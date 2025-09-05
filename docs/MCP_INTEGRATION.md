@@ -31,6 +31,36 @@ export FAX_API_URL=http://localhost:8080
 export API_KEY=your_secure_api_key
 ```
 
+## Quick Start (Scripts)
+- macOS/Linux (stdio):
+```
+FAX_API_URL=http://localhost:8080 API_KEY=$API_KEY \
+  ./api/scripts/start-mcp.sh
+```
+
+- macOS/Linux (HTTP on port 3001):
+```
+FAX_API_URL=http://localhost:8080 API_KEY=$API_KEY MCP_HTTP_PORT=3001 \
+  ./api/scripts/start-mcp-http.sh
+```
+
+- Windows (stdio): double‑click `api\scripts\start-mcp.bat`
+- Windows (HTTP): double‑click `api\scripts\start-mcp-http.bat`
+
+Alternative (Makefile shortcuts):
+```
+make mcp-stdio     # stdio transport
+make mcp-http      # HTTP transport (runs in api/)
+make mcp-setup     # writes Claude/Cursor configs
+```
+
+Global install (adds `faxbot-mcp` and `faxbot-mcp-http` to PATH):
+```
+cd api && npm run install-global
+FAX_API_URL=http://localhost:8080 API_KEY=$API_KEY faxbot-mcp
+FAX_API_URL=http://localhost:8080 API_KEY=$API_KEY MCP_HTTP_PORT=3001 faxbot-mcp-http
+```
+
 ## Stdio Transport (Claude Desktop, Cursor)
 - Start stdio MCP:
 ```
@@ -66,10 +96,16 @@ curl -X POST http://localhost:3001/mcp/call \
   }'
 ```
 
+Docker option (profile `mcp`):
+```
+make mcp-up     # builds and starts the faxbot-mcp service
+make mcp-logs   # tail MCP logs
+make mcp-down   # stop MCP service
+```
+
 ## Security
 - If the API uses `X-API-Key`, set `API_KEY` for MCP so it forwards the header.
 - For HTTP transport, place behind auth and rate limits.
 
 ## Voice Examples
 - You can say: “Send this PDF to +1555… using fax tools.” The assistant will call `send_fax` with base64 content, then `get_fax_status`.
-

@@ -23,6 +23,8 @@ Simple fax-sending API with AI integration. Choose your backend:
 ## AI Assistant Integration
 [→ MCP Integration Guide](docs/MCP_INTEGRATION.md)
 
+- Quick start: use the scripts in `api/scripts` (`start-mcp.sh`, `start-mcp-http.sh`) or `make mcp-stdio` / `make mcp-http`.
+
 ## Documentation
 - [API Reference](docs/API_REFERENCE.md) — Endpoints and examples
 - [Troubleshooting](docs/TROUBLESHOOTING.md) — Common issues
