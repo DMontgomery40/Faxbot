@@ -16,6 +16,8 @@ from .ami import ami_client
 from .phaxio_service import get_phaxio_service
 import hmac
 import hashlib
+from urllib.parse import urlparse
+from .audit import init_audit_logger, audit_event
 
 
 app = FastAPI(title="Faxbot API", version="1.0.0")
@@ -33,6 +35,32 @@ async def on_startup():
     # Validate Ghostscript availability for PDF->TIFF conversion
     if shutil.which("gs") is None:
         print("[warn] Ghostscript (gs) not found; PDF→TIFF conversion will be stubbed. Install 'ghostscript' for production use.")
+    # Security posture warnings
+    if not settings.api_key and not settings.fax_disabled:
+        print("[warn] API_KEY is unset while faxing is enabled; /fax requests are unauthenticated. Set API_KEY for production.")
+    try:
+        pu = urlparse(settings.public_api_url)
+        insecure = pu.scheme == "http" and pu.hostname not in {"localhost", "127.0.0.1"}
+        if insecure:
+            msg = "PUBLIC_API_URL is not HTTPS; cloud providers will fetch PDFs over HTTP. Use HTTPS in production."
+            if settings.enforce_public_https and settings.fax_backend == "phaxio":
+                raise RuntimeError(msg)
+            else:
+                print(f"[warn] {msg}")
+    except Exception:
+        pass
+
+    # Start periodic cleanup task for artifacts
+    if settings.artifact_ttl_days > 0:
+        asyncio.create_task(_artifact_cleanup_loop())
+    # Init audit logger
+    init_audit_logger(
+        enabled=settings.audit_log_enabled,
+        fmt=settings.audit_log_format,
+        filepath=(settings.audit_log_file or None),
+        use_syslog=settings.audit_log_syslog,
+        syslog_address=(settings.audit_log_syslog_address or None),
+    )
     # Start AMI listener and result handler (only for SIP backend)
     if not settings.fax_disabled and settings.fax_backend == "sip":
         asyncio.create_task(ami_client.connect())
@@ -57,6 +85,8 @@ def _handle_fax_result(event):
             job.updated_at = datetime.utcnow()
             db.add(job)
             db.commit()
+    if job_id and status:
+        audit_event("job_updated", job_id=job_id, status=status, provider="asterisk")
 
 
 @app.get("/health")
@@ -104,13 +134,21 @@ async def send_fax(background: BackgroundTasks, to: str = Form(...), file: Uploa
         with open(pdf_path, "wb") as f:
             f.write(content)
 
-    # Convert PDF to TIFF (skip in test mode)
-    if settings.fax_disabled:
-        pages = 1
-        with open(tiff_path, "wb") as f:
-            f.write(b"TIFF_PLACEHOLDER")
+    # Backend-specific file preparation
+    if settings.fax_backend == "phaxio":
+        # Cloud backend: skip TIFF conversion; provider callback will set final pages
+        pages = None
+        if settings.fax_disabled:
+            # Test mode: nothing else to prepare
+            pass
     else:
-        pages, _ = pdf_to_tiff(pdf_path, tiff_path)
+        # SIP/Asterisk requires TIFF
+        if settings.fax_disabled:
+            pages = 1
+            with open(tiff_path, "wb") as f:
+                f.write(b"TIFF_PLACEHOLDER")
+        else:
+            pages, _ = pdf_to_tiff(pdf_path, tiff_path)
 
     # Create job in DB with backend info
     with SessionLocal() as db:
@@ -127,6 +165,7 @@ async def send_fax(background: BackgroundTasks, to: str = Form(...), file: Uploa
         )
         db.add(job)
         db.commit()
+    audit_event("job_created", job_id=job_id, backend=settings.fax_backend)
 
     # Kick off fax sending based on backend
     if not settings.fax_disabled:
@@ -142,6 +181,7 @@ async def send_fax(background: BackgroundTasks, to: str = Form(...), file: Uploa
 
 async def _originate_job(job_id: str, to: str, tiff_path: str):
     try:
+        audit_event("job_dispatch", job_id=job_id, method="sip")
         await ami_client.originate_sendfax(job_id, to, tiff_path)
         # Mark as started
         with SessionLocal() as db:
@@ -160,6 +200,7 @@ async def _originate_job(job_id: str, to: str, tiff_path: str):
                 job.updated_at = datetime.utcnow()
                 db.add(job)
                 db.commit()
+        audit_event("job_failed", job_id=job_id, error=str(e))
 
 
 @app.get("/fax/{job_id}", response_model=FaxJobOut, dependencies=[Depends(require_api_key)])
@@ -168,7 +209,52 @@ def get_fax(job_id: str):
         job = db.get(FaxJob, job_id)
         if not job:
             raise HTTPException(404, detail="Job not found")
-        return _serialize_job(job)
+    return _serialize_job(job)
+
+
+async def _artifact_cleanup_loop():
+    """Periodically delete old artifacts beyond TTL for finalized jobs."""
+    interval = max(1, settings.cleanup_interval_minutes)
+    while True:
+        try:
+            await _cleanup_once()
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error(f"Artifact cleanup error: {e}")
+        await asyncio.sleep(interval * 60)
+
+
+async def _cleanup_once():
+    cutoff = datetime.utcnow() - timedelta(days=max(1, settings.artifact_ttl_days))
+    final_statuses = {"SUCCESS", "FAILED", "failed", "disabled"}
+    data_dir = settings.fax_data_dir
+    import glob
+    with SessionLocal() as db:
+        # naive scan: iterate all jobs updated before cutoff
+        # SQLAlchemy 2.0 Core select is imported? Simpler: fetch all and filter.
+        # For small SQLite this is fine. For larger stores, switch to SQL query with filters.
+        jobs = db.query(FaxJob).all()  # type: ignore[attr-defined]
+        for job in jobs:
+            try:
+                if job.updated_at and job.updated_at < cutoff and (job.status in final_statuses):
+                    # Delete PDF
+                    pdf_path = os.path.join(data_dir, f"{job.id}.pdf")
+                    if os.path.exists(pdf_path):
+                        os.remove(pdf_path)
+                    # Delete TIFF
+                    if job.tiff_path and os.path.exists(job.tiff_path):
+                        try:
+                            os.remove(job.tiff_path)
+                        except FileNotFoundError:
+                            pass
+                    # Delete original upload(s)
+                    for p in glob.glob(os.path.join(data_dir, f"{job.id}-*")):
+                        try:
+                            os.remove(p)
+                        except FileNotFoundError:
+                            pass
+            except Exception:
+                continue
 
 
 @app.get("/fax/{job_id}/pdf")
@@ -197,7 +283,8 @@ async def get_fax_pdf(job_id: str, token: str = Query(...)):
         import logging
         logger = logging.getLogger(__name__)
         logger.info(f"PDF accessed for job {job_id} by cloud provider")
-
+        audit_event("pdf_served", job_id=job_id)
+        
         return FileResponse(
             pdf_path,
             media_type="application/pdf",
@@ -253,6 +340,7 @@ async def phaxio_callback(request: Request):
             job.updated_at = datetime.utcnow()
             db.add(job)
             db.commit()
+    audit_event("job_updated", job_id=job_id, status=status_info.get('status'), provider="phaxio")
     
     return {"status": "ok"}
 
@@ -285,6 +373,7 @@ async def _send_via_phaxio(job_id: str, to: str, pdf_path: str):
                 db.commit()
         
         # Send via Phaxio
+        audit_event("job_dispatch", job_id=job_id, method="phaxio")
         result = await phaxio_service.send_fax(to, pdf_url, job_id)
         
         # Update job with provider SID
@@ -306,6 +395,7 @@ async def _send_via_phaxio(job_id: str, to: str, pdf_path: str):
                 job.updated_at = datetime.utcnow()
                 db.add(job)
                 db.commit()
+        audit_event("job_failed", job_id=job_id, error=str(e))
 
 
 def _serialize_job(job: FaxJob) -> FaxJobOut:

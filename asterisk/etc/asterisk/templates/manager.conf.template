@@ -4,9 +4,8 @@ webenabled = no
 port = 5038
 bindaddr = 0.0.0.0
 
-[api]
+[${ASTERISK_AMI_USERNAME}]
 secret = ${ASTERISK_AMI_PASSWORD}
 read = all
 write = all
 displayconnects = yes
-

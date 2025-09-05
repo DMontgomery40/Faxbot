@@ -14,9 +14,9 @@ This is a focused, prioritized backlog based on the latest audit.
 - [COMPLETED] AMI reconnect concurrency safety
   - Added connection lock; background reconnect from read loop
   - Keeps exponential backoff
-- Asterisk AMI username templating
-  - Use `${ASTERISK_AMI_USERNAME}` as the section name in `manager.conf.template`
-  - Keep credentials aligned between API env and Asterisk
+- [COMPLETED] Asterisk AMI username templating
+  - `manager.conf.template` now uses `${ASTERISK_AMI_USERNAME}` for the section name
+  - Docs updated to call out the alignment with API env
 - [COMPLETED] Redact sensitive tokens from logs
   - Do not log `pdf_url` tokens
   - Ensure all logs contain job IDs, not secrets
@@ -26,38 +26,42 @@ This is a focused, prioritized backlog based on the latest audit.
   - Docs updated; scripts and Makefile remain valid
 
 ## Medium Priority
-- Skip TIFF generation for Phaxio path
-  - Avoid `pdf_to_tiff` when backend is `phaxio` to save CPU/IO
-  - Page count can be filled by provider callback
-- Source of truth for pages
-  - Ensure provider callback updates overwrite any local estimates
-  - Document this behavior
-- Public URL defaults and docs
-  - Prefer HTTPS for `PUBLIC_API_URL` in docs
-  - Warn on startup when using localhost in non‑dev
-- Rate limiting and auth posture
-  - Warn if `API_KEY` is unset and `FAX_DISABLED=false`
-  - Add reverse proxy (nginx/Caddy) examples for IP allowlist + rate limits
+- [COMPLETED] Skip TIFF generation for Phaxio path
+  - Do not convert to TIFF when backend is `phaxio`; pages set by callback
+- [COMPLETED] Source of truth for pages
+  - Provider callback overwrites local estimates; documented
+- [COMPLETED] Public URL defaults and docs
+  - Startup warns when `PUBLIC_API_URL` is plain HTTP (non-local)
+  - Docs recommend HTTPS for production
+- [COMPLETED] Rate limiting and auth posture
+  - Startup warns when `API_KEY` is unset and faxing is enabled
+  - Added reverse proxy examples (Nginx/Caddy) to Troubleshooting
 
 ## Low Priority
-- Phone number normalization
-  - Document E.164 expectation; avoid guessing country codes
+- [COMPLETED] Phone number normalization
+  - Documented E.164 preference and best‑effort normalization note
 - MCP example configs
   - Treat `api/configs/*.json` as examples; rely on `setup-mcp.js` to generate paths
-- Ghostscript flags
-  - Clean up redundant options (e.g., lzw with tiffg4)
+- [COMPLETED] Ghostscript flags
+  - Removed redundant compression flag for tiffg4
 - File retention
   - Add TTL cleanup for `orig`, `pdf`, and `tiff` artifacts
   - Document storage footprint and retention controls
-- CI tests and scripts
-  - Add GH Actions to run `pytest -q` with `FAX_DISABLED=true`
+- [COMPLETED] CI tests and scripts
+  - GitHub Actions workflow added to run tests
 
 ## Documentation Improvements
 - Port forwarding appendix for novices (router examples/screenshots)
 - Asterisk template walkthrough with env examples per provider
 - “Data persistence” note: mount DB/file volumes for durability
+- [ADDED] HIPAA requirements document and operator checklist
+  - Status: Completed (HIPAA_REQUIREMENTS.md)
+- [COMPLETED] Audit logging docs
+  - Added optional SIEM sink configuration and events list
+- [COMPLETED] Provider TLS/VPN examples
+  - Added PJSIP TLS and WireGuard sketches to SIP guide
 
 ---
 
 # In Progress
-- Implement Asterisk AMI username templating
+- (none)

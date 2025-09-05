@@ -28,6 +28,7 @@ Simple fax-sending API with AI integration. Choose your backend:
 ## Documentation
 - [API Reference](docs/API_REFERENCE.md) — Endpoints and examples
 - [Troubleshooting](docs/TROUBLESHOOTING.md) — Common issues
+- [HIPAA Requirements](HIPAA_REQUIREMENTS.md) — Security, BAAs, and compliance checklist
 
 ## Notes
 - Send-only. Receiving is out of scope.

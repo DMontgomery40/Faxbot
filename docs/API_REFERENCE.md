@@ -59,3 +59,20 @@ curl -H "X-API-Key: $API_KEY" http://localhost:8080/fax/$JOB_ID
 - Backend chosen via `FAX_BACKEND` env var.
 - TXT files are converted to PDF before TIFF conversion.
 - If Ghostscript is missing, TIFF step is stubbed with pages=1; install for production.
+- For the Phaxio backend, TIFF conversion is skipped; page count is finalized via the provider callback.
+- Tokenized PDF access has a TTL (`PDF_TOKEN_TTL_MINUTES`, default 60). The `/fax/{id}/pdf?token=...` link expires after TTL.
+- Optional retention: enable automatic cleanup of artifacts by setting `ARTIFACT_TTL_DAYS>0` (default disabled). Cleanup runs every `CLEANUP_INTERVAL_MINUTES` (default 1440).
+
+## Phone Numbers
+- Preferred format: E.164 (e.g., `+15551234567`).
+- Validation: API accepts `+` and 6–20 digits.
+- Cloud path (Phaxio): the service may attempt best‑effort normalization for non‑E.164 input; provide E.164 to avoid ambiguity.
+
+## Audit Logging (Optional)
+- Enable structured audit logs for SIEM ingestion:
+  - `AUDIT_LOG_ENABLED=true`
+  - `AUDIT_LOG_FORMAT=json` (default)
+  - `AUDIT_LOG_FILE=/var/log/faxbot_audit.log` (optional)
+  - `AUDIT_LOG_SYSLOG=true` and `AUDIT_LOG_SYSLOG_ADDRESS=/dev/log` (optional)
+- Events: `job_created`, `job_dispatch`, `job_updated`, `job_failed`, `pdf_served`.
+- Logs contain job IDs and metadata only (no PHI).

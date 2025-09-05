@@ -13,6 +13,7 @@
 - T.38: a protocol for fax over IP using UDPTL; more reliable than voice codecs for fax.
 - UDPTL: the transport for T.38; you must open/forward a port range for it.
 - AMI (Asterisk Manager Interface): how the API tells Asterisk to start a fax call.
+- E.164: the international phone number format (e.g., `+15551234567`). Use E.164 for destinations and caller IDs when possible.
 
 ## Requirements
 - A SIP trunk that supports T.38 over UDPTL
@@ -125,8 +126,46 @@ Notes:
 - Always ask your provider to confirm T.38 support and sign a BAA if you’ll transmit PHI.
 - Typical US costs (ballpark): local DID ~$0.5–$2/mo; outbound ~$0.005–$0.02/min. Verify current pricing pages.
 
+## TLS Signaling & VPN Examples (Advanced)
+
+### PJSIP TLS Transport (example)
+```
+[transport-tls]
+type=transport
+protocol=tls
+bind=0.0.0.0:5061
+method=tlsv1_2
+local_net=10.0.0.0/8
+cert_file=/etc/asterisk/keys/asterisk.pem
+priv_key_file=/etc/asterisk/keys/asterisk.key
+ca_list_file=/etc/asterisk/keys/ca.crt
+external_media_address=<public_ip>
+external_signaling_address=<public_ip>
+```
+
+Then reference `transport=transport-tls` in your trunk endpoint/registration if your provider supports TLS.
+
+### Site‑to‑Site VPN (WireGuard sketch)
+- Provision a WireGuard tunnel between your Asterisk host and the SIP provider’s VPN endpoint.
+- Route provider IP ranges through the WG interface; restrict firewall to permit SIP/T.38 only via the tunnel.
+- Example (Asterisk side `/etc/wireguard/wg0.conf`):
+```
+[Interface]
+PrivateKey = <your_private_key>
+Address = 10.7.0.2/32
+
+[Peer]
+PublicKey = <provider_public_key>
+Endpoint = <provider_vpn_host>:51820
+AllowedIPs = <provider_sip_subnets>
+PersistentKeepalive = 25
+```
+
+Restart Asterisk with `external_*` addresses set to the tunnel’s public IP if required.
+
 ## Understanding the Asterisk Configuration
 - `asterisk/etc/asterisk/templates/pjsip.conf.template` is rendered from your `.env` at container start.
+- `asterisk/etc/asterisk/templates/manager.conf.template` uses `${ASTERISK_AMI_USERNAME}` as the user section and `${ASTERISK_AMI_PASSWORD}` for the secret. Ensure these match your API env so AMI auth succeeds.
 - The `faxout` dialplan in `extensions.conf` uses `SendFAX()` with T.38 and emits `UserEvent(FaxResult)` on completion.
 - The API listens for that event via AMI to update job status.
 

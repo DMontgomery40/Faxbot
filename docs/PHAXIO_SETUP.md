@@ -27,6 +27,7 @@ PHAXIO_STATUS_CALLBACK_URL=https://your-domain.com/phaxio-callback
 API_KEY=your_secure_api_key   # Optional but recommended; used as X-API-Key
 ```
 - Note: PUBLIC_API_URL must be reachable by Phaxio to fetch PDFs.
+ - For production, set `ENFORCE_PUBLIC_HTTPS=true` to require HTTPS (recommended). For local testing, leave it false.
 
 3) Start the API
 ```
@@ -55,7 +56,8 @@ curl -H "X-API-Key: your_secure_api_key" http://localhost:8080/fax/<job_id>
 - Phaxio will POST status to `PHAXIO_STATUS_CALLBACK_URL`.
 - This API exposes `POST /phaxio-callback` and will update job status when the request includes `?job_id=<id>`.
 - Ensure your PUBLIC_API_URL and callback URL are reachable from Phaxio.
- - Security: by default, callbacks must include a valid `X-Phaxio-Signature` (HMAC-SHA256 of the raw body using `PHAXIO_API_SECRET`). You can disable this by setting `PHAXIO_VERIFY_SIGNATURE=false` (not recommended).
+- Security: by default, callbacks must include a valid `X-Phaxio-Signature` (HMAC-SHA256 of the raw body using `PHAXIO_API_SECRET`). You can disable this by setting `PHAXIO_VERIFY_SIGNATURE=false` (not recommended).
+ - Optional retention: set `ARTIFACT_TTL_DAYS>0` to automatically delete PDFs after the specified number of days (cleanup runs daily by default).
 
 ## Costs & HIPAA
 - Phaxio pricing: see their site for per-page costs.
@@ -65,6 +67,11 @@ curl -H "X-API-Key: your_secure_api_key" http://localhost:8080/fax/<job_id>
 - Set a strong `API_KEY` and send it as `X-API-Key`.
 - Rate limit and restrict access via reverse proxy (nginx, Caddy, etc.).
 - The PDF serving endpoint uses a tokenized URL; treat PUBLIC_API_URL as sensitive.
+- Use HTTPS for `PUBLIC_API_URL` in production so Phaxio fetches over TLS. HTTP is fine for local development only.
+
+## Number Format
+- Use E.164 format (e.g., `+15551234567`) for best results.
+- The backend performs limited normalization for non‑E.164 input, but E.164 avoids ambiguity across regions.
 
 ## Troubleshooting
 - "phaxio not configured": verify `FAX_BACKEND=phaxio` and both API key/secret.

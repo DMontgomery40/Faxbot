@@ -1,7 +1,7 @@
 import subprocess
 import shutil
 from pathlib import Path
-from typing import Tuple
+from typing import Tuple, Optional
 from reportlab.lib.pagesizes import letter  # type: ignore
 from reportlab.pdfgen import canvas  # type: ignore
 
@@ -60,7 +60,6 @@ def pdf_to_tiff(pdf_path: str, tiff_path: str) -> Tuple[int, str]:
         "-dBATCH",
         "-sDEVICE=tiffg4",
         "-r204x196",
-        "-sCompression=lzw",
         f"-sOutputFile={tiff_path}",
         pdf_path,
     ]
@@ -76,3 +75,17 @@ def pdf_to_tiff(pdf_path: str, tiff_path: str) -> Tuple[int, str]:
     except Exception:
         pass
     return pages, tiff_path
+
+
+def count_pdf_pages(pdf_path: str) -> Optional[int]:
+    """Return the number of pages in a PDF using Ghostscript. Returns None if unknown."""
+    if shutil.which("gs") is None:
+        return None
+    try:
+        out = subprocess.check_output([
+            "gs", "-q", "-dNODISPLAY", "-c",
+            f"({pdf_path}) (r) file runpdfbegin pdfpagecount = quit"
+        ])
+        return int((out or b"1").strip() or b"1")
+    except Exception:
+        return None
