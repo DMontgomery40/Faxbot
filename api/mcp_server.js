@@ -39,7 +39,7 @@ class FaxMcpServer {
         tools: [
           {
             name: 'send_fax',
-            description: 'Send a fax to a recipient using T.38 protocol via Asterisk. Supports PDF and TXT files.',
+            description: 'Send a fax to a recipient using either Phaxio cloud service or T.38 protocol via Asterisk. Supports PDF and TXT files.',
             inputSchema: {
               type: 'object',
               properties: {

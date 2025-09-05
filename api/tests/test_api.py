@@ -1,19 +1,16 @@
 from fastapi.testclient import TestClient
+from app.main import app
 
 
 def test_health():
-    from app.main import app
     client = TestClient(app)
     r = client.get("/health")
     assert r.status_code == 200
     assert r.json()["status"] == "ok"
 
 
-def test_send_validation_bad_number(tmp_path, monkeypatch):
-    # Ensure fax disabled to avoid AMI during tests
-    monkeypatch.setenv("FAX_DISABLED", "true")
-
-    from app.main import app
+def test_send_validation_bad_number():
+    """Test validation with bad phone number."""
     with TestClient(app) as c:
         files = {
             "to": (None, "abc"),
@@ -23,9 +20,8 @@ def test_send_validation_bad_number(tmp_path, monkeypatch):
         assert r.status_code == 400
 
 
-def test_send_txt(tmp_path, monkeypatch):
-    monkeypatch.setenv("FAX_DISABLED", "true")
-    from app.main import app
+def test_send_txt():
+    """Test sending a text file (conversion functions are mocked globally)."""
     with TestClient(app) as c:
         files = {
             "to": (None, "+15551230001"),

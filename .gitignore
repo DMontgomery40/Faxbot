@@ -6,11 +6,10 @@ __pycache__/
 .env
 
 # Local data
-openfax.db
+*.db
 faxdata/
 
 # Editor/OS
 .DS_Store
 .mypy_cache/
 .pytest_cache/
-

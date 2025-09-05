@@ -5,7 +5,7 @@
       "args": [
         "mcp_server.js"
       ],
-      "cwd": "/Users/davidmontgomery/open-fax-by-codex/api",
+      "cwd": "/Users/davidmontgomery/faxbot/api",
       "env": {
         "FAX_API_URL": "http://localhost:8080",
         "API_KEY": ""

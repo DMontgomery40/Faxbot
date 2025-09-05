@@ -9,17 +9,24 @@ class AMIClient:
         self.writer: Optional[asyncio.StreamWriter] = None
         self._connected = asyncio.Event()
         self._listeners: Dict[str, Callable[[Dict[str, str]], None]] = {}
+        self._conn_lock = asyncio.Lock()
 
     async def connect(self):
-        while True:
-            try:
-                self.reader, self.writer = await asyncio.open_connection(settings.ami_host, settings.ami_port)
-                await self._login()
-                self._connected.set()
-                asyncio.create_task(self._read_loop())
+        async with self._conn_lock:
+            if self._connected.is_set():
                 return
-            except Exception:
-                await asyncio.sleep(1.0)
+            delay = 1.0
+            while not self._connected.is_set():
+                try:
+                    self.reader, self.writer = await asyncio.open_connection(settings.ami_host, settings.ami_port)
+                    await self._login()
+                    self._connected.set()
+                    asyncio.create_task(self._read_loop())
+                    return
+                except Exception:
+                    # Exponential backoff with cap
+                    await asyncio.sleep(delay)
+                    delay = min(delay * 2, 30.0)
 
     async def _login(self):
         await self._send_action({
@@ -46,7 +53,8 @@ class AMIClient:
                     buf[k.strip()] = v.strip()
         except Exception:
             self._connected.clear()
-            await self.connect()
+            # Reconnect in background; avoid raising into caller
+            asyncio.create_task(self.connect())
 
     def _dispatch(self, msg: Dict[str, str]):
         event = msg.get("Event")
@@ -88,4 +96,3 @@ class AMIClient:
 
 
 ami_client = AMIClient()
-

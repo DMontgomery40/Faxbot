@@ -145,7 +145,7 @@ class McpInstaller {
         config.mcpServers = {};
       }
       
-      config.mcpServers['open-fax'] = mcpConfig;
+      config.mcpServers['faxbot'] = mcpConfig;
       
       fs.writeFileSync(claudeConfigPath, JSON.stringify(config, null, 2));
       console.log(`✅ Claude config updated: ${claudeConfigPath}`);
@@ -177,7 +177,7 @@ class McpInstaller {
         config.mcpServers = {};
       }
       
-      config.mcpServers['open-fax'] = mcpConfig;
+      config.mcpServers['faxbot'] = mcpConfig;
       
       fs.writeFileSync(cursorConfigPath, JSON.stringify(config, null, 2));
       console.log(`✅ Cursor config updated: ${cursorConfigPath}`);

@@ -1,6 +1,6 @@
 [global]
 type=global
-user_agent=OpenFax-Asterisk
+user_agent=Faxbot-Asterisk
 
 [transport-udp]
 type=transport

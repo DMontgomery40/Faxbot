@@ -13,9 +13,10 @@ services:
       - faxdata:/faxdata
     ports:
       - "8080:8080"
-    depends_on:
-      - asterisk
+    # Note: Asterisk dependency is optional - only needed for SIP backend
 
+  # Asterisk service - only needed for SIP backend
+  # Can be disabled by setting FAX_BACKEND=phaxio in .env (cloud backend)
   asterisk:
     build:
       context: ./asterisk

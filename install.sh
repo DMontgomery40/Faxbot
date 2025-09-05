@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Open Fax MCP - One-Click Installer
+# Faxbot MCP - One-Click Installer
 # Supports macOS, Linux, and Windows (via WSL)
 
 set -e

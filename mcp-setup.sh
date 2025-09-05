@@ -1,11 +1,11 @@
 #!/bin/bash
 
-# MCP Setup Script for Open Fax by Codex
+# MCP Setup Script for Faxbot
 # This script helps set up the MCP server for AI integration
 
 set -e
 
-echo "🔧 Setting up Open Fax MCP Server..."
+echo "🔧 Setting up Faxbot MCP Server..."
 
 # Check if .env exists
 if [ ! -f .env ]; then
@@ -39,7 +39,7 @@ echo ""
 echo "Add this to your MCP configuration:"
 echo '{'
 echo '  "mcpServers": {'
-echo '    "open-fax": {'
+echo '    "faxbot": {'
 echo '      "command": "node",'
 echo '      "args": ["mcp_server.js"],'
 echo '      "cwd": "'$(pwd)/api'"'

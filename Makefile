@@ -5,6 +5,10 @@ SHELL := /bin/bash
 up:
 	docker compose up -d --build
 
+# For cloud backend only (Phaxio) - skips Asterisk
+up-cloud:
+	docker compose up -d --build api
+
 down:
 	docker compose down
 
@@ -45,4 +49,3 @@ npm-global:
 
 homebrew-install:
 	brew bundle
-
