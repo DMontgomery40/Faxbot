@@ -5,7 +5,7 @@
 
 set -e
 
-REPO_URL="https://github.com/your-org/faxbot"
+REPO_URL="https://github.com/DMontgomery40/Faxbot"
 INSTALL_DIR="$HOME/.local/share/faxbot"
 BIN_DIR="$HOME/.local/bin"
 
@@ -283,7 +283,7 @@ print_installation_complete() {
     
     echo -e "${BLUE}📖 Documentation:${NC}"
     echo "   $INSTALL_DIR/README.md"
-    echo "   https://github.com/your-org/faxbot"
+    echo "   https://github.com/DMontgomery40/Faxbot"
     echo ""
     
     echo -e "${BLUE}🔧 Configuration Files:${NC}"

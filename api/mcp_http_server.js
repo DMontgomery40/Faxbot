@@ -661,7 +661,7 @@ class ModernFaxMcpServer {
       res.json({
         message: 'Faxbot MCP Server 2.0',
         description: 'AI-native T.38 fax transmission service',
-        documentation: 'https://github.com/your-org/faxbot',
+        documentation: 'https://github.com/DMontgomery40/Faxbot',
         endpoints: {
           health: '/health',
           capabilities: '/mcp/capabilities'

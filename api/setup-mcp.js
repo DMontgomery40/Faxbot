@@ -333,7 +333,7 @@ class McpInstaller {
     console.log(`   • configs/cursor-mcp.json`);
     console.log(`   • configs/http-mcp.json`);
     console.log('');
-    console.log('📖 Documentation: https://github.com/your-org/open-fax-by-codex');
+    console.log('📖 Documentation: https://github.com/DMontgomery40/Faxbot');
     console.log('');
     console.log('🚀 Ready for AI-powered fax transmission!');
   }

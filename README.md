@@ -24,7 +24,7 @@ This fax API includes MCP (Model Context Protocol) support for AI assistant inte
 
 **Automated installer:**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/your-org/faxbot/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/DMontgomery40/Faxbot/main/install.sh | bash
 ```
 
 **Package managers:**
@@ -33,7 +33,7 @@ curl -fsSL https://raw.githubusercontent.com/your-org/faxbot/main/install.sh | b
 npm install -g faxbot-mcp
 
 # Manual install
-git clone https://github.com/your-org/faxbot
+git clone https://github.com/DMontgomery40/Faxbot
 cd faxbot
 ./install.sh
 ```
