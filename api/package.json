@@ -1,6 +1,6 @@
 {
   "name": "faxbot-mcp",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "Modern MCP server for Faxbot - AI-native T.38 fax transmission",
   "main": "mcp_server.js",
   "bin": {
@@ -16,7 +16,15 @@
     "install-global": "npm install -g .",
     "postinstall": "node setup-mcp.js"
   },
-  "keywords": ["mcp", "fax", "t38", "ai", "voice-assistant", "healthcare", "faxbot"],
+  "keywords": [
+    "mcp",
+    "fax",
+    "t38",
+    "ai",
+    "voice-assistant",
+    "healthcare",
+    "faxbot"
+  ],
   "author": "Faxbot Project",
   "license": "MIT",
   "repository": {
@@ -39,6 +47,10 @@
   "engines": {
     "node": ">=18.0.0"
   },
-  "os": ["darwin", "linux", "win32"],
+  "os": [
+    "darwin",
+    "linux",
+    "win32"
+  ],
   "preferGlobal": true
 }
