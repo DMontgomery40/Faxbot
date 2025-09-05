@@ -77,24 +77,13 @@ cd api && node setup-mcp.js
 ```
 cd api && npm run start:http
 ```
-- Endpoints:
-  - GET `/health` – liveness
-  - GET `/mcp/capabilities` – tool list
-  - POST `/mcp/call` – invoke tool with JSON body
-- Example request (send fax):
-```
-curl -X POST http://localhost:3001/mcp/call \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "name": "send_fax",
-    "arguments": {
-      "to": "+15551234567",
-      "fileName": "note.txt",
-      "fileType": "txt",
-      "fileContent": "SGVsbG8gV29ybGQh"  
-    }
-  }'
-```
+- Protocol: Streamable HTTP with session management
+  - POST `/mcp` handles JSON-RPC requests. The first request must be an Initialize request if no `Mcp-Session-Id` is provided.
+  - GET `/mcp` establishes an SSE stream for server-to-client notifications. Include `Mcp-Session-Id` header.
+  - DELETE `/mcp` terminates the session. Include `Mcp-Session-Id` header.
+  - CORS: The server exposes `Mcp-Session-Id` and allows `mcp-session-id` header for browser clients.
+
+Note: Streamable HTTP is intended for MCP-aware clients (Claude Desktop, Cursor/Cline, etc.). Manual curl testing requires constructing JSON-RPC requests and handling SSE, which is beyond the scope of this guide.
 
 Docker option (profile `mcp`):
 ```

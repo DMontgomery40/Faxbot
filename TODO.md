@@ -20,6 +20,10 @@ This is a focused, prioritized backlog based on the latest audit.
 - [COMPLETED] Redact sensitive tokens from logs
   - Do not log `pdf_url` tokens
   - Ensure all logs contain job IDs, not secrets
+- [COMPLETED] Streamable HTTP MCP server
+  - Implemented `/mcp` POST/GET/DELETE with `StreamableHTTPServerTransport`
+  - Session management and SSE notifications supported
+  - Docs updated; scripts and Makefile remain valid
 
 ## Medium Priority
 - Skip TIFF generation for Phaxio path
