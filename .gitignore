@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.pyc
+
+# Env
+.env
+
+# Local data
+openfax.db
+faxdata/
+
+# Editor/OS
+.DS_Store
+.mypy_cache/
+.pytest_cache/
+

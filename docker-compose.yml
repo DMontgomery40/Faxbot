@@ -1,0 +1,54 @@
+version: "3.9"
+
+services:
+  api:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    env_file:
+      - ./.env
+    environment:
+      - FAX_DATA_DIR=/faxdata
+    volumes:
+      - faxdata:/faxdata
+    ports:
+      - "8080:8080"
+    depends_on:
+      - asterisk
+
+  asterisk:
+    build:
+      context: ./asterisk
+      dockerfile: Dockerfile
+    env_file:
+      - ./.env
+    environment:
+      - TZ=${TZ:-UTC}
+    volumes:
+      - faxdata:/faxdata
+    ports:
+      - "5060:5060/udp"
+      - "5060:5060/tcp"
+      - "5038:5038" # AMI
+      - "4000-4999:4000-4999/udp" # UDPTL for T.38
+
+  # Optional: Faxbot MCP Server for AI integration
+  faxbot-mcp:
+    build:
+      context: ./api
+      dockerfile: Dockerfile.mcp
+    env_file:
+      - ./.env
+    environment:
+      - FAX_API_URL=http://api:8080
+      - API_KEY=${API_KEY}
+    depends_on:
+      - api
+    profiles:
+      - mcp
+    stdin_open: true
+    tty: true
+
+volumes:
+  faxdata:
+    driver: local

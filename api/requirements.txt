@@ -1,0 +1,12 @@
+fastapi==0.112.2
+uvicorn[standard]==0.30.6
+pydantic==2.9.1
+python-multipart==0.0.9
+aiofiles==23.2.1
+sqlalchemy==2.0.34
+alembic==1.13.2
+httpx==0.27.2
+tenacity==8.5.0
+pytest==8.3.2
+anyio==4.4.0
+reportlab==4.2.2
