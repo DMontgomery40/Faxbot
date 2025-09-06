@@ -94,12 +94,16 @@ Implement the following as minimum controls:
 ## MCP (AI Assistant) Considerations
 - MCP transmits base64 file content for the `send_fax` tool. Treat the MCP server with the same controls as the API (auth, network restrictions, audit logging).
 - Do not send PHI to LLMs or external services unless you have a signed BAA and an approved use case.
-- Keep MCP HTTP behind authentication and rate limiting.
+- All MCP servers must require authentication:
+  - REST API: `X-API-Key` for /fax endpoints.
+  - MCP HTTP/SSE: `Authorization: Bearer <JWT>` verified against your OIDC JWKS.
+- Serve MCP over TLS. Never log PHI (file content, rendered pages). Log only job IDs and metadata.
 
 ## Operational Checklist (Minimum)
 - [ ] Signed BAA with Phaxio (if using cloud backend).
 - [ ] TLS everywhere (HTTPS for public endpoints; VPN/private link for SIP media).
 - [ ] API auth enabled (`API_KEY` set). Reverse proxy with IP allowlist + rate limiting.
+- [ ] MCP auth enforced (OAuth2 Bearer required for HTTP/SSE MCP).
 - [ ] Callback signature verification enabled (`PHAXIO_VERIFY_SIGNATURE=true`).
 - [ ] Tokenized PDF access enabled with short TTL (`PDF_TOKEN_TTL_MINUTES`).
 - [ ] Logs do not contain PHI; tokens redacted; job IDs only.

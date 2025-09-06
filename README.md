@@ -24,6 +24,7 @@ Simple fax-sending API with AI integration. Choose your backend:
 [→ MCP Integration Guide](docs/MCP_INTEGRATION.md)
 
 - Quick start: use the scripts in `api/scripts` (`start-mcp.sh`, `start-mcp-http.sh`) or `make mcp-stdio` / `make mcp-http`.
+- New: OAuth2‑protected SSE MCP servers for Node and Python — see the SSE sections in the MCP guide.
 
 ## Client SDKs
 - Python: `pip install faxbot`

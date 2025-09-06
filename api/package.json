@@ -5,12 +5,14 @@
   "main": "mcp_server.js",
   "bin": {
     "faxbot-mcp": "./mcp_server.js",
-    "faxbot-mcp-http": "./mcp_http_server.js"
+    "faxbot-mcp-http": "./mcp_http_server.js",
+    "faxbot-mcp-sse": "./mcp_sse_server.js"
   },
   "scripts": {
     "start": "node mcp_server.js",
     "start:mcp": "node mcp_server.js",
     "start:http": "node mcp_http_server.js",
+    "start:sse": "node mcp_sse_server.js",
     "dev:mcp": "nodemon mcp_server.js",
     "dev:http": "nodemon mcp_http_server.js",
     "install-global": "npm install -g .",
@@ -39,7 +41,8 @@
     "cors": "^2.8.5",
     "helmet": "^7.1.0",
     "joi": "^17.12.0",
-    "dotenv": "^16.4.0"
+    "dotenv": "^16.4.0",
+    "jose": "^5.2.0"
   },
   "devDependencies": {
     "nodemon": "^3.0.0"
