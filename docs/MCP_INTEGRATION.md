@@ -5,6 +5,21 @@
 - Here, Faxbot exposes two tools: `send_fax` and `get_fax_status`.
 - Transports supported: stdio (desktop), HTTP (server), and SSE with OAuth2 (server).
 
+## Transport Options Matrix
+
+Faxbot provides **2 MCP servers × 3 transports = 6 integration options**:
+
+| Transport | File | Port | Auth | Use Case |
+|-----------|------|------|------|----------|
+| **stdio** | mcp_server.js | N/A | API key | Claude Desktop, Cursor |
+| **HTTP** | mcp_http_server.js | 3001 | API key | Web apps, cloud AI |
+| **SSE+OAuth** | mcp_sse_server.js | 3002 | JWT/Bearer | Enterprise, HIPAA |
+
+**Quick Selection Guide:**
+- **stdio**: Desktop AI assistants (Claude Desktop, Cursor) - simplest setup
+- **HTTP**: Web applications, cloud-based AI services - scalable
+- **SSE+OAuth**: Enterprise deployments, HIPAA compliance - most secure
+
 ## Architecture
 Assistant → MCP Server → Faxbot API → Backend (Phaxio or SIP/Asterisk)
 
@@ -16,8 +31,43 @@ Assistant → MCP Server → Faxbot API → Backend (Phaxio or SIP/Asterisk)
   - Input: `{ jobId }`
   - Output: Formatted job status.
 
-## Base64 Note
-- Current limitation: file content is provided as base64. Large files increase prompt payload. Prefer small PDFs.
+## ⚠️ Critical Limitation: Base64 File Encoding
+
+**This is a MAJOR user experience limitation that severely constrains real-world usage:**
+
+### What This Means for Users:
+- **You CANNOT just say "fax this PDF file"** to Claude and point to a file on your computer
+- **The AI assistant must read your file AND convert it to base64 encoding** before calling the fax tools
+- **Large PDFs (>1MB) will consume massive amounts of conversation tokens** and may hit model limits
+- **This effectively limits faxing to small documents** (few pages max)
+
+### The Technical Problem:
+1. MCP protocol requires `fileContent` parameter as base64-encoded string
+2. Claude Desktop/AI assistant must:
+   - Read the file from your local filesystem (requires filesystem MCP server)
+   - Encode entire file as base64 in memory  
+   - Pass huge base64 string as tool parameter
+   - Base64 encoding increases file size by ~33%
+
+### Realistic User Workflow:
+```
+❌ NOT POSSIBLE: "Hey Claude, fax document.pdf to +1234567890"
+
+✅ ACTUALLY REQUIRED:
+1. User: "Please read document.pdf and fax it to +1234567890" 
+2. Claude: Uses filesystem MCP to read file
+3. Claude: Converts file to base64 (consuming massive tokens)
+4. Claude: Calls send_fax with giant base64 string
+5. Faxbot MCP: Decodes base64 back to original file
+```
+
+### File Size Impact:
+- **Small PDF (100KB)**: ~400KB tokens, usable
+- **Typical PDF (1MB)**: ~4MB tokens, may hit limits  
+- **Large PDF (5MB)**: ~20MB tokens, **will fail**
+
+### Why This Design Was Chosen:
+MCP protocol's JSON-based messaging requires binary data as base64. Alternative approaches (file paths, resource URLs) are emerging in the MCP community but not yet standardized for tool parameters.
 
 ## Setup
 1) API running at `FAX_API_URL` (default `http://localhost:8080`).
@@ -173,5 +223,33 @@ uvicorn server:app --host 0.0.0.0 --port 3003
 - Notes:
   - The Python MCP server bridges SSE + OAuth2 until official Python MCP SDKs add built-in HTTP/OAuth support.
 
-## Voice Examples
-- You can say: “Send this PDF to +1555… using fax tools.” The assistant will call `send_fax` with base64 content, then `get_fax_status`.
+## Realistic Voice Examples
+
+### ❌ What DOESN'T Work:
+```
+"Hey Claude, fax document.pdf to +1234567890"
+"Send this PDF to the pharmacy"
+"Fax my insurance card to Dr. Smith"
+```
+
+### ✅ What ACTUALLY Works:
+```
+"Please read the file insurance-card.pdf from my Documents folder, then fax it to +1234567890"
+
+"Can you open the prescription.pdf file on my desktop and send it via fax to +15551234567?"
+
+"Read the small-report.pdf (make sure it's under 100KB) and fax it to my doctor's office at +19876543210"
+```
+
+### Required Setup:
+1. **Faxbot MCP server** running (for fax tools)
+2. **Filesystem MCP server** running (for file reading)  
+3. **Small files only** (under ~100KB for reliable operation)
+4. **Explicit file reading request** (Claude must read file first, then fax)
+
+### What Actually Happens:
+1. Claude uses filesystem MCP to read your PDF
+2. Claude converts file to base64 (consuming massive tokens)
+3. Claude calls `send_fax` with base64 content  
+4. Claude calls `get_fax_status` to check progress
+5. You get confirmation of fax transmission
