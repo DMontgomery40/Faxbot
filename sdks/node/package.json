@@ -1,0 +1,29 @@
+{
+  "name": "faxbot",
+  "version": "1.0.0",
+  "description": "Faxbot API Client SDK for Node.js - send faxes and check status via Faxbot",
+  "main": "index.js",
+  "author": "Faxbot Project",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/DMontgomery40/Faxbot.git"
+  },
+  "keywords": [
+    "fax",
+    "faxbot",
+    "fax API",
+    "Phaxio",
+    "Asterisk",
+    "telephony",
+    "SDK"
+  ],
+  "dependencies": {
+    "axios": "^1.7.0",
+    "form-data": "^4.0.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
+

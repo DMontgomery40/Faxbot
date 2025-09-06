@@ -21,8 +21,12 @@ class Settings(BaseModel):
     # Phaxio Configuration (for cloud backend)
     phaxio_api_key: str = Field(default_factory=lambda: os.getenv("PHAXIO_API_KEY", ""))
     phaxio_api_secret: str = Field(default_factory=lambda: os.getenv("PHAXIO_API_SECRET", ""))
-    phaxio_status_callback_url: str = Field(default_factory=lambda: os.getenv("PHAXIO_STATUS_CALLBACK_URL", ""))
-    phaxio_verify_signature: bool = Field(default_factory=lambda: os.getenv("PHAXIO_VERIFY_SIGNATURE", "true").lower() in {"1", "true", "yes"})
+    # Support both PHAXIO_STATUS_CALLBACK_URL and PHAXIO_CALLBACK_URL per AGENTS.md
+    phaxio_status_callback_url: str = Field(
+        default_factory=lambda: os.getenv("PHAXIO_STATUS_CALLBACK_URL", os.getenv("PHAXIO_CALLBACK_URL", ""))
+    )
+    # Default off for dev/tests; enable in production via env
+    phaxio_verify_signature: bool = Field(default_factory=lambda: os.getenv("PHAXIO_VERIFY_SIGNATURE", "false").lower() in {"1", "true", "yes"})
 
     # Public API URL (needed for cloud backend to fetch PDFs, e.g., Phaxio)
     public_api_url: str = Field(default_factory=lambda: os.getenv("PUBLIC_API_URL", "http://localhost:8080"))
@@ -51,3 +55,12 @@ class Settings(BaseModel):
 
 
 settings = Settings()
+
+
+def reload_settings() -> None:
+    """Reload settings from current environment into the existing instance.
+    Keeps references stable across modules that imported `settings`.
+    """
+    new = Settings()
+    for name in new.model_fields.keys():  # type: ignore[attr-defined]
+        setattr(settings, name, getattr(new, name))

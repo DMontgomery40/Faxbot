@@ -3,7 +3,7 @@ from typing import Optional, Dict, Any
 import httpx
 import logging
 
-from .config import settings
+from .config import settings, reload_settings
 
 logger = logging.getLogger(__name__)
 
@@ -185,12 +185,16 @@ _phaxio_service: Optional[PhaxioFaxService] = None
 def get_phaxio_service() -> Optional[PhaxioFaxService]:
     """Get singleton Phaxio service instance."""
     global _phaxio_service
+    # Ensure settings reflect current environment (tests monkeypatch env at runtime)
+    reload_settings()
+    # If not configured, ensure we don't keep a stale instance
+    if not (settings.phaxio_api_key and settings.phaxio_api_secret):
+        _phaxio_service = None
+        return None
     if _phaxio_service is None:
-        # Use settings object for consistency
-        if settings.phaxio_api_key and settings.phaxio_api_secret:
-            _phaxio_service = PhaxioFaxService(
-                api_key=settings.phaxio_api_key,
-                api_secret=settings.phaxio_api_secret,
-                status_callback_url=settings.phaxio_status_callback_url or None,
-            )
+        _phaxio_service = PhaxioFaxService(
+            api_key=settings.phaxio_api_key,
+            api_secret=settings.phaxio_api_secret,
+            status_callback_url=settings.phaxio_status_callback_url or None,
+        )
     return _phaxio_service

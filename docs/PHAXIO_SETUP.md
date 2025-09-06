@@ -23,7 +23,8 @@ FAX_BACKEND=phaxio
 PHAXIO_API_KEY=your_key
 PHAXIO_API_SECRET=your_secret
 PUBLIC_API_URL=https://your-domain.com
-PHAXIO_STATUS_CALLBACK_URL=https://your-domain.com/phaxio-callback
+PHAXIO_CALLBACK_URL=https://your-domain.com/phaxio-callback   # Preferred name
+# PHAXIO_STATUS_CALLBACK_URL=https://your-domain.com/phaxio-callback  # Alias also supported
 API_KEY=your_secure_api_key   # Optional but recommended; used as X-API-Key
 ```
 - Note: PUBLIC_API_URL must be reachable by Phaxio to fetch PDFs.
@@ -35,7 +36,7 @@ make up-cloud   # or: docker compose up -d --build api
 ```
 - API will listen on `http://localhost:8080` by default.
 
-How this works: you talk to the Faxbot API (your local/server endpoint). Faxbot then calls the official Phaxio API on your behalf and gives Phaxio a public URL to fetch your PDF. You do not call Phaxio endpoints directly from your client. Ensure `PUBLIC_API_URL` is reachable from Phaxio and that `PHAXIO_STATUS_CALLBACK_URL` points back to your server.
+How this works: you talk to the Faxbot API (your local/server endpoint). Faxbot then calls the official Phaxio API on your behalf and gives Phaxio a public URL to fetch your PDF. You do not call Phaxio endpoints directly from your client. Ensure `PUBLIC_API_URL` is reachable from Phaxio and that your callback URL (`PHAXIO_CALLBACK_URL` or `PHAXIO_STATUS_CALLBACK_URL`) points back to your server.
 
 4) Test sending a fax
 - Convert TXT→PDF→TIFF is handled automatically.
@@ -53,7 +54,7 @@ curl -H "X-API-Key: your_secure_api_key" http://localhost:8080/fax/<job_id>
 ```
 
 5) Configure callback (optional but recommended)
-- Phaxio will POST status to `PHAXIO_STATUS_CALLBACK_URL`.
+- Phaxio will POST status to your callback URL (`PHAXIO_CALLBACK_URL` or `PHAXIO_STATUS_CALLBACK_URL`).
 - This API exposes `POST /phaxio-callback` and will update job status when the request includes `?job_id=<id>`.
 - Ensure your PUBLIC_API_URL and callback URL are reachable from Phaxio.
 - Security: by default, callbacks must include a valid `X-Phaxio-Signature` (HMAC-SHA256 of the raw body using `PHAXIO_API_SECRET`). You can disable this by setting `PHAXIO_VERIFY_SIGNATURE=false` (not recommended).

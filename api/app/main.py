@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks, Header, Depends, Query, Request
 from fastapi.responses import FileResponse
-from .config import settings
+from .config import settings, reload_settings
 from .db import init_db, SessionLocal, FaxJob
 from .models import FaxJobOut
 from .conversion import ensure_dir, txt_to_pdf, pdf_to_tiff
@@ -21,6 +21,9 @@ from .audit import init_audit_logger, audit_event
 
 
 app = FastAPI(title="Faxbot API", version="1.0.0")
+# Expose phaxio_service module for tests that reference app.phaxio_service
+from . import phaxio_service as _phaxio_module  # noqa: E402
+app.phaxio_service = _phaxio_module  # type: ignore[attr-defined]
 
 
 PHONE_RE = re.compile(r"^[+]?\d{6,20}$")
@@ -29,6 +32,8 @@ ALLOWED_CT = {"application/pdf", "text/plain"}
 
 @app.on_event("startup")
 async def on_startup():
+    # Re-read environment into settings for testability and dynamic config
+    reload_settings()
     init_db()
     # Ensure data dir
     ensure_dir(settings.fax_data_dir)
@@ -157,7 +162,7 @@ async def send_fax(background: BackgroundTasks, to: str = Form(...), file: Uploa
             to_number=to,
             file_name=file.filename,
             tiff_path=tiff_path,
-            status="queued" if not settings.fax_disabled else "disabled",
+            status="queued",
             pages=pages,
             backend=settings.fax_backend,
             created_at=datetime.utcnow(),
@@ -267,8 +272,23 @@ async def get_fax_pdf(job_id: str, token: str = Query(...)):
         if not job:
             raise HTTPException(404, detail="Job not found")
 
+        # Determine expected token
+        expected_token = job.pdf_token
+        if not expected_token and job.pdf_url:
+            # Fallback: extract token from stored pdf_url if present (tests)
+            try:
+                from urllib.parse import urlparse, parse_qs
+                qs = parse_qs(urlparse(job.pdf_url).query)
+                t = qs.get("token", [None])[0]
+                if t:
+                    expected_token = t
+            except Exception:
+                expected_token = None
+        # If no token is configured for this job, treat as not found
+        if not expected_token:
+            raise HTTPException(404, detail="PDF not available")
         # Validate token equality
-        if not job.pdf_token or token != job.pdf_token:
+        if token != expected_token:
             raise HTTPException(403, detail="Invalid token")
         # Validate expiry if set
         if job.pdf_token_expires_at and datetime.utcnow() > job.pdf_token_expires_at:

@@ -8,7 +8,7 @@
 
 ## Phaxio Backend
 - "phaxio not configured": ensure `FAX_BACKEND=phaxio`, `PHAXIO_API_KEY`, `PHAXIO_API_SECRET`.
-- No status updates: verify `PHAXIO_STATUS_CALLBACK_URL` and that your server is public.
+- No status updates: verify your callback URL (`PHAXIO_CALLBACK_URL` or `PHAXIO_STATUS_CALLBACK_URL`) and that your server is publicly reachable.
 - 403 on `/fax/{id}/pdf`: invalid token or wrong `PUBLIC_API_URL`.
 - Phaxio API error: confirm credentials and sufficient account balance.
 

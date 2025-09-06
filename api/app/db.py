@@ -34,7 +34,17 @@ class FaxJob(Base):  # type: ignore
     updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
 
+def _rebind_engine_if_needed() -> None:
+    global engine, SessionLocal
+    target_url = settings.database_url
+    current_url = str(engine.url)
+    if current_url != target_url:
+        engine = create_engine(target_url, future=True)
+        SessionLocal.configure(bind=engine)
+
+
 def init_db():
+    _rebind_engine_if_needed()
     Base.metadata.create_all(engine)
     _ensure_optional_columns()
 
