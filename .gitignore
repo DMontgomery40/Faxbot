@@ -13,3 +13,15 @@ faxdata/
 .DS_Store
 .mypy_cache/
 .pytest_cache/
+
+AGENTS.md
+TODO.md
+.venv/
+.vscode/
+.idea/
+.pytest_cache/
+.mypy_cache/
+.env.example
+.env.example.local
+.env.example.production
+.env.example.development
