@@ -6,6 +6,7 @@ on:
       - 'sdks/node/**'
   release:
     types: [published]
+  workflow_dispatch:
 
 jobs:
   build-test:
@@ -40,4 +41,3 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: npm publish --access public
-

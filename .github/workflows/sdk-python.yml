@@ -6,6 +6,7 @@ on:
       - 'sdks/python/**'
   release:
     types: [published]
+  workflow_dispatch:
 
 jobs:
   build-test:

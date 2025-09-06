@@ -182,4 +182,3 @@ class FaxbotClient {
 
 // Export the FaxbotClient class as the module's default export
 module.exports = FaxbotClient;
-
