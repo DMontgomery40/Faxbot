@@ -1,9 +1,9 @@
 {
   "name": "faxbot",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Faxbot API Client SDK for Node.js - send faxes and check status via Faxbot",
   "main": "index.js",
-  "author": "Faxbot Project",
+  "author": "David Montgomery",
   "license": "MIT",
   "repository": {
     "type": "git",

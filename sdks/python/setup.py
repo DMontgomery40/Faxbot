@@ -17,7 +17,7 @@ setuptools.setup(
     name="faxbot",
     version="1.0.0",
     author="Faxbot Project",
-    author_email="support@example.com",
+    author_email="dmontg@gmail.com",
     description="Faxbot API Client SDK for Python",
     long_description=read_readme(),
     long_description_content_type="text/markdown",
