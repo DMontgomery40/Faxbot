@@ -22,7 +22,8 @@ export async function extractTextFromBuffer(buffer) {
     throw new Error('Invalid or empty buffer provided');
   }
   try {
-    const { default: pdf } = await import('pdf-parse');
+    const mod = await import('pdf-parse/lib/pdf-parse.js');
+    const pdf = mod.default || mod;
     const data = await pdf(buffer);
     const cleaned = normalizeWhitespace(data.text || '');
     if (!cleaned) {

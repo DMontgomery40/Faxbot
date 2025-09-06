@@ -36,9 +36,9 @@ If you're unsure which MCP transport to use:
 
 | Transport | File | Port | Auth | Use Case |
 |-----------|------|------|------|----------|
-| **stdio** | mcp_server.js | N/A | API key | Claude Desktop, Cursor |
-| **HTTP** | mcp_http_server.js | 3001 | API key | Web apps, cloud AI |
-| **SSE+OAuth** | mcp_sse_server.js | 3002 | JWT/Bearer | Enterprise, HIPAA |
+| **stdio** | api/mcp_server.js or node_mcp/src/servers/stdio.js | N/A | API key | Desktop AI |
+| **HTTP** | api/mcp_http_server.js or node_mcp/src/servers/http.js | 3001 | API key | Web apps, cloud AI |
+| **SSE+OAuth** | api/mcp_sse_server.js or node_mcp/src/servers/sse.js | 3002 | JWT/Bearer | Enterprise, HIPAA |
 
 ### Common MCP Problems
 
@@ -50,10 +50,23 @@ If you're unsure which MCP transport to use:
   - 100KB PDF = usable
   - 500KB PDF = borderline  
   - 1MB+ PDF = probably fails
-- **Workaround**: Use smaller PDFs or convert large documents to text first
+- **Recommended Workaround (OCR)**: Use the Faxbot OCR workflow to extract text locally and send as TXT fax.
+  - Node prompt: `faxbot_pdf` (in `node_mcp/`)
+  - Python tool: `faxbot_pdf(pdf_path, to, header_text?)` (in `python_mcp/`)
+  - Start (Node): `cd node_mcp && npm install && ./scripts/start-stdio.sh`
+  - Start (Python): `cd python_mcp && python -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt && python stdio_server.py`
+  - Env: set `FAX_API_URL` and `API_KEY`; optional `MAX_TEXT_SIZE`, `FAXBOT_OCR_ENABLE=true`, `FAXBOT_OCR_DPI=200`
 
 #### Connection & Authentication
-- **MCP server not found**: Ensure you're in the `api/` directory when starting MCP servers
+- **MCP server not found**: Ensure you’re starting from the correct path:
+  - Legacy servers: `api/scripts/start-mcp*.sh`
+  - New servers (recommended): `node_mcp/scripts/start-*.sh`
+  - Python servers: `python_mcp/` (`stdio_server.py`, `http_server.py`, `server.py`)
+
+### OCR Issues (Python)
+- `pytesseract` errors: Install Tesseract OCR (macOS: `brew install tesseract`, Ubuntu: `sudo apt-get install tesseract-ocr`). Ensure `tesseract` is on PATH or set `TESSERACT_CMD`.
+- `pypdfium2` missing: Run `pip install -r python_mcp/requirements.txt` within a virtualenv.
+- OCR not triggered: Ensure `FAXBOT_OCR_ENABLE=true`. The code only falls back to OCR when extracted text is empty or very short.
 - **Authentication failures**: 
   - stdio: Check `API_KEY` environment variable matches Faxbot API setting
   - HTTP: Verify `X-API-Key` header is being passed correctly

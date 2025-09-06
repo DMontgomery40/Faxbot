@@ -80,8 +80,16 @@ app.delete('/mcp', async (req, res) => {
   await session.transport.handleRequest(req, res);
 });
 
-const port = parseInt(process.env.MCP_HTTP_PORT || '3001', 10);
-app.listen(port, () => {
-  console.log(`Faxbot MCP HTTP (streamable) on http://localhost:${port}`);
-});
+export async function start() {
+  const port = parseInt(process.env.MCP_HTTP_PORT || '3001', 10);
+  app.listen(port, () => {
+    console.log(`Faxbot MCP HTTP (streamable) on http://localhost:${port}`);
+  });
+}
 
+if (import.meta.url === `file://${process.argv[1]}`) {
+  start().catch((err) => {
+    console.error('Failed to start HTTP server:', err);
+    process.exit(1);
+  });
+}

@@ -15,6 +15,14 @@ Faxbot provides **2 MCP servers × 3 transports = 6 integration options**:
 | **HTTP** | mcp_http_server.js | 3001 | API key | Web apps, cloud AI |
 | **SSE+OAuth** | mcp_sse_server.js | 3002 | JWT/Bearer | Enterprise, HIPAA |
 
+New (recommended) Node MCP servers with OCR prompt live under `node_mcp/`:
+
+| Transport | File (node_mcp) | Port | Auth | Notes |
+|-----------|------------------|------|------|-------|
+| **stdio** | src/servers/stdio.js | N/A | API key | Includes `faxbot_pdf` prompt (OCR) |
+| **HTTP** | src/servers/http.js | 3001 | API key | Streamable HTTP + prompts |
+| **SSE+OAuth** | src/servers/sse.js | 3002 | JWT/Bearer | Prompts + OAuth2 |
+
 **Quick Selection Guide:**
 - **stdio**: Desktop AI assistants (Claude Desktop, Cursor) - simplest setup
 - **HTTP**: Web applications, cloud-based AI services - scalable
@@ -49,7 +57,7 @@ Assistant → MCP Server → Faxbot API → Backend (Phaxio or SIP/Asterisk)
    - Pass huge base64 string as tool parameter
    - Base64 encoding increases file size by ~33%
 
-### Realistic User Workflow:
+### Realistic User Workflow (Legacy Base64 Path):
 ```
 ❌ NOT POSSIBLE: "Hey Claude, fax document.pdf to +1234567890"
 
@@ -69,7 +77,60 @@ Assistant → MCP Server → Faxbot API → Backend (Phaxio or SIP/Asterisk)
 ### Why This Design Was Chosen:
 MCP protocol's JSON-based messaging requires binary data as base64. Alternative approaches (file paths, resource URLs) are emerging in the MCP community but not yet standardized for tool parameters.
 
-## Setup
+## OCR Workaround (Recommended): Faxbot Prompt/Tool (Node + Python)
+
+The new Node MCP servers in `node_mcp/` add a prompt-driven workflow that avoids sending base64 data through the conversation. Python MCP servers now include a matching tool for parity.
+
+- Node prompt: `faxbot_pdf`
+- Python tool: `faxbot_pdf(pdf_path, to, header_text?)`
+- Behavior: Extracts text from the local PDF and sends it as a TXT fax to drastically reduce tokens. If text is not embedded, optional OCR fallback can be enabled.
+
+Example prompt execution (conceptual GetPrompt request):
+```
+name: "faxbot_pdf"
+arguments: { "pdf_path": "/abs/path/report.pdf", "to": "+15551234567", "header_text": "Acme Clinic" }
+```
+
+Start Node MCP servers with OCR support:
+```
+# stdio (desktop assistants)
+cd node_mcp && npm install
+FAX_API_URL=http://localhost:8080 API_KEY=$API_KEY ./scripts/start-stdio.sh
+
+# HTTP (port 3001)
+FAX_API_URL=http://localhost:8080 API_KEY=$API_KEY MCP_HTTP_PORT=3001 ./scripts/start-http.sh
+
+# SSE + OAuth (port 3002)
+OAUTH_ISSUER=... OAUTH_AUDIENCE=... FAX_API_URL=http://localhost:8080 API_KEY=$API_KEY \
+  MCP_SSE_PORT=3002 ./scripts/start-sse.sh
+```
+
+Notes:
+- Set `MAX_TEXT_SIZE` (default 100000 bytes) to control extracted text size. Exceeding text is truncated with a warning.
+- This path does not embed base64 in the AI conversation, improving reliability for large PDFs.
+
+Python MCP (stdio/HTTP/SSE) with OCR tool:
+```
+cd python_mcp
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+export FAX_API_URL=http://localhost:8080
+export API_KEY=your_api_key
+export FAXBOT_OCR_ENABLE=true        # optional; enables OCR fallback when embedded text is missing
+export FAXBOT_OCR_DPI=200            # optional; rasterization DPI for OCR
+python stdio_server.py               # stdio
+# or: uvicorn http_server:app --host 0.0.0.0 --port 3004
+# or: uvicorn server:app --host 0.0.0.0 --port 3003 (SSE+OAuth)
+```
+
+OCR dependencies (Python optional):
+- Requires `pdfminer.six` (installed via requirements)
+- OCR fallback requires: `pypdfium2`, `Pillow`, `pytesseract`, and the Tesseract binary on your system
+  - macOS: `brew install tesseract`
+  - Ubuntu/Debian: `sudo apt-get install tesseract-ocr`
+  - Set `TESSERACT_CMD` if tesseract is not on PATH
+
+## Setup (Legacy /api servers)
 1) API running at `FAX_API_URL` (default `http://localhost:8080`).
 2) Install Node deps in `api/`:
 ```
@@ -81,7 +142,7 @@ export FAX_API_URL=http://localhost:8080
 export API_KEY=your_secure_api_key
 ```
 
-## Quick Start (Scripts)
+## Quick Start (Scripts) — Legacy /api servers
 - macOS/Linux (stdio):
 ```
 FAX_API_URL=http://localhost:8080 API_KEY=$API_KEY \
@@ -111,7 +172,7 @@ FAX_API_URL=http://localhost:8080 API_KEY=$API_KEY faxbot-mcp
 FAX_API_URL=http://localhost:8080 API_KEY=$API_KEY MCP_HTTP_PORT=3001 faxbot-mcp-http
 ```
 
-## Stdio Transport (Claude Desktop, Cursor)
+## Stdio Transport (Claude Desktop, Cursor) — Legacy /api server
 - Node (stdio) start:
 ```
 cd api && npm run start:mcp
@@ -132,7 +193,7 @@ export API_KEY=your_api_key
 python stdio_server.py
 ```
 
-## HTTP Transport (Cloud/Local)
+## HTTP Transport (Cloud/Local) — Legacy /api server
 - Node (HTTP) start:
 ```
 cd api && npm run start:http
