@@ -57,3 +57,8 @@ const client = new FaxbotClient('http://localhost:8080', 'YOUR_API_KEY');
 
 ## Compatibility
 - The SDKs work regardless of backend (Phaxio cloud or SIP/Asterisk) because Faxbot abstracts the difference.
+
+## MCP vs SDK
+- The SDKs do not include MCP (Model Context Protocol) logic. They are simple HTTP clients for developers.
+- MCP integration is a separate component (stdio/HTTP servers) for AI assistants.
+- See the guide: docs/MCP_INTEGRATION.md for setup, transports, and examples.

@@ -36,3 +36,7 @@ print("Status:", status["status"])
 ## Publishing (maintainers)
 - Configure GitHub secret `PYPI_API_TOKEN`.
 - Create a GitHub Release to trigger publish via CI.
+
+## MCP Note
+- MCP (Model Context Protocol) is not part of this SDK. It is a separate integration layer for AI assistants.
+- Refer to `docs/MCP_INTEGRATION.md` in the repository for MCP setup and usage.
