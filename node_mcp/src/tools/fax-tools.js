@@ -1,19 +1,23 @@
 import { McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
 import { sendFax as apiSendFax, getFaxStatus as apiGetFaxStatus } from '../shared/fax-client.js';
+import { extractTextFromPDF } from '../shared/pdf-extractor.js';
+import fs from 'fs';
+import path from 'path';
 
 export const faxTools = [
   {
     name: 'send_fax',
-    description: 'Send a fax to a recipient. Supports PDF (base64) and TXT.',
+    description: 'Send a fax to a recipient. Preferred: provide filePath to a local PDF. Fallback: base64 fileContent.',
     inputSchema: {
       type: 'object',
       properties: {
         to: { type: 'string', description: 'Fax number (e.g., +1234567890)' },
+        filePath: { type: 'string', description: 'Absolute or relative path to PDF or TXT file (preferred)' },
         fileContent: { type: 'string', description: 'Base64 encoded file content (PDF or plain text)' },
         fileName: { type: 'string', description: 'File name, e.g., document.pdf' },
         fileType: { type: 'string', enum: ['pdf', 'txt'], description: 'Optional override of file type' }
       },
-      required: ['to', 'fileContent', 'fileName']
+      required: ['to']
     }
   },
   {
@@ -24,6 +28,20 @@ export const faxTools = [
       properties: { jobId: { type: 'string', description: 'Job ID from send_fax' } },
       required: ['jobId']
     }
+  },
+  {
+    name: 'faxbot_pdf',
+    description:
+      'Extract text from a local PDF path and send as a text fax (avoids base64 token overhead).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        pdf_path: { type: 'string', description: 'Absolute or relative path to PDF file' },
+        to: { type: 'string', description: 'Fax number (E.164 preferred)' },
+        header_text: { type: 'string', description: 'Optional header text to prepend' },
+      },
+      required: ['pdf_path', 'to'],
+    },
   }
 ];
 
@@ -40,13 +58,36 @@ function validatePhone(to) {
 }
 
 export async function handleSendFaxTool(args) {
-  const { to, fileContent, fileName } = args || {};
+  const { to, fileContent, fileName, filePath } = args || {};
   let { fileType } = args || {};
-  if (!to || !fileContent || !fileName) {
-    throw new McpError(ErrorCode.InvalidParams, 'Missing required parameters: to, fileContent, fileName');
+  if (!to) throw new McpError(ErrorCode.InvalidParams, 'Missing required parameter: to');
+  if (!validatePhone(to)) throw new McpError(ErrorCode.InvalidParams, 'Invalid recipient number format');
+
+  // Preferred: filePath
+  if (filePath && typeof filePath === 'string') {
+    const resolved = path.isAbsolute(filePath) ? filePath : path.resolve(process.cwd(), filePath);
+    try {
+      const st = await fs.promises.stat(resolved);
+      if (!st.isFile()) throw new Error('Not a file');
+    } catch {
+      throw new McpError(ErrorCode.InvalidParams, `File not found or not a file: ${resolved}`);
+    }
+    const ext = (resolved.split('.').pop() || '').toLowerCase();
+    let text = '';
+    if (ext === 'pdf') text = await extractTextFromPDF(resolved);
+    else if (ext === 'txt') text = await fs.promises.readFile(resolved, 'utf8');
+    else throw new McpError(ErrorCode.InvalidParams, 'filePath must point to a PDF or TXT file');
+    const MAX_TEXT_SIZE = parseInt(process.env.MAX_TEXT_SIZE || '100000', 10);
+    if (Buffer.byteLength(text, 'utf8') > MAX_TEXT_SIZE) {
+      text = Buffer.from(text, 'utf8').subarray(0, MAX_TEXT_SIZE).toString('utf8');
+    }
+    const result = await apiSendFax(to, text, 'txt', 'extracted.txt');
+    return { content: [{ type: 'text', text: `Fax queued. Job ID: ${result.id}` }] };
   }
-  if (!validatePhone(to)) {
-    throw new McpError(ErrorCode.InvalidParams, 'Invalid recipient number format');
+
+  // Backward-compatible base64 path
+  if (!fileContent || !fileName) {
+    throw new McpError(ErrorCode.InvalidParams, 'Missing required parameters: fileContent and fileName (or provide filePath)');
   }
   if (!fileType) fileType = detectTypeFromName(fileName);
   if (!['pdf', 'txt'].includes(fileType || '')) {
@@ -65,14 +106,10 @@ export async function handleSendFaxTool(args) {
     const result = await apiSendFax(to, fileType === 'pdf' ? buffer : buffer.toString('utf8'), fileType, fileName);
     return {
       content: [
-        {
-          type: 'text',
-          text: `Fax queued successfully!\n\nJob ID: ${result.id}\nRecipient: ${to}\nFile: ${fileName} (${fileType})\nStatus: ${result.status}\n\nUse get_fax_status with job ID "${result.id}" to check progress.`
-        }
-      ]
+        { type: 'text', text: `Fax queued successfully! Job ID: ${result.id}` },
+      ],
     };
   } catch (err) {
-    // Attempt to surface helpful message
     const e = err;
     const status = e?.response?.status;
     const detail = e?.response?.data?.detail || e?.response?.statusText;
@@ -106,5 +143,37 @@ export async function handleGetFaxStatusTool(args) {
   }
 }
 
-export default { faxTools, handleSendFaxTool, handleGetFaxStatusTool };
+export async function handleFaxbotPdfTool(args) {
+  const { pdf_path, to, header_text } = args || {};
+  if (!pdf_path || !to) {
+    throw new McpError(ErrorCode.InvalidParams, 'pdf_path and to are required');
+  }
+  const resolved = path.isAbsolute(pdf_path) ? pdf_path : path.resolve(process.cwd(), pdf_path);
+  try {
+    const st = await fs.promises.stat(resolved);
+    if (!st.isFile()) throw new Error('Not a file');
+  } catch {
+    throw new McpError(ErrorCode.InvalidParams, `File not found or not a file: ${resolved}`);
+  }
+  let text = await extractTextFromPDF(resolved);
+  if (header_text && String(header_text).trim()) {
+    text = `${String(header_text).trim()}\n\n${text}`;
+  }
+  const MAX_TEXT_SIZE = parseInt(process.env.MAX_TEXT_SIZE || '100000', 10);
+  let notice = '';
+  if (Buffer.byteLength(text, 'utf8') > MAX_TEXT_SIZE) {
+    text = Buffer.from(text, 'utf8').subarray(0, MAX_TEXT_SIZE).toString('utf8');
+    notice = `Warning: Extracted text exceeded MAX_TEXT_SIZE (${MAX_TEXT_SIZE}) and was truncated.\n\n`;
+  }
+  const result = await apiSendFax(to, text, 'txt', 'extracted.txt');
+  return {
+    content: [
+      {
+        type: 'text',
+        text: `${notice}Faxbot PDF text fax queued. Job ID: ${result.id}`,
+      },
+    ],
+  };
+}
 
+export default { faxTools, handleSendFaxTool, handleGetFaxStatusTool, handleFaxbotPdfTool };

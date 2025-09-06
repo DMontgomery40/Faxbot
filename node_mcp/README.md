@@ -1,11 +1,10 @@
-# Faxbot Node MCP (OCR Workflow)
+# Faxbot Node MCP
 
-Node-based MCP servers for Faxbot with smart PDF-to-text extraction to avoid base64 token limits.
+Node-based MCP servers for Faxbot.
 
 Features:
 - Stdio, Streamable HTTP, and SSE+OAuth transports
-- send_fax and get_fax_status tools (backward compatible)
-- faxbot_pdf prompt: extracts PDF text locally, sends as TXT fax
+- Tools: send_fax, get_fax_status
 
 ## Install
 
@@ -35,16 +34,13 @@ Environment variables:
 ./scripts/start-sse.sh
 ```
 
-## Prompts
-
-- `faxbot_pdf(pdf_path, to, header_text?)`
-  - Extracts PDF text locally and sends as a text fax.
-  - Returns a confirmation message and job ID.
-
 ## Tools
 
-- `send_fax(to, fileContent(base64), fileName, fileType?)`
+- `send_fax(to, filePath?, fileContent?, fileName?, fileType?)`
 - `get_fax_status(jobId)`
+
+## Notes
+- For local files, tools accept a `filePath` parameter (preferred). Base64 is still supported for compatibility.
 
 ## Notes
 

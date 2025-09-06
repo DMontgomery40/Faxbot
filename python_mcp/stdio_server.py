@@ -77,7 +77,37 @@ async def _api_status(job_id: str) -> Dict[str, Any]:
 
 
 @mcp.tool()
-async def send_fax(to: str, fileContent: str, fileName: str, fileType: Optional[str] = None) -> str:  # noqa: N803
+async def send_fax(to: str, fileContent: Optional[str] = None, fileName: Optional[str] = None, fileType: Optional[str] = None, filePath: Optional[str] = None) -> str:  # noqa: N803
+    """Send a fax. Preferred: provide filePath to a local PDF/TXT. Fallback: base64 fileContent."""
+    # Preferred: filePath
+    if filePath:
+        from .text_extract import extract_text_from_pdf
+        import os
+        import pathlib
+        p = str(pathlib.Path(filePath).expanduser().resolve())
+        if not os.path.exists(p):
+            raise ValueError(f"File not found: {p}")
+        if p.lower().endswith('.pdf'):
+            text, _ = extract_text_from_pdf(p)
+        elif p.lower().endswith('.txt'):
+            with open(p, 'r', encoding='utf-8', errors='ignore') as fh:
+                text = fh.read()
+        else:
+            raise ValueError('filePath must point to a PDF or TXT file')
+        # Truncate
+        max_bytes = int(os.getenv('MAX_TEXT_SIZE', '100000'))
+        b = text.encode('utf-8')
+        if len(b) > max_bytes:
+            text = b[:max_bytes].decode('utf-8', errors='ignore')
+        b64 = base64.b64encode(text.encode('utf-8')).decode('ascii')
+        job = await _api_send(to, 'extracted.txt', b64, 'txt')
+        return (
+            f"Fax queued successfully!\n\nJob ID: {job['id']}\nRecipient: {to}\nFile: extracted.txt (txt)\nStatus: {job['status']}\n"
+            f"\nUse get_fax_status with job ID '{job['id']}' to check progress."
+        )
+    # Fallback: base64
+    if not (fileContent and fileName):
+        raise ValueError('Missing required parameters: fileContent and fileName (or provide filePath)')
     job = await _api_send(to, fileName, fileContent, fileType)
     return (
         f"Fax queued successfully!\n\nJob ID: {job['id']}\nRecipient: {to}\nFile: {fileName}\nStatus: {job['status']}\n"

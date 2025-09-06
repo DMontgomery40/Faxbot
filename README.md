@@ -23,11 +23,9 @@ Simple fax-sending API with AI integration. Choose your backend:
 ## AI Assistant Integration
 [→ MCP Integration Guide](docs/MCP_INTEGRATION.md)
 
-- Recommended (OCR, avoids base64): use the new Node MCP servers in `node_mcp/` and the `faxbot_pdf` prompt to extract PDF text locally and send as TXT fax.
-  - `cd node_mcp && npm install && ./scripts/start-stdio.sh`
-  - Env: `FAX_API_URL`, `API_KEY`, optional `MAX_TEXT_SIZE`
-- Legacy servers remain under `api/` (`start-mcp.sh`, `start-mcp-http.sh`) and Python `python_mcp/`.
-- OAuth2‑protected SSE MCP servers are available in both Node and Python — see the SSE sections in the MCP guide.
+- Node MCP servers live in `node_mcp/` (stdio, HTTP, SSE+OAuth).
+- Legacy servers remain under `api/` and Python `python_mcp/`.
+- OAuth2‑protected SSE MCP servers are available in both Node and Python.
 
 ## Client SDKs
 - Python: `pip install faxbot`

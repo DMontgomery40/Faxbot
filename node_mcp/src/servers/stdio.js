@@ -9,7 +9,7 @@ import {
   ListToolsRequestSchema,
   McpError,
 } from '@modelcontextprotocol/sdk/types.js';
-import { faxTools, handleSendFaxTool, handleGetFaxStatusTool } from '../tools/fax-tools.js';
+import { faxTools, handleSendFaxTool, handleGetFaxStatusTool, handleFaxbotPdfTool } from '../tools/fax-tools.js';
 import { listPrompts } from '../prompts/index.js';
 import { extractTextFromPDF } from '../shared/pdf-extractor.js';
 import { sendFax } from '../shared/fax-client.js';
@@ -62,6 +62,8 @@ function buildServer() {
         return await handleSendFaxTool(args);
       case 'get_fax_status':
         return await handleGetFaxStatusTool(args);
+      case 'faxbot_pdf':
+        return await handleFaxbotPdfTool(args);
       default:
         throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${name}`);
     }
@@ -72,15 +74,14 @@ function buildServer() {
   server.setRequestHandler(GetPromptRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
     if (name === 'faxbot_pdf') {
-      const { message, jobId } = await executeFaxbotPdf(args || {});
+      const { pdf_path, to, header_text } = (args || {});
+      const instruction = `Plan: Extract text from PDF at ${pdf_path} and send as TXT fax to ${to}.\n` +
+        `Action: Call the tool 'faxbot_pdf' with the same arguments to execute. Optional header_text: ${header_text || '(none)'}\n` +
+        `Note: This prompt only describes the plan and does not send the fax itself.`;
       return {
         messages: [
-          {
-            role: 'user',
-            content: { type: 'text', text: message },
-          },
+          { role: 'user', content: { type: 'text', text: instruction } },
         ],
-        _meta: { jobId },
       };
     }
     throw new McpError(ErrorCode.MethodNotFound, `Unknown prompt: ${name}`);

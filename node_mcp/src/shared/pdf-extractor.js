@@ -1,5 +1,7 @@
 import fs from 'fs';
 import path from 'path';
+import os from 'os';
+import { execFile } from 'child_process';
 
 function normalizeWhitespace(text) {
   if (!text || typeof text !== 'string') return '';
@@ -53,7 +55,15 @@ export async function extractTextFromPDF(filePath) {
       throw new Error('Provided path is not a file');
     }
     const buffer = await fs.promises.readFile(filePath);
-    return await extractTextFromBuffer(buffer);
+    const text = await extractTextFromBuffer(buffer);
+    if (text && text.length >= 32) return text;
+    // Optional OCR fallback using pdftoppm + tesseract if available/enabled
+    const ocrEnabled = (process.env.FAXBOT_OCR_ENABLE || 'true').toLowerCase() !== 'false';
+    if (ocrEnabled) {
+      const ocr = await ocrPdfWithTesseract(filePath);
+      if (ocr) return ocr;
+    }
+    return text;
   } catch (err) {
     if (err && (err.code === 'ENOENT' || err.code === 'ENOTDIR')) {
       throw new Error(`File not found: ${filePath}`);
@@ -63,3 +73,63 @@ export async function extractTextFromPDF(filePath) {
 }
 
 export default { extractTextFromPDF, extractTextFromBuffer };
+
+// Helpers
+function which(cmd) {
+  const sep = process.platform === 'win32' ? ';' : ':';
+  const exts = process.platform === 'win32' ? (process.env.PATHEXT || '.EXE;.CMD;.BAT').toLowerCase().split(';') : [''];
+  const paths = (process.env.PATH || '').split(sep);
+  for (const p of paths) {
+    const full = path.join(p, cmd);
+    for (const ext of exts) {
+      const candidate = full + ext;
+      try {
+        fs.accessSync(candidate, fs.constants.X_OK);
+        return candidate;
+      } catch {}
+    }
+  }
+  return null;
+}
+
+function execFileAsync(cmd, args, options = {}) {
+  return new Promise((resolve, reject) => {
+    execFile(cmd, args, options, (error, stdout, stderr) => {
+      if (error) return reject(Object.assign(error, { stdout, stderr }));
+      resolve({ stdout, stderr });
+    });
+  });
+}
+
+async function ocrPdfWithTesseract(pdfPath) {
+  const pdftoppm = which('pdftoppm');
+  const tesseract = which('tesseract');
+  if (!pdftoppm || !tesseract) return '';
+  const dpi = parseInt(process.env.FAXBOT_OCR_DPI || '200', 10);
+  const tmp = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'faxbot-ocr-'));
+  try {
+    const prefix = path.join(tmp, 'page');
+    await execFileAsync(pdftoppm, ['-r', String(dpi), '-png', pdfPath, prefix], { maxBuffer: 1024 * 1024 * 64 });
+    // Collect generated images
+    const files = await fs.promises.readdir(tmp);
+    const pngs = files.filter((f) => f.startsWith('page-') && f.endsWith('.png')).sort((a, b) => a.localeCompare(b));
+    let out = '';
+    for (const f of pngs) {
+      const img = path.join(tmp, f);
+      try {
+        const { stdout } = await execFileAsync(tesseract, [img, 'stdout']);
+        out += `\n\n${stdout || ''}`;
+      } catch {}
+    }
+    return normalizeWhitespace(out);
+  } catch {
+    return '';
+  } finally {
+    // cleanup
+    try {
+      const files = await fs.promises.readdir(tmp);
+      await Promise.all(files.map((f) => fs.promises.unlink(path.join(tmp, f)).catch(() => {})));
+      await fs.promises.rmdir(tmp).catch(() => {});
+    } catch {}
+  }
+}

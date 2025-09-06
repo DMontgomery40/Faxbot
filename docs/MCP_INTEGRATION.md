@@ -15,13 +15,13 @@ Faxbot provides **2 MCP servers × 3 transports = 6 integration options**:
 | **HTTP** | mcp_http_server.js | 3001 | API key | Web apps, cloud AI |
 | **SSE+OAuth** | mcp_sse_server.js | 3002 | JWT/Bearer | Enterprise, HIPAA |
 
-New (recommended) Node MCP servers with OCR prompt live under `node_mcp/`:
+Node MCP servers live under `node_mcp/`:
 
-| Transport | File (node_mcp) | Port | Auth | Notes |
-|-----------|------------------|------|------|-------|
-| **stdio** | src/servers/stdio.js | N/A | API key | Includes `faxbot_pdf` prompt (OCR) |
-| **HTTP** | src/servers/http.js | 3001 | API key | Streamable HTTP + prompts |
-| **SSE+OAuth** | src/servers/sse.js | 3002 | JWT/Bearer | Prompts + OAuth2 |
+| Transport | File (node_mcp) | Port | Auth |
+|-----------|------------------|------|------|
+| **stdio** | src/servers/stdio.js | N/A | API key |
+| **HTTP** | src/servers/http.js | 3001 | API key |
+| **SSE+OAuth** | src/servers/sse.js | 3002 | JWT/Bearer |
 
 **Quick Selection Guide:**
 - **stdio**: Desktop AI assistants (Claude Desktop, Cursor) - simplest setup
@@ -39,57 +39,32 @@ Assistant → MCP Server → Faxbot API → Backend (Phaxio or SIP/Asterisk)
   - Input: `{ jobId }`
   - Output: Formatted job status.
 
-## ⚠️ Critical Limitation: Base64 File Encoding
+## Setup
 
-**This is a MAJOR user experience limitation that severely constrains real-world usage:**
-
-### What This Means for Users:
-- **You CANNOT just say "fax this PDF file"** to Claude and point to a file on your computer
-- **The AI assistant must read your file AND convert it to base64 encoding** before calling the fax tools
-- **Large PDFs (>1MB) will consume massive amounts of conversation tokens** and may hit model limits
-- **This effectively limits faxing to small documents** (few pages max)
-
-### The Technical Problem:
-1. MCP protocol requires `fileContent` parameter as base64-encoded string
-2. Claude Desktop/AI assistant must:
-   - Read the file from your local filesystem (requires filesystem MCP server)
-   - Encode entire file as base64 in memory  
-   - Pass huge base64 string as tool parameter
-   - Base64 encoding increases file size by ~33%
-
-### Realistic User Workflow (Legacy Base64 Path):
+Start Node MCP (stdio/HTTP/SSE):
 ```
-❌ NOT POSSIBLE: "Hey Claude, fax document.pdf to +1234567890"
-
-✅ ACTUALLY REQUIRED:
-1. User: "Please read document.pdf and fax it to +1234567890" 
-2. Claude: Uses filesystem MCP to read file
-3. Claude: Converts file to base64 (consuming massive tokens)
-4. Claude: Calls send_fax with giant base64 string
-5. Faxbot MCP: Decodes base64 back to original file
+cd node_mcp && npm install
+FAX_API_URL=http://localhost:8080 API_KEY=$API_KEY ./scripts/start-stdio.sh
+FAX_API_URL=http://localhost:8080 API_KEY=$API_KEY MCP_HTTP_PORT=3001 ./scripts/start-http.sh
+OAUTH_ISSUER=... OAUTH_AUDIENCE=... FAX_API_URL=http://localhost:8080 API_KEY=$API_KEY MCP_SSE_PORT=3002 ./scripts/start-sse.sh
 ```
 
-### File Size Impact:
-- **Small PDF (100KB)**: ~400KB tokens, usable
-- **Typical PDF (1MB)**: ~4MB tokens, may hit limits  
-- **Large PDF (5MB)**: ~20MB tokens, **will fail**
-
-### Why This Design Was Chosen:
-MCP protocol's JSON-based messaging requires binary data as base64. Alternative approaches (file paths, resource URLs) are emerging in the MCP community but not yet standardized for tool parameters.
-
-## OCR Workaround (Recommended): Faxbot Prompt/Tool (Node + Python)
-
-The new Node MCP servers in `node_mcp/` add a prompt-driven workflow that avoids sending base64 data through the conversation. Python MCP servers now include a matching tool for parity.
-
-- Node prompt: `faxbot_pdf`
-- Python tool: `faxbot_pdf(pdf_path, to, header_text?)`
-- Behavior: Extracts text from the local PDF and sends it as a TXT fax to drastically reduce tokens. If text is not embedded, optional OCR fallback can be enabled.
-
-Example prompt execution (conceptual GetPrompt request):
+Start Python MCP (stdio/HTTP/SSE):
 ```
-name: "faxbot_pdf"
-arguments: { "pdf_path": "/abs/path/report.pdf", "to": "+15551234567", "header_text": "Acme Clinic" }
+cd python_mcp
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+export FAX_API_URL=http://localhost:8080
+export API_KEY=your_api_key
+python stdio_server.py               # stdio
+# or: uvicorn http_server:app --host 0.0.0.0 --port 3004
+# or: uvicorn server:app --host 0.0.0.0 --port 3003 (SSE+OAuth)
 ```
+
+## Tools
+
+- send_fax: Send PDF or TXT files to a fax number.
+- get_fax_status: Check fax job status.
 
 Start Node MCP servers with OCR support:
 ```
@@ -108,6 +83,7 @@ OAUTH_ISSUER=... OAUTH_AUDIENCE=... FAX_API_URL=http://localhost:8080 API_KEY=$A
 Notes:
 - Set `MAX_TEXT_SIZE` (default 100000 bytes) to control extracted text size. Exceeding text is truncated with a warning.
 - This path does not embed base64 in the AI conversation, improving reliability for large PDFs.
+- An optional prompt named `faxbot_pdf` is available in Node that returns a message instructing the model to call the tool; the prompt itself does not send the fax.
 
 Python MCP (stdio/HTTP/SSE) with OCR tool:
 ```

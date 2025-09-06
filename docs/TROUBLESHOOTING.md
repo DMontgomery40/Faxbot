@@ -42,20 +42,9 @@ If you're unsure which MCP transport to use:
 
 ### Common MCP Problems
 
-#### Base64 File Handling (MAJOR LIMITATION)
-- **"File too large" or token limit errors**: PDFs >1MB will likely fail due to base64 token consumption
-- **AI assistant can't find file**: You need BOTH faxbot MCP AND filesystem MCP servers running
-- **Workflow confusion**: You can't just say "fax this file" - AI must read file first, then encode as base64
-- **Real size limits**: 
-  - 100KB PDF = usable
-  - 500KB PDF = borderline  
-  - 1MB+ PDF = probably fails
-- **Recommended Workaround (OCR)**: Use the Faxbot OCR workflow to extract text locally and send as TXT fax.
-  - Node prompt: `faxbot_pdf` (in `node_mcp/`)
-  - Python tool: `faxbot_pdf(pdf_path, to, header_text?)` (in `python_mcp/`)
-  - Start (Node): `cd node_mcp && npm install && ./scripts/start-stdio.sh`
-  - Start (Python): `cd python_mcp && python -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt && python stdio_server.py`
-  - Env: set `FAX_API_URL` and `API_KEY`; optional `MAX_TEXT_SIZE`, `FAXBOT_OCR_ENABLE=true`, `FAXBOT_OCR_DPI=200`
+#### MCP Usage Tips
+- Ensure the main Faxbot API is reachable (`FAX_API_URL`) and your `API_KEY` is set.
+- For local files, use tooling that can access your filesystem as needed.
 
 #### Connection & Authentication
 - **MCP server not found**: Ensure you’re starting from the correct path:
@@ -63,10 +52,8 @@ If you're unsure which MCP transport to use:
   - New servers (recommended): `node_mcp/scripts/start-*.sh`
   - Python servers: `python_mcp/` (`stdio_server.py`, `http_server.py`, `server.py`)
 
-### OCR Issues (Python)
-- `pytesseract` errors: Install Tesseract OCR (macOS: `brew install tesseract`, Ubuntu: `sudo apt-get install tesseract-ocr`). Ensure `tesseract` is on PATH or set `TESSERACT_CMD`.
-- `pypdfium2` missing: Run `pip install -r python_mcp/requirements.txt` within a virtualenv.
-- OCR not triggered: Ensure `FAXBOT_OCR_ENABLE=true`. The code only falls back to OCR when extracted text is empty or very short.
+### Environment
+- `FAX_API_URL`, `API_KEY`: Required for authentication.
 - **Authentication failures**: 
   - stdio: Check `API_KEY` environment variable matches Faxbot API setting
   - HTTP: Verify `X-API-Key` header is being passed correctly
