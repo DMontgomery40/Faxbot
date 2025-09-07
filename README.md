@@ -6,6 +6,29 @@ Simple fax-sending API with AI integration. Choose your backend:
 
 ## Quick Start Options
 
+### Docker Compose (API + optional MCP)
+- Copy and edit `.env` (or start from `.env.example`).
+- Run the API:
+```
+docker compose up -d --build api
+```
+- Optional MCP (HTTP, port 3001):
+```
+docker compose --profile mcp up -d --build faxbot-mcp
+# or: make mcp-up
+```
+- Optional MCP SSE (OAuth2/JWT, port 3002):
+```
+export OAUTH_ISSUER=https://YOUR_ISSUER
+export OAUTH_AUDIENCE=faxbot-mcp
+export OAUTH_JWKS_URL=https://YOUR_ISSUER/.well-known/jwks.json
+docker compose --profile mcp up -d --build faxbot-mcp-sse
+# or: make mcp-sse-up
+```
+- Check health: `curl http://localhost:8080/health`
+- MCP HTTP health: `curl http://localhost:3001/health`
+ - MCP SSE health: `curl http://localhost:3002/health`
+
 ### Option 1: Phaxio (Recommended for Most Users)
 - 5-minute setup
 - No telephony knowledge required
@@ -52,10 +75,26 @@ Stdio “just works” tip
 [→ SDK Usage Guide](docs/SDKS.md)
 
 ## Documentation
+Core guides
+- [MCP Integration](docs/MCP_INTEGRATION.md) — Claude/Cursor stdio, HTTP, SSE (Node + Python)
 - [API Reference](docs/API_REFERENCE.md) — Endpoints and examples
-- [Troubleshooting](docs/TROUBLESHOOTING.md) — Common issues
+- [Client SDKs](docs/SDKS.md) — Python and Node SDK usage
+ - MCP Inspector: use `docker compose --profile mcp up -d mcp-inspector` and open http://localhost:6274 to explore tools/resources/prompts
+
+Backends
+- [Phaxio Setup](docs/PHAXIO_SETUP.md) — Cloud (tokenized PDF URL + HMAC webhook)
+- [Sinch Setup](docs/SINCH_SETUP.md) — Cloud direct upload (v3 API)
+- [SIP/Asterisk Setup](docs/SIP_SETUP.md) — Self-hosted T.38
+
+Security & compliance
 - [HIPAA Requirements](HIPAA_REQUIREMENTS.md) — Security, BAAs, and compliance checklist
+- [OAuth/OIDC Setup](docs/OAUTH_SETUP.md) — Configure SSE with Auth0, Okta, Azure AD, Google, Keycloak
+
+File handling
 - [Images vs Text PDFs](docs/IMAGES_AND_PDFS.md) — The right way to fax scans/photos
+
+Advanced
+- [Phaxio End-to-End Test](docs/PHAXIO_E2E_TEST.md) — Simulated callback flow for local testing
 
 ## Notes
 - Send-only. Receiving is out of scope.

@@ -1,6 +1,6 @@
 SHELL := /bin/bash
 
-.PHONY: up down build logs fmt test mcp-up mcp-down mcp-setup mcp-logs
+.PHONY: up down build logs fmt test mcp-up mcp-down mcp-setup mcp-logs mcp-sse-up mcp-sse-down mcp-sse-logs
 
 up:
 	docker compose up -d --build
@@ -42,6 +42,15 @@ mcp-down:
 
 mcp-logs:
 	docker compose logs -f faxbot-mcp
+
+mcp-sse-up:
+	docker compose --profile mcp up -d --build faxbot-mcp-sse
+
+mcp-sse-down:
+	docker compose --profile mcp down
+
+mcp-sse-logs:
+	docker compose logs -f faxbot-mcp-sse
 
 # Package management
 npm-global:

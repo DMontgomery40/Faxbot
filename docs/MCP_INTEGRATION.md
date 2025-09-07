@@ -6,6 +6,9 @@ Demo
   (Your browser or GitHub may not inline-play videos; use the link.)
 </video>
 
+What MCP is
+- MCP is a protocol. “SSE”, “HTTP”, and “stdio” are transports. Faxbot provides two server implementations (Node and Python), each capable of running on any of the transports. Pick a language (Node or Python) and a transport (stdio/HTTP/SSE) that fits your environment.
+
 Quick Start (Claude/Cursor)
 - Add Faxbot MCP to your assistant config (stdio). Then call send_fax with a local filePath.
 
@@ -39,15 +42,99 @@ Examples
 - “Call send_fax with { to: "+15551234567", filePath: "/Users/me/Documents/letter.pdf" }”
 - “Call get_fax_status with { jobId: "<id>" }”
 
+Docker Quick Start (HTTP MCP)
+- Start the API and MCP via Docker Compose:
+```
+docker compose up -d --build api
+docker compose --profile mcp up -d --build faxbot-mcp
+```
+- The MCP HTTP server listens on `http://localhost:3001`.
+- Use this when integrating web clients or cloud AI that speak MCP over HTTP.
+- For Claude Desktop or Cursor (stdio), run the MCP directly on the host instead of Docker.
+
+Turnkey SSE (HIPAA‑oriented) via Docker Compose
+- Node SSE (port 3002):
+```
+export OAUTH_ISSUER=https://YOUR_ISSUER
+export OAUTH_AUDIENCE=faxbot-mcp
+export OAUTH_JWKS_URL=https://YOUR_ISSUER/.well-known/jwks.json
+docker compose --profile mcp up -d --build faxbot-mcp-sse
+```
+- Python SSE (port 3003):
+```
+export OAUTH_ISSUER=https://YOUR_ISSUER
+export OAUTH_AUDIENCE=faxbot-mcp
+export OAUTH_JWKS_URL=https://YOUR_ISSUER/.well-known/jwks.json
+docker compose --profile mcp up -d --build faxbot-mcp-py-sse
+```
+- Choose one. Both require Bearer JWTs issued by your IdP; tokens are verified via JWKS.
+- Detailed OIDC setup guidance and provider links: see OAUTH_SETUP.md.
+
+MCP Inspector (explore tools/resources/prompts)
+- Start the Inspector UI via Docker:
+```
+docker compose --profile mcp up -d mcp-inspector
+open http://localhost:6274
+```
+- Or run locally:
+```
+npx @modelcontextprotocol/inspector
+```
+- Connect the Inspector to your Faxbot MCP server:
+  - Stdio: launch `node node_mcp/src/servers/stdio.js` (or `python python_mcp/stdio_server.py`) with `FAX_API_URL` and `API_KEY` env.
+  - HTTP: set transport “streamable-http” and point to `http://localhost:3001`.
+  - SSE: set transport “sse” and point to `http://localhost:3002/sse` (Node) or `http://localhost:3003/sse` (Python). Include `Authorization: Bearer <JWT>`.
+
+Example `mcp.json` for MCP Inspector
+```json
+{
+  "mcpServers": {
+    "faxbot-node-stdio": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["src/servers/stdio.js"],
+      "cwd": "./node_mcp",
+      "env": {
+        "FAX_API_URL": "http://localhost:8080",
+        "API_KEY": "your_api_key"
+      }
+    },
+    "faxbot-node-http": {
+      "type": "streamable-http",
+      "url": "http://localhost:3001/mcp"
+    },
+    "faxbot-node-sse": {
+      "type": "sse",
+      "url": "http://localhost:3002/sse"
+    },
+    "faxbot-py-stdio": {
+      "type": "stdio",
+      "command": "python",
+      "args": ["stdio_server.py"],
+      "cwd": "./python_mcp",
+      "env": {
+        "FAX_API_URL": "http://localhost:8080",
+        "API_KEY": "your_api_key"
+      }
+    },
+    "faxbot-py-sse": {
+      "type": "sse",
+      "url": "http://localhost:3003/sse"
+    }
+  }
+}
+```
+Notes:
+- For SSE entries, provide `Authorization: Bearer <JWT>` in the Inspector UI headers before connecting.
+- If you keep only one server entry or name one `default-server`, Inspector selects it automatically.
+
 Details
 <details>
-<summary>Transports and servers</summary>
+<summary>Transports × servers (language matrix)</summary>
 
-2 MCP servers × 3 transports = 6 options.
+2 languages × 3 transports = 6 options.
 
-Legacy /api servers (Node): `mcp_server.js`, `mcp_http_server.js`, `mcp_sse_server.js`
-
-Node MCP (recommended):
+Node MCP:
 - stdio: `node_mcp/src/servers/stdio.js`
 - HTTP: `node_mcp/src/servers/http.js` (port 3001)
 - SSE+OAuth: `node_mcp/src/servers/sse.js` (port 3002)
@@ -56,6 +143,8 @@ Python MCP:
 - stdio: `python_mcp/stdio_server.py`
 - HTTP: `python_mcp/http_server.py`
 - SSE+OAuth: `python_mcp/server.py`
+
+Legacy Node servers also exist under `api/` (`mcp_server.js`, `mcp_http_server.js`, `mcp_sse_server.js`).
 
 </details>
 

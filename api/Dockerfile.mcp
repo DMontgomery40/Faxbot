@@ -8,15 +8,17 @@ COPY package*.json ./
 # Install dependencies
 RUN npm install --production
 
-# Copy MCP server
+# Copy MCP servers
 COPY mcp_server.js ./
+COPY mcp_http_server.js ./
+COPY mcp_sse_server.js ./
 
 # Create non-root user
-RUN addgroup -g 1001 -S nodejs
-RUN adduser -S nodejs -u 1001
-
+RUN addgroup -g 1001 -S nodejs && adduser -S nodejs -u 1001
 USER nodejs
 
-EXPOSE 3000
+# Expose MCP ports
+EXPOSE 3001 3002
 
-CMD ["npm", "run", "start:mcp"]
+# Default to HTTP transport in containers so clients can reach it over the network.
+CMD ["npm", "run", "start:http"]
