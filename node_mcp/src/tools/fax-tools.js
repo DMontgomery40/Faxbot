@@ -1,6 +1,5 @@
 import { McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
 import { sendFax as apiSendFax, getFaxStatus as apiGetFaxStatus } from '../shared/fax-client.js';
-import { extractTextFromPDF } from '../shared/pdf-extractor.js';
 import fs from 'fs';
 import path from 'path';
 
@@ -28,20 +27,6 @@ export const faxTools = [
       properties: { jobId: { type: 'string', description: 'Job ID from send_fax' } },
       required: ['jobId']
     }
-  },
-  {
-    name: 'faxbot_pdf',
-    description:
-      'Extract TEXT from a local PDF and fax as TXT. Use for text‑based PDFs only. For scanned/image PDFs (insurance cards, lab results), use send_fax with filePath to send the original image PDF.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        pdf_path: { type: 'string', description: 'Absolute or relative path to PDF file' },
-        to: { type: 'string', description: 'Fax number (E.164 preferred)' },
-        header_text: { type: 'string', description: 'Optional header text to prepend' },
-      },
-      required: ['pdf_path', 'to'],
-    },
   }
 ];
 
@@ -145,43 +130,4 @@ export async function handleGetFaxStatusTool(args) {
   }
 }
 
-export async function handleFaxbotPdfTool(args) {
-  const { pdf_path, to, header_text } = args || {};
-  if (!pdf_path || !to) {
-    throw new McpError(ErrorCode.InvalidParams, 'pdf_path and to are required');
-  }
-  const resolved = path.isAbsolute(pdf_path) ? pdf_path : path.resolve(process.cwd(), pdf_path);
-  try {
-    const st = await fs.promises.stat(resolved);
-    if (!st.isFile()) throw new Error('Not a file');
-  } catch {
-    throw new McpError(ErrorCode.InvalidParams, `File not found or not a file: ${resolved}`);
-  }
-  let text = await extractTextFromPDF(resolved);
-  if (!text || text.trim().length < 16) {
-    throw new McpError(
-      ErrorCode.InvalidParams,
-      'The PDF appears to contain little or no extractable text (likely a scanned/image PDF). Use send_fax with { filePath: \'<path>.pdf\' } to send the image as a PDF, which is the recommended workflow for insurance cards, lab results, etc.'
-    );
-  }
-  if (header_text && String(header_text).trim()) {
-    text = `${String(header_text).trim()}\n\n${text}`;
-  }
-  const MAX_TEXT_SIZE = parseInt(process.env.MAX_TEXT_SIZE || '100000', 10);
-  let notice = '';
-  if (Buffer.byteLength(text, 'utf8') > MAX_TEXT_SIZE) {
-    text = Buffer.from(text, 'utf8').subarray(0, MAX_TEXT_SIZE).toString('utf8');
-    notice = `Warning: Extracted text exceeded MAX_TEXT_SIZE (${MAX_TEXT_SIZE}) and was truncated.\n\n`;
-  }
-  const result = await apiSendFax(to, text, 'txt', 'extracted.txt');
-  return {
-    content: [
-      {
-        type: 'text',
-        text: `${notice}Faxbot PDF text fax queued. Job ID: ${result.id}`,
-      },
-    ],
-  };
-}
-
-export default { faxTools, handleSendFaxTool, handleGetFaxStatusTool, handleFaxbotPdfTool };
+export default { faxTools, handleSendFaxTool, handleGetFaxStatusTool };

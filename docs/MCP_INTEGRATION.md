@@ -29,14 +29,12 @@ Claude Desktop or Cursor config example:
 Use these tools
 - send_fax: `{ to, filePath }` (stdio) or `{ to, fileContent, fileName, fileType }` (HTTP/SSE)
 - get_fax_status: `{ jobId }`
-- faxbot_pdf (stdio convenience): `{ pdf_path, to, header_text? }` — for text‑based PDFs only; do not use for scanned/image PDFs.
 
 Important notes
 - File types: only PDF and TXT. Convert images (PNG/JPG) to PDF first.
 - Stdio: use `filePath` so the MCP reads the file locally and posts it to Faxbot.
-- HTTP/SSE: provide base64 content and keep files small (≤ ~100 KB).
+- HTTP/SSE: provide base64 content and keep files small (≤ ~100 KB). The HTTP/SSE MCP servers accept JSON payloads up to ~16 MB (base64 overhead included), while the Faxbot API enforces a 10 MB raw file size limit.
 - Backends: works with any Faxbot backend (`phaxio`, `sinch`, or `sip`).
- - Scanned/image PDFs: use `send_fax` with `filePath` to send the original image PDF; do not call `faxbot_pdf`.
 
 Examples
 - “Call send_fax with { to: "+15551234567", filePath: "/Users/me/Documents/letter.pdf" }”
@@ -144,7 +142,7 @@ Python MCP:
 - HTTP: `python_mcp/http_server.py`
 - SSE+OAuth: `python_mcp/server.py`
 
-Legacy Node servers also exist under `api/` (`mcp_server.js`, `mcp_http_server.js`, `mcp_sse_server.js`).
+
 
 </details>
 
@@ -175,7 +173,7 @@ python stdio_server.py               # stdio
 # or: uvicorn server:app --host 0.0.0.0 --port 3003 (SSE+OAuth)
 ```
 
-OCR (optional): set `FAXBOT_OCR_ENABLE=true` and install Tesseract; see `python_mcp/text_extract.py`.
+ 
 
 </details>
 
@@ -188,12 +186,7 @@ OCR (optional): set `FAXBOT_OCR_ENABLE=true` and install Tesseract; see `python_
 
 </details>
 
-<details>
-<summary>Legacy /api servers</summary>
 
-Scripts and Make targets exist under `api/`. These servers are base64‑only for `send_fax`.
-
-</details>
 
 <details>
 <summary>Voice examples</summary>

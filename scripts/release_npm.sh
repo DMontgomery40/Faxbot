@@ -17,8 +17,6 @@ echo "Checking npm auth..."
 npm whoami || echo "Warning: not logged in. Set NPM_TOKEN or run 'npm login' before publishing."
 
 publish_pkg "$ROOT_DIR/node_mcp"
-publish_pkg "$ROOT_DIR/api"
 publish_pkg "$ROOT_DIR/sdks/node"
 
 echo "Done."
-

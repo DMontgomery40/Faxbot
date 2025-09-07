@@ -1,7 +1,7 @@
 {
   "name": "faxbot-node-mcp",
   "version": "1.0.1",
-  "description": "Node.js MCP servers for Faxbot with OCR workflow support",
+  "description": "Node.js MCP servers for Faxbot (stdio, HTTP, SSE)",
   "main": "src/servers/stdio.js",
   "type": "module",
   "repository": {
@@ -21,7 +21,6 @@
     "@modelcontextprotocol/sdk": "^1.17.5",
     "axios": "^1.7.0",
     "form-data": "^4.0.0",
-    "pdf-parse": "^1.1.1",
     "fs": "^0.0.1-security",
     "path": "^0.12.7",
     "express": "^4.19.2",
