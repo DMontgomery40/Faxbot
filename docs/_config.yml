@@ -1,11 +1,11 @@
 title: Faxbot
 description: The first open-source, self-hostable fax API with AI integration
-baseurl: ""
-url: "https://yourusername.github.io"
+baseurl: "/faxbot"
+url: "https://davidmontgomery.github.io"
 
 # Theme
 remote_theme: just-the-docs/just-the-docs
-color_scheme: light
+color_scheme: dark
 
 # Search
 search_enabled: true
@@ -21,10 +21,10 @@ search:
 # Navigation
 nav_external_links:
   - title: GitHub Repository
-    url: https://github.com/yourusername/faxbot
+    url: https://github.com/davidmontgomery/faxbot
     hide_icon: false
   - title: Docker Hub
-    url: https://hub.docker.com/r/yourusername/faxbot
+    url: https://hub.docker.com/r/davidmontgomery/faxbot
     hide_icon: false
 
 # Table of contents
@@ -32,7 +32,7 @@ nav_sort: case_insensitive
 nav_fold: false
 
 # Footer
-footer_content: "Copyright &copy; 2024 Faxbot. Distributed under the <a href=\"https://github.com/yourusername/faxbot/blob/main/LICENSE\">MIT License</a>."
+footer_content: "Copyright &copy; 2024 Faxbot. Distributed under the <a href=\"https://github.com/davidmontgomery/faxbot/blob/main/LICENSE\">MIT License</a>."
 
 # Back to top link
 back_to_top: true

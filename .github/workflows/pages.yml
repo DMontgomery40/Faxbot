@@ -2,7 +2,7 @@ name: Deploy Jekyll site to Pages
 
 on:
   push:
-    branches: ["main"]
+    branches: ["main", "docs-jekyll-site"]
     paths: ["docs/**", "_config.yml", "README.md", "HIPAA_REQUIREMENTS.md", "CONTRIBUTING.md"]
   workflow_dispatch:
 
