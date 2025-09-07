@@ -1,9 +1,17 @@
 {
   "name": "faxbot-node-mcp",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Node.js MCP servers for Faxbot with OCR workflow support",
   "main": "src/servers/stdio.js",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/DMontgomery40/Faxbot.git"
+  },
+  "author": "David Montgomery <dmontg@gmail.com>",
+  "bugs": { "url": "https://github.com/DMontgomery40/Faxbot/issues" },
+  "homepage": "https://github.com/DMontgomery40/Faxbot",
+  "publishConfig": { "access": "public" },
   "scripts": {
     "stdio": "node src/servers/stdio.js",
     "http": "node src/servers/http.js",
@@ -24,4 +32,3 @@
     "dotenv": "^16.4.5"
   }
 }
-
