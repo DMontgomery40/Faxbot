@@ -1,7 +1,5 @@
 # Faxbot
 
-### NOTE: This is still in production, pre-alpha stage at this point, but the self-hosted methods have been tested and function reliably, so far. 
-
 Simple fax-sending API with AI integration. Choose your backend:
 
 ## Quick Start Options
