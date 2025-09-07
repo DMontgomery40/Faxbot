@@ -56,7 +56,7 @@ const client = new FaxbotClient('http://localhost:8080', 'YOUR_API_KEY');
   - 404: job not found (for GET /fax/{id})
 
 ## Compatibility
-- The SDKs work regardless of backend (Phaxio cloud or SIP/Asterisk) because Faxbot abstracts the difference.
+- The SDKs work regardless of backend (`phaxio`, `sinch`, or `sip`) because Faxbot abstracts the difference.
 
 ## MCP vs SDK
 - The SDKs do not include MCP (Model Context Protocol) logic. They are simple HTTP clients for developers.

@@ -31,6 +31,11 @@ class Settings(BaseModel):
     # Public API URL (needed for cloud backend to fetch PDFs, e.g., Phaxio)
     public_api_url: str = Field(default_factory=lambda: os.getenv("PUBLIC_API_URL", "http://localhost:8080"))
 
+    # Sinch Fax (Phaxio by Sinch) — direct upload flow
+    sinch_project_id: str = Field(default_factory=lambda: os.getenv("SINCH_PROJECT_ID", ""))
+    sinch_api_key: str = Field(default_factory=lambda: os.getenv("SINCH_API_KEY", os.getenv("PHAXIO_API_KEY", "")))
+    sinch_api_secret: str = Field(default_factory=lambda: os.getenv("SINCH_API_SECRET", os.getenv("PHAXIO_API_SECRET", "")))
+
     # Fax presentation
     fax_header: str = Field(default_factory=lambda: os.getenv("FAX_HEADER", "Faxbot"))
     fax_station_id: str = Field(default_factory=lambda: os.getenv("FAX_LOCAL_STATION_ID", "+10000000000"))

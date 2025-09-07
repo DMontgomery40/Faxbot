@@ -183,29 +183,27 @@ async def send_fax(to: str, fileContent: Optional[str] = None, fileName: Optiona
         Human-readable confirmation text containing job ID and status.
     """
     if filePath:
-        from .text_extract import extract_text_from_pdf
         p = str(pathlib.Path(filePath).expanduser().resolve())
         if not os.path.exists(p):
             raise ValueError(f"File not found: {p}")
         if p.lower().endswith('.pdf'):
-            text, _ = extract_text_from_pdf(p)
+            with open(p, 'rb') as fh:
+                data = fh.read()
+            b64 = base64.b64encode(data).decode('ascii')
+            job = await api_send_fax(to, os.path.basename(p), b64, 'pdf')
         elif p.lower().endswith('.txt'):
-            with open(p, 'r', encoding='utf-8', errors='ignore') as fh:
-                text = fh.read()
+            with open(p, 'rb') as fh:
+                data = fh.read()
+            b64 = base64.b64encode(data).decode('ascii')
+            job = await api_send_fax(to, os.path.basename(p), b64, 'txt')
         else:
             raise ValueError('filePath must point to a PDF or TXT file')
-        max_bytes = int(os.getenv('MAX_TEXT_SIZE', '100000'))
-        b = text.encode('utf-8')
-        if len(b) > max_bytes:
-            text = b[:max_bytes].decode('utf-8', errors='ignore')
-        b64 = base64.b64encode(text.encode('utf-8')).decode('ascii')
-        job = await api_send_fax(to, 'extracted.txt', b64, 'txt')
     else:
         if not (fileContent and fileName):
             raise ValueError('Missing required parameters: fileContent and fileName (or provide filePath)')
         job = await api_send_fax(to, fileName, fileContent, fileType)
     return (
-        f"Fax queued successfully!\n\nJob ID: {job['id']}\nRecipient: {to}\nFile: {fileName}\nStatus: {job['status']}\n"
+        f"Fax queued successfully!\n\nJob ID: {job['id']}\nRecipient: {to}\nFile: {fileName or os.path.basename(filePath) if filePath else ''}\nStatus: {job['status']}\n"
         f"\nUse get_fax_status with job ID '{job['id']}' to check progress."
     )
 

@@ -50,13 +50,11 @@ app.post('/mcp', async (req, res) => {
       }
       const transport = new StreamableHTTPServerTransport({});
       const server = await initServerWithTransport(transport);
-      if (!transport.sessionId) {
-        return res
-          .status(500)
-          .json({ jsonrpc: '2.0', error: { code: -32603, message: 'Failed to initialize session' }, id: null });
-      }
-      sessions[transport.sessionId] = { transport, server };
+      // Process initialize request; the transport will assign sessionId and set header
       await transport.handleRequest(req, res, req.body);
+      if (transport.sessionId) {
+        sessions[transport.sessionId] = { transport, server };
+      }
       return;
     }
     await session.transport.handleRequest(req, res, req.body);

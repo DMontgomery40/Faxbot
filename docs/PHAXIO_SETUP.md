@@ -1,7 +1,7 @@
 # PHAXIO_SETUP.md
 
 ## Overview
-- Cloud backend for sending faxes via Phaxio.
+- Cloud backend for sending faxes via Phaxio (also branded “Phaxio by Sinch”).
 - Easiest option; no SIP or telephony expertise required.
 - Send-only (no receiving).
 
@@ -16,6 +16,8 @@
   - PHAXIO_API_KEY
   - PHAXIO_API_SECRET
 
+Note on branding: New Phaxio signups and dashboards may redirect to Sinch. That is expected — Phaxio is a Sinch company. This backend continues to work with those credentials.
+
 2) Set environment variables
 - Edit `.env` (or create from `.env.example`). Set:
 ```
@@ -29,6 +31,8 @@ API_KEY=your_secure_api_key   # Optional but recommended; used as X-API-Key
 ```
 - Note: PUBLIC_API_URL must be reachable by Phaxio to fetch PDFs.
  - For production, set `ENFORCE_PUBLIC_HTTPS=true` to require HTTPS (recommended). For local testing, leave it false.
+
+Sinch v3 vs legacy Phaxio: If you prefer Sinch’s Fax API v3 “direct upload” flow, use the separate `sinch` backend instead (see SINCH_SETUP.md). This guide covers the classic Phaxio-style flow where the provider fetches your PDF via a tokenized URL and posts status to `/phaxio-callback`.
 
 3) Start the API
 ```
@@ -79,3 +83,6 @@ curl -H "X-API-Key: your_secure_api_key" http://localhost:8080/fax/<job_id>
 - No status updates: confirm callback URL and public reachability.
 - 403 when fetching PDF: token mismatch or expired URL.
 - See docs/TROUBLESHOOTING.md for more.
+
+## Related: Sinch Fax API v3
+Phaxio is part of Sinch. If your console shows Sinch and you prefer the v3 API’s direct upload model (and features like their own webhooks), use the `sinch` backend. See SINCH_SETUP.md. Your existing Phaxio credentials typically work as Sinch API credentials; you will also need the Sinch Project ID.

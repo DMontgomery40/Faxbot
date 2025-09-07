@@ -50,16 +50,17 @@ curl -H "X-API-Key: $API_KEY" http://localhost:8080/fax/$JOB_ID
   - `status: string` (queued | in_progress | SUCCESS | FAILED | disabled)
   - `error?: string`
   - `pages?: number`
-  - `backend: string` ("phaxio" or "sip")
+  - `backend: string` ("phaxio", "sinch", or "sip")
   - `provider_sid?: string`
   - `created_at: ISO8601`
   - `updated_at: ISO8601`
 
 ## Notes
-- Backend chosen via `FAX_BACKEND` env var.
+- Backend chosen via `FAX_BACKEND` env var: `phaxio` (cloud via Phaxio/Phaxio‑by‑Sinch V2 style), `sinch` (cloud via Sinch Fax API v3 direct upload), or `sip` (self‑hosted Asterisk).
 - TXT files are converted to PDF before TIFF conversion.
 - If Ghostscript is missing, TIFF step is stubbed with pages=1; install for production.
-- For the Phaxio backend, TIFF conversion is skipped; page count is finalized via the provider callback.
+- For the `phaxio` backend, TIFF conversion is skipped; page count is finalized via the provider callback (`/phaxio-callback`, HMAC verification supported).
+- For the `sinch` backend, the API uploads your PDF directly to Sinch. Webhook support is under evaluation; status reflects the provider’s immediate response and may be updated by polling in future versions.
 - Tokenized PDF access has a TTL (`PDF_TOKEN_TTL_MINUTES`, default 60). The `/fax/{id}/pdf?token=...` link expires after TTL.
 - Optional retention: enable automatic cleanup of artifacts by setting `ARTIFACT_TTL_DAYS>0` (default disabled). Cleanup runs every `CLEANUP_INTERVAL_MINUTES` (default 1440).
 

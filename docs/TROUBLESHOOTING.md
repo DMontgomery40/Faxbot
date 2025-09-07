@@ -12,6 +12,11 @@
 - 403 on `/fax/{id}/pdf`: invalid token or wrong `PUBLIC_API_URL`.
 - Phaxio API error: confirm credentials and sufficient account balance.
 
+## Sinch Fax API v3 Backend
+- "sinch not configured": ensure `FAX_BACKEND=sinch`, `SINCH_PROJECT_ID`, `SINCH_API_KEY`, `SINCH_API_SECRET` (or set `PHAXIO_API_KEY/SECRET` which are used as fallback values).
+- Region/base URL: if requests fail, try `SINCH_BASE_URL` (e.g., `https://us.fax.api.sinch.com/v3`).
+- Webhooks: current build does not expose a Sinch webhook endpoint; status reflects the immediate response from Sinch. Poll your job via `GET /fax/{id}` if needed.
+
 ## SIP/Asterisk Backend
 - AMI connection failed:
   - Asterisk container running and reachable on `5038`.
@@ -36,7 +41,7 @@ If you're unsure which MCP transport to use:
 
 | Transport | File | Port | Auth | Use Case |
 |-----------|------|------|------|----------|
-| **stdio** | api/mcp_server.js or node_mcp/src/servers/stdio.js | N/A | API key | Desktop AI |
+| **stdio** | node_mcp/src/servers/stdio.js (recommended) or api/mcp_server.js (legacy) | N/A | API key | Desktop AI |
 | **HTTP** | api/mcp_http_server.js or node_mcp/src/servers/http.js | 3001 | API key | Web apps, cloud AI |
 | **SSE+OAuth** | api/mcp_sse_server.js or node_mcp/src/servers/sse.js | 3002 | JWT/Bearer | Enterprise, HIPAA |
 
@@ -67,6 +72,13 @@ If you're unsure which MCP transport to use:
 - **Claude can't read files**: Install and configure filesystem MCP server alongside Faxbot MCP
 - **Permission denied**: Check filesystem MCP server has access to directory containing your PDFs
 - **Wrong file path**: Use absolute paths or ensure filesystem MCP server is configured for correct directories
+
+### File Types and Paths
+- Only PDF and TXT are accepted. Convert images (PNG/JPG) to PDF first.
+- macOS: `sips -s format pdf "in.png" --out "out.pdf"`
+- Linux: `img2pdf in.png -o out.pdf` or `magick convert in.png out.pdf`
+- Filenames with spaces: quote the full path. Example (curl): `-F "file=@'./My File.pdf'"`
+- macOS screenshot names sometimes include a “narrow no‑break space” (U+202F) that looks like a regular space and breaks shell quoting. If a quoted path still fails, try renaming with a wildcard: `cp Screenshot*.pdf doc.pdf` and use the new name.
 
 ## Reverse Proxy Examples (Rate Limiting)
 

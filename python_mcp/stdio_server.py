@@ -81,28 +81,27 @@ async def send_fax(to: str, fileContent: Optional[str] = None, fileName: Optiona
     """Send a fax. Preferred: provide filePath to a local PDF/TXT. Fallback: base64 fileContent."""
     # Preferred: filePath
     if filePath:
-        from .text_extract import extract_text_from_pdf
         import os
         import pathlib
         p = str(pathlib.Path(filePath).expanduser().resolve())
         if not os.path.exists(p):
             raise ValueError(f"File not found: {p}")
         if p.lower().endswith('.pdf'):
-            text, _ = extract_text_from_pdf(p)
+            with open(p, 'rb') as fh:
+                data = fh.read()
+            b64 = base64.b64encode(data).decode('ascii')
+            job = await _api_send(to, os.path.basename(p), b64, 'pdf')
+            used_name = os.path.basename(p)
         elif p.lower().endswith('.txt'):
-            with open(p, 'r', encoding='utf-8', errors='ignore') as fh:
-                text = fh.read()
+            with open(p, 'rb') as fh:
+                data = fh.read()  # preserve exact bytes
+            b64 = base64.b64encode(data).decode('ascii')
+            job = await _api_send(to, os.path.basename(p), b64, 'txt')
+            used_name = os.path.basename(p)
         else:
             raise ValueError('filePath must point to a PDF or TXT file')
-        # Truncate
-        max_bytes = int(os.getenv('MAX_TEXT_SIZE', '100000'))
-        b = text.encode('utf-8')
-        if len(b) > max_bytes:
-            text = b[:max_bytes].decode('utf-8', errors='ignore')
-        b64 = base64.b64encode(text.encode('utf-8')).decode('ascii')
-        job = await _api_send(to, 'extracted.txt', b64, 'txt')
         return (
-            f"Fax queued successfully!\n\nJob ID: {job['id']}\nRecipient: {to}\nFile: extracted.txt (txt)\nStatus: {job['status']}\n"
+            f"Fax queued successfully!\n\nJob ID: {job['id']}\nRecipient: {to}\nFile: {used_name}\nStatus: {job['status']}\n"
             f"\nUse get_fax_status with job ID '{job['id']}' to check progress."
         )
     # Fallback: base64
@@ -140,7 +139,11 @@ def _normalize_and_truncate(text: str) -> str:
 
 @mcp.tool()
 async def faxbot_pdf(pdf_path: str, to: str, header_text: str = "") -> str:
-    """Extract text from a PDF (with optional OCR fallback) and send as TXT fax.
+    """Extract TEXT from a PDF (with optional OCR) and send as TXT fax.
+
+    Use this for text‑based PDFs only. If your PDF is a scanned/image document
+    (insurance cards, lab results, photos), do not use this tool — instead
+    call send_fax with filePath to send the image PDF itself.
 
     Args:
         pdf_path: Absolute or relative path to a local PDF file
@@ -160,6 +163,10 @@ async def faxbot_pdf(pdf_path: str, to: str, header_text: str = "") -> str:
         raise ValueError("Only PDF input is supported")
 
     text, used_ocr = extract_text_from_pdf(abs_path)
+    if not text or text.strip() == "":
+        raise ValueError(
+            "No extractable text found. This PDF is likely scanned/image‑only. Use send_fax with filePath to send the original image PDF."
+        )
     if header_text and header_text.strip():
         text = f"{header_text.strip()}\n\n{text}"
     text = _normalize_and_truncate(text)

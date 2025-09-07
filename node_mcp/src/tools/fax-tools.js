@@ -32,7 +32,7 @@ export const faxTools = [
   {
     name: 'faxbot_pdf',
     description:
-      'Extract text from a local PDF path and send as a text fax (avoids base64 token overhead).',
+      'Extract TEXT from a local PDF and fax as TXT. Use for text‑based PDFs only. For scanned/image PDFs (insurance cards, lab results), use send_fax with filePath to send the original image PDF.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -63,7 +63,7 @@ export async function handleSendFaxTool(args) {
   if (!to) throw new McpError(ErrorCode.InvalidParams, 'Missing required parameter: to');
   if (!validatePhone(to)) throw new McpError(ErrorCode.InvalidParams, 'Invalid recipient number format');
 
-  // Preferred: filePath
+  // Preferred: filePath (preserve fidelity — upload original PDF/TXT)
   if (filePath && typeof filePath === 'string') {
     const resolved = path.isAbsolute(filePath) ? filePath : path.resolve(process.cwd(), filePath);
     try {
@@ -73,16 +73,18 @@ export async function handleSendFaxTool(args) {
       throw new McpError(ErrorCode.InvalidParams, `File not found or not a file: ${resolved}`);
     }
     const ext = (resolved.split('.').pop() || '').toLowerCase();
-    let text = '';
-    if (ext === 'pdf') text = await extractTextFromPDF(resolved);
-    else if (ext === 'txt') text = await fs.promises.readFile(resolved, 'utf8');
-    else throw new McpError(ErrorCode.InvalidParams, 'filePath must point to a PDF or TXT file');
-    const MAX_TEXT_SIZE = parseInt(process.env.MAX_TEXT_SIZE || '100000', 10);
-    if (Buffer.byteLength(text, 'utf8') > MAX_TEXT_SIZE) {
-      text = Buffer.from(text, 'utf8').subarray(0, MAX_TEXT_SIZE).toString('utf8');
+    const base = path.basename(resolved);
+    if (ext === 'pdf') {
+      const buf = await fs.promises.readFile(resolved);
+      const result = await apiSendFax(to, buf, 'pdf', base);
+      return { content: [{ type: 'text', text: `Fax queued. Job ID: ${result.id}` }] };
+    } else if (ext === 'txt') {
+      const text = await fs.promises.readFile(resolved, 'utf8');
+      const result = await apiSendFax(to, text, 'txt', base);
+      return { content: [{ type: 'text', text: `Fax queued. Job ID: ${result.id}` }] };
+    } else {
+      throw new McpError(ErrorCode.InvalidParams, 'filePath must point to a PDF or TXT file');
     }
-    const result = await apiSendFax(to, text, 'txt', 'extracted.txt');
-    return { content: [{ type: 'text', text: `Fax queued. Job ID: ${result.id}` }] };
   }
 
   // Backward-compatible base64 path
@@ -156,6 +158,12 @@ export async function handleFaxbotPdfTool(args) {
     throw new McpError(ErrorCode.InvalidParams, `File not found or not a file: ${resolved}`);
   }
   let text = await extractTextFromPDF(resolved);
+  if (!text || text.trim().length < 16) {
+    throw new McpError(
+      ErrorCode.InvalidParams,
+      'The PDF appears to contain little or no extractable text (likely a scanned/image PDF). Use send_fax with { filePath: \'<path>.pdf\' } to send the image as a PDF, which is the recommended workflow for insurance cards, lab results, etc.'
+    );
+  }
   if (header_text && String(header_text).trim()) {
     text = `${String(header_text).trim()}\n\n${text}`;
   }

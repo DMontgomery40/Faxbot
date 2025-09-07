@@ -1,5 +1,14 @@
 # Faxbot Security Audit Report - Critical & High Priority Findings
 
+# Faxbot Security Audit Report - Critical & High Priority Findings
+
+## Immediate
+- Implement Sinch webhook handling to reach parity with Phaxio
+  - Add `/sinch-callback` endpoint and signature/auth validation per Sinch docs
+  - Map provider events to queued/in_progress/SUCCESS/FAILED
+  - Update tests and docs (API_REFERENCE.md, SINCH_SETUP.md, TROUBLESHOOTING.md)
+  - Consider configurable verification and retention rules analogous to Phaxio HMAC
+
 ## Executive Summary
 
 **Critical security and compliance issues identified:**

@@ -92,12 +92,21 @@ Implement the following as minimum controls:
   - Rotate credentials periodically. Log and alert on failed auth.
 
 ## MCP (AI Assistant) Considerations
-- MCP transmits base64 file content for the `send_fax` tool. Treat the MCP server with the same controls as the API (auth, network restrictions, audit logging).
-- Do not send PHI to LLMs or external services unless you have a signed BAA and an approved use case.
-- All MCP servers must require authentication:
+- Stdio vs HTTP/SSE transports
+  - Stdio (local): connects tools directly to desktop assistants without a network server. Convenient for individuals. Not generally used for provider‑side HIPAA workflows.
+  - HTTP/SSE (server): network transports that can be authenticated (API key, OAuth2/JWT) and deployed under your security program. Use SSE+OAuth for provider‑side HIPAA workflows.
+- File handling
+  - For stdio, prefer `send_fax` with `filePath` to avoid embedding PHI as base64 in conversations.
+  - For HTTP/SSE, tool inputs are JSON; base64 increases size and token exposure. Enforce auth and rate limits and avoid logging request bodies.
+- Do not send PHI to LLMs or external services unless covered by a BAA and approved by policy. Faxbot’s MCP servers call your Faxbot API; they do not upload PHI to model providers.
+- All MCP servers must require authentication where applicable:
   - REST API: `X-API-Key` for /fax endpoints.
   - MCP HTTP/SSE: `Authorization: Bearer <JWT>` verified against your OIDC JWKS.
 - Serve MCP over TLS. Never log PHI (file content, rendered pages). Log only job IDs and metadata.
+
+## Roles and Transport Choice (Practical Guidance)
+- Healthcare providers (CE/BA): use HTTPS for API, `phaxio` with HMAC or `sinch` with auth; for MCP use SSE+OAuth or skip MCP and call REST/SDKs directly.
+- Patients/individuals sending their own documents: HIPAA obligations differ; using local stdio MCP is generally acceptable. The receiving provider bears most compliance obligations upon receipt. Providers must still secure inbound faxes on their systems.
 
 ## Operational Checklist (Minimum)
 - [ ] Signed BAA with Phaxio (if using cloud backend).

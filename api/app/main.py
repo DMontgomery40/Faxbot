@@ -14,6 +14,7 @@ from .models import FaxJobOut
 from .conversion import ensure_dir, txt_to_pdf, pdf_to_tiff
 from .ami import ami_client
 from .phaxio_service import get_phaxio_service
+from .sinch_service import get_sinch_service
 import hmac
 import hashlib
 from urllib.parse import urlparse
@@ -146,6 +147,10 @@ async def send_fax(background: BackgroundTasks, to: str = Form(...), file: Uploa
         if settings.fax_disabled:
             # Test mode: nothing else to prepare
             pass
+    elif settings.fax_backend == "sinch":
+        # Sinch cloud backend: no local TIFF; provider handles rasterization
+        pages = None
+        # nothing else to prepare here
     else:
         # SIP/Asterisk requires TIFF
         if settings.fax_disabled:
@@ -175,10 +180,10 @@ async def send_fax(background: BackgroundTasks, to: str = Form(...), file: Uploa
     # Kick off fax sending based on backend
     if not settings.fax_disabled:
         if settings.fax_backend == "phaxio":
-            # For Phaxio, we need a public URL for the PDF
             background.add_task(_send_via_phaxio, job_id, to, pdf_path)
+        elif settings.fax_backend == "sinch":
+            background.add_task(_send_via_sinch, job_id, to, pdf_path)
         else:
-            # SIP/Asterisk backend
             background.add_task(_originate_job, job_id, to, tiff_path)
 
     return _serialize_job(job)
@@ -406,6 +411,49 @@ async def _send_via_phaxio(job_id: str, to: str, pdf_path: str):
                 db.add(job)
                 db.commit()
                 
+    except Exception as e:
+        with SessionLocal() as db:
+            job = db.get(FaxJob, job_id)
+            if job:
+                job.status = "failed"
+                job.error = str(e)
+                job.updated_at = datetime.utcnow()
+                db.add(job)
+                db.commit()
+        audit_event("job_failed", job_id=job_id, error=str(e))
+
+
+async def _send_via_sinch(job_id: str, to: str, pdf_path: str):
+    """Send fax via Sinch Fax API v3 (Phaxio by Sinch)."""
+    try:
+        sinch = get_sinch_service()
+        if not sinch or not sinch.is_configured():
+            raise Exception("Sinch Fax is not properly configured")
+
+        audit_event("job_dispatch", job_id=job_id, method="sinch")
+
+        # Create fax by uploading the PDF directly (multipart/form-data)
+        resp = await sinch.send_fax_file(to, pdf_path)
+
+        fax_id = str(resp.get("id") or resp.get("data", {}).get("id") or "")
+        status = (resp.get("status") or resp.get("data", {}).get("status") or "in_progress").upper()
+        if status == "IN_PROGRESS":
+            internal_status = "in_progress"
+        elif status in {"SUCCESS", "COMPLETED", "COMPLETED_OK"}:
+            internal_status = "SUCCESS"
+        elif status in {"FAILED", "FAILURE", "ERROR"}:
+            internal_status = "FAILED"
+        else:
+            internal_status = "queued"
+
+        with SessionLocal() as db:
+            job = db.get(FaxJob, job_id)
+            if job:
+                job.provider_sid = fax_id
+                job.status = internal_status
+                job.updated_at = datetime.utcnow()
+                db.add(job)
+                db.commit()
     except Exception as e:
         with SessionLocal() as db:
             job = db.get(FaxJob, job_id)
