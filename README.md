@@ -62,8 +62,8 @@ Stdio “just works” tip
 - Set `FAX_BACKEND` to `phaxio` (cloud) or `sip` (self-hosted).
 - Use `X-API-Key` for auth; secure behind a reverse proxy for rate limiting.
 
-**Demo**
-<video src="assets/faxbot_demo.mov" width="100%" autoplay loop muted playsinline controls>
-  <a href="assets/faxbot_demo.mov">Download the demo video</a>
-  (Your browser does not support embedded videos.)
- </video>
+Demo
+<video src="assets/faxbot_demo.mp4" width="100%" autoplay loop muted playsinline controls>
+  <a href="assets/faxbot_demo.mp4">Watch the demo video</a>
+  (Your browser or GitHub may not inline-play videos; use the link.)
+</video>
