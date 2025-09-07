@@ -61,3 +61,9 @@ Stdio “just works” tip
 - Send-only. Receiving is out of scope.
 - Set `FAX_BACKEND` to `phaxio` (cloud) or `sip` (self-hosted).
 - Use `X-API-Key` for auth; secure behind a reverse proxy for rate limiting.
+
+**Demo**
+<video src="assets/faxbot_demo.mov" width="100%" autoplay loop muted playsinline controls>
+  <a href="assets/faxbot_demo.mov">Download the demo video</a>
+  (Your browser does not support embedded videos.)
+ </video>
