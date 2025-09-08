@@ -1,7 +1,11 @@
-# Faxbot
-
 <p align="center">
   <img src="assets/faxbot_full_logo.png" alt="Faxbot logo" width="100%" />
+</p>
+
+<p align="center">
+  <a href="https://dmontgomery40.github.io/Faxbot/">
+    <img alt="View the Documentation" src="https://img.shields.io/badge/Docs-Faxbot-2b5fff?style=for-the-badge">
+  </a>
 </p>
 
 The first and only open-source, self-hostable fax API. Send faxes with a single function call.
