@@ -7,8 +7,8 @@ permalink: /
 ---
 
 
-<div style="text-align:center;margin:16px 0;">
-  <img src="{{ site.baseurl }}/docs/assets/images/faxbot_full_logo.png" alt="Faxbot logo" style="max-width:100%;width:100%;height:auto;" />
+<div class="home-hero">
+  <img src="{{ site.baseurl }}/docs/assets/images/faxbot_full_logo.png" alt="Faxbot logo" />
 </div>
 
 {: .highlight }
@@ -27,3 +27,33 @@ To our knowledge, no other open-source project combines:
 - Developer SDKs for Node.js and Python
 
 Questions? Issues? Please don't hesitate to reach out. See `CONTRIBUTING.md` for the best way to get help.
+
+---
+
+## Table of Contents
+
+- Getting Started
+  - [Overview]({{ site.baseurl }}/getting-started/)
+- Backends
+  - [Phaxio Setup]({{ site.baseurl }}/backends/phaxio-setup.html)
+  - [Sinch Setup]({{ site.baseurl }}/backends/sinch-setup.html)
+  - [SIP/Asterisk Setup]({{ site.baseurl }}/backends/sip-setup.html)
+  - [Images & PDFs]({{ site.baseurl }}/backends/images-and-pdfs.html)
+- AI Integration
+  - [Overview]({{ site.baseurl }}/ai-integration/)
+  - [MCP Integration]({{ site.baseurl }}/ai-integration/mcp-integration.html)
+  - [Node MCP]({{ site.baseurl }}/ai-integration/node-mcp.html)
+- Security
+  - [Overview]({{ site.baseurl }}/security/)
+  - [HIPAA Requirements]({{ site.baseurl }}/security/hipaa-requirements.html)
+  - [OAuth Setup]({{ site.baseurl }}/security/oauth-setup.html)
+- Development
+  - [Overview]({{ site.baseurl }}/development/)
+  - [API Reference]({{ site.baseurl }}/development/api-reference.html)
+  - [Client SDKs]({{ site.baseurl }}/development/sdks.html)
+  - [Troubleshooting]({{ site.baseurl }}/development/troubleshooting.html)
+  - [Phaxio E2E Test]({{ site.baseurl }}/development/phaxio-e2e-test.html)
+  - [Node.js SDK]({{ site.baseurl }}/development/node-sdk.html)
+  - [Python SDK]({{ site.baseurl }}/development/python-sdk.html)
+  - [Changelog]({{ site.baseurl }}/development/changelog.html)
+  

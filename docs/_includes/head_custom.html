@@ -3,3 +3,19 @@
 <link rel="icon" type="image/png" sizes="16x16" href="{{ site.baseurl }}/assets/images/favicon-16x16.png">
 <link rel="manifest" href="{{ site.baseurl }}/assets/images/site.webmanifest">
 <link rel="icon" href="{{ site.baseurl }}/assets/images/favicon.ico">
+<style>
+/* Responsive, flexible header logo using clamp for height */
+.site-header .site-logo {
+  height: clamp(40px, 10vw, 96px);
+  width: auto;
+}
+.home-hero {
+  display: grid;
+  place-items: center;
+  margin: 16px 0 24px;
+}
+.home-hero img {
+  width: min(1080px, 100%);
+  height: auto;
+}
+</style>
