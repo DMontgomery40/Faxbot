@@ -82,4 +82,16 @@ exclude:
   - package.json
   - package-lock.json
   - Rakefile
+  # Exclude legacy single-file docs and built site output within docs/
+  - docs/_site/
+  - docs/API_REFERENCE.md
+  - docs/MCP_INTEGRATION.md
+  - docs/PHAXIO_SETUP.md
+  - docs/SINCH_SETUP.md
+  - docs/SIP_SETUP.md
+  - docs/SDKS.md
+  - docs/OAUTH_SETUP.md
+  - docs/IMAGES_AND_PDFS.md
+  - docs/PHAXIO_E2E_TEST.md
+  - docs/TROUBLESHOOTING.md
 
