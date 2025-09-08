@@ -6,7 +6,6 @@ description: "The first open-source, self-hostable fax API with AI integration"
 permalink: /
 ---
 
-# Faxbot
 
 <div style="text-align:center;margin:16px 0;">
   <img src="{{ site.baseurl }}/docs/assets/images/faxbot_full_logo.png" alt="Faxbot logo" style="max-width:100%;width:100%;height:auto;" />
