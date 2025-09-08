@@ -18,7 +18,6 @@ npm install
 Environment variables:
 - `FAX_API_URL` (default `http://localhost:8080`)
 - `API_KEY` (Faxbot API key)
-- `MAX_TEXT_SIZE` (default `100000` bytes; extraction truncates with warning)
 - SSE only: `OAUTH_ISSUER`, `OAUTH_AUDIENCE`, optional `OAUTH_JWKS_URL`
 
 ## Run
@@ -41,8 +40,3 @@ Environment variables:
 
 ## Notes
 - For local files, tools accept a `filePath` parameter (preferred). Base64 is still supported for compatibility.
-
-## Notes
-
-- Existing `/api` MCP servers remain as fallback. These servers are the new default target for OCR workflows.
-- The OCR path avoids including base64 file bytes in the LLM conversation.

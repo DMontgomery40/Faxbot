@@ -2,9 +2,9 @@
   "server": {
     "command": "node",
     "args": [
-      "mcp_http_server.js"
+      "src/servers/http.js"
     ],
-    "cwd": "/Users/davidmontgomery/faxbot/api",
+    "cwd": "/Users/davidmontgomery/faxbot/node_mcp",
     "env": {
       "FAX_API_URL": "http://localhost:8080",
       "API_KEY": "",

@@ -100,9 +100,7 @@
 **Why it matters:** OAuth2 is mandatory for all MCP SSE connections, including local development, creating friction for non-healthcare users who don't need HIPAA-level security.
 
 **Evidence:**  
-- api/mcp_sse_server.js:38-56 - OAuth authentication required for all endpoints
-- No fallback mode for development or non-PHI scenarios
-- docs/MCP_INTEGRATION.md doesn't distinguish between PHI and non-PHI usage
+- Node/Python SSE servers enforce OAuth2 (expected for HIPAA). Non-PHI users should prefer stdio/HTTP with API keys.
 
 **Proposed fix:** Make OAuth optional via `REQUIRE_MCP_OAUTH=false` flag for non-healthcare deployments, with clear documentation about when it's needed.  
 **Owner:**  
@@ -114,7 +112,6 @@
 
 **Evidence:**  
 - api/Dockerfile:1-26 - No USER directive, runs as root
-- api/Dockerfile.mcp:14-17 - MCP container properly uses non-root user
 - asterisk/Dockerfile:1-28 - Also runs as root
 
 **Proposed fix:** Add non-root user to production Dockerfile, implement security hardening options, and restrict container capabilities.  

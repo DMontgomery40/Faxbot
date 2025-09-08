@@ -33,7 +33,11 @@ Use these tools
 Important notes
 - File types: only PDF and TXT. Convert images (PNG/JPG) to PDF first.
 - Stdio: use `filePath` so the MCP reads the file locally and posts it to Faxbot.
+<<<<<<< HEAD
 - HTTP/SSE: provide base64 content; MCP JSON limit is ~16 MB; REST API raw file limit is 10 MB. Keep files small when possible.
+=======
+- HTTP/SSE: provide base64 content and keep files small (≤ ~100 KB). The HTTP/SSE MCP servers accept JSON payloads up to ~16 MB (base64 overhead included), while the Faxbot API enforces a 10 MB raw file size limit.
+>>>>>>> e90ae07e0f5c7e702a72e6e6ef61d566d4279f26
 - Backends: works with any Faxbot backend (`phaxio`, `sinch`, or `sip`).
 
 Examples
@@ -138,7 +142,17 @@ Python MCP:
 - HTTP: `python_mcp/http_server.py`
 - SSE+OAuth: `python_mcp/server.py`
 
+<<<<<<< HEAD
 Node MCP start commands
+=======
+
+
+</details>
+
+<details>
+<summary>Node MCP start commands</summary>
+
+>>>>>>> e90ae07e0f5c7e702a72e6e6ef61d566d4279f26
 ```
 cd node_mcp && npm install
 FAX_API_URL=http://localhost:8080 API_KEY=$API_KEY ./scripts/start-stdio.sh     # stdio
@@ -159,15 +173,45 @@ python stdio_server.py               # stdio
 # or: uvicorn server:app --host 0.0.0.0 --port 3003 (SSE+OAuth)
 ```
 
+<<<<<<< HEAD
 HTTP and SSE details
+=======
+ 
+
+</details>
+
+<details>
+<summary>HTTP and SSE details</summary>
+
+>>>>>>> e90ae07e0f5c7e702a72e6e6ef61d566d4279f26
 - HTTP uses Streamable HTTP with sessions: POST `/mcp`, GET `/mcp` (SSE), DELETE `/mcp`.
 - SSE+OAuth requires Bearer JWT with `iss`/`aud`; JWKS is fetched from the issuer.
 - Place HTTP/SSE behind auth/rate limits for production.
 
+<<<<<<< HEAD
 Voice examples
 - ❌ “Fax document.pdf to +1234567890” (missing file access/base64)
 - ✅ “Call send_fax with { to: "+1234567890", filePath: "/path/to/file.pdf" }”
 - For HTTP/SSE, read and base64‑encode the file before calling `send_fax`.
+=======
+</details>
+
+
+
+<details>
+<summary>Voice examples</summary>
+
+❌ “Fax document.pdf to +1234567890” (missing file access/base64)
+
+✅ “Call send_fax with { to: "+1234567890", filePath: "/path/to/file.pdf" }”
+
+For HTTP/SSE, read and base64‑encode the file before calling `send_fax`.
+
+</details>
+
+<details>
+<summary>File conversion hints</summary>
+>>>>>>> e90ae07e0f5c7e702a72e6e6ef61d566d4279f26
 
 File conversion hints
 - macOS Preview: File → Export As… → PDF

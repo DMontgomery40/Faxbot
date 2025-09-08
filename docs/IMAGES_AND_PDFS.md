@@ -4,7 +4,11 @@ Most real‑world faxes in 2025 are images — scans of insurance cards, lab res
 
 Quick guidance
 - If you have a PDF that is a scan/photo (image‑based): send it as‑is. Use `send_fax` with `filePath` (stdio) or upload the PDF via the REST API/SDKs.
+<<<<<<< HEAD
 - If you have a pure text document: paste text into a `.txt` file and send as TXT, or export to a PDF and send that.
+=======
+- If you have a pure text document: paste text into a `.txt` file and send as TXT, or export as a PDF and send that.
+>>>>>>> e90ae07e0f5c7e702a72e6e6ef61d566d4279f26
 - If you have images (PNG/JPG): convert to PDF first, then send.
 
 Conversions
@@ -15,7 +19,11 @@ Conversions
 
 MCP tooling: which option to use?
 - `send_fax` with `filePath` (stdio) — recommended for all PDFs (image or text). Sends the original file.
+<<<<<<< HEAD
 - HTTP/SSE MCP transports — require base64; keep files small where possible, or prefer stdio with `filePath` for local usage. Node MCP JSON limit is ~16 MB; API raw limit is 10 MB.
+=======
+- HTTP/SSE MCP transports — require base64; keep files small (≤ ~100 KB), or prefer stdio with `filePath` for local usage.
+>>>>>>> e90ae07e0f5c7e702a72e6e6ef61d566d4279f26
 
 File size and quality
 - API default limit is `MAX_FILE_SIZE_MB=10`.

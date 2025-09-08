@@ -26,7 +26,7 @@ mcp-install:
 	./install.sh
 
 mcp-setup:
-	cd api && node setup-mcp.js
+	@echo "See docs/MCP_INTEGRATION.md for stdio/HTTP/SSE config"
 
 mcp-up:
 	docker compose --profile mcp up -d --build

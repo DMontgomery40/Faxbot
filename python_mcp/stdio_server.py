@@ -129,56 +129,7 @@ async def get_fax_status(jobId: str) -> str:  # noqa: N803
     return "\n".join(parts)
 
 
-def _normalize_and_truncate(text: str) -> str:
-    max_bytes = int(os.getenv("MAX_TEXT_SIZE", "100000"))
-    b = text.encode("utf-8")
-    if len(b) > max_bytes:
-        return b[:max_bytes].decode("utf-8", errors="ignore")
-    return text
-
-
-@mcp.tool()
-async def faxbot_pdf(pdf_path: str, to: str, header_text: str = "") -> str:
-    """Extract TEXT from a PDF (with optional OCR) and send as TXT fax.
-
-    Use this for text‑based PDFs only. If your PDF is a scanned/image document
-    (insurance cards, lab results, photos), do not use this tool — instead
-    call send_fax with filePath to send the image PDF itself.
-
-    Args:
-        pdf_path: Absolute or relative path to a local PDF file
-        to: Destination fax number
-        header_text: Optional header text prepended to the content
-    Returns:
-        Confirmation string including job ID.
-    """
-    from .text_extract import extract_text_from_pdf
-
-    if not pdf_path:
-        raise ValueError("pdf_path is required")
-    abs_path = str(pathlib.Path(pdf_path).expanduser().resolve())
-    if not os.path.exists(abs_path):
-        raise ValueError(f"File not found: {abs_path}")
-    if not abs_path.lower().endswith(".pdf"):
-        raise ValueError("Only PDF input is supported")
-
-    text, used_ocr = extract_text_from_pdf(abs_path)
-    if not text or text.strip() == "":
-        raise ValueError(
-            "No extractable text found. This PDF is likely scanned/image‑only. Use send_fax with filePath to send the original image PDF."
-        )
-    if header_text and header_text.strip():
-        text = f"{header_text.strip()}\n\n{text}"
-    text = _normalize_and_truncate(text)
-
-    # Encode as base64 TXT and send via existing API function
-    file_b64 = base64.b64encode(text.encode("utf-8")).decode("ascii")
-    job = await _api_send(to, "extracted.txt", file_b64, "txt")
-    method = "OCR" if used_ocr else "text extraction"
-    return (
-        f"Faxbot workflow initiated via {method}.\n\nPDF: {abs_path}\nJob ID: {job['id']}\nRecipient: {to}\n"
-        f"Status: {job['status']}\n(Truncation may apply; adjust MAX_TEXT_SIZE if needed.)"
-    )
+# OCR/text-extraction workflow removed; only send_fax and get_fax_status are exposed.
 
 
 def main() -> None:
