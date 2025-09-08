@@ -6,6 +6,10 @@ has_children: true
 permalink: /security/
 ---
 
+<div class="home-hero">
+  <img src="{{ site.baseurl }}/docs/assets/images/faxbot_full_logo.png" alt="Faxbot logo" />
+</div>
+
 # Security & Compliance
 
 Faxbot is designed to handle sensitive healthcare data and can be configured for HIPAA compliance.

@@ -6,6 +6,10 @@ has_children: true
 permalink: /development/
 ---
 
+<div class="home-hero">
+  <img src="{{ site.baseurl }}/docs/assets/images/faxbot_full_logo.png" alt="Faxbot logo" />
+</div>
+
 # Developer Guides
 
 Resources for building against the Faxbot API and SDKs. For contributing to the project itself, see the top‑level [Contributing](/Faxbot/contributing/) page.

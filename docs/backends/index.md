@@ -6,6 +6,10 @@ has_children: true
 permalink: /backends/
 ---
 
+<div class="home-hero">
+  <img src="{{ site.baseurl }}/docs/assets/images/faxbot_full_logo.png" alt="Faxbot logo" />
+</div>
+
 # Fax Backends
 
 Faxbot supports multiple backends for sending faxes. Choose the one that best fits your needs:
