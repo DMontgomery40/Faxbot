@@ -6,6 +6,7 @@ url: "https://dmontgomery40.github.io"
 # Theme
 remote_theme: just-the-docs/just-the-docs
 color_scheme: dark
+logo: /Faxbot/docs/assets/images/faxbot_full_logo.png
 
 # Search
 search_enabled: true
