@@ -48,6 +48,7 @@ make up-cloud   # or: docker compose up -d --build api
 ```
 - API will listen on `http://localhost:8080` by default.
 
+{: .highlight }
 How this works: you talk to the Faxbot API (your local/server endpoint). Faxbot then calls the official Phaxio API on your behalf and gives Phaxio a public URL to fetch your PDF. You do not call Phaxio endpoints directly from your client. Ensure `PUBLIC_API_URL` is reachable from Phaxio and that your callback URL (`PHAXIO_CALLBACK_URL` or `PHAXIO_STATUS_CALLBACK_URL`) points back to your server.
 
 4) Test sending a fax

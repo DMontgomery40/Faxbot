@@ -12,6 +12,7 @@ permalink: /
   <img src="{{ site.baseurl }}/docs/assets/images/faxbot_full_logo.png" alt="Faxbot logo" style="max-width:100%;width:100%;height:auto;" />
 </div>
 
+{: .highlight }
 The first and only open-source, self-hostable fax API. Send faxes with a single function call.
 
 Yes, this repo might look overwhelming at first glance—that's only because Faxbot supports multiple backends (cloud and self-hosted), several MCP transport options for AI integration, and HIPAA-compliant security configurations. Most users will only need one path through this complexity.

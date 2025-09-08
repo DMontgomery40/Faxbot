@@ -130,6 +130,7 @@ Pick one of these two (beginner-friendly):
 - HIPAA/BAA: contact Flowroute to discuss BAA before handling PHI
 - Link: https://flowroute.com/pricing-details/
 
+{: .highlight }
 Notes:
 - Always ask your provider to confirm T.38 support and sign a BAA if you'll transmit PHI.
 - Typical US costs (ballpark): local DID ~$0.5–$2/mo; outbound ~$0.005–$0.02/min. Verify current pricing pages.

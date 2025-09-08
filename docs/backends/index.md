@@ -26,4 +26,5 @@ Faxbot supports multiple backends for sending faxes. Choose the one that best fi
 - **High volume**: Consider [SIP/Asterisk Setup](sip-setup.html) for cost savings
 - **Existing Sinch users**: Use [Sinch Setup](sinch-setup.html) if you already have an account
 
+{: .highlight }
 All backends support the same API endpoints and features. You can switch between them by changing your configuration.

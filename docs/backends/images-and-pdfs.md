@@ -33,6 +33,8 @@ HIPAA considerations
 - Healthcare providers (Covered Entities/Business Associates): use HIPAA‑aligned transports and controls.
   - Prefer OAuth‑protected SSE MCP for assistant integrations or use the REST API/SDKs directly.
   - Use HTTPS for `PUBLIC_API_URL` (Phaxio) and enable signature verification.
+
+  {: .highlight }
 - Patients (sending their own documents): HIPAA obligations differ; using local stdio MCP is generally acceptable because you are not a covered entity and Faxbot does not receive faxes. Providers still must protect inbound faxes on their side.
 
 Troubleshooting
