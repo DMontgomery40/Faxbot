@@ -41,9 +41,9 @@ If you're unsure which MCP transport to use:
 
 | Transport | File | Port | Auth | Use Case |
 |-----------|------|------|------|----------|
-| **stdio** | node_mcp/src/servers/stdio.js (recommended) or api/mcp_server.js (legacy) | N/A | API key | Desktop AI |
-| **HTTP** | api/mcp_http_server.js or node_mcp/src/servers/http.js | 3001 | API key | Web apps, cloud AI |
-| **SSE+OAuth** | api/mcp_sse_server.js or node_mcp/src/servers/sse.js | 3002 | JWT/Bearer | Enterprise, HIPAA |
+| **stdio** | node_mcp/src/servers/stdio.js (Node) or python_mcp/stdio_server.py (Python) | N/A | API key | Desktop AI |
+| **HTTP** | node_mcp/src/servers/http.js | 3001 | API key | Web apps, cloud AI |
+| **SSE+OAuth** | node_mcp/src/servers/sse.js (Node) or python_mcp/server.py (Python) | 3002/3003 | JWT/Bearer | Enterprise, HIPAA |
 
 ### Common MCP Problems
 
@@ -53,8 +53,7 @@ If you're unsure which MCP transport to use:
 
 #### Connection & Authentication
 - **MCP server not found**: Ensure you’re starting from the correct path:
-  - Legacy servers: `api/scripts/start-mcp*.sh`
-  - New servers (recommended): `node_mcp/scripts/start-*.sh`
+  - Node servers: `node_mcp/scripts/start-*.sh`
   - Python servers: `python_mcp/` (`stdio_server.py`, `http_server.py`, `server.py`)
 
 ### Environment
