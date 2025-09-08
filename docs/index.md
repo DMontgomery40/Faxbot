@@ -9,8 +9,7 @@ permalink: /
 # Faxbot
 
 <div style="text-align:center;margin:16px 0;">
-  <img src="{{ site.baseurl }}/docs/assets/images/faxbot_full_logo.png" alt="Faxbot logo" style="max-width:280px;width:60%;height:auto;" />
-  
+  <img src="{{ site.baseurl }}/docs/assets/images/faxbot_full_logo.png" alt="Faxbot logo" style="max-width:100%;width:100%;height:auto;" />
 </div>
 
 The first and only open-source, self-hostable fax API. Send faxes with a single function call.
