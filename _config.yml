@@ -91,4 +91,9 @@ exclude:
   - docs/IMAGES_AND_PDFS.md
   - docs/TROUBLESHOOTING.md
   - docs/HIPAA_REQUIREMENTS.md
+  # Exclude root Markdown that should not be in the nav
+  - AGENTS.md
+  - HIPAA_REQUIREMENTS.md
+  - OCR_WORKAROUND_IMPLEMENTATION.md
+  - TODO.md
 
