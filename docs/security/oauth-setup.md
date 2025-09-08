@@ -3,6 +3,7 @@ layout: default
 title: OAuth Setup
 parent: Security
 nav_order: 2
+permalink: /security/oauth-setup.html
 ---
 
 # OAuth2 / OIDC Setup for Faxbot MCP (SSE)

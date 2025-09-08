@@ -3,6 +3,7 @@ layout: default
 title: Client SDKs
 parent: Development
 nav_order: 2
+permalink: /development/sdks.html
 ---
 
 # Client SDKs

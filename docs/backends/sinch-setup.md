@@ -3,9 +3,10 @@ layout: default
 title: Sinch Setup
 parent: Backends
 nav_order: 2
+permalink: /backends/sinch-setup.html
 ---
 
-# SINCH_SETUP.md
+# Sinch Setup
 
 Cloud backend using Sinch Fax API v3 ("Phaxio by Sinch"). This backend uploads your PDF directly to Sinch rather than serving a tokenized URL.
 

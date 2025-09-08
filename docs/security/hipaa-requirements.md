@@ -3,6 +3,7 @@ layout: default
 title: HIPAA Requirements
 parent: Security
 nav_order: 1
+permalink: /security/hipaa-requirements.html
 ---
 
 # HIPAA_REQUIREMENTS.md

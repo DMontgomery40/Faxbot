@@ -5,7 +5,7 @@ parent: Development
 nav_order: 3
 ---
 
-# TROUBLESHOOTING.md
+# Troubleshooting
 
 ## General
 - 401 Invalid API key: set `API_KEY` and pass `X-API-Key` header.

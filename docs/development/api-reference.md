@@ -3,9 +3,10 @@ layout: default
 title: API Reference
 parent: Development
 nav_order: 1
+permalink: /development/api-reference.html
 ---
 
-# API_REFERENCE.md
+# API Reference
 
 ## Base URL
 - Default: `http://localhost:8080`

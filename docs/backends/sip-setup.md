@@ -3,9 +3,10 @@ layout: default
 title: SIP/Asterisk Setup
 parent: Backends
 nav_order: 3
+permalink: /backends/sip-setup.html
 ---
 
-# SIP_SETUP.md
+# SIP/Asterisk Setup
 
 ## Overview
 - Self-hosted backend using Asterisk and a SIP trunk with T.38 fax.

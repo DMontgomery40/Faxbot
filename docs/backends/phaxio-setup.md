@@ -3,9 +3,10 @@ layout: default
 title: Phaxio Setup
 parent: Backends
 nav_order: 1
+permalink: /backends/phaxio-setup.html
 ---
 
-# PHAXIO_SETUP.md
+# Phaxio Setup
 
 ## Overview
 - Cloud backend for sending faxes via Phaxio (also branded "Phaxio by Sinch").

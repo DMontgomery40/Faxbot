@@ -3,9 +3,10 @@ layout: default
 title: MCP Integration
 parent: AI Integration
 nav_order: 1
+permalink: /ai-integration/mcp-integration.html
 ---
 
-# MCP_INTEGRATION.md
+# MCP Integration
 
 Demo
 <video src="../assets/images/faxbot_demo.mp4" width="100%" autoplay loop muted playsinline controls>
