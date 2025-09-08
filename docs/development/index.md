@@ -6,9 +6,9 @@ has_children: true
 permalink: /development/
 ---
 
-# Development Resources
+# Developer Guides
 
-This section contains technical resources for developers integrating with Faxbot or contributing to the project.
+Resources for building against the Faxbot API and SDKs. For contributing to the project itself, see the top‑level [Contributing](/Faxbot/contributing/) page.
 
 ## API Reference
 
@@ -22,9 +22,15 @@ Pre-built client libraries for Node.js and Python that handle authentication, fi
 
 Guides for testing your integration and resolving common issues.
 
-## Contributing
+## Local Docs Preview
 
-Information for developers who want to contribute to the Faxbot project.
+Run the docs site locally:
+
+```
+cd docs
+bundle install
+bundle exec jekyll serve
+```
 
 ## Advanced Features
 

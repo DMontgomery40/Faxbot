@@ -9,6 +9,9 @@ nav_order: 2
 
 This guide shows how to configure JWT validation for the SSE transport. It covers the minimal concepts, the three env vars Faxbot needs, and quick links for popular identity providers.
 
+<details markdown="1">
+<summary>Environment variables</summary>
+
 What the MCP SSE server validates
 - Issuer (`iss`): matches `OAUTH_ISSUER`
 - Audience (`aud`): matches `OAUTH_AUDIENCE` (e.g., `faxbot-mcp`)
@@ -21,6 +24,7 @@ OAUTH_ISSUER     # Your OIDC issuer URL (no trailing slash)
 OAUTH_AUDIENCE   # The audience/identifier of the API you expose to clients (string)
 OAUTH_JWKS_URL   # JWKS endpoint (optional if your issuer uses the default well-known path)
 ```
+</details>
 
 General steps (any provider)
 1) Create or identify an API/resource in your IdP.

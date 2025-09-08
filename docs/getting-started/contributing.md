@@ -1,8 +1,8 @@
 ---
 layout: default
 title: Contributing
-parent: Getting Started
-nav_order: 2
+nav_order: 99
+permalink: /contributing/
 ---
 
 # Contributing to Faxbot

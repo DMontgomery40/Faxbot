@@ -1,6 +1,19 @@
 # Faxbot
 
-Simple fax-sending API with AI integration. Choose your backend:
+The first and only open-source, self-hostable fax API. Send faxes with a single function call.
+
+Yes, this repo might look overwhelming at first glance—that's only because Faxbot supports multiple backends (cloud and self-hosted), several MCP transport options for AI integration, and HIPAA-compliant security configurations. Most users will only need one path through this complexity.
+
+**Core function:** `send_fax(phone_number, pdf_file)` → Done.
+
+To our knowledge, no other open-source project combines:
+- Modern REST API for fax transmission
+- Multiple backend options (Phaxio cloud, Sinch cloud, self-hosted SIP/Asterisk)
+- AI assistant integration via MCP (Model Context Protocol)
+- HIPAA compliance features for healthcare PHI
+- Developer SDKs for Node.js and Python
+
+Questions? Issues? **Please don't hesitate to reach out.** See [CONTRIBUTING.md](CONTRIBUTING.md) for the best way to get help.
 
 ## Quick Start Options
 
@@ -51,8 +64,7 @@ docker compose --profile mcp up -d --build faxbot-mcp-sse
 ## AI Assistant Integration
 [→ MCP Integration Guide](docs/MCP_INTEGRATION.md)
 
-- Node MCP servers live in `node_mcp/` (stdio, HTTP, SSE+OAuth).
-- Legacy servers remain under `api/` and Python `python_mcp/`.
+- Node MCP servers live in `node_mcp/` (stdio, HTTP, SSE+OAuth). Python MCP servers live in `python_mcp/`.
 - OAuth2‑protected SSE MCP servers are available in both Node and Python.
 
 Important file-type note

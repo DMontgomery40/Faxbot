@@ -136,7 +136,7 @@ Notes:
 - If you keep only one server entry or name one `default-server`, Inspector selects it automatically.
 
 Details
-<details>
+<details markdown="1">
 <summary>Transports × servers (language matrix)</summary>
 
 2 languages × 3 transports = 6 options.
@@ -155,7 +155,7 @@ Legacy Node servers also exist under `api/` (`mcp_server.js`, `mcp_http_server.j
 
 </details>
 
-<details>
+<details markdown="1">
 <summary>Node MCP start commands</summary>
 
 ```
@@ -168,7 +168,7 @@ OAUTH_ISSUER=... OAUTH_AUDIENCE=... FAX_API_URL=http://localhost:8080 API_KEY=$A
 
 </details>
 
-<details>
+<details markdown="1">
 <summary>Python MCP start commands</summary>
 
 ```
@@ -186,7 +186,7 @@ OCR (optional): set `FAXBOT_OCR_ENABLE=true` and install Tesseract; see `python_
 
 </details>
 
-<details>
+<details markdown="1">
 <summary>HTTP and SSE details</summary>
 
 - HTTP uses Streamable HTTP with sessions: POST `/mcp`, GET `/mcp` (SSE), DELETE `/mcp`.
@@ -195,14 +195,14 @@ OCR (optional): set `FAXBOT_OCR_ENABLE=true` and install Tesseract; see `python_
 
 </details>
 
-<details>
+<details markdown="1">
 <summary>Legacy /api servers</summary>
 
 Scripts and Make targets exist under `api/`. These servers are base64‑only for `send_fax`.
 
 </details>
 
-<details>
+<details markdown="1">
 <summary>Voice examples</summary>
 
 ❌ "Fax document.pdf to +1234567890" (missing file access/base64)
