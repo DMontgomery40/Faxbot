@@ -1,3 +1,11 @@
+---
+layout: default
+title: Sinch Setup (Cloud Fax v3)
+parent: Backends
+nav_order: 2
+permalink: /backends/sinch-setup.html
+---
+
 # SINCH_SETUP.md
 
 Cloud backend using Sinch Fax API v3 ("Phaxio by Sinch"). This backend uploads your PDF directly to Sinch rather than serving a tokenized URL.
@@ -45,8 +53,4 @@ Troubleshooting
 - 413: file too large → raise `MAX_FILE_SIZE_MB`.
 - 415: unsupported file type → only PDF/TXT.
 - Sinch API errors: verify Project ID, API key/secret, and region.
----
-layout: default
-title: SINCH_SETUP.md
-nav_order: 70
----
+

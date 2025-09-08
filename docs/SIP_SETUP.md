@@ -1,3 +1,11 @@
+---
+layout: default
+title: SIP/Asterisk Setup (Self-hosted)
+parent: Backends
+nav_order: 3
+permalink: /backends/sip-setup.html
+---
+
 # SIP_SETUP.md
 
 ## Overview
@@ -5,6 +13,10 @@
 - Send-only. You don’t need to accept inbound faxes to send.
 - Full control, no per-fax cloud charges (you still pay your trunk provider).
 - Requires some networking setup; this guide assumes minimal prior knowledge.
+
+## What is Asterisk AMI?
+- AMI (Asterisk Manager Interface) is a TCP interface on port 5038 that lets applications control Asterisk (originate calls, subscribe to events). It has no web UI; you connect via CLI/tools. Faxbot uses AMI to originate fax calls (outbound) and to receive fax results (events).
+- Security: AMI must stay on private networks only. Never expose 5038 to the internet.
 
 ## What Is SIP? (Crash Course)
 - SIP (Session Initiation Protocol): signaling protocol to set up calls over the internet.
@@ -101,10 +113,13 @@ docker compose up -d --build
 ## Test Send
 ```
 curl -X POST http://localhost:8080/fax \
-  -H "X-API-Key: your_secure_api_key" \
+  -H "X-API-Key: fbk_live_<keyId>_<secret>" \
   -F to=+15551234567 \
   -F file=@./example.pdf
 ```
+
+Auth tip
+- For production, set `REQUIRE_API_KEY=true` and create per‑user/service keys via `POST /admin/api-keys` using a temporary bootstrap env `API_KEY`. Clients send `X-API-Key: fbk_live_<keyId>_<secret>`.
 
 ## Choosing a SIP Provider (T.38)
 Pick one of these two (beginner-friendly):
@@ -125,6 +140,54 @@ Pick one of these two (beginner-friendly):
 Notes:
 - Always ask your provider to confirm T.38 support and sign a BAA if you’ll transmit PHI.
 - Typical US costs (ballpark): local DID ~$0.5–$2/mo; outbound ~$0.005–$0.02/min. Verify current pricing pages.
+
+## Inbound Receiving Quickstart (WIP)
+
+Enable inbound in your `.env`:
+```
+INBOUND_ENABLED=true
+ASTERISK_INBOUND_SECRET=<random>
+```
+
+Add a minimal inbound dialplan (example):
+```
+[fax-inbound]
+exten => _X.,1,NoOp(Fax inbound DID ${EXTEN} from ${CALLERID(num)})
+ same => n,Set(FAXFILE=/faxdata/${UNIQUEID}.tiff)
+ same => n,ReceiveFAX(${FAXFILE})
+ same => n,System(curl -s -X POST http://api:8080/_internal/asterisk/inbound \
+   -H "X-Internal-Secret: ${ASTERISK_INBOUND_SECRET}" \
+   -H "Content-Type: application/json" \
+   -d '{"tiff_path":"${FAXFILE}","to_number":"${EXTEN}","from_number":"${CALLERID(num)}","faxstatus":"${FAXSTATUS}","faxpages":"${FAXPAGES}","uniqueid":"${UNIQUEID}"}')
+ same => n,Hangup()
+```
+
+Notes:
+- Use `/faxdata` for `FAXFILE` so the API container (and host) can access the file (shared volume).
+- `http://api:8080` resolves to the API container name in Docker Compose.
+
+Verify inbound with helper scripts:
+- Internal smoke (no SIP required):
+  - `API_KEY=bootstrap_admin_only ASTERISK_INBOUND_SECRET=sekret scripts/inbound-internal-smoke.sh`
+- E2E watch (send a fax to your DID and wait for detection):
+  - `API_KEY=bootstrap_admin_only scripts/e2e-inbound-sip.sh`
+
+List/get/download inbound via API:
+```
+# Create key with inbound scopes
+curl -s -X POST http://localhost:8080/admin/api-keys \
+  -H "X-API-Key: $API_KEY" -H 'Content-Type: application/json' \
+  -d '{"name":"inbound","scopes":["inbound:list","inbound:read"]}'
+
+curl -H "X-API-Key: $TOKEN" http://localhost:8080/inbound
+curl -H "X-API-Key: $TOKEN" http://localhost:8080/inbound/<id>
+curl -H "X-API-Key: $TOKEN" -OJ http://localhost:8080/inbound/<id>/pdf
+```
+
+## Understanding AMI (Deeper)
+- Configuration lives in `manager.conf` (our container templates render from .env).
+- Faxbot connects to AMI to originate calls and subscribe to `UserEvent(FaxResult)` for outbound; inbound path uses `ReceiveFAX` + internal HTTP post for simplicity.
+- AMI is not a GUI. Use `asterisk -rvvvvv` and CLI commands to inspect state.
 
 ## TLS Signaling & VPN Examples (Advanced)
 
@@ -176,8 +239,3 @@ Restart Asterisk with `external_*` addresses set to the tunnel’s public IP if 
 - T.38: fax-over-IP protocol (preferred over G.711 for reliable faxing).
 - UDPTL: transport used by T.38; requires UDP port range open.
 - AMI: Asterisk Manager Interface; API uses it to originate calls and receive events.
----
-layout: default
-title: SIP_SETUP.md
-nav_order: 80
----

@@ -1,3 +1,11 @@
+---
+layout: default
+title: Phaxio Setup (Cloud)
+parent: Backends
+nav_order: 1
+permalink: /backends/phaxio-setup.html
+---
+
 # PHAXIO_SETUP.md
 
 ## Overview
@@ -27,7 +35,8 @@ PHAXIO_API_SECRET=your_secret
 PUBLIC_API_URL=https://your-domain.com
 PHAXIO_CALLBACK_URL=https://your-domain.com/phaxio-callback   # Preferred name
 # PHAXIO_STATUS_CALLBACK_URL=https://your-domain.com/phaxio-callback  # Alias also supported
-API_KEY=your_secure_api_key   # Optional but recommended; used as X-API-Key
+API_KEY=bootstrap_admin_only   # Optional bootstrap admin; used as X-API-Key for admin endpoints
+REQUIRE_API_KEY=true           # Enforce API key auth in production
 ```
 - Note: PUBLIC_API_URL must be reachable by Phaxio to fetch PDFs.
  - For production, set `ENFORCE_PUBLIC_HTTPS=true` to require HTTPS (recommended). For local testing, leave it false.
@@ -42,22 +51,32 @@ make up-cloud   # or: docker compose up -d --build api
 
 How this works: you talk to the Faxbot API (your local/server endpoint). Faxbot then calls the official Phaxio API on your behalf and gives Phaxio a public URL to fetch your PDF. You do not call Phaxio endpoints directly from your client. Ensure `PUBLIC_API_URL` is reachable from Phaxio and that your callback URL (`PHAXIO_CALLBACK_URL` or `PHAXIO_STATUS_CALLBACK_URL`) points back to your server.
 
-4) Test sending a fax
+4) Create a per-user API key (recommended)
+- Use the admin endpoint to mint a DB‑backed key (returns a token once):
+```
+curl -s -X POST http://localhost:8080/admin/api-keys \
+  -H "X-API-Key: $API_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"local dev","owner":"me","scopes":["fax:send","fax:read"]}'
+```
+- Save the returned token `fbk_live_<keyId>_<secret>` and use it as `X-API-Key` below.
+
+5) Test sending a fax
 - Convert TXT→PDF→TIFF is handled automatically.
 - Example (replace number):
 ```
 curl -X POST http://localhost:8080/fax \
-  -H "X-API-Key: your_secure_api_key" \
+-H "X-API-Key: fbk_live_<keyId>_<secret>" \
   -F to=+15551234567 \
   -F file=@./example.pdf
 ```
 - Response includes `id`, `status`, `backend`, timestamps.
 - Check status:
 ```
-curl -H "X-API-Key: your_secure_api_key" http://localhost:8080/fax/<job_id>
+curl -H "X-API-Key: fbk_live_<keyId>_<secret>" http://localhost:8080/fax/<job_id>
 ```
 
-5) Configure callback (optional but recommended)
+6) Configure callback (optional but recommended)
 - Phaxio will POST status to your callback URL (`PHAXIO_CALLBACK_URL` or `PHAXIO_STATUS_CALLBACK_URL`).
 - This API exposes `POST /phaxio-callback` and will update job status when the request includes `?job_id=<id>`.
 - Ensure your PUBLIC_API_URL and callback URL are reachable from Phaxio.
@@ -86,8 +105,3 @@ curl -H "X-API-Key: your_secure_api_key" http://localhost:8080/fax/<job_id>
 
 ## Related: Sinch Fax API v3
 Phaxio is part of Sinch. If your console shows Sinch and you prefer the v3 API’s direct upload model (and features like their own webhooks), use the `sinch` backend. See SINCH_SETUP.md. Your existing Phaxio credentials typically work as Sinch API credentials; you will also need the Sinch Project ID.
----
-layout: default
-title: PHAXIO_SETUP.md
-nav_order: 60
----

@@ -1,12 +1,31 @@
-# API_REFERENCE.md
+---
+layout: default
+title: API Reference
+nav_order: 10
+permalink: /api-reference.html
+---
+
+# API Reference
 
 ## Base URL
 - Default: `http://localhost:8080`
 - Health: `GET /health` → `{ "status": "ok" }`
 
 ## Auth
-- Header `X-API-Key: <key>` if `API_KEY` is set in environment.
-- If `API_KEY` is blank, auth is disabled (not recommended).
+- Header `X-API-Key: <token>` where `<token>` is either:
+  - A DB‑backed token `fbk_live_<keyId>_<secret>` created via admin endpoints (recommended), or
+  - The env `API_KEY` value (legacy/bootstrap).
+- Set `REQUIRE_API_KEY=true` to enforce authentication even if env `API_KEY` is blank (recommended for HIPAA/production).
+
+### Scopes
+- Endpoints require specific scopes when authentication is enforced:
+  - `POST /fax` → `fax:send`
+  - `GET /fax/{id}` → `fax:read`
+- Admin endpoints require either the bootstrap env key (`API_KEY`) or a DB key with `keys:manage`.
+- If `REQUIRE_API_KEY=false` and no `API_KEY` is set, unauthenticated requests are allowed in development.
+
+### Rate limiting (optional)
+- Config: `MAX_REQUESTS_PER_MINUTE` (default 0 = disabled). When enabled, each API key is limited per-minute across requests. Exceeding the limit returns `429 Too Many Requests` with a `Retry-After` header.
 
 ## Endpoints
 
@@ -16,7 +35,7 @@
   - `file`: PDF or TXT
 - Responses
   - 202 Accepted: `{ id, to, status, error?, pages?, backend, provider_sid?, created_at, updated_at }`
-  - 400 bad number; 413 file too large; 415 unsupported type; 401 invalid API key
+  - 400 bad number; 413 file too large; 415 unsupported type; 401 invalid API key; 403 missing `fax:send` scope
 - Example
 ```
 curl -X POST http://localhost:8080/fax \
@@ -27,7 +46,7 @@ curl -X POST http://localhost:8080/fax \
 
 2) GET `/fax/{id}`
 - Returns job status as above.
-- 404 if not found; 401 if invalid API key.
+- 404 if not found; 401 if invalid API key; 403 if missing `fax:read` scope.
 ```
 curl -H "X-API-Key: $API_KEY" http://localhost:8080/fax/$JOB_ID
 ```
@@ -42,6 +61,29 @@ curl -H "X-API-Key: $API_KEY" http://localhost:8080/fax/$JOB_ID
 - Correlation via query param `?job_id=...`.
 - Returns `{ status: "ok" }`.
 - Signature verification: if `PHAXIO_VERIFY_SIGNATURE=true` (default), the server verifies `X-Phaxio-Signature` (HMAC-SHA256 of the raw body using `PHAXIO_API_SECRET`). Requests without a valid signature are rejected (401).
+
+5) Admin — API keys
+- All admin endpoints require either the bootstrap env key (`API_KEY`) or a DB key with scope `keys:manage`.
+
+  a) `POST /admin/api-keys`
+  - Create a new key. Response includes the plaintext token once.
+  - Body JSON: `{ name?: string, owner?: string, scopes?: string[], expires_at?: ISO8601, note?: string }`
+  - Response: `{ key_id, token, name?, owner?, scopes[], expires_at? }`
+
+  b) `GET /admin/api-keys`
+  - List key metadata (no secrets). Response: `[{ key_id, name?, owner?, scopes[], created_at, last_used_at?, expires_at?, revoked_at?, note? }]`
+
+  c) `DELETE /admin/api-keys/{keyId}`
+  - Revoke a key (soft delete via `revoked_at`).
+
+  d) `POST /admin/api-keys/{keyId}/rotate`
+  - Rotate the secret for an existing key. Response returns the new plaintext token once.
+
+6) Inbound (WIP scaffolding; enable with `INBOUND_ENABLED=true`)
+- `GET /inbound` (requires scope `inbound:list`) — list recent inbound faxes.
+- `GET /inbound/{id}` (requires scope `inbound:read`) — get metadata.
+- `GET /inbound/{id}/pdf` — download inbound PDF via either `?token=...` (short‑TTL) or API key with `inbound:read`.
+- Internal (SIP/Asterisk): `POST /_internal/asterisk/inbound` with header `X-Internal-Secret: <secret>` and body `{ tiff_path, to_number, from_number?, faxstatus?, faxpages?, uniqueid }`.
 
 ## Models
 - FaxJobOut
@@ -62,6 +104,7 @@ curl -H "X-API-Key: $API_KEY" http://localhost:8080/fax/$JOB_ID
 - For the `phaxio` backend, TIFF conversion is skipped; page count is finalized via the provider callback (`/phaxio-callback`, HMAC verification supported).
 - For the `sinch` backend, the API uploads your PDF directly to Sinch. Webhook support is under evaluation; status reflects the provider’s immediate response and may be updated by polling in future versions.
 - Tokenized PDF access has a TTL (`PDF_TOKEN_TTL_MINUTES`, default 60). The `/fax/{id}/pdf?token=...` link expires after TTL.
+- API key tokens are never logged; audits record only the `key_id`.
 - Optional retention: enable automatic cleanup of artifacts by setting `ARTIFACT_TTL_DAYS>0` (default disabled). Cleanup runs every `CLEANUP_INTERVAL_MINUTES` (default 1440).
 
 ## Phone Numbers
@@ -77,8 +120,3 @@ curl -H "X-API-Key: $API_KEY" http://localhost:8080/fax/$JOB_ID
   - `AUDIT_LOG_SYSLOG=true` and `AUDIT_LOG_SYSLOG_ADDRESS=/dev/log` (optional)
 - Events: `job_created`, `job_dispatch`, `job_updated`, `job_failed`, `pdf_served`.
 - Logs contain job IDs and metadata only (no PHI).
----
-layout: default
-title: API Reference
-nav_order: 10
----

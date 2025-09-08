@@ -1,3 +1,10 @@
+---
+layout: default
+title: SDKs (Node & Python)
+nav_order: 20
+permalink: /SDKS.html
+---
+
 # Client SDKs
 
 Thin, official clients for the Faxbot API. They call the unified Faxbot REST API (no direct Phaxio/Asterisk calls). Current version alignment: Python 1.0.2, Node 1.0.2.
@@ -22,7 +29,7 @@ print("Status:", status["status"])
 ```
 - Notes:
   - Only `.pdf` and `.txt` files are accepted.
-  - If `API_KEY` is enabled on the server, the client sends it via `X-API-Key`.
+  - Auth: Prefer DB‑backed tokens created via `POST /admin/api-keys` (sent as `X-API-Key`). The legacy env `API_KEY` also works for bootstrap.
   - Optional: `check_health()` calls `/health`.
 
 ## Node.js
@@ -44,7 +51,7 @@ const client = new FaxbotClient('http://localhost:8080', 'YOUR_API_KEY');
 ```
 - Notes:
   - Only `.pdf` and `.txt` files are accepted.
-  - If `API_KEY` is enabled, `X-API-Key` header is added automatically.
+  - Auth: Prefer DB‑backed tokens created via `POST /admin/api-keys` (sent as `X-API-Key`). The legacy env `API_KEY` also works for bootstrap.
   - Optional: `checkHealth()` calls `/health`.
 
 ## Errors
@@ -62,8 +69,3 @@ const client = new FaxbotClient('http://localhost:8080', 'YOUR_API_KEY');
 - The SDKs do not include MCP (Model Context Protocol) logic. They are simple HTTP clients for developers.
 - MCP integration is a separate component (stdio/HTTP servers) for AI assistants.
 - See the guide: docs/MCP_INTEGRATION.md for setup, transports, and examples.
----
-layout: default
-title: Client SDKs
-nav_order: 15
----

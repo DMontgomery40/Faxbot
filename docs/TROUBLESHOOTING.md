@@ -1,7 +1,16 @@
+---
+layout: default
+title: Troubleshooting
+nav_order: 90
+permalink: /TROUBLESHOOTING.html
+---
+
 # TROUBLESHOOTING.md
 
 ## General
-- 401 Invalid API key: set `API_KEY` and pass `X-API-Key` header.
+- 401 Invalid API key: ensure you are sending a valid `X-API-Key`.
+  - Recommended: create a DB‑backed token via `POST /admin/api-keys` (use an env bootstrap `API_KEY` to authenticate the admin call), then use `fbk_live_<keyId>_<secret>` in requests.
+  - For production, set `REQUIRE_API_KEY=true` so unauthenticated requests are rejected.
 - 413 File too large: adjust `MAX_FILE_SIZE_MB`.
 - 415 Unsupported file type: only PDF and TXT allowed.
 - Prefer HTTPS for `PUBLIC_API_URL` in production. The cloud backend fetches PDFs from your server; use TLS.
