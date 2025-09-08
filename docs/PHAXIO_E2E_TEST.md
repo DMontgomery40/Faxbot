@@ -1,3 +1,11 @@
+---
+layout: default
+title: Phaxio End-to-End Test
+parent: Scripts and Tests
+nav_order: 2
+permalink: /scripts-and-tests/phaxio-e2e-test.html
+---
+
 # Phaxio End-to-End Test (No Physical Fax Required)
 
 Goal: Send a real fax through Phaxio and receive it on a Phaxio number — fully end-to-end, no hardware.
@@ -69,8 +77,3 @@ The command prints a JSON response with `id`. Use it to poll status:
 - Production: Use HTTPS for `PUBLIC_API_URL`. Phaxio will fetch your PDF over TLS.
 - Security: `API_KEY` protects your `/fax` endpoint; scripts forward it as `X-API-Key`.
 - Retry: Phaxio sends webhooks; transient network issues are retried internally.
----
-layout: default
-title: Phaxio End-to-End Test (No Physical Fax Required)
-nav_order: 50
----
