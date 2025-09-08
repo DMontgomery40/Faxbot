@@ -45,4 +45,8 @@ Troubleshooting
 - 413: file too large → raise `MAX_FILE_SIZE_MB`.
 - 415: unsupported file type → only PDF/TXT.
 - Sinch API errors: verify Project ID, API key/secret, and region.
-
+---
+layout: default
+title: SINCH_SETUP.md
+nav_order: 70
+---

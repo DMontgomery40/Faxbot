@@ -69,3 +69,8 @@ The command prints a JSON response with `id`. Use it to poll status:
 - Production: Use HTTPS for `PUBLIC_API_URL`. Phaxio will fetch your PDF over TLS.
 - Security: `API_KEY` protects your `/fax` endpoint; scripts forward it as `X-API-Key`.
 - Retry: Phaxio sends webhooks; transient network issues are retried internally.
+---
+layout: default
+title: Phaxio End-to-End Test (No Physical Fax Required)
+nav_order: 50
+---

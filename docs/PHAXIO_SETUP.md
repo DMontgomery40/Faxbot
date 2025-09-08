@@ -86,3 +86,8 @@ curl -H "X-API-Key: your_secure_api_key" http://localhost:8080/fax/<job_id>
 
 ## Related: Sinch Fax API v3
 Phaxio is part of Sinch. If your console shows Sinch and you prefer the v3 API’s direct upload model (and features like their own webhooks), use the `sinch` backend. See SINCH_SETUP.md. Your existing Phaxio credentials typically work as Sinch API credentials; you will also need the Sinch Project ID.
+---
+layout: default
+title: PHAXIO_SETUP.md
+nav_order: 60
+---

@@ -77,3 +77,8 @@ curl -H "X-API-Key: $API_KEY" http://localhost:8080/fax/$JOB_ID
   - `AUDIT_LOG_SYSLOG=true` and `AUDIT_LOG_SYSLOG_ADDRESS=/dev/log` (optional)
 - Events: `job_created`, `job_dispatch`, `job_updated`, `job_failed`, `pdf_served`.
 - Logs contain job IDs and metadata only (no PHI).
+---
+layout: default
+title: API Reference
+nav_order: 10
+---

@@ -39,3 +39,8 @@ HIPAA considerations
 Troubleshooting
 - “Unsupported file type”: only PDF and TXT are accepted. Convert images to PDF.
 - Shell path issues with spaces/odd characters: quote the entire path or rename using a wildcard (e.g., `cp Screenshot*.pdf card.pdf`).
+---
+layout: default
+title: Images vs Text PDFs
+nav_order: 30
+---

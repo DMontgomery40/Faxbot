@@ -220,3 +220,8 @@ File conversion hints
 - Windows: “Print to PDF”.
 
 See also: Images vs Text PDFs guide (docs/IMAGES_AND_PDFS.md).
+---
+layout: default
+title: MCP Integration
+nav_order: 20
+---

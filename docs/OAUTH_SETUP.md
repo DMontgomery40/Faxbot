@@ -85,4 +85,8 @@ Notes
 - You may set `OAUTH_JWKS_URL` explicitly if your provider’s JWKS path differs from the default (e.g., Okta’s `/v1/keys`, Keycloak’s `/protocol/openid-connect/certs`).
 - The SSE servers do not mint tokens; they only validate them. Use your IdP or an internal OAuth server to issue client tokens.
 - For HIPAA deployments, ensure your IdP and reverse proxy enforce TLS, MFA, and appropriate policies.
-
+---
+layout: default
+title: OAuth / OIDC Setup for Faxbot MCP (SSE)
+nav_order: 40
+---

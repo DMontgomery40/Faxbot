@@ -176,3 +176,8 @@ Restart Asterisk with `external_*` addresses set to the tunnel’s public IP if 
 - T.38: fax-over-IP protocol (preferred over G.711 for reliable faxing).
 - UDPTL: transport used by T.38; requires UDP port range open.
 - AMI: Asterisk Manager Interface; API uses it to originate calls and receive events.
+---
+layout: default
+title: SIP_SETUP.md
+nav_order: 80
+---
