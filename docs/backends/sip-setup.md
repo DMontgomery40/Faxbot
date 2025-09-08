@@ -86,11 +86,13 @@ docker compose up -d --build
 ```
 - API on `8080`, Asterisk on `5060/udp`, `5060/tcp`, AMI on `5038`, UDPTL `4000–4999/udp`.
 
-## How It Works
-1. API converts input file to PDF, then to fax-optimized TIFF (Ghostscript).
-2. API creates a job and originates a Local channel via AMI.
-3. Asterisk dials your SIP trunk; on answer, executes `SendFAX()` in T.38.
-4. Asterisk emits `UserEvent(FaxResult, ...)`; API updates job status.
+{: .highlight }
+> ## How It Works
+> 1. API converts input file to PDF, then to fax-optimized TIFF (Ghostscript).
+> 2. API creates a job and originates a Local channel via AMI.
+> 3. Asterisk dials your SIP trunk; on answer, executes SendFAX() in T.38.
+> 4. Asterisk emits UserEvent(FaxResult, ...); API updates job status.
+
 
 ## Logs & Debugging
 - API: `docker compose logs -f api`
@@ -131,7 +133,6 @@ Pick one of these two (beginner-friendly):
 - Link: https://flowroute.com/pricing-details/
 
 {: .highlight }
-Notes:
 - Always ask your provider to confirm T.38 support and sign a BAA if you'll transmit PHI.
 - Typical US costs (ballpark): local DID ~$0.5–$2/mo; outbound ~$0.005–$0.02/min. Verify current pricing pages.
 
