@@ -75,6 +75,10 @@ exclude:
   - scripts/
   - docker-compose.yml
   - README.md
+  - AGENTS.md
+  - OCR_WORKAROUND_IMPLEMENTATION.md
+  - HIPAA_REQUIREMENTS.md
+  - TODO.md
   - Makefile
   - LICENSE
   - Gemfile
