@@ -20,10 +20,6 @@ pushd node_mcp >/dev/null 2>&1 || true
 npm install || true
 popd >/dev/null 2>&1 || true
 
-echo "📦 Installing legacy /api MCP dependencies (optional)..."
-pushd api >/dev/null 2>&1 || true
-npm install || true
-popd >/dev/null 2>&1 || true
 
 echo "✅ MCP setup complete!"
 echo ""
@@ -33,10 +29,7 @@ echo "1. Start MCP stdio server (RECOMMENDED, supports filePath):"
 echo "   cd node_mcp && npm run stdio"
 echo ""
 echo "2. Start with Docker (node_mcp profile)"
-echo "   docker-compose --profile mcp up -d"
-echo ""
-echo "3. Legacy stdio server (base64-only):"
-echo "   cd api && npm run start:mcp"
+echo "   docker compose --profile mcp up -d"
 echo ""
 echo "📋 MCP Configuration for Claude/Cursor:"
 echo ""
@@ -55,7 +48,7 @@ echo ""
 echo "🎯 Available MCP Tools:"
 echo "- send_fax: Send a fax (stdio supports filePath; HTTP/SSE require base64)"
 echo "- get_fax_status: Check fax job status"
-echo "- faxbot_pdf: Extract text from a PDF and fax as TXT (stdio convenience)"
+echo "(Tools: send_fax, get_fax_status)"
 echo ""
 echo "🗣️  Voice Assistant Example:"
 echo '"Call send_fax with { to: "+1234567890", filePath: "/Users/me/Documents/letter.pdf" }"'

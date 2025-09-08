@@ -1,5 +1,6 @@
 # Faxbot
 
+
 <p align="center">
   <img src="docs/assets/images/faxbot_full_logo.png" alt="Faxbot logo" width="100%" />
 </p>

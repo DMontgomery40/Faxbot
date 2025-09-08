@@ -12,7 +12,7 @@ dotenv.config();
 
 const app = express();
 app.use(helmet());
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({ limit: '16mb' }));
 app.use(cors({ origin: '*', exposedHeaders: ['Mcp-Session-Id'] }));
 app.use(morgan('dev'));
 

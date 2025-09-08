@@ -161,33 +161,20 @@ setup_configuration() {
         ENV_CREATED=false
     fi
     
-    # Run MCP setup
-    cd api
-    node setup-mcp.js
-    
-    print_success "MCP configuration complete"
+    # MCP configuration helpers are no longer generated from api/; use docs/MCP_INTEGRATION.md
+    print_success "Using Node/Python MCP per docs/MCP_INTEGRATION.md"
 }
 
 create_shortcuts() {
     print_step "Creating system shortcuts..."
     
-    # Create executable script
+    # Create stdio launcher for Node MCP (preferred)
     cat > "$BIN_DIR/faxbot-mcp" << EOF
 #!/bin/bash
-cd "$INSTALL_DIR/api"
-node mcp_server.js "\$@"
+cd "$INSTALL_DIR/node_mcp"
+node src/servers/stdio.js "\$@"
 EOF
-    
     chmod +x "$BIN_DIR/faxbot-mcp"
-    
-    # Create HTTP server script
-    cat > "$BIN_DIR/faxbot-mcp-http" << EOF
-#!/bin/bash
-cd "$INSTALL_DIR/api"
-node mcp_http_server.js "\$@"
-EOF
-    
-    chmod +x "$BIN_DIR/faxbot-mcp-http"
     
     # Add to PATH if not already there
     SHELL_RC=""
@@ -231,7 +218,7 @@ setup_desktop_integration() {
 [Desktop Entry]
 Name=Faxbot
 Comment=AI-Native Fax Transmission Service
-Exec=$BIN_DIR/faxbot-mcp-http
+Exec=$BIN_DIR/faxbot-mcp
 Icon=mail-send
 Terminal=false
 Type=Application
@@ -265,14 +252,12 @@ print_installation_complete() {
     fi
     echo ""
     
-    echo -e "${BLUE}3. Start MCP server (choose one):${NC}"
+    echo -e "${BLUE}3. Start MCP server:${NC}"
     if [ "$PATH_UPDATED" = true ]; then
         echo "   faxbot-mcp              # Stdio mode"
-        echo "   faxbot-mcp-http         # HTTP mode"
         echo "   (restart terminal for PATH updates)"
     else
         echo "   $BIN_DIR/faxbot-mcp              # Stdio mode"
-        echo "   $BIN_DIR/faxbot-mcp-http         # HTTP mode"
     fi
     echo ""
     

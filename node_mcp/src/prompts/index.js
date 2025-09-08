@@ -1,8 +1,4 @@
-import { FAXBOT_PROMPTS } from './faxbot.js';
-
-export const PROMPTS = {
-  ...FAXBOT_PROMPTS,
-};
+export const PROMPTS = {};
 
 export function listPrompts() {
   return Object.values(PROMPTS).map((p) => ({
