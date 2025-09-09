@@ -14,12 +14,16 @@ Yes, this repo might look overwhelming at first glance—that's only because Fax
 
 **Core function:** `send_fax(phone_number, pdf_file)` → Done.
 
-To our knowledge, no other open-source project combines:
-- Modern REST API for fax transmission
-- Multiple backend options (Phaxio cloud, Sinch cloud, self-hosted SIP/Asterisk)
-- AI assistant integration via MCP (Model Context Protocol)
-- HIPAA compliance features for healthcare PHI
-- Developer SDKs for Node.js and Python
+### Why Faxbot
+
+- Open source and self‑hostable end‑to‑end: run it entirely on your infra, modify as needed.
+- One API, many backends: switch Phaxio ↔ Sinch ↔ self‑hosted SIP/Asterisk via environment settings.
+- Bring‑your‑own SIP trunk: choose any SIP provider; migrate later by changing a couple of env vars.
+- Fully local option: when using SIP, no third‑party cloud in the path; artifacts stay on your storage (S3/MinIO supported).
+- AI assistant tools built‑in: MCP servers (Node & Python) for stdio/HTTP/SSE; desktop stdio supports `filePath` (no base64 size pain).
+- Inbound receiving design: cloud webhooks with signature verification or Asterisk ReceiveFAX → TIFF→PDF, mailbox routing, short‑TTL tokens, retention.
+- Test/dev backend: simulate send/receive flows without hitting a paid provider.
+- Vendor‑neutral SDKs: identical Node/Python clients so your app code is portable.
 
 Questions? Issues? **Please don't hesitate to reach out.** See [CONTRIBUTING.md](CONTRIBUTING.md) for the best way to get help.
 
@@ -107,6 +111,15 @@ Backends
 Security & compliance
 - [HIPAA Requirements](HIPAA_REQUIREMENTS.md) — Security, BAAs, and compliance checklist
 - [OAuth/OIDC Setup](docs/OAUTH_SETUP.md) — Configure SSE with Auth0, Okta, Azure AD, Google, Keycloak
+- [Deployment Guide](docs/DEPLOYMENT.md) — Production database, storage, proxy, and hosting considerations
+- [Scripts and Tests](docs/scripts-and-tests.md) — One‑button scripts for auth/inbound and Makefile shortcuts
+
+Authentication
+- The API supports a single env key (`API_KEY`) or multiple DB‑backed keys.
+- For production/HIPAA, set `REQUIRE_API_KEY=true` and create per‑user/service keys via admin endpoints:
+  - `POST /admin/api-keys` (returns token once), `GET /admin/api-keys`, `DELETE /admin/api-keys/{keyId}`, `POST /admin/api-keys/{keyId}/rotate`.
+  - Bootstrap with env `API_KEY` or use a key that has the `keys:manage` scope.
+  - Clients send `X-API-Key: fbk_live_<keyId>_<secret>`.
 
 File handling
 - [Images vs Text PDFs](docs/IMAGES_AND_PDFS.md) — The right way to fax scans/photos
@@ -114,10 +127,33 @@ File handling
 Advanced
 - [Phaxio End-to-End Test](docs/PHAXIO_E2E_TEST.md) — Simulated callback flow for local testing
 
+Testing
+- Quick auth smoke test (creates venv, installs deps, runs a minimal suite):
+  - `scripts/smoke-auth.sh`
+- Live API curl demo (requires API at localhost:8080):
+  - `API_KEY=bootstrap_admin_only scripts/curl-auth-demo.sh`
+ - Inbound internal smoke (no SIP required):
+   - `API_KEY=bootstrap_admin_only ASTERISK_INBOUND_SECRET=sekret scripts/inbound-internal-smoke.sh`
+ - SIP inbound E2E helper (watch for inbound after you send a fax to your DID):
+   - `API_KEY=bootstrap_admin_only scripts/e2e-inbound-sip.sh`
+
+Local dev server (no Docker)
+- Start the FastAPI server from your working tree with uvicorn:
+  - `scripts/run-uvicorn-dev.sh`
+- This sets reasonable dev defaults (API_KEY=bootstrap_admin_only, REQUIRE_API_KEY=true, FAX_DISABLED=true). Override by exporting env vars before running.
+
 ## Notes
-- Send-only. Receiving is out of scope.
+- Send-only for now. Inbound receiving scaffolding is available behind a feature flag for SIP/Asterisk internal testing. Full multi-backend inbound is tracked in PHASE_RECEIVE.md on the development branch.
 - Set `FAX_BACKEND` to `phaxio` (cloud) or `sip` (self-hosted).
-- Use `X-API-Key` for auth; secure behind a reverse proxy for rate limiting.
+- Use `X-API-Key` for auth; `REQUIRE_API_KEY` enforces auth even if env `API_KEY` is blank; secure behind a reverse proxy for rate limiting.
+
+### Inbound (WIP scaffolding for SIP/Asterisk)
+- Enable inbound in `.env` (or env): `INBOUND_ENABLED=true` and set `ASTERISK_INBOUND_SECRET`.
+- Asterisk can notify Faxbot via internal curl to `POST /_internal/asterisk/inbound` with header `X-Internal-Secret: <ASTERISK_INBOUND_SECRET>` and JSON `{ tiff_path, to_number, from_number?, faxstatus?, faxpages?, uniqueid }`.
+- List inbound: `GET /inbound` (requires `inbound:list` scope).
+- Get metadata: `GET /inbound/{id}` (requires `inbound:read` scope).
+- Download PDF: `GET /inbound/{id}/pdf` via short‑TTL token or API key with `inbound:read`.
+- Defaults per decisions: retention 30 days; token TTL 60 minutes; rate limits list 30/min, get/pdf 60/min.
 
 Demo
 <video src="assets/faxbot_demo.mp4" width="100%" autoplay loop muted playsinline controls>
