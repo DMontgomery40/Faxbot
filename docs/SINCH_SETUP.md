@@ -32,6 +32,15 @@ API_KEY=your_secure_api_key         # optional but recommended (X-API-Key)
 MAX_FILE_SIZE_MB=10
 ```
 
+Create a per-user API key (recommended)
+```
+curl -s -X POST http://localhost:8080/admin/api-keys \
+  -H "X-API-Key: $API_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"local dev","owner":"me","scopes":["fax:send","fax:read"]}'
+```
+Save the returned `token` (`fbk_live_<keyId>_<secret>`) and use it as `X-API-Key` for client calls.
+
 Send a fax (curl)
 ```
 curl -X POST http://localhost:8080/fax \
@@ -53,4 +62,3 @@ Troubleshooting
 - 413: file too large → raise `MAX_FILE_SIZE_MB`.
 - 415: unsupported file type → only PDF/TXT.
 - Sinch API errors: verify Project ID, API key/secret, and region.
-
