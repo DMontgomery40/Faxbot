@@ -12,18 +12,42 @@ permalink: /api-reference.html
 - Health: `GET /health` → `{ "status": "ok" }`
  - Readiness: `GET /health/ready` → 200 when ready; 503 otherwise
 
-## Auth
-- Header `X-API-Key: <token>` where `<token>` is either:
-  - A DB‑backed token `fbk_live_<keyId>_<secret>` created via admin endpoints (recommended), or
-  - The env `API_KEY` value (legacy/bootstrap).
-- Set `REQUIRE_API_KEY=true` to enforce authentication even if env `API_KEY` is blank (recommended for HIPAA/production).
+## Authentication and API Keys
+- Send `X-API-Key: <token>` on every request. Two options exist:
+  - DB‑backed tokens (recommended): format `fbk_live_<keyId>_<secret>`, minted via admin endpoints.
+  - Env bootstrap key (legacy): the literal `API_KEY` value configured on the server. Use this only to bootstrap and mint DB keys.
+- Set `REQUIRE_API_KEY=true` in production/HIPAA to enforce authentication even if `API_KEY` is blank.
 
-### Scopes
-- Endpoints require specific scopes when authentication is enforced:
-  - `POST /fax` → `fax:send`
-  - `GET /fax/{id}` → `fax:read`
-- Admin endpoints require either the bootstrap env key (`API_KEY`) or a DB key with `keys:manage`.
-- If `REQUIRE_API_KEY=false` and no `API_KEY` is set, unauthenticated requests are allowed in development.
+How to get an API key (recommended flow)
+1) Set a temporary bootstrap admin key in the server environment: `API_KEY=bootstrap_admin_only` (or any strong value).
+2) Create a DB-backed key via admin endpoint (requires admin auth with the bootstrap env key):
+```
+curl -s -X POST http://localhost:8080/admin/api-keys \
+  -H "X-API-Key: $API_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"dev","owner":"you@example.com","scopes":["fax:send","fax:read"]}'
+```
+3) Save the returned `token` (`fbk_live_<keyId>_<secret>`) securely — it is shown ONCE.
+4) Use that token as `X-API-Key` for all client calls. You can delete the bootstrap `API_KEY` later if you wish.
+
+Scopes
+- Enforced when authentication is required:
+  - `POST /fax` → scope `fax:send`
+  - `GET /fax/{id}` → scope `fax:read`
+  - Inbound list/get/download → scopes `inbound:list` / `inbound:read`
+  - Admin endpoints → `keys:manage` (or the bootstrap env key)
+- If `REQUIRE_API_KEY=false` and no `API_KEY` is set, unauthenticated requests are allowed in development; scopes are then not required.
+
+Token lifecycle (rotate, revoke, expire)
+- Rotate: `POST /admin/api-keys/{keyId}/rotate` returns a new plaintext token once; the old secret stops working immediately.
+- Revoke: `DELETE /admin/api-keys/{keyId}` sets `revoked_at` — the token is rejected thereafter.
+- Expire: create keys with `expires_at` (ISO8601) to enforce automatic expiry.
+- Metadata: `GET /admin/api-keys` lists non‑secret fields (`created_at`, `last_used_at`, `expires_at`, `revoked_at`, `scopes`, `owner`, `name`).
+
+Error semantics
+- 401 Unauthorized: missing/invalid token, revoked/expired token, or no admin auth for admin endpoints.
+- 403 Forbidden: valid token but insufficient scopes for the endpoint.
+- 429 Too Many Requests: per‑key rate limit exceeded.
 
 ### Rate limiting (optional)
 - Global: `MAX_REQUESTS_PER_MINUTE` (default 0 = disabled). When enabled, each API key is limited per-minute across requests.
@@ -70,21 +94,26 @@ curl -H "X-API-Key: $API_KEY" http://localhost:8080/fax/$JOB_ID
 - Signature verification: if `PHAXIO_VERIFY_SIGNATURE=true` (default), the server verifies `X-Phaxio-Signature` (HMAC-SHA256 of the raw body using `PHAXIO_API_SECRET`). Requests without a valid signature are rejected (401).
 
 5) Admin — API keys
-- All admin endpoints require either the bootstrap env key (`API_KEY`) or a DB key with scope `keys:manage`.
+- Requires admin auth: either the bootstrap env key (`API_KEY`) or a DB key with scope `keys:manage`.
 
-  a) `POST /admin/api-keys`
-  - Create a new key. Response includes the plaintext token once.
-  - Body JSON: `{ name?: string, owner?: string, scopes?: string[], expires_at?: ISO8601, note?: string }`
-  - Response: `{ key_id, token, name?, owner?, scopes[], expires_at? }`
+  a) Create a key — `POST /admin/api-keys`
+  - Body: `{ name?: string, owner?: string, scopes?: string[], expires_at?: ISO8601, note?: string }`
+  - Returns: `{ key_id, token, name?, owner?, scopes[], expires_at? }` (token shown ONCE)
+  - Example:
+```
+curl -s -X POST http://localhost:8080/admin/api-keys \
+  -H "X-API-Key: $API_KEY" -H 'Content-Type: application/json' \
+  -d '{"name":"svc-bot","owner":"svc@example.com","scopes":["fax:send"]}'
+```
 
-  b) `GET /admin/api-keys`
-  - List key metadata (no secrets). Response: `[{ key_id, name?, owner?, scopes[], created_at, last_used_at?, expires_at?, revoked_at?, note? }]`
+  b) List keys — `GET /admin/api-keys`
+  - Returns: `[{ key_id, name?, owner?, scopes[], created_at, last_used_at?, expires_at?, revoked_at?, note? }]`
 
-  c) `DELETE /admin/api-keys/{keyId}`
-  - Revoke a key (soft delete via `revoked_at`).
+  c) Revoke key — `DELETE /admin/api-keys/{keyId}`
+  - Response: `{ status: "ok" }`
 
-  d) `POST /admin/api-keys/{keyId}/rotate`
-  - Rotate the secret for an existing key. Response returns the new plaintext token once.
+  d) Rotate key — `POST /admin/api-keys/{keyId}/rotate`
+  - Returns: `{ key_id, token }` (new token shown ONCE)
 
 6) Admin — Config (read-only)
 - `GET /admin/config`

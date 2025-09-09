@@ -8,7 +8,11 @@ SINCH_API_SECRET=your_api_secret    # falls back to PHAXIO_API_SECRET if unset
 # General
 API_KEY=your_secure_api_key         # optional but recommended (X-API-Key)
 MAX_FILE_SIZE_MB=10
-</code></pre></div></div> <p>Send a fax (curl)</p> <div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>curl -X POST http://localhost:8080/fax \
+</code></pre></div></div> <p>Create a per-user API key (recommended)</p> <div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>curl -s -X POST http://localhost:8080/admin/api-keys \
+  -H "X-API-Key: $API_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"local dev","owner":"me","scopes":["fax:send","fax:read"]}'
+</code></pre></div></div> <p>Save the returned <code class="language-plaintext highlighter-rouge">token</code> (<code class="language-plaintext highlighter-rouge">fbk_live_&lt;keyId&gt;_&lt;secret&gt;</code>) and use it as <code class="language-plaintext highlighter-rouge">X-API-Key</code> for client calls.</p> <p>Send a fax (curl)</p> <div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>curl -X POST http://localhost:8080/fax \
   -H "X-API-Key: $API_KEY" \
   -F to=+15551234567 \
   -F file=@./example.pdf
