@@ -34,9 +34,10 @@ Implement the following as minimum controls:
   - SIP signaling should use TLS if supported by your provider; media (T.38 over UDPTL) is typically not encrypted. Mitigate with a site‑to‑site VPN/private interconnect to your SIP provider and strict firewalling.
   - Never expose AMI (5038/tcp) to the public internet.
 
-2) Access control
-- Require API key on all /fax and /fax/{id} calls (`X-API-Key`). Do not run with blank `API_KEY` in production.
+-2) Access control
+- Require API key on all /fax and /fax/{id} calls (`X-API-Key`). Set `REQUIRE_API_KEY=true` to enforce authentication even if env `API_KEY` is blank. Use DB‑backed, per‑user/service API keys created via admin endpoints instead of sharing a single env key. Rotate keys regularly.
 - Restrict inbound traffic with a reverse proxy: IP allowlists and rate limiting.
+- Optional app-level rate limiting: set `MAX_REQUESTS_PER_MINUTE` to bound per-key request rates in addition to reverse proxy/WAF limits.
 - Rotate credentials and set a strong AMI password. Do not use `changeme`.
 
 3) Data minimization & confidentiality
@@ -123,7 +124,8 @@ Implement the following as minimum controls:
 
 ## Current Implementation Status (2025‑Q3)
 - Implemented:
-  - API key support, reverse proxy guidance.
+  - Multi‑key API auth with admin endpoints (create/list/revoke/rotate) and bootstrap env key.
+  - `REQUIRE_API_KEY` enforcement flag for production.
   - Tokenized PDF access with equality check and TTL expiry.
   - Phaxio callback signature verification (HMAC‑SHA256).
   - AMI concurrency/backoff improvements; SIP dialplan emits granular results.

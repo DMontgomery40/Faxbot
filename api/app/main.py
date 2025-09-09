@@ -6,6 +6,7 @@ import asyncio
 import secrets
 from datetime import datetime, timedelta
 from typing import Optional
+import time
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks, Header, Depends, Query, Request
 from fastapi.responses import FileResponse
 from .config import settings, reload_settings
@@ -18,7 +19,12 @@ from .sinch_service import get_sinch_service
 import hmac
 import hashlib
 from urllib.parse import urlparse
+from fastapi.responses import StreamingResponse
 from .audit import init_audit_logger, audit_event
+from .storage import get_storage
+from .auth import verify_db_key, create_api_key, list_api_keys, revoke_api_key, rotate_api_key
+from pydantic import BaseModel
+from typing import List, Any, cast
 
 
 app = FastAPI(title="Faxbot API", version="1.0.0")
@@ -29,6 +35,44 @@ app.phaxio_service = _phaxio_module  # type: ignore[attr-defined]
 
 PHONE_RE = re.compile(r"^[+]?\d{6,20}$")
 ALLOWED_CT = {"application/pdf", "text/plain"}
+
+
+# In-memory per-key rate limiter (fixed window, per minute)
+_rate_buckets: dict[str, dict[str, int]] = {}
+
+
+def _enforce_rate_limit(info: Optional[dict], path: str, limit: Optional[int] = None):
+    # Choose provided per-route limit, else global
+    limit = int(limit or settings.max_requests_per_minute)
+    if not limit or limit <= 0:
+        return
+    if info is None:
+        # Do not rate limit unauthenticated dev requests
+        return
+    key_id = info.get("key_id") or "unknown"
+    now_min = int(time.time() // 60)
+    # Prune old buckets (keep only current minute to bound memory)
+    try:
+        old_keys = [k for k, v in _rate_buckets.items() if v.get("window") != now_min]
+        for k in old_keys:
+            _rate_buckets.pop(k, None)
+    except Exception:
+        pass
+    bucket_key = f"{key_id}|{path}"
+    bucket = _rate_buckets.get(bucket_key)
+    if not bucket or bucket.get("window") != now_min:
+        bucket = {"window": now_min, "count": 0}
+        _rate_buckets[bucket_key] = bucket
+    bucket["count"] += 1
+    if bucket["count"] > limit:
+        retry_after = (bucket["window"] + 1) * 60 - int(time.time())
+        audit_event("rate_limited", key_id=key_id, path=path, limit=limit)
+        from fastapi import HTTPException
+        raise HTTPException(
+            status_code=429,
+            detail="Rate limit exceeded",
+            headers={"Retry-After": str(max(1, retry_after))},
+        )
 
 
 @app.on_event("startup")
@@ -42,8 +86,8 @@ async def on_startup():
     if shutil.which("gs") is None:
         print("[warn] Ghostscript (gs) not found; PDF→TIFF conversion will be stubbed. Install 'ghostscript' for production use.")
     # Security posture warnings
-    if not settings.api_key and not settings.fax_disabled:
-        print("[warn] API_KEY is unset while faxing is enabled; /fax requests are unauthenticated. Set API_KEY for production.")
+    if not settings.require_api_key and not settings.api_key and not settings.fax_disabled:
+        print("[warn] API auth is not enforced (REQUIRE_API_KEY=false and API_KEY unset); /fax requests are unauthenticated. Set API_KEY or REQUIRE_API_KEY for production.")
     try:
         pu = urlparse(settings.public_api_url)
         insecure = pu.scheme == "http" and pu.hostname not in {"localhost", "127.0.0.1"}
@@ -81,15 +125,16 @@ def _handle_fax_result(event):
     with SessionLocal() as db:
         job = db.get(FaxJob, job_id)
         if job:
-            job.status = status or job.status
-            job.error = error
+            j = cast(Any, job)
+            j.status = status or j.status
+            j.error = error
             if pages:
                 try:
                     job.pages = int(pages)
                 except Exception:
                     pass
-            job.updated_at = datetime.utcnow()
-            db.add(job)
+            j.updated_at = datetime.utcnow()
+            db.add(j)
             db.commit()
     if job_id and status:
         audit_event("job_updated", job_id=job_id, status=status, provider="asterisk")
@@ -100,35 +145,294 @@ def health():
     return {"status": "ok"}
 
 
-def require_api_key(x_api_key: Optional[str] = Header(default=None)):
-    if settings.api_key and x_api_key != settings.api_key:
-        raise HTTPException(401, detail="Invalid API key")
+@app.get("/health/ready")
+def health_ready():
+    """Readiness probe. Returns 200 when core dependencies are ready.
+    Checks: DB connectivity; backend configuration; storage configuration when inbound is enabled.
+    """
+    # DB check
+    db_ok = False
+    try:
+        from sqlalchemy import text  # type: ignore
+        with SessionLocal() as db:
+            db.execute(text("SELECT 1"))
+            db_ok = True
+    except Exception:
+        db_ok = False
+
+    # Backend config check
+    backend = settings.fax_backend
+    backend_ok = True
+    backend_warnings: List[str] = []
+    if backend == "phaxio":
+        backend_ok = bool(settings.phaxio_api_key and settings.phaxio_api_secret)
+        # PUBLIC_API_URL must be https for production enforcement, unless localhost
+        try:
+            pu = urlparse(settings.public_api_url)
+            if settings.enforce_public_https and (pu.scheme != "https") and pu.hostname not in {"localhost", "127.0.0.1"}:
+                backend_ok = False
+                backend_warnings.append("PUBLIC_API_URL must be HTTPS when ENFORCE_PUBLIC_HTTPS=true")
+        except Exception:
+            backend_warnings.append("Invalid PUBLIC_API_URL")
+    elif backend == "sinch":
+        backend_ok = bool(settings.sinch_project_id and settings.sinch_api_key and settings.sinch_api_secret)
+    elif backend == "sip":
+        # Presence checks only; AMI connection is handled asynchronously
+        if not settings.ami_password or settings.ami_password == "changeme":
+            backend_warnings.append("ASTERISK_AMI_PASSWORD must be set to a non-default value")
+        backend_ok = True
+    else:
+        backend_warnings.append(f"Unknown backend: {backend}")
+
+    # Storage check (only if inbound enabled)
+    storage_ok = True
+    storage_error: Optional[str] = None
+    if settings.inbound_enabled:
+        try:
+            # Ensure storage can be initialized
+            get_storage()
+            if settings.storage_backend == "s3" and not settings.s3_bucket:
+                storage_ok = False
+                storage_error = "S3_BUCKET not set"
+        except Exception as e:
+            storage_ok = False
+            storage_error = str(e)
+
+    # AMI connection hint for SIP
+    ami_connected = False
+    try:
+        from .ami import ami_client as _ac  # type: ignore
+        ami_connected = bool(getattr(_ac, "_connected").is_set())  # type: ignore[union-attr]
+    except Exception:
+        ami_connected = False
+
+    ready = bool(db_ok and backend_ok and (storage_ok or not settings.inbound_enabled))
+    status_code = 200 if ready else 503
+    from fastapi.responses import JSONResponse as _JR
+    return _JR(
+        content={
+            "status": "ready" if ready else "not_ready",
+            "backend": backend,
+            "checks": {
+                "db": db_ok,
+                "backend_config": backend_ok,
+                "storage": storage_ok if settings.inbound_enabled else None,
+                "ami_connected": ami_connected if backend == "sip" else None,
+            },
+            "warnings": backend_warnings,
+            "storage_error": storage_error,
+        },
+        status_code=status_code,
+    )
 
 
-@app.post("/fax", response_model=FaxJobOut, status_code=202, dependencies=[Depends(require_api_key)])
+def require_api_key(request: Request, x_api_key: Optional[str] = Header(default=None)):
+    """Authenticate request using either env API_KEY or DB-backed key.
+    Behavior:
+      - If header matches env API_KEY → allow
+      - Else, if header is a valid DB key → allow
+      - Else, if REQUIRE_API_KEY=true → 401
+      - Else (dev mode) → allow
+    """
+    # Env bootstrap key
+    if settings.api_key and x_api_key == settings.api_key:
+        # Optionally audit usage without logging secrets
+        audit_event("api_key_used", key_id="env", path=request.url.path if request else None)
+        # Treat env key as full-access for compatibility
+        return {"key_id": "env", "scopes": ["*"]}
+    # Try DB-backed key
+    info = verify_db_key(x_api_key)
+    if info:
+        audit_event("api_key_used", key_id=info.get("key_id"), path=request.url.path if request else None)
+        return info
+    # If API key is required, reject
+    if settings.require_api_key or settings.api_key:
+        raise HTTPException(401, detail="Invalid or missing API key")
+    # Dev mode: allow unauthenticated
+    return None
+
+
+def require_admin(x_api_key: Optional[str] = Header(default=None)):
+    # Allow env key as admin for bootstrap
+    if settings.api_key and x_api_key == settings.api_key:
+        return {"admin": True, "key_id": "env"}
+    info = verify_db_key(x_api_key)
+    if not info or ("keys:manage" not in (info.get("scopes") or [])):
+        raise HTTPException(401, detail="Admin authentication failed")
+    return info
+
+
+def _has_scope(info: Optional[dict], required: str) -> bool:
+    if info is None:
+        return False
+    scopes = info.get("scopes") or []
+    return "*" in scopes or required in scopes
+
+
+def require_scopes(required: List[str], path: Optional[str] = None, rpm: Optional[int] = None):
+    """Factory to build a dependency enforcing scopes and per-route RPM.
+    Allows unauthenticated access only when not enforcing API keys in dev.
+    """
+    def _dep(info = Depends(require_api_key)):
+        if info is None and not settings.require_api_key and not settings.api_key:
+            return
+        missing = [s for s in required if not _has_scope(info, s)]
+        if missing:
+            audit_event("api_key_denied_scope", key_id=(info or {}).get("key_id"), required=",".join(missing))
+            raise HTTPException(403, detail=f"Insufficient scope: {','.join(required)} required")
+        if rpm and path:
+            _enforce_rate_limit(info, path, rpm)
+    return _dep
+
+
+def require_fax_send(info = Depends(require_api_key)):
+    # If not enforcing API key (dev mode) and unauthenticated, allow
+    if info is None and not settings.require_api_key and not settings.api_key:
+        return
+    if not _has_scope(info, "fax:send"):
+        audit_event("api_key_denied_scope", key_id=(info or {}).get("key_id"), required="fax:send")
+        raise HTTPException(403, detail="Insufficient scope: fax:send required")
+    # Rate limit per key if configured
+    _enforce_rate_limit(info, "/fax")
+
+
+def require_fax_read(info = Depends(require_api_key)):
+    if info is None and not settings.require_api_key and not settings.api_key:
+        return
+    if not _has_scope(info, "fax:read"):
+        audit_event("api_key_denied_scope", key_id=(info or {}).get("key_id"), required="fax:read")
+        raise HTTPException(403, detail="Insufficient scope: fax:read required")
+    _enforce_rate_limit(info, "/fax/{id}")
+
+
+class CreateAPIKeyIn(BaseModel):
+    name: Optional[str] = None
+    owner: Optional[str] = None
+    scopes: Optional[List[str]] = None
+    expires_at: Optional[datetime] = None
+    note: Optional[str] = None
+
+
+class CreateAPIKeyOut(BaseModel):
+    key_id: str
+    token: str
+    name: Optional[str] = None
+    owner: Optional[str] = None
+    scopes: List[str] = []
+    expires_at: Optional[datetime] = None
+
+
+class APIKeyMeta(BaseModel):
+    key_id: str
+    name: Optional[str] = None
+    owner: Optional[str] = None
+    scopes: List[str] = []
+    created_at: Optional[datetime] = None
+    last_used_at: Optional[datetime] = None
+    expires_at: Optional[datetime] = None
+    revoked_at: Optional[datetime] = None
+    note: Optional[str] = None
+
+
+@app.get("/admin/config", dependencies=[Depends(require_admin)])
+def get_admin_config():
+    """Return sanitized effective configuration for operators.
+    Does not include secrets. Requires admin auth (bootstrap env key or keys:manage).
+    """
+    backend = settings.fax_backend
+    # Configured flags
+    cfg = {
+        "backend": backend,
+        "require_api_key": settings.require_api_key,
+        "enforce_public_https": settings.enforce_public_https,
+        "phaxio_verify_signature": settings.phaxio_verify_signature,
+        "audit_log_enabled": settings.audit_log_enabled,
+        "rate_limits": {
+            "global_rpm": settings.max_requests_per_minute,
+            "inbound_list_rpm": settings.inbound_list_rpm,
+            "inbound_get_rpm": settings.inbound_get_rpm,
+        },
+        "inbound": {
+            "enabled": settings.inbound_enabled,
+            "retention_days": settings.inbound_retention_days,
+            "token_ttl_minutes": settings.inbound_token_ttl_minutes,
+        },
+        "storage": {
+            "backend": settings.storage_backend,
+            "s3_bucket": (settings.s3_bucket[:4] + "…" if settings.s3_bucket else ""),
+            "s3_region": settings.s3_region,
+            "s3_prefix": settings.s3_prefix,
+            "s3_endpoint_url": settings.s3_endpoint_url,
+            "s3_kms_key_id": (settings.s3_kms_key_id[:8] + "…" if settings.s3_kms_key_id else ""),
+        },
+        "backend_configured": {
+            "phaxio": bool(settings.phaxio_api_key and settings.phaxio_api_secret),
+            "sinch": bool(settings.sinch_project_id and settings.sinch_api_key and settings.sinch_api_secret),
+            "sip_ami_configured": bool(settings.ami_username and settings.ami_password),
+            "sip_ami_password_default": (settings.ami_password == "changeme"),
+        },
+        "public_api_url": settings.public_api_url,
+    }
+    return cfg
+
+@app.post("/fax", response_model=FaxJobOut, status_code=202, dependencies=[Depends(require_fax_send)])
 async def send_fax(background: BackgroundTasks, to: str = Form(...), file: UploadFile = File(...)):
     # Validate destination
     if not PHONE_RE.match(to):
         raise HTTPException(400, detail="'to' must be E.164 or digits only")
-    # Validate content type and size
-    if file.content_type not in ALLOWED_CT:
-        raise HTTPException(415, detail="Only PDF and TXT are allowed")
-    content = await file.read()
+    # Stream upload to disk with magic sniff and size enforcement
     max_bytes = settings.max_file_size_mb * 1024 * 1024
-    if len(content) > max_bytes:
-        raise HTTPException(413, detail=f"File exceeds {settings.max_file_size_mb} MB limit")
-
     job_id = uuid.uuid4().hex
     orig_path = os.path.join(settings.fax_data_dir, f"{job_id}-{file.filename}")
     pdf_path = os.path.join(settings.fax_data_dir, f"{job_id}.pdf")
     tiff_path = os.path.join(settings.fax_data_dir, f"{job_id}.tiff")
 
-    # Persist upload
-    with open(orig_path, "wb") as f:
-        f.write(content)
+    total = 0
+    first_chunk = b""
+    CHUNK = 64 * 1024
+    try:
+        with open(orig_path, "wb") as out:
+            # Read first chunk for magic sniff
+            first_chunk = await file.read(CHUNK)
+            total += len(first_chunk)
+            if total > max_bytes:
+                raise HTTPException(413, detail=f"File exceeds {settings.max_file_size_mb} MB limit")
+            out.write(first_chunk)
+            # Stream the rest
+            while True:
+                chunk = await file.read(CHUNK)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > max_bytes:
+                    raise HTTPException(413, detail=f"File exceeds {settings.max_file_size_mb} MB limit")
+                out.write(chunk)
+    except HTTPException:
+        try:
+            if os.path.exists(orig_path):
+                os.remove(orig_path)
+        finally:
+            raise
+
+    # Magic sniff: PDF if starts with %PDF, else treat as text if UTF-8 clean
+    is_pdf = first_chunk.startswith(b"%PDF")
+    is_text = False
+    if not is_pdf:
+        try:
+            first_chunk.decode("utf-8")
+            is_text = True
+        except Exception:
+            is_text = False
+    if not (is_pdf or is_text):
+        # Unsupported type
+        try:
+            os.remove(orig_path)
+        except Exception:
+            pass
+        raise HTTPException(415, detail="Only PDF and TXT are allowed")
 
     # Convert to PDF if needed
-    if file.content_type == "text/plain" or (file.filename and file.filename.lower().endswith(".txt")):
+    if is_text or (file.filename and file.filename.lower().endswith(".txt")):
         if settings.fax_disabled:
             # Test mode - skip conversion
             with open(pdf_path, "wb") as f:
@@ -136,9 +440,8 @@ async def send_fax(background: BackgroundTasks, to: str = Form(...), file: Uploa
         else:
             txt_to_pdf(orig_path, pdf_path)
     else:
-        # Write the PDF directly
-        with open(pdf_path, "wb") as f:
-            f.write(content)
+        # Copy the PDF directly
+        shutil.copyfile(orig_path, pdf_path)
 
     # Backend-specific file preparation
     if settings.fax_backend == "phaxio":
@@ -197,29 +500,71 @@ async def _originate_job(job_id: str, to: str, tiff_path: str):
         with SessionLocal() as db:
             job = db.get(FaxJob, job_id)
             if job:
-                job.status = "in_progress"
-                job.updated_at = datetime.utcnow()
-                db.add(job)
+                j = cast(Any, job)
+                j.status = "in_progress"
+                j.updated_at = datetime.utcnow()
+                db.add(j)
                 db.commit()
     except Exception as e:
         with SessionLocal() as db:
             job = db.get(FaxJob, job_id)
             if job:
-                job.status = "failed"
-                job.error = str(e)
-                job.updated_at = datetime.utcnow()
-                db.add(job)
+                j = cast(Any, job)
+                j.status = "failed"
+                j.error = str(e)
+                j.updated_at = datetime.utcnow()
+                db.add(j)
                 db.commit()
         audit_event("job_failed", job_id=job_id, error=str(e))
 
 
-@app.get("/fax/{job_id}", response_model=FaxJobOut, dependencies=[Depends(require_api_key)])
+@app.get("/fax/{job_id}", response_model=FaxJobOut, dependencies=[Depends(require_fax_read)])
 def get_fax(job_id: str):
     with SessionLocal() as db:
         job = db.get(FaxJob, job_id)
         if not job:
             raise HTTPException(404, detail="Job not found")
     return _serialize_job(job)
+
+
+# Admin API key management
+@app.post("/admin/api-keys", response_model=CreateAPIKeyOut, dependencies=[Depends(require_admin)])
+def admin_create_api_key(payload: CreateAPIKeyIn):
+    result = create_api_key(
+        name=payload.name,
+        owner=payload.owner,
+        scopes=payload.scopes,
+        expires_at=payload.expires_at,
+        note=payload.note,
+    )
+    return CreateAPIKeyOut(**result)  # type: ignore[arg-type]
+
+
+@app.get("/admin/api-keys", response_model=List[APIKeyMeta], dependencies=[Depends(require_admin)])
+def admin_list_api_keys():
+    rows = list_api_keys()
+    return [APIKeyMeta(**r) for r in rows]
+
+
+@app.delete("/admin/api-keys/{key_id}", dependencies=[Depends(require_admin)])
+def admin_revoke_api_key(key_id: str):
+    ok = revoke_api_key(key_id)
+    if not ok:
+        raise HTTPException(404, detail="Key not found")
+    return {"status": "ok"}
+
+
+class RotateAPIKeyOut(BaseModel):
+    key_id: str
+    token: str
+
+
+@app.post("/admin/api-keys/{key_id}/rotate", response_model=RotateAPIKeyOut, dependencies=[Depends(require_admin)])
+def admin_rotate_api_key(key_id: str):
+    res = rotate_api_key(key_id)
+    if not res:
+        raise HTTPException(404, detail="Key not found")
+    return RotateAPIKeyOut(**res)  # type: ignore[arg-type]
 
 
 async def _artifact_cleanup_loop():
@@ -266,6 +611,39 @@ async def _cleanup_once():
             except Exception:
                 continue
 
+        # Inbound retention cleanup
+        try:
+            from .db import InboundFax  # type: ignore
+        except Exception:
+            InboundFax = None  # type: ignore
+        if InboundFax is not None:
+            now = datetime.utcnow()
+            storage = get_storage()
+            rows = db.query(InboundFax).all()  # type: ignore[attr-defined]
+            for fx in rows:
+                try:
+                    if fx.retention_until and fx.retention_until <= now:
+                        # Delete stored PDF (local or S3)
+                        if fx.pdf_path:
+                            try:
+                                storage.delete(str(fx.pdf_path))
+                            except Exception:
+                                pass
+                            fx.pdf_path = None
+                        # Delete local TIFF if present
+                        if fx.tiff_path and os.path.exists(fx.tiff_path):
+                            try:
+                                os.remove(fx.tiff_path)
+                            except FileNotFoundError:
+                                pass
+                            fx.tiff_path = None
+                        fx.updated_at = now
+                        db.add(fx)
+                        db.commit()
+                        audit_event("inbound_deleted", job_id=fx.id)
+                except Exception:
+                    continue
+
 
 @app.get("/fax/{job_id}/pdf")
 async def get_fax_pdf(job_id: str, token: str = Query(...)):
@@ -278,25 +656,25 @@ async def get_fax_pdf(job_id: str, token: str = Query(...)):
             raise HTTPException(404, detail="Job not found")
 
         # Determine expected token
-        expected_token = job.pdf_token
-        if not expected_token and job.pdf_url:
+        expected_token = job.pdf_token  # type: ignore[assignment]
+        if not expected_token and job.pdf_url:  # type: ignore[truthy-bool]
             # Fallback: extract token from stored pdf_url if present (tests)
             try:
                 from urllib.parse import urlparse, parse_qs
-                qs = parse_qs(urlparse(job.pdf_url).query)
+                qs = parse_qs(urlparse(str(job.pdf_url)).query)  # type: ignore[arg-type]
                 t = qs.get("token", [None])[0]
                 if t:
-                    expected_token = t
+                    expected_token = str(t)  # type: ignore[assignment]
             except Exception:
-                expected_token = None
+                expected_token = None  # type: ignore[assignment]
         # If no token is configured for this job, treat as not found
-        if not expected_token:
+        if not expected_token:  # type: ignore[truthy-bool]
             raise HTTPException(404, detail="PDF not available")
         # Validate token equality
         if token != expected_token:
             raise HTTPException(403, detail="Invalid token")
         # Validate expiry if set
-        if job.pdf_token_expires_at and datetime.utcnow() > job.pdf_token_expires_at:
+        if job.pdf_token_expires_at and datetime.utcnow() > job.pdf_token_expires_at:  # type: ignore[operator]
             raise HTTPException(403, detail="Token expired")
 
         # Get the PDF path
@@ -362,8 +740,8 @@ async def phaxio_callback(request: Request):
                 job.error = status_info['error_message']
             if status_info.get('pages'):
                 job.pages = status_info['pages']
-            job.updated_at = datetime.utcnow()
-            db.add(job)
+            job.updated_at = datetime.utcnow()  # type: ignore[assignment]
+            db.add(job)  # type: ignore[arg-type]
             db.commit()
     audit_event("job_updated", job_id=job_id, status=status_info.get('status'), provider="phaxio")
     
@@ -389,12 +767,13 @@ async def _send_via_phaxio(job_id: str, to: str, pdf_path: str):
         with SessionLocal() as db:
             job = db.get(FaxJob, job_id)
             if job:
-                job.pdf_url = pdf_url
-                job.pdf_token = pdf_token
-                job.pdf_token_expires_at = expires_at
-                job.status = "in_progress"
-                job.updated_at = datetime.utcnow()
-                db.add(job)
+                j = cast(Any, job)
+                j.pdf_url = pdf_url
+                j.pdf_token = pdf_token
+                j.pdf_token_expires_at = expires_at
+                j.status = "in_progress"
+                j.updated_at = datetime.utcnow()
+                db.add(j)
                 db.commit()
         
         # Send via Phaxio
@@ -405,20 +784,22 @@ async def _send_via_phaxio(job_id: str, to: str, pdf_path: str):
         with SessionLocal() as db:
             job = db.get(FaxJob, job_id)
             if job:
-                job.provider_sid = result['provider_sid']
-                job.status = result['status']
-                job.updated_at = datetime.utcnow()
-                db.add(job)
+                j = cast(Any, job)
+                j.provider_sid = result['provider_sid']
+                j.status = result['status']
+                j.updated_at = datetime.utcnow()
+                db.add(j)
                 db.commit()
                 
     except Exception as e:
         with SessionLocal() as db:
             job = db.get(FaxJob, job_id)
             if job:
-                job.status = "failed"
-                job.error = str(e)
-                job.updated_at = datetime.utcnow()
-                db.add(job)
+                j = cast(Any, job)
+                j.status = "failed"
+                j.error = str(e)
+                j.updated_at = datetime.utcnow()
+                db.add(j)
                 db.commit()
         audit_event("job_failed", job_id=job_id, error=str(e))
 
@@ -449,32 +830,488 @@ async def _send_via_sinch(job_id: str, to: str, pdf_path: str):
         with SessionLocal() as db:
             job = db.get(FaxJob, job_id)
             if job:
-                job.provider_sid = fax_id
-                job.status = internal_status
-                job.updated_at = datetime.utcnow()
-                db.add(job)
+                j = cast(Any, job)
+                j.provider_sid = fax_id
+                j.status = internal_status
+                j.updated_at = datetime.utcnow()
+                db.add(j)
                 db.commit()
     except Exception as e:
         with SessionLocal() as db:
             job = db.get(FaxJob, job_id)
             if job:
-                job.status = "failed"
-                job.error = str(e)
-                job.updated_at = datetime.utcnow()
-                db.add(job)
+                j = cast(Any, job)
+                j.status = "failed"
+                j.error = str(e)
+                j.updated_at = datetime.utcnow()
+                db.add(j)
                 db.commit()
         audit_event("job_failed", job_id=job_id, error=str(e))
 
 
 def _serialize_job(job: FaxJob) -> FaxJobOut:
+    j = cast(Any, job)
     return FaxJobOut(
-        id=job.id,
-        to=job.to_number,
-        status=job.status,
-        error=job.error,
-        pages=job.pages,
-        backend=job.backend,
-        provider_sid=job.provider_sid,
-        created_at=job.created_at,
-        updated_at=job.updated_at,
+        id=j.id,
+        to=j.to_number,
+        status=j.status,
+        error=j.error,
+        pages=j.pages,
+        backend=j.backend,
+        provider_sid=j.provider_sid,
+        created_at=j.created_at,
+        updated_at=j.updated_at,
     )
+
+
+# ===== Inbound receiving (MVP scaffolding) =====
+from .db import InboundFax  # type: ignore
+from .conversion import tiff_to_pdf  # type: ignore
+
+
+class InboundFaxOut(BaseModel):
+    id: str
+    fr: Optional[str] = None
+    to: Optional[str] = None
+    status: str
+    backend: str
+    pages: Optional[int] = None
+    size_bytes: Optional[int] = None
+    created_at: Optional[datetime] = None
+    received_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+    mailbox: Optional[str] = None
+
+
+def _serialize_inbound(fx: InboundFax) -> InboundFaxOut:
+    f = cast(Any, fx)
+    return InboundFaxOut(
+        id=f.id,
+        fr=f.from_number,
+        to=f.to_number,
+        status=f.status,
+        backend=f.backend,
+        pages=f.pages,
+        size_bytes=f.size_bytes,
+        created_at=f.created_at,
+        received_at=f.received_at,
+        updated_at=f.updated_at,
+        mailbox=f.mailbox_label,
+    )
+
+
+def require_inbound_list(info = Depends(require_api_key)):
+    if info is None and not settings.require_api_key and not settings.api_key:
+        return
+    if not _has_scope(info, "inbound:list"):
+        audit_event("api_key_denied_scope", key_id=(info or {}).get("key_id"), required="inbound:list")
+        raise HTTPException(403, detail="Insufficient scope: inbound:list required")
+    if settings.inbound_list_rpm:
+        _enforce_rate_limit(info, "/inbound")
+
+
+def require_inbound_read(info = Depends(require_api_key)):
+    if info is None and not settings.require_api_key and not settings.api_key:
+        return
+    if not _has_scope(info, "inbound:read"):
+        audit_event("api_key_denied_scope", key_id=(info or {}).get("key_id"), required="inbound:read")
+        raise HTTPException(403, detail="Insufficient scope: inbound:read required")
+    if settings.inbound_get_rpm:
+        _enforce_rate_limit(info, "/inbound/{id}")
+
+
+@app.get("/inbound", response_model=List[InboundFaxOut], dependencies=[Depends(require_scopes(["inbound:list"], path="/inbound", rpm=settings.inbound_list_rpm))])
+def list_inbound(
+    to_number: Optional[str] = Query(default=None),
+    status: Optional[str] = Query(default=None),
+    mailbox: Optional[str] = Query(default=None),
+):
+    if not settings.inbound_enabled:
+        raise HTTPException(404, detail="Inbound not enabled")
+    with SessionLocal() as db:
+        q = db.query(InboundFax)  # type: ignore[attr-defined]
+        if to_number:
+            q = q.filter(InboundFax.to_number == to_number)  # type: ignore[attr-defined]
+        if status:
+            q = q.filter(InboundFax.status == status)  # type: ignore[attr-defined]
+        if mailbox:
+            q = q.filter(InboundFax.mailbox_label == mailbox)  # type: ignore[attr-defined]
+        rows = q.order_by(InboundFax.received_at.desc()).limit(100).all()  # type: ignore[attr-defined]
+        return [_serialize_inbound(r) for r in rows]
+
+
+@app.get("/inbound/{inbound_id}", response_model=InboundFaxOut, dependencies=[Depends(require_scopes(["inbound:read"], path="/inbound/{id}", rpm=settings.inbound_get_rpm))])
+def get_inbound(inbound_id: str):
+    if not settings.inbound_enabled:
+        raise HTTPException(404, detail="Inbound not enabled")
+    with SessionLocal() as db:
+        fx = db.get(InboundFax, inbound_id)
+        if not fx:
+            raise HTTPException(404, detail="Inbound fax not found")
+        return _serialize_inbound(fx)
+
+
+@app.get("/inbound/{inbound_id}/pdf")
+def get_inbound_pdf(inbound_id: str, token: Optional[str] = Query(default=None), info = Depends(require_api_key)):
+    if not settings.inbound_enabled:
+        raise HTTPException(404, detail="Inbound not enabled")
+    with SessionLocal() as db:
+        fx = db.get(InboundFax, inbound_id)
+        if not fx:
+            raise HTTPException(404, detail="Inbound fax not found")
+        allowed = False
+        if token and fx.pdf_token and token == fx.pdf_token:
+            if fx.pdf_token_expires_at and datetime.utcnow() > fx.pdf_token_expires_at:
+                raise HTTPException(403, detail="Token expired")
+            allowed = True
+        elif info is not None and _has_scope(info, "inbound:read"):
+            if settings.inbound_get_rpm:
+                _enforce_rate_limit(info, "/inbound/{id}/pdf", settings.inbound_get_rpm)
+            allowed = True
+        if not allowed:
+            raise HTTPException(403, detail="Forbidden")
+        pdf_path = str(fx.pdf_path or "")
+        if not pdf_path:
+            raise HTTPException(404, detail="PDF file not found")
+        storage = get_storage()
+        if pdf_path.startswith("s3://"):
+            stream, name = storage.get_pdf_stream(pdf_path)
+            audit_event("inbound_pdf_served", job_id=inbound_id, method=("token" if token else "api_key"))
+            return StreamingResponse(stream, media_type="application/pdf", headers={
+                "Content-Disposition": f"attachment; filename={name}",
+                "Cache-Control": "no-cache, no-store, must-revalidate",
+                "Pragma": "no-cache",
+                "Expires": "0",
+            })
+        if not os.path.exists(pdf_path):
+            raise HTTPException(404, detail="PDF file not found")
+        audit_event("inbound_pdf_served", job_id=inbound_id, method=("token" if token else "api_key"))
+        return FileResponse(
+            pdf_path,
+            media_type="application/pdf",
+            filename=f"inbound_{inbound_id}.pdf",
+            headers={"Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache", "Expires": "0"},
+        )
+
+
+@app.post("/_internal/asterisk/inbound")
+def asterisk_inbound(payload: dict, x_internal_secret: Optional[str] = Header(default=None)):
+    if not settings.inbound_enabled:
+        raise HTTPException(404, detail="Inbound not enabled")
+    if not settings.asterisk_inbound_secret:
+        raise HTTPException(401, detail="Internal secret not configured")
+    if x_internal_secret != settings.asterisk_inbound_secret:
+        raise HTTPException(401, detail="Invalid internal secret")
+    try:
+        tiff_path = str(payload.get("tiff_path"))
+        to_number = (payload.get("to_number") or "").strip() or None
+        from_number = (payload.get("from_number") or "").strip() or None
+        faxstatus = (payload.get("faxstatus") or "").strip() or None
+        faxpages = payload.get("faxpages")
+        uniqueid = str(payload.get("uniqueid") or "")
+        if not tiff_path or not os.path.exists(tiff_path):
+            raise HTTPException(400, detail="TIFF path invalid")
+    except Exception:
+        raise HTTPException(400, detail="Invalid payload")
+
+    job_id = uuid.uuid4().hex
+    data_dir = settings.fax_data_dir
+    ensure_dir(data_dir)
+    pdf_path = os.path.join(data_dir, f"{job_id}.pdf")
+
+    pages, _ = tiff_to_pdf(tiff_path, pdf_path)
+    import hashlib as _hl
+    try:
+        with open(pdf_path, "rb") as f:
+            content = f.read()
+        size_bytes = len(content)
+        sha256 = _hl.sha256(content).hexdigest()
+    except Exception:
+        size_bytes = None
+        sha256 = None
+
+    # Upload to configured storage (local path preserved or uploaded to S3)
+    storage = get_storage()
+    object_name = f"{job_id}.pdf"
+    stored_uri = storage.put_pdf(pdf_path, object_name)
+    try:
+        if stored_uri.startswith("s3://") and os.path.exists(pdf_path):
+            os.remove(pdf_path)
+    except Exception:
+        pass
+
+    pdf_token = secrets.token_urlsafe(32)
+    expires_at = datetime.utcnow() + timedelta(minutes=max(1, settings.inbound_token_ttl_minutes))
+    retention_until = None
+    if settings.inbound_retention_days and settings.inbound_retention_days > 0:
+        retention_until = datetime.utcnow() + timedelta(days=settings.inbound_retention_days)
+
+    with SessionLocal() as db:
+        fx = InboundFax(
+            id=job_id,
+            from_number=from_number,
+            to_number=to_number,
+            status=faxstatus or "received",
+            backend="sip",
+            provider_sid=uniqueid or None,
+            pages=int(faxpages) if faxpages else pages,
+            size_bytes=size_bytes,
+            sha256=sha256,
+            pdf_path=stored_uri,
+            tiff_path=tiff_path,
+            mailbox_label=None,
+            retention_until=retention_until,
+            pdf_token=pdf_token,
+            pdf_token_expires_at=expires_at,
+            created_at=datetime.utcnow(),
+            received_at=datetime.utcnow(),
+            updated_at=datetime.utcnow(),
+        )
+        db.add(fx)
+        db.commit()
+    audit_event("inbound_received", job_id=job_id, backend="sip")
+    return {"id": job_id, "status": "ok"}
+
+
+@app.post("/phaxio-inbound")
+async def phaxio_inbound(request: Request):
+    if not settings.inbound_enabled:
+        raise HTTPException(404, detail="Inbound not enabled")
+    raw = await request.body()
+    if settings.phaxio_inbound_verify_signature:
+        provided = request.headers.get("X-Phaxio-Signature") or request.headers.get("X-Phaxio-Signature-SHA256")
+        if not provided:
+            raise HTTPException(401, detail="Missing Phaxio signature")
+        secret = (settings.phaxio_api_secret or "").encode()
+        if not secret:
+            raise HTTPException(401, detail="Phaxio secret not configured")
+        digest = hmac.new(secret, raw, hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(digest, (provided or "").strip().lower()):
+            raise HTTPException(401, detail="Invalid Phaxio signature")
+
+    # Parse form or JSON
+    try:
+        form = await request.form()
+        data = dict(form)
+    except Exception:
+        try:
+            data = await request.json()
+        except Exception:
+            data = {}
+
+    # Extract fields robustly
+    def get_nested(d, *keys):
+        for k in keys:
+            if k in d:
+                return d[k]
+        return None
+
+    provider_sid = get_nested(data, "fax[id]", "id", "fax_id", "faxId")
+    from_number = get_nested(data, "fax[from]", "from", "from_number")
+    to_number = get_nested(data, "fax[to]", "to", "to_number")
+    pages = get_nested(data, "fax[num_pages]", "num_pages", "pages")
+    status = get_nested(data, "fax[status]", "status") or "received"
+    file_url = get_nested(data, "file_url", "media_url", "pdf_url")
+
+    if not provider_sid:
+        # Accept and ignore if no provider id to avoid retries storm
+        return {"status": "ignored"}
+
+    # Idempotency: unique (provider_sid, event_type)
+    with SessionLocal() as db:
+        from .db import InboundEvent  # type: ignore
+        evt = InboundEvent(id=uuid.uuid4().hex, provider_sid=str(provider_sid), event_type="phaxio-inbound", created_at=datetime.utcnow())
+        try:
+            db.add(evt)
+            db.commit()
+        except Exception:
+            # Duplicate → ignore
+            db.rollback()
+            return {"status": "ok"}
+
+    # Fetch PDF if URL provided
+    pdf_bytes: Optional[bytes] = None
+    if file_url:
+        try:
+            import httpx
+            auth = None
+            if settings.phaxio_api_key and settings.phaxio_api_secret:
+                auth = (settings.phaxio_api_key, settings.phaxio_api_secret)
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                resp = await client.get(str(file_url), auth=auth)
+                if resp.status_code == 200 and (resp.headers.get("content-type", "").startswith("application/pdf") or True):
+                    pdf_bytes = resp.content
+        except Exception:
+            pdf_bytes = None
+
+    job_id = uuid.uuid4().hex
+    data_dir = settings.fax_data_dir
+    ensure_dir(data_dir)
+    local_pdf = os.path.join(data_dir, f"{job_id}.pdf")
+    if pdf_bytes is None:
+        # Minimal placeholder PDF so record exists; operators can re-fetch if needed
+        with open(local_pdf, "wb") as f:
+            f.write(b"%PDF-1.4\n% placeholder inbound\n%%EOF")
+        size_bytes = len(b"%PDF-1.4\n% placeholder inbound\n%%EOF")
+        pages_int = None
+        sha256_hex = hashlib.sha256(b"%PDF-1.4\n% placeholder inbound\n%%EOF").hexdigest()
+    else:
+        with open(local_pdf, "wb") as f:
+            f.write(pdf_bytes)
+        size_bytes = len(pdf_bytes)
+        pages_int = None
+        sha256_hex = hashlib.sha256(pdf_bytes).hexdigest()
+
+    storage = get_storage()
+    stored_uri = storage.put_pdf(local_pdf, f"{job_id}.pdf")
+    try:
+        if stored_uri.startswith("s3://") and os.path.exists(local_pdf):
+            os.remove(local_pdf)
+    except Exception:
+        pass
+
+    pdf_token = secrets.token_urlsafe(32)
+    expires_at = datetime.utcnow() + timedelta(minutes=max(1, settings.inbound_token_ttl_minutes))
+    retention_until = datetime.utcnow() + timedelta(days=settings.inbound_retention_days) if settings.inbound_retention_days > 0 else None
+
+    with SessionLocal() as db:
+        from .db import InboundFax  # type: ignore
+        fx = InboundFax(
+            id=job_id,
+            from_number=(str(from_number) if from_number else None),
+            to_number=(str(to_number) if to_number else None),
+            status=str(status),
+            backend="phaxio",
+            provider_sid=str(provider_sid),
+            pages=int(pages) if pages else pages_int,
+            size_bytes=size_bytes,
+            sha256=sha256_hex,
+            pdf_path=stored_uri,
+            tiff_path=None,
+            mailbox_label=None,
+            retention_until=retention_until,
+            pdf_token=pdf_token,
+            pdf_token_expires_at=expires_at,
+            created_at=datetime.utcnow(),
+            received_at=datetime.utcnow(),
+            updated_at=datetime.utcnow(),
+        )
+        db.add(fx)
+        db.commit()
+    audit_event("inbound_received", job_id=job_id, backend="phaxio")
+    return {"status": "ok"}
+
+
+@app.post("/sinch-inbound")
+async def sinch_inbound(request: Request):
+    if not settings.inbound_enabled:
+        raise HTTPException(404, detail="Inbound not enabled")
+    raw = await request.body()
+    # Verify Basic if configured
+    if settings.sinch_inbound_basic_user:
+        auth = request.headers.get("Authorization", "")
+        import base64
+        ok = False
+        if auth.startswith("Basic "):
+            try:
+                dec = base64.b64decode(auth.split(" ", 1)[1]).decode()
+                user, _, pwd = dec.partition(":")
+                ok = (user == settings.sinch_inbound_basic_user and pwd == settings.sinch_inbound_basic_pass)
+            except Exception:
+                ok = False
+        if not ok:
+            raise HTTPException(401, detail="Invalid basic auth")
+    # Verify HMAC if configured
+    if settings.sinch_inbound_hmac_secret:
+        provided = request.headers.get("X-Sinch-Signature", "")
+        secret = settings.sinch_inbound_hmac_secret.encode()
+        digest = hmac.new(secret, raw, hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(digest, (provided or "").strip().lower()):
+            raise HTTPException(401, detail="Invalid signature")
+
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+
+    provider_sid = data.get("id") or data.get("fax_id")
+    from_number = data.get("from") or data.get("from_number")
+    to_number = data.get("to") or data.get("to_number")
+    pages = data.get("num_pages") or data.get("pages")
+    status = data.get("status") or "received"
+    file_url = data.get("file_url") or data.get("media_url")
+
+    if not provider_sid:
+        return {"status": "ignored"}
+
+    with SessionLocal() as db:
+        from .db import InboundEvent  # type: ignore
+        evt = InboundEvent(id=uuid.uuid4().hex, provider_sid=str(provider_sid), event_type="sinch-inbound", created_at=datetime.utcnow())
+        try:
+            db.add(evt)
+            db.commit()
+        except Exception:
+            db.rollback()
+            return {"status": "ok"}
+
+    pdf_bytes: Optional[bytes] = None
+    if file_url:
+        try:
+            import httpx
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                resp = await client.get(str(file_url))
+                if resp.status_code == 200:
+                    pdf_bytes = resp.content
+        except Exception:
+            pdf_bytes = None
+
+    job_id = uuid.uuid4().hex
+    data_dir = settings.fax_data_dir
+    ensure_dir(data_dir)
+    local_pdf = os.path.join(data_dir, f"{job_id}.pdf")
+    if pdf_bytes is None:
+        with open(local_pdf, "wb") as f:
+            f.write(b"%PDF-1.4\n% placeholder inbound\n%%EOF")
+        size_bytes = len(b"%PDF-1.4\n% placeholder inbound\n%%EOF")
+        pages_int = None
+        sha256_hex = hashlib.sha256(b"%PDF-1.4\n% placeholder inbound\n%%EOF").hexdigest()
+    else:
+        with open(local_pdf, "wb") as f:
+            f.write(pdf_bytes)
+        size_bytes = len(pdf_bytes)
+        pages_int = None
+        sha256_hex = hashlib.sha256(pdf_bytes).hexdigest()
+
+    storage = get_storage()
+    stored_uri = storage.put_pdf(local_pdf, f"{job_id}.pdf")
+
+    pdf_token = secrets.token_urlsafe(32)
+    expires_at = datetime.utcnow() + timedelta(minutes=max(1, settings.inbound_token_ttl_minutes))
+    retention_until = datetime.utcnow() + timedelta(days=settings.inbound_retention_days) if settings.inbound_retention_days > 0 else None
+
+    with SessionLocal() as db:
+        from .db import InboundFax  # type: ignore
+        fx = InboundFax(
+            id=job_id,
+            from_number=(str(from_number) if from_number else None),
+            to_number=(str(to_number) if to_number else None),
+            status=str(status),
+            backend="sinch",
+            provider_sid=str(provider_sid),
+            pages=int(pages) if pages else pages_int,
+            size_bytes=size_bytes,
+            sha256=sha256_hex,
+            pdf_path=stored_uri,
+            tiff_path=None,
+            mailbox_label=None,
+            retention_until=retention_until,
+            pdf_token=pdf_token,
+            pdf_token_expires_at=expires_at,
+            created_at=datetime.utcnow(),
+            received_at=datetime.utcnow(),
+            updated_at=datetime.utcnow(),
+        )
+        db.add(fx)
+        db.commit()
+    audit_event("inbound_received", job_id=job_id, backend="sinch")
+    return {"status": "ok"}

@@ -49,6 +49,7 @@ docker compose --profile mcp up -d --build faxbot-mcp-sse
 # or: make mcp-sse-up
 ```
 - Check health: `curl http://localhost:8080/health`
+- Readiness: `curl -i http://localhost:8080/health/ready` (200 when ready; 503 if not)
 - MCP HTTP health: `curl http://localhost:3001/health`
  - MCP SSE health: `curl http://localhost:3002/health`
 
@@ -111,15 +112,6 @@ Backends
 Security & compliance
 - [HIPAA Requirements](HIPAA_REQUIREMENTS.md) — Security, BAAs, and compliance checklist
 - [OAuth/OIDC Setup](docs/OAUTH_SETUP.md) — Configure SSE with Auth0, Okta, Azure AD, Google, Keycloak
-- [Deployment Guide](docs/DEPLOYMENT.md) — Production database, storage, proxy, and hosting considerations
-- [Scripts and Tests](docs/scripts-and-tests.md) — One‑button scripts for auth/inbound and Makefile shortcuts
-
-Authentication
-- The API supports a single env key (`API_KEY`) or multiple DB‑backed keys.
-- For production/HIPAA, set `REQUIRE_API_KEY=true` and create per‑user/service keys via admin endpoints:
-  - `POST /admin/api-keys` (returns token once), `GET /admin/api-keys`, `DELETE /admin/api-keys/{keyId}`, `POST /admin/api-keys/{keyId}/rotate`.
-  - Bootstrap with env `API_KEY` or use a key that has the `keys:manage` scope.
-  - Clients send `X-API-Key: fbk_live_<keyId>_<secret>`.
 
 File handling
 - [Images vs Text PDFs](docs/IMAGES_AND_PDFS.md) — The right way to fax scans/photos
@@ -127,33 +119,10 @@ File handling
 Advanced
 - [Phaxio End-to-End Test](docs/PHAXIO_E2E_TEST.md) — Simulated callback flow for local testing
 
-Testing
-- Quick auth smoke test (creates venv, installs deps, runs a minimal suite):
-  - `scripts/smoke-auth.sh`
-- Live API curl demo (requires API at localhost:8080):
-  - `API_KEY=bootstrap_admin_only scripts/curl-auth-demo.sh`
- - Inbound internal smoke (no SIP required):
-   - `API_KEY=bootstrap_admin_only ASTERISK_INBOUND_SECRET=sekret scripts/inbound-internal-smoke.sh`
- - SIP inbound E2E helper (watch for inbound after you send a fax to your DID):
-   - `API_KEY=bootstrap_admin_only scripts/e2e-inbound-sip.sh`
-
-Local dev server (no Docker)
-- Start the FastAPI server from your working tree with uvicorn:
-  - `scripts/run-uvicorn-dev.sh`
-- This sets reasonable dev defaults (API_KEY=bootstrap_admin_only, REQUIRE_API_KEY=true, FAX_DISABLED=true). Override by exporting env vars before running.
-
 ## Notes
-- Send-only for now. Inbound receiving scaffolding is available behind a feature flag for SIP/Asterisk internal testing. Full multi-backend inbound is tracked in PHASE_RECEIVE.md on the development branch.
-- Set `FAX_BACKEND` to `phaxio` (cloud) or `sip` (self-hosted).
-- Use `X-API-Key` for auth; `REQUIRE_API_KEY` enforces auth even if env `API_KEY` is blank; secure behind a reverse proxy for rate limiting.
-
-### Inbound (WIP scaffolding for SIP/Asterisk)
-- Enable inbound in `.env` (or env): `INBOUND_ENABLED=true` and set `ASTERISK_INBOUND_SECRET`.
-- Asterisk can notify Faxbot via internal curl to `POST /_internal/asterisk/inbound` with header `X-Internal-Secret: <ASTERISK_INBOUND_SECRET>` and JSON `{ tiff_path, to_number, from_number?, faxstatus?, faxpages?, uniqueid }`.
-- List inbound: `GET /inbound` (requires `inbound:list` scope).
-- Get metadata: `GET /inbound/{id}` (requires `inbound:read` scope).
-- Download PDF: `GET /inbound/{id}/pdf` via short‑TTL token or API key with `inbound:read`.
-- Defaults per decisions: retention 30 days; token TTL 60 minutes; rate limits list 30/min, get/pdf 60/min.
+- Receiving: WIP. Inbound scaffolding exists behind config flags and on the `development` branch (see PHASE_RECEIVE.md). It is not GA yet and remains backend‑isolated (Phaxio/Sinch callbacks, SIP/Asterisk internal). Outbound send is production‑ready.
+- Default backend is `phaxio` for easier onboarding. Set `FAX_BACKEND=sip` explicitly for telephony users or `FAX_BACKEND=sinch` for Sinch v3.
+- Use `X-API-Key` for auth; secure behind a reverse proxy for rate limiting.
 
 Demo
 <video src="assets/faxbot_demo.mp4" width="100%" autoplay loop muted playsinline controls>

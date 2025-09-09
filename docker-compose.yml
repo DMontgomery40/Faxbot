@@ -30,7 +30,7 @@ services:
     ports:
       - "5060:5060/udp"
       - "5060:5060/tcp"
-      - "5038:5038" # AMI
+      # AMI (5038) is intentionally not exposed; keep internal only.
       - "4000-4999:4000-4999/udp" # UDPTL for T.38
 
   # Optional: Faxbot MCP Server for AI integration

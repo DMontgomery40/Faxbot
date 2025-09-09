@@ -19,6 +19,7 @@ def init_audit_logger(
     # Avoid duplicate handlers on reload
     if logger.handlers:
         return
+    handler: logging.Handler
     if filepath:
         handler = logging.FileHandler(filepath)
     elif use_syslog:

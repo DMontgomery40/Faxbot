@@ -21,6 +21,7 @@ Run (example):
     uvicorn server:app --host 0.0.0.0 --port 3003
 """
 import base64
+import asyncio
 import pathlib
 import os
 import time

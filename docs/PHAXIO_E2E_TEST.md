@@ -1,3 +1,11 @@
+---
+layout: default
+title: Phaxio End-to-End Test
+parent: Scripts and Tests
+nav_order: 2
+permalink: /scripts-and-tests/phaxio-e2e-test.html
+---
+
 # Phaxio End-to-End Test (No Physical Fax Required)
 
 Goal: Send a real fax through Phaxio and receive it on a Phaxio number — fully end-to-end, no hardware.

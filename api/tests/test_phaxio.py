@@ -113,8 +113,10 @@ async def test_phaxio_integration_end_to_end(monkeypatch, tmp_path):
             assert data["status"] in ["queued", "disabled"]
 
 
-def test_phaxio_callback_handling():
+def test_phaxio_callback_handling(monkeypatch):
     """Test Phaxio webhook callback processing."""
+    # Disable signature verification for this unit test (default is now true)
+    monkeypatch.setenv("PHAXIO_VERIFY_SIGNATURE", "false")
     with TestClient(app) as client:
         # Mock callback data from Phaxio
         callback_data = {
@@ -235,4 +237,3 @@ def test_phaxio_configuration_validation():
     # Test with full credentials
     service = PhaxioFaxService(api_key="key", api_secret="secret")
     assert service.is_configured()
-

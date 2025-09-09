@@ -1,0 +1,6 @@
+Alembic migrations for Faxbot API.
+Use DATABASE_URL to target your database. Example:
+
+  export DATABASE_URL=postgresql+psycopg2://user:pass@host:5432/db
+  alembic -c api/alembic.ini upgrade head
+

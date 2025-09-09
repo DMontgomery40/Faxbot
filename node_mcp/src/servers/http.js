@@ -13,8 +13,9 @@ dotenv.config();
 const app = express();
 app.use(helmet());
 app.use(express.json({ limit: '16mb' }));
+const corsOrigin = process.env.MCP_HTTP_CORS_ORIGIN || '*';
 app.use(
-  cors({ origin: '*', exposedHeaders: ['Mcp-Session-Id'], allowedHeaders: ['Content-Type', 'mcp-session-id'] })
+  cors({ origin: corsOrigin, exposedHeaders: ['Mcp-Session-Id'], allowedHeaders: ['Content-Type', 'mcp-session-id', 'authorization', 'x-api-key'] })
 );
 app.use(morgan('dev'));
 
@@ -23,6 +24,25 @@ app.get('/health', (_req, res) => {
 });
 
 const sessions = Object.create(null); // sessionId -> { transport, server }
+const MCP_HTTP_API_KEY = process.env.MCP_HTTP_API_KEY || '';
+
+function checkAuth(req, res, next) {
+  if (!MCP_HTTP_API_KEY) {
+    // Explicitly require configuration for network-exposed server
+    return res.status(401).json({ error: 'Unauthorized: MCP_HTTP_API_KEY not configured' });
+  }
+  const hdr = (req.headers['authorization'] || '').trim();
+  const x = (req.headers['x-api-key'] || '').toString().trim();
+  let ok = false;
+  if (hdr && hdr.startsWith('Bearer ')) {
+    const token = hdr.slice(7).trim();
+    ok = token === MCP_HTTP_API_KEY;
+  } else if (x) {
+    ok = x === MCP_HTTP_API_KEY;
+  }
+  if (!ok) return res.status(401).json({ error: 'Unauthorized' });
+  return next();
+}
 
 async function initServerWithTransport(transport) {
   const server = buildServer();
@@ -36,7 +56,7 @@ async function initServerWithTransport(transport) {
   return server;
 }
 
-app.post('/mcp', async (req, res) => {
+app.post('/mcp', checkAuth, async (req, res) => {
   try {
     const sessionId = req.headers['mcp-session-id'];
     const session = sessionId ? sessions[sessionId] : undefined;
@@ -64,14 +84,14 @@ app.post('/mcp', async (req, res) => {
   }
 });
 
-app.get('/mcp', async (req, res) => {
+app.get('/mcp', checkAuth, async (req, res) => {
   const sessionId = req.headers['mcp-session-id'];
   const session = sessionId ? sessions[sessionId] : undefined;
   if (!session) return res.status(400).send('Invalid or missing session ID');
   await session.transport.handleRequest(req, res);
 });
 
-app.delete('/mcp', async (req, res) => {
+app.delete('/mcp', checkAuth, async (req, res) => {
   const sessionId = req.headers['mcp-session-id'];
   const session = sessionId ? sessions[sessionId] : undefined;
   if (!session) return res.status(400).send('Invalid or missing session ID');

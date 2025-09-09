@@ -21,6 +21,23 @@ build:
 test:
 	docker compose run --rm api pytest -q
 
+# Alembic helpers (run locally)
+alembic-upgrade:
+	DATABASE_URL=$${DATABASE_URL:-sqlite:///./faxbot.db} alembic -c api/alembic.ini upgrade head
+
+alembic-downgrade:
+	DATABASE_URL=$${DATABASE_URL:-sqlite:///./faxbot.db} alembic -c api/alembic.ini downgrade -1
+
+alembic-revision:
+	@echo "Use: DATABASE_URL=... alembic -c api/alembic.ini revision -m 'message' --autogenerate"
+
+# Inbound helpers
+inbound-smoke:
+	API_KEY=$${API_KEY} ASTERISK_INBOUND_SECRET=$${ASTERISK_INBOUND_SECRET} ./scripts/inbound-internal-smoke.sh
+
+inbound-e2e:
+	API_KEY=$${API_KEY} ./scripts/e2e-inbound-sip.sh
+
 # MCP-specific commands (2025 Standards)
 mcp-install:
 	./install.sh
