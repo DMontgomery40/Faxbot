@@ -14,12 +14,16 @@ Yes, this repo might look overwhelming at first glance—that's only because Fax
 
 **Core function:** `send_fax(phone_number, pdf_file)` → Done.
 
-To our knowledge, no other open-source project combines:
-- Modern REST API for fax transmission
-- Multiple backend options (Phaxio cloud, Sinch cloud, self-hosted SIP/Asterisk)
-- AI assistant integration via MCP (Model Context Protocol)
-- HIPAA compliance features for healthcare PHI
-- Developer SDKs for Node.js and Python
+### Why Faxbot
+
+- Open source and self‑hostable end‑to‑end: run it entirely on your infra, modify as needed.
+- One API, many backends: switch Phaxio ↔ Sinch ↔ self‑hosted SIP/Asterisk via environment settings.
+- Bring‑your‑own SIP trunk: choose any SIP provider; migrate later by changing a couple of env vars.
+- Fully local option: when using SIP, no third‑party cloud in the path; artifacts stay on your storage (S3/MinIO supported).
+- AI assistant tools built‑in: MCP servers (Node & Python) for stdio/HTTP/SSE; desktop stdio supports `filePath` (no base64 size pain).
+- Inbound receiving design: cloud webhooks with signature verification or Asterisk ReceiveFAX → TIFF→PDF, mailbox routing, short‑TTL tokens, retention.
+- Test/dev backend: simulate send/receive flows without hitting a paid provider.
+- Vendor‑neutral SDKs: identical Node/Python clients so your app code is portable.
 
 Questions? Issues? **Please don't hesitate to reach out.** See [CONTRIBUTING.md](CONTRIBUTING.md) for the best way to get help.
 
