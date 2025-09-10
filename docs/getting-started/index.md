@@ -35,10 +35,9 @@ Need HIPAA? Use Phaxio or SSE+OAuth. For local dev, you can disable faxing with 
 - **SIP/Asterisk (Self‑Hosted):** full control, no per‑fax cloud charges.
   - [SIP/Asterisk Setup Guide](/Faxbot/backends/sip-setup.html)
 
-### Optional: Inbound (Receiving)
+### Receiving
 
-- Enable inbound to list and download received faxes via API and the Admin Console.
-- [Inbound Overview](/Faxbot/inbound/)
+- When enabled, received faxes appear in the Admin Console inbox and are accessible via the API. See the [API Reference](/Faxbot/development/api-reference.html).
 
 After the API is running, optionally add AI assistant control:
 - [MCP Integration](/Faxbot/ai-integration/mcp-integration.html)
@@ -52,7 +51,7 @@ After the API is running, optionally add AI assistant control:
 ## Next Steps
 
 - Review [Security](/Faxbot/security/) if handling PHI
-- Explore the [Admin Console](/Faxbot/LOCAL_ADMIN_CONSOLE.html) for keys, jobs, inbound inbox, diagnostics, and settings
+- Explore the [Admin Console](/Faxbot/admin-console/) for keys, jobs, inbound inbox, diagnostics, and settings
 - Try the [SDKs](/Faxbot/development/sdks.html) to integrate quickly
 
 ## Need Help?

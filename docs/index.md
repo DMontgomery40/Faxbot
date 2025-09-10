@@ -16,9 +16,7 @@ The first and only open-source, self-hostable fax API. Send and receive faxes wi
 
 Yes, this repo might look overwhelming at first glance—that's only because Faxbot supports multiple backends (cloud and self-hosted), several MCP transport options for AI integration, and HIPAA-compliant security configurations. Most users will only need one path through this complexity.
 
-**Core functions:**
-- `send_fax(phone_number, pdf_file)` → Outbound
-- `GET /inbound` + `GET /inbound/{id}/pdf` → Inbound
+**Core API:** Send and receive faxes with a simple REST surface. See the [API Reference]({{ site.baseurl }}/development/api-reference.html).
 
 ### Why Faxbot
 
@@ -37,21 +35,10 @@ Yes, this repo might look overwhelming at first glance—that's only because Fax
 
 Faxbot includes a local Admin Console for keys, jobs, inbound inbox, diagnostics, and settings.
 
-- Guide: [Local Admin Console]({{ site.baseurl }}/LOCAL_ADMIN_CONSOLE.html)
+- Guide: [Admin Console]({{ site.baseurl }}/admin-console/)
 - Demo UI: https://faxbot.net/admin-demo/ (simulated data)
 
-## Receiving Faxes (Inbound)
 
-When enabled, inbound faxes appear in the Inbox and via API:
-
-- `GET /inbound` → list most recent inbound faxes (metadata)
-- `GET /inbound/{id}/pdf` → short‑lived PDF download (tokenized, TTL configurable)
-
-Configuration depends on backend:
-- Cloud (Phaxio/Sinch): Configure webhooks to point to your instance; enable signature verification
-- SIP/Asterisk: Use ReceiveFAX → convert TIFF→PDF; route to storage; enforce retention policy
-
-See: [Inbound Overview]({{ site.baseurl }}/inbound/)
 
 Questions? Issues? Please don't hesitate to reach out. See `CONTRIBUTING.md` for the best way to get help.
 

@@ -79,6 +79,8 @@ exclude:
   - package.json
   - package-lock.json
   - Rakefile
+  # Exclude internal planning docs from publishing
+  - docs/LOCAL_ADMIN_CONSOLE.md
   # Exclude legacy single-file docs to keep sidebar clean
   - docs/API_REFERENCE.md
   - docs/MCP_INTEGRATION.md
@@ -96,4 +98,3 @@ exclude:
   - HIPAA_REQUIREMENTS.md
   - OCR_WORKAROUND_IMPLEMENTATION.md
   - TODO.md
-
