@@ -5,10 +5,12 @@ import uuid
 import asyncio
 import secrets
 from datetime import datetime, timedelta
-from typing import Optional
+import tempfile
+from typing import Optional, Any, List, cast
 import time
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks, Header, Depends, Query, Request
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks, Header, Depends, Query, Request, Response
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from .config import settings, reload_settings
 from .db import init_db, SessionLocal, FaxJob
 from .models import FaxJobOut
@@ -24,7 +26,6 @@ from .audit import init_audit_logger, audit_event
 from .storage import get_storage
 from .auth import verify_db_key, create_api_key, list_api_keys, revoke_api_key, rotate_api_key
 from pydantic import BaseModel
-from typing import List, Any, cast
 
 
 app = FastAPI(title="Faxbot API", version="1.0.0")
@@ -73,6 +74,91 @@ def _enforce_rate_limit(info: Optional[dict], path: str, limit: Optional[int] = 
             detail="Rate limit exceeded",
             headers={"Retry-After": str(max(1, retry_after))},
         )
+
+
+# ===== Admin UI static mount (local-only feature) =====
+if os.getenv("ENABLE_LOCAL_ADMIN", "false").lower() == "true":
+    # Prefer container path if present, else project-relative path
+    admin_ui_path_candidates = [
+        "/app/admin_ui/dist",
+        os.path.join(os.path.dirname(__file__), "..", "admin_ui", "dist"),
+    ]
+    for _p in admin_ui_path_candidates:
+        try:
+            ap = os.path.abspath(_p)
+            if os.path.exists(ap):
+                app.mount("/admin/ui", StaticFiles(directory=ap, html=True), name="admin_ui")
+                break
+        except Exception:
+            pass
+
+# Serve project assets (logo, etc.) under /assets if present (dev convenience)
+_assets_candidates = [
+    os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "assets")),
+    os.path.abspath(os.path.join(os.getcwd(), "assets")),
+]
+for _ap in _assets_candidates:
+    try:
+        if os.path.isdir(_ap):
+            app.mount("/assets", StaticFiles(directory=_ap), name="assets")
+            break
+    except Exception:
+        pass
+
+
+# ===== Admin security middleware (loopback + flag) =====
+@app.middleware("http")
+async def enforce_local_admin(request: Request, call_next):
+    # Restrict only the browser UI under /admin/ui; leave programmatic admin APIs accessible
+    if request.url.path.startswith("/admin/ui"):
+        # Feature flag gate
+        if os.getenv("ENABLE_LOCAL_ADMIN", "false").lower() != "true":
+            return Response(content="Admin console disabled", status_code=404)
+        # Block proxied access by default (defensive)
+        h = request.headers
+        if "x-forwarded-for" in h or "x-real-ip" in h:
+            return Response(content="Admin console not available through proxy", status_code=403)
+        # Loopback only
+        client_ip = str(request.client.host)
+        allowed = {"127.0.0.1", "::1", "localhost"}
+        if client_ip not in allowed:
+            try:
+                import ipaddress
+                ip = ipaddress.ip_address(client_ip)
+                if not ip.is_loopback:
+                    return Response(content="Forbidden", status_code=403)
+            except Exception:
+                return Response(content="Forbidden", status_code=403)
+    response = await call_next(request)
+    if request.url.path.startswith("/admin/"):
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+    return response
+
+
+# ===== Shared helpers for admin responses =====
+def mask_secret(value: Optional[str], visible_chars: int = 4) -> str:
+    if not value:
+        return "***"
+    if len(value) <= visible_chars:
+        return "***"
+    return "*" * (len(value) - visible_chars) + value[-visible_chars:]
+
+
+def mask_phone(phone: Optional[str]) -> str:
+    if not phone or len(phone) < 4:
+        return "****"
+    return "*" * (len(phone) - 4) + phone[-4:]
+
+
+def sanitize_error(text: Optional[str]) -> Optional[str]:
+    if not text:
+        return None
+    # Replace long digit sequences (likely numbers/IDs/phones) and truncate
+    sanitized = re.sub(r"\+?\d{6,}", "***", text)
+    return sanitized[:80]
 
 
 @app.on_event("startup")
@@ -374,6 +460,390 @@ def get_admin_config():
         "public_api_url": settings.public_api_url,
     }
     return cfg
+
+
+@app.get("/admin/settings", dependencies=[Depends(require_admin)])
+def get_admin_settings():
+    """Return effective settings with sensitive values masked."""
+    return {
+        "backend": {
+            "type": settings.fax_backend,
+            "disabled": settings.fax_disabled,
+        },
+        "phaxio": {
+            "api_key": mask_secret(settings.phaxio_api_key),
+            "api_secret": mask_secret(settings.phaxio_api_secret),
+            "callback_url": settings.phaxio_status_callback_url,
+            "verify_signature": settings.phaxio_verify_signature,
+            "configured": bool(settings.phaxio_api_key and settings.phaxio_api_secret),
+        },
+        "sinch": {
+            "project_id": settings.sinch_project_id,
+            "api_key": mask_secret(settings.sinch_api_key),
+            "api_secret": mask_secret(settings.sinch_api_secret),
+            "configured": bool(settings.sinch_project_id and settings.sinch_api_key and settings.sinch_api_secret),
+        },
+        "sip": {
+            "ami_host": settings.ami_host,
+            "ami_port": settings.ami_port,
+            "ami_username": settings.ami_username,
+            "ami_password": mask_secret(settings.ami_password),
+            "ami_password_is_default": settings.ami_password == "changeme",
+            "station_id": mask_phone(settings.fax_station_id),
+            "configured": bool(settings.ami_username and settings.ami_password),
+        },
+        "security": {
+            "require_api_key": settings.require_api_key,
+            "enforce_https": settings.enforce_public_https,
+            "audit_enabled": settings.audit_log_enabled,
+            "public_api_url": settings.public_api_url,
+        },
+        "storage": {
+            "backend": settings.storage_backend,
+            "s3_bucket": (settings.s3_bucket[:4] + "…" if settings.s3_bucket else ""),
+            "s3_kms_enabled": bool(settings.s3_kms_key_id),
+        },
+        "inbound": {
+            "enabled": settings.inbound_enabled,
+            "retention_days": settings.inbound_retention_days,
+        },
+        "limits": {
+            "max_file_size_mb": settings.max_file_size_mb,
+            "pdf_token_ttl_minutes": settings.pdf_token_ttl_minutes,
+            "rate_limit_rpm": settings.max_requests_per_minute,
+        },
+    }
+
+
+class ValidateSettingsRequest(BaseModel):
+    backend: str
+    phaxio_api_key: Optional[str] = None
+    phaxio_api_secret: Optional[str] = None
+    sinch_project_id: Optional[str] = None
+    sinch_api_key: Optional[str] = None
+    sinch_api_secret: Optional[str] = None
+    ami_host: Optional[str] = None
+    ami_port: Optional[int] = None
+    ami_username: Optional[str] = None
+    ami_password: Optional[str] = None
+
+
+@app.post("/admin/settings/validate", dependencies=[Depends(require_admin)])
+async def validate_settings(payload: ValidateSettingsRequest):
+    """Validate connectivity/non-destructive checks for the selected backend."""
+    results: dict[str, Any] = {"backend": payload.backend, "checks": {}, "test_fax": None}
+    if payload.backend == "phaxio":
+        if payload.phaxio_api_key and payload.phaxio_api_secret:
+            try:
+                import httpx
+                async with httpx.AsyncClient() as client:
+                    resp = await client.get(
+                        "https://api.phaxio.com/v2.1/account/status",
+                        auth=(payload.phaxio_api_key, payload.phaxio_api_secret),
+                    )
+                    results["checks"]["auth"] = (resp.status_code == 200)
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        results["checks"]["account_status"] = bool(data.get("success"))
+            except Exception as e:
+                results["checks"]["auth"] = False
+                results["checks"]["error"] = str(e)
+        else:
+            results["checks"]["auth"] = False
+    elif payload.backend == "sinch":
+        # v1 presence-only
+        results["checks"]["auth"] = bool(
+            payload.sinch_project_id and payload.sinch_api_key and payload.sinch_api_secret
+        )
+    elif payload.backend == "sip":
+        if all([payload.ami_host, payload.ami_username, payload.ami_password]):
+            try:
+                from .ami import test_ami_connection
+                ok = await test_ami_connection(
+                    host=payload.ami_host or "asterisk",
+                    port=payload.ami_port or 5038,
+                    username=payload.ami_username or "api",
+                    password=payload.ami_password or "",
+                )
+                results["checks"]["ami_connection"] = bool(ok)
+                if payload.ami_password == "changeme":
+                    results["checks"]["ami_password_secure"] = False
+                    results["checks"]["warning"] = "AMI password is still default"
+            except Exception as e:
+                results["checks"]["ami_connection"] = False
+                results["checks"]["error"] = str(e)
+        import shutil as _sh
+        results["checks"]["ghostscript"] = _sh.which("gs") is not None
+    # Common check: fax_data_dir write
+    try:
+        _test = os.path.join(settings.fax_data_dir, f"test_{uuid.uuid4().hex}")
+        with open(_test, "w") as f:
+            f.write("ok")
+        os.remove(_test)
+        results["checks"]["fax_data_dir_writable"] = True
+    except Exception:
+        results["checks"]["fax_data_dir_writable"] = False
+    return results
+
+
+@app.get("/admin/health-status", dependencies=[Depends(require_admin)])
+async def get_health_status():
+    # Basic dashboard counters and posture
+    with SessionLocal() as db:
+        queued = db.query(FaxJob).filter(FaxJob.status == "queued").count()
+        in_prog = db.query(FaxJob).filter(FaxJob.status == "in_progress").count()
+        recent_fail = db.query(FaxJob).filter(
+            FaxJob.status == "failed", FaxJob.updated_at > datetime.utcnow() - timedelta(hours=1)
+        ).count()
+    return {
+        "timestamp": datetime.utcnow().isoformat(),
+        "backend": settings.fax_backend,
+        "jobs": {"queued": queued, "in_progress": in_prog, "recent_failures": recent_fail},
+        "inbound_enabled": settings.inbound_enabled,
+        "api_keys_configured": bool(settings.api_key),
+        "require_auth": settings.require_api_key,
+    }
+
+
+@app.get("/admin/fax-jobs", dependencies=[Depends(require_admin)])
+async def list_admin_jobs(
+    status: Optional[str] = None,
+    backend: Optional[str] = None,
+    limit: int = Query(default=50, le=100),
+    offset: int = Query(default=0, ge=0),
+):
+    with SessionLocal() as db:
+        q = db.query(FaxJob)
+        if status:
+            q = q.filter(FaxJob.status == status)
+        if backend:
+            q = q.filter(FaxJob.backend == backend)
+        total = q.count()
+        rows = q.order_by(FaxJob.created_at.desc()).offset(offset).limit(limit).all()
+        return {
+            "total": total,
+            "jobs": [
+                {
+                    "id": r.id,
+                    "to_number": mask_phone(getattr(r, "to_number", None)),
+                    "status": r.status,
+                    "backend": r.backend,
+                    "pages": r.pages,
+                    "error": sanitize_error(getattr(r, "error", None)),
+                    "created_at": r.created_at,
+                    "updated_at": r.updated_at,
+                }
+                for r in rows
+            ],
+        }
+
+
+@app.get("/admin/fax-jobs/{job_id}", dependencies=[Depends(require_admin)])
+async def get_admin_job(job_id: str):
+    with SessionLocal() as db:
+        job = db.get(FaxJob, job_id)
+        if not job:
+            raise HTTPException(404, detail="Job not found")
+        return {
+            "id": job.id,
+            "to_number": mask_phone(getattr(job, "to_number", None)),
+            "status": job.status,
+            "backend": job.backend,
+            "pages": job.pages,
+            "error": sanitize_error(getattr(job, "error", None)),
+            "provider_sid": job.provider_sid,
+            "created_at": job.created_at,
+            "updated_at": job.updated_at,
+            "file_name": job.file_name,
+        }
+
+
+@app.post("/admin/diagnostics/run", dependencies=[Depends(require_admin)])
+async def run_diagnostics():
+    """Run bounded, non-destructive diagnostics for v1."""
+    diag: dict[str, Any] = {
+        "timestamp": datetime.utcnow().isoformat(),
+        "backend": settings.fax_backend,
+        "checks": {},
+    }
+    # Backend configured flags
+    if settings.fax_backend == "phaxio":
+        diag["checks"]["phaxio"] = {
+            "api_key_set": bool(settings.phaxio_api_key),
+            "api_secret_set": bool(settings.phaxio_api_secret),
+            "callback_url_set": bool(settings.phaxio_status_callback_url),
+            "signature_verification": settings.phaxio_verify_signature,
+            "public_url_https": settings.public_api_url.startswith("https://"),
+        }
+    elif settings.fax_backend == "sinch":
+        diag["checks"]["sinch"] = {
+            "project_id_set": bool(settings.sinch_project_id),
+            "api_key_set": bool(settings.sinch_api_key),
+            "api_secret_set": bool(settings.sinch_api_secret),
+        }
+    elif settings.fax_backend == "sip":
+        sip_checks: dict[str, Any] = {
+            "ami_host": settings.ami_host,
+            "ami_port": settings.ami_port,
+            "ami_password_not_default": settings.ami_password != "changeme",
+            "station_id_set": bool(settings.fax_station_id),
+        }
+        # Probe AMI reachability best-effort
+        try:
+            from .ami import test_ami_connection
+            sip_checks["ami_reachable"] = await test_ami_connection(
+                settings.ami_host, settings.ami_port, settings.ami_username, settings.ami_password
+            )
+        except Exception as e:
+            sip_checks["ami_reachable"] = False
+            sip_checks["ami_error"] = str(e)
+        diag["checks"]["sip"] = sip_checks
+
+    # System checks
+    sys: dict[str, Any] = {
+        "ghostscript": shutil.which("gs") is not None,
+        "fax_data_dir": os.path.exists(settings.fax_data_dir),
+        "fax_data_writable": False,
+        "database_connected": False,
+        "temp_dir_writable": False,
+    }
+    # Test fax_data_dir write
+    try:
+        os.makedirs(settings.fax_data_dir, exist_ok=True)
+        test_path = os.path.join(settings.fax_data_dir, f"diag_{uuid.uuid4().hex}")
+        with open(test_path, "w") as f:
+            f.write("ok")
+        os.remove(test_path)
+        sys["fax_data_writable"] = True
+    except Exception:
+        pass
+    # DB
+    try:
+        with SessionLocal() as db:
+            db.execute("SELECT 1")
+            sys["database_connected"] = True
+    except Exception:
+        pass
+    # Temp dir
+    try:
+        with tempfile.NamedTemporaryFile(delete=True) as tmp:
+            tmp.write(b"ok")
+            sys["temp_dir_writable"] = True
+    except Exception:
+        pass
+    diag["checks"]["system"] = sys
+
+    # Storage
+    if settings.storage_backend.lower() == "s3":
+        st = {
+            "type": "s3",
+            "bucket_set": bool(settings.s3_bucket),
+            "region_set": bool(settings.s3_region),
+            "kms_enabled": bool(settings.s3_kms_key_id),
+        }
+        if settings.s3_bucket and os.getenv("ENABLE_S3_DIAGNOSTICS", "false").lower() == "true":
+            try:
+                import boto3  # type: ignore
+                from botocore.config import Config  # type: ignore
+                s3 = boto3.client(
+                    "s3",
+                    region_name=(settings.s3_region or None),
+                    endpoint_url=(settings.s3_endpoint_url or None),
+                    config=Config(signature_version="s3v4"),
+                )
+                s3.head_bucket(Bucket=settings.s3_bucket)
+                st["accessible"] = True
+            except Exception as e:
+                st["accessible"] = False
+                st["error"] = str(e)[:100]
+        diag["checks"]["storage"] = st
+    else:
+        diag["checks"]["storage"] = {"type": "local", "warning": "Local storage only suitable for development"}
+
+    # Inbound flags
+    if settings.inbound_enabled:
+        inbound = {"enabled": True, "retention_days": settings.inbound_retention_days}
+        if settings.fax_backend == "phaxio":
+            inbound["signature_verification"] = settings.phaxio_inbound_verify_signature
+        elif settings.fax_backend == "sinch":
+            inbound["auth_configured"] = bool(settings.sinch_inbound_basic_user or settings.sinch_inbound_hmac_secret)
+        elif settings.fax_backend == "sip":
+            inbound["asterisk_secret_set"] = bool(settings.asterisk_inbound_secret)
+        diag["checks"]["inbound"] = inbound
+
+    # Security summary
+    diag["checks"]["security"] = {
+        "enforce_https": settings.enforce_public_https,
+        "audit_logging": settings.audit_log_enabled,
+        "rate_limiting": settings.max_requests_per_minute > 0,
+        "pdf_token_ttl": settings.pdf_token_ttl_minutes,
+    }
+
+    # Summary
+    critical: list[str] = []
+    warnings: list[str] = []
+    if settings.fax_backend == "phaxio":
+        p = diag["checks"].get("phaxio", {})
+        if not p.get("api_key_set"):
+            critical.append("Phaxio API key not set")
+        if not p.get("callback_url_set"):
+            warnings.append("PHAXIO_STATUS_CALLBACK_URL not set")
+        if not p.get("public_url_https"):
+            warnings.append("PUBLIC_API_URL should be HTTPS")
+    if settings.fax_backend == "sip":
+        s = diag["checks"].get("sip", {})
+        if not s.get("ami_password_not_default"):
+            critical.append("AMI password is default 'changeme'")
+        if not s.get("ami_reachable"):
+            warnings.append("AMI not reachable")
+    if not sys.get("fax_data_writable"):
+        critical.append("Cannot write to fax data dir")
+    if not sys.get("database_connected"):
+        critical.append("Database connection failed")
+    diag["summary"] = {"healthy": len(critical) == 0, "critical_issues": critical, "warnings": warnings}
+    return diag
+
+
+@app.get("/admin/settings/export", dependencies=[Depends(require_admin)])
+def export_settings_env():
+    """Generate a .env snippet for current settings (secrets redacted)."""
+    lines: List[str] = []
+    lines.append(f"FAX_BACKEND={settings.fax_backend}")
+    lines.append(f"REQUIRE_API_KEY={str(settings.require_api_key).lower()}")
+    lines.append(f"ENFORCE_PUBLIC_HTTPS={str(settings.enforce_public_https).lower()}")
+    lines.append("# NOTE: Secrets are redacted below. Fill in actual values before use.")
+    if settings.fax_backend == "phaxio":
+        lines.append("# Phaxio configuration")
+        lines.append(
+            f"PHAXIO_API_KEY={(settings.phaxio_api_key[:8] + '…') if settings.phaxio_api_key else ''}"
+        )
+        lines.append(
+            f"PHAXIO_API_SECRET={(settings.phaxio_api_secret[:8] + '…') if settings.phaxio_api_secret else ''}"
+        )
+        lines.append(f"PUBLIC_API_URL={settings.public_api_url}")
+        lines.append(f"PHAXIO_STATUS_CALLBACK_URL={settings.phaxio_status_callback_url}")
+        lines.append("# Also supports PHAXIO_CALLBACK_URL as an alias")
+        lines.append(f"PHAXIO_VERIFY_SIGNATURE={str(settings.phaxio_verify_signature).lower()}")
+    elif settings.fax_backend == "sip":
+        lines.append("# SIP/Asterisk configuration")
+        lines.append(f"ASTERISK_AMI_HOST={settings.ami_host}")
+        lines.append(f"ASTERISK_AMI_PORT={settings.ami_port}")
+        lines.append(f"ASTERISK_AMI_USERNAME={settings.ami_username}")
+        lines.append("ASTERISK_AMI_PASSWORD=***REDACTED***")
+    elif settings.fax_backend == "sinch":
+        lines.append("# Sinch configuration")
+        lines.append(f"SINCH_PROJECT_ID={settings.sinch_project_id}")
+        lines.append(
+            f"SINCH_API_KEY={(settings.sinch_api_key[:8] + '…') if settings.sinch_api_key else ''}"
+        )
+        lines.append(
+            f"SINCH_API_SECRET={(settings.sinch_api_secret[:8] + '…') if settings.sinch_api_secret else ''}"
+        )
+    return {
+        "env_content": "\n".join(lines),
+        "requires_restart": True,
+        "note": "v1 is read-only. Copy to .env and restart the API to apply.",
+    }
 
 @app.post("/fax", response_model=FaxJobOut, status_code=202, dependencies=[Depends(require_fax_send)])
 async def send_fax(background: BackgroundTasks, to: str = Form(...), file: UploadFile = File(...)):

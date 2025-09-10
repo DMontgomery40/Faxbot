@@ -20,6 +20,7 @@ export REQUIRE_API_KEY="${REQUIRE_API_KEY:-true}"
 export FAX_DISABLED="${FAX_DISABLED:-true}"
 export FAX_BACKEND="${FAX_BACKEND:-phaxio}"
 export FAX_DATA_DIR="${FAX_DATA_DIR:-$ROOT_DIR/faxdata}"
+export ENABLE_LOCAL_ADMIN="${ENABLE_LOCAL_ADMIN:-true}"
 
 PORT="${PORT:-8080}"
 echo "[i] Starting uvicorn on http://0.0.0.0:${PORT}"
@@ -28,5 +29,6 @@ echo "[i] REQUIRE_API_KEY: $REQUIRE_API_KEY"
 echo "[i] FAX_DISABLED: $FAX_DISABLED"
 echo "[i] FAX_BACKEND: $FAX_BACKEND"
 echo "[i] FAX_DATA_DIR: $FAX_DATA_DIR"
+echo "[i] ENABLE_LOCAL_ADMIN: $ENABLE_LOCAL_ADMIN"
 
 exec "$VENV_DIR/bin/python" -m uvicorn api.app.main:app --host 0.0.0.0 --port "$PORT" --reload

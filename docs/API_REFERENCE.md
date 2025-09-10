@@ -13,7 +13,7 @@ permalink: /api-reference.html
  - Readiness: `GET /health/ready` → 200 when ready; 503 otherwise
 
 ## Authentication and API Keys
-- Send `X-API-Key: <token>` on every request. Two options exist:
+- Send `X-API-Key: <token>` on every request. Two options exist:auth
   - DB‑backed tokens (recommended): format `fbk_live_<keyId>_<secret>`, minted via admin endpoints.
   - Env bootstrap key (legacy): the literal `API_KEY` value configured on the server. Use this only to bootstrap and mint DB keys.
 - Set `REQUIRE_API_KEY=true` in production/HIPAA to enforce authentication even if `API_KEY` is blank.
