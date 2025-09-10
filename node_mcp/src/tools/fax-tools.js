@@ -239,8 +239,9 @@ export async function handleGetInboundPdfTool(args) {
     const b64 = buffer.toString('base64');
     return { content: [{ type: 'text', text: b64 }] };
   } else {
-    // Return a hint URL path for clients that can fetch; includes no token here; relies on API key-based access
-    return { content: [{ type: 'text', text: `/inbound/${inboundId}/pdf` }] };
+    // Return a MCP resource reference that clients can read via ReadResource
+    const uri = `faxbot:inbound/${inboundId}/pdf`;
+    return { content: [{ type: 'resource', resource: { uri, mimeType: 'application/pdf' } }] };
   }
 }
 
