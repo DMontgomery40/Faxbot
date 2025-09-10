@@ -1,5 +1,7 @@
 ## Faxbot Local‑Only Admin Console — Production‑Ready Plan (v1)
 
+> Demo: Explore a simulated Admin Console at https://faxbot.net/admin-demo/
+
 ### Purpose
 - Deliver a pragmatic, local‑only admin console that rides on the existing API.
 - v1 goal: help operators do the basics without hand‑editing `.env`: keys, readiness/diagnostics, simple send, inbound view (when enabled).
