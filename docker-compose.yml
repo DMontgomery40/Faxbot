@@ -9,6 +9,7 @@ services:
       - ./.env
     environment:
       - FAX_DATA_DIR=/faxdata
+      - ENABLE_LOCAL_ADMIN=true
     volumes:
       - faxdata:/faxdata
     ports:

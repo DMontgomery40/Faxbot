@@ -171,7 +171,7 @@ mcp = FastMCP(name="Faxbot MCP (Python)")
 
 
 @mcp.tool()
-async def send_fax(to: str, fileContent: Optional[str] = None, fileName: Optional[str] = None, fileType: Optional[str] = None, filePath: Optional[str] = None) -> str:  # noqa: N803
+async def send_fax(to: str, fileContent: Optional[str] = None, fileName: Optional[str] = None, fileType: Optional[str] = None, filePath: Optional[str] = None, fileUrl: Optional[str] = None) -> str:  # noqa: N803
     """Send a fax using the Faxbot REST API.
 
     Args:
@@ -199,6 +199,17 @@ async def send_fax(to: str, fileContent: Optional[str] = None, fileName: Optiona
             job = await api_send_fax(to, os.path.basename(p), b64, 'txt')
         else:
             raise ValueError('filePath must point to a PDF or TXT file')
+    elif fileUrl:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.get(fileUrl)
+            resp.raise_for_status()
+            ct = (resp.headers.get('content-type') or '').lower()
+            name_guess = pathlib.Path(fileUrl.split('?')[0].split('#')[0]).name or ('document.pdf' if 'pdf' in ct else 'document.txt')
+            if ('pdf' not in ct) and (not name_guess.lower().endswith('.pdf')) and ('text/plain' not in ct) and (not name_guess.lower().endswith('.txt')):
+                raise ValueError('Unsupported content-type for fileUrl (expect PDF or text/plain)')
+            b64 = base64.b64encode(resp.content).decode('ascii')
+            ft = 'pdf' if ('pdf' in ct or name_guess.lower().endswith('.pdf')) else 'txt'
+            job = await api_send_fax(to, name_guess, b64, ft)
     else:
         if not (fileContent and fileName):
             raise ValueError('Missing required parameters: fileContent and fileName (or provide filePath)')
@@ -228,7 +239,64 @@ async def get_fax_status(jobId: str) -> str:  # noqa: N803
     return "\n".join(lines)
 
 
-# OCR/text-extraction workflow removed; only send_fax and get_fax_status are exposed.
+@mcp.tool()
+async def list_inbound(limit: Optional[int] = 20, cursor: Optional[str] = None) -> str:
+    headers = {}
+    if API_KEY:
+        headers['X-API-Key'] = API_KEY
+    params = {}
+    if limit is not None:
+        params['limit'] = limit
+    if cursor:
+        params['cursor'] = cursor
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        resp = await client.get(f"{FAX_API_URL}/inbound", headers=headers, params=params)
+        resp.raise_for_status()
+        data = resp.json()
+    if isinstance(data, dict) and 'items' in data:
+        lines = [f"• {x.get('id')} from {x.get('fr') or x.get('from') or 'unknown'} → {x.get('to') or 'unknown'}{(' ('+str(x.get('pages'))+'p)') if x.get('pages') else ''}" for x in data['items']]
+        return "Inbound List\n\n" + "\n".join(lines)
+    return "Inbound List\n\n" + str(data)
+
+
+@mcp.tool()
+async def get_fax(id: str) -> str:  # noqa: N803
+    if id.lower().startswith('in_'):
+        headers = {'X-API-Key': API_KEY} if API_KEY else {}
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(f"{FAX_API_URL}/inbound/{id}", headers=headers)
+            if resp.status_code == 404:
+                raise ValueError(f"Inbound not found: {id}")
+            resp.raise_for_status()
+            fx = resp.json()
+        parts = [
+            "Inbound Fax",
+            f"ID: {fx.get('id')}",
+            f"From: {fx.get('fr') or fx.get('from')}",
+            f"To: {fx.get('to')}",
+        ]
+        if fx.get('pages'):
+            parts.append(f"Pages: {fx['pages']}")
+        if fx.get('received_at'):
+            parts.append(f"Received: {fx['received_at']}")
+        return "\n".join([p for p in parts if p])
+    # else outbound
+    return await get_fax_status(id)
+
+
+@mcp.tool()
+async def get_inbound_pdf(inboundId: str, asBase64: Optional[bool] = False) -> str:  # noqa: N803
+    headers = {'X-API-Key': API_KEY} if API_KEY else {}
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        resp = await client.get(f"{FAX_API_URL}/inbound/{inboundId}/pdf", headers=headers)
+        if resp.status_code == 404:
+            raise ValueError(f"Inbound not found: {inboundId}")
+        resp.raise_for_status()
+        if asBase64:
+            return base64.b64encode(resp.content).decode('ascii')
+        # Hint path (clients with HTTP access can fetch directly)
+        return f"/inbound/{inboundId}/pdf"
+
 
 
 # Build underlying SSE ASGI app from FastMCP

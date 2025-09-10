@@ -9,7 +9,7 @@ import {
   ListToolsRequestSchema,
   McpError,
 } from '@modelcontextprotocol/sdk/types.js';
-import { faxTools, handleSendFaxTool, handleGetFaxStatusTool } from '../tools/fax-tools.js';
+import { faxTools, handleSendFaxTool, handleGetFaxStatusTool, handleGetFaxTool, handleListInboundTool, handleGetInboundPdfTool } from '../tools/fax-tools.js';
 import { listPrompts } from '../prompts/index.js';
 
 function buildServer() {
@@ -27,6 +27,12 @@ function buildServer() {
         return await handleSendFaxTool(args);
       case 'get_fax_status':
         return await handleGetFaxStatusTool(args);
+      case 'get_fax':
+        return await handleGetFaxTool(args);
+      case 'list_inbound':
+        return await handleListInboundTool(args);
+      case 'get_inbound_pdf':
+        return await handleGetInboundPdfTool(args);
       default:
         throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${name}`);
     }

@@ -269,6 +269,11 @@ function App() {
               src={`${window.location.origin}/assets/faxbot_full_logo.png`}
               alt="Faxbot"
               onClick={() => setTabValue(0)}
+              onError={(e) => {
+                console.error('Header logo failed to load:', e);
+                // Try relative path as fallback
+                (e.target as HTMLImageElement).src = "/assets/faxbot_full_logo.png";
+              }}
               sx={{ 
                 height: { xs: 28, sm: 32 }, 
                 mr: { xs: 1, sm: 2 }, 

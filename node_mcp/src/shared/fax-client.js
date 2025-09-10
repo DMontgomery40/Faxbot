@@ -45,4 +45,34 @@ export async function getFaxStatus(jobId) {
   return resp.data;
 }
 
+export async function listInbound(params = {}) {
+  const headers = buildHeaders();
+  const searchParams = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== null) searchParams.append(k, String(v));
+  }
+  const qs = searchParams.toString();
+  const url = `${BASE_URL}/inbound${qs ? `?${qs}` : ''}`;
+  const resp = await axios.get(url, { headers, timeout: 10000 });
+  if (!resp.data) throw new Error('Invalid response from Fax API');
+  return resp.data;
+}
+
+export async function getInbound(inboundId) {
+  if (!inboundId) throw new Error('inboundId required');
+  const headers = buildHeaders();
+  const resp = await axios.get(`${BASE_URL}/inbound/${encodeURIComponent(inboundId)}`, { headers, timeout: 10000 });
+  if (!resp.data) throw new Error('Invalid response from Fax API');
+  return resp.data;
+}
+
+export async function downloadInboundPdf(inboundId) {
+  if (!inboundId) throw new Error('inboundId required');
+  const headers = buildHeaders();
+  const resp = await axios.get(`${BASE_URL}/inbound/${encodeURIComponent(inboundId)}/pdf`, { headers, responseType: 'arraybuffer', timeout: 30000 });
+  if (!resp.data) throw new Error('Invalid response from Fax API');
+  const contentType = resp.headers['content-type'] || 'application/pdf';
+  return { buffer: Buffer.from(resp.data), contentType };
+}
+
 export default { sendFax, getFaxStatus };
