@@ -57,7 +57,7 @@ function SetupWizard({ client }: SetupWizardProps) {
   const [validationResults, setValidationResults] = useState<any>(null);
   const [envContent, setEnvContent] = useState('');
 
-  const steps = ['Choose Backend', 'Configure Credentials', 'Security Settings', 'Generate Config'];
+  const steps = ['Choose Backend', 'Configure Credentials', 'Security Settings', 'Apply & Export'];
 
   const handleNext = () => {
     setActiveStep((prevActiveStep) => prevActiveStep + 1);
@@ -124,6 +124,43 @@ function SetupWizard({ client }: SetupWizardProps) {
     const content = lines.join('\n');
     setEnvContent(content);
     return content;
+  };
+
+  const applyAndReload = async () => {
+    setValidating(true);
+    setEnvContent('');
+    setValidationResults(null);
+    try {
+      const payload: any = {
+        backend: config.backend,
+        require_api_key: config.require_api_key,
+        enforce_public_https: config.enforce_public_https,
+        pdf_token_ttl_minutes: config.pdf_token_ttl_minutes,
+      };
+      if (config.backend === 'phaxio') {
+        payload.phaxio_api_key = config.phaxio_api_key;
+        payload.phaxio_api_secret = config.phaxio_api_secret;
+        if (config.public_api_url) payload.public_api_url = config.public_api_url;
+      } else if (config.backend === 'sinch') {
+        payload.sinch_project_id = config.sinch_project_id;
+        payload.sinch_api_key = config.sinch_api_key;
+        payload.sinch_api_secret = config.sinch_api_secret;
+      } else if (config.backend === 'sip') {
+        payload.ami_host = config.ami_host;
+        payload.ami_port = config.ami_port;
+        payload.ami_username = config.ami_username;
+        payload.ami_password = config.ami_password;
+        payload.fax_station_id = config.fax_station_id;
+      }
+      await client.updateSettings(payload);
+      await client.reloadSettings();
+      const results = await client.validateSettings(config);
+      setValidationResults(results);
+    } catch (e) {
+      setValidationResults({ error: e instanceof Error ? e.message : 'Apply failed' });
+    } finally {
+      setValidating(false);
+    }
   };
 
   const copyToClipboard = (text: string) => {
@@ -382,7 +419,7 @@ function SetupWizard({ client }: SetupWizardProps) {
         return (
           <Box>
             <Typography variant="h6" gutterBottom>
-              Configuration Complete
+              Apply & Export
             </Typography>
             
             <Box sx={{ mb: 2 }}>
@@ -393,6 +430,15 @@ function SetupWizard({ client }: SetupWizardProps) {
                 sx={{ mr: 1 }}
               >
                 {validating ? <CircularProgress size={20} /> : 'Validate Configuration'}
+              </Button>
+              <Button
+                variant="contained"
+                color="primary"
+                onClick={applyAndReload}
+                disabled={validating}
+                sx={{ mr: 1 }}
+              >
+                {validating ? <CircularProgress size={20} /> : 'Apply & Reload'}
               </Button>
               <Button
                 variant="contained"
@@ -449,8 +495,8 @@ function SetupWizard({ client }: SetupWizardProps) {
                   </pre>
                 </Paper>
                 
-                <Alert severity="warning" sx={{ mt: 2 }}>
-                  After updating .env, restart the API with: docker compose restart api
+                <Alert severity="info" sx={{ mt: 2 }}>
+                  Changes were applied in-process. For persistence across restarts, click Generate .env, update your environment file, and restart the API.
                 </Alert>
               </Box>
             )}

@@ -59,6 +59,19 @@ export class AdminAPIClient {
     return res.json();
   }
 
+  async updateSettings(settings: any): Promise<any> {
+    const res = await this.fetch('/admin/settings', {
+      method: 'PUT',
+      body: JSON.stringify(settings),
+    });
+    return res.json();
+  }
+
+  async reloadSettings(): Promise<any> {
+    const res = await this.fetch('/admin/settings/reload', { method: 'POST' });
+    return res.json();
+  }
+
   // Diagnostics
   async runDiagnostics(): Promise<DiagnosticsResult> {
     const res = await this.fetch('/admin/diagnostics/run', {

@@ -586,6 +586,123 @@ async def validate_settings(payload: ValidateSettingsRequest):
     return results
 
 
+class UpdateSettingsRequest(BaseModel):
+    # Core
+    backend: Optional[str] = None  # 'phaxio' | 'sinch' | 'sip'
+    require_api_key: Optional[bool] = None
+    enforce_public_https: Optional[bool] = None
+    public_api_url: Optional[str] = None
+    fax_disabled: Optional[bool] = None
+    max_file_size_mb: Optional[int] = None
+
+    # Phaxio
+    phaxio_api_key: Optional[str] = None
+    phaxio_api_secret: Optional[str] = None
+    phaxio_status_callback_url: Optional[str] = None
+    phaxio_verify_signature: Optional[bool] = None
+
+    # Sinch
+    sinch_project_id: Optional[str] = None
+    sinch_api_key: Optional[str] = None
+    sinch_api_secret: Optional[str] = None
+
+    # SIP/Asterisk
+    ami_host: Optional[str] = None
+    ami_port: Optional[int] = None
+    ami_username: Optional[str] = None
+    ami_password: Optional[str] = None
+    fax_station_id: Optional[str] = None
+
+    # Inbound
+    inbound_enabled: Optional[bool] = None
+    inbound_retention_days: Optional[int] = None
+    inbound_token_ttl_minutes: Optional[int] = None
+    asterisk_inbound_secret: Optional[str] = None
+    phaxio_inbound_verify_signature: Optional[bool] = None
+    sinch_inbound_verify_signature: Optional[bool] = None
+    sinch_inbound_basic_user: Optional[str] = None
+    sinch_inbound_basic_pass: Optional[str] = None
+    sinch_inbound_hmac_secret: Optional[str] = None
+
+    # Audit / rate limiting
+    audit_log_enabled: Optional[bool] = None
+    max_requests_per_minute: Optional[int] = None
+
+
+def _set_env_bool(key: str, value: Optional[bool]):
+    if value is None:
+        return
+    os.environ[key] = "true" if value else "false"
+
+
+def _set_env_opt(key: str, value):
+    if value is None:
+        return
+    os.environ[key] = str(value)
+
+
+@app.put("/admin/settings", dependencies=[Depends(require_admin)])
+def update_admin_settings(payload: UpdateSettingsRequest):
+    """Apply configuration updates in-process by setting environment variables and reloading settings.
+    Note: For persistence across restarts, write these to your .env and restart the API.
+    """
+    # Core
+    if payload.backend:
+        _set_env_opt("FAX_BACKEND", payload.backend)
+    _set_env_bool("REQUIRE_API_KEY", payload.require_api_key)
+    _set_env_bool("ENFORCE_PUBLIC_HTTPS", payload.enforce_public_https)
+    _set_env_opt("PUBLIC_API_URL", payload.public_api_url)
+    _set_env_bool("FAX_DISABLED", payload.fax_disabled)
+    _set_env_opt("MAX_FILE_SIZE_MB", payload.max_file_size_mb)
+
+    # Phaxio
+    _set_env_opt("PHAXIO_API_KEY", payload.phaxio_api_key)
+    _set_env_opt("PHAXIO_API_SECRET", payload.phaxio_api_secret)
+    if payload.phaxio_status_callback_url is not None:
+        _set_env_opt("PHAXIO_STATUS_CALLBACK_URL", payload.phaxio_status_callback_url)
+        # also set alias for compatibility
+        _set_env_opt("PHAXIO_CALLBACK_URL", payload.phaxio_status_callback_url)
+    _set_env_bool("PHAXIO_VERIFY_SIGNATURE", payload.phaxio_verify_signature)
+
+    # Sinch
+    _set_env_opt("SINCH_PROJECT_ID", payload.sinch_project_id)
+    _set_env_opt("SINCH_API_KEY", payload.sinch_api_key)
+    _set_env_opt("SINCH_API_SECRET", payload.sinch_api_secret)
+
+    # SIP
+    _set_env_opt("ASTERISK_AMI_HOST", payload.ami_host)
+    _set_env_opt("ASTERISK_AMI_PORT", payload.ami_port)
+    _set_env_opt("ASTERISK_AMI_USERNAME", payload.ami_username)
+    _set_env_opt("ASTERISK_AMI_PASSWORD", payload.ami_password)
+    _set_env_opt("FAX_LOCAL_STATION_ID", payload.fax_station_id)
+
+    # Inbound
+    _set_env_bool("INBOUND_ENABLED", payload.inbound_enabled)
+    _set_env_opt("INBOUND_RETENTION_DAYS", payload.inbound_retention_days)
+    _set_env_opt("INBOUND_TOKEN_TTL_MINUTES", payload.inbound_token_ttl_minutes)
+    _set_env_opt("ASTERISK_INBOUND_SECRET", payload.asterisk_inbound_secret)
+    _set_env_bool("PHAXIO_INBOUND_VERIFY_SIGNATURE", payload.phaxio_inbound_verify_signature)
+    _set_env_bool("SINCH_INBOUND_VERIFY_SIGNATURE", payload.sinch_inbound_verify_signature)
+    _set_env_opt("SINCH_INBOUND_BASIC_USER", payload.sinch_inbound_basic_user)
+    _set_env_opt("SINCH_INBOUND_BASIC_PASS", payload.sinch_inbound_basic_pass)
+    _set_env_opt("SINCH_INBOUND_HMAC_SECRET", payload.sinch_inbound_hmac_secret)
+
+    # Audit / rate limiting
+    _set_env_bool("AUDIT_LOG_ENABLED", payload.audit_log_enabled)
+    _set_env_opt("MAX_REQUESTS_PER_MINUTE", payload.max_requests_per_minute)
+
+    # Apply live
+    reload_settings()
+    # Return current effective masked view
+    return get_admin_settings()
+
+
+@app.post("/admin/settings/reload", dependencies=[Depends(require_admin)])
+def admin_reload_settings():
+    reload_settings()
+    return get_admin_settings()
+
+
 @app.get("/admin/health-status", dependencies=[Depends(require_admin)])
 async def get_health_status():
     # Basic dashboard counters and posture
