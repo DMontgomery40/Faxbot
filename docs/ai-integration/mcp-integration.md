@@ -34,9 +34,12 @@ Claude Desktop or Cursor config example:
 }
 ```
 
-Use these tools
-- send_fax: `{ to, filePath }` (stdio) or `{ to, fileContent, fileName, fileType }` (HTTP/SSE)
+Use these tools (Node & Python MCP)
+- send_fax: `{ to, filePath }` (stdio) or `{ to, fileUrl }` or `{ to, fileContent, fileName, fileType }`
 - get_fax_status: `{ jobId }`
+- get_fax: `{ id }` — works for outbound job ids and inbound ids
+- list_inbound: `{ limit?, cursor? }` — recent inbound metadata
+- get_inbound_pdf: `{ inboundId, asBase64? }` — returns base64 or a path/URI to fetch
 
 Important notes
 - File types: only PDF and TXT. Convert images (PNG/JPG) to PDF first.
@@ -45,8 +48,12 @@ Important notes
 - Backends: works with any Faxbot backend (`phaxio`, `sinch`, or `sip`).
 
 Examples
-- "Call send_fax with { to: "+15551234567", filePath: "/Users/me/Documents/letter.pdf" }"
-- "Call get_fax_status with { jobId: "<id>" }"
+- Natural language: “Fax insurance_card.pdf to SkyRidge Cardiology.” The MCP client can look up the number using its own tools, then call `send_fax`. Follow with `get_fax_status`.
+- Tool calls:
+  - `send_fax` with `{ to: "+15551234567", filePath: "/Users/me/Documents/letter.pdf" }`
+  - `get_fax_status` with `{ jobId: "<id>" }`
+  - `get_fax` with `{ id: "in_123" }` (inbound) or `{ id: "fbj_ABC" }` (outbound)
+  - `get_inbound_pdf` with `{ inboundId: "in_123", asBase64: true }`
 
 Docker Quick Start (HTTP MCP)
 - Start the API and MCP via Docker Compose:

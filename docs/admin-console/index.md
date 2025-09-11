@@ -24,3 +24,21 @@ permalink: /admin-console/
 - Hosted demo with simulated data: https://faxbot.net/admin-demo/
 - No external calls; intended for showcasing the workflow
 
+## Live Apply & Export
+
+- Setup Wizard: choose a backend (Phaxio/Sinch/SIP), enter credentials, pick security defaults (require API key, enforce HTTPS, audit logging), then click “Apply & Reload”.
+  - Changes apply in‑process immediately.
+  - Click “Generate .env” to export a snippet for persistence across restarts.
+- Settings: quick edits for backend/security and selected provider fields.
+  - Click “Apply & Reload” to take effect immediately.
+
+## Restart (Optional)
+
+- If `ADMIN_ALLOW_RESTART=true`, the Diagnostics page shows a “Restart API” button.
+  - This triggers a controlled process exit so your container manager (e.g., Docker) restarts the API.
+  - If the flag is not set, the button returns “Restart not allowed”.
+
+## Dashboard & Diagnostics
+
+- Dashboard shows the live backend (phaxio/sinch/sip) and simple queue stats. After applying settings, it reflects the new backend.
+- Diagnostics runs a comprehensive check (backend credentials/config, storage, inbound flags, security posture) and shows recommendations.
