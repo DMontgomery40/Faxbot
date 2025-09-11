@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Box,
   Card,
@@ -37,6 +37,9 @@ function Settings({ client }: SettingsProps) {
   const [envContent, setEnvContent] = useState<string>('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [snack, setSnack] = useState<string | null>(null);
+  const [form, setForm] = useState<any>({});
+  const handleForm = (field: string, value: any) => setForm((prev: any) => ({ ...prev, [field]: value }));
 
   const fetchSettings = async () => {
     try {
@@ -44,12 +47,22 @@ function Settings({ client }: SettingsProps) {
       setLoading(true);
       const data = await client.getSettings();
       setSettings(data);
+      setForm({
+        backend: data.backend?.type,
+        require_api_key: data.security?.require_api_key,
+        enforce_public_https: data.security?.enforce_https,
+        public_api_url: data.security?.public_api_url,
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to fetch settings');
     } finally {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    fetchSettings().catch(() => {});
+  }, []);
 
   const exportEnv = async () => {
     try {
@@ -121,10 +134,7 @@ function Settings({ client }: SettingsProps) {
       )}
 
       <Alert severity="info" sx={{ mb: 3 }}>
-        <Typography variant="body2">
-          <strong>v1 Note:</strong> Settings are read-only in this version. 
-          To modify settings, update your .env file and restart the API.
-        </Typography>
+        <Typography variant="body2">Apply changes live, then export .env for persistence across restarts.</Typography>
       </Alert>
 
       {loading && !settings ? (
@@ -150,6 +160,15 @@ function Settings({ client }: SettingsProps) {
                       primary="Backend Type"
                       secondary={settings.backend.type.toUpperCase()}
                     />
+                    <select
+                      value={form.backend || settings.backend.type}
+                      onChange={(e) => handleForm('backend', e.target.value)}
+                      style={{ background: 'transparent', color: 'inherit', borderColor: '#444', padding: '6px', borderRadius: 6 }}
+                    >
+                      <option value="phaxio">phaxio</option>
+                      <option value="sinch">sinch</option>
+                      <option value="sip">sip</option>
+                    </select>
                     <Chip
                       label={settings.backend.disabled ? 'Disabled' : 'Active'}
                       color={settings.backend.disabled ? 'error' : 'success'}
@@ -179,6 +198,14 @@ function Settings({ client }: SettingsProps) {
                       primary="API Key Required"
                       secondary={settings.security.require_api_key ? 'Yes' : 'No'}
                     />
+                    <select
+                      value={(form.require_api_key ?? settings.security.require_api_key) ? 'true' : 'false'}
+                      onChange={(e) => handleForm('require_api_key', e.target.value === 'true')}
+                      style={{ background: 'transparent', color: 'inherit', borderColor: '#444', padding: '6px', borderRadius: 6 }}
+                    >
+                      <option value="true">Yes</option>
+                      <option value="false">No</option>
+                    </select>
                   </ListItem>
                   <ListItem>
                     <ListItemIcon>
@@ -188,6 +215,14 @@ function Settings({ client }: SettingsProps) {
                       primary="HTTPS Enforced"
                       secondary={settings.security.enforce_https ? 'Yes' : 'No'}
                     />
+                    <select
+                      value={(form.enforce_public_https ?? settings.security.enforce_https) ? 'true' : 'false'}
+                      onChange={(e) => handleForm('enforce_public_https', e.target.value === 'true')}
+                      style={{ background: 'transparent', color: 'inherit', borderColor: '#444', padding: '6px', borderRadius: 6 }}
+                    >
+                      <option value="true">Yes</option>
+                      <option value="false">No</option>
+                    </select>
                   </ListItem>
                   <ListItem>
                     <ListItemIcon>
@@ -197,6 +232,14 @@ function Settings({ client }: SettingsProps) {
                       primary="Audit Logging"
                       secondary={settings.security.audit_enabled ? 'Enabled' : 'Disabled'}
                     />
+                    <select
+                      value={(form.audit_log_enabled ?? settings.security.audit_enabled) ? 'true' : 'false'}
+                      onChange={(e) => handleForm('audit_log_enabled', e.target.value === 'true')}
+                      style={{ background: 'transparent', color: 'inherit', borderColor: '#444', padding: '6px', borderRadius: 6 }}
+                    >
+                      <option value="true">Enabled</option>
+                      <option value="false">Disabled</option>
+                    </select>
                   </ListItem>
                 </List>
               </CardContent>
@@ -219,6 +262,11 @@ function Settings({ client }: SettingsProps) {
                         primary="API Key"
                         secondary={settings.phaxio.api_key || 'Not configured'}
                       />
+                      <input
+                        placeholder="Update PHAXIO_API_KEY"
+                        onChange={(e) => handleForm('phaxio_api_key', e.target.value)}
+                        style={{ background: 'transparent', color: 'inherit', borderColor: '#444', padding: '6px', borderRadius: 6 }}
+                      />
                     </ListItem>
                     <ListItem>
                       <ListItemIcon>{getStatusIcon(!!settings.phaxio.api_secret)}</ListItemIcon>
@@ -226,12 +274,23 @@ function Settings({ client }: SettingsProps) {
                         primary="API Secret"
                         secondary={settings.phaxio.api_secret || 'Not configured'}
                       />
+                      <input
+                        placeholder="Update PHAXIO_API_SECRET"
+                        onChange={(e) => handleForm('phaxio_api_secret', e.target.value)}
+                        style={{ background: 'transparent', color: 'inherit', borderColor: '#444', padding: '6px', borderRadius: 6 }}
+                      />
                     </ListItem>
                     <ListItem>
                       <ListItemIcon>{getStatusIcon(!!settings.phaxio.callback_url)}</ListItemIcon>
                       <ListItemText
                         primary="Callback URL"
                         secondary={settings.phaxio.callback_url || 'Not configured'}
+                      />
+                      <input
+                        placeholder="PUBLIC_API_URL"
+                        defaultValue={form.public_api_url || ''}
+                        onChange={(e) => handleForm('public_api_url', e.target.value)}
+                        style={{ background: 'transparent', color: 'inherit', borderColor: '#444', padding: '6px', borderRadius: 6, minWidth: '220px' }}
                       />
                     </ListItem>
                   </List>
@@ -245,6 +304,11 @@ function Settings({ client }: SettingsProps) {
                         primary="AMI Host"
                         secondary={settings.sip.ami_host || 'Not configured'}
                       />
+                      <input
+                        placeholder="ASTERISK_AMI_HOST"
+                        onChange={(e) => handleForm('ami_host', e.target.value)}
+                        style={{ background: 'transparent', color: 'inherit', borderColor: '#444', padding: '6px', borderRadius: 6 }}
+                      />
                     </ListItem>
                     <ListItem>
                       <ListItemIcon>
@@ -254,12 +318,22 @@ function Settings({ client }: SettingsProps) {
                         primary="AMI Password"
                         secondary={settings.sip.ami_password_is_default ? 'Using default (insecure)' : 'Custom password set'}
                       />
+                      <input
+                        placeholder="Update ASTERISK_AMI_PASSWORD"
+                        onChange={(e) => handleForm('ami_password', e.target.value)}
+                        style={{ background: 'transparent', color: 'inherit', borderColor: '#444', padding: '6px', borderRadius: 6 }}
+                      />
                     </ListItem>
                     <ListItem>
                       <ListItemIcon>{getStatusIcon(!!settings.sip.station_id)}</ListItemIcon>
                       <ListItemText
                         primary="Station ID"
                         secondary={settings.sip.station_id || 'Not configured'}
+                      />
+                      <input
+                        placeholder="FAX_LOCAL_STATION_ID"
+                        onChange={(e) => handleForm('fax_station_id', e.target.value)}
+                        style={{ background: 'transparent', color: 'inherit', borderColor: '#444', padding: '6px', borderRadius: 6 }}
                       />
                     </ListItem>
                   </List>
@@ -268,6 +342,14 @@ function Settings({ client }: SettingsProps) {
             </Card>
           </Grid>
         </Grid>
+        <Box sx={{ display: 'flex', gap: 1, mt: 2 }}>
+          <Button variant="contained" onClick={async () => { try { setLoading(true); setError(null); const p:any={}; if (form.backend) p.backend=form.backend; if (form.require_api_key!==undefined) p.require_api_key=!!form.require_api_key; if (form.enforce_public_https!==undefined) p.enforce_public_https=!!form.enforce_public_https; if (form.public_api_url) p.public_api_url=String(form.public_api_url); if (form.backend==='phaxio'){ if (form.phaxio_api_key) p.phaxio_api_key=form.phaxio_api_key; if (form.phaxio_api_secret) p.phaxio_api_secret=form.phaxio_api_secret; } if (form.backend==='sinch'){ if (form.sinch_project_id) p.sinch_project_id=form.sinch_project_id; if (form.sinch_api_key) p.sinch_api_key=form.sinch_api_key; if (form.sinch_api_secret) p.sinch_api_secret=form.sinch_api_secret; } if (form.backend==='sip'){ if (form.ami_host) p.ami_host=form.ami_host; if (form.ami_port) p.ami_port=Number(form.ami_port); if (form.ami_username) p.ami_username=form.ami_username; if (form.ami_password) p.ami_password=form.ami_password; if (form.fax_station_id) p.fax_station_id=form.fax_station_id; } await client.updateSettings(p); await client.reloadSettings(); await fetchSettings(); setSnack('Settings applied and reloaded'); } catch(e:any){ setError(e?.message||'Failed to apply settings'); } finally { setLoading(false);} }} disabled={loading}>
+            Apply & Reload
+          </Button>
+          <Button variant="outlined" startIcon={<RefreshIcon />} onClick={fetchSettings} disabled={loading}>
+            Refresh
+          </Button>
+        </Box>
       ) : (
         <Typography variant="body2" color="text.secondary">
           Click "Load Settings" to view current configuration
@@ -316,6 +398,11 @@ function Settings({ client }: SettingsProps) {
             </Alert>
           </CardContent>
         </Card>
+      )}
+      {snack && (
+        <Alert severity="success" sx={{ mt: 2 }} onClose={() => setSnack(null)}>
+          {snack}
+        </Alert>
       )}
     </Box>
   );

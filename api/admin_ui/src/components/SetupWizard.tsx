@@ -23,6 +23,7 @@ import SecretInput from './common/SecretInput';
 
 interface SetupWizardProps {
   client: AdminAPIClient;
+  onDone?: () => void;
 }
 
 interface WizardConfig {
@@ -44,7 +45,7 @@ interface WizardConfig {
   pdf_token_ttl_minutes?: number;
 }
 
-function SetupWizard({ client }: SetupWizardProps) {
+function SetupWizard({ client, onDone }: SetupWizardProps) {
   const [activeStep, setActiveStep] = useState(0);
   const [config, setConfig] = useState<WizardConfig>({
     backend: 'phaxio',
@@ -56,6 +57,7 @@ function SetupWizard({ client }: SetupWizardProps) {
   const [validating, setValidating] = useState(false);
   const [validationResults, setValidationResults] = useState<any>(null);
   const [envContent, setEnvContent] = useState('');
+  const [snack, setSnack] = useState<string | null>(null);
 
   const steps = ['Choose Backend', 'Configure Credentials', 'Security Settings', 'Apply & Export'];
 
@@ -156,6 +158,9 @@ function SetupWizard({ client }: SetupWizardProps) {
       await client.reloadSettings();
       const results = await client.validateSettings(config);
       setValidationResults(results);
+      setSnack('Configuration applied and reloaded');
+      // Optionally return to Dashboard
+      setTimeout(() => onDone?.(), 500);
     } catch (e) {
       setValidationResults({ error: e instanceof Error ? e.message : 'Apply failed' });
     } finally {
@@ -544,6 +549,11 @@ function SetupWizard({ client }: SetupWizardProps) {
           {activeStep === steps.length - 1 ? 'Finish' : 'Next'}
         </Button>
       </Box>
+      {snack && (
+        <Alert severity="success" sx={{ mt: 2 }} onClose={() => setSnack(null)}>
+          {snack}
+        </Alert>
+      )}
     </Box>
   );
 }

@@ -361,7 +361,7 @@ function App() {
             <ApiKeys client={client!} />
           </TabPanel>
           <TabPanel value={tabValue} index={5}>
-            <SetupWizard client={client!} />
+            <SetupWizard client={client!} onDone={() => setTabValue(0)} />
           </TabPanel>
           <TabPanel value={tabValue} index={6}>
             <Settings client={client!} />
