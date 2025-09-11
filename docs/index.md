@@ -20,7 +20,8 @@ Quick links
 - Backends → [Phaxio](/Faxbot/backends/phaxio-setup), [Sinch](/Faxbot/backends/sinch-setup), [SIP/Asterisk](/Faxbot/backends/sip-setup)
 - SDKs → [Node & Python](/Faxbot/sdks)
 - Troubleshooting → [Guide](/Faxbot/troubleshooting)
-- Security → [OAuth Setup](/Faxbot/security/oauth-setup)
+- Security → [Overview](/Faxbot/security/), [OAuth Setup](/Faxbot/security/oauth-setup)
+- Compliance → [faxbot.net/compliance](https://faxbot.net/compliance/), [BAA PDF](https://faxbot.net/compliance/business-associate-agreement.pdf)
 
 Demo
 <video src="/Faxbot/assets/images/faxbot_demo.mp4" width="100%" autoplay loop muted playsinline controls>
