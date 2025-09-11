@@ -86,6 +86,9 @@ class Settings(BaseModel):
     inbound_list_rpm: int = Field(default_factory=lambda: int(os.getenv("INBOUND_LIST_RPM", "30")))
     inbound_get_rpm: int = Field(default_factory=lambda: int(os.getenv("INBOUND_GET_RPM", "60")))
 
+    # Admin console options
+    admin_allow_restart: bool = Field(default_factory=lambda: os.getenv("ADMIN_ALLOW_RESTART", "false").lower() in {"1","true","yes"})
+
 
 settings = Settings()
 

@@ -147,14 +147,22 @@ function Diagnostics({ client }: DiagnosticsProps) {
         <Typography variant="h4" component="h1">
           System Diagnostics
         </Typography>
-        <Button
-          variant="contained"
-          startIcon={loading ? <CircularProgress size={20} /> : <PlayArrowIcon />}
-          onClick={runDiagnostics}
-          disabled={loading}
-        >
-          {loading ? 'Running...' : 'Run Diagnostics'}
-        </Button>
+        <Box display="flex" gap={1}>
+          <Button
+            variant="contained"
+            startIcon={loading ? <CircularProgress size={20} /> : <PlayArrowIcon />}
+            onClick={runDiagnostics}
+            disabled={loading}
+          >
+            {loading ? 'Running...' : 'Run Diagnostics'}
+          </Button>
+          <Button
+            variant="outlined"
+            onClick={async () => { try { await client.restart(); } catch { /* ignore */ } }}
+          >
+            Restart API
+          </Button>
+        </Box>
       </Box>
 
       {error && (

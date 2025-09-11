@@ -72,6 +72,11 @@ export class AdminAPIClient {
     return res.json();
   }
 
+  async restart(): Promise<any> {
+    const res = await this.fetch('/admin/restart', { method: 'POST' });
+    return res.json();
+  }
+
   // Diagnostics
   async runDiagnostics(): Promise<DiagnosticsResult> {
     const res = await this.fetch('/admin/diagnostics/run', {

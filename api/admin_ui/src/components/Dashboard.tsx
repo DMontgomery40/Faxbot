@@ -29,6 +29,7 @@ function Dashboard({ client, onNavigate }: DashboardProps) {
   const [health, setHealth] = useState<HealthStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [justApplied, setJustApplied] = useState<boolean>(false);
 
   const fetchHealth = async () => {
     try {
@@ -44,6 +45,11 @@ function Dashboard({ client, onNavigate }: DashboardProps) {
 
   useEffect(() => {
     fetchHealth();
+    if (sessionStorage.getItem('fb_admin_applied') === '1') {
+      setJustApplied(true);
+      sessionStorage.removeItem('fb_admin_applied');
+      setTimeout(() => setJustApplied(false), 4000);
+    }
     
     // Start polling
     const cleanup = client.startPolling((data) => {
@@ -72,6 +78,11 @@ function Dashboard({ client, onNavigate }: DashboardProps) {
 
   return (
     <Box>
+      {justApplied && (
+        <Alert severity="success" sx={{ mb: 2 }}>
+          Configuration applied successfully.
+        </Alert>
+      )}
       <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
         <Typography variant="h4" component="h1">
           Dashboard

@@ -160,6 +160,7 @@ function SetupWizard({ client, onDone }: SetupWizardProps) {
       setValidationResults(results);
       setSnack('Configuration applied and reloaded');
       // Optionally return to Dashboard
+      try { sessionStorage.setItem('fb_admin_applied','1'); } catch {}
       setTimeout(() => onDone?.(), 500);
     } catch (e) {
       setValidationResults({ error: e instanceof Error ? e.message : 'Apply failed' });

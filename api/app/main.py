@@ -429,6 +429,7 @@ def get_admin_config():
     # Configured flags
     cfg = {
         "backend": backend,
+        "allow_restart": settings.admin_allow_restart,
         "require_api_key": settings.require_api_key,
         "enforce_public_https": settings.enforce_public_https,
         "phaxio_verify_signature": settings.phaxio_verify_signature,
@@ -627,6 +628,16 @@ class UpdateSettingsRequest(BaseModel):
     # Audit / rate limiting
     audit_log_enabled: Optional[bool] = None
     max_requests_per_minute: Optional[int] = None
+    # Storage
+    storage_backend: Optional[str] = None
+    s3_bucket: Optional[str] = None
+    s3_prefix: Optional[str] = None
+    s3_region: Optional[str] = None
+    s3_endpoint_url: Optional[str] = None
+    s3_kms_key_id: Optional[str] = None
+    # Inbound rate limits
+    inbound_list_rpm: Optional[int] = None
+    inbound_get_rpm: Optional[int] = None
 
 
 def _set_env_bool(key: str, value: Optional[bool]):
@@ -690,6 +701,16 @@ def update_admin_settings(payload: UpdateSettingsRequest):
     # Audit / rate limiting
     _set_env_bool("AUDIT_LOG_ENABLED", payload.audit_log_enabled)
     _set_env_opt("MAX_REQUESTS_PER_MINUTE", payload.max_requests_per_minute)
+    # Storage
+    _set_env_opt("STORAGE_BACKEND", payload.storage_backend)
+    _set_env_opt("S3_BUCKET", payload.s3_bucket)
+    _set_env_opt("S3_PREFIX", payload.s3_prefix)
+    _set_env_opt("S3_REGION", payload.s3_region)
+    _set_env_opt("S3_ENDPOINT_URL", payload.s3_endpoint_url)
+    _set_env_opt("S3_KMS_KEY_ID", payload.s3_kms_key_id)
+    # Inbound rate limits
+    _set_env_opt("INBOUND_LIST_RPM", payload.inbound_list_rpm)
+    _set_env_opt("INBOUND_GET_RPM", payload.inbound_get_rpm)
 
     # Apply live
     reload_settings()
@@ -701,6 +722,18 @@ def update_admin_settings(payload: UpdateSettingsRequest):
 def admin_reload_settings():
     reload_settings()
     return get_admin_settings()
+
+
+@app.post("/admin/restart", dependencies=[Depends(require_admin)])
+async def admin_restart():
+    """Optional: restart the API process (for containerized deployments). Controlled by ADMIN_ALLOW_RESTART."""
+    if not settings.admin_allow_restart:
+        raise HTTPException(403, detail="Restart not allowed")
+    async def _exit_soon():
+        await asyncio.sleep(0.5)
+        os._exit(0)
+    asyncio.create_task(_exit_soon())
+    return {"ok": True, "note": "Process will exit; container manager should restart it."}
 
 
 @app.get("/admin/health-status", dependencies=[Depends(require_admin)])
