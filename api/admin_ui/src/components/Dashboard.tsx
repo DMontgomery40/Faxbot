@@ -118,7 +118,7 @@ function Dashboard({ client, onNavigate }: DashboardProps) {
                   },
                   transition: 'all 0.2s ease-in-out',
                 }}
-                onClick={() => onNavigate?.(7)} // Navigate to Diagnostics tab (index 7)
+                onClick={() => onNavigate?.(9)} // Navigate to Diagnostics tab (index 9)
               >
               <CardContent sx={{ pb: { xs: 1, sm: 2 } }}>
                 <Box display="flex" alignItems="center" mb={{ xs: 1, sm: 2 }}>

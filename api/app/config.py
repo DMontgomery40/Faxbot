@@ -2,6 +2,39 @@ import os
 from pydantic import BaseModel, Field
 
 
+# Optional: load persisted settings from a file before constructing Settings
+# Controlled by ENABLE_PERSISTED_SETTINGS=true and optional PERSISTED_ENV_PATH
+def _load_persisted_env_if_enabled() -> None:
+    try:
+        enabled = os.getenv("ENABLE_PERSISTED_SETTINGS", "false").lower() in {"1", "true", "yes"}
+        if not enabled:
+            return
+        path = os.getenv("PERSISTED_ENV_PATH", "/faxdata/faxbot.env")
+        if not os.path.exists(path):
+            return
+        with open(path, "r") as f:
+            for raw in f.readlines():
+                line = raw.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if "=" not in line:
+                    continue
+                key, val = line.split("=", 1)
+                key = key.strip()
+                # Strip optional surrounding quotes
+                v = val.strip()
+                if (v.startswith("\"") and v.endswith("\"")) or (v.startswith("'") and v.endswith("'")):
+                    v = v[1:-1]
+                # Persisted file overrides process env when enabled
+                os.environ[key] = v
+    except Exception:
+        # Fail open: if persisted load fails, continue with process env
+        pass
+
+
+_load_persisted_env_if_enabled()
+
+
 class Settings(BaseModel):
     # App
     fax_data_dir: str = Field(default_factory=lambda: os.getenv("FAX_DATA_DIR", "./faxdata"))
@@ -88,6 +121,17 @@ class Settings(BaseModel):
 
     # Admin console options
     admin_allow_restart: bool = Field(default_factory=lambda: os.getenv("ADMIN_ALLOW_RESTART", "false").lower() in {"1","true","yes"})
+
+    # MCP (embedded) settings
+    enable_mcp_sse: bool = Field(default_factory=lambda: os.getenv("ENABLE_MCP_SSE", "false").lower() in {"1","true","yes"})
+    mcp_sse_path: str = Field(default_factory=lambda: os.getenv("MCP_SSE_PATH", "/mcp/sse"))
+    require_mcp_oauth: bool = Field(default_factory=lambda: os.getenv("REQUIRE_MCP_OAUTH", "false").lower() in {"1","true","yes"})
+    oauth_issuer: str = Field(default_factory=lambda: os.getenv("OAUTH_ISSUER", ""))
+    oauth_audience: str = Field(default_factory=lambda: os.getenv("OAUTH_AUDIENCE", ""))
+    oauth_jwks_url: str = Field(default_factory=lambda: os.getenv("OAUTH_JWKS_URL", ""))
+    # MCP HTTP transport
+    enable_mcp_http: bool = Field(default_factory=lambda: os.getenv("ENABLE_MCP_HTTP", "false").lower() in {"1","true","yes"})
+    mcp_http_path: str = Field(default_factory=lambda: os.getenv("MCP_HTTP_PATH", "/mcp/http"))
 
 
 settings = Settings()

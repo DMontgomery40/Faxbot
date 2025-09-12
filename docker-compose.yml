@@ -10,6 +10,11 @@ services:
     environment:
       - FAX_DATA_DIR=/faxdata
       - ENABLE_LOCAL_ADMIN=true
+      - ADMIN_ALLOW_RESTART=true
+      # Optional: auto-load persisted .env settings on startup
+      - ENABLE_PERSISTED_SETTINGS=true
+      # Persist DB to volume so jobs/keys/inbox survive rebuilds
+      - DATABASE_URL=sqlite:////faxdata/faxbot.db
     volumes:
       - faxdata:/faxdata
     ports:

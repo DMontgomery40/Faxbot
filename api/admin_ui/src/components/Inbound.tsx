@@ -15,10 +15,7 @@ import {
   Alert,
   Chip,
 } from '@mui/material';
-import {
-  Refresh as RefreshIcon,
-  Download as DownloadIcon,
-} from '@mui/icons-material';
+import { Refresh as RefreshIcon, Download as DownloadIcon, ContentCopy as ContentCopyIcon, PlayArrow as PlayArrowIcon } from '@mui/icons-material';
 import AdminAPIClient from '../api/client';
 import type { InboundFax } from '../api/types';
 
@@ -30,6 +27,8 @@ function Inbound({ client }: InboundProps) {
   const [faxes, setFaxes] = useState<InboundFax[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [callbacks, setCallbacks] = useState<any | null>(null);
+  const [simulating, setSimulating] = useState(false);
 
   const fetchInbound = async () => {
     try {
@@ -62,6 +61,9 @@ function Inbound({ client }: InboundProps) {
 
   useEffect(() => {
     fetchInbound();
+    (async () => {
+      try { setCallbacks(await client.getInboundCallbacks()); } catch {}
+    })();
   }, [client]);
 
   useEffect(() => {
@@ -106,14 +108,25 @@ function Inbound({ client }: InboundProps) {
         <Typography variant="h4" component="h1">
           Inbound Faxes
         </Typography>
-        <Button
-          variant="outlined"
-          startIcon={<RefreshIcon />}
-          onClick={fetchInbound}
-          disabled={loading}
-        >
-          Refresh
-        </Button>
+        <Box>
+          <Button
+            variant="outlined"
+            startIcon={<RefreshIcon />}
+            onClick={fetchInbound}
+            disabled={loading}
+            sx={{ mr: 1 }}
+          >
+            Refresh
+          </Button>
+          <Button
+            variant="outlined"
+            startIcon={<PlayArrowIcon />}
+            onClick={async () => { try { setSimulating(true); await client.simulateInbound(); await fetchInbound(); } catch(e:any){ setError(e?.message||'Test add failed'); } finally { setSimulating(false);} }}
+            disabled={simulating}
+          >
+            Add Test Fax
+          </Button>
+        </Box>
       </Box>
 
       {error && (
@@ -124,9 +137,31 @@ function Inbound({ client }: InboundProps) {
 
       <Alert severity="info" sx={{ mb: 3 }}>
         <Typography variant="body2">
-          <strong>Note:</strong> Requires inbound:list and inbound:read scopes or bootstrap key. 
-          Phone numbers are masked for HIPAA compliance.
+          <strong>Note:</strong> Requires inbound:list and inbound:read scopes or bootstrap key. Phone numbers are masked for HIPAA compliance.
         </Typography>
+        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
+          "Add Test Fax" creates a local test entry only — use your provider console with the callback URL below for real inbound delivery.
+        </Typography>
+        {callbacks && callbacks.callbacks && callbacks.callbacks.length > 0 && (
+          <Box sx={{ mt: 2 }}>
+            <Typography variant="subtitle2" gutterBottom>
+              Provider Callback URL
+            </Typography>
+            {callbacks.callbacks.map((cb: any, idx: number) => (
+              <Box key={idx} display="flex" alignItems="center" sx={{ mb: 1 }}>
+                <Typography variant="body2" sx={{ mr: 1 }}>
+                  {cb.name}: {cb.url}
+                </Typography>
+                <Button size="small" variant="outlined" startIcon={<ContentCopyIcon />} onClick={() => navigator.clipboard.writeText(cb.url)}>
+                  Copy
+                </Button>
+              </Box>
+            ))}
+            <Typography variant="caption" color="text.secondary">
+              Configure this URL in your provider console to deliver inbound faxes.
+            </Typography>
+          </Box>
+        )}
       </Alert>
 
       <Card>

@@ -24,6 +24,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY api/app /app/app
 
+# MCP (Python) — install and include server for embedded mount
+COPY python_mcp/requirements.txt /app/python_mcp/requirements.txt
+RUN pip install --no-cache-dir -r /app/python_mcp/requirements.txt
+COPY python_mcp /app/python_mcp
+
 # Copy admin UI build from the first stage
 COPY --from=admin-ui-builder /build/dist /app/admin_ui/dist
 
@@ -36,4 +41,3 @@ EXPOSE 8080
 
 ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080"]
-

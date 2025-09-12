@@ -58,6 +58,9 @@ function SetupWizard({ client, onDone }: SetupWizardProps) {
   const [validationResults, setValidationResults] = useState<any>(null);
   const [envContent, setEnvContent] = useState('');
   const [snack, setSnack] = useState<string | null>(null);
+  const [verifyingInbound, setVerifyingInbound] = useState(false);
+  const [verifyFound, setVerifyFound] = useState<any | null>(null);
+  const [callbacks, setCallbacks] = useState<any | null>(null);
 
   const steps = ['Choose Backend', 'Configure Credentials', 'Security Settings', 'Apply & Export'];
 
@@ -83,6 +86,32 @@ function SetupWizard({ client, onDone }: SetupWizardProps) {
     } finally {
       setValidating(false);
     }
+  };
+
+  const loadCallbacks = async () => {
+    try { setCallbacks(await client.getInboundCallbacks()); } catch { setCallbacks(null); }
+  };
+
+  const startVerifyInbound = async () => {
+    setVerifyFound(null);
+    setVerifyingInbound(true);
+    const since = new Date().toISOString();
+    // Poll logs for inbound_received events since now
+    let attempts = 0;
+    const poll = async () => {
+      if (!verifyingInbound || attempts++ > 30) { setVerifyingInbound(false); return; }
+      try {
+        const res = await client.getLogs({ event: 'inbound_received', since });
+        if (res.items && res.items.length > 0) {
+          setVerifyFound(res.items[0]);
+          setVerifyingInbound(false);
+          setSnack('Inbound verified (event received)');
+          return;
+        }
+      } catch {}
+      setTimeout(poll, 2000);
+    };
+    poll();
   };
 
   const generateEnvContent = () => {
@@ -351,6 +380,41 @@ function SetupWizard({ client, onDone }: SetupWizardProps) {
                   />
                 </Grid>
               </Grid>
+            )}
+
+            {/* Provider Connect */}
+            {(config.backend === 'phaxio' || config.backend === 'sinch') && (
+              <Box sx={{ mt: 3 }}>
+                <Typography variant="subtitle1" gutterBottom>Connect {config.backend.toUpperCase()} Inbound</Typography>
+                <Button variant="outlined" onClick={loadCallbacks} sx={{ mr: 1 }}>Show Callback URL</Button>
+                {callbacks && callbacks.callbacks && callbacks.callbacks[0] && (
+                  <Paper sx={{ p: 2, mt: 2 }}>
+                    <Typography variant="body2" sx={{ mb: 1 }}>Callback URL:</Typography>
+                    <Box component="pre" sx={{ p: 1, bgcolor: 'background.default', borderRadius: 1, overflow: 'auto' }}>{callbacks.callbacks[0].url}</Box>
+                    <Box sx={{ mt: 1, display: 'flex', gap: 1 }}>
+                      <Button variant="outlined" onClick={() => navigator.clipboard.writeText(callbacks.callbacks[0].url)}>Copy</Button>
+                      <Button variant="outlined" onClick={async () => { try { await client.simulateInbound({ backend: config.backend }); setSnack('Simulated inbound received'); } catch(e:any){ setSnack(e?.message||'Simulation failed'); } }}>Simulate Inbound</Button>
+                    </Box>
+                    <Box sx={{ mt: 2, display: 'flex', gap: 1, alignItems: 'center' }}>
+                      <Button variant="contained" onClick={startVerifyInbound} disabled={verifyingInbound}>
+                        {verifyingInbound ? 'Waiting for inbound…' : 'Start Verify Inbound'}
+                      </Button>
+                      {verifyFound && (
+                        <Typography variant="body2" color="success.main">Verified: inbound event received ({String(verifyFound.backend || 'unknown')})</Typography>
+                      )}
+                    </Box>
+                    <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
+                      Paste this URL into your {config.backend.toUpperCase()} console for inbound fax delivery.
+                      {"  •  "}
+                      <a href="https://www.phaxio.com/docs/" target="_blank" rel="noreferrer">Phaxio Docs</a>
+                      {"  •  "}
+                      <a href="https://developers.sinch.com/docs/fax/api-reference/" target="_blank" rel="noreferrer">Sinch Fax API Docs</a>
+                      {"  •  "}
+                      <a href="https://github.com/" target="_blank" rel="noreferrer">Faxbot Docs</a>
+                    </Typography>
+                  </Paper>
+                )}
+              </Box>
             )}
           </Box>
         );

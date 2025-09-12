@@ -41,6 +41,7 @@ function Settings({ client }: SettingsProps) {
   const [form, setForm] = useState<any>({});
   const [restartHint, setRestartHint] = useState<boolean>(false);
   const [allowRestart, setAllowRestart] = useState<boolean>(false);
+  const [persistedEnabled, setPersistedEnabled] = useState<boolean>(false);
   const handleForm = (field: string, value: any) => setForm((prev: any) => ({ ...prev, [field]: value }));
 
   const fetchSettings = async () => {
@@ -68,6 +69,8 @@ function Settings({ client }: SettingsProps) {
       try {
         const cfg = await client.getConfig();
         setAllowRestart(!!cfg?.allow_restart);
+        setPersistedEnabled(!!cfg?.persisted_settings_enabled);
+        setForm((prev: any) => ({ ...prev, enable_persisted_settings: !!cfg?.persisted_settings_enabled }));
       } catch {}
     })();
   }, []);
@@ -125,12 +128,23 @@ function Settings({ client }: SettingsProps) {
           >
             Load Settings
           </Button>
+          <Button variant="contained" onClick={exportEnv} disabled={loading} sx={{ mr: 1 }}>
+            Export .env
+          </Button>
           <Button
-            variant="contained"
-            onClick={exportEnv}
+            variant="outlined"
+            onClick={async () => {
+              try {
+                setLoading(true); setError(null);
+                const res = await client.persistSettings();
+                setSnack(`Saved to ${res.path}`);
+              } catch (e: any) {
+                setError(e?.message || 'Failed to save on server');
+              } finally { setLoading(false); }
+            }}
             disabled={loading}
           >
-            Export .env
+            Save .env to server
           </Button>
         </Box>
       </Box>
@@ -156,7 +170,7 @@ function Settings({ client }: SettingsProps) {
           <Grid item xs={12} md={6}>
             <Card>
               <CardContent>
-                <Box display="flex" alignItems="center" mb={2}>
+                <Box id="settings-backend" display="flex" alignItems="center" mb={2}>
                   <CloudIcon sx={{ mr: 1 }} />
                   <Typography variant="h6">Backend Configuration</Typography>
                 </Box>
@@ -194,7 +208,7 @@ function Settings({ client }: SettingsProps) {
           <Grid item xs={12} md={6}>
             <Card>
               <CardContent>
-                <Box display="flex" alignItems="center" mb={2}>
+                <Box id="settings-security" display="flex" alignItems="center" mb={2}>
                   <SecurityIcon sx={{ mr: 1 }} />
                   <Typography variant="h6">Security</Typography>
                 </Box>
@@ -250,6 +264,23 @@ function Settings({ client }: SettingsProps) {
                       <option value="false">Disabled</option>
                     </select>
                   </ListItem>
+                  <ListItem>
+                    <ListItemIcon>
+                      {persistedEnabled ? <CheckCircleIcon color="success" /> : <WarningIcon color="warning" />}
+                    </ListItemIcon>
+                    <ListItemText
+                      primary="Load persisted .env at startup"
+                      secondary={persistedEnabled ? 'Enabled' : 'Disabled'}
+                    />
+                    <select
+                      value={(form.enable_persisted_settings ?? persistedEnabled) ? 'true' : 'false'}
+                      onChange={(e) => handleForm('enable_persisted_settings', e.target.value === 'true')}
+                      style={{ background: 'transparent', color: 'inherit', borderColor: '#444', padding: '6px', borderRadius: 6 }}
+                    >
+                      <option value="true">Enabled</option>
+                      <option value="false">Disabled</option>
+                    </select>
+                  </ListItem>
                 </List>
               </CardContent>
             </Card>
@@ -265,6 +296,17 @@ function Settings({ client }: SettingsProps) {
                 
                 {settings.backend.type === 'phaxio' && (
                   <List dense>
+                    <ListItem>
+                      <Typography id="settings-phaxio" variant="subtitle1">Phaxio</Typography>
+                    </ListItem>
+                    <ListItem>
+                      <Typography variant="caption" color="text.secondary">
+                        Help: 
+                        <a href="https://www.phaxio.com/docs/" target="_blank" rel="noreferrer">Phaxio Docs</a>
+                        {"  •  "}
+                        <a href="https://developers.sinch.com/docs/fax/api-reference/" target="_blank" rel="noreferrer">Sinch Fax API (Phaxio)</a>
+                      </Typography>
+                    </ListItem>
                     <ListItem>
                       <ListItemIcon>{getStatusIcon(!!settings.phaxio.api_key)}</ListItemIcon>
                       <ListItemText
@@ -307,6 +349,9 @@ function Settings({ client }: SettingsProps) {
 
                 {settings.backend.type === 'sip' && (
                   <List dense>
+                    <ListItem>
+                      <Typography id="settings-sip" variant="subtitle1">SIP / Asterisk</Typography>
+                    </ListItem>
                     <ListItem>
                       <ListItemIcon>{getStatusIcon(!!settings.sip.ami_host)}</ListItemIcon>
                       <ListItemText
@@ -351,11 +396,170 @@ function Settings({ client }: SettingsProps) {
             </Card>
           </Grid>
 
+          {/* Inbound Receiving */}
+          <Grid item xs={12}>
+            <Card>
+              <CardContent>
+                <Typography id="settings-inbound" variant="h6" gutterBottom>
+                  Inbound Receiving
+                </Typography>
+                <List dense>
+                  <ListItem>
+                    <ListItemIcon>
+                      {settings.inbound?.enabled ? <CheckCircleIcon color="success" /> : <WarningIcon color="warning" />}
+                    </ListItemIcon>
+                    <ListItemText
+                      primary="Enable Inbound"
+                      secondary={settings.inbound?.enabled ? 'Enabled' : 'Disabled'}
+                    />
+                    <select
+                      value={(form.inbound_enabled ?? settings.inbound?.enabled) ? 'true' : 'false'}
+                      onChange={(e) => handleForm('inbound_enabled', e.target.value === 'true')}
+                      style={{ background: 'transparent', color: 'inherit', borderColor: '#444', padding: '6px', borderRadius: 6 }}
+                    >
+                      <option value="true">Enabled</option>
+                      <option value="false">Disabled</option>
+                    </select>
+                  </ListItem>
+                  <ListItem>
+                    <ListItemText
+                      primary="Retention Days"
+                      secondary={String(settings.inbound?.retention_days ?? 30)}
+                    />
+                    <input
+                      type="number"
+                      placeholder={String(settings.inbound?.retention_days ?? 30)}
+                      onChange={(e) => handleForm('inbound_retention_days', parseInt(e.target.value))}
+                      style={{ background: 'transparent', color: 'inherit', borderColor: '#444', padding: '6px', borderRadius: 6, width: 120 }}
+                    />
+                  </ListItem>
+                  <ListItem>
+                    <ListItemText
+                      primary="Token TTL (minutes)"
+                      secondary={String(settings.inbound?.token_ttl_minutes ?? 60)}
+                    />
+                    <input
+                      type="number"
+                      placeholder={String(settings.inbound?.token_ttl_minutes ?? 60)}
+                      onChange={(e) => handleForm('inbound_token_ttl_minutes', parseInt(e.target.value))}
+                      style={{ background: 'transparent', color: 'inherit', borderColor: '#444', padding: '6px', borderRadius: 6, width: 120 }}
+                    />
+                  </ListItem>
+
+                  {settings.backend.type === 'sip' && (
+                    <ListItem sx={{ alignItems: 'flex-start', flexWrap: 'wrap', gap: 1 }}>
+                      <ListItemText
+                        primary="Asterisk Inbound Secret"
+                        secondary={
+                          <Typography variant="caption" color="text.secondary">
+                            Shared secret used by your Asterisk dialplan to POST inbound fax metadata to Faxbot.
+                            Keep this private and only use it on the private network.
+                            {' '}<a href="https://github.com/your-org/faxbot/blob/main/docs-site/docs/asterisk/inbound.md" target="_blank" rel="noreferrer">Asterisk inbound guide</a>
+                          </Typography>
+                        }
+                      />
+                      <input
+                        placeholder="ASTERISK_INBOUND_SECRET"
+                        onChange={(e) => handleForm('asterisk_inbound_secret', e.target.value)}
+                        style={{ background: 'transparent', color: 'inherit', borderColor: '#444', padding: '6px', borderRadius: 6 }}
+                      />
+                      <Button size="small" sx={{ ml: 1 }} onClick={async ()=>{
+                        try {
+                          const bytes = new Uint8Array(32);
+                          (window.crypto || ({} as any)).getRandomValues ? window.crypto.getRandomValues(bytes) : bytes.fill(Math.floor(Math.random()*256));
+                          const b64 = btoa(String.fromCharCode(...Array.from(bytes))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+                          await client.updateSettings({ asterisk_inbound_secret: b64 });
+                          await client.reloadSettings();
+                          await fetchSettings();
+                          setSnack('Generated new inbound secret');
+                        } catch(e:any){ setError(e?.message||'Failed to generate secret'); }
+                      }}>Generate</Button>
+                      <Button size="small" onClick={async ()=>{
+                        try { await navigator.clipboard.writeText(''); setSnack('Copied'); } catch {}
+                      }} disabled>Copy</Button>
+                    </ListItem>
+                  )}
+
+                  {settings.backend.type === 'phaxio' && (
+                    <ListItem>
+                      <ListItemText
+                        primary="Verify Phaxio Inbound Signature"
+                        secondary={settings.inbound?.phaxio?.verify_signature ? 'Enabled' : 'Disabled'}
+                      />
+                      <select
+                        value={(form.phaxio_inbound_verify_signature ?? settings.inbound?.phaxio?.verify_signature) ? 'true' : 'false'}
+                        onChange={(e) => handleForm('phaxio_inbound_verify_signature', e.target.value === 'true')}
+                        style={{ background: 'transparent', color: 'inherit', borderColor: '#444', padding: '6px', borderRadius: 6 }}
+                      >
+                        <option value="true">Enabled</option>
+                        <option value="false">Disabled</option>
+                      </select>
+                    </ListItem>
+                  )}
+
+                  {settings.backend.type === 'sinch' && (
+                    <>
+                      <ListItem>
+                        <ListItemText
+                          primary="Verify Sinch Inbound Signature"
+                          secondary={settings.inbound?.sinch?.verify_signature ? 'Enabled' : 'Disabled'}
+                        />
+                        <select
+                          value={(form.sinch_inbound_verify_signature ?? settings.inbound?.sinch?.verify_signature) ? 'true' : 'false'}
+                          onChange={(e) => handleForm('sinch_inbound_verify_signature', e.target.value === 'true')}
+                          style={{ background: 'transparent', color: 'inherit', borderColor: '#444', padding: '6px', borderRadius: 6 }}
+                        >
+                          <option value="true">Enabled</option>
+                          <option value="false">Disabled</option>
+                        </select>
+                      </ListItem>
+                      <ListItem>
+                        <ListItemText
+                          primary="Sinch Inbound Basic Auth"
+                          secondary={settings.inbound?.sinch?.basic_auth_configured ? 'Configured' : 'Not configured'}
+                        />
+                        <input
+                          placeholder="SINCH_INBOUND_BASIC_USER"
+                          onChange={(e) => handleForm('sinch_inbound_basic_user', e.target.value)}
+                          style={{ background: 'transparent', color: 'inherit', borderColor: '#444', padding: '6px', borderRadius: 6, marginRight: 8 }}
+                        />
+                        <input
+                          placeholder="SINCH_INBOUND_BASIC_PASS"
+                          onChange={(e) => handleForm('sinch_inbound_basic_pass', e.target.value)}
+                          style={{ background: 'transparent', color: 'inherit', borderColor: '#444', padding: '6px', borderRadius: 6 }}
+                        />
+                        <Typography variant="caption" color="text.secondary" sx={{ ml: 2 }}>
+                          Faxbot-enforced optional auth. Use if your provider supports setting Basic credentials on callbacks.
+                        </Typography>
+                      </ListItem>
+                      <ListItem>
+                        <ListItemText
+                          primary="Sinch Inbound HMAC Secret"
+                          secondary={settings.inbound?.sinch?.hmac_configured ? 'Configured' : 'Not configured'}
+                        />
+                        <input
+                          placeholder="SINCH_INBOUND_HMAC_SECRET"
+                          onChange={(e) => handleForm('sinch_inbound_hmac_secret', e.target.value)}
+                          style={{ background: 'transparent', color: 'inherit', borderColor: '#444', padding: '6px', borderRadius: 6 }}
+                        />
+                        <Typography variant="caption" color="text.secondary" sx={{ ml: 2 }}>
+                          Faxbot-enforced optional HMAC validation. Configure the same shared secret in your provider if supported.
+                          {"  •  "}
+                          <a href="https://developers.sinch.com/docs/fax/api-reference/" target="_blank" rel="noreferrer">Sinch Fax API Docs</a>
+                        </Typography>
+                      </ListItem>
+                    </>
+                  )}
+                </List>
+              </CardContent>
+            </Card>
+          </Grid>
+
           {/* Storage Configuration */}
           <Grid item xs={12}>
             <Card>
               <CardContent>
-                <Typography variant="h6" gutterBottom>
+                <Typography id="settings-storage" variant="h6" gutterBottom>
                   Storage Configuration
                 </Typography>
                 <List dense>
@@ -404,9 +608,49 @@ function Settings({ client }: SettingsProps) {
               </CardContent>
             </Card>
           </Grid>
+
+          {/* Advanced Settings */}
+          <Grid item xs={12}>
+            <Card>
+              <CardContent>
+                <Typography id="settings-advanced" variant="h6" gutterBottom>
+                  Advanced Settings
+                </Typography>
+                <List dense>
+                  <ListItem>
+                    <ListItemText primary="Database URL" secondary={settings.database?.url || 'sqlite:///./faxbot.db'} />
+                    <Button variant="outlined" onClick={async ()=>{ try{ setLoading(true); setError(null); await client.updateSettings({ database_url: 'sqlite:////faxdata/faxbot.db' }); await client.reloadSettings(); await fetchSettings(); setSnack('Switched DB to /faxdata/faxbot.db'); }catch(e:any){ setError(e?.message||'Failed to switch DB'); } finally{ setLoading(false);} }}>Use persistent DB</Button>
+                  </ListItem>
+                  <ListItem>
+                    <Button variant="outlined" onClick={async ()=>{ try{ setLoading(true); const res = await (client as any).fetch?.('/admin/db-status'); const data = await res.json(); setEnvContent(JSON.stringify(data, null, 2)); setSnack('DB status loaded'); } catch(e:any){ setError(e?.message||'Failed to load DB status'); } finally{ setLoading(false);} }}>Check DB Status</Button>
+                    <Typography variant="caption" color="text.secondary" sx={{ ml: 2 }}>Shows current driver, connection, counts and SQLite file info.</Typography>
+                  </ListItem>
+                  <ListItem>
+                    <ListItemText primary="Max Upload Size (MB)" secondary={String(settings.limits?.max_file_size_mb || 10)} />
+                    <input type="number" placeholder={String(settings.limits?.max_file_size_mb || 10)} onChange={(e)=>handleForm('max_file_size_mb', parseInt(e.target.value))} style={{ background: 'transparent', color: 'inherit', borderColor: '#444', padding: '6px', borderRadius: 6, width: 120 }} />
+                  </ListItem>
+                  <ListItem>
+                    <ListItemText primary="Global Rate Limit (RPM)" secondary={String(settings.limits?.rate_limit_rpm || 0)} />
+                    <input type="number" placeholder={String(settings.limits?.rate_limit_rpm || 0)} onChange={(e)=>handleForm('max_requests_per_minute', parseInt(e.target.value))} style={{ background: 'transparent', color: 'inherit', borderColor: '#444', padding: '6px', borderRadius: 6, width: 120 }} />
+                  </ListItem>
+                  <ListItem>
+                    <ListItemText primary="Inbound List RPM" secondary={String(settings.limits?.inbound_list_rpm ?? 30)} />
+                    <input type="number" placeholder={String(settings.limits?.inbound_list_rpm ?? 30)} onChange={(e)=>handleForm('inbound_list_rpm', parseInt(e.target.value))} style={{ background: 'transparent', color: 'inherit', borderColor: '#444', padding: '6px', borderRadius: 6, width: 120 }} />
+                  </ListItem>
+                  <ListItem>
+                    <ListItemText primary="Inbound Get RPM" secondary={String(settings.limits?.inbound_get_rpm ?? 60)} />
+                    <input type="number" placeholder={String(settings.limits?.inbound_get_rpm ?? 60)} onChange={(e)=>handleForm('inbound_get_rpm', parseInt(e.target.value))} style={{ background: 'transparent', color: 'inherit', borderColor: '#444', padding: '6px', borderRadius: 6, width: 120 }} />
+                  </ListItem>
+                </List>
+                <Alert severity="info">
+                  For HIPAA environments, set reasonable RPM limits and keep upload size within policy.
+                </Alert>
+              </CardContent>
+            </Card>
+          </Grid>
         </Grid>
         <Box sx={{ display: 'flex', gap: 1, mt: 2 }}>
-          <Button variant="contained" onClick={async () => { try { setLoading(true); setError(null); setRestartHint(false); const p:any={}; if (form.backend) p.backend=form.backend; if (form.require_api_key!==undefined) p.require_api_key=!!form.require_api_key; if (form.enforce_public_https!==undefined) p.enforce_public_https=!!form.enforce_public_https; if (form.public_api_url) p.public_api_url=String(form.public_api_url); if (form.backend==='phaxio'){ if (form.phaxio_api_key) p.phaxio_api_key=form.phaxio_api_key; if (form.phaxio_api_secret) p.phaxio_api_secret=form.phaxio_api_secret; } if (form.backend==='sinch'){ if (form.sinch_project_id) p.sinch_project_id=form.sinch_project_id; if (form.sinch_api_key) p.sinch_api_key=form.sinch_api_key; if (form.sinch_api_secret) p.sinch_api_secret=form.sinch_api_secret; } if (form.backend==='sip'){ if (form.ami_host) p.ami_host=form.ami_host; if (form.ami_port) p.ami_port=Number(form.ami_port); if (form.ami_username) p.ami_username=form.ami_username; if (form.ami_password) p.ami_password=form.ami_password; if (form.fax_station_id) p.fax_station_id=form.fax_station_id; } if (form.storage_backend) p.storage_backend=form.storage_backend; if (form.s3_bucket) p.s3_bucket=form.s3_bucket; if (form.s3_region) p.s3_region=form.s3_region; if (form.s3_prefix) p.s3_prefix=form.s3_prefix; if (form.s3_endpoint_url) p.s3_endpoint_url=form.s3_endpoint_url; if (form.s3_kms_key_id) p.s3_kms_key_id=form.s3_kms_key_id; const res = await client.updateSettings(p); await client.reloadSettings(); await fetchSettings(); setSnack('Settings applied and reloaded'); if (res && res._meta && res._meta.restart_recommended) setRestartHint(true); } catch(e:any){ setError(e?.message||'Failed to apply settings'); } finally { setLoading(false);} }} disabled={loading}>
+          <Button variant="contained" onClick={async () => { try { setLoading(true); setError(null); setRestartHint(false); const p:any={}; if (form.backend) p.backend=form.backend; if (form.require_api_key!==undefined) p.require_api_key=!!form.require_api_key; if (form.enforce_public_https!==undefined) p.enforce_public_https=!!form.enforce_public_https; if (form.public_api_url) p.public_api_url=String(form.public_api_url); if (form.enable_persisted_settings!==undefined) p.enable_persisted_settings=!!form.enable_persisted_settings; if (form.backend==='phaxio'){ if (form.phaxio_api_key) p.phaxio_api_key=form.phaxio_api_key; if (form.phaxio_api_secret) p.phaxio_api_secret=form.phaxio_api_secret; } if (form.backend==='sinch'){ if (form.sinch_project_id) p.sinch_project_id=form.sinch_project_id; if (form.sinch_api_key) p.sinch_api_key=form.sinch_api_key; if (form.sinch_api_secret) p.sinch_api_secret=form.sinch_api_secret; } if (form.backend==='sip'){ if (form.ami_host) p.ami_host=form.ami_host; if (form.ami_port) p.ami_port=Number(form.ami_port); if (form.ami_username) p.ami_username=form.ami_username; if (form.ami_password) p.ami_password=form.ami_password; if (form.fax_station_id) p.fax_station_id=form.fax_station_id; } if (form.inbound_enabled!==undefined) p.inbound_enabled=!!form.inbound_enabled; if (form.inbound_retention_days!==undefined) p.inbound_retention_days=Number(form.inbound_retention_days); if (form.inbound_token_ttl_minutes!==undefined) p.inbound_token_ttl_minutes=Number(form.inbound_token_ttl_minutes); if (form.asterisk_inbound_secret) p.asterisk_inbound_secret=form.asterisk_inbound_secret; if (form.phaxio_inbound_verify_signature!==undefined) p.phaxio_inbound_verify_signature=!!form.phaxio_inbound_verify_signature; if (form.sinch_inbound_verify_signature!==undefined) p.sinch_inbound_verify_signature=!!form.sinch_inbound_verify_signature; if (form.sinch_inbound_basic_user) p.sinch_inbound_basic_user=form.sinch_inbound_basic_user; if (form.sinch_inbound_basic_pass) p.sinch_inbound_basic_pass=form.sinch_inbound_basic_pass; if (form.sinch_inbound_hmac_secret) p.sinch_inbound_hmac_secret=form.sinch_inbound_hmac_secret; if (form.storage_backend) p.storage_backend=form.storage_backend; if (form.s3_bucket) p.s3_bucket=form.s3_bucket; if (form.s3_region) p.s3_region=form.s3_region; if (form.s3_prefix) p.s3_prefix=form.s3_prefix; if (form.s3_endpoint_url) p.s3_endpoint_url=form.s3_endpoint_url; if (form.s3_kms_key_id) p.s3_kms_key_id=form.s3_kms_key_id; if (form.max_file_size_mb!==undefined) p.max_file_size_mb=Number(form.max_file_size_mb); if (form.max_requests_per_minute!==undefined) p.max_requests_per_minute=Number(form.max_requests_per_minute); if (form.inbound_list_rpm!==undefined) p.inbound_list_rpm=Number(form.inbound_list_rpm); if (form.inbound_get_rpm!==undefined) p.inbound_get_rpm=Number(form.inbound_get_rpm); const res = await client.updateSettings(p); await client.reloadSettings(); await fetchSettings(); setSnack('Settings applied and reloaded'); if (res && res._meta && res._meta.restart_recommended) setRestartHint(true); if (p.enable_persisted_settings!==undefined) setPersistedEnabled(!!p.enable_persisted_settings); } catch(e:any){ setError(e?.message||'Failed to apply settings'); } finally { setLoading(false);} }} disabled={loading}>
             Apply & Reload
           </Button>
           <Button variant="outlined" startIcon={<RefreshIcon />} onClick={fetchSettings} disabled={loading}>

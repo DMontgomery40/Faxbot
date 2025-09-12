@@ -22,6 +22,8 @@ import JobsList from './components/JobsList';
 import ApiKeys from './components/ApiKeys';
 import Settings from './components/Settings';
 import Diagnostics from './components/Diagnostics';
+import MCP from './components/MCP';
+import Logs from './components/Logs';
 import SendFax from './components/SendFax';
 import Inbound from './components/Inbound';
 
@@ -341,6 +343,8 @@ function App() {
               <Tab label="Keys" />
               <Tab label="Setup" />
               <Tab label="Settings" />
+              <Tab label="MCP" />
+              <Tab label="Logs" />
               <Tab label="Diagnostics" />
             </Tabs>
           </Box>
@@ -367,7 +371,13 @@ function App() {
             <Settings client={client!} />
           </TabPanel>
           <TabPanel value={tabValue} index={7}>
-            <Diagnostics client={client!} />
+            <MCP client={client!} />
+          </TabPanel>
+          <TabPanel value={tabValue} index={8}>
+            <Logs client={client!} />
+          </TabPanel>
+          <TabPanel value={tabValue} index={9}>
+            <Diagnostics client={client!} onNavigate={setTabValue} />
           </TabPanel>
         </Container>
       </Box>
