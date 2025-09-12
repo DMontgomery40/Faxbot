@@ -81,11 +81,24 @@ def _parse_s3_uri(uri: str) -> Tuple[str, str]:
 
 
 _storage: Optional[Storage] = None
+_storage_sig: Optional[tuple] = None
+
+def _signature() -> tuple:
+    return (
+        (settings.storage_backend or "local").lower(),
+        settings.s3_bucket or "",
+        settings.s3_region or "",
+        settings.s3_endpoint_url or "",
+        settings.s3_kms_key_id or "",
+        settings.s3_prefix or "",
+    )
 
 
 def get_storage() -> Storage:
     global _storage
-    if _storage is not None:
+    global _storage_sig
+    sig = _signature()
+    if _storage is not None and _storage_sig == sig:
         return _storage
     if (settings.storage_backend or "local").lower() == "s3":
         try:
@@ -95,4 +108,12 @@ def get_storage() -> Storage:
             raise
     else:
         _storage = LocalStorage()
+    _storage_sig = sig
     return _storage
+
+
+def reset_storage() -> None:
+    """Clear cached storage so next get_storage() reflects updated settings."""
+    global _storage, _storage_sig
+    _storage = None
+    _storage_sig = None
