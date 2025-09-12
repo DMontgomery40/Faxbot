@@ -23,7 +23,7 @@ import hashlib
 from urllib.parse import urlparse
 from fastapi.responses import StreamingResponse
 from .audit import init_audit_logger, audit_event
-from .storage import get_storage
+from .storage import get_storage, reset_storage
 from .auth import verify_db_key, create_api_key, list_api_keys, revoke_api_key, rotate_api_key
 from pydantic import BaseModel
 
@@ -701,7 +701,15 @@ def update_admin_settings(payload: UpdateSettingsRequest):
     # Audit / rate limiting
     _set_env_bool("AUDIT_LOG_ENABLED", payload.audit_log_enabled)
     _set_env_opt("MAX_REQUESTS_PER_MINUTE", payload.max_requests_per_minute)
-    # Storage
+    # Storage (note: credentials are handled by AWS SDK env/role, not here)
+    storage_fields = [
+        payload.storage_backend,
+        payload.s3_bucket,
+        payload.s3_prefix,
+        payload.s3_region,
+        payload.s3_endpoint_url,
+        payload.s3_kms_key_id,
+    ]
     _set_env_opt("STORAGE_BACKEND", payload.storage_backend)
     _set_env_opt("S3_BUCKET", payload.s3_bucket)
     _set_env_opt("S3_PREFIX", payload.s3_prefix)
@@ -713,9 +721,28 @@ def update_admin_settings(payload: UpdateSettingsRequest):
     _set_env_opt("INBOUND_GET_RPM", payload.inbound_get_rpm)
 
     # Apply live
+    # Detect backend/storage changes for guidance
+    old_backend = settings.fax_backend
+    old_storage = (settings.storage_backend or "local").lower()
     reload_settings()
-    # Return current effective masked view
-    return get_admin_settings()
+    new_backend = settings.fax_backend
+    new_storage = (settings.storage_backend or "local").lower()
+    backend_changed = (old_backend != new_backend)
+    storage_changed = (old_storage != new_storage) or any(storage_fields)
+    if storage_changed:
+        # Recreate storage client with new settings on next access
+        try:
+            reset_storage()
+        except Exception:
+            pass
+    # Return current effective masked view + hints
+    out = get_admin_settings()
+    out["_meta"] = {
+        "backend_changed": backend_changed,
+        "storage_changed": storage_changed,
+        "restart_recommended": backend_changed or new_backend == "sip" or storage_changed,
+    }
+    return out
 
 
 @app.post("/admin/settings/reload", dependencies=[Depends(require_admin)])

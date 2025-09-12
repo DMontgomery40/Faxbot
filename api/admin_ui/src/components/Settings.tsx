@@ -341,15 +341,81 @@ function Settings({ client }: SettingsProps) {
               </CardContent>
             </Card>
           </Grid>
+
+          {/* Storage Configuration */}
+          <Grid item xs={12}>
+            <Card>
+              <CardContent>
+                <Typography variant="h6" gutterBottom>
+                  Storage Configuration
+                </Typography>
+                <List dense>
+                  <ListItem>
+                    <ListItemText primary="Storage Backend" secondary={(form.storage_backend || settings.storage?.backend || 'local').toUpperCase()} />
+                    <select
+                      value={form.storage_backend || settings.storage?.backend || 'local'}
+                      onChange={(e) => handleForm('storage_backend', e.target.value)}
+                      style={{ background: 'transparent', color: 'inherit', borderColor: '#444', padding: '6px', borderRadius: 6 }}
+                    >
+                      <option value="local">local</option>
+                      <option value="s3">s3</option>
+                    </select>
+                  </ListItem>
+                  {(form.storage_backend === 's3' || settings.storage?.backend === 's3') && (
+                    <>
+                      <ListItem>
+                        <ListItemText primary="S3 Bucket" secondary={settings.storage?.s3_bucket || ''} />
+                        <input placeholder="S3_BUCKET" onChange={(e)=>handleForm('s3_bucket', e.target.value)} style={{ background: 'transparent', color: 'inherit', borderColor: '#444', padding: '6px', borderRadius: 6 }} />
+                      </ListItem>
+                      <ListItem>
+                        <ListItemText primary="S3 Region" secondary={settings.storage?.s3_region || ''} />
+                        <input placeholder="S3_REGION" onChange={(e)=>handleForm('s3_region', e.target.value)} style={{ background: 'transparent', color: 'inherit', borderColor: '#444', padding: '6px', borderRadius: 6 }} />
+                      </ListItem>
+                      <ListItem>
+                        <ListItemText primary="S3 Prefix" secondary={settings.storage?.s3_prefix || ''} />
+                        <input placeholder="S3_PREFIX" onChange={(e)=>handleForm('s3_prefix', e.target.value)} style={{ background: 'transparent', color: 'inherit', borderColor: '#444', padding: '6px', borderRadius: 6 }} />
+                      </ListItem>
+                      <ListItem>
+                        <ListItemText primary="S3 Endpoint URL" secondary={settings.storage?.s3_endpoint_url || ''} />
+                        <input placeholder="S3_ENDPOINT_URL" onChange={(e)=>handleForm('s3_endpoint_url', e.target.value)} style={{ background: 'transparent', color: 'inherit', borderColor: '#444', padding: '6px', borderRadius: 6, minWidth: '260px' }} />
+                      </ListItem>
+                      <ListItem>
+                        <ListItemText primary="S3 KMS Key ID" secondary={settings.storage?.s3_kms_enabled ? 'Configured' : 'Not set'} />
+                        <input placeholder="S3_KMS_KEY_ID" onChange={(e)=>handleForm('s3_kms_key_id', e.target.value)} style={{ background: 'transparent', color: 'inherit', borderColor: '#444', padding: '6px', borderRadius: 6, minWidth: '260px' }} />
+                      </ListItem>
+                      <ListItem>
+                        <Button variant="outlined" onClick={async ()=>{ try { setLoading(true); const diag = await (client as any).runDiagnostics?.(); if (diag?.checks?.storage?.type === 's3') { const st = diag.checks.storage; const ok = st.accessible===true || st.bucket_set; setSnack(ok ? 'S3 validation passed' : ('S3 validation incomplete' + (st.error? (': '+st.error):''))); } else { setSnack('Diagnostics did not include S3 checks. Enable ENABLE_S3_DIAGNOSTICS=true on server for full validation.'); } } catch(e:any){ setError(e?.message||'S3 validation failed'); } finally { setLoading(false);} }}>
+                          Validate S3
+                        </Button>
+                        <Typography variant="caption" sx={{ ml: 2 }}>Full validation requires ENABLE_S3_DIAGNOSTICS=true on server and proper AWS credentials via env/role.</Typography>
+                      </ListItem>
+                    </>
+                  )}
+                </List>
+              </CardContent>
+            </Card>
+          </Grid>
         </Grid>
         <Box sx={{ display: 'flex', gap: 1, mt: 2 }}>
-          <Button variant="contained" onClick={async () => { try { setLoading(true); setError(null); const p:any={}; if (form.backend) p.backend=form.backend; if (form.require_api_key!==undefined) p.require_api_key=!!form.require_api_key; if (form.enforce_public_https!==undefined) p.enforce_public_https=!!form.enforce_public_https; if (form.public_api_url) p.public_api_url=String(form.public_api_url); if (form.backend==='phaxio'){ if (form.phaxio_api_key) p.phaxio_api_key=form.phaxio_api_key; if (form.phaxio_api_secret) p.phaxio_api_secret=form.phaxio_api_secret; } if (form.backend==='sinch'){ if (form.sinch_project_id) p.sinch_project_id=form.sinch_project_id; if (form.sinch_api_key) p.sinch_api_key=form.sinch_api_key; if (form.sinch_api_secret) p.sinch_api_secret=form.sinch_api_secret; } if (form.backend==='sip'){ if (form.ami_host) p.ami_host=form.ami_host; if (form.ami_port) p.ami_port=Number(form.ami_port); if (form.ami_username) p.ami_username=form.ami_username; if (form.ami_password) p.ami_password=form.ami_password; if (form.fax_station_id) p.fax_station_id=form.fax_station_id; } await client.updateSettings(p); await client.reloadSettings(); await fetchSettings(); setSnack('Settings applied and reloaded'); } catch(e:any){ setError(e?.message||'Failed to apply settings'); } finally { setLoading(false);} }} disabled={loading}>
+          <Button variant="contained" onClick={async () => { try { setLoading(true); setError(null); setRestartHint(false); const p:any={}; if (form.backend) p.backend=form.backend; if (form.require_api_key!==undefined) p.require_api_key=!!form.require_api_key; if (form.enforce_public_https!==undefined) p.enforce_public_https=!!form.enforce_public_https; if (form.public_api_url) p.public_api_url=String(form.public_api_url); if (form.backend==='phaxio'){ if (form.phaxio_api_key) p.phaxio_api_key=form.phaxio_api_key; if (form.phaxio_api_secret) p.phaxio_api_secret=form.phaxio_api_secret; } if (form.backend==='sinch'){ if (form.sinch_project_id) p.sinch_project_id=form.sinch_project_id; if (form.sinch_api_key) p.sinch_api_key=form.sinch_api_key; if (form.sinch_api_secret) p.sinch_api_secret=form.sinch_api_secret; } if (form.backend==='sip'){ if (form.ami_host) p.ami_host=form.ami_host; if (form.ami_port) p.ami_port=Number(form.ami_port); if (form.ami_username) p.ami_username=form.ami_username; if (form.ami_password) p.ami_password=form.ami_password; if (form.fax_station_id) p.fax_station_id=form.fax_station_id; } if (form.storage_backend) p.storage_backend=form.storage_backend; if (form.s3_bucket) p.s3_bucket=form.s3_bucket; if (form.s3_region) p.s3_region=form.s3_region; if (form.s3_prefix) p.s3_prefix=form.s3_prefix; if (form.s3_endpoint_url) p.s3_endpoint_url=form.s3_endpoint_url; if (form.s3_kms_key_id) p.s3_kms_key_id=form.s3_kms_key_id; const res = await client.updateSettings(p); await client.reloadSettings(); await fetchSettings(); setSnack('Settings applied and reloaded'); if (res && res._meta && res._meta.restart_recommended) setRestartHint(true); } catch(e:any){ setError(e?.message||'Failed to apply settings'); } finally { setLoading(false);} }} disabled={loading}>
             Apply & Reload
           </Button>
           <Button variant="outlined" startIcon={<RefreshIcon />} onClick={fetchSettings} disabled={loading}>
             Refresh
           </Button>
         </Box>
+        {restartHint && (
+          <Alert severity="warning" sx={{ mt: 2 }}>
+            Changes may require an API restart (backend or storage changed). {allowRestart ? 'You can restart below.' : 'Please restart the API process.'}
+          </Alert>
+        )}
+        {allowRestart && (
+          <Box sx={{ mt: 1 }}>
+            <Button variant="outlined" onClick={async () => { try { await client.restart(); } catch (e) { /* ignore */ } }}>
+              Restart API
+            </Button>
+          </Box>
+        )}
       ) : (
         <Typography variant="body2" color="text.secondary">
           Click "Load Settings" to view current configuration
