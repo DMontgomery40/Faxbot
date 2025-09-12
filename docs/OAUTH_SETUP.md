@@ -1,3 +1,11 @@
+---
+layout: default
+title: OAuth / OIDC Setup (MCP SSE)
+parent: Security
+nav_order: 2
+permalink: /security/oauth-setup.html
+---
+
 # OAuth2 / OIDC Setup for Faxbot MCP (SSE)
 
 This guide shows how to configure JWT validation for the SSE transport. It covers the minimal concepts, the three env vars Faxbot needs, and quick links for popular identity providers.

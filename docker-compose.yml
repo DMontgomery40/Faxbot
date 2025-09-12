@@ -3,12 +3,18 @@ version: "3.9"
 services:
   api:
     build:
-      context: ./api
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: ./api/Dockerfile
     env_file:
       - ./.env
     environment:
       - FAX_DATA_DIR=/faxdata
+      - ENABLE_LOCAL_ADMIN=true
+      - ADMIN_ALLOW_RESTART=true
+      # Optional: auto-load persisted .env settings on startup
+      - ENABLE_PERSISTED_SETTINGS=true
+      # Persist DB to volume so jobs/keys/inbox survive rebuilds
+      - DATABASE_URL=sqlite:////faxdata/faxbot.db
     volumes:
       - faxdata:/faxdata
     ports:
@@ -30,7 +36,7 @@ services:
     ports:
       - "5060:5060/udp"
       - "5060:5060/tcp"
-      - "5038:5038" # AMI
+      # AMI (5038) is intentionally not exposed; keep internal only.
       - "4000-4999:4000-4999/udp" # UDPTL for T.38
 
   # Optional: Faxbot MCP Server for AI integration

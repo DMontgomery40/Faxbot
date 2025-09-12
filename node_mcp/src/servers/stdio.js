@@ -7,9 +7,11 @@ import {
   GetPromptRequestSchema,
   ListPromptsRequestSchema,
   ListToolsRequestSchema,
+  ReadResourceRequestSchema,
   McpError,
 } from '@modelcontextprotocol/sdk/types.js';
-import { faxTools, handleSendFaxTool, handleGetFaxStatusTool } from '../tools/fax-tools.js';
+import { downloadInboundPdf as apiDownloadInboundPdf } from '../shared/fax-client.js';
+import { faxTools, handleSendFaxTool, handleGetFaxStatusTool, handleGetFaxTool, handleListInboundTool, handleGetInboundPdfTool } from '../tools/fax-tools.js';
 import { listPrompts } from '../prompts/index.js';
 
 function buildServer() {
@@ -27,6 +29,12 @@ function buildServer() {
         return await handleSendFaxTool(args);
       case 'get_fax_status':
         return await handleGetFaxStatusTool(args);
+      case 'get_fax':
+        return await handleGetFaxTool(args);
+      case 'list_inbound':
+        return await handleListInboundTool(args);
+      case 'get_inbound_pdf':
+        return await handleGetInboundPdfTool(args);
       default:
         throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${name}`);
     }
@@ -36,6 +44,26 @@ function buildServer() {
   server.setRequestHandler(ListPromptsRequestSchema, async () => ({ prompts: listPrompts() }));
   server.setRequestHandler(GetPromptRequestSchema, async (_request) => {
     throw new McpError(ErrorCode.MethodNotFound, 'No prompts are defined');
+  });
+
+  // Resources: support reading inbound PDFs via a custom URI scheme
+  server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+    const uri = request.params?.uri || '';
+    if (typeof uri !== 'string') throw new McpError(ErrorCode.InvalidParams, 'Invalid uri');
+    // faxbot:inbound/<id>/pdf
+    const m = uri.match(/^faxbot:inbound\/(.+)\/pdf$/i);
+    if (!m) throw new McpError(ErrorCode.InvalidParams, `Unsupported resource uri: ${uri}`);
+    const inboundId = m[1];
+    const { buffer, contentType } = await apiDownloadInboundPdf(inboundId);
+    return {
+      contents: [
+        {
+          uri,
+          mimeType: contentType || 'application/pdf',
+          blob: buffer.toString('base64'),
+        },
+      ],
+    };
   });
 
   return server;

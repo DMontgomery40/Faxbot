@@ -1,3 +1,10 @@
+---
+layout: default
+title: Images and PDFs (Conversion)
+nav_order: 40
+permalink: /IMAGES_AND_PDFS.html
+---
+
 # Images vs Text PDFs
 
 Most real‑world faxes in 2025 are images — scans of insurance cards, lab results, driver’s licenses, or signed forms. Faxbot supports two content types only: PDF and TXT. This guide explains how to handle image content correctly and how to balance file size with HIPAA concerns.

@@ -1,9 +1,625 @@
 {"0": {
+    "doc": "API Reference",
+    "title": "API Reference",
+    "content": " ",
+    "url": "/Faxbot/api-reference.html",
+    
+    "relUrl": "/api-reference.html"
+  },"1": {
+    "doc": "API Reference",
+    "title": "Base URL",
+    "content": ". | Default: http://localhost:8080 | Health: GET /health → { \"status\": \"ok\" } | Readiness: GET /health/ready → 200 when ready; 503 otherwise | . ",
+    "url": "/Faxbot/api-reference.html#base-url",
+    
+    "relUrl": "/api-reference.html#base-url"
+  },"2": {
+    "doc": "API Reference",
+    "title": "Authentication and API Keys",
+    "content": ". | Send X-API-Key: &lt;token&gt; on every request. Two options exist: . | DB‑backed tokens (recommended): format fbk_live_&lt;keyId&gt;_&lt;secret&gt;, minted via admin endpoints. | Env bootstrap key (legacy): the literal API_KEY value configured on the server. Use this only to bootstrap and mint DB keys. | . | Set REQUIRE_API_KEY=true in production/HIPAA to enforce authentication even if API_KEY is blank. | . How to get an API key (recommended flow) 1) Set a temporary bootstrap admin key in the server environment: API_KEY=bootstrap_admin_only (or any strong value). 2) Create a DB-backed key via admin endpoint (requires admin auth with the bootstrap env key): . curl -s -X POST http://localhost:8080/admin/api-keys \\ -H \"X-API-Key: $API_KEY\" \\ -H 'Content-Type: application/json' \\ -d '{\"name\":\"dev\",\"owner\":\"you@example.com\",\"scopes\":[\"fax:send\",\"fax:read\"]}' . 3) Save the returned token (fbk_live_&lt;keyId&gt;_&lt;secret&gt;) securely — it is shown ONCE. 4) Use that token as X-API-Key for all client calls. You can delete the bootstrap API_KEY later if you wish. Scopes . | Enforced when authentication is required: . | POST /fax → scope fax:send | GET /fax/{id} → scope fax:read | Inbound list/get/download → scopes inbound:list / inbound:read | Admin endpoints → keys:manage (or the bootstrap env key) | . | If REQUIRE_API_KEY=false and no API_KEY is set, unauthenticated requests are allowed in development; scopes are then not required. | . Token lifecycle (rotate, revoke, expire) . | Rotate: POST /admin/api-keys/{keyId}/rotate returns a new plaintext token once; the old secret stops working immediately. | Revoke: DELETE /admin/api-keys/{keyId} sets revoked_at — the token is rejected thereafter. | Expire: create keys with expires_at (ISO8601) to enforce automatic expiry. | Metadata: GET /admin/api-keys lists non‑secret fields (created_at, last_used_at, expires_at, revoked_at, scopes, owner, name). | . Error semantics . | 401 Unauthorized: missing/invalid token, revoked/expired token, or no admin auth for admin endpoints. | 403 Forbidden: valid token but insufficient scopes for the endpoint. | 429 Too Many Requests: per‑key rate limit exceeded. | . Rate limiting (optional) . | Global: MAX_REQUESTS_PER_MINUTE (default 0 = disabled). When enabled, each API key is limited per-minute across requests. | Inbound-specific: INBOUND_LIST_RPM and INBOUND_GET_RPM apply to GET /inbound, GET /inbound/{id}, and GET /inbound/{id}/pdf (API-key path). Token-based downloads are not rate-limited. | Exceeding the limit returns 429 Too Many Requests with a Retry-After header. | . ",
+    "url": "/Faxbot/api-reference.html#authentication-and-api-keys",
+    
+    "relUrl": "/api-reference.html#authentication-and-api-keys"
+  },"3": {
+    "doc": "API Reference",
+    "title": "Endpoints",
+    "content": "1) POST /fax . | Multipart form . | to: destination number (E.164 or digits) | file: PDF or TXT | . | Implementation details . | Streaming upload: file data streams to disk in chunks; the 10 MB limit is enforced incrementally to avoid memory spikes. | Magic sniff: server validates content by signature — PDFs must begin with %PDF; TXT must be UTF‑8 decodable. Declared content-type is not trusted. | . | Responses . | 202 Accepted: { id, to, status, error?, pages?, backend, provider_sid?, created_at, updated_at } | 400 bad number; 413 file too large; 415 unsupported type; 401 invalid API key; 403 missing fax:send scope | . | Example curl -X POST http://localhost:8080/fax \\ -H \"X-API-Key: $API_KEY\" \\ -F to=+15551234567 \\ -F file=@./example.pdf . | . 2) GET /fax/{id} . | Returns job status as above. | 404 if not found; 401 if invalid API key; 403 if missing fax:read scope. curl -H \"X-API-Key: $API_KEY\" http://localhost:8080/fax/$JOB_ID . | . 3) GET /fax/{id}/pdf?token=... | Serves the original PDF for cloud provider to fetch. | No API auth; requires token that matches stored URL. | 403 invalid/expired token; 404 not found. | . 4) POST /phaxio-callback . | For Phaxio status webhooks. Expects form-encoded fields (e.g., fax[status], fax[id]). | Correlation via query param ?job_id=.... | Returns { status: \"ok\" }. | Signature verification: if PHAXIO_VERIFY_SIGNATURE=true (default), the server verifies X-Phaxio-Signature (HMAC-SHA256 of the raw body using PHAXIO_API_SECRET). Requests without a valid signature are rejected (401). | . 5) Admin — API keys . | Requires admin auth: either the bootstrap env key (API_KEY) or a DB key with scope keys:manage. a) Create a key — POST /admin/api-keys . | Body: { name?: string, owner?: string, scopes?: string[], expires_at?: ISO8601, note?: string } | Returns: { key_id, token, name?, owner?, scopes[], expires_at? } (token shown ONCE) | Example: curl -s -X POST http://localhost:8080/admin/api-keys \\ -H \"X-API-Key: $API_KEY\" -H 'Content-Type: application/json' \\ -d '{\"name\":\"svc-bot\",\"owner\":\"svc@example.com\",\"scopes\":[\"fax:send\"]}' . | . b) List keys — GET /admin/api-keys . | Returns: [{ key_id, name?, owner?, scopes[], created_at, last_used_at?, expires_at?, revoked_at?, note? }] | . c) Revoke key — DELETE /admin/api-keys/{keyId} . | Response: { status: \"ok\" } | . d) Rotate key — POST /admin/api-keys/{keyId}/rotate . | Returns: { key_id, token } (new token shown ONCE) | . | . 6) Admin — Config (read-only) . | GET /admin/config . | Requires admin auth. | Returns a sanitized view of effective configuration and runtime flags (no secrets): . | backend, require_api_key, enforce_public_https, phaxio_verify_signature, audit_log_enabled | rate_limits (global and inbound), inbound (enabled, retention, token TTL) | storage (backend, masked S3 identifiers), backend_configured booleans, public_api_url | . | . | . 7) Inbound (WIP scaffolding; enable with INBOUND_ENABLED=true) . | GET /inbound (requires scope inbound:list) — list recent inbound faxes. | GET /inbound/{id} (requires scope inbound:read) — get metadata. | GET /inbound/{id}/pdf — download inbound PDF via either ?token=... (short‑TTL) or API key with inbound:read. | Internal (SIP/Asterisk): POST /_internal/asterisk/inbound with header X-Internal-Secret: &lt;secret&gt; and body { tiff_path, to_number, from_number?, faxstatus?, faxpages?, uniqueid }. | . Retention and cleanup (inbound) . | Set INBOUND_RETENTION_DAYS to automatically delete stored inbound artifacts after the specified days. The cleanup loop runs every CLEANUP_INTERVAL_MINUTES. | For S3 storage, objects are deleted via the API; for local storage, files are unlinked. Metadata rows remain for audit/history, but pdf_path/tiff_path are cleared. | When STORAGE_BACKEND=s3, local PDFs are removed immediately after upload (only the S3 URI is retained). | . ",
+    "url": "/Faxbot/api-reference.html#endpoints",
+    
+    "relUrl": "/api-reference.html#endpoints"
+  },"4": {
+    "doc": "API Reference",
+    "title": "Models",
+    "content": ". | FaxJobOut . | id: string | to: string | | status: string (queued | in_progress | SUCCESS | FAILED | disabled) | . | error?: string | pages?: number | backend: string (“phaxio”, “sinch”, or “sip”) | provider_sid?: string | created_at: ISO8601 | updated_at: ISO8601 | . | . ",
+    "url": "/Faxbot/api-reference.html#models",
+    
+    "relUrl": "/api-reference.html#models"
+  },"5": {
+    "doc": "API Reference",
+    "title": "Notes",
+    "content": ". | Backend chosen via FAX_BACKEND env var: phaxio (cloud via Phaxio/Phaxio‑by‑Sinch V2 style), sinch (cloud via Sinch Fax API v3 direct upload), or sip (self‑hosted Asterisk). | Default backend is phaxio. Set FAX_BACKEND=sip explicitly if you are running Asterisk; set FAX_BACKEND=sinch for Sinch v3 direct upload. | TXT files are converted to PDF before TIFF conversion. | If Ghostscript is missing, TIFF step is stubbed with pages=1; install for production. | For the phaxio backend, TIFF conversion is skipped; page count is finalized via the provider callback (/phaxio-callback, HMAC verification supported). | For the sinch backend, the API uploads your PDF directly to Sinch. Webhook support is under evaluation; status reflects the provider’s immediate response and may be updated by polling in future versions. | Tokenized PDF access has a TTL (PDF_TOKEN_TTL_MINUTES, default 60). The /fax/{id}/pdf?token=... link expires after TTL. | API key tokens are never logged; audits record only the key_id. | Optional retention: enable automatic cleanup of artifacts by setting ARTIFACT_TTL_DAYS&gt;0 (default disabled). Cleanup runs every CLEANUP_INTERVAL_MINUTES (default 1440). | . ",
+    "url": "/Faxbot/api-reference.html#notes",
+    
+    "relUrl": "/api-reference.html#notes"
+  },"6": {
+    "doc": "API Reference",
+    "title": "Phone Numbers",
+    "content": ". | Preferred format: E.164 (e.g., +15551234567). | Validation: API accepts + and 6–20 digits. | Cloud path (Phaxio): the service may attempt best‑effort normalization for non‑E.164 input; provide E.164 to avoid ambiguity. | . ",
+    "url": "/Faxbot/api-reference.html#phone-numbers",
+    
+    "relUrl": "/api-reference.html#phone-numbers"
+  },"7": {
+    "doc": "API Reference",
+    "title": "Audit Logging (Optional)",
+    "content": ". | Enable structured audit logs for SIEM ingestion: . | AUDIT_LOG_ENABLED=true | AUDIT_LOG_FORMAT=json (default) | AUDIT_LOG_FILE=/var/log/faxbot_audit.log (optional) | AUDIT_LOG_SYSLOG=true and AUDIT_LOG_SYSLOG_ADDRESS=/dev/log (optional) | . | Events: job_created, job_dispatch, job_updated, job_failed, pdf_served. | Logs contain job IDs and metadata only (no PHI). | . ",
+    "url": "/Faxbot/api-reference.html#audit-logging-optional",
+    
+    "relUrl": "/api-reference.html#audit-logging-optional"
+  },"8": {
+    "doc": "Authentication (API Keys)",
+    "title": "Authentication (API Keys)",
+    "content": "Faxbot authenticates requests using an X-API-Key header. There are two key types: . | DB‑backed keys (recommended): tokens of the form fbk_live_&lt;keyId&gt;_&lt;secret&gt; created via admin endpoints. | Bootstrap env key (legacy): the literal API_KEY value set on the server; use only to bootstrap DB keys. | . ",
+    "url": "/Faxbot/security/authentication.html",
+    
+    "relUrl": "/security/authentication.html"
+  },"9": {
+    "doc": "Authentication (API Keys)",
+    "title": "Quick Start — Get a DB‑Backed Key",
+    "content": "1) Set a temporary bootstrap admin key in the server environment (for example in .env): . API_KEY=bootstrap_admin_only REQUIRE_API_KEY=true . 2) Create a per‑user/service key via the admin endpoint (authenticate with the bootstrap API_KEY): . curl -s -X POST http://localhost:8080/admin/api-keys \\ -H \"X-API-Key: $API_KEY\" \\ -H 'Content-Type: application/json' \\ -d '{\"name\":\"dev\",\"owner\":\"you@example.com\",\"scopes\":[\"fax:send\",\"fax:read\"]}' . 3) Save the returned token securely. It is shown once. 4) Use that token on all client requests: . curl -H \"X-API-Key: fbk_live_&lt;keyId&gt;_&lt;secret&gt;\" http://localhost:8080/health . ",
+    "url": "/Faxbot/security/authentication.html#quick-start--get-a-dbbacked-key",
+    
+    "relUrl": "/security/authentication.html#quick-start--get-a-dbbacked-key"
+  },"10": {
+    "doc": "Authentication (API Keys)",
+    "title": "Scopes",
+    "content": "Scopes limit what a key can do: . | fax:send — required for POST /fax | fax:read — required for GET /fax/{id} | inbound:list and inbound:read — required for inbound listing/metadata/download | keys:manage — required for admin key management endpoints | . If REQUIRE_API_KEY=false and no API_KEY is set, unauthenticated requests are allowed in development, and scopes are not enforced. ",
+    "url": "/Faxbot/security/authentication.html#scopes",
+    
+    "relUrl": "/security/authentication.html#scopes"
+  },"11": {
+    "doc": "Authentication (API Keys)",
+    "title": "Key Lifecycle",
+    "content": ". | Rotate — POST /admin/api-keys/{keyId}/rotate returns a new plaintext token once; the old secret is immediately invalid. | Revoke — DELETE /admin/api-keys/{keyId} sets revoked_at, permanently disabling the token. | Expire — when creating a key, set expires_at (ISO8601) to enforce automatic expiry. | List metadata — GET /admin/api-keys returns non‑secret fields: scopes, timestamps, owner, name, revoked_at. | . ",
+    "url": "/Faxbot/security/authentication.html#key-lifecycle",
+    
+    "relUrl": "/security/authentication.html#key-lifecycle"
+  },"12": {
+    "doc": "Authentication (API Keys)",
+    "title": "Admin Endpoints (Summary)",
+    "content": ". | Create: POST /admin/api-keys → returns { key_id, token, ... } (token shown once) | List: GET /admin/api-keys → returns array of metadata (no secrets) | Revoke: DELETE /admin/api-keys/{keyId} → { status: \"ok\" } | Rotate: POST /admin/api-keys/{keyId}/rotate → { key_id, token } (new token shown once) | . Admin auth: use either the bootstrap env API_KEY, or a DB key that has the keys:manage scope. ",
+    "url": "/Faxbot/security/authentication.html#admin-endpoints-summary",
+    
+    "relUrl": "/security/authentication.html#admin-endpoints-summary"
+  },"13": {
+    "doc": "Authentication (API Keys)",
+    "title": "Enforcement &amp; Errors",
+    "content": ". | REQUIRE_API_KEY=true (recommended for HIPAA/production) enforces authentication even if API_KEY is blank. | 401 Unauthorized — missing/invalid, revoked, or expired token; or no admin auth for admin endpoints. | 403 Forbidden — valid token but insufficient scopes. | 429 Too Many Requests — per‑key rate limit exceeded. | . ",
+    "url": "/Faxbot/security/authentication.html#enforcement--errors",
+    
+    "relUrl": "/security/authentication.html#enforcement--errors"
+  },"14": {
+    "doc": "Authentication (API Keys)",
+    "title": "Rate Limiting (Optional)",
+    "content": ". | Global per‑key: MAX_REQUESTS_PER_MINUTE (default 0 disables) | Inbound per‑route: INBOUND_LIST_RPM, INBOUND_GET_RPM (token downloads are not rate‑limited) | . ",
+    "url": "/Faxbot/security/authentication.html#rate-limiting-optional",
+    
+    "relUrl": "/security/authentication.html#rate-limiting-optional"
+  },"15": {
+    "doc": "Authentication (API Keys)",
+    "title": "Security Tips",
+    "content": ". | Prefer DB‑backed keys per user/service; avoid sharing a single env key. | Rotate regularly and remove unused keys. | For public deployments, place the API behind TLS and a reverse proxy/WAF with additional rate limits and IP allowlists. | . ",
+    "url": "/Faxbot/security/authentication.html#security-tips",
+    
+    "relUrl": "/security/authentication.html#security-tips"
+  },"16": {
+    "doc": "Backends",
+    "title": "Backends",
+    "content": "Choose one backend (cloud or self‑hosted) and follow its setup guide. ",
+    "url": "/Faxbot/backends/",
+    
+    "relUrl": "/backends/"
+  },"17": {
+    "doc": "Images and PDFs (Conversion)",
+    "title": "Images vs Text PDFs",
+    "content": "Most real‑world faxes in 2025 are images — scans of insurance cards, lab results, driver’s licenses, or signed forms. Faxbot supports two content types only: PDF and TXT. This guide explains how to handle image content correctly and how to balance file size with HIPAA concerns. Quick guidance . | If you have a PDF that is a scan/photo (image‑based): send it as‑is. Use send_fax with filePath (stdio) or upload the PDF via the REST API/SDKs. | If you have a pure text document: paste text into a .txt file and send as TXT, or export as a PDF and send that. | If you have images (PNG/JPG): convert to PDF first, then send. | . Conversions . | macOS Preview: File → Export As… → Format: PDF | macOS CLI: sips -s format pdf \"in.png\" --out \"out.pdf\" | Linux: img2pdf in.png -o out.pdf or magick convert in.png out.pdf | Windows: open image → Print → “Microsoft Print to PDF” | . MCP tooling: which option to use? . | send_fax with filePath (stdio) — recommended for all PDFs (image or text). Sends the original file. | HTTP/SSE MCP transports — require base64; keep files small (≤ ~100 KB), or prefer stdio with filePath for local usage. | . File size and quality . | API default limit is MAX_FILE_SIZE_MB=10. | For scans, use 150–200 DPI and grayscale when possible to reduce size without losing readability. | For personal/one‑off use (patients): local stdio MCP with filePath avoids base64 bloat; token limits don’t apply. | . HIPAA considerations . | Healthcare providers (Covered Entities/Business Associates): use HIPAA‑aligned transports and controls. | Prefer OAuth‑protected SSE MCP for assistant integrations or use the REST API/SDKs directly. | Use HTTPS for PUBLIC_API_URL (Phaxio) and enable signature verification. | . | Patients (sending their own documents): HIPAA obligations differ; using local stdio MCP is generally acceptable because you are not a covered entity and Faxbot does not receive faxes. Providers still must protect inbound faxes on their side. | . Troubleshooting . | “Unsupported file type”: only PDF and TXT are accepted. Convert images to PDF. | Shell path issues with spaces/odd characters: quote the entire path or rename using a wildcard (e.g., cp Screenshot*.pdf card.pdf). | . ",
+    "url": "/Faxbot/IMAGES_AND_PDFS.html#images-vs-text-pdfs",
+    
+    "relUrl": "/IMAGES_AND_PDFS.html#images-vs-text-pdfs"
+  },"18": {
+    "doc": "Images and PDFs (Conversion)",
+    "title": "Images and PDFs (Conversion)",
+    "content": " ",
+    "url": "/Faxbot/IMAGES_AND_PDFS.html",
+    
+    "relUrl": "/IMAGES_AND_PDFS.html"
+  },"19": {
+    "doc": "MCP Integration",
+    "title": "MCP_INTEGRATION.md",
+    "content": "Demo . Watch the demo video (Your browser or GitHub may not inline-play videos; use the link.) What MCP is . | MCP is a protocol. “SSE”, “HTTP”, and “stdio” are transports. Faxbot provides two server implementations (Node and Python), each capable of running on any of the transports. Pick a language (Node or Python) and a transport (stdio/HTTP/SSE) that fits your environment. | . Quick Start (Claude/Cursor) . | Add Faxbot MCP to your assistant config (stdio). Then call send_fax with a local filePath. | . Claude Desktop or Cursor config example: . { \"mcpServers\": { \"faxbot\": { \"command\": \"node\", \"args\": [\"src/servers/stdio.js\"], \"cwd\": \"/PATH/TO/faxbot/node_mcp\", \"env\": { \"FAX_API_URL\": \"http://localhost:8080\", \"API_KEY\": \"your_api_key\" } } } } . Use these tools . | send_fax: { to, filePath } (stdio) or { to, fileContent, fileName, fileType } (HTTP/SSE) | get_fax_status: { jobId } | . Important notes . | File types: only PDF and TXT. Convert images (PNG/JPG) to PDF first. | Stdio: use filePath so the MCP reads the file locally and posts it to Faxbot. | HTTP/SSE: provide base64 content and keep files small (≤ ~100 KB). The HTTP/SSE MCP servers accept JSON payloads up to ~16 MB (base64 overhead included), while the Faxbot API enforces a 10 MB raw file size limit. | Backends: works with any Faxbot backend (phaxio, sinch, or sip). | . Examples . | “Call send_fax with { to: “+15551234567”, filePath: “/Users/me/Documents/letter.pdf” }” | “Call get_fax_status with { jobId: “\" }” | . Docker Quick Start (HTTP MCP) . | Start the API and MCP via Docker Compose: docker compose up -d --build api docker compose --profile mcp up -d --build faxbot-mcp . | The MCP HTTP server listens on http://localhost:3001. | Authentication is required: set MCP_HTTP_API_KEY on the server and pass either Authorization: Bearer &lt;MCP_HTTP_API_KEY&gt; or X-API-Key: &lt;MCP_HTTP_API_KEY&gt; on all /mcp requests. | Use this when integrating web clients or cloud AI that speak MCP over HTTP. Restrict CORS with MCP_HTTP_CORS_ORIGIN. | For Claude Desktop or Cursor (stdio), run the MCP directly on the host instead of Docker. | . Turnkey SSE (HIPAA‑oriented) via Docker Compose . | Node SSE (port 3002): export OAUTH_ISSUER=https://YOUR_ISSUER export OAUTH_AUDIENCE=faxbot-mcp export OAUTH_JWKS_URL=https://YOUR_ISSUER/.well-known/jwks.json docker compose --profile mcp up -d --build faxbot-mcp-sse . | Python SSE (port 3003): export OAUTH_ISSUER=https://YOUR_ISSUER export OAUTH_AUDIENCE=faxbot-mcp export OAUTH_JWKS_URL=https://YOUR_ISSUER/.well-known/jwks.json docker compose --profile mcp up -d --build faxbot-mcp-py-sse . | Choose one. Both require Bearer JWTs issued by your IdP; tokens are verified via JWKS. | Detailed OIDC setup guidance and provider links: see OAUTH_SETUP.md. | . MCP Inspector (explore tools/resources/prompts) . | Start the Inspector UI via Docker: docker compose --profile mcp up -d mcp-inspector open http://localhost:6274 . | Or run locally: npx @modelcontextprotocol/inspector . | Connect the Inspector to your Faxbot MCP server: . | Stdio: launch node node_mcp/src/servers/stdio.js (or python python_mcp/stdio_server.py) with FAX_API_URL and API_KEY env. | HTTP: set transport “streamable-http” and point to http://localhost:3001. | SSE: set transport “sse” and point to http://localhost:3002/sse (Node) or http://localhost:3003/sse (Python). Include Authorization: Bearer &lt;JWT&gt;. | . | . Example mcp.json for MCP Inspector . { \"mcpServers\": { \"faxbot-node-stdio\": { \"type\": \"stdio\", \"command\": \"node\", \"args\": [\"src/servers/stdio.js\"], \"cwd\": \"./node_mcp\", \"env\": { \"FAX_API_URL\": \"http://localhost:8080\", \"API_KEY\": \"your_api_key\" } }, \"faxbot-node-http\": { \"type\": \"streamable-http\", \"url\": \"http://localhost:3001/mcp\" }, \"faxbot-node-sse\": { \"type\": \"sse\", \"url\": \"http://localhost:3002/sse\" }, \"faxbot-py-stdio\": { \"type\": \"stdio\", \"command\": \"python\", \"args\": [\"stdio_server.py\"], \"cwd\": \"./python_mcp\", \"env\": { \"FAX_API_URL\": \"http://localhost:8080\", \"API_KEY\": \"your_api_key\" } }, \"faxbot-py-sse\": { \"type\": \"sse\", \"url\": \"http://localhost:3003/sse\" } } } . Notes: . | For SSE entries, provide Authorization: Bearer &lt;JWT&gt; in the Inspector UI headers before connecting. | If you keep only one server entry or name one default-server, Inspector selects it automatically. | . Details . Transports × servers (language matrix)&lt;/summary&gt; . 2 languages × 3 transports = 6 options. Node MCP: . | stdio: node_mcp/src/servers/stdio.js | HTTP: node_mcp/src/servers/http.js (port 3001) | SSE+OAuth: node_mcp/src/servers/sse.js (port 3002) | . Python MCP: . | stdio: python_mcp/stdio_server.py | HTTP: python_mcp/http_server.py | SSE+OAuth: python_mcp/server.py | . &lt;/details&gt; . Node MCP start commands&lt;/summary&gt; . cd node_mcp &amp;&amp; npm install FAX_API_URL=http://localhost:8080 API_KEY=$API_KEY ./scripts/start-stdio.sh # stdio FAX_API_URL=http://localhost:8080 API_KEY=$API_KEY MCP_HTTP_PORT=3001 ./scripts/start-http.sh OAUTH_ISSUER=... OAUTH_AUDIENCE=... FAX_API_URL=http://localhost:8080 API_KEY=$API_KEY \\ MCP_SSE_PORT=3002 ./scripts/start-sse.sh . &lt;/details&gt; . Python MCP start commands&lt;/summary&gt; . cd python_mcp python -m venv .venv &amp;&amp; source .venv/bin/activate pip install -r requirements.txt export FAX_API_URL=http://localhost:8080 export API_KEY=your_api_key python stdio_server.py # stdio # or: uvicorn http_server:app --host 0.0.0.0 --port 3004 # or: uvicorn server:app --host 0.0.0.0 --port 3003 (SSE+OAuth) . &lt;/details&gt; . HTTP and SSE details&lt;/summary&gt; . | HTTP uses Streamable HTTP with sessions: POST /mcp, GET /mcp (SSE), DELETE /mcp. | SSE+OAuth requires Bearer JWT with iss/aud; JWKS is fetched from the issuer. | Place HTTP/SSE behind auth/rate limits for production. | . &lt;/details&gt; . Voice examples&lt;/summary&gt; . ❌ “Fax document.pdf to +1234567890” (missing file access/base64) . ✅ “Call send_fax with { to: “+1234567890”, filePath: “/path/to/file.pdf” }” . For HTTP/SSE, read and base64‑encode the file before calling send_fax. &lt;/details&gt; . File conversion hints&lt;/summary&gt; . | macOS Preview: File → Export As… → PDF | macOS CLI: sips -s format pdf \"in.png\" --out \"out.pdf\" | Linux: img2pdf in.png -o out.pdf or magick convert in.png out.pdf | Windows: “Print to PDF”. | . &lt;/details&gt; . See also: Images vs Text PDFs guide (docs/IMAGES_AND_PDFS.md). ",
+    "url": "/Faxbot/ai-integration/mcp-integration.html#mcp_integrationmd",
+    
+    "relUrl": "/ai-integration/mcp-integration.html#mcp_integrationmd"
+  },"20": {
+    "doc": "MCP Integration",
+    "title": "MCP Integration",
+    "content": " ",
+    "url": "/Faxbot/ai-integration/mcp-integration.html",
+    
+    "relUrl": "/ai-integration/mcp-integration.html"
+  },"21": {
+    "doc": "OAuth / OIDC Setup (MCP SSE)",
+    "title": "OAuth2 / OIDC Setup for Faxbot MCP (SSE)",
+    "content": "This guide shows how to configure JWT validation for the SSE transport. It covers the minimal concepts, the three env vars Faxbot needs, and quick links for popular identity providers. What the MCP SSE server validates . | Issuer (iss): matches OAUTH_ISSUER | Audience (aud): matches OAUTH_AUDIENCE (e.g., faxbot-mcp) | Signature: verified against the provider’s JWKS (OAUTH_JWKS_URL) | Expiry / not-before: standard JWT time checks | . Environment variables . OAUTH_ISSUER # Your OIDC issuer URL (no trailing slash) OAUTH_AUDIENCE # The audience/identifier of the API you expose to clients (string) OAUTH_JWKS_URL # JWKS endpoint (optional if your issuer uses the default well-known path) . General steps (any provider) 1) Create or identify an API/resource in your IdP. | Set an identifier value (this becomes the aud claim). Example: faxbot-mcp. 2) Create a client/app that can obtain access tokens for that API (client credentials or the flow used by your client). 3) Find your issuer URL and JWKS URL. | The issuer is the base of your OIDC realm/tenant. | The JWKS URL is advertised as jwks_uri in the OIDC discovery document at ${issuer}/.well-known/openid-configuration. 4) Export env vars and start the SSE server (Node or Python). 5) Obtain a token from the IdP and connect to /sse with Authorization: Bearer &lt;token&gt;. | . Provider specifics and links . Auth0 . | Issuer: https://YOUR_TENANT.auth0.com | Audience: your API Identifier (e.g., faxbot-mcp) | JWKS: https://YOUR_TENANT.auth0.com/.well-known/jwks.json | Docs: . | Create API (audience): https://auth0.com/docs/get-started/apis/enable-api-authorization | JWKS and token validation: https://auth0.com/docs/secure/tokens/json-web-tokens/json-web-key-sets | Client credentials flow: https://auth0.com/docs/get-started/authentication-and-authorization-flow/client-credentials-flow | . | . Okta . | Issuer: https://YOUR_DOMAIN.okta.com/oauth2/default (or your custom auth server) | Audience: the custom API audience you configure | JWKS: ${issuer}/v1/keys (Okta uses /v1/keys, not the generic /.well-known/jwks.json) | Docs: . | Authorization servers &amp; discovery: https://developer.okta.com/docs/guides/customize-authz-server/main/ | Validate access tokens / JWKS: https://developer.okta.com/docs/guides/validate-access-tokens/main/ | . | . Microsoft Entra ID (Azure AD) . | Issuer: https://login.microsoftonline.com/&lt;TENANT_ID&gt;/v2.0 | Audience: App Registration → “Expose an API” → Application ID URI (or custom ID you set) | JWKS: https://login.microsoftonline.com/&lt;TENANT_ID&gt;/discovery/v2.0/keys | Docs: . | OIDC discovery: https://learn.microsoft.com/azure/active-directory/develop/v2-protocols-oidc | App registration / Expose an API: https://learn.microsoft.com/azure/active-directory/develop/quickstart-configure-app-expose-web-apis | . | . Google Identity (Workforce/Cloud) . | Issuer: https://accounts.google.com | Audience: your audience string; ensure your token provider includes it in aud | JWKS: https://www.googleapis.com/oauth2/v3/certs | Docs: . | OIDC discovery: https://accounts.google.com/.well-known/openid-configuration | . | . Keycloak (self‑hosted) . | Issuer: https://YOUR_HOST/realms/YOUR_REALM | Audience: client ID or custom audience claim (depends on realm configuration) | JWKS: ${issuer}/protocol/openid-connect/certs | Docs: . | OpenID Connect endpoints: https://www.keycloak.org/docs/latest/securing_apps/#openid-connect-endpoints | . | . How to test quickly (Auth0 example) . # 1) Request a token using client credentials export AUTH0_DOMAIN=YOUR_TENANT.auth0.com export AUTH0_CLIENT_ID=... export AUTH0_CLIENT_SECRET=... export AUDIENCE=faxbot-mcp TOKEN=$(curl -s https://$AUTH0_DOMAIN/oauth/token \\ -H 'content-type: application/json' \\ -d '{\"grant_type\":\"client_credentials\",\"client_id\":\"'\"$AUTH0_CLIENT_ID\"'\",\"client_secret\":\"'\"$AUTH0_CLIENT_SECRET\"'\",\"audience\":\"'\"$AUDIENCE\"'\"}' | jq -r .access_token) # 2) Connect to SSE (replace 3002 or 3003 depending on Node/Python container) curl -H \"Authorization: Bearer $TOKEN\" -H \"Accept: text/event-stream\" http://localhost:3002/sse . Notes . | You may set OAUTH_JWKS_URL explicitly if your provider’s JWKS path differs from the default (e.g., Okta’s /v1/keys, Keycloak’s /protocol/openid-connect/certs). | The SSE servers do not mint tokens; they only validate them. Use your IdP or an internal OAuth server to issue client tokens. | For HIPAA deployments, ensure your IdP and reverse proxy enforce TLS, MFA, and appropriate policies. | . ",
+    "url": "/Faxbot/security/oauth-setup.html#oauth2--oidc-setup-for-faxbot-mcp-sse",
+    
+    "relUrl": "/security/oauth-setup.html#oauth2--oidc-setup-for-faxbot-mcp-sse"
+  },"22": {
+    "doc": "OAuth / OIDC Setup (MCP SSE)",
+    "title": "OAuth / OIDC Setup (MCP SSE)",
+    "content": " ",
+    "url": "/Faxbot/security/oauth-setup.html",
+    
+    "relUrl": "/security/oauth-setup.html"
+  },"23": {
+    "doc": "Phaxio End-to-End Test",
+    "title": "Phaxio End-to-End Test (No Physical Fax Required)",
+    "content": "Goal: Send a real fax through Phaxio and receive it on a Phaxio number — fully end-to-end, no hardware. ",
+    "url": "/Faxbot/scripts-and-tests/phaxio-e2e-test.html#phaxio-end-to-end-test-no-physical-fax-required",
+    
+    "relUrl": "/scripts-and-tests/phaxio-e2e-test.html#phaxio-end-to-end-test-no-physical-fax-required"
+  },"24": {
+    "doc": "Phaxio End-to-End Test",
+    "title": "Prerequisites",
+    "content": ". | Phaxio account with API key/secret | A Phaxio receiving number (purchase a temporary number in the Phaxio console) | An HTTPS URL that Phaxio can reach (for fetching your PDF and posting callbacks) | . ",
+    "url": "/Faxbot/scripts-and-tests/phaxio-e2e-test.html#prerequisites",
+    
+    "relUrl": "/scripts-and-tests/phaxio-e2e-test.html#prerequisites"
+  },"25": {
+    "doc": "Phaxio End-to-End Test",
+    "title": "1) Configure Faxbot for Phaxio",
+    "content": "Set the following in .env at the repo root: . FAX_BACKEND=phaxio API_KEY=&lt;a_secure_key_you_choose&gt; PHAXIO_API_KEY=&lt;from_phaxio_console&gt; PHAXIO_API_SECRET=&lt;from_phaxio_console&gt; # Point these to your public HTTPS URL (set in step 2) PUBLIC_API_URL=https://&lt;your-public-host&gt; PHAXIO_CALLBACK_URL=https://&lt;your-public-host&gt;/phaxio-callback . Then start the API (cloud-only): . make up-cloud . ",
+    "url": "/Faxbot/scripts-and-tests/phaxio-e2e-test.html#1-configure-faxbot-for-phaxio",
+    
+    "relUrl": "/scripts-and-tests/phaxio-e2e-test.html#1-configure-faxbot-for-phaxio"
+  },"26": {
+    "doc": "Phaxio End-to-End Test",
+    "title": "2) Expose the API via HTTPS",
+    "content": "Fast path (auto): ./scripts/setup-phaxio-tunnel.sh . This will: . | Start a quick tunnel (prefers cloudflared; falls back to ngrok) | Detect the public HTTPS URL | Update .env (PUBLIC_API_URL, PHAXIO_CALLBACK_URL, FAX_BACKEND=phaxio) | Restart the API (make up-cloud) | . Manual alternative: . | Cloudflared: cloudflared tunnel --url http://localhost:8080 | ngrok: ngrok http 8080 Then copy the HTTPS URL and set PUBLIC_API_URL and PHAXIO_CALLBACK_URL in .env, and restart the API (make down &amp;&amp; make up-cloud). | . ",
+    "url": "/Faxbot/scripts-and-tests/phaxio-e2e-test.html#2-expose-the-api-via-https",
+    
+    "relUrl": "/scripts-and-tests/phaxio-e2e-test.html#2-expose-the-api-via-https"
+  },"27": {
+    "doc": "Phaxio End-to-End Test",
+    "title": "3) Send a fax to your Phaxio number",
+    "content": "Use a simple text file (Faxbot will render it to PDF for you): . echo \"Test Faxbot → Phaxio end-to-end\" &gt; /tmp/fax.txt FAX_API_URL=http://localhost:8080 API_KEY=$API_KEY \\ ./scripts/send-fax.sh +1YOURPHAXIONUMBER /tmp/fax.txt . Sample PDF works too: ./scripts/send-fax.sh +1YOURPHAXIONUMBER path/to/sample.pdf . The command prints a JSON response with id. Use it to poll status: ./scripts/get-status.sh &lt;job_id&gt; . ",
+    "url": "/Faxbot/scripts-and-tests/phaxio-e2e-test.html#3-send-a-fax-to-your-phaxio-number",
+    
+    "relUrl": "/scripts-and-tests/phaxio-e2e-test.html#3-send-a-fax-to-your-phaxio-number"
+  },"28": {
+    "doc": "Phaxio End-to-End Test",
+    "title": "4) Verify Delivery",
+    "content": ". | Phaxio dashboard (Inbound faxes) should show a received fax. | Your callback endpoint (/phaxio-callback) updates the job status to SUCCESS/FAILED. | make logs tails API logs; you should see pdf_served and job_updated events. | . ",
+    "url": "/Faxbot/scripts-and-tests/phaxio-e2e-test.html#4-verify-delivery",
+    
+    "relUrl": "/scripts-and-tests/phaxio-e2e-test.html#4-verify-delivery"
+  },"29": {
+    "doc": "Phaxio End-to-End Test",
+    "title": "Notes",
+    "content": ". | Production: Use HTTPS for PUBLIC_API_URL. Phaxio will fetch your PDF over TLS. | Security: API_KEY protects your /fax endpoint; scripts forward it as X-API-Key. | Retry: Phaxio sends webhooks; transient network issues are retried internally. | . ",
+    "url": "/Faxbot/scripts-and-tests/phaxio-e2e-test.html#notes",
+    
+    "relUrl": "/scripts-and-tests/phaxio-e2e-test.html#notes"
+  },"30": {
+    "doc": "Phaxio End-to-End Test",
+    "title": "Phaxio End-to-End Test",
+    "content": " ",
+    "url": "/Faxbot/scripts-and-tests/phaxio-e2e-test.html",
+    
+    "relUrl": "/scripts-and-tests/phaxio-e2e-test.html"
+  },"31": {
+    "doc": "Phaxio Setup (Cloud)",
+    "title": "PHAXIO_SETUP.md",
+    "content": " ",
+    "url": "/Faxbot/backends/phaxio-setup.html#phaxio_setupmd",
+    
+    "relUrl": "/backends/phaxio-setup.html#phaxio_setupmd"
+  },"32": {
+    "doc": "Phaxio Setup (Cloud)",
+    "title": "Overview",
+    "content": ". | Cloud backend for sending faxes via Phaxio (also branded “Phaxio by Sinch”). | Easiest option; no SIP or telephony expertise required. | Send-first. Receiving: WIP behind config flags (see PHASE_RECEIVE.md); not GA yet. | . ",
+    "url": "/Faxbot/backends/phaxio-setup.html#overview",
+    
+    "relUrl": "/backends/phaxio-setup.html#overview"
+  },"33": {
+    "doc": "Phaxio Setup (Cloud)",
+    "title": "Prerequisites",
+    "content": ". | Phaxio account and API credentials. | Public URL for callbacks and PDF access (domain or tunnel like ngrok). | Docker and Docker Compose installed. | . ",
+    "url": "/Faxbot/backends/phaxio-setup.html#prerequisites",
+    
+    "relUrl": "/backends/phaxio-setup.html#prerequisites"
+  },"34": {
+    "doc": "Phaxio Setup (Cloud)",
+    "title": "Steps",
+    "content": "1) Create Phaxio account and get credentials . | Log in to the Phaxio console and retrieve: . | PHAXIO_API_KEY | PHAXIO_API_SECRET | . | . Note on branding: New Phaxio signups and dashboards may redirect to Sinch. That is expected — Phaxio is a Sinch company. This backend continues to work with those credentials. 2) Set environment variables . | Edit .env (or create from .env.example). Set: FAX_BACKEND=phaxio PHAXIO_API_KEY=your_key PHAXIO_API_SECRET=your_secret PUBLIC_API_URL=https://your-domain.com PHAXIO_CALLBACK_URL=https://your-domain.com/phaxio-callback # Preferred name # PHAXIO_STATUS_CALLBACK_URL=https://your-domain.com/phaxio-callback # Alias also supported API_KEY=bootstrap_admin_only # Optional bootstrap admin; used as X-API-Key for admin endpoints REQUIRE_API_KEY=true # Enforce API key auth in production . | Note: PUBLIC_API_URL must be reachable by Phaxio to fetch PDFs. | HTTPS enforcement defaults to on. For production, keep ENFORCE_PUBLIC_HTTPS=true (recommended). For local testing on non‑TLS URLs, you may temporarily set ENFORCE_PUBLIC_HTTPS=false. | . Sinch v3 vs legacy Phaxio: If you prefer Sinch’s Fax API v3 “direct upload” flow, use the separate sinch backend instead (see SINCH_SETUP.md). This guide covers the classic Phaxio-style flow where the provider fetches your PDF via a tokenized URL and posts status to /phaxio-callback. 3) Start the API . make up-cloud # or: docker compose up -d --build api . | API will listen on http://localhost:8080 by default. | . How this works: you talk to the Faxbot API (your local/server endpoint). Faxbot then calls the official Phaxio API on your behalf and gives Phaxio a public URL to fetch your PDF. You do not call Phaxio endpoints directly from your client. Ensure PUBLIC_API_URL is reachable from Phaxio and that your callback URL (PHAXIO_CALLBACK_URL or PHAXIO_STATUS_CALLBACK_URL) points back to your server. 4) Create a per-user API key (recommended) . | Use the admin endpoint to mint a DB‑backed key (returns a token once): curl -s -X POST http://localhost:8080/admin/api-keys \\ -H \"X-API-Key: $API_KEY\" \\ -H 'Content-Type: application/json' \\ -d '{\"name\":\"local dev\",\"owner\":\"me\",\"scopes\":[\"fax:send\",\"fax:read\"]}' . | Save the returned token fbk_live_&lt;keyId&gt;_&lt;secret&gt; and use it as X-API-Key below. | . 5) Test sending a fax . | Convert TXT→PDF→TIFF is handled automatically. | Example (replace number): curl -X POST http://localhost:8080/fax \\ -H \"X-API-Key: fbk_live_&lt;keyId&gt;_&lt;secret&gt;\" \\ -F to=+15551234567 \\ -F file=@./example.pdf . | Response includes id, status, backend, timestamps. | Check status: curl -H \"X-API-Key: fbk_live_&lt;keyId&gt;_&lt;secret&gt;\" http://localhost:8080/fax/&lt;job_id&gt; . | . 6) Configure callback (optional but recommended) . | Phaxio will POST status to your callback URL (PHAXIO_CALLBACK_URL or PHAXIO_STATUS_CALLBACK_URL). | This API exposes POST /phaxio-callback and will update job status when the request includes ?job_id=&lt;id&gt;. | Ensure your PUBLIC_API_URL and callback URL are reachable from Phaxio. | Security: by default, callbacks must include a valid X-Phaxio-Signature (HMAC-SHA256 of the raw body using PHAXIO_API_SECRET). You can disable this by setting PHAXIO_VERIFY_SIGNATURE=false (not recommended). | Optional retention: set ARTIFACT_TTL_DAYS&gt;0 to automatically delete PDFs after the specified number of days (cleanup runs daily by default). | . ",
+    "url": "/Faxbot/backends/phaxio-setup.html#steps",
+    
+    "relUrl": "/backends/phaxio-setup.html#steps"
+  },"35": {
+    "doc": "Phaxio Setup (Cloud)",
+    "title": "Costs &amp; HIPAA",
+    "content": ". | Phaxio pricing: see their site for per-page costs. | HIPAA information (BAA): https://www.phaxio.com/docs/security/hipaa | . ",
+    "url": "/Faxbot/backends/phaxio-setup.html#costs--hipaa",
+    
+    "relUrl": "/backends/phaxio-setup.html#costs--hipaa"
+  },"36": {
+    "doc": "Phaxio Setup (Cloud)",
+    "title": "Security Notes",
+    "content": ". | Set a strong API_KEY and send it as X-API-Key. | Rate limit and restrict access via reverse proxy (nginx, Caddy, etc.). | The PDF serving endpoint uses a tokenized URL; treat PUBLIC_API_URL as sensitive. | Use HTTPS for PUBLIC_API_URL in production so Phaxio fetches over TLS. HTTP is fine for local development only. | . ",
+    "url": "/Faxbot/backends/phaxio-setup.html#security-notes",
+    
+    "relUrl": "/backends/phaxio-setup.html#security-notes"
+  },"37": {
+    "doc": "Phaxio Setup (Cloud)",
+    "title": "Number Format",
+    "content": ". | Use E.164 format (e.g., +15551234567) for best results. | The backend performs limited normalization for non‑E.164 input, but E.164 avoids ambiguity across regions. | . ",
+    "url": "/Faxbot/backends/phaxio-setup.html#number-format",
+    
+    "relUrl": "/backends/phaxio-setup.html#number-format"
+  },"38": {
+    "doc": "Phaxio Setup (Cloud)",
+    "title": "Troubleshooting",
+    "content": ". | “phaxio not configured”: verify FAX_BACKEND=phaxio and both API key/secret. | No status updates: confirm callback URL and public reachability. | 403 when fetching PDF: token mismatch or expired URL. | See docs/TROUBLESHOOTING.md for more. | . ",
+    "url": "/Faxbot/backends/phaxio-setup.html#troubleshooting",
+    
+    "relUrl": "/backends/phaxio-setup.html#troubleshooting"
+  },"39": {
+    "doc": "Phaxio Setup (Cloud)",
+    "title": "Related: Sinch Fax API v3",
+    "content": "Phaxio is part of Sinch. If your console shows Sinch and you prefer the v3 API’s direct upload model (and features like their own webhooks), use the sinch backend. See SINCH_SETUP.md. Your existing Phaxio credentials typically work as Sinch API credentials; you will also need the Sinch Project ID. ",
+    "url": "/Faxbot/backends/phaxio-setup.html#related-sinch-fax-api-v3",
+    
+    "relUrl": "/backends/phaxio-setup.html#related-sinch-fax-api-v3"
+  },"40": {
+    "doc": "Phaxio Setup (Cloud)",
+    "title": "Phaxio Setup (Cloud)",
+    "content": " ",
+    "url": "/Faxbot/backends/phaxio-setup.html",
+    
+    "relUrl": "/backends/phaxio-setup.html"
+  },"41": {
+    "doc": "Scripts and Tests",
+    "title": "Scripts and Tests",
+    "content": "Overview of helper scripts and test workflows. | Start FastAPI for local dev: scripts/run-uvicorn-dev.sh | Auth smoke tests and curl demo: scripts/smoke-auth.sh, scripts/curl-auth-demo.sh | Inbound/SIP helpers: scripts/inbound-internal-smoke.sh, scripts/e2e-inbound-sip.sh | . Use the left navigation to access detailed guides. ",
+    "url": "/Faxbot/scripts-and-tests/",
+    
+    "relUrl": "/scripts-and-tests/"
+  },"42": {
+    "doc": "SDKs (Node & Python)",
+    "title": "Client SDKs",
+    "content": "Thin, official clients for the Faxbot API. They call the unified Faxbot REST API (no direct Phaxio/Asterisk calls). Current version alignment: Python 1.0.2, Node 1.0.2. | Python: faxbot | Node.js: faxbot | . ",
+    "url": "/Faxbot/SDKS.html#client-sdks",
+    
+    "relUrl": "/SDKS.html#client-sdks"
+  },"43": {
+    "doc": "SDKs (Node & Python)",
+    "title": "Python",
+    "content": ". | Install: pip install faxbot . | Usage: ```python from faxbot import FaxbotClient | . client = FaxbotClient(base_url=”http://localhost:8080”, api_key=”YOUR_API_KEY”) job = client.send_fax(“+15551234567”, “/path/to/document.pdf”) print(“Queued:”, job[“id”], job[“status”]) status = client.get_status(job[“id”]) print(“Status:”, status[“status”]) . - Notes: - Only `.pdf` and `.txt` files are accepted. - Auth: Prefer DB‑backed tokens created via `POST /admin/api-keys` (sent as `X-API-Key`). The legacy env `API_KEY` also works for bootstrap. - Optional: `check_health()` calls `/health`. ## Node.js - Install: . npm install faxbot . - Usage: ```js const FaxbotClient = require('faxbot'); const client = new FaxbotClient('http://localhost:8080', 'YOUR_API_KEY'); (async () =&gt; { const job = await client.sendFax('+15551234567', '/path/to/document.pdf'); console.log('Queued:', job.id, job.status); const status = await client.getStatus(job.id); console.log('Status:', status.status); })(); . | Notes: . | Only .pdf and .txt files are accepted. | Auth: Prefer DB‑backed tokens created via POST /admin/api-keys (sent as X-API-Key). The legacy env API_KEY also works for bootstrap. | Optional: checkHealth() calls /health. | . | . ",
+    "url": "/Faxbot/SDKS.html#python",
+    
+    "relUrl": "/SDKS.html#python"
+  },"44": {
+    "doc": "SDKs (Node & Python)",
+    "title": "Errors",
+    "content": ". | The SDKs raise/throw on non-2xx responses. Common cases: . | 400: invalid phone number or parameters | 401: missing/invalid API key | 413: file too large | 415: unsupported media type (non-PDF/TXT) | 404: job not found (for GET /fax/{id}) | . | . ",
+    "url": "/Faxbot/SDKS.html#errors",
+    
+    "relUrl": "/SDKS.html#errors"
+  },"45": {
+    "doc": "SDKs (Node & Python)",
+    "title": "Compatibility",
+    "content": ". | The SDKs work regardless of backend (phaxio, sinch, or sip) because Faxbot abstracts the difference. | . ",
+    "url": "/Faxbot/SDKS.html#compatibility",
+    
+    "relUrl": "/SDKS.html#compatibility"
+  },"46": {
+    "doc": "SDKs (Node & Python)",
+    "title": "MCP vs SDK",
+    "content": ". | The SDKs do not include MCP (Model Context Protocol) logic. They are simple HTTP clients for developers. | MCP integration is a separate component (stdio/HTTP servers) for AI assistants. | See the guide: docs/MCP_INTEGRATION.md for setup, transports, and examples. | . ",
+    "url": "/Faxbot/SDKS.html#mcp-vs-sdk",
+    
+    "relUrl": "/SDKS.html#mcp-vs-sdk"
+  },"47": {
+    "doc": "SDKs (Node & Python)",
+    "title": "SDKs (Node & Python)",
+    "content": " ",
+    "url": "/Faxbot/SDKS.html",
+    
+    "relUrl": "/SDKS.html"
+  },"48": {
+    "doc": "Security",
+    "title": "Security",
+    "content": "Configuration and guidance for HIPAA‑aligned deployments and OAuth/OIDC setup. Recommended reading . | Authentication (API Keys) | HIPAA Requirements | OAuth/OIDC Setup | . ",
+    "url": "/Faxbot/security/",
+    
+    "relUrl": "/security/"
+  },"49": {
+    "doc": "Sinch Setup (Cloud Fax v3)",
+    "title": "SINCH_SETUP.md",
+    "content": "Cloud backend using Sinch Fax API v3 (“Phaxio by Sinch”). This backend uploads your PDF directly to Sinch rather than serving a tokenized URL. When to use . | Prefer this if you have a Sinch account/project and want the v3 direct‑upload flow. | If you signed up at Phaxio and were redirected to Sinch, your credentials generally work here. You will also need your Sinch Project ID. | . Key differences vs phaxio backend . | phaxio: Provider fetches your PDF via PUBLIC_API_URL and posts status to /phaxio-callback (HMAC verification supported). No Sinch project ID required. | sinch: Faxbot uploads your PDF directly to Sinch (multipart). PUBLIC_API_URL and /phaxio-callback are not used. Webhook integration for Sinch is under evaluation; current builds reflect the provider’s initial status response. | . Environment . FAX_BACKEND=sinch SINCH_PROJECT_ID=your_project_id SINCH_API_KEY=your_api_key # falls back to PHAXIO_API_KEY if unset SINCH_API_SECRET=your_api_secret # falls back to PHAXIO_API_SECRET if unset # Optional override region/base URL: # SINCH_BASE_URL=https://fax.api.sinch.com/v3 # General API_KEY=your_secure_api_key # optional but recommended (X-API-Key) MAX_FILE_SIZE_MB=10 . Create a per-user API key (recommended) . curl -s -X POST http://localhost:8080/admin/api-keys \\ -H \"X-API-Key: $API_KEY\" \\ -H 'Content-Type: application/json' \\ -d '{\"name\":\"local dev\",\"owner\":\"me\",\"scopes\":[\"fax:send\",\"fax:read\"]}' . Save the returned token (fbk_live_&lt;keyId&gt;_&lt;secret&gt;) and use it as X-API-Key for client calls. Send a fax (curl) . curl -X POST http://localhost:8080/fax \\ -H \"X-API-Key: $API_KEY\" \\ -F to=+15551234567 \\ -F file=@./example.pdf . The response includes a job ID and the backend: \"sinch\" field. Status updates . | Immediate status is mapped from Sinch’s response. Additional webhook handling may be added later; for now, poll your own app state via GET /fax/{id}. | . Notes . | Only PDF and TXT files are accepted. Convert images (PNG/JPG) to PDF first. | Avoid exposing credentials. Place Faxbot behind HTTPS and a reverse proxy with rate limiting. | . Troubleshooting . | 401: invalid API key to your Faxbot API (set API_KEY and send X-API-Key). | 413: file too large → raise MAX_FILE_SIZE_MB. | 415: unsupported file type → only PDF/TXT. | Sinch API errors: verify Project ID, API key/secret, and region. | . ",
+    "url": "/Faxbot/backends/sinch-setup.html#sinch_setupmd",
+    
+    "relUrl": "/backends/sinch-setup.html#sinch_setupmd"
+  },"50": {
+    "doc": "Sinch Setup (Cloud Fax v3)",
+    "title": "Sinch Setup (Cloud Fax v3)",
+    "content": " ",
+    "url": "/Faxbot/backends/sinch-setup.html",
+    
+    "relUrl": "/backends/sinch-setup.html"
+  },"51": {
+    "doc": "SIP/Asterisk Setup (Self-hosted)",
+    "title": "SIP_SETUP.md",
+    "content": " ",
+    "url": "/Faxbot/backends/sip-setup.html#sip_setupmd",
+    
+    "relUrl": "/backends/sip-setup.html#sip_setupmd"
+  },"52": {
+    "doc": "SIP/Asterisk Setup (Self-hosted)",
+    "title": "Overview",
+    "content": ". | Self-hosted backend using Asterisk and a SIP trunk with T.38 fax. | Send-only. You don’t need to accept inbound faxes to send. | Full control, no per-fax cloud charges (you still pay your trunk provider). | Requires some networking setup; this guide assumes minimal prior knowledge. | . ",
+    "url": "/Faxbot/backends/sip-setup.html#overview",
+    
+    "relUrl": "/backends/sip-setup.html#overview"
+  },"53": {
+    "doc": "SIP/Asterisk Setup (Self-hosted)",
+    "title": "What is Asterisk AMI?",
+    "content": ". | AMI (Asterisk Manager Interface) is a TCP interface on port 5038 that lets applications control Asterisk (originate calls, subscribe to events). It has no web UI; you connect via CLI/tools. Faxbot uses AMI to originate fax calls (outbound) and to receive fax results (events). | Security: AMI must stay on private networks only. Never expose 5038 to the internet. | . ",
+    "url": "/Faxbot/backends/sip-setup.html#what-is-asterisk-ami",
+    
+    "relUrl": "/backends/sip-setup.html#what-is-asterisk-ami"
+  },"54": {
+    "doc": "SIP/Asterisk Setup (Self-hosted)",
+    "title": "What Is SIP? (Crash Course)",
+    "content": ". | SIP (Session Initiation Protocol): signaling protocol to set up calls over the internet. | SIP Trunk: your account/connection to a carrier that places calls to the PSTN. | DID (Direct Inward Dialing): a phone number you can buy from a SIP provider. For sending only, a DID is optional but recommended so your caller ID is valid. | T.38: a protocol for fax over IP using UDPTL; more reliable than voice codecs for fax. | UDPTL: the transport for T.38; you must open/forward a port range for it. | AMI (Asterisk Manager Interface): how the API tells Asterisk to start a fax call. | E.164: the international phone number format (e.g., +15551234567). Use E.164 for destinations and caller IDs when possible. | . ",
+    "url": "/Faxbot/backends/sip-setup.html#what-is-sip-crash-course",
+    
+    "relUrl": "/backends/sip-setup.html#what-is-sip-crash-course"
+  },"55": {
+    "doc": "SIP/Asterisk Setup (Self-hosted)",
+    "title": "Requirements",
+    "content": ". | A SIP trunk that supports T.38 over UDPTL | A public/static IP or NAT configured to forward required ports (below) | Docker and Docker Compose | . ",
+    "url": "/Faxbot/backends/sip-setup.html#requirements",
+    
+    "relUrl": "/backends/sip-setup.html#requirements"
+  },"56": {
+    "doc": "SIP/Asterisk Setup (Self-hosted)",
+    "title": "Networking",
+    "content": ". | SIP signaling: 5060/tcp+udp | AMI (Manager): 5038/tcp (internal only; do not expose publicly) | T.38 UDPTL media: 4000–4999/udp | If behind NAT, forward 5060 (tcp+udp) and 4000–4999/udp to the Asterisk host. Keep 5038 internal. | . Tips: . | Many home routers call this “port forwarding” or “virtual servers”. | If your provider supports registration, the trunk will stay up behind NAT; still forward UDPTL. | . Why port forwarding is needed (simple analogy): . | Think of your router like an office front desk. Internet calls arrive at the front desk but don’t know which room (device) to go to. | Port forwarding is the instruction to the front desk: “When fax data comes for room 4000–4999 (UDPTL), send it to the Asterisk machine.” | Without it, the fax data can’t reach your server, and calls fail or time out. | If you use a cloud VM instead of your home network, you don’t need a home router—just open those ports in the VM’s firewall. | . How to set up port forwarding on a typical home router: 1) Find your router brand/model (sticker on the device) and log into its admin page (often 192.168.0.1 or 192.168.1.1). 2) Reserve a fixed LAN IP for the machine running Asterisk (DHCP reservation), e.g., 192.168.1.50. 3) Create port forward rules: . | UDP 4000–4999 → 192.168.1.50 | UDP 5060 and TCP 5060 → 192.168.1.50 4) Save and reboot if required. 5) On your server firewall, also allow those ports. | . If you’re on CGNAT (carrier-grade NAT) or can’t port forward: . | Use a cloud VM (e.g., small Linux instance) with a public IP and open the same ports there. | Or choose the Phaxio cloud backend instead of SIP. | . ",
+    "url": "/Faxbot/backends/sip-setup.html#networking",
+    
+    "relUrl": "/backends/sip-setup.html#networking"
+  },"57": {
+    "doc": "SIP/Asterisk Setup (Self-hosted)",
+    "title": "Configure Environment",
+    "content": "Edit .env: . # Default backend is phaxio; set sip explicitly for self‑hosted Asterisk FAX_BACKEND=sip # AMI (used by API to originate fax calls) ASTERISK_AMI_HOST=asterisk ASTERISK_AMI_PORT=5038 ASTERISK_AMI_USERNAME=api ASTERISK_AMI_PASSWORD=change_me_safe # SIP trunk (from your provider) SIP_USERNAME=your_username SIP_PASSWORD=your_password SIP_SERVER=sip.provider.example SIP_FROM_USER=+15551234567 SIP_FROM_DOMAIN=sip.provider.example # Presentation FAX_LOCAL_STATION_ID=+15551234567 FAX_HEADER=Your Org Name . ",
+    "url": "/Faxbot/backends/sip-setup.html#configure-environment",
+    
+    "relUrl": "/backends/sip-setup.html#configure-environment"
+  },"58": {
+    "doc": "SIP/Asterisk Setup (Self-hosted)",
+    "title": "Start Services",
+    "content": "docker compose up -d --build . | API on 8080, Asterisk on 5060/udp, 5060/tcp, AMI on 5038, UDPTL 4000–4999/udp. | . ",
+    "url": "/Faxbot/backends/sip-setup.html#start-services",
+    
+    "relUrl": "/backends/sip-setup.html#start-services"
+  },"59": {
+    "doc": "SIP/Asterisk Setup (Self-hosted)",
+    "title": "How It Works",
+    "content": ". | API converts input file to PDF, then to fax-optimized TIFF (Ghostscript). | API creates a job and originates a Local channel via AMI. | Asterisk dials your SIP trunk; on answer, executes SendFAX() in T.38. | Asterisk emits UserEvent(FaxResult, ...); API updates job status. | . ",
+    "url": "/Faxbot/backends/sip-setup.html#how-it-works",
+    
+    "relUrl": "/backends/sip-setup.html#how-it-works"
+  },"60": {
+    "doc": "SIP/Asterisk Setup (Self-hosted)",
+    "title": "Logs &amp; Debugging",
+    "content": ". | API: docker compose logs -f api | Asterisk: docker compose logs -f asterisk | Inside Asterisk shell: docker exec -it &lt;asterisk_container&gt; asterisk -rvvv . | Check module load: module show like fax | Call flow: watch for SendFAX and FaxResult events | . | . ",
+    "url": "/Faxbot/backends/sip-setup.html#logs--debugging",
+    
+    "relUrl": "/backends/sip-setup.html#logs--debugging"
+  },"61": {
+    "doc": "SIP/Asterisk Setup (Self-hosted)",
+    "title": "Common Pitfalls",
+    "content": ". | T.38 disabled at provider → enable UDPTL and verify udptl.conf range. | NAT issues → enable rtp_symmetric, force_rport, correct match and from_domain. | Wrong credentials → check pjsip.conf generated from templates (envsubst in start.sh). | Ghostscript missing → API warns and stubs conversion; install for production. | CGNAT / no port forwarding → use a cloud VM or Phaxio backend. | . ",
+    "url": "/Faxbot/backends/sip-setup.html#common-pitfalls",
+    
+    "relUrl": "/backends/sip-setup.html#common-pitfalls"
+  },"62": {
+    "doc": "SIP/Asterisk Setup (Self-hosted)",
+    "title": "Test Send",
+    "content": "curl -X POST http://localhost:8080/fax \\ -H \"X-API-Key: fbk_live_&lt;keyId&gt;_&lt;secret&gt;\" \\ -F to=+15551234567 \\ -F file=@./example.pdf . Auth tip . | For production, set REQUIRE_API_KEY=true and create per‑user/service keys via POST /admin/api-keys using a temporary bootstrap env API_KEY. Clients send X-API-Key: fbk_live_&lt;keyId&gt;_&lt;secret&gt;. | . ",
+    "url": "/Faxbot/backends/sip-setup.html#test-send",
+    
+    "relUrl": "/backends/sip-setup.html#test-send"
+  },"63": {
+    "doc": "SIP/Asterisk Setup (Self-hosted)",
+    "title": "Choosing a SIP Provider (T.38)",
+    "content": "Pick one of these two (beginner-friendly): . 1) Telnyx — developer‑friendly, good for small deployments . | Self‑serve signup, clear portal | T.38 support documented; confirm for your region and use case | HIPAA/BAA: contact Telnyx to sign a BAA before handling PHI | Links: Telnyx Voice/Numbers pricing, HIPAA resources . | https://telnyx.com/ | . | . 2) Flowroute — flexible SIP trunking for small scale . | Self‑serve signup, good DID inventory | T.38 support documented; confirm with support for your route | HIPAA/BAA: contact Flowroute to discuss BAA before handling PHI | Link: https://flowroute.com/pricing-details/ | . Notes: . | Always ask your provider to confirm T.38 support and sign a BAA if you’ll transmit PHI. | Typical US costs (ballpark): local DID ~$0.5–$2/mo; outbound ~$0.005–$0.02/min. Verify current pricing pages. | . ",
+    "url": "/Faxbot/backends/sip-setup.html#choosing-a-sip-provider-t38",
+    
+    "relUrl": "/backends/sip-setup.html#choosing-a-sip-provider-t38"
+  },"64": {
+    "doc": "SIP/Asterisk Setup (Self-hosted)",
+    "title": "Inbound Receiving Quickstart (WIP)",
+    "content": "Enable inbound in your .env: . INBOUND_ENABLED=true ASTERISK_INBOUND_SECRET=&lt;random&gt; . Add a minimal inbound dialplan (example): . [fax-inbound] exten =&gt; _X.,1,NoOp(Fax inbound DID ${EXTEN} from ${CALLERID(num)}) same =&gt; n,Set(FAXFILE=/faxdata/${UNIQUEID}.tiff) same =&gt; n,ReceiveFAX(${FAXFILE}) same =&gt; n,System(curl -s -X POST http://api:8080/_internal/asterisk/inbound \\ -H \"X-Internal-Secret: ${ASTERISK_INBOUND_SECRET}\" \\ -H \"Content-Type: application/json\" \\ -d '{\"tiff_path\":\"${FAXFILE}\",\"to_number\":\"${EXTEN}\",\"from_number\":\"${CALLERID(num)}\",\"faxstatus\":\"${FAXSTATUS}\",\"faxpages\":\"${FAXPAGES}\",\"uniqueid\":\"${UNIQUEID}\"}') same =&gt; n,Hangup() . Notes: . | Use /faxdata for FAXFILE so the API container (and host) can access the file (shared volume). | http://api:8080 resolves to the API container name in Docker Compose. | . Verify inbound with helper scripts: . | Internal smoke (no SIP required): . | API_KEY=bootstrap_admin_only ASTERISK_INBOUND_SECRET=sekret scripts/inbound-internal-smoke.sh | . | E2E watch (send a fax to your DID and wait for detection): . | API_KEY=bootstrap_admin_only scripts/e2e-inbound-sip.sh | . | . List/get/download inbound via API: . # Create key with inbound scopes curl -s -X POST http://localhost:8080/admin/api-keys \\ -H \"X-API-Key: $API_KEY\" -H 'Content-Type: application/json' \\ -d '{\"name\":\"inbound\",\"scopes\":[\"inbound:list\",\"inbound:read\"]}' curl -H \"X-API-Key: $TOKEN\" http://localhost:8080/inbound curl -H \"X-API-Key: $TOKEN\" http://localhost:8080/inbound/&lt;id&gt; curl -H \"X-API-Key: $TOKEN\" -OJ http://localhost:8080/inbound/&lt;id&gt;/pdf . ",
+    "url": "/Faxbot/backends/sip-setup.html#inbound-receiving-quickstart-wip",
+    
+    "relUrl": "/backends/sip-setup.html#inbound-receiving-quickstart-wip"
+  },"65": {
+    "doc": "SIP/Asterisk Setup (Self-hosted)",
+    "title": "Understanding AMI (Deeper)",
+    "content": ". | Configuration lives in manager.conf (our container templates render from .env). | Faxbot connects to AMI to originate calls and subscribe to UserEvent(FaxResult) for outbound; inbound path uses ReceiveFAX + internal HTTP post for simplicity. | AMI is not a GUI. Use asterisk -rvvvvv and CLI commands to inspect state. | . ",
+    "url": "/Faxbot/backends/sip-setup.html#understanding-ami-deeper",
+    
+    "relUrl": "/backends/sip-setup.html#understanding-ami-deeper"
+  },"66": {
+    "doc": "SIP/Asterisk Setup (Self-hosted)",
+    "title": "TLS Signaling &amp; VPN Examples (Advanced)",
+    "content": "PJSIP TLS Transport (example) . [transport-tls] type=transport protocol=tls bind=0.0.0.0:5061 method=tlsv1_2 local_net=10.0.0.0/8 cert_file=/etc/asterisk/keys/asterisk.pem priv_key_file=/etc/asterisk/keys/asterisk.key ca_list_file=/etc/asterisk/keys/ca.crt external_media_address=&lt;public_ip&gt; external_signaling_address=&lt;public_ip&gt; . Then reference transport=transport-tls in your trunk endpoint/registration if your provider supports TLS. Site‑to‑Site VPN (WireGuard sketch) . | Provision a WireGuard tunnel between your Asterisk host and the SIP provider’s VPN endpoint. | Route provider IP ranges through the WG interface; restrict firewall to permit SIP/T.38 only via the tunnel. | Example (Asterisk side /etc/wireguard/wg0.conf): ``` [Interface] PrivateKey = Address = 10.7.0.2/32 | . [Peer] PublicKey = Endpoint = :51820 AllowedIPs = PersistentKeepalive = 25 ``` . Restart Asterisk with external_* addresses set to the tunnel’s public IP if required. ",
+    "url": "/Faxbot/backends/sip-setup.html#tls-signaling--vpn-examples-advanced",
+    
+    "relUrl": "/backends/sip-setup.html#tls-signaling--vpn-examples-advanced"
+  },"67": {
+    "doc": "SIP/Asterisk Setup (Self-hosted)",
+    "title": "Understanding the Asterisk Configuration",
+    "content": ". | asterisk/etc/asterisk/templates/pjsip.conf.template is rendered from your .env at container start. | asterisk/etc/asterisk/templates/manager.conf.template uses ${ASTERISK_AMI_USERNAME} as the user section and ${ASTERISK_AMI_PASSWORD} for the secret. Ensure these match your API env so AMI auth succeeds. | The faxout dialplan in extensions.conf uses SendFAX() with T.38 and emits UserEvent(FaxResult) on completion. | The API listens for that event via AMI to update job status. | . ",
+    "url": "/Faxbot/backends/sip-setup.html#understanding-the-asterisk-configuration",
+    
+    "relUrl": "/backends/sip-setup.html#understanding-the-asterisk-configuration"
+  },"68": {
+    "doc": "SIP/Asterisk Setup (Self-hosted)",
+    "title": "Minimal Telephony Glossary",
+    "content": ". | SIP: signaling protocol for VoIP calls. | SIP Trunk: your carrier connection for inbound/outbound PSTN calls. | DID: a phone number; optional for send-only but helpful for caller ID. | T.38: fax-over-IP protocol (preferred over G.711 for reliable faxing). | UDPTL: transport used by T.38; requires UDP port range open. | AMI: Asterisk Manager Interface; API uses it to originate calls and receive events. | . ",
+    "url": "/Faxbot/backends/sip-setup.html#minimal-telephony-glossary",
+    
+    "relUrl": "/backends/sip-setup.html#minimal-telephony-glossary"
+  },"69": {
+    "doc": "SIP/Asterisk Setup (Self-hosted)",
+    "title": "SIP/Asterisk Setup (Self-hosted)",
+    "content": " ",
+    "url": "/Faxbot/backends/sip-setup.html",
+    
+    "relUrl": "/backends/sip-setup.html"
+  },"70": {
+    "doc": "Troubleshooting",
+    "title": "TROUBLESHOOTING.md",
+    "content": " ",
+    "url": "/Faxbot/TROUBLESHOOTING.html#troubleshootingmd",
+    
+    "relUrl": "/TROUBLESHOOTING.html#troubleshootingmd"
+  },"71": {
+    "doc": "Troubleshooting",
+    "title": "General",
+    "content": ". | 401 Invalid API key: ensure you are sending a valid X-API-Key. | Recommended: create a DB‑backed token via POST /admin/api-keys (use an env bootstrap API_KEY to authenticate the admin call), then use fbk_live_&lt;keyId&gt;_&lt;secret&gt; in requests. | For production, set REQUIRE_API_KEY=true so unauthenticated requests are rejected. | . | 413 File too large: adjust MAX_FILE_SIZE_MB. | 415 Unsupported file type: only PDF and TXT allowed. | Prefer HTTPS for PUBLIC_API_URL in production. The cloud backend fetches PDFs from your server; use TLS. | . ",
+    "url": "/Faxbot/TROUBLESHOOTING.html#general",
+    
+    "relUrl": "/TROUBLESHOOTING.html#general"
+  },"72": {
+    "doc": "Troubleshooting",
+    "title": "Phaxio Backend",
+    "content": ". | “phaxio not configured”: ensure FAX_BACKEND=phaxio, PHAXIO_API_KEY, PHAXIO_API_SECRET. | No status updates: verify your callback URL (PHAXIO_CALLBACK_URL or PHAXIO_STATUS_CALLBACK_URL) and that your server is publicly reachable. | 403 on /fax/{id}/pdf: invalid token or wrong PUBLIC_API_URL. | Phaxio API error: confirm credentials and sufficient account balance. | . ",
+    "url": "/Faxbot/TROUBLESHOOTING.html#phaxio-backend",
+    
+    "relUrl": "/TROUBLESHOOTING.html#phaxio-backend"
+  },"73": {
+    "doc": "Troubleshooting",
+    "title": "Sinch Fax API v3 Backend",
+    "content": ". | “sinch not configured”: ensure FAX_BACKEND=sinch, SINCH_PROJECT_ID, SINCH_API_KEY, SINCH_API_SECRET (or set PHAXIO_API_KEY/SECRET which are used as fallback values). | Region/base URL: if requests fail, try SINCH_BASE_URL (e.g., https://us.fax.api.sinch.com/v3). | Webhooks: current build does not expose a Sinch webhook endpoint; status reflects the immediate response from Sinch. Poll your job via GET /fax/{id} if needed. | . ",
+    "url": "/Faxbot/TROUBLESHOOTING.html#sinch-fax-api-v3-backend",
+    
+    "relUrl": "/TROUBLESHOOTING.html#sinch-fax-api-v3-backend"
+  },"74": {
+    "doc": "Troubleshooting",
+    "title": "SIP/Asterisk Backend",
+    "content": ". | AMI connection failed: . | Asterisk container running and reachable on 5038. | ASTERISK_AMI_* match manager.conf template. | API logs show reconnect with exponential backoff. | . | T.38 negotiation failed: . | Provider supports UDPTL. | Firewall forwards UDP 4000-4999. | pjsip.conf has t38_udptl=yes and redundancy. | . | No fax send: . | Check Asterisk logs for SendFAX and FaxResult events. | Validate destination formatting. | . | . ",
+    "url": "/Faxbot/TROUBLESHOOTING.html#sipasterisk-backend",
+    
+    "relUrl": "/TROUBLESHOOTING.html#sipasterisk-backend"
+  },"75": {
+    "doc": "Troubleshooting",
+    "title": "Conversion",
+    "content": ". | Ghostscript missing: API warns and stubs TIFF conversion; install ghostscript for production. | Garbled pages: use clean PDF fonts or provide PDF instead of TXT. | . ",
+    "url": "/Faxbot/TROUBLESHOOTING.html#conversion",
+    
+    "relUrl": "/TROUBLESHOOTING.html#conversion"
+  },"76": {
+    "doc": "Troubleshooting",
+    "title": "MCP (AI Assistant Integration)",
+    "content": "Transport Selection Issues . If you’re unsure which MCP transport to use: . | Transport | File | Port | Auth | Use Case | . | stdio | node_mcp/src/servers/stdio.js (Node) or python_mcp/stdio_server.py (Python) | N/A | API key | Desktop AI | . | HTTP | node_mcp/src/servers/http.js | 3001 | API key | Web apps, cloud AI | . | SSE+OAuth | node_mcp/src/servers/sse.js (Node) or python_mcp/server.py (Python) | 3002/3003 | JWT/Bearer | Enterprise, HIPAA | . Common MCP Problems . MCP Usage Tips . | Ensure the main Faxbot API is reachable (FAX_API_URL) and your API_KEY is set. | For local files, use tooling that can access your filesystem as needed. | . Connection &amp; Authentication . | MCP server not found: Ensure you’re starting from the correct path: . | Node servers: node_mcp/scripts/start-*.sh | Python servers: python_mcp/ (stdio_server.py, http_server.py, server.py) | . | . Environment . | FAX_API_URL, API_KEY: Required for authentication. | Authentication failures: . | stdio: Check API_KEY environment variable matches Faxbot API setting | HTTP: Verify X-API-Key header is being passed correctly | SSE+OAuth: Confirm JWT token has correct iss, aud, and hasn’t expired | . | Connection refused: . | Ensure main Faxbot API is running on FAX_API_URL (default: http://localhost:8080) | For HTTP/SSE transports, check port availability (3001/3002) | . | “No tools available”: MCP server started successfully but tools not loading - check MCP server logs for initialization errors | . Filesystem Access Required . | Claude can’t read files: Install and configure filesystem MCP server alongside Faxbot MCP | Permission denied: Check filesystem MCP server has access to directory containing your PDFs | Wrong file path: Use absolute paths or ensure filesystem MCP server is configured for correct directories | . File Types and Paths . | Only PDF and TXT are accepted. Convert images (PNG/JPG) to PDF first. | macOS: sips -s format pdf \"in.png\" --out \"out.pdf\" | Linux: img2pdf in.png -o out.pdf or magick convert in.png out.pdf | Filenames with spaces: quote the full path. Example (curl): -F \"file=@'./My File.pdf'\" | macOS screenshot names sometimes include a “narrow no‑break space” (U+202F) that looks like a regular space and breaks shell quoting. If a quoted path still fails, try renaming with a wildcard: cp Screenshot*.pdf doc.pdf and use the new name. | . ",
+    "url": "/Faxbot/TROUBLESHOOTING.html#mcp-ai-assistant-integration",
+    
+    "relUrl": "/TROUBLESHOOTING.html#mcp-ai-assistant-integration"
+  },"77": {
+    "doc": "Troubleshooting",
+    "title": "Reverse Proxy Examples (Rate Limiting)",
+    "content": "Nginx (basic example): . server { listen 443 ssl; server_name your-domain.com; # ... ssl_certificate / ssl_certificate_key ... # Simple rate limit per IP limit_req_zone $binary_remote_addr zone=faxbot:10m rate=5r/s; location / { limit_req zone=faxbot burst=10 nodelay; proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for; proxy_set_header Host $host; proxy_pass http://127.0.0.1:8080; } } . Caddy (basic example): . your-domain.com { reverse_proxy 127.0.0.1:8080 # Rate limiting plugins vary; consider layer-4 or WAF if needed } . ",
+    "url": "/Faxbot/TROUBLESHOOTING.html#reverse-proxy-examples-rate-limiting",
+    
+    "relUrl": "/TROUBLESHOOTING.html#reverse-proxy-examples-rate-limiting"
+  },"78": {
+    "doc": "Troubleshooting",
+    "title": "Troubleshooting",
+    "content": " ",
+    "url": "/Faxbot/TROUBLESHOOTING.html",
+    
+    "relUrl": "/TROUBLESHOOTING.html"
+  },"79": {
     "doc": "Faxbot",
     "title": "Faxbot",
-    "content": "The first and only open‑source, self‑hostable fax API. Send faxes with a single function call. | Modern REST API for fax transmission | Multiple backend options (Phaxio cloud, Sinch cloud, self‑hosted SIP/Asterisk) | AI assistant integration via MCP (Node &amp; Python; stdio/HTTP/SSE) | HIPAA‑aligned controls for healthcare deployments | Official SDKs for Node.js and Python | . Quick links . | AI Integration → MCP Integration | Backends → Phaxio, Sinch, SIP/Asterisk | SDKs → Node &amp; Python | Troubleshooting → Guide | Security → HIPAA Requirements, OAuth Setup | . Demo . Watch the demo video ",
+    "content": "The first and only open‑source, self‑hostable fax API. Send faxes with a single function call. | Modern REST API for fax transmission | Multiple backend options (Phaxio cloud, Sinch cloud, self‑hosted SIP/Asterisk) | AI assistant integration via MCP (Node &amp; Python; stdio/HTTP/SSE) | HIPAA‑aligned controls for healthcare deployments | Official SDKs for Node.js and Python | . Quick links . | AI Integration → MCP Integration | Backends → Phaxio, Sinch, SIP/Asterisk | SDKs → Node &amp; Python | Troubleshooting → Guide | Security → OAuth Setup | . Demo . Watch the demo video ",
     "url": "/Faxbot/",
     
     "relUrl": "/"
+  },"80": {
+    "doc": "AI Integration",
+    "title": "AI Integration",
+    "content": "Faxbot integrates with AI assistants through the Model Context Protocol (MCP), allowing you to send faxes using natural language commands like “fax this document to my doctor.” . ",
+    "url": "/Faxbot/ai-integration/#ai-integration",
+    
+    "relUrl": "/ai-integration/#ai-integration"
+  },"81": {
+    "doc": "AI Integration",
+    "title": "AI Integration",
+    "content": ". ",
+    "url": "/Faxbot/ai-integration/",
+    
+    "relUrl": "/ai-integration/"
+  },"82": {
+    "doc": "Scripts and Tests (Guide)",
+    "title": "Scripts and Tests",
+    "content": "This page lists the most useful helper scripts and tests so you can verify Faxbot quickly without hand‑assembling curl commands. All scripts auto‑load .env via scripts/load-env.sh. Put your settings there. ",
+    "url": "/Faxbot/scripts-and-tests.html#scripts-and-tests",
+    
+    "relUrl": "/scripts-and-tests.html#scripts-and-tests"
+  },"83": {
+    "doc": "Scripts and Tests (Guide)",
+    "title": "Auth and API basics",
+    "content": ". | scripts/smoke-auth.sh . | Creates a local venv, installs deps, runs a minimal pytest that creates a DB key, sends a test fax, queries status, and revokes the key. | . | scripts/run-uvicorn-dev.sh . | Starts the API from your working tree (no Docker); accepts PORT (default 8080). | . | scripts/curl-auth-demo.sh . | Assumes a running API; mints a DB key via admin endpoint, sends a TXT/PDF fax, and fetches the job status. | . | . ",
+    "url": "/Faxbot/scripts-and-tests.html#auth-and-api-basics",
+    
+    "relUrl": "/scripts-and-tests.html#auth-and-api-basics"
+  },"84": {
+    "doc": "Scripts and Tests (Guide)",
+    "title": "Inbound",
+    "content": ". | scripts/bootstrap-inbound.sh . | One-button setup for inbound on your machine/server: sets INBOUND_ENABLED=true, generates ASTERISK_INBOUND_SECRET if missing, ensures REQUIRE_API_KEY=true, restarts API (docker compose), and runs the inbound smoke. | . | scripts/inbound-internal-smoke.sh . | Posts a simulated inbound TIFF to /_internal/asterisk/inbound, lists /inbound, and downloads /inbound/{id}/pdf using a freshly minted inbound read token. | . | scripts/e2e-inbound-sip.sh . | Checks health and Asterisk registration, mints an inbound read token, and watches /inbound for a new item after you fax to your DID; downloads the PDF when available. | . | . ",
+    "url": "/Faxbot/scripts-and-tests.html#inbound",
+    
+    "relUrl": "/scripts-and-tests.html#inbound"
+  },"85": {
+    "doc": "Scripts and Tests (Guide)",
+    "title": "Cloud ingress helpers",
+    "content": ". | scripts/setup-phaxio-tunnel.sh . | Starts an HTTPS tunnel (cloudflared/ngrok), discovers a public URL, updates .env with PUBLIC_API_URL and PHAXIO_CALLBACK_URL, and restarts the API (cloud‑only). Useful for local Phaxio testing. | . | . ",
+    "url": "/Faxbot/scripts-and-tests.html#cloud-ingress-helpers",
+    
+    "relUrl": "/scripts-and-tests.html#cloud-ingress-helpers"
+  },"86": {
+    "doc": "Scripts and Tests (Guide)",
+    "title": "Makefile shortcuts",
+    "content": ". | make up / make down / make logs | make up-cloud (API only; no Asterisk) | make test (runs pytest in the API container) | make inbound-smoke / make inbound-e2e | scripts/check-env.sh — validates your .env for the selected backend and inbound/storage settings; prints what’s missing and why. | Alembic: . | make alembic-upgrade (upgrade to head) | make alembic-downgrade (step down one) | make alembic-revision (info for autogenerate; use DATABASE_URL env) | . | . ",
+    "url": "/Faxbot/scripts-and-tests.html#makefile-shortcuts",
+    
+    "relUrl": "/scripts-and-tests.html#makefile-shortcuts"
+  },"87": {
+    "doc": "Scripts and Tests (Guide)",
+    "title": "Notes",
+    "content": ". | For production, host the API as a container behind TLS; the UI can be hosted separately (e.g., Netlify) and calls the API over HTTPS. | Use Postgres in production (DATABASE_URL=postgresql+psycopg2://…). SQLite remains for dev. | Store artifacts on S3 or S3‑compatible storage with SSE‑KMS for PHI (configure STORAGE_BACKEND, S3_*). | . ",
+    "url": "/Faxbot/scripts-and-tests.html#notes",
+    
+    "relUrl": "/scripts-and-tests.html#notes"
+  },"88": {
+    "doc": "Scripts and Tests (Guide)",
+    "title": "Scripts and Tests (Guide)",
+    "content": " ",
+    "url": "/Faxbot/scripts-and-tests.html",
+    
+    "relUrl": "/scripts-and-tests.html"
   }
 }

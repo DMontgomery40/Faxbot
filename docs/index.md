@@ -16,11 +16,12 @@ The first and only open‑source, self‑hostable fax API. Send faxes with a sin
 - Official SDKs for Node.js and Python
 
 Quick links
-- AI Integration → [MCP Integration](/Faxbot/ai-integration/mcp-integration.html)
-- Backends → [Phaxio](/Faxbot/backends/phaxio-setup.html), [Sinch](/Faxbot/backends/sinch-setup.html), [SIP/Asterisk](/Faxbot/backends/sip-setup.html)
-- SDKs → [Node & Python](/Faxbot/SDKS.html)
-- Troubleshooting → [Guide](/Faxbot/TROUBLESHOOTING.html)
-- Security → [HIPAA Requirements](/Faxbot/security/hipaa-requirements.html), [OAuth Setup](/Faxbot/security/oauth-setup.html)
+- AI Integration → [MCP Integration](/Faxbot/ai-integration/mcp-integration)
+- Backends → [Phaxio](/Faxbot/backends/phaxio-setup), [Sinch](/Faxbot/backends/sinch-setup), [SIP/Asterisk](/Faxbot/backends/sip-setup)
+- SDKs → [Node & Python](/Faxbot/sdks)
+- Troubleshooting → [Guide](/Faxbot/troubleshooting)
+- Security → [Overview](/Faxbot/security/), [OAuth Setup](/Faxbot/security/oauth-setup)
+- Compliance → [faxbot.net/compliance](https://faxbot.net/compliance/), [BAA PDF](https://faxbot.net/compliance/business-associate-agreement.pdf)
 
 Demo
 <video src="/Faxbot/assets/images/faxbot_demo.mp4" width="100%" autoplay loop muted playsinline controls>

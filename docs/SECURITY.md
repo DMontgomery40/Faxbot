@@ -14,4 +14,11 @@ Recommended reading
 - [Authentication (API Keys)](/security/authentication)
 - [HIPAA Requirements](../HIPAA_REQUIREMENTS.md)
 - [OAuth/OIDC Setup](OAUTH_SETUP.md)
+- [Authentication (API Keys)](/Faxbot/security/authentication.html)
+- [OAuth/OIDC Setup](/Faxbot/security/oauth-setup.html)
+- [Compliance Overview (faxbot.net)](https://faxbot.net/compliance/)
+- [Business Associate Agreement (PDF)](https://faxbot.net/compliance/business-associate-agreement.pdf)
+
+
+
 

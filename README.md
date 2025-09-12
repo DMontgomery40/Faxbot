@@ -49,6 +49,7 @@ docker compose --profile mcp up -d --build faxbot-mcp-sse
 # or: make mcp-sse-up
 ```
 - Check health: `curl http://localhost:8080/health`
+- Readiness: `curl -i http://localhost:8080/health/ready` (200 when ready; 503 if not)
 - MCP HTTP health: `curl http://localhost:3001/health`
  - MCP SSE health: `curl http://localhost:3002/health`
 
@@ -119,8 +120,8 @@ Advanced
 - [Phaxio End-to-End Test](docs/PHAXIO_E2E_TEST.md) — Simulated callback flow for local testing
 
 ## Notes
-- Send-only. Receiving is out of scope.
-- Set `FAX_BACKEND` to `phaxio` (cloud) or `sip` (self-hosted).
+- Receiving: WIP. Inbound scaffolding exists behind config flags and on the `development` branch (see PHASE_RECEIVE.md). It is not GA yet and remains backend‑isolated (Phaxio/Sinch callbacks, SIP/Asterisk internal). Outbound send is production‑ready.
+- Default backend is `phaxio` for easier onboarding. Set `FAX_BACKEND=sip` explicitly for telephony users or `FAX_BACKEND=sinch` for Sinch v3.
 - Use `X-API-Key` for auth; secure behind a reverse proxy for rate limiting.
 
 Demo

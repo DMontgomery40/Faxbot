@@ -1,3 +1,11 @@
+---
+layout: default
+title: MCP Integration
+parent: AI Integration
+nav_order: 1
+permalink: /ai-integration/mcp-integration.html
+---
+
 # MCP_INTEGRATION.md
 
 Demo
@@ -47,7 +55,8 @@ docker compose up -d --build api
 docker compose --profile mcp up -d --build faxbot-mcp
 ```
 - The MCP HTTP server listens on `http://localhost:3001`.
-- Use this when integrating web clients or cloud AI that speak MCP over HTTP.
+- Authentication is required: set `MCP_HTTP_API_KEY` on the server and pass either `Authorization: Bearer <MCP_HTTP_API_KEY>` or `X-API-Key: <MCP_HTTP_API_KEY>` on all `/mcp` requests.
+- Use this when integrating web clients or cloud AI that speak MCP over HTTP. Restrict CORS with `MCP_HTTP_CORS_ORIGIN`.
 - For Claude Desktop or Cursor (stdio), run the MCP directly on the host instead of Docker.
 
 Turnkey SSE (HIPAA‑oriented) via Docker Compose
