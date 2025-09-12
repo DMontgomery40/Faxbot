@@ -39,6 +39,8 @@ function Settings({ client }: SettingsProps) {
   const [error, setError] = useState<string | null>(null);
   const [snack, setSnack] = useState<string | null>(null);
   const [form, setForm] = useState<any>({});
+  const [restartHint, setRestartHint] = useState<boolean>(false);
+  const [allowRestart, setAllowRestart] = useState<boolean>(false);
   const handleForm = (field: string, value: any) => setForm((prev: any) => ({ ...prev, [field]: value }));
 
   const fetchSettings = async () => {
@@ -61,7 +63,13 @@ function Settings({ client }: SettingsProps) {
   };
 
   useEffect(() => {
-    fetchSettings().catch(() => {});
+    (async () => {
+      await fetchSettings();
+      try {
+        const cfg = await client.getConfig();
+        setAllowRestart(!!cfg?.allow_restart);
+      } catch {}
+    })();
   }, []);
 
   const exportEnv = async () => {
@@ -142,6 +150,7 @@ function Settings({ client }: SettingsProps) {
           <CircularProgress />
         </Box>
       ) : settings ? (
+        <Box>
         <Grid container spacing={3}>
           {/* Backend Configuration */}
           <Grid item xs={12} md={6}>
@@ -416,6 +425,7 @@ function Settings({ client }: SettingsProps) {
             </Button>
           </Box>
         )}
+        </Box>
       ) : (
         <Typography variant="body2" color="text.secondary">
           Click "Load Settings" to view current configuration

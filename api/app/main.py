@@ -118,17 +118,18 @@ async def enforce_local_admin(request: Request, call_next):
         h = request.headers
         if "x-forwarded-for" in h or "x-real-ip" in h:
             return Response(content="Admin console not available through proxy", status_code=403)
-        # Loopback only
+        # Local access policy
+        # Allow loopback; when running inside a container, also allow private bridge IPs (RFC1918)
         client_ip = str(request.client.host)
-        allowed = {"127.0.0.1", "::1", "localhost"}
-        if client_ip not in allowed:
-            try:
-                import ipaddress
-                ip = ipaddress.ip_address(client_ip)
-                if not ip.is_loopback:
-                    return Response(content="Forbidden", status_code=403)
-            except Exception:
-                return Response(content="Forbidden", status_code=403)
+        try:
+            import ipaddress
+            ip = ipaddress.ip_address(client_ip)
+        except Exception:
+            return Response(content="Forbidden", status_code=403)
+        in_container = os.path.exists("/.dockerenv")
+        allow = ip.is_loopback or (in_container and ip.is_private)
+        if not allow:
+            return Response(content="Forbidden", status_code=403)
     response = await call_next(request)
     if request.url.path.startswith("/admin/"):
         response.headers["X-Frame-Options"] = "DENY"

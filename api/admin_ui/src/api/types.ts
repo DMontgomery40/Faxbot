@@ -73,6 +73,9 @@ export interface Settings {
     backend: string;
     s3_bucket: string;
     s3_kms_enabled: boolean;
+    s3_region?: string;
+    s3_prefix?: string;
+    s3_endpoint_url?: string;
   };
   inbound: {
     enabled: boolean;
