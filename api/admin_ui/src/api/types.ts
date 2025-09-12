@@ -77,14 +77,33 @@ export interface Settings {
     s3_prefix?: string;
     s3_endpoint_url?: string;
   };
+  database?: {
+    url: string;
+    persistent: boolean;
+  };
   inbound: {
     enabled: boolean;
     retention_days: number;
+    token_ttl_minutes?: number;
+    sip?: {
+      asterisk_secret: string;
+      configured: boolean;
+    };
+    phaxio?: {
+      verify_signature: boolean;
+    };
+    sinch?: {
+      verify_signature: boolean;
+      basic_auth_configured: boolean;
+      hmac_configured: boolean;
+    };
   };
   limits: {
     max_file_size_mb: number;
     pdf_token_ttl_minutes: number;
     rate_limit_rpm: number;
+    inbound_list_rpm?: number;
+    inbound_get_rpm?: number;
   };
 }
 

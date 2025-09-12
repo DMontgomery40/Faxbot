@@ -24,15 +24,23 @@ import {
 } from '@mui/icons-material';
 import AdminAPIClient from '../api/client';
 import type { DiagnosticsResult } from '../api/types';
+import { Dialog, DialogTitle, DialogContent, DialogActions, Link } from '@mui/material';
 
 interface DiagnosticsProps {
   client: AdminAPIClient;
+  onNavigate?: (index: number) => void;
 }
 
-function Diagnostics({ client }: DiagnosticsProps) {
+function Diagnostics({ client, onNavigate }: DiagnosticsProps) {
   const [diagnostics, setDiagnostics] = useState<DiagnosticsResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [helpOpen, setHelpOpen] = useState(false);
+  const [helpTitle, setHelpTitle] = useState<string>('');
+  const [helpKey, setHelpKey] = useState<string>('');
+  const [testSending, setTestSending] = useState(false);
+  const [testJobId, setTestJobId] = useState<string | null>(null);
+  const [testStatus, setTestStatus] = useState<string | null>(null);
 
   const runDiagnostics = async () => {
     try {
@@ -77,6 +85,88 @@ function Diagnostics({ client }: DiagnosticsProps) {
     return <Typography variant="body2">{String(value)}</Typography>;
   };
 
+  const anchorFor = (title: string) => {
+    const t = title.toLowerCase();
+    if (t.includes('phaxio')) return '#settings-phaxio';
+    if (t.includes('sinch')) return '#settings-security';
+    if (t.includes('sip')) return '#settings-sip';
+    if (t.includes('storage')) return '#settings-storage';
+    if (t.includes('security')) return '#settings-security';
+    if (t.includes('inbound')) return '#settings-inbound';
+    return '#settings-advanced';
+  };
+
+  const helpFor = (title: string, key: string, value: any): string | null => {
+    const t = title.toLowerCase();
+    if (t.includes('phaxio')) {
+      if (key === 'api_key_set' && !value) return 'Set PHAXIO_API_KEY with your Phaxio console key.';
+      if (key === 'api_secret_set' && !value) return 'Set PHAXIO_API_SECRET with your Phaxio console secret.';
+      if (key === 'callback_url_set' && !value) return 'Set PHAXIO_STATUS_CALLBACK_URL so Phaxio can send status updates.';
+      if (key === 'public_url_https' && !value) return 'PUBLIC_API_URL should be HTTPS for PHI; enable TLS.';
+    }
+    if (t.includes('sinch')) {
+      if (key === 'project_id_set' && !value) return 'Set SINCH_PROJECT_ID from your Sinch console.';
+      if (key === 'api_key_set' && !value) return 'Set SINCH_API_KEY (or PHAXIO_API_KEY) for Sinch.';
+      if (key === 'api_secret_set' && !value) return 'Set SINCH_API_SECRET (or PHAXIO_API_SECRET) for Sinch.';
+    }
+    if (t.includes('sip')) {
+      if (key === 'ami_password_not_default' && !value) return 'Change ASTERISK_AMI_PASSWORD from default to a secure value.';
+      if (key === 'ami_reachable' && !value) return 'Verify AMI host/port, credentials, and network reachability.';
+    }
+    if (t.includes('storage')) {
+      if (key === 'kms_enabled' && !value) return 'Set S3_KMS_KEY_ID to enable server-side encryption (KMS).';
+      if (key === 'bucket_set' && !value) return 'Set S3_BUCKET to store inbound artifacts.';
+    }
+    if (t.includes('security')) {
+      if (key === 'enforce_https' && !value) return 'Set ENFORCE_PUBLIC_HTTPS=true for HIPAA deployments.';
+      if (key === 'audit_logging' && !value) return 'Enable AUDIT_LOG_ENABLED=true to record security events.';
+      if (key === 'rate_limiting' && !value) return 'Set MAX_REQUESTS_PER_MINUTE to mitigate abuse.';
+      if (key === 'pdf_token_ttl' && !value) return 'Set a reasonable PDF_TOKEN_TTL_MINUTES for Phaxio token links.';
+    }
+    if (t.includes('system')) {
+      if (key === 'ghostscript' && !value) return 'Install ghostscript in production to support PDF→TIFF.';
+      if (key === 'fax_data_writable' && !value) return 'Ensure FAX_DATA_DIR is writable (default /faxdata).';
+      if (key === 'database_connected' && !value) return 'Check DATABASE_URL and ensure DB file or Postgres is reachable.';
+    }
+    if (t.includes('inbound')) {
+      if (key === 'enabled' && !value) return 'Enable inbound to receive faxes.';
+    }
+    return null;
+  };
+
+  const getHelpDocs = (title: string, key: string) => {
+    const t = title.toLowerCase();
+    const docs: { text: string; href?: string }[] = [];
+    if (t.includes('sip')) {
+      if (key === 'ami_reachable') {
+        docs.push({ text: 'Asterisk Manager Interface (AMI) setup guide', href: 'https://wiki.asterisk.org/wiki/display/AST/Asterisk+Manager+Interface' });
+        docs.push({ text: 'Verify docker compose asterisk service is running and reachable as host "asterisk" on port 5038.' });
+        docs.push({ text: 'Ensure ASTERISK_AMI_USERNAME/PASSWORD match Asterisk manager.conf and that port 5038 is not exposed publicly.' });
+      }
+      if (key === 'ami_password_not_default') {
+        docs.push({ text: 'Change ASTERISK_AMI_PASSWORD from default to a secure value in both Faxbot and manager.conf.' });
+      }
+    }
+    if (t.includes('phaxio')) {
+      docs.push({ text: 'Phaxio docs', href: 'https://www.phaxio.com/docs/' });
+      docs.push({ text: 'Signature verification overview (HMAC)', href: 'https://www.phaxio.com/docs/' });
+    }
+    if (t.includes('sinch')) {
+      docs.push({ text: 'Sinch Fax API reference', href: 'https://developers.sinch.com/docs/fax/api-reference/' });
+      docs.push({ text: 'Faxbot inbound security can also enforce optional Basic/HMAC on callbacks. Configure shared secrets in Faxbot and, if supported, in your provider portal.' });
+    }
+    if (t.includes('storage')) {
+      docs.push({ text: 'S3 server-side encryption with KMS best practices' });
+    }
+    if (t.includes('security')) {
+      docs.push({ text: 'Enforce HTTPS (ENFORCE_PUBLIC_HTTPS) and enable audit logging for HIPAA.' });
+    }
+    if (t.includes('system')) {
+      docs.push({ text: 'Install Ghostscript package for PDF→TIFF conversion.' });
+    }
+    return docs;
+  };
+
   const renderChecks = (checks: Record<string, any>, title: string) => {
     return (
       <Card sx={{ mb: 2 }}>
@@ -84,12 +174,25 @@ function Diagnostics({ client }: DiagnosticsProps) {
           <Typography variant="h6" gutterBottom>
             {title}
           </Typography>
-          {Object.entries(checks).map(([key, value]) => (
-            <Box key={key} display="flex" justifyContent="space-between" alignItems="center" mb={1}>
-              <Typography variant="body2">{key.replace(/_/g, ' ')}:</Typography>
-              {renderCheckValue(value)}
-            </Box>
-          ))}
+          {Object.entries(checks).map(([key, value]) => {
+            const help = helpFor(title, key, value);
+            const label = (typeof value === 'boolean') ? (value ? 'View' : 'Help') : 'Open';
+            return (
+              <Box key={key} display="flex" justifyContent="space-between" alignItems="center" mb={1}>
+                <Box>
+                  <Typography variant="body2">{key.replace(/_/g, ' ')}:</Typography>
+                  {help && (
+                    <Typography variant="caption" color="text.secondary">{help}</Typography>
+                  )}
+                </Box>
+                <Box display="flex" alignItems="center" gap={1}>
+                  {renderCheckValue(value)}
+                  <Button size="small" variant="outlined" onClick={() => { setHelpTitle(title); setHelpKey(key); setHelpOpen(true); }}>{label}</Button>
+                  <Button size="small" onClick={() => { if (onNavigate) { const a = anchorFor(title); window.location.hash = a; onNavigate(6); } }}>Open Settings</Button>
+                </Box>
+              </Box>
+            );
+          })}
         </CardContent>
       </Card>
     );
@@ -141,7 +244,47 @@ function Diagnostics({ client }: DiagnosticsProps) {
     }
   };
 
+  const runSendTestFax = async () => {
+    try {
+      setError(null);
+      setTestSending(true);
+      setTestJobId(null);
+      setTestStatus(null);
+      // Create a tiny text file in memory
+      const blob = new Blob(["Faxbot test"], { type: 'text/plain' });
+      const file = new File([blob], 'test.txt', { type: 'text/plain' });
+      const result = await client.sendFax('+15555550123', file);
+      setTestJobId(result.id);
+      setTestStatus(result.status);
+      // Poll status a few times
+      let attempts = 0;
+      const poll = async () => {
+        if (!result.id || attempts++ > 10) return; // ~10 polls
+        try {
+          const job = await client.getJob(result.id);
+          setTestStatus(job.status);
+          if (['SUCCESS','FAILED','failed','SUCCESSFUL','COMPLETED'].includes(String(job.status))) return;
+          // Show matching log snippet if available
+          try {
+            const logs = await client.getLogs({ q: result.id, limit: 5 });
+            if (logs.items && logs.items.length > 0) {
+              // Put latest log JSON in error banner if failure
+              // (lightweight: do nothing here but could display inline in future)
+            }
+          } catch {}
+        } catch {}
+        setTimeout(poll, 2000);
+      };
+      poll();
+    } catch (e: any) {
+      setError(e?.message || 'Test fax failed to start');
+    } finally {
+      setTestSending(false);
+    }
+  };
+
   return (
+    <>
     <Box>
       <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
         <Typography variant="h4" component="h1">
@@ -173,6 +316,27 @@ function Diagnostics({ client }: DiagnosticsProps) {
 
       {diagnostics && (
         <Box>
+          {/* Built-in Tests */}
+          <Card sx={{ mb: 3 }}>
+            <CardContent>
+              <Typography variant="h6" gutterBottom>
+                Built‑in Tests
+              </Typography>
+              <Box display="flex" alignItems="center" gap={1}>
+                <Button variant="outlined" onClick={runSendTestFax} disabled={testSending}>
+                  {testSending ? 'Sending…' : 'Send Test Fax'}
+                </Button>
+                {testJobId && (
+                  <Typography variant="body2" color="text.secondary">
+                    Job: {testJobId} • Status: {testStatus || 'queued'}
+                  </Typography>
+                )}
+              </Box>
+              <Typography variant="caption" color="text.secondary">
+                Uses your current backend settings. For cloud backends without valid credentials this will fail fast with an error.
+              </Typography>
+            </CardContent>
+          </Card>
           {/* Summary */}
           <Card sx={{ mb: 3 }}>
             <CardContent>
@@ -193,7 +357,7 @@ function Diagnostics({ client }: DiagnosticsProps) {
             </CardContent>
           </Card>
 
-          {/* Suggestions */}
+      {/* Suggestions */}
           {(() => {
             const suggestions = getSuggestions(diagnostics);
             return suggestions.length > 0 && (
@@ -265,7 +429,7 @@ function Diagnostics({ client }: DiagnosticsProps) {
               </Paper>
             </CardContent>
           </Card>
-        </Box>
+      </Box>
       )}
 
       {!diagnostics && !loading && (
@@ -281,6 +445,23 @@ function Diagnostics({ client }: DiagnosticsProps) {
         </Alert>
       )}
     </Box>
+    <Dialog open={helpOpen} onClose={() => setHelpOpen(false)} maxWidth="md" fullWidth>
+      <DialogTitle>Help — {helpTitle} / {helpKey.replace(/_/g,' ')}</DialogTitle>
+      <DialogContent>
+        {getHelpDocs(helpTitle, helpKey).map((d, i) => (
+          <Typography key={i} variant="body2" sx={{ mb: 1 }}>
+            {d.href ? (<Link href={d.href} target="_blank" rel="noreferrer">{d.text}</Link>) : d.text}
+          </Typography>
+        ))}
+        {!getHelpDocs(helpTitle, helpKey).length && (
+          <Typography variant="body2">No additional guidance available.</Typography>
+        )}
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={() => setHelpOpen(false)}>Close</Button>
+      </DialogActions>
+    </Dialog>
+    </>
   );
 }
 

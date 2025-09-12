@@ -9,7 +9,7 @@ import tempfile
 from typing import Optional, Any, List, cast
 import time
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks, Header, Depends, Query, Request, Response
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from .config import settings, reload_settings
 from .db import init_db, SessionLocal, FaxJob
@@ -23,6 +23,7 @@ import hashlib
 from urllib.parse import urlparse
 from fastapi.responses import StreamingResponse
 from .audit import init_audit_logger, audit_event
+from .audit import query_recent_logs
 from .storage import get_storage, reset_storage
 from .auth import verify_db_key, create_api_key, list_api_keys, revoke_api_key, rotate_api_key
 from pydantic import BaseModel
@@ -105,6 +106,39 @@ for _ap in _assets_candidates:
     except Exception:
         pass
 
+# ===== Embedded MCP mounts (optional) =====
+try:
+    if os.getenv("ENABLE_MCP_SSE", "false").lower() in {"1","true","yes"}:
+        # Set environment for python_mcp before import
+        os.environ.setdefault("FAX_API_URL", "http://localhost:8080")
+        if settings.api_key:
+            os.environ.setdefault("API_KEY", settings.api_key)
+        # Configure OAuth variables for the embedded server
+        if settings.require_mcp_oauth:
+            if settings.oauth_issuer:
+                os.environ["OAUTH_ISSUER"] = settings.oauth_issuer
+            if settings.oauth_audience:
+                os.environ["OAUTH_AUDIENCE"] = settings.oauth_audience
+            if settings.oauth_jwks_url:
+                os.environ["OAUTH_JWKS_URL"] = settings.oauth_jwks_url
+        from python_mcp import server as _mcp_server  # type: ignore
+        mount_app = _mcp_server.app if settings.require_mcp_oauth else getattr(_mcp_server, "inner_app")
+        app.mount(settings.mcp_sse_path, mount_app)
+except Exception as _mcp_err:
+    # Do not break API if MCP mount fails; surface in diagnostics
+    print(f"[warn] MCP SSE mount failed: {_mcp_err}")
+
+try:
+    if os.getenv("ENABLE_MCP_HTTP", "false").lower() in {"1","true","yes"}:
+        # Prepare environment
+        os.environ.setdefault("FAX_API_URL", "http://localhost:8080")
+        if settings.api_key:
+            os.environ.setdefault("API_KEY", settings.api_key)
+        from python_mcp import http_server as _mcp_http  # type: ignore
+        app.mount(settings.mcp_http_path, _mcp_http.app)
+except Exception as _mcp_http_err:
+    print(f"[warn] MCP HTTP mount failed: {_mcp_http_err}")
+
 
 # ===== Admin security middleware (loopback + flag) =====
 @app.middleware("http")
@@ -148,6 +182,21 @@ def mask_secret(value: Optional[str], visible_chars: int = 4) -> str:
     return "*" * (len(value) - visible_chars) + value[-visible_chars:]
 
 
+def _mask_url(url: str) -> str:
+    try:
+        from urllib.parse import urlparse
+        p = urlparse(url)
+        if p.username or p.password:
+            netloc = p.hostname or ''
+            if p.port:
+                netloc += f":{p.port}"
+            masked = p._replace(netloc=netloc).geturl()
+            return masked
+        return url
+    except Exception:
+        return url
+
+
 def mask_phone(phone: Optional[str]) -> str:
     if not phone or len(phone) < 4:
         return "****"
@@ -169,9 +218,9 @@ async def on_startup():
     init_db()
     # Ensure data dir
     ensure_dir(settings.fax_data_dir)
-    # Validate Ghostscript availability for PDF->TIFF conversion
+    # Validate Ghostscript availability for all backends (core dependency)
     if shutil.which("gs") is None:
-        print("[warn] Ghostscript (gs) not found; PDF→TIFF conversion will be stubbed. Install 'ghostscript' for production use.")
+        raise RuntimeError("Ghostscript (gs) not found. Install 'ghostscript' — it is required for fax file processing.")
     # Security posture warnings
     if not settings.require_api_key and not settings.api_key and not settings.fax_disabled:
         print("[warn] API auth is not enforced (REQUIRE_API_KEY=false and API_KEY unset); /fax requests are unauthenticated. Set API_KEY or REQUIRE_API_KEY for production.")
@@ -285,6 +334,12 @@ def health_ready():
             storage_ok = False
             storage_error = str(e)
 
+    # System dependency check (Ghostscript — required for all backends)
+    gs_installed = shutil.which("gs") is not None
+    if not gs_installed:
+        backend_ok = False
+        backend_warnings.append("Ghostscript (gs) not installed — required for fax file processing")
+
     # AMI connection hint for SIP
     ami_connected = False
     try:
@@ -293,7 +348,7 @@ def health_ready():
     except Exception:
         ami_connected = False
 
-    ready = bool(db_ok and backend_ok and (storage_ok or not settings.inbound_enabled))
+    ready = bool(db_ok and backend_ok and gs_installed and (storage_ok or not settings.inbound_enabled))
     status_code = 200 if ready else 503
     from fastapi.responses import JSONResponse as _JR
     return _JR(
@@ -305,6 +360,7 @@ def health_ready():
                 "backend_config": backend_ok,
                 "storage": storage_ok if settings.inbound_enabled else None,
                 "ami_connected": ami_connected if backend == "sip" else None,
+                "ghostscript": gs_installed,
             },
             "warnings": backend_warnings,
             "storage_error": storage_error,
@@ -434,6 +490,19 @@ def get_admin_config():
         "require_api_key": settings.require_api_key,
         "enforce_public_https": settings.enforce_public_https,
         "phaxio_verify_signature": settings.phaxio_verify_signature,
+        "persisted_settings_enabled": (os.getenv("ENABLE_PERSISTED_SETTINGS", "false").lower() in {"1","true","yes"}),
+        "mcp": {
+            "sse_enabled": (os.getenv("ENABLE_MCP_SSE", "false").lower() in {"1","true","yes"}),
+            "sse_path": settings.mcp_sse_path,
+            "require_oauth": settings.require_mcp_oauth,
+            "oauth": {
+                "issuer": settings.oauth_issuer,
+                "audience": settings.oauth_audience,
+                "jwks_url": settings.oauth_jwks_url,
+            },
+            "http_enabled": (os.getenv("ENABLE_MCP_HTTP", "false").lower() in {"1","true","yes"}),
+            "http_path": settings.mcp_http_path,
+        },
         "audit_log_enabled": settings.audit_log_enabled,
         "rate_limits": {
             "global_rpm": settings.max_requests_per_minute,
@@ -505,14 +574,33 @@ def get_admin_settings():
             "s3_bucket": (settings.s3_bucket[:4] + "…" if settings.s3_bucket else ""),
             "s3_kms_enabled": bool(settings.s3_kms_key_id),
         },
+        "database": {
+            "url": settings.database_url,
+            "persistent": settings.database_url.startswith("sqlite:////faxdata/") if isinstance(settings.database_url, str) else False,
+        },
         "inbound": {
             "enabled": settings.inbound_enabled,
             "retention_days": settings.inbound_retention_days,
+            "token_ttl_minutes": settings.inbound_token_ttl_minutes,
+            "sip": {
+                "asterisk_secret": mask_secret(settings.asterisk_inbound_secret),
+                "configured": bool(settings.asterisk_inbound_secret),
+            },
+            "phaxio": {
+                "verify_signature": settings.phaxio_inbound_verify_signature,
+            },
+            "sinch": {
+                "verify_signature": settings.sinch_inbound_verify_signature,
+                "basic_auth_configured": bool(settings.sinch_inbound_basic_user),
+                "hmac_configured": bool(settings.sinch_inbound_hmac_secret),
+            },
         },
         "limits": {
             "max_file_size_mb": settings.max_file_size_mb,
             "pdf_token_ttl_minutes": settings.pdf_token_ttl_minutes,
             "rate_limit_rpm": settings.max_requests_per_minute,
+            "inbound_list_rpm": settings.inbound_list_rpm,
+            "inbound_get_rpm": settings.inbound_get_rpm,
         },
     }
 
@@ -596,6 +684,15 @@ class UpdateSettingsRequest(BaseModel):
     public_api_url: Optional[str] = None
     fax_disabled: Optional[bool] = None
     max_file_size_mb: Optional[int] = None
+    enable_persisted_settings: Optional[bool] = None
+    database_url: Optional[str] = None
+    # MCP embedded SSE
+    enable_mcp_sse: Optional[bool] = None
+    require_mcp_oauth: Optional[bool] = None
+    oauth_issuer: Optional[str] = None
+    oauth_audience: Optional[str] = None
+    oauth_jwks_url: Optional[str] = None
+    enable_mcp_http: Optional[bool] = None
 
     # Phaxio
     phaxio_api_key: Optional[str] = None
@@ -665,6 +762,15 @@ def update_admin_settings(payload: UpdateSettingsRequest):
     _set_env_bool("ENFORCE_PUBLIC_HTTPS", payload.enforce_public_https)
     _set_env_opt("PUBLIC_API_URL", payload.public_api_url)
     _set_env_bool("FAX_DISABLED", payload.fax_disabled)
+    _set_env_bool("ENABLE_PERSISTED_SETTINGS", payload.enable_persisted_settings)
+    _set_env_opt("DATABASE_URL", payload.database_url)
+    # MCP SSE
+    _set_env_bool("ENABLE_MCP_SSE", payload.enable_mcp_sse)
+    _set_env_bool("REQUIRE_MCP_OAUTH", payload.require_mcp_oauth)
+    _set_env_opt("OAUTH_ISSUER", payload.oauth_issuer)
+    _set_env_opt("OAUTH_AUDIENCE", payload.oauth_audience)
+    _set_env_opt("OAUTH_JWKS_URL", payload.oauth_jwks_url)
+    _set_env_bool("ENABLE_MCP_HTTP", payload.enable_mcp_http)
     _set_env_opt("MAX_FILE_SIZE_MB", payload.max_file_size_mb)
 
     # Phaxio
@@ -730,6 +836,15 @@ def update_admin_settings(payload: UpdateSettingsRequest):
     new_storage = (settings.storage_backend or "local").lower()
     backend_changed = (old_backend != new_backend)
     storage_changed = (old_storage != new_storage) or any(storage_fields)
+    # Changing MCP flags typically requires restart to remount
+    mcp_changed = any([
+        payload.enable_mcp_sse is not None,
+        payload.require_mcp_oauth is not None,
+        payload.oauth_issuer is not None,
+        payload.oauth_audience is not None,
+        payload.oauth_jwks_url is not None,
+        payload.enable_mcp_http is not None,
+    ])
     if storage_changed:
         # Recreate storage client with new settings on next access
         try:
@@ -741,7 +856,7 @@ def update_admin_settings(payload: UpdateSettingsRequest):
     out["_meta"] = {
         "backend_changed": backend_changed,
         "storage_changed": storage_changed,
-        "restart_recommended": backend_changed or new_backend == "sip" or storage_changed,
+        "restart_recommended": backend_changed or new_backend == "sip" or storage_changed or mcp_changed,
     }
     return out
 
@@ -773,14 +888,258 @@ async def get_health_status():
         recent_fail = db.query(FaxJob).filter(
             FaxJob.status == "failed", FaxJob.updated_at > datetime.utcnow() - timedelta(hours=1)
         ).count()
+    # Lightweight health signals (avoid duplicating full readiness logic)
+    # DB check
+    db_ok = True
+    try:
+        from sqlalchemy import text  # type: ignore
+        with SessionLocal() as db:
+            db.execute(text("SELECT 1"))
+    except Exception:
+        db_ok = False
+    # Ghostscript
+    gs_ok = shutil.which("gs") is not None
+    # Backend configured
+    backend = settings.fax_backend
+    backend_ok = True
+    if backend == "phaxio":
+        backend_ok = bool(settings.phaxio_api_key and settings.phaxio_api_secret)
+    elif backend == "sinch":
+        backend_ok = bool(settings.sinch_project_id and settings.sinch_api_key and settings.sinch_api_secret)
+    # backend_ok remains True for sip; AMI connectivity is handled asynchronously
+    backend_healthy = bool(db_ok and gs_ok and backend_ok)
     return {
         "timestamp": datetime.utcnow().isoformat(),
-        "backend": settings.fax_backend,
+        "backend": backend,
+        "backend_healthy": backend_healthy,
         "jobs": {"queued": queued, "in_progress": in_prog, "recent_failures": recent_fail},
         "inbound_enabled": settings.inbound_enabled,
         "api_keys_configured": bool(settings.api_key),
         "require_auth": settings.require_api_key,
     }
+
+
+@app.get("/admin/db-status", dependencies=[Depends(require_admin)])
+def admin_db_status():
+    from sqlalchemy import text  # type: ignore
+    url = settings.database_url
+    engine = "unknown"
+    sqlite_file = None
+    if url.startswith("sqlite:"):
+        engine = "sqlite"
+        # sqlite:///./file or sqlite:////abs
+        path = url.split("sqlite:///")[-1]
+        if path.startswith("/"):
+            sqlite_file = path
+        else:
+            # relative to CWD
+            sqlite_file = os.path.abspath(path)
+    elif url.startswith("postgres"):  # pragma: no cover
+        engine = "postgres"
+    elif url.startswith("mysql"):  # pragma: no cover
+        engine = "mysql"
+
+    connected = False
+    err = None
+    counts = {}
+    try:
+        with SessionLocal() as db:
+            db.execute(text("SELECT 1"))
+            connected = True
+            # Try lightweight counts
+            try:
+                counts["fax_jobs"] = db.query(FaxJob).count()
+            except Exception:  # pragma: no cover
+                counts["fax_jobs"] = None
+            try:
+                from .auth import APIKey  # type: ignore
+                counts["api_keys"] = db.query(APIKey).count()
+            except Exception:
+                counts["api_keys"] = None
+            try:
+                from .db import InboundFax  # type: ignore
+                counts["inbound_fax"] = db.query(InboundFax).count()
+            except Exception:
+                counts["inbound_fax"] = None
+    except Exception as e:  # pragma: no cover
+        connected = False
+        err = str(e)
+
+    sqlite_info = None
+    if sqlite_file:
+        try:
+            st = os.stat(sqlite_file)
+            sqlite_info = {
+                "path": sqlite_file,
+                "exists": True,
+                "size_bytes": st.st_size,
+                "modified": datetime.utcfromtimestamp(st.st_mtime).isoformat(),
+                "persistent_volume": sqlite_file.startswith("/faxdata/") or sqlite_file.startswith("/faxdata")
+            }
+        except FileNotFoundError:
+            sqlite_info = {"path": sqlite_file, "exists": False}
+
+    return {
+        "url": _mask_url(url),
+        "engine": engine,
+        "connected": connected,
+        "error": err,
+        "counts": counts,
+        "sqlite": sqlite_info,
+    }
+
+
+class LogsQuery(BaseModel):
+    q: Optional[str] = None
+    event: Optional[str] = None
+    since: Optional[str] = None
+    limit: Optional[int] = 200
+
+
+@app.get("/admin/logs", dependencies=[Depends(require_admin)])
+def admin_logs(q: Optional[str] = None, event: Optional[str] = None, since: Optional[str] = None, limit: int = 200):
+    """Return recent audit logs from in-process ring buffer with simple filtering.
+    For persistent logs, configure AUDIT_LOG_FILE and use external tooling; this endpoint focuses on interactive UI needs.
+    """
+    try:
+        rows = query_recent_logs(q=q, event=event, since=since, limit=limit)
+    except Exception as e:
+        raise HTTPException(500, detail=str(e))
+    return {"items": rows, "count": len(rows)}
+
+
+@app.get("/admin/logs/tail", dependencies=[Depends(require_admin)])
+def admin_logs_tail(q: Optional[str] = None, event: Optional[str] = None, lines: int = 2000):
+    """Tail the audit log file when AUDIT_LOG_FILE is configured.
+    Returns last N lines (default 2000), filtered by substring and/or event name when logs are JSON.
+    """
+    path = settings.audit_log_file or ""
+    if not path:
+        raise HTTPException(400, detail="AUDIT_LOG_FILE not configured")
+    try:
+        from collections import deque as _dq
+        dq = _dq(maxlen=max(1, min(lines, 20000)))
+        with open(path, 'r', encoding='utf-8', errors='replace') as f:
+            for line in f:
+                dq.append(line.rstrip('\n'))
+        out = []
+        q_norm = (q or "").lower()
+        for raw in dq:
+            item = {"raw": raw}
+            try:
+                import json as _json
+                obj = _json.loads(raw)
+                item.update(obj if isinstance(obj, dict) else {"message": obj})
+            except Exception:
+                pass
+            if event and str(item.get("event")) != event:
+                continue
+            if q_norm and q_norm not in raw.lower():
+                continue
+            out.append(item)
+        return {"items": out, "count": len(out), "source": path}
+    except FileNotFoundError:
+        raise HTTPException(404, detail="Audit log file not found")
+    except Exception as e:
+        raise HTTPException(500, detail=str(e))
+
+
+@app.get("/admin/inbound/callbacks", dependencies=[Depends(require_admin)])
+def admin_inbound_callbacks():
+    base = settings.public_api_url.rstrip("/")
+    backend = settings.fax_backend
+    out: dict[str, Any] = {"backend": backend, "callbacks": []}
+    if backend == "phaxio":
+        out["callbacks"].append({
+            "name": "Phaxio Inbound",
+            "url": f"{base}/phaxio-inbound",
+            "verify_signature": settings.phaxio_inbound_verify_signature,
+            "notes": "Configure in Phaxio console → Inbound settings. Enable HMAC verification if policy requires.",
+        })
+    elif backend == "sinch":
+        out["callbacks"].append({
+            "name": "Sinch Fax Inbound",
+            "url": f"{base}/sinch-inbound",
+            "auth": {
+                "basic": bool(settings.sinch_inbound_basic_user),
+                "hmac": bool(settings.sinch_inbound_hmac_secret),
+            },
+            "notes": "Set webhook in Sinch Fax console. Optionally use Basic and/or HMAC.",
+        })
+    elif backend == "sip":
+        out["callbacks"].append({
+            "name": "Asterisk Internal",
+            "url": f"/_internal/asterisk/inbound",
+            "header": "X-Internal-Secret",
+            "secret_configured": bool(settings.asterisk_inbound_secret),
+            "notes": "Call from dialplan/AGI on the private network only.",
+            "example_curl": (
+                "curl -X POST -H 'X-Internal-Secret: <secret>' -H 'Content-Type: application/json' "
+                "http://api:8080/_internal/asterisk/inbound "
+                "-d '{\"tiff_path\":\"/faxdata/in.tiff\",\"to_number\":\"+1555...\"}'"
+            ),
+        })
+    return out
+
+
+class SimulateInboundIn(BaseModel):
+    backend: Optional[str] = None  # default to current backend
+    fr: Optional[str] = None
+    to: Optional[str] = None
+    pages: Optional[int] = 1
+    status: Optional[str] = "received"
+
+
+@app.post("/admin/inbound/simulate", dependencies=[Depends(require_admin)])
+def admin_inbound_simulate(payload: SimulateInboundIn):
+    if not settings.inbound_enabled:
+        raise HTTPException(400, detail="Inbound not enabled")
+    backend = (payload.backend or settings.fax_backend).lower()
+    job_id = uuid.uuid4().hex
+    data_dir = settings.fax_data_dir
+    ensure_dir(data_dir)
+    # Create a tiny placeholder PDF
+    pdf_path = os.path.join(data_dir, f"{job_id}.pdf")
+    with open(pdf_path, "wb") as f:
+        f.write(b"%PDF-1.4\n% inbound simulation\n%%EOF")
+    size_bytes = os.path.getsize(pdf_path)
+    sha256_hex = hashlib.sha256(b"%PDF-1.4\n% inbound simulation\n%%EOF").hexdigest()
+    storage = get_storage()
+    stored_uri = storage.put_pdf(pdf_path, f"{job_id}.pdf")
+    try:
+        if stored_uri.startswith("s3://") and os.path.exists(pdf_path):
+            os.remove(pdf_path)
+    except Exception:
+        pass
+    pdf_token = secrets.token_urlsafe(32)
+    expires_at = datetime.utcnow() + timedelta(minutes=max(1, settings.inbound_token_ttl_minutes))
+    retention_until = datetime.utcnow() + timedelta(days=settings.inbound_retention_days) if settings.inbound_retention_days > 0 else None
+
+    with SessionLocal() as db:
+        fx = InboundFax(
+            id=job_id,
+            from_number=payload.fr,
+            to_number=payload.to,
+            status=payload.status or "received",
+            backend=backend,
+            provider_sid=None,
+            pages=payload.pages,
+            size_bytes=size_bytes,
+            sha256=sha256_hex,
+            pdf_path=stored_uri,
+            tiff_path=None,
+            mailbox_label=None,
+            retention_until=retention_until,
+            pdf_token=pdf_token,
+            pdf_token_expires_at=expires_at,
+            created_at=datetime.utcnow(),
+            received_at=datetime.utcnow(),
+            updated_at=datetime.utcnow(),
+        )
+        db.add(fx)
+        db.commit()
+    audit_event("inbound_received", job_id=job_id, backend=backend)
+    return {"id": job_id, "status": "ok"}
 
 
 @app.get("/admin/fax-jobs", dependencies=[Depends(require_admin)])
@@ -834,6 +1193,27 @@ async def get_admin_job(job_id: str):
             "updated_at": job.updated_at,
             "file_name": job.file_name,
         }
+
+
+@app.get("/admin/fax-jobs/{job_id}/pdf", dependencies=[Depends(require_admin)])
+def admin_get_job_pdf(job_id: str):
+    """Admin-only: download the outbound fax PDF for a job if present.
+    Works for all backends; the API generates/keeps a PDF per job prior to sending.
+    """
+    pdf_path = os.path.join(settings.fax_data_dir, f"{job_id}.pdf")
+    if not os.path.exists(pdf_path):
+        raise HTTPException(404, detail="PDF file not found")
+    audit_event("admin_pdf_download", job_id=job_id)
+    return FileResponse(
+        pdf_path,
+        media_type="application/pdf",
+        filename=f"fax_{job_id}.pdf",
+        headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        },
+    )
 
 
 @app.post("/admin/diagnostics/run", dependencies=[Depends(require_admin)])
@@ -897,8 +1277,9 @@ async def run_diagnostics():
         pass
     # DB
     try:
+        from sqlalchemy import text  # type: ignore
         with SessionLocal() as db:
-            db.execute("SELECT 1")
+            db.execute(text("SELECT 1"))
             sys["database_connected"] = True
     except Exception:
         pass
@@ -974,6 +1355,9 @@ async def run_diagnostics():
             critical.append("AMI password is default 'changeme'")
         if not s.get("ami_reachable"):
             warnings.append("AMI not reachable")
+    # Ghostscript is required for all backends
+    if not sys.get("ghostscript"):
+        critical.append("Ghostscript (gs) not installed — required for fax file processing")
     if not sys.get("fax_data_writable"):
         critical.append("Cannot write to fax data dir")
     if not sys.get("database_connected"):
@@ -1022,6 +1406,124 @@ def export_settings_env():
         "requires_restart": True,
         "note": "v1 is read-only. Copy to .env and restart the API to apply.",
     }
+
+
+def _export_settings_full_env() -> str:
+    """Generate a full .env content string with unmasked values for persistence.
+    Admin-only usage. Includes core, backend, inbound, storage and security settings.
+    """
+    kv: dict[str, str] = {}
+    # Core
+    kv["FAX_BACKEND"] = settings.fax_backend
+    kv["REQUIRE_API_KEY"] = "true" if settings.require_api_key else "false"
+    kv["ENFORCE_PUBLIC_HTTPS"] = "true" if settings.enforce_public_https else "false"
+    kv["FAX_DISABLED"] = "true" if settings.fax_disabled else "false"
+    kv["PUBLIC_API_URL"] = settings.public_api_url
+    kv["MAX_FILE_SIZE_MB"] = str(settings.max_file_size_mb)
+    # Security / audit
+    kv["AUDIT_LOG_ENABLED"] = "true" if settings.audit_log_enabled else "false"
+    if settings.audit_log_file:
+        kv["AUDIT_LOG_FILE"] = settings.audit_log_file
+    kv["PDF_TOKEN_TTL_MINUTES"] = str(settings.pdf_token_ttl_minutes)
+    if settings.max_requests_per_minute is not None:
+        kv["MAX_REQUESTS_PER_MINUTE"] = str(settings.max_requests_per_minute)
+    # Backend: Phaxio
+    if settings.fax_backend == "phaxio":
+        kv["PHAXIO_API_KEY"] = settings.phaxio_api_key or ""
+        kv["PHAXIO_API_SECRET"] = settings.phaxio_api_secret or ""
+        if settings.phaxio_status_callback_url:
+            kv["PHAXIO_STATUS_CALLBACK_URL"] = settings.phaxio_status_callback_url
+        kv["PHAXIO_VERIFY_SIGNATURE"] = "true" if settings.phaxio_verify_signature else "false"
+    # Backend: Sinch
+    if settings.fax_backend == "sinch":
+        kv["SINCH_PROJECT_ID"] = settings.sinch_project_id or ""
+        kv["SINCH_API_KEY"] = settings.sinch_api_key or ""
+        kv["SINCH_API_SECRET"] = settings.sinch_api_secret or ""
+    # Backend: SIP/Asterisk
+    if settings.fax_backend == "sip":
+        kv["ASTERISK_AMI_HOST"] = settings.ami_host
+        kv["ASTERISK_AMI_PORT"] = str(settings.ami_port)
+        kv["ASTERISK_AMI_USERNAME"] = settings.ami_username
+        kv["ASTERISK_AMI_PASSWORD"] = settings.ami_password
+        if settings.fax_station_id:
+            kv["FAX_LOCAL_STATION_ID"] = settings.fax_station_id
+    # Inbound
+    kv["INBOUND_ENABLED"] = "true" if settings.inbound_enabled else "false"
+    kv["INBOUND_RETENTION_DAYS"] = str(settings.inbound_retention_days)
+    kv["INBOUND_TOKEN_TTL_MINUTES"] = str(settings.inbound_token_ttl_minutes)
+    if settings.asterisk_inbound_secret:
+        kv["ASTERISK_INBOUND_SECRET"] = settings.asterisk_inbound_secret
+    kv["PHAXIO_INBOUND_VERIFY_SIGNATURE"] = "true" if settings.phaxio_inbound_verify_signature else "false"
+    kv["SINCH_INBOUND_VERIFY_SIGNATURE"] = "true" if settings.sinch_inbound_verify_signature else "false"
+    if settings.sinch_inbound_basic_user:
+        kv["SINCH_INBOUND_BASIC_USER"] = settings.sinch_inbound_basic_user
+        kv["SINCH_INBOUND_BASIC_PASS"] = settings.sinch_inbound_basic_pass or ""
+    if settings.sinch_inbound_hmac_secret:
+        kv["SINCH_INBOUND_HMAC_SECRET"] = settings.sinch_inbound_hmac_secret
+    kv["INBOUND_LIST_RPM"] = str(settings.inbound_list_rpm)
+    kv["INBOUND_GET_RPM"] = str(settings.inbound_get_rpm)
+    # Storage
+    kv["STORAGE_BACKEND"] = (settings.storage_backend or "local")
+    if (settings.storage_backend or "").lower() == "s3":
+        if settings.s3_bucket:
+            kv["S3_BUCKET"] = settings.s3_bucket
+        if settings.s3_prefix:
+            kv["S3_PREFIX"] = settings.s3_prefix
+        if settings.s3_region:
+            kv["S3_REGION"] = settings.s3_region
+        if settings.s3_endpoint_url:
+            kv["S3_ENDPOINT_URL"] = settings.s3_endpoint_url
+        if settings.s3_kms_key_id:
+            kv["S3_KMS_KEY_ID"] = settings.s3_kms_key_id
+    # Admin console toggles
+    kv["ENABLE_LOCAL_ADMIN"] = os.getenv("ENABLE_LOCAL_ADMIN", "true").lower()
+    kv["ADMIN_ALLOW_RESTART"] = os.getenv("ADMIN_ALLOW_RESTART", "false").lower()
+    # Persisted settings loader toggle
+    kv["ENABLE_PERSISTED_SETTINGS"] = os.getenv("ENABLE_PERSISTED_SETTINGS", "false").lower()
+    if os.getenv("PERSISTED_ENV_PATH"):
+        kv["PERSISTED_ENV_PATH"] = os.getenv("PERSISTED_ENV_PATH", "") or ""
+    # MCP SSE
+    kv["ENABLE_MCP_SSE"] = os.getenv("ENABLE_MCP_SSE", "false").lower()
+    kv["REQUIRE_MCP_OAUTH"] = os.getenv("REQUIRE_MCP_OAUTH", "false").lower()
+    if settings.oauth_issuer:
+        kv["OAUTH_ISSUER"] = settings.oauth_issuer
+    if settings.oauth_audience:
+        kv["OAUTH_AUDIENCE"] = settings.oauth_audience
+    if settings.oauth_jwks_url:
+        kv["OAUTH_JWKS_URL"] = settings.oauth_jwks_url
+    # MCP HTTP
+    kv["ENABLE_MCP_HTTP"] = os.getenv("ENABLE_MCP_HTTP", "false").lower()
+
+    lines: list[str] = []
+    for k, v in kv.items():
+        if v is None:
+            continue
+        s = str(v)
+        if any(ch in s for ch in [" ", "#"]):
+            s = f'"{s}"'
+        lines.append(f"{k}={s}")
+    return "\n".join(lines) + "\n"
+
+
+class PersistSettingsIn(BaseModel):
+    content: str | None = None
+    path: str | None = None
+
+
+@app.post("/admin/settings/persist", dependencies=[Depends(require_admin)])
+def persist_settings(payload: PersistSettingsIn):
+    """Write a .env file to a persisted location (default: /faxdata/faxbot.env).
+    If content is not provided, the server will render a full export from current settings.
+    """
+    target = payload.path or os.getenv("PERSISTED_ENV_PATH", "/faxdata/faxbot.env")
+    content = payload.content or _export_settings_full_env()
+    try:
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        with open(target, "w") as f:
+            f.write(content)
+    except Exception as e:
+        raise HTTPException(500, detail=f"Failed to write settings: {e}")
+    return {"ok": True, "path": target}
 
 @app.post("/fax", response_model=FaxJobOut, status_code=202, dependencies=[Depends(require_fax_send)])
 async def send_fax(background: BackgroundTasks, to: str = Form(...), file: UploadFile = File(...)):
@@ -1963,3 +2465,21 @@ async def sinch_inbound(request: Request):
         db.commit()
     audit_event("inbound_received", job_id=job_id, backend="sinch")
     return {"status": "ok"}
+# ===== Global error logging =====
+@app.exception_handler(HTTPException)
+async def _handle_http_exc(request: Request, exc: HTTPException):
+    try:
+        audit_event("api_error", path=request.url.path, status=exc.status_code, detail=str(exc.detail))
+    except Exception:
+        pass
+    return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
+
+
+@app.exception_handler(Exception)
+async def _handle_any_exc(request: Request, exc: Exception):
+    try:
+        audit_event("api_error", path=request.url.path, status=500, detail="internal_error")
+    except Exception:
+        pass
+    # Return minimal detail to avoid leaking internals
+    return JSONResponse({"detail": "Internal Server Error"}, status_code=500)

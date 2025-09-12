@@ -357,6 +357,23 @@ function JobsList({ client }: JobsListProps) {
           )}
         </DialogContent>
         <DialogActions>
+          {selectedJob && (
+            <Button onClick={async () => {
+              try {
+                const blob = await client.downloadJobPdf(selectedJob.id);
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `fax_${selectedJob.id}.pdf`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+              } catch (e) {
+                // ignore for now; could add error state
+              }
+            }}>Download PDF</Button>
+          )}
           <Button onClick={handleCloseJobDetail}>Close</Button>
         </DialogActions>
       </Dialog>

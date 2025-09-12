@@ -59,6 +59,14 @@ export class AdminAPIClient {
     return res.json();
   }
 
+  async persistSettings(content?: string, path?: string): Promise<{ ok: boolean; path: string }> {
+    const res = await this.fetch('/admin/settings/persist', {
+      method: 'POST',
+      body: JSON.stringify({ content, path }),
+    });
+    return res.json();
+  }
+
   async updateSettings(settings: any): Promise<any> {
     const res = await this.fetch('/admin/settings', {
       method: 'PUT',
@@ -90,6 +98,37 @@ export class AdminAPIClient {
     return res.json();
   }
 
+  // MCP
+  async getMcpConfig(): Promise<any> {
+    const res = await this.fetch('/admin/config');
+    return res.json();
+  }
+
+  async getMcpHealth(path: string = '/mcp/sse/health'): Promise<any> {
+    const res = await fetch(`${this.baseURL}${path}`);
+    if (!res.ok) throw new Error(`MCP not healthy (${res.status})`);
+    return res.json();
+  }
+
+  // Logs
+  async getLogs(params: { q?: string; event?: string; since?: string; limit?: number } = {}): Promise<{ items: any[]; count: number }>{
+    const search = new URLSearchParams();
+    for (const [k,v] of Object.entries(params)) {
+      if (v !== undefined && v !== null && String(v).length > 0) search.append(k, String(v));
+    }
+    const res = await this.fetch(`/admin/logs?${search.toString()}`);
+    return res.json();
+  }
+
+  async tailLogs(params: { q?: string; event?: string; lines?: number } = {}): Promise<{ items: any[]; count: number; source?: string }>{
+    const search = new URLSearchParams();
+    for (const [k,v] of Object.entries(params)) {
+      if (v !== undefined && v !== null && String(v).length > 0) search.append(k, String(v));
+    }
+    const res = await this.fetch(`/admin/logs/tail?${search.toString()}`);
+    return res.json();
+  }
+
   // Jobs
   async listJobs(params: { 
     status?: string; 
@@ -110,6 +149,18 @@ export class AdminAPIClient {
   async getJob(id: string): Promise<FaxJob> {
     const res = await this.fetch(`/admin/fax-jobs/${id}`);
     return res.json();
+  }
+
+  async downloadJobPdf(id: string): Promise<Blob> {
+    const res = await fetch(`${this.baseURL}/admin/fax-jobs/${encodeURIComponent(id)}/pdf`, {
+      headers: {
+        'X-API-Key': this.apiKey,
+      },
+    });
+    if (!res.ok) {
+      throw new Error(`Download failed: ${res.status}`);
+    }
+    return res.blob();
   }
 
   // API Keys
@@ -161,6 +212,20 @@ export class AdminAPIClient {
     }
     
     return res.blob();
+  }
+
+  // Inbound helpers
+  async getInboundCallbacks(): Promise<any> {
+    const res = await this.fetch('/admin/inbound/callbacks');
+    return res.json();
+  }
+
+  async simulateInbound(opts: { backend?: string; fr?: string; to?: string; pages?: number; status?: string } = {}): Promise<{ id: string; status: string }> {
+    const res = await this.fetch('/admin/inbound/simulate', {
+      method: 'POST',
+      body: JSON.stringify(opts),
+    });
+    return res.json();
   }
 
   // Send test fax
