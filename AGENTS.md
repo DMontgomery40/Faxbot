@@ -14,15 +14,16 @@ There has **NEVER** been an open source, locally hostable fax server API with AI
 **NEVER:** "OpenFax", "twilio-fax", or any other name  
 **Status:** Production deployment capable, handling PHI/PII in healthcare environments
 
-## Revolutionary Architecture Overview
+## Revolutionary Architecture Overview (v3 Modular Plugins)
 
 Faxbot is the first and only open source fax transmission system that combines:
 
-1. **Multiple Backend Options** - Cloud (Phaxio, Sinch), Self-hosted (SIP/Asterisk), Test Mode
-2. **AI Assistant Integration** - Two MCP servers with three transport protocols each  
-3. **Developer SDKs** - Node.js and Python with identical APIs
-4. **HIPAA Compliance** - Built-in controls for healthcare PHI handling
-5. **Non-Healthcare Flexibility** - Configurable security for non-PHI scenarios
+1. **Modular Provider Plugins (v3)** — Outbound, inbound, auth, and storage provider slots are resolved at runtime via a single config file. Providers are implemented as plugins (Python for backend execution; Node plugins for MCP/UI helpers only).
+2. **Multiple Backends via Plugins** — Cloud (Phaxio, Sinch), Self‑hosted (SIP/Asterisk), and Test Mode are expressed as plugins bound to provider slots.
+3. **AI Assistant Integration** — Two MCP servers (Node + Python) with three transports each (stdio/HTTP/SSE) derive tools from active capabilities.
+4. **Developer SDKs** — Node.js and Python with identical APIs (OpenAPI alignment), stable error mapping.
+5. **HIPAA Compliance** — Built‑in controls for healthcare PHI handling across plugins (HMAC verification, secure storage options, no secret logging).
+6. **Non‑Healthcare Flexibility** — Configurable security for non‑PHI scenarios; safe defaults remain available.
 
 **Architecture Flow:**
 ```
@@ -41,6 +42,11 @@ What this means for all agents and contributors
 - Contextual help everywhere: tooltips, helper text, and “Learn more” links across all screens.
 - Backend isolation in the UI: show provider-specific guidance only for the selected backend.
 - Mobile-first polish: layouts, spacing, and controls must be legible and usable on phones.
+
+v3 UI additions
+- Plugins tab: manage active provider plugins with enable/disable toggles and schema‑driven config forms.
+- Curated registry search: discover available plugins; remote install is disabled by default and requires explicit approval when enabled.
+- Contextual help per active provider: tips and “Learn more” links are plugin‑specific; no cross‑backend leakage.
 
 Acceptance criteria (per screen or feature)
 - Inline explanation for each field or control (short helper text or tooltip).
@@ -61,7 +67,17 @@ Developer notes
 - Keep copy short and plain; reserve deep detail for the docs site.
 - Avoid logging sensitive data in UI or network tabs; surface IDs/metadata only.
 
-## Backends (mutually exclusive)
+## Provider Slots and Backends (v3)
+
+In v3, backends are provided by plugins bound to provider slots via a single resolved config.
+
+Provider slots (initial)
+- outbound: sending faxes (capabilities: send, get_status)
+- inbound: receiving/callback models (capabilities: list_inbound, get_inbound_pdf; cloud callbacks remain HTTP endpoints in core that delegate to plugin handlers)
+- auth (optional): authentication/authorization helpers (e.g., OIDC validation)
+- storage (optional): artifact storage adapters (e.g., S3)
+
+Only one outbound provider is active at a time. UI must only show guidance for the currently selected provider.
 
 ### 1. Phaxio Backend (Cloud) - RECOMMENDED FOR MOST USERS
 **When to use:** Healthcare and business users wanting simplicity  
@@ -195,6 +211,10 @@ client.check_health()
 - **Do NOT** directly integrate with backends (Phaxio/Asterisk)
 - **Always call** Faxbot REST API endpoints
 
+OpenAPI alignment
+- `api/openapi.yaml` is the source of truth for REST endpoints.
+- SDKs and Admin UI types should match the OpenAPI contracts; codegen is optional but server must not drift from spec.
+
 ## Auth and API Keys (Updated)
 
 - Multi-key auth is implemented. Tokens follow `fbk_live_<keyId>_<secret>` and are passed as `X-API-Key`.
@@ -261,6 +281,9 @@ Notes
 - Backends remain isolated: no Phaxio details in SIP paths and vice versa.
 - Idempotency for inbound callbacks uses DB uniqueness on `(provider_sid, event_type)`.
 
+v3 plugin note
+- Inbound cloud callbacks remain core HTTP endpoints (Phaxio/Sinch) that delegate to plugin handlers; signature verification stays in core and cannot be disabled by plugins.
+
 ### Admin Console coverage for inbound (UI goals)
 - Toggle to enable inbound receiving with clear warnings on storage and PHI.
 - Storage configuration UI (local vs S3/S3‑compatible) with KMS and endpoint hints.
@@ -286,13 +309,15 @@ GET  /health           # Service health check
 - Keys: API key management (mint/list/rotate/delete) with copy-to-clipboard UX.
 - Inbound (when enabled): listing, detail, secure download, retention status.
 
-### MCP Tools (only two)
+### MCP Tools (v3 parity)
 - send_fax
   - stdio: `{ to, filePath }` preferred; `{ to, fileContent, fileName, fileType }` supported
   - HTTP/SSE: `{ to, fileContent, fileName, fileType }` (base64 required)
 - get_fax_status: `{ jobId }`
+- list_inbound: `{ limit?, cursor? }` (when inbound enabled)
+- get_inbound_pdf: `{ inboundId, asBase64? }` (guarded by scopes/limits)
 
-No OCR tools (`faxbot_pdf` removed by design).
+No OCR tools (`faxbot_pdf` removed by design). Node and Python MCP servers must expose the same tool set for a given config.
 
 ### Typical Workflows
 
@@ -311,7 +336,9 @@ No OCR tools (`faxbot_pdf` removed by design).
 ## Critical Implementation Warnings
 
 ### 1. Backend Isolation is MANDATORY
-**NEVER mix instructions between backends.** A Phaxio user should never see Asterisk configuration. A SIP user should never see Phaxio setup instructions.
+With v3 plugins, isolation is enforced at the UI and config layer:
+- Only the active outbound provider’s settings and guidance are shown.
+- Switching providers is a guided flow; never show mixed provider setup on the same screen.
 
 ### 2. MCP File Handling — Practical Notes
 - stdio: pass `filePath` (no base64, no token limits)
@@ -394,6 +421,32 @@ fax_jobs:
 - Multi‑instance: app’s in‑memory rate limiting is per‑node; rely on edge rate limiting or add a distributed limiter later.
 
 See also: `docs/DEPLOYMENT.md`.
+
+## v3 Plugin Architecture — Contracts and Endpoints
+
+Feature flags
+- `FEATURE_V3_PLUGINS=true` enables plugin discovery endpoints and the Admin Console Plugins tab.
+- `FEATURE_PLUGIN_INSTALL=false` by default; remote install is disabled unless explicitly approved and allowlisted.
+
+Config store
+- Single resolved config file at `config/faxbot.config.json` (override with `FAXBOT_CONFIG_PATH`).
+- Structure: `{ version, providers: { outbound: { plugin, enabled, settings }, inbound: { ... }, auth?: { ... }, storage?: { ... } } }`
+- Atomic writes with backups; rollback to last known‑good on validation/startup failure; surface Admin UI banner.
+
+Discovery and endpoints (when `FEATURE_V3_PLUGINS=true`)
+- `GET /plugins` — list installed plugins with manifests and current enabled/config values
+- `GET /plugins/{id}/config` — return enabled + settings for a plugin
+- `PUT /plugins/{id}/config` — validate via JSON Schema and persist atomically
+- `GET /plugin-registry` — serve curated registry JSON for UI search
+
+Security and permissions
+- New admin scopes: `admin:plugins:read`, `admin:plugins:write` for list/get/update.
+- Only keys with `keys:manage` may change plugin configs.
+- Per‑key RPM limits should mirror inbound list/get defaults for plugin reads; stricter for writes.
+
+Dynamic install (optional, off by default)
+- If enabled, enforce a strict allowlist with checksums (and signatures if provided); non‑interactive, sandboxed installs only.
+- For HIPAA profiles, keep remote install disabled.
 
 ## Security Architecture Deep Dive
 
@@ -535,11 +588,11 @@ What goes where
   - Inbox UI, tagging/routing, notifications
   - Analytics, exports, support tooling
 
-Branch policy (enforced)
-- Long‑lived branches are limited to exactly: `main`, `development`, and `docs-jekyll-site` (GitHub Pages publishing branch).
-- All feature work goes directly to `development`. Do not create additional branches unless explicitly approved by the project owner.
-- Unapproved or “rogue” branches will be removed to maintain the branch structure.
-- Tag releases from `main` (e.g., `v1.1.0`) so MVP consumers can pin stable versions.
+Branch policy (v3)
+- Long‑lived branches are limited to: `main`, `development`, and `docs-jekyll-site` (GitHub Pages branch).
+- All work targets `development`. Short‑lived feature branches may be created only with owner approval and must merge back into `development` via PR.
+- Unapproved or “rogue” branches will be removed to maintain the structure.
+- Tag releases from `main` (e.g., `v3.0.0`) so consumers can pin stable versions.
 
 Docs publishing
 - GitHub Pages publishes from the `docs-jekyll-site` branch. Do not repoint Pages without approval.
@@ -558,7 +611,7 @@ Receiving capability recommendation
 ### ❌ Don't Do This:
 1. **Mix backend documentation** - Phaxio users see SIP instructions
 2. **Assume MCP knowledge** - Explain it's for AI tool integration  
-3. **Hard-code backends** - Always check FAX_BACKEND environment
+3. **Hard‑code backends** - In v3, always resolve through the provider adapter/config store; do not hard‑code backends or mix provider logic.
 4. **Skip authentication** - Even non-HIPAA users need reasonable security
 5. **Log PHI content** - PDF contents, phone numbers in production logs
 6. **Default weak passwords** - "changeme" must be changed
