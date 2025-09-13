@@ -55,3 +55,6 @@ logs/
 
 # Project-specific
 /AGENTS.md
+# Internal audits and working dirs (kept off main)
+audit*/
+development/
