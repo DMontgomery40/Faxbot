@@ -18,6 +18,7 @@ import {
   Grid,
   Paper,
 } from '@mui/material';
+import { Chip } from '@mui/material';
 import AdminAPIClient from '../api/client';
 import SecretInput from './common/SecretInput';
 
@@ -256,6 +257,14 @@ function SetupWizard({ client, onDone }: SetupWizardProps) {
             <Typography variant="h6" gutterBottom>
               Configure {config.backend.toUpperCase()} Credentials
             </Typography>
+            <Box sx={{ display: 'flex', gap: 1, mb: 2 }}>
+              <Button variant="outlined" onClick={handleValidate} disabled={validating}>
+                {validating ? <CircularProgress size={18} /> : 'Validate Provider'}
+              </Button>
+              {validationResults && !validationResults.error && (
+                <Chip color={(validationResults.checks && Object.values(validationResults.checks).every(Boolean)) ? 'success' : 'warning'} label={(validationResults.checks && Object.values(validationResults.checks).every(Boolean)) ? 'All checks passed' : 'Review checks'} />
+              )}
+            </Box>
             
             {config.backend === 'phaxio' && (
               <Grid container spacing={{ xs: 2, md: 3 }}>
@@ -391,18 +400,21 @@ function SetupWizard({ client, onDone }: SetupWizardProps) {
                   <Paper sx={{ p: 2, mt: 2 }}>
                     <Typography variant="body2" sx={{ mb: 1 }}>Callback URL:</Typography>
                     <Box component="pre" sx={{ p: 1, bgcolor: 'background.default', borderRadius: 1, overflow: 'auto' }}>{callbacks.callbacks[0].url}</Box>
-                    <Box sx={{ mt: 1, display: 'flex', gap: 1 }}>
-                      <Button variant="outlined" onClick={() => navigator.clipboard.writeText(callbacks.callbacks[0].url)}>Copy</Button>
-                      <Button variant="outlined" onClick={async () => { try { await client.simulateInbound({ backend: config.backend }); setSnack('Simulated inbound received'); } catch(e:any){ setSnack(e?.message||'Simulation failed'); } }}>Simulate Inbound</Button>
-                    </Box>
-                    <Box sx={{ mt: 2, display: 'flex', gap: 1, alignItems: 'center' }}>
-                      <Button variant="contained" onClick={startVerifyInbound} disabled={verifyingInbound}>
-                        {verifyingInbound ? 'Waiting for inbound…' : 'Start Verify Inbound'}
-                      </Button>
-                      {verifyFound && (
-                        <Typography variant="body2" color="success.main">Verified: inbound event received ({String(verifyFound.backend || 'unknown')})</Typography>
-                      )}
-                    </Box>
+                <Box sx={{ mt: 1, display: 'flex', gap: 1 }}>
+                  <Button variant="outlined" onClick={() => navigator.clipboard.writeText(callbacks.callbacks[0].url)}>Copy</Button>
+                  <Button variant="outlined" onClick={async () => { try { await client.simulateInbound({ backend: config.backend }); setSnack('Simulated inbound received'); } catch(e:any){ setSnack(e?.message||'Simulation failed'); } }}>Simulate Inbound</Button>
+                </Box>
+                <Box sx={{ mt: 2, display: 'flex', gap: 1, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <Button variant="contained" onClick={startVerifyInbound} disabled={verifyingInbound}>
+                    {verifyingInbound ? 'Waiting for inbound…' : 'Start Verify Inbound'}
+                  </Button>
+                  {verifyFound && (
+                    <Typography variant="body2" color="success.main">Verified: inbound event received ({String(verifyFound.backend || 'unknown')})</Typography>
+                  )}
+                  {!verifyFound && verifyingInbound && (
+                    <Typography variant="body2" color="text.secondary">Waiting for callback…</Typography>
+                  )}
+                </Box>
                     <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
                       Paste this URL into your {config.backend.toUpperCase()} console for inbound fax delivery.
                       {"  •  "}
@@ -528,15 +540,20 @@ function SetupWizard({ client, onDone }: SetupWizardProps) {
                 ) : (
                   <Box>
                     {Object.entries(validationResults.checks || {}).map(([key, value]) => (
-                      <Box key={key} display="flex" justifyContent="space-between" mb={1}>
-                        <Typography>{key}:</Typography>
-                        <Typography 
-                          color={value === true ? 'success.main' : value === false ? 'error.main' : 'text.secondary'}
-                        >
-                          {String(value)}
-                        </Typography>
+                      <Box key={key} display="flex" justifyContent="space-between" mb={1} alignItems="center">
+                        <Box>
+                          <Typography>{key.replace(/_/g,' ')}:</Typography>
+                          <Typography variant="caption" color="text.secondary">
+                            {config.backend === 'phaxio' && key.includes('auth') ? 'Set PHAXIO_API_KEY/PHAXIO_API_SECRET in Phaxio console.' : ''}
+                            {config.backend === 'sinch' && key.includes('auth') ? 'Set SINCH project, key and secret in Sinch Fax API.' : ''}
+                          </Typography>
+                        </Box>
+                        <Chip size="small" color={value ? 'success' : 'error'} label={value ? 'Pass' : 'Fail'} />
                       </Box>
                     ))}
+                    <Typography variant="caption" color="text.secondary">
+                      Help: <a href="https://www.phaxio.com/docs/" target="_blank" rel="noreferrer">Phaxio</a> • <a href="https://developers.sinch.com/docs/fax/api-reference/" target="_blank" rel="noreferrer">Sinch Fax API</a>
+                    </Typography>
                   </Box>
                 )}
               </Paper>

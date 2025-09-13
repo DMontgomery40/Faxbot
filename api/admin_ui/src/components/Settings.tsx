@@ -183,6 +183,10 @@ function Settings({ client }: SettingsProps) {
                       primary="Backend Type"
                       secondary={settings.backend.type.toUpperCase()}
                     />
+                    <Typography variant="caption" color="text.secondary" sx={{ mr: 2 }}>
+                      Choose your transport backend. Changing providers may require a restart and
+                      provider-specific configuration. For SIP/Asterisk, ensure private networking and T.38 support.
+                    </Typography>
                     <select
                       value={form.backend || settings.backend.type}
                       onChange={(e) => handleForm('backend', e.target.value)}
@@ -221,6 +225,9 @@ function Settings({ client }: SettingsProps) {
                       primary="API Key Required"
                       secondary={settings.security.require_api_key ? 'Yes' : 'No'}
                     />
+                    <Typography variant="caption" color="text.secondary" sx={{ mr: 2 }}>
+                      Enable in production; required for HIPAA. Mint DB-backed keys in the Keys tab and pass them as X-API-Key.
+                    </Typography>
                     <select
                       value={(form.require_api_key ?? settings.security.require_api_key) ? 'true' : 'false'}
                       onChange={(e) => handleForm('require_api_key', e.target.value === 'true')}
@@ -238,6 +245,9 @@ function Settings({ client }: SettingsProps) {
                       primary="HTTPS Enforced"
                       secondary={settings.security.enforce_https ? 'Yes' : 'No'}
                     />
+                    <Typography variant="caption" color="text.secondary" sx={{ mr: 2 }}>
+                      Required for PHI. PUBLIC_API_URL must be HTTPS for cloud providers to fetch PDFs securely.
+                    </Typography>
                     <select
                       value={(form.enforce_public_https ?? settings.security.enforce_https) ? 'true' : 'false'}
                       onChange={(e) => handleForm('enforce_public_https', e.target.value === 'true')}
@@ -255,6 +265,9 @@ function Settings({ client }: SettingsProps) {
                       primary="Audit Logging"
                       secondary={settings.security.audit_enabled ? 'Enabled' : 'Disabled'}
                     />
+                    <Typography variant="caption" color="text.secondary" sx={{ mr: 2 }}>
+                      Enable structured logs for admin actions and fax lifecycle. Set AUDIT_LOG_FILE to persist; view in Logs tab.
+                    </Typography>
                     <select
                       value={(form.audit_log_enabled ?? settings.security.audit_enabled) ? 'true' : 'false'}
                       onChange={(e) => handleForm('audit_log_enabled', e.target.value === 'true')}
@@ -272,6 +285,9 @@ function Settings({ client }: SettingsProps) {
                       primary="Load persisted .env at startup"
                       secondary={persistedEnabled ? 'Enabled' : 'Disabled'}
                     />
+                    <Typography variant="caption" color="text.secondary" sx={{ mr: 2 }}>
+                      Loads /faxdata/faxbot.env at boot. Use “Save .env to server” after applying changes to keep them across restarts.
+                    </Typography>
                     <select
                       value={(form.enable_persisted_settings ?? persistedEnabled) ? 'true' : 'false'}
                       onChange={(e) => handleForm('enable_persisted_settings', e.target.value === 'true')}
@@ -307,43 +323,52 @@ function Settings({ client }: SettingsProps) {
                         <a href="https://developers.sinch.com/docs/fax/api-reference/" target="_blank" rel="noreferrer">Sinch Fax API (Phaxio)</a>
                       </Typography>
                     </ListItem>
-                    <ListItem>
-                      <ListItemIcon>{getStatusIcon(!!settings.phaxio.api_key)}</ListItemIcon>
-                      <ListItemText
-                        primary="API Key"
-                        secondary={settings.phaxio.api_key || 'Not configured'}
-                      />
-                      <input
-                        placeholder="Update PHAXIO_API_KEY"
-                        onChange={(e) => handleForm('phaxio_api_key', e.target.value)}
-                        style={{ background: 'transparent', color: 'inherit', borderColor: '#444', padding: '6px', borderRadius: 6 }}
-                      />
-                    </ListItem>
-                    <ListItem>
-                      <ListItemIcon>{getStatusIcon(!!settings.phaxio.api_secret)}</ListItemIcon>
-                      <ListItemText
-                        primary="API Secret"
-                        secondary={settings.phaxio.api_secret || 'Not configured'}
-                      />
-                      <input
-                        placeholder="Update PHAXIO_API_SECRET"
-                        onChange={(e) => handleForm('phaxio_api_secret', e.target.value)}
-                        style={{ background: 'transparent', color: 'inherit', borderColor: '#444', padding: '6px', borderRadius: 6 }}
-                      />
-                    </ListItem>
-                    <ListItem>
-                      <ListItemIcon>{getStatusIcon(!!settings.phaxio.callback_url)}</ListItemIcon>
-                      <ListItemText
-                        primary="Callback URL"
-                        secondary={settings.phaxio.callback_url || 'Not configured'}
-                      />
-                      <input
-                        placeholder="PUBLIC_API_URL"
-                        defaultValue={form.public_api_url || ''}
-                        onChange={(e) => handleForm('public_api_url', e.target.value)}
-                        style={{ background: 'transparent', color: 'inherit', borderColor: '#444', padding: '6px', borderRadius: 6, minWidth: '220px' }}
-                      />
-                    </ListItem>
+                  <ListItem>
+                    <ListItemIcon>{getStatusIcon(!!settings.phaxio.api_key)}</ListItemIcon>
+                    <ListItemText
+                      primary="API Key"
+                      secondary={settings.phaxio.api_key || 'Not configured'}
+                    />
+                    <Typography variant="caption" color="text.secondary" sx={{ mr: 2 }}>
+                      Get from Phaxio console. Use a service account and keep this secret safe.
+                    </Typography>
+                    <input
+                      placeholder="Update PHAXIO_API_KEY"
+                      onChange={(e) => handleForm('phaxio_api_key', e.target.value)}
+                      style={{ background: 'transparent', color: 'inherit', borderColor: '#444', padding: '6px', borderRadius: 6 }}
+                    />
+                  </ListItem>
+                  <ListItem>
+                    <ListItemIcon>{getStatusIcon(!!settings.phaxio.api_secret)}</ListItemIcon>
+                    <ListItemText
+                      primary="API Secret"
+                      secondary={settings.phaxio.api_secret || 'Not configured'}
+                    />
+                    <Typography variant="caption" color="text.secondary" sx={{ mr: 2 }}>
+                      Get from Phaxio console. Required alongside API key for provider API calls.
+                    </Typography>
+                    <input
+                      placeholder="Update PHAXIO_API_SECRET"
+                      onChange={(e) => handleForm('phaxio_api_secret', e.target.value)}
+                      style={{ background: 'transparent', color: 'inherit', borderColor: '#444', padding: '6px', borderRadius: 6 }}
+                    />
+                  </ListItem>
+                  <ListItem>
+                    <ListItemIcon>{getStatusIcon(!!settings.phaxio.callback_url)}</ListItemIcon>
+                    <ListItemText
+                      primary="Callback URL"
+                      secondary={settings.phaxio.callback_url || 'Not configured'}
+                    />
+                    <Typography variant="caption" color="text.secondary" sx={{ mr: 2 }}>
+                      Phaxio status webhooks hit /phaxio-callback; PUBLIC_API_URL must be HTTPS. Enable HMAC verification for security.
+                    </Typography>
+                    <input
+                      placeholder="PUBLIC_API_URL"
+                      defaultValue={form.public_api_url || ''}
+                      onChange={(e) => handleForm('public_api_url', e.target.value)}
+                      style={{ background: 'transparent', color: 'inherit', borderColor: '#444', padding: '6px', borderRadius: 6, minWidth: '220px' }}
+                    />
+                  </ListItem>
                   </List>
                 )}
 
@@ -352,44 +377,53 @@ function Settings({ client }: SettingsProps) {
                     <ListItem>
                       <Typography id="settings-sip" variant="subtitle1">SIP / Asterisk</Typography>
                     </ListItem>
-                    <ListItem>
-                      <ListItemIcon>{getStatusIcon(!!settings.sip.ami_host)}</ListItemIcon>
-                      <ListItemText
-                        primary="AMI Host"
-                        secondary={settings.sip.ami_host || 'Not configured'}
-                      />
-                      <input
-                        placeholder="ASTERISK_AMI_HOST"
-                        onChange={(e) => handleForm('ami_host', e.target.value)}
-                        style={{ background: 'transparent', color: 'inherit', borderColor: '#444', padding: '6px', borderRadius: 6 }}
-                      />
-                    </ListItem>
-                    <ListItem>
-                      <ListItemIcon>
-                        {settings.sip.ami_password_is_default ? <WarningIcon color="warning" /> : <CheckCircleIcon color="success" />}
-                      </ListItemIcon>
-                      <ListItemText
-                        primary="AMI Password"
-                        secondary={settings.sip.ami_password_is_default ? 'Using default (insecure)' : 'Custom password set'}
-                      />
-                      <input
-                        placeholder="Update ASTERISK_AMI_PASSWORD"
-                        onChange={(e) => handleForm('ami_password', e.target.value)}
-                        style={{ background: 'transparent', color: 'inherit', borderColor: '#444', padding: '6px', borderRadius: 6 }}
-                      />
-                    </ListItem>
-                    <ListItem>
-                      <ListItemIcon>{getStatusIcon(!!settings.sip.station_id)}</ListItemIcon>
-                      <ListItemText
-                        primary="Station ID"
-                        secondary={settings.sip.station_id || 'Not configured'}
-                      />
-                      <input
-                        placeholder="FAX_LOCAL_STATION_ID"
-                        onChange={(e) => handleForm('fax_station_id', e.target.value)}
-                        style={{ background: 'transparent', color: 'inherit', borderColor: '#444', padding: '6px', borderRadius: 6 }}
-                      />
-                    </ListItem>
+                  <ListItem>
+                    <ListItemIcon>{getStatusIcon(!!settings.sip.ami_host)}</ListItemIcon>
+                    <ListItemText
+                      primary="AMI Host"
+                      secondary={settings.sip.ami_host || 'Not configured'}
+                    />
+                    <Typography variant="caption" color="text.secondary" sx={{ mr: 2 }}>
+                      Asterisk service hostname on your private network (e.g., docker compose service name "asterisk").
+                    </Typography>
+                    <input
+                      placeholder="ASTERISK_AMI_HOST"
+                      onChange={(e) => handleForm('ami_host', e.target.value)}
+                      style={{ background: 'transparent', color: 'inherit', borderColor: '#444', padding: '6px', borderRadius: 6 }}
+                    />
+                  </ListItem>
+                  <ListItem>
+                    <ListItemIcon>
+                      {settings.sip.ami_password_is_default ? <WarningIcon color="warning" /> : <CheckCircleIcon color="success" />}
+                    </ListItemIcon>
+                    <ListItemText
+                      primary="AMI Password"
+                      secondary={settings.sip.ami_password_is_default ? 'Using default (insecure)' : 'Custom password set'}
+                    />
+                    <Typography variant="caption" color="text.secondary" sx={{ mr: 2 }}>
+                      Must not be the default. Update in both Faxbot and Asterisk manager.conf; never expose 5038 publicly.
+                    </Typography>
+                    <input
+                      placeholder="Update ASTERISK_AMI_PASSWORD"
+                      onChange={(e) => handleForm('ami_password', e.target.value)}
+                      style={{ background: 'transparent', color: 'inherit', borderColor: '#444', padding: '6px', borderRadius: 6 }}
+                    />
+                  </ListItem>
+                  <ListItem>
+                    <ListItemIcon>{getStatusIcon(!!settings.sip.station_id)}</ListItemIcon>
+                    <ListItemText
+                      primary="Station ID"
+                      secondary={settings.sip.station_id || 'Not configured'}
+                    />
+                    <Typography variant="caption" color="text.secondary" sx={{ mr: 2 }}>
+                      Your fax header/DID in E.164 format (e.g., +15551234567).
+                    </Typography>
+                    <input
+                      placeholder="FAX_LOCAL_STATION_ID"
+                      onChange={(e) => handleForm('fax_station_id', e.target.value)}
+                      style={{ background: 'transparent', color: 'inherit', borderColor: '#444', padding: '6px', borderRadius: 6 }}
+                    />
+                  </ListItem>
                   </List>
                 )}
               </CardContent>
@@ -454,7 +488,7 @@ function Settings({ client }: SettingsProps) {
                           <Typography variant="caption" color="text.secondary">
                             Shared secret used by your Asterisk dialplan to POST inbound fax metadata to Faxbot.
                             Keep this private and only use it on the private network.
-                            {' '}<a href="https://github.com/your-org/faxbot/blob/main/docs-site/docs/asterisk/inbound.md" target="_blank" rel="noreferrer">Asterisk inbound guide</a>
+                            {' '}<a href="https://dmontgomery40.github.io/Faxbot/" target="_blank" rel="noreferrer">Docs site (Asterisk inbound)</a>
                           </Typography>
                         }
                       />
@@ -466,7 +500,12 @@ function Settings({ client }: SettingsProps) {
                       <Button size="small" sx={{ ml: 1 }} onClick={async ()=>{
                         try {
                           const bytes = new Uint8Array(32);
-                          (window.crypto || ({} as any)).getRandomValues ? window.crypto.getRandomValues(bytes) : bytes.fill(Math.floor(Math.random()*256));
+                          const cryptoObj: any = (typeof window !== 'undefined') ? (window as any).crypto : undefined;
+                          if (cryptoObj && typeof cryptoObj.getRandomValues === 'function') {
+                            cryptoObj.getRandomValues(bytes);
+                          } else {
+                            for (let i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256);
+                          }
                           const b64 = btoa(String.fromCharCode(...Array.from(bytes))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
                           await client.updateSettings({ asterisk_inbound_secret: b64 });
                           await client.reloadSettings();
@@ -565,6 +604,9 @@ function Settings({ client }: SettingsProps) {
                 <List dense>
                   <ListItem>
                     <ListItemText primary="Storage Backend" secondary={(form.storage_backend || settings.storage?.backend || 'local').toUpperCase()} />
+                    <Typography variant="caption" color="text.secondary" sx={{ mr: 2 }}>
+                      Local for development only. Use S3 with KMS for PHI in production.
+                    </Typography>
                     <select
                       value={form.storage_backend || settings.storage?.backend || 'local'}
                       onChange={(e) => handleForm('storage_backend', e.target.value)}
@@ -594,6 +636,9 @@ function Settings({ client }: SettingsProps) {
                       </ListItem>
                       <ListItem>
                         <ListItemText primary="S3 KMS Key ID" secondary={settings.storage?.s3_kms_enabled ? 'Configured' : 'Not set'} />
+                        <Typography variant="caption" color="text.secondary" sx={{ mr: 2 }}>
+                          Enable server-side encryption with KMS by specifying a CMK (recommended for PHI).
+                        </Typography>
                         <input placeholder="S3_KMS_KEY_ID" onChange={(e)=>handleForm('s3_kms_key_id', e.target.value)} style={{ background: 'transparent', color: 'inherit', borderColor: '#444', padding: '6px', borderRadius: 6, minWidth: '260px' }} />
                       </ListItem>
                       <ListItem>
@@ -620,6 +665,9 @@ function Settings({ client }: SettingsProps) {
                   <ListItem>
                     <ListItemText primary="Database URL" secondary={settings.database?.url || 'sqlite:///./faxbot.db'} />
                     <Button variant="outlined" onClick={async ()=>{ try{ setLoading(true); setError(null); await client.updateSettings({ database_url: 'sqlite:////faxdata/faxbot.db' }); await client.reloadSettings(); await fetchSettings(); setSnack('Switched DB to /faxdata/faxbot.db'); }catch(e:any){ setError(e?.message||'Failed to switch DB'); } finally{ setLoading(false);} }}>Use persistent DB</Button>
+                    <Typography variant="caption" color="text.secondary" sx={{ ml: 2 }}>
+                      SQLite in /faxdata persists across rebuilds. For production scale, use Postgres.
+                    </Typography>
                   </ListItem>
                   <ListItem>
                     <Button variant="outlined" onClick={async ()=>{ try{ setLoading(true); const res = await (client as any).fetch?.('/admin/db-status'); const data = await res.json(); setEnvContent(JSON.stringify(data, null, 2)); setSnack('DB status loaded'); } catch(e:any){ setError(e?.message||'Failed to load DB status'); } finally{ setLoading(false);} }}>Check DB Status</Button>
@@ -627,18 +675,30 @@ function Settings({ client }: SettingsProps) {
                   </ListItem>
                   <ListItem>
                     <ListItemText primary="Max Upload Size (MB)" secondary={String(settings.limits?.max_file_size_mb || 10)} />
+                    <Typography variant="caption" color="text.secondary" sx={{ mr: 2 }}>
+                      Default 10 MB aligns with provider limits. Increase only if your environment and provider allow it.
+                    </Typography>
                     <input type="number" placeholder={String(settings.limits?.max_file_size_mb || 10)} onChange={(e)=>handleForm('max_file_size_mb', parseInt(e.target.value))} style={{ background: 'transparent', color: 'inherit', borderColor: '#444', padding: '6px', borderRadius: 6, width: 120 }} />
                   </ListItem>
                   <ListItem>
                     <ListItemText primary="Global Rate Limit (RPM)" secondary={String(settings.limits?.rate_limit_rpm || 0)} />
+                    <Typography variant="caption" color="text.secondary" sx={{ mr: 2 }}>
+                      Per-key requests per minute. Set to mitigate abuse; 0 disables global rate limiting.
+                    </Typography>
                     <input type="number" placeholder={String(settings.limits?.rate_limit_rpm || 0)} onChange={(e)=>handleForm('max_requests_per_minute', parseInt(e.target.value))} style={{ background: 'transparent', color: 'inherit', borderColor: '#444', padding: '6px', borderRadius: 6, width: 120 }} />
                   </ListItem>
                   <ListItem>
                     <ListItemText primary="Inbound List RPM" secondary={String(settings.limits?.inbound_list_rpm ?? 30)} />
+                    <Typography variant="caption" color="text.secondary" sx={{ mr: 2 }}>
+                      Rate limit for listing inbound faxes (per key). Keep conservative for HIPAA workloads.
+                    </Typography>
                     <input type="number" placeholder={String(settings.limits?.inbound_list_rpm ?? 30)} onChange={(e)=>handleForm('inbound_list_rpm', parseInt(e.target.value))} style={{ background: 'transparent', color: 'inherit', borderColor: '#444', padding: '6px', borderRadius: 6, width: 120 }} />
                   </ListItem>
                   <ListItem>
                     <ListItemText primary="Inbound Get RPM" secondary={String(settings.limits?.inbound_get_rpm ?? 60)} />
+                    <Typography variant="caption" color="text.secondary" sx={{ mr: 2 }}>
+                      Rate limit for fetching inbound fax metadata/PDF (per key).
+                    </Typography>
                     <input type="number" placeholder={String(settings.limits?.inbound_get_rpm ?? 60)} onChange={(e)=>handleForm('inbound_get_rpm', parseInt(e.target.value))} style={{ background: 'transparent', color: 'inherit', borderColor: '#444', padding: '6px', borderRadius: 6, width: 120 }} />
                   </ListItem>
                 </List>

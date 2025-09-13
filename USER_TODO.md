@@ -68,7 +68,7 @@ Notes
 
 **HIPAA Requirements:**
 - Sign AWS Business Associate Agreement (BAA)
-- Link: https://aws.amazon.com/compliance/hipaa-eligible-services/
+- Link: https://aws.amazon.com/compliance/hipaa-eligible-services-reference/
 - Enable CloudTrail logging for all regions
 - Use only HIPAA-eligible services
 
@@ -254,7 +254,7 @@ postgresql+psycopg2://faxbot:PASSWORD@your-db-endpoint:5432/faxbot
 **Timeline:** Must complete BEFORE handling any PHI
 **Action:**
 1. **AWS BAA:**
-   - Link: https://aws.amazon.com/compliance/hipaa-eligible-services/
+   - Link: https://aws.amazon.com/compliance/hipaa-eligible-services-reference/
    - Sign online through AWS console
    - Covers: EC2, RDS, S3, CloudFront, CloudWatch, etc.
 
@@ -374,4 +374,3 @@ PHAXIO_INBOUND_VERIFY_SIGNATURE=true
 - [ ] Disaster recovery tested
 
 **CRITICAL:** Do not handle any PHI until all BAAs are executed and compliance measures are verified.
-

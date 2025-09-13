@@ -30,6 +30,7 @@ function Logs({ client }: LogsProps) {
   const [expandedRow, setExpandedRow] = useState<any | null>(null);
   const [wrap, setWrap] = useState<boolean>(false);
   const [sincePreset, setSincePreset] = useState<string>('');
+  const [follow, setFollow] = useState<boolean>(false);
 
   const run = async () => {
     try {
@@ -64,6 +65,11 @@ function Logs({ client }: LogsProps) {
   };
 
   useEffect(() => { run(); }, []);
+  useEffect(() => {
+    if (!follow) return;
+    const id = setInterval(run, 2000);
+    return () => clearInterval(id);
+  }, [follow, query, eventFilter, sincePreset, since, limit, source, fileLines]);
 
   const columns = useMemo(() => ['ts','event','job_id','key_id','backend','status','error','to','from','path'], []);
 
@@ -103,6 +109,7 @@ function Logs({ client }: LogsProps) {
               <TextField label="Lines" type="number" size="small" value={fileLines} onChange={(e)=>setFileLines(parseInt(e.target.value||'2000'))} />
             )}
             <FormControlLabel control={<Switch checked={wrap} onChange={(e)=>setWrap(e.target.checked)} />} label="Wrap" />
+            <FormControlLabel control={<Switch checked={follow} onChange={(e)=>setFollow(e.target.checked)} />} label="Follow" />
           </Box>
         </CardContent>
       </Card>

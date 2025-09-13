@@ -139,7 +139,7 @@ function Diagnostics({ client, onNavigate }: DiagnosticsProps) {
     const docs: { text: string; href?: string }[] = [];
     if (t.includes('sip')) {
       if (key === 'ami_reachable') {
-        docs.push({ text: 'Asterisk Manager Interface (AMI) setup guide', href: 'https://wiki.asterisk.org/wiki/display/AST/Asterisk+Manager+Interface' });
+        docs.push({ text: 'Asterisk documentation (AMI)', href: 'https://docs.asterisk.org/' });
         docs.push({ text: 'Verify docker compose asterisk service is running and reachable as host "asterisk" on port 5038.' });
         docs.push({ text: 'Ensure ASTERISK_AMI_USERNAME/PASSWORD match Asterisk manager.conf and that port 5038 is not exposed publicly.' });
       }
