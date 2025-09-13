@@ -33,6 +33,16 @@ permalink: /admin-console/
   - Click “Apply & Reload” to take effect immediately.
   - Backend/storage changes may require a restart to initialize provider clients (e.g., Asterisk AMI) or swap storage drivers safely.
 
+## Persisted Settings (v2)
+
+- Enable loading of a server-side .env on startup: toggle “Load persisted .env at startup” in Settings (sets ENABLE_PERSISTED_SETTINGS=true).
+- Save the current configuration to a persisted file by clicking “Save .env to server”.
+  - Default path: /faxdata/faxbot.env (lives on the `faxdata` volume).
+  - You can still export and download the .env if you prefer manual review.
+- Notes
+  - When enabled, the API loads values from the persisted file before constructing settings, overriding process environment.
+  - Keep this feature local-only and behind the Admin Console gate.
+
 ## Restart (Optional)
 
 - If `ADMIN_ALLOW_RESTART=true`, the Diagnostics page shows a “Restart API” button.
@@ -52,3 +62,25 @@ permalink: /admin-console/
 
 - Dashboard shows the live backend (phaxio/sinch/sip) and simple queue stats. After applying settings, it reflects the new backend.
 - Diagnostics runs a comprehensive check (backend credentials/config, storage, inbound flags, security posture) and shows recommendations.
+
+## Inbound Controls (v2)
+
+- Toggle inbound receiving on/off and configure retention/token TTL in Settings.
+- Backend-specific auth:
+  - SIP/Asterisk: set `ASTERISK_INBOUND_SECRET` for the private `/_internal/asterisk/inbound` route.
+  - Phaxio: enable HMAC verification for inbound webhooks.
+  - Sinch: configure Basic auth and/or HMAC verification for inbound callbacks.
+
+## Outbound PDFs (v2)
+
+- From Jobs, open a job to view details and download the outbound PDF (admin-only). The API generates a PDF per job before dispatching to the selected backend.
+## MCP (v2)
+
+- Embedded Python MCP SSE server is available under `/mcp/sse`.
+- In the UI (MCP tab), enable SSE and optionally require OAuth/JWT.
+- Health check: “SSE Healthy” chip reflects `/mcp/sse/health` status.
+- “Claude Desktop Config” block provides a copy‑ready config snippet.
+- Notes
+  - For HIPAA, enable OAuth/JWT and configure issuer/audience/JWKS.
+  - When disabled, SSE runs without auth for local development only.
+  - Changing MCP flags requires an API restart (use Restart in UI).

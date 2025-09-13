@@ -40,7 +40,7 @@ Auth0
 - Audience: your API Identifier (e.g., `faxbot-mcp`)
 - JWKS: `https://YOUR_TENANT.auth0.com/.well-known/jwks.json`
 - Docs:
-  - Create API (audience): https://auth0.com/docs/get-started/apis/enable-api-authorization
+  - Create API (audience): https://auth0.com/docs/get-started/apis
   - JWKS and token validation: https://auth0.com/docs/secure/tokens/json-web-tokens/json-web-key-sets
   - Client credentials flow: https://auth0.com/docs/get-started/authentication-and-authorization-flow/client-credentials-flow
 
@@ -72,7 +72,7 @@ Keycloak (self‑hosted)
 - Audience: client ID or custom audience claim (depends on realm configuration)
 - JWKS: `${issuer}/protocol/openid-connect/certs`
 - Docs:
-  - OpenID Connect endpoints: https://www.keycloak.org/docs/latest/securing_apps/#openid-connect-endpoints
+  - OpenID Connect endpoints: https://www.keycloak.org/docs/latest/server_admin/#_endpoints
 
 How to test quickly (Auth0 example)
 ```
@@ -93,4 +93,3 @@ Notes
 - You may set `OAUTH_JWKS_URL` explicitly if your provider’s JWKS path differs from the default (e.g., Okta’s `/v1/keys`, Keycloak’s `/protocol/openid-connect/certs`).
 - The SSE servers do not mint tokens; they only validate them. Use your IdP or an internal OAuth server to issue client tokens.
 - For HIPAA deployments, ensure your IdP and reverse proxy enforce TLS, MFA, and appropriate policies.
-
