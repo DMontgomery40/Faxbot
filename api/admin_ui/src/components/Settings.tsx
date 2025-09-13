@@ -488,7 +488,7 @@ function Settings({ client }: SettingsProps) {
                           <Typography variant="caption" color="text.secondary">
                             Shared secret used by your Asterisk dialplan to POST inbound fax metadata to Faxbot.
                             Keep this private and only use it on the private network.
-                            {' '}<a href="https://dmontgomery40.github.io/Faxbot/" target="_blank" rel="noreferrer">Docs site (Asterisk inbound)</a>
+                            {' '}<a href="https://dmontgomery40.github.io/Faxbot/asterisk/inbound/" target="_blank" rel="noreferrer">Asterisk inbound guide</a>
                           </Typography>
                         }
                       />
