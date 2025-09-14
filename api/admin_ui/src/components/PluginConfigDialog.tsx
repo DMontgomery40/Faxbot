@@ -54,9 +54,8 @@ export default function PluginConfigDialog({ open, plugin, initialConfig, onClos
         <Box>
           <Alert severity="info" sx={{ mb: 2 }}>
             Secrets (API key/secret) are configured in Settings → Backend: Phaxio. This form stores only non‑secret values in the plugin config.
-            
-            
-            
+            <br />
+            <a href="https://dashboard.sinch.com/signup" target="_blank" rel="noopener">Sign up</a> · <a href="https://www.phaxio.com/docs/" target="_blank" rel="noopener">Phaxio docs</a>
           </Alert>
           <TextField
             label="Callback URL"
@@ -80,9 +79,8 @@ export default function PluginConfigDialog({ open, plugin, initialConfig, onClos
         <Box>
           <Alert severity="info" sx={{ mb: 2 }}>
             Secrets (API key/secret) are configured in Settings → Backend: Sinch. This form stores only non‑secret values in the plugin config.
-            
-            
-            
+            <br />
+            <a href="https://dashboard.sinch.com/signup" target="_blank" rel="noopener">Sign up</a> · <a href="https://dashboard.sinch.com" target="_blank" rel="noopener">Open Dashboard</a> · <a href="https://developers.sinch.com/docs/fax/overview/" target="_blank" rel="noopener">Fax docs</a>
           </Alert>
           <TextField
             label="Project ID"
@@ -196,4 +194,3 @@ export default function PluginConfigDialog({ open, plugin, initialConfig, onClos
     </Dialog>
   );
 }
-
