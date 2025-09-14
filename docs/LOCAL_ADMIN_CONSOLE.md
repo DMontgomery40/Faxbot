@@ -35,8 +35,8 @@
 - v2: consider a `settings` table for non‑secret toggles; encrypted secret storage can follow with audit.
 
 ### Events & Real‑Time Updates
-- v1 uses polling (simpler and memory‑safe): dashboard polls `/health/ready`; job rows poll `GET /fax/{id}`.
-- v2 can add `GET /admin/events` SSE with idle timeouts and heartbeats.
+- The UI uses polling by default: dashboard polls `/health/ready`; job rows poll `GET /fax/{id}`.
+- Advanced users can run MCP transports (HTTP/SSE/WebSocket) for assistant integrations; UI integrates these indirectly via the API.
 
 ---
 
@@ -53,6 +53,14 @@ Everything here either exists or is tightly scoped to implement.
 - `PUT /admin/settings` (partial) → updates DB‑backed settings. Body uses a typed schema; secrets are provided in full; omitting a secret leaves it unchanged.
 - `POST /admin/settings/reload` → triggers `reload_settings()` and applies changes in‑process; returns what was hot‑reloaded vs requires restart.
 - `POST /admin/settings/validate` → runs connectivity checks based on provided (but not yet saved) values; e.g., Phaxio auth ping, Sinch upload test (dry), AMI login test.
+
+### Plugins (Preview)
+- `GET /plugins` → lists installed provider plugins and current enabled state (read‑only).
+- `GET /plugins/{id}/config` → returns effective config for a provider (sanitized).
+- `PUT /plugins/{id}/config` → persists selection/settings to the server config file.
+- Notes:
+  - The UI shows a Plugins tab only when the server has the plugins feature enabled.
+  - Persisted changes do not immediately alter the running backend; operators apply changes during a planned restart.
 
 Settings Validate Input (subset):
 - `fax_backend: "phaxio"|"sinch"|"sip"|"test"`

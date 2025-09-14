@@ -119,6 +119,9 @@ File handling
 Advanced
 - [Phaxio End-to-End Test](docs/PHAXIO_E2E_TEST.md) — Simulated callback flow for local testing
 
+Development status
+- v3 plugin work (feature-gated) status: see `docs/V3_PHASE_STATUS.md`.
+
 ## Notes
 - Receiving: WIP. Inbound scaffolding exists behind config flags and on the `development` branch (see PHASE_RECEIVE.md). It is not GA yet and remains backend‑isolated (Phaxio/Sinch callbacks, SIP/Asterisk internal). Outbound send is production‑ready.
 - Default backend is `phaxio` for easier onboarding. Set `FAX_BACKEND=sip` explicitly for telephony users or `FAX_BACKEND=sinch` for Sinch v3.

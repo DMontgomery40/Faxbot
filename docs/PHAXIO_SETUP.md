@@ -11,7 +11,7 @@ permalink: /backends/phaxio-setup.html
 ## Overview
 - Cloud backend for sending faxes via Phaxio (also branded “Phaxio by Sinch”).
 - Easiest option; no SIP or telephony expertise required.
- - Send-first. Receiving: WIP behind config flags (see PHASE_RECEIVE.md); not GA yet.
+ - Send-first by default. Optional: inbound receiving is available via a secure callback.
 
 ## Prerequisites
 - Phaxio account and API credentials.
@@ -81,7 +81,14 @@ curl -H "X-API-Key: fbk_live_<keyId>_<secret>" http://localhost:8080/fax/<job_id
 - This API exposes `POST /phaxio-callback` and will update job status when the request includes `?job_id=<id>`.
 - Ensure your PUBLIC_API_URL and callback URL are reachable from Phaxio.
 - Security: by default, callbacks must include a valid `X-Phaxio-Signature` (HMAC-SHA256 of the raw body using `PHAXIO_API_SECRET`). You can disable this by setting `PHAXIO_VERIFY_SIGNATURE=false` (not recommended).
- - Optional retention: set `ARTIFACT_TTL_DAYS>0` to automatically delete PDFs after the specified number of days (cleanup runs daily by default).
+- Optional retention: set `ARTIFACT_TTL_DAYS>0` to automatically delete PDFs after the specified number of days (cleanup runs daily by default).
+
+7) Inbound receiving (optional)
+- Enable inbound mode in your environment: `INBOUND_ENABLED=true`.
+- Configure Phaxio inbound webhook to point to `POST /phaxio-inbound` on your server.
+- Security: `PHAXIO_INBOUND_VERIFY_SIGNATURE=true` (default) verifies `X-Phaxio-Signature` against your `PHAXIO_API_SECRET`.
+- Storage: choose `STORAGE_BACKEND=local` (dev) or `STORAGE_BACKEND=s3` (production). For S3, configure `S3_BUCKET`, `S3_REGION`, optional `S3_PREFIX`, `S3_ENDPOINT_URL`, and `S3_KMS_KEY_ID`.
+- Viewing/downloading inbound PDFs requires either a short‑TTL tokenized link (`GET /inbound/{id}/pdf?token=...`) or an API key with scope `inbound:read`.
 
 ## Costs & HIPAA
 - Phaxio pricing: see their site for per-page costs.

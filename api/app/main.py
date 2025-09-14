@@ -26,6 +26,13 @@ from .audit import init_audit_logger, audit_event
 from .audit import query_recent_logs
 from .storage import get_storage, reset_storage
 from .auth import verify_db_key, create_api_key, list_api_keys, revoke_api_key, rotate_api_key
+
+# v3 plugins (feature-gated)
+try:
+    from .plugins.config_store import read_config as _read_cfg, write_config as _write_cfg  # type: ignore
+except Exception:  # pragma: no cover - optional
+    _read_cfg = None  # type: ignore
+    _write_cfg = None  # type: ignore
 from pydantic import BaseModel
 
 
@@ -530,6 +537,14 @@ def get_admin_config():
         },
         "public_api_url": settings.public_api_url,
     }
+    # v3 plugins status (feature-gated)
+    if settings.feature_v3_plugins:
+        cfg["v3_plugins"] = {
+            "enabled": True,
+            "active_outbound": settings.fax_backend,
+            "config_path": settings.faxbot_config_path,
+            "plugin_install_enabled": settings.feature_plugin_install,
+        }
     return cfg
 
 
@@ -2483,3 +2498,174 @@ async def _handle_any_exc(request: Request, exc: Exception):
         pass
     # Return minimal detail to avoid leaking internals
     return JSONResponse({"detail": "Internal Server Error"}, status_code=500)
+
+
+# ===== v3 Plugins: discovery and config (feature-gated) =====
+def _plugins_disabled_response():
+    return JSONResponse({"detail": "v3 plugins feature disabled"}, status_code=404)
+
+
+def _installed_plugins() -> list[dict[str, Any]]:
+    """Return built-in provider manifests as plugin-like entries.
+
+    This is a minimal discovery surface to unblock Admin UI while
+    the full plugin system is developed.
+    """
+    current = settings.fax_backend
+    items = []
+    # Outbound providers
+    items.append({
+        "id": "phaxio",
+        "name": "Phaxio Cloud Fax",
+        "version": "1.0.0",
+        "categories": ["outbound"],
+        "capabilities": ["send", "get_status", "webhook"],
+        "enabled": (current == "phaxio"),
+        "configurable": True,
+    })
+    items.append({
+        "id": "sinch",
+        "name": "Sinch Fax API v3",
+        "version": "1.0.0",
+        "categories": ["outbound"],
+        "capabilities": ["send", "get_status"],
+        "enabled": (current == "sinch"),
+        "configurable": True,
+    })
+    items.append({
+        "id": "sip",
+        "name": "SIP/Asterisk (Self-hosted)",
+        "version": "1.0.0",
+        "categories": ["outbound"],
+        "capabilities": ["send", "get_status"],
+        "enabled": (current == "sip"),
+        "configurable": True,
+    })
+    # Storage providers (inbound artifacts)
+    items.append({
+        "id": "local",
+        "name": "Local Storage",
+        "version": "1.0.0",
+        "categories": ["storage"],
+        "capabilities": ["store", "retrieve", "delete"],
+        "enabled": (settings.storage_backend == "local"),
+        "configurable": False,
+    })
+    items.append({
+        "id": "s3",
+        "name": "S3 / S3-compatible Storage",
+        "version": "1.0.0",
+        "categories": ["storage"],
+        "capabilities": ["store", "retrieve", "delete"],
+        "enabled": (settings.storage_backend == "s3"),
+        "configurable": True,
+    })
+    return items
+
+
+@app.get("/plugins", dependencies=[Depends(require_admin)])
+def list_plugins():
+    if not settings.feature_v3_plugins:
+        return _plugins_disabled_response()
+    return {"items": _installed_plugins()}
+
+
+@app.get("/plugins/{plugin_id}/config", dependencies=[Depends(require_admin)])
+def get_plugin_config(plugin_id: str):
+    if not settings.feature_v3_plugins:
+        return _plugins_disabled_response()
+    pid = plugin_id.lower()
+    # Effective config from current settings (sanitized)
+    if pid == "phaxio":
+        return {
+            "enabled": settings.fax_backend == "phaxio",
+            "settings": {
+                "callback_url": settings.phaxio_status_callback_url,
+                "verify_signature": settings.phaxio_verify_signature,
+                "configured": bool(settings.phaxio_api_key and settings.phaxio_api_secret),
+            },
+        }
+    if pid == "sinch":
+        return {
+            "enabled": settings.fax_backend == "sinch",
+            "settings": {
+                "project_id": settings.sinch_project_id,
+                "configured": bool(settings.sinch_project_id and settings.sinch_api_key and settings.sinch_api_secret),
+            },
+        }
+    if pid == "sip":
+        return {
+            "enabled": settings.fax_backend == "sip",
+            "settings": {
+                "ami_host": settings.ami_host,
+                "ami_port": settings.ami_port,
+                "ami_username": settings.ami_username,
+                "ami_password_default": settings.ami_password == "changeme",
+            },
+        }
+    if pid == "s3":
+        return {
+            "enabled": settings.storage_backend == "s3",
+            "settings": {
+                "bucket": settings.s3_bucket,
+                "region": settings.s3_region,
+                "prefix": settings.s3_prefix,
+                "endpoint_url": settings.s3_endpoint_url,
+                "kms_key_id": settings.s3_kms_key_id,
+            },
+        }
+    if pid == "local":
+        return {"enabled": settings.storage_backend == "local", "settings": {}}
+    raise HTTPException(404, detail="Plugin not found")
+
+
+class UpdatePluginConfigIn(BaseModel):
+    enabled: Optional[bool] = None
+    settings: Optional[dict[str, Any]] = None
+
+
+@app.put("/plugins/{plugin_id}/config", dependencies=[Depends(require_admin)])
+def update_plugin_config(plugin_id: str, payload: UpdatePluginConfigIn):
+    if not settings.feature_v3_plugins:
+        return _plugins_disabled_response()
+    if _read_cfg is None or _write_cfg is None:
+        raise HTTPException(500, detail="Config store unavailable")
+    cfg_res = _read_cfg(settings.faxbot_config_path)
+    if not cfg_res.ok or cfg_res.data is None:
+        raise HTTPException(500, detail=cfg_res.error or "Failed to read config")
+    data = cfg_res.data
+    pid = plugin_id.lower()
+    # Minimal mapping for outbound/storage
+    if pid in {"phaxio", "sinch", "sip"}:
+        data.setdefault("providers", {}).setdefault("outbound", {})
+        data["providers"]["outbound"]["plugin"] = pid
+        data["providers"]["outbound"]["enabled"] = bool(payload.enabled) if payload.enabled is not None else True
+        data["providers"]["outbound"]["settings"] = payload.settings or data["providers"]["outbound"].get("settings", {})
+    elif pid in {"local", "s3"}:
+        data.setdefault("providers", {}).setdefault("storage", {})
+        data["providers"]["storage"]["plugin"] = pid
+        data["providers"]["storage"]["enabled"] = bool(payload.enabled) if payload.enabled is not None else True
+        data["providers"]["storage"]["settings"] = payload.settings or data["providers"]["storage"].get("settings", {})
+    else:
+        raise HTTPException(404, detail="Plugin not found")
+    wr = _write_cfg(settings.faxbot_config_path, data)
+    if not wr.ok:
+        raise HTTPException(500, detail=wr.error or "Failed to write config")
+    # Note: applying new config at runtime is future work; for now we persist only.
+    return {"ok": True, "path": wr.path}
+
+
+@app.get("/plugin-registry")
+def plugin_registry():
+    if not settings.feature_v3_plugins:
+        return _plugins_disabled_response()
+    # Try to load curated registry file; fallback to built-in list
+    try:
+        reg_path = os.getenv("PLUGIN_REGISTRY_PATH", os.path.join(os.getcwd(), "config", "plugin_registry.json"))
+        if os.path.exists(reg_path):
+            import json as _json
+            with open(reg_path, "r", encoding="utf-8") as f:
+                return _json.load(f)
+    except Exception:
+        pass
+    return {"items": _installed_plugins(), "note": "default registry"}

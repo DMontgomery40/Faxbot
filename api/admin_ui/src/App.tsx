@@ -19,6 +19,7 @@ import AdminAPIClient from './api/client';
 import Dashboard from './components/Dashboard';
 import SetupWizard from './components/SetupWizard';
 import JobsList from './components/JobsList';
+import Plugins from './components/Plugins';
 import ApiKeys from './components/ApiKeys';
 import Settings from './components/Settings';
 import Diagnostics from './components/Diagnostics';
@@ -100,6 +101,7 @@ function App() {
     return localStorage.getItem('faxbot_admin_key') || '';
   });
   const [client, setClient] = useState<AdminAPIClient | null>(null);
+  const [adminConfig, setAdminConfig] = useState<any | null>(null);
   const [authenticated, setAuthenticated] = useState(false);
   const [error, setError] = useState('');
   const [tabValue, setTabValue] = useState(0);
@@ -108,13 +110,14 @@ function App() {
     try {
       const testClient = new AdminAPIClient(key);
       // Test the key by fetching config
-      await testClient.getConfig();
+      const cfg = await testClient.getConfig();
       
       // Success
       localStorage.setItem('faxbot_admin_key', key);
       setApiKey(key);
       setClient(testClient);
       setAuthenticated(true);
+      setAdminConfig(cfg);
       setError('');
     } catch (e) {
       setError('Invalid API key or insufficient permissions');
@@ -346,6 +349,7 @@ function App() {
               <Tab label="MCP" />
               <Tab label="Logs" />
               <Tab label="Diagnostics" />
+              {adminConfig?.v3_plugins?.enabled ? <Tab label="Plugins" /> : null}
             </Tabs>
           </Box>
           
@@ -379,6 +383,11 @@ function App() {
           <TabPanel value={tabValue} index={9}>
             <Diagnostics client={client!} onNavigate={setTabValue} />
           </TabPanel>
+          {adminConfig?.v3_plugins?.enabled ? (
+            <TabPanel value={tabValue} index={10}>
+              <Plugins client={client!} />
+            </TabPanel>
+          ) : null}
         </Container>
       </Box>
     </ThemeProvider>

@@ -249,6 +249,30 @@ export class AdminAPIClient {
     return res.json();
   }
 
+  // v3 Plugins (feature-gated)
+  async listPlugins(): Promise<{ items: any[] }> {
+    const res = await this.fetch('/plugins');
+    return res.json();
+  }
+
+  async getPluginConfig(pluginId: string): Promise<{ enabled: boolean; settings: any }> {
+    const res = await this.fetch(`/plugins/${encodeURIComponent(pluginId)}/config`);
+    return res.json();
+  }
+
+  async updatePluginConfig(pluginId: string, payload: { enabled?: boolean; settings?: Record<string, any> }): Promise<{ ok: boolean; path: string }> {
+    const res = await this.fetch(`/plugins/${encodeURIComponent(pluginId)}/config`, {
+      method: 'PUT',
+      body: JSON.stringify(payload || {}),
+    });
+    return res.json();
+  }
+
+  async getPluginRegistry(): Promise<{ items: any[] }> {
+    const res = await this.fetch('/plugin-registry');
+    return res.json();
+  }
+
   // Polling helper
   startPolling(onUpdate: (data: HealthStatus) => void, intervalMs: number = 5000): () => void {
     let running = true;

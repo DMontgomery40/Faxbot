@@ -168,17 +168,18 @@ SINCH_API_SECRET=...
 
 ## MCP Integration (Node + Python)
 
-Two MCP servers live in `node_mcp/` (Node) and `python_mcp/` (Python). Each supports stdio/HTTP/SSE.
+Two MCP servers live in `node_mcp/` (Node) and `python_mcp/` (Python). Transports now include stdio/HTTP/SSE/WebSocket.
 
 | Transport | Node entrypoint | Python entrypoint | Port | Auth |
 |-----------|------------------|-------------------|------|------|
 | stdio     | `src/servers/stdio.js` | `stdio_server.py` | N/A  | API key |
 | HTTP      | `src/servers/http.js`  | (n/a)            | 3001 | API key |
 | SSE       | `src/servers/sse.js`   | `server.py`      | 3002/3003 | OAuth2/JWT |
+| WebSocket | `src/servers/ws.js`    | (n/a)            | 3004 | API key (MCP_WS_API_KEY or API_KEY) |
 
 Notes
 - Legacy MCP servers under `api/` were removed. Do not reference `api/mcp_*.js`.
-- Node HTTP/SSE JSON limit is 16 MB to account for base64 overhead; REST API still enforces 10 MB raw file size.
+- Node HTTP/SSE/WS JSON limit guidance remains 16 MB base64; REST API still enforces 10 MB raw file size.
 - Prefer stdio + `filePath` for desktop assistants.
 
 ## The Two SDKs: Node.js and Python
@@ -443,6 +444,7 @@ Security and permissions
 - New admin scopes: `admin:plugins:read`, `admin:plugins:write` for list/get/update.
 - Only keys with `keys:manage` may change plugin configs.
 - Per‑key RPM limits should mirror inbound list/get defaults for plugin reads; stricter for writes.
+ - Current implementation uses existing `require_admin` (bootstrap API_KEY or a DB key with `keys:manage`) while scoped plugin keys are designed and rolled out.
 
 Dynamic install (optional, off by default)
 - If enabled, enforce a strict allowlist with checksums (and signatures if provided); non‑interactive, sandboxed installs only.

@@ -10,7 +10,7 @@ permalink: /api-reference.html
 ## Base URL
 - Default: `http://localhost:8080`
 - Health: `GET /health` → `{ "status": "ok" }`
- - Readiness: `GET /health/ready` → 200 when ready; 503 otherwise
+- Readiness: `GET /health/ready` → 200 when ready; 503 otherwise
 
 ## Authentication and API Keys
 - Send `X-API-Key: <token>` on every request. Two options exist:
@@ -171,3 +171,11 @@ Retention and cleanup (inbound)
   - `AUDIT_LOG_SYSLOG=true` and `AUDIT_LOG_SYSLOG_ADDRESS=/dev/log` (optional)
 - Events: `job_created`, `job_dispatch`, `job_updated`, `job_failed`, `pdf_served`.
 - Logs contain job IDs and metadata only (no PHI).
+- Plugin Management (feature: plugins)
+  - `GET /plugins` — list installed plugins (providers and storage). Admin auth required.
+  - `GET /plugins/{id}/config` — get current enabled/settings for a plugin. Admin auth required.
+  - `PUT /plugins/{id}/config` — persist enabled/settings to server config file. Admin auth required.
+  - `GET /plugin-registry` — curated registry with descriptions/links.
+
+Notes
+- Changes are persisted but not applied live; backend selection at runtime continues to use environment until explicitly applied during maintenance.

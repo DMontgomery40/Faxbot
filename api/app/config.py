@@ -133,6 +133,11 @@ class Settings(BaseModel):
     enable_mcp_http: bool = Field(default_factory=lambda: os.getenv("ENABLE_MCP_HTTP", "false").lower() in {"1","true","yes"})
     mcp_http_path: str = Field(default_factory=lambda: os.getenv("MCP_HTTP_PATH", "/mcp/http"))
 
+    # v3 Plugins (feature-gated)
+    feature_v3_plugins: bool = Field(default_factory=lambda: os.getenv("FEATURE_V3_PLUGINS", "false").lower() in {"1","true","yes"})
+    faxbot_config_path: str = Field(default_factory=lambda: os.getenv("FAXBOT_CONFIG_PATH", "config/faxbot.config.json"))
+    feature_plugin_install: bool = Field(default_factory=lambda: os.getenv("FEATURE_PLUGIN_INSTALL", "false").lower() in {"1","true","yes"})
+
 
 settings = Settings()
 

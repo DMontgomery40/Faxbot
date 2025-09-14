@@ -53,6 +53,12 @@ The response includes a job ID and the `backend: "sinch"` field.
 Status updates
 - Immediate status is mapped from Sinch’s response. Additional webhook handling may be added later; for now, poll your own app state via `GET /fax/{id}`.
 
+Inbound receiving (optional)
+- Enable inbound mode: `INBOUND_ENABLED=true`.
+- Configure Sinch inbound webhook to `POST /sinch-inbound`.
+- Security: you may enable Basic auth (`SINCH_INBOUND_BASIC_USER/PASS`) and/or HMAC (`SINCH_INBOUND_HMAC_SECRET`).
+- Stored inbound PDFs can be accessed with a short‑TTL token or an API key with `inbound:read`.
+
 Notes
 - Only PDF and TXT files are accepted. Convert images (PNG/JPG) to PDF first.
 - Avoid exposing credentials. Place Faxbot behind HTTPS and a reverse proxy with rate limiting.
