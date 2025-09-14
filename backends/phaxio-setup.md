@@ -93,5 +93,11 @@ curl -H "X-API-Key: your_secure_api_key" http://localhost:8080/fax/<job_id>
 - 403 when fetching PDF: token mismatch or expired URL.
 - See docs/TROUBLESHOOTING.md for more.
 
+## Official References
+- API Reference (v2/v2.1): https://www.phaxio.com/docs/api/v2/
+- Create and send a fax (content_url): https://www.phaxio.com/docs/api/v2.1/faxes/create_and_send_fax
+- Send fax webhooks: https://www.phaxio.com/docs/api/v2.1/faxes/send_webhooks
+- HIPAA guidance: https://www.phaxio.com/docs/security/hipaa
+
 ## Related: Sinch Fax API v3
 Phaxio is part of Sinch. If your console shows Sinch and you prefer the v3 API's direct upload model (and features like their own webhooks), use the `sinch` backend. See SINCH_SETUP.md. Your existing Phaxio credentials typically work as Sinch API credentials; you will also need the Sinch Project ID.

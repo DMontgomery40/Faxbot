@@ -179,6 +179,11 @@ Restart Asterisk with `external_*` addresses set to the tunnel's public IP if re
 - The `faxout` dialplan in `extensions.conf` uses `SendFAX()` with T.38 and emits `UserEvent(FaxResult)` on completion.
 - The API listens for that event via AMI to update job status.
 
+## Official References
+- Asterisk Manager Interface (AMI): https://wiki.asterisk.org/wiki/display/AST/Asterisk+Manager+Interface+(AMI)
+- Fax overview: https://wiki.asterisk.org/wiki/display/AST/Fax
+- Application SendFAX: https://wiki.asterisk.org/wiki/display/AST/Application_SendFAX
+
 ## Minimal Telephony Glossary
 - SIP: signaling protocol for VoIP calls.
 - SIP Trunk: your carrier connection for inbound/outbound PSTN calls.

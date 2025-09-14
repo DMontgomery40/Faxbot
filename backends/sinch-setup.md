@@ -53,3 +53,7 @@ Troubleshooting
 - 413: file too large → raise `MAX_FILE_SIZE_MB`.
 - 415: unsupported file type → only PDF/TXT.
 - Sinch API errors: verify Project ID, API key/secret, and region.
+
+Official References
+- Sinch Fax Overview: https://developers.sinch.com/docs/fax/overview/
+- API Reference: https://developers.sinch.com/docs/fax/api-reference/
