@@ -2,7 +2,7 @@
 layout: default
 title: Phaxio Setup
 parent: Backends
-nav_order: 1
+nav_order: 2
 permalink: /backends/phaxio-setup.html
 ---
 

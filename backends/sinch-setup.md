@@ -1,18 +1,22 @@
 ---
 layout: default
-title: Sinch Setup
+title: Sinch Setup (Recommended)
 parent: Backends
-nav_order: 2
+nav_order: 1
 permalink: /backends/sinch-setup.html
 ---
 
-# Sinch Setup
+# Sinch Setup (Recommended)
 
 Cloud backend using Sinch Fax API v3 ("Phaxio by Sinch"). This backend uploads your PDF directly to Sinch rather than serving a tokenized URL.
 
 When to use
 - Prefer this if you have a Sinch account/project and want the v3 direct‑upload flow.
 - If you signed up at Phaxio and were redirected to Sinch, your credentials generally work here. You will also need your Sinch Project ID.
+
+Why we recommend it
+- Easiest for beginners: no domain or tunnel required to send.
+- Direct upload: avoids configuring public URLs and callbacks.
 
 Key differences vs `phaxio` backend
 - `phaxio`: Provider fetches your PDF via `PUBLIC_API_URL` and posts status to `/phaxio-callback` (HMAC verification supported). No Sinch project ID required.
