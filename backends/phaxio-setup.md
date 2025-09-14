@@ -13,6 +13,11 @@ permalink: /backends/phaxio-setup.html
 - Easiest option; no SIP or telephony expertise required.
 - Send-only (no receiving).
 
+Quick links
+- Sign up (redirects to Sinch): https://console.phaxio.com/signup
+- Sinch dashboard: https://dashboard.sinch.com
+- Phaxio docs: https://www.phaxio.com/docs/
+
 ## Prerequisites
 - Phaxio account and API credentials.
 - Public URL for callbacks and PDF access (domain or tunnel like ngrok).
@@ -20,7 +25,9 @@ permalink: /backends/phaxio-setup.html
 
 ## Steps
 1) Create Phaxio account and get credentials
-- Log in to the Phaxio console and retrieve:
+- Sign up at https://console.phaxio.com/signup (you will land on a Sinch page — this is expected).
+- Or go directly to the Sinch dashboard: https://dashboard.sinch.com
+- In your account, retrieve:
   - PHAXIO_API_KEY
   - PHAXIO_API_SECRET
 

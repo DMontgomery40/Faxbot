@@ -19,6 +19,10 @@ Key differences vs `phaxio` backend
 - `sinch`: Faxbot uploads your PDF directly to Sinch (multipart). PUBLIC_API_URL and `/phaxio-callback` are not used. Webhook integration for Sinch is under evaluation; current builds reflect the provider's initial status response.
 
 Environment
+Quick links
+- Sign up: https://dashboard.sinch.com/signup
+- Developer docs: https://developers.sinch.com/docs/fax/overview/
+
 ```
 FAX_BACKEND=sinch
 SINCH_PROJECT_ID=your_project_id
