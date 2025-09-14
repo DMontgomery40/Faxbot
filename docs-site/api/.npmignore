@@ -1,0 +1,15 @@
+node_modules/
+*.log
+.env
+.env.*
+configs/
+scripts/
+storage/
+test*
+*.test.js
+coverage/
+.nyc_output/
+docs/
+examples/
+.DS_Store
+Thumbs.db

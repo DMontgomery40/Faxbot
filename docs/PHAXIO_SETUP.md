@@ -1,12 +1,15 @@
 ---
 layout: default
-title: Phaxio Setup (Cloud)
+title: Phaxio Setup (Duplicate)
 parent: Backends
-nav_order: 1
+nav_exclude: true
 permalink: /backends/phaxio-setup.html
 ---
 
-# PHAXIO_SETUP.md
+# Phaxio Setup (Duplicate)
+
+This page is a duplicate. Please see the canonical page under Backends:
+- /backends/phaxio-setup.html
 
 ## Overview
 - Cloud backend for sending faxes via Phaxio (also branded “Phaxio by Sinch”).

@@ -1,0 +1,43 @@
+name: Node SDK
+
+on:
+  push:
+    paths:
+      - 'sdks/node/**'
+  release:
+    types: [published]
+  workflow_dispatch:
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+      - name: Install deps
+        working-directory: sdks/node
+        run: npm install
+      - name: Verify pack
+        working-directory: sdks/node
+        run: npm pack
+
+  publish:
+    needs: build-test
+    if: (github.event_name == 'release' && github.event.action == 'published') || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          registry-url: 'https://registry.npmjs.org'
+      - name: Install deps
+        working-directory: sdks/node
+        run: npm install
+      - name: Publish
+        working-directory: sdks/node
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --access public

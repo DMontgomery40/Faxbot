@@ -1,0 +1,18 @@
+{
+  "server": {
+    "command": "node",
+    "args": [
+      "src/servers/http.js"
+    ],
+    "cwd": "/Users/davidmontgomery/faxbot/node_mcp",
+    "env": {
+      "FAX_API_URL": "http://localhost:8080",
+      "API_KEY": "",
+      "MCP_HTTP_PORT": "3001"
+    }
+  },
+  "endpoints": {
+    "health": "http://localhost:3001/health",
+    "capabilities": "http://localhost:3001/mcp/capabilities"
+  }
+}

@@ -1,0 +1,50 @@
+name: Python SDK
+
+on:
+  push:
+    paths:
+      - 'sdks/python/**'
+  release:
+    types: [published]
+  workflow_dispatch:
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      - name: Install build tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install build twine
+      - name: Build package
+        working-directory: sdks/python
+        run: python -m build
+      - name: Twine check
+        working-directory: sdks/python
+        run: twine check dist/*
+
+  publish:
+    needs: build-test
+    if: (github.event_name == 'release' && github.event.action == 'published') || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      - name: Install build tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install build
+      - name: Build
+        working-directory: sdks/python
+        run: python -m build
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@v1.8.14
+        with:
+          packages_dir: sdks/python/dist
+          password: ${{ secrets.PYPI_API_TOKEN }}

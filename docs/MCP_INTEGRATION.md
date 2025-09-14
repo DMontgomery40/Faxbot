@@ -15,7 +15,7 @@ Demo
 </video>
 
 What MCP is
-- MCP is a protocol. “SSE”, “HTTP”, and “stdio” are transports. Faxbot provides two server implementations (Node and Python), each capable of running on any of the transports. Pick a language (Node or Python) and a transport (stdio/HTTP/SSE) that fits your environment.
+- MCP is a protocol. Today, stdio, HTTP, and SSE are the canonical transports. A WebSocket transport for MCP is under discussion (SEP‑1288). Faxbot provides a Node WebSocket helper for convenience; it mirrors tool calls but is not a formal MCP WebSocket transport.
 
 Quick Start (Claude/Cursor)
 - Add Faxbot MCP to your assistant config (stdio). Then call send_fax with a local filePath.

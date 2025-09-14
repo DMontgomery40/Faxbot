@@ -1,17 +1,14 @@
 ---
 layout: default
-title: Security
-nav_order: 60
-has_children: true
-permalink: /security/
+title: Security Overview (Deprecated Copy)
+parent: Security
+nav_exclude: true
+permalink: /security/overview.html
 ---
 
-# Security
+# Security Overview
 
-Configuration and guidance for HIPAA‑aligned deployments and OAuth/OIDC setup.
-
-Recommended reading
-- [Authentication (API Keys)](/security/authentication)
-- [HIPAA Requirements](../HIPAA_REQUIREMENTS.md)
-- [OAuth/OIDC Setup](OAUTH_SETUP.md)
-
+This page is deprecated. Please use the canonical Security section:
+- Security index: /security/
+- HIPAA Requirements: /security/hipaa-requirements.html
+- OAuth/OIDC Setup: /security/oauth-setup.html

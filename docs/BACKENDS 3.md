@@ -1,15 +1,14 @@
 ---
 layout: default
-title: Backends
-nav_order: 25
-has_children: true
+title: Backends (Duplicate)
+nav_exclude: true
 permalink: /backends/
 ---
 
-# Backends
+# Backends (Duplicate)
 
-Choose one backend (cloud or self‑hosted) and follow its setup guide.
-
+This page is a duplicate. Please see the canonical Backends section:
+- /backends/
 
 
 

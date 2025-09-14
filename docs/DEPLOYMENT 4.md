@@ -135,3 +135,9 @@ Operational checks
 - Enforce TLS everywhere; redirect HTTP→HTTPS.
 - Validate webhooks with HMAC/signatures; IP allowlist if available.
 - Ensure no PHI in logs; log IDs and generic metadata only.
+---
+layout: default
+title: Deployment Guide (Archived)
+nav_exclude: true
+permalink: /deployment/guide-archived-4.html
+---
