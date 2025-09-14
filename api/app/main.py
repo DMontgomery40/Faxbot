@@ -166,6 +166,16 @@ def plugin_registry():
             "links": {
                 "docs": "https://developers.ringcentral.com/guide/methods/fax"
             }
+        },
+        {
+            "id": "homeassistant_health",
+            "name": "Home Assistant Health (Sample)",
+            "categories": ["integration"],
+            "description": "Fetch daily health metrics from Home Assistant and report via Faxbot.",
+            "links": {
+                "faxbot": "/plugins/homeassistant.html",
+                "docs": "https://www.home-assistant.io/docs/authentication/"
+            }
         }
     ]
     return {"items": items}
