@@ -4,6 +4,10 @@ import react from '@vitejs/plugin-react'
 export default defineConfig({
   plugins: [react()],
   base: '/admin/ui/',
+  css: {
+    // Force Vite to use an inline empty PostCSS config to avoid walking parent directories
+    postcss: {}
+  },
   build: {
     outDir: 'dist',
     assetsDir: 'assets',
