@@ -57,6 +57,11 @@ Questions? Issues? Please don't hesitate to reach out. See `CONTRIBUTING.md` for
   - [Overview]({{ site.baseurl }}/ai-integration/)
   - [MCP Integration]({{ site.baseurl }}/ai-integration/mcp-integration.html)
   - [Node MCP]({{ site.baseurl }}/ai-integration/node-mcp.html)
+  - Quick Starts:
+    - stdio: run `node node_mcp/src/servers/stdio.js`
+    - HTTP: run `node node_mcp/src/servers/http.js` (port 3001)
+    - SSE: run `node node_mcp/src/servers/sse.js` (port 3002)
+    - WebSocket: run `node node_mcp/src/servers/ws.js` (port 3004)
 - Security
   - [Overview]({{ site.baseurl }}/security/)
   - [HIPAA Requirements]({{ site.baseurl }}/security/hipaa-requirements.html)

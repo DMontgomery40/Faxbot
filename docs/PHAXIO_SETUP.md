@@ -93,6 +93,8 @@ curl -H "X-API-Key: fbk_live_<keyId>_<secret>" http://localhost:8080/fax/<job_id
 - The PDF serving endpoint uses a tokenized URL; treat PUBLIC_API_URL as sensitive.
 - Use HTTPS for `PUBLIC_API_URL` in production so Phaxio fetches over TLS. HTTP is fine for local development only.
 
+See also: [Webhooks]({{ site.baseurl }}/backends/webhooks.html)
+
 ## Number Format
 - Use E.164 format (e.g., `+15551234567`) for best results.
 - The backend performs limited normalization for non‑E.164 input, but E.164 avoids ambiguity across regions.

@@ -57,6 +57,8 @@ Notes
 - Only PDF and TXT files are accepted. Convert images (PNG/JPG) to PDF first.
 - Avoid exposing credentials. Place Faxbot behind HTTPS and a reverse proxy with rate limiting.
 
+See also: [Webhooks]({{ site.baseurl }}/backends/webhooks.html)
+
 Troubleshooting
 - 401: invalid API key to your Faxbot API (set `API_KEY` and send `X-API-Key`).
 - 413: file too large → raise `MAX_FILE_SIZE_MB`.
