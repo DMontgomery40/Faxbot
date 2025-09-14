@@ -16,17 +16,18 @@ Faxbot supports multiple backends for sending faxes. Choose the one that best fi
 
 ## Backend Comparison
 
-| Feature | Phaxio | Sinch | SIP/Asterisk |
-|---------|--------|--------|--------------|
-| **Setup Time** | 5 minutes | 10 minutes | 1-2 hours |
-| **Telephony Knowledge** | None required | None required | T.38/SIP expertise |
-| **Cost Model** | Pay per fax | Pay per fax | SIP trunk only |
-| **Control Level** | Limited | Limited | Full control |
-| **HIPAA Ready** | Yes (with BAA) | Yes (with BAA) | Yes (self-hosted) |
+| Feature | Sinch (Direct) | Documo (mFax) | Phaxio | SIP/Asterisk |
+|---------|-----------------|---------------|--------|--------------|
+| **Setup Time** | 5 minutes | 5 minutes | 10–15 minutes | 1–2 hours |
+| **Telephony Knowledge** | None | None | None | T.38/SIP expertise |
+| **Domain/Tunnel Needed** | No | No | Often (for callbacks/fetch) | No |
+| **Cost Model** | Pay per fax | Pay per fax | Pay per fax | SIP trunk only |
+| **Control Level** | Provider-managed | Provider-managed | Provider-managed | Full control |
+| **HIPAA Ready** | Yes (with BAA) | Check plan | Yes (with BAA) | Yes (self-hosted) |
 
 ## Recommendations
 
-- **Most users**: Start with [Phaxio Setup](phaxio-setup.html) - it's the easiest and most reliable
+- **Most users**: Start with [Sinch Setup](sinch-setup.html) or [Documo Setup](documo-setup.html) — both work without a domain
 - **High volume**: Consider [SIP/Asterisk Setup](sip-setup.html) for cost savings
 - **Existing Sinch users**: Use [Sinch Setup](sinch-setup.html) if you already have an account
 
