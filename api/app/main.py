@@ -15,6 +15,7 @@ from .conversion import ensure_dir, txt_to_pdf, pdf_to_tiff
 from .ami import ami_client
 from .phaxio_service import get_phaxio_service
 from .sinch_service import get_sinch_service
+from .documo_service import get_documo_service
 import hmac
 import hashlib
 from urllib.parse import urlparse
@@ -151,6 +152,9 @@ async def send_fax(background: BackgroundTasks, to: str = Form(...), file: Uploa
         # Sinch cloud backend: no local TIFF; provider handles rasterization
         pages = None
         # nothing else to prepare here
+    elif settings.fax_backend == "documo":
+        # Documo (mFax) cloud backend: direct upload, no TIFF
+        pages = None
     else:
         # SIP/Asterisk requires TIFF
         if settings.fax_disabled:
@@ -183,6 +187,8 @@ async def send_fax(background: BackgroundTasks, to: str = Form(...), file: Uploa
             background.add_task(_send_via_phaxio, job_id, to, pdf_path)
         elif settings.fax_backend == "sinch":
             background.add_task(_send_via_sinch, job_id, to, pdf_path)
+        elif settings.fax_backend == "documo":
+            background.add_task(_send_via_documo, job_id, to, pdf_path)
         else:
             background.add_task(_originate_job, job_id, to, tiff_path)
 
@@ -464,6 +470,49 @@ async def _send_via_sinch(job_id: str, to: str, pdf_path: str):
                 db.add(job)
                 db.commit()
         audit_event("job_failed", job_id=job_id, error=str(e))
+
+async def _send_via_documo(job_id: str, to: str, pdf_path: str):
+    """Send fax via Documo (mFax) REST API."""
+    try:
+        service = get_documo_service()
+        if not service or not service.is_configured():
+            raise Exception("Documo is not properly configured")
+
+        audit_event("job_dispatch", job_id=job_id, method="documo")
+
+        resp = await service.send_fax_file(to, pdf_path)
+
+        # Documo returns message details; try to extract ID/status
+        fax_id = str(resp.get("messageId") or resp.get("id") or resp.get("data", {}).get("id") or "")
+        status = (resp.get("status") or resp.get("data", {}).get("status") or "queued").upper()
+        if status in {"IN_PROGRESS", "PROCESSING", "QUEUED"}:
+            internal_status = "in_progress"
+        elif status in {"SUCCESS", "COMPLETED", "COMPLETED_OK"}:
+            internal_status = "SUCCESS"
+        elif status in {"FAILED", "FAILURE", "ERROR"}:
+            internal_status = "FAILED"
+        else:
+            internal_status = "queued"
+
+        with SessionLocal() as db:
+            job = db.get(FaxJob, job_id)
+            if job:
+                job.provider_sid = fax_id
+                job.status = internal_status
+                job.updated_at = datetime.utcnow()
+                db.add(job)
+                db.commit()
+    except Exception as e:
+        with SessionLocal() as db:
+            job = db.get(FaxJob, job_id)
+            if job:
+                job.status = "failed"
+                job.error = str(e)
+                job.updated_at = datetime.utcnow()
+                db.add(job)
+                db.commit()
+        audit_event("job_failed", job_id=job_id, error=str(e))
+
 
 
 def _serialize_job(job: FaxJob) -> FaxJobOut:

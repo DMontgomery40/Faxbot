@@ -16,7 +16,7 @@ Quick start tips
 - Phaxio sign‑ups redirect to Sinch (expected). Use: https://dashboard.sinch.com/signup
 
 Backend
-- Select active backend: phaxio | sinch | sip
+- Select active backend: sinch | documo | phaxio | sip
 - Phaxio
   - `PHAXIO_API_KEY`, `PHAXIO_API_SECRET` (secret inputs)
   - `PHAXIO_CALLBACK_URL` or `PHAXIO_STATUS_CALLBACK_URL`
@@ -24,6 +24,9 @@ Backend
 - Sinch
   - `SINCH_PROJECT_ID`, `SINCH_API_KEY`, `SINCH_API_SECRET`
   - Optional `SINCH_BASE_URL`
+- Documo (mFax)
+  - `DOCUMO_API_KEY`
+  - Optional `DOCUMO_SANDBOX=true` and `DOCUMO_BASE_URL`
 - SIP/Asterisk
   - `ASTERISK_AMI_HOST`, `ASTERISK_AMI_PORT`, `ASTERISK_AMI_USERNAME`, `ASTERISK_AMI_PASSWORD`
   - Presentation: `FAX_LOCAL_STATION_ID`, `FAX_HEADER`

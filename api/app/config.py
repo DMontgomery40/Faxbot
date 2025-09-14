@@ -36,7 +36,13 @@ class Settings(BaseModel):
     sinch_api_key: str = Field(default_factory=lambda: os.getenv("SINCH_API_KEY", os.getenv("PHAXIO_API_KEY", "")))
     sinch_api_secret: str = Field(default_factory=lambda: os.getenv("SINCH_API_SECRET", os.getenv("PHAXIO_API_SECRET", "")))
 
+    # Documo (mFax) API — direct upload flow
+    documo_api_key: str = Field(default_factory=lambda: os.getenv("DOCUMO_API_KEY", ""))
+    documo_base_url: str = Field(default_factory=lambda: os.getenv("DOCUMO_BASE_URL", "https://api.documo.com"))
+    documo_use_sandbox: bool = Field(default_factory=lambda: os.getenv("DOCUMO_SANDBOX", "false").lower() in {"1", "true", "yes"})
+
     # Fax presentation
+
     fax_header: str = Field(default_factory=lambda: os.getenv("FAX_HEADER", "Faxbot"))
     fax_station_id: str = Field(default_factory=lambda: os.getenv("FAX_LOCAL_STATION_ID", "+10000000000"))
 
