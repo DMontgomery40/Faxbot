@@ -148,6 +148,24 @@ def plugin_registry():
             "links": {
                 "faxbot": "/backends/sip-setup.html"
             }
+        },
+        {
+            "id": "interfax",
+            "name": "InterFAX (Upland)",
+            "categories": ["outbound"],
+            "description": "Cloud fax REST API (Upland InterFAX).",
+            "links": {
+                "docs": "https://docs.uplandsoftware.com/interfax/documentation/api/rest/"
+            }
+        },
+        {
+            "id": "ringcentral_fax",
+            "name": "RingCentral Fax",
+            "categories": ["outbound"],
+            "description": "Send faxes via RingCentral (account required).",
+            "links": {
+                "docs": "https://developers.ringcentral.com/guide/methods/fax"
+            }
         }
     ]
     return {"items": items}
