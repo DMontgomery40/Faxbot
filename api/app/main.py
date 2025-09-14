@@ -7,7 +7,7 @@ import secrets
 from datetime import datetime, timedelta
 from typing import Optional
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks, Header, Depends, Query, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from .config import settings, reload_settings
 from .db import init_db, SessionLocal, FaxJob
 from .models import FaxJobOut
@@ -99,6 +99,58 @@ def _handle_fax_result(event):
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@app.get("/plugin-registry")
+def plugin_registry():
+    """Return a curated list of discoverable plugins (scaffold)."""
+    items = [
+        {
+            "id": "sinch",
+            "name": "Sinch Fax API v3 (Direct Upload)",
+            "categories": ["outbound"],
+            "description": "Send faxes via Sinch v3 with direct PDF upload (no domain required).",
+            "links": {
+                "signup": "https://dashboard.sinch.com/signup",
+                "dashboard": "https://dashboard.sinch.com",
+                "docs": "https://developers.sinch.com/docs/fax/overview/",
+                "faxbot": "/backends/sinch-setup.html"
+            }
+        },
+        {
+            "id": "documo",
+            "name": "Documo mFax (Direct Upload)",
+            "categories": ["outbound"],
+            "description": "Send faxes via Documo (mFax) with direct PDF upload (no domain required).",
+            "links": {
+                "signup": "https://www.mfax.io/pricing",
+                "dashboard": "https://app.documo.com",
+                "docs": "https://docs.documo.com",
+                "faxbot": "/backends/documo-setup.html"
+            }
+        },
+        {
+            "id": "phaxio",
+            "name": "Phaxio by Sinch (Fetch/Callback)",
+            "categories": ["outbound"],
+            "description": "Provider fetches your PDF and posts callbacks; works best with HTTPS public URL.",
+            "links": {
+                "signup": "https://dashboard.sinch.com/signup",
+                "docs": "https://www.phaxio.com/docs/",
+                "faxbot": "/backends/phaxio-setup.html"
+            }
+        },
+        {
+            "id": "sip",
+            "name": "SIP/Asterisk (Self-hosted)",
+            "categories": ["outbound"],
+            "description": "Self-hosted T.38 via Asterisk and your SIP trunk.",
+            "links": {
+                "faxbot": "/backends/sip-setup.html"
+            }
+        }
+    ]
+    return {"items": items}
 
 
 def require_api_key(x_api_key: Optional[str] = Header(default=None)):
