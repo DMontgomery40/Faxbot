@@ -1,5 +1,4 @@
 import asyncio
-import contextlib
 from typing import Dict, Optional, Callable
 from .config import settings
 
@@ -97,25 +96,3 @@ class AMIClient:
 
 
 ami_client = AMIClient()
-
-
-async def test_ami_connection(host: str, port: int, username: str, password: str) -> bool:
-    """One-off AMI TCP connect + login probe. Does not mutate global client."""
-    try:
-        reader, writer = await asyncio.open_connection(host, port)
-        login = (
-            f"Action: Login\r\nUsername: {username}\r\nSecret: {password}\r\n\r\n"
-        )
-        writer.write(login.encode())
-        await writer.drain()
-        # Read a line to confirm response (best-effort)
-        try:
-            await asyncio.wait_for(reader.readline(), timeout=2.0)
-        except asyncio.TimeoutError:
-            pass
-        writer.close()
-        with contextlib.suppress(Exception):
-            await writer.wait_closed()
-        return True
-    except Exception:
-        return False

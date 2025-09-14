@@ -1,4 +1,5 @@
-from typing import Optional, Dict, Any, Tuple
+import asyncio
+from typing import Optional, Dict, Any
 import httpx
 import logging
 import os
@@ -33,15 +34,14 @@ class SinchFaxService:
     def is_configured(self) -> bool:
         return bool(self.project_id and self.api_key and self.api_secret)
 
-    def _auth(self) -> Tuple[str, str]:
+    def _auth(self) -> tuple[str, str]:
         return (self.api_key, self.api_secret)
 
     async def upload_file(self, file_path: str) -> int:
         if not os.path.exists(file_path):
             raise FileNotFoundError(file_path)
         urls = [self.base_url] + [b for b in self.DEFAULT_BASES if b != self.base_url]
-        from typing import Optional, Tuple as _Tuple
-        last: Optional[_Tuple[str, object, str]] = None
+        last = None
         for base in urls:
             url = f"{base}/projects/{self.project_id}/files"
             try:
@@ -59,6 +59,16 @@ class SinchFaxService:
                 last = (url, "exception", str(e))
                 continue
         raise RuntimeError(f"Sinch file upload failed: {last}")
+        files = {"file": (os.path.basename(file_path), open(file_path, "rb"), "application/pdf")}
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            resp = await client.post(url, files=files, auth=self._auth())
+            if resp.status_code >= 400:
+                raise RuntimeError(f"Sinch file upload error {resp.status_code}: {resp.text}")
+            data = resp.json()
+            file_id = data.get("id") or data.get("data", {}).get("id")
+            if file_id is None:
+                raise RuntimeError(f"Unexpected Sinch upload response: {data}")
+            return int(file_id)
 
     async def send_fax(self, to_number: str, file_id: int) -> Dict[str, Any]:
         # Normalize number to E.164 if possible
@@ -76,7 +86,7 @@ class SinchFaxService:
             return resp.json()
 
     async def get_fax_status(self, fax_id: str) -> Dict[str, Any]:
-        url = f"{self.base_url}/projects/{self.project_id}/faxes/{fax_id}"
+        url = f"{self.BASE_URL}/projects/{self.project_id}/faxes/{fax_id}"
         async with httpx.AsyncClient(timeout=15.0) as client:
             resp = await client.get(url, auth=self._auth())
             resp.raise_for_status()
@@ -96,12 +106,11 @@ class SinchFaxService:
                 to = f"+{digits}"
         url = f"{self.base_url}/projects/{self.project_id}/faxes"
         async with httpx.AsyncClient(timeout=60.0) as client:
-            # httpx expects a mapping of field name → (filename, fileobj, content_type)
-            # For the additional text field, pass as data not files
-            with open(file_path, "rb") as fh:
-                files = {"file": (os.path.basename(file_path), fh, "application/pdf")}
-                data = {"to": to}
-                resp = await client.post(url, files=files, data=data, auth=self._auth())
+            files = {
+                "file": (os.path.basename(file_path), open(file_path, "rb"), "application/pdf"),
+                "to": (None, to),
+            }
+            resp = await client.post(url, files=files, auth=self._auth())
             if resp.status_code >= 400:
                 raise RuntimeError(f"Sinch create fax error {resp.status_code}: {resp.text}")
             return resp.json()

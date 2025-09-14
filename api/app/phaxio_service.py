@@ -71,8 +71,7 @@ class PhaxioFaxService:
         # Basic retry with exponential backoff
         attempts = 3
         delay = 1.0
-        from typing import Optional
-        last_err: Optional[Exception] = None
+        last_err: Exception | None = None
         async with httpx.AsyncClient(timeout=30.0) as client:
             for _ in range(attempts):
                 try:

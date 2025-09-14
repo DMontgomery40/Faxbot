@@ -4,7 +4,6 @@ from pathlib import Path
 from typing import Tuple, Optional
 from reportlab.lib.pagesizes import letter  # type: ignore
 from reportlab.pdfgen import canvas  # type: ignore
-import os
 
 
 def ensure_dir(path: str) -> None:
@@ -76,39 +75,6 @@ def pdf_to_tiff(pdf_path: str, tiff_path: str) -> Tuple[int, str]:
     except Exception:
         pass
     return pages, tiff_path
-
-
-def tiff_to_pdf(tiff_path: str, pdf_path: str) -> Tuple[int, str]:
-    """Convert inbound TIFF to PDF for normalized storage.
-    Returns (pages, pdf_path). Uses Ghostscript when available; stubs in test mode.
-    """
-    if os.getenv("FAX_DISABLED") == "true" or "test" in tiff_path.lower():
-        Path(pdf_path).write_bytes(b"%PDF-1.4\ntest\n%%EOF")
-        return 1, pdf_path
-    if shutil.which("gs") is None:
-        # No Ghostscript; create placeholder minimal PDF
-        Path(pdf_path).write_bytes(b"%PDF-1.4\n% placeholder\n%%EOF")
-        return 1, pdf_path
-    cmd = [
-        "gs",
-        "-dNOPAUSE",
-        "-dBATCH",
-        "-sDEVICE=pdfwrite",
-        "-dCompatibilityLevel=1.4",
-        f"-sOutputFile={pdf_path}",
-        tiff_path,
-    ]
-    subprocess.run(cmd, check=True)
-    pages = 1
-    try:
-        out = subprocess.check_output([
-            "gs", "-q", "-dNODISPLAY", "-c",
-            f"({pdf_path}) (r) file runpdfbegin pdfpagecount = quit"
-        ])
-        pages = int(out.strip() or b"1")
-    except Exception:
-        pass
-    return pages, pdf_path
 
 
 def count_pdf_pages(pdf_path: str) -> Optional[int]:
