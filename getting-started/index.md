@@ -7,7 +7,7 @@ permalink: /getting-started/
 ---
 
 <div class="home-hero">
-  <img src="{{ site.baseurl }}/docs/assets/images/faxbot_full_logo.png" alt="Faxbot logo" />
+  <img src="{{ site.baseurl }}/assets/images/faxbot_full_logo.png" alt="Faxbot logo" />
 </div>
 
 # Getting Started
