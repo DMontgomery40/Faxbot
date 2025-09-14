@@ -10,6 +10,11 @@ permalink: /admin-console/settings/
 
 Adjust backend, security, MCP, and storage without manual edits.
 
+Quick start tips
+- New to Faxbot? Use the [Setup Wizard](/Faxbot/admin-console/setup-wizard/) first — it walks you through the minimum you need.
+- No domain? Pick “Sinch (Direct Upload)” in the wizard or here under Backend → Sinch; you can send without a public URL.
+- Phaxio sign‑ups redirect to Sinch (expected). Use: https://dashboard.sinch.com/signup
+
 Backend
 - Select active backend: phaxio | sinch | sip
 - Phaxio
