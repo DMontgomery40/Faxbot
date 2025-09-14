@@ -24,6 +24,7 @@ from typing import Any, Dict, Optional
 
 import requests
 from .plugins import PluginManager
+from .plugins import PluginManager
 
 
 class FaxbotClient:
@@ -199,6 +200,13 @@ class FaxbotClient:
             return True
         else:
             raise Exception(f"Health check returned HTTP {response.status_code}")
+
+    @property
+    def plugins(self) -> PluginManager:
+        """Access plugin manager (lazy initialization)."""
+        if not hasattr(self, "_plugin_manager") or self._plugin_manager is None:
+            self._plugin_manager = PluginManager(self)
+        return self._plugin_manager
 
     # NEW: Plugin manager property
     @property
