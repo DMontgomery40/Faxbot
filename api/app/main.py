@@ -171,6 +171,21 @@ def plugin_registry():
     return {"items": items}
 
 
+@app.post("/admin/apply-env", dependencies=[Depends(require_api_key)])
+async def apply_env(payload: dict):
+    """Apply provided env vars to the running process (non-persistent).
+
+    This updates os.environ and reloads settings. For durable persistence,
+    export a .env file via the Admin Console or deployment tooling.
+    """
+    # Allow only uppercase keys with letters, digits and underscores
+    for k, v in payload.items():
+        if isinstance(k, str) and k.isupper():
+            os.environ[k] = str(v)
+    reload_settings()
+    return {"status": "ok", "applied": sorted([k for k in payload.keys() if isinstance(k, str) and k.isupper()])}
+
+
 def require_api_key(x_api_key: Optional[str] = Header(default=None)):
     if settings.api_key and x_api_key != settings.api_key:
         raise HTTPException(401, detail="Invalid API key")
