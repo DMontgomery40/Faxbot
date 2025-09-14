@@ -18,3 +18,7 @@ Faxbot v3 supports modular provider plugins that bind to capability slots at run
 
 Key rule: protocols like SIP are transports, not capabilities. Choose the plugin base class based on what the plugin does.
 
+Discover
+- Cloud providers: [Cloud Provider Plugins](/Faxbot/plugins/cloud-provider-plugins.html)
+- SIP providers: [SIP Provider Plugins](/Faxbot/plugins/sip-provider-plugins.html)
+
