@@ -91,5 +91,15 @@ curl -H "X-API-Key: $API_KEY" http://localhost:8080/fax/$JOB_ID
 - `PUT /plugins/{id}/config` — persist enabled/settings to server config file. Admin auth required.
 - `GET /plugin-registry` — curated registry with descriptions/links.
 
+### Admin Apply (runtime only)
+- `POST /admin/apply-env` — Apply env vars to the running process (non‑persistent). Admin auth required (`X-API-Key`).
+  - Body: JSON object of `KEY: value` (uppercase keys only are applied)
+  - Example:
+    ```
+    curl -X POST http://localhost:8080/admin/apply-env \
+      -H "X-API-Key: $API_KEY" -H "Content-Type: application/json" \
+      -d '{"FAX_BACKEND":"sinch","SINCH_PROJECT_ID":"...","SINCH_API_KEY":"...","SINCH_API_SECRET":"..."}'
+    ```
+
 Notes
 - Changes are persisted but not applied live; backend selection at runtime continues to use environment until explicitly applied during maintenance.
