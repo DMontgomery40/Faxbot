@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Box, Grid, Card, CardContent, CardActions, Typography, Button, Chip, Link as MLink, Tooltip, Divider, Alert } from '@mui/material';
 import { Extension, Cloud, Storage as StorageIcon, Phone, WarningAmber } from '@mui/icons-material';
 import AdminAPIClient from '../api/client';
+import PluginRegistryList from './PluginRegistryList';
 
 type Props = { client: AdminAPIClient };
 
@@ -86,6 +87,8 @@ export default function Plugins({ client }: Props) {
           <Section title="Outbound Providers" items={byCategory('outbound')} saving={saving} onActivate={handleMakeActiveOutbound} registry={registry} />
           <Divider sx={{ my: 3 }} />
           <Section title="Storage Providers" items={byCategory('storage')} saving={saving} onActivate={undefined} registry={registry} />
+          <Divider sx={{ my: 3 }} />
+          <PluginRegistryList />
         </>
       )}
     </Box>

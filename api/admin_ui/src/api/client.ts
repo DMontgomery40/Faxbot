@@ -80,6 +80,15 @@ export class AdminAPIClient {
     return res.json();
   }
 
+  // Admin apply (runtime only)
+  async applyEnv(payload: Record<string, string>): Promise<{ status: string; applied: string[] }>{
+    const res = await this.fetch('/admin/apply-env', {
+      method: 'POST',
+      body: JSON.stringify(payload || {}),
+    });
+    return res.json();
+  }
+
   async restart(): Promise<any> {
     const res = await this.fetch('/admin/restart', { method: 'POST' });
     return res.json();
