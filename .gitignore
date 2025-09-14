@@ -55,3 +55,16 @@ logs/
 
 # Project-specific
 /AGENTS.md
+
+# Jekyll build outputs
+_site/
+.jekyll-cache/
+.sass-cache/
+.bundle/
+vendor/
+
+# Secondary docs build outputs
+docs/_site/
+docs/.jekyll-cache/
+docs/.sass-cache/
+
