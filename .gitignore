@@ -55,3 +55,10 @@ logs/
 
 # Project-specific
 /AGENTS.md
+
+# Jekyll build outputs (exclude in dev)
+_site/
+docs/_site/
+.bundle/
+vendor/
+
