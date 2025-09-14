@@ -20,6 +20,7 @@ import hmac
 import hashlib
 from urllib.parse import urlparse
 from .audit import init_audit_logger, audit_event
+import httpx
 
 
 app = FastAPI(title="Faxbot API", version="1.0.0")
@@ -169,6 +170,33 @@ def plugin_registry():
         }
     ]
     return {"items": items}
+
+
+@app.get("/plugin-registry/discover")
+async def plugin_registry_discover(q: str = "keywords:faxbot-plugin faxbot", size: int = 20):
+    """Query npm registry for packages matching Faxbot plugin keywords.
+
+    Returns a simplified list of { id, name, version, description }.
+    """
+    url = f"https://registry.npmjs.org/-/v1/search?text={q}&size={max(1, min(size, 100))}"
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(url)
+        resp.raise_for_status()
+        data = resp.json()
+        items = []
+        for obj in data.get("objects", []):
+            pkg = obj.get("package", {})
+            items.append({
+                "id": pkg.get("name"),
+                "name": pkg.get("name"),
+                "version": pkg.get("version"),
+                "description": pkg.get("description"),
+                "links": pkg.get("links", {}),
+            })
+        return {"items": items, "source": "npm"}
+    except Exception as e:
+        return JSONResponse(status_code=502, content={"error": str(e)})
 
 
 @app.post("/admin/apply-env", dependencies=[Depends(require_api_key)])
