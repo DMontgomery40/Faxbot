@@ -1,6 +1,6 @@
 ---
 layout: default
-title: Setup Wizard
+title: Setup Wizard (Beginner Friendly)
 parent: Admin Console
 nav_order: 1
 permalink: /admin-console/setup-wizard/
@@ -8,28 +8,69 @@ permalink: /admin-console/setup-wizard/
 
 # Setup Wizard
 
-Configure Faxbot end‑to‑end without touching `.env` files. The wizard validates inputs, applies safe defaults, and provides copy‑ready exports.
+New to fax? Start here. This wizard gets you sending in minutes and explains each choice in plain language, with direct links to the third‑party pages you’ll need.
 
-Steps
-- Choose Backend
-  - Phaxio (recommended): requires API key/secret and public HTTPS URL
-  - Sinch Fax API v3: requires project ID, API key/secret
-  - SIP/Asterisk: requires AMI host/port/username/password
-- Security Profile
-  - HIPAA (strict): require API key, enforce HTTPS, enable audit logging, verify signatures
-  - Non‑PHI (convenience): relaxed HTTPS and logging defaults; still supports API keys
-- Provider Details
-  - Phaxio: set `PHAXIO_CALLBACK_URL` (usually `<PUBLIC_API_URL>/phaxio-callback`)
-  - Sinch: set project region/base URL if needed
-  - SIP: confirm Station ID and Header (sender metadata)
-- Apply & Reload
-  - Writes settings to the running process; shows status banner
-  - “Generate .env” exports a file for persistence; you can also “Save .env to server” if persisted settings are enabled
+What you’re choosing
+- Phaxio by Sinch (cloud): A developer fax API (Phaxio is part of Sinch). Simple and reliable. Two flavors in Faxbot:
+  - “Phaxio” flow: Phaxio fetches your PDF from your server via a public URL. Best if you already have a domain or can run a tunnel. Supports webhooks to update status.
+  - “Sinch (Direct Upload)”: Faxbot uploads the PDF directly to Sinch. Best if you do not have a public URL or domain yet. Send-only works without webhooks.
+- SIP / Asterisk (self‑hosted): No third‑party cloud, uses your SIP trunk. More advanced; skip for now if you’re just getting started.
+
+Do I need a domain?
+- No, if you pick “Sinch (Direct Upload)”. You can send faxes without any public URL.
+- Yes (or a tunnel) if you pick “Phaxio” and want status callbacks or if Phaxio must fetch your PDF from your server.
+- You can always add a domain later. For quick tests, use the included tunnel script: `scripts/setup-phaxio-tunnel.sh`.
+
+Beginner 5‑minute path (no domain required)
+1) Choose backend: “Sinch (Direct Upload)”.
+2) Create a Sinch/Phaxio account:
+   - Sign up: https://dashboard.sinch.com/signup (this is where Phaxio signups redirect — that’s normal).
+   - After signup, create a project, then get your Project ID and API key/secret.
+     - Help: Sinch Fax docs → https://developers.sinch.com/docs/fax/overview/
+3) In the wizard, paste:
+   - Project ID → `SINCH_PROJECT_ID`
+   - API key → `SINCH_API_KEY`
+   - API secret → `SINCH_API_SECRET`
+4) Click “Apply”. Then send a test fax in the Admin Console or via curl.
+
+If you have a domain (or can run a temporary tunnel)
+1) Choose backend: “Phaxio (Recommended)”.
+2) Create an account and get credentials:
+   - Phaxio site: https://www.phaxio.com → Sign Up takes you to Sinch (expected).
+   - Direct signup: https://dashboard.sinch.com/signup
+   - Get: `PHAXIO_API_KEY` and `PHAXIO_API_SECRET` (same as Sinch API key/secret in many accounts).
+   - Official Phaxio docs: https://www.phaxio.com/docs/
+3) Make your API reachable over HTTPS:
+   - Option A: use your domain, e.g. `https://api.yourdomain.com`
+   - Option B: quick test tunnel → run `scripts/setup-phaxio-tunnel.sh` to get a temporary `https://...trycloudflare.com` URL.
+4) In the wizard, set:
+   - `PUBLIC_API_URL` to your HTTPS URL
+   - `PHAXIO_CALLBACK_URL` to `https://YOUR_URL/phaxio-callback`
+   - Paste your API key/secret
+5) Click “Apply”, then send a test fax. Status updates arrive via callback (HMAC verified by default).
+
+Security profile
+- HIPAA (strict): requires API key for your Faxbot API, enforces HTTPS, enables audit logging, verifies provider signatures.
+- Non‑PHI (convenience): relaxed defaults for local/dev; you can switch to HIPAA later without changing providers.
+
+What is Phaxio? What is Sinch?
+- Phaxio is a developer‑focused fax API. It’s part of Sinch now. When you click “Sign Up” on phaxio.com, you’ll be redirected to a Sinch signup page — that is expected. Your credentials work with Faxbot’s Phaxio flow and the Sinch (direct upload) flow.
+
+Where do I find credentials?
+- Sinch dashboard (recommended): https://dashboard.sinch.com
+  - Create a project → note “Project ID”
+  - Create/locate API key + secret
+- Phaxio docs if you prefer the legacy console: https://www.phaxio.com/docs/
+
+Apply & reload
+- “Apply” writes settings to the running API with safe defaults.
+- “Generate .env” gives you a copy‑ready file. If enabled, “Save .env to server” writes it for persistence.
 
 Helpful tips
-- Use a tunnel during initial Phaxio testing (cloudflared/ngrok). See: [Deployment](/Faxbot/deployment/) and `scripts/setup-phaxio-tunnel.sh`.
-- If “Restart API” is available, changes that affect connections (e.g., AMI) will prompt a restart.
-- The wizard never stores provider secrets in plugin config. Secrets live in environment variables.
+- No domain? Pick “Sinch (Direct Upload)” and you can send immediately.
+- For Phaxio tests without a domain, run: `scripts/setup-phaxio-tunnel.sh` (uses Cloudflare Tunnel; falls back to ngrok if installed).
+- If a change affects persistent connections (e.g., Asterisk AMI), you’ll be prompted to restart the API.
+- Secrets are not stored in plugin manifests; they live in environment variables.
 
 Example .env snippets
 - Phaxio (HIPAA profile)
@@ -68,12 +109,12 @@ API_KEY=generate_a_strong_key
 ```
 
 Warnings and prompts
-- Missing HTTPS on `PUBLIC_API_URL` with cloud backends → show warning, suggest tunnel/domain
-- Empty `API_KEY` in production → prompt to enable auth
-- Ghostscript not found for SIP/Asterisk → warn that conversion/pages may be stubbed
+- Missing HTTPS on `PUBLIC_API_URL` with cloud backends → warning with quick‑fix link to the tunnel script.
+- Empty `API_KEY` in production → prompt to enable auth.
+- Ghostscript not found for SIP/Asterisk → warn that conversion/pages may be stubbed.
 
 Learn more
-- Phaxio: [Backend setup](/Faxbot/backends/phaxio-setup.html)
-- Sinch: [Backend setup](/Faxbot/backends/sinch-setup.html)
+- Phaxio: [Backend setup](/Faxbot/backends/phaxio-setup.html) • Official docs: https://www.phaxio.com/docs/
+- Sinch: [Backend setup](/Faxbot/backends/sinch-setup.html) • Sign up: https://dashboard.sinch.com/signup • Docs: https://developers.sinch.com/docs/fax/overview/
 - SIP/Asterisk: [Backend setup](/Faxbot/backends/sip-setup.html)
 - Security: [Authentication](/Faxbot/security/authentication/), [HIPAA](/Faxbot/security/hipaa-requirements.html), [OAuth/OIDC](/Faxbot/security/oauth-setup.html)
