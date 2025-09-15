@@ -21,9 +21,10 @@ import type { InboundFax } from '../api/types';
 
 interface InboundProps {
   client: AdminAPIClient;
+  docsBase?: string;
 }
 
-function Inbound({ client }: InboundProps) {
+function Inbound({ client, docsBase }: InboundProps) {
   const [faxes, setFaxes] = useState<InboundFax[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -190,7 +191,7 @@ same => n,System(curl -s -X POST -H "Content-Type: application/json" -H "X-Inter
                   ); setCopied(true); setTimeout(()=>setCopied(false), 2000); }}>
                     {copied ? 'Copied' : 'Copy dialplan snippet'}
                   </Button>
-                  <Button size="small" href="https://faxbot.net/backends/sip-setup.html#inbound" target="_blank" rel="noreferrer">
+                  <Button size="small" href={`${docsBase || 'https://dmontgomery40.github.io/Faxbot'}/backends/sip-setup.html#inbound`} target="_blank" rel="noreferrer">
                     Learn more (Asterisk inbound)
                   </Button>
                 </Box>

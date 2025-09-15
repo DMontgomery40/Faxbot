@@ -498,6 +498,10 @@ def get_admin_config():
         "enforce_public_https": settings.enforce_public_https,
         "phaxio_verify_signature": settings.phaxio_verify_signature,
         "persisted_settings_enabled": (os.getenv("ENABLE_PERSISTED_SETTINGS", "false").lower() in {"1","true","yes"}),
+        "branding": {
+            "docs_base": os.getenv("DOCS_BASE_URL", "https://dmontgomery40.github.io/Faxbot"),
+            "logo_path": "/admin/ui/faxbot_full_logo.png",
+        },
         "mcp": {
             "sse_enabled": (os.getenv("ENABLE_MCP_SSE", "false").lower() in {"1","true","yes"}),
             "sse_path": settings.mcp_sse_path,

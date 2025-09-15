@@ -46,6 +46,7 @@ function Settings({ client }: SettingsProps) {
   const [restartHint, setRestartHint] = useState<boolean>(false);
   const [allowRestart, setAllowRestart] = useState<boolean>(false);
   const [persistedEnabled, setPersistedEnabled] = useState<boolean>(false);
+  const [docsBase, setDocsBase] = useState<string>('https://dmontgomery40.github.io/Faxbot');
   const [lastGeneratedSecret, setLastGeneratedSecret] = useState<string>('');
   const handleForm = (field: string, value: any) => setForm((prev: any) => ({ ...prev, [field]: value }));
   const isSmall = useMediaQuery('(max-width:900px)');
@@ -82,6 +83,7 @@ function Settings({ client }: SettingsProps) {
         const cfg = await client.getConfig();
         setAllowRestart(!!cfg?.allow_restart);
         setPersistedEnabled(!!cfg?.persisted_settings_enabled);
+        if (cfg?.branding?.docs_base) setDocsBase(cfg.branding.docs_base);
         setForm((prev: any) => ({ ...prev, enable_persisted_settings: !!cfg?.persisted_settings_enabled }));
       } catch {}
     })();
@@ -575,7 +577,7 @@ function Settings({ client }: SettingsProps) {
                           <Typography variant="caption" color="text.secondary">
                             Shared secret used by your Asterisk dialplan to POST inbound fax metadata to Faxbot.
                             Keep this private and only use it on the private network.
-                            {' '}<a href="https://dmontgomery40.github.io/Faxbot/asterisk/inbound/" target="_blank" rel="noreferrer">Asterisk inbound guide</a>
+                            {' '}<a href={`${docsBase}/backends/sip-setup.html#inbound`} target="_blank" rel="noreferrer">Asterisk inbound guide</a>
                           </Typography>
                         }
                       />

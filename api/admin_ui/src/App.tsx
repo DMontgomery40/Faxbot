@@ -419,7 +419,7 @@ function App() {
             <JobsList client={client!} />
           </TabPanel>
           <TabPanel value={tabValue} index={3}>
-            <Inbound client={client!} />
+            <Inbound client={client!} docsBase={adminConfig?.branding?.docs_base} />
           </TabPanel>
           <TabPanel value={tabValue} index={4}>
             <ApiKeys client={client!} />
