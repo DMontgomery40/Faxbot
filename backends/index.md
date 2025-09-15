@@ -30,6 +30,8 @@ Faxbot supports multiple backends for sending faxes. Choose the one that best fi
 - **Most users**: Start with [Sinch Setup](sinch-setup.html) or [Documo Setup](documo-setup.html) — both work without a domain
 - **High volume**: Consider [SIP/Asterisk Setup](sip-setup.html) for cost savings
 - **Existing Sinch users**: Use [Sinch Setup](sinch-setup.html) if you already have an account
+- **Prefer SignalWire**: Use [SignalWire Setup](signalwire-setup.html) for the Compatibility API flow
+- **FreeSWITCH operators**: See [FreeSWITCH Setup](freeswitch-setup.html) for self‑hosted fax via mod_spandsp
 
 {: .highlight }
 All backends support the same API endpoints and features. You can switch between them by changing your configuration.

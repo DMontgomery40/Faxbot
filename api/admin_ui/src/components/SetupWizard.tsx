@@ -1,7 +1,10 @@
 import { useState } from 'react';
-import { Box, Card, CardContent, Typography, Stepper, Step, StepLabel, Button, TextField, Alert, Link, FormControl, InputLabel, Select, MenuItem } from '@mui/material';
+import { Box, Card, CardContent, Typography, Stepper, Step, StepLabel, Button, TextField, Alert, Link, FormControl, InputLabel, Select, MenuItem, Tooltip, Chip, useMediaQuery, useTheme } from '@mui/material';
+import InfoIcon from '@mui/icons-material/Info';
+import WarningIcon from '@mui/icons-material/Warning';
+import SecurityIcon from '@mui/icons-material/Security';
 
-type Backend = 'sinch' | 'documo' | 'phaxio' | 'sip';
+type Backend = 'sinch' | 'documo' | 'phaxio' | 'sip' | 'test';
 
 interface Props {
   onApply?: (env: Record<string,string>) => Promise<void> | void;
@@ -12,53 +15,152 @@ export default function SetupWizard({ onApply }: Props) {
   const [backend, setBackend] = useState<Backend>('sinch');
   const [env, setEnv] = useState<Record<string,string>>({});
   const [saving, setSaving] = useState(false);
+  const [hipaaMode, setHipaaMode] = useState(false);
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const steps = ['Choose Backend', 'Credentials', 'Review & Apply'];
 
   const set = (k: string, v: string) => setEnv((e) => ({ ...e, [k]: v }));
 
+  // HIPAA Compliance Warning Component
+  const HIPAAWarning = () => (
+    <Alert severity="warning" sx={{ mb: 2 }} icon={<SecurityIcon />}>
+      <Typography variant="subtitle2" fontWeight="bold" gutterBottom>
+        HIPAA Compliance Requirements
+      </Typography>
+      <Typography variant="body2" paragraph>
+        {backend === 'test' ? (
+          <>Test mode should NEVER be used with real PHI data.</>
+        ) : backend === 'sip' ? (
+          <>Self-hosted requires network isolation, strong AMI passwords, and T.38 encryption when handling PHI.</>
+        ) : (
+          <>Cloud providers require a signed Business Associate Agreement (BAA) before handling any PHI.</>
+        )}
+      </Typography>
+      {backend !== 'test' && backend !== 'sip' && (
+        <Box>
+          <Typography variant="body2" sx={{ mb: 1 }}>Required steps for HIPAA compliance:</Typography>
+          <ol style={{ margin: 0, paddingLeft: 20, fontSize: '0.875rem' }}>
+            <li>Sign BAA with provider</li>
+            <li>Disable document storage at provider</li>
+            <li>Enable two-factor authentication</li>
+            <li>Use HTTPS for all webhooks</li>
+            <li>Enable signature verification</li>
+          </ol>
+        </Box>
+      )}
+      <Link href="/Faxbot/security/hipaa-requirements.html" target="_blank" rel="noopener" sx={{ display: 'inline-flex', alignItems: 'center', mt: 1 }}>
+        <InfoIcon sx={{ fontSize: 16, mr: 0.5 }} />
+        Learn more about HIPAA requirements
+      </Link>
+    </Alert>
+  );
+
   const Links = () => {
+    if (backend === 'test') {
+      return (
+        <Alert severity="success" sx={{ mb: 2 }}>
+          <Typography variant="body2" gutterBottom>
+            <strong>Test/Development Mode</strong> - No actual fax transmission
+          </Typography>
+          <ul style={{ margin: 0, paddingLeft: 20, fontSize: '0.875rem' }}>
+            <li>Simulates all API responses</li>
+            <li>File processing and validation works normally</li>
+            <li>Perfect for development and CI/CD pipelines</li>
+            <li>NO real faxes are sent</li>
+          </ul>
+          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
+            Set FAX_DISABLED=true to enable test mode
+          </Typography>
+        </Alert>
+      );
+    }
+    
     if (backend === 'sinch') {
       return (
         <Alert severity="info" sx={{ mb: 2 }}>
-          <div>Sinch (Direct Upload) works without a domain.</div>
-          <div>
+          <Box display="flex" alignItems="center" mb={1}>
+            <Chip label="No Domain Required" size="small" color="success" sx={{ mr: 1 }} />
+            <Tooltip title="Direct upload means you don't need a public URL or domain to send faxes">
+              <InfoIcon fontSize="small" color="action" />
+            </Tooltip>
+          </Box>
+          <Typography variant="body2" gutterBottom>
+            Sinch Fax API v3 (Direct Upload) - Modern cloud fax service
+          </Typography>
+          <Box sx={{ mt: 1 }}>
             <Link href="https://dashboard.sinch.com/signup" target="_blank" rel="noopener">Sign up</Link> ·{' '}
-            <Link href="https://dashboard.sinch.com" target="_blank" rel="noopener">Open Dashboard (Project & API Keys)</Link> ·{' '}
-            <Link href="https://developers.sinch.com/docs/fax/overview/" target="_blank" rel="noopener">Fax Docs</Link>
-          </div>
+            <Link href="https://dashboard.sinch.com" target="_blank" rel="noopener">Dashboard</Link> ·{' '}
+            <Link href="https://developers.sinch.com/docs/fax/overview/" target="_blank" rel="noopener">API Docs</Link> ·{' '}
+            <Link href="/Faxbot/backends/sinch-setup.html" target="_blank" rel="noopener">Setup Guide</Link>
+          </Box>
         </Alert>
       );
     }
     if (backend === 'documo') {
       return (
         <Alert severity="info" sx={{ mb: 2 }}>
-          <div>Documo (mFax) direct upload — no domain required.</div>
-          <div>
+          <Box display="flex" alignItems="center" mb={1}>
+            <Chip label="No Domain Required" size="small" color="success" sx={{ mr: 1 }} />
+            <Tooltip title="Direct upload API - no callbacks or public URL needed">
+              <InfoIcon fontSize="small" color="action" />
+            </Tooltip>
+          </Box>
+          <Typography variant="body2" gutterBottom>
+            Documo (mFax) - Alternative cloud fax provider
+          </Typography>
+          <Box sx={{ mt: 1 }}>
             <Link href="https://www.mfax.io/pricing" target="_blank" rel="noopener">Sign up</Link> ·{' '}
-            <Link href="https://app.documo.com" target="_blank" rel="noopener">Open Web App (Settings → API)</Link> ·{' '}
-            <Link href="https://docs.documo.com" target="_blank" rel="noopener">API Docs</Link>
-          </div>
+            <Link href="https://app.documo.com" target="_blank" rel="noopener">Web App</Link> ·{' '}
+            <Link href="https://docs.documo.com" target="_blank" rel="noopener">API Docs</Link> ·{' '}
+            <Link href="/Faxbot/backends/documo-setup.html" target="_blank" rel="noopener">Setup Guide</Link>
+          </Box>
         </Alert>
       );
     }
     if (backend === 'phaxio') {
       return (
         <Alert severity="info" sx={{ mb: 2 }}>
-          <div>Phaxio by Sinch — may require a public HTTPS URL for callbacks/fetch.</div>
-          <div>
+          <Box display="flex" alignItems="center" mb={1}>
+            <Chip label="Domain/Tunnel Required" size="small" color="warning" sx={{ mr: 1 }} />
+            <Tooltip title="Phaxio needs to fetch PDFs from your server via HTTPS">
+              <InfoIcon fontSize="small" color="action" />
+            </Tooltip>
+          </Box>
+          <Typography variant="body2" gutterBottom>
+            Phaxio (by Sinch) - Enterprise-grade cloud fax with callbacks
+          </Typography>
+          <Box sx={{ mt: 1 }}>
             <Link href="https://dashboard.sinch.com/signup" target="_blank" rel="noopener">Sign up</Link> ·{' '}
-            <Link href="https://www.phaxio.com/docs/" target="_blank" rel="noopener">Phaxio Docs</Link>
-          </div>
+            <Link href="https://www.phaxio.com/docs/" target="_blank" rel="noopener">Phaxio Docs</Link> ·{' '}
+            <Link href="/Faxbot/backends/phaxio-setup.html" target="_blank" rel="noopener">Setup Guide</Link>
+          </Box>
+          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
+            💡 Tip: Use scripts/setup-phaxio-tunnel.sh for quick testing without a domain
+          </Typography>
         </Alert>
       );
     }
     // SIP
     return (
-      <Alert severity="info" sx={{ mb: 2 }}>
-        <div>SIP/Asterisk (self‑hosted). Requires SIP trunk and T.38 knowledge.</div>
-        <div>
-          <Link href="/Faxbot/backends/sip-setup.html" target="_blank" rel="noopener">SIP/Asterisk Setup</Link>
-        </div>
+      <Alert severity="warning" sx={{ mb: 2 }}>
+        <Box display="flex" alignItems="center" mb={1}>
+          <Chip label="Advanced Setup" size="small" color="error" sx={{ mr: 1 }} />
+          <Chip label="Full Control" size="small" color="primary" sx={{ mr: 1 }} />
+          <Tooltip title="Requires SIP trunk provider, T.38 knowledge, and network configuration">
+            <InfoIcon fontSize="small" color="action" />
+          </Tooltip>
+        </Box>
+        <Typography variant="body2" gutterBottom>
+          SIP/Asterisk - Self-hosted with complete control
+        </Typography>
+        <Alert severity="error" sx={{ mt: 1, mb: 1 }}>
+          <strong>⚠️ Security Critical:</strong> AMI port 5038 must NEVER be exposed publicly!
+        </Alert>
+        <Box sx={{ mt: 1 }}>
+          <Link href="/Faxbot/backends/sip-setup.html" target="_blank" rel="noopener">SIP/Asterisk Setup Guide</Link> ·{' '}
+          <Link href="/Faxbot/guides/signalwire-setup.html" target="_blank" rel="noopener">SignalWire Example</Link>
+        </Box>
       </Alert>
     );
   };
