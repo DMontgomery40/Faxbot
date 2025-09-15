@@ -603,6 +603,13 @@ def get_admin_settings():
             "callback_url": settings.signalwire_status_callback_url,
             "configured": bool(settings.signalwire_space_url and settings.signalwire_project_id and settings.signalwire_api_token),
         },
+        "fs": {
+            "esl_host": settings.fs_esl_host,
+            "esl_port": settings.fs_esl_port,
+            "gateway_name": settings.fs_gateway_name,
+            "caller_id_number": settings.fs_caller_id_number,
+            "t38_enable": settings.fs_t38_enable,
+        },
         "sip": {
             "ami_host": settings.ami_host,
             "ami_port": settings.ami_port,

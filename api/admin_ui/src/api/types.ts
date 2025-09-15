@@ -60,6 +60,14 @@ export interface Settings {
     api_secret: string;
     configured: boolean;
   };
+  signalwire?: {
+    space_url: string;
+    project_id: string;
+    api_token: string;
+    from_fax: string;
+    callback_url?: string;
+    configured: boolean;
+  };
   sip: {
     ami_host: string;
     ami_port: number;
@@ -68,6 +76,13 @@ export interface Settings {
     ami_password_is_default: boolean;
     station_id: string;
     configured: boolean;
+  };
+  fs?: {
+    esl_host?: string;
+    esl_port?: number;
+    gateway_name?: string;
+    caller_id_number?: string;
+    t38_enable?: boolean;
   };
   security: {
     require_api_key: boolean;
