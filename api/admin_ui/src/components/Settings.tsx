@@ -160,6 +160,28 @@ function Settings({ client }: SettingsProps) {
           >
             Save .env to server
           </Button>
+          {allowRestart && (
+            <Button
+              variant="outlined"
+              sx={{ ml: 1 }}
+              onClick={async () => {
+                try {
+                  setLoading(true); setError(null);
+                  // Persist current effective settings and restart
+                  await client.persistSettings();
+                  await client.restart();
+                  setSnack('Saved .env and restarting API...');
+                } catch (e:any) {
+                  setError(e?.message || 'Failed to save and restart');
+                } finally {
+                  setLoading(false);
+                }
+              }}
+              disabled={loading}
+            >
+              Save & Restart
+            </Button>
+          )}
         </Box>
       </Box>
 

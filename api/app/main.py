@@ -705,6 +705,9 @@ class UpdateSettingsRequest(BaseModel):
     max_file_size_mb: Optional[int] = None
     enable_persisted_settings: Optional[bool] = None
     database_url: Optional[str] = None
+    # Feature flags
+    feature_v3_plugins: Optional[bool] = None
+    feature_plugin_install: Optional[bool] = None
     # MCP embedded SSE
     enable_mcp_sse: Optional[bool] = None
     require_mcp_oauth: Optional[bool] = None
@@ -783,6 +786,9 @@ def update_admin_settings(payload: UpdateSettingsRequest):
     _set_env_bool("FAX_DISABLED", payload.fax_disabled)
     _set_env_bool("ENABLE_PERSISTED_SETTINGS", payload.enable_persisted_settings)
     _set_env_opt("DATABASE_URL", payload.database_url)
+    # Feature flags
+    _set_env_bool("FEATURE_V3_PLUGINS", payload.feature_v3_plugins)
+    _set_env_bool("FEATURE_PLUGIN_INSTALL", payload.feature_plugin_install)
     # MCP SSE
     _set_env_bool("ENABLE_MCP_SSE", payload.enable_mcp_sse)
     _set_env_bool("REQUIRE_MCP_OAUTH", payload.require_mcp_oauth)
