@@ -18,6 +18,7 @@ from .conversion import ensure_dir, txt_to_pdf, pdf_to_tiff
 from .ami import ami_client
 from .phaxio_service import get_phaxio_service
 from .sinch_service import get_sinch_service
+from .signalwire_service import get_signalwire_service
 import hmac
 import hashlib
 from urllib.parse import urlparse
@@ -28,6 +29,7 @@ from .audit import query_recent_logs
 from .storage import get_storage, reset_storage
 from .auth import verify_db_key, create_api_key, list_api_keys, revoke_api_key, rotate_api_key
 from .plugins.http_provider import HttpManifest, HttpProviderRuntime
+from .signalwire_service import get_signalwire_service
 
 # v3 plugins (feature-gated)
 try:
@@ -325,6 +327,8 @@ def health_ready():
             backend_warnings.append("Invalid PUBLIC_API_URL")
     elif backend == "sinch":
         backend_ok = bool(settings.sinch_project_id and settings.sinch_api_key and settings.sinch_api_secret)
+    elif backend == "signalwire":
+        backend_ok = bool(settings.signalwire_space_url and settings.signalwire_project_id and settings.signalwire_api_token)
     elif backend == "sip":
         # Presence checks only; AMI connection is handled asynchronously
         if not settings.ami_password or settings.ami_password == "changeme":
@@ -542,6 +546,7 @@ def get_admin_config():
         "backend_configured": {
             "phaxio": bool(settings.phaxio_api_key and settings.phaxio_api_secret),
             "sinch": bool(settings.sinch_project_id and settings.sinch_api_key and settings.sinch_api_secret),
+            "signalwire": bool(settings.signalwire_space_url and settings.signalwire_project_id and settings.signalwire_api_token),
             "documo": bool(settings.documo_api_key),
             "sip_ami_configured": bool(settings.ami_username and settings.ami_password),
             "sip_ami_password_default": (settings.ami_password == "changeme"),
@@ -585,6 +590,14 @@ def get_admin_settings():
             "api_key": mask_secret(settings.sinch_api_key),
             "api_secret": mask_secret(settings.sinch_api_secret),
             "configured": bool(settings.sinch_project_id and settings.sinch_api_key and settings.sinch_api_secret),
+        },
+        "signalwire": {
+            "space_url": settings.signalwire_space_url,
+            "project_id": settings.signalwire_project_id,
+            "api_token": mask_secret(settings.signalwire_api_token),
+            "from_fax": mask_phone(settings.signalwire_fax_from_e164),
+            "callback_url": settings.signalwire_status_callback_url,
+            "configured": bool(settings.signalwire_space_url and settings.signalwire_project_id and settings.signalwire_api_token),
         },
         "sip": {
             "ami_host": settings.ami_host,
@@ -740,6 +753,12 @@ class UpdateSettingsRequest(BaseModel):
     sinch_api_key: Optional[str] = None
     sinch_api_secret: Optional[str] = None
 
+    # SignalWire
+    signalwire_space_url: Optional[str] = None
+    signalwire_project_id: Optional[str] = None
+    signalwire_api_token: Optional[str] = None
+    signalwire_fax_from_e164: Optional[str] = None
+
     # Documo
     documo_api_key: Optional[str] = None
     documo_base_url: Optional[str] = None
@@ -829,6 +848,12 @@ def update_admin_settings(payload: UpdateSettingsRequest):
     _set_env_opt("SINCH_PROJECT_ID", payload.sinch_project_id)
     _set_env_opt("SINCH_API_KEY", payload.sinch_api_key)
     _set_env_opt("SINCH_API_SECRET", payload.sinch_api_secret)
+
+    # SignalWire
+    _set_env_opt("SIGNALWIRE_SPACE_URL", payload.signalwire_space_url)
+    _set_env_opt("SIGNALWIRE_PROJECT_ID", payload.signalwire_project_id)
+    _set_env_opt("SIGNALWIRE_API_TOKEN", payload.signalwire_api_token)
+    _set_env_opt("SIGNALWIRE_FAX_FROM_E164", payload.signalwire_fax_from_e164)
 
     # Documo (preview)
     _set_env_opt("DOCUMO_API_KEY", payload.documo_api_key)
@@ -1253,6 +1278,12 @@ def admin_inbound_callbacks():
                 "hmac": bool(settings.sinch_inbound_hmac_secret),
             },
             "notes": "Set webhook in Sinch Fax console. Optionally use Basic and/or HMAC.",
+        })
+    elif backend == "signalwire":
+        out["callbacks"].append({
+            "name": "SignalWire Fax Status",
+            "url": f"{base}/signalwire-callback",
+            "notes": "Configure StatusCallback on send; this endpoint will process updates.",
         })
     elif backend == "sip":
         out["callbacks"].append({
@@ -1906,6 +1937,9 @@ async def send_fax(background: BackgroundTasks, to: str = Form(...), file: Uploa
         # Sinch cloud backend: no local TIFF; provider handles rasterization
         pages = None
         # nothing else to prepare here
+    elif settings.fax_backend == "signalwire":
+        # Cloud backend using Compatibility Fax API; no local TIFF
+        pages = None
     elif settings.feature_v3_plugins and os.path.exists(os.path.join(os.getcwd(), "config", "providers", settings.fax_backend, "manifest.json")):
         # Manifest providers: use tokenized PDF URL later; no TIFF
         pages = None
@@ -1941,6 +1975,8 @@ async def send_fax(background: BackgroundTasks, to: str = Form(...), file: Uploa
             background.add_task(_send_via_phaxio, job_id, to, pdf_path)
         elif settings.fax_backend == "sinch":
             background.add_task(_send_via_sinch, job_id, to, pdf_path)
+        elif settings.fax_backend == "signalwire":
+            background.add_task(_send_via_signalwire, job_id, to, pdf_path)
         elif settings.feature_v3_plugins and os.path.exists(os.path.join(os.getcwd(), "config", "providers", settings.fax_backend, "manifest.json")):
             background.add_task(_send_via_manifest, job_id, to, pdf_path)
         else:
@@ -2302,6 +2338,52 @@ async def _send_via_sinch(job_id: str, to: str, pdf_path: str):
                 j.error = str(e)
                 j.updated_at = datetime.utcnow()
                 db.add(j)
+                db.commit()
+        audit_event("job_failed", job_id=job_id, error=str(e))
+
+
+async def _send_via_signalwire(job_id: str, to: str, pdf_path: str):
+    try:
+        svc = get_signalwire_service()
+        if not svc:
+            raise RuntimeError("SignalWire not configured")
+        # Tokenized PDF URL
+        pdf_token = secrets.token_urlsafe(32)
+        ttl = max(1, int(settings.pdf_token_ttl_minutes))
+        expires_at = datetime.utcnow() + timedelta(minutes=ttl)
+        media_url = f"{settings.public_api_url}/fax/{job_id}/pdf?token={pdf_token}"
+
+        with SessionLocal() as db:
+            job = db.get(FaxJob, job_id)
+            if job:
+                job.pdf_url = media_url
+                job.pdf_token = pdf_token
+                job.pdf_token_expires_at = expires_at
+                job.status = "in_progress"
+                job.updated_at = datetime.utcnow()
+                db.add(job)
+                db.commit()
+
+        audit_event("job_dispatch", job_id=job_id, method="signalwire")
+        res = await svc.send_fax(to, media_url, job_id)
+        prov_sid = str(res.get("provider_sid") or "")
+        status = str(res.get("status") or "queued")
+        with SessionLocal() as db:
+            job = db.get(FaxJob, job_id)
+            if job:
+                job.provider_sid = prov_sid
+                job.status = status
+                job.updated_at = datetime.utcnow()
+                db.add(job)
+                db.commit()
+    except Exception as e:
+        with SessionLocal() as db:
+            job = db.get(FaxJob, job_id)
+            if job:
+                job.status = "failed"
+                job.error = str(e)
+                job.updated_at = datetime.utcnow()
+                db.add(job)
                 db.commit()
         audit_event("job_failed", job_id=job_id, error=str(e))
 
@@ -3079,3 +3161,49 @@ def plugin_registry():
     except Exception:
         pass
     return {"items": _installed_plugins(), "note": "default registry"}
+@app.post("/signalwire-callback")
+async def signalwire_callback(request: Request, job_id: Optional[str] = Query(default=None)):
+    """SignalWire Compatibility Fax Status callback handler.
+    Verifies optional HMAC when configured and updates job status.
+    """
+    raw = await request.body()
+    # Optional HMAC verification; header name may vary by configuration
+    key = (settings.signalwire_webhook_signing_key or '').encode()
+    if key:
+        provided = request.headers.get('X-SignalWire-Signature') or ''
+        try:
+            digest = hmac.new(key, raw, hashlib.sha256).hexdigest()
+            if not hmac.compare_digest(digest, provided.strip().lower()):
+                raise HTTPException(401, detail="Invalid signature")
+        except Exception:
+            raise HTTPException(401, detail="Invalid signature")
+    # Parse form or JSON
+    payload: dict[str, Any]
+    try:
+        form = await request.form()
+        payload = dict(form)
+    except Exception:
+        try:
+            payload = await request.json()
+        except Exception:
+            payload = {}
+    svc = get_signalwire_service()
+    if not svc:
+        return {"ok": True}
+    res = await svc.handle_status_callback(payload)
+    prov_sid = str(res.get('provider_sid') or '')
+    status = str(res.get('status') or '')
+    # Update job by job_id if present, else by provider_sid best-effort
+    with SessionLocal() as db:
+        job = None
+        if job_id:
+            job = db.get(FaxJob, str(job_id))
+        if not job and prov_sid:
+            job = db.query(FaxJob).filter(FaxJob.provider_sid == prov_sid).first()
+        if job:
+            job.status = status or job.status
+            job.updated_at = datetime.utcnow()
+            db.add(job)
+            db.commit()
+            audit_event("job_updated", job_id=job.id, status=job.status, provider="signalwire")
+    return {"ok": True}

@@ -230,6 +230,7 @@ function Settings({ client }: SettingsProps) {
                     >
                       <option value="phaxio">phaxio</option>
                       <option value="sinch">sinch</option>
+                      <option value="signalwire">signalwire</option>
                       <option value="documo">documo</option>
                       <option value="sip">sip</option>
                     </select>
@@ -743,6 +744,35 @@ function Settings({ client }: SettingsProps) {
               </CardContent>
             </Card>
           </Grid>
+
+          {/* SignalWire (cloud) */}
+          {(form.backend === 'signalwire' || settings.backend.type === 'signalwire') && (
+            <Grid item xs={12}>
+              <Card>
+                <CardContent>
+                  <Typography variant="h6" gutterBottom>SignalWire</Typography>
+                  <List dense>
+                    <ListItem sx={{ alignItems: 'flex-start', flexWrap: 'wrap', gap: 1 }}>
+                      <ListItemText primary="Space URL" secondary={settings.signalwire?.space_url || ''} />
+                      <input placeholder="example.signalwire.com" onChange={(e)=>handleForm('signalwire_space_url', e.target.value)} style={ctlStyle} />
+                    </ListItem>
+                    <ListItem sx={{ alignItems: 'flex-start', flexWrap: 'wrap', gap: 1 }}>
+                      <ListItemText primary="Project ID" secondary={settings.signalwire?.project_id || ''} />
+                      <input placeholder="SIGNALWIRE_PROJECT_ID" onChange={(e)=>handleForm('signalwire_project_id', e.target.value)} style={ctlStyle} />
+                    </ListItem>
+                    <ListItem sx={{ alignItems: 'flex-start', flexWrap: 'wrap', gap: 1 }}>
+                      <ListItemText primary="API Token" secondary={settings.signalwire?.api_token || '***'} />
+                      <input placeholder="SIGNALWIRE_API_TOKEN" onChange={(e)=>handleForm('signalwire_api_token', e.target.value)} style={ctlStyle} />
+                    </ListItem>
+                    <ListItem sx={{ alignItems: 'flex-start', flexWrap: 'wrap', gap: 1 }}>
+                      <ListItemText primary="From (fax)" secondary={settings.signalwire?.from_fax || ''} />
+                      <input placeholder="+13035551234" onChange={(e)=>handleForm('signalwire_fax_from_e164', e.target.value)} style={ctlStyle} />
+                    </ListItem>
+                  </List>
+                </CardContent>
+              </Card>
+            </Grid>
+          )}
 
           {/* Storage Configuration */}
           <Grid item xs={12}>
