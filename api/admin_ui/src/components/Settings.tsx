@@ -599,7 +599,7 @@ function Settings({ client }: SettingsProps) {
                           <Typography variant="caption" color="text.secondary">
                             Shared secret used by your Asterisk dialplan to POST inbound fax metadata to Faxbot.
                             Keep this private and only use it on the private network.
-                            {' '}<a href={`${docsBase}/backends/sip-setup.html#inbound`} target="_blank" rel="noreferrer">Asterisk inbound guide</a>
+                            {' '}<a href={`${docsBase}/backends/sip-setup.html#inbound-receiving-quickstart-wip`} target="_blank" rel="noreferrer">Asterisk inbound guide</a>
                           </Typography>
                         }
                       />

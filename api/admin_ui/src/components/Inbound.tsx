@@ -191,7 +191,7 @@ same => n,System(curl -s -X POST -H "Content-Type: application/json" -H "X-Inter
                   ); setCopied(true); setTimeout(()=>setCopied(false), 2000); }}>
                     {copied ? 'Copied' : 'Copy dialplan snippet'}
                   </Button>
-                  <Button size="small" href={`${docsBase || 'https://dmontgomery40.github.io/Faxbot'}/backends/sip-setup.html#inbound`} target="_blank" rel="noreferrer">
+                  <Button size="small" href={`${docsBase || 'https://dmontgomery40.github.io/Faxbot'}/backends/sip-setup.html#inbound-receiving-quickstart-wip`} target="_blank" rel="noreferrer">
                     Learn more (Asterisk inbound)
                   </Button>
                 </Box>
