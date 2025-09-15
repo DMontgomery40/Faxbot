@@ -19,6 +19,14 @@ Provider docs
   - Asterisk Manager Interface (AMI): https://wiki.asterisk.org/wiki/display/AST/Asterisk+Manager+Interface+(AMI)
   - Fax overview: https://wiki.asterisk.org/wiki/display/AST/Fax
   - Application SendFAX: https://wiki.asterisk.org/wiki/display/AST/Application_SendFAX
+- FreeSWITCH (self‑hosted backend)
+  - FreeSWITCH Explained: https://developer.signalwire.com/freeswitch/FreeSWITCH-Explained/
+  - mod_spandsp (fax): http://files.freeswitch.org/api/mod_spandsp.html
+  - Dialplan Reference: https://freeswitch.org/confluence/display/FREESWITCH/Dialplan+Reference
+  - fs_cli: https://freeswitch.org/confluence/display/FREESWITCH/fs_cli
+- SignalWire
+  - Compatibility (Twilio‑style) API: https://developer.signalwire.com/compatibility-api/reference/overview
+  - Fax via Compatibility API: https://developer.signalwire.com/compatibility-api/reference/send-a-fax
 
 Tools
 - Ghostscript (PDF↔TIFF utilities): https://ghostscript.com/docs/
