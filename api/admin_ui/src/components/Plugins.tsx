@@ -27,6 +27,26 @@ const iconFor = (cat: string) => {
   }
 };
 
+// Example manifest placeholder
+const EXAMPLE_MANIFEST = `{
+  "id": "example",
+  "allowed_domains": ["api.example.com"],
+  "actions": {
+    "send_fax": {
+      "method": "POST",
+      "url": "https://api.example.com/fax",
+      "body": {
+        "kind": "json",
+        "template": "{\\"to\\":\\"{{ to }}\\", \\"file_url\\":\\"{{ file_url }}\\"}"
+      },
+      "response": {
+        "job_id": "data.id",
+        "status": "data.status"
+      }
+    }
+  }
+}`;
+
 export default function Plugins({ client }: Props) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>('');
@@ -158,7 +178,7 @@ export default function Plugins({ client }: Props) {
             </Typography>
             <Grid container spacing={2}>
               <Grid item xs={12} md={8}>
-                <TextField label="Manifest JSON" value={manifestJson} onChange={(e)=>setManifestJson(e.target.value)} fullWidth multiline minRows={8} placeholder="{\n  \"id\": \"example\",\n  \"allowed_domains\": [\"api.example.com\"],\n  \"actions\": {\n    \"send_fax\": { \"method\": \"POST\", \"url\": \"https://api.example.com/fax\", \"body\": { \"kind\": \"json\", \"template\": \"{\\\"to\\\":\\\"{{ to }}\\\", \\\"file_url\\\":\\\"{{ file_url }}\\\"}\" }, \"response\": { \"job_id\": \"data.id\", \"status\": \"data.status\" } }\n  }\n}" />
+                <TextField label="Manifest JSON" value={manifestJson} onChange={(e)=>setManifestJson(e.target.value)} fullWidth multiline minRows={8} placeholder={EXAMPLE_MANIFEST} />
               </Grid>
               <Grid item xs={12} md={4}>
                 <TextField label="To Number" value={manifestTo} onChange={(e)=>setManifestTo(e.target.value)} fullWidth size="small" sx={{ mb: 1 }} />

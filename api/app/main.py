@@ -227,9 +227,13 @@ async def on_startup():
     init_db()
     # Ensure data dir
     ensure_dir(settings.fax_data_dir)
-    # Validate Ghostscript availability for all backends (core dependency)
+    # Validate Ghostscript availability where required. For SIP backend, it's mandatory.
+    # For cloud backends (phaxio/sinch) tests and dev may proceed without gs; emit a warning.
     if shutil.which("gs") is None:
-        raise RuntimeError("Ghostscript (gs) not found. Install 'ghostscript' — it is required for fax file processing.")
+        if not settings.fax_disabled and settings.fax_backend == "sip":
+            raise RuntimeError("Ghostscript (gs) not found. Install 'ghostscript' — it is required for SIP/TIFF processing.")
+        else:
+            print("[warn] Ghostscript (gs) not found; continuing (not required for current backend)")
     # Security posture warnings
     if not settings.require_api_key and not settings.api_key and not settings.fax_disabled:
         print("[warn] API auth is not enforced (REQUIRE_API_KEY=false and API_KEY unset); /fax requests are unauthenticated. Set API_KEY or REQUIRE_API_KEY for production.")
