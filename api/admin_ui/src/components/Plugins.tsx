@@ -47,6 +47,9 @@ const EXAMPLE_MANIFEST = `{
   }
 }`;
 
+// Bulk import placeholder
+const BULK_IMPORT_PLACEHOLDER = `[ { "id": "provider1", ... }, { ... } ] or markdown with json code blocks`;
+
 export default function Plugins({ client }: Props) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>('');
@@ -236,7 +239,7 @@ export default function Plugins({ client }: Props) {
             </Typography>
             <Grid container spacing={2}>
               <Grid item xs={12} md={8}>
-                <TextField label="Manifests JSON or Markdown" value={bulkText} onChange={(e)=>setBulkText(e.target.value)} fullWidth multiline minRows={8} placeholder="[ { \"id\": \"provider1\", ... }, { ... } ] or markdown with ```json code blocks" />
+                <TextField label="Manifests JSON or Markdown" value={bulkText} onChange={(e)=>setBulkText(e.target.value)} fullWidth multiline minRows={8} placeholder={BULK_IMPORT_PLACEHOLDER} />
               </Grid>
               <Grid item xs={12} md={4}>
                 <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
@@ -259,6 +262,17 @@ export default function Plugins({ client }: Props) {
                       setError(e?.message || 'Import failed');
                     }
                   }}>Import</Button>
+                  <Button size="small" onClick={async () => {
+                    try {
+                      setError(''); setNote(''); setBulkImportRes(null);
+                      const res = await client.importHttpManifests({ source: 'repo_scrape' } as any);
+                      setBulkImportRes(res);
+                      setNote(`Imported ${res.imported?.length || 0} provider(s) from repo scrape`);
+                      await load();
+                    } catch (e: any) {
+                      setError(e?.message || 'Import from repo failed');
+                    }
+                  }}>Import from repo scrape</Button>
                 </Box>
                 {bulkImportRes && (
                   <Box sx={{ mt: 2 }}>

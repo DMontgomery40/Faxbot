@@ -1111,6 +1111,7 @@ async def validate_http_manifest(payload: ManifestValidateIn):
 class ImportManifestsIn(BaseModel):
     items: Optional[List[dict]] = None
     markdown: Optional[str] = None
+    source: Optional[str] = None  # 'repo_scrape' reads api_plugins_list.md from CWD
 
 
 def _extract_json_blocks(md: str) -> List[dict]:
@@ -1143,6 +1144,13 @@ def import_http_manifests(payload: ImportManifestsIn):
     For markdown, extracts JSON code fences and imports objects that look like manifests.
     """
     candidates: List[dict] = []
+    if (payload.source or "").lower() == "repo_scrape" and not payload.items and not payload.markdown:
+        try:
+            scrape_path = os.path.join(os.getcwd(), "api_plugins_list.md")
+            with open(scrape_path, "r", encoding="utf-8") as f:
+                payload.markdown = f.read()
+        except Exception as e:
+            raise HTTPException(404, detail=f"Scrape file not found or unreadable: {e}")
     if payload.items:
         for it in payload.items:
             if isinstance(it, dict):
