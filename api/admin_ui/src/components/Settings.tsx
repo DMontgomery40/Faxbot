@@ -46,6 +46,7 @@ function Settings({ client }: SettingsProps) {
   const [restartHint, setRestartHint] = useState<boolean>(false);
   const [allowRestart, setAllowRestart] = useState<boolean>(false);
   const [persistedEnabled, setPersistedEnabled] = useState<boolean>(false);
+  const [lastGeneratedSecret, setLastGeneratedSecret] = useState<string>('');
   const handleForm = (field: string, value: any) => setForm((prev: any) => ({ ...prev, [field]: value }));
   const isSmall = useMediaQuery('(max-width:900px)');
   const ctlStyle: React.CSSProperties = { background: 'transparent', color: 'inherit', borderColor: '#444', padding: '6px', borderRadius: 6, width: isSmall ? '100%' : 'auto', maxWidth: isSmall ? '100%' : undefined };
@@ -593,15 +594,23 @@ function Settings({ client }: SettingsProps) {
                             for (let i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256);
                           }
                           const b64 = btoa(String.fromCharCode(...Array.from(bytes))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+                          setLastGeneratedSecret(b64);
                           await client.updateSettings({ asterisk_inbound_secret: b64 });
                           await client.reloadSettings();
                           await fetchSettings();
-                          setSnack('Generated new inbound secret');
+                          setSnack('Generated new inbound secret (displayed once below)');
                         } catch(e:any){ setError(e?.message||'Failed to generate secret'); }
                       }}>Generate</Button>
                       <Button size="small" onClick={async ()=>{
-                        try { await navigator.clipboard.writeText(''); setSnack('Copied'); } catch {}
-                      }} disabled>Copy</Button>
+                        const toCopy = (form.asterisk_inbound_secret || lastGeneratedSecret || '').trim();
+                        if (!toCopy) return;
+                        try { await navigator.clipboard.writeText(toCopy); setSnack('Copied'); } catch {}
+                      }} disabled={!form.asterisk_inbound_secret && !lastGeneratedSecret}>Copy</Button>
+                      {lastGeneratedSecret && (
+                        <Typography variant="caption" color="text.secondary" sx={{ ml: 1 }}>
+                          New secret (copy now): <code>{lastGeneratedSecret}</code>
+                        </Typography>
+                      )}
                     </ListItem>
                   )}
 
