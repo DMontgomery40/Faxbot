@@ -10,6 +10,24 @@
       "learn_more": "https://docs.faxbot.net/providers/phaxio"
     },
     {
+      "id": "signalwire",
+      "name": "SignalWire (Compatibility Fax API)",
+      "version": "1.0.0",
+      "categories": ["outbound"],
+      "capabilities": ["send", "get_status", "webhook"],
+      "description": "Cloud fax using Twilio‑style Compatibility API.",
+      "learn_more": "https://dmontgomery40.github.io/Faxbot/guides/signalwire-setup/"
+    },
+    {
+      "id": "freeswitch",
+      "name": "FreeSWITCH (Self‑Hosted)",
+      "version": "1.0.0",
+      "categories": ["outbound"],
+      "capabilities": ["send"],
+      "description": "Self‑hosted fax via mod_spandsp (txfax/rxfax).",
+      "learn_more": "https://dmontgomery40.github.io/Faxbot/guides/freeswitch-setup/"
+    },
+    {
       "id": "sinch",
       "name": "Sinch Fax API v3",
       "version": "1.0.0",
@@ -47,4 +65,3 @@
     }
   ]
 }
-

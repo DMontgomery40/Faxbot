@@ -3020,6 +3020,15 @@ def _installed_plugins() -> list[dict[str, Any]]:
         "configurable": True,
     })
     items.append({
+        "id": "signalwire",
+        "name": "SignalWire (Compatibility Fax API)",
+        "version": "1.0.0",
+        "categories": ["outbound"],
+        "capabilities": ["send", "get_status", "webhook"],
+        "enabled": (current == "signalwire"),
+        "configurable": True,
+    })
+    items.append({
         "id": "documo",
         "name": "Documo mFax",
         "version": "1.0.0",
@@ -3035,6 +3044,15 @@ def _installed_plugins() -> list[dict[str, Any]]:
         "categories": ["outbound"],
         "capabilities": ["send", "get_status"],
         "enabled": (current == "sip"),
+        "configurable": True,
+    })
+    items.append({
+        "id": "freeswitch",
+        "name": "FreeSWITCH (Self-hosted)",
+        "version": "1.0.0",
+        "categories": ["outbound"],
+        "capabilities": ["send"],
+        "enabled": (current == "freeswitch"),
         "configurable": True,
     })
     # Storage providers (inbound artifacts)
@@ -3114,6 +3132,15 @@ def get_plugin_config(plugin_id: str):
                 "configured": bool(settings.sinch_project_id and settings.sinch_api_key and settings.sinch_api_secret),
             },
         }
+    if pid == "signalwire":
+        return {
+            "enabled": settings.fax_backend == "signalwire",
+            "settings": {
+                "space_url": settings.signalwire_space_url,
+                "project_id": settings.signalwire_project_id,
+                "configured": bool(settings.signalwire_space_url and settings.signalwire_project_id and settings.signalwire_api_token),
+            },
+        }
     if pid == "documo":
         return {
             "enabled": settings.fax_backend == "documo",
@@ -3132,6 +3159,15 @@ def get_plugin_config(plugin_id: str):
                 "ami_port": settings.ami_port,
                 "ami_username": settings.ami_username,
                 "ami_password_default": settings.ami_password == "changeme",
+            },
+        }
+    if pid == "freeswitch":
+        return {
+            "enabled": settings.fax_backend == "freeswitch",
+            "settings": {
+                "esl_host": settings.fs_esl_host,
+                "esl_port": settings.fs_esl_port,
+                "gateway_name": settings.fs_gateway_name,
             },
         }
     if pid == "s3":
@@ -3174,7 +3210,7 @@ def update_plugin_config(plugin_id: str, payload: UpdatePluginConfigIn):
     data = cfg_res.data
     pid = plugin_id.lower()
     # Minimal mapping for outbound/storage
-    if pid in {"phaxio", "sinch", "sip"}:
+    if pid in {"phaxio", "sinch", "sip", "signalwire", "freeswitch"}:
         data.setdefault("providers", {}).setdefault("outbound", {})
         data["providers"]["outbound"]["plugin"] = pid
         data["providers"]["outbound"]["enabled"] = bool(payload.enabled) if payload.enabled is not None else True

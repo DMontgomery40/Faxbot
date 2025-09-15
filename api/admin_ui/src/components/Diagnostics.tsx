@@ -158,6 +158,14 @@ function Diagnostics({ client, onNavigate, docsBase }: DiagnosticsProps) {
       docs.push({ text: 'Sinch Fax API reference', href: 'https://developers.sinch.com/docs/fax/' });
       docs.push({ text: 'Faxbot inbound security can also enforce optional Basic/HMAC on callbacks. Configure shared secrets in Faxbot and, if supported, in your provider portal.' });
     }
+    if (t.includes('signalwire')) {
+      docs.push({ text: 'Faxbot: SignalWire setup', href: `${docsBase || 'https://dmontgomery40.github.io/Faxbot'}/guides/signalwire-setup/` });
+      docs.push({ text: 'SignalWire Compatibility API', href: 'https://developer.signalwire.com/compatibility-api/reference/overview' });
+    }
+    if (t.includes('freeswitch')) {
+      docs.push({ text: 'Faxbot: FreeSWITCH setup', href: `${docsBase || 'https://dmontgomery40.github.io/Faxbot'}/guides/freeswitch-setup/` });
+      docs.push({ text: 'FreeSWITCH Explained', href: 'https://developer.signalwire.com/freeswitch/FreeSWITCH-Explained/' });
+    }
     if (t.includes('storage')) {
       docs.push({ text: 'S3 server-side encryption with KMS (AWS docs)', href: 'https://docs.aws.amazon.com/AmazonS3/latest/userguide/UsingKMSEncryption.html' });
     }
