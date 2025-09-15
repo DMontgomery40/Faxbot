@@ -174,6 +174,42 @@ class HttpProviderRuntime:
             for kv in pairs:
                 k, _, v = kv.partition("=")
                 params[k] = v
+        elif act.body_kind == "multipart":
+            # Support a simple query-like template where a special key 'attachment' or 'file'
+            # indicates the binary PDF part. Example:
+            #   request={"to":[{"phoneNumber":"{{to}}"}]}&attachment={{file}}
+            rendered = _render(act.body_template, ctx)
+            pairs = [kv for kv in (rendered.split("&") if rendered else []) if kv]
+            form_fields: Dict[str, str] = {}
+            attach_key: Optional[str] = None
+            for kv in pairs:
+                k, _, v = kv.partition("=")
+                if k.lower() in {"attachment", "file", "document"}:
+                    attach_key = k
+                    # value handled below
+                else:
+                    form_fields[k] = v
+            body_data = form_fields
+            # Attach file bytes by downloading file_url (preferred) or reading local path
+            file_bytes: Optional[bytes] = None
+            filename = "fax.pdf"
+            if file_url:
+                filename = (urlparse(file_url).path.rsplit('/', 1)[-1] or filename)
+                async with httpx.AsyncClient(timeout=httpx.Timeout(self.m.timeout_ms / 1000.0)) as client:
+                    r = await client.get(str(file_url))
+                    r.raise_for_status()
+                    file_bytes = r.content
+            elif file_path:
+                try:
+                    with open(file_path, 'rb') as f:
+                        file_bytes = f.read()
+                    filename = file_path.rsplit('/', 1)[-1] or filename
+                except Exception:
+                    file_bytes = None
+            if attach_key and file_bytes is not None:
+                files = {attach_key: (filename, file_bytes, 'application/pdf')}
+            else:
+                files = None
         elif act.body_kind == "none":
             pass
         else:
@@ -181,7 +217,12 @@ class HttpProviderRuntime:
 
         timeout = httpx.Timeout(self.m.timeout_ms / 1000.0)
         async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.request(act.method, url, headers=headers, params=params, json=body_data, files=files)
+            if act.body_kind == "multipart":
+                resp = await client.request(act.method, url, headers=headers, params=params, data=body_data, files=files)
+            elif act.body_kind == "form":
+                resp = await client.request(act.method, url, headers=headers, params=params, data=params)
+            else:
+                resp = await client.request(act.method, url, headers=headers, params=params, json=body_data, files=files)
         try:
             data = resp.json()
         except Exception:
