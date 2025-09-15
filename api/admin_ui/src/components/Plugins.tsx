@@ -63,6 +63,9 @@ export default function Plugins({ client }: Props) {
   const [manifestTo, setManifestTo] = useState<string>('+15551234567');
   const [manifestFileUrl, setManifestFileUrl] = useState<string>('');
   const [manifestResult, setManifestResult] = useState<any | null>(null);
+  // Bulk import state
+  const [bulkText, setBulkText] = useState<string>('');
+  const [bulkImportRes, setBulkImportRes] = useState<any | null>(null);
 
   const load = async () => {
     try {
@@ -220,6 +223,47 @@ export default function Plugins({ client }: Props) {
                   <Box sx={{ mt: 2 }}>
                     <Typography variant="subtitle2">Result</Typography>
                     <pre style={{ margin: 0, fontSize: '0.75rem' }}>{JSON.stringify(manifestResult, null, 2)}</pre>
+                  </Box>
+                )}
+              </Grid>
+            </Grid>
+          </Box>
+          <Divider sx={{ my: 3 }} />
+          <Box>
+            <Typography variant="h6" sx={{ mb: 1 }}>Bulk Import Providers (Preview)</Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+              Paste either a JSON array of manifests or scraped Markdown containing JSON code blocks. We’ll import valid manifests and ignore the rest.
+            </Typography>
+            <Grid container spacing={2}>
+              <Grid item xs={12} md={8}>
+                <TextField label="Manifests JSON or Markdown" value={bulkText} onChange={(e)=>setBulkText(e.target.value)} fullWidth multiline minRows={8} placeholder="[ { \"id\": \"provider1\", ... }, { ... } ] or markdown with ```json code blocks" />
+              </Grid>
+              <Grid item xs={12} md={4}>
+                <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+                  <Button size="small" variant="contained" onClick={async () => {
+                    try {
+                      setError(''); setNote(''); setBulkImportRes(null);
+                      // Try to parse as JSON first
+                      let payload: any = {};
+                      try {
+                        const parsed = JSON.parse(bulkText);
+                        if (Array.isArray(parsed)) payload.items = parsed; else if (parsed && Array.isArray(parsed.items)) payload.items = parsed.items;
+                      } catch {
+                        payload.markdown = bulkText;
+                      }
+                      const res = await client.importHttpManifests(payload);
+                      setBulkImportRes(res);
+                      setNote(`Imported ${res.imported?.length || 0} provider(s)`);
+                      await load();
+                    } catch (e: any) {
+                      setError(e?.message || 'Import failed');
+                    }
+                  }}>Import</Button>
+                </Box>
+                {bulkImportRes && (
+                  <Box sx={{ mt: 2 }}>
+                    <Typography variant="subtitle2">Import Summary</Typography>
+                    <pre style={{ margin: 0, fontSize: '0.75rem' }}>{JSON.stringify(bulkImportRes, null, 2)}</pre>
                   </Box>
                 )}
               </Grid>

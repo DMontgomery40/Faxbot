@@ -1108,6 +1108,67 @@ async def validate_http_manifest(payload: ManifestValidateIn):
     return info
 
 
+class ImportManifestsIn(BaseModel):
+    items: Optional[List[dict]] = None
+    markdown: Optional[str] = None
+
+
+def _extract_json_blocks(md: str) -> List[dict]:
+    blocks: List[dict] = []
+    try:
+        import re as _re
+        pattern = _re.compile(r"```(?:json)?\s*([\s\S]*?)```", _re.MULTILINE)
+        for m in pattern.finditer(md):
+            raw = m.group(1).strip()
+            if not raw:
+                continue
+            try:
+                obj = json.loads(raw)
+                if isinstance(obj, dict):
+                    blocks.append(obj)
+                elif isinstance(obj, list):
+                    for it in obj:
+                        if isinstance(it, dict):
+                            blocks.append(it)
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return blocks
+
+
+@app.post("/admin/plugins/http/import-manifests", dependencies=[Depends(require_admin)])
+def import_http_manifests(payload: ImportManifestsIn):
+    """Bulk import provider manifests from JSON list or scraped markdown.
+    For markdown, extracts JSON code fences and imports objects that look like manifests.
+    """
+    candidates: List[dict] = []
+    if payload.items:
+        for it in payload.items:
+            if isinstance(it, dict):
+                candidates.append(it)
+    if payload.markdown:
+        candidates.extend(_extract_json_blocks(payload.markdown or ""))
+    if not candidates:
+        raise HTTPException(400, detail="No manifest candidates provided")
+    imported: List[dict] = []
+    errors: List[dict] = []
+    for data in candidates:
+        try:
+            man = HttpManifest.from_dict(data)
+            if not man.id:
+                raise ValueError("manifest.id missing")
+            dest_dir = os.path.join(_providers_dir(), man.id)
+            os.makedirs(dest_dir, exist_ok=True)
+            path = os.path.join(dest_dir, "manifest.json")
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
+            imported.append({"id": man.id, "name": man.name, "path": path})
+        except Exception as e:
+            errors.append({"error": str(e), "data_keys": list(data.keys())[:5]})
+    return {"ok": True, "imported": imported, "errors": errors}
+
+
 class LogsQuery(BaseModel):
     q: Optional[str] = None
     event: Optional[str] = None

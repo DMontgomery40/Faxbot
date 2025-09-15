@@ -296,6 +296,14 @@ export class AdminAPIClient {
     return res.json();
   }
 
+  async importHttpManifests(payload: { items?: any[]; markdown?: string }): Promise<{ ok: boolean; imported: any[]; errors: any[] }>{
+    const res = await this.fetch('/admin/plugins/http/import-manifests', {
+      method: 'POST',
+      body: JSON.stringify(payload || {}),
+    });
+    return res.json();
+  }
+
   // Polling helper
   startPolling(onUpdate: (data: HealthStatus) => void, intervalMs: number = 5000): () => void {
     let running = true;
