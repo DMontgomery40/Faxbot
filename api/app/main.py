@@ -19,6 +19,7 @@ from .ami import ami_client
 from .phaxio_service import get_phaxio_service
 from .sinch_service import get_sinch_service
 from .signalwire_service import get_signalwire_service
+from .freeswitch_service import originate_txfax, fs_cli_available
 import hmac
 import hashlib
 from urllib.parse import urlparse
@@ -329,6 +330,9 @@ def health_ready():
         backend_ok = bool(settings.sinch_project_id and settings.sinch_api_key and settings.sinch_api_secret)
     elif backend == "signalwire":
         backend_ok = bool(settings.signalwire_space_url and settings.signalwire_project_id and settings.signalwire_api_token)
+    elif backend == "freeswitch":
+        # Presence checks only; fs_cli availability is recommended but not required at readiness stage
+        backend_ok = True
     elif backend == "sip":
         # Presence checks only; AMI connection is handled asynchronously
         if not settings.ami_password or settings.ami_password == "changeme":
@@ -1940,6 +1944,14 @@ async def send_fax(background: BackgroundTasks, to: str = Form(...), file: Uploa
     elif settings.fax_backend == "signalwire":
         # Cloud backend using Compatibility Fax API; no local TIFF
         pages = None
+    elif settings.fax_backend == "freeswitch":
+        # Self-hosted FreeSWITCH requires TIFF
+        if settings.fax_disabled:
+            pages = 1
+            with open(tiff_path, "wb") as f:
+                f.write(b"TIFF_PLACEHOLDER")
+        else:
+            pages, _ = pdf_to_tiff(pdf_path, tiff_path)
     elif settings.feature_v3_plugins and os.path.exists(os.path.join(os.getcwd(), "config", "providers", settings.fax_backend, "manifest.json")):
         # Manifest providers: use tokenized PDF URL later; no TIFF
         pages = None
@@ -1977,6 +1989,8 @@ async def send_fax(background: BackgroundTasks, to: str = Form(...), file: Uploa
             background.add_task(_send_via_sinch, job_id, to, pdf_path)
         elif settings.fax_backend == "signalwire":
             background.add_task(_send_via_signalwire, job_id, to, pdf_path)
+        elif settings.fax_backend == "freeswitch":
+            background.add_task(_send_via_freeswitch, job_id, to, tiff_path)
         elif settings.feature_v3_plugins and os.path.exists(os.path.join(os.getcwd(), "config", "providers", settings.fax_backend, "manifest.json")):
             background.add_task(_send_via_manifest, job_id, to, pdf_path)
         else:
@@ -2384,6 +2398,38 @@ async def _send_via_signalwire(job_id: str, to: str, pdf_path: str):
                 job.error = str(e)
                 job.updated_at = datetime.utcnow()
                 db.add(job)
+                db.commit()
+        audit_event("job_failed", job_id=job_id, error=str(e))
+
+
+async def _send_via_freeswitch(job_id: str, to: str, tiff_path: str):
+    try:
+        audit_event("job_dispatch", job_id=job_id, method="freeswitch")
+        if not fs_cli_available() and not settings.fax_disabled:
+            raise RuntimeError("fs_cli not available on API host; install FreeSWITCH client or configure ESL integration")
+        # Fire and forget
+        if not settings.fax_disabled:
+            res = originate_txfax(to, tiff_path, job_id)
+        else:
+            res = "disabled"
+        with SessionLocal() as db:
+            job = db.get(FaxJob, job_id)
+            if job:
+                j = cast(Any, job)
+                j.status = "in_progress"
+                j.provider_sid = (res or "").strip()
+                j.updated_at = datetime.utcnow()
+                db.add(j)
+                db.commit()
+    except Exception as e:
+        with SessionLocal() as db:
+            job = db.get(FaxJob, job_id)
+            if job:
+                j = cast(Any, job)
+                j.status = "failed"
+                j.error = str(e)
+                j.updated_at = datetime.utcnow()
+                db.add(j)
                 db.commit()
         audit_event("job_failed", job_id=job_id, error=str(e))
 
@@ -3206,4 +3252,46 @@ async def signalwire_callback(request: Request, job_id: Optional[str] = Query(de
             db.add(job)
             db.commit()
             audit_event("job_updated", job_id=job.id, status=job.status, provider="signalwire")
+    return {"ok": True}
+class FSOutboundResultIn(BaseModel):
+    job_id: Optional[str] = None
+    fax_status: Optional[str] = None
+    fax_result_text: Optional[str] = None
+    fax_result_code: Optional[str] = None
+    fax_document_transferred_pages: Optional[int] = None
+    uuid: Optional[str] = None
+
+
+@app.post("/_internal/freeswitch/outbound_result")
+def freeswitch_outbound_result(payload: FSOutboundResultIn, x_internal_secret: Optional[str] = Header(default=None)):
+    # Reuse Asterisk secret for simplicity; can introduce a dedicated FS secret later
+    secret = settings.asterisk_inbound_secret
+    if not secret:
+        raise HTTPException(401, detail="Internal secret not configured")
+    if x_internal_secret != secret:
+        raise HTTPException(401, detail="Invalid internal secret")
+    if not payload.job_id:
+        raise HTTPException(400, detail="Missing job_id")
+    status_map = {
+        'SUCCESS': 'SUCCESS',
+        'OK': 'SUCCESS',
+        'FAILED': 'FAILED',
+        'ERROR': 'FAILED',
+        'FAIL': 'FAILED',
+    }
+    status = (payload.fax_status or payload.fax_result_text or '').upper()
+    internal = status_map.get(status, 'FAILED' if 'FAIL' in status else 'in_progress')
+    with SessionLocal() as db:
+        job = db.get(FaxJob, str(payload.job_id))
+        if not job:
+            raise HTTPException(404, detail="Job not found")
+        job.status = internal
+        if payload.fax_document_transferred_pages:
+            job.pages = payload.fax_document_transferred_pages
+        if payload.fax_result_text:
+            job.error = None if internal == 'SUCCESS' else payload.fax_result_text
+        job.updated_at = datetime.utcnow()
+        db.add(job)
+        db.commit()
+    audit_event("job_updated", job_id=str(payload.job_id), status=internal, provider="freeswitch")
     return {"ok": True}

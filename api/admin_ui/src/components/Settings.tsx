@@ -233,6 +233,7 @@ function Settings({ client }: SettingsProps) {
                       <option value="signalwire">signalwire</option>
                       <option value="documo">documo</option>
                       <option value="sip">sip</option>
+                      <option value="freeswitch">freeswitch</option>
                     </select>
                     <Chip
                       label={settings.backend.disabled ? 'Disabled' : 'Active'}
@@ -775,6 +776,39 @@ function Settings({ client }: SettingsProps) {
           )}
 
           {/* Storage Configuration */}
+          {/* FreeSWITCH (self-hosted) */}
+          {(form.backend === 'freeswitch' || settings.backend.type === 'freeswitch') && (
+            <Grid item xs={12}>
+              <Card>
+                <CardContent>
+                  <Typography variant="h6" gutterBottom>FreeSWITCH</Typography>
+                  <List dense>
+                    <ListItem sx={{ alignItems: 'flex-start', flexWrap: 'wrap', gap: 1 }}>
+                      <ListItemText primary="ESL Host" secondary={String(settings?.sip?.ami_host || settings?.fs?.esl_host || '')} />
+                      <input placeholder="FREESWITCH_ESL_HOST" onChange={(e)=>handleForm('FREESWITCH_ESL_HOST'.toLowerCase(), e.target.value)} style={ctlStyle} />
+                    </ListItem>
+                    <ListItem sx={{ alignItems: 'flex-start', flexWrap: 'wrap', gap: 1 }}>
+                      <ListItemText primary="ESL Port" secondary={String(settings?.fs?.esl_port || 8021)} />
+                      <input placeholder="FREESWITCH_ESL_PORT" onChange={(e)=>handleForm('FREESWITCH_ESL_PORT'.toLowerCase(), e.target.value)} style={ctlStyle} />
+                    </ListItem>
+                    <ListItem sx={{ alignItems: 'flex-start', flexWrap: 'wrap', gap: 1 }}>
+                      <ListItemText primary="ESL Password" secondary={'***'} />
+                      <input placeholder="FREESWITCH_ESL_PASSWORD" onChange={(e)=>handleForm('FREESWITCH_ESL_PASSWORD'.toLowerCase(), e.target.value)} style={ctlStyle} />
+                    </ListItem>
+                    <ListItem sx={{ alignItems: 'flex-start', flexWrap: 'wrap', gap: 1 }}>
+                      <ListItemText primary="Gateway Name" secondary={String((settings as any)?.fs?.gateway_name || settings?.sip?.ami_host || '')} />
+                      <input placeholder="FREESWITCH_GATEWAY_NAME" onChange={(e)=>handleForm('FREESWITCH_GATEWAY_NAME'.toLowerCase(), e.target.value)} style={ctlStyle} />
+                    </ListItem>
+                    <ListItem sx={{ alignItems: 'flex-start', flexWrap: 'wrap', gap: 1 }}>
+                      <ListItemText primary="Caller ID Number" secondary={String((settings as any)?.fs?.caller_id_number || '')} />
+                      <input placeholder="FREESWITCH_CALLER_ID_NUMBER" onChange={(e)=>handleForm('FREESWITCH_CALLER_ID_NUMBER'.toLowerCase(), e.target.value)} style={ctlStyle} />
+                    </ListItem>
+                  </List>
+                  <Alert severity="info">For result updates, set an api_hangup_hook in your dialplan to POST to /_internal/freeswitch/outbound_result with X-Internal-Secret and include fax variables and the channel variable faxbot_job_id.</Alert>
+                </CardContent>
+              </Card>
+            </Grid>
+          )}
           <Grid item xs={12}>
             <Card>
               <CardContent>
