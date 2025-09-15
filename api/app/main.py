@@ -7,7 +7,8 @@ import secrets
 from datetime import datetime, timedelta
 from typing import Optional
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks, Header, Depends, Query, Request
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, HTMLResponse
+from fastapi.staticfiles import StaticFiles
 from .config import settings, reload_settings
 from .db import init_db, SessionLocal, FaxJob
 from .models import FaxJobOut
@@ -27,6 +28,11 @@ app = FastAPI(title="Faxbot API", version="1.0.0")
 # Expose phaxio_service module for tests that reference app.phaxio_service
 from . import phaxio_service as _phaxio_module  # noqa: E402
 app.phaxio_service = _phaxio_module  # type: ignore[attr-defined]
+
+# Mount Admin UI static assets if available
+ADMIN_UI_DIR = os.getenv('ADMIN_UI_DIR', '/app/admin_ui_dist')
+if os.path.isdir(ADMIN_UI_DIR):
+    app.mount('/admin/ui', StaticFiles(directory=ADMIN_UI_DIR, html=True), name='admin_ui')
 
 
 PHONE_RE = re.compile(r"^[+]?\d{6,20}$")
