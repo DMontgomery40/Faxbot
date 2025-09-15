@@ -273,6 +273,29 @@ export class AdminAPIClient {
     return res.json();
   }
 
+  // Manifest providers (admin-only)
+  async validateHttpManifest(payload: { manifest: any; credentials?: any; settings?: any; to?: string; file_url?: string; from_number?: string; render_only?: boolean }): Promise<any> {
+    const res = await this.fetch('/admin/plugins/http/validate', {
+      method: 'POST',
+      body: JSON.stringify(payload || {}),
+    });
+    return res.json();
+  }
+
+  async installHttpManifest(payload: { manifest: any }): Promise<{ ok: boolean; id: string; path: string }> {
+    const res = await this.fetch('/admin/plugins/http/install', {
+      method: 'POST',
+      body: JSON.stringify(payload || {}),
+    });
+    return res.json();
+  }
+
+  // Jobs admin helpers
+  async refreshJob(jobId: string): Promise<FaxJob> {
+    const res = await this.fetch(`/admin/fax-jobs/${encodeURIComponent(jobId)}/refresh`, { method: 'POST' });
+    return res.json();
+  }
+
   // Polling helper
   startPolling(onUpdate: (data: HealthStatus) => void, intervalMs: number = 5000): () => void {
     let running = true;

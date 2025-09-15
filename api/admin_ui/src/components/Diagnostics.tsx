@@ -409,6 +409,47 @@ function Diagnostics({ client, onNavigate, docsBase }: DiagnosticsProps) {
           {diagnostics.checks.storage && renderChecks(diagnostics.checks.storage, 'Storage Configuration')}
           {diagnostics.checks.inbound && renderChecks(diagnostics.checks.inbound, 'Inbound Configuration')}
           {diagnostics.checks.security && renderChecks(diagnostics.checks.security, 'Security Configuration')}
+          {diagnostics.checks.plugins && (
+            <Card sx={{ mb: 3 }}>
+              <CardContent>
+                <Typography variant="h6" gutterBottom>Plugins (v3)</Typography>
+                <Box display="flex" gap={1} alignItems="center" sx={{ mb: 1 }}>
+                  <Chip size="small" label={diagnostics.checks.plugins.v3_enabled ? 'Enabled' : 'Disabled'} color={diagnostics.checks.plugins.v3_enabled ? 'success' : 'default'} variant="outlined" />
+                  <Chip size="small" label={`Installed: ${diagnostics.checks.plugins.installed || 0}`} variant="outlined" />
+                  <Chip size="small" label={`Active outbound: ${diagnostics.checks.plugins.active_outbound || '-'}`} variant="outlined" />
+                </Box>
+                {(diagnostics.checks.plugins.manifests || []).length === 0 ? (
+                  <Typography variant="body2" color="text.secondary">No manifest providers installed.</Typography>
+                ) : (
+                  <List dense>
+                    {(diagnostics.checks.plugins.manifests || []).map((m: any) => (
+                      <ListItem key={m.id} alignItems="flex-start">
+                        <ListItemIcon>{(m.issues && m.issues.length>0) ? <WarningIcon color="warning" /> : <CheckCircleIcon color="success" />}</ListItemIcon>
+                        <ListItemText
+                          primary={`${m.name || m.id}`}
+                          secondary={
+                            <Box>
+                              <Typography variant="caption" color="text.secondary">Actions: {(m.actions || []).join(', ') || '—'}</Typography>
+                              <br />
+                              <Typography variant="caption" color="text.secondary">Allowed domains: {(m.allowed_domains || []).join(', ') || '—'}</Typography>
+                              {(m.issues || []).length > 0 && (
+                                <Box sx={{ mt: 0.5 }}>
+                                  {(m.issues || []).map((iss: string, idx: number) => (
+                                    <Chip key={idx} size="small" color="warning" label={iss} sx={{ mr: 0.5, mb: 0.5 }} />
+                                  ))}
+                                </Box>
+                              )}
+                            </Box>
+                          }
+                        />
+                      </ListItem>
+                    ))}
+                  </List>
+                )}
+                <Typography variant="caption" color="text.secondary">Edit manifests from Plugins → HTTP Manifest Tester (preview) or install manifests into config/providers/&lt;id&gt;/manifest.json.</Typography>
+              </CardContent>
+            </Card>
+          )}
 
           {/* Raw Results */}
           <Card>

@@ -38,6 +38,11 @@ export default function Plugins({ client }: Props) {
   const [configPlugin, setConfigPlugin] = useState<PluginItem | null>(null);
   const [configData, setConfigData] = useState<{ enabled?: boolean; settings?: any } | null>(null);
   const [query, setQuery] = useState('');
+  // Manifest tester state
+  const [manifestJson, setManifestJson] = useState<string>('');
+  const [manifestTo, setManifestTo] = useState<string>('+15551234567');
+  const [manifestFileUrl, setManifestFileUrl] = useState<string>('');
+  const [manifestResult, setManifestResult] = useState<any | null>(null);
 
   const load = async () => {
     try {
@@ -145,6 +150,61 @@ export default function Plugins({ client }: Props) {
           <Section title="Storage Providers" items={byCategory('storage')} saving={saving} onActivate={undefined} onConfigure={handleConfigure} registry={registry} />
           <Divider sx={{ my: 3 }} />
           <Discover title="Discover (Curated Registry)" items={registryOnly()} />
+          <Divider sx={{ my: 3 }} />
+          <Box>
+            <Typography variant="h6" sx={{ mb: 1 }}>HTTP Manifest Tester (Preview)</Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+              Paste a manifest JSON and validate or dry‑run a send. Installing saves to the providers directory.
+            </Typography>
+            <Grid container spacing={2}>
+              <Grid item xs={12} md={8}>
+                <TextField label="Manifest JSON" value={manifestJson} onChange={(e)=>setManifestJson(e.target.value)} fullWidth multiline minRows={8} placeholder="{\n  \"id\": \"example\",\n  \"allowed_domains\": [\"api.example.com\"],\n  \"actions\": {\n    \"send_fax\": { \"method\": \"POST\", \"url\": \"https://api.example.com/fax\", \"body\": { \"kind\": \"json\", \"template\": \"{\\\"to\\\":\\\"{{ to }}\\\", \\\"file_url\\\":\\\"{{ file_url }}\\\"}\" }, \"response\": { \"job_id\": \"data.id\", \"status\": \"data.status\" } }\n  }\n}" />
+              </Grid>
+              <Grid item xs={12} md={4}>
+                <TextField label="To Number" value={manifestTo} onChange={(e)=>setManifestTo(e.target.value)} fullWidth size="small" sx={{ mb: 1 }} />
+                <TextField label="File URL (tokenized)" value={manifestFileUrl} onChange={(e)=>setManifestFileUrl(e.target.value)} fullWidth size="small" sx={{ mb: 1 }} placeholder="https://.../file.pdf?token=..." />
+                <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+                  <Button size="small" variant="outlined" onClick={async () => {
+                    try {
+                      setError(''); setNote(''); setManifestResult(null);
+                      const parsed = JSON.parse(manifestJson || '{}');
+                      const r = await client.validateHttpManifest({ manifest: parsed, render_only: true });
+                      setManifestResult(r);
+                    } catch (e: any) {
+                      setError(e?.message || 'Validate failed');
+                    }
+                  }}>Validate</Button>
+                  <Button size="small" variant="outlined" onClick={async () => {
+                    try {
+                      setError(''); setNote(''); setManifestResult(null);
+                      const parsed = JSON.parse(manifestJson || '{}');
+                      const r = await client.validateHttpManifest({ manifest: parsed, to: manifestTo, file_url: manifestFileUrl, render_only: false });
+                      setManifestResult(r);
+                    } catch (e: any) {
+                      setError(e?.message || 'Dry‑run failed');
+                    }
+                  }}>Dry‑run Send</Button>
+                  <Button size="small" variant="contained" onClick={async () => {
+                    try {
+                      setError(''); setNote('');
+                      const parsed = JSON.parse(manifestJson || '{}');
+                      const r = await client.installHttpManifest({ manifest: parsed });
+                      setNote(`Installed manifest ${r.id}`);
+                      await load();
+                    } catch (e: any) {
+                      setError(e?.message || 'Install failed');
+                    }
+                  }}>Install</Button>
+                </Box>
+                {manifestResult && (
+                  <Box sx={{ mt: 2 }}>
+                    <Typography variant="subtitle2">Result</Typography>
+                    <pre style={{ margin: 0, fontSize: '0.75rem' }}>{JSON.stringify(manifestResult, null, 2)}</pre>
+                  </Box>
+                )}
+              </Grid>
+            </Grid>
+          </Box>
           <PluginConfigDialog
             open={configOpen}
             plugin={configPlugin}

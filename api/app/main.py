@@ -6,7 +6,7 @@ import asyncio
 import secrets
 from datetime import datetime, timedelta
 import tempfile
-from typing import Optional, Any, List, cast
+from typing import Optional, Any, List, Dict, cast
 import time
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks, Header, Depends, Query, Request, Response
 from fastapi.responses import FileResponse, JSONResponse
@@ -22,10 +22,12 @@ import hmac
 import hashlib
 from urllib.parse import urlparse
 from fastapi.responses import StreamingResponse
+import json
 from .audit import init_audit_logger, audit_event
 from .audit import query_recent_logs
 from .storage import get_storage, reset_storage
 from .auth import verify_db_key, create_api_key, list_api_keys, revoke_api_key, rotate_api_key
+from .plugins.http_provider import HttpManifest, HttpProviderRuntime
 
 # v3 plugins (feature-gated)
 try:
@@ -568,6 +570,12 @@ def get_admin_settings():
             "verify_signature": settings.phaxio_verify_signature,
             "configured": bool(settings.phaxio_api_key and settings.phaxio_api_secret),
         },
+        "documo": {
+            "api_key": mask_secret(settings.documo_api_key),
+            "base_url": settings.documo_base_url,
+            "sandbox": settings.documo_use_sandbox,
+            "configured": bool(settings.documo_api_key),
+        },
         "sinch": {
             "project_id": settings.sinch_project_id,
             "api_key": mask_secret(settings.sinch_api_key),
@@ -1024,6 +1032,77 @@ def admin_db_status():
         "sqlite": sqlite_info,
     }
 
+# ====== Manifest Providers (HTTP) — install/validate (admin-only) ======
+
+def _providers_dir() -> str:
+    return os.getenv("FAXBOT_PROVIDERS_DIR", os.path.join(os.getcwd(), "config", "providers"))
+
+
+class ManifestIn(BaseModel):
+    manifest: dict
+
+
+@app.post("/admin/plugins/http/install", dependencies=[Depends(require_admin)])
+def install_http_manifest(payload: ManifestIn):
+    man = HttpManifest.from_dict(payload.manifest or {})
+    if not man.id:
+        raise HTTPException(400, detail="Manifest id is required")
+    dest_dir = os.path.join(_providers_dir(), man.id)
+    os.makedirs(dest_dir, exist_ok=True)
+    path = os.path.join(dest_dir, "manifest.json")
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(payload.manifest, f, indent=2)
+    except Exception as e:
+        raise HTTPException(500, detail=str(e))
+    return {"ok": True, "id": man.id, "path": path}
+
+
+class ManifestValidateIn(BaseModel):
+    manifest: dict
+    credentials: dict | None = None
+    settings: dict | None = None
+    to: str | None = None
+    file_url: str | None = None
+    from_number: str | None = None
+    render_only: bool | None = True
+
+
+@app.post("/admin/plugins/http/validate", dependencies=[Depends(require_admin)])
+async def validate_http_manifest(payload: ManifestValidateIn):
+    man = HttpManifest.from_dict(payload.manifest or {})
+    if not man.id:
+        raise HTTPException(400, detail="Manifest id required")
+    info = {
+        "id": man.id,
+        "name": man.name,
+        "actions": list(man.actions.keys()),
+        "allowed_domains": man.allowed_domains,
+    }
+    # Basic HIPAA posture checks
+    try:
+        if settings.enforce_public_https:
+            insecure = []
+            for k, act in (man.actions or {}).items():
+                try:
+                    from urllib.parse import urlparse as _p
+                    if act.url and _p(act.url).scheme == "http":
+                        insecure.append(k)
+                except Exception:
+                    pass
+            if insecure:
+                info["warnings"] = [f"Action(s) {', '.join(insecure)} use HTTP. HTTPS is required when ENFORCE_PUBLIC_HTTPS=true."]
+    except Exception:
+        pass
+    if not payload.render_only:
+        try:
+            rt = HttpProviderRuntime(man, payload.credentials or {}, payload.settings or {})
+            res = await rt.send_fax(to=payload.to or "+15551234567", file_url=payload.file_url, from_number=payload.from_number)
+            info["normalized"] = res
+        except Exception as e:
+            info["error"] = str(e)
+    return info
+
 
 class LogsQuery(BaseModel):
     q: Optional[str] = None
@@ -1252,6 +1331,58 @@ def admin_get_job_pdf(job_id: str):
     )
 
 
+@app.post("/admin/fax-jobs/{job_id}/refresh", dependencies=[Depends(require_admin)])
+async def admin_refresh_job(job_id: str):
+    """Refresh job status via provider when supported (manifest providers preview).
+    For manifest-based outbound providers that define get_status, polls provider and updates DB.
+    """
+    # Load job
+    with SessionLocal() as db:
+        job = db.get(FaxJob, job_id)
+        if not job:
+            raise HTTPException(404, detail="Job not found")
+        backend = (job.backend or settings.fax_backend).lower()
+    # Only handle manifest-backed backends for now
+    mpath = os.path.join(os.getcwd(), "config", "providers", backend, "manifest.json")
+    if not (settings.feature_v3_plugins and os.path.exists(mpath)):
+        raise HTTPException(400, detail="Refresh not supported for this backend")
+    try:
+        with open(mpath, "r", encoding="utf-8") as f:
+            man = HttpManifest.from_dict(json.load(f))
+        p_settings: Dict[str, Any] = {}
+        try:
+            if _read_cfg is not None:
+                cfg = _read_cfg(settings.faxbot_config_path)
+                if getattr(cfg, "ok", False) and getattr(cfg, "data", None):
+                    ob = ((cfg.data.get("providers") or {}).get("outbound") or {})
+                    if (ob.get("plugin") or "").lower() == backend:
+                        p_settings = ob.get("settings") or {}
+        except Exception:
+            pass
+        rt = HttpProviderRuntime(man, {}, p_settings)
+        res = await rt.get_status(job_id=job_id, provider_sid=(job.provider_sid or None))
+        status = str(res.get("status") or job.status)
+        prov_sid = str(res.get("job_id") or job.provider_sid or "")
+        with SessionLocal() as db:
+            j = db.get(FaxJob, job_id)
+            if j:
+                j.status = status
+                if prov_sid:
+                    j.provider_sid = prov_sid
+                j.updated_at = datetime.utcnow()
+                db.add(j)
+                db.commit()
+        with SessionLocal() as db:
+            j2 = db.get(FaxJob, job_id)
+            if j2:
+                return _serialize_job(j2)
+        raise HTTPException(500, detail="Failed to load updated job")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, detail=str(e))
+
+
 @app.post("/admin/diagnostics/run", dependencies=[Depends(require_admin)])
 async def run_diagnostics():
     """Run bounded, non-destructive diagnostics for v1."""
@@ -1374,6 +1505,59 @@ async def run_diagnostics():
         "pdf_token_ttl": settings.pdf_token_ttl_minutes,
     }
 
+    # Plugins (v3) readiness
+    try:
+        plugins_info: dict[str, Any] = {
+            "v3_enabled": settings.feature_v3_plugins,
+            "plugin_install_enabled": settings.feature_plugin_install,
+            "active_outbound": settings.fax_backend,
+            "installed": 0,
+            "manifests": [],
+        }
+        issues_total = 0
+        if settings.feature_v3_plugins:
+            prov_dir = _providers_dir()
+            if os.path.isdir(prov_dir):
+                for pid in os.listdir(prov_dir):
+                    mpath = os.path.join(prov_dir, pid, "manifest.json")
+                    if not os.path.exists(mpath):
+                        continue
+                    try:
+                        with open(mpath, "r", encoding="utf-8") as f:
+                            mdata = json.load(f)
+                        man = HttpManifest.from_dict(mdata)
+                        actions = list((man.actions or {}).keys())
+                        issues: list[str] = []
+                        # Basic manifest checks
+                        if "send_fax" not in actions:
+                            issues.append("missing send_fax action")
+                        if not man.allowed_domains:
+                            issues.append("allowed_domains empty")
+                        # HTTPS check when enforcing HTTPS
+                        if settings.enforce_public_https:
+                            for name, act in (man.actions or {}).items():
+                                try:
+                                    pu = urlparse(act.url)
+                                    if pu.scheme == "http":
+                                        issues.append(f"action {name} uses http")
+                                except Exception:
+                                    issues.append(f"action {name} url invalid")
+                        plugins_info["manifests"].append({
+                            "id": man.id,
+                            "name": man.name,
+                            "actions": actions,
+                            "allowed_domains": man.allowed_domains,
+                            "issues": issues,
+                        })
+                        issues_total += len(issues)
+                    except Exception as e:
+                        plugins_info.setdefault("errors", []).append({"id": pid, "error": str(e)})
+            plugins_info["installed"] = len(plugins_info["manifests"])  # type: ignore[index]
+        diag["checks"]["plugins"] = plugins_info
+    except Exception:
+        # Don't break diagnostics on plugin scan errors
+        pass
+
     # Summary
     critical: list[str] = []
     warnings: list[str] = []
@@ -1398,6 +1582,15 @@ async def run_diagnostics():
         critical.append("Cannot write to fax data dir")
     if not sys.get("database_connected"):
         critical.append("Database connection failed")
+    # Plugin warnings
+    try:
+        p = diag["checks"].get("plugins", {})
+        if p.get("v3_enabled") and p.get("installed", 0) > 0:
+            for m in p.get("manifests", []):
+                for issue in (m.get("issues") or []):
+                    warnings.append(f"Plugin {m.get('id')}: {issue}")
+    except Exception:
+        pass
     diag["summary"] = {"healthy": len(critical) == 0, "critical_issues": critical, "warnings": warnings}
     return diag
 
@@ -1640,6 +1833,9 @@ async def send_fax(background: BackgroundTasks, to: str = Form(...), file: Uploa
         # Sinch cloud backend: no local TIFF; provider handles rasterization
         pages = None
         # nothing else to prepare here
+    elif settings.feature_v3_plugins and os.path.exists(os.path.join(os.getcwd(), "config", "providers", settings.fax_backend, "manifest.json")):
+        # Manifest providers: use tokenized PDF URL later; no TIFF
+        pages = None
     else:
         # SIP/Asterisk requires TIFF
         if settings.fax_disabled:
@@ -1672,6 +1868,8 @@ async def send_fax(background: BackgroundTasks, to: str = Form(...), file: Uploa
             background.add_task(_send_via_phaxio, job_id, to, pdf_path)
         elif settings.fax_backend == "sinch":
             background.add_task(_send_via_sinch, job_id, to, pdf_path)
+        elif settings.feature_v3_plugins and os.path.exists(os.path.join(os.getcwd(), "config", "providers", settings.fax_backend, "manifest.json")):
+            background.add_task(_send_via_manifest, job_id, to, pdf_path)
         else:
             background.add_task(_originate_job, job_id, to, tiff_path)
 
@@ -2031,6 +2229,66 @@ async def _send_via_sinch(job_id: str, to: str, pdf_path: str):
                 j.error = str(e)
                 j.updated_at = datetime.utcnow()
                 db.add(j)
+                db.commit()
+        audit_event("job_failed", job_id=job_id, error=str(e))
+
+async def _send_via_manifest(job_id: str, to: str, pdf_path: str):
+    try:
+        pid = settings.fax_backend
+        mpath = os.path.join(os.getcwd(), "config", "providers", pid, "manifest.json")
+        with open(mpath, "r", encoding="utf-8") as f:
+            man = HttpManifest.from_dict(json.load(f))
+
+        # Generate tokenized PDF URL with expiry
+        pdf_token = secrets.token_urlsafe(32)
+        ttl = max(1, int(settings.pdf_token_ttl_minutes))
+        expires_at = datetime.utcnow() + timedelta(minutes=ttl)
+        pdf_url = f"{settings.public_api_url}/fax/{job_id}/pdf?token={pdf_token}"
+
+        with SessionLocal() as db:
+            job = db.get(FaxJob, job_id)
+            if job:
+                job.pdf_url = pdf_url
+                job.pdf_token = pdf_token
+                job.pdf_token_expires_at = expires_at
+                job.status = "in_progress"
+                job.updated_at = datetime.utcnow()
+                db.add(job)
+                db.commit()
+
+        # Load provider settings from config store if present
+        p_settings: Dict[str, Any] = {}
+        try:
+            if _read_cfg is not None:
+                cfg = _read_cfg(settings.faxbot_config_path)
+                if getattr(cfg, "ok", False) and getattr(cfg, "data", None):
+                    ob = ((cfg.data.get("providers") or {}).get("outbound") or {})
+                    if (ob.get("plugin") or "").lower() == pid.lower():
+                        p_settings = ob.get("settings") or {}
+        except Exception:
+            pass
+
+        audit_event("job_dispatch", job_id=job_id, method=f"manifest:{pid}")
+        rt = HttpProviderRuntime(man, {}, p_settings)
+        res = await rt.send_fax(to=to, file_url=pdf_url)
+        prov_sid = str(res.get("job_id") or "")
+        status = str(res.get("status") or "queued")
+        with SessionLocal() as db:
+            job = db.get(FaxJob, job_id)
+            if job:
+                job.provider_sid = prov_sid
+                job.status = status
+                job.updated_at = datetime.utcnow()
+                db.add(job)
+                db.commit()
+    except Exception as e:
+        with SessionLocal() as db:
+            job = db.get(FaxJob, job_id)
+            if job:
+                job.status = "failed"
+                job.error = str(e)
+                job.updated_at = datetime.utcnow()
+                db.add(job)
                 db.commit()
         audit_event("job_failed", job_id=job_id, error=str(e))
 
@@ -2590,6 +2848,31 @@ def _installed_plugins() -> list[dict[str, Any]]:
         "enabled": (settings.storage_backend == "s3"),
         "configurable": True,
     })
+    # Manifest providers: scan providers dir
+    try:
+        prov_dir = _providers_dir()
+        if os.path.isdir(prov_dir):
+            for pid in os.listdir(prov_dir):
+                mpath = os.path.join(prov_dir, pid, "manifest.json")
+                if os.path.exists(mpath):
+                    try:
+                        with open(mpath, "r", encoding="utf-8") as f:
+                            data = json.load(f)
+                        pid2 = str(data.get("id") or pid)
+                        name = str(data.get("name") or pid2)
+                        items.append({
+                            "id": pid2,
+                            "name": name,
+                            "version": "1.0.0",
+                            "categories": ["outbound"],
+                            "capabilities": ["send", "get_status"],
+                            "enabled": (current == pid2),
+                            "configurable": True,
+                        })
+                    except Exception:
+                        pass
+    except Exception:
+        pass
     return items
 
 
@@ -2656,6 +2939,13 @@ def get_plugin_config(plugin_id: str):
         }
     if pid == "local":
         return {"enabled": settings.storage_backend == "local", "settings": {}}
+    # Manifest providers: return minimal config presence
+    mpath = os.path.join(_providers_dir(), pid, "manifest.json")
+    if os.path.exists(mpath):
+        return {
+            "enabled": settings.fax_backend == pid,
+            "settings": {},
+        }
     raise HTTPException(404, detail="Plugin not found")
 
 
@@ -2687,7 +2977,14 @@ def update_plugin_config(plugin_id: str, payload: UpdatePluginConfigIn):
         data["providers"]["storage"]["enabled"] = bool(payload.enabled) if payload.enabled is not None else True
         data["providers"]["storage"]["settings"] = payload.settings or data["providers"]["storage"].get("settings", {})
     else:
-        raise HTTPException(404, detail="Plugin not found")
+        # Accept unknown outbound plugin ids if a manifest exists
+        mpath = os.path.join(_providers_dir(), pid, "manifest.json")
+        if not os.path.exists(mpath):
+            raise HTTPException(404, detail="Plugin not found")
+        data.setdefault("providers", {}).setdefault("outbound", {})
+        data["providers"]["outbound"]["plugin"] = pid
+        data["providers"]["outbound"]["enabled"] = bool(payload.enabled) if payload.enabled is not None else True
+        data["providers"]["outbound"]["settings"] = payload.settings or data["providers"]["outbound"].get("settings", {})
     wr = _write_cfg(settings.faxbot_config_path, data)
     if not wr.ok:
         raise HTTPException(500, detail=wr.error or "Failed to write config")

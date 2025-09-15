@@ -345,6 +345,9 @@ function Dashboard({ client, onNavigate }: DashboardProps) {
                   <Typography variant="body2" color="text.secondary">
                     Outbound: {cfg?.v3_plugins?.active_outbound || '-'} • Installed: {plugins?.length ?? 0}
                   </Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    Manifest warnings appear under Diagnostics.
+                  </Typography>
                 </CardContent>
               </Card>
             </Grid>

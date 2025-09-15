@@ -48,6 +48,12 @@ export interface Settings {
     verify_signature: boolean;
     configured: boolean;
   };
+  documo?: {
+    api_key: string;
+    base_url?: string;
+    sandbox?: boolean;
+    configured: boolean;
+  };
   sinch: {
     project_id: string;
     api_key: string;

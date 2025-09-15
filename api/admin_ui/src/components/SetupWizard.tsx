@@ -36,6 +36,8 @@ interface WizardConfig {
   sinch_project_id?: string;
   sinch_api_key?: string;
   sinch_api_secret?: string;
+  documo_api_key?: string;
+  documo_use_sandbox?: boolean;
   ami_host?: string;
   ami_port?: number;
   ami_username?: string;
