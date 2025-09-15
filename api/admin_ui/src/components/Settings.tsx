@@ -804,6 +804,29 @@ function Settings({ client }: SettingsProps) {
                       <input placeholder="FREESWITCH_CALLER_ID_NUMBER" onChange={(e)=>handleForm('FREESWITCH_CALLER_ID_NUMBER'.toLowerCase(), e.target.value)} style={ctlStyle} />
                     </ListItem>
                   </List>
+                  <Box sx={{ mt: 2 }}>
+                    <Typography variant="subtitle2" gutterBottom>Outbound Result Hook (copyable)</Typography>
+                    <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                      Add this to your outbound dialplan (before hangup) to post result details back to Faxbot. Replace YOUR_SECRET with your <code>ASTERISK_INBOUND_SECRET</code> (shared internal secret).
+                    </Typography>
+                    <Box component="pre" sx={{ p: 1, bgcolor: 'background.default', border: '1px solid', borderColor: 'divider', borderRadius: 1, overflowX: 'auto', fontSize: '0.75rem' }}>
+{`<action application="set" data="api_hangup_hook=system curl -s -X POST \
+  -H 'Content-Type: application/json' \
+  -H 'X-Internal-Secret: YOUR_SECRET' \
+  -d '{\"job_id\":\"${'${faxbot_job_id}'}\",\"fax_status\":\"${'${fax_success}'}\",\"fax_result_text\":\"${'${fax_result_text}'}\",\"fax_document_transferred_pages\":${'${fax_document_transferred_pages}'},\"uuid\":\"${'${uuid}'}\"}' \
+  http://api:8080/_internal/freeswitch/outbound_result"/>`}
+                    </Box>
+                    <Button size="small" sx={{ mt: 1 }} onClick={async ()=>{
+                      try {
+                        const text = `<action application=\"set\" data=\"api_hangup_hook=system curl -s -X POST \\\n+  -H 'Content-Type: application/json' \\\n+  -H 'X-Internal-Secret: YOUR_SECRET' \\\n+  -d '{\\\"job_id\\\":\\\"${'${faxbot_job_id}'}\\\",\\\"fax_status\\\":\\\"${'${fax_success}'}\\\",\\\"fax_result_text\\\":\\\"${'${fax_result_text}'}\\\",\\\"fax_document_transferred_pages\\\":${'${fax_document_transferred_pages}'},\\\"uuid\\\":\\\"${'${uuid}'}\\\"}' \\\n+  http://api:8080/_internal/freeswitch/outbound_result\"/>`;
+                        await navigator.clipboard.writeText(text);
+                        setSnack('Copied');
+                      } catch {}
+                    }}>Copy snippet</Button>
+                    <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
+                      Use service name "api" for Docker Compose networking; otherwise set your API host. Ensure your dialplan sets <code>faxbot_job_id</code> (the originate flow sets it automatically).
+                    </Typography>
+                  </Box>
                   <Alert severity="info">For result updates, set an api_hangup_hook in your dialplan to POST to /_internal/freeswitch/outbound_result with X-Internal-Secret and include fax variables and the channel variable faxbot_job_id.</Alert>
                 </CardContent>
               </Card>
