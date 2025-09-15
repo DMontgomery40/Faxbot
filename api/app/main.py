@@ -536,6 +536,7 @@ def get_admin_config():
         "backend_configured": {
             "phaxio": bool(settings.phaxio_api_key and settings.phaxio_api_secret),
             "sinch": bool(settings.sinch_project_id and settings.sinch_api_key and settings.sinch_api_secret),
+            "documo": bool(settings.documo_api_key),
             "sip_ami_configured": bool(settings.ami_username and settings.ami_password),
             "sip_ami_password_default": (settings.ami_password == "changeme"),
         },
@@ -727,6 +728,11 @@ class UpdateSettingsRequest(BaseModel):
     sinch_api_key: Optional[str] = None
     sinch_api_secret: Optional[str] = None
 
+    # Documo
+    documo_api_key: Optional[str] = None
+    documo_base_url: Optional[str] = None
+    documo_use_sandbox: Optional[bool] = None
+
     # SIP/Asterisk
     ami_host: Optional[str] = None
     ami_port: Optional[int] = None
@@ -811,6 +817,11 @@ def update_admin_settings(payload: UpdateSettingsRequest):
     _set_env_opt("SINCH_PROJECT_ID", payload.sinch_project_id)
     _set_env_opt("SINCH_API_KEY", payload.sinch_api_key)
     _set_env_opt("SINCH_API_SECRET", payload.sinch_api_secret)
+
+    # Documo (preview)
+    _set_env_opt("DOCUMO_API_KEY", payload.documo_api_key)
+    _set_env_opt("DOCUMO_BASE_URL", payload.documo_base_url)
+    _set_env_bool("DOCUMO_SANDBOX", payload.documo_use_sandbox)
 
     # SIP
     _set_env_opt("ASTERISK_AMI_HOST", payload.ami_host)
@@ -2543,6 +2554,15 @@ def _installed_plugins() -> list[dict[str, Any]]:
         "configurable": True,
     })
     items.append({
+        "id": "documo",
+        "name": "Documo mFax",
+        "version": "1.0.0",
+        "categories": ["outbound"],
+        "capabilities": ["send", "get_status"],
+        "enabled": (current == "documo"),
+        "configurable": True,
+    })
+    items.append({
         "id": "sip",
         "name": "SIP/Asterisk (Self-hosted)",
         "version": "1.0.0",
@@ -2601,6 +2621,16 @@ def get_plugin_config(plugin_id: str):
             "settings": {
                 "project_id": settings.sinch_project_id,
                 "configured": bool(settings.sinch_project_id and settings.sinch_api_key and settings.sinch_api_secret),
+            },
+        }
+    if pid == "documo":
+        return {
+            "enabled": settings.fax_backend == "documo",
+            "settings": {
+                "api_key": "***" if settings.documo_api_key else "",
+                "base_url": settings.documo_base_url,
+                "sandbox": settings.documo_use_sandbox,
+                "configured": bool(settings.documo_api_key),
             },
         }
     if pid == "sip":

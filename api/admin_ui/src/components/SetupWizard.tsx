@@ -148,6 +148,10 @@ function SetupWizard({ client, onDone, docsBase }: SetupWizardProps) {
       lines.push(`ASTERISK_AMI_USERNAME=${config.ami_username || 'api'}`);
       lines.push(`ASTERISK_AMI_PASSWORD=${config.ami_password || 'change_me'}`);
       lines.push(`FAX_LOCAL_STATION_ID=${config.fax_station_id || '+15551234567'}`);
+    } else if (config.backend === 'documo') {
+      lines.push('# Documo (mFax) Configuration');
+      lines.push(`DOCUMO_API_KEY=${config.documo_api_key || 'your_api_key_here'}`);
+      lines.push(`DOCUMO_SANDBOX=${config.documo_use_sandbox ? 'true' : 'false'}`);
     }
 
     lines.push('');
@@ -178,6 +182,9 @@ function SetupWizard({ client, onDone, docsBase }: SetupWizardProps) {
         payload.sinch_project_id = config.sinch_project_id;
         payload.sinch_api_key = config.sinch_api_key;
         payload.sinch_api_secret = config.sinch_api_secret;
+      } else if (config.backend === 'documo') {
+        payload.documo_api_key = config.documo_api_key;
+        payload.documo_use_sandbox = config.documo_use_sandbox;
       } else if (config.backend === 'sip') {
         payload.ami_host = config.ami_host;
         payload.ami_port = config.ami_port;
@@ -234,6 +241,7 @@ function SetupWizard({ client, onDone, docsBase }: SetupWizardProps) {
               >
                 <MenuItem value="phaxio">Phaxio (Cloud - Recommended)</MenuItem>
                 <MenuItem value="sinch">Sinch Fax API v3 (Cloud)</MenuItem>
+                <MenuItem value="documo">Documo (mFax)</MenuItem>
                 <MenuItem value="sip">SIP/Asterisk (Self-hosted)</MenuItem>
               </Select>
             </FormControl>

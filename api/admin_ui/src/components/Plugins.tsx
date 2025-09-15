@@ -109,6 +109,14 @@ export default function Plugins({ client }: Props) {
     return hay.includes(q);
   };
   const byCategory = (cat: string) => (items || []).filter(p => (p.categories || []).includes(cat)).filter(matches);
+  // Ensure Documo appears even if server list is behind
+  const ensureDocumo = (arr: PluginItem[]) => {
+    const has = arr.some(p => p.id === 'documo');
+    if (!has) {
+      arr = arr.concat([{ id: 'documo', name: 'Documo mFax', version: '1.0.0', categories: ['outbound'], capabilities: ['send','get_status'], description: 'Direct upload (preview)' } as any]);
+    }
+    return arr;
+  };
   const registryOnly = () => {
     const installed = new Set((items || []).map(i => i.id));
     return (registry || []).filter(r => !installed.has(r.id) && matches(r as any));
@@ -132,7 +140,7 @@ export default function Plugins({ client }: Props) {
         <Typography>Loading…</Typography>
       ) : (
         <>
-          <Section title="Outbound Providers" items={byCategory('outbound')} saving={saving} onActivate={handleMakeActiveOutbound} onConfigure={handleConfigure} registry={registry} />
+          <Section title="Outbound Providers" items={ensureDocumo(byCategory('outbound'))} saving={saving} onActivate={handleMakeActiveOutbound} onConfigure={handleConfigure} registry={registry} />
           <Divider sx={{ my: 3 }} />
           <Section title="Storage Providers" items={byCategory('storage')} saving={saving} onActivate={undefined} onConfigure={handleConfigure} registry={registry} />
           <Divider sx={{ my: 3 }} />

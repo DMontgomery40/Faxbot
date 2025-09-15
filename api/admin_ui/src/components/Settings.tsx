@@ -230,6 +230,7 @@ function Settings({ client }: SettingsProps) {
                     >
                       <option value="phaxio">phaxio</option>
                       <option value="sinch">sinch</option>
+                      <option value="documo">documo</option>
                       <option value="sip">sip</option>
                     </select>
                     <Chip
@@ -405,6 +406,36 @@ function Settings({ client }: SettingsProps) {
                       style={ctlStyle}
                     />
                   </ListItem>
+                  </List>
+                )}
+
+                {settings.backend.type === 'documo' && (
+                  <List dense>
+                    <ListItem>
+                      <ListItemText
+                        primary="Documo API Key"
+                        secondary={settings?.documo?.configured ? 'Configured' : 'Not configured'}
+                      />
+                      <input
+                        placeholder="DOCUMO_API_KEY"
+                        onChange={(e) => handleForm('documo_api_key', e.target.value)}
+                        style={ctlStyle}
+                      />
+                    </ListItem>
+                    <ListItem>
+                      <ListItemText
+                        primary="Sandbox"
+                        secondary={String((form.documo_use_sandbox ?? false))}
+                      />
+                      <select
+                        value={(form.documo_use_sandbox ?? false) ? 'true' : 'false'}
+                        onChange={(e) => handleForm('documo_use_sandbox', e.target.value === 'true')}
+                        style={ctlStyle}
+                      >
+                        <option value="false">false</option>
+                        <option value="true">true</option>
+                      </select>
+                    </ListItem>
                   </List>
                 )}
 
