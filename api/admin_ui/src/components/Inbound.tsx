@@ -29,6 +29,7 @@ function Inbound({ client }: InboundProps) {
   const [error, setError] = useState<string | null>(null);
   const [callbacks, setCallbacks] = useState<any | null>(null);
   const [simulating, setSimulating] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   const fetchInbound = async () => {
     try {
@@ -160,6 +161,44 @@ function Inbound({ client }: InboundProps) {
             <Typography variant="caption" color="text.secondary">
               Configure this URL in your provider console to deliver inbound faxes.
             </Typography>
+            {callbacks.backend === 'sip' && (
+              <Box sx={{ mt: 2 }}>
+                <Typography variant="subtitle2" gutterBottom>
+                  Asterisk inbound (internal)
+                </Typography>
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                  Add a dialplan step after ReceiveFAX to POST the TIFF path internally:
+                </Typography>
+                <Box component="pre" sx={{ p: 1, bgcolor: 'background.default', border: '1px solid', borderColor: 'divider', borderRadius: 1, overflowX: 'auto', fontSize: '0.75rem' }}>
+{`same => n,Set(FAXFILE=/faxdata/${'${UNIQUEID}'}.tiff)
+same => n,ReceiveFAX(${"${FAXFILE}"})
+same => n,Set(FAXSTATUS=${'${FAXOPT(status)}'})
+same => n,Set(FAXPAGES=${'${FAXOPT(pages)}'})
+same => n,System(curl -s -X POST \
+  -H "Content-Type: application/json" \
+  -H "X-Internal-Secret: YOUR_SECRET" \
+  -d "{\"tiff_path\":\"${'${FAXFILE}'}\",\"to_number\":\"${'${EXTEN}'}\",\"from_number\":\"${'${CALLERID(num)}'}\",\"faxstatus\":\"${'${FAXSTATUS}'}\",\"faxpages\":\"${'${FAXPAGES}'}\",\"uniqueid\":\"${'${UNIQUEID}'}\"}" \
+  http://api:8080/_internal/asterisk/inbound)`}
+                </Box>
+                <Box sx={{ display: 'flex', gap: 1, mt: 1 }}>
+                  <Button size="small" variant="outlined" startIcon={<ContentCopyIcon />} onClick={async () => { await navigator.clipboard.writeText(
+`same => n,Set(FAXFILE=/faxdata/${'${UNIQUEID}'}.tiff)
+same => n,ReceiveFAX(${"${FAXFILE}"})
+same => n,Set(FAXSTATUS=${'${FAXOPT(status)}'})
+same => n,Set(FAXPAGES=${'${FAXOPT(pages)}'})
+same => n,System(curl -s -X POST -H "Content-Type: application/json" -H "X-Internal-Secret: YOUR_SECRET" -d "{\"tiff_path\":\"${'${FAXFILE}'}\",\"to_number\":\"${'${EXTEN}'}\",\"from_number\":\"${'${CALLERID(num)}'}\",\"faxstatus\":\"${'${FAXSTATUS}'}\",\"faxpages\":\"${'${FAXPAGES}'}\",\"uniqueid\":\"${'${UNIQUEID}'}\"}" http://api:8080/_internal/asterisk/inbound)`
+                  ); setCopied(true); setTimeout(()=>setCopied(false), 2000); }}>
+                    {copied ? 'Copied' : 'Copy dialplan snippet'}
+                  </Button>
+                  <Button size="small" href="https://faxbot.net/backends/sip-setup.html#inbound" target="_blank" rel="noreferrer">
+                    Learn more (Asterisk inbound)
+                  </Button>
+                </Box>
+                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
+                  Use service name "api" when running via Docker Compose; otherwise, point to your API host. Ensure Asterisk mounts the same /faxdata volume.
+                </Typography>
+              </Box>
+            )}
           </Box>
         )}
       </Alert>
