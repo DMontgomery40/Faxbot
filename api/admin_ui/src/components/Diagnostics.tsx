@@ -29,9 +29,10 @@ import { Dialog, DialogTitle, DialogContent, DialogActions, Link } from '@mui/ma
 interface DiagnosticsProps {
   client: AdminAPIClient;
   onNavigate?: (index: number) => void;
+  docsBase?: string;
 }
 
-function Diagnostics({ client, onNavigate }: DiagnosticsProps) {
+function Diagnostics({ client, onNavigate, docsBase }: DiagnosticsProps) {
   const [diagnostics, setDiagnostics] = useState<DiagnosticsResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -149,7 +150,7 @@ function Diagnostics({ client, onNavigate }: DiagnosticsProps) {
       }
     }
     if (t.includes('phaxio')) {
-      docs.push({ text: 'Faxbot: Phaxio setup', href: 'https://dmontgomery40.github.io/Faxbot/PHAXIO_SETUP.html' });
+      docs.push({ text: 'Faxbot: Phaxio setup', href: `${docsBase || 'https://dmontgomery40.github.io/Faxbot'}/backends/phaxio-setup.html` });
       docs.push({ text: 'Sinch Fax (Phaxio) API', href: 'https://developers.sinch.com/docs/fax/' });
       docs.push({ text: 'Webhook signature (HMAC)', href: 'https://developers.sinch.com/docs/fax/' });
     }

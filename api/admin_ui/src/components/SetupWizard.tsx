@@ -25,6 +25,7 @@ import SecretInput from './common/SecretInput';
 interface SetupWizardProps {
   client: AdminAPIClient;
   onDone?: () => void;
+  docsBase?: string;
 }
 
 interface WizardConfig {
@@ -46,7 +47,7 @@ interface WizardConfig {
   pdf_token_ttl_minutes?: number;
 }
 
-function SetupWizard({ client, onDone }: SetupWizardProps) {
+function SetupWizard({ client, onDone, docsBase }: SetupWizardProps) {
   const [activeStep, setActiveStep] = useState(0);
   const [config, setConfig] = useState<WizardConfig>({
     backend: 'phaxio',
@@ -418,11 +419,11 @@ function SetupWizard({ client, onDone }: SetupWizardProps) {
                     <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
                       Paste this URL into your {config.backend.toUpperCase()} console for inbound fax delivery.
                       {"  •  "}
-                      <a href="https://dmontgomery40.github.io/Faxbot/providers/phaxio/" target="_blank" rel="noreferrer">Faxbot: Phaxio Setup</a>
+                      <a href={`${docsBase || 'https://dmontgomery40.github.io/Faxbot'}/backends/phaxio-setup.html`} target="_blank" rel="noreferrer">Faxbot: Phaxio Setup</a>
                       {"  •  "}
                       <a href="https://developers.sinch.com/docs/fax/api-reference/" target="_blank" rel="noreferrer">Sinch Fax API Docs</a>
                       {"  •  "}
-                      <a href="https://dmontgomery40.github.io/Faxbot/" target="_blank" rel="noreferrer">Faxbot Docs</a>
+                      <a href={`${docsBase || 'https://dmontgomery40.github.io/Faxbot'}/`} target="_blank" rel="noreferrer">Faxbot Docs</a>
                     </Typography>
                   </Paper>
                 )}
@@ -552,7 +553,7 @@ function SetupWizard({ client, onDone }: SetupWizardProps) {
                       </Box>
                     ))}
                     <Typography variant="caption" color="text.secondary">
-                      Help: <a href="https://dmontgomery40.github.io/Faxbot/providers/phaxio/" target="_blank" rel="noreferrer">Faxbot: Phaxio</a> • <a href="https://developers.sinch.com/docs/fax/api-reference/" target="_blank" rel="noreferrer">Sinch Fax API</a>
+                      Help: <a href={`${docsBase || 'https://dmontgomery40.github.io/Faxbot'}/backends/phaxio-setup.html`} target="_blank" rel="noreferrer">Faxbot: Phaxio</a> • <a href="https://developers.sinch.com/docs/fax/api-reference/" target="_blank" rel="noreferrer">Sinch Fax API</a>
                     </Typography>
                   </Box>
                 )}

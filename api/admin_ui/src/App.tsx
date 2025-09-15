@@ -425,7 +425,7 @@ function App() {
             <ApiKeys client={client!} />
           </TabPanel>
           <TabPanel value={tabValue} index={5}>
-            <SetupWizard client={client!} onDone={() => setTabValue(0)} />
+            <SetupWizard client={client!} onDone={() => setTabValue(0)} docsBase={adminConfig?.branding?.docs_base} />
           </TabPanel>
           <TabPanel value={tabValue} index={6}>
             <Settings client={client!} />
@@ -437,7 +437,7 @@ function App() {
             <Logs client={client!} />
           </TabPanel>
           <TabPanel value={tabValue} index={9}>
-            <Diagnostics client={client!} onNavigate={setTabValue} />
+            <Diagnostics client={client!} onNavigate={setTabValue} docsBase={adminConfig?.branding?.docs_base} />
           </TabPanel>
           {adminConfig?.v3_plugins?.enabled ? (
             <TabPanel value={tabValue} index={10}>

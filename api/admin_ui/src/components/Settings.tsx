@@ -354,7 +354,7 @@ function Settings({ client }: SettingsProps) {
                     <ListItem>
                       <Typography variant="caption" color="text.secondary">
                         Help: 
-                        <a href="https://dmontgomery40.github.io/Faxbot/providers/phaxio/" target="_blank" rel="noreferrer">Faxbot: Phaxio</a>
+                        <a href={`${docsBase}/backends/phaxio-setup.html`} target="_blank" rel="noreferrer">Faxbot: Phaxio</a>
                         {"  •  "}
                         <a href="https://developers.sinch.com/docs/fax/api-reference/" target="_blank" rel="noreferrer">Sinch Fax API</a>
                       </Typography>
