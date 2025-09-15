@@ -378,6 +378,64 @@ function SetupWizard({ client, onDone, docsBase }: SetupWizardProps) {
             {config.backend === 'signalwire' && (
               <Grid container spacing={2}>
                 <Grid item xs={12}>
+                  <TextField
+                    label="Space URL"
+                    value={(config as any).signalwire_space_url || ''}
+                    onChange={(e) => handleConfigChange('signalwire_space_url', e.target.value)}
+                    fullWidth
+                  />
+                </Grid>
+                <Grid item xs={12}>
+                  <TextField
+                    label="Project ID"
+                    value={(config as any).signalwire_project_id || ''}
+                    onChange={(e) => handleConfigChange('signalwire_project_id', e.target.value)}
+                    fullWidth
+                  />
+                </Grid>
+                <Grid item xs={12}>
+                  <SecretInput
+                    label="API Token"
+                    value={(config as any).signalwire_api_token || ''}
+                    onChange={(value) => handleConfigChange('signalwire_api_token', value)}
+                    fullWidth
+                  />
+                </Grid>
+                <Grid item xs={12}>
+                  <TextField
+                    label="From (fax)"
+                    value={(config as any).signalwire_fax_from_e164 || ''}
+                    onChange={(e) => handleConfigChange('signalwire_fax_from_e164', e.target.value)}
+                    fullWidth
+                  />
+                </Grid>
+                <Grid item xs={12}>
+                  <Alert severity="info">
+                    Set PUBLIC_API_URL to an HTTPS URL so SignalWire can fetch MediaUrl tokens; callbacks hit /signalwire-callback.
+                  </Alert>
+                </Grid>
+              </Grid>
+            )}
+
+            {config.backend === 'freeswitch' && (
+              <Grid container spacing={2}>
+                <Grid item xs={12}>
+                  <Alert severity="info" sx={{ mb: 2 }}>
+                    FreeSWITCH uses originate &amp;txfax; add an api_hangup_hook to post results back to Faxbot after call ends.
+                  </Alert>
+                </Grid>
+                <Grid item xs={12}>
+                  <TextField label="Gateway Name" value={(config as any).fs_gateway_name || ''} onChange={(e)=>handleConfigChange('fs_gateway_name', e.target.value)} fullWidth />
+                </Grid>
+                <Grid item xs={12}>
+                  <TextField label="Caller ID Number" value={(config as any).fs_caller_id_number || ''} onChange={(e)=>handleConfigChange('fs_caller_id_number', e.target.value)} fullWidth />
+                </Grid>
+              </Grid>
+            )}
+
+            {config.backend === 'signalwire' && (
+              <Grid container spacing={2}>
+                <Grid item xs={12}>
                   <TextField label="Space URL" value={(config as any).signalwire_space_url || ''} onChange={(e)=>handleConfigChange('signalwire_space_url', e.target.value)} fullWidth />
                 </Grid>
                 <Grid item xs={12}>

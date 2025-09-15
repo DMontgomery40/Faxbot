@@ -16,7 +16,7 @@
       "categories": ["outbound"],
       "capabilities": ["send", "get_status", "webhook"],
       "description": "Cloud fax using Twilio‑style Compatibility API.",
-      "learn_more": "https://dmontgomery40.github.io/Faxbot/guides/signalwire-setup/"
+      "learn_more": "https://dmontgomery40.github.io/Faxbot/backends/signalwire-setup.html"
     },
     {
       "id": "freeswitch",
@@ -25,7 +25,7 @@
       "categories": ["outbound"],
       "capabilities": ["send"],
       "description": "Self‑hosted fax via mod_spandsp (txfax/rxfax).",
-      "learn_more": "https://dmontgomery40.github.io/Faxbot/guides/freeswitch-setup/"
+      "learn_more": "https://dmontgomery40.github.io/Faxbot/backends/freeswitch-setup.html"
     },
     {
       "id": "sinch",
