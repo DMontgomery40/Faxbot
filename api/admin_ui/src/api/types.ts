@@ -98,6 +98,12 @@ export interface Settings {
       hmac_configured: boolean;
     };
   };
+  features?: {
+    v3_plugins: boolean;
+    fax_disabled: boolean;
+    inbound_enabled: boolean;
+    plugin_install: boolean;
+  };
   limits: {
     max_file_size_mb: number;
     pdf_token_ttl_minutes: number;

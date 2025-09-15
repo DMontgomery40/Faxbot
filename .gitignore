@@ -55,3 +55,9 @@ logs/
 
 # Project-specific
 /AGENTS.md
+
+# Ignore built sites and vendor
+_site/
+docs/_site/
+vendor/
+.bundle/

@@ -88,7 +88,7 @@ function Diagnostics({ client, onNavigate }: DiagnosticsProps) {
   const anchorFor = (title: string) => {
     const t = title.toLowerCase();
     if (t.includes('phaxio')) return '#settings-phaxio';
-    if (t.includes('sinch')) return '#settings-security';
+    if (t.includes('sinch')) return '#settings-backend';
     if (t.includes('sip')) return '#settings-sip';
     if (t.includes('storage')) return '#settings-storage';
     if (t.includes('security')) return '#settings-security';
@@ -131,7 +131,8 @@ function Diagnostics({ client, onNavigate }: DiagnosticsProps) {
     if (t.includes('inbound')) {
       if (key === 'enabled' && !value) return 'Enable inbound to receive faxes.';
     }
-    return null;
+    // Default lightweight hint so every row has help
+    return 'See linked docs for configuration details.';
   };
 
   const getHelpDocs = (title: string, key: string) => {
@@ -139,7 +140,7 @@ function Diagnostics({ client, onNavigate }: DiagnosticsProps) {
     const docs: { text: string; href?: string }[] = [];
     if (t.includes('sip')) {
       if (key === 'ami_reachable') {
-        docs.push({ text: 'Asterisk documentation (AMI)', href: 'https://docs.asterisk.org/' });
+        docs.push({ text: 'Asterisk Manager Interface (AMI)', href: 'https://wiki.asterisk.org/wiki/display/AST/Asterisk+Manager+Interface+%28AMI%29' });
         docs.push({ text: 'Verify docker compose asterisk service is running and reachable as host "asterisk" on port 5038.' });
         docs.push({ text: 'Ensure ASTERISK_AMI_USERNAME/PASSWORD match Asterisk manager.conf and that port 5038 is not exposed publicly.' });
       }
@@ -148,26 +149,46 @@ function Diagnostics({ client, onNavigate }: DiagnosticsProps) {
       }
     }
     if (t.includes('phaxio')) {
-      docs.push({ text: 'Phaxio docs', href: 'https://www.phaxio.com/docs/' });
-      docs.push({ text: 'Signature verification overview (HMAC)', href: 'https://www.phaxio.com/docs/' });
+      docs.push({ text: 'Faxbot: Phaxio setup', href: 'https://dmontgomery40.github.io/Faxbot/PHAXIO_SETUP.html' });
+      docs.push({ text: 'Sinch Fax (Phaxio) API', href: 'https://developers.sinch.com/docs/fax/' });
+      docs.push({ text: 'Webhook signature (HMAC)', href: 'https://developers.sinch.com/docs/fax/' });
     }
     if (t.includes('sinch')) {
-      docs.push({ text: 'Sinch Fax API reference', href: 'https://developers.sinch.com/docs/fax/api-reference/' });
+      docs.push({ text: 'Sinch Fax API reference', href: 'https://developers.sinch.com/docs/fax/' });
       docs.push({ text: 'Faxbot inbound security can also enforce optional Basic/HMAC on callbacks. Configure shared secrets in Faxbot and, if supported, in your provider portal.' });
     }
     if (t.includes('storage')) {
-      docs.push({ text: 'S3 server-side encryption with KMS best practices' });
+      docs.push({ text: 'S3 server-side encryption with KMS (AWS docs)', href: 'https://docs.aws.amazon.com/AmazonS3/latest/userguide/UsingKMSEncryption.html' });
     }
     if (t.includes('security')) {
       docs.push({ text: 'Enforce HTTPS (ENFORCE_PUBLIC_HTTPS) and enable audit logging for HIPAA.' });
     }
     if (t.includes('system')) {
-      docs.push({ text: 'Install Ghostscript package for PDF→TIFF conversion.' });
+      docs.push({ text: 'Ghostscript install (docs)', href: 'https://ghostscript.readthedocs.io/' });
     }
     return docs;
   };
 
   const renderChecks = (checks: Record<string, any>, title: string) => {
+    // Respect active backend: show N/A for inactive providers in demo
+    const active = diagnostics?.backend || 'phaxio';
+    const isPhax = title.toLowerCase().includes('phaxio');
+    const isSinch = title.toLowerCase().includes('sinch');
+    const isSip = title.toLowerCase().includes('sip');
+    if ((isPhax && active !== 'phaxio') || (isSinch && active !== 'sinch') || (isSip && active !== 'sip')) {
+      return (
+        <Card sx={{ mb: 2 }}>
+          <CardContent>
+            <Typography variant="h6" gutterBottom>
+              {title}
+            </Typography>
+            <Typography variant="body2" color="text.secondary">
+              N/A — inactive backend
+            </Typography>
+          </CardContent>
+        </Card>
+      );
+    }
     return (
       <Card sx={{ mb: 2 }}>
         <CardContent>
@@ -176,14 +197,12 @@ function Diagnostics({ client, onNavigate }: DiagnosticsProps) {
           </Typography>
           {Object.entries(checks).map(([key, value]) => {
             const help = helpFor(title, key, value);
-            const label = (typeof value === 'boolean') ? (value ? 'View' : 'Help') : 'Open';
+            const label = (typeof value === 'boolean') ? (value ? 'View' : 'Help') : 'Help';
             return (
               <Box key={key} display="flex" justifyContent="space-between" alignItems="center" mb={1}>
                 <Box>
                   <Typography variant="body2">{key.replace(/_/g, ' ')}:</Typography>
-                  {help && (
-                    <Typography variant="caption" color="text.secondary">{help}</Typography>
-                  )}
+                  <Typography variant="caption" color="text.secondary">{help}</Typography>
                 </Box>
                 <Box display="flex" alignItems="center" gap={1}>
                   {renderCheckValue(value)}
@@ -221,7 +240,7 @@ function Diagnostics({ client, onNavigate }: DiagnosticsProps) {
       if (!phaxio.callback_url_set) suggestions.push({ type: 'warning', text: 'Set PHAXIO_STATUS_CALLBACK_URL (or PHAXIO_CALLBACK_URL)' });
       if (phaxio.public_url_https === false) suggestions.push({ type: 'warning', text: 'Use HTTPS for PUBLIC_API_URL' });
     }
-    
+    // Only suggest SIP issues when SIP is active
     if (diagnostics.backend === 'sip') {
       const sip = checks.sip || {};
       if (sip.ami_password_not_default === false) suggestions.push({ type: 'error', text: 'Change ASTERISK_AMI_PASSWORD from default "changeme"' });

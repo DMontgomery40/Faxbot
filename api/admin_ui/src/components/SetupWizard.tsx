@@ -418,11 +418,11 @@ function SetupWizard({ client, onDone }: SetupWizardProps) {
                     <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
                       Paste this URL into your {config.backend.toUpperCase()} console for inbound fax delivery.
                       {"  •  "}
-                      <a href="https://www.phaxio.com/docs/" target="_blank" rel="noreferrer">Phaxio Docs</a>
+                      <a href="https://dmontgomery40.github.io/Faxbot/providers/phaxio/" target="_blank" rel="noreferrer">Faxbot: Phaxio Setup</a>
                       {"  •  "}
                       <a href="https://developers.sinch.com/docs/fax/api-reference/" target="_blank" rel="noreferrer">Sinch Fax API Docs</a>
                       {"  •  "}
-                      <a href="https://github.com/" target="_blank" rel="noreferrer">Faxbot Docs</a>
+                      <a href="https://dmontgomery40.github.io/Faxbot/" target="_blank" rel="noreferrer">Faxbot Docs</a>
                     </Typography>
                   </Paper>
                 )}
@@ -552,7 +552,7 @@ function SetupWizard({ client, onDone }: SetupWizardProps) {
                       </Box>
                     ))}
                     <Typography variant="caption" color="text.secondary">
-                      Help: <a href="https://www.phaxio.com/docs/" target="_blank" rel="noreferrer">Phaxio</a> • <a href="https://developers.sinch.com/docs/fax/api-reference/" target="_blank" rel="noreferrer">Sinch Fax API</a>
+                      Help: <a href="https://dmontgomery40.github.io/Faxbot/providers/phaxio/" target="_blank" rel="noreferrer">Faxbot: Phaxio</a> • <a href="https://developers.sinch.com/docs/fax/api-reference/" target="_blank" rel="noreferrer">Sinch Fax API</a>
                     </Typography>
                   </Box>
                 )}

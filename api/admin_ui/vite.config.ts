@@ -5,7 +5,7 @@ export default defineConfig({
   plugins: [react()],
   base: '/admin/ui/',
   css: {
-    // Force Vite to use an inline empty PostCSS config to avoid walking parent directories
+    // Prevent PostCSS from walking up outside the project (avoids permission errors)
     postcss: {}
   },
   build: {
