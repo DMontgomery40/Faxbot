@@ -46,6 +46,12 @@ After applying, open **Diagnostics → Telephony** to confirm registration statu
 - The `/asterisk/etc/asterisk/extensions.conf` template sends faxes with `SendFAX()` and emits `UserEvent(FaxResult)` on completion
 - AMI events flow back into Faxbot, updating job status inside the Admin Console automatically
 
+## How it works (under the hood)
+- API converts TXT→PDF, then PDF→TIFF using Ghostscript
+- `originate_sendfax(job_id, to, tiff_path)` is sent over AMI; job status updates to `in_progress`
+- On `FaxResult`, the API maps Asterisk fields to `SUCCESS/FAILED` and records page count when present
+- Admin coverage: Diagnostics shows AMI connectivity and Ghostscript availability; Jobs detail view surfaces the outbound PDF
+
 ## Cutover checklist
 
 Use this when replacing a hosted fax service:

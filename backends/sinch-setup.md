@@ -34,8 +34,13 @@ Use this backend when you want Sinch's direct-upload workflow (often branded "Ph
 ## Key differences vs the Phaxio backend
 
 - PDFs upload via Sinch's REST API; no tokenised URL is exposed
-- Callbacks are optional. When enabled, they land on `/sinch-callback` with signature verification (configure the signing secret under **Settings → Backends → Sinch**)
+- Callbacks are optional. When enabled, they land on `/sinch-inbound` (inbound) or provider status callback paths with Basic and/or HMAC verification
 - Perfect for temporary lab environments where you cannot expose a public HTTPS endpoint
+
+## How it works (under the hood)
+- Faxbot sends the PDF via multipart upload using your credentials
+- Status is derived from Sinch's immediate response and any configured callbacks/polling
+- Admin coverage: Diagnostics shows backend auth presence; Setup Wizard writes credentials to the resolved config
 
 ## Troubleshooting
 
