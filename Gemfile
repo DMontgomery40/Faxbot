@@ -10,3 +10,4 @@ gem 'jekyll-include-cache'
 gem 'just-the-docs', '~> 0.7.0'
 # Resolve remote-theme constraint by pinning converter to <= 3.0
 gem 'jekyll-sass-converter', '~> 3.0.0'
+gem 'sass-embedded', '1.71.1'
