@@ -74,7 +74,7 @@ GEM
     jekyll-watch (2.2.1)
       listen (~> 3.0)
     json (2.13.2)
-    just-the-docs (0.7.0)
+    just-the-docs (0.6.2)
       jekyll (>= 3.8.5)
       jekyll-include-cache
       jekyll-seo-tag (>= 2.0)
@@ -171,7 +171,7 @@ DEPENDENCIES
   jekyll-remote-theme (~> 0.4.3)
   jekyll-sass-converter (~> 3.0.0)
   jekyll-seo-tag
-  just-the-docs (~> 0.7.0)
+  just-the-docs (= 0.6.2)
   sass-embedded (= 1.71.1)
   webrick (~> 1.8)
 
