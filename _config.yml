@@ -4,7 +4,7 @@ baseurl: "/Faxbot"
 url: "https://dmontgomery40.github.io"
 
 # Theme
-remote_theme: just-the-docs/just-the-docs@v0.6.2
+remote_theme: just-the-docs/just-the-docs@v0.5.3
 color_scheme: dark
 logo: /assets/images/faxbot_full_logo.png
 

@@ -3,9 +3,10 @@ layout: default
 title: Troubleshooting
 nav_order: 80
 permalink: /troubleshooting/
+nav_exclude: true
 ---
 
-# Troubleshooting
+# Troubleshooting (Legacy Page)
 
 Common errors
 - 401 Unauthorized
@@ -47,6 +48,4 @@ Diagnostics
 - Logs show warnings for missing API key or insecure public URL when enforcement is on
 
 More help
-- [Backends](/Faxbot/backends/)
-- [Deployment](/Faxbot/deployment/)
-- [Security](/Faxbot/security/)
+- {{ site.baseurl }}/development/troubleshooting.html

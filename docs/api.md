@@ -3,9 +3,14 @@ layout: default
 title: REST API
 nav_order: 90
 permalink: /api/
+nav_exclude: true
 ---
 
-# REST API
+# REST API (Legacy Page)
+
+This page is superseded by the consolidated API Reference. See:
+
+- {{ site.baseurl }}/development/api-reference.html
 
 Base URL
 - Default: `http://localhost:8080`
@@ -39,4 +44,3 @@ Notes
 - Phone validation accepts E.164 or digits (`+15551234567`, `15551234567`)
 - Max upload size is `MAX_FILE_SIZE_MB` (default 10 MB)
 - Allowed content types: `application/pdf`, `text/plain`
-

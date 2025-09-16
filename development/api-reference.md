@@ -11,45 +11,76 @@ permalink: /development/api-reference.html
 ## Base URL
 - Default: `http://localhost:8080`
 - Health: `GET /health` → `{ "status": "ok" }`
+- Readiness: `GET /health/ready` → checks DB, backend config, storage (when inbound enabled), Ghostscript
 
 ## Auth
-- Header `X-API-Key: <key>` if `API_KEY` is set in environment.
-- If `API_KEY` is blank, auth is disabled (not recommended).
+- Header `X-API-Key: <token>` when API auth is required
+- Multi‑key support with scopes and per‑key rate limiting
 
-## Endpoints
+## Core (outbound)
 
-1) POST `/fax`
+POST `/fax`
 - Multipart form
   - `to`: destination number (E.164 or digits)
   - `file`: PDF or TXT
 - Responses
   - 202 Accepted: `{ id, to, status, error?, pages?, backend, provider_sid?, created_at, updated_at }`
-  - 400 bad number; 413 file too large; 415 unsupported type; 401 invalid API key
-- Example
-```
-curl -X POST http://localhost:8080/fax \
-  -H "X-API-Key: $API_KEY" \
-  -F to=+15551234567 \
-  -F file=@./example.pdf
-```
+  - 400 invalid number/params; 413 too large; 415 unsupported type; 401 invalid API key
 
-2) GET `/fax/{id}`
-- Returns job status as above.
-- 404 if not found; 401 if invalid API key.
-```
-curl -H "X-API-Key: $API_KEY" http://localhost:8080/fax/$JOB_ID
-```
+GET `/fax/{id}`
+- Returns job status as above
+- 404 if not found; 401 if invalid API key
 
-3) GET `/fax/{id}/pdf?token=...`
-- Serves the original PDF for cloud provider to fetch.
-- No API auth; requires token that matches stored URL.
-- 403 invalid/expired token; 404 not found.
+GET `/fax/{id}/pdf?token=...`
+- Serves the original PDF to cloud providers
+- No API auth; requires short‑TTL token
+- 403 invalid/expired token; 404 not found
 
-4) POST `/phaxio-callback`
-- For Phaxio status webhooks. Expects form-encoded fields (e.g., `fax[status]`, `fax[id]`).
-- Correlation via query param `?job_id=...`.
-- Returns `{ status: "ok" }`.
-- Signature verification: if `PHAXIO_VERIFY_SIGNATURE=true` (default), the server verifies `X-Phaxio-Signature` (HMAC-SHA256 of the raw body using `PHAXIO_API_SECRET`). Requests without a valid signature are rejected (401).
+POST `/phaxio-callback`
+- Phaxio status webhooks (form data)
+- Correlate by query param `?job_id=...`
+- If `PHAXIO_VERIFY_SIGNATURE=true`, verify `X-Phaxio-Signature` (HMAC‑SHA256 over raw body using `PHAXIO_API_SECRET`)
+
+## Inbound (when enabled)
+- `POST /phaxio-inbound` — HMAC verification optional (enabled by default via `PHAXIO_INBOUND_VERIFY_SIGNATURE`)
+- `POST /sinch-inbound` — Basic and/or HMAC verification supported
+- `POST /_internal/asterisk/inbound` — Internal Asterisk hook (`X-Internal-Secret: <ASTERISK_INBOUND_SECRET>`) with JSON `{ tiff_path, to_number, from_number?, faxstatus?, faxpages?, uniqueid }`
+- `GET /inbound` — List inbound faxes (scope `inbound:list`)
+- `GET /inbound/{id}` — Get inbound metadata (scope `inbound:read`)
+- `GET /inbound/{id}/pdf?token=...` — Short‑TTL tokenized PDF access (or API key with `inbound:read`)
+
+## Admin
+
+Settings & diagnostics
+- `GET /admin/settings` — Effective settings snapshot (sanitized)
+- `POST /admin/settings/validate` — Check provider credentials/connectivity (non‑destructive)
+- `PUT /admin/settings` — Apply settings in process (persist to environment variables)
+- `POST /admin/settings/reload` — Reload settings from current environment
+- `GET /admin/health-status` — Aggregated health state for Admin Console
+- `GET /admin/db-status` — DB status (counts, connectivity)
+- `GET /admin/logs` — Recent audit logs; `GET /admin/logs/tail` — stream subset
+- `POST /admin/diagnostics/run` — One‑shot diagnostics bundle
+- `POST /admin/restart` — Controlled process exit (requires `ADMIN_ALLOW_RESTART=true`)
+- `GET /admin/settings/export` — Export current settings as `.env` snippet
+- `POST /admin/settings/persist` — Save `.env` to server (`/faxdata/faxbot.env`) when enabled
+
+API keys
+- `POST /admin/api-keys` — Mint a key (returns token once)
+- `GET /admin/api-keys` — List keys (metadata only)
+- `DELETE /admin/api-keys/{keyId}` — Revoke
+- `POST /admin/api-keys/{keyId}/rotate` — Rotate (returns new token once)
+
+Jobs (admin)
+- `GET /admin/fax-jobs` — Filterable list with masked numbers
+- `GET /admin/fax-jobs/{id}` — Job detail (admin view)
+- `GET /admin/fax-jobs/{id}/pdf` — Download outbound PDF (admin‑only)
+- `POST /admin/fax-jobs/{id}/refresh` — Poll provider for status (manifest providers)
+
+Plugins (feature‑gated)
+- `GET /plugins` — List installed plugins (providers and storage)
+- `GET /plugins/{id}/config` — Current `enabled` + `settings`
+- `PUT /plugins/{id}/config` — Persist via config store (`FAXBOT_CONFIG_PATH`)
+- `GET /plugin-registry` — Curated registry (file‑backed if present)
 
 ## Models
 - FaxJobOut
@@ -58,48 +89,24 @@ curl -H "X-API-Key: $API_KEY" http://localhost:8080/fax/$JOB_ID
   - `status: string` (queued | in_progress | SUCCESS | FAILED | disabled)
   - `error?: string`
   - `pages?: number`
-  - `backend: string` ("phaxio", "sinch", or "sip")
+  - `backend: string` (phaxio | sinch | sip | signalwire | freeswitch | manifest id)
   - `provider_sid?: string`
   - `created_at: ISO8601`
   - `updated_at: ISO8601`
 
 ## Notes
-- Backend chosen via `FAX_BACKEND` env var: `phaxio` (cloud via Phaxio/Phaxio‑by‑Sinch V2 style), `sinch` (cloud via Sinch Fax API v3 direct upload), or `sip` (self‑hosted Asterisk).
-- TXT files are converted to PDF before TIFF conversion.
-- If Ghostscript is missing, TIFF step is stubbed with pages=1; install for production.
-- For the `phaxio` backend, TIFF conversion is skipped; page count is finalized via the provider callback (`/phaxio-callback`, HMAC verification supported).
-- For the `sinch` backend, the API uploads your PDF directly to Sinch. Webhook support is under evaluation; status reflects the provider's immediate response and may be updated by polling in future versions.
-- Tokenized PDF access has a TTL (`PDF_TOKEN_TTL_MINUTES`, default 60). The `/fax/{id}/pdf?token=...` link expires after TTL.
-- Optional retention: enable automatic cleanup of artifacts by setting `ARTIFACT_TTL_DAYS>0` (default disabled). Cleanup runs every `CLEANUP_INTERVAL_MINUTES` (default 1440).
+- Backend selection: `FAX_BACKEND=phaxio|sinch|sip|signalwire|freeswitch|<manifest id>`
+- File limits: API raw upload limit defaults to 10 MB; MCP HTTP/SSE JSON limit is 16 MB (base64 overhead)
+- TXT uploads are converted to PDF; SIP path converts PDF→TIFF before dialing
+- For Phaxio, page count finalizes via webhook callbacks
+- Tokenized PDF access TTL: `PDF_TOKEN_TTL_MINUTES` (default 60)
+- Artifact cleanup: set `ARTIFACT_TTL_DAYS>0` (cleanup runs every `CLEANUP_INTERVAL_MINUTES`)
 
 ## Phone Numbers
-- Preferred format: E.164 (e.g., `+15551234567`).
-- Validation: API accepts `+` and 6–20 digits.
-- Cloud path (Phaxio): the service may attempt best‑effort normalization for non‑E.164 input; provide E.164 to avoid ambiguity.
+- Preferred: E.164 (e.g., `+15551234567`)
+- Validation: `+` and 6–20 digits
 
 ## Audit Logging (Optional)
-- Enable structured audit logs for SIEM ingestion:
-  - `AUDIT_LOG_ENABLED=true`
-  - `AUDIT_LOG_FORMAT=json` (default)
-  - `AUDIT_LOG_FILE=/var/log/faxbot_audit.log` (optional)
-  - `AUDIT_LOG_SYSLOG=true` and `AUDIT_LOG_SYSLOG_ADDRESS=/dev/log` (optional)
-- Events: `job_created`, `job_dispatch`, `job_updated`, `job_failed`, `pdf_served`.
-- Logs contain job IDs and metadata only (no PHI).
-### Plugin Management (feature: plugins)
-- `GET /plugins` — list installed plugins (providers and storage). Admin auth required.
-- `GET /plugins/{id}/config` — get current enabled/settings for a plugin. Admin auth required.
-- `PUT /plugins/{id}/config` — persist enabled/settings to server config file. Admin auth required.
-- `GET /plugin-registry` — curated registry with descriptions/links.
-
-### Admin Apply (runtime only)
-- `POST /admin/apply-env` — Apply env vars to the running process (non‑persistent). Admin auth required (`X-API-Key`).
-  - Body: JSON object of `KEY: value` (uppercase keys only are applied)
-  - Example:
-    ```
-    curl -X POST http://localhost:8080/admin/apply-env \
-      -H "X-API-Key: $API_KEY" -H "Content-Type: application/json" \
-      -d '{"FAX_BACKEND":"sinch","SINCH_PROJECT_ID":"...","SINCH_API_KEY":"...","SINCH_API_SECRET":"..."}'
-    ```
-
-Notes
-- Changes are persisted but not applied live; backend selection at runtime continues to use environment until explicitly applied during maintenance.
+- Enable structured audit logs: `AUDIT_LOG_ENABLED=true` (JSON format by default)
+- Optional sinks: file path, syslog (`AUDIT_LOG_SYSLOG=true`)
+- Events include job lifecycle and admin activity; PHI content is never logged

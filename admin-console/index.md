@@ -7,16 +7,16 @@ permalink: /admin-console/
 
 # Admin Console
 
-> The local Admin Console helps you manage keys, jobs, inbound inbox, diagnostics, and settings without editing `.env` files by hand.
+The Admin Console lets you manage keys, jobs, inbound inbox, diagnostics, and settings without editing `.env` by hand.
 
-- Local‑only by default; protect with API keys and loopback restrictions
-- Works alongside any backend (Phaxio, Sinch, SIP/Asterisk)
-- Provides copy‑ready configuration lines after validation
+- Local‑only by default; access is restricted to loopback in current builds
+- Works with any backend (Phaxio, Sinch, SIP/Asterisk, SignalWire)
+- Provides copy‑ready configuration after validation
 
 ## Usage
 
 - Access at `http://localhost:8080/admin/ui/` when the API is running
-- Use an admin‑scoped API key to log in (or bootstrap key in development)
+- If you see 404, set `ENABLE_LOCAL_ADMIN=true` (or set `ADMIN_UI_DIR=/app/admin_ui_dist`) and restart
 - Explore tabs for Dashboard, Send, Jobs, Inbound, Keys, Settings, Diagnostics
 
 ### Plugins (preview)
@@ -66,6 +66,12 @@ permalink: /admin-console/
 
 - Dashboard shows the live backend (phaxio/sinch/sip) and simple queue stats. After applying settings, it reflects the new backend.
 - Diagnostics runs a comprehensive check (backend credentials/config, storage, inbound flags, security posture) and shows recommendations.
+
+### Under the Hood
+- The console reads settings from `GET /admin/settings` and health from `GET /admin/health-status`
+- “Apply & Reload” calls `PUT /admin/settings` then `POST /admin/settings/reload`
+- Persisted settings writes a server‑side `.env` via `POST /admin/settings/persist` (when enabled)
+- Jobs table uses admin‑scoped endpoints (`/admin/fax-jobs*`) with masked phone numbers
 
 ## Inbound Controls (v2)
 

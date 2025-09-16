@@ -12,11 +12,9 @@ permalink: /
 </div>
 
 {: .highlight }
-The first and only open-source, self-hostable fax API. Send and receive faxes with a single function call. Operate everything via a local Admin Console.
+The first and only open‑source, self‑hostable fax API with a complete Admin Console. Send faxes in minutes without touching the command line.
 
-Yes, this repo might look overwhelming at first glance—that's only because Faxbot supports multiple backends (cloud and self-hosted), several MCP transport options for AI integration, and HIPAA-compliant security configurations. Most users will only need one path through this complexity.
-
-**Core API:** Send and receive faxes with a simple REST surface. See the [API Reference]({{ site.baseurl }}/development/api-reference.html).
+Most users follow one simple path: start the container, open the Admin Console, complete the Setup Wizard, and send a test fax.
 
 ### Why Faxbot
 
@@ -33,10 +31,10 @@ Yes, this repo might look overwhelming at first glance—that's only because Fax
 
 ## Admin Console
 
-Faxbot includes a local Admin Console for keys, jobs, inbound inbox, diagnostics, and settings.
+Manage everything from the Admin Console—backend selection, keys, jobs, inbound inbox, diagnostics, and settings.
 
 - Guide: [Admin Console]({{ site.baseurl }}/admin-console/)
-- Demo UI: https://faxbot.net/admin-demo/ (simulated data)
+- Demo: [Admin Demo](https://faxbot.net/admin-demo/) (simulated data)
 
 
 
@@ -53,14 +51,12 @@ Questions? Issues? Please don't hesitate to reach out. See `CONTRIBUTING.md` for
   - [Sinch Setup]({{ site.baseurl }}/backends/sinch-setup.html)
   - [SIP/Asterisk Setup]({{ site.baseurl }}/backends/sip-setup.html)
   - [Images & PDFs]({{ site.baseurl }}/backends/images-and-pdfs.html)
+- Plugins
+  - [Overview]({{ site.baseurl }}/plugins/)
+  - [Curated Registry]({{ site.baseurl }}/plugins/registry.html)
+  - [HTTP Manifest Providers]({{ site.baseurl }}/plugins/manifest-http.html)
 - AI Integration
   - [Overview]({{ site.baseurl }}/ai-integration/)
-  - [MCP Integration]({{ site.baseurl }}/ai-integration/mcp-integration.html)
-  - [Node MCP]({{ site.baseurl }}/ai-integration/node-mcp.html)
-  
-- Plugins
-  - Overview (see main docs)
-  - SIP Provider Plugins (see main docs)
 - Security
   - [Overview]({{ site.baseurl }}/security/)
   - [HIPAA Requirements]({{ site.baseurl }}/security/hipaa-requirements.html)
@@ -68,18 +64,15 @@ Questions? Issues? Please don't hesitate to reach out. See `CONTRIBUTING.md` for
 - Development
   - [Overview]({{ site.baseurl }}/development/)
   - [API Reference]({{ site.baseurl }}/development/api-reference.html)
-  - [Client SDKs]({{ site.baseurl }}/development/sdks.html)
+  - [SDKs]({{ site.baseurl }}/development/sdks.html)
   - [Troubleshooting]({{ site.baseurl }}/development/troubleshooting.html)
-  - [Phaxio E2E Test]({{ site.baseurl }}/development/phaxio-e2e-test.html)
-  - [Node.js SDK]({{ site.baseurl }}/development/node-sdk.html)
-  - [Python SDK]({{ site.baseurl }}/development/python-sdk.html)
   - [Changelog]({{ site.baseurl }}/development/changelog.html)
 
 ---
 
 ## Enterprise Services
 
-Need custom integrations with platforms like Spruce and other healthcare communication tools, or a managed deployment with BAAs? We provide enterprise services while keeping Faxbot open‑source and self‑hostable.
+Need custom integrations (Spruce, EHRs), managed hosting with BAAs, or help with audits? We provide enterprise services while keeping Faxbot open‑source and self‑hostable.
 
 - Learn more: https://faxbot.net/compliance
 - Contact: mailto:david@faxbot.com

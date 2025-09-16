@@ -4,6 +4,7 @@ title: Transports
 parent: MCP Integration
 nav_order: 3
 permalink: /mcp/transports/
+nav_exclude: false
 ---
 
 # Transports
@@ -25,4 +26,3 @@ SSE + OAuth2
 Limits
 - REST API raw file limit: `MAX_FILE_SIZE_MB` (default 10 MB)
 - Node MCP JSON body limit: ~16 MB base64 payload
-
