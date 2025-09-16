@@ -26,7 +26,7 @@ jobs:
         with:
           ruby-version: '3.2'
           bundler-cache: true
-          cache-version: 0
+          cache-version: 1
       - name: Install gems
         run: bundle install --jobs 4 --retry 3
       - name: Setup Pages
