@@ -3,7 +3,18 @@ name: Deploy Jekyll site to Pages
 on:
   push:
     branches: ["main", "docs-jekyll-site"]
-    paths: ["docs/**", "_config.yml", "README.md", "HIPAA_REQUIREMENTS.md", "CONTRIBUTING.md"]
+    paths:
+      - "docs/**"
+      - "backends/**"
+      - "admin-console/**"
+      - "ai-integration/**"
+      - "getting-started/**"
+      - "security/**"
+      - "development/**"
+      - "_config.yml"
+      - "README.md"
+      - "HIPAA_REQUIREMENTS.md"
+      - "CONTRIBUTING.md"
   workflow_dispatch:
 
 permissions:
