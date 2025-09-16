@@ -48,5 +48,5 @@ Need a quick tunnel? Follow [Public Access & Tunnels]({{ site.baseurl }}/backend
 
 ## References
 
-- SignalWire Fax docs: https://developer.signalwire.com/
-- Compatibility API overview: https://developer.signalwire.com/apis/docs/fax
+- SignalWire Fax docs: <https://developer.signalwire.com/>
+- Compatibility API overview: <https://developer.signalwire.com/apis/docs/fax>

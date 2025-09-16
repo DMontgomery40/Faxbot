@@ -54,9 +54,9 @@ The Node and Python SDKs mirror this workflow once you are satisfied with the co
 
 ## References
 
-- Signup (redirects to Sinch): https://console.phaxio.com/signup
-- Dashboard: https://dashboard.sinch.com
-- HIPAA details: https://www.phaxio.com/docs/security/hipaa
-- Classic API overview: https://www.phaxio.com/docs/api/
+- Signup (redirects to Sinch): <https://console.phaxio.com/signup>
+- Dashboard: <https://dashboard.sinch.com>
+- HIPAA details: <https://www.phaxio.com/docs/security/hipaa>
+- Classic API overview: <https://www.phaxio.com/docs/api/>
 
 Prefer the direct-upload Sinch Fax API v3? Use the [Sinch backend](sinch-setup.html) instead.

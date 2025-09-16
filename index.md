@@ -74,6 +74,6 @@ Questions? Issues? Please don't hesitate to reach out. See `CONTRIBUTING.md` for
 
 Need custom integrations (Spruce, EHRs), managed hosting with BAAs, or help with audits? We provide enterprise services while keeping Faxbot open‑source and self‑hostable.
 
-- Learn more: https://faxbot.net/compliance
+- Learn more: <https://faxbot.net/compliance>
 - Contact: mailto:david@faxbot.com
   

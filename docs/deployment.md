@@ -28,8 +28,8 @@ Public URL and TLS
 - Set `PUBLIC_API_URL` to your HTTPS endpoint
 - `ENFORCE_PUBLIC_HTTPS=true` for production with cloud backends
 - For quick testing, use a tunnel:
-  - Cloudflare Tunnel: https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/do-more-with-tunnels/trycloudflare/
-  - ngrok (HTTP): https://ngrok.com/docs/guides/http/
+  - Cloudflare Tunnel: <https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/do-more-with-tunnels/trycloudflare/>
+  - ngrok (HTTP): <https://ngrok.com/docs/guides/http/>
 
 Artifacts cleanup
 - `ARTIFACT_TTL_DAYS` to delete old PDFs/TIFFs after completion
@@ -41,5 +41,5 @@ Security
 - Use HTTPS for callbacks and public endpoints
 
 References
-- AWS S3 SSE‑KMS: https://docs.aws.amazon.com/AmazonS3/latest/userguide/UsingKMSEncryption.html
+- AWS S3 SSE‑KMS: <https://docs.aws.amazon.com/AmazonS3/latest/userguide/UsingKMSEncryption.html>
 - Third‑Party docs: [/third-party/](/Faxbot/third-party/)

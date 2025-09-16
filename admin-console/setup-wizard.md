@@ -25,9 +25,9 @@ Do I need a domain?
 Beginner 5‑minute path (no domain required)
 1) Choose backend: “Sinch (Direct Upload)”.
 2) Create a Sinch/Phaxio account:
-   - Sign up: https://dashboard.sinch.com/signup (this is where Phaxio signups redirect — that’s normal).
+   - Sign up: <https://dashboard.sinch.com/signup> (this is where Phaxio signups redirect — that’s normal).
    - After signup, create a project, then get your Project ID and API key/secret.
-     - Help: Sinch Fax docs → https://developers.sinch.com/docs/fax/overview/
+     - Help: Sinch Fax docs → <https://developers.sinch.com/docs/fax/overview/>
 3) In the wizard, paste:
    - Project ID → `SINCH_PROJECT_ID`
    - API key → `SINCH_API_KEY`
@@ -37,9 +37,9 @@ Beginner 5‑minute path (no domain required)
 Alternative: Documo (no domain required)
 1) Choose backend: “Documo (mFax)”.
 2) Create an account and API key:
-   - Sign up: https://www.mfax.io/pricing
+   - Sign up: <https://www.mfax.io/pricing>
    - Enable API and create an API key in the Documo web app.
-   - Docs: https://docs.documo.com
+   - Docs: <https://docs.documo.com>
 3) In the wizard, paste:
    - API key → `DOCUMO_API_KEY`
    - Optional: enable sandbox → `DOCUMO_SANDBOX=true`
@@ -49,10 +49,10 @@ Alternative: Documo (no domain required)
 If you have a domain (or can run a temporary tunnel)
 1) Choose backend: “Phaxio (Recommended)”.
 2) Create an account and get credentials:
-   - Phaxio site: https://www.phaxio.com → Sign Up takes you to Sinch (expected).
-   - Direct signup: https://dashboard.sinch.com/signup
+   - Phaxio site: <https://www.phaxio.com> → Sign Up takes you to Sinch (expected).
+   - Direct signup: <https://dashboard.sinch.com/signup>
    - Get: `PHAXIO_API_KEY` and `PHAXIO_API_SECRET` (same as Sinch API key/secret in many accounts).
-   - Official Phaxio docs: https://www.phaxio.com/docs/
+   - Official Phaxio docs: <https://www.phaxio.com/docs/>
 3) Make your API reachable over HTTPS:
    - Option A: use your domain, e.g. `https://api.yourdomain.com`
    - Option B: quick test tunnel → run `scripts/setup-phaxio-tunnel.sh` to get a temporary `https://...trycloudflare.com` URL.
@@ -70,10 +70,10 @@ What is Phaxio? What is Sinch?
 - Phaxio is a developer‑focused fax API. It’s part of Sinch now. When you click “Sign Up” on phaxio.com, you’ll be redirected to a Sinch signup page — that is expected. Your credentials work with Faxbot’s Phaxio flow and the Sinch (direct upload) flow.
 
 Where do I find credentials?
-- Sinch dashboard (recommended): https://dashboard.sinch.com
+- Sinch dashboard (recommended): <https://dashboard.sinch.com>
   - Create a project → note “Project ID”
   - Create/locate API key + secret
-- Phaxio docs if you prefer the legacy console: https://www.phaxio.com/docs/
+- Phaxio docs if you prefer the legacy console: <https://www.phaxio.com/docs/>
 
 Apply & reload
 - “Apply” writes settings to the running API with safe defaults.

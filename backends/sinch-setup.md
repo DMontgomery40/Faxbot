@@ -50,8 +50,8 @@ Use this backend when you want Sinch's direct-upload workflow (often branded "Ph
 
 ## References
 
-- Sign up / dashboard: https://dashboard.sinch.com
-- Fax API overview: https://developers.sinch.com/docs/fax/overview/
-- Regional endpoints: https://developers.sinch.com/docs/fax/api-reference/#base-urls
+- Sign up / dashboard: <https://dashboard.sinch.com>
+- Fax API overview: <https://developers.sinch.com/docs/fax/overview/>
+- Regional endpoints: <https://developers.sinch.com/docs/fax/api-reference/#base-urls>
 
 Switching back to tokenised fetch flows? Use the [Phaxio backend](phaxio-setup.html).

@@ -32,7 +32,7 @@ Faxbot is designed to handle sensitive healthcare data and can be configured for
 - Strong authentication mandatory
 
 #### BAAs & Audits (Enterprise)
-If we host or operate Faxbot for you, we sign BAAs through a streamlined process and provide architecture documentation for reviews. We welcome security assessments and audits of our stack. See https://faxbot.net/compliance for an overview and contact options.
+If we host or operate Faxbot for you, we sign BAAs through a streamlined process and provide architecture documentation for reviews. We welcome security assessments and audits of our stack. See <https://faxbot.net/compliance> for an overview and contact options.
 
 ### Non-Healthcare Users
 - Relaxed security settings available for convenience
