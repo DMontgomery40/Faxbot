@@ -38,11 +38,13 @@ Evaluating locally? Use a tunnel such as Cloudflare or ngrok—the wizard links 
 
 The Node and Python SDKs mirror this workflow once you are satisfied with the console experience.
 
-## How it works
+## How it works (under the hood)
 
 - Faxbot hosts a tokenised PDF URL; Phaxio fetches it using your `PUBLIC_API_URL`
 - Status changes arrive at `/phaxio-callback` with HMAC-SHA256 signatures
 - Tokens expire based on the retention policy you pick in **Settings → Storage**
+- Signature header: `X-Phaxio-Signature` (HMAC-SHA256 over raw body with `PHAXIO_API_SECRET`)
+- Admin coverage: Diagnostics shows callback URL and signature status; the wizard sets `PHAXIO_CALLBACK_URL` and `PHAXIO_VERIFY_SIGNATURE`
 
 ## Troubleshooting
 
