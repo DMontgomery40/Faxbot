@@ -27,6 +27,6 @@ You can still enable authentication, storage, and inbound settings—only outbou
 
 ## Tips
 
-- Pair with the [API key helper]({{ site.baseurl }}/admin-console/settings.html) to validate auth flows without burning provider credits
+- Pair with the [API key helper]({{ site.baseurl }}/admin-console/settings/) to validate auth flows without burning provider credits
 - Use the SDKs’ built-in health checks to confirm connectivity while remaining in a sandbox state
 - When you are ready for real faxes, rerun the Setup Wizard, choose your provider, and apply the changes. Faxbot rolls back the simulation automatically.

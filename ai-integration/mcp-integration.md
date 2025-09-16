@@ -197,7 +197,7 @@ File conversion hints
 - Linux: `img2pdf in.png -o out.pdf` or `magick convert in.png out.pdf`
 - Windows: "Print to PDF".
 
-See also: Images vs Text PDFs guide (docs/IMAGES_AND_PDFS.md).
+See also: Images vs Text PDFs guide: {{ site.baseurl }}/backends/images-and-pdfs.html
 
 ## Secure SSE with OAuth2 (Admin Console path)
 

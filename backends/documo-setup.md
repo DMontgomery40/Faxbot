@@ -46,3 +46,8 @@ Documo’s mFax API is another fast-start cloud option. Like Sinch, Faxbot uploa
 
 - Sign up & pricing: https://www.mfax.io/pricing
 - API documentation: https://docs.documo.com
+
+## How it works (under the hood)
+- Faxbot uploads the PDF directly via Documo’s REST API using your API key
+- Status is derived from the provider’s response and optional follow-up checks
+- Admin coverage: Diagnostics shows the configured environment and basic auth presence; Jobs store the provider job ID

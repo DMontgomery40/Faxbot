@@ -34,6 +34,12 @@ Need a quick tunnel? Follow [Public Access & Tunnels]({{ site.baseurl }}/backend
 - Status callbacks hit `/signalwire-callback`; enable signature verification by setting the signing key in **Settings → Backends → SignalWire**
 - Watch status transitions in **Jobs** with provider-specific troubleshooting links
 
+## How it works (under the hood)
+- Faxbot mints a short‑TTL tokenised MediaUrl and includes it in the create‑fax request
+- SignalWire fetches the MediaUrl via HTTPS; Faxbot returns the PDF if and only if token and TTL match
+- Optional HMAC verification protects callbacks (`X-SignalWire-Signature` when configured)
+- Admin coverage: Diagnostics shows callback URL and signature settings; Jobs reveal provider SID
+
 ## Troubleshooting
 
 - **403 fetching MediaUrl** → Token expired or `PUBLIC_API_URL` mismatch; reopen the job to mint a new link

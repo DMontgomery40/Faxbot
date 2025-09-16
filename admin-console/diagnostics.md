@@ -37,3 +37,11 @@ Related docs
 - Security: [Authentication](/Faxbot/security/authentication/), [HIPAA](/Faxbot/security/hipaa-requirements.html), [OAuth/OIDC](/Faxbot/security/oauth-setup.html)
 - Deployment: [Guide](/Faxbot/deployment/)
 - Third‑Party: [/third-party/](/Faxbot/third-party/)
+
+## Under the Hood
+
+- Readiness probe: `GET /health/ready`
+- Admin health: `GET /admin/health-status` (aggregated checks for the console)
+- DB status: `GET /admin/db-status`
+- Logs: `GET /admin/logs` and `GET /admin/logs/tail`
+- Restart: `POST /admin/restart` (requires `ADMIN_ALLOW_RESTART=true`)

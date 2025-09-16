@@ -41,3 +41,11 @@ All runtime configuration lives here once the Setup Wizard has been completed. E
 - Reapply the last known-good configuration if a test change causes an outage
 
 Need step-by-step provider help? Jump to [Backends]({{ site.baseurl }}/backends/) for detailed walkthroughs tailored to each option.
+
+## Under the Hood
+
+- Read settings: `GET /admin/settings` (sanitized values for display)
+- Validate backend creds: `POST /admin/settings/validate`
+- Apply runtime changes: `PUT /admin/settings`
+- Reload from environment: `POST /admin/settings/reload`
+- Persist a server-side `.env`: `POST /admin/settings/persist` (when enabled)
