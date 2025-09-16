@@ -2,7 +2,7 @@
 layout: default
 title: Diagnostics Matrix
 parent: Admin Console
-nav_order: 5
+nav_order: 7
 permalink: /admin-console/diagnostics-matrix/
 ---
 
@@ -66,4 +66,3 @@ File limits
 Actions
 - After each change, click “Apply & Reload” and rerun Diagnostics
 - Use “Restart API” when prompted (if enabled) for backend client reinitialization
-

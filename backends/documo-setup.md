@@ -1,49 +1,48 @@
 ---
 layout: default
-title: Documo mFax Setup
+title: Documo (mFax)
 parent: Backends
 nav_order: 3
 permalink: /backends/documo-setup.html
 ---
 
-# Documo mFax Setup
+# Documo (mFax)
 
-Beginner‑friendly cloud backend using Documo (mFax). Direct upload — no domain or tunnel required to send.
+Documo’s mFax API is another fast-start cloud option. Like Sinch, Faxbot uploads your files directly so you can stay entirely private behind a tunnel or LAN.
 
-When to use
-- You want a quick send path without setting up a public URL.
-- You have, or can create, an mFax/Documo account and API key.
+## Gather before you start
 
-Quick links
-- Sign up / pricing: https://www.mfax.io/pricing
-- Docs: https://docs.documo.com
+- Documo API Key (Dashboard → Developers)
+- Decide whether you are pointing at **Production** or **Sandbox**
+- Optional base URL override if Documo provisions a regional endpoint
 
-Environment
-```
-FAX_BACKEND=documo
-DOCUMO_API_KEY=your_documo_api_key
-# Optional: sandbox for testing
-# DOCUMO_SANDBOX=true
-# Optional: override base URL
-# DOCUMO_BASE_URL=https://api.documo.com
+## Configure with the Setup Wizard
 
-# General
-API_KEY=your_secure_api_key   # optional but recommended (X-API-Key to your Faxbot API)
-```
+1. Admin Console → **Setup Wizard**
+2. Choose **Documo (mFax)**
+3. Enter your API Key and toggle Sandbox mode if needed
+4. Apply. Faxbot validates the key with a lightweight call before saving
 
-Send a fax (curl)
-```
-curl -X POST http://localhost:8080/fax   -H "X-API-Key: $API_KEY"   -F to=+15551234567   -F file=@./example.pdf
-```
+## Send a fax from the UI
 
-Notes
-- Faxbot uploads your PDF directly via `POST /v1/faxes` with your API key; no callback URL is needed to send.
-- Status in Faxbot starts as queued/in_progress and updates based on provider responses. You can poll `GET /fax/{id}`.
+1. Open **Send Fax**
+2. Upload PDF/TXT → enter destination number
+3. Submit. Faxbot pushes the file to Documo immediately and shows the Documo job ID in Diagnostics
+4. Use **Jobs** to monitor completion; the grid links to Documo’s status page when available
 
-Troubleshooting
-- 401: invalid API key to your Faxbot API (set `API_KEY` and send `X-API-Key`).
-- Provider auth errors: verify `DOCUMO_API_KEY` and whether sandbox is on/off.
-- Only PDF/TXT files are accepted by Faxbot’s REST API; convert images to PDF first.
+## Security & compliance
 
-Official References
-- API docs: https://docs.documo.com
+- Faxbot never stores Documo credentials in logs; they live in the plugin config store
+- Storage defaults to “no provider retention.” Double-check in Documo that document storage is disabled when handling PHI
+- Rate-limit inbound API traffic via your reverse proxy like any production deployment
+
+## Troubleshooting
+
+- **Job never appears** → Confirm you chose the correct environment (Production vs Sandbox)
+- **401 from provider** → Regenerate the API key and rerun the wizard
+- **413 file too large** → Adjust the Faxbot `MAX_FILE_SIZE_MB` setting under **Settings → File Handling**
+
+## References
+
+- Sign up & pricing: https://www.mfax.io/pricing
+- API documentation: https://docs.documo.com

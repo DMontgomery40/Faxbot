@@ -2,7 +2,7 @@
 layout: default
 title: Diagnostics
 parent: Admin Console
-nav_order: 3
+nav_order: 6
 permalink: /admin-console/diagnostics/
 ---
 

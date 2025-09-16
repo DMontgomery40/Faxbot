@@ -2,7 +2,7 @@
 layout: default
 title: Images & PDFs
 parent: Backends
-nav_order: 4
+nav_order: 8
 ---
 
 # Images vs Text PDFs
@@ -25,7 +25,7 @@ MCP tooling: which option to use?
 - HTTP/SSE MCP transports — require base64; keep files small where possible, or prefer stdio with `filePath` for local usage. Node MCP JSON limit is ~16 MB; API raw limit is 10 MB.
 
 File size and quality
-- API default limit is `MAX_FILE_SIZE_MB=10`.
+- Default limit is 10 MB (tweak under **Settings → Security → Max File Size**).
 - For scans, use 150–200 DPI and grayscale when possible to reduce size without losing readability.
 - For personal/one‑off use (patients): local stdio MCP with `filePath` avoids base64 bloat; token limits don't apply.
 

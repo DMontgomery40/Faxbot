@@ -12,48 +12,32 @@ permalink: /getting-started/
 
 # Getting Started
 
-Welcome to Faxbot! This section will help you get up and running quickly.
+Faxbot is now Admin Console first. Use this short path to get a local instance online and walk through the Setup Wizard—no manual config files required.
 
-## What is Faxbot?
+## Launch Faxbot
 
-Faxbot is the first and only open-source, self-hostable fax API that combines:
-- Simple REST API for sending faxes
-- Multiple backend options (cloud and self-hosted)
-- AI assistant integration via MCP
-- HIPAA compliance features
-- Developer SDKs for Node.js and Python
+1. Copy `.env.example` to `.env` (only change values if you already know your backend).
+2. Start the stack: `docker compose up -d --build api`
+3. Open the Admin Console at http://localhost:8080 and sign in with the default Admin Console password from `.env` (or set `ADMIN_PASSWORD` before starting).
 
-{: .highlight }
-Need HIPAA? Use Phaxio or SSE+OAuth. For local dev, you can disable faxing with `FAX_DISABLED=true`.
+{: .note }
+Need a hands-off demo? Skip straight to the [Admin Console Demo]({{ site.baseurl }}/admin-console/).
 
-## Choose Your Path
+## Complete the Setup Wizard
 
-- **Phaxio (Cloud, recommended):** start here for a 5‑minute setup.
-  - [Phaxio Setup Guide](/Faxbot/backends/phaxio-setup.html)
-- **Sinch Fax API v3 (Cloud):** direct upload flow for “Phaxio by Sinch” accounts.
-  - [Sinch Setup Guide](/Faxbot/backends/sinch-setup.html)
-- **SIP/Asterisk (Self‑Hosted):** full control, no per‑fax cloud charges.
-  - [SIP/Asterisk Setup Guide](/Faxbot/backends/sip-setup.html)
+1. In the console, click **Setup Wizard**.
+2. Choose your outbound provider (Phaxio, Sinch, SIP/Asterisk, SignalWire, or Test Mode).
+3. Enter credentials and security preferences using the inline guidance on each step.
+4. Review and apply. Faxbot writes the config file and restarts the API for you.
 
-### Receiving
+That is the entire onboarding flow. The rest of the docs dive into provider-specific nuances when you are ready.
 
-- When enabled, received faxes appear in the Admin Console inbox and are accessible via the API. See the [API Reference](/Faxbot/development/api-reference.html).
+## What to do next
 
-After the API is running, optionally add AI assistant control:
-- [MCP Integration](/Faxbot/ai-integration/mcp-integration.html)
+- Follow the tailored provider guides under [Backends]({{ site.baseurl }}/backends/) for credentials, networking, and HIPAA notes.
+- Manage keys, storage, inbound receiving, and diagnostics from the Admin Console tabs (each screen links to matching docs for deeper context).
+- Integrate your app using the [Node]({{ site.baseurl }}/development/node-sdk.html) or [Python]({{ site.baseurl }}/development/python-sdk.html) SDK once outbound faxing is verified.
 
-## Quick Checks
+## Need help?
 
-- `GET /health` returns `{ "status": "ok" }` when the API is up
-- `X-API-Key` header is required if `API_KEY` is set
-- Max upload size defaults to 10 MB (configurable)
-
-## Next Steps
-
-- Review [Security](/Faxbot/security/) if handling PHI
-- Explore the [Admin Console](/Faxbot/admin-console/) for keys, jobs, inbound inbox, diagnostics, and settings
-- Try the [SDKs](/Faxbot/development/sdks.html) to integrate quickly
-
-## Need Help?
-
-Don't hesitate to ask questions! See our [Contributing guide](contributing.html) for the best way to get help.
+Open an issue or see [Contributing](contributing.html) for support options. Let us know which backend you picked so we can respond with the right playbook.

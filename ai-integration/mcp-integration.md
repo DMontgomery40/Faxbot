@@ -198,3 +198,14 @@ File conversion hints
 - Windows: "Print to PDF".
 
 See also: Images vs Text PDFs guide (docs/IMAGES_AND_PDFS.md).
+
+## Secure SSE with OAuth2 (Admin Console path)
+
+1. Open **Settings → MCP** in the Admin Console
+2. Enable `Node SSE` and/or `Python SSE`
+3. Enter the OAuth issuer, expected audience, and optional JWKS URL
+4. Apply and confirm health. Faxbot reloads the MCP workers and refuses connections without a valid Bearer token.
+5. Configure assistants to send a short-lived JWT (`Authorization: Bearer <token>`) on every SSE request.
+
+{: .note }
+Pair SSE with TLS termination and strict scopes when processing PHI. The [Security docs]({{ site.baseurl }}/security/oauth-setup.html) include IdP-specific examples.

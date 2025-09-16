@@ -70,7 +70,7 @@ export default function SetupWizard({ onApply }: Props) {
             <li>NO real faxes are sent</li>
           </ul>
           <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
-            Set FAX_DISABLED=true to enable test mode
+            Selecting this option writes <code>FAX_DISABLED=true</code> to the runtime config—no manual edits required.
           </Typography>
         </Alert>
       );
@@ -136,7 +136,7 @@ export default function SetupWizard({ onApply }: Props) {
             <Link href="/Faxbot/backends/phaxio-setup.html" target="_blank" rel="noopener">Setup Guide</Link>
           </Box>
           <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
-            💡 Tip: Use scripts/setup-phaxio-tunnel.sh for quick testing without a domain
+            💡 Tip: Follow <Link href="/Faxbot/backends/public-access.html" target="_blank" rel="noopener">Public Access &amp; Tunnels</Link> for one-command helpers.
           </Typography>
         </Alert>
       );
@@ -159,7 +159,7 @@ export default function SetupWizard({ onApply }: Props) {
         </Alert>
         <Box sx={{ mt: 1 }}>
           <Link href="/Faxbot/backends/sip-setup.html" target="_blank" rel="noopener">SIP/Asterisk Setup Guide</Link> ·{' '}
-          <Link href="/Faxbot/guides/signalwire-setup.html" target="_blank" rel="noopener">SignalWire Example</Link>
+          <Link href="/Faxbot/backends/signalwire-setup.html" target="_blank" rel="noopener">SignalWire Cloud Option</Link>
         </Box>
       </Alert>
     );
@@ -275,4 +275,3 @@ export default function SetupWizard({ onApply }: Props) {
     </Box>
   );
 }
-

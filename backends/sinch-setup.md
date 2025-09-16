@@ -1,67 +1,52 @@
 ---
 layout: default
-title: Sinch Setup (Recommended)
+title: Sinch Fax API v3
 parent: Backends
 nav_order: 1
 permalink: /backends/sinch-setup.html
 ---
 
-# Sinch Setup (Recommended)
+# Sinch Fax API v3
 
-Cloud backend using Sinch Fax API v3 ("Phaxio by Sinch"). This backend uploads your PDF directly to Sinch rather than serving a tokenized URL.
+Use this backend when you want Sinch's direct-upload workflow (often branded "Phaxio by Sinch"). Faxbot streams your PDF to Sinch immediately, so you do **not** need a public URL for the provider to fetch from.
 
-When to use
-- Prefer this if you have a Sinch account/project and want the v3 direct‑upload flow.
-- If you signed up at Phaxio and were redirected to Sinch, your credentials generally work here. You will also need your Sinch Project ID.
+## Gather before you start
 
-Why we recommend it
-- Easiest for beginners: no domain or tunnel required to send.
-- Direct upload: avoids configuring public URLs and callbacks.
+- Sinch Project ID
+- API Key and Secret (same values Phaxio dashboards expose)
+- Optional: `SINCH_BASE_URL` if you are on a non-default region
 
-Key differences vs `phaxio` backend
-- `phaxio`: Provider fetches your PDF via `PUBLIC_API_URL` and posts status to `/phaxio-callback` (HMAC verification supported). No Sinch project ID required.
-- `sinch`: Faxbot uploads your PDF directly to Sinch (multipart). PUBLIC_API_URL and `/phaxio-callback` are not used. Webhook integration for Sinch is under evaluation; current builds reflect the provider's initial status response.
+## Configure through the Setup Wizard
 
-Environment
-Quick links
-- Sign up: https://dashboard.sinch.com/signup
-- Developer docs: https://developers.sinch.com/docs/fax/overview/
+1. Admin Console → **Setup Wizard**
+2. Choose **Sinch Fax API v3**
+3. Enter Project ID, API Key, and API Secret
+4. Pick HIPAA vs Non-PHI profile. HIPAA profile enforces HTTPS when you later enable inbound receiving or webhooks.
+5. Apply the changes. Faxbot stores credentials in the plugin config and validates them immediately.
 
-```
-FAX_BACKEND=sinch
-SINCH_PROJECT_ID=your_project_id
-SINCH_API_KEY=your_api_key          # falls back to PHAXIO_API_KEY if unset
-SINCH_API_SECRET=your_api_secret    # falls back to PHAXIO_API_SECRET if unset
-# Optional override region/base URL:
-# SINCH_BASE_URL=https://fax.api.sinch.com/v3
+## Send & monitor entirely from the console
 
-# General
-API_KEY=your_secure_api_key         # optional but recommended (X-API-Key)
-MAX_FILE_SIZE_MB=10
-```
+1. Go to **Send Fax** and upload a PDF or TXT (10 MB limit)
+2. Enter the destination number (`+15551234567` format)
+3. Submit. Sinch returns a job reference instantly, which Faxbot maps to your internal job ID.
+4. Watch **Jobs**. Status moves from `queued` → `in_progress` → `SUCCESS/FAILED` based on Sinch responses.
 
-Send a fax (curl)
-```
-curl -X POST http://localhost:8080/fax \
-  -H "X-API-Key: $API_KEY" \
-  -F to=+15551234567 \
-  -F file=@./example.pdf
-```
-The response includes a job ID and the `backend: "sinch"` field.
+## Key differences vs the Phaxio backend
 
-Status updates
-- Immediate status is mapped from Sinch's response. Additional webhook handling may be added later; for now, poll your own app state via `GET /fax/{id}`.
+- PDFs upload via Sinch's REST API; no tokenised URL is exposed
+- Callbacks are optional. When enabled, they land on `/sinch-callback` with signature verification (configure the signing secret under **Settings → Backends → Sinch**)
+- Perfect for temporary lab environments where you cannot expose a public HTTPS endpoint
 
-Notes
-- Only PDF and TXT files are accepted. Convert images (PNG/JPG) to PDF first.
-- Avoid exposing credentials. Place Faxbot behind HTTPS and a reverse proxy with rate limiting.
+## Troubleshooting
 
-Troubleshooting
-- 401: invalid API key to your Faxbot API (set `API_KEY` and send `X-API-Key`).
-- 413: file too large → raise `MAX_FILE_SIZE_MB`.
-- 415: unsupported file type → only PDF/TXT.
-- Sinch API errors: verify Project ID, API key/secret, and region.
+- **Credentials rejected** → Double-check the Project ID; Sinch requires the UUID-style ID, not the workspace name
+- **413 file too large** → Increase `MAX_FILE_SIZE_MB` in Settings or compress the PDF
+- **Pending forever** → Ensure the Sinch console shows the job; if not, the API likely rejected the request (Admin Console Diagnostics → Provider Logs).
 
-Official References
-- Sinch Fax Overview: https://developers.sinch.com/docs/fax/overview/
-- API Reference: https://developers.sinch.com/docs/fax/api-reference/
+## References
+
+- Sign up / dashboard: https://dashboard.sinch.com
+- Fax API overview: https://developers.sinch.com/docs/fax/overview/
+- Regional endpoints: https://developers.sinch.com/docs/fax/api-reference/#base-urls
+
+Switching back to tokenised fetch flows? Use the [Phaxio backend](phaxio-setup.html).

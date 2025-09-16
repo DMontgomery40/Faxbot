@@ -2,7 +2,7 @@
 layout: default
 title: Annotated Demo (Interactive)
 parent: Admin Console
-nav_order: 6
+nav_order: 8
 permalink: /admin-console/annotated-demo/
 ---
 
@@ -48,4 +48,3 @@ This is a live, embedded view of the Admin Demo with overlay callouts. Use the T
 Notes
 - This demo is simulated — no files are transmitted. For a real send, use your local Admin Console after backend configuration.
 - Annotations are approximate (responsive layout may shift elements). Toggle them off if they obscure your view.
-

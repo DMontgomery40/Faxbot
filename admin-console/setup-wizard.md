@@ -2,7 +2,7 @@
 layout: default
 title: Setup Wizard (Beginner Friendly)
 parent: Admin Console
-nav_order: 1
+nav_order: 2
 permalink: /admin-console/setup-wizard/
 ---
 

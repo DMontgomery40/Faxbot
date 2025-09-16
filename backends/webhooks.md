@@ -2,7 +2,7 @@
 layout: default
 title: Webhooks
 parent: Backends
-nav_order: 5
+nav_order: 10
 permalink: /backends/webhooks.html
 ---
 
@@ -103,4 +103,3 @@ curl -X POST -H 'X-Internal-Secret: <secret>' -H 'Content-Type: application/json
 - Use HTTPS for all public callbacks.
 - Keep secrets out of logs; audit only metadata (job ids, event types).
 - Rotate webhook secrets periodically and validate signatures strictly.
-

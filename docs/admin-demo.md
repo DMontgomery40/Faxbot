@@ -15,5 +15,4 @@ Explore an interactive, simulated Faxbot Admin Console to learn the workflow wit
 
 Next steps
 - Move to your local Admin Console to connect a real backend via the Setup Wizard
-- Review [Guides](/Faxbot/guides/) for quick wins and [Backends](/Faxbot/backends/) to choose your provider
-
+- Review [Backends](/Faxbot/backends/) for provider-specific walkthroughs and security notes

@@ -2,7 +2,7 @@
 layout: default
 title: Plugin Builder
 parent: Admin Console
-nav_order: 4
+nav_order: 5
 permalink: /admin-console/plugin-builder/
 ---
 
@@ -32,4 +32,3 @@ Next steps
 
 References
 - Plugins (v3): [Overview](/Faxbot/plugins/)
-

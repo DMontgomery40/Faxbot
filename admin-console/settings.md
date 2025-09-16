@@ -2,55 +2,42 @@
 layout: default
 title: Settings
 parent: Admin Console
-nav_order: 2
+nav_order: 3
 permalink: /admin-console/settings/
 ---
 
 # Settings
 
-Adjust backend, security, MCP, and storage without manual edits.
+All runtime configuration lives here once the Setup Wizard has been completed. Every field includes inline helper text and a **Learn more** link that deep-links to the matching docs page.
 
-Quick start tips
-- New to Faxbot? Use the [Setup Wizard](/Faxbot/admin-console/setup-wizard/) first — it walks you through the minimum you need.
-- No domain? Pick “Sinch (Direct Upload)” in the wizard or here under Backend → Sinch; you can send without a public URL.
-- Phaxio sign‑ups redirect to Sinch (expected). Use: https://dashboard.sinch.com/signup
+## Backend tab
 
-Backend
-- Select active backend: sinch | documo | phaxio | sip
-- Phaxio
-  - `PHAXIO_API_KEY`, `PHAXIO_API_SECRET` (secret inputs)
-  - `PHAXIO_CALLBACK_URL` or `PHAXIO_STATUS_CALLBACK_URL`
-  - Toggle “Verify signatures” → `PHAXIO_VERIFY_SIGNATURE=true`
-- Sinch
-  - `SINCH_PROJECT_ID`, `SINCH_API_KEY`, `SINCH_API_SECRET`
-  - Optional `SINCH_BASE_URL`
-- Documo (mFax)
-  - `DOCUMO_API_KEY`
-  - Optional `DOCUMO_SANDBOX=true` and `DOCUMO_BASE_URL`
-- SIP/Asterisk
-  - `ASTERISK_AMI_HOST`, `ASTERISK_AMI_PORT`, `ASTERISK_AMI_USERNAME`, `ASTERISK_AMI_PASSWORD`
-  - Presentation: `FAX_LOCAL_STATION_ID`, `FAX_HEADER`
+- Pick the active outbound provider or swap to Test Mode without touching `.env`
+- Each provider reveals only the fields it needs (Phaxio keys, Sinch project ID, SIP trunk credentials, etc.)
+- Security profiles (HIPAA vs Non-PHI) control defaults like HTTPS enforcement and signature verification
+- Applying changes regenerates the plugin config and restarts the API in-place
 
-Security
-- Require API key: sets `API_KEY` and enables auth on REST endpoints
-- Enforce HTTPS for cloud fetches: `ENFORCE_PUBLIC_HTTPS`
-- Audit events: `AUDIT_LOG_ENABLED`, format/file/syslog options
-- File limits: `MAX_FILE_SIZE_MB` (default 10 MB)
+## Security tab
 
-MCP (Tools)
-- Enable SSE (Python/Node) and configure OAuth2/JWT for HIPAA use
-- Copy‑ready configs for popular assistants
+- Require REST API keys and mint them on the **API Keys** page
+- Enforce HTTPS for callback URLs, toggle audit logging, and set rate limits
+- Adjust max upload size and allowed file types; warnings surface in Send Fax when values are restrictive
 
-Storage (Inbound)
-- Local (dev only) or S3/S3‑compatible with KMS support
-- Fields: bucket, region, prefix, endpoint URL, KMS Key ID (secrets via environment/role)
- - See also: AWS S3 SSE‑KMS (https://docs.aws.amazon.com/AmazonS3/latest/userguide/UsingKMSEncryption.html)
+## Storage & Inbound tab
 
-Persistence
-- Enable persisted `.env` on startup (local only) to reload saved settings
-- Export `.env` for review in change control systems
+- Select local storage (dev only) or S3/S3-compatible with optional SSE-KMS
+- Configure inbound fax retention windows, download token TTL, and per-scope rate limits
+- Warnings surface when HIPAA defaults are relaxed so you can document exceptions
 
-Learn more
-- Backends: [Phaxio](/Faxbot/backends/phaxio-setup.html), [Sinch](/Faxbot/backends/sinch-setup.html), [SIP/Asterisk](/Faxbot/backends/sip-setup.html)
-- Security: [Authentication](/Faxbot/security/authentication/), [HIPAA](/Faxbot/security/hipaa-requirements.html), [OAuth/OIDC](/Faxbot/security/oauth-setup.html)
-- Third‑Party: [/third-party/](/Faxbot/third-party/)
+## MCP tab
+
+- Enable/disable Node and Python MCP transports (stdio, HTTP, SSE)
+- Provide OAuth issuer/audience for SSE when handling PHI
+- Copy/paste starter configs for Claude Desktop, Cursor, and Windsurf
+
+## Export & versioning
+
+- Download the resolved config for change control
+- Reapply the last known-good configuration if a test change causes an outage
+
+Need step-by-step provider help? Jump to [Backends]({{ site.baseurl }}/backends/) for detailed walkthroughs tailored to each option.
