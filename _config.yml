@@ -79,6 +79,7 @@ exclude:
   - package.json
   - package-lock.json
   - Rakefile
+  - v3_plans/
   # Exclude internal planning docs from publishing
   - docs/LOCAL_ADMIN_CONSOLE.md
   # Exclude legacy single-file docs to keep sidebar clean
