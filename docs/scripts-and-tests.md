@@ -20,6 +20,12 @@ All scripts auto‑load `.env` via `scripts/load-env.sh`. Put your settings ther
 - `scripts/curl-auth-demo.sh`
   - Assumes a running API; mints a DB key via admin endpoint, sends a TXT/PDF fax, and fetches the job status.
 
+## Send and status helpers
+- `scripts/send-fax.sh`
+  - Simple wrapper to POST `/fax` with a PDF or TXT. Usage: `scripts/send-fax.sh "+15551234567" /absolute/path/file.pdf|.txt`.
+- `scripts/get-status.sh`
+  - Fetches `/fax/{id}` for a given job ID. Usage: `scripts/get-status.sh <job_id>`.
+
 ## Inbound
 - `scripts/bootstrap-inbound.sh`
   - One-button setup for inbound on your machine/server: sets `INBOUND_ENABLED=true`, generates `ASTERISK_INBOUND_SECRET` if missing, ensures `REQUIRE_API_KEY=true`, restarts API (docker compose), and runs the inbound smoke.
@@ -42,6 +48,18 @@ All scripts auto‑load `.env` via `scripts/load-env.sh`. Put your settings ther
   - `make alembic-upgrade` (upgrade to head)
   - `make alembic-downgrade` (step down one)
   - `make alembic-revision` (info for autogenerate; use DATABASE_URL env)
+
+## Environment and terminal helpers
+- `scripts/load-env.sh`
+  - Utility to export variables from `.env` into the current shell. Sourced by most scripts.
+- `scripts/install-terminal-deps.sh`
+  - Installs Python and UI dependencies used by the Admin Console Terminal feature. See: TERMINAL.md.
+
+## Release (maintainers)
+- `scripts/release_npm.sh`
+  - Publishes Node packages (`node_mcp`, `sdks/node`) to npm. Requires `npm login` or `NPM_TOKEN`.
+- `scripts/release_pypi.sh`
+  - Builds and uploads Python packages (`sdks/python`, `python_mcp`) to PyPI. Requires `twine` auth.
 
 ## Notes
 - For production, host the API as a container behind TLS; the UI can be hosted separately (e.g., Netlify) and calls the API over HTTPS.
