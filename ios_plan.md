@@ -57,8 +57,18 @@
    - Tap to retry failed faxes
 
 4. **Settings Tab**
-   - Server URL configuration
-   - API key setup
+   - **Connection Status** section:
+     - Current active connection (Local/Tunnel)
+     - Connection health indicators
+     - "Test Connections" button
+   - **Server Configuration**:
+     - Local URL (auto-discovered or manual)
+     - Tunnel URL (from Faxbot tunnel setup)
+     - Connection preference (Auto/Local Only/Tunnel Only)
+   - **Setup Options**:
+     - "Scan QR Code" button
+     - "Discover on Network" button
+     - Manual server entry
    - Advanced settings (collapsed by default)
 
 ### Data Models:
@@ -89,10 +99,29 @@ struct InboundFax {
 }
 
 struct ServerConfig {
-    var url: String = ""
+    var localURL: String = ""          // 192.168.1.100:8080
+    var tunnelURL: String = ""         // https://fax-abc123.trycloudflare.com
     var apiKey: String = ""
+    var tunnelProvider: String = ""    // cloudflare, wireguard, tailscale, none
     var inboundEnabled: Bool = false
-    var isConfigured: Bool { !url.isEmpty }
+    var preferredConnection: ConnectionType = .auto
+
+    var isConfigured: Bool { !localURL.isEmpty || !tunnelURL.isEmpty }
+    var hasMultipleConnections: Bool { !localURL.isEmpty && !tunnelURL.isEmpty }
+}
+
+enum ConnectionType {
+    case auto      // Smart selection based on network
+    case local     // Force local network
+    case tunnel    // Force tunnel
+}
+
+struct ConnectionStatus {
+    let type: ConnectionType
+    let url: String
+    let isReachable: Bool
+    let latency: TimeInterval?
+    let lastTested: Date
 }
 ```
 
@@ -233,6 +262,53 @@ class FaxbotClient: ObservableObject {
     func testConnection() async -> Bool {
         // Test /health endpoint and check inbound availability
     }
+
+    func discoverServers() async -> [ServerInfo] {
+        // Scan local network for Faxbot instances
+    }
+
+    func getTunnelInfo() async throws -> TunnelInfo {
+        let url = URL(string: "\(currentURL)/admin/tunnel/status")!
+        var request = URLRequest(url: url)
+        request.setValue(serverConfig.apiKey, forHTTPHeaderField: "X-API-Key")
+
+        let (data, _) = try await session.data(for: request)
+        return try JSONDecoder().decode(TunnelInfo.self, from: data)
+    }
+
+    func selectBestConnection() async -> String {
+        // Test both local and tunnel URLs, return fastest available
+        if isOnLocalNetwork() && !serverConfig.localURL.isEmpty {
+            return serverConfig.localURL
+        } else if !serverConfig.tunnelURL.isEmpty {
+            return serverConfig.tunnelURL
+        }
+        return serverConfig.localURL.isEmpty ? serverConfig.tunnelURL : serverConfig.localURL
+    }
+
+    private func isOnLocalNetwork() -> Bool {
+        // Check if device is on same network as Faxbot server
+        // Compare network interfaces, ping local URL, etc.
+        return true // Simplified for now
+    }
+}
+
+struct ServerInfo {
+    let localURL: String
+    let tunnelURL: String?
+    let tunnelProvider: String?
+    let version: String
+    let serverName: String
+}
+
+struct TunnelInfo {
+    let enabled: Bool
+    let provider: String  // cloudflare, wireguard, tailscale, none
+    let status: String    // connected, connecting, error, disabled
+    let publicURL: String?
+    let lastConnected: Date?
+    let error: String?
+}
 }
 ```
 
@@ -286,17 +362,19 @@ class FaxbotClient: ObservableObject {
 
 ### Key Frameworks:
 - SwiftUI (UI)
-- AVFoundation (Camera)
+- AVFoundation (Camera, QR code scanning)
 - PDFKit (PDF generation and viewing)
-- Vision (Document scanning)
+- Vision (Document scanning, QR detection)
 - Combine (Data flow)
 - Foundation (Networking)
+- Network (Local network discovery)
 - QuickLook (PDF preview)
 
 ### App Capabilities:
-- Camera usage
+- Camera usage (document scanning, QR codes)
 - Photo library access (share extension)
-- Network requests
+- Network requests (both local and internet)
+- Local network access (for auto-discovery)
 - Background app refresh (for status updates)
 - Push notifications (optional)
 
@@ -315,7 +393,7 @@ Following Apple's enhanced security guidelines: https://developer.apple.com/docu
 
 **Network Security**:
 ```swift
-// Info.plist configuration for self-hosted exceptions
+// Info.plist configuration for self-hosted and local network access
 <key>NSAppTransportSecurity</key>
 <dict>
     <key>NSExceptionDomains</key>
@@ -326,9 +404,19 @@ Following Apple's enhanced security guidelines: https://developer.apple.com/docu
             <true/>
         </dict>
     </dict>
+    <key>NSAllowsLocalNetworking</key>
+    <true/>
     <key>NSAllowsArbitraryLoadsInWebContent</key>
     <false/>
 </dict>
+
+// Local Network Usage Description
+<key>NSLocalNetworkUsageDescription</key>
+<string>This app discovers Faxbot servers on your local network for easy setup and connection.</string>
+
+// Camera Usage for QR Codes
+<key>NSCameraUsageDescription</key>
+<string>Camera access is used to scan documents for faxing and QR codes for server setup.</string>
 ```
 
 **Privacy Permissions**:
@@ -345,10 +433,34 @@ Following Apple's enhanced security guidelines: https://developer.apple.com/docu
 
 ### First Launch Setup:
 1. Welcome screen explaining the app purpose
-2. Server URL configuration (e.g., `https://fax.myhouse.local:8080`)
-3. API key setup (copy from Faxbot admin console)
-4. Connection test
-5. Tutorial overlay showing main features
+2. **Auto-Discovery & Setup Options**:
+   - **Option A: Scan QR Code** from Faxbot Admin Console (instant setup)
+   - **Option B: Auto-Discover** on local network (finds `192.168.x.x:8080`)
+   - **Option C: Manual Entry** for custom configurations
+3. Connection test (tests both local and tunnel URLs)
+4. Tutorial overlay showing main features
+
+### Smart Connection Discovery
+The app intelligently finds and connects to Faxbot:
+
+**Local Network Discovery**:
+- Scans common IP ranges (192.168.x.x, 10.x.x.x) for Faxbot instances
+- Tests `/health` endpoint on port 8080
+- Shows "Found Faxbot at 192.168.1.100" with automatic setup
+
+**QR Code Setup** (Preferred Method):
+- Admin Console generates QR code containing:
+  - Local URL (`192.168.1.100:8080`)
+  - Tunnel URL (`https://fax-abc123.trycloudflare.com`)
+  - API key
+  - Tunnel provider type
+- iOS app scans and auto-configures everything
+- Instant connection with zero typing
+
+**Manual Configuration**:
+- Enter server URL manually
+- App detects if it's local IP or tunnel URL
+- Prompts for API key
 
 ### Daily Usage:
 1. **Quick Fax**: Open app → Camera → Take photo → Select contact → Send
@@ -356,31 +468,72 @@ Following Apple's enhanced security guidelines: https://developer.apple.com/docu
 3. **Text Fax**: Open app → Text tab → Type message → Select contact → Send
 4. **Read Fax**: Open app → Inbox tab → Tap received fax → View PDF
 
+### Advanced Setup Scenarios:
+
+**Scenario 1: Home User with Router VPN (Firewalla)**
+1. User has WireGuard running on Firewalla router
+2. Sets up Faxbot with WireGuard client mode via Admin Console
+3. iOS app discovers local IP when home, uses tunnel when away
+4. Seamless experience everywhere via user's own VPN
+
+**Scenario 2: Non-Technical User**
+1. Starts Faxbot Docker container (Cloudflare auto-enabled)
+2. Scans QR code from Admin Console in iOS app
+3. App auto-configures both local and tunnel URLs
+4. Works immediately from anywhere
+
+**Scenario 3: Enterprise with Tailscale**
+1. Admin configures Tailscale in Faxbot Admin Console
+2. Users add Faxbot's Tailnet address to iOS app
+3. Secure access through corporate network
+4. Full audit logging and access controls
+
 ### Advanced Features (Hidden by Default):
-- Custom server settings
-- Detailed fax job history with metadata
-- Re-send failed faxes
-- Export/share received fax PDFs
-- Bulk operations on inbox
-- Connection diagnostics
-- Inbound fax notifications settings
+- **Connection Management**:
+  - Manual connection preference override
+  - Connection latency monitoring
+  - Network diagnostics and troubleshooting
+  - Custom timeout settings
+- **Server Management**:
+  - Multiple server profiles
+  - Server health monitoring
+  - API key rotation
+  - Tunnel status and logs
+- **Fax Operations**:
+  - Detailed fax job history with metadata
+  - Re-send failed faxes
+  - Export/share received fax PDFs
+  - Bulk operations on inbox
+  - Custom retry policies
+- **Notifications & Alerts**:
+  - Inbound fax notifications settings
+  - Connection failure alerts
+  - Server health notifications
 
 ## Success Metrics
 
 ### Core Functionality:
-- [ ] Successfully connects to Faxbot server
-- [ ] Sends photo faxes reliably
+- [ ] Successfully connects to Faxbot server (local and tunnel)
+- [ ] Auto-discovers Faxbot on local network
+- [ ] QR code setup works from Admin Console
+- [ ] Smart connection selection (local when home, tunnel when remote)
+- [ ] Sends photo faxes reliably via both connection types
 - [ ] Sends text faxes reliably
 - [ ] Displays received faxes in inbox
 - [ ] PDF viewer for received faxes works
 - [ ] Share extension works from Photos/Files
 - [ ] Status tracking shows job progress
+- [ ] Connection health monitoring works
 
 ### User Experience:
-- [ ] Setup takes <5 minutes for technical users
+- [ ] QR code setup takes <30 seconds
+- [ ] Auto-discovery setup takes <2 minutes
+- [ ] Manual setup takes <5 minutes for technical users
 - [ ] Sending a fax takes <30 seconds
+- [ ] Connection switching is seamless (home ↔ remote)
 - [ ] App feels native on iOS 26
 - [ ] Error messages are helpful and actionable
+- [ ] Network issues are handled gracefully
 
 ### Technical:
 - [ ] Handles network interruptions gracefully
