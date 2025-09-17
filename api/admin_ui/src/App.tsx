@@ -37,7 +37,8 @@ import MCP from './components/MCP';
 import Logs from './components/Logs';
 import SendFax from './components/SendFax';
 import Inbound from './components/Inbound';
-import PluginBuilder from './components/PluginBuilder';
+import Terminal from './components/Terminal';
+import ScriptsTests from './components/ScriptsTests';
 
 const darkTheme = createTheme({
   palette: {
@@ -116,6 +117,8 @@ function App() {
   const [authenticated, setAuthenticated] = useState(false);
   const [error, setError] = useState('');
   const [tabValue, setTabValue] = useState(0);
+  const [settingsTab, setSettingsTab] = useState(0); // 0: Setup, 1: Settings, 2: Keys, 3: MCP
+  const [toolsTab, setToolsTab] = useState(0); // 0: Terminal, 1: Diagnostics, 2: Logs, 3: Plugins, 4: Scripts & Tests
   const [mobileOpen, setMobileOpen] = useState(false);
   const isSmall = useMediaQuery('(max-width:900px)');
 
@@ -365,14 +368,8 @@ function App() {
                 <Tab label="Send" />
                 <Tab label="Jobs" />
                 <Tab label="Inbox" />
-                <Tab label="Keys" />
-                <Tab label="Setup" />
                 <Tab label="Settings" />
-                <Tab label="MCP" />
-                <Tab label="Logs" />
-                <Tab label="Diagnostics" />
-                {adminConfig?.v3_plugins?.enabled ? <Tab label="Plugins" /> : null}
-                {adminConfig?.v3_plugins?.enabled ? <Tab label="Plugin Builder" /> : null}
+                <Tab label="Tools" />
               </Tabs>
             </Box>
           )}
@@ -380,32 +377,26 @@ function App() {
           <Drawer anchor="left" open={mobileOpen} onClose={() => setMobileOpen(false)} sx={{ display: { xs: 'block', md: 'none' } }}>
             <Box sx={{ width: 260 }} role="presentation" onClick={() => setMobileOpen(false)} onKeyDown={() => setMobileOpen(false)}>
               <List>
-                {/* Promote Settings to the top on mobile for quick access */}
-                <ListItem button onClick={() => setTabValue(6)}>
-                  <ListItemText primary="Settings" />
-                </ListItem>
+                <ListItem button onClick={() => setTabValue(0)}><ListItemText primary="Dashboard" /></ListItem>
+                <ListItem button onClick={() => setTabValue(1)}><ListItemText primary="Send" /></ListItem>
+                <ListItem button onClick={() => setTabValue(2)}><ListItemText primary="Jobs" /></ListItem>
+                <ListItem button onClick={() => setTabValue(3)}><ListItemText primary="Inbox" /></ListItem>
                 <Divider />
-                {(() => {
-                  const items = ['Dashboard','Send','Jobs','Inbox','Keys','Setup','MCP','Logs','Diagnostics'];
-                  const toIndex: Record<string, number> = {
-                    Dashboard: 0, Send: 1, Jobs: 2, Inbox: 3, Keys: 4, Setup: 5, Settings: 6, MCP: 7, Logs: 8, Diagnostics: 9,
-                  };
-                  return items.map((label) => (
-                    <ListItem button key={label} onClick={() => setTabValue(toIndex[label])}>
-                      <ListItemText primary={label} />
-                    </ListItem>
-                  ));
-                })()}
+                <ListItem><ListItemText primary="Settings" primaryTypographyProps={{ fontWeight: 600 }} /></ListItem>
+                <ListItem button onClick={() => { setTabValue(4); setSettingsTab(0); }}><ListItemText primary="Setup" /></ListItem>
+                <ListItem button onClick={() => { setTabValue(4); setSettingsTab(1); }}><ListItemText primary="Settings" /></ListItem>
+                <ListItem button onClick={() => { setTabValue(4); setSettingsTab(2); }}><ListItemText primary="Keys" /></ListItem>
+                <ListItem button onClick={() => { setTabValue(4); setSettingsTab(3); }}><ListItemText primary="MCP" /></ListItem>
+                <Divider />
+                <ListItem><ListItemText primary="Tools" primaryTypographyProps={{ fontWeight: 600 }} /></ListItem>
+                <ListItem button onClick={() => { setTabValue(5); setToolsTab(0); }}><ListItemText primary="Terminal" /></ListItem>
+                <ListItem button onClick={() => { setTabValue(5); setToolsTab(1); }}><ListItemText primary="Diagnostics" /></ListItem>
+                <ListItem button onClick={() => { setTabValue(5); setToolsTab(2); }}><ListItemText primary="Logs" /></ListItem>
+                {adminConfig?.v3_plugins?.enabled && (
+                  <ListItem button onClick={() => { setTabValue(5); setToolsTab(3); }}><ListItemText primary="Plugins" /></ListItem>
+                )}
+                <ListItem button onClick={() => { setTabValue(5); setToolsTab(4); }}><ListItemText primary="Scripts & Tests" /></ListItem>
               </List>
-              {adminConfig?.v3_plugins?.enabled && (
-                <>
-                  <Divider />
-                  <List>
-                    <ListItem button onClick={() => setTabValue(10)}><ListItemText primary="Plugins" /></ListItem>
-                    <ListItem button onClick={() => setTabValue(11)}><ListItemText primary="Plugin Builder" /></ListItem>
-                  </List>
-                </>
-              )}
             </Box>
           </Drawer>
           
@@ -421,34 +412,48 @@ function App() {
           <TabPanel value={tabValue} index={3}>
             <Inbound client={client!} docsBase={adminConfig?.branding?.docs_base} />
           </TabPanel>
+          {/* Settings group */}
           <TabPanel value={tabValue} index={4}>
-            <ApiKeys client={client!} />
+            <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 2, overflowX: 'auto' }}>
+              <Tabs
+                value={settingsTab}
+                onChange={(_, v) => setSettingsTab(v)}
+                variant={isSmall ? 'scrollable' : 'standard'}
+                scrollButtons={isSmall ? 'auto' : undefined}
+              >
+                <Tab label="Setup" />
+                <Tab label="Settings" />
+                <Tab label="Keys" />
+                <Tab label="MCP" />
+              </Tabs>
+            </Box>
+            {settingsTab === 0 && <SetupWizard client={client!} onDone={() => setTabValue(0)} docsBase={adminConfig?.branding?.docs_base} />}
+            {settingsTab === 1 && <Settings client={client!} />}
+            {settingsTab === 2 && <ApiKeys client={client!} />}
+            {settingsTab === 3 && <MCP client={client!} />}
           </TabPanel>
+          {/* Tools group */}
           <TabPanel value={tabValue} index={5}>
-            <SetupWizard client={client!} onDone={() => setTabValue(0)} docsBase={adminConfig?.branding?.docs_base} />
+            <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 2, overflowX: 'auto' }}>
+              <Tabs
+                value={toolsTab}
+                onChange={(_, v) => setToolsTab(v)}
+                variant={isSmall ? 'scrollable' : 'standard'}
+                scrollButtons={isSmall ? 'auto' : undefined}
+              >
+                <Tab label="Terminal" />
+                <Tab label="Diagnostics" />
+                <Tab label="Logs" />
+                {adminConfig?.v3_plugins?.enabled ? <Tab label="Plugins" /> : null}
+                <Tab label="Scripts & Tests" />
+              </Tabs>
+            </Box>
+            {toolsTab === 0 && <Terminal apiKey={apiKey} />}
+            {toolsTab === 1 && <Diagnostics client={client!} onNavigate={setTabValue} docsBase={adminConfig?.branding?.docs_base} />}
+            {toolsTab === 2 && <Logs client={client!} />}
+            {toolsTab === 3 && adminConfig?.v3_plugins?.enabled && <Plugins client={client!} />}
+            {toolsTab === 4 && <ScriptsTests client={client!} docsBase={adminConfig?.branding?.docs_base} />}
           </TabPanel>
-          <TabPanel value={tabValue} index={6}>
-            <Settings client={client!} />
-          </TabPanel>
-          <TabPanel value={tabValue} index={7}>
-            <MCP client={client!} />
-          </TabPanel>
-          <TabPanel value={tabValue} index={8}>
-            <Logs client={client!} />
-          </TabPanel>
-          <TabPanel value={tabValue} index={9}>
-            <Diagnostics client={client!} onNavigate={setTabValue} docsBase={adminConfig?.branding?.docs_base} />
-          </TabPanel>
-          {adminConfig?.v3_plugins?.enabled ? (
-            <TabPanel value={tabValue} index={10}>
-              <Plugins client={client!} />
-            </TabPanel>
-          ) : null}
-          {adminConfig?.v3_plugins?.enabled ? (
-            <TabPanel value={tabValue} index={11}>
-              <PluginBuilder client={client!} />
-            </TabPanel>
-          ) : null}
         </Container>
       </Box>
     </ThemeProvider>

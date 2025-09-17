@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 import tempfile
 from typing import Optional, Any, List, Dict, cast
 import time
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks, Header, Depends, Query, Request, Response
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks, Header, Depends, Query, Request, Response, WebSocket
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from .config import settings, reload_settings
@@ -3336,5 +3336,51 @@ def freeswitch_outbound_result(payload: FSOutboundResultIn, x_internal_secret: O
         job.updated_at = datetime.utcnow()
         db.add(job)
         db.commit()
-    audit_event("job_updated", job_id=str(payload.job_id), status=internal, provider="freeswitch")
+    audit_event("job_updated", job_id=str(payload.job_id), status=internal, provider="freeswitch")                                                              
     return {"ok": True}
+
+
+# Terminal WebSocket endpoint for Admin Console
+@app.websocket("/admin/terminal")
+async def admin_terminal_websocket(
+    websocket: WebSocket,
+    api_key: Optional[str] = Header(None, alias="X-API-Key")
+):
+    """WebSocket terminal for Admin Console - requires admin authentication."""
+    # Check admin authentication
+    if not api_key or api_key != settings.api_key:
+        # Try to get API key from query params for WebSocket auth
+        import urllib.parse
+        # Starlette's websocket.url.query is a string; older versions may return bytes
+        _q = websocket.url.query
+        try:
+            query_str = _q.decode()  # type: ignore[attr-defined]
+        except AttributeError:
+            query_str = str(_q or "")
+        query_params = urllib.parse.parse_qs(query_str)
+        ws_api_key = query_params.get('api_key', [None])[0]
+        
+        if not ws_api_key or ws_api_key != settings.api_key:
+            # Check if they have a valid DB-backed key with admin privileges
+            from .auth import verify_db_key
+            key_data = verify_db_key(ws_api_key or api_key or "")
+            if not key_data or 'keys:manage' not in key_data.get('scopes', []):
+                await websocket.close(code=1008, reason="Unauthorized")
+                return
+    
+    # Import terminal handler
+    from .terminal import handle_terminal_websocket, check_terminal_requirements
+    
+    # Check requirements
+    issues = check_terminal_requirements()
+    if issues:
+        await websocket.accept()
+        await websocket.send_text(json.dumps({
+            'type': 'error',
+            'message': f'Terminal not available: {", ".join(issues)}'
+        }))
+        await websocket.close()
+        return
+    
+    # Handle terminal session
+    await handle_terminal_websocket(websocket)

@@ -8,7 +8,8 @@ RUN npm run build
 FROM python:3.11-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    DOCKER_CONTAINER=true
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -41,3 +42,4 @@ EXPOSE 8080
 
 ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080"]
+

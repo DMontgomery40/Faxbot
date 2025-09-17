@@ -139,42 +139,172 @@ function Diagnostics({ client, onNavigate, docsBase }: DiagnosticsProps) {
   const getHelpDocs = (title: string, key: string) => {
     const t = title.toLowerCase();
     const docs: { text: string; href?: string }[] = [];
-    if (t.includes('sip')) {
-      if (key === 'ami_reachable') {
-        docs.push({ text: 'Asterisk Manager Interface (AMI)', href: 'https://wiki.asterisk.org/wiki/display/AST/Asterisk+Manager+Interface+%28AMI%29' });
-        docs.push({ text: 'Verify docker compose asterisk service is running and reachable as host "asterisk" on port 5038.' });
-        docs.push({ text: 'Ensure ASTERISK_AMI_USERNAME/PASSWORD match Asterisk manager.conf and that port 5038 is not exposed publicly.' });
-      }
-      if (key === 'ami_password_not_default') {
-        docs.push({ text: 'Change ASTERISK_AMI_PASSWORD from default to a secure value in both Faxbot and manager.conf.' });
-      }
-    }
-    if (t.includes('phaxio')) {
-      docs.push({ text: 'Faxbot: Phaxio setup', href: `${docsBase || 'https://dmontgomery40.github.io/Faxbot'}/backends/phaxio-setup.html` });
-      docs.push({ text: 'Sinch Fax (Phaxio) API', href: 'https://developers.sinch.com/docs/fax/' });
-      docs.push({ text: 'Webhook signature (HMAC)', href: 'https://developers.sinch.com/docs/fax/' });
-    }
-    if (t.includes('sinch')) {
-      docs.push({ text: 'Sinch Fax API reference', href: 'https://developers.sinch.com/docs/fax/' });
-      docs.push({ text: 'Faxbot inbound security can also enforce optional Basic/HMAC on callbacks. Configure shared secrets in Faxbot and, if supported, in your provider portal.' });
-    }
-    if (t.includes('signalwire')) {
-      docs.push({ text: 'Faxbot: SignalWire setup', href: `${docsBase || 'https://dmontgomery40.github.io/Faxbot'}/backends/signalwire-setup.html` });
-      docs.push({ text: 'SignalWire Compatibility API', href: 'https://developer.signalwire.com/compatibility-api/reference/overview' });
-    }
-    if (t.includes('freeswitch')) {
-      docs.push({ text: 'Faxbot: FreeSWITCH setup', href: `${docsBase || 'https://dmontgomery40.github.io/Faxbot'}/backends/freeswitch-setup.html` });
-      docs.push({ text: 'FreeSWITCH Explained', href: 'https://developer.signalwire.com/freeswitch/FreeSWITCH-Explained/' });
-    }
-    if (t.includes('storage')) {
-      docs.push({ text: 'S3 server-side encryption with KMS (AWS docs)', href: 'https://docs.aws.amazon.com/AmazonS3/latest/userguide/UsingKMSEncryption.html' });
-    }
-    if (t.includes('security')) {
-      docs.push({ text: 'Enforce HTTPS (ENFORCE_PUBLIC_HTTPS) and enable audit logging for HIPAA.' });
-    }
+    
+    // System Checks - specific help for each check
     if (t.includes('system')) {
-      docs.push({ text: 'Ghostscript install (docs)', href: 'https://ghostscript.readthedocs.io/' });
+      if (key === 'ghostscript') {
+        docs.push({ text: 'Ghostscript is required for PDF to TIFF conversion (SIP/Asterisk backend).' });
+        docs.push({ text: 'Ghostscript Documentation', href: 'https://ghostscript.readthedocs.io/' });
+        docs.push({ text: 'Install via: apt-get install ghostscript (Linux) or brew install ghostscript (Mac)' });
+      }
+      else if (key === 'fax_data_dir' || key === 'fax_data_writable') {
+        docs.push({ text: 'The fax data directory stores temporary and permanent fax files.' });
+        docs.push({ text: 'Default location: /faxdata (in Docker) or ./faxdata (local)' });
+        docs.push({ text: 'Set FAX_DATA_DIR environment variable to customize location.' });
+        docs.push({ text: 'Ensure the directory has write permissions for the API process.' });
+      }
+      else if (key === 'temp_dir_writable') {
+        docs.push({ text: 'Temporary directory is used for processing files during transmission.' });
+        docs.push({ text: 'Default: system temp directory (/tmp or %TEMP%)' });
+        docs.push({ text: 'Ensure adequate space and write permissions.' });
+      }
+      else if (key === 'database_connected') {
+        docs.push({ text: 'Database stores job status and metadata.' });
+        docs.push({ text: 'Default: SQLite (faxbot.db)' });
+        docs.push({ text: 'For production: Use PostgreSQL with DATABASE_URL environment variable.' });
+        docs.push({ text: 'Faxbot Database Guide', href: `${docsBase || 'https://dmontgomery40.github.io/Faxbot'}/deployment.html#database` });
+      }
     }
+    
+    // Phaxio Configuration
+    else if (t.includes('phaxio')) {
+      if (key === 'api_key_set' || key === 'api_secret_set') {
+        docs.push({ text: 'Get your API credentials from the Phaxio Console', href: 'https://console.phaxio.com/api_credentials' });
+        docs.push({ text: 'Set PHAXIO_API_KEY and PHAXIO_API_SECRET in your .env file' });
+        docs.push({ text: 'Never commit API keys to version control' });
+      }
+      else if (key === 'callback_url_set') {
+        docs.push({ text: 'Webhooks receive status updates from Phaxio', href: 'https://developers.sinch.com/docs/fax/getting-started/webhooks/' });
+        docs.push({ text: 'Set PHAXIO_CALLBACK_URL to your public endpoint (https://yourdomain.com/phaxio-callback)' });
+        docs.push({ text: 'Must be publicly accessible with valid HTTPS certificate' });
+      }
+      else if (key === 'public_url_https') {
+        docs.push({ text: 'HIPAA requires HTTPS for all PHI transmission' });
+        docs.push({ text: 'Set PUBLIC_API_URL with https:// prefix' });
+        docs.push({ text: 'Use Let\'s Encrypt or other valid SSL certificate' });
+      }
+      else if (key === 'verify_signature') {
+        docs.push({ text: 'HMAC signature verification prevents webhook spoofing' });
+        docs.push({ text: 'Set PHAXIO_VERIFY_SIGNATURE=true for production' });
+        docs.push({ text: 'Webhook Security Guide', href: 'https://developers.sinch.com/docs/fax/getting-started/webhooks/#verifying-webhook-signatures' });
+      }
+      else {
+        docs.push({ text: 'Complete Phaxio Setup Guide', href: `${docsBase || 'https://dmontgomery40.github.io/Faxbot'}/backends/phaxio-setup.html` });
+        docs.push({ text: 'Phaxio Developer Documentation', href: 'https://developers.sinch.com/docs/fax/' });
+      }
+    }
+    
+    // Sinch Configuration
+    else if (t.includes('sinch')) {
+      if (key === 'project_id_set') {
+        docs.push({ text: 'Find your Project ID in Sinch Dashboard', href: 'https://dashboard.sinch.com' });
+        docs.push({ text: 'Set SINCH_PROJECT_ID in your .env file' });
+      }
+      else if (key === 'api_key_set' || key === 'api_secret_set') {
+        docs.push({ text: 'Create API credentials in Sinch Dashboard', href: 'https://dashboard.sinch.com/settings/access-keys' });
+        docs.push({ text: 'Set SINCH_API_KEY and SINCH_API_SECRET (or reuse PHAXIO_* if compatible)' });
+      }
+      else {
+        docs.push({ text: 'Sinch Fax API Documentation', href: 'https://developers.sinch.com/docs/fax/' });
+        docs.push({ text: 'Faxbot Sinch Setup', href: `${docsBase || 'https://dmontgomery40.github.io/Faxbot'}/backends/sinch-setup.html` });
+      }
+    }
+    
+    // SIP/Asterisk Configuration
+    else if (t.includes('sip')) {
+      if (key === 'ami_reachable') {
+        docs.push({ text: 'Asterisk Manager Interface (AMI) Documentation', href: 'https://wiki.asterisk.org/wiki/display/AST/Asterisk+Manager+Interface+%28AMI%29' });
+        docs.push({ text: 'Ensure Asterisk container is running: docker compose up -d asterisk' });
+        docs.push({ text: 'Default connection: host=asterisk, port=5038' });
+        docs.push({ text: 'Check firewall rules and Docker networking' });
+      }
+      else if (key === 'ami_password_not_default') {
+        docs.push({ text: 'Change ASTERISK_AMI_PASSWORD from "changeme" to a secure value' });
+        docs.push({ text: 'Update both .env and asterisk/manager.conf' });
+        docs.push({ text: 'Restart Asterisk after changing: docker compose restart asterisk' });
+      }
+      else {
+        docs.push({ text: 'Complete SIP/Asterisk Setup', href: `${docsBase || 'https://dmontgomery40.github.io/Faxbot'}/backends/sip-setup.html` });
+        docs.push({ text: 'T.38 Fax Protocol Guide', href: 'https://www.voip-info.org/t-38/' });
+      }
+    }
+    
+    // Storage Configuration
+    else if (t.includes('storage')) {
+      if (key === 'backend') {
+        docs.push({ text: 'Storage backends: local (dev) or s3 (production)' });
+        docs.push({ text: 'Set STORAGE_BACKEND=s3 for production with S3 or compatible storage' });
+      }
+      else if (key === 'bucket_set') {
+        docs.push({ text: 'Create an S3 bucket for inbound fax storage' });
+        docs.push({ text: 'Set S3_BUCKET environment variable' });
+        docs.push({ text: 'S3 Bucket Creation Guide', href: 'https://docs.aws.amazon.com/AmazonS3/latest/userguide/creating-bucket.html' });
+      }
+      else if (key === 'kms_enabled') {
+        docs.push({ text: 'KMS encryption protects PHI at rest' });
+        docs.push({ text: 'Set S3_KMS_KEY_ID to enable server-side encryption' });
+        docs.push({ text: 'AWS KMS Documentation', href: 'https://docs.aws.amazon.com/AmazonS3/latest/userguide/UsingKMSEncryption.html' });
+      }
+      else {
+        docs.push({ text: 'Storage Configuration Guide', href: `${docsBase || 'https://dmontgomery40.github.io/Faxbot'}/deployment.html#storage` });
+      }
+    }
+    
+    // Security Configuration
+    else if (t.includes('security')) {
+      if (key === 'api_key_required') {
+        docs.push({ text: 'API key authentication protects endpoints' });
+        docs.push({ text: 'Set REQUIRE_API_KEY=true for production' });
+        docs.push({ text: 'Generate keys via Admin Console or set API_KEY environment variable' });
+      }
+      else if (key === 'enforce_https') {
+        docs.push({ text: 'HTTPS is required for HIPAA compliance' });
+        docs.push({ text: 'Set ENFORCE_PUBLIC_HTTPS=true for production' });
+        docs.push({ text: 'Deploy behind reverse proxy with valid SSL certificate' });
+      }
+      else if (key === 'audit_logging') {
+        docs.push({ text: 'Audit logs track all PHI access and system events' });
+        docs.push({ text: 'Set AUDIT_LOG_ENABLED=true and AUDIT_LOG_FILE=/path/to/audit.log' });
+        docs.push({ text: 'HIPAA Compliance Guide', href: `${docsBase || 'https://dmontgomery40.github.io/Faxbot'}/security.html#hipaa` });
+      }
+      else if (key === 'rate_limiting') {
+        docs.push({ text: 'Rate limiting prevents abuse and DoS attacks' });
+        docs.push({ text: 'Set MAX_REQUESTS_PER_MINUTE (default: 60)' });
+        docs.push({ text: 'Configure per-key limits in Admin Console' });
+      }
+      else if (key === 'pdf_token_ttl') {
+        docs.push({ text: 'PDF tokens provide time-limited access to transmitted documents' });
+        docs.push({ text: 'Set PDF_TOKEN_TTL_MINUTES (default: 60)' });
+        docs.push({ text: 'Shorter TTLs improve security but may inconvenience users' });
+      }
+      else {
+        docs.push({ text: 'Security Best Practices', href: `${docsBase || 'https://dmontgomery40.github.io/Faxbot'}/security.html` });
+      }
+    }
+    
+    // Inbound Configuration
+    else if (t.includes('inbound')) {
+      if (key === 'enabled') {
+        docs.push({ text: 'Enable inbound fax receiving with INBOUND_ENABLED=true' });
+        docs.push({ text: 'Requires storage backend configuration' });
+        docs.push({ text: 'Inbound Setup Guide', href: `${docsBase || 'https://dmontgomery40.github.io/Faxbot'}/inbound.html` });
+      }
+      else if (key === 'retention_days') {
+        docs.push({ text: 'Set INBOUND_RETENTION_DAYS to control storage duration' });
+        docs.push({ text: 'Default: 30 days' });
+        docs.push({ text: 'Consider compliance requirements for your industry' });
+      }
+      else {
+        docs.push({ text: 'Inbound Fax Documentation', href: `${docsBase || 'https://dmontgomery40.github.io/Faxbot'}/inbound.html` });
+      }
+    }
+    
+    // Fallback for any uncovered cases
+    if (docs.length === 0) {
+      docs.push({ text: 'Complete Faxbot Documentation', href: `${docsBase || 'https://dmontgomery40.github.io/Faxbot'}` });
+      docs.push({ text: 'For additional help, check the troubleshooting guide or file an issue on GitHub.' });
+    }
+    
     return docs;
   };
 
