@@ -9,8 +9,9 @@
     "test": "vitest",
     "electron": "electron .",
     "electron-dev": "concurrently \"npm run dev\" \"wait-on http://localhost:5173 && electron .\"",
-    "electron-build": "npm run build && electron-builder",
-    "electron-dist": "npm run build && electron-builder --publish=never"
+    "electron-build": "npm run build && electron-builder --win",
+    "electron-dist": "npm run build && electron-builder --win --publish=never",
+    "electron-build-all": "npm run build && electron-builder"
   },
   "dependencies": {
     "react": "^18.2.0",
@@ -74,9 +75,15 @@
       "target": [
         {
           "target": "nsis",
+          "arch": ["x64", "ia32"]
+        },
+        {
+          "target": "portable",
           "arch": ["x64"]
         }
-      ]
+      ],
+      "publisherName": "Faxbot",
+      "verifyUpdateCodeSignature": false
     },
     "linux": {
       "icon": "electron/assets/icon.png",
