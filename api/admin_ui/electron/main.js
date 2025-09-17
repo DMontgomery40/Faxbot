@@ -2,6 +2,9 @@ const { app, BrowserWindow, Menu, shell, ipcMain, Tray, nativeImage, dialog } = 
 const path = require('path');
 const isDev = process.env.NODE_ENV === 'development';
 
+// Set the app name for macOS menu bar
+app.setName('Faxbot');
+
 // Keep a global reference of the window object
 let mainWindow;
 let tray = null;

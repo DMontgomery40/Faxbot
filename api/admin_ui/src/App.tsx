@@ -101,6 +101,35 @@ function AppContent() {
   const [toolsTab, setToolsTab] = useState(0); // 0: Terminal, 1: Diagnostics, 2: Logs, 3: Plugins, 4: Scripts & Tests
   const [mobileOpen, setMobileOpen] = useState(false);
 
+  // Listen for Electron menu navigation
+  useEffect(() => {
+    const api = (window as any).electronAPI;
+    if (typeof window !== 'undefined' && api?.isElectron && typeof api.onNavigate === 'function') {
+      const handleRoute = (route: string) => {
+        console.log('Electron menu navigation:', route);
+        switch (route) {
+          case '/send':
+            setTabValue(1);
+            break;
+          case '/settings':
+            setTabValue(4);
+            setSettingsTab(1);
+            break;
+          case '/dashboard':
+            setTabValue(0);
+            break;
+          default:
+            console.log('Unknown navigation route:', route);
+        }
+      };
+
+      api.onNavigate(handleRoute);
+      return () => {
+        if (typeof api.removeNavigateListener === 'function') api.removeNavigateListener();
+      };
+    }
+  }, []);
+
   const handleLogin = async (key: string) => {
     try {
       // Check if we're running in Electron
