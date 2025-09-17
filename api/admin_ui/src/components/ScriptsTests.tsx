@@ -198,8 +198,8 @@ const ScriptsTests: React.FC<Props> = ({ client, docsBase }) => {
           <PrettyBox title="Auth Smoke: create key → send test → status">
             <Box display="flex" alignItems="center" gap={1} mb={1}>
               <TextField size="small" label="Test to" value={toNumber} onChange={(e)=>setToNumber(e.target.value)} sx={{ maxWidth: 260 }} />
-              <Button variant="contained" onClick={runAuthSmoke} disabled={busyAuth}>{busyAuth ? <CircularProgress size={18} /> : 'Run'}</Button>
-              <Button onClick={clearAuth} disabled={busyAuth}>Clear</Button>
+              <Button variant="contained" onClick={runAuthSmoke} disabled={busyAuth || busyInbound || busyInfo}>{busyAuth ? <CircularProgress size={18} /> : 'Run'}</Button>
+              <Button onClick={clearAuth} disabled={busyAuth || busyInbound || busyInfo}>Clear</Button>
             </Box>
             <ConsoleBox lines={authLines} loading={busyAuth} />
           </PrettyBox>
@@ -209,8 +209,8 @@ const ScriptsTests: React.FC<Props> = ({ client, docsBase }) => {
             <PrettyBox title={`Inbound (${backend || 'backend'}): simulate and list`}>
               <Box display="flex" alignItems="center" gap={1} mb={1}>
                 <TextField size="small" label="To (optional)" value={toNumber} onChange={(e)=>setToNumber(e.target.value)} sx={{ maxWidth: 260 }} />
-                <Button variant="contained" onClick={runInboundSim} disabled={busyInbound}>{busyInbound ? <CircularProgress size={18} /> : 'Run'}</Button>
-                <Button onClick={clearInbound} disabled={busyInbound}>Clear</Button>
+                <Button variant="contained" onClick={runInboundSim} disabled={busyInbound || busyAuth || busyInfo}>{busyInbound ? <CircularProgress size={18} /> : 'Run'}</Button>
+                <Button onClick={clearInbound} disabled={busyInbound || busyAuth || busyInfo}>Clear</Button>
               </Box>
               <ConsoleBox lines={inboundLines} loading={busyInbound} />
             </PrettyBox>
@@ -226,8 +226,8 @@ const ScriptsTests: React.FC<Props> = ({ client, docsBase }) => {
               </Typography>
               <Box display="flex" alignItems="center" gap={1} mb={1}>
                 <TextField size="small" label="ASTERISK_INBOUND_SECRET" value={sipSecret} onChange={(e)=>setSipSecret(e.target.value)} sx={{ maxWidth: 320 }} />
-                <Button onClick={()=>setSipSecret(generateSecret())}>Generate</Button>
-                <Button variant="contained" onClick={saveSipInboundSecret} disabled={busyInfo}>{busyInfo ? <CircularProgress size={18} /> : 'Enable & Save'}</Button>
+                <Button onClick={()=>setSipSecret(generateSecret())} disabled={busyAuth || busyInbound || busyInfo}>Generate</Button>
+                <Button variant="contained" onClick={saveSipInboundSecret} disabled={busyInfo || busyAuth || busyInbound}>{busyInfo ? <CircularProgress size={18} /> : 'Enable & Save'}</Button>
               </Box>
               <Typography variant="caption" color="text.secondary">
                 Dialplan should POST to /_internal/asterisk/inbound with header X-Internal-Secret.
@@ -243,7 +243,7 @@ const ScriptsTests: React.FC<Props> = ({ client, docsBase }) => {
               </Typography>
               <Box display="flex" alignItems="center" gap={1} mb={1}>
                 <TextField size="small" label="PUBLIC_API_URL" value={publicApiUrl} onChange={(e)=>setPublicApiUrl(e.target.value)} sx={{ maxWidth: 420 }} />
-                <Button variant="contained" onClick={savePhaxioCallback} disabled={busyInfo}>{busyInfo ? <CircularProgress size={18} /> : 'Save'}</Button>
+                <Button variant="contained" onClick={savePhaxioCallback} disabled={busyInfo || busyAuth || busyInbound}>{busyInfo ? <CircularProgress size={18} /> : 'Save'}</Button>
               </Box>
               <Typography variant="caption" color="text.secondary">
                 Ensure this is HTTPS and publicly reachable. Configure signature verification in Settings if required.
@@ -258,8 +258,8 @@ const ScriptsTests: React.FC<Props> = ({ client, docsBase }) => {
                 {backend === 'phaxio' ? 'Phaxio Inbound Callback' : backend === 'sinch' ? 'Sinch Inbound Callback' : backend === 'sip' ? 'Asterisk Inbound (internal)' : 'Inbound Callback'}
               </Typography>
               <Box display="flex" gap={1} mb={1}>
-                <Button variant="outlined" onClick={runCallbacksInfo} disabled={busyInfo}>{busyInfo ? <CircularProgress size={18} /> : 'Show'}</Button>
-                <Button onClick={clearInfo} disabled={busyInfo}>Clear</Button>
+                <Button variant="outlined" onClick={runCallbacksInfo} disabled={busyInfo || busyAuth || busyInbound}>{busyInfo ? <CircularProgress size={18} /> : 'Show'}</Button>
+                <Button onClick={clearInfo} disabled={busyInfo || busyAuth || busyInbound}>Clear</Button>
               </Box>
               <ConsoleBox lines={infoLines} loading={busyInfo} />
             </CardContent>
