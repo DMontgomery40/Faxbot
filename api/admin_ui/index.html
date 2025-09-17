@@ -8,7 +8,17 @@
     <link rel="apple-touch-icon" sizes="180x180" href="/admin/ui/apple-touch-icon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Faxbot Admin Console</title>
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline';" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; worker-src 'self'; connect-src 'self';" />
+    <script>
+      // Defensive: ensure no stale demo Service Workers are active
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.getRegistrations().then((regs) => {
+          for (const r of regs) {
+            try { r.unregister(); } catch (e) { /* no-op */ }
+          }
+        });
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>

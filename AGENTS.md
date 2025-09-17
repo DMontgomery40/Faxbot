@@ -169,16 +169,19 @@ SINCH_API_SECRET=...
 ## MCP Integration (Node + Python)
 
 Two MCP servers live in `node_mcp/` (Node) and `python_mcp/` (Python). Each supports stdio/HTTP/SSE.
+Additionally, a Node WebSocket helper is available for convenience; it mirrors tool calls but is not a formal MCP WebSocket transport (SEP‑1288 is under discussion).
 
 | Transport | Node entrypoint | Python entrypoint | Port | Auth |
 |-----------|------------------|-------------------|------|------|
 | stdio     | `src/servers/stdio.js` | `stdio_server.py` | N/A  | API key |
 | HTTP      | `src/servers/http.js`  | (n/a)            | 3001 | API key |
 | SSE       | `src/servers/sse.js`   | `server.py`      | 3002/3003 | OAuth2/JWT |
+| WebSocket helper | `src/servers/ws.js` | (n/a)         | 3004 | API key |
 
 Notes
 - Legacy MCP servers under `api/` were removed. Do not reference `api/mcp_*.js`.
 - Node HTTP/SSE JSON limit is 16 MB to account for base64 overhead; REST API still enforces 10 MB raw file size.
+- The WebSocket helper mirrors tool calls for convenience and is not a formal MCP transport.
 - Prefer stdio + `filePath` for desktop assistants.
 
 ## The Two SDKs: Node.js and Python
@@ -308,6 +311,7 @@ GET  /health           # Service health check
 - Jobs: queue status, progress, pages, failures with contextual remediation links.
 - Keys: API key management (mint/list/rotate/delete) with copy-to-clipboard UX.
 - Inbound (when enabled): listing, detail, secure download, retention status.
+- Plugins (v3): list native + manifest providers; enable/disable outbound; schema‑driven config forms; curated registry search. Plugin Builder (preview): create/edit HTTP manifest providers and validate via dry‑run.
 
 ### MCP Tools (v3 parity)
 - send_fax
@@ -438,6 +442,24 @@ Discovery and endpoints (when `FEATURE_V3_PLUGINS=true`)
 - `GET /plugins/{id}/config` — return enabled + settings for a plugin
 - `PUT /plugins/{id}/config` — validate via JSON Schema and persist atomically
 - `GET /plugin-registry` — serve curated registry JSON for UI search
+
+Manifest providers (HTTP) — preview
+- Data-only providers are supported via a declarative manifest executed by core (no third‑party code in server).
+- Runtime: `api/app/plugins/http_provider.py` interprets manifests with:
+  - `auth` schemes: `basic|bearer|api_key_header|api_key_query|none`
+  - `actions.send_fax|get_status`: method, url, headers, `body.kind` (`json|form|multipart|none`), `body.template`
+  - Response mapping via simple JSONPath-like selectors (`data.id`, `data.list[0].field`) and optional `status_map`
+  - Policy: `allowed_domains[]`, `timeout_ms`, redaction (follow-up), HTTPS only in HIPAA
+- Storage: manifests are persisted under `FAXBOT_PROVIDERS_DIR` (default `config/providers/<id>/manifest.json`).
+- New admin endpoints (feature-gated, admin-only):
+  - `POST /admin/plugins/http/validate` — validate a manifest + optional dry-run send; returns normalized result
+  - `POST /admin/plugins/http/install` — persist the manifest to the providers dir
+- Resolution: when `FEATURE_V3_PLUGINS=true` and outbound plugin references an installed manifest id, core uses the manifest runtime for send/status.
+- Security (HIPAA defaults): remote install disabled by default; enforce domain allowlists, strict timeouts/body caps; redact secrets; no arbitrary code.
+
+Admin Console (planned builder)
+- Plugin Builder wizard (preview plan): Basics → Auth → Send endpoint → Response mapping → Optional webhook mapping → Test (raw request/response + normalized result) → Save.
+- “Search npm” lists packages under scope `@faxbot` with keyword `faxbot-provider`; cards render README; install prompts show domain allowlist and a dry-run.
 
 Security and permissions
 - New admin scopes: `admin:plugins:read`, `admin:plugins:write` for list/get/update.
@@ -599,6 +621,7 @@ Docs publishing
 - Author and iterate docs on `development`; promote to `docs-jekyll-site` when stable.
 - Reference docs from the Admin Console using stable URLs only; avoid linking to WIP drafts.
 - Keep backend‑specific pages separated (Phaxio vs Sinch vs SIP/Asterisk).
+- Admin Console must derive all internal doc links from a single base (`DOCS_BASE_URL`), exposed at `/admin/config` as `branding.docs_base`. Never hard‑code full docs URLs in UI code.
 
 Receiving capability recommendation
 - Implement inbound fax support in core:

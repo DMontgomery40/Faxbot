@@ -23,6 +23,8 @@ import os
 from typing import Any, Dict, Optional
 
 import requests
+from .plugins import PluginManager
+from .plugins import PluginManager
 
 
 class FaxbotClient:
@@ -52,6 +54,8 @@ class FaxbotClient:
         self._headers: Dict[str, str] = {}
         if self.api_key:
             self._headers["X-API-Key"] = self.api_key
+        # Lazy plugin manager (initialized on first access)
+        self._plugin_manager = None
 
     def send_fax(self, to: str, file_path: str) -> Dict[str, Any]:
         """Send a fax through the Faxbot API.
@@ -197,3 +201,17 @@ class FaxbotClient:
         else:
             raise Exception(f"Health check returned HTTP {response.status_code}")
 
+    @property
+    def plugins(self) -> PluginManager:
+        """Access plugin manager (lazy initialization)."""
+        if not hasattr(self, "_plugin_manager") or self._plugin_manager is None:
+            self._plugin_manager = PluginManager(self)
+        return self._plugin_manager
+
+    # NEW: Plugin manager property
+    @property
+    def plugins(self) -> PluginManager:
+        """Access plugin manager (lazy initialization)."""
+        if self._plugin_manager is None:
+            self._plugin_manager = PluginManager(self)
+        return self._plugin_manager

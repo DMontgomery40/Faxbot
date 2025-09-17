@@ -15,6 +15,7 @@ Components
 - Object storage: S3/S3‑compatible with SSE‑KMS for artifacts; lifecycle policies.
 - Reverse proxy/WAF: TLS, rate limiting, IP restrictions, OIDC if needed.
  - Health checks: use `GET /health` for liveness and `GET /health/ready` for readiness (returns 200 when core dependencies are ready; 503 otherwise).
+- Optional MCP transports: run one or more of HTTP (3001), SSE (3002/3003), or WebSocket (3004) for assistant integrations.
 - Optional: Asterisk (only for SIP flows), isolated in a VPC/VNet; UDPTL ports open to trunk provider only.
 
 Environment configuration
@@ -25,6 +26,7 @@ Environment configuration
 - Authentication
   - `REQUIRE_API_KEY=true` in production. Create per‑user/service keys with `/admin/api-keys`.
   - MCP SSE requires OAuth2/JWT; host under TLS.
+  - MCP HTTP/WS: protect with `MCP_HTTP_API_KEY` / `MCP_WS_API_KEY` and restrict origins (HTTP) or run behind an authenticated proxy (WS).
 - Storage
   - `STORAGE_BACKEND=s3`
   - `S3_BUCKET`, `S3_PREFIX`, `S3_REGION`
@@ -51,6 +53,10 @@ HIPAA notes
 - Execute BAAs with providers (Phaxio/Sinch, cloud infra, S3/KMS).
 - Enforce HTTPS, HMAC verification, short token TTLs, audit logging.
 - Store no PHI in logs; artifact storage encrypted at rest.
+
+Plugins (preview)
+- Enable plugin discovery for operators by setting `FEATURE_V3_PLUGINS=true` on the API. This adds read‑only plugin discovery endpoints and a Plugins tab in the Admin Console.
+- Persisted changes are written to the server config file; plan maintenance windows to apply changes to the running backend.
 
 Next steps for production maturity
 - Alembic migrations: add migrations for all tables and future schema changes.

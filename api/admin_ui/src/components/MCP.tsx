@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Box, Card, CardContent, Typography, Button, Alert, Grid, TextField, Switch, FormControlLabel, Chip } from '@mui/material';
+import { Box, Card, CardContent, Typography, Button, Alert, Grid, TextField, Switch, FormControlLabel, Chip, Tooltip, IconButton, Paper } from '@mui/material';
+import { ContentCopy } from '@mui/icons-material';
 import AdminAPIClient from '../api/client';
 
 interface MCPProps { client: AdminAPIClient; }
@@ -103,6 +104,9 @@ function MCP({ client }: MCPProps) {
           <Card>
             <CardContent>
               <Typography variant="h6" gutterBottom>Server Settings</Typography>
+              <Alert severity="info" sx={{ mb: 2 }}>
+                Embedded Python MCP servers are mounted by the Faxbot API at /mcp/* when enabled. No external Node process is required for SSE/HTTP.
+              </Alert>
               <FormControlLabel control={<Switch checked={sseEnabled} onChange={(e) => setSseEnabled(e.target.checked)} />} label="Enable SSE (/mcp/sse)" />
               <FormControlLabel control={<Switch checked={httpEnabled} onChange={(e) => setHttpEnabled(e.target.checked)} />} label="Enable Streamable HTTP (/mcp/http)" />
               <FormControlLabel control={<Switch checked={requireOAuth} onChange={(e) => setRequireOAuth(e.target.checked)} />} label="Require OAuth (JWT)" />
@@ -128,15 +132,21 @@ function MCP({ client }: MCPProps) {
               <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
                 Add to your Claude Desktop MCP config. SSE URL: {sseUrl()}
               </Typography>
-              <Box component="pre" sx={{ p: 2, bgcolor: 'background.default', borderRadius: 1, overflow: 'auto' }}>
-                {generateClaudeConfig()}
-              </Box>
+              <Paper sx={{ position: 'relative', p: 2, bgcolor: 'background.default', borderRadius: 1, overflow: 'auto' }}>
+                <Box component="pre" sx={{ m: 0 }}>{generateClaudeConfig()}</Box>
+                <Tooltip title="Copy config">
+                  <IconButton size="small" sx={{ position: 'absolute', right: 8, top: 8 }} onClick={() => navigator.clipboard.writeText(generateClaudeConfig())}>
+                    <ContentCopy fontSize="small" />
+                  </IconButton>
+                </Tooltip>
+              </Paper>
               {httpEnabled && (
                 <>
                   <Typography variant="h6" gutterBottom sx={{ mt: 2 }}>HTTP Transport (experimental)</Typography>
-                  <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-                    HTTP URL: {httpUrl()} (uses Streamable HTTP; CORS open for dev)
-                  </Typography>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <Typography variant="body2" color="text.secondary">HTTP URL: {httpUrl()}</Typography>
+                    <Tooltip title="Copy HTTP URL"><IconButton size="small" onClick={() => navigator.clipboard.writeText(httpUrl())}><ContentCopy fontSize="small" /></IconButton></Tooltip>
+                  </Box>
                 </>
               )}
             </CardContent>

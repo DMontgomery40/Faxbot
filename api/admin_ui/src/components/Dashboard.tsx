@@ -16,7 +16,9 @@ import {
   CheckCircle as CheckCircleIcon,
   Warning as WarningIcon,
   Error as ErrorIcon,
+  ContentCopy as ContentCopyIcon,
 } from '@mui/icons-material';
+import { IconButton } from '@mui/material';
 import AdminAPIClient from '../api/client';
 import type { HealthStatus } from '../api/types';
 
@@ -30,6 +32,8 @@ function Dashboard({ client, onNavigate }: DashboardProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [justApplied, setJustApplied] = useState<boolean>(false);
+  const [cfg, setCfg] = useState<any | null>(null);
+  const [plugins, setPlugins] = useState<any[] | null>(null);
 
   const fetchHealth = async () => {
     try {
@@ -40,6 +44,26 @@ function Dashboard({ client, onNavigate }: DashboardProps) {
       setError(err instanceof Error ? err.message : 'Failed to fetch health status');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchConfig = async () => {
+    try {
+      const c = await client.getConfig();
+      setCfg(c);
+      // Lazy-load plugins list only when v3 plugins are enabled
+      if (c?.v3_plugins?.enabled) {
+        try {
+          const list = await client.listPlugins();
+          setPlugins(list?.items || []);
+        } catch {
+          setPlugins([]);
+        }
+      } else {
+        setPlugins(null);
+      }
+    } catch {
+      // ignore
     }
   };
 
@@ -55,6 +79,7 @@ function Dashboard({ client, onNavigate }: DashboardProps) {
     const cleanup = client.startPolling((data) => {
       setHealth(data);
       setError(null);
+      fetchConfig();
     });
     
     return cleanup;
@@ -253,6 +278,100 @@ function Dashboard({ client, onNavigate }: DashboardProps) {
                 </CardContent>
               </Card>
             </Tooltip>
+          </Grid>
+
+          {/* Config Overview */}
+          <Grid item xs={12} md={6}>
+            <Card>
+              <CardContent>
+                <Typography variant="h6" gutterBottom>Config Overview</Typography>
+                <Grid container spacing={1}>
+                  <Grid item xs={6}><Typography variant="body2" color="text.secondary">Backend</Typography></Grid>
+                  <Grid item xs={6}><Chip size="small" label={cfg?.backend || health.backend} /></Grid>
+                  <Grid item xs={6}><Typography variant="body2" color="text.secondary">Storage</Typography></Grid>
+                  <Grid item xs={6}><Chip size="small" label={cfg?.storage?.backend || 'local'} /></Grid>
+                  <Grid item xs={6}><Typography variant="body2" color="text.secondary">Require API Key</Typography></Grid>
+                  <Grid item xs={6}><Chip size="small" label={(cfg?.require_api_key ? 'Enabled' : 'Disabled')} color={cfg?.require_api_key ? 'success' : 'default'} variant="outlined" /></Grid>
+                  <Grid item xs={6}><Typography variant="body2" color="text.secondary">Enforce HTTPS</Typography></Grid>
+                  <Grid item xs={6}><Chip size="small" label={(cfg?.enforce_public_https ? 'Enabled' : 'Disabled')} color={cfg?.enforce_public_https ? 'success' : 'default'} variant="outlined" /></Grid>
+                  <Grid item xs={6}><Typography variant="body2" color="text.secondary">v3 Plugins</Typography></Grid>
+                  <Grid item xs={6}><Chip size="small" label={(cfg?.v3_plugins?.enabled ? `Enabled (${cfg?.v3_plugins?.active_outbound || '-'})` : 'Disabled')} color={cfg?.v3_plugins?.enabled ? 'success' : 'default'} variant="outlined" /></Grid>
+                </Grid>
+              </CardContent>
+            </Card>
+          </Grid>
+
+          {/* MCP Overview */}
+          <Grid item xs={12} md={6}>
+            <Card>
+              <CardContent>
+                <Typography variant="h6" gutterBottom>MCP Overview</Typography>
+                <Grid container spacing={1} alignItems="center">
+                  <Grid item xs={4}><Typography variant="body2" color="text.secondary">SSE</Typography></Grid>
+                  <Grid item xs={8}>
+                    <Chip size="small" label={cfg?.mcp?.sse_enabled ? 'Enabled' : 'Disabled'} color={cfg?.mcp?.sse_enabled ? 'success' : 'default'} variant="outlined" />
+                    {cfg?.mcp?.sse_enabled && (
+                      <Tooltip title="Copy SSE URL">
+                        <IconButton size="small" sx={{ ml: 1 }} onClick={() => navigator.clipboard.writeText(`${window.location.origin}${cfg?.mcp?.sse_path || '/mcp/sse'}`)}>
+                          <ContentCopyIcon fontSize="small" />
+                        </IconButton>
+                      </Tooltip>
+                    )}
+                  </Grid>
+                  <Grid item xs={4}><Typography variant="body2" color="text.secondary">HTTP</Typography></Grid>
+                  <Grid item xs={8}>
+                    <Chip size="small" label={cfg?.mcp?.http_enabled ? 'Enabled' : 'Disabled'} color={cfg?.mcp?.http_enabled ? 'success' : 'default'} variant="outlined" />
+                    {cfg?.mcp?.http_enabled && (
+                      <Tooltip title="Copy HTTP URL">
+                        <IconButton size="small" sx={{ ml: 1 }} onClick={() => navigator.clipboard.writeText(`${window.location.origin}${cfg?.mcp?.http_path || '/mcp/http'}`)}>
+                          <ContentCopyIcon fontSize="small" />
+                        </IconButton>
+                      </Tooltip>
+                    )}
+                  </Grid>
+                  <Grid item xs={4}><Typography variant="body2" color="text.secondary">OAuth</Typography></Grid>
+                  <Grid item xs={8}><Chip size="small" label={cfg?.mcp?.require_oauth ? 'Required' : 'Optional'} variant="outlined" /></Grid>
+                </Grid>
+              </CardContent>
+            </Card>
+          </Grid>
+
+          {/* Plugins (feature-gated) */}
+          {cfg?.v3_plugins?.enabled && (
+            <Grid item xs={12} md={6}>
+              <Card>
+                <CardContent>
+                  <Typography variant="h6" gutterBottom>Plugins</Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    Outbound: {cfg?.v3_plugins?.active_outbound || '-'} • Installed: {plugins?.length ?? 0}
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    Manifest warnings appear under Diagnostics.
+                  </Typography>
+                </CardContent>
+              </Card>
+            </Grid>
+          )}
+
+          {/* SDK & Quickstart */}
+          <Grid item xs={12} md={cfg?.v3_plugins?.enabled ? 6 : 12}>
+            <Card>
+              <CardContent>
+                <Typography variant="h6" gutterBottom>SDK & Quickstart</Typography>
+                <Typography variant="body2">Base URL: {window.location.origin}</Typography>
+                <Typography variant="body2" sx={{ mb: 1 }}>Header: X-API-Key: &lt;your key&gt;</Typography>
+                <Typography variant="body2" color="text.secondary">Node:</Typography>
+                <Box component="pre" sx={{ p: 1, bgcolor: 'background.default', borderRadius: 1, overflow: 'auto' }}>{`npm i faxbot@1.0.2
+node -e "(async()=>{const FaxbotClient=require('faxbot');const c=new FaxbotClient('${window.location.origin}','<key>');const r=await c.sendFax('+15551234567','/path/to/file.pdf');console.log(r)})()"`}</Box>
+                <Typography variant="body2" color="text.secondary">Python:</Typography>
+                <Box component="pre" sx={{ p: 1, bgcolor: 'background.default', borderRadius: 1, overflow: 'auto' }}>{`pip install faxbot==1.0.2
+python - <<'PY'
+from faxbot import FaxbotClient
+c=FaxbotClient('${window.location.origin}','<key>')
+print(c.send_fax('+15551234567','/path/to/file.pdf'))
+PY`}</Box>
+              </CardContent>
+            </Card>
           </Grid>
 
           {/* Last Updated */}

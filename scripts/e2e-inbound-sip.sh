@@ -7,7 +7,8 @@ source "$ROOT_DIR/scripts/load-env.sh"
 API_URL="${FAX_API_URL:-http://localhost:8080}"
 ADMIN_KEY="${API_KEY:-}"
 
-if [[ -z "${INBOUND_ENABLED:-}" || "${INBOUND_ENABLED,,}" != "true" ]]; then
+LOWER_INBOUND=$(printf %s "${INBOUND_ENABLED:-}" | tr '[:upper:]' '[:lower:]')
+if [[ -z "${INBOUND_ENABLED:-}" || "$LOWER_INBOUND" != "true" ]]; then
   echo "[x] INBOUND_ENABLED must be true in .env or exported" >&2
   exit 1
 fi
@@ -96,4 +97,3 @@ EOF
   fi
   sleep 5
 done
-

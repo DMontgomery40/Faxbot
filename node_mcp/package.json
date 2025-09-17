@@ -15,7 +15,8 @@
   "scripts": {
     "stdio": "node src/servers/stdio.js",
     "http": "node src/servers/http.js",
-    "sse": "node src/servers/sse.js"
+    "sse": "node src/servers/sse.js",
+    "ws": "node src/servers/ws.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.17.5",
@@ -28,6 +29,7 @@
     "cors": "^2.8.5",
     "morgan": "^1.10.0",
     "jose": "^5.2.4",
-    "dotenv": "^16.4.5"
+    "dotenv": "^16.4.5",
+    "ws": "^8.18.0"
   }
 }

@@ -22,6 +22,7 @@ const fs = require('fs');
 const path = require('path');
 const axios = require('axios');
 const FormData = require('form-data');
+const PluginManager = require('./plugins');
 
 class FaxbotClient {
   /**
@@ -38,6 +39,8 @@ class FaxbotClient {
       baseURL: this.baseUrl,
       timeout: 30000, // 30 seconds default timeout
     });
+    // Expose plugin manager (auto-detects server plugin support)
+    this.plugins = new PluginManager(this);
   }
 
   /**

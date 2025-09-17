@@ -12,6 +12,8 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import { downloadInboundPdf as apiDownloadInboundPdf } from '../shared/fax-client.js';
 import { faxTools, handleSendFaxTool, handleGetFaxStatusTool, handleGetFaxTool, handleListInboundTool, handleGetInboundPdfTool } from '../tools/fax-tools.js';
+import MCPToolRegistry from '../plugins/tool_registry.js';
+import StatusPlugin from '../plugins/examples/status_plugin.js';
 import { listPrompts } from '../prompts/index.js';
 
 function buildServer() {
@@ -20,10 +22,33 @@ function buildServer() {
     { capabilities: { tools: {}, prompts: {} } }
   );
 
+  // Plugin tool registry (MCP/UI helper plugins only)
+  const toolRegistry = new MCPToolRegistry();
+  // Register example plugin (extend with additional plugins later)
+  toolRegistry.registerPlugin(new StatusPlugin());
+
   // Tools
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: faxTools }));
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({
+    tools: [
+      ...faxTools,
+      ...toolRegistry.getAllTools().map(t => ({
+        name: `${t.pluginId}_${t.name}`,
+        description: t.description || 'Plugin tool',
+        inputSchema: t.parameters || { type: 'object' },
+      })),
+    ]
+  }));
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
+    // Plugin tool dispatch
+    if (toolRegistry.has(name)) {
+      try {
+        const result = await toolRegistry.executeTool(name, args);
+        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+      } catch (err) {
+        return { content: [{ type: 'text', text: `Error: ${err?.message || 'Unknown'}` }], isError: true };
+      }
+    }
     switch (name) {
       case 'send_fax':
         return await handleSendFaxTool(args);

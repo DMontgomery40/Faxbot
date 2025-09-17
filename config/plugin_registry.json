@@ -1,0 +1,67 @@
+{
+  "items": [
+    {
+      "id": "phaxio",
+      "name": "Phaxio Cloud Fax",
+      "version": "1.0.0",
+      "categories": ["outbound"],
+      "capabilities": ["send", "get_status", "webhook"],
+      "description": "Recommended for most users; HIPAA-ready with BAA.",
+      "learn_more": "https://docs.faxbot.net/providers/phaxio"
+    },
+    {
+      "id": "signalwire",
+      "name": "SignalWire (Compatibility Fax API)",
+      "version": "1.0.0",
+      "categories": ["outbound"],
+      "capabilities": ["send", "get_status", "webhook"],
+      "description": "Cloud fax using Twilio‑style Compatibility API.",
+      "learn_more": "https://dmontgomery40.github.io/Faxbot/backends/signalwire-setup.html"
+    },
+    {
+      "id": "freeswitch",
+      "name": "FreeSWITCH (Self‑Hosted)",
+      "version": "1.0.0",
+      "categories": ["outbound"],
+      "capabilities": ["send"],
+      "description": "Self‑hosted fax via mod_spandsp (txfax/rxfax).",
+      "learn_more": "https://dmontgomery40.github.io/Faxbot/backends/freeswitch-setup.html"
+    },
+    {
+      "id": "sinch",
+      "name": "Sinch Fax API v3",
+      "version": "1.0.0",
+      "categories": ["outbound"],
+      "capabilities": ["send", "get_status"],
+      "description": "Direct Sinch upload model for Phaxio by Sinch accounts.",
+      "learn_more": "https://docs.faxbot.net/providers/sinch"
+    },
+    {
+      "id": "sip",
+      "name": "SIP/Asterisk (Self-hosted)",
+      "version": "1.0.0",
+      "categories": ["outbound"],
+      "capabilities": ["send", "get_status"],
+      "description": "Advanced users; requires SIP trunk + T.38 and AMI.",
+      "learn_more": "https://docs.faxbot.net/providers/asterisk"
+    },
+    {
+      "id": "local",
+      "name": "Local Storage",
+      "version": "1.0.0",
+      "categories": ["storage"],
+      "capabilities": ["store", "retrieve", "delete"],
+      "description": "Local storage for development only.",
+      "learn_more": "https://docs.faxbot.net/storage/local"
+    },
+    {
+      "id": "s3",
+      "name": "S3 / S3-compatible Storage",
+      "version": "1.0.0",
+      "categories": ["storage"],
+      "capabilities": ["store", "retrieve", "delete"],
+      "description": "Production storage with SSE-KMS recommended for PHI.",
+      "learn_more": "https://docs.faxbot.net/storage/s3"
+    }
+  ]
+}

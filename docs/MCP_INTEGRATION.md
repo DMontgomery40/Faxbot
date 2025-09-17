@@ -15,7 +15,7 @@ Demo
 </video>
 
 What MCP is
-- MCP is a protocol. “SSE”, “HTTP”, and “stdio” are transports. Faxbot provides two server implementations (Node and Python), each capable of running on any of the transports. Pick a language (Node or Python) and a transport (stdio/HTTP/SSE) that fits your environment.
+- MCP is a protocol. “stdio”, “HTTP”, “SSE”, and “WebSocket” are transports. Faxbot provides two server implementations (Node and Python); Node supports stdio/HTTP/SSE/WebSocket and Python supports stdio/SSE. Pick a language and a transport that fits your environment.
 
 Quick Start (Claude/Cursor)
 - Add Faxbot MCP to your assistant config (stdio). Then call send_fax with a local filePath.
@@ -35,13 +35,13 @@ Claude Desktop or Cursor config example:
 ```
 
 Use these tools
-- send_fax: `{ to, filePath }` (stdio) or `{ to, fileContent, fileName, fileType }` (HTTP/SSE)
+- send_fax: `{ to, filePath }` (stdio) or `{ to, fileContent, fileName, fileType }` (HTTP/SSE/WebSocket)
 - get_fax_status: `{ jobId }`
 
 Important notes
 - File types: only PDF and TXT. Convert images (PNG/JPG) to PDF first.
 - Stdio: use `filePath` so the MCP reads the file locally and posts it to Faxbot.
-- HTTP/SSE: provide base64 content and keep files small (≤ ~100 KB). The HTTP/SSE MCP servers accept JSON payloads up to ~16 MB (base64 overhead included), while the Faxbot API enforces a 10 MB raw file size limit.
+- HTTP/SSE/WebSocket: provide base64 content or plugin tools; keep JSON payloads reasonable. Node MCP JSON handling is ~16 MB; the Faxbot API enforces a 10 MB raw file size limit.
 - Backends: works with any Faxbot backend (`phaxio`, `sinch`, or `sip`).
 
 Examples
@@ -113,6 +113,10 @@ Example `mcp.json` for MCP Inspector
     "faxbot-node-sse": {
       "type": "sse",
       "url": "http://localhost:3002/sse"
+    },
+    "faxbot-node-ws": {
+      "type": "websocket",
+      "url": "ws://localhost:3004"
     },
     "faxbot-py-stdio": {
       "type": "stdio",

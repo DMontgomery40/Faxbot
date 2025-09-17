@@ -53,6 +53,14 @@ class Settings(BaseModel):
     ami_username: str = Field(default_factory=lambda: os.getenv("ASTERISK_AMI_USERNAME", "api"))
     ami_password: str = Field(default_factory=lambda: os.getenv("ASTERISK_AMI_PASSWORD", "changeme"))
 
+    # FreeSWITCH ESL (preview)
+    fs_esl_host: str = Field(default_factory=lambda: os.getenv("FREESWITCH_ESL_HOST", "127.0.0.1"))
+    fs_esl_port: int = Field(default_factory=lambda: int(os.getenv("FREESWITCH_ESL_PORT", "8021")))
+    fs_esl_password: str = Field(default_factory=lambda: os.getenv("FREESWITCH_ESL_PASSWORD", "ClueCon"))
+    fs_gateway_name: str = Field(default_factory=lambda: os.getenv("FREESWITCH_GATEWAY_NAME", "gw_signalwire"))
+    fs_caller_id_number: str = Field(default_factory=lambda: os.getenv("FREESWITCH_CALLER_ID_NUMBER", "3035551234"))
+    fs_t38_enable: bool = Field(default_factory=lambda: os.getenv("FREESWITCH_T38_ENABLE", "true").lower() in {"1","true","yes"})
+
     # Phaxio Configuration (for cloud backend)
     phaxio_api_key: str = Field(default_factory=lambda: os.getenv("PHAXIO_API_KEY", ""))
     phaxio_api_secret: str = Field(default_factory=lambda: os.getenv("PHAXIO_API_SECRET", ""))
@@ -70,6 +78,21 @@ class Settings(BaseModel):
     sinch_project_id: str = Field(default_factory=lambda: os.getenv("SINCH_PROJECT_ID", ""))
     sinch_api_key: str = Field(default_factory=lambda: os.getenv("SINCH_API_KEY", os.getenv("PHAXIO_API_KEY", "")))
     sinch_api_secret: str = Field(default_factory=lambda: os.getenv("SINCH_API_SECRET", os.getenv("PHAXIO_API_SECRET", "")))
+
+    # SignalWire (Compatibility Fax API)
+    signalwire_space_url: str = Field(default_factory=lambda: os.getenv("SIGNALWIRE_SPACE_URL", ""))
+    signalwire_project_id: str = Field(default_factory=lambda: os.getenv("SIGNALWIRE_PROJECT_ID", ""))
+    signalwire_api_token: str = Field(default_factory=lambda: os.getenv("SIGNALWIRE_API_TOKEN", ""))
+    signalwire_fax_from_e164: str = Field(default_factory=lambda: os.getenv("SIGNALWIRE_FAX_FROM_E164", ""))
+    signalwire_sms_from_e164: str = Field(default_factory=lambda: os.getenv("SIGNALWIRE_SMS_FROM_E164", ""))
+    signalwire_status_callback_url: str = Field(default_factory=lambda: os.getenv("SIGNALWIRE_STATUS_CALLBACK_URL", os.getenv("SIGNALWIRE_CALLBACK_URL", "")))
+    signalwire_webhook_signing_key: str = Field(default_factory=lambda: os.getenv("SIGNALWIRE_WEBHOOK_SIGNING_KEY", ""))
+    signalwire_status_poll_seconds: int = Field(default_factory=lambda: int(os.getenv("SIGNALWIRE_STATUS_POLL_SECONDS", "0")))
+
+    # Documo (mFax) — direct upload flow (preview)
+    documo_api_key: str = Field(default_factory=lambda: os.getenv("DOCUMO_API_KEY", ""))
+    documo_base_url: str = Field(default_factory=lambda: os.getenv("DOCUMO_BASE_URL", "https://api.documo.com"))
+    documo_use_sandbox: bool = Field(default_factory=lambda: os.getenv("DOCUMO_SANDBOX", "false").lower() in {"1", "true", "yes"})
 
     # Fax presentation
     fax_header: str = Field(default_factory=lambda: os.getenv("FAX_HEADER", "Faxbot"))
@@ -132,6 +155,11 @@ class Settings(BaseModel):
     # MCP HTTP transport
     enable_mcp_http: bool = Field(default_factory=lambda: os.getenv("ENABLE_MCP_HTTP", "false").lower() in {"1","true","yes"})
     mcp_http_path: str = Field(default_factory=lambda: os.getenv("MCP_HTTP_PATH", "/mcp/http"))
+
+    # v3 Plugins (feature-gated)
+    feature_v3_plugins: bool = Field(default_factory=lambda: os.getenv("FEATURE_V3_PLUGINS", "false").lower() in {"1","true","yes"})
+    faxbot_config_path: str = Field(default_factory=lambda: os.getenv("FAXBOT_CONFIG_PATH", "config/faxbot.config.json"))
+    feature_plugin_install: bool = Field(default_factory=lambda: os.getenv("FEATURE_PLUGIN_INSTALL", "false").lower() in {"1","true","yes"})
 
 
 settings = Settings()

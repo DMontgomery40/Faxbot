@@ -15,7 +15,7 @@ def read_readme() -> str:
 
 setuptools.setup(
     name="faxbot",
-    version="1.0.3",
+    version="1.1.0",
     author="David Montgomery",
     author_email="dmontg@gmail.com",
     description="Faxbot API Client SDK for Python",

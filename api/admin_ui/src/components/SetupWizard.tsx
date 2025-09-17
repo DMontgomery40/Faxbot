@@ -25,6 +25,7 @@ import SecretInput from './common/SecretInput';
 interface SetupWizardProps {
   client: AdminAPIClient;
   onDone?: () => void;
+  docsBase?: string;
 }
 
 interface WizardConfig {
@@ -35,6 +36,8 @@ interface WizardConfig {
   sinch_project_id?: string;
   sinch_api_key?: string;
   sinch_api_secret?: string;
+  documo_api_key?: string;
+  documo_use_sandbox?: boolean;
   ami_host?: string;
   ami_port?: number;
   ami_username?: string;
@@ -46,7 +49,7 @@ interface WizardConfig {
   pdf_token_ttl_minutes?: number;
 }
 
-function SetupWizard({ client, onDone }: SetupWizardProps) {
+function SetupWizard({ client, onDone, docsBase }: SetupWizardProps) {
   const [activeStep, setActiveStep] = useState(0);
   const [config, setConfig] = useState<WizardConfig>({
     backend: 'phaxio',
@@ -140,6 +143,16 @@ function SetupWizard({ client, onDone }: SetupWizardProps) {
       lines.push(`SINCH_PROJECT_ID=${config.sinch_project_id || 'your_project_id_here'}`);
       lines.push(`SINCH_API_KEY=${config.sinch_api_key || 'your_api_key_here'}`);
       lines.push(`SINCH_API_SECRET=${config.sinch_api_secret || 'your_api_secret_here'}`);
+    } else if (config.backend === 'signalwire') {
+      lines.push('# SignalWire Compatibility Fax API');
+      lines.push(`SIGNALWIRE_SPACE_URL=${(config as any).signalwire_space_url || 'example.signalwire.com'}`);
+      lines.push(`SIGNALWIRE_PROJECT_ID=${(config as any).signalwire_project_id || 'your_project_id_here'}`);
+      lines.push(`SIGNALWIRE_API_TOKEN=${(config as any).signalwire_api_token || 'your_api_token_here'}`);
+      lines.push(`SIGNALWIRE_FAX_FROM_E164=${(config as any).signalwire_fax_from_e164 || '+15551234567'}`);
+      if (config.public_api_url) {
+        lines.push(`PUBLIC_API_URL=${config.public_api_url}`);
+        lines.push(`SIGNALWIRE_STATUS_CALLBACK_URL=${config.public_api_url}/signalwire-callback`);
+      }
     } else if (config.backend === 'sip') {
       lines.push('# SIP/Asterisk Configuration');
       lines.push(`ASTERISK_AMI_HOST=${config.ami_host || 'asterisk'}`);
@@ -147,6 +160,15 @@ function SetupWizard({ client, onDone }: SetupWizardProps) {
       lines.push(`ASTERISK_AMI_USERNAME=${config.ami_username || 'api'}`);
       lines.push(`ASTERISK_AMI_PASSWORD=${config.ami_password || 'change_me'}`);
       lines.push(`FAX_LOCAL_STATION_ID=${config.fax_station_id || '+15551234567'}`);
+    } else if (config.backend === 'freeswitch') {
+      lines.push('# FreeSWITCH Configuration');
+      lines.push(`FREESWITCH_GATEWAY_NAME=${(config as any).fs_gateway_name || 'gw_signalwire'}`);
+      lines.push(`FREESWITCH_CALLER_ID_NUMBER=${(config as any).fs_caller_id_number || '3035551234'}`);
+      lines.push('FREESWITCH_T38_ENABLE=true');
+    } else if (config.backend === 'documo') {
+      lines.push('# Documo (mFax) Configuration');
+      lines.push(`DOCUMO_API_KEY=${config.documo_api_key || 'your_api_key_here'}`);
+      lines.push(`DOCUMO_SANDBOX=${config.documo_use_sandbox ? 'true' : 'false'}`);
     }
 
     lines.push('');
@@ -177,12 +199,23 @@ function SetupWizard({ client, onDone }: SetupWizardProps) {
         payload.sinch_project_id = config.sinch_project_id;
         payload.sinch_api_key = config.sinch_api_key;
         payload.sinch_api_secret = config.sinch_api_secret;
+      } else if (config.backend === 'signalwire') {
+        (payload as any).signalwire_space_url = (config as any).signalwire_space_url;
+        (payload as any).signalwire_project_id = (config as any).signalwire_project_id;
+        (payload as any).signalwire_api_token = (config as any).signalwire_api_token;
+        (payload as any).signalwire_fax_from_e164 = (config as any).signalwire_fax_from_e164;
+      } else if (config.backend === 'documo') {
+        payload.documo_api_key = config.documo_api_key;
+        payload.documo_use_sandbox = config.documo_use_sandbox;
       } else if (config.backend === 'sip') {
         payload.ami_host = config.ami_host;
         payload.ami_port = config.ami_port;
         payload.ami_username = config.ami_username;
         payload.ami_password = config.ami_password;
         payload.fax_station_id = config.fax_station_id;
+      } else if (config.backend === 'freeswitch') {
+        (payload as any).fs_gateway_name = (config as any).fs_gateway_name;
+        (payload as any).fs_caller_id_number = (config as any).fs_caller_id_number;
       }
       await client.updateSettings(payload);
       await client.reloadSettings();
@@ -233,7 +266,10 @@ function SetupWizard({ client, onDone }: SetupWizardProps) {
               >
                 <MenuItem value="phaxio">Phaxio (Cloud - Recommended)</MenuItem>
                 <MenuItem value="sinch">Sinch Fax API v3 (Cloud)</MenuItem>
+                <MenuItem value="signalwire">SignalWire (Compatibility API)</MenuItem>
+                <MenuItem value="documo">Documo (mFax)</MenuItem>
                 <MenuItem value="sip">SIP/Asterisk (Self-hosted)</MenuItem>
+                <MenuItem value="freeswitch">FreeSWITCH (Self-hosted)</MenuItem>
               </Select>
             </FormControl>
             
@@ -246,6 +282,11 @@ function SetupWizard({ client, onDone }: SetupWizardProps) {
             {config.backend === 'sip' && (
               <Alert severity="warning" sx={{ mt: 2 }}>
                 Requires technical expertise: T.38 support, port forwarding, NAT configuration
+              </Alert>
+            )}
+            {config.backend === 'freeswitch' && (
+              <Alert severity="warning" sx={{ mt: 2 }}>
+                Requires FreeSWITCH with mod_spandsp and gateway; configure result hook to post back status
               </Alert>
             )}
           </Box>
@@ -334,6 +375,98 @@ function SetupWizard({ client, onDone }: SetupWizardProps) {
               </Grid>
             )}
 
+            {config.backend === 'signalwire' && (
+              <Grid container spacing={2}>
+                <Grid item xs={12}>
+                  <TextField
+                    label="Space URL"
+                    value={(config as any).signalwire_space_url || ''}
+                    onChange={(e) => handleConfigChange('signalwire_space_url', e.target.value)}
+                    fullWidth
+                  />
+                </Grid>
+                <Grid item xs={12}>
+                  <TextField
+                    label="Project ID"
+                    value={(config as any).signalwire_project_id || ''}
+                    onChange={(e) => handleConfigChange('signalwire_project_id', e.target.value)}
+                    fullWidth
+                  />
+                </Grid>
+                <Grid item xs={12}>
+                  <SecretInput
+                    label="API Token"
+                    value={(config as any).signalwire_api_token || ''}
+                    onChange={(value) => handleConfigChange('signalwire_api_token', value)}
+                    fullWidth
+                  />
+                </Grid>
+                <Grid item xs={12}>
+                  <TextField
+                    label="From (fax)"
+                    value={(config as any).signalwire_fax_from_e164 || ''}
+                    onChange={(e) => handleConfigChange('signalwire_fax_from_e164', e.target.value)}
+                    fullWidth
+                  />
+                </Grid>
+                <Grid item xs={12}>
+                  <Alert severity="info">
+                    Set PUBLIC_API_URL to an HTTPS URL so SignalWire can fetch MediaUrl tokens; callbacks hit /signalwire-callback.
+                  </Alert>
+                </Grid>
+              </Grid>
+            )}
+
+            {config.backend === 'freeswitch' && (
+              <Grid container spacing={2}>
+                <Grid item xs={12}>
+                  <Alert severity="info" sx={{ mb: 2 }}>
+                    FreeSWITCH uses originate &amp;txfax; add an api_hangup_hook to post results back to Faxbot after call ends.
+                  </Alert>
+                </Grid>
+                <Grid item xs={12}>
+                  <TextField label="Gateway Name" value={(config as any).fs_gateway_name || ''} onChange={(e)=>handleConfigChange('fs_gateway_name', e.target.value)} fullWidth />
+                </Grid>
+                <Grid item xs={12}>
+                  <TextField label="Caller ID Number" value={(config as any).fs_caller_id_number || ''} onChange={(e)=>handleConfigChange('fs_caller_id_number', e.target.value)} fullWidth />
+                </Grid>
+              </Grid>
+            )}
+
+            {config.backend === 'signalwire' && (
+              <Grid container spacing={2}>
+                <Grid item xs={12}>
+                  <TextField label="Space URL" value={(config as any).signalwire_space_url || ''} onChange={(e)=>handleConfigChange('signalwire_space_url', e.target.value)} fullWidth />
+                </Grid>
+                <Grid item xs={12}>
+                  <TextField label="Project ID" value={(config as any).signalwire_project_id || ''} onChange={(e)=>handleConfigChange('signalwire_project_id', e.target.value)} fullWidth />
+                </Grid>
+                <Grid item xs={12}>
+                  <SecretInput label="API Token" value={(config as any).signalwire_api_token || ''} onChange={(v)=>handleConfigChange('signalwire_api_token', v)} fullWidth />
+                </Grid>
+                <Grid item xs={12}>
+                  <TextField label="From (fax)" value={(config as any).signalwire_fax_from_e164 || ''} onChange={(e)=>handleConfigChange('signalwire_fax_from_e164', e.target.value)} fullWidth />
+                </Grid>
+                <Grid item xs={12}>
+                  <Alert severity="info">Set PUBLIC_API_URL to an HTTPS URL so SignalWire can fetch MediaUrl tokens; callbacks hit /signalwire-callback.</Alert>
+                </Grid>
+              </Grid>
+            )}
+
+            {config.backend === 'freeswitch' && (
+              <Grid container spacing={2}>
+                <Grid item xs={12}>
+                  <Alert severity="info">Faxbot will originate &amp;txfax via FreeSWITCH. Add an api_hangup_hook to post results back to the API.</Alert>
+                </Grid>
+                <Grid item xs={12}>
+                  <TextField label="Gateway Name" value={(config as any).fs_gateway_name || ''} onChange={(e)=>handleConfigChange('fs_gateway_name', e.target.value)} fullWidth />
+                </Grid>
+                <Grid item xs={12}>
+                  <TextField label="Caller ID Number" value={(config as any).fs_caller_id_number || ''} onChange={(e)=>handleConfigChange('fs_caller_id_number', e.target.value)} fullWidth />
+                </Grid>
+              </Grid>
+            )}
+
             {config.backend === 'sip' && (
               <Grid container spacing={2}>
                 <Grid item xs={12}>
@@ -418,11 +551,11 @@ function SetupWizard({ client, onDone }: SetupWizardProps) {
                     <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
                       Paste this URL into your {config.backend.toUpperCase()} console for inbound fax delivery.
                       {"  •  "}
-                      <a href="https://www.phaxio.com/docs/" target="_blank" rel="noreferrer">Phaxio Docs</a>
+                      <a href={`${docsBase || 'https://dmontgomery40.github.io/Faxbot'}/backends/phaxio-setup.html`} target="_blank" rel="noreferrer">Faxbot: Phaxio Setup</a>
                       {"  •  "}
                       <a href="https://developers.sinch.com/docs/fax/api-reference/" target="_blank" rel="noreferrer">Sinch Fax API Docs</a>
                       {"  •  "}
-                      <a href="https://github.com/" target="_blank" rel="noreferrer">Faxbot Docs</a>
+                      <a href={`${docsBase || 'https://dmontgomery40.github.io/Faxbot'}/`} target="_blank" rel="noreferrer">Faxbot Docs</a>
                     </Typography>
                   </Paper>
                 )}
@@ -552,7 +685,7 @@ function SetupWizard({ client, onDone }: SetupWizardProps) {
                       </Box>
                     ))}
                     <Typography variant="caption" color="text.secondary">
-                      Help: <a href="https://www.phaxio.com/docs/" target="_blank" rel="noreferrer">Phaxio</a> • <a href="https://developers.sinch.com/docs/fax/api-reference/" target="_blank" rel="noreferrer">Sinch Fax API</a>
+                      Help: <a href={`${docsBase || 'https://dmontgomery40.github.io/Faxbot'}/guides/phaxio-5-minutes/`} target="_blank" rel="noreferrer">Faxbot: Phaxio</a> • <a href={`${docsBase || 'https://dmontgomery40.github.io/Faxbot'}/guides/signalwire-setup/`} target="_blank" rel="noreferrer">Faxbot: SignalWire</a> • <a href={`${docsBase || 'https://dmontgomery40.github.io/Faxbot'}/guides/freeswitch-setup/`} target="_blank" rel="noreferrer">Faxbot: FreeSWITCH</a> • <a href="https://developers.sinch.com/docs/fax/api-reference/" target="_blank" rel="noreferrer">Sinch Fax API</a>
                     </Typography>
                   </Box>
                 )}

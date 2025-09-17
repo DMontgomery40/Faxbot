@@ -374,6 +374,16 @@ function JobsList({ client }: JobsListProps) {
               }
             }}>Download PDF</Button>
           )}
+          {selectedJob && (
+            <Button onClick={async () => {
+              try {
+                const updated = await client.refreshJob(selectedJob.id);
+                setSelectedJob(updated);
+              } catch (e) {
+                // ignore; could show an alert on failure
+              }
+            }}>Refresh Status</Button>
+          )}
           <Button onClick={handleCloseJobDetail}>Close</Button>
         </DialogActions>
       </Dialog>

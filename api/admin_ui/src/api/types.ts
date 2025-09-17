@@ -48,10 +48,24 @@ export interface Settings {
     verify_signature: boolean;
     configured: boolean;
   };
+  documo?: {
+    api_key: string;
+    base_url?: string;
+    sandbox?: boolean;
+    configured: boolean;
+  };
   sinch: {
     project_id: string;
     api_key: string;
     api_secret: string;
+    configured: boolean;
+  };
+  signalwire?: {
+    space_url: string;
+    project_id: string;
+    api_token: string;
+    from_fax: string;
+    callback_url?: string;
     configured: boolean;
   };
   sip: {
@@ -62,6 +76,13 @@ export interface Settings {
     ami_password_is_default: boolean;
     station_id: string;
     configured: boolean;
+  };
+  fs?: {
+    esl_host?: string;
+    esl_port?: number;
+    gateway_name?: string;
+    caller_id_number?: string;
+    t38_enable?: boolean;
   };
   security: {
     require_api_key: boolean;
@@ -97,6 +118,12 @@ export interface Settings {
       basic_auth_configured: boolean;
       hmac_configured: boolean;
     };
+  };
+  features?: {
+    v3_plugins: boolean;
+    fax_disabled: boolean;
+    inbound_enabled: boolean;
+    plugin_install: boolean;
   };
   limits: {
     max_file_size_mb: number;

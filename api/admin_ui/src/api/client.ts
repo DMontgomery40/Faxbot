@@ -249,6 +249,61 @@ export class AdminAPIClient {
     return res.json();
   }
 
+  // v3 Plugins (feature-gated)
+  async listPlugins(): Promise<{ items: any[] }> {
+    const res = await this.fetch('/plugins');
+    return res.json();
+  }
+
+  async getPluginConfig(pluginId: string): Promise<{ enabled: boolean; settings: any }> {
+    const res = await this.fetch(`/plugins/${encodeURIComponent(pluginId)}/config`);
+    return res.json();
+  }
+
+  async updatePluginConfig(pluginId: string, payload: { enabled?: boolean; settings?: Record<string, any> }): Promise<{ ok: boolean; path: string }> {
+    const res = await this.fetch(`/plugins/${encodeURIComponent(pluginId)}/config`, {
+      method: 'PUT',
+      body: JSON.stringify(payload || {}),
+    });
+    return res.json();
+  }
+
+  async getPluginRegistry(): Promise<{ items: any[] }> {
+    const res = await this.fetch('/plugin-registry');
+    return res.json();
+  }
+
+  // Manifest providers (admin-only)
+  async validateHttpManifest(payload: { manifest: any; credentials?: any; settings?: any; to?: string; file_url?: string; from_number?: string; render_only?: boolean }): Promise<any> {
+    const res = await this.fetch('/admin/plugins/http/validate', {
+      method: 'POST',
+      body: JSON.stringify(payload || {}),
+    });
+    return res.json();
+  }
+
+  async installHttpManifest(payload: { manifest: any }): Promise<{ ok: boolean; id: string; path: string }> {
+    const res = await this.fetch('/admin/plugins/http/install', {
+      method: 'POST',
+      body: JSON.stringify(payload || {}),
+    });
+    return res.json();
+  }
+
+  // Jobs admin helpers
+  async refreshJob(jobId: string): Promise<FaxJob> {
+    const res = await this.fetch(`/admin/fax-jobs/${encodeURIComponent(jobId)}/refresh`, { method: 'POST' });
+    return res.json();
+  }
+
+  async importHttpManifests(payload: { items?: any[]; markdown?: string }): Promise<{ ok: boolean; imported: any[]; errors: any[] }>{
+    const res = await this.fetch('/admin/plugins/http/import-manifests', {
+      method: 'POST',
+      body: JSON.stringify(payload || {}),
+    });
+    return res.json();
+  }
+
   // Polling helper
   startPolling(onUpdate: (data: HealthStatus) => void, intervalMs: number = 5000): () => void {
     let running = true;

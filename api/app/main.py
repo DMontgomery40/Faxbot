@@ -6,7 +6,7 @@ import asyncio
 import secrets
 from datetime import datetime, timedelta
 import tempfile
-from typing import Optional, Any, List, cast
+from typing import Optional, Any, List, Dict, cast
 import time
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks, Header, Depends, Query, Request, Response
 from fastapi.responses import FileResponse, JSONResponse
@@ -18,14 +18,26 @@ from .conversion import ensure_dir, txt_to_pdf, pdf_to_tiff
 from .ami import ami_client
 from .phaxio_service import get_phaxio_service
 from .sinch_service import get_sinch_service
+from .signalwire_service import get_signalwire_service
+from .freeswitch_service import originate_txfax, fs_cli_available
 import hmac
 import hashlib
 from urllib.parse import urlparse
 from fastapi.responses import StreamingResponse
+import json
 from .audit import init_audit_logger, audit_event
 from .audit import query_recent_logs
 from .storage import get_storage, reset_storage
 from .auth import verify_db_key, create_api_key, list_api_keys, revoke_api_key, rotate_api_key
+from .plugins.http_provider import HttpManifest, HttpProviderRuntime
+from .signalwire_service import get_signalwire_service
+
+# v3 plugins (feature-gated)
+try:
+    from .plugins.config_store import read_config as _read_cfg, write_config as _write_cfg  # type: ignore
+except Exception:  # pragma: no cover - optional
+    _read_cfg = None  # type: ignore
+    _write_cfg = None  # type: ignore
 from pydantic import BaseModel
 
 
@@ -218,9 +230,13 @@ async def on_startup():
     init_db()
     # Ensure data dir
     ensure_dir(settings.fax_data_dir)
-    # Validate Ghostscript availability for all backends (core dependency)
+    # Validate Ghostscript availability where required. For SIP backend, it's mandatory.
+    # For cloud backends (phaxio/sinch) tests and dev may proceed without gs; emit a warning.
     if shutil.which("gs") is None:
-        raise RuntimeError("Ghostscript (gs) not found. Install 'ghostscript' — it is required for fax file processing.")
+        if not settings.fax_disabled and settings.fax_backend == "sip":
+            raise RuntimeError("Ghostscript (gs) not found. Install 'ghostscript' — it is required for SIP/TIFF processing.")
+        else:
+            print("[warn] Ghostscript (gs) not found; continuing (not required for current backend)")
     # Security posture warnings
     if not settings.require_api_key and not settings.api_key and not settings.fax_disabled:
         print("[warn] API auth is not enforced (REQUIRE_API_KEY=false and API_KEY unset); /fax requests are unauthenticated. Set API_KEY or REQUIRE_API_KEY for production.")
@@ -312,6 +328,11 @@ def health_ready():
             backend_warnings.append("Invalid PUBLIC_API_URL")
     elif backend == "sinch":
         backend_ok = bool(settings.sinch_project_id and settings.sinch_api_key and settings.sinch_api_secret)
+    elif backend == "signalwire":
+        backend_ok = bool(settings.signalwire_space_url and settings.signalwire_project_id and settings.signalwire_api_token)
+    elif backend == "freeswitch":
+        # Presence checks only; fs_cli availability is recommended but not required at readiness stage
+        backend_ok = True
     elif backend == "sip":
         # Presence checks only; AMI connection is handled asynchronously
         if not settings.ami_password or settings.ami_password == "changeme":
@@ -491,6 +512,10 @@ def get_admin_config():
         "enforce_public_https": settings.enforce_public_https,
         "phaxio_verify_signature": settings.phaxio_verify_signature,
         "persisted_settings_enabled": (os.getenv("ENABLE_PERSISTED_SETTINGS", "false").lower() in {"1","true","yes"}),
+        "branding": {
+            "docs_base": os.getenv("DOCS_BASE_URL", "https://dmontgomery40.github.io/Faxbot"),
+            "logo_path": "/admin/ui/faxbot_full_logo.png",
+        },
         "mcp": {
             "sse_enabled": (os.getenv("ENABLE_MCP_SSE", "false").lower() in {"1","true","yes"}),
             "sse_path": settings.mcp_sse_path,
@@ -525,11 +550,21 @@ def get_admin_config():
         "backend_configured": {
             "phaxio": bool(settings.phaxio_api_key and settings.phaxio_api_secret),
             "sinch": bool(settings.sinch_project_id and settings.sinch_api_key and settings.sinch_api_secret),
+            "signalwire": bool(settings.signalwire_space_url and settings.signalwire_project_id and settings.signalwire_api_token),
+            "documo": bool(settings.documo_api_key),
             "sip_ami_configured": bool(settings.ami_username and settings.ami_password),
             "sip_ami_password_default": (settings.ami_password == "changeme"),
         },
         "public_api_url": settings.public_api_url,
     }
+    # v3 plugins status (feature-gated)
+    if settings.feature_v3_plugins:
+        cfg["v3_plugins"] = {
+            "enabled": True,
+            "active_outbound": settings.fax_backend,
+            "config_path": settings.faxbot_config_path,
+            "plugin_install_enabled": settings.feature_plugin_install,
+        }
     return cfg
 
 
@@ -548,11 +583,32 @@ def get_admin_settings():
             "verify_signature": settings.phaxio_verify_signature,
             "configured": bool(settings.phaxio_api_key and settings.phaxio_api_secret),
         },
+        "documo": {
+            "api_key": mask_secret(settings.documo_api_key),
+            "base_url": settings.documo_base_url,
+            "sandbox": settings.documo_use_sandbox,
+            "configured": bool(settings.documo_api_key),
+        },
         "sinch": {
             "project_id": settings.sinch_project_id,
             "api_key": mask_secret(settings.sinch_api_key),
             "api_secret": mask_secret(settings.sinch_api_secret),
             "configured": bool(settings.sinch_project_id and settings.sinch_api_key and settings.sinch_api_secret),
+        },
+        "signalwire": {
+            "space_url": settings.signalwire_space_url,
+            "project_id": settings.signalwire_project_id,
+            "api_token": mask_secret(settings.signalwire_api_token),
+            "from_fax": mask_phone(settings.signalwire_fax_from_e164),
+            "callback_url": settings.signalwire_status_callback_url,
+            "configured": bool(settings.signalwire_space_url and settings.signalwire_project_id and settings.signalwire_api_token),
+        },
+        "fs": {
+            "esl_host": settings.fs_esl_host,
+            "esl_port": settings.fs_esl_port,
+            "gateway_name": settings.fs_gateway_name,
+            "caller_id_number": settings.fs_caller_id_number,
+            "t38_enable": settings.fs_t38_enable,
         },
         "sip": {
             "ami_host": settings.ami_host,
@@ -686,6 +742,9 @@ class UpdateSettingsRequest(BaseModel):
     max_file_size_mb: Optional[int] = None
     enable_persisted_settings: Optional[bool] = None
     database_url: Optional[str] = None
+    # Feature flags
+    feature_v3_plugins: Optional[bool] = None
+    feature_plugin_install: Optional[bool] = None
     # MCP embedded SSE
     enable_mcp_sse: Optional[bool] = None
     require_mcp_oauth: Optional[bool] = None
@@ -704,6 +763,17 @@ class UpdateSettingsRequest(BaseModel):
     sinch_project_id: Optional[str] = None
     sinch_api_key: Optional[str] = None
     sinch_api_secret: Optional[str] = None
+
+    # SignalWire
+    signalwire_space_url: Optional[str] = None
+    signalwire_project_id: Optional[str] = None
+    signalwire_api_token: Optional[str] = None
+    signalwire_fax_from_e164: Optional[str] = None
+
+    # Documo
+    documo_api_key: Optional[str] = None
+    documo_base_url: Optional[str] = None
+    documo_use_sandbox: Optional[bool] = None
 
     # SIP/Asterisk
     ami_host: Optional[str] = None
@@ -764,6 +834,9 @@ def update_admin_settings(payload: UpdateSettingsRequest):
     _set_env_bool("FAX_DISABLED", payload.fax_disabled)
     _set_env_bool("ENABLE_PERSISTED_SETTINGS", payload.enable_persisted_settings)
     _set_env_opt("DATABASE_URL", payload.database_url)
+    # Feature flags
+    _set_env_bool("FEATURE_V3_PLUGINS", payload.feature_v3_plugins)
+    _set_env_bool("FEATURE_PLUGIN_INSTALL", payload.feature_plugin_install)
     # MCP SSE
     _set_env_bool("ENABLE_MCP_SSE", payload.enable_mcp_sse)
     _set_env_bool("REQUIRE_MCP_OAUTH", payload.require_mcp_oauth)
@@ -786,6 +859,17 @@ def update_admin_settings(payload: UpdateSettingsRequest):
     _set_env_opt("SINCH_PROJECT_ID", payload.sinch_project_id)
     _set_env_opt("SINCH_API_KEY", payload.sinch_api_key)
     _set_env_opt("SINCH_API_SECRET", payload.sinch_api_secret)
+
+    # SignalWire
+    _set_env_opt("SIGNALWIRE_SPACE_URL", payload.signalwire_space_url)
+    _set_env_opt("SIGNALWIRE_PROJECT_ID", payload.signalwire_project_id)
+    _set_env_opt("SIGNALWIRE_API_TOKEN", payload.signalwire_api_token)
+    _set_env_opt("SIGNALWIRE_FAX_FROM_E164", payload.signalwire_fax_from_e164)
+
+    # Documo (preview)
+    _set_env_opt("DOCUMO_API_KEY", payload.documo_api_key)
+    _set_env_opt("DOCUMO_BASE_URL", payload.documo_base_url)
+    _set_env_bool("DOCUMO_SANDBOX", payload.documo_use_sandbox)
 
     # SIP
     _set_env_opt("ASTERISK_AMI_HOST", payload.ami_host)
@@ -988,6 +1072,146 @@ def admin_db_status():
         "sqlite": sqlite_info,
     }
 
+# ====== Manifest Providers (HTTP) — install/validate (admin-only) ======
+
+def _providers_dir() -> str:
+    return os.getenv("FAXBOT_PROVIDERS_DIR", os.path.join(os.getcwd(), "config", "providers"))
+
+
+class ManifestIn(BaseModel):
+    manifest: dict
+
+
+@app.post("/admin/plugins/http/install", dependencies=[Depends(require_admin)])
+def install_http_manifest(payload: ManifestIn):
+    man = HttpManifest.from_dict(payload.manifest or {})
+    if not man.id:
+        raise HTTPException(400, detail="Manifest id is required")
+    dest_dir = os.path.join(_providers_dir(), man.id)
+    os.makedirs(dest_dir, exist_ok=True)
+    path = os.path.join(dest_dir, "manifest.json")
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(payload.manifest, f, indent=2)
+    except Exception as e:
+        raise HTTPException(500, detail=str(e))
+    return {"ok": True, "id": man.id, "path": path}
+
+
+class ManifestValidateIn(BaseModel):
+    manifest: dict
+    credentials: dict | None = None
+    settings: dict | None = None
+    to: str | None = None
+    file_url: str | None = None
+    from_number: str | None = None
+    render_only: bool | None = True
+
+
+@app.post("/admin/plugins/http/validate", dependencies=[Depends(require_admin)])
+async def validate_http_manifest(payload: ManifestValidateIn):
+    man = HttpManifest.from_dict(payload.manifest or {})
+    if not man.id:
+        raise HTTPException(400, detail="Manifest id required")
+    info = {
+        "id": man.id,
+        "name": man.name,
+        "actions": list(man.actions.keys()),
+        "allowed_domains": man.allowed_domains,
+    }
+    # Basic HIPAA posture checks
+    try:
+        if settings.enforce_public_https:
+            insecure = []
+            for k, act in (man.actions or {}).items():
+                try:
+                    from urllib.parse import urlparse as _p
+                    if act.url and _p(act.url).scheme == "http":
+                        insecure.append(k)
+                except Exception:
+                    pass
+            if insecure:
+                info["warnings"] = [f"Action(s) {', '.join(insecure)} use HTTP. HTTPS is required when ENFORCE_PUBLIC_HTTPS=true."]
+    except Exception:
+        pass
+    if not payload.render_only:
+        try:
+            rt = HttpProviderRuntime(man, payload.credentials or {}, payload.settings or {})
+            res = await rt.send_fax(to=payload.to or "+15551234567", file_url=payload.file_url, from_number=payload.from_number)
+            info["normalized"] = res
+        except Exception as e:
+            info["error"] = str(e)
+    return info
+
+
+class ImportManifestsIn(BaseModel):
+    items: Optional[List[dict]] = None
+    markdown: Optional[str] = None
+    source: Optional[str] = None  # 'repo_scrape' reads api_plugins_list.md from CWD
+
+
+def _extract_json_blocks(md: str) -> List[dict]:
+    blocks: List[dict] = []
+    try:
+        import re as _re
+        pattern = _re.compile(r"```(?:json)?\s*([\s\S]*?)```", _re.MULTILINE)
+        for m in pattern.finditer(md):
+            raw = m.group(1).strip()
+            if not raw:
+                continue
+            try:
+                obj = json.loads(raw)
+                if isinstance(obj, dict):
+                    blocks.append(obj)
+                elif isinstance(obj, list):
+                    for it in obj:
+                        if isinstance(it, dict):
+                            blocks.append(it)
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return blocks
+
+
+@app.post("/admin/plugins/http/import-manifests", dependencies=[Depends(require_admin)])
+def import_http_manifests(payload: ImportManifestsIn):
+    """Bulk import provider manifests from JSON list or scraped markdown.
+    For markdown, extracts JSON code fences and imports objects that look like manifests.
+    """
+    candidates: List[dict] = []
+    if (payload.source or "").lower() == "repo_scrape" and not payload.items and not payload.markdown:
+        try:
+            scrape_path = os.path.join(os.getcwd(), "api_plugins_list.md")
+            with open(scrape_path, "r", encoding="utf-8") as f:
+                payload.markdown = f.read()
+        except Exception as e:
+            raise HTTPException(404, detail=f"Scrape file not found or unreadable: {e}")
+    if payload.items:
+        for it in payload.items:
+            if isinstance(it, dict):
+                candidates.append(it)
+    if payload.markdown:
+        candidates.extend(_extract_json_blocks(payload.markdown or ""))
+    if not candidates:
+        raise HTTPException(400, detail="No manifest candidates provided")
+    imported: List[dict] = []
+    errors: List[dict] = []
+    for data in candidates:
+        try:
+            man = HttpManifest.from_dict(data)
+            if not man.id:
+                raise ValueError("manifest.id missing")
+            dest_dir = os.path.join(_providers_dir(), man.id)
+            os.makedirs(dest_dir, exist_ok=True)
+            path = os.path.join(dest_dir, "manifest.json")
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
+            imported.append({"id": man.id, "name": man.name, "path": path})
+        except Exception as e:
+            errors.append({"error": str(e), "data_keys": list(data.keys())[:5]})
+    return {"ok": True, "imported": imported, "errors": errors}
+
 
 class LogsQuery(BaseModel):
     q: Optional[str] = None
@@ -1065,6 +1289,12 @@ def admin_inbound_callbacks():
                 "hmac": bool(settings.sinch_inbound_hmac_secret),
             },
             "notes": "Set webhook in Sinch Fax console. Optionally use Basic and/or HMAC.",
+        })
+    elif backend == "signalwire":
+        out["callbacks"].append({
+            "name": "SignalWire Fax Status",
+            "url": f"{base}/signalwire-callback",
+            "notes": "Configure StatusCallback on send; this endpoint will process updates.",
         })
     elif backend == "sip":
         out["callbacks"].append({
@@ -1216,6 +1446,58 @@ def admin_get_job_pdf(job_id: str):
     )
 
 
+@app.post("/admin/fax-jobs/{job_id}/refresh", dependencies=[Depends(require_admin)])
+async def admin_refresh_job(job_id: str):
+    """Refresh job status via provider when supported (manifest providers preview).
+    For manifest-based outbound providers that define get_status, polls provider and updates DB.
+    """
+    # Load job
+    with SessionLocal() as db:
+        job = db.get(FaxJob, job_id)
+        if not job:
+            raise HTTPException(404, detail="Job not found")
+        backend = (job.backend or settings.fax_backend).lower()
+    # Only handle manifest-backed backends for now
+    mpath = os.path.join(os.getcwd(), "config", "providers", backend, "manifest.json")
+    if not (settings.feature_v3_plugins and os.path.exists(mpath)):
+        raise HTTPException(400, detail="Refresh not supported for this backend")
+    try:
+        with open(mpath, "r", encoding="utf-8") as f:
+            man = HttpManifest.from_dict(json.load(f))
+        p_settings: Dict[str, Any] = {}
+        try:
+            if _read_cfg is not None:
+                cfg = _read_cfg(settings.faxbot_config_path)
+                if getattr(cfg, "ok", False) and getattr(cfg, "data", None):
+                    ob = ((cfg.data.get("providers") or {}).get("outbound") or {})
+                    if (ob.get("plugin") or "").lower() == backend:
+                        p_settings = ob.get("settings") or {}
+        except Exception:
+            pass
+        rt = HttpProviderRuntime(man, {}, p_settings)
+        res = await rt.get_status(job_id=job_id, provider_sid=(job.provider_sid or None))
+        status = str(res.get("status") or job.status)
+        prov_sid = str(res.get("job_id") or job.provider_sid or "")
+        with SessionLocal() as db:
+            j = db.get(FaxJob, job_id)
+            if j:
+                j.status = status
+                if prov_sid:
+                    j.provider_sid = prov_sid
+                j.updated_at = datetime.utcnow()
+                db.add(j)
+                db.commit()
+        with SessionLocal() as db:
+            j2 = db.get(FaxJob, job_id)
+            if j2:
+                return _serialize_job(j2)
+        raise HTTPException(500, detail="Failed to load updated job")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, detail=str(e))
+
+
 @app.post("/admin/diagnostics/run", dependencies=[Depends(require_admin)])
 async def run_diagnostics():
     """Run bounded, non-destructive diagnostics for v1."""
@@ -1338,6 +1620,59 @@ async def run_diagnostics():
         "pdf_token_ttl": settings.pdf_token_ttl_minutes,
     }
 
+    # Plugins (v3) readiness
+    try:
+        plugins_info: dict[str, Any] = {
+            "v3_enabled": settings.feature_v3_plugins,
+            "plugin_install_enabled": settings.feature_plugin_install,
+            "active_outbound": settings.fax_backend,
+            "installed": 0,
+            "manifests": [],
+        }
+        issues_total = 0
+        if settings.feature_v3_plugins:
+            prov_dir = _providers_dir()
+            if os.path.isdir(prov_dir):
+                for pid in os.listdir(prov_dir):
+                    mpath = os.path.join(prov_dir, pid, "manifest.json")
+                    if not os.path.exists(mpath):
+                        continue
+                    try:
+                        with open(mpath, "r", encoding="utf-8") as f:
+                            mdata = json.load(f)
+                        man = HttpManifest.from_dict(mdata)
+                        actions = list((man.actions or {}).keys())
+                        issues: list[str] = []
+                        # Basic manifest checks
+                        if "send_fax" not in actions:
+                            issues.append("missing send_fax action")
+                        if not man.allowed_domains:
+                            issues.append("allowed_domains empty")
+                        # HTTPS check when enforcing HTTPS
+                        if settings.enforce_public_https:
+                            for name, act in (man.actions or {}).items():
+                                try:
+                                    pu = urlparse(act.url)
+                                    if pu.scheme == "http":
+                                        issues.append(f"action {name} uses http")
+                                except Exception:
+                                    issues.append(f"action {name} url invalid")
+                        plugins_info["manifests"].append({
+                            "id": man.id,
+                            "name": man.name,
+                            "actions": actions,
+                            "allowed_domains": man.allowed_domains,
+                            "issues": issues,
+                        })
+                        issues_total += len(issues)
+                    except Exception as e:
+                        plugins_info.setdefault("errors", []).append({"id": pid, "error": str(e)})
+            plugins_info["installed"] = len(plugins_info["manifests"])  # type: ignore[index]
+        diag["checks"]["plugins"] = plugins_info
+    except Exception:
+        # Don't break diagnostics on plugin scan errors
+        pass
+
     # Summary
     critical: list[str] = []
     warnings: list[str] = []
@@ -1362,6 +1697,15 @@ async def run_diagnostics():
         critical.append("Cannot write to fax data dir")
     if not sys.get("database_connected"):
         critical.append("Database connection failed")
+    # Plugin warnings
+    try:
+        p = diag["checks"].get("plugins", {})
+        if p.get("v3_enabled") and p.get("installed", 0) > 0:
+            for m in p.get("manifests", []):
+                for issue in (m.get("issues") or []):
+                    warnings.append(f"Plugin {m.get('id')}: {issue}")
+    except Exception:
+        pass
     diag["summary"] = {"healthy": len(critical) == 0, "critical_issues": critical, "warnings": warnings}
     return diag
 
@@ -1604,6 +1948,20 @@ async def send_fax(background: BackgroundTasks, to: str = Form(...), file: Uploa
         # Sinch cloud backend: no local TIFF; provider handles rasterization
         pages = None
         # nothing else to prepare here
+    elif settings.fax_backend == "signalwire":
+        # Cloud backend using Compatibility Fax API; no local TIFF
+        pages = None
+    elif settings.fax_backend == "freeswitch":
+        # Self-hosted FreeSWITCH requires TIFF
+        if settings.fax_disabled:
+            pages = 1
+            with open(tiff_path, "wb") as f:
+                f.write(b"TIFF_PLACEHOLDER")
+        else:
+            pages, _ = pdf_to_tiff(pdf_path, tiff_path)
+    elif settings.feature_v3_plugins and os.path.exists(os.path.join(os.getcwd(), "config", "providers", settings.fax_backend, "manifest.json")):
+        # Manifest providers: use tokenized PDF URL later; no TIFF
+        pages = None
     else:
         # SIP/Asterisk requires TIFF
         if settings.fax_disabled:
@@ -1636,6 +1994,12 @@ async def send_fax(background: BackgroundTasks, to: str = Form(...), file: Uploa
             background.add_task(_send_via_phaxio, job_id, to, pdf_path)
         elif settings.fax_backend == "sinch":
             background.add_task(_send_via_sinch, job_id, to, pdf_path)
+        elif settings.fax_backend == "signalwire":
+            background.add_task(_send_via_signalwire, job_id, to, pdf_path)
+        elif settings.fax_backend == "freeswitch":
+            background.add_task(_send_via_freeswitch, job_id, to, tiff_path)
+        elif settings.feature_v3_plugins and os.path.exists(os.path.join(os.getcwd(), "config", "providers", settings.fax_backend, "manifest.json")):
+            background.add_task(_send_via_manifest, job_id, to, pdf_path)
         else:
             background.add_task(_originate_job, job_id, to, tiff_path)
 
@@ -1995,6 +2359,144 @@ async def _send_via_sinch(job_id: str, to: str, pdf_path: str):
                 j.error = str(e)
                 j.updated_at = datetime.utcnow()
                 db.add(j)
+                db.commit()
+        audit_event("job_failed", job_id=job_id, error=str(e))
+
+
+async def _send_via_signalwire(job_id: str, to: str, pdf_path: str):
+    try:
+        svc = get_signalwire_service()
+        if not svc:
+            raise RuntimeError("SignalWire not configured")
+        # Tokenized PDF URL
+        pdf_token = secrets.token_urlsafe(32)
+        ttl = max(1, int(settings.pdf_token_ttl_minutes))
+        expires_at = datetime.utcnow() + timedelta(minutes=ttl)
+        media_url = f"{settings.public_api_url}/fax/{job_id}/pdf?token={pdf_token}"
+
+        with SessionLocal() as db:
+            job = db.get(FaxJob, job_id)
+            if job:
+                job.pdf_url = media_url
+                job.pdf_token = pdf_token
+                job.pdf_token_expires_at = expires_at
+                job.status = "in_progress"
+                job.updated_at = datetime.utcnow()
+                db.add(job)
+                db.commit()
+
+        audit_event("job_dispatch", job_id=job_id, method="signalwire")
+        res = await svc.send_fax(to, media_url, job_id)
+        prov_sid = str(res.get("provider_sid") or "")
+        status = str(res.get("status") or "queued")
+        with SessionLocal() as db:
+            job = db.get(FaxJob, job_id)
+            if job:
+                job.provider_sid = prov_sid
+                job.status = status
+                job.updated_at = datetime.utcnow()
+                db.add(job)
+                db.commit()
+    except Exception as e:
+        with SessionLocal() as db:
+            job = db.get(FaxJob, job_id)
+            if job:
+                job.status = "failed"
+                job.error = str(e)
+                job.updated_at = datetime.utcnow()
+                db.add(job)
+                db.commit()
+        audit_event("job_failed", job_id=job_id, error=str(e))
+
+
+async def _send_via_freeswitch(job_id: str, to: str, tiff_path: str):
+    try:
+        audit_event("job_dispatch", job_id=job_id, method="freeswitch")
+        if not fs_cli_available() and not settings.fax_disabled:
+            raise RuntimeError("fs_cli not available on API host; install FreeSWITCH client or configure ESL integration")
+        # Fire and forget
+        if not settings.fax_disabled:
+            res = originate_txfax(to, tiff_path, job_id)
+        else:
+            res = "disabled"
+        with SessionLocal() as db:
+            job = db.get(FaxJob, job_id)
+            if job:
+                j = cast(Any, job)
+                j.status = "in_progress"
+                j.provider_sid = (res or "").strip()
+                j.updated_at = datetime.utcnow()
+                db.add(j)
+                db.commit()
+    except Exception as e:
+        with SessionLocal() as db:
+            job = db.get(FaxJob, job_id)
+            if job:
+                j = cast(Any, job)
+                j.status = "failed"
+                j.error = str(e)
+                j.updated_at = datetime.utcnow()
+                db.add(j)
+                db.commit()
+        audit_event("job_failed", job_id=job_id, error=str(e))
+
+async def _send_via_manifest(job_id: str, to: str, pdf_path: str):
+    try:
+        pid = settings.fax_backend
+        mpath = os.path.join(os.getcwd(), "config", "providers", pid, "manifest.json")
+        with open(mpath, "r", encoding="utf-8") as f:
+            man = HttpManifest.from_dict(json.load(f))
+
+        # Generate tokenized PDF URL with expiry
+        pdf_token = secrets.token_urlsafe(32)
+        ttl = max(1, int(settings.pdf_token_ttl_minutes))
+        expires_at = datetime.utcnow() + timedelta(minutes=ttl)
+        pdf_url = f"{settings.public_api_url}/fax/{job_id}/pdf?token={pdf_token}"
+
+        with SessionLocal() as db:
+            job = db.get(FaxJob, job_id)
+            if job:
+                job.pdf_url = pdf_url
+                job.pdf_token = pdf_token
+                job.pdf_token_expires_at = expires_at
+                job.status = "in_progress"
+                job.updated_at = datetime.utcnow()
+                db.add(job)
+                db.commit()
+
+        # Load provider settings from config store if present
+        p_settings: Dict[str, Any] = {}
+        try:
+            if _read_cfg is not None:
+                cfg = _read_cfg(settings.faxbot_config_path)
+                if getattr(cfg, "ok", False) and getattr(cfg, "data", None):
+                    ob = ((cfg.data.get("providers") or {}).get("outbound") or {})
+                    if (ob.get("plugin") or "").lower() == pid.lower():
+                        p_settings = ob.get("settings") or {}
+        except Exception:
+            pass
+
+        audit_event("job_dispatch", job_id=job_id, method=f"manifest:{pid}")
+        rt = HttpProviderRuntime(man, {}, p_settings)
+        res = await rt.send_fax(to=to, file_url=pdf_url)
+        prov_sid = str(res.get("job_id") or "")
+        status = str(res.get("status") or "queued")
+        with SessionLocal() as db:
+            job = db.get(FaxJob, job_id)
+            if job:
+                job.provider_sid = prov_sid
+                job.status = status
+                job.updated_at = datetime.utcnow()
+                db.add(job)
+                db.commit()
+    except Exception as e:
+        with SessionLocal() as db:
+            job = db.get(FaxJob, job_id)
+            if job:
+                job.status = "failed"
+                job.error = str(e)
+                job.updated_at = datetime.utcnow()
+                db.add(job)
                 db.commit()
         audit_event("job_failed", job_id=job_id, error=str(e))
 
@@ -2483,3 +2985,356 @@ async def _handle_any_exc(request: Request, exc: Exception):
         pass
     # Return minimal detail to avoid leaking internals
     return JSONResponse({"detail": "Internal Server Error"}, status_code=500)
+
+
+# ===== v3 Plugins: discovery and config (feature-gated) =====
+def _plugins_disabled_response():
+    return JSONResponse({"detail": "v3 plugins feature disabled"}, status_code=404)
+
+
+def _installed_plugins() -> list[dict[str, Any]]:
+    """Return built-in provider manifests as plugin-like entries.
+
+    This is a minimal discovery surface to unblock Admin UI while
+    the full plugin system is developed.
+    """
+    current = settings.fax_backend
+    items = []
+    # Outbound providers
+    items.append({
+        "id": "phaxio",
+        "name": "Phaxio Cloud Fax",
+        "version": "1.0.0",
+        "categories": ["outbound"],
+        "capabilities": ["send", "get_status", "webhook"],
+        "enabled": (current == "phaxio"),
+        "configurable": True,
+    })
+    items.append({
+        "id": "sinch",
+        "name": "Sinch Fax API v3",
+        "version": "1.0.0",
+        "categories": ["outbound"],
+        "capabilities": ["send", "get_status"],
+        "enabled": (current == "sinch"),
+        "configurable": True,
+    })
+    items.append({
+        "id": "signalwire",
+        "name": "SignalWire (Compatibility Fax API)",
+        "version": "1.0.0",
+        "categories": ["outbound"],
+        "capabilities": ["send", "get_status", "webhook"],
+        "enabled": (current == "signalwire"),
+        "configurable": True,
+    })
+    items.append({
+        "id": "documo",
+        "name": "Documo mFax",
+        "version": "1.0.0",
+        "categories": ["outbound"],
+        "capabilities": ["send", "get_status"],
+        "enabled": (current == "documo"),
+        "configurable": True,
+    })
+    items.append({
+        "id": "sip",
+        "name": "SIP/Asterisk (Self-hosted)",
+        "version": "1.0.0",
+        "categories": ["outbound"],
+        "capabilities": ["send", "get_status"],
+        "enabled": (current == "sip"),
+        "configurable": True,
+    })
+    items.append({
+        "id": "freeswitch",
+        "name": "FreeSWITCH (Self-hosted)",
+        "version": "1.0.0",
+        "categories": ["outbound"],
+        "capabilities": ["send"],
+        "enabled": (current == "freeswitch"),
+        "configurable": True,
+    })
+    # Storage providers (inbound artifacts)
+    items.append({
+        "id": "local",
+        "name": "Local Storage",
+        "version": "1.0.0",
+        "categories": ["storage"],
+        "capabilities": ["store", "retrieve", "delete"],
+        "enabled": (settings.storage_backend == "local"),
+        "configurable": False,
+    })
+    items.append({
+        "id": "s3",
+        "name": "S3 / S3-compatible Storage",
+        "version": "1.0.0",
+        "categories": ["storage"],
+        "capabilities": ["store", "retrieve", "delete"],
+        "enabled": (settings.storage_backend == "s3"),
+        "configurable": True,
+    })
+    # Manifest providers: scan providers dir
+    try:
+        prov_dir = _providers_dir()
+        if os.path.isdir(prov_dir):
+            for pid in os.listdir(prov_dir):
+                mpath = os.path.join(prov_dir, pid, "manifest.json")
+                if os.path.exists(mpath):
+                    try:
+                        with open(mpath, "r", encoding="utf-8") as f:
+                            data = json.load(f)
+                        pid2 = str(data.get("id") or pid)
+                        name = str(data.get("name") or pid2)
+                        items.append({
+                            "id": pid2,
+                            "name": name,
+                            "version": "1.0.0",
+                            "categories": ["outbound"],
+                            "capabilities": ["send", "get_status"],
+                            "enabled": (current == pid2),
+                            "configurable": True,
+                        })
+                    except Exception:
+                        pass
+    except Exception:
+        pass
+    return items
+
+
+@app.get("/plugins", dependencies=[Depends(require_admin)])
+def list_plugins():
+    if not settings.feature_v3_plugins:
+        return _plugins_disabled_response()
+    return {"items": _installed_plugins()}
+
+
+@app.get("/plugins/{plugin_id}/config", dependencies=[Depends(require_admin)])
+def get_plugin_config(plugin_id: str):
+    if not settings.feature_v3_plugins:
+        return _plugins_disabled_response()
+    pid = plugin_id.lower()
+    # Effective config from current settings (sanitized)
+    if pid == "phaxio":
+        return {
+            "enabled": settings.fax_backend == "phaxio",
+            "settings": {
+                "callback_url": settings.phaxio_status_callback_url,
+                "verify_signature": settings.phaxio_verify_signature,
+                "configured": bool(settings.phaxio_api_key and settings.phaxio_api_secret),
+            },
+        }
+    if pid == "sinch":
+        return {
+            "enabled": settings.fax_backend == "sinch",
+            "settings": {
+                "project_id": settings.sinch_project_id,
+                "configured": bool(settings.sinch_project_id and settings.sinch_api_key and settings.sinch_api_secret),
+            },
+        }
+    if pid == "signalwire":
+        return {
+            "enabled": settings.fax_backend == "signalwire",
+            "settings": {
+                "space_url": settings.signalwire_space_url,
+                "project_id": settings.signalwire_project_id,
+                "configured": bool(settings.signalwire_space_url and settings.signalwire_project_id and settings.signalwire_api_token),
+            },
+        }
+    if pid == "documo":
+        return {
+            "enabled": settings.fax_backend == "documo",
+            "settings": {
+                "api_key": "***" if settings.documo_api_key else "",
+                "base_url": settings.documo_base_url,
+                "sandbox": settings.documo_use_sandbox,
+                "configured": bool(settings.documo_api_key),
+            },
+        }
+    if pid == "sip":
+        return {
+            "enabled": settings.fax_backend == "sip",
+            "settings": {
+                "ami_host": settings.ami_host,
+                "ami_port": settings.ami_port,
+                "ami_username": settings.ami_username,
+                "ami_password_default": settings.ami_password == "changeme",
+            },
+        }
+    if pid == "freeswitch":
+        return {
+            "enabled": settings.fax_backend == "freeswitch",
+            "settings": {
+                "esl_host": settings.fs_esl_host,
+                "esl_port": settings.fs_esl_port,
+                "gateway_name": settings.fs_gateway_name,
+            },
+        }
+    if pid == "s3":
+        return {
+            "enabled": settings.storage_backend == "s3",
+            "settings": {
+                "bucket": settings.s3_bucket,
+                "region": settings.s3_region,
+                "prefix": settings.s3_prefix,
+                "endpoint_url": settings.s3_endpoint_url,
+                "kms_key_id": settings.s3_kms_key_id,
+            },
+        }
+    if pid == "local":
+        return {"enabled": settings.storage_backend == "local", "settings": {}}
+    # Manifest providers: return minimal config presence
+    mpath = os.path.join(_providers_dir(), pid, "manifest.json")
+    if os.path.exists(mpath):
+        return {
+            "enabled": settings.fax_backend == pid,
+            "settings": {},
+        }
+    raise HTTPException(404, detail="Plugin not found")
+
+
+class UpdatePluginConfigIn(BaseModel):
+    enabled: Optional[bool] = None
+    settings: Optional[dict[str, Any]] = None
+
+
+@app.put("/plugins/{plugin_id}/config", dependencies=[Depends(require_admin)])
+def update_plugin_config(plugin_id: str, payload: UpdatePluginConfigIn):
+    if not settings.feature_v3_plugins:
+        return _plugins_disabled_response()
+    if _read_cfg is None or _write_cfg is None:
+        raise HTTPException(500, detail="Config store unavailable")
+    cfg_res = _read_cfg(settings.faxbot_config_path)
+    if not cfg_res.ok or cfg_res.data is None:
+        raise HTTPException(500, detail=cfg_res.error or "Failed to read config")
+    data = cfg_res.data
+    pid = plugin_id.lower()
+    # Minimal mapping for outbound/storage
+    if pid in {"phaxio", "sinch", "sip", "signalwire", "freeswitch"}:
+        data.setdefault("providers", {}).setdefault("outbound", {})
+        data["providers"]["outbound"]["plugin"] = pid
+        data["providers"]["outbound"]["enabled"] = bool(payload.enabled) if payload.enabled is not None else True
+        data["providers"]["outbound"]["settings"] = payload.settings or data["providers"]["outbound"].get("settings", {})
+    elif pid in {"local", "s3"}:
+        data.setdefault("providers", {}).setdefault("storage", {})
+        data["providers"]["storage"]["plugin"] = pid
+        data["providers"]["storage"]["enabled"] = bool(payload.enabled) if payload.enabled is not None else True
+        data["providers"]["storage"]["settings"] = payload.settings or data["providers"]["storage"].get("settings", {})
+    else:
+        # Accept unknown outbound plugin ids if a manifest exists
+        mpath = os.path.join(_providers_dir(), pid, "manifest.json")
+        if not os.path.exists(mpath):
+            raise HTTPException(404, detail="Plugin not found")
+        data.setdefault("providers", {}).setdefault("outbound", {})
+        data["providers"]["outbound"]["plugin"] = pid
+        data["providers"]["outbound"]["enabled"] = bool(payload.enabled) if payload.enabled is not None else True
+        data["providers"]["outbound"]["settings"] = payload.settings or data["providers"]["outbound"].get("settings", {})
+    wr = _write_cfg(settings.faxbot_config_path, data)
+    if not wr.ok:
+        raise HTTPException(500, detail=wr.error or "Failed to write config")
+    # Note: applying new config at runtime is future work; for now we persist only.
+    return {"ok": True, "path": wr.path}
+
+
+@app.get("/plugin-registry")
+def plugin_registry():
+    if not settings.feature_v3_plugins:
+        return _plugins_disabled_response()
+    # Try to load curated registry file; fallback to built-in list
+    try:
+        reg_path = os.getenv("PLUGIN_REGISTRY_PATH", os.path.join(os.getcwd(), "config", "plugin_registry.json"))
+        if os.path.exists(reg_path):
+            import json as _json
+            with open(reg_path, "r", encoding="utf-8") as f:
+                return _json.load(f)
+    except Exception:
+        pass
+    return {"items": _installed_plugins(), "note": "default registry"}
+@app.post("/signalwire-callback")
+async def signalwire_callback(request: Request, job_id: Optional[str] = Query(default=None)):
+    """SignalWire Compatibility Fax Status callback handler.
+    Verifies optional HMAC when configured and updates job status.
+    """
+    raw = await request.body()
+    # Optional HMAC verification; header name may vary by configuration
+    key = (settings.signalwire_webhook_signing_key or '').encode()
+    if key:
+        provided = request.headers.get('X-SignalWire-Signature') or ''
+        try:
+            digest = hmac.new(key, raw, hashlib.sha256).hexdigest()
+            if not hmac.compare_digest(digest, provided.strip().lower()):
+                raise HTTPException(401, detail="Invalid signature")
+        except Exception:
+            raise HTTPException(401, detail="Invalid signature")
+    # Parse form or JSON
+    payload: dict[str, Any]
+    try:
+        form = await request.form()
+        payload = dict(form)
+    except Exception:
+        try:
+            payload = await request.json()
+        except Exception:
+            payload = {}
+    svc = get_signalwire_service()
+    if not svc:
+        return {"ok": True}
+    res = await svc.handle_status_callback(payload)
+    prov_sid = str(res.get('provider_sid') or '')
+    status = str(res.get('status') or '')
+    # Update job by job_id if present, else by provider_sid best-effort
+    with SessionLocal() as db:
+        job = None
+        if job_id:
+            job = db.get(FaxJob, str(job_id))
+        if not job and prov_sid:
+            job = db.query(FaxJob).filter(FaxJob.provider_sid == prov_sid).first()
+        if job:
+            job.status = status or job.status
+            job.updated_at = datetime.utcnow()
+            db.add(job)
+            db.commit()
+            audit_event("job_updated", job_id=job.id, status=job.status, provider="signalwire")
+    return {"ok": True}
+class FSOutboundResultIn(BaseModel):
+    job_id: Optional[str] = None
+    fax_status: Optional[str] = None
+    fax_result_text: Optional[str] = None
+    fax_result_code: Optional[str] = None
+    fax_document_transferred_pages: Optional[int] = None
+    uuid: Optional[str] = None
+
+
+@app.post("/_internal/freeswitch/outbound_result")
+def freeswitch_outbound_result(payload: FSOutboundResultIn, x_internal_secret: Optional[str] = Header(default=None)):
+    # Reuse Asterisk secret for simplicity; can introduce a dedicated FS secret later
+    secret = settings.asterisk_inbound_secret
+    if not secret:
+        raise HTTPException(401, detail="Internal secret not configured")
+    if x_internal_secret != secret:
+        raise HTTPException(401, detail="Invalid internal secret")
+    if not payload.job_id:
+        raise HTTPException(400, detail="Missing job_id")
+    status_map = {
+        'SUCCESS': 'SUCCESS',
+        'OK': 'SUCCESS',
+        'FAILED': 'FAILED',
+        'ERROR': 'FAILED',
+        'FAIL': 'FAILED',
+    }
+    status = (payload.fax_status or payload.fax_result_text or '').upper()
+    internal = status_map.get(status, 'FAILED' if 'FAIL' in status else 'in_progress')
+    with SessionLocal() as db:
+        job = db.get(FaxJob, str(payload.job_id))
+        if not job:
+            raise HTTPException(404, detail="Job not found")
+        job.status = internal
+        if payload.fax_document_transferred_pages:
+            job.pages = payload.fax_document_transferred_pages
+        if payload.fax_result_text:
+            job.error = None if internal == 'SUCCESS' else payload.fax_result_text
+        job.updated_at = datetime.utcnow()
+        db.add(job)
+        db.commit()
+    audit_event("job_updated", job_id=str(payload.job_id), status=internal, provider="freeswitch")
+    return {"ok": True}

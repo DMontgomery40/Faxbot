@@ -4,6 +4,10 @@ import react from '@vitejs/plugin-react'
 export default defineConfig({
   plugins: [react()],
   base: '/admin/ui/',
+  css: {
+    // Prevent PostCSS from walking up outside the project (avoids permission errors)
+    postcss: {}
+  },
   build: {
     outDir: 'dist',
     assetsDir: 'assets',
