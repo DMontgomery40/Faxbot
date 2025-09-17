@@ -155,7 +155,32 @@ SINCH_API_SECRET=...
 # SINCH_BASE_URL=https://us.fax.api.sinch.com/v3
 ```
 
-### 4. Test/Development Backend — FOR DEVELOPMENT ONLY
+### 4. SignalWire Fax (Cloud) — PREVIEW
+Use when you operate within SignalWire and prefer their Fax APIs.
+
+```env
+FAX_BACKEND=signalwire
+SIGNALWIRE_SPACE_URL=https://<space>.signalwire.com
+SIGNALWIRE_PROJECT_ID=...
+SIGNALWIRE_API_TOKEN=...
+SIGNALWIRE_FAX_FROM_E164=+15551234567
+# Optional outbound status callback
+SIGNALWIRE_STATUS_CALLBACK_URL=https://yourdomain.com/signalwire-callback
+# Optional webhook verification
+SIGNALWIRE_WEBHOOK_SIGNING_KEY=...
+```
+
+### 5. FreeSWITCH (Self-Hosted) — PREVIEW
+Programmatic originate via `fs_cli` on the API host or ESL integration.
+
+```env
+FAX_BACKEND=freeswitch
+FREESWITCH_GATEWAY_NAME=gw_signalwire
+```
+
+- Internal result hook (maps to job update): `POST /_internal/freeswitch/outbound_result` with `X-Internal-Secret: <ASTERISK_INBOUND_SECRET>` and JSON `{ job_id, fax_status, fax_result_text?, fax_document_transferred_pages?, uuid? }`.
+
+### 6. Test/Development Backend — FOR DEVELOPMENT ONLY
 **When to use:** Development, testing, CI/CD pipelines  
 **Configuration:** `FAX_DISABLED=true`
 
@@ -184,6 +209,11 @@ Notes
 - The WebSocket helper mirrors tool calls for convenience and is not a formal MCP transport.
 - Prefer stdio + `filePath` for desktop assistants.
 
+Admin Console Terminal (local-only)
+- WebSocket endpoint: `/admin/terminal` (admin auth required).
+- Backend uses pexpect to provide a TTY inside the API container; same privileges as the service user.
+- Gate UI access with `ENABLE_LOCAL_ADMIN=true`; avoid exposing through proxies.
+
 ## The Two SDKs: Node.js and Python
 
 ### Identical API Surface:
@@ -206,7 +236,7 @@ client.check_health()
 ```
 
 **Both SDKs:**
-- Version 1.0.2 (synchronized releases)
+- Version 1.1.0 (synchronized releases)
 - Support PDF and TXT files only
 - Identical error handling (400/401/413/415/404)
 - Optional API key authentication
@@ -300,8 +330,9 @@ v3 plugin note
 ```
 POST /fax              # Send fax (multipart: to, file)
 GET  /fax/{id}         # Check fax status  
-GET  /fax/{id}/pdf     # Tokenized PDF access (for Phaxio)
+GET  /fax/{id}/pdf     # Tokenized PDF access (for cloud backends)
 POST /phaxio-callback  # Phaxio webhook (status updates)
+POST /signalwire-callback  # SignalWire status callback (optional HMAC verification)
 GET  /health           # Service health check
 ```
 
@@ -311,7 +342,8 @@ GET  /health           # Service health check
 - Jobs: queue status, progress, pages, failures with contextual remediation links.
 - Keys: API key management (mint/list/rotate/delete) with copy-to-clipboard UX.
 - Inbound (when enabled): listing, detail, secure download, retention status.
-- Plugins (v3): list native + manifest providers; enable/disable outbound; schema‑driven config forms; curated registry search. Plugin Builder (preview): create/edit HTTP manifest providers and validate via dry‑run.
+- Plugins (v3): list native + manifest providers; enable/disable outbound; schema‑driven config forms; curated registry search.
+- Tools group: Terminal (local-only), Diagnostics, Logs, Scripts & Tests (backend-aware quick runs), Plugins.
 
 ### MCP Tools (v3 parity)
 - send_fax
@@ -322,6 +354,11 @@ GET  /health           # Service health check
 - get_inbound_pdf: `{ inboundId, asBase64? }` (guarded by scopes/limits)
 
 No OCR tools (`faxbot_pdf` removed by design). Node and Python MCP servers must expose the same tool set for a given config.
+
+Admin Actions (container checks)
+- UI exposes an allowlisted set of safe container checks under Tools → Scripts & Tests.
+- Endpoints: `GET /admin/actions` (list), `POST /admin/actions/run` (execute), admin-only.
+- Enabled only for local admin (gated by `ENABLE_ADMIN_EXEC` and `ENABLE_LOCAL_ADMIN`). No arbitrary commands allowed.
 
 ### Typical Workflows
 
