@@ -1,8 +1,6 @@
 import { useState, useEffect } from 'react';
 import {
   Box,
-  Card,
-  CardContent,
   Typography,
   Table,
   TableBody,
@@ -11,8 +9,6 @@ import {
   TableHead,
   TableRow,
   Button,
-  TextField,
-  Grid,
   Alert,
   Dialog,
   DialogTitle,
@@ -20,15 +16,36 @@ import {
   DialogActions,
   Chip,
   CircularProgress,
+  Paper,
+  IconButton,
+  Tooltip,
+  useMediaQuery,
+  useTheme,
+  Stack,
+  Card,
+  CardContent,
+  Fade,
+  Grow,
+  Snackbar,
 } from '@mui/material';
 import {
   Add as AddIcon,
   Refresh as RefreshIcon,
   Delete as DeleteIcon,
-  Cached as CachedIcon,
+  Cached as RotateIcon,
+  ContentCopy as CopyIcon,
+  VpnKey as KeyIcon,
+  Security as SecurityIcon,
+  Person as PersonIcon,
+  CalendarToday as DateIcon,
+  CheckCircle as SuccessIcon,
 } from '@mui/icons-material';
 import AdminAPIClient from '../api/client';
 import type { ApiKey } from '../api/types';
+import {
+  ResponsiveTextField,
+  ResponsiveFormSection,
+} from './common/ResponsiveFormFields';
 
 interface ApiKeysProps {
   client: AdminAPIClient;
@@ -40,11 +57,16 @@ function ApiKeys({ client }: ApiKeysProps) {
   const [error, setError] = useState<string | null>(null);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [newKeyResult, setNewKeyResult] = useState<string | null>(null);
+  const [copySnackbar, setCopySnackbar] = useState(false);
   const [formData, setFormData] = useState({
     name: '',
     owner: '',
     scopes: 'fax:send,fax:read',
   });
+
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('md'));
+  const isSmallMobile = useMediaQuery(theme.breakpoints.down('sm'));
 
   const fetchKeys = async () => {
     try {
@@ -80,22 +102,22 @@ function ApiKeys({ client }: ApiKeysProps) {
     }
   };
 
-  const handleRotateKey = async (keyId: string) => {
-    if (!confirm(`Rotate key ${keyId}? The old token will be invalidated.`)) {
+  const handleRotateKey = async (keyId: string, keyName?: string) => {
+    if (!confirm(`Rotate key "${keyName || keyId}"? The old token will be invalidated.`)) {
       return;
     }
     
     try {
       const result = await client.rotateApiKey(keyId);
-      alert(`New token (copy now):\n${result.token}`);
+      setNewKeyResult(result.token);
       await fetchKeys();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to rotate API key');
     }
   };
 
-  const handleRevokeKey = async (keyId: string) => {
-    if (!confirm(`Revoke key ${keyId}? This action cannot be undone.`)) {
+  const handleRevokeKey = async (keyId: string, keyName?: string) => {
+    if (!confirm(`Revoke key "${keyName || keyId}"? This action cannot be undone.`)) {
       return;
     }
     
@@ -110,29 +132,143 @@ function ApiKeys({ client }: ApiKeysProps) {
   const formatDate = (dateString?: string) => {
     if (!dateString) return '-';
     try {
-      return new Date(dateString).toLocaleString();
+      const date = new Date(dateString);
+      if (isSmallMobile) {
+        return date.toLocaleDateString();
+      }
+      return date.toLocaleString();
     } catch {
       return dateString;
     }
   };
 
-  const copyToClipboard = (text: string) => {
-    navigator.clipboard.writeText(text);
+  const copyToClipboard = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopySnackbar(true);
+    } catch (err) {
+      // Fallback for older browsers
+      const textArea = document.createElement("textarea");
+      textArea.value = text;
+      document.body.appendChild(textArea);
+      textArea.select();
+      document.execCommand('copy');
+      document.body.removeChild(textArea);
+      setCopySnackbar(true);
+    }
   };
+
+  const MobileKeyCard = ({ apiKey }: { apiKey: ApiKey }) => (
+    <Grow in timeout={300}>
+      <Card sx={{ mb: 2, borderRadius: 2 }}>
+        <CardContent>
+          <Stack spacing={2}>
+            {/* Header */}
+            <Box>
+              <Typography variant="h6" fontWeight={600}>
+                {apiKey.name || 'Unnamed Key'}
+              </Typography>
+              <Typography variant="caption" color="text.secondary">
+                ID: {apiKey.key_id}
+              </Typography>
+            </Box>
+
+            {/* Details */}
+            <Stack spacing={1}>
+              {apiKey.owner && (
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <PersonIcon fontSize="small" color="action" />
+                  <Typography variant="body2">{apiKey.owner}</Typography>
+                </Box>
+              )}
+              
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <DateIcon fontSize="small" color="action" />
+                <Typography variant="body2">
+                  Created: {formatDate(apiKey.created_at)}
+                </Typography>
+              </Box>
+
+              {apiKey.last_used_at && (
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <DateIcon fontSize="small" color="action" />
+                  <Typography variant="body2">
+                    Last used: {formatDate(apiKey.last_used_at)}
+                </Typography>
+                </Box>
+              )}
+            </Stack>
+
+            {/* Scopes */}
+            <Box>
+              <Typography variant="caption" color="text.secondary" sx={{ mb: 0.5, display: 'block' }}>
+                Permissions:
+              </Typography>
+              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+                {apiKey.scopes?.map((scope) => (
+                  <Chip
+                    key={scope}
+                    label={scope}
+                    size="small"
+                    variant="outlined"
+                    sx={{ borderRadius: 1 }}
+                  />
+                ))}
+              </Box>
+            </Box>
+
+            {/* Actions */}
+            <Box sx={{ display: 'flex', gap: 1, pt: 1 }}>
+              <Button
+                variant="outlined"
+                size="small"
+                startIcon={<RotateIcon />}
+                onClick={() => handleRotateKey(apiKey.key_id, apiKey.name)}
+                sx={{ flex: 1 }}
+              >
+                Rotate
+              </Button>
+              <Button
+                variant="outlined"
+                size="small"
+                color="error"
+                startIcon={<DeleteIcon />}
+                onClick={() => handleRevokeKey(apiKey.key_id, apiKey.name)}
+                sx={{ flex: 1 }}
+              >
+                Revoke
+              </Button>
+            </Box>
+          </Stack>
+        </CardContent>
+      </Card>
+    </Grow>
+  );
 
   return (
     <Box>
-      <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
+      <Box 
+        display="flex" 
+        justifyContent="space-between" 
+        alignItems={{ xs: 'flex-start', sm: 'center' }}
+        flexDirection={{ xs: 'column', sm: 'row' }}
+        gap={2}
+        mb={3}
+      >
         <Typography variant="h4" component="h1">
           API Keys
         </Typography>
-        <Box>
+        <Box display="flex" gap={1}>
           <Button
             variant="outlined"
             startIcon={<RefreshIcon />}
             onClick={fetchKeys}
             disabled={loading}
-            sx={{ mr: 1 }}
+            size={isSmallMobile ? 'medium' : 'large'}
+            sx={{ 
+              borderRadius: 2,
+              minHeight: isSmallMobile ? 40 : 42,
+            }}
           >
             Refresh
           </Button>
@@ -140,6 +276,11 @@ function ApiKeys({ client }: ApiKeysProps) {
             variant="contained"
             startIcon={<AddIcon />}
             onClick={() => setCreateDialogOpen(true)}
+            size={isSmallMobile ? 'medium' : 'large'}
+            sx={{ 
+              borderRadius: 2,
+              minHeight: isSmallMobile ? 40 : 42,
+            }}
           >
             Create Key
           </Button>
@@ -147,173 +288,258 @@ function ApiKeys({ client }: ApiKeysProps) {
       </Box>
 
       {error && (
-        <Alert severity="error" sx={{ mb: 3 }}>
-          {error}
-        </Alert>
+        <Fade in>
+          <Alert 
+            severity="error" 
+            sx={{ mb: 3, borderRadius: 2 }}
+            onClose={() => setError(null)}
+          >
+            {error}
+          </Alert>
+        </Fade>
       )}
 
-      <Card>
-        <CardContent>
-          {loading ? (
-            <Box display="flex" justifyContent="center" py={4}>
-              <CircularProgress />
-            </Box>
-          ) : keys.length === 0 ? (
-            <Box textAlign="center" py={4}>
-              <Typography variant="body1" color="text.secondary">
-                No API keys found
-              </Typography>
-            </Box>
-          ) : (
-            <TableContainer>
-              <Table>
-                <TableHead>
-                  <TableRow>
-                    <TableCell>Key ID</TableCell>
-                    <TableCell>Name</TableCell>
-                    <TableCell>Scopes</TableCell>
-                    <TableCell>Owner</TableCell>
-                    <TableCell>Created</TableCell>
-                    <TableCell>Last Used</TableCell>
-                    <TableCell>Expires</TableCell>
-                    <TableCell>Actions</TableCell>
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  {keys.map((key) => (
-                    <TableRow key={key.key_id} hover>
-                      <TableCell>
-                        <Typography variant="body2" fontFamily="monospace">
+      {loading ? (
+        <Box display="flex" justifyContent="center" py={4}>
+          <CircularProgress />
+        </Box>
+      ) : keys.length === 0 ? (
+        <Fade in>
+          <Paper sx={{ p: 4, textAlign: 'center', borderRadius: 2 }}>
+            <KeyIcon sx={{ fontSize: 48, color: 'text.secondary', mb: 2 }} />
+            <Typography variant="h6" gutterBottom>
+              No API Keys
+            </Typography>
+            <Typography color="text.secondary" sx={{ mb: 3 }}>
+              Create your first API key to start using the Faxbot API
+            </Typography>
+            <Button
+              variant="contained"
+              startIcon={<AddIcon />}
+              onClick={() => setCreateDialogOpen(true)}
+              sx={{ borderRadius: 2 }}
+            >
+              Create Your First Key
+            </Button>
+          </Paper>
+        </Fade>
+      ) : isMobile ? (
+        // Mobile Layout
+        <Box>
+          {keys.map((key) => (
+            <MobileKeyCard key={key.key_id} apiKey={key} />
+          ))}
+        </Box>
+      ) : (
+        // Desktop Layout
+        <Fade in>
+          <TableContainer component={Paper} sx={{ borderRadius: 2 }}>
+            <Table>
+              <TableHead>
+                <TableRow>
+                  <TableCell>Name / ID</TableCell>
+                  <TableCell>Owner</TableCell>
+                  <TableCell>Scopes</TableCell>
+                  <TableCell>Created</TableCell>
+                  <TableCell>Last Used</TableCell>
+                  <TableCell align="right">Actions</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {keys.map((key) => (
+                  <TableRow key={key.key_id} hover>
+                    <TableCell>
+                      <Box>
+                        <Typography variant="body2" fontWeight={600}>
+                          {key.name || 'Unnamed'}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary">
                           {key.key_id}
                         </Typography>
-                      </TableCell>
-                      <TableCell>{key.name || '-'}</TableCell>
-                      <TableCell>
-                        <Box display="flex" flexWrap="wrap" gap={0.5}>
-                          {key.scopes.map((scope) => (
-                            <Chip
-                              key={scope}
-                              label={scope}
-                              size="small"
-                              variant="outlined"
-                            />
-                          ))}
-                        </Box>
-                      </TableCell>
-                      <TableCell>{key.owner || '-'}</TableCell>
-                      <TableCell>
-                        <Typography variant="caption" color="text.secondary">
-                          {formatDate(key.created_at)}
-                        </Typography>
-                      </TableCell>
-                      <TableCell>
-                        <Typography variant="caption" color="text.secondary">
-                          {formatDate(key.last_used_at)}
-                        </Typography>
-                      </TableCell>
-                      <TableCell>
-                        <Typography variant="caption" color="text.secondary">
-                          {formatDate(key.expires_at)}
-                        </Typography>
-                      </TableCell>
-                      <TableCell>
-                        <Box display="flex" gap={1}>
-                          <Button
+                      </Box>
+                    </TableCell>
+                    <TableCell>{key.owner || '-'}</TableCell>
+                    <TableCell>
+                      <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+                        {key.scopes?.map((scope) => (
+                          <Chip
+                            key={scope}
+                            label={scope}
                             size="small"
-                            startIcon={<CachedIcon />}
-                            onClick={() => handleRotateKey(key.key_id)}
-                          >
-                            Rotate
-                          </Button>
-                          <Button
-                            size="small"
-                            color="error"
-                            startIcon={<DeleteIcon />}
-                            onClick={() => handleRevokeKey(key.key_id)}
-                          >
-                            Revoke
-                          </Button>
-                        </Box>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </TableContainer>
-          )}
-        </CardContent>
-      </Card>
+                            variant="outlined"
+                            sx={{ borderRadius: 1 }}
+                          />
+                        ))}
+                      </Box>
+                    </TableCell>
+                    <TableCell>{formatDate(key.created_at)}</TableCell>
+                    <TableCell>{formatDate(key.last_used_at)}</TableCell>
+                    <TableCell align="right">
+                      <Tooltip title="Rotate Key">
+                        <IconButton
+                          onClick={() => handleRotateKey(key.key_id, key.name)}
+                          size="small"
+                        >
+                          <RotateIcon />
+                        </IconButton>
+                      </Tooltip>
+                      <Tooltip title="Revoke Key">
+                        <IconButton
+                          onClick={() => handleRevokeKey(key.key_id, key.name)}
+                          size="small"
+                          color="error"
+                        >
+                          <DeleteIcon />
+                        </IconButton>
+                      </Tooltip>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </TableContainer>
+        </Fade>
+      )}
 
       {/* Create Key Dialog */}
-      <Dialog open={createDialogOpen} onClose={() => setCreateDialogOpen(false)} maxWidth="sm" fullWidth>
-        <DialogTitle>Create API Key</DialogTitle>
+      <Dialog 
+        open={createDialogOpen} 
+        onClose={() => !newKeyResult && setCreateDialogOpen(false)}
+        maxWidth="sm"
+        fullWidth
+        fullScreen={isSmallMobile}
+      >
+        <DialogTitle>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <KeyIcon />
+            Create New API Key
+          </Box>
+        </DialogTitle>
         <DialogContent>
-          <Grid container spacing={2} sx={{ mt: 1 }}>
-            <Grid item xs={12}>
-              <TextField
-                fullWidth
-                label="Name (optional)"
+          {!newKeyResult ? (
+            <Box sx={{ pt: 1 }}>
+              <ResponsiveTextField
+                label="Key Name"
                 value={formData.name}
-                onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
-                placeholder="e.g., Admin Console"
+                onChange={(value) => setFormData({ ...formData, name: value })}
+                placeholder="Production API Key"
+                helperText="A friendly name to identify this key"
+                icon={<KeyIcon />}
               />
-            </Grid>
-            <Grid item xs={12}>
-              <TextField
-                fullWidth
-                label="Owner (optional)"
+              
+              <ResponsiveTextField
+                label="Owner"
                 value={formData.owner}
-                onChange={(e) => setFormData(prev => ({ ...prev, owner: e.target.value }))}
-                placeholder="e.g., ops@clinic.com"
+                onChange={(value) => setFormData({ ...formData, owner: value })}
+                placeholder="service@example.com"
+                helperText="Email or identifier of the key owner"
+                icon={<PersonIcon />}
               />
-            </Grid>
-            <Grid item xs={12}>
-              <TextField
-                fullWidth
-                label="Scopes"
+              
+              <ResponsiveTextField
+                label="Permissions (Scopes)"
                 value={formData.scopes}
-                onChange={(e) => setFormData(prev => ({ ...prev, scopes: e.target.value }))}
-                placeholder="fax:send,fax:read,keys:manage"
-                helperText="Comma-separated list of scopes"
+                onChange={(value) => setFormData({ ...formData, scopes: value })}
+                placeholder="fax:send,fax:read"
+                helperText="Comma-separated list of permissions. Available: fax:send, fax:read, inbound:list, inbound:read, keys:manage"
+                icon={<SecurityIcon />}
               />
-            </Grid>
-          </Grid>
+            </Box>
+          ) : (
+            <Box>
+              <Alert 
+                severity="success" 
+                icon={<SuccessIcon />}
+                sx={{ mb: 3, borderRadius: 2 }}
+              >
+                API key created successfully! Copy it now - you won't be able to see it again.
+              </Alert>
+              
+              <ResponsiveFormSection
+                title="Your New API Key"
+                subtitle="Save this key securely - it won't be shown again"
+                icon={<KeyIcon />}
+              >
+                <Box
+                  sx={{
+                    p: 2,
+                    backgroundColor: theme.palette.mode === 'dark'
+                      ? 'rgba(255, 255, 255, 0.05)'
+                      : 'rgba(0, 0, 0, 0.05)',
+                    borderRadius: 1,
+                    fontFamily: 'monospace',
+                    wordBreak: 'break-all',
+                    position: 'relative',
+                  }}
+                >
+                  <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
+                    {newKeyResult}
+                  </Typography>
+                  <IconButton
+                    onClick={() => copyToClipboard(newKeyResult)}
+                    size="small"
+                    sx={{
+                      position: 'absolute',
+                      top: 8,
+                      right: 8,
+                    }}
+                  >
+                    <CopyIcon fontSize="small" />
+                  </IconButton>
+                </Box>
+              </ResponsiveFormSection>
+            </Box>
+          )}
         </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setCreateDialogOpen(false)}>Cancel</Button>
-          <Button onClick={handleCreateKey} variant="contained">
-            Create
-          </Button>
+        <DialogActions sx={{ px: 3, pb: 3 }}>
+          {!newKeyResult ? (
+            <>
+              <Button 
+                onClick={() => setCreateDialogOpen(false)}
+                sx={{ borderRadius: 2 }}
+              >
+                Cancel
+              </Button>
+              <Button 
+                onClick={handleCreateKey} 
+                variant="contained"
+                startIcon={<AddIcon />}
+                sx={{ borderRadius: 2 }}
+              >
+                Create Key
+              </Button>
+            </>
+          ) : (
+            <>
+              <Button
+                onClick={() => copyToClipboard(newKeyResult)}
+                startIcon={<CopyIcon />}
+                sx={{ borderRadius: 2 }}
+              >
+                Copy Key
+              </Button>
+              <Button
+                onClick={() => {
+                  setNewKeyResult(null);
+                  setCreateDialogOpen(false);
+                }}
+                variant="contained"
+                sx={{ borderRadius: 2 }}
+              >
+                Done
+              </Button>
+            </>
+          )}
         </DialogActions>
       </Dialog>
 
-      {/* New Key Result Dialog */}
-      <Dialog open={!!newKeyResult} onClose={() => setNewKeyResult(null)} maxWidth="sm" fullWidth>
-        <DialogTitle>API Key Created</DialogTitle>
-        <DialogContent>
-          <Alert severity="warning" sx={{ mb: 2 }}>
-            <strong>Important:</strong> This token will only be shown once. Copy it now and store it securely.
-          </Alert>
-          <TextField
-            fullWidth
-            multiline
-            rows={4}
-            value={newKeyResult || ''}
-            InputProps={{
-              readOnly: true,
-              style: { fontFamily: 'monospace' },
-            }}
-          />
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => copyToClipboard(newKeyResult || '')}>
-            Copy Token
-          </Button>
-          <Button onClick={() => setNewKeyResult(null)} variant="contained">
-            Done
-          </Button>
-        </DialogActions>
-      </Dialog>
+      {/* Copy Snackbar */}
+      <Snackbar
+        open={copySnackbar}
+        autoHideDuration={2000}
+        onClose={() => setCopySnackbar(false)}
+        message="Copied to clipboard!"
+      />
     </Box>
   );
 }

@@ -14,10 +14,9 @@ import {
   List,
   ListItem,
   ListItemText,
-  ListItemIcon,
   Switch,
-  FormGroup,
   FormControlLabel,
+  Stack,
 } from '@mui/material';
 import {
   Refresh as RefreshIcon,
@@ -25,12 +24,16 @@ import {
   ContentCopy as ContentCopyIcon,
   Security as SecurityIcon,
   Cloud as CloudIcon,
+  Storage as StorageIcon,
   CheckCircle as CheckCircleIcon,
   Warning as WarningIcon,
   Error as ErrorIcon,
+  Settings as SettingsIcon,
 } from '@mui/icons-material';
 import AdminAPIClient from '../api/client';
 import type { Settings as SettingsType } from '../api/types';
+import { ResponsiveSettingItem, ResponsiveSettingSection } from './common/ResponsiveSettingItem';
+import { ResponsiveTextField, ResponsiveFormSection } from './common/ResponsiveFormFields';
 
 interface SettingsProps {
   client: AdminAPIClient;
@@ -51,7 +54,6 @@ function Settings({ client }: SettingsProps) {
   const handleForm = (field: string, value: any) => setForm((prev: any) => ({ ...prev, [field]: value }));
   const isSmall = useMediaQuery('(max-width:900px)');
   const ctlStyle: React.CSSProperties = { background: 'transparent', color: 'inherit', borderColor: '#444', padding: '6px', borderRadius: 6, width: isSmall ? '100%' : 'auto', maxWidth: isSmall ? '100%' : undefined };
-  const numCtlStyle: React.CSSProperties = { ...ctlStyle, width: isSmall ? '100%' : '120px' } as React.CSSProperties;
 
   const fetchSettings = async () => {
     try {
@@ -201,578 +203,530 @@ function Settings({ client }: SettingsProps) {
         </Box>
       ) : settings ? (
         <Box>
-        <Grid container spacing={3}>
+        <Stack spacing={3}>
           {/* Backend Configuration */}
-          <Grid item xs={12} md={6}>
-            <Card>
-              <CardContent>
-                <Box id="settings-backend" display="flex" alignItems="center" mb={2}>
-                  <CloudIcon sx={{ mr: 1 }} />
-                  <Typography variant="h6">Backend Configuration</Typography>
-                </Box>
-                <List dense>
-                  <ListItem sx={{ alignItems: 'flex-start', flexWrap: 'wrap', gap: 1 }}>
-                    <ListItemIcon>
-                      {getStatusIcon(!settings.backend.disabled)}
-                    </ListItemIcon>
-                    <ListItemText
-                      primary="Backend Type"
-                      secondary={settings.backend.type.toUpperCase()}
-                    />
-                    <Typography variant="caption" color="text.secondary" sx={{ mr: 2 }}>
-                      Choose your transport backend. Changing providers may require a restart and
-                      provider-specific configuration. For SIP/Asterisk, ensure private networking and T.38 support.
-                    </Typography>
-                    <select
-                      value={form.backend || settings.backend.type}
-                      onChange={(e) => handleForm('backend', e.target.value)}
-                      style={ctlStyle}
-                    >
-                      <option value="phaxio">phaxio</option>
-                      <option value="sinch">sinch</option>
-                      <option value="signalwire">signalwire</option>
-                      <option value="documo">documo</option>
-                      <option value="sip">sip</option>
-                      <option value="freeswitch">freeswitch</option>
-                    </select>
-                    <Chip
-                      label={settings.backend.disabled ? 'Disabled' : 'Active'}
-                      color={settings.backend.disabled ? 'error' : 'success'}
-                      size="small"
-                      variant="outlined"
-                    />
-                  </ListItem>
-                </List>
-              </CardContent>
-            </Card>
-          </Grid>
+          <ResponsiveFormSection
+            title="Backend Configuration"
+            subtitle="Choose your fax transport backend"
+            icon={<CloudIcon />}
+          >
+            <ResponsiveSettingItem
+              icon={getStatusIcon(!settings.backend.disabled)}
+              label="Backend Type"
+              value={settings.backend.type.toUpperCase()}
+              helperText="Choose your transport backend. Changing providers may require a restart and provider-specific configuration. For SIP/Asterisk, ensure private networking and T.38 support."
+              onChange={(value) => handleForm('backend', value)}
+              type="select"
+              options={[
+                { value: 'phaxio', label: 'Phaxio (Cloud)' },
+                { value: 'sinch', label: 'Sinch (Cloud)' },
+                { value: 'signalwire', label: 'SignalWire (Cloud)' },
+                { value: 'documo', label: 'Documo (Cloud)' },
+                { value: 'sip', label: 'SIP/Asterisk (Self-hosted)' },
+                { value: 'freeswitch', label: 'FreeSWITCH (Self-hosted)' }
+              ]}
+              showCurrentValue={true}
+            />
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 1 }}>
+              <Chip
+                label={settings.backend.disabled ? 'Disabled' : 'Active'}
+                color={settings.backend.disabled ? 'error' : 'success'}
+                size="small"
+                variant="outlined"
+                sx={{ borderRadius: 1 }}
+              />
+            </Box>
+          </ResponsiveFormSection>
 
           {/* Security Settings */}
-          <Grid item xs={12} md={6}>
-            <Card>
-              <CardContent>
-                <Box id="settings-security" display="flex" alignItems="center" mb={2}>
-                  <SecurityIcon sx={{ mr: 1 }} />
-                  <Typography variant="h6">Security</Typography>
-                </Box>
-                <List dense>
-                  <ListItem sx={{ alignItems: 'flex-start', flexWrap: 'wrap', gap: 1 }}>
-                    <ListItemIcon>
-                      {settings.security.require_api_key ? <CheckCircleIcon color="success" /> : <WarningIcon color="warning" />}
-                    </ListItemIcon>
-                    <ListItemText
-                      primary="API Key Required"
-                      secondary={settings.security.require_api_key ? 'Yes' : 'No'}
-                    />
-                    <Typography variant="caption" color="text.secondary" sx={{ mr: 2 }}>
-                      Enable in production; required for HIPAA. Mint DB-backed keys in the Keys tab and pass them as X-API-Key.
-                    </Typography>
-                    <select
-                      value={(form.require_api_key ?? settings.security.require_api_key) ? 'true' : 'false'}
-                      onChange={(e) => handleForm('require_api_key', e.target.value === 'true')}
-                      style={ctlStyle}
-                    >
-                      <option value="true">Yes</option>
-                      <option value="false">No</option>
-                    </select>
-                  </ListItem>
-                  <ListItem sx={{ alignItems: 'flex-start', flexWrap: 'wrap', gap: 1 }}>
-                    <ListItemIcon>
-                      {settings.security.enforce_https ? <CheckCircleIcon color="success" /> : <WarningIcon color="warning" />}
-                    </ListItemIcon>
-                    <ListItemText
-                      primary="HTTPS Enforced"
-                      secondary={settings.security.enforce_https ? 'Yes' : 'No'}
-                    />
-                    <Typography variant="caption" color="text.secondary" sx={{ mr: 2 }}>
-                      Required for PHI. PUBLIC_API_URL must be HTTPS for cloud providers to fetch PDFs securely.
-                    </Typography>
-                    <select
-                      value={(form.enforce_public_https ?? settings.security.enforce_https) ? 'true' : 'false'}
-                      onChange={(e) => handleForm('enforce_public_https', e.target.value === 'true')}
-                      style={ctlStyle}
-                    >
-                      <option value="true">Yes</option>
-                      <option value="false">No</option>
-                    </select>
-                  </ListItem>
-                  <ListItem sx={{ alignItems: 'flex-start', flexWrap: 'wrap', gap: 1 }}>
-                    <ListItemIcon>
-                      {settings.security.audit_enabled ? <CheckCircleIcon color="success" /> : <WarningIcon color="warning" />}
-                    </ListItemIcon>
-                    <ListItemText
-                      primary="Audit Logging"
-                      secondary={settings.security.audit_enabled ? 'Enabled' : 'Disabled'}
-                    />
-                    <Typography variant="caption" color="text.secondary" sx={{ mr: 2 }}>
-                      Enable structured logs for admin actions and fax lifecycle. Set AUDIT_LOG_FILE to persist; view in Logs tab.
-                    </Typography>
-                    <select
-                      value={(form.audit_log_enabled ?? settings.security.audit_enabled) ? 'true' : 'false'}
-                      onChange={(e) => handleForm('audit_log_enabled', e.target.value === 'true')}
-                      style={ctlStyle}
-                    >
-                      <option value="true">Enabled</option>
-                      <option value="false">Disabled</option>
-                    </select>
-                  </ListItem>
-                  <ListItem sx={{ alignItems: 'flex-start', flexWrap: 'wrap', gap: 1 }}>
-                    <ListItemIcon>
-                      {persistedEnabled ? <CheckCircleIcon color="success" /> : <WarningIcon color="warning" />}
-                    </ListItemIcon>
-                    <ListItemText
-                      primary="Load persisted .env at startup"
-                      secondary={persistedEnabled ? 'Enabled' : 'Disabled'}
-                    />
-                    <Typography variant="caption" color="text.secondary" sx={{ mr: 2 }}>
-                      Loads /faxdata/faxbot.env at boot. Use “Save .env to server” after applying changes to keep them across restarts.
-                    </Typography>
-                    <select
-                      value={(form.enable_persisted_settings ?? persistedEnabled) ? 'true' : 'false'}
-                      onChange={(e) => handleForm('enable_persisted_settings', e.target.value === 'true')}
-                      style={ctlStyle}
-                    >
-                      <option value="true">Enabled</option>
-                      <option value="false">Disabled</option>
-                    </select>
-                  </ListItem>
-                </List>
-              </CardContent>
-            </Card>
-          </Grid>
+          <ResponsiveFormSection
+            title="Security Settings"
+            subtitle="Configure authentication and HIPAA compliance"
+            icon={<SecurityIcon />}
+          >
+            <ResponsiveSettingItem
+              icon={settings.security.require_api_key ? <CheckCircleIcon color="success" /> : <WarningIcon color="warning" />}
+              label="API Key Required"
+              value={settings.security.require_api_key ? 'Yes' : 'No'}
+              helperText="Enable in production; required for HIPAA. Mint DB-backed keys in the Keys tab and pass them as X-API-Key."
+              onChange={(value) => handleForm('require_api_key', value === 'true')}
+              type="select"
+              options={[
+                { value: 'true', label: 'Yes (Required for HIPAA)' },
+                { value: 'false', label: 'No (Dev only)' }
+              ]}
+              showCurrentValue={true}
+            />
+            
+            <ResponsiveSettingItem
+              icon={settings.security.enforce_https ? <CheckCircleIcon color="success" /> : <WarningIcon color="warning" />}
+              label="HTTPS Enforced"
+              value={settings.security.enforce_https ? 'Yes' : 'No'}
+              helperText="Required for PHI. PUBLIC_API_URL must be HTTPS for cloud providers to fetch PDFs securely."
+              onChange={(value) => handleForm('enforce_public_https', value === 'true')}
+              type="select"
+              options={[
+                { value: 'true', label: 'Yes (Required for PHI)' },
+                { value: 'false', label: 'No (Dev only)' }
+              ]}
+              showCurrentValue={true}
+            />
+            
+            <ResponsiveSettingItem
+              icon={settings.security.audit_enabled ? <CheckCircleIcon color="success" /> : <WarningIcon color="warning" />}
+              label="Audit Logging"
+              value={settings.security.audit_enabled ? 'Enabled' : 'Disabled'}
+              helperText="Enable structured logs for admin actions and fax lifecycle. Set AUDIT_LOG_FILE to persist; view in Logs tab."
+              onChange={(value) => handleForm('audit_log_enabled', value === 'true')}
+              type="select"
+              options={[
+                { value: 'true', label: 'Enabled (HIPAA requirement)' },
+                { value: 'false', label: 'Disabled' }
+              ]}
+              showCurrentValue={true}
+            />
+            
+            <ResponsiveSettingItem
+              icon={persistedEnabled ? <CheckCircleIcon color="success" /> : <WarningIcon color="warning" />}
+              label="Load persisted .env at startup"
+              value={persistedEnabled ? 'Enabled' : 'Disabled'}
+              helperText='Loads /faxdata/faxbot.env at boot. Use "Save .env to server" after applying changes to keep them across restarts.'
+              onChange={(value) => handleForm('enable_persisted_settings', value === 'true')}
+              type="select"
+              options={[
+                { value: 'true', label: 'Enabled' },
+                { value: 'false', label: 'Disabled' }
+              ]}
+              showCurrentValue={true}
+            />
+          </ResponsiveFormSection>
 
           {/* Backend-Specific Configuration */}
-          <Grid item xs={12}>
-            <Card>
-              <CardContent>
-                <Typography variant="h6" gutterBottom>
-                  {settings.backend.type.toUpperCase()} Configuration
-                </Typography>
-                
-                {settings.backend.type === 'phaxio' && (
-                  <List dense>
-                    <ListItem>
-                      <Typography id="settings-phaxio" variant="subtitle1">Phaxio</Typography>
-                    </ListItem>
-                    <ListItem>
-                      <Typography variant="caption" color="text.secondary">
-                        Help: 
-                        <a href={`${docsBase}/backends/phaxio-setup.html`} target="_blank" rel="noreferrer">Faxbot: Phaxio</a>
-                        {"  •  "}
-                        <a href="https://developers.sinch.com/docs/fax/api-reference/" target="_blank" rel="noreferrer">Sinch Fax API</a>
-                      </Typography>
-                    </ListItem>
-                  <ListItem>
-                    <ListItemIcon>{getStatusIcon(!!settings.phaxio.api_key)}</ListItemIcon>
-                    <ListItemText
-                      primary="API Key"
-                      secondary={settings.phaxio.api_key || 'Not configured'}
-                    />
-                    <Typography variant="caption" color="text.secondary" sx={{ mr: 2 }}>
-                      Get from Phaxio console. Use a service account and keep this secret safe.
-                    </Typography>
-                    <input
+          {settings.backend.type === 'phaxio' && (
+                  <ResponsiveSettingSection
+                    title="PHAXIO Configuration"
+                    subtitle="Configure your Phaxio API credentials and settings"
+                  >
+                    <Box sx={{ display: 'flex', gap: 1, mb: 2, flexWrap: 'wrap' }}>
+                      <Chip
+                        label="Faxbot: Phaxio Setup"
+                        component="a"
+                        href={`${docsBase}/backends/phaxio-setup.html`}
+                        target="_blank"
+                        rel="noreferrer"
+                        clickable
+                        size="small"
+                        variant="outlined"
+                      />
+                      <Chip
+                        label="Sinch Fax API Docs"
+                        component="a"
+                        href="https://developers.sinch.com/docs/fax/api-reference/"
+                        target="_blank"
+                        rel="noreferrer"
+                        clickable
+                        size="small"
+                        variant="outlined"
+                      />
+                    </Box>
+                    
+                    <ResponsiveSettingItem
+                      icon={getStatusIcon(!!settings.phaxio.api_key)}
+                      label="API Key"
+                      value={settings.phaxio.api_key?.replace(/./g, '*').slice(0, 20) || ''}
+                      helperText="Get from Phaxio console. Use a service account and keep this secret safe."
                       placeholder="Update PHAXIO_API_KEY"
-                      onChange={(e) => handleForm('phaxio_api_key', e.target.value)}
-                      style={ctlStyle}
+                      onChange={(value) => handleForm('phaxio_api_key', value)}
+                      type="password"
+                      showCurrentValue={!!settings.phaxio.api_key}
                     />
-                  </ListItem>
-                  <ListItem>
-                    <ListItemIcon>{getStatusIcon(!!settings.phaxio.api_secret)}</ListItemIcon>
-                    <ListItemText
-                      primary="API Secret"
-                      secondary={settings.phaxio.api_secret || 'Not configured'}
-                    />
-                    <Typography variant="caption" color="text.secondary" sx={{ mr: 2 }}>
-                      Get from Phaxio console. Required alongside API key for provider API calls.
-                    </Typography>
-                    <input
+                    
+                    <ResponsiveSettingItem
+                      icon={getStatusIcon(!!settings.phaxio.api_secret)}
+                      label="API Secret"
+                      value={settings.phaxio.api_secret?.replace(/./g, '*').slice(0, 20) || ''}
+                      helperText="Get from Phaxio console. Required alongside API key for provider API calls."
                       placeholder="Update PHAXIO_API_SECRET"
-                      onChange={(e) => handleForm('phaxio_api_secret', e.target.value)}
-                      style={ctlStyle}
+                      onChange={(value) => handleForm('phaxio_api_secret', value)}
+                      type="password"
+                      showCurrentValue={!!settings.phaxio.api_secret}
                     />
-                  </ListItem>
-                  <ListItem>
-                    <ListItemIcon>{getStatusIcon(!!settings.phaxio.callback_url)}</ListItemIcon>
-                    <ListItemText
-                      primary="Callback URL"
-                      secondary={settings.phaxio.callback_url || 'Not configured'}
+                    
+                    <ResponsiveSettingItem
+                      icon={getStatusIcon(!!settings.phaxio.callback_url)}
+                      label="Callback URL"
+                      value={settings.phaxio.callback_url || form.public_api_url || ''}
+                      helperText="Phaxio status webhooks hit /phaxio-callback; PUBLIC_API_URL must be HTTPS. Enable HMAC verification for security."
+                      placeholder="https://localhost:8080/phaxio-callback"
+                      onChange={(value) => handleForm('public_api_url', value)}
+                      showCurrentValue={!!settings.phaxio.callback_url}
                     />
-                    <Typography variant="caption" color="text.secondary" sx={{ mr: 2 }}>
-                      Phaxio status webhooks hit /phaxio-callback; PUBLIC_API_URL must be HTTPS. Enable HMAC verification for security.
-                    </Typography>
-                    <input
-                      placeholder="PUBLIC_API_URL"
-                      defaultValue={form.public_api_url || ''}
-                      onChange={(e) => handleForm('public_api_url', e.target.value)}
-                      style={ctlStyle}
-                    />
-                  </ListItem>
-                  </List>
+                  </ResponsiveSettingSection>
                 )}
 
                 {settings.backend.type === 'documo' && (
-                  <List dense>
-                    <ListItem>
-                      <ListItemText
-                        primary="Documo API Key"
-                        secondary={settings?.documo?.configured ? 'Configured' : 'Not configured'}
-                      />
-                      <input
-                        placeholder="DOCUMO_API_KEY"
-                        onChange={(e) => handleForm('documo_api_key', e.target.value)}
-                        style={ctlStyle}
-                      />
-                    </ListItem>
-                    <ListItem>
-                      <ListItemText
-                        primary="Sandbox"
-                        secondary={String((form.documo_use_sandbox ?? false))}
-                      />
-                      <select
-                        value={(form.documo_use_sandbox ?? false) ? 'true' : 'false'}
-                        onChange={(e) => handleForm('documo_use_sandbox', e.target.value === 'true')}
-                        style={ctlStyle}
-                      >
-                        <option value="false">false</option>
-                        <option value="true">true</option>
-                      </select>
-                    </ListItem>
-                  </List>
+                  <ResponsiveSettingSection
+                    title="Documo Configuration"
+                    subtitle="Configure your Documo API settings"
+                  >
+                    <ResponsiveSettingItem
+                      icon={getStatusIcon(!!settings?.documo?.configured)}
+                      label="Documo API Key"
+                      value={settings?.documo?.configured ? 'Configured' : ''}
+                      helperText="Enter your Documo API key for authentication."
+                      placeholder="DOCUMO_API_KEY"
+                      onChange={(value) => handleForm('documo_api_key', value)}
+                      type="password"
+                      showCurrentValue={settings?.documo?.configured}
+                    />
+                    
+                    <ResponsiveSettingItem
+                      icon={getStatusIcon(true)}
+                      label="Sandbox Mode"
+                      value={(form.documo_use_sandbox ?? false) ? 'true' : 'false'}
+                      helperText="Enable sandbox mode for testing without sending real faxes."
+                      onChange={(value) => handleForm('documo_use_sandbox', value === 'true')}
+                      type="select"
+                      options={[
+                        { value: 'false', label: 'Production' },
+                        { value: 'true', label: 'Sandbox' }
+                      ]}
+                      showCurrentValue={false}
+                    />
+                  </ResponsiveSettingSection>
                 )}
 
                 {settings.backend.type === 'sip' && (
-                  <List dense>
-                    <ListItem>
-                      <Typography id="settings-sip" variant="subtitle1">SIP / Asterisk</Typography>
-                    </ListItem>
-                  <ListItem>
-                    <ListItemIcon>{getStatusIcon(!!settings.sip.ami_host)}</ListItemIcon>
-                    <ListItemText
-                      primary="AMI Host"
-                      secondary={settings.sip.ami_host || 'Not configured'}
-                    />
-                    <Typography variant="caption" color="text.secondary" sx={{ mr: 2 }}>
-                      Asterisk service hostname on your private network (e.g., docker compose service name "asterisk").
-                    </Typography>
-                    <input
+                  <ResponsiveSettingSection
+                    title="SIP / Asterisk Configuration"
+                    subtitle="Configure your Asterisk AMI connection settings"
+                  >
+                    <ResponsiveSettingItem
+                      icon={getStatusIcon(!!settings.sip.ami_host)}
+                      label="AMI Host"
+                      value={settings.sip.ami_host || ''}
+                      helperText='Asterisk service hostname on your private network (e.g., docker compose service name "asterisk").'
                       placeholder="ASTERISK_AMI_HOST"
-                      onChange={(e) => handleForm('ami_host', e.target.value)}
-                      style={ctlStyle}
+                      onChange={(value) => handleForm('ami_host', value)}
+                      showCurrentValue={!!settings.sip.ami_host}
                     />
-                  </ListItem>
-                  <ListItem>
-                    <ListItemIcon>
-                      {settings.sip.ami_password_is_default ? <WarningIcon color="warning" /> : <CheckCircleIcon color="success" />}
-                    </ListItemIcon>
-                    <ListItemText
-                      primary="AMI Password"
-                      secondary={settings.sip.ami_password_is_default ? 'Using default (insecure)' : 'Custom password set'}
-                    />
-                    <Typography variant="caption" color="text.secondary" sx={{ mr: 2 }}>
-                      Must not be the default. Update in both Faxbot and Asterisk manager.conf; never expose 5038 publicly.
-                    </Typography>
-                    <input
+                    
+                    <ResponsiveSettingItem
+                      icon={settings.sip.ami_password_is_default ? <WarningIcon color="warning" /> : <CheckCircleIcon color="success" />}
+                      label="AMI Password"
+                      value={settings.sip.ami_password_is_default ? 'Using default (insecure)' : 'Custom password set'}
+                      helperText="Must not be the default. Update in both Faxbot and Asterisk manager.conf; never expose 5038 publicly."
                       placeholder="Update ASTERISK_AMI_PASSWORD"
-                      onChange={(e) => handleForm('ami_password', e.target.value)}
-                      style={ctlStyle}
+                      onChange={(value) => handleForm('ami_password', value)}
+                      type="password"
+                      showCurrentValue={!settings.sip.ami_password_is_default}
                     />
-                  </ListItem>
-                  <ListItem>
-                    <ListItemIcon>{getStatusIcon(!!settings.sip.station_id)}</ListItemIcon>
-                    <ListItemText
-                      primary="Station ID"
-                      secondary={settings.sip.station_id || 'Not configured'}
-                    />
-                    <Typography variant="caption" color="text.secondary" sx={{ mr: 2 }}>
-                      Your fax header/DID in E.164 format (e.g., +15551234567).
-                    </Typography>
-                    <input
+                    
+                    <ResponsiveSettingItem
+                      icon={getStatusIcon(!!settings.sip.station_id)}
+                      label="Station ID"
+                      value={settings.sip.station_id || ''}
+                      helperText="Your fax header/DID in E.164 format (e.g., +15551234567)."
                       placeholder="FAX_LOCAL_STATION_ID"
-                      onChange={(e) => handleForm('fax_station_id', e.target.value)}
-                      style={ctlStyle}
+                      onChange={(value) => handleForm('fax_station_id', value)}
+                      showCurrentValue={!!settings.sip.station_id}
                     />
-                  </ListItem>
-                  </List>
+                  </ResponsiveSettingSection>
                 )}
-              </CardContent>
-            </Card>
-          </Grid>
 
           {/* Feature Flags */}
-          <Grid item xs={12}>
-            <Card>
-              <CardContent>
-                <Typography variant="h6" gutterBottom>
-                  Feature Flags
-                </Typography>
-                <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                  Enable or disable v3 features. Changes require restart to take effect.
-                </Typography>
-                
-                <FormGroup>
-                  <FormControlLabel
-                    control={
-                      <Switch
-                        checked={form.feature_v3_plugins ?? settings?.features?.v3_plugins ?? false}
-                        onChange={(e) => handleForm('feature_v3_plugins', e.target.checked)}
-                      />
-                    }
-                    label="Enable v3 Plugin System"
+          <ResponsiveFormSection
+            title="Feature Flags"
+            subtitle="Enable or disable v3 features. Changes require restart to take effect."
+            icon={<SettingsIcon />}
+          >
+            <Stack spacing={2}>
+              <FormControlLabel
+                control={
+                  <Switch
+                    checked={form.feature_v3_plugins ?? settings?.features?.v3_plugins ?? false}
+                    onChange={(e) => handleForm('feature_v3_plugins', e.target.checked)}
+                    sx={{ '& .MuiSwitch-thumb': { width: 20, height: 20 } }}
                   />
-                  <Typography variant="caption" color="text.secondary" sx={{ ml: 4, mb: 2 }}>
-                    Activates the new modular plugin architecture for fax providers
-                  </Typography>
-                  
-                  <FormControlLabel
-                    control={
-                      <Switch
-                        checked={form.fax_disabled ?? settings?.backend?.disabled ?? false}
-                        onChange={(e) => handleForm('fax_disabled', e.target.checked)}
-                      />
-                    }
-                    label="Test Mode (No Real Faxes)"
+                }
+                label="Enable v3 Plugin System"
+                sx={{ alignItems: 'flex-start', '& .MuiFormControlLabel-label': { mt: 0.5 } }}
+              />
+              <Typography variant="caption" color="text.secondary" sx={{ ml: 4, mb: 1 }}>
+                Activates the new modular plugin architecture for fax providers
+              </Typography>
+              
+              <FormControlLabel
+                control={
+                  <Switch
+                    checked={form.fax_disabled ?? settings?.backend?.disabled ?? false}
+                    onChange={(e) => handleForm('fax_disabled', e.target.checked)}
+                    sx={{ '& .MuiSwitch-thumb': { width: 20, height: 20 } }}
                   />
-                  <Typography variant="caption" color="text.secondary" sx={{ ml: 4, mb: 2 }}>
-                    Simulates fax operations without actually sending - useful for development
-                  </Typography>
-                  
-                  <FormControlLabel
-                    control={
-                      <Switch
-                        checked={form.inbound_enabled ?? settings?.inbound?.enabled ?? false}
-                        onChange={(e) => handleForm('inbound_enabled', e.target.checked)}
-                      />
-                    }
-                    label="Enable Inbound Fax Receiving"
+                }
+                label="Test Mode (No Real Faxes)"
+                sx={{ alignItems: 'flex-start', '& .MuiFormControlLabel-label': { mt: 0.5 } }}
+              />
+              <Typography variant="caption" color="text.secondary" sx={{ ml: 4, mb: 1 }}>
+                Simulates fax operations without actually sending - useful for development
+              </Typography>
+              
+              <FormControlLabel
+                control={
+                  <Switch
+                    checked={form.inbound_enabled ?? settings?.inbound?.enabled ?? false}
+                    onChange={(e) => handleForm('inbound_enabled', e.target.checked)}
+                    sx={{ '& .MuiSwitch-thumb': { width: 20, height: 20 } }}
                   />
-                  <Typography variant="caption" color="text.secondary" sx={{ ml: 4, mb: 2 }}>
-                    Allow receiving faxes (requires additional configuration based on backend)
-                  </Typography>
+                }
+                label="Enable Inbound Fax Receiving"
+                sx={{ alignItems: 'flex-start', '& .MuiFormControlLabel-label': { mt: 0.5 } }}
+              />
+              <Typography variant="caption" color="text.secondary" sx={{ ml: 4, mb: 1 }}>
+                Allow receiving faxes (requires additional configuration based on backend)
+              </Typography>
 
-                  <FormControlLabel
-                    control={
-                      <Switch
-                        checked={form.feature_plugin_install ?? settings?.features?.plugin_install ?? false}
-                        onChange={(e) => handleForm('feature_plugin_install', e.target.checked)}
-                        disabled
-                      />
-                    }
-                    label="Allow Remote Plugin Installation (Advanced)"
+              <FormControlLabel
+                control={
+                  <Switch
+                    checked={form.feature_plugin_install ?? settings?.features?.plugin_install ?? false}
+                    onChange={(e) => handleForm('feature_plugin_install', e.target.checked)}
+                    disabled
+                    sx={{ '& .MuiSwitch-thumb': { width: 20, height: 20 } }}
                   />
-                  <Typography variant="caption" color="text.secondary" sx={{ ml: 4, mb: 2 }}>
-                    Disabled by default for security. Enable only in trusted environments.
-                  </Typography>
-                </FormGroup>
-
-                {restartHint && (
-                  <Alert severity="info" sx={{ mt: 2 }}>
-                    Feature flag changes require a restart to take effect
-                  </Alert>
-                )}
-              </CardContent>
-            </Card>
-          </Grid>
+                }
+                label="Allow Remote Plugin Installation (Advanced)"
+                sx={{ alignItems: 'flex-start', '& .MuiFormControlLabel-label': { mt: 0.5 } }}
+              />
+              <Typography variant="caption" color="text.secondary" sx={{ ml: 4 }}>
+                Disabled by default for security. Enable only in trusted environments.
+              </Typography>
+            </Stack>
+            {restartHint && (
+              <Alert severity="info" sx={{ mt: 2, borderRadius: 2 }}>
+                Feature flag changes require a restart to take effect
+              </Alert>
+            )}
+          </ResponsiveFormSection>
 
           {/* Inbound Receiving */}
-          <Grid item xs={12}>
-            <Card>
-              <CardContent>
-                <Typography id="settings-inbound" variant="h6" gutterBottom>
-                  Inbound Receiving
-                </Typography>
-                <List dense>
-                  <ListItem>
-                    <ListItemIcon>
-                      {settings.inbound?.enabled ? <CheckCircleIcon color="success" /> : <WarningIcon color="warning" />}
-                    </ListItemIcon>
-                    <ListItemText
-                      primary="Enable Inbound"
-                      secondary={settings.inbound?.enabled ? 'Enabled' : 'Disabled'}
-                    />
-                    <select
-                      value={(form.inbound_enabled ?? settings.inbound?.enabled) ? 'true' : 'false'}
-                      onChange={(e) => handleForm('inbound_enabled', e.target.value === 'true')}
-                      style={ctlStyle}
-                    >
-                      <option value="true">Enabled</option>
-                      <option value="false">Disabled</option>
-                    </select>
-                  </ListItem>
-                  <ListItem>
-                    <ListItemText
-                      primary="Retention Days"
-                      secondary={String(settings.inbound?.retention_days ?? 30)}
-                    />
-                    <input
-                      type="number"
-                      placeholder={String(settings.inbound?.retention_days ?? 30)}
-                      onChange={(e) => handleForm('inbound_retention_days', parseInt(e.target.value))}
-                      style={numCtlStyle}
-                    />
-                  </ListItem>
-                  <ListItem>
-                    <ListItemText
-                      primary="Token TTL (minutes)"
-                      secondary={String(settings.inbound?.token_ttl_minutes ?? 60)}
-                    />
-                    <input
-                      type="number"
-                      placeholder={String(settings.inbound?.token_ttl_minutes ?? 60)}
-                      onChange={(e) => handleForm('inbound_token_ttl_minutes', parseInt(e.target.value))}
-                      style={numCtlStyle}
-                    />
-                  </ListItem>
+          <ResponsiveFormSection
+            title="Inbound Receiving"
+            subtitle="Configure inbound fax receiving and storage settings"
+            icon={<CheckCircleIcon />}
+          >
+            <ResponsiveSettingItem
+              icon={settings.inbound?.enabled ? <CheckCircleIcon color="success" /> : <WarningIcon color="warning" />}
+              label="Enable Inbound"
+              value={settings.inbound?.enabled ? 'Enabled' : 'Disabled'}
+              helperText="Allow receiving faxes (requires additional configuration based on backend)"
+              onChange={(value) => handleForm('inbound_enabled', value === 'true')}
+              type="select"
+              options={[
+                { value: 'true', label: 'Enabled' },
+                { value: 'false', label: 'Disabled' }
+              ]}
+              showCurrentValue={true}
+            />
+            
+            <ResponsiveSettingItem
+              icon={<SettingsIcon />}
+              label="Retention Days"
+              value={String(settings.inbound?.retention_days ?? 30)}
+              helperText="How long to keep inbound fax files before automatic cleanup"
+              onChange={(value) => handleForm('inbound_retention_days', parseInt(value))}
+              type="number"
+              placeholder={String(settings.inbound?.retention_days ?? 30)}
+              showCurrentValue={true}
+            />
+            
+            <ResponsiveSettingItem
+              icon={<SettingsIcon />}
+              label="Token TTL (minutes)"
+              value={String(settings.inbound?.token_ttl_minutes ?? 60)}
+              helperText="How long PDF download tokens remain valid"
+              onChange={(value) => handleForm('inbound_token_ttl_minutes', parseInt(value))}
+              type="number"
+              placeholder={String(settings.inbound?.token_ttl_minutes ?? 60)}
+              showCurrentValue={true}
+            />
 
-                  {settings.backend.type === 'sip' && (
-                    <ListItem sx={{ alignItems: 'flex-start', flexWrap: 'wrap', gap: 1 }}>
-                      <ListItemText
-                        primary="Asterisk Inbound Secret"
-                        secondary={
-                          <Typography variant="caption" color="text.secondary">
-                            Shared secret used by your Asterisk dialplan to POST inbound fax metadata to Faxbot.
-                            Keep this private and only use it on the private network.
-                            {' '}<a href={`${docsBase}/backends/sip-setup.html#inbound-receiving-quickstart-wip`} target="_blank" rel="noreferrer">Asterisk inbound guide</a>
-                          </Typography>
+            {settings.backend.type === 'sip' && (
+              <Box sx={{ mt: 2 }}>
+                <ResponsiveSettingItem
+                  icon={<SecurityIcon />}
+                  label="Asterisk Inbound Secret"
+                  value={lastGeneratedSecret ? 'Generated (copy below)' : 'Not configured'}
+                  helperText="Shared secret used by your Asterisk dialplan to POST inbound fax metadata to Faxbot. Keep this private and only use it on the private network."
+                  onChange={(value) => handleForm('asterisk_inbound_secret', value)}
+                  placeholder="ASTERISK_INBOUND_SECRET"
+                  type="password"
+                  showCurrentValue={false}
+                />
+                <Box sx={{ display: 'flex', gap: 1, mt: 1, flexWrap: 'wrap' }}>
+                  <Button 
+                    size="small" 
+                    variant="outlined"
+                    onClick={async () => {
+                      try {
+                        const bytes = new Uint8Array(32);
+                        const cryptoObj: any = (typeof window !== 'undefined') ? (window as any).crypto : undefined;
+                        if (cryptoObj && typeof cryptoObj.getRandomValues === 'function') {
+                          cryptoObj.getRandomValues(bytes);
+                        } else {
+                          for (let i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256);
                         }
-                      />
-                      <input
-                        placeholder="ASTERISK_INBOUND_SECRET"
-                        onChange={(e) => handleForm('asterisk_inbound_secret', e.target.value)}
-                        style={{ background: 'transparent', color: 'inherit', borderColor: '#444', padding: '6px', borderRadius: 6 }}
-                      />
-                      <Button size="small" sx={{ ml: 1 }} onClick={async ()=>{
-                        try {
-                          const bytes = new Uint8Array(32);
-                          const cryptoObj: any = (typeof window !== 'undefined') ? (window as any).crypto : undefined;
-                          if (cryptoObj && typeof cryptoObj.getRandomValues === 'function') {
-                            cryptoObj.getRandomValues(bytes);
-                          } else {
-                            for (let i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256);
-                          }
-                          const b64 = btoa(String.fromCharCode(...Array.from(bytes))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
-                          setLastGeneratedSecret(b64);
-                          await client.updateSettings({ asterisk_inbound_secret: b64 });
-                          await client.reloadSettings();
-                          await fetchSettings();
-                          setSnack('Generated new inbound secret (displayed once below)');
-                        } catch(e:any){ setError(e?.message||'Failed to generate secret'); }
-                      }}>Generate</Button>
-                      <Button size="small" onClick={async ()=>{
-                        const toCopy = (form.asterisk_inbound_secret || lastGeneratedSecret || '').trim();
-                        if (!toCopy) return;
-                        try { await navigator.clipboard.writeText(toCopy); setSnack('Copied'); } catch {}
-                      }} disabled={!form.asterisk_inbound_secret && !lastGeneratedSecret}>Copy</Button>
-                      {lastGeneratedSecret && (
-                        <Typography variant="caption" color="text.secondary" sx={{ ml: 1 }}>
-                          New secret (copy now): <code>{lastGeneratedSecret}</code>
-                        </Typography>
-                      )}
-                    </ListItem>
-                  )}
+                        const b64 = btoa(String.fromCharCode(...Array.from(bytes))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+                        setLastGeneratedSecret(b64);
+                        await client.updateSettings({ asterisk_inbound_secret: b64 });
+                        await client.reloadSettings();
+                        await fetchSettings();
+                        setSnack('Generated new inbound secret (displayed once below)');
+                      } catch(e:any){ setError(e?.message||'Failed to generate secret'); }
+                    }}
+                    sx={{ borderRadius: 1 }}
+                  >
+                    Generate
+                  </Button>
+                  <Button 
+                    size="small" 
+                    variant="outlined"
+                    onClick={async () => {
+                      const toCopy = (form.asterisk_inbound_secret || lastGeneratedSecret || '').trim();
+                      if (!toCopy) return;
+                      try { await navigator.clipboard.writeText(toCopy); setSnack('Copied'); } catch {}
+                    }} 
+                    disabled={!form.asterisk_inbound_secret && !lastGeneratedSecret}
+                    sx={{ borderRadius: 1 }}
+                  >
+                    Copy
+                  </Button>
+                </Box>
+                {lastGeneratedSecret && (
+                  <Alert severity="success" sx={{ mt: 2, borderRadius: 2 }}>
+                    <Typography variant="body2">
+                      New secret (copy now): <code>{lastGeneratedSecret}</code>
+                    </Typography>
+                  </Alert>
+                )}
+              </Box>
+            )}
 
-                  {settings.backend.type === 'phaxio' && (
-                    <ListItem sx={{ alignItems: 'flex-start', flexWrap: 'wrap', gap: 1 }}>
-                      <ListItemText
-                        primary="Verify Phaxio Inbound Signature"
-                        secondary={settings.inbound?.phaxio?.verify_signature ? 'Enabled' : 'Disabled'}
-                      />
-                      <select
-                        value={(form.phaxio_inbound_verify_signature ?? settings.inbound?.phaxio?.verify_signature) ? 'true' : 'false'}
-                        onChange={(e) => handleForm('phaxio_inbound_verify_signature', e.target.value === 'true')}
-                        style={ctlStyle}
-                      >
-                        <option value="true">Enabled</option>
-                        <option value="false">Disabled</option>
-                      </select>
-                    </ListItem>
-                  )}
+            {settings.backend.type === 'phaxio' && (
+              <ResponsiveSettingItem
+                icon={settings.inbound?.phaxio?.verify_signature ? <CheckCircleIcon color="success" /> : <WarningIcon color="warning" />}
+                label="Verify Phaxio Inbound Signature"
+                value={settings.inbound?.phaxio?.verify_signature ? 'Enabled' : 'Disabled'}
+                helperText="Enable HMAC signature verification for Phaxio inbound webhooks (recommended for security)"
+                onChange={(value) => handleForm('phaxio_inbound_verify_signature', value === 'true')}
+                type="select"
+                options={[
+                  { value: 'true', label: 'Enabled (Recommended)' },
+                  { value: 'false', label: 'Disabled' }
+                ]}
+                showCurrentValue={true}
+              />
+            )}
 
-                  {settings.backend.type === 'sinch' && (
-                    <>
-                      <ListItem sx={{ alignItems: 'flex-start', flexWrap: 'wrap', gap: 1 }}>
-                        <ListItemText
-                          primary="Verify Sinch Inbound Signature"
-                          secondary={settings.inbound?.sinch?.verify_signature ? 'Enabled' : 'Disabled'}
-                        />
-                        <select
-                          value={(form.sinch_inbound_verify_signature ?? settings.inbound?.sinch?.verify_signature) ? 'true' : 'false'}
-                          onChange={(e) => handleForm('sinch_inbound_verify_signature', e.target.value === 'true')}
-                          style={ctlStyle}
-                        >
-                          <option value="true">Enabled</option>
-                          <option value="false">Disabled</option>
-                        </select>
-                      </ListItem>
-                      <ListItem sx={{ alignItems: 'flex-start', flexWrap: 'wrap', gap: 1 }}>
-                        <ListItemText
-                          primary="Sinch Inbound Basic Auth"
-                          secondary={settings.inbound?.sinch?.basic_auth_configured ? 'Configured' : 'Not configured'}
-                        />
-                        <input
-                          placeholder="SINCH_INBOUND_BASIC_USER"
-                          onChange={(e) => handleForm('sinch_inbound_basic_user', e.target.value)}
-                          style={{ ...ctlStyle, marginRight: isSmall ? 0 : 8 }}
-                        />
-                        <input
-                          placeholder="SINCH_INBOUND_BASIC_PASS"
-                          onChange={(e) => handleForm('sinch_inbound_basic_pass', e.target.value)}
-                          style={ctlStyle}
-                        />
-                        <Typography variant="caption" color="text.secondary" sx={{ ml: 2 }}>
-                          Faxbot-enforced optional auth. Use if your provider supports setting Basic credentials on callbacks.
-                        </Typography>
-                      </ListItem>
-                      <ListItem sx={{ alignItems: 'flex-start', flexWrap: 'wrap', gap: 1 }}>
-                        <ListItemText
-                          primary="Sinch Inbound HMAC Secret"
-                          secondary={settings.inbound?.sinch?.hmac_configured ? 'Configured' : 'Not configured'}
-                        />
-                        <input
-                          placeholder="SINCH_INBOUND_HMAC_SECRET"
-                          onChange={(e) => handleForm('sinch_inbound_hmac_secret', e.target.value)}
-                          style={ctlStyle}
-                        />
-                        <Typography variant="caption" color="text.secondary" sx={{ ml: 2 }}>
-                          Faxbot-enforced optional HMAC validation. Configure the same shared secret in your provider if supported.
-                          {"  •  "}
-                          <a href="https://developers.sinch.com/docs/fax/api-reference/" target="_blank" rel="noreferrer">Sinch Fax API Docs</a>
-                        </Typography>
-                      </ListItem>
-                    </>
-                  )}
-                </List>
-              </CardContent>
-            </Card>
-          </Grid>
+            {settings.backend.type === 'sinch' && (
+              <Box sx={{ mt: 2 }}>
+                <ResponsiveSettingItem
+                  icon={settings.inbound?.sinch?.verify_signature ? <CheckCircleIcon color="success" /> : <WarningIcon color="warning" />}
+                  label="Verify Sinch Inbound Signature"
+                  value={settings.inbound?.sinch?.verify_signature ? 'Enabled' : 'Disabled'}
+                  helperText="Enable HMAC signature verification for Sinch inbound webhooks"
+                  onChange={(value) => handleForm('sinch_inbound_verify_signature', value === 'true')}
+                  type="select"
+                  options={[
+                    { value: 'true', label: 'Enabled' },
+                    { value: 'false', label: 'Disabled' }
+                  ]}
+                  showCurrentValue={true}
+                />
+                
+                <ResponsiveSettingItem
+                  icon={settings.inbound?.sinch?.basic_auth_configured ? <CheckCircleIcon color="success" /> : <WarningIcon color="warning" />}
+                  label="Sinch Inbound Basic Auth User"
+                  value={settings.inbound?.sinch?.basic_auth_configured ? 'Configured' : 'Not configured'}
+                  helperText="Faxbot-enforced optional auth. Use if your provider supports setting Basic credentials on callbacks."
+                  onChange={(value) => handleForm('sinch_inbound_basic_user', value)}
+                  placeholder="SINCH_INBOUND_BASIC_USER"
+                  showCurrentValue={false}
+                />
+                
+                <ResponsiveSettingItem
+                  icon={<SecurityIcon />}
+                  label="Sinch Inbound Basic Auth Password"
+                  value=""
+                  helperText="Password for Basic authentication"
+                  onChange={(value) => handleForm('sinch_inbound_basic_pass', value)}
+                  placeholder="SINCH_INBOUND_BASIC_PASS"
+                  type="password"
+                  showCurrentValue={false}
+                />
+                
+                <ResponsiveSettingItem
+                  icon={settings.inbound?.sinch?.hmac_configured ? <CheckCircleIcon color="success" /> : <WarningIcon color="warning" />}
+                  label="Sinch Inbound HMAC Secret"
+                  value={settings.inbound?.sinch?.hmac_configured ? 'Configured' : 'Not configured'}
+                  helperText="Faxbot-enforced optional HMAC validation. Configure the same shared secret in your provider if supported."
+                  onChange={(value) => handleForm('sinch_inbound_hmac_secret', value)}
+                  placeholder="SINCH_INBOUND_HMAC_SECRET"
+                  type="password"
+                  showCurrentValue={false}
+                />
+              </Box>
+            )}
+          </ResponsiveFormSection>
 
           {/* SignalWire (cloud) */}
           {(form.backend === 'signalwire' || settings.backend.type === 'signalwire') && (
-            <Grid item xs={12}>
-              <Card>
-                <CardContent>
-                  <Typography variant="h6" gutterBottom>SignalWire</Typography>
-                  <List dense>
-                    <ListItem sx={{ alignItems: 'flex-start', flexWrap: 'wrap', gap: 1 }}>
-                      <ListItemText primary="Space URL" secondary={settings.signalwire?.space_url || ''} />
-                      <input placeholder="example.signalwire.com" onChange={(e)=>handleForm('signalwire_space_url', e.target.value)} style={ctlStyle} />
-                    </ListItem>
-                    <ListItem sx={{ alignItems: 'flex-start', flexWrap: 'wrap', gap: 1 }}>
-                      <ListItemText primary="Project ID" secondary={settings.signalwire?.project_id || ''} />
-                      <input placeholder="SIGNALWIRE_PROJECT_ID" onChange={(e)=>handleForm('signalwire_project_id', e.target.value)} style={ctlStyle} />
-                    </ListItem>
-                    <ListItem sx={{ alignItems: 'flex-start', flexWrap: 'wrap', gap: 1 }}>
-                      <ListItemText primary="API Token" secondary={settings.signalwire?.api_token || '***'} />
-                      <input placeholder="SIGNALWIRE_API_TOKEN" onChange={(e)=>handleForm('signalwire_api_token', e.target.value)} style={ctlStyle} />
-                    </ListItem>
-                    <ListItem sx={{ alignItems: 'flex-start', flexWrap: 'wrap', gap: 1 }}>
-                      <ListItemText primary="From (fax)" secondary={settings.signalwire?.from_fax || ''} />
-                      <input placeholder="+13035551234" onChange={(e)=>handleForm('signalwire_fax_from_e164', e.target.value)} style={ctlStyle} />
-                    </ListItem>
-                  </List>
-                </CardContent>
-              </Card>
-            </Grid>
+            <ResponsiveFormSection
+              title="SignalWire Configuration"
+              subtitle="Configure your SignalWire fax settings"
+              icon={<CloudIcon />}
+            >
+              <ResponsiveSettingItem
+                icon={<CloudIcon />}
+                label="Space URL"
+                value={settings.signalwire?.space_url || ''}
+                helperText="Your SignalWire space URL (e.g., example.signalwire.com)"
+                onChange={(value) => handleForm('signalwire_space_url', value)}
+                placeholder="example.signalwire.com"
+                showCurrentValue={!!settings.signalwire?.space_url}
+              />
+              
+              <ResponsiveSettingItem
+                icon={<SettingsIcon />}
+                label="Project ID"
+                value={settings.signalwire?.project_id || ''}
+                helperText="Your SignalWire project identifier"
+                onChange={(value) => handleForm('signalwire_project_id', value)}
+                placeholder="SIGNALWIRE_PROJECT_ID"
+                showCurrentValue={!!settings.signalwire?.project_id}
+              />
+              
+              <ResponsiveSettingItem
+                icon={<SecurityIcon />}
+                label="API Token"
+                value={settings.signalwire?.api_token ? '***' : ''}
+                helperText="Your SignalWire API token for authentication"
+                onChange={(value) => handleForm('signalwire_api_token', value)}
+                placeholder="SIGNALWIRE_API_TOKEN"
+                type="password"
+                showCurrentValue={!!settings.signalwire?.api_token}
+              />
+              
+              <ResponsiveSettingItem
+                icon={<SettingsIcon />}
+                label="From (fax)"
+                value={settings.signalwire?.from_fax || ''}
+                helperText="Your fax number in E.164 format (e.g., +13035551234)"
+                onChange={(value) => handleForm('signalwire_fax_from_e164', value)}
+                placeholder="+13035551234"
+                showCurrentValue={!!settings.signalwire?.from_fax}
+              />
+            </ResponsiveFormSection>
           )}
 
           {/* Storage Configuration */}
@@ -832,120 +786,236 @@ function Settings({ client }: SettingsProps) {
               </Card>
             </Grid>
           )}
-          <Grid item xs={12}>
-            <Card>
-              <CardContent>
-                <Typography id="settings-storage" variant="h6" gutterBottom>
-                  Storage Configuration
-                </Typography>
-                <List dense>
-                  <ListItem sx={{ alignItems: 'flex-start', flexWrap: 'wrap', gap: 1 }}>
-                    <ListItemText primary="Storage Backend" secondary={(form.storage_backend || settings.storage?.backend || 'local').toUpperCase()} />
-                    <Typography variant="caption" color="text.secondary" sx={{ mr: 2 }}>
-                      Local for development only. Use S3 with KMS for PHI in production.
-                    </Typography>
-                    <select
-                      value={form.storage_backend || settings.storage?.backend || 'local'}
-                      onChange={(e) => handleForm('storage_backend', e.target.value)}
-                      style={{ background: 'transparent', color: 'inherit', borderColor: '#444', padding: '6px', borderRadius: 6 }}
-                    >
-                      <option value="local">local</option>
-                      <option value="s3">s3</option>
-                    </select>
-                  </ListItem>
-                  {(form.storage_backend === 's3' || settings.storage?.backend === 's3') && (
-                    <>
-                      <ListItem sx={{ alignItems: 'flex-start', flexWrap: 'wrap', gap: 1 }}>
-                        <ListItemText primary="S3 Bucket" secondary={settings.storage?.s3_bucket || ''} />
-                        <input placeholder="S3_BUCKET" onChange={(e)=>handleForm('s3_bucket', e.target.value)} style={ctlStyle} />
-                      </ListItem>
-                      <ListItem sx={{ alignItems: 'flex-start', flexWrap: 'wrap', gap: 1 }}>
-                        <ListItemText primary="S3 Region" secondary={settings.storage?.s3_region || ''} />
-                        <input placeholder="S3_REGION" onChange={(e)=>handleForm('s3_region', e.target.value)} style={ctlStyle} />
-                      </ListItem>
-                      <ListItem sx={{ alignItems: 'flex-start', flexWrap: 'wrap', gap: 1 }}>
-                        <ListItemText primary="S3 Prefix" secondary={settings.storage?.s3_prefix || ''} />
-                        <input placeholder="S3_PREFIX" onChange={(e)=>handleForm('s3_prefix', e.target.value)} style={ctlStyle} />
-                      </ListItem>
-                      <ListItem>
-                        <ListItemText primary="S3 Endpoint URL" secondary={settings.storage?.s3_endpoint_url || ''} />
-                        <input placeholder="S3_ENDPOINT_URL" onChange={(e)=>handleForm('s3_endpoint_url', e.target.value)} style={ctlStyle} />
-                      </ListItem>
-                      <ListItem>
-                        <ListItemText primary="S3 KMS Key ID" secondary={settings.storage?.s3_kms_enabled ? 'Configured' : 'Not set'} />
-                        <Typography variant="caption" color="text.secondary" sx={{ mr: 2 }}>
-                          Enable server-side encryption with KMS by specifying a CMK (recommended for PHI).
-                        </Typography>
-                        <input placeholder="S3_KMS_KEY_ID" onChange={(e)=>handleForm('s3_kms_key_id', e.target.value)} style={ctlStyle} />
-                      </ListItem>
-                      <ListItem>
-                        <Button variant="outlined" onClick={async ()=>{ try { setLoading(true); const diag = await (client as any).runDiagnostics?.(); if (diag?.checks?.storage?.type === 's3') { const st = diag.checks.storage; const ok = st.accessible===true || st.bucket_set; setSnack(ok ? 'S3 validation passed' : ('S3 validation incomplete' + (st.error? (': '+st.error):''))); } else { setSnack('Diagnostics did not include S3 checks. Enable ENABLE_S3_DIAGNOSTICS=true on server for full validation.'); } } catch(e:any){ setError(e?.message||'S3 validation failed'); } finally { setLoading(false);} }}>
-                          Validate S3
-                        </Button>
-                        <Typography variant="caption" sx={{ ml: 2 }}>Full validation requires ENABLE_S3_DIAGNOSTICS=true on server and proper AWS credentials via env/role.</Typography>
-                      </ListItem>
-                    </>
-                  )}
-                </List>
-              </CardContent>
-            </Card>
-          </Grid>
+          <ResponsiveFormSection
+            title="Storage Configuration"
+            subtitle="Configure file storage backend and S3 settings"
+            icon={<StorageIcon />}
+          >
+            <ResponsiveSettingItem
+              icon={getStatusIcon(settings.storage?.backend === 's3')}
+              label="Storage Backend"
+              value={(form.storage_backend || settings.storage?.backend || 'local').toUpperCase()}
+              helperText="Local for development only. Use S3 with KMS for PHI in production."
+              onChange={(value) => handleForm('storage_backend', value)}
+              type="select"
+              options={[
+                { value: 'local', label: 'Local (Dev only)' },
+                { value: 's3', label: 'S3 (Production)' }
+              ]}
+              showCurrentValue={true}
+            />
+            
+            {(form.storage_backend === 's3' || settings.storage?.backend === 's3') && (
+              <Box sx={{ mt: 2 }}>
+                <ResponsiveSettingItem
+                  icon={<StorageIcon />}
+                  label="S3 Bucket"
+                  value={settings.storage?.s3_bucket || ''}
+                  helperText="Your S3 bucket name for storing fax files"
+                  onChange={(value) => handleForm('s3_bucket', value)}
+                  placeholder="S3_BUCKET"
+                  showCurrentValue={!!settings.storage?.s3_bucket}
+                />
+                
+                <ResponsiveSettingItem
+                  icon={<CloudIcon />}
+                  label="S3 Region"
+                  value={settings.storage?.s3_region || ''}
+                  helperText="AWS region where your S3 bucket is located"
+                  onChange={(value) => handleForm('s3_region', value)}
+                  placeholder="S3_REGION"
+                  showCurrentValue={!!settings.storage?.s3_region}
+                />
+                
+                <ResponsiveSettingItem
+                  icon={<SettingsIcon />}
+                  label="S3 Prefix"
+                  value={settings.storage?.s3_prefix || ''}
+                  helperText="Optional prefix for organizing files within the bucket"
+                  onChange={(value) => handleForm('s3_prefix', value)}
+                  placeholder="S3_PREFIX"
+                  showCurrentValue={!!settings.storage?.s3_prefix}
+                />
+                
+                <ResponsiveSettingItem
+                  icon={<CloudIcon />}
+                  label="S3 Endpoint URL"
+                  value={settings.storage?.s3_endpoint_url || ''}
+                  helperText="Custom S3 endpoint for S3-compatible services (MinIO, etc.)"
+                  onChange={(value) => handleForm('s3_endpoint_url', value)}
+                  placeholder="S3_ENDPOINT_URL"
+                  showCurrentValue={!!settings.storage?.s3_endpoint_url}
+                />
+                
+                <ResponsiveSettingItem
+                  icon={<SecurityIcon />}
+                  label="S3 KMS Key ID"
+                  value={settings.storage?.s3_kms_enabled ? 'Configured' : 'Not set'}
+                  helperText="Enable server-side encryption with KMS by specifying a CMK (recommended for PHI)"
+                  onChange={(value) => handleForm('s3_kms_key_id', value)}
+                  placeholder="S3_KMS_KEY_ID"
+                  showCurrentValue={false}
+                />
+                
+                <Box sx={{ mt: 2 }}>
+                  <Button 
+                    variant="outlined" 
+                    onClick={async () => { 
+                      try { 
+                        setLoading(true); 
+                        const diag = await (client as any).runDiagnostics?.(); 
+                        if (diag?.checks?.storage?.type === 's3') { 
+                          const st = diag.checks.storage; 
+                          const ok = st.accessible === true || st.bucket_set; 
+                          setSnack(ok ? 'S3 validation passed' : ('S3 validation incomplete' + (st.error ? (': ' + st.error) : ''))); 
+                        } else { 
+                          setSnack('Diagnostics did not include S3 checks. Enable ENABLE_S3_DIAGNOSTICS=true on server for full validation.'); 
+                        } 
+                      } catch(e: any) { 
+                        setError(e?.message || 'S3 validation failed'); 
+                      } finally { 
+                        setLoading(false); 
+                      } 
+                    }}
+                    sx={{ borderRadius: 2 }}
+                  >
+                    Validate S3
+                  </Button>
+                  <Typography variant="caption" color="text.secondary" sx={{ ml: 2, display: 'block', mt: 1 }}>
+                    Full validation requires ENABLE_S3_DIAGNOSTICS=true on server and proper AWS credentials via env/role.
+                  </Typography>
+                </Box>
+              </Box>
+            )}
+          </ResponsiveFormSection>
 
           {/* Advanced Settings */}
-          <Grid item xs={12}>
-            <Card>
-              <CardContent>
-                <Typography id="settings-advanced" variant="h6" gutterBottom>
-                  Advanced Settings
-                </Typography>
-                <List dense>
-                  <ListItem>
-                    <ListItemText primary="Database URL" secondary={settings.database?.url || 'sqlite:///./faxbot.db'} />
-                    <Button variant="outlined" onClick={async ()=>{ try{ setLoading(true); setError(null); await client.updateSettings({ database_url: 'sqlite:////faxdata/faxbot.db' }); await client.reloadSettings(); await fetchSettings(); setSnack('Switched DB to /faxdata/faxbot.db'); }catch(e:any){ setError(e?.message||'Failed to switch DB'); } finally{ setLoading(false);} }}>Use persistent DB</Button>
-                    <Typography variant="caption" color="text.secondary" sx={{ ml: 2 }}>
-                      SQLite in /faxdata persists across rebuilds. For production scale, use Postgres.
-                    </Typography>
-                  </ListItem>
-                  <ListItem>
-                    <Button variant="outlined" onClick={async ()=>{ try{ setLoading(true); const res = await (client as any).fetch?.('/admin/db-status'); const data = await res.json(); setEnvContent(JSON.stringify(data, null, 2)); setSnack('DB status loaded'); } catch(e:any){ setError(e?.message||'Failed to load DB status'); } finally{ setLoading(false);} }}>Check DB Status</Button>
-                    <Typography variant="caption" color="text.secondary" sx={{ ml: 2 }}>Shows current driver, connection, counts and SQLite file info.</Typography>
-                  </ListItem>
-                  <ListItem>
-                    <ListItemText primary="Max Upload Size (MB)" secondary={String(settings.limits?.max_file_size_mb || 10)} />
-                    <Typography variant="caption" color="text.secondary" sx={{ mr: 2 }}>
-                      Default 10 MB aligns with provider limits. Increase only if your environment and provider allow it.
-                    </Typography>
-                    <input type="number" placeholder={String(settings.limits?.max_file_size_mb || 10)} onChange={(e)=>handleForm('max_file_size_mb', parseInt(e.target.value))} style={numCtlStyle} />
-                  </ListItem>
-                  <ListItem>
-                    <ListItemText primary="Global Rate Limit (RPM)" secondary={String(settings.limits?.rate_limit_rpm || 0)} />
-                    <Typography variant="caption" color="text.secondary" sx={{ mr: 2 }}>
-                      Per-key requests per minute. Set to mitigate abuse; 0 disables global rate limiting.
-                    </Typography>
-                    <input type="number" placeholder={String(settings.limits?.rate_limit_rpm || 0)} onChange={(e)=>handleForm('max_requests_per_minute', parseInt(e.target.value))} style={numCtlStyle} />
-                  </ListItem>
-                  <ListItem>
-                    <ListItemText primary="Inbound List RPM" secondary={String(settings.limits?.inbound_list_rpm ?? 30)} />
-                    <Typography variant="caption" color="text.secondary" sx={{ mr: 2 }}>
-                      Rate limit for listing inbound faxes (per key). Keep conservative for HIPAA workloads.
-                    </Typography>
-                    <input type="number" placeholder={String(settings.limits?.inbound_list_rpm ?? 30)} onChange={(e)=>handleForm('inbound_list_rpm', parseInt(e.target.value))} style={numCtlStyle} />
-                  </ListItem>
-                  <ListItem>
-                    <ListItemText primary="Inbound Get RPM" secondary={String(settings.limits?.inbound_get_rpm ?? 60)} />
-                    <Typography variant="caption" color="text.secondary" sx={{ mr: 2 }}>
-                      Rate limit for fetching inbound fax metadata/PDF (per key).
-                    </Typography>
-                    <input type="number" placeholder={String(settings.limits?.inbound_get_rpm ?? 60)} onChange={(e)=>handleForm('inbound_get_rpm', parseInt(e.target.value))} style={numCtlStyle} />
-                  </ListItem>
-                </List>
-                <Alert severity="info">
-                  For HIPAA environments, set reasonable RPM limits and keep upload size within policy.
+          <ResponsiveFormSection
+              title="Advanced Settings"
+              subtitle="Database, rate limiting, and upload configuration"
+              icon={<SettingsIcon />}
+            >
+              <Stack spacing={3}>
+                {/* Database Configuration */}
+                <Box>
+                  <ResponsiveSettingItem
+                    icon={getStatusIcon(!!settings.database?.url)}
+                    label="Database URL"
+                    value={settings.database?.url || 'sqlite:///./faxbot.db'}
+                    helperText="SQLite in /faxdata persists across rebuilds. For production scale, use Postgres."
+                    showCurrentValue={true}
+                  />
+                  <Box sx={{ 
+                    display: 'flex', 
+                    gap: 2, 
+                    mt: 2,
+                    flexDirection: { xs: 'column', sm: 'row' }
+                  }}>
+                    <Button 
+                      variant="outlined"
+                      size={isSmall ? 'medium' : 'small'}
+                      onClick={async ()=>{ 
+                        try{ 
+                          setLoading(true); 
+                          setError(null); 
+                          await client.updateSettings({ database_url: 'sqlite:////faxdata/faxbot.db' }); 
+                          await client.reloadSettings(); 
+                          await fetchSettings(); 
+                          setSnack('Switched DB to /faxdata/faxbot.db'); 
+                        } catch(e:any){ 
+                          setError(e?.message||'Failed to switch DB'); 
+                        } finally{ 
+                          setLoading(false);
+                        } 
+                      }}
+                      sx={{ borderRadius: 2 }}
+                      fullWidth={isSmall}
+                    >
+                      Use persistent
+                    </Button>
+                    <Button 
+                      variant="outlined"
+                      size={isSmall ? 'medium' : 'small'}
+                      onClick={async ()=>{ 
+                        try{ 
+                          setLoading(true); 
+                          const res = await (client as any).fetch?.('/admin/db-status'); 
+                          const data = await res.json(); 
+                          setEnvContent(JSON.stringify(data, null, 2)); 
+                          setSnack('DB status loaded'); 
+                        } catch(e:any){ 
+                          setError(e?.message||'Failed to load DB status'); 
+                        } finally{ 
+                          setLoading(false);
+                        } 
+                      }}
+                      sx={{ borderRadius: 2 }}
+                      fullWidth={isSmall}
+                    >
+                      Check DB Status
+                    </Button>
+                  </Box>
+                  <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
+                    Shows current driver, connection, counts and SQLite file info.
+                  </Typography>
+                </Box>
+
+                {/* Upload Limits */}
+                <ResponsiveTextField
+                  label="Max Upload Size (MB)"
+                  value={String(form.max_file_size_mb ?? settings.limits?.max_file_size_mb ?? 10)}
+                  onChange={(value) => handleForm('max_file_size_mb', parseInt(value) || 10)}
+                  placeholder="10"
+                  helperText="Default 10 MB aligns with provider limits. Increase only if your environment and provider allow it."
+                  type="number"
+                  icon={<CloudIcon />}
+                />
+
+                {/* Rate Limiting */}
+                <ResponsiveTextField
+                  label="Global Rate Limit (RPM)"
+                  value={String(form.max_requests_per_minute ?? settings.limits?.rate_limit_rpm ?? 60)}
+                  onChange={(value) => handleForm('max_requests_per_minute', parseInt(value) || 0)}
+                  placeholder="60"
+                  helperText="Per-key requests per minute. Set to mitigate abuse; 0 disables global rate limiting."
+                  type="number"
+                  icon={<SecurityIcon />}
+                />
+
+                <ResponsiveTextField
+                  label="Inbound List RPM"
+                  value={String(form.inbound_list_rpm ?? settings.limits?.inbound_list_rpm ?? 30)}
+                  onChange={(value) => handleForm('inbound_list_rpm', parseInt(value) || 30)}
+                  placeholder="30"
+                  helperText="Rate limit for listing inbound faxes (per key). Keep conservative for HIPAA workloads."
+                  type="number"
+                  icon={<SecurityIcon />}
+                />
+
+                <ResponsiveTextField
+                  label="Inbound Get RPM"
+                  value={String(form.inbound_get_rpm ?? settings.limits?.inbound_get_rpm ?? 60)}
+                  onChange={(value) => handleForm('inbound_get_rpm', parseInt(value) || 60)}
+                  placeholder="60"
+                  helperText="Rate limit for fetching inbound fax metadata/PDF (per key)."
+                  type="number"
+                  icon={<SecurityIcon />}
+                />
+
+                <Alert 
+                  severity="info" 
+                  sx={{ 
+                    borderRadius: 2,
+                    '& .MuiAlert-icon': { alignItems: 'center' }
+                  }}
+                >
+                  <Typography variant="body2">
+                    For HIPAA environments, set reasonable RPM limits and keep upload size within policy.
+                  </Typography>
                 </Alert>
-              </CardContent>
-            </Card>
-          </Grid>
-        </Grid>
+              </Stack>
+            </ResponsiveFormSection>
+        </Stack>
         <Box sx={{ display: 'flex', gap: 1, mt: 2 }}>
           <Button variant="contained" onClick={async () => { try { setLoading(true); setError(null); setRestartHint(false); const p:any={}; if (form.backend) p.backend=form.backend; if (form.require_api_key!==undefined) p.require_api_key=!!form.require_api_key; if (form.enforce_public_https!==undefined) p.enforce_public_https=!!form.enforce_public_https; if (form.public_api_url) p.public_api_url=String(form.public_api_url); if (form.enable_persisted_settings!==undefined) p.enable_persisted_settings=!!form.enable_persisted_settings; if (form.feature_v3_plugins!==undefined) p.feature_v3_plugins=!!form.feature_v3_plugins; if (form.feature_plugin_install!==undefined) p.feature_plugin_install=!!form.feature_plugin_install; if (form.backend==='phaxio'){ if (form.phaxio_api_key) p.phaxio_api_key=form.phaxio_api_key; if (form.phaxio_api_secret) p.phaxio_api_secret=form.phaxio_api_secret; } if (form.backend==='sinch'){ if (form.sinch_project_id) p.sinch_project_id=form.sinch_project_id; if (form.sinch_api_key) p.sinch_api_key=form.sinch_api_key; if (form.sinch_api_secret) p.sinch_api_secret=form.sinch_api_secret; } if (form.backend==='sip'){ if (form.ami_host) p.ami_host=form.ami_host; if (form.ami_port) p.ami_port=Number(form.ami_port); if (form.ami_username) p.ami_username=form.ami_username; if (form.ami_password) p.ami_password=form.ami_password; if (form.fax_station_id) p.fax_station_id=form.fax_station_id; } if (form.inbound_enabled!==undefined) p.inbound_enabled=!!form.inbound_enabled; if (form.inbound_retention_days!==undefined) p.inbound_retention_days=Number(form.inbound_retention_days); if (form.inbound_token_ttl_minutes!==undefined) p.inbound_token_ttl_minutes=Number(form.inbound_token_ttl_minutes); if (form.asterisk_inbound_secret) p.asterisk_inbound_secret=form.asterisk_inbound_secret; if (form.phaxio_inbound_verify_signature!==undefined) p.phaxio_inbound_verify_signature=!!form.phaxio_inbound_verify_signature; if (form.sinch_inbound_verify_signature!==undefined) p.sinch_inbound_verify_signature=!!form.sinch_inbound_verify_signature; if (form.sinch_inbound_basic_user) p.sinch_inbound_basic_user=form.sinch_inbound_basic_user; if (form.sinch_inbound_basic_pass) p.sinch_inbound_basic_pass=form.sinch_inbound_basic_pass; if (form.sinch_inbound_hmac_secret) p.sinch_inbound_hmac_secret=form.sinch_inbound_hmac_secret; if (form.storage_backend) p.storage_backend=form.storage_backend; if (form.s3_bucket) p.s3_bucket=form.s3_bucket; if (form.s3_region) p.s3_region=form.s3_region; if (form.s3_prefix) p.s3_prefix=form.s3_prefix; if (form.s3_endpoint_url) p.s3_endpoint_url=form.s3_endpoint_url; if (form.s3_kms_key_id) p.s3_kms_key_id=form.s3_kms_key_id; if (form.max_file_size_mb!==undefined) p.max_file_size_mb=Number(form.max_file_size_mb); if (form.max_requests_per_minute!==undefined) p.max_requests_per_minute=Number(form.max_requests_per_minute); if (form.inbound_list_rpm!==undefined) p.inbound_list_rpm=Number(form.inbound_list_rpm); if (form.inbound_get_rpm!==undefined) p.inbound_get_rpm=Number(form.inbound_get_rpm); const res = await client.updateSettings(p); await client.reloadSettings(); await fetchSettings(); setSnack('Settings applied and reloaded'); if (res && res._meta && res._meta.restart_recommended) setRestartHint(true); if (p.enable_persisted_settings!==undefined) setPersistedEnabled(!!p.enable_persisted_settings); } catch(e:any){ setError(e?.message||'Failed to apply settings'); } finally { setLoading(false);} }} disabled={loading}>
             Apply & Reload
