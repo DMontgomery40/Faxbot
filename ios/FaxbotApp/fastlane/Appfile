@@ -1,0 +1,4 @@
+app_identifier(ENV.fetch('APP_IDENTIFIER', 'net.faxbot.ios'))
+apple_id(ENV['APPLE_ID'])
+team_id(ENV['TEAM_ID'])
+

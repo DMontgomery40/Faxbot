@@ -1,0 +1,447 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		064E4594E1D3F3E331C7B887 /* Keychain.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C5128DE9204678110EBCE0D /* Keychain.swift */; };
+		406759DD9C63FECB984EFB31 /* ShareViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 17409B96060E797DC7C29E5B /* ShareViewController.swift */; };
+		47ACDFBDDD786246BF0446E3 /* QRScannerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A275397395C2770AF50A546 /* QRScannerView.swift */; };
+		51DAE036143B5EE840A4DA0A /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 67569AC1641D91125AC62BBC /* APIClient.swift */; };
+		7817D4FA1F520F06E7D3A584 /* FaxbotApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9830C8C17225DBA38A9C7ECF /* FaxbotApp.swift */; };
+		9A26CEF7E8FE12B5ED2AB22F /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D24062D2F073F96A3F722F46 /* ContentView.swift */; };
+		A3986C8FA61FE5316E45F9C3 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D42F39278F447D2896B2316D /* SettingsView.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		E364DFF7D186D0F5D21C81A1 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 84A5454F0D07610CFE738C98 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A5123F5C95FB6619081EEA63;
+			remoteInfo = Faxbot;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		17409B96060E797DC7C29E5B /* ShareViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareViewController.swift; sourceTree = "<group>"; };
+		33C05F1E9AEF10EA8E8CAF8A /* FaxbotShare.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = FaxbotShare.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		3C5128DE9204678110EBCE0D /* Keychain.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Keychain.swift; sourceTree = "<group>"; };
+		5A275397395C2770AF50A546 /* QRScannerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QRScannerView.swift; sourceTree = "<group>"; };
+		67569AC1641D91125AC62BBC /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
+		821DFA6BFC097DBB954DA9A6 /* Faxbot.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Faxbot.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		9830C8C17225DBA38A9C7ECF /* FaxbotApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FaxbotApp.swift; sourceTree = "<group>"; };
+		D24062D2F073F96A3F722F46 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		D42F39278F447D2896B2316D /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXGroup section */
+		1D2D1EE68D97291C16F09555 /* Faxbot */ = {
+			isa = PBXGroup;
+			children = (
+				67569AC1641D91125AC62BBC /* APIClient.swift */,
+				D24062D2F073F96A3F722F46 /* ContentView.swift */,
+				9830C8C17225DBA38A9C7ECF /* FaxbotApp.swift */,
+				3C5128DE9204678110EBCE0D /* Keychain.swift */,
+				5A275397395C2770AF50A546 /* QRScannerView.swift */,
+				D42F39278F447D2896B2316D /* SettingsView.swift */,
+			);
+			name = Faxbot;
+			path = Sources/Faxbot;
+			sourceTree = "<group>";
+		};
+		30DA74DBBC13672F22A81AE9 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				821DFA6BFC097DBB954DA9A6 /* Faxbot.app */,
+				33C05F1E9AEF10EA8E8CAF8A /* FaxbotShare.appex */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		AA9F3D91B0EA864B1EBC3430 = {
+			isa = PBXGroup;
+			children = (
+				1D2D1EE68D97291C16F09555 /* Faxbot */,
+				B434D2EA4EAE2B465080B1D0 /* FaxbotShare */,
+				30DA74DBBC13672F22A81AE9 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		B434D2EA4EAE2B465080B1D0 /* FaxbotShare */ = {
+			isa = PBXGroup;
+			children = (
+				17409B96060E797DC7C29E5B /* ShareViewController.swift */,
+			);
+			name = FaxbotShare;
+			path = Sources/FaxbotShare;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		19D192CE2E4C0829EAA455E0 /* FaxbotShare */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 93A5D02D082D4C057F08BA26 /* Build configuration list for PBXNativeTarget "FaxbotShare" */;
+			buildPhases = (
+				BC4E5FFAE113E3EB326A8C04 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				A404E9CF97E942FCBE560575 /* PBXTargetDependency */,
+			);
+			name = FaxbotShare;
+			packageProductDependencies = (
+			);
+			productName = FaxbotShare;
+			productReference = 33C05F1E9AEF10EA8E8CAF8A /* FaxbotShare.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+		A5123F5C95FB6619081EEA63 /* Faxbot */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 3C5BA6EEDE0C32B1695BACC6 /* Build configuration list for PBXNativeTarget "Faxbot" */;
+			buildPhases = (
+				2E228B4165719E05A55C211D /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = Faxbot;
+			packageProductDependencies = (
+			);
+			productName = Faxbot;
+			productReference = 821DFA6BFC097DBB954DA9A6 /* Faxbot.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		84A5454F0D07610CFE738C98 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					19D192CE2E4C0829EAA455E0 = {
+						ProvisioningStyle = Automatic;
+					};
+					A5123F5C95FB6619081EEA63 = {
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = 7361D8BE77A339EB5A28EEDA /* Build configuration list for PBXProject "FaxbotApp" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = AA9F3D91B0EA864B1EBC3430;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				A5123F5C95FB6619081EEA63 /* Faxbot */,
+				19D192CE2E4C0829EAA455E0 /* FaxbotShare */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXSourcesBuildPhase section */
+		2E228B4165719E05A55C211D /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				51DAE036143B5EE840A4DA0A /* APIClient.swift in Sources */,
+				9A26CEF7E8FE12B5ED2AB22F /* ContentView.swift in Sources */,
+				7817D4FA1F520F06E7D3A584 /* FaxbotApp.swift in Sources */,
+				064E4594E1D3F3E331C7B887 /* Keychain.swift in Sources */,
+				47ACDFBDDD786246BF0446E3 /* QRScannerView.swift in Sources */,
+				A3986C8FA61FE5316E45F9C3 /* SettingsView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		BC4E5FFAE113E3EB326A8C04 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				406759DD9C63FECB984EFB31 /* ShareViewController.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		A404E9CF97E942FCBE560575 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A5123F5C95FB6619081EEA63 /* Faxbot */;
+			targetProxy = E364DFF7D186D0F5D21C81A1 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		07818ECD369010E24014F386 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CLANG_ENABLE_CPLUSPLUS_TYPED_ALLOCATOR_SUPPORT = YES;
+				CLANG_ENABLE_C_TYPED_ALLOCATOR_SUPPORT = YES;
+				CLANG_ENABLE_STACK_ZERO_INIT = YES;
+				CODE_SIGN_ENTITLEMENTS = Resources/Faxbot.entitlements;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_BITCODE = NO;
+				ENABLE_CPLUSPLUS_BOUNDS_SAFE_BUFFERS = YES;
+				ENABLE_C_BOUNDS_SAFETY = YES;
+				ENABLE_POINTER_AUTHENTICATION = YES;
+				ENABLE_SECURITY_COMPILER_WARNINGS = YES;
+				INFOPLIST_FILE = Resources/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = net.faxbot.ios;
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.1;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				UISupportedInterfaceOrientations_iPhone = (
+					UIInterfaceOrientationPortrait,
+				);
+			};
+			name = Release;
+		};
+		0F7E441EA7E7E12A64F6B2CD /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		1C72D91CE0CBE2809D888B85 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_STYLE = Automatic;
+				INFOPLIST_FILE = Resources/ShareExtensionInfo.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = net.faxbot.ios.share;
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.1;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		728E789C4839D1C7D487897A /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		DDA72AC2CFD7567C45DE2B69 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_STYLE = Automatic;
+				INFOPLIST_FILE = Resources/ShareExtensionInfo.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = net.faxbot.ios.share;
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.1;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		F434C43BB3433C45CBF1FB0C /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CLANG_ENABLE_CPLUSPLUS_TYPED_ALLOCATOR_SUPPORT = YES;
+				CLANG_ENABLE_C_TYPED_ALLOCATOR_SUPPORT = YES;
+				CLANG_ENABLE_STACK_ZERO_INIT = YES;
+				CODE_SIGN_ENTITLEMENTS = Resources/Faxbot.entitlements;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_BITCODE = NO;
+				ENABLE_CPLUSPLUS_BOUNDS_SAFE_BUFFERS = YES;
+				ENABLE_C_BOUNDS_SAFETY = YES;
+				ENABLE_POINTER_AUTHENTICATION = YES;
+				ENABLE_SECURITY_COMPILER_WARNINGS = YES;
+				INFOPLIST_FILE = Resources/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = net.faxbot.ios;
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.1;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				UISupportedInterfaceOrientations_iPhone = (
+					UIInterfaceOrientationPortrait,
+				);
+			};
+			name = Debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		3C5BA6EEDE0C32B1695BACC6 /* Build configuration list for PBXNativeTarget "Faxbot" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				F434C43BB3433C45CBF1FB0C /* Debug */,
+				07818ECD369010E24014F386 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		7361D8BE77A339EB5A28EEDA /* Build configuration list for PBXProject "FaxbotApp" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				728E789C4839D1C7D487897A /* Debug */,
+				0F7E441EA7E7E12A64F6B2CD /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		93A5D02D082D4C057F08BA26 /* Build configuration list for PBXNativeTarget "FaxbotShare" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				DDA72AC2CFD7567C45DE2B69 /* Debug */,
+				1C72D91CE0CBE2809D888B85 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 84A5454F0D07610CFE738C98 /* Project object */;
+}

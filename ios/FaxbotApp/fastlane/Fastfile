@@ -1,0 +1,21 @@
+default_platform(:ios)
+
+platform :ios do
+  desc "Build the app for release"
+  lane :build do
+    scheme = ENV.fetch('SCHEME', 'Faxbot')
+    gym(scheme: scheme, configuration: 'Release', export_method: 'app-store')
+  end
+
+  desc "Upload to TestFlight"
+  lane :beta do
+    scheme = ENV.fetch('SCHEME', 'Faxbot')
+    app_identifier = ENV.fetch('APP_IDENTIFIER', 'net.faxbot.ios')
+    team_id = ENV['TEAM_ID']
+    UI.user_error!("TEAM_ID not set") unless team_id
+    gym(scheme: scheme, configuration: 'Release', export_method: 'app-store', export_options: { compileBitcode: false, uploadBitcode: false })
+    ipa = Actions.lane_context[SharedValues::IPA_OUTPUT_PATH]
+    pilot(ipa: ipa, team_id: team_id, skip_waiting_for_build_processing: true)
+  end
+end
+
