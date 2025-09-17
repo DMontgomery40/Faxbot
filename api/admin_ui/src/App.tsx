@@ -106,14 +106,17 @@ function AppContent() {
       // Check if we're running in Electron
       const isElectron = typeof window !== 'undefined' && (window as any).electronAPI?.isElectron === true;
       
+      // If key is empty, use bootstrap key for authentication
+      const authKey = key.trim() === '' ? 'bootstrap_admin_only' : key;
+      
       // Use appropriate client based on environment
-      const testClient = isElectron ? new ElectronAPIClient(key) : new AdminAPIClient(key);
+      const testClient = isElectron ? new ElectronAPIClient(authKey) : new AdminAPIClient(authKey);
       
       // Test the key by fetching config
       const cfg = await testClient.getConfig();
       
       // Success
-      localStorage.setItem('faxbot_admin_key', key);
+      localStorage.setItem('faxbot_admin_key', key); // Store original key (empty for bootstrap)
       setApiKey(key);
       setClient(testClient);
       setAuthenticated(true);
