@@ -9,8 +9,9 @@
     "test": "vitest",
     "electron": "electron .",
     "electron-dev": "concurrently \"npm run dev\" \"wait-on http://localhost:5173 && electron .\"",
-    "electron-build": "npm run build && electron-builder",
-    "electron-dist": "npm run build && electron-builder --publish=never"
+    "electron-build": "npm run build && electron-builder --linux",
+    "electron-dist": "npm run build && electron-builder --linux --publish=never",
+    "electron-build-all": "npm run build && electron-builder"
   },
   "dependencies": {
     "react": "^18.2.0",
@@ -84,8 +85,23 @@
         {
           "target": "AppImage",
           "arch": ["x64"]
+        },
+        {
+          "target": "deb",
+          "arch": ["x64"]
+        },
+        {
+          "target": "rpm",
+          "arch": ["x64"]
+        },
+        {
+          "target": "tar.gz",
+          "arch": ["x64"]
         }
-      ]
+      ],
+      "category": "Office",
+      "maintainer": "Faxbot Team",
+      "vendor": "Faxbot"
     }
   }
 }
