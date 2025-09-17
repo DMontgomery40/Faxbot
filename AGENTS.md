@@ -67,6 +67,215 @@ Developer notes
 - Keep copy short and plain; reserve deep detail for the docs site.
 - Avoid logging sensitive data in UI or network tabs; surface IDs/metadata only.
 
+## Admin Console Frontend Style Guide (dev branch)
+
+Scope: This governs all work under `api/admin_ui/` (Vite + React + TS + MUI) and its Electron shell under `api/admin_ui/electron/`. Follow these rules precisely so new UI matches the current implementation.
+
+Stack and entry points
+- Framework: React 18 + TypeScript + Vite
+- UI: MUI v5 with Emotion (`sx` prop-first styling)
+- Theme: Dark/Light/System via context provider
+  - Theme source: `api/admin_ui/src/theme/themes.ts`:1
+  - Provider: `api/admin_ui/src/theme/ThemeContext.tsx`:1
+- App shell and tabs: `api/admin_ui/src/App.tsx`:1
+- API client: `api/admin_ui/src/api/client.ts`:1 (web) and `api/admin_ui/src/api/electron-client.ts`:1 (Electron)
+- Types: `api/admin_ui/src/api/types.ts`:1
+- Electron main/preload: `api/admin_ui/electron/main.js`:1, `api/admin_ui/electron/preload.js`:1
+- CSP and fonts: `api/admin_ui/index.html`:1
+
+Directory conventions
+- Screens live in `api/admin_ui/src/components/` as PascalCase files.
+- Reusable building blocks live in `api/admin_ui/src/components/common/`.
+  - Form kit: `ResponsiveFormFields.tsx`:1
+  - Settings kit: `ResponsiveSettingItem.tsx`:1
+  - Cards/loader/transitions: `ResponsiveCard.tsx`:1, `SmoothLoader.tsx`:1
+- Hooks in `api/admin_ui/src/hooks/` (debounce/throttle/lazy/virtual scroll): `usePerformance.ts`:1; Electron glue: `useElectron.ts`:1
+- Do not add global CSS; use the MUI theme and `sx` on components. Component-level styled() is acceptable when necessary.
+
+Theming and styling
+- Always wrap UI with `ThemeProvider` from `ThemeContext` (already done in `App.tsx`).
+- Use `sx` for styling. Respect radii and motion:
+  - Border radius: 12–16px (Paper/Card), 8–10px (inputs/buttons/chips)
+  - Animations: 200–400ms, ease or standard MUI cubic-bezier; use MUI `<Fade>/<Slide>/<Zoom>`
+- Keep dark theme as default; ensure light theme parity. Theme tokens live in `themes.ts`.
+- Never hard-code colors when theme tokens exist (primary, text, divider, action.hover, etc.).
+
+Responsive rules (mobile-first)
+- Breakpoints: xs<600, sm≈600, md≈900–960, lg≈1200.
+- Prefer responsive `sx` objects: `px: { xs: 1, sm: 2, md: 3 }`.
+- Touch targets ≥44px on mobile; don’t squeeze controls.
+- Use the responsive kits:
+  - Forms and sections: `ResponsiveFormSection`, `ResponsiveTextField`, `ResponsiveSelect`, `ResponsiveFileUpload`, `ResponsiveCheckbox`, `ResponsiveRadioGroup` in `ResponsiveFormFields.tsx`:1
+  - Settings layouts: `ResponsiveSettingSection`, `ResponsiveSettingItem` in `ResponsiveSettingItem.tsx`:1
+  - Cards and grids: `ResponsiveCard`, `ResponsiveGrid` in `ResponsiveCard.tsx`:1
+  - Loaders/transitions: `SmoothLoader`, `InlineLoader`, `PageTransition` in `SmoothLoader.tsx`:1
+
+Navigation and structure
+- App uses tabbed navigation (not react-router) inside `App.tsx`:1. Add new top-level areas as Tabs and include mobile Drawer entries.
+- Electron menu navigation is bridged via IPC (see `useElectron.ts`:1). If you add a new tab, wire a corresponding menu command and handler.
+
+Data and API access
+- Use `AdminAPIClient`/`ElectronAPIClient` only; do not hand-roll fetch logic except for file downloads that require `Blob`.
+- Inject the client via props; do not import env vars into components.
+- Honor X-API-Key usage exactly as implemented in `client.ts`:1. Never log keys; if you must log, redact length/last 4 only.
+- Respect error codes and map to actionable messages:
+  - 400 invalid input → show inline errors and helper text
+  - 401 auth → “Invalid API key or insufficient permissions”
+  - 413 too large → “Max file size is 10 MB”
+  - 415 unsupported → “PDF/TXT only”
+  - 404 not found → “Resource not found or expired”
+
+Docs and linking
+- Get `docsBase` from `/admin/config` and pass through component props (see `Diagnostics.tsx` and `Settings.tsx`).
+- Never hard-code full docs URLs in components. Build links off `docsBase` only.
+- Provide at least one “Learn more” link per screen or complex control; keep copy short in the UI.
+
+Backend isolation in UI
+- Show provider-specific UI/help only for the active backend. Example pattern in `Settings.tsx`: backend sections are gated by `settings.backend.type`.
+- Do not mix Phaxio/Sinch/SIP help or controls on the same panel.
+
+Forms and validation
+- Use the responsive form kit. Avoid raw `<TextField>` unless wrapped in the kit.
+- Show helper text for normal guidance; show `errorMessage` only when `error=true`.
+- Pre-validate obvious constraints client-side (phone shape, 10 MB limit, PDF/TXT only).
+- Use accessible labels; no placeholder-only inputs for required fields.
+
+Performance patterns
+- Use `useDebounce` for search inputs; `useThrottle` for scroll/resize (see `usePerformance.ts`:1).
+- Lazy-load heavy panels if they materially affect initial paint; otherwise keep interactions snappy.
+- Use `SmoothLoader` during async actions; never leave the user with no feedback.
+
+Electron integration
+- Renderer remains browser-sandboxed (`nodeIntegration: false`, `contextIsolation: true`). Use the preload API only (`window.electronAPI`).
+- For Electron builds, default API base is `http://localhost:8080` (see `electron-client.ts`:1). Don’t add new Node APIs in the renderer.
+- File picking: prefer native file input for web; optionally add Electron `selectFile` helper where it improves UX.
+
+Security and PHI
+- No PHI in logs, error strings, or notifications.
+- Mask secrets in UI; use `SecretInput` or password toggles.
+- Respect CSP in `index.html`:1 — don’t introduce new external origins without review.
+
+Copy and micro-UX
+- Keep copy terse and plain. Use tooltips for short help; deeper content should be in docs.
+- Always provide a success path hint (what to do next) and a remediation hint on failure.
+
+Acceptance checklist (UI PRs)
+- Mobile first: verified at common breakpoints (xs/sm/md)
+- Uses responsive kits; spacing, radii, and motion match theme
+- No mixed backend guidance; docs links use `docsBase`
+- Errors are actionable; loader/disabled states present
+- API usage via `AdminAPIClient`/`ElectronAPIClient`; no direct secrets in logs
+- Electron menu/IPC updated if a new tab is added
+
+Do and don’t (frontend)
+- Do: use MUI `<Fade>/<Slide>/<Zoom>` for transitions; keep durations consistent (300±100ms)
+- Do: compose with `ResponsiveCard` and `ResponsiveGrid` for dashboards
+- Don’t: add CSS files or global styles; avoid inline styles except via `sx`
+- Don’t: hard-code URLs, backend names, or secrets; don’t drift from OpenAPI types
+
+Quick references
+- Theme: `api/admin_ui/src/theme/themes.ts`:1, `api/admin_ui/src/theme/ThemeContext.tsx`:1
+- Form kit: `api/admin_ui/src/components/common/ResponsiveFormFields.tsx`:1
+- Settings kit: `api/admin_ui/src/components/common/ResponsiveSettingItem.tsx`:1
+- Cards/loader: `api/admin_ui/src/components/common/ResponsiveCard.tsx`:1, `api/admin_ui/src/components/common/SmoothLoader.tsx`:1
+- API/types: `api/admin_ui/src/api/client.ts`:1, `api/admin_ui/src/api/types.ts`:1
+- App shell: `api/admin_ui/src/App.tsx`:1
+- Electron: `api/admin_ui/electron/main.js`:1, `api/admin_ui/electron/preload.js`:1
+
+### How To Add A New Screen
+
+1) Create the component
+- Path: `api/admin_ui/src/components/MyFeature.tsx`
+- Keep props minimal and typed: `{ client: AdminAPIClient; docsBase?: string }`
+- Use responsive kits and loaders. Example template:
+```tsx
+import React, { useState } from 'react';
+import { Box, Typography, Stack, Alert, Button } from '@mui/material';
+import AdminAPIClient from '../api/client';
+import { ResponsiveFormSection, ResponsiveTextField } from './common/ResponsiveFormFields';
+import { SmoothLoader } from './common/SmoothLoader';
+
+type Props = { client: AdminAPIClient; docsBase?: string };
+
+export default function MyFeature({ client, docsBase }: Props) {
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [value, setValue] = useState('');
+
+  const runAction = async () => {
+    setError(null); setLoading(true);
+    try {
+      // await client.someCall();
+    } catch (e: any) {
+      setError(e?.message || 'Something went wrong');
+    } finally { setLoading(false); }
+  };
+
+  return (
+    <Box>
+      <Typography variant="h4" component="h1" sx={{ mb: 3 }}>My Feature</Typography>
+
+      {error && (
+        <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>{error}</Alert>
+      )}
+
+      <ResponsiveFormSection
+        title="Do the thing"
+        subtitle="Short helper text; add a Learn more link in docs"
+      >
+        <Stack spacing={2}>
+          <ResponsiveTextField
+            label="Input"
+            value={value}
+            onChange={setValue}
+            placeholder="Example"
+            helperText="Explain expected format"
+          />
+          <Button variant="contained" onClick={runAction} sx={{ borderRadius: 2 }}>Run</Button>
+        </Stack>
+      </ResponsiveFormSection>
+
+      <SmoothLoader loading={loading} variant="linear" />
+    </Box>
+  );
+}
+```
+
+2) Wire it into the shell
+- Import the component in `api/admin_ui/src/App.tsx`:1.
+- Decide location:
+  - Top-level tab: extend `tabIcons`, add a `<Tab ... label="My Feature" />`, extend `drawerItems`, and add a `<TabPanel index={N}><MyFeature client={client!} docsBase={adminConfig?.branding?.docs_base} /></TabPanel>`.
+  - Settings group: add an item in `settingsItems`, render under the settings TabPanel when `settingsTab === X`.
+  - Tools group: add to `toolsItems`, render when `toolsTab === X`.
+
+3) Electron navigation (if top-level)
+- Add a menu item in `api/admin_ui/electron/main.js`:1 that does `mainWindow.webContents.send('navigate-to', '/my-feature')`.
+- In `App.tsx`:1, extend the `onNavigate` switch to map `/my-feature` to the correct `setTabValue(N)` and sub-tab if needed.
+
+4) Docs linking
+- Fetch `docsBase` via `/admin/config` (already available in `adminConfig.branding.docs_base`).
+- Link as: `<Link href={`${docsBase}/path/to/section`}>Learn more</Link>`; do not hard‑code full URLs.
+
+5) Error handling
+- Map HTTP errors to user-friendly text per the error table above.
+- Provide recovery hints and a next step after success.
+
+6) Testing and responsiveness
+- Manually verify xs/sm/md layouts; ensure no horizontal scroll and touch targets ≥44px.
+- Check both dark and light themes.
+
+### UI PR Checklist (submit with every UI PR)
+- Mobile-first: verified on xs/sm/md breakpoints; no horizontal scrolling
+- Uses responsive kits (`ResponsiveFormSection`, `ResponsiveTextField`, etc.)
+- Spacing/radii/motion match theme; transitions 200–400ms; uses MUI transitions
+- API usage via `AdminAPIClient`/`ElectronAPIClient`; no custom fetch except Blob downloads
+- Error states actionable; success path hints present; loaders/disabled states present
+- Backend isolation respected; only active backend guidance rendered
+- Docs links built from `docsBase`; no hard-coded external URLs
+- No PHI or secrets in logs/UI/errors; secrets masked (use `SecretInput` when applicable)
+- Electron: menu and `onNavigate` route wired if a new tab was added
+- CSP respected; no new external origins without review
+
 ## Provider Slots and Backends (v3)
 
 In v3, backends are provided by plugins bound to provider slots via a single resolved config.
