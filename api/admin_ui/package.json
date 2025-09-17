@@ -1,5 +1,5 @@
 {
-  "name": "faxbot-admin",
+  "name": "faxbot",
   "version": "1.0.0",
   "private": true,
   "scripts": {
@@ -49,8 +49,8 @@
     ]
   },
   "build": {
-    "appId": "com.faxbot.admin",
-    "productName": "Faxbot Admin Console",
+    "appId": "com.faxbot.app",
+    "productName": "Faxbot",
     "directories": {
       "output": "electron-dist"
     },

@@ -109,11 +109,21 @@ function AppContent() {
       // If key is empty, use bootstrap key for authentication
       const authKey = key.trim() === '' ? 'bootstrap_admin_only' : key;
       
+      // Debug logging
+      console.log('Login attempt:', { 
+        originalKey: key, 
+        authKey, 
+        isElectron,
+        keyEmpty: key.trim() === ''
+      });
+      
       // Use appropriate client based on environment
       const testClient = isElectron ? new ElectronAPIClient(authKey) : new AdminAPIClient(authKey);
       
       // Test the key by fetching config
+      console.log('Attempting to fetch config...');
       const cfg = await testClient.getConfig();
+      console.log('Config fetch successful:', cfg);
       
       // Success
       localStorage.setItem('faxbot_admin_key', key); // Store original key (empty for bootstrap)
@@ -123,6 +133,7 @@ function AppContent() {
       setAdminConfig(cfg);
       setError('');
     } catch (e) {
+      console.error('Login failed:', e);
       setError('Invalid API key or insufficient permissions');
       setAuthenticated(false);
     }
@@ -223,15 +234,18 @@ function AppContent() {
                   }}
                 >
                   <img
-                    src={`${window.location.origin}/assets/faxbot_full_logo.png`}
+                    src="./faxbot_full_logo.png"
                     alt="Faxbot"
                     onError={(e) => {
-                      console.error('Logo failed to load:', e);
+                      console.error('Login logo failed to load, showing fallback text');
                       (e.target as HTMLImageElement).style.display = 'none';
-                      // Show fallback text
-                      const fallback = document.createElement('div');
-                      fallback.innerHTML = '<h1 style="color: #3BA0FF; font-size: 3rem; margin: 0;">FAXBOT</h1>';
-                      (e.target as HTMLImageElement).parentNode?.appendChild(fallback);
+                      // Show fallback text only once
+                      if (!(e.target as HTMLImageElement).parentNode?.querySelector('.logo-fallback')) {
+                        const fallback = document.createElement('div');
+                        fallback.className = 'logo-fallback';
+                        fallback.innerHTML = '<h1 style="color: #3BA0FF; font-size: 3rem; margin: 0;">FAXBOT</h1>';
+                        (e.target as HTMLImageElement).parentNode?.appendChild(fallback);
+                      }
                     }}
                     style={{
                       width: '100%',
@@ -380,25 +394,40 @@ function AppContent() {
           borderColor: 'divider'
         }}
       >
-        <Toolbar sx={{ minHeight: { xs: 56, sm: 64 }, px: { xs: 1, sm: 2 } }}>
+        <Toolbar sx={{ 
+          minHeight: { xs: 56, sm: 64 }, 
+          px: { xs: 1, sm: 2 },
+          // Add left padding in Electron to avoid window controls
+          pl: typeof window !== 'undefined' && (window as any).electronAPI?.isElectron 
+            ? { xs: 8, sm: 10 } 
+            : { xs: 1, sm: 2 }
+        }}>
           <IconButton 
             color="inherit" 
             edge="start" 
             onClick={() => setMobileOpen(true)} 
-            sx={{ mr: 1, display: { xs: 'inline-flex', md: 'none' } }} 
+            sx={{ 
+              mr: 2, 
+              display: { xs: 'inline-flex', md: 'none' },
+              // Add extra left margin in Electron to avoid window controls
+              ml: typeof window !== 'undefined' && (window as any).electronAPI?.isElectron 
+                ? { xs: 2, sm: 3 } 
+                : { xs: 0, sm: 0 }
+            }} 
             aria-label="open navigation"
           >
             <MenuIcon />
           </IconButton>
+          
           <Box
             component="img"
-            src={`${window.location.origin}/assets/faxbot_full_logo.png`}
+            src="./faxbot_full_logo.png"
             alt="Faxbot"
             onClick={() => setTabValue(0)}
             onError={(e) => {
-              console.error('Header logo failed to load:', e);
-              // Try relative path as fallback
-              (e.target as HTMLImageElement).src = "/assets/faxbot_full_logo.png";
+              console.error('Header logo failed to load, hiding logo');
+              // Hide the logo instead of trying different paths to prevent infinite loop
+              (e.target as HTMLImageElement).style.display = 'none';
             }}
             sx={{ 
               height: { xs: 26, sm: 30 }, 

@@ -26,9 +26,9 @@ export function ThemeToggle() {
 
   const getCurrentIcon = () => {
     if (mode === 'system') {
-      return <SystemIcon />;
+      return <SystemIcon key="system" />;
     }
-    return resolvedMode === 'dark' ? <DarkIcon /> : <LightIcon />;
+    return resolvedMode === 'dark' ? <DarkIcon key="dark" /> : <LightIcon key="light" />;
   };
 
   return (

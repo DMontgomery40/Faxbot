@@ -33,6 +33,15 @@ export class AdminAPIClient {
       headers['X-API-Key'] = this.apiKey;
     }
 
+    // Debug logging
+    console.log('API Request:', {
+      url: `${this.baseURL}${path}`,
+      method: options.method || 'GET',
+      hasApiKey: !!(this.apiKey && this.apiKey.trim() !== ''),
+      apiKeyLength: this.apiKey ? this.apiKey.length : 0,
+      headers: Object.keys(headers)
+    });
+
     const response = await fetch(`${this.baseURL}${path}`, {
       ...options,
       headers,

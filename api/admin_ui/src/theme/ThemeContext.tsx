@@ -29,18 +29,30 @@ export function ThemeProvider({ children }: ThemeProviderProps) {
     return (saved as ThemeMode) || 'dark';
   });
 
-  const [systemPreference, setSystemPreference] = useState<'dark' | 'light'>(() => 
-    window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
-  );
+  const [systemPreference, setSystemPreference] = useState<'dark' | 'light'>(() => {
+    try {
+      return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    } catch {
+      return 'dark'; // fallback for Electron or other environments
+    }
+  });
 
   useEffect(() => {
-    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
-    const handleChange = (e: MediaQueryListEvent) => {
-      setSystemPreference(e.matches ? 'dark' : 'light');
-    };
-    
-    mediaQuery.addEventListener('change', handleChange);
-    return () => mediaQuery.removeEventListener('change', handleChange);
+    try {
+      const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+      const handleChange = (e: MediaQueryListEvent) => {
+        // Debounce rapid changes to prevent flickering
+        setTimeout(() => {
+          setSystemPreference(e.matches ? 'dark' : 'light');
+        }, 100);
+      };
+      
+      mediaQuery.addEventListener('change', handleChange);
+      return () => mediaQuery.removeEventListener('change', handleChange);
+    } catch {
+      // Fallback for environments that don't support matchMedia
+      console.warn('matchMedia not supported, using dark theme');
+    }
   }, []);
 
   useEffect(() => {

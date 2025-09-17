@@ -9,6 +9,12 @@ class ElectronAPIClient extends AdminAPIClient {
     this.electronBaseURL = ElectronAPIClient.getAPIBaseURL();
     // Override the baseURL to use Electron's API endpoint
     this.baseURL = this.electronBaseURL;
+    
+    // Debug logging
+    console.log('ElectronAPIClient created:', {
+      apiKey: apiKey ? '[REDACTED]' : '(empty)',
+      baseURL: this.baseURL
+    });
   }
 
   static getAPIBaseURL(): string {
