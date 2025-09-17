@@ -47,6 +47,7 @@ v3 UI additions
 - Plugins tab: manage active provider plugins with enable/disable toggles and schema‑driven config forms.
 - Curated registry search: discover available plugins; remote install is disabled by default and requires explicit approval when enabled.
 - Contextual help per active provider: tips and “Learn more” links are plugin‑specific; no cross‑backend leakage.
+- Scripts & Tests: backend‑aware quick actions; no CLI required. Local‑only Terminal is also available (see Security notes).
 
 Acceptance criteria (per screen or feature)
 - Inline explanation for each field or control (short helper text or tooltip).
@@ -130,18 +131,18 @@ ENFORCE_PUBLIC_HTTPS=true
 - Asterisk Manager Interface (AMI) access
 - Understanding of SIP/RTP/UDPTL protocols
 
-**Environment Variables:**
+**Environment Variables (API):**
 ```env
 FAX_BACKEND=sip
 ASTERISK_AMI_HOST=asterisk
 ASTERISK_AMI_PORT=5038
 ASTERISK_AMI_USERNAME=api
 ASTERISK_AMI_PASSWORD=secure_password_not_changeme
-SIP_USERNAME=your_sip_username
-SIP_PASSWORD=your_sip_password
-SIP_SERVER=sip.yourprovider.com
-SIP_FROM_USER=+15551234567
+# Optional local station ID presented by the fax stack
+FAX_LOCAL_STATION_ID="My Faxbot"
 ```
+
+Note: SIP trunk credentials (username/password/server) are configured in your Asterisk/FS gateway, not in the Faxbot API.
 
 ### 3. Sinch Fax API v3 (Cloud)
 Use when you prefer the direct upload model (“Phaxio by Sinch” accounts).
@@ -245,7 +246,7 @@ client.check_health()
 - **Always call** Faxbot REST API endpoints
 
 OpenAPI alignment
-- `api/openapi.yaml` is the source of truth for REST endpoints.
+- FastAPI serves OpenAPI at `/openapi.json`; treat it as the source of truth for REST endpoints.
 - SDKs and Admin UI types should match the OpenAPI contracts; codegen is optional but server must not drift from spec.
 
 ## Auth and API Keys (Updated)
@@ -597,15 +598,17 @@ Operational checks
 
 ### Backend Testing Matrix
 ```
-Test Scenario          | Phaxio | SIP | Test Mode |
------------------------|--------|-----|-----------|
-PDF file upload        |   ✓    |  ✓  |     ✓     |  
-TXT to PDF conversion  |   ✓    |  ✓  |     ✓     |
-Status checking        |   ✓    |  ✓  |     ✓     |
-Error handling         |   ✓    |  ✓  |     ✓     |
-Actual transmission    |   ✓    |  ✓  |     ✗     |
-Webhook callbacks      |   ✓    |  ✗  |     ✗     |
-TIFF conversion        |   ✗    |  ✓  |     ✗     |
+Test Scenario          | Phaxio | Sinch | SignalWire | SIP/Asterisk | FreeSWITCH | Test Mode |
+-----------------------|--------|-------|------------|--------------|------------|-----------|
+PDF file upload        |   ✓    |   ✓   |     ✓      |      ✓       |     ✓*     |     ✓     |
+TXT to PDF conversion  |   ✓    |   ✓   |     ✓      |      ✓       |     ✓*     |     ✓     |
+Status checking        |   ✓    |   ✓   |     ✓      |      ✓       |     ✓*     |     ✓     |
+Error handling         |   ✓    |   ✓   |     ✓      |      ✓       |     ✓*     |     ✓     |
+Actual transmission    |   ✓    |   ✓   |     ✓      |      ✓       |     ✓*     |     ✗     |
+Webhook callbacks      |   ✓    |   ✗   |     ✓      |      ✗       |     ✗      |     ✗     |
+TIFF conversion        |   ✗    |   ✗   |     ✗      |      ✓       |     ✓*     |     ✗     |
+
+*FreeSWITCH rows reflect current preview support with fs_cli/ESL integration and an internal result hook.
 ```
 
 ### MCP Testing Requirements
@@ -727,7 +730,7 @@ Receiving capability recommendation
 ## Final Critical Reminders
 
 1. **This has never existed before** - No assumptions allowed
-2. **Three backends, not two** - Include test mode documentation
+2. **Multiple backends** - Cloud (Phaxio, Sinch, SignalWire), self‑hosted (SIP/Asterisk, FreeSWITCH), and Test mode are supported. Keep docs and UI strictly backend‑specific.
 3. **Six MCP configurations** - 2 servers × 3 transports each
 4. **HIPAA is not optional** - For healthcare users, compliance is mandatory
 5. **Non-HIPAA users matter too** - Don't make everything enterprise-complex
