@@ -10,7 +10,6 @@ import {
   TextField,
   CircularProgress,
   Divider,
-  Chip,
 } from '@mui/material';
 import AdminAPIClient from '../api/client';
 
@@ -52,76 +51,99 @@ const ConsoleBox: React.FC<{ lines: string[]; loading?: boolean }>=({ lines, loa
 
 const ScriptsTests: React.FC<Props> = ({ client, docsBase }) => {
   const [error, setError] = useState<string>('');
-  const [busy, setBusy] = useState<string>('');
-  const [consoleLines, setConsoleLines] = useState<string[]>([]);
+  // Per-card state to avoid interleaving logs or running simultaneously
+  const [busyAuth, setBusyAuth] = useState<boolean>(false);
+  const [busyInbound, setBusyInbound] = useState<boolean>(false);
+  const [busyInfo, setBusyInfo] = useState<boolean>(false);
+  const [authLines, setAuthLines] = useState<string[]>([]);
+  const [inboundLines, setInboundLines] = useState<string[]>([]);
+  const [infoLines, setInfoLines] = useState<string[]>([]);
   const [toNumber, setToNumber] = useState<string>('+15551234567');
+  const [backend, setBackend] = useState<string>('');
+  const [inboundEnabled, setInboundEnabled] = useState<boolean>(false);
 
   const docsUrl = useMemo(() => `${docsBase || 'https://dmontgomery40.github.io/Faxbot'}/development/scripts-and-tests.html`, [docsBase]);
 
-  const push = (line: string) => setConsoleLines((prev) => [...prev, line]);
-  const clear = () => setConsoleLines([]);
+  const pushAuth = (line: string) => setAuthLines((prev) => [...prev, line]);
+  const clearAuth = () => setAuthLines([]);
+  const pushInbound = (line: string) => setInboundLines((prev) => [...prev, line]);
+  const clearInbound = () => setInboundLines([]);
+  const pushInfo = (line: string) => setInfoLines((prev) => [...prev, line]);
+  const clearInfo = () => setInfoLines([]);
+
+  React.useEffect(() => {
+    (async () => {
+      try {
+        const s = await client.getSettings();
+        const b = (s as any)?.backend?.type || '';
+        setBackend(b);
+        setInboundEnabled(Boolean((s as any)?.inbound?.enabled));
+      } catch (e: any) {
+        setError(e?.message || 'Failed to load settings');
+      }
+    })();
+  }, [client]);
 
   const runAuthSmoke = async () => {
-    setError(''); clear(); setBusy('auth');
+    setError(''); clearAuth(); setBusyAuth(true);
     try {
-      push('[i] Creating send+read API key');
+      pushAuth('[i] Creating send+read API key');
       const { token } = await client.createApiKey({ name: 'gui-smoke', owner: 'admin', scopes: ['fax:send','fax:read'] });
-      push(`[i] Key minted (ends with …${(token||'').slice(-6)})`);
-      push('[i] Sending test TXT');
+      pushAuth(`[i] Key minted (ends with …${(token||'').slice(-6)})`);
+      pushAuth('[i] Sending test TXT');
       const blob = new Blob([`hello from Faxbot Admin Console — ${new Date().toISOString()}`], { type: 'text/plain' });
       const file = new File([blob], 'gui-smoke.txt', { type: 'text/plain' });
       const send = await client.sendFax(toNumber, file);
-      push(`[✓] Queued: ${send.id} status=${send.status}`);
+      pushAuth(`[✓] Queued: ${send.id} status=${send.status}`);
       // Fetch status via admin view for richer details
-      push('[i] Fetching status…');
+      pushAuth('[i] Fetching status…');
       try {
         const job = await (client as any).getJob(send.id);
-        push(JSON.stringify(job, null, 2));
+        pushAuth(JSON.stringify(job, null, 2));
       } catch (e) {
-        push('[!] Could not fetch admin job detail; showing basic result only');
+        pushAuth('[!] Could not fetch admin job detail; showing basic result only');
       }
     } catch (e: any) {
       setError(e?.message || 'Auth smoke failed');
     } finally {
-      setBusy('');
+      setBusyAuth(false);
     }
   };
 
   const runInboundSim = async () => {
-    setError(''); clear(); setBusy('inbound');
+    setError(''); clearInbound(); setBusyInbound(true);
     try {
-      push('[i] Simulating inbound (admin)');
+      pushInbound('[i] Simulating inbound (admin)');
       const res = await client.simulateInbound({ to: toNumber, pages: 1, status: 'received' });
-      push(`[✓] Inbound created: ${res.id}`);
-      push('[i] Listing inbound…');
+      pushInbound(`[✓] Inbound created: ${res.id}`);
+      pushInbound('[i] Listing inbound…');
       const list = await client.listInbound();
-      push(`Count: ${list.length}`);
+      pushInbound(`Count: ${list.length}`);
       const first = list.find((i: any)=> i.id === (res as any).id) || list[0];
-      if (first) push(JSON.stringify(first, null, 2));
-      else push('[!] Could not find the simulated item in list');
+      if (first) pushInbound(JSON.stringify(first, null, 2));
+      else pushInbound('[!] Could not find the simulated item in list');
     } catch (e: any) {
       setError(e?.message || 'Inbound simulation failed (enable inbound and admin scopes)');
     } finally {
-      setBusy('');
+      setBusyInbound(false);
     }
   };
 
   const runCallbacksInfo = async () => {
-    setError(''); setBusy('callbacks');
+    setError(''); clearInfo(); setBusyInfo(true);
     try {
-      push('[i] Fetching configured inbound callbacks…');
+      pushInfo('[i] Fetching configured inbound callbacks…');
       const info = await client.getInboundCallbacks();
-      push(JSON.stringify(info, null, 2));
+      pushInfo(JSON.stringify(info, null, 2));
     } catch (e: any) {
       setError(e?.message || 'Failed to fetch callbacks');
-    } finally { setBusy(''); }
+    } finally { setBusyInfo(false); }
   };
 
   return (
     <Box>
       <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
         <Typography variant="h4">Scripts & Tests</Typography>
-        <Chip label="GUI‑first" color="primary" variant="outlined" />
       </Box>
 
       <Alert severity="info" sx={{ mb: 2 }}>
@@ -136,31 +158,35 @@ const ScriptsTests: React.FC<Props> = ({ client, docsBase }) => {
           <PrettyBox title="Auth Smoke: create key → send test → status">
             <Box display="flex" alignItems="center" gap={1} mb={1}>
               <TextField size="small" label="Test to" value={toNumber} onChange={(e)=>setToNumber(e.target.value)} sx={{ maxWidth: 260 }} />
-              <Button variant="contained" onClick={runAuthSmoke} disabled={!!busy}>{busy==='auth' ? <CircularProgress size={18} /> : 'Run'}</Button>
-              <Button onClick={()=>setConsoleLines([])} disabled={!!busy}>Clear</Button>
+              <Button variant="contained" onClick={runAuthSmoke} disabled={busyAuth}>{busyAuth ? <CircularProgress size={18} /> : 'Run'}</Button>
+              <Button onClick={clearAuth} disabled={busyAuth}>Clear</Button>
             </Box>
-            <ConsoleBox lines={consoleLines} loading={busy==='auth'} />
+            <ConsoleBox lines={authLines} loading={busyAuth} />
           </PrettyBox>
         </Grid>
-        <Grid item xs={12} md={6}>
-          <PrettyBox title="Inbound: admin simulate and list">
-            <Box display="flex" alignItems="center" gap={1} mb={1}>
-              <TextField size="small" label="To (optional)" value={toNumber} onChange={(e)=>setToNumber(e.target.value)} sx={{ maxWidth: 260 }} />
-              <Button variant="contained" onClick={runInboundSim} disabled={!!busy}>{busy==='inbound' ? <CircularProgress size={18} /> : 'Run'}</Button>
-              <Button onClick={()=>setConsoleLines([])} disabled={!!busy}>Clear</Button>
-            </Box>
-            <ConsoleBox lines={consoleLines} loading={busy==='inbound'} />
-          </PrettyBox>
-        </Grid>
+        {inboundEnabled && (
+          <Grid item xs={12} md={6}>
+            <PrettyBox title={`Inbound (${backend || 'backend'}): simulate and list`}>
+              <Box display="flex" alignItems="center" gap={1} mb={1}>
+                <TextField size="small" label="To (optional)" value={toNumber} onChange={(e)=>setToNumber(e.target.value)} sx={{ maxWidth: 260 }} />
+                <Button variant="contained" onClick={runInboundSim} disabled={busyInbound}>{busyInbound ? <CircularProgress size={18} /> : 'Run'}</Button>
+                <Button onClick={clearInbound} disabled={busyInbound}>Clear</Button>
+              </Box>
+              <ConsoleBox lines={inboundLines} loading={busyInbound} />
+            </PrettyBox>
+          </Grid>
+        )}
         <Grid item xs={12}>
           <Card>
             <CardContent>
-              <Typography variant="h6" gutterBottom>Inbound Callbacks (configured URLs)</Typography>
+              <Typography variant="h6" gutterBottom>
+                {backend === 'phaxio' ? 'Phaxio Inbound Callback' : backend === 'sinch' ? 'Sinch Inbound Callback' : backend === 'sip' ? 'Asterisk Inbound (internal)' : 'Inbound Callback'}
+              </Typography>
               <Box display="flex" gap={1} mb={1}>
-                <Button variant="outlined" onClick={runCallbacksInfo} disabled={!!busy}>{busy==='callbacks' ? <CircularProgress size={18} /> : 'Show'}</Button>
-                <Button onClick={()=>setConsoleLines([])} disabled={!!busy}>Clear</Button>
+                <Button variant="outlined" onClick={runCallbacksInfo} disabled={busyInfo}>{busyInfo ? <CircularProgress size={18} /> : 'Show'}</Button>
+                <Button onClick={clearInfo} disabled={busyInfo}>Clear</Button>
               </Box>
-              <ConsoleBox lines={consoleLines} loading={busy==='callbacks'} />
+              <ConsoleBox lines={infoLines} loading={busyInfo} />
             </CardContent>
           </Card>
         </Grid>

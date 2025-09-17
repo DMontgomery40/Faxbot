@@ -332,7 +332,7 @@ function App() {
               LOCAL ONLY
             </Typography>
             <Tooltip title="Open Settings">
-              <IconButton color="inherit" onClick={() => setTabValue(6)} sx={{ mr: { xs: 0.5, md: 1 } }} aria-label="open settings">
+              <IconButton color="inherit" onClick={() => { setTabValue(4); setSettingsTab(1); }} sx={{ mr: { xs: 0.5, md: 1 } }} aria-label="open settings">
                 <SettingsIcon />
               </IconButton>
             </Tooltip>
