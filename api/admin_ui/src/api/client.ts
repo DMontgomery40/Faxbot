@@ -242,6 +242,30 @@ export class AdminAPIClient {
     return res.json();
   }
 
+  // Tunnel (admin-only)
+  async getTunnelStatus(): Promise<any> {
+    const res = await this.fetch('/admin/tunnel/status');
+    return res.json();
+  }
+
+  async setTunnelConfig(payload: any): Promise<any> {
+    const res = await this.fetch('/admin/tunnel/config', {
+      method: 'POST',
+      body: JSON.stringify(payload || {}),
+    });
+    return res.json();
+  }
+
+  async testTunnel(): Promise<{ ok: boolean; message?: string; target?: string }> {
+    const res = await this.fetch('/admin/tunnel/test', { method: 'POST' });
+    return res.json();
+  }
+
+  async createTunnelPairing(): Promise<{ code: string; expires_at: string }> {
+    const res = await this.fetch('/admin/tunnel/pair', { method: 'POST' });
+    return res.json();
+  }
+
   // Send test fax
   async sendFax(to: string, file: File): Promise<{ id: string; status: string }> {
     const formData = new FormData();

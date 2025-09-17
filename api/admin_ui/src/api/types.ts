@@ -164,3 +164,14 @@ export interface InboundFax {
   pages?: number;
   received_at?: string;
 }
+
+// Tunnel types
+export interface TunnelStatus {
+  enabled: boolean;
+  provider: 'none' | 'cloudflare' | 'wireguard' | 'tailscale';
+  status: 'disabled' | 'connecting' | 'connected' | 'error';
+  public_url?: string;
+  local_ip?: string;
+  last_checked?: string;
+  error_message?: string;
+}

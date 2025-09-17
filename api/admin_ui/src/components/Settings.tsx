@@ -34,6 +34,7 @@ import AdminAPIClient from '../api/client';
 import type { Settings as SettingsType } from '../api/types';
 import { ResponsiveSettingItem, ResponsiveSettingSection } from './common/ResponsiveSettingItem';
 import { ResponsiveTextField, ResponsiveFormSection } from './common/ResponsiveFormFields';
+import TunnelSettings from './TunnelSettings';
 
 interface SettingsProps {
   client: AdminAPIClient;
@@ -300,6 +301,18 @@ function Settings({ client }: SettingsProps) {
               showCurrentValue={true}
             />
           </ResponsiveFormSection>
+
+          {/* VPN Tunnel (iOS connectivity) */}
+          <ResponsiveSettingSection
+            title="VPN Tunnel"
+            subtitle="Configure a secure tunnel for Admin Console and iOS app connectivity."
+          >
+            <TunnelSettings
+              client={client}
+              docsBase={docsBase}
+              hipaaMode={Boolean(settings.security?.enforce_https && settings.security?.require_api_key)}
+            />
+          </ResponsiveSettingSection>
 
           {/* Backend-Specific Configuration */}
           {settings.backend.type === 'phaxio' && (

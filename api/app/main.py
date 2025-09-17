@@ -1302,6 +1302,56 @@ _ACTIONS_REGISTRY: Dict[str, Dict[str, Any]] = {
         "timeout": 5,
         "backend": ["*"]
     },
+    # Tunnel helpers (local-only admin actions)
+    "tunnel_status_cloudflared_logs_tail": {
+        "label": "Cloudflared logs (tail 50)",
+        "kind": "shell",
+        "cmd": ["sh", "-lc", "docker logs faxbot-cloudflared 2>&1 | tail -n 50"],
+        "timeout": 5,
+        "backend": ["*"]
+    },
+    "tunnel_start_cloudflared": {
+        "label": "Start Cloudflared (compose profile)",
+        "kind": "shell",
+        "cmd": ["sh", "-lc", "docker compose --profile cloudflare up -d cloudflared"],
+        "timeout": 20,
+        "backend": ["*"]
+    },
+    "tunnel_stop_cloudflared": {
+        "label": "Stop Cloudflared",
+        "kind": "shell",
+        "cmd": ["sh", "-lc", "docker compose stop cloudflared || true"],
+        "timeout": 15,
+        "backend": ["*"]
+    },
+    "tunnel_start_wireguard": {
+        "label": "Start WireGuard client",
+        "kind": "shell",
+        "cmd": ["sh", "-lc", "docker compose --profile wireguard up -d wireguard"],
+        "timeout": 20,
+        "backend": ["*"]
+    },
+    "tunnel_stop_wireguard": {
+        "label": "Stop WireGuard client",
+        "kind": "shell",
+        "cmd": ["sh", "-lc", "docker compose stop wireguard || true"],
+        "timeout": 15,
+        "backend": ["*"]
+    },
+    "tunnel_start_tailscale": {
+        "label": "Start Tailscale client",
+        "kind": "shell",
+        "cmd": ["sh", "-lc", "docker compose --profile tailscale up -d tailscale"],
+        "timeout": 20,
+        "backend": ["*"]
+    },
+    "tunnel_stop_tailscale": {
+        "label": "Stop Tailscale client",
+        "kind": "shell",
+        "cmd": ["sh", "-lc", "docker compose stop tailscale || true"],
+        "timeout": 15,
+        "backend": ["*"]
+    },
 }
 
 
@@ -1364,6 +1414,158 @@ def admin_actions_run(payload: RunActionIn):
         return {"ok": False, "id": payload.id, "code": 124, "stdout": "", "stderr": "Timed out"}
     except Exception as e:
         raise HTTPException(500, detail=str(e))
+
+
+# ===== VPN Tunnel endpoints (admin-only, UI-driven) =====
+class TunnelStatusOut(BaseModel):
+    enabled: bool
+    provider: str  # none|cloudflare|wireguard|tailscale
+    status: str    # disabled|connecting|connected|error
+    public_url: Optional[str] = None
+    local_ip: Optional[str] = None
+    last_checked: Optional[datetime] = None
+    error_message: Optional[str] = None
+
+
+class TunnelConfigIn(BaseModel):
+    enabled: bool = False
+    provider: str = "none"  # none|cloudflare|wireguard|tailscale
+    cloudflare_custom_domain: Optional[str] = None
+    wireguard_endpoint: Optional[str] = None
+    wireguard_server_public_key: Optional[str] = None
+    wireguard_client_ip: Optional[str] = None
+    wireguard_dns: Optional[str] = None
+    tailscale_auth_key: Optional[str] = None
+    tailscale_hostname: Optional[str] = None
+
+
+class TunnelTestOut(BaseModel):
+    ok: bool
+    message: Optional[str] = None
+    target: Optional[str] = None
+
+
+# In-memory state (non-persistent; UI persists a masked version in .env via existing settings persistence)
+_TUNNEL_STATE: Dict[str, Any] = {
+    "enabled": False,
+    "provider": "none",
+    "public_url": None,
+    "last_checked": None,
+    "error": None,
+}
+
+_PAIR_CODES: Dict[str, Dict[str, Any]] = {}
+
+
+def _hipaa_posture_enabled() -> bool:
+    try:
+        return bool(settings.enforce_public_https and (settings.require_api_key or settings.api_key))
+    except Exception:
+        return False
+
+
+@app.get("/admin/tunnel/status", dependencies=[Depends(require_admin)])
+def admin_tunnel_status() -> TunnelStatusOut:
+    # Compose a conservative status view; do not leak secrets
+    enabled = bool(_TUNNEL_STATE.get("enabled"))
+    provider = str(_TUNNEL_STATE.get("provider") or "none").lower()
+    public_url = _TUNNEL_STATE.get("public_url")
+    error = _TUNNEL_STATE.get("error")
+    # HIPAA posture disables Cloudflare quick tunnel
+    if provider == "cloudflare" and _hipaa_posture_enabled():
+        return TunnelStatusOut(
+            enabled=False,
+            provider="cloudflare",
+            status="error",
+            public_url=None,
+            error_message="Cloudflare Quick Tunnel is not HIPAA compliant. Use WireGuard or Tailscale.",
+            last_checked=datetime.utcnow(),
+        )
+    status = "disabled"
+    if enabled:
+        status = "connected" if (public_url and provider == "cloudflare") else "connecting"
+        if error:
+            status = "error"
+    # Derive a local IP hint best-effort
+    local_ip = None
+    try:
+        import socket
+        local_ip = socket.gethostbyname(socket.gethostname())
+    except Exception:
+        pass
+    return TunnelStatusOut(
+        enabled=enabled,
+        provider=provider,
+        status=status,
+        public_url=public_url if provider == "cloudflare" and not _hipaa_posture_enabled() else None,
+        local_ip=local_ip,
+        last_checked=datetime.utcnow(),
+        error_message=(str(error) if error else None),
+    )
+
+
+@app.post("/admin/tunnel/config", dependencies=[Depends(require_admin)])
+def admin_tunnel_config(payload: TunnelConfigIn) -> TunnelStatusOut:
+    # Validate provider
+    provider = (payload.provider or "none").lower()
+    if provider not in {"none", "cloudflare", "wireguard", "tailscale"}:
+        raise HTTPException(400, detail="Invalid provider")
+    # Enforce HIPAA posture
+    if provider == "cloudflare" and _hipaa_posture_enabled():
+        # Auto-disable and warn in status
+        _TUNNEL_STATE.update({
+            "enabled": False,
+            "provider": "cloudflare",
+            "public_url": None,
+            "error": "Cloudflare Quick Tunnel is not allowed in HIPAA posture",
+            "last_checked": datetime.utcnow(),
+        })
+        return admin_tunnel_status()
+    # Apply config safely (no secrets echoed)
+    _TUNNEL_STATE.update({
+        "enabled": bool(payload.enabled),
+        "provider": provider,
+        "error": None,
+        "last_checked": datetime.utcnow(),
+    })
+    # Reset derived URL on provider change
+    if provider != "cloudflare":
+        _TUNNEL_STATE["public_url"] = None
+    return admin_tunnel_status()
+
+
+@app.post("/admin/tunnel/test", dependencies=[Depends(require_admin)])
+def admin_tunnel_test() -> TunnelTestOut:
+    # Perform a bounded local probe; do not reach out to public endpoints from here
+    try:
+        import http.client
+        from urllib.parse import urlparse as _up
+        url = settings.public_api_url or "http://localhost:8080"
+        p = _up(url)
+        host = p.hostname or "localhost"
+        port = p.port or (443 if p.scheme == "https" else 80)
+        path = "/health"
+        conn = http.client.HTTPSConnection(host, port, timeout=3) if p.scheme == "https" else http.client.HTTPConnection(host, port, timeout=3)
+        conn.request("GET", path)
+        resp = conn.getresponse()
+        ok = (resp.status == 200)
+        return TunnelTestOut(ok=ok, message=("OK" if ok else f"HTTP {resp.status}"), target=f"{host}:{port}{path}")
+    except Exception as e:
+        return TunnelTestOut(ok=False, message=str(e)[:120])
+
+
+class PairOut(BaseModel):
+    code: str
+    expires_at: datetime
+
+
+@app.post("/admin/tunnel/pair", dependencies=[Depends(require_admin)])
+def admin_tunnel_pair() -> PairOut:
+    # Generate a short-lived numeric code; do not include secrets in the QR/content
+    code = str(secrets.randbelow(899999) + 100000)
+    expires = datetime.utcnow() + timedelta(minutes=5)
+    _PAIR_CODES[code] = {"expires_at": expires, "created_at": datetime.utcnow()}
+    return PairOut(code=code, expires_at=expires)
 
 
 @app.get("/admin/inbound/callbacks", dependencies=[Depends(require_admin)])
