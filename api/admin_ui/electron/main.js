@@ -2,8 +2,13 @@ const { app, BrowserWindow, Menu, shell, ipcMain, Tray, nativeImage, dialog } = 
 const path = require('path');
 const isDev = process.env.NODE_ENV === 'development';
 
-// Set the app name for macOS menu bar
+// Set the app name and About panel for macOS
 app.setName('Faxbot');
+app.setAboutPanelOptions({
+  applicationName: 'Faxbot',
+  applicationVersion: app.getVersion(),
+  copyright: '© Faxbot',
+});
 
 // Keep a global reference of the window object
 let mainWindow;
@@ -143,33 +148,54 @@ function createTray() {
 }
 
 function createMenu() {
+  const isMac = process.platform === 'darwin';
+
+  const appMenu = isMac ? [{
+    label: app.name || 'Faxbot',
+    submenu: [
+      { role: 'about', label: 'About Faxbot' },
+      { type: 'separator' },
+      { role: 'services' },
+      { type: 'separator' },
+      { role: 'hide', label: 'Hide Faxbot' },
+      { role: 'hideOthers' },
+      { role: 'unhide' },
+      { type: 'separator' },
+      { role: 'quit', label: 'Quit Faxbot' },
+    ]
+  }] : [];
+
+  const faxMenu = [{
+    label: 'Fax',
+    submenu: [
+      { label: 'Dashboard', accelerator: 'CmdOrCtrl+D', click: () => mainWindow && mainWindow.webContents.send('navigate-to', '/dashboard') },
+      { label: 'Jobs', accelerator: 'CmdOrCtrl+J', click: () => mainWindow && mainWindow.webContents.send('navigate-to', '/jobs') },
+      { label: 'Inbox', accelerator: 'CmdOrCtrl+I', click: () => mainWindow && mainWindow.webContents.send('navigate-to', '/inbound') },
+      { type: 'separator' },
+      { label: 'Diagnostics', click: () => mainWindow && mainWindow.webContents.send('navigate-to', '/diagnostics') },
+    ]
+  }];
+
+  const helpMenu = [{
+    role: 'help',
+    submenu: [
+      { label: 'Faxbot Documentation', click: () => shell.openExternal('https://dmontgomery40.github.io/Faxbot/') },
+      { label: 'About Faxbot', click: () => app.showAboutPanel() },
+    ]
+  }];
+
   const template = [
+    ...appMenu,
     {
       label: 'File',
       submenu: [
         {
           label: 'Send Fax',
           accelerator: 'CmdOrCtrl+N',
-          click: () => {
-            if (mainWindow) {
-              mainWindow.webContents.send('navigate-to', '/send');
-            }
-          }
+          click: () => { mainWindow && mainWindow.webContents.send('navigate-to', '/send'); }
         },
         { type: 'separator' },
-        {
-          label: 'Settings',
-          accelerator: 'CmdOrCtrl+,',
-          click: () => {
-            if (mainWindow) {
-              mainWindow.webContents.send('navigate-to', '/settings');
-            }
-          }
-        },
-        { type: 'separator' },
-        {
-          role: 'quit'
-        }
+        { role: isMac ? 'close' : 'quit' }
       ]
     },
     {
@@ -181,7 +207,7 @@ function createMenu() {
         { role: 'cut' },
         { role: 'copy' },
         { role: 'paste' },
-        { role: 'selectall' }
+        { role: 'selectAll' }
       ]
     },
     {
@@ -198,105 +224,10 @@ function createMenu() {
         { role: 'togglefullscreen' }
       ]
     },
-    {
-      label: 'Fax',
-      submenu: [
-        {
-          label: 'Dashboard',
-          accelerator: 'CmdOrCtrl+D',
-          click: () => {
-            if (mainWindow) {
-              mainWindow.webContents.send('navigate-to', '/');
-            }
-          }
-        },
-        {
-          label: 'Jobs',
-          accelerator: 'CmdOrCtrl+J',
-          click: () => {
-            if (mainWindow) {
-              mainWindow.webContents.send('navigate-to', '/jobs');
-            }
-          }
-        },
-        {
-          label: 'Inbox',
-          accelerator: 'CmdOrCtrl+I',
-          click: () => {
-            if (mainWindow) {
-              mainWindow.webContents.send('navigate-to', '/inbox');
-            }
-          }
-        },
-        { type: 'separator' },
-        {
-          label: 'Diagnostics',
-          click: () => {
-            if (mainWindow) {
-              mainWindow.webContents.send('navigate-to', '/tools');
-            }
-          }
-        }
-      ]
-    },
-    {
-      label: 'Window',
-      submenu: [
-        { role: 'minimize' },
-        { role: 'close' }
-      ]
-    },
-    {
-      role: 'help',
-      submenu: [
-        {
-          label: 'About Faxbot',
-          click: () => {
-            dialog.showMessageBox(mainWindow, {
-              type: 'info',
-              title: 'About Faxbot Admin Console',
-              message: 'Faxbot Admin Console',
-              detail: 'A modern, HIPAA-compliant fax transmission system\n\nVersion: 1.0.0\nElectron: ' + process.versions.electron + '\nNode: ' + process.versions.node,
-              buttons: ['OK']
-            });
-          }
-        },
-        {
-          label: 'Documentation',
-          click: () => {
-            shell.openExternal('https://faxbot.net/docs/');
-          }
-        }
-      ]
-    }
+    ...faxMenu,
+    { role: 'windowMenu' },
+    ...helpMenu,
   ];
-
-  // macOS specific menu adjustments
-  if (process.platform === 'darwin') {
-    template.unshift({
-      label: app.getName(),
-      submenu: [
-        { role: 'about' },
-        { type: 'separator' },
-        { role: 'services' },
-        { type: 'separator' },
-        { role: 'hide' },
-        { role: 'hideOthers' },
-        { role: 'unhide' },
-        { type: 'separator' },
-        { role: 'quit' }
-      ]
-    });
-
-    // Window menu
-    template[5].submenu = [
-      { role: 'close' },
-      { role: 'minimize' },
-      { role: 'zoom' },
-      { type: 'separator' },
-      { role: 'front' }
-    ];
-  }
 
   const menu = Menu.buildFromTemplate(template);
   Menu.setApplicationMenu(menu);
