@@ -296,7 +296,7 @@ AUDIT_LOG_ENABLED=false     # Reduce logging overhead
 - Non-healthcare users get usability-focused defaults
 - Clear documentation about which settings affect compliance
 
-## Inbound Receiving (WIP Scaffolding)
+## Inbound Receiving 
 
 - Enable with `INBOUND_ENABLED=true`.
 - SIP/Asterisk (internal): `POST /_internal/asterisk/inbound` with `X-Internal-Secret: <ASTERISK_INBOUND_SECRET>` and JSON `{ tiff_path, to_number, from_number?, faxstatus?, faxpages?, uniqueid }`.
@@ -496,8 +496,7 @@ Manifest providers (HTTP) — preview
 - Security (HIPAA defaults): remote install disabled by default; enforce domain allowlists, strict timeouts/body caps; redact secrets; no arbitrary code.
 
 Admin Console (planned builder)
-- Plugin Builder wizard (preview plan): Basics → Auth → Send endpoint → Response mapping → Optional webhook mapping → Test (raw request/response + normalized result) → Save.
-- “Search npm” lists packages under scope `@faxbot` with keyword `faxbot-provider`; cards render README; install prompts show domain allowlist and a dry-run.
+- json manifests [cont]
 
 Security and permissions
 - New admin scopes: `admin:plugins:read`, `admin:plugins:write` for list/get/update.
@@ -611,7 +610,7 @@ TIFF conversion        |   ✗    |   ✗   |     ✗      |      ✓       |   
 *FreeSWITCH rows reflect current preview support with fs_cli/ESL integration and an internal result hook.
 ```
 
-### MCP Testing Requirements
+### MCP Testing Requirements -- test all with the OFFICIAL MCP INSPECTOR TOOL FROM ANTHROPIC
 - **Stdio:** Test with Claude Desktop or Cursor configuration
 - **HTTP:** Test session management and CORS handling
 - **SSE+OAuth:** Test JWT validation and token expiration
