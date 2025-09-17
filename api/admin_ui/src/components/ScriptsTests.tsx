@@ -61,6 +61,8 @@ const ScriptsTests: React.FC<Props> = ({ client, docsBase }) => {
   const [toNumber, setToNumber] = useState<string>('+15551234567');
   const [backend, setBackend] = useState<string>('');
   const [inboundEnabled, setInboundEnabled] = useState<boolean>(false);
+  const [publicApiUrl, setPublicApiUrl] = useState<string>('');
+  const [sipSecret, setSipSecret] = useState<string>('');
 
   const docsUrl = useMemo(() => `${docsBase || 'https://dmontgomery40.github.io/Faxbot'}/development/scripts-and-tests.html`, [docsBase]);
 
@@ -78,6 +80,7 @@ const ScriptsTests: React.FC<Props> = ({ client, docsBase }) => {
         const b = (s as any)?.backend?.type || '';
         setBackend(b);
         setInboundEnabled(Boolean((s as any)?.inbound?.enabled));
+        setPublicApiUrl(((s as any)?.security?.public_api_url) || '');
       } catch (e: any) {
         setError(e?.message || 'Failed to load settings');
       }
@@ -140,6 +143,43 @@ const ScriptsTests: React.FC<Props> = ({ client, docsBase }) => {
     } finally { setBusyInfo(false); }
   };
 
+  const generateSecret = () => {
+    try {
+      if (window.crypto && (window.crypto as any).getRandomValues) {
+        const arr = new Uint8Array(24);
+        window.crypto.getRandomValues(arr);
+        return Array.from(arr).map(b => b.toString(16).padStart(2, '0')).join('');
+      }
+    } catch {}
+    return Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+  };
+
+  const saveSipInboundSecret = async () => {
+    setError(''); pushInfo('[i] Saving Asterisk inbound secret and enabling inbound…'); setBusyInfo(true);
+    try {
+      const secret = sipSecret || generateSecret();
+      setSipSecret(secret);
+      await (client as any).updateSettings?.({ inbound_enabled: true, asterisk_inbound_secret: secret });
+      const s = await client.getSettings();
+      setInboundEnabled(Boolean((s as any)?.inbound?.enabled));
+      pushInfo('[✓] Saved. Inbound is enabled. Update your dialplan to post with X-Internal-Secret.');
+    } catch (e:any) {
+      setError(e?.message || 'Failed to save inbound secret');
+    } finally { setBusyInfo(false); }
+  };
+
+  const savePhaxioCallback = async () => {
+    if (!publicApiUrl) { setError('PUBLIC_API_URL is not set. Configure it in Settings.'); return; }
+    setError(''); pushInfo('[i] Saving PHAXIO_CALLBACK_URL from PUBLIC_API_URL…'); setBusyInfo(true);
+    try {
+      const url = `${publicApiUrl.replace(/\/$/, '')}/phaxio-callback`;
+      await (client as any).updateSettings?.({ phaxio_status_callback_url: url });
+      pushInfo(`[✓] Set callback URL to ${url}`);
+    } catch (e:any) {
+      setError(e?.message || 'Failed to save callback URL');
+    } finally { setBusyInfo(false); }
+  };
+
   return (
     <Box>
       <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
@@ -173,6 +213,41 @@ const ScriptsTests: React.FC<Props> = ({ client, docsBase }) => {
                 <Button onClick={clearInbound} disabled={busyInbound}>Clear</Button>
               </Box>
               <ConsoleBox lines={inboundLines} loading={busyInbound} />
+            </PrettyBox>
+          </Grid>
+        )}
+
+        {/* Backend-specific helpers */}
+        {backend === 'sip' && (
+          <Grid item xs={12} md={6}>
+            <PrettyBox title="SIP/Asterisk: inbound secret">
+              <Typography variant="body2" sx={{ mb: 1 }}>
+                Set a strong secret used by your dialplan to call the internal inbound endpoint.
+              </Typography>
+              <Box display="flex" alignItems="center" gap={1} mb={1}>
+                <TextField size="small" label="ASTERISK_INBOUND_SECRET" value={sipSecret} onChange={(e)=>setSipSecret(e.target.value)} sx={{ maxWidth: 320 }} />
+                <Button onClick={()=>setSipSecret(generateSecret())}>Generate</Button>
+                <Button variant="contained" onClick={saveSipInboundSecret} disabled={busyInfo}>{busyInfo ? <CircularProgress size={18} /> : 'Enable & Save'}</Button>
+              </Box>
+              <Typography variant="caption" color="text.secondary">
+                Dialplan should POST to /_internal/asterisk/inbound with header X-Internal-Secret.
+              </Typography>
+            </PrettyBox>
+          </Grid>
+        )}
+        {backend === 'phaxio' && (
+          <Grid item xs={12} md={6}>
+            <PrettyBox title="Phaxio: set callback URL">
+              <Typography variant="body2" sx={{ mb: 1 }}>
+                Uses PUBLIC_API_URL to set PHAXIO_CALLBACK_URL to <code>/phaxio-callback</code>.
+              </Typography>
+              <Box display="flex" alignItems="center" gap={1} mb={1}>
+                <TextField size="small" label="PUBLIC_API_URL" value={publicApiUrl} onChange={(e)=>setPublicApiUrl(e.target.value)} sx={{ maxWidth: 420 }} />
+                <Button variant="contained" onClick={savePhaxioCallback} disabled={busyInfo}>{busyInfo ? <CircularProgress size={18} /> : 'Save'}</Button>
+              </Box>
+              <Typography variant="caption" color="text.secondary">
+                Ensure this is HTTPS and publicly reachable. Configure signature verification in Settings if required.
+              </Typography>
             </PrettyBox>
           </Grid>
         )}
