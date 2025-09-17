@@ -63,6 +63,8 @@ const ScriptsTests: React.FC<Props> = ({ client, docsBase }) => {
   const [inboundEnabled, setInboundEnabled] = useState<boolean>(false);
   const [publicApiUrl, setPublicApiUrl] = useState<string>('');
   const [sipSecret, setSipSecret] = useState<string>('');
+  const [actions, setActions] = useState<Array<{ id: string; label: string }>>([]);
+  const [actionOutput, setActionOutput] = useState<Record<string, string>>({});
 
   const docsUrl = useMemo(() => `${docsBase || 'https://dmontgomery40.github.io/Faxbot'}/development/scripts-and-tests.html`, [docsBase]);
 
@@ -81,6 +83,16 @@ const ScriptsTests: React.FC<Props> = ({ client, docsBase }) => {
         setBackend(b);
         setInboundEnabled(Boolean((s as any)?.inbound?.enabled));
         setPublicApiUrl(((s as any)?.security?.public_api_url) || '');
+        // Load container actions
+        try {
+          const al = await (client as any).listActions?.();
+          if (al?.enabled && Array.isArray(al.items)) {
+            const filtered = (al.items as any[])
+              .filter((a) => !a.backend || a.backend.includes('*') || a.backend.includes(b))
+              .map((a) => ({ id: a.id, label: a.label }));
+            setActions(filtered);
+          }
+        } catch {}
       } catch (e: any) {
         setError(e?.message || 'Failed to load settings');
       }
@@ -265,6 +277,37 @@ const ScriptsTests: React.FC<Props> = ({ client, docsBase }) => {
             </CardContent>
           </Card>
         </Grid>
+
+        {actions.length > 0 && (
+          <Grid item xs={12}>
+            <Card>
+              <CardContent>
+                <Typography variant="h6" gutterBottom>Container Checks</Typography>
+                <Box display="flex" gap={1} flexWrap="wrap" mb={1}>
+                  {actions.map((a) => (
+                    <Button key={a.id} variant="outlined" size="small" disabled={busyAuth || busyInbound || busyInfo}
+                      onClick={async ()=>{
+                        setBusyInfo(true);
+                        try {
+                          const r = await (client as any).runAction?.(a.id);
+                          setActionOutput((prev)=>({ ...prev, [a.id]: (r?.stdout||'') + (r?.stderr? "\n[stderr]\n"+r.stderr : '') }));
+                        } catch (e:any) {
+                          setActionOutput((prev)=>({ ...prev, [a.id]: e?.message || 'Failed' }));
+                        } finally { setBusyInfo(false); }
+                      }}
+                    >{a.label}</Button>
+                  ))}
+                </Box>
+                {actions.map((a)=> (
+                  <Box key={a.id} sx={{ mb: 2 }}>
+                    <Typography variant="subtitle2" sx={{ mb: 0.5 }}>{a.label}</Typography>
+                    <ConsoleBox lines={(actionOutput[a.id]?.split('\n')||[]).slice(0,400)} loading={false} />
+                  </Box>
+                ))}
+              </CardContent>
+            </Card>
+          </Grid>
+        )}
       </Grid>
       <Divider sx={{ my: 2 }} />
       <Typography variant="body2" color="text.secondary">

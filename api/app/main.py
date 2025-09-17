@@ -7,6 +7,7 @@ import secrets
 from datetime import datetime, timedelta
 import tempfile
 from typing import Optional, Any, List, Dict, cast
+import subprocess
 import time
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks, Header, Depends, Query, Request, Response, WebSocket
 from fastapi.responses import FileResponse, JSONResponse
@@ -1264,6 +1265,103 @@ def admin_logs_tail(q: Optional[str] = None, event: Optional[str] = None, lines:
         return {"items": out, "count": len(out), "source": path}
     except FileNotFoundError:
         raise HTTPException(404, detail="Audit log file not found")
+    except Exception as e:
+        raise HTTPException(500, detail=str(e))
+
+
+# ===== Admin actions (safe, allowlisted exec for UI) =====
+class ActionItem(BaseModel):
+    id: str
+    label: str
+    backend: Optional[List[str]] = None  # None or ["*"] means all
+
+
+_ACTIONS_REGISTRY: Dict[str, Dict[str, Any]] = {
+    # Safe, introspective commands only; never include secrets
+    "python_version": {
+        "label": "Python Version",
+        "kind": "python",
+        "runner": lambda: {
+            "stdout": f"{os.sys.version}",
+            "stderr": "",
+            "code": 0,
+        },
+        "backend": ["*"]
+    },
+    "gs_version": {
+        "label": "Ghostscript Version",
+        "kind": "shell",
+        "cmd": ["gs", "-v"],
+        "timeout": 10,
+        "backend": ["sip", "freeswitch"],
+    },
+    "list_faxdata": {
+        "label": "List /faxdata",
+        "kind": "shell",
+        "cmd": ["ls", "-la", "/faxdata"],
+        "timeout": 5,
+        "backend": ["*"]
+    },
+}
+
+
+def _admin_exec_enabled() -> bool:
+    # Default enabled when local admin is on; can be disabled via env
+    val = os.getenv("ENABLE_ADMIN_EXEC", None)
+    if val is not None:
+        return val.lower() in {"1", "true", "yes"}
+    return os.getenv("ENABLE_LOCAL_ADMIN", "false").lower() in {"1","true","yes"}
+
+
+@app.get("/admin/actions", dependencies=[Depends(require_admin)])
+def admin_actions_list():
+    if not _admin_exec_enabled():
+        return {"enabled": False, "items": []}
+    b = settings.fax_backend or ""
+    items: List[ActionItem] = []
+    for aid, meta in _ACTIONS_REGISTRY.items():
+        backends = meta.get("backend") or ["*"]
+        if "*" in backends or b in backends:
+            items.append(ActionItem(id=aid, label=meta.get("label") or aid, backend=backends))
+    return {"enabled": True, "items": [i.dict() for i in items]}
+
+
+class RunActionIn(BaseModel):
+    id: str
+
+
+@app.post("/admin/actions/run", dependencies=[Depends(require_admin)])
+def admin_actions_run(payload: RunActionIn):
+    if not _admin_exec_enabled():
+        raise HTTPException(403, detail="Admin exec is disabled. Set ENABLE_ADMIN_EXEC=true for local-only use.")
+    meta = _ACTIONS_REGISTRY.get(payload.id)
+    if not meta:
+        raise HTTPException(404, detail="Unknown action")
+    # Backend gate
+    backs = meta.get("backend") or ["*"]
+    if "*" not in backs and settings.fax_backend not in backs:
+        raise HTTPException(400, detail="Action not applicable for current backend")
+    try:
+        if meta.get("kind") == "python":
+            res = meta.get("runner")()
+            return {"ok": True, "id": payload.id, **res}
+        elif meta.get("kind") == "shell":
+            cmd = meta.get("cmd")
+            if not isinstance(cmd, list) or not all(isinstance(x, str) for x in cmd):
+                raise ValueError("Invalid command spec")
+            timeout = int(meta.get("timeout", 20))
+            p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+            return {
+                "ok": p.returncode == 0,
+                "id": payload.id,
+                "code": p.returncode,
+                "stdout": p.stdout[-10000:],
+                "stderr": p.stderr[-4000:],
+            }
+        else:
+            raise ValueError("Unsupported action kind")
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "id": payload.id, "code": 124, "stdout": "", "stderr": "Timed out"}
     except Exception as e:
         raise HTTPException(500, detail=str(e))
 

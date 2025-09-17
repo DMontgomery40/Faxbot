@@ -228,6 +228,20 @@ export class AdminAPIClient {
     return res.json();
   }
 
+  // Admin actions (container exec — allowlisted)
+  async listActions(): Promise<{ enabled: boolean; items: Array<{ id: string; label: string; backend?: string[] }> }> {
+    const res = await this.fetch('/admin/actions');
+    return res.json();
+  }
+
+  async runAction(id: string): Promise<{ ok: boolean; id: string; code?: number; stdout?: string; stderr?: string }> {
+    const res = await this.fetch('/admin/actions/run', {
+      method: 'POST',
+      body: JSON.stringify({ id }),
+    });
+    return res.json();
+  }
+
   // Send test fax
   async sendFax(to: string, file: File): Promise<{ id: string; status: string }> {
     const formData = new FormData();
