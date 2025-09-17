@@ -332,7 +332,7 @@ function AppContent() {
                   value={apiKey}
                   onChange={(e) => setApiKey(e.target.value)}
                   onKeyPress={handleKeyPress}
-                  placeholder="fbk_live_... or bootstrap key"
+                  placeholder="fbk_live_... or leave empty for bootstrap"
                   sx={{ mt: 3 }}
                   autoFocus
                 />
@@ -348,13 +348,12 @@ function AppContent() {
                     fontWeight: 600,
                     borderRadius: 2
                   }}
-                  disabled={!apiKey}
                 >
                   Login
                 </Button>
                 
                 <Typography variant="caption" sx={{ mt: 2, display: 'block', opacity: 0.8 }}>
-                  Use an API key with 'keys:manage' scope or the bootstrap API_KEY from your .env
+                  Use an API key with 'keys:manage' scope or leave empty for bootstrap mode
                 </Typography>
               </Paper>
             </Fade>
