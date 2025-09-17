@@ -214,15 +214,18 @@ function AppContent() {
                   }}
                 >
                   <img
-                    src={`${window.location.origin}/assets/faxbot_full_logo.png`}
+                    src="./faxbot_full_logo.png"
                     alt="Faxbot"
                     onError={(e) => {
-                      console.error('Logo failed to load:', e);
+                      console.error('Login logo failed to load, showing fallback text');
                       (e.target as HTMLImageElement).style.display = 'none';
-                      // Show fallback text
-                      const fallback = document.createElement('div');
-                      fallback.innerHTML = '<h1 style="color: #3BA0FF; font-size: 3rem; margin: 0;">FAXBOT</h1>';
-                      (e.target as HTMLImageElement).parentNode?.appendChild(fallback);
+                      // Show fallback text only once
+                      if (!(e.target as HTMLImageElement).parentNode?.querySelector('.logo-fallback')) {
+                        const fallback = document.createElement('div');
+                        fallback.className = 'logo-fallback';
+                        fallback.innerHTML = '<h1 style="color: #3BA0FF; font-size: 3rem; margin: 0;">FAXBOT</h1>';
+                        (e.target as HTMLImageElement).parentNode?.appendChild(fallback);
+                      }
                     }}
                     style={{
                       width: '100%',
@@ -384,13 +387,13 @@ function AppContent() {
           </IconButton>
           <Box
             component="img"
-            src={`${window.location.origin}/assets/faxbot_full_logo.png`}
+            src="./faxbot_full_logo.png"
             alt="Faxbot"
             onClick={() => setTabValue(0)}
             onError={(e) => {
-              console.error('Header logo failed to load:', e);
-              // Try relative path as fallback
-              (e.target as HTMLImageElement).src = "/assets/faxbot_full_logo.png";
+              console.error('Header logo failed to load, hiding logo');
+              // Hide the logo instead of trying different paths to prevent infinite loop
+              (e.target as HTMLImageElement).style.display = 'none';
             }}
             sx={{ 
               height: { xs: 26, sm: 30 }, 
