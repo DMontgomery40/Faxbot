@@ -9,8 +9,8 @@ import type {
 } from './types';
 
 export class AdminAPIClient {
-  private baseURL: string;
-  private apiKey: string;
+  protected baseURL: string;
+  protected apiKey: string;
 
   constructor(apiKey: string) {
     // Always localhost since we're local-only
@@ -19,13 +19,23 @@ export class AdminAPIClient {
   }
 
   private async fetch(path: string, options: RequestInit = {}): Promise<Response> {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+
+    // Merge existing headers
+    if (options.headers) {
+      Object.assign(headers, options.headers);
+    }
+
+    // Only add X-API-Key header if we have an API key
+    if (this.apiKey && this.apiKey.trim() !== '') {
+      headers['X-API-Key'] = this.apiKey;
+    }
+
     const response = await fetch(`${this.baseURL}${path}`, {
       ...options,
-      headers: {
-        'X-API-Key': this.apiKey,
-        'Content-Type': 'application/json',
-        ...options.headers,
-      },
+      headers,
     });
 
     if (!response.ok) {

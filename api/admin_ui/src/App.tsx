@@ -42,6 +42,7 @@ import LogoutIcon from '@mui/icons-material/Logout';
 import HelpIcon from '@mui/icons-material/Help';
 import { Tooltip } from '@mui/material';
 import AdminAPIClient from './api/client';
+import ElectronAPIClient from './api/electron-client';
 import Dashboard from './components/Dashboard';
 import SetupWizard from './components/SetupWizard';
 import JobsList from './components/JobsList';
@@ -102,7 +103,12 @@ function AppContent() {
 
   const handleLogin = async (key: string) => {
     try {
-      const testClient = new AdminAPIClient(key);
+      // Check if we're running in Electron
+      const isElectron = typeof window !== 'undefined' && (window as any).electronAPI?.isElectron === true;
+      
+      // Use appropriate client based on environment
+      const testClient = isElectron ? new ElectronAPIClient(key) : new AdminAPIClient(key);
+      
       // Test the key by fetching config
       const cfg = await testClient.getConfig();
       

@@ -1,123 +1,14 @@
 // Electron-specific API client that handles both dev and production modes
 import AdminAPIClient from './client';
 
-class ElectronAPIClient {
-  private client: AdminAPIClient;
+class ElectronAPIClient extends AdminAPIClient {
   private electronBaseURL: string;
 
   constructor(apiKey: string = '') {
-    // Create a temporary client just to get the methods
-    this.client = new AdminAPIClient(apiKey);
+    super(apiKey);
     this.electronBaseURL = ElectronAPIClient.getAPIBaseURL();
-  }
-
-  // Custom fetch method for Electron
-  private async electronFetch(path: string, options: RequestInit = {}): Promise<Response> {
-    const response = await fetch(`${this.electronBaseURL}${path}`, {
-      ...options,
-      headers: {
-        'X-API-Key': this.client['apiKey'] || '',
-        'Content-Type': 'application/json',
-        ...options.headers,
-      },
-    });
-
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
-    }
-
-    return response;
-  }
-
-  // Proxy all methods from AdminAPIClient but use our custom fetch
-  async checkHealth() {
-    const response = await this.electronFetch('/health');
-    return response.json();
-  }
-
-  async getSettings() {
-    const response = await this.electronFetch('/admin/settings');
-    return response.json();
-  }
-
-  async updateSettings(settings: any) {
-    const response = await this.electronFetch('/admin/settings', {
-      method: 'POST',
-      body: JSON.stringify(settings),
-    });
-    return response.json();
-  }
-
-  async reloadSettings() {
-    const response = await this.electronFetch('/admin/reload-settings', {
-      method: 'POST',
-    });
-    return response.json();
-  }
-
-  async sendFax(to: string, file: File) {
-    const formData = new FormData();
-    formData.append('to', to);
-    formData.append('file', file);
-
-    const response = await fetch(`${this.electronBaseURL}/fax`, {
-      method: 'POST',
-      headers: {
-        'X-API-Key': this.client['apiKey'] || '',
-      },
-      body: formData,
-    });
-
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
-    }
-
-    return response.json();
-  }
-
-  async getFaxStatus(jobId: string) {
-    const response = await this.electronFetch(`/fax/${jobId}`);
-    return response.json();
-  }
-
-  async listJobs() {
-    const response = await this.electronFetch('/admin/jobs');
-    return response.json();
-  }
-
-  async getApiKeys() {
-    const response = await this.electronFetch('/admin/api-keys');
-    return response.json();
-  }
-
-  async createApiKey(name: string, scopes: string[]) {
-    const response = await this.electronFetch('/admin/api-keys', {
-      method: 'POST',
-      body: JSON.stringify({ name, scopes }),
-    });
-    return response.json();
-  }
-
-  async deleteApiKey(keyId: string) {
-    const response = await this.electronFetch(`/admin/api-keys/${keyId}`, {
-      method: 'DELETE',
-    });
-    return response.json();
-  }
-
-  async runDiagnostics() {
-    const response = await this.electronFetch('/admin/diagnostics');
-    return response.json();
-  }
-
-  async listInbound() {
-    const response = await this.electronFetch('/inbound');
-    return response.json();
-  }
-
-  async getInboundPdf(id: string) {
-    const response = await this.electronFetch(`/inbound/${id}/pdf`);
-    return response.blob();
+    // Override the baseURL to use Electron's API endpoint
+    this.baseURL = this.electronBaseURL;
   }
 
   static getAPIBaseURL(): string {
