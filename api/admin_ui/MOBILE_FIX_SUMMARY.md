@@ -112,3 +112,4 @@ The Settings page is now:
 - **Secure**: Proper password handling and masking
 
 The mobile experience has been transformed from a messy, overlapping layout to a clean, professional interface that's easy to use on any device.
+
