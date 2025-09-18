@@ -20,23 +20,29 @@ struct SettingsView: View {
                     TextField("Local URL (e.g., http://192.168.1.100:8080)", text: $localURL)
                         .textInputAutocapitalization(.never)
                         .keyboardType(.URL)
+                        .foregroundColor(.brandText)
                     TextField("Tunnel/Public URL (https://…)", text: $tunnelURL)
                         .textInputAutocapitalization(.never)
                         .keyboardType(.URL)
+                        .foregroundColor(.brandText)
                     SecureField("API Key (fbk_live_…)", text: $apiKeyInput)
                         .textInputAutocapitalization(.never)
                         .disableAutocorrection(true)
+                        .foregroundColor(.brandText)
                     Button("Save") {
                         client.serverConfig.localURL = localURL
                         client.serverConfig.tunnelURL = tunnelURL
                         client.serverConfig.apiKey = apiKeyInput
                         Task { await client.persistToKeychain(); Haptics.success() }
                     }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.brandPrimary)
                 }
                 Section("Pairing") {
                     TextField("Enter pairing code", text: $pairingCode)
                         .keyboardType(.numberPad)
                         .submitLabel(.go)
+                        .foregroundColor(.brandText)
                         .onSubmit { Task { await redeem() } }
                     Button(redeeming ? "Redeeming…" : "Redeem Code") {
                         Task { await redeem() }
@@ -96,16 +102,18 @@ struct SettingsView: View {
                 }
                 Section("About") {
                     Button { if let url = URL(string: "https://faxbot.net") { openURL(url) } } label: {
-                        Label("Faxbot website", systemImage: "safari").foregroundColor(.primary)
+                        Label("Faxbot website", systemImage: "safari")
+                            .foregroundColor(.brandPrimary)
                     }
                     .buttonStyle(.plain)
                     Button { if let url = URL(string: "https://faxbot.net/docs") { openURL(url) } } label: {
-                        Label("Docs", systemImage: "book").foregroundColor(.primary)
+                        Label("Docs", systemImage: "book")
+                            .foregroundColor(.brandPrimary)
                     }
                     .buttonStyle(.plain)
                     Text("Faxbot makes faxing feel as simple as texting. Your data stays on your server; this app connects securely using a pairing code.")
                         .font(.footnote)
-                        .foregroundStyle(.secondary)
+                        .foregroundColor(.brandSecondaryText)
                 }
             }
             .navigationTitle("Settings")

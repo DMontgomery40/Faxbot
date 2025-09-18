@@ -15,6 +15,7 @@ struct RecentChips: View {
                         HStack(spacing: 6) {
                             Image(systemName: "person.crop.circle.badge.plus")
                             Text(num)
+                                .foregroundColor(.primary)
                         }
                         .font(.caption)
                         .padding(.horizontal, 10).padding(.vertical, 6)

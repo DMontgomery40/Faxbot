@@ -1,8 +1,11 @@
 import SwiftUI
 
 extension Color {
-    static var brandPrimary: Color { Color("BrandPrimary") }
-    static var brandBackground: Color { Color("BrandBackground") }
-    static var brandSurface: Color { Color("BrandSurface") }
+    // Force explicit colors that work in both light and dark mode
+    static var brandPrimary: Color { Color.blue }
+    static var brandBackground: Color { Color(UIColor.systemBackground) }
+    static var brandSurface: Color { Color(UIColor.secondarySystemBackground) }
+    static var brandText: Color { Color(UIColor.label) }
+    static var brandSecondaryText: Color { Color(UIColor.secondaryLabel) }
 }
 

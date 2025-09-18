@@ -5,7 +5,9 @@ struct ToastView: View {
     var body: some View {
         HStack(spacing: 10) {
             Image(systemName: "paperplane.fill").font(.caption)
-            Text(text).font(.footnote.weight(.semibold))
+            Text(text)
+                .font(.footnote.weight(.semibold))
+                .foregroundColor(.primary)
         }
         .padding(.horizontal, 14).padding(.vertical, 10)
         .background(Color.brandSurface.opacity(0.9), in: Capsule())

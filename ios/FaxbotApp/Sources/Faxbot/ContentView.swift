@@ -45,15 +45,18 @@ struct SendView: View {
                 TextField("To (E.164, comma-separated)", text: $toNumbersRaw)
                     .textFieldStyle(.roundedBorder)
                     .keyboardType(.numbersAndPunctuation)
+                    .foregroundColor(.brandText)
                     .onChange(of: toNumbersRaw) { _, newValue in
                         parsedNumbers = parseNumbers(newValue)
                     }
                 if !parsedNumbers.isEmpty {
                     FlowLayout(parsedNumbers, id: \.self) { num in
                         let label = contactMap[num] != nil ? "\(contactMap[num]!) (\(num))" : num
-                        Text(label).font(.caption)
+                        Text(label)
+                            .font(.caption)
+                            .foregroundColor(.brandText)
                             .padding(.horizontal, 8).padding(.vertical, 4)
-                            .background(Capsule().fill(Color.secondary.opacity(0.15)))
+                            .background(Capsule().fill(Color.brandPrimary.opacity(0.2)))
                     }
                 }
                 HStack {
@@ -61,13 +64,24 @@ struct SendView: View {
                         showingScanner = true
                     } label: {
                         Label("Scan Document", systemImage: "doc.viewfinder")
+                            .foregroundColor(.white)
                     }
                     .buttonStyle(.borderedProminent)
+                    .tint(.brandPrimary)
 
-                    Button { showingText = true } label: { Label("Type Text", systemImage: "text.alignleft") }
-                        .buttonStyle(.bordered)
-                    Button { Haptics.lightTap(); showingContacts = true } label: { Label("Contacts", systemImage: "person.crop.circle") }
-                        .buttonStyle(.bordered)
+                    Button { showingText = true } label: { 
+                        Label("Type Text", systemImage: "text.alignleft")
+                            .foregroundColor(.brandPrimary)
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(.brandPrimary)
+                    
+                    Button { Haptics.lightTap(); showingContacts = true } label: { 
+                        Label("Contacts", systemImage: "person.crop.circle")
+                            .foregroundColor(.brandPrimary)
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(.brandPrimary)
                 }
                 // Recent contacts quick-add
                 RecentChips { selected in
@@ -75,7 +89,11 @@ struct SendView: View {
                     parsedNumbers = Array(existing.union([selected]))
                     toNumbersRaw = parsedNumbers.joined(separator: ", ")
                 }
-                if let msg = resultMessage { Text(msg).font(.footnote).foregroundStyle(.secondary) }
+                if let msg = resultMessage { 
+                    Text(msg)
+                        .font(.footnote)
+                        .foregroundColor(.brandSecondaryText)
+                }
             }.padding()
         }
         .scrollBounceBehavior(.basedOnSize)
@@ -169,15 +187,25 @@ struct InboxView: View {
             Button {
                 Task { await openPdf(id: it.id) }
             } label: {
-                VStack(alignment: .leading) {
+                VStack(alignment: .leading, spacing: 4) {
                     HStack {
                         Text("From: \(it.fr ?? "Unknown")")
+                            .foregroundColor(.brandText)
+                            .font(.body)
                         Spacer()
-                        if let p = it.pages { Text("\(p) pgs").foregroundStyle(.secondary) }
+                        if let p = it.pages { 
+                            Text("\(p) pgs")
+                                .foregroundColor(.brandSecondaryText)
+                                .font(.caption)
+                        }
                     }
-                    Text(it.received_at ?? "").font(.caption).foregroundStyle(.secondary)
+                    Text(it.received_at ?? "")
+                        .font(.caption)
+                        .foregroundColor(.brandSecondaryText)
                 }
+                .padding(.vertical, 4)
             }
+            .buttonStyle(.plain)
         }
         .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)
@@ -226,15 +254,23 @@ struct HistoryView: View {
         List(items, id: \.["id"]) { it in
             VStack(alignment: .leading) {
                 HStack {
-                    Text(it["file"] ?? "").font(.subheadline)
+                    Text(it["file"] ?? "")
+                        .font(.subheadline)
+                        .foregroundColor(.brandText)
                     Spacer()
                     StatusBadge(status: it["status"] ?? "")
                 }
-                Text("To: \(it["to"] ?? "") • \(it["ts"] ?? "")").font(.caption).foregroundStyle(.secondary)
+                Text("To: \(it["to"] ?? "") • \(it["ts"] ?? "")")
+                    .font(.caption)
+                    .foregroundColor(.brandSecondaryText)
                 if let err = it["err"], !(err.isEmpty) {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("We couldn't complete this fax.").font(.caption)
-                        Text(friendlyError(err)).font(.caption2).foregroundStyle(.secondary)
+                        Text("We couldn't complete this fax.")
+                            .font(.caption)
+                            .foregroundColor(.brandText)
+                        Text(friendlyError(err))
+                            .font(.caption2)
+                            .foregroundColor(.brandSecondaryText)
                         Link("Learn more", destination: URL(string: "https://faxbot.net/docs/troubleshooting")!)
                         HStack {
                             Spacer()

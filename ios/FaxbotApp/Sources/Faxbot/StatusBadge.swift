@@ -12,7 +12,9 @@ struct StatusBadge: View {
         }()
         HStack(spacing: 6) {
             Image(systemName: icon)
+                .foregroundColor(.white)
             Text(text)
+                .foregroundColor(.white)
         }
         .font(.caption2.weight(.semibold))
         .padding(.horizontal, 8).padding(.vertical, 4)
