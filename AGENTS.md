@@ -68,6 +68,215 @@ Developer notes
 - Keep copy short and plain; reserve deep detail for the docs site.
 - Avoid logging sensitive data in UI or network tabs; surface IDs/metadata only.
 
+## Admin Console Frontend Style Guide (dev branch)
+
+Scope: This governs all work under `api/admin_ui/` (Vite + React + TS + MUI) and its Electron shell under `api/admin_ui/electron/`. Follow these rules precisely so new UI matches the current implementation.
+
+Stack and entry points
+- Framework: React 18 + TypeScript + Vite
+- UI: MUI v5 with Emotion (`sx` prop-first styling)
+- Theme: Dark/Light/System via context provider
+  - Theme source: `api/admin_ui/src/theme/themes.ts`:1
+  - Provider: `api/admin_ui/src/theme/ThemeContext.tsx`:1
+- App shell and tabs: `api/admin_ui/src/App.tsx`:1
+- API client: `api/admin_ui/src/api/client.ts`:1 (web) and `api/admin_ui/src/api/electron-client.ts`:1 (Electron)
+- Types: `api/admin_ui/src/api/types.ts`:1
+- Electron main/preload: `api/admin_ui/electron/main.js`:1, `api/admin_ui/electron/preload.js`:1
+- CSP and fonts: `api/admin_ui/index.html`:1
+
+Directory conventions
+- Screens live in `api/admin_ui/src/components/` as PascalCase files.
+- Reusable building blocks live in `api/admin_ui/src/components/common/`.
+  - Form kit: `ResponsiveFormFields.tsx`:1
+  - Settings kit: `ResponsiveSettingItem.tsx`:1
+  - Cards/loader/transitions: `ResponsiveCard.tsx`:1, `SmoothLoader.tsx`:1
+- Hooks in `api/admin_ui/src/hooks/` (debounce/throttle/lazy/virtual scroll): `usePerformance.ts`:1; Electron glue: `useElectron.ts`:1
+- Do not add global CSS; use the MUI theme and `sx` on components. Component-level styled() is acceptable when necessary.
+
+Theming and styling
+- Always wrap UI with `ThemeProvider` from `ThemeContext` (already done in `App.tsx`).
+- Use `sx` for styling. Respect radii and motion:
+  - Border radius: 12–16px (Paper/Card), 8–10px (inputs/buttons/chips)
+  - Animations: 200–400ms, ease or standard MUI cubic-bezier; use MUI `<Fade>/<Slide>/<Zoom>`
+- Keep dark theme as default; ensure light theme parity. Theme tokens live in `themes.ts`.
+- Never hard-code colors when theme tokens exist (primary, text, divider, action.hover, etc.).
+
+Responsive rules (mobile-first)
+- Breakpoints: xs<600, sm≈600, md≈900–960, lg≈1200.
+- Prefer responsive `sx` objects: `px: { xs: 1, sm: 2, md: 3 }`.
+- Touch targets ≥44px on mobile; don’t squeeze controls.
+- Use the responsive kits:
+  - Forms and sections: `ResponsiveFormSection`, `ResponsiveTextField`, `ResponsiveSelect`, `ResponsiveFileUpload`, `ResponsiveCheckbox`, `ResponsiveRadioGroup` in `ResponsiveFormFields.tsx`:1
+  - Settings layouts: `ResponsiveSettingSection`, `ResponsiveSettingItem` in `ResponsiveSettingItem.tsx`:1
+  - Cards and grids: `ResponsiveCard`, `ResponsiveGrid` in `ResponsiveCard.tsx`:1
+  - Loaders/transitions: `SmoothLoader`, `InlineLoader`, `PageTransition` in `SmoothLoader.tsx`:1
+
+Navigation and structure
+- App uses tabbed navigation (not react-router) inside `App.tsx`:1. Add new top-level areas as Tabs and include mobile Drawer entries.
+- Electron menu navigation is bridged via IPC (see `useElectron.ts`:1). If you add a new tab, wire a corresponding menu command and handler.
+
+Data and API access
+- Use `AdminAPIClient`/`ElectronAPIClient` only; do not hand-roll fetch logic except for file downloads that require `Blob`.
+- Inject the client via props; do not import env vars into components.
+- Honor X-API-Key usage exactly as implemented in `client.ts`:1. Never log keys; if you must log, redact length/last 4 only.
+- Respect error codes and map to actionable messages:
+  - 400 invalid input → show inline errors and helper text
+  - 401 auth → “Invalid API key or insufficient permissions”
+  - 413 too large → “Max file size is 10 MB”
+  - 415 unsupported → “PDF/TXT only”
+  - 404 not found → “Resource not found or expired”
+
+Docs and linking
+- Get `docsBase` from `/admin/config` and pass through component props (see `Diagnostics.tsx` and `Settings.tsx`).
+- Never hard-code full docs URLs in components. Build links off `docsBase` only.
+- Provide at least one “Learn more” link per screen or complex control; keep copy short in the UI.
+
+Backend isolation in UI
+- Show provider-specific UI/help only for the active backend. Example pattern in `Settings.tsx`: backend sections are gated by `settings.backend.type`.
+- Do not mix Phaxio/Sinch/SIP help or controls on the same panel.
+
+Forms and validation
+- Use the responsive form kit. Avoid raw `<TextField>` unless wrapped in the kit.
+- Show helper text for normal guidance; show `errorMessage` only when `error=true`.
+- Pre-validate obvious constraints client-side (phone shape, 10 MB limit, PDF/TXT only).
+- Use accessible labels; no placeholder-only inputs for required fields.
+
+Performance patterns
+- Use `useDebounce` for search inputs; `useThrottle` for scroll/resize (see `usePerformance.ts`:1).
+- Lazy-load heavy panels if they materially affect initial paint; otherwise keep interactions snappy.
+- Use `SmoothLoader` during async actions; never leave the user with no feedback.
+
+Electron integration
+- Renderer remains browser-sandboxed (`nodeIntegration: false`, `contextIsolation: true`). Use the preload API only (`window.electronAPI`).
+- For Electron builds, default API base is `http://localhost:8080` (see `electron-client.ts`:1). Don’t add new Node APIs in the renderer.
+- File picking: prefer native file input for web; optionally add Electron `selectFile` helper where it improves UX.
+
+Security and PHI
+- No PHI in logs, error strings, or notifications.
+- Mask secrets in UI; use `SecretInput` or password toggles.
+- Respect CSP in `index.html`:1 — don’t introduce new external origins without review.
+
+Copy and micro-UX
+- Keep copy terse and plain. Use tooltips for short help; deeper content should be in docs.
+- Always provide a success path hint (what to do next) and a remediation hint on failure.
+
+Acceptance checklist (UI PRs)
+- Mobile first: verified at common breakpoints (xs/sm/md)
+- Uses responsive kits; spacing, radii, and motion match theme
+- No mixed backend guidance; docs links use `docsBase`
+- Errors are actionable; loader/disabled states present
+- API usage via `AdminAPIClient`/`ElectronAPIClient`; no direct secrets in logs
+- Electron menu/IPC updated if a new tab is added
+
+Do and don’t (frontend)
+- Do: use MUI `<Fade>/<Slide>/<Zoom>` for transitions; keep durations consistent (300±100ms)
+- Do: compose with `ResponsiveCard` and `ResponsiveGrid` for dashboards
+- Don’t: add CSS files or global styles; avoid inline styles except via `sx`
+- Don’t: hard-code URLs, backend names, or secrets; don’t drift from OpenAPI types
+
+Quick references
+- Theme: `api/admin_ui/src/theme/themes.ts`:1, `api/admin_ui/src/theme/ThemeContext.tsx`:1
+- Form kit: `api/admin_ui/src/components/common/ResponsiveFormFields.tsx`:1
+- Settings kit: `api/admin_ui/src/components/common/ResponsiveSettingItem.tsx`:1
+- Cards/loader: `api/admin_ui/src/components/common/ResponsiveCard.tsx`:1, `api/admin_ui/src/components/common/SmoothLoader.tsx`:1
+- API/types: `api/admin_ui/src/api/client.ts`:1, `api/admin_ui/src/api/types.ts`:1
+- App shell: `api/admin_ui/src/App.tsx`:1
+- Electron: `api/admin_ui/electron/main.js`:1, `api/admin_ui/electron/preload.js`:1
+
+### How To Add A New Screen
+
+1) Create the component
+- Path: `api/admin_ui/src/components/MyFeature.tsx`
+- Keep props minimal and typed: `{ client: AdminAPIClient; docsBase?: string }`
+- Use responsive kits and loaders. Example template:
+```tsx
+import React, { useState } from 'react';
+import { Box, Typography, Stack, Alert, Button } from '@mui/material';
+import AdminAPIClient from '../api/client';
+import { ResponsiveFormSection, ResponsiveTextField } from './common/ResponsiveFormFields';
+import { SmoothLoader } from './common/SmoothLoader';
+
+type Props = { client: AdminAPIClient; docsBase?: string };
+
+export default function MyFeature({ client, docsBase }: Props) {
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [value, setValue] = useState('');
+
+  const runAction = async () => {
+    setError(null); setLoading(true);
+    try {
+      // await client.someCall();
+    } catch (e: any) {
+      setError(e?.message || 'Something went wrong');
+    } finally { setLoading(false); }
+  };
+
+  return (
+    <Box>
+      <Typography variant="h4" component="h1" sx={{ mb: 3 }}>My Feature</Typography>
+
+      {error && (
+        <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>{error}</Alert>
+      )}
+
+      <ResponsiveFormSection
+        title="Do the thing"
+        subtitle="Short helper text; add a Learn more link in docs"
+      >
+        <Stack spacing={2}>
+          <ResponsiveTextField
+            label="Input"
+            value={value}
+            onChange={setValue}
+            placeholder="Example"
+            helperText="Explain expected format"
+          />
+          <Button variant="contained" onClick={runAction} sx={{ borderRadius: 2 }}>Run</Button>
+        </Stack>
+      </ResponsiveFormSection>
+
+      <SmoothLoader loading={loading} variant="linear" />
+    </Box>
+  );
+}
+```
+
+2) Wire it into the shell
+- Import the component in `api/admin_ui/src/App.tsx`:1.
+- Decide location:
+  - Top-level tab: extend `tabIcons`, add a `<Tab ... label="My Feature" />`, extend `drawerItems`, and add a `<TabPanel index={N}><MyFeature client={client!} docsBase={adminConfig?.branding?.docs_base} /></TabPanel>`.
+  - Settings group: add an item in `settingsItems`, render under the settings TabPanel when `settingsTab === X`.
+  - Tools group: add to `toolsItems`, render when `toolsTab === X`.
+
+3) Electron navigation (if top-level)
+- Add a menu item in `api/admin_ui/electron/main.js`:1 that does `mainWindow.webContents.send('navigate-to', '/my-feature')`.
+- In `App.tsx`:1, extend the `onNavigate` switch to map `/my-feature` to the correct `setTabValue(N)` and sub-tab if needed.
+
+4) Docs linking
+- Fetch `docsBase` via `/admin/config` (already available in `adminConfig.branding.docs_base`).
+- Link as: `<Link href={`${docsBase}/path/to/section`}>Learn more</Link>`; do not hard‑code full URLs.
+
+5) Error handling
+- Map HTTP errors to user-friendly text per the error table above.
+- Provide recovery hints and a next step after success.
+
+6) Testing and responsiveness
+- Manually verify xs/sm/md layouts; ensure no horizontal scroll and touch targets ≥44px.
+- Check both dark and light themes.
+
+### UI PR Checklist (submit with every UI PR)
+- Mobile-first: verified on xs/sm/md breakpoints; no horizontal scrolling
+- Uses responsive kits (`ResponsiveFormSection`, `ResponsiveTextField`, etc.)
+- Spacing/radii/motion match theme; transitions 200–400ms; uses MUI transitions
+- API usage via `AdminAPIClient`/`ElectronAPIClient`; no custom fetch except Blob downloads
+- Error states actionable; success path hints present; loaders/disabled states present
+- Backend isolation respected; only active backend guidance rendered
+- Docs links built from `docsBase`; no hard-coded external URLs
+- No PHI or secrets in logs/UI/errors; secrets masked (use `SecretInput` when applicable)
+- Electron: menu and `onNavigate` route wired if a new tab was added
+- CSP respected; no new external origins without review
+
 ## Provider Slots and Backends (v3)
 
 In v3, backends are provided by plugins bound to provider slots via a single resolved config.
@@ -214,6 +423,80 @@ Admin Console Terminal (local-only)
 - WebSocket endpoint: `/admin/terminal` (admin auth required).
 - Backend uses pexpect to provide a TTY inside the API container; same privileges as the service user.
 - Gate UI access with `ENABLE_LOCAL_ADMIN=true`; avoid exposing through proxies.
+
+## iOS App (Standalone Repository)
+
+**Repository:** `https://github.com/DMontgomery40/faxbot.app`  
+**Status:** Production-ready iOS 26 app with SwiftUI interface  
+**Architecture:** Pure client app - connects to any Faxbot server via REST API
+
+### Key Characteristics:
+- **Standalone app** - No server code, just connects to Faxbot servers
+- **iOS 26 optimized** - Uses Liquid Glass design, system colors, enhanced security
+- **Pairing system** - QR code or manual pairing with server admin console
+- **Full feature parity** - Send/receive faxes, document scanning, contact management
+- **Share extension** - Send faxes directly from Photos, Files, or any app
+- **HIPAA compliant** - Inherits security posture from connected server
+
+### iOS App Architecture Flow:
+```
+iOS App → REST API → Faxbot Server → Backend → Fax Transmission
+   ↓         ↓           ↓            ↓
+Share Ext → REST API → Faxbot Server → Backend → Fax Transmission
+```
+
+### Development Requirements:
+- **Xcode 15+** with iOS 26 SDK
+- **XcodeGen** for project generation: `brew install xcodegen`
+- **Apple Developer Account** for device testing/App Store
+- **Running Faxbot server** (local or remote) for testing
+
+### Build Commands:
+```bash
+# Build and run in simulator
+./scripts/ios/run-sim.sh
+
+# Build for physical device (requires Apple Developer account)
+DEVICE_NAME="Your iPhone" ./scripts/ios/run-sim.sh
+
+# Archive for TestFlight/App Store
+./scripts/ios/archive.sh
+```
+
+### iOS App Features:
+- **Send Tab:** Document scanning, text-to-fax, contact picker, recent contacts
+- **Inbox Tab:** View received faxes (when server has inbound enabled)
+- **History Tab:** Track sent faxes, retry failed sends, status updates
+- **Settings Tab:** Server pairing, connectivity testing, notifications
+- **Share Extension:** Fax from any app via iOS share sheet
+
+### iOS-Specific Security (iOS 26):
+- **Enhanced Security capabilities** enabled in entitlements
+- **Pointer authentication, stack zero init, bounds safety** compiler flags
+- **Keychain storage** for server credentials and API keys
+- **App Groups** for sharing data with Share Extension
+- **Certificate pinning** for self-signed server certificates
+- **No PHI stored locally** - everything stays on server
+
+### Pairing Process:
+1. User opens Faxbot server admin console
+2. Generate mobile pairing code in Settings → Mobile Apps
+3. iOS app Settings → enter code or scan QR
+4. App automatically configures server URLs and API key
+5. Secure connection established
+
+### Share Extension Workflow:
+1. User takes photo or selects document in any app
+2. Tap Share → select "Fax" 
+3. Choose recipient from saved contacts or enter number
+4. Fax sends in background via server
+5. User gets notification when complete
+
+### iOS App Limitations:
+- **Requires running Faxbot server** - app is pure client
+- **10MB file size limit** - enforced client-side
+- **PDF/TXT only** - images auto-converted to PDF
+- **iOS 17+ required** - uses modern SwiftUI features
 
 ## The Two SDKs: Node.js and Python
 
@@ -621,6 +904,61 @@ TIFF conversion        |   ✗    |   ✗   |     ✗      |      ✓       |   
 - **Authentication:** Optional API key scenarios
 - **Health checking:** Service availability detection
 
+## Repository Structure (Multi-Repo Architecture)
+
+Faxbot uses a **multi-repository architecture** to separate concerns and enable independent development:
+
+### 1. Core Repository: `faxbot/faxbot` (Main)
+**Contains:** Core API, backends, MCP servers, SDKs, documentation
+- **Branch:** `main` (production releases), `development` (active development)
+- **Components:** FastAPI server, plugin system, Phaxio/SIP/Sinch backends
+- **MCP Servers:** Node.js and Python MCP servers with stdio/HTTP/SSE transports
+- **SDKs:** Node.js and Python client libraries
+- **Admin Console:** React/TypeScript web interface
+
+### 2. iOS App Repository: `DMontgomery40/faxbot.app` 
+**Contains:** Standalone iOS app with SwiftUI interface
+- **Branch:** `main` (production releases)
+- **Components:** iOS 26 app, Share Extension, build scripts
+- **Dependencies:** Connects to any Faxbot server via REST API
+- **Platform:** iOS 17+ with iOS 26 optimizations
+
+### 3. Commercial Website: `faxbot.net` (Private)
+**Contains:** Marketing website, hosted service, billing
+- **Branch:** `main` (production website)
+- **Components:** Astro-based marketing site, compliance documentation
+- **Purpose:** Commercial hosted service at faxbot.net
+
+### Repository Relationships:
+```
+faxbot/faxbot (Core)
+├── Provides REST API
+├── Serves Admin Console
+└── Handles all fax transmission
+
+DMontgomery40/faxbot.app (iOS)
+├── Connects to Core via REST API
+├── Pure client - no server code
+└── Works with any Faxbot server
+
+faxbot.net (Commercial)
+├── Markets the ecosystem
+├── Hosts managed Faxbot instances
+└── Provides billing/support
+```
+
+### Why Multi-Repo:
+1. **Separation of concerns** - iOS vs backend vs marketing
+2. **Independent releases** - iOS app updates don't require server updates
+3. **Team permissions** - iOS developers don't need backend access
+4. **App Store requirements** - Apple prefers focused app repositories
+5. **Licensing clarity** - Core is open source, commercial parts separate
+
+### Cross-Repo Dependencies:
+- **iOS app** depends on Core's REST API specification
+- **Commercial site** depends on Core's Docker images
+- **All repos** share this AGENTS.md for consistency
+
 ## Development Workflow and Open‑Core vs Commercial App
 
 Q: If we plan to add a front end and inbound receiving while maintaining a lightweight MVP for users who only need to send faxes now, should we fork the repo into a separate commercial app and leave this one alone?
@@ -649,11 +987,47 @@ What goes where
   - Inbox UI, tagging/routing, notifications
   - Analytics, exports, support tooling
 
-Branch policy (v3)
-- Long‑lived branches are limited to: `main`, `development`, and `docs-jekyll-site` (GitHub Pages branch).
-- All work targets `development`. Short‑lived feature branches may be created only with owner approval and must merge back into `development` via PR.
-- Unapproved or “rogue” branches will be removed to maintain the structure.
+## Branch Policy (v3) - CRITICAL FOR AGENTS
+
+### Multi-Repository Branch Structure
+
+#### Core Repository (`faxbot/faxbot`):
+- **`main`**: Production releases only. **AGENTS MUST NEVER WORK DIRECTLY IN MAIN.**
+- **`development`**: Default branch for general core development work.
+- **`docs-jekyll-site`**: GitHub Pages documentation branch.
+- **App-specific branches**: For platform-specific applications (e.g., `electron_macos`, `electron_windows`, `electron_linux`).
+
+#### iOS App Repository (`DMontgomery40/faxbot.app`):
+- **`main`**: Production releases and active development (single branch model)
+- **No development branch** - iOS app uses trunk-based development
+
+#### Commercial Website (`faxbot.net`):
+- **`main`**: Production website and active development
+
+### Agent Work Rules (Updated for Multi-Repo)
+1. **NEVER work in `main`** on the core repository - This is for production releases only.
+2. **Core API/MCP/backend work**: Use `development` branch in `faxbot/faxbot`
+3. **iOS app work**: Work directly in `main` branch in `DMontgomery40/faxbot.app`
+4. **Website work**: Work directly in `main` branch in `faxbot.net`
+5. **Electron app work**: Use dedicated branches in core repository:
+   - Electron macOS work → `electron_macos` branch
+   - Electron Windows work → `electron_windows` branch  
+   - Electron Linux work → `electron_linux` branch
+
+### Branch Selection Logic for Agents
+```
+If working on Core API/MCP/backends → faxbot/faxbot development branch
+If working on iOS app → DMontgomery40/faxbot.app main branch
+If working on website → faxbot.net main branch
+If working on Electron macOS → faxbot/faxbot electron_macos branch
+If working on Electron Windows → faxbot/faxbot electron_windows branch  
+If working on Electron Linux → faxbot/faxbot electron_linux branch
+NEVER work in main branch of core repository
+```
+
+### Release Process
 - Tag releases from `main` (e.g., `v3.0.0`) so consumers can pin stable versions.
+- App branches merge to `development`, then `development` merges to `main` for releases.
 
 Docs publishing
 - GitHub Pages publishes from the `docs-jekyll-site` branch. Do not repoint Pages without approval.
