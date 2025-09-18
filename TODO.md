@@ -1,3 +1,45 @@
+
+  - while the api key management is great, there should be a submenu in api keys, whre it's just users names lists, with a dropdown box, where you can check and uncheck the scopes of their api keys. 
+  - OR, if managers shouldn't see user api keys, then set up a user/pass system, instead of a key only login
+- ADD FAX COVER PAGE 
+  - subject / from / to / date
+  - in settings, user configures what fields that want and can add fields, and it will just always auto fill them
+  - "Sent from Faxbot.net" at the bottom of every cover page
+- FAXBOT.NET mini hero banner in upper left has the old tiny version still  
+- SEPERATE INBOUND AND OUTBOUND FAX PROVIDERS
+  - i personally want sip inbound with my t38fax.com or whatever sip number, and outbound through sinch
+- FIX ALL THE BROKEN LINKS IN ADMIN CONSOLE
+- ADD FUNCTIONALITY TO ADMIN CONSOLE OF JUST WRITING TEXT IN A BOX, AND THE API DOES THE WORK OF MAKING IT A TEXT FILE, THIS FUNCTIONALITY IS HOW FAXBOT.APP / IOS APP WORKS
+- CLEAN UP UGLY INBOX IN IOS APP, ALLOW "HISTORY" TO BE CLICKABLE SO PEOPLE CAN SEE WHAT THEY SENT
+- NO USING ISO DATES ANYWHERE THAT ARE VISABLE TO USER
+- ADD OPTION TO SET TIMEZONE IN SETTINGS, DEFAULT TIME SHOULD COME FROM SYSTEM
+- FINALLY FIX BROKEN TERMINAL IN ADMIN CONSOLE
+- FIX CLOUDFLARE LINK
+  - if it doesn't work to start a docker container from the console, which it should, but if it doesn't, just package it into the api itself. it should be on by default with the warning that it's not hipaa compliant, but again we must keep in mind many users don't need hipaa
+  - PREP FOR BIGGER CLIENTS BY HAVING BETTER USER MANAGEMENT
+  - we have scoped api keys, so it's really just about adding names and stuff, and maybe tracking # of pages per user, so someone at the company doesn't send 20k faxes and nobody knows who did it
+
+- **BIG TASK**
+MAKE FAXBOT ACTUALLY EASY.  we say it is. it's not. at all. phaxio would take 5 minutes to set up, maybe, but our docs suck on actually doing it and it's an incredly complicated site and has a zillion apis. 
+ - big idea:  since sinch has SOOO many api and webhook options, could we use that to our advantage and just write "scripts" for users that set up stuff for them in the backend via curl and command line api calls??? is that possible?? must research if it's possible, or find some kind of way that users can actually get up and going and start faxing in a way that ACTUALLY takes 5 minutes. 
+  - next stage should be a subscription option for faxbot for the occasional user who has to send a fax once a month or something, and doesn't want to sign up for all this shit, and doesn't care about having their own number.  they pay us $2/month or $10/year or something, and they can send X amount of faxes, from OUR number, we'll of course tell them what that number is and send them a thing over email saying "here's a copy of the fax you sent".
+  - this is huge and it really is the future and the entire point of the consumer side of faxbot, which is why i made it, my question was: why can't i just type out a quick note and fax it from my phone?  now with the faxbot app you can, but, it's all the backend bullshit, and buying phone numbers, and picking providers and going through pricing tiers, and getting a million fuckin secrets and keys and ids ughhhh... i HATE IT. So, we just sign up for an account with whoever, we pay the bill , we send the fax, we take out ALL THE PAIN for users.  again, this is just average individual consumers who aren't hipaa bound, and just want to send an occasional thing. we make the signup wicked easy, all payment options, hopefully they can just click on paypal button, and it will take 2 minutes, and boom they never need to think about the pain of faxing again.   so that would be like faxbot "lite" or something, and then we keep faxbot the super secure hipaa ready platform, as the thing we sell to hospitals and clinics and such. 
+  - this brings things to a whole new level of course cause it means aws hosting, and expenses and all sorts of shit.  but it's the right thing to do for the world lol.  hell i'm down to just eat the cost of users sending a few faxes a year without even paying.  what's the section 203 rule on that lol?  we'd probably be responsible for people sending death threats or no?  no as long as they were signing in and it wasn't all anonymous, we don't want to turn this into twitter but over fax.  if there was an app where you could legit just BOOM send a fax, without doing ANYTHING AT ALL, then who are you going to go to if you even need to send faxes at any scale?? us obviously
+
+- DO THIS: 
+-    Where to get a macOS .p12 cert
+
+  - Developer ID Application certificate from Apple:
+      - Keychain Access → Certificate Assistant → Request a Certificate From a CA… (CSR)
+      - Apple Developer → Certificates → Add Developer ID Application → upload CSR → download
+      - Import into Keychain, then export as .p12 (with password)
+      - Put into GitHub Secrets:
+          - MAC_CERT_P12_BASE64 (base64 of the .p12)
+          - MAC_CERT_PASSWORD
+          - APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, APPLE_TEAM_ID
+      - Then run the “Release macOS DMG” workflow (release-macos.yml).
+
+
 # Missing Features & Mandates — Running List
 
 Updated: 2025-09-17
