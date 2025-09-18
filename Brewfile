@@ -12,4 +12,4 @@ brew "curl"
 brew "wget"
 
 # Development tools (optional)
-brew "nodemon"
+brew "xcodegen"

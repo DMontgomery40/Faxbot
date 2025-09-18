@@ -239,7 +239,6 @@
 				CLANG_ENABLE_CPLUSPLUS_TYPED_ALLOCATOR_SUPPORT = YES;
 				CLANG_ENABLE_C_TYPED_ALLOCATOR_SUPPORT = YES;
 				CLANG_ENABLE_STACK_ZERO_INIT = YES;
-				CODE_SIGN_ENTITLEMENTS = Resources/Faxbot.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
@@ -325,7 +324,6 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				APPLICATION_EXTENSION_API_ONLY = YES;
-				CODE_SIGN_ENTITLEMENTS = Resources/FaxbotShare.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				INFOPLIST_FILE = Resources/ShareExtensionInfo.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
@@ -408,7 +406,6 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				APPLICATION_EXTENSION_API_ONLY = YES;
-				CODE_SIGN_ENTITLEMENTS = Resources/FaxbotShare.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				INFOPLIST_FILE = Resources/ShareExtensionInfo.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
@@ -431,7 +428,6 @@
 				CLANG_ENABLE_CPLUSPLUS_TYPED_ALLOCATOR_SUPPORT = YES;
 				CLANG_ENABLE_C_TYPED_ALLOCATOR_SUPPORT = YES;
 				CLANG_ENABLE_STACK_ZERO_INIT = YES;
-				CODE_SIGN_ENTITLEMENTS = Resources/Faxbot.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;

@@ -1,6 +1,16 @@
 import Foundation
 import SwiftUI
 
+struct FaxJob: Decodable {
+    let id: String
+    let status: String
+    let backend: String?
+    let pages: Int?
+    let error: String?
+    let created_at: String?
+    let updated_at: String?
+}
+
 @MainActor
 final class FaxbotClient: ObservableObject {
     @Published var serverConfig = ServerConfig()
@@ -21,7 +31,9 @@ final class FaxbotClient: ObservableObject {
 
     func bootstrapFromKeychain() async {
         do {
-            try await KeychainHelper.shared.load(into: &serverConfig)
+            var cfg = serverConfig
+            try await KeychainHelper.shared.load(into: &cfg)
+            serverConfig = cfg
             maskKey()
         } catch {
             // ignore
@@ -57,11 +69,11 @@ final class FaxbotClient: ObservableObject {
         struct PairOut: Decodable { let base_urls: [String:String?]; let token: String }
         let po = try JSONDecoder().decode(PairOut.self, from: data)
         // Update config
-        if let local = po.base_urls["local"] ?? nil { serverConfig.localURL = local ?? "" }
-        if let tun = po.base_urls["tunnel"] ?? nil { serverConfig.tunnelURL = tun ?? "" }
-        if let pub = po.base_urls["public"] ?? nil, serverConfig.tunnelURL.isEmpty { serverConfig.tunnelURL = pub ?? "" }
+        if let localOpt = po.base_urls["local"], let local = localOpt { serverConfig.localURL = local }
+        if let tunOpt = po.base_urls["tunnel"], let tun = tunOpt { serverConfig.tunnelURL = tun }
+        if let pubOpt = po.base_urls["public"], let pub = pubOpt, serverConfig.tunnelURL.isEmpty { serverConfig.tunnelURL = pub }
         serverConfig.apiKey = po.token
-        try await persistToKeychain()
+        await persistToKeychain()
         // Also save to app group for share extension
         let suite = UserDefaults(suiteName: "group.net.faxbot.shared")
         suite?.set(serverConfig.localURL, forKey: "localURL")
@@ -231,16 +243,6 @@ actor RecentContacts {
     private let key = "fax_recent_contacts"
     private init() {}
     func add(number: String) {
-    struct FaxJob: Decodable {
-        let id: String
-        let status: String
-        let backend: String?
-        let pages: Int?
-        let error: String?
-        let created_at: String?
-        let updated_at: String?
-    }
-
         var arr = (UserDefaults.standard.array(forKey: key) as? [String]) ?? []
         if let idx = arr.firstIndex(of: number) { arr.remove(at: idx) }
         arr.insert(number, at: 0)
@@ -250,27 +252,3 @@ actor RecentContacts {
     func list() -> [String] { (UserDefaults.standard.array(forKey: key) as? [String]) ?? [] }
 }
 
-actor KeychainHelper {
-    static let shared = KeychainHelper()
-    private init() {}
-
-    func save(from cfg: ServerConfig) async throws {
-        try await set(key: "localURL", value: cfg.localURL)
-        try await set(key: "tunnelURL", value: cfg.tunnelURL)
-        try await set(key: "apiKey", value: cfg.apiKey)
-    }
-
-    func load(into cfg: inout ServerConfig) async throws {
-        cfg.localURL = (try? await get(key: "localURL")) ?? cfg.localURL
-        cfg.tunnelURL = (try? await get(key: "tunnelURL")) ?? cfg.tunnelURL
-        cfg.apiKey = (try? await get(key: "apiKey")) ?? cfg.apiKey
-    }
-
-    private func set(key: String, value: String) async throws {
-        // Placeholder; replace with real Keychain API in implementation
-        UserDefaults.standard.set(value, forKey: "fb_" + key)
-    }
-    private func get(key: String) async throws -> String? {
-        UserDefaults.standard.string(forKey: "fb_" + key)
-    }
-}

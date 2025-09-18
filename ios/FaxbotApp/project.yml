@@ -21,7 +21,7 @@ targets:
         SWIFT_VERSION: 5.10
         CURRENT_PROJECT_VERSION: 1
         MARKETING_VERSION: 0.1.0
-        CODE_SIGN_ENTITLEMENTS: Resources/Faxbot.entitlements
+        # No entitlements needed for Personal Team / Simulator
         # Enhanced Security build settings (iOS 26)
         ENABLE_POINTER_AUTHENTICATION: YES
         CLANG_ENABLE_C_TYPED_ALLOCATOR_SUPPORT: YES
@@ -60,7 +60,7 @@ targets:
         CODE_SIGN_STYLE: Automatic
         SWIFT_VERSION: 5.10
         APPLICATION_EXTENSION_API_ONLY: YES
-        CODE_SIGN_ENTITLEMENTS: Resources/FaxbotShare.entitlements
+        # No entitlements for share extension on Personal Team; re-enable on paid team
     info:
       path: Resources/ShareExtensionInfo.plist
       properties:

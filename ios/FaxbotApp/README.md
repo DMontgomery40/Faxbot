@@ -17,7 +17,7 @@ CLI-first iOS app with iOS 26 Enhanced Security.
 
 - In `ios/FaxbotApp` run:
   - `bundle exec fastlane build` or `fastlane build`
-  - `TEAM_ID=YOUR_TEAM_ID APP_IDENTIFIER=net.faxbot.ios fastlane beta`
+  - `TEAM_ID=YOUR_TEAM_ID APP_IDENTIFIER=net.faxbot.ios.v1 fastlane beta`
 
 ### Enhanced Security (iOS 26)
 

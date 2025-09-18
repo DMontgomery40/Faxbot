@@ -18,7 +18,7 @@ struct ContactPickerView: View {
                             Haptics.lightTap()
                         }) {
                             Image(systemName: selected.contains(c.id) ? "checkmark.circle.fill" : "circle")
-                                .foregroundStyle(selected.contains(c.id) ? .tint : .secondary)
+                                .foregroundStyle(selected.contains(c.id) ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
                         }.buttonStyle(.plain)
                         VStack(alignment: .leading) {
                             Text(c.name).font(.body)

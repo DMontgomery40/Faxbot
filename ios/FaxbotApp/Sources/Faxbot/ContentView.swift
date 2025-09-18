@@ -116,21 +116,14 @@ struct SendView: View {
     func sendText() async {
         sending = true; defer { sending = false }
         guard let data = textContent.data(using: .utf8) else { return }
-        do {
-            let results = await client.sendFax(toMany: parsedNumbers, file: data, filename: "note.txt")
-            let ok = results.filter { if case .success = $0.result { true } else { false } }.count
-            resultMessage = ok == results.count ? "Queued to \(ok) recipient(s)" : "Queued \(ok)/\(results.count)"
-            Haptics.success()
-            withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { showToast = true }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) { withAnimation { showToast = false } }
-            textContent = ""
-            for r in results { await RecentContacts.shared.add(number: r.to) }
-        } catch {
-            resultMessage = "Failed: \(error.localizedDescription)"
-            Haptics.error()
-            withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { showToast = true }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) { withAnimation { showToast = false } }
-        }
+        let results = await client.sendFax(toMany: parsedNumbers, file: data, filename: "note.txt")
+        let ok = results.filter { if case .success = $0.result { true } else { false } }.count
+        resultMessage = ok == results.count ? "Queued to \(ok) recipient(s)" : "Queued \(ok)/\(results.count)"
+        Haptics.success()
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { showToast = true }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) { withAnimation { showToast = false } }
+        textContent = ""
+        for r in results { await RecentContacts.shared.add(number: r.to) }
     }
 
     func sendImages(_ images: [UIImage]) async {
@@ -191,8 +184,8 @@ struct InboxView: View {
         .overlay(loading ? ProgressView() : nil)
         .task { await reload() }
         .refreshable { await reload() }
-        .sheet(item: $previewURL) { url in
-            PDFPreview(url: url)
+        .sheet(isPresented: Binding(get: { previewURL != nil }, set: { if !$0 { previewURL = nil } })) {
+            if let url = previewURL { PDFPreview(url: url) }
         }
     }
 
@@ -256,13 +249,10 @@ struct HistoryView: View {
         .scrollBounceBehavior(.basedOnSize)
         .onAppear { Task { items = await FaxHistory.shared.list(); await startPolling() } }
         .onDisappear { polling = false }
-        .actionSheet(isPresented: $showResendSheet) {
-            ActionSheet(title: Text("Resend to \(resendTo)"), buttons: [
-                .default(Text("Pick PDF")) { showDocPicker = true },
-                .default(Text("Scan Document")) { showResendScanner = true },
-                .default(Text("Type Text")) { showResendText = true },
-                .cancel()
-            ])
+        .confirmationDialog("Resend to \(resendTo)", isPresented: $showResendSheet, titleVisibility: .visible) {
+            Button("Pick PDF") { showDocPicker = true }
+            Button("Scan Document") { showResendScanner = true }
+            Button("Type Text") { showResendText = true }
         }
         .sheet(isPresented: $showDocPicker) {
             DocumentPicker { url, data in
@@ -295,6 +285,10 @@ struct HistoryView: View {
                 }.padding().navigationTitle("Type Text")
             }
         }
+    }
+    private func prepareResend(to: String) {
+        resendTo = to
+        showResendSheet = true
     }
     func startPolling() async {
         polling = true

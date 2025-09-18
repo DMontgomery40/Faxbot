@@ -2,10 +2,7 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>com.apple.security.application-groups</key>
-  <array>
-    <string>group.net.faxbot.shared</string>
-  </array>
+  <!-- Personal Team: remove App Groups for share extension; re-enable when on paid team -->
 </dict>
 </plist>
 

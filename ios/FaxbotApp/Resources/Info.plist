@@ -18,6 +18,11 @@
 	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<false/>
+	</dict>
 	<key>NSCameraUsageDescription</key>
 	<string>Camera is used to scan documents and QR pairing codes.</string>
 	<key>NSLocalNetworkUsageDescription</key>
@@ -26,18 +31,13 @@
 	<string>Photos access is used to share or attach images to faxes.</string>
 	<key>UILaunchScreen</key>
 	<dict/>
+	<key>UIRequiresFullScreen</key>
+	<true/>
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>
 	</array>
 	<key>UIUserInterfaceStyle</key>
 	<string>Automatic</string>
-	<key>NSAppTransportSecurity</key>
-	<dict>
-		<key>NSAllowsArbitraryLoads</key>
-		<false/>
-	</dict>
-	<key>UIRequiresFullScreen</key>
-	<true/>
 </dict>
 </plist>
