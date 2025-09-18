@@ -8,7 +8,8 @@ struct FaxbotApp: App {
         WindowGroup {
             ContentView()
                 .environmentObject(client)
+                .onAppear { NotificationManager.shared.configure() }
+                .tint(Color.brandPrimary)
         }
     }
 }
-

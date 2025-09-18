@@ -28,7 +28,7 @@ struct SettingsView: View {
                     Button("Save") {
                         client.serverConfig.localURL = localURL
                         client.serverConfig.tunnelURL = tunnelURL
-                        Task { await client.persistToKeychain() }
+                        Task { await client.persistToKeychain(); Haptics.success() }
                     }
                 }
                 Section("Pairing") {
@@ -42,9 +42,11 @@ struct SettingsView: View {
                                 tunnelURL = client.serverConfig.tunnelURL
                                 apiKeyMasked = client.apiKeyMasked
                                 pairingCode = ""
+                                Haptics.success()
                             } catch {
                                 // Surface a gentle toast/alert in a full implementation
                                 print("Pairing failed: \(error.localizedDescription)")
+                                Haptics.error()
                             }
                         }
                     }
@@ -65,10 +67,26 @@ struct SettingsView: View {
                         Task {
                             testing = true
                             defer { testing = false }
-                            _ = await client.testHealth()
+                            let ok = await client.testHealth()
+                            if ok { Haptics.success() } else { Haptics.warning() }
                         }
                     }
                     .disabled(testing)
+                }
+                Section("Notifications") {
+                    Toggle("Allow Notifications", isOn: Binding(get: { UserDefaults.standard.bool(forKey: "notif_allow") }, set: { v in
+                        UserDefaults.standard.set(v, forKey: "notif_allow")
+                        if v { NotificationManager.shared.requestAuthorization() }
+                    }))
+                    Toggle("Notify on sent", isOn: Binding(get: { UserDefaults.standard.bool(forKey: "notif_out_success") }, set: { UserDefaults.standard.set($0, forKey: "notif_out_success") }))
+                        .disabled(!UserDefaults.standard.bool(forKey: "notif_allow"))
+                    Toggle("Notify on failure", isOn: Binding(get: { UserDefaults.standard.bool(forKey: "notif_out_failure") }, set: { UserDefaults.standard.set($0, forKey: "notif_out_failure") }))
+                        .disabled(!UserDefaults.standard.bool(forKey: "notif_allow"))
+                    Toggle("Notify on inbound", isOn: Binding(get: { UserDefaults.standard.bool(forKey: "notif_inbound") }, set: { UserDefaults.standard.set($0, forKey: "notif_inbound") }))
+                        .disabled(!UserDefaults.standard.bool(forKey: "notif_allow"))
+                    Button("Open System Notification Settings") {
+                        if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
+                    }
                 }
                 Section("About") {
                     Link("Faxbot website", destination: URL(string: "https://faxbot.net")!)
@@ -79,6 +97,8 @@ struct SettingsView: View {
                 }
             }
             .navigationTitle("Settings")
+            .toolbarBackground(.ultraThinMaterial, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
             .onAppear {
                 localURL = client.serverConfig.localURL
                 tunnelURL = client.serverConfig.tunnelURL

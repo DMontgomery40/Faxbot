@@ -29,11 +29,14 @@ struct SendView: View {
     @EnvironmentObject private var client: FaxbotClient
     @State private var toNumbersRaw: String = ""
     @State private var parsedNumbers: [String] = []
+    @State private var contactMap: [String:String] = [:]
     @State private var showingScanner = false
     @State private var showingText = false
     @State private var textContent = ""
     @State private var sending = false
     @State private var resultMessage: String?
+    @State private var showToast = false
+    @State private var showingContacts = false
 
     var body: some View {
         ScrollView {
@@ -46,7 +49,8 @@ struct SendView: View {
                     }
                 if !parsedNumbers.isEmpty {
                     FlowLayout(parsedNumbers, id: \.self) { num in
-                        Text(num).font(.caption)
+                        let label = contactMap[num] != nil ? "\(contactMap[num]!) (\(num))" : num
+                        Text(label).font(.caption)
                             .padding(.horizontal, 8).padding(.vertical, 4)
                             .background(Capsule().fill(Color.secondary.opacity(0.15)))
                     }
@@ -61,6 +65,8 @@ struct SendView: View {
 
                     Button { showingText = true } label: { Label("Type Text", systemImage: "text.alignleft") }
                         .buttonStyle(.bordered)
+                    Button { Haptics.lightTap(); showingContacts = true } label: { Label("Contacts", systemImage: "person.crop.circle") }
+                        .buttonStyle(.bordered)
                 }
                 // Recent contacts quick-add
                 RecentChips { selected in
@@ -71,6 +77,7 @@ struct SendView: View {
                 if let msg = resultMessage { Text(msg).font(.footnote).foregroundStyle(.secondary) }
             }.padding()
         }
+        .scrollBounceBehavior(.basedOnSize)
         .sheet(isPresented: $showingText) {
             NavigationStack {
                 VStack {
@@ -87,7 +94,23 @@ struct SendView: View {
                 Task { await sendImages(images) }
             }
         }
+        .sheet(isPresented: $showingContacts) {
+            ContactPickerView { selected in
+                let nums = selected.map { $0.number }
+                let existing = Set(parsedNumbers)
+                parsedNumbers = Array(existing.union(nums))
+                toNumbersRaw = parsedNumbers.joined(separator: ", ")
+            }
+        }
         .background(.ultraThinMaterial)
+        .overlay(alignment: .bottom) {
+            if showToast, let msg = resultMessage {
+                ToastView(text: msg)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .padding(.bottom, 20)
+            }
+        }
+        .task { await loadContactsMap() }
     }
 
     func sendText() async {
@@ -96,11 +119,17 @@ struct SendView: View {
         do {
             let results = await client.sendFax(toMany: parsedNumbers, file: data, filename: "note.txt")
             let ok = results.filter { if case .success = $0.result { true } else { false } }.count
-            resultMessage = "Queued to \(ok)/\(results.count)"
+            resultMessage = ok == results.count ? "Queued to \(ok) recipient(s)" : "Queued \(ok)/\(results.count)"
+            Haptics.success()
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { showToast = true }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) { withAnimation { showToast = false } }
             textContent = ""
             for r in results { await RecentContacts.shared.add(number: r.to) }
         } catch {
             resultMessage = "Failed: \(error.localizedDescription)"
+            Haptics.error()
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { showToast = true }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) { withAnimation { showToast = false } }
         }
     }
 
@@ -110,16 +139,28 @@ struct SendView: View {
             let pdf = try PDFComposer.pdfFrom(images: images)
             let results = await client.sendFax(toMany: parsedNumbers, file: pdf, filename: "scan.pdf")
             let ok = results.filter { if case .success = $0.result { true } else { false } }.count
-            resultMessage = "Queued to \(ok)/\(results.count)"
+            resultMessage = ok == results.count ? "Queued to \(ok) recipient(s)" : "Queued \(ok)/\(results.count)"
+            Haptics.success()
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { showToast = true }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) { withAnimation { showToast = false } }
             for r in results { await RecentContacts.shared.add(number: r.to) }
         } catch {
             resultMessage = "Failed: \(error.localizedDescription)"
+            Haptics.error()
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { showToast = true }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) { withAnimation { showToast = false } }
         }
     }
 
     func parseNumbers(_ raw: String) -> [String] {
         let parts = raw.split(whereSeparator: { ", \n\t".contains($0) })
         return parts.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+    }
+    func loadContactsMap() async {
+        let list = await ContactsStore.shared.list()
+        var m: [String:String] = [:]
+        for c in list { m[c.number] = c.name }
+        contactMap = m
     }
 }
 
@@ -144,20 +185,36 @@ struct InboxView: View {
                 }
             }
         }
+        .listStyle(.insetGrouped)
+        .scrollContentBackground(.hidden)
+        .scrollBounceBehavior(.basedOnSize)
         .overlay(loading ? ProgressView() : nil)
         .task { await reload() }
+        .refreshable { await reload() }
         .sheet(item: $previewURL) { url in
             PDFPreview(url: url)
         }
     }
 
     func reload() async {
+        Haptics.lightTap()
         loading = true; defer { loading = false }
-        do { items = try await client.listInbound() } catch { items = [] }
+        do {
+            let prev = Set(items.map { $0.id })
+            let latest = try await client.listInbound()
+            let latestIDs = Set(latest.map { $0.id })
+            let newIDs = latestIDs.subtracting(prev)
+            items = latest
+            for id in newIDs {
+                if let fx = latest.first(where: { $0.id == id }) {
+                    NotificationManager.shared.notifyInbound(id: id, from: fx.fr)
+                }
+            }
+        } catch { items = [] }
     }
 
     func openPdf(id: String) async {
-        do { previewURL = try await client.downloadInboundPdf(id: id) } catch { }
+        do { previewURL = try await client.downloadInboundPdf(id: id); Haptics.lightTap() } catch { }
     }
 }
 
@@ -165,6 +222,12 @@ struct HistoryView: View {
     @EnvironmentObject private var client: FaxbotClient
     @State private var items: [[String:String]] = []
     @State private var polling = true
+    @State private var showResendSheet = false
+    @State private var resendTo: String = ""
+    @State private var showResendScanner = false
+    @State private var showResendText = false
+    @State private var resendText = ""
+    @State private var showDocPicker = false
     var body: some View {
         List(items, id: \.["id"]) { it in
             VStack(alignment: .leading) {
@@ -179,12 +242,59 @@ struct HistoryView: View {
                         Text("We couldn't complete this fax.").font(.caption)
                         Text(friendlyError(err)).font(.caption2).foregroundStyle(.secondary)
                         Link("Learn more", destination: URL(string: "https://faxbot.net/docs/troubleshooting")!)
+                        HStack {
+                            Spacer()
+                            Button { prepareResend(to: it["to"] ?? "") } label: { Label("Resend", systemImage: "arrow.triangle.2.circlepath") }
+                                .buttonStyle(.borderedProminent)
+                        }
                     }
                 }
             }
         }
+        .listStyle(.insetGrouped)
+        .scrollContentBackground(.hidden)
+        .scrollBounceBehavior(.basedOnSize)
         .onAppear { Task { items = await FaxHistory.shared.list(); await startPolling() } }
         .onDisappear { polling = false }
+        .actionSheet(isPresented: $showResendSheet) {
+            ActionSheet(title: Text("Resend to \(resendTo)"), buttons: [
+                .default(Text("Pick PDF")) { showDocPicker = true },
+                .default(Text("Scan Document")) { showResendScanner = true },
+                .default(Text("Type Text")) { showResendText = true },
+                .cancel()
+            ])
+        }
+        .sheet(isPresented: $showDocPicker) {
+            DocumentPicker { url, data in
+                if let data, let url {
+                    Task { try? await client.sendFax(to: resendTo, file: data, filename: url.lastPathComponent); Haptics.success() }
+                }
+            }
+        }
+        .sheet(isPresented: $showResendScanner) {
+            DocumentScanner { images in
+                Task {
+                    if let pdf = try? PDFComposer.pdfFrom(images: images) {
+                        try? await client.sendFax(to: resendTo, file: pdf, filename: "scan.pdf"); Haptics.success()
+                    }
+                }
+            }
+        }
+        .sheet(isPresented: $showResendText) {
+            NavigationStack {
+                VStack(spacing: 12) {
+                    Text("Resend to \(resendTo)").font(.caption).foregroundStyle(.secondary)
+                    TextEditor(text: $resendText).frame(minHeight: 200).overlay(RoundedRectangle(cornerRadius: 8).stroke(.quaternary))
+                    Button("Send") {
+                        Task {
+                            if let data = resendText.data(using: .utf8) {
+                                try? await client.sendFax(to: resendTo, file: data, filename: "note.txt"); Haptics.success(); resendText = ""; showResendText = false
+                            }
+                        }
+                    }.buttonStyle(.borderedProminent)
+                }.padding().navigationTitle("Type Text")
+            }
+        }
     }
     func startPolling() async {
         polling = true
@@ -199,7 +309,14 @@ struct HistoryView: View {
             guard let id = it["id"] else { continue }
             do {
                 let job = try await client.getFaxStatus(jobId: id)
+                let oldStatus = it["status"] ?? ""
                 await FaxHistory.shared.update(jobId: id, status: job.status, error: job.error)
+                let newStatus = job.status
+                if newStatus.uppercased() != oldStatus.uppercased() {
+                    NotificationManager.shared.notifyOutbound(jobId: id, status: newStatus, to: it["to"])
+                    if newStatus.uppercased().contains("SUCCESS") { Haptics.success() }
+                    if newStatus.uppercased().contains("FAIL") { Haptics.error() }
+                }
             } catch { /* ignore transient */ }
         }
         updated = await FaxHistory.shared.list()
