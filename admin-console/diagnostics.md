@@ -30,13 +30,13 @@ Actions
 
 If something fails
 - Follow the actionable link beside the check (e.g., Backends, Security)
-- See [Troubleshooting](/Faxbot/troubleshooting/)
+- See [Troubleshooting](/troubleshooting/)
 
 Related docs
-- Backends: [Phaxio](/Faxbot/backends/phaxio-setup.html), [Sinch](/Faxbot/backends/sinch-setup.html), [SIP/Asterisk](/Faxbot/backends/sip-setup.html)
-- Security: [Authentication](/Faxbot/security/authentication/), [HIPAA](/Faxbot/security/hipaa-requirements.html), [OAuth/OIDC](/Faxbot/security/oauth-setup.html)
-- Deployment: [Guide](/Faxbot/deployment/)
-- Third‑Party: [/third-party/](/Faxbot/third-party/)
+- Backends: [Phaxio](/backends/phaxio-setup.html), [Sinch](/backends/sinch-setup.html), [SIP/Asterisk](/backends/sip-setup.html)
+- Security: [Authentication](/security/authentication/), [HIPAA](/security/hipaa-requirements.html), [OAuth/OIDC](/security/oauth-setup.html)
+- Deployment: [Guide](/deployment/)
+- Third‑Party: [/third-party/](/third-party/)
 
 ## Under the Hood
 

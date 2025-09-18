@@ -12,7 +12,7 @@ permalink: /development/
 
 # Developer Guides
 
-Resources for building against the Faxbot API and SDKs. For contributing to the project itself, see the top‑level [Contributing](/Faxbot/contributing/) page.
+Resources for building against the Faxbot API and SDKs. For contributing to the project itself, see the top‑level [Contributing](/contributing/) page.
 
 ## API Reference
 
