@@ -272,3 +272,4 @@ export const lightTheme = createTheme({
   shape: sharedShape,
   components: getComponentOverrides(false)
 });
+

@@ -1,4 +1,4 @@
-
+- Move instructions on branches, repos, which to work in when, to the top of agents.md for agents too lazy to read more than 50 lines, then run that script in parent folder that upddates all agents.md files
   - while the api key management is great, there should be a submenu in api keys, whre it's just users names lists, with a dropdown box, where you can check and uncheck the scopes of their api keys. 
   - OR, if managers shouldn't see user api keys, then set up a user/pass system, instead of a key only login
 - ADD FAX COVER PAGE 
@@ -18,6 +18,8 @@
   - if it doesn't work to start a docker container from the console, which it should, but if it doesn't, just package it into the api itself. it should be on by default with the warning that it's not hipaa compliant, but again we must keep in mind many users don't need hipaa
   - PREP FOR BIGGER CLIENTS BY HAVING BETTER USER MANAGEMENT
   - we have scoped api keys, so it's really just about adding names and stuff, and maybe tracking # of pages per user, so someone at the company doesn't send 20k faxes and nobody knows who did it
+    - while the api key management is great, there should be a submenu in api keys, whre it's just users names lists, with a dropdown box, where you can check and uncheck the scopes of their api keys. 
+  - OR, if managers shouldn't see user api keys, then set up a user/pass system, instead of a key only login
 
 - **BIG TASK**
 MAKE FAXBOT ACTUALLY EASY.  we say it is. it's not. at all. phaxio would take 5 minutes to set up, maybe, but our docs suck on actually doing it and it's an incredly complicated site and has a zillion apis. 

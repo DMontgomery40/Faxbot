@@ -39,3 +39,4 @@ You can create these icons from the Faxbot logo:
 ## Placeholder Icons
 
 Currently using placeholder icons. Replace with actual Faxbot branding when available.
+
