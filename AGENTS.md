@@ -858,11 +858,37 @@ What goes where
   - Inbox UI, tagging/routing, notifications
   - Analytics, exports, support tooling
 
-Branch policy (v3)
-- Long‑lived branches are limited to: `main`, `development`, and `docs-jekyll-site` (GitHub Pages branch).
-- All work targets `development`. Short‑lived feature branches may be created only with owner approval and must merge back into `development` via PR.
-- Unapproved or “rogue” branches will be removed to maintain the structure.
+## Branch Policy (v3) - CRITICAL FOR AGENTS
+
+### Branch Structure
+- **`main`**: Production releases only. **AGENTS MUST NEVER WORK DIRECTLY IN MAIN.**
+- **`development`**: Default branch for general core development work.
+- **`docs-jekyll-site`**: GitHub Pages documentation branch.
+- **App-specific branches**: For platform-specific applications (e.g., `electron_macos`, `electron_windows`, `electron_linux`, `iOS`).
+
+### Agent Work Rules
+1. **NEVER work in `main`** - This is for production releases only.
+2. **General core work**: Use `development` branch.
+3. **App-specific work**: Use the dedicated app branch:
+   - Electron macOS work → `electron_macos` branch
+   - Electron Windows work → `electron_windows` branch  
+   - Electron Linux work → `electron_linux` branch
+   - iOS app work → `iOS` branch
+4. **Feature branches**: Only with owner approval, must merge back to appropriate target branch via PR.
+
+### Branch Selection Logic for Agents
+```
+If working on Electron macOS → electron_macos
+If working on Electron Windows → electron_windows  
+If working on Electron Linux → electron_linux
+If working on iOS app → iOS
+If working on core API/MCP/docs → development
+NEVER work in main
+```
+
+### Release Process
 - Tag releases from `main` (e.g., `v3.0.0`) so consumers can pin stable versions.
+- App branches merge to `development`, then `development` merges to `main` for releases.
 
 Docs publishing
 - GitHub Pages publishes from the `docs-jekyll-site` branch. Do not repoint Pages without approval.
