@@ -1,7 +1,7 @@
 title: Faxbot
 description: The first open-source, self-hostable fax API with AI integration
-baseurl: "/Faxbot"
-url: "https://dmontgomery40.github.io"
+baseurl: ""
+url: "https://docs.faxbot.net"
 
 # Theme
 remote_theme: just-the-docs/just-the-docs

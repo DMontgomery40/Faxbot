@@ -214,7 +214,7 @@ function AppContent() {
                   }}
                 >
                   <img
-                    src={`${window.location.origin}/assets/faxbot_full_logo.png`}
+                    src={muiTheme.palette.mode === 'dark' ? '/admin/ui/faxbot_mini_banner_dark.png' : '/admin/ui/faxbot_mini_banner_light.png'}
                     alt="Faxbot"
                     onError={(e) => {
                       console.error('Logo failed to load:', e);
@@ -384,16 +384,16 @@ function AppContent() {
           </IconButton>
           <Box
             component="img"
-            src={`${window.location.origin}/assets/faxbot_full_logo.png`}
+            src={muiTheme.palette.mode === 'dark' ? '/admin/ui/faxbot_mini_banner_dark.png' : '/admin/ui/faxbot_mini_banner_light.png'}
             alt="Faxbot"
             onClick={() => setTabValue(0)}
             onError={(e) => {
               console.error('Header logo failed to load:', e);
               // Try relative path as fallback
-              (e.target as HTMLImageElement).src = "/assets/faxbot_full_logo.png";
+              (e.target as HTMLImageElement).src = muiTheme.palette.mode === 'dark' ? '/assets/faxbot_mini_banner_dark.png' : '/assets/faxbot_mini_banner_light.png';
             }}
             sx={{ 
-              height: { xs: 26, sm: 30 }, 
+              height: { xs: 30, sm: 36 }, 
               mr: { xs: 1, sm: 2 }, 
               borderRadius: 1,
               cursor: 'pointer',
