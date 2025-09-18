@@ -2,7 +2,7 @@
 set -euo pipefail
 
 SCHEME=${SCHEME:-Faxbot}
-DEVICE_NAME=${DEVICE_NAME:-"iPhone 15 Pro"}
+DEVICE_NAME=${DEVICE_NAME:-"iPhone 17 Pro"}
 
 ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 APP_DIR="$ROOT_DIR/ios/FaxbotApp"
@@ -15,15 +15,17 @@ xcodegen generate
 
 DEST="platform=iOS Simulator,name=${DEVICE_NAME}"
 echo "[+] Building $SCHEME for $DEVICE_NAME"
-xcodebuild -scheme "$SCHEME" -configuration Debug -destination "$DEST" build | xcpretty || true
+# Force a local derived data path so the .app path is predictable
+xcodebuild -scheme "$SCHEME" -configuration Debug -destination "$DEST" -derivedDataPath build build | xcpretty || true
 
 APP_PATH="$PWD/build/Build/Products/Debug-iphonesimulator/Faxbot.app"
 if [ ! -d "$APP_PATH" ]; then
-  # Fallback default derived data path
-  APP_PATH="$(getconf DARWIN_USER_TEMP_DIR || echo /tmp)/Faxbot.app"
+  # Try to locate the built app if the default path changes
+  APP_PATH=$(find "$PWD/build" -type d -name "Faxbot.app" -maxdepth 6 | head -n 1 || true)
 fi
 
-UDID=$(xcrun simctl list devices | awk -v n="$DEVICE_NAME" '$0 ~ n" \("{gsub(/[()]/,""); print $2; exit}')
+# Extract simulator UDID robustly (handles parentheses and state labels)
+UDID=$(xcrun simctl list devices | grep -F "$DEVICE_NAME (" | head -n1 | sed -E 's/.*\(([0-9A-Fa-f-]{36})\).*/\1/')
 if [ -z "$UDID" ]; then echo "Simulator $DEVICE_NAME not found" >&2; exit 1; fi
 
 echo "[+] Booting simulator $DEVICE_NAME ($UDID)"
