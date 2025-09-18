@@ -19,6 +19,7 @@ struct ContentView: View {
                 .tabItem { Label("Settings", systemImage: "gearshape.fill") }
                 .tag(3)
         }
+        .tint(.brandPrimary)
         .task {
             await client.bootstrapFromKeychain()
         }
@@ -102,7 +103,7 @@ struct SendView: View {
                 toNumbersRaw = parsedNumbers.joined(separator: ", ")
             }
         }
-        .background(.ultraThinMaterial)
+        .background(Color.brandBackground)
         .overlay(alignment: .bottom) {
             if showToast, let msg = resultMessage {
                 ToastView(text: msg)

@@ -2,11 +2,16 @@ import SwiftUI
 
 struct SettingsView: View {
     @EnvironmentObject private var client: FaxbotClient
+    @Environment(\.openURL) private var openURL
     @State private var localURL: String = ""
     @State private var tunnelURL: String = ""
     @State private var apiKeyMasked: String = ""
+    @State private var apiKeyInput: String = ""
     @State private var pairingCode: String = ""
     @State private var testing = false
+    @State private var redeeming = false
+    @State private var showSimAlert = false
+    @State private var infoAlert: (title: String, message: String)?
 
     var body: some View {
         NavigationStack {
@@ -18,40 +23,32 @@ struct SettingsView: View {
                     TextField("Tunnel/Public URL (https://…)", text: $tunnelURL)
                         .textInputAutocapitalization(.never)
                         .keyboardType(.URL)
-                    HStack {
-                        Text("API Key")
-                        Spacer()
-                        Text(apiKeyMasked.isEmpty ? "Not set" : apiKeyMasked)
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                    }
+                    SecureField("API Key (fbk_live_…)", text: $apiKeyInput)
+                        .textInputAutocapitalization(.never)
+                        .disableAutocorrection(true)
                     Button("Save") {
                         client.serverConfig.localURL = localURL
                         client.serverConfig.tunnelURL = tunnelURL
+                        client.serverConfig.apiKey = apiKeyInput
                         Task { await client.persistToKeychain(); Haptics.success() }
                     }
                 }
                 Section("Pairing") {
                     TextField("Enter pairing code", text: $pairingCode)
                         .keyboardType(.numberPad)
-                    Button("Redeem Code") {
-                        Task {
-                            do {
-                                try await client.redeemPairing(code: pairingCode)
-                                localURL = client.serverConfig.localURL
-                                tunnelURL = client.serverConfig.tunnelURL
-                                apiKeyMasked = client.apiKeyMasked
-                                pairingCode = ""
-                                Haptics.success()
-                            } catch {
-                                // Surface a gentle toast/alert in a full implementation
-                                print("Pairing failed: \(error.localizedDescription)")
-                                Haptics.error()
-                            }
-                        }
+                        .submitLabel(.go)
+                        .onSubmit { Task { await redeem() } }
+                    Button(redeeming ? "Redeeming…" : "Redeem Code") {
+                        Task { await redeem() }
                     }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.brandPrimary)
+                    .disabled(redeeming || pairingCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     Button("Scan QR Code") {
                         // Present scanner
+                        #if targetEnvironment(simulator)
+                        showSimAlert = true
+                        #else
                         let root = UIApplication.shared.connectedScenes
                             .compactMap { ($0 as? UIWindowScene)?.keyWindow }
                             .first?.rootViewController
@@ -60,7 +57,10 @@ struct SettingsView: View {
                             Task { try? await client.redeemPairing(code: code) }
                         }
                         root?.present(vc, animated: true)
+                        #endif
                     }
+                    .buttonStyle(.bordered)
+                    .tint(.brandPrimary)
                 }
                 Section("Diagnostics") {
                     Button(testing ? "Testing…" : "Test Connectivity") {
@@ -68,7 +68,13 @@ struct SettingsView: View {
                             testing = true
                             defer { testing = false }
                             let ok = await client.testHealth()
-                            if ok { Haptics.success() } else { Haptics.warning() }
+                            if ok {
+                                Haptics.success()
+                                infoAlert = ("Connectivity OK", "We can reach your Faxbot server.")
+                            } else {
+                                Haptics.warning()
+                                infoAlert = ("Cannot reach server", "Check the URL and that the API is running.")
+                            }
                         }
                     }
                     .disabled(testing)
@@ -89,8 +95,14 @@ struct SettingsView: View {
                     }
                 }
                 Section("About") {
-                    Link("Faxbot website", destination: URL(string: "https://faxbot.net")!)
-                    Link("Docs", destination: URL(string: "https://faxbot.net/docs")!)
+                    Button { if let url = URL(string: "https://faxbot.net") { openURL(url) } } label: {
+                        Label("Faxbot website", systemImage: "safari").foregroundColor(.primary)
+                    }
+                    .buttonStyle(.plain)
+                    Button { if let url = URL(string: "https://faxbot.net/docs") { openURL(url) } } label: {
+                        Label("Docs", systemImage: "book").foregroundColor(.primary)
+                    }
+                    .buttonStyle(.plain)
                     Text("Faxbot makes faxing feel as simple as texting. Your data stays on your server; this app connects securely using a pairing code.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
@@ -99,11 +111,40 @@ struct SettingsView: View {
             .navigationTitle("Settings")
             .toolbarBackground(.ultraThinMaterial, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
+            .scrollContentBackground(.hidden)
+            .background(Color.brandBackground)
+            .alert("Camera not available in Simulator", isPresented: $showSimAlert) {
+                Button("OK", role: .cancel) {}
+            }
+            .alert(infoAlert?.title ?? "", isPresented: Binding(get: { infoAlert != nil }, set: { if !$0 { infoAlert = nil } })) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(infoAlert?.message ?? "")
+            }
             .onAppear {
                 localURL = client.serverConfig.localURL
                 tunnelURL = client.serverConfig.tunnelURL
                 apiKeyMasked = client.apiKeyMasked
+                apiKeyInput = client.serverConfig.apiKey
             }
+        }
+    }
+
+    private func redeem() async {
+        guard !pairingCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        redeeming = true
+        defer { redeeming = false }
+        do {
+            try await client.redeemPairing(code: pairingCode)
+            localURL = client.serverConfig.localURL
+            tunnelURL = client.serverConfig.tunnelURL
+            apiKeyMasked = client.apiKeyMasked
+            pairingCode = ""
+            Haptics.success()
+            infoAlert = ("Paired", "Your device is paired with the server.")
+        } catch {
+            Haptics.error()
+            infoAlert = ("Pairing failed", error.localizedDescription)
         }
     }
 }

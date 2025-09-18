@@ -10,6 +10,7 @@ struct FaxbotApp: App {
                 .environmentObject(client)
                 .onAppear { NotificationManager.shared.configure() }
                 .tint(Color.brandPrimary)
+                .preferredColorScheme(nil)
         }
     }
 }

@@ -20,7 +20,7 @@ struct StatusBadge: View {
             Capsule()
                 .fill(LinearGradient(colors: [color.opacity(0.18), color.opacity(0.08)], startPoint: .topLeading, endPoint: .bottomTrailing))
         )
-        .overlay(Capsule().stroke(color.opacity(0.25), lineWidth: 1))
+        .overlay(Capsule().stroke(Color.white.opacity(0.4), lineWidth: 0.5))
     }
 }
 
