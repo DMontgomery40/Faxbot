@@ -8,12 +8,23 @@
 
 /* Begin PBXBuildFile section */
 		064E4594E1D3F3E331C7B887 /* Keychain.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C5128DE9204678110EBCE0D /* Keychain.swift */; };
+		26E71E336220A114BA5FE881 /* Color+Brand.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6FC395D795F029863C47E569 /* Color+Brand.swift */; };
 		406759DD9C63FECB984EFB31 /* ShareViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 17409B96060E797DC7C29E5B /* ShareViewController.swift */; };
 		47ACDFBDDD786246BF0446E3 /* QRScannerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A275397395C2770AF50A546 /* QRScannerView.swift */; };
+		4AB62D2A5C303BF395921AC0 /* Haptics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5ED15A417D3886DB8D06098A /* Haptics.swift */; };
 		51DAE036143B5EE840A4DA0A /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 67569AC1641D91125AC62BBC /* APIClient.swift */; };
+		559FA2A39DD7E6CF90DD8BF7 /* RecentChips.swift in Sources */ = {isa = PBXBuildFile; fileRef = 22E6EB5A34BD8FD65C25BE1B /* RecentChips.swift */; };
+		56124E253754FDBFC4788C75 /* DocumentScanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 379750C9D42251CCFDFBDACC /* DocumentScanner.swift */; };
+		5C4C32F3BBC57BBE3F7BFE0B /* DocumentPicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4682603812C5AE291D51A873 /* DocumentPicker.swift */; };
 		7817D4FA1F520F06E7D3A584 /* FaxbotApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9830C8C17225DBA38A9C7ECF /* FaxbotApp.swift */; };
+		7BE899B1679E11527BFBF6E9 /* NotificationManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = D927C23D3BB06DDF4FDE56B1 /* NotificationManager.swift */; };
+		8124F0F8A9A88C5A74F9C9FB /* ToastView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1C6FD6A242F355965E0AF94 /* ToastView.swift */; };
+		8D966E761DBE86ACE8C6E451 /* PDFPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = 687391E14C8AD93D13C10094 /* PDFPreview.swift */; };
+		8E0127DF1D5291CFBF1690CA /* ContactPickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1A83D3809B4AD1F6251BBBB /* ContactPickerView.swift */; };
 		9A26CEF7E8FE12B5ED2AB22F /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D24062D2F073F96A3F722F46 /* ContentView.swift */; };
 		A3986C8FA61FE5316E45F9C3 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D42F39278F447D2896B2316D /* SettingsView.swift */; };
+		AF1DE1E7EADD60030D9B7551 /* ContactsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = FED50F4EB96DDFBED1D94749 /* ContactsStore.swift */; };
+		C07B7B76C3D85DDDF02EA06A /* StatusBadge.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2C4BA21F019D5237F70C9D7 /* StatusBadge.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -28,14 +39,25 @@
 
 /* Begin PBXFileReference section */
 		17409B96060E797DC7C29E5B /* ShareViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareViewController.swift; sourceTree = "<group>"; };
+		22E6EB5A34BD8FD65C25BE1B /* RecentChips.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecentChips.swift; sourceTree = "<group>"; };
 		33C05F1E9AEF10EA8E8CAF8A /* FaxbotShare.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = FaxbotShare.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		379750C9D42251CCFDFBDACC /* DocumentScanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocumentScanner.swift; sourceTree = "<group>"; };
 		3C5128DE9204678110EBCE0D /* Keychain.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Keychain.swift; sourceTree = "<group>"; };
+		4682603812C5AE291D51A873 /* DocumentPicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocumentPicker.swift; sourceTree = "<group>"; };
 		5A275397395C2770AF50A546 /* QRScannerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QRScannerView.swift; sourceTree = "<group>"; };
+		5ED15A417D3886DB8D06098A /* Haptics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Haptics.swift; sourceTree = "<group>"; };
 		67569AC1641D91125AC62BBC /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
+		687391E14C8AD93D13C10094 /* PDFPreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PDFPreview.swift; sourceTree = "<group>"; };
+		6FC395D795F029863C47E569 /* Color+Brand.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Color+Brand.swift"; sourceTree = "<group>"; };
 		821DFA6BFC097DBB954DA9A6 /* Faxbot.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Faxbot.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		9830C8C17225DBA38A9C7ECF /* FaxbotApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FaxbotApp.swift; sourceTree = "<group>"; };
+		A1A83D3809B4AD1F6251BBBB /* ContactPickerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContactPickerView.swift; sourceTree = "<group>"; };
+		C1C6FD6A242F355965E0AF94 /* ToastView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToastView.swift; sourceTree = "<group>"; };
 		D24062D2F073F96A3F722F46 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		D42F39278F447D2896B2316D /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		D927C23D3BB06DDF4FDE56B1 /* NotificationManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationManager.swift; sourceTree = "<group>"; };
+		F2C4BA21F019D5237F70C9D7 /* StatusBadge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusBadge.swift; sourceTree = "<group>"; };
+		FED50F4EB96DDFBED1D94749 /* ContactsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContactsStore.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
@@ -43,11 +65,22 @@
 			isa = PBXGroup;
 			children = (
 				67569AC1641D91125AC62BBC /* APIClient.swift */,
+				6FC395D795F029863C47E569 /* Color+Brand.swift */,
+				A1A83D3809B4AD1F6251BBBB /* ContactPickerView.swift */,
+				FED50F4EB96DDFBED1D94749 /* ContactsStore.swift */,
 				D24062D2F073F96A3F722F46 /* ContentView.swift */,
+				4682603812C5AE291D51A873 /* DocumentPicker.swift */,
+				379750C9D42251CCFDFBDACC /* DocumentScanner.swift */,
 				9830C8C17225DBA38A9C7ECF /* FaxbotApp.swift */,
+				5ED15A417D3886DB8D06098A /* Haptics.swift */,
 				3C5128DE9204678110EBCE0D /* Keychain.swift */,
+				D927C23D3BB06DDF4FDE56B1 /* NotificationManager.swift */,
+				687391E14C8AD93D13C10094 /* PDFPreview.swift */,
 				5A275397395C2770AF50A546 /* QRScannerView.swift */,
+				22E6EB5A34BD8FD65C25BE1B /* RecentChips.swift */,
 				D42F39278F447D2896B2316D /* SettingsView.swift */,
+				F2C4BA21F019D5237F70C9D7 /* StatusBadge.swift */,
+				C1C6FD6A242F355965E0AF94 /* ToastView.swift */,
 			);
 			name = Faxbot;
 			path = Sources/Faxbot;
@@ -161,11 +194,22 @@
 			buildActionMask = 2147483647;
 			files = (
 				51DAE036143B5EE840A4DA0A /* APIClient.swift in Sources */,
+				26E71E336220A114BA5FE881 /* Color+Brand.swift in Sources */,
+				8E0127DF1D5291CFBF1690CA /* ContactPickerView.swift in Sources */,
+				AF1DE1E7EADD60030D9B7551 /* ContactsStore.swift in Sources */,
 				9A26CEF7E8FE12B5ED2AB22F /* ContentView.swift in Sources */,
+				5C4C32F3BBC57BBE3F7BFE0B /* DocumentPicker.swift in Sources */,
+				56124E253754FDBFC4788C75 /* DocumentScanner.swift in Sources */,
 				7817D4FA1F520F06E7D3A584 /* FaxbotApp.swift in Sources */,
+				4AB62D2A5C303BF395921AC0 /* Haptics.swift in Sources */,
 				064E4594E1D3F3E331C7B887 /* Keychain.swift in Sources */,
+				7BE899B1679E11527BFBF6E9 /* NotificationManager.swift in Sources */,
+				8D966E761DBE86ACE8C6E451 /* PDFPreview.swift in Sources */,
 				47ACDFBDDD786246BF0446E3 /* QRScannerView.swift in Sources */,
+				559FA2A39DD7E6CF90DD8BF7 /* RecentChips.swift in Sources */,
 				A3986C8FA61FE5316E45F9C3 /* SettingsView.swift in Sources */,
+				C07B7B76C3D85DDDF02EA06A /* StatusBadge.swift in Sources */,
+				8124F0F8A9A88C5A74F9C9FB /* ToastView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -281,6 +325,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = Resources/FaxbotShare.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				INFOPLIST_FILE = Resources/ShareExtensionInfo.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
@@ -363,6 +408,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = Resources/FaxbotShare.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				INFOPLIST_FILE = Resources/ShareExtensionInfo.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
