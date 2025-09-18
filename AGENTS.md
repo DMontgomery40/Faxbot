@@ -47,6 +47,7 @@ v3 UI additions
 - Plugins tab: manage active provider plugins with enable/disable toggles and schema‑driven config forms.
 - Curated registry search: discover available plugins; remote install is disabled by default and requires explicit approval when enabled.
 - Contextual help per active provider: tips and “Learn more” links are plugin‑specific; no cross‑backend leakage.
+- Scripts & Tests: backend‑aware quick actions; no CLI required. Local‑only Terminal is also available (see Security notes).
 
 Acceptance criteria (per screen or feature)
 - Inline explanation for each field or control (short helper text or tooltip).
@@ -339,18 +340,18 @@ ENFORCE_PUBLIC_HTTPS=true
 - Asterisk Manager Interface (AMI) access
 - Understanding of SIP/RTP/UDPTL protocols
 
-**Environment Variables:**
+**Environment Variables (API):**
 ```env
 FAX_BACKEND=sip
 ASTERISK_AMI_HOST=asterisk
 ASTERISK_AMI_PORT=5038
 ASTERISK_AMI_USERNAME=api
 ASTERISK_AMI_PASSWORD=secure_password_not_changeme
-SIP_USERNAME=your_sip_username
-SIP_PASSWORD=your_sip_password
-SIP_SERVER=sip.yourprovider.com
-SIP_FROM_USER=+15551234567
+# Optional local station ID presented by the fax stack
+FAX_LOCAL_STATION_ID="My Faxbot"
 ```
+
+Note: SIP trunk credentials (username/password/server) are configured in your Asterisk/FS gateway, not in the Faxbot API.
 
 ### 3. Sinch Fax API v3 (Cloud)
 Use when you prefer the direct upload model (“Phaxio by Sinch” accounts).
@@ -364,7 +365,32 @@ SINCH_API_SECRET=...
 # SINCH_BASE_URL=https://us.fax.api.sinch.com/v3
 ```
 
-### 4. Test/Development Backend — FOR DEVELOPMENT ONLY
+### 4. SignalWire Fax (Cloud) — PREVIEW
+Use when you operate within SignalWire and prefer their Fax APIs.
+
+```env
+FAX_BACKEND=signalwire
+SIGNALWIRE_SPACE_URL=https://<space>.signalwire.com
+SIGNALWIRE_PROJECT_ID=...
+SIGNALWIRE_API_TOKEN=...
+SIGNALWIRE_FAX_FROM_E164=+15551234567
+# Optional outbound status callback
+SIGNALWIRE_STATUS_CALLBACK_URL=https://yourdomain.com/signalwire-callback
+# Optional webhook verification
+SIGNALWIRE_WEBHOOK_SIGNING_KEY=...
+```
+
+### 5. FreeSWITCH (Self-Hosted) — PREVIEW
+Programmatic originate via `fs_cli` on the API host or ESL integration.
+
+```env
+FAX_BACKEND=freeswitch
+FREESWITCH_GATEWAY_NAME=gw_signalwire
+```
+
+- Internal result hook (maps to job update): `POST /_internal/freeswitch/outbound_result` with `X-Internal-Secret: <ASTERISK_INBOUND_SECRET>` and JSON `{ job_id, fax_status, fax_result_text?, fax_document_transferred_pages?, uuid? }`.
+
+### 6. Test/Development Backend — FOR DEVELOPMENT ONLY
 **When to use:** Development, testing, CI/CD pipelines  
 **Configuration:** `FAX_DISABLED=true`
 
@@ -378,17 +404,99 @@ SINCH_API_SECRET=...
 ## MCP Integration (Node + Python)
 
 Two MCP servers live in `node_mcp/` (Node) and `python_mcp/` (Python). Each supports stdio/HTTP/SSE.
+Additionally, a Node WebSocket helper is available for convenience; it mirrors tool calls but is not a formal MCP WebSocket transport (SEP‑1288 is under discussion).
 
 | Transport | Node entrypoint | Python entrypoint | Port | Auth |
 |-----------|------------------|-------------------|------|------|
 | stdio     | `src/servers/stdio.js` | `stdio_server.py` | N/A  | API key |
 | HTTP      | `src/servers/http.js`  | (n/a)            | 3001 | API key |
 | SSE       | `src/servers/sse.js`   | `server.py`      | 3002/3003 | OAuth2/JWT |
+| WebSocket helper | `src/servers/ws.js` | (n/a)         | 3004 | API key |
 
 Notes
 - Legacy MCP servers under `api/` were removed. Do not reference `api/mcp_*.js`.
 - Node HTTP/SSE JSON limit is 16 MB to account for base64 overhead; REST API still enforces 10 MB raw file size.
+- The WebSocket helper mirrors tool calls for convenience and is not a formal MCP transport.
 - Prefer stdio + `filePath` for desktop assistants.
+
+Admin Console Terminal (local-only)
+- WebSocket endpoint: `/admin/terminal` (admin auth required).
+- Backend uses pexpect to provide a TTY inside the API container; same privileges as the service user.
+- Gate UI access with `ENABLE_LOCAL_ADMIN=true`; avoid exposing through proxies.
+
+## iOS App (Standalone Repository)
+
+**Repository:** `https://github.com/DMontgomery40/faxbot.app`  
+**Status:** Production-ready iOS 26 app with SwiftUI interface  
+**Architecture:** Pure client app - connects to any Faxbot server via REST API
+
+### Key Characteristics:
+- **Standalone app** - No server code, just connects to Faxbot servers
+- **iOS 26 optimized** - Uses Liquid Glass design, system colors, enhanced security
+- **Pairing system** - QR code or manual pairing with server admin console
+- **Full feature parity** - Send/receive faxes, document scanning, contact management
+- **Share extension** - Send faxes directly from Photos, Files, or any app
+- **HIPAA compliant** - Inherits security posture from connected server
+
+### iOS App Architecture Flow:
+```
+iOS App → REST API → Faxbot Server → Backend → Fax Transmission
+   ↓         ↓           ↓            ↓
+Share Ext → REST API → Faxbot Server → Backend → Fax Transmission
+```
+
+### Development Requirements:
+- **Xcode 15+** with iOS 26 SDK
+- **XcodeGen** for project generation: `brew install xcodegen`
+- **Apple Developer Account** for device testing/App Store
+- **Running Faxbot server** (local or remote) for testing
+
+### Build Commands:
+```bash
+# Build and run in simulator
+./scripts/ios/run-sim.sh
+
+# Build for physical device (requires Apple Developer account)
+DEVICE_NAME="Your iPhone" ./scripts/ios/run-sim.sh
+
+# Archive for TestFlight/App Store
+./scripts/ios/archive.sh
+```
+
+### iOS App Features:
+- **Send Tab:** Document scanning, text-to-fax, contact picker, recent contacts
+- **Inbox Tab:** View received faxes (when server has inbound enabled)
+- **History Tab:** Track sent faxes, retry failed sends, status updates
+- **Settings Tab:** Server pairing, connectivity testing, notifications
+- **Share Extension:** Fax from any app via iOS share sheet
+
+### iOS-Specific Security (iOS 26):
+- **Enhanced Security capabilities** enabled in entitlements
+- **Pointer authentication, stack zero init, bounds safety** compiler flags
+- **Keychain storage** for server credentials and API keys
+- **App Groups** for sharing data with Share Extension
+- **Certificate pinning** for self-signed server certificates
+- **No PHI stored locally** - everything stays on server
+
+### Pairing Process:
+1. User opens Faxbot server admin console
+2. Generate mobile pairing code in Settings → Mobile Apps
+3. iOS app Settings → enter code or scan QR
+4. App automatically configures server URLs and API key
+5. Secure connection established
+
+### Share Extension Workflow:
+1. User takes photo or selects document in any app
+2. Tap Share → select "Fax" 
+3. Choose recipient from saved contacts or enter number
+4. Fax sends in background via server
+5. User gets notification when complete
+
+### iOS App Limitations:
+- **Requires running Faxbot server** - app is pure client
+- **10MB file size limit** - enforced client-side
+- **PDF/TXT only** - images auto-converted to PDF
+- **iOS 17+ required** - uses modern SwiftUI features
 
 ## The Two SDKs: Node.js and Python
 
@@ -412,7 +520,7 @@ client.check_health()
 ```
 
 **Both SDKs:**
-- Version 1.0.2 (synchronized releases)
+- Version 1.1.0 (synchronized releases)
 - Support PDF and TXT files only
 - Identical error handling (400/401/413/415/404)
 - Optional API key authentication
@@ -421,7 +529,7 @@ client.check_health()
 - **Always call** Faxbot REST API endpoints
 
 OpenAPI alignment
-- `api/openapi.yaml` is the source of truth for REST endpoints.
+- FastAPI serves OpenAPI at `/openapi.json`; treat it as the source of truth for REST endpoints.
 - SDKs and Admin UI types should match the OpenAPI contracts; codegen is optional but server must not drift from spec.
 
 ## Auth and API Keys (Updated)
@@ -471,7 +579,7 @@ AUDIT_LOG_ENABLED=false     # Reduce logging overhead
 - Non-healthcare users get usability-focused defaults
 - Clear documentation about which settings affect compliance
 
-## Inbound Receiving (WIP Scaffolding)
+## Inbound Receiving 
 
 - Enable with `INBOUND_ENABLED=true`.
 - SIP/Asterisk (internal): `POST /_internal/asterisk/inbound` with `X-Internal-Secret: <ASTERISK_INBOUND_SECRET>` and JSON `{ tiff_path, to_number, from_number?, faxstatus?, faxpages?, uniqueid }`.
@@ -506,8 +614,9 @@ v3 plugin note
 ```
 POST /fax              # Send fax (multipart: to, file)
 GET  /fax/{id}         # Check fax status  
-GET  /fax/{id}/pdf     # Tokenized PDF access (for Phaxio)
+GET  /fax/{id}/pdf     # Tokenized PDF access (for cloud backends)
 POST /phaxio-callback  # Phaxio webhook (status updates)
+POST /signalwire-callback  # SignalWire status callback (optional HMAC verification)
 GET  /health           # Service health check
 ```
 
@@ -517,6 +626,8 @@ GET  /health           # Service health check
 - Jobs: queue status, progress, pages, failures with contextual remediation links.
 - Keys: API key management (mint/list/rotate/delete) with copy-to-clipboard UX.
 - Inbound (when enabled): listing, detail, secure download, retention status.
+- Plugins (v3): list native + manifest providers; enable/disable outbound; schema‑driven config forms; curated registry search.
+- Tools group: Terminal (local-only), Diagnostics, Logs, Scripts & Tests (backend-aware quick runs), Plugins.
 
 ### MCP Tools (v3 parity)
 - send_fax
@@ -527,6 +638,11 @@ GET  /health           # Service health check
 - get_inbound_pdf: `{ inboundId, asBase64? }` (guarded by scopes/limits)
 
 No OCR tools (`faxbot_pdf` removed by design). Node and Python MCP servers must expose the same tool set for a given config.
+
+Admin Actions (container checks)
+- UI exposes an allowlisted set of safe container checks under Tools → Scripts & Tests.
+- Endpoints: `GET /admin/actions` (list), `POST /admin/actions/run` (execute), admin-only.
+- Enabled only for local admin (gated by `ENABLE_ADMIN_EXEC` and `ENABLE_LOCAL_ADMIN`). No arbitrary commands allowed.
 
 ### Typical Workflows
 
@@ -648,6 +764,23 @@ Discovery and endpoints (when `FEATURE_V3_PLUGINS=true`)
 - `PUT /plugins/{id}/config` — validate via JSON Schema and persist atomically
 - `GET /plugin-registry` — serve curated registry JSON for UI search
 
+Manifest providers (HTTP) — preview
+- Data-only providers are supported via a declarative manifest executed by core (no third‑party code in server).
+- Runtime: `api/app/plugins/http_provider.py` interprets manifests with:
+  - `auth` schemes: `basic|bearer|api_key_header|api_key_query|none`
+  - `actions.send_fax|get_status`: method, url, headers, `body.kind` (`json|form|multipart|none`), `body.template`
+  - Response mapping via simple JSONPath-like selectors (`data.id`, `data.list[0].field`) and optional `status_map`
+  - Policy: `allowed_domains[]`, `timeout_ms`, redaction (follow-up), HTTPS only in HIPAA
+- Storage: manifests are persisted under `FAXBOT_PROVIDERS_DIR` (default `config/providers/<id>/manifest.json`).
+- New admin endpoints (feature-gated, admin-only):
+  - `POST /admin/plugins/http/validate` — validate a manifest + optional dry-run send; returns normalized result
+  - `POST /admin/plugins/http/install` — persist the manifest to the providers dir
+- Resolution: when `FEATURE_V3_PLUGINS=true` and outbound plugin references an installed manifest id, core uses the manifest runtime for send/status.
+- Security (HIPAA defaults): remote install disabled by default; enforce domain allowlists, strict timeouts/body caps; redact secrets; no arbitrary code.
+
+Admin Console (planned builder)
+- json manifests [cont]
+
 Security and permissions
 - New admin scopes: `admin:plugins:read`, `admin:plugins:write` for list/get/update.
 - Only keys with `keys:manage` may change plugin configs.
@@ -747,18 +880,20 @@ Operational checks
 
 ### Backend Testing Matrix
 ```
-Test Scenario          | Phaxio | SIP | Test Mode |
------------------------|--------|-----|-----------|
-PDF file upload        |   ✓    |  ✓  |     ✓     |  
-TXT to PDF conversion  |   ✓    |  ✓  |     ✓     |
-Status checking        |   ✓    |  ✓  |     ✓     |
-Error handling         |   ✓    |  ✓  |     ✓     |
-Actual transmission    |   ✓    |  ✓  |     ✗     |
-Webhook callbacks      |   ✓    |  ✗  |     ✗     |
-TIFF conversion        |   ✗    |  ✓  |     ✗     |
+Test Scenario          | Phaxio | Sinch | SignalWire | SIP/Asterisk | FreeSWITCH | Test Mode |
+-----------------------|--------|-------|------------|--------------|------------|-----------|
+PDF file upload        |   ✓    |   ✓   |     ✓      |      ✓       |     ✓*     |     ✓     |
+TXT to PDF conversion  |   ✓    |   ✓   |     ✓      |      ✓       |     ✓*     |     ✓     |
+Status checking        |   ✓    |   ✓   |     ✓      |      ✓       |     ✓*     |     ✓     |
+Error handling         |   ✓    |   ✓   |     ✓      |      ✓       |     ✓*     |     ✓     |
+Actual transmission    |   ✓    |   ✓   |     ✓      |      ✓       |     ✓*     |     ✗     |
+Webhook callbacks      |   ✓    |   ✗   |     ✓      |      ✗       |     ✗      |     ✗     |
+TIFF conversion        |   ✗    |   ✗   |     ✗      |      ✓       |     ✓*     |     ✗     |
+
+*FreeSWITCH rows reflect current preview support with fs_cli/ESL integration and an internal result hook.
 ```
 
-### MCP Testing Requirements
+### MCP Testing Requirements -- test all with the OFFICIAL MCP INSPECTOR TOOL FROM ANTHROPIC
 - **Stdio:** Test with Claude Desktop or Cursor configuration
 - **HTTP:** Test session management and CORS handling
 - **SSE+OAuth:** Test JWT validation and token expiration
@@ -768,6 +903,61 @@ TIFF conversion        |   ✗    |  ✓  |     ✗     |
 - **Error code mapping:** Consistent HTTP status handling
 - **Authentication:** Optional API key scenarios
 - **Health checking:** Service availability detection
+
+## Repository Structure (Multi-Repo Architecture)
+
+Faxbot uses a **multi-repository architecture** to separate concerns and enable independent development:
+
+### 1. Core Repository: `faxbot/faxbot` (Main)
+**Contains:** Core API, backends, MCP servers, SDKs, documentation
+- **Branch:** `main` (production releases), `development` (active development)
+- **Components:** FastAPI server, plugin system, Phaxio/SIP/Sinch backends
+- **MCP Servers:** Node.js and Python MCP servers with stdio/HTTP/SSE transports
+- **SDKs:** Node.js and Python client libraries
+- **Admin Console:** React/TypeScript web interface
+
+### 2. iOS App Repository: `DMontgomery40/faxbot.app` 
+**Contains:** Standalone iOS app with SwiftUI interface
+- **Branch:** `main` (production releases)
+- **Components:** iOS 26 app, Share Extension, build scripts
+- **Dependencies:** Connects to any Faxbot server via REST API
+- **Platform:** iOS 17+ with iOS 26 optimizations
+
+### 3. Commercial Website: `faxbot.net` (Private)
+**Contains:** Marketing website, hosted service, billing
+- **Branch:** `main` (production website)
+- **Components:** Astro-based marketing site, compliance documentation
+- **Purpose:** Commercial hosted service at faxbot.net
+
+### Repository Relationships:
+```
+faxbot/faxbot (Core)
+├── Provides REST API
+├── Serves Admin Console
+└── Handles all fax transmission
+
+DMontgomery40/faxbot.app (iOS)
+├── Connects to Core via REST API
+├── Pure client - no server code
+└── Works with any Faxbot server
+
+faxbot.net (Commercial)
+├── Markets the ecosystem
+├── Hosts managed Faxbot instances
+└── Provides billing/support
+```
+
+### Why Multi-Repo:
+1. **Separation of concerns** - iOS vs backend vs marketing
+2. **Independent releases** - iOS app updates don't require server updates
+3. **Team permissions** - iOS developers don't need backend access
+4. **App Store requirements** - Apple prefers focused app repositories
+5. **Licensing clarity** - Core is open source, commercial parts separate
+
+### Cross-Repo Dependencies:
+- **iOS app** depends on Core's REST API specification
+- **Commercial site** depends on Core's Docker images
+- **All repos** share this AGENTS.md for consistency
 
 ## Development Workflow and Open‑Core vs Commercial App
 
@@ -797,17 +987,54 @@ What goes where
   - Inbox UI, tagging/routing, notifications
   - Analytics, exports, support tooling
 
-Branch policy (v3)
-- Long‑lived branches are limited to: `main`, `development`, and `docs-jekyll-site` (GitHub Pages branch).
-- All work targets `development`. Short‑lived feature branches may be created only with owner approval and must merge back into `development` via PR.
-- Unapproved or “rogue” branches will be removed to maintain the structure.
+## Branch Policy (v3) - CRITICAL FOR AGENTS
+
+### Multi-Repository Branch Structure
+
+#### Core Repository (`faxbot/faxbot`):
+- **`main`**: Production releases only. **AGENTS MUST NEVER WORK DIRECTLY IN MAIN.**
+- **`development`**: Default branch for general core development work.
+- **`docs-jekyll-site`**: GitHub Pages documentation branch.
+- **App-specific branches**: For platform-specific applications (e.g., `electron_macos`, `electron_windows`, `electron_linux`).
+
+#### iOS App Repository (`DMontgomery40/faxbot.app`):
+- **`main`**: Production releases and active development (single branch model)
+- **No development branch** - iOS app uses trunk-based development
+
+#### Commercial Website (`faxbot.net`):
+- **`main`**: Production website and active development
+
+### Agent Work Rules (Updated for Multi-Repo)
+1. **NEVER work in `main`** on the core repository - This is for production releases only.
+2. **Core API/MCP/backend work**: Use `development` branch in `faxbot/faxbot`
+3. **iOS app work**: Work directly in `main` branch in `DMontgomery40/faxbot.app`
+4. **Website work**: Work directly in `main` branch in `faxbot.net`
+5. **Electron app work**: Use dedicated branches in core repository:
+   - Electron macOS work → `electron_macos` branch
+   - Electron Windows work → `electron_windows` branch  
+   - Electron Linux work → `electron_linux` branch
+
+### Branch Selection Logic for Agents
+```
+If working on Core API/MCP/backends → faxbot/faxbot development branch
+If working on iOS app → DMontgomery40/faxbot.app main branch
+If working on website → faxbot.net main branch
+If working on Electron macOS → faxbot/faxbot electron_macos branch
+If working on Electron Windows → faxbot/faxbot electron_windows branch  
+If working on Electron Linux → faxbot/faxbot electron_linux branch
+NEVER work in main branch of core repository
+```
+
+### Release Process
 - Tag releases from `main` (e.g., `v3.0.0`) so consumers can pin stable versions.
+- App branches merge to `development`, then `development` merges to `main` for releases.
 
 Docs publishing
 - GitHub Pages publishes from the `docs-jekyll-site` branch. Do not repoint Pages without approval.
 - Author and iterate docs on `development`; promote to `docs-jekyll-site` when stable.
 - Reference docs from the Admin Console using stable URLs only; avoid linking to WIP drafts.
 - Keep backend‑specific pages separated (Phaxio vs Sinch vs SIP/Asterisk).
+- Admin Console must derive all internal doc links from a single base (`DOCS_BASE_URL`), exposed at `/admin/config` as `branding.docs_base`. Never hard‑code full docs URLs in UI code.
 
 Receiving capability recommendation
 - Implement inbound fax support in core:
@@ -876,7 +1103,7 @@ Receiving capability recommendation
 ## Final Critical Reminders
 
 1. **This has never existed before** - No assumptions allowed
-2. **Three backends, not two** - Include test mode documentation
+2. **Multiple backends** - Cloud (Phaxio, Sinch, SignalWire), self‑hosted (SIP/Asterisk, FreeSWITCH), and Test mode are supported. Keep docs and UI strictly backend‑specific.
 3. **Six MCP configurations** - 2 servers × 3 transports each
 4. **HIPAA is not optional** - For healthcare users, compliance is mandatory
 5. **Non-HIPAA users matter too** - Don't make everything enterprise-complex
