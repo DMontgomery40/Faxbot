@@ -59,7 +59,7 @@ struct SendView: View {
                             .background(Capsule().fill(Color.brandPrimary.opacity(0.2)))
                     }
                 }
-                HStack {
+                HStack(spacing: 12) {
                     Button {
                         showingScanner = true
                     } label: {
@@ -68,6 +68,7 @@ struct SendView: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(.brandPrimary)
+                    .frame(maxWidth: .infinity)
 
                     Button { showingText = true } label: { 
                         Label("Type Text", systemImage: "text.alignleft")
@@ -75,6 +76,7 @@ struct SendView: View {
                     }
                     .buttonStyle(.bordered)
                     .tint(.brandPrimary)
+                    .frame(maxWidth: .infinity)
                     
                     Button { Haptics.lightTap(); showingContacts = true } label: { 
                         Label("Contacts", systemImage: "person.crop.circle")
@@ -82,6 +84,7 @@ struct SendView: View {
                     }
                     .buttonStyle(.bordered)
                     .tint(.brandPrimary)
+                    .frame(maxWidth: .infinity)
                 }
                 // Recent contacts quick-add
                 RecentChips { selected in
@@ -94,7 +97,9 @@ struct SendView: View {
                         .font(.footnote)
                         .foregroundColor(.brandSecondaryText)
                 }
-            }.padding()
+            }
+            .padding()
+            .padding(.horizontal, 4) // Extra padding to prevent edge cutoff
         }
         .scrollBounceBehavior(.basedOnSize)
         .sheet(isPresented: $showingText) {

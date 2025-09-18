@@ -15,7 +15,7 @@ struct RecentChips: View {
                         HStack(spacing: 6) {
                             Image(systemName: "person.crop.circle.badge.plus")
                             Text(num)
-                                .foregroundColor(.primary)
+                                .foregroundColor(.brandText)
                         }
                         .font(.caption)
                         .padding(.horizontal, 10).padding(.vertical, 6)
@@ -25,6 +25,7 @@ struct RecentChips: View {
                     .transition(.asymmetric(insertion: .scale.combined(with: .opacity), removal: .opacity))
                 }
             }
+            .padding(.horizontal, 16) // Add horizontal padding to prevent edge cutoff
             .padding(.vertical, 2)
         }
         .onAppear { Task { items = await RecentContacts.shared.list() } }
