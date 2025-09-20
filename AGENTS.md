@@ -131,6 +131,15 @@ Docs and linking
 - Never hard-code full docs URLs in components. Build links off `docsBase` only.
 - Provide at least one “Learn more” link per screen or complex control; keep copy short in the UI.
 
+Apps docs surface (new)
+- The public docs site adds a top-level "Apps" section with pages for the desktop Electron shell and the iOS companion.
+- iOS app is part of the commercial offering. Do not publish build/sign instructions or internal packaging steps in public docs.
+- Desktop (Electron) page should focus on usage/pairing and not on signing/packaging steps.
+- Link targets built from `docsBase`:
+  - `${docsBase}/apps/`
+  - `${docsBase}/apps/ios/`
+  - `${docsBase}/apps/electron/`
+
 Backend isolation in UI
 - Show provider-specific UI/help only for the active backend. Example pattern in `Settings.tsx`: backend sections are gated by `settings.backend.type`.
 - Do not mix Phaxio/Sinch/SIP help or controls on the same panel.
@@ -423,80 +432,6 @@ Admin Console Terminal (local-only)
 - WebSocket endpoint: `/admin/terminal` (admin auth required).
 - Backend uses pexpect to provide a TTY inside the API container; same privileges as the service user.
 - Gate UI access with `ENABLE_LOCAL_ADMIN=true`; avoid exposing through proxies.
-
-## iOS App (Standalone Repository)
-
-**Repository:** `https://github.com/DMontgomery40/faxbot.app`  
-**Status:** Production-ready iOS 26 app with SwiftUI interface  
-**Architecture:** Pure client app - connects to any Faxbot server via REST API
-
-### Key Characteristics:
-- **Standalone app** - No server code, just connects to Faxbot servers
-- **iOS 26 optimized** - Uses Liquid Glass design, system colors, enhanced security
-- **Pairing system** - QR code or manual pairing with server admin console
-- **Full feature parity** - Send/receive faxes, document scanning, contact management
-- **Share extension** - Send faxes directly from Photos, Files, or any app
-- **HIPAA compliant** - Inherits security posture from connected server
-
-### iOS App Architecture Flow:
-```
-iOS App → REST API → Faxbot Server → Backend → Fax Transmission
-   ↓         ↓           ↓            ↓
-Share Ext → REST API → Faxbot Server → Backend → Fax Transmission
-```
-
-### Development Requirements:
-- **Xcode 15+** with iOS 26 SDK
-- **XcodeGen** for project generation: `brew install xcodegen`
-- **Apple Developer Account** for device testing/App Store
-- **Running Faxbot server** (local or remote) for testing
-
-### Build Commands:
-```bash
-# Build and run in simulator
-./scripts/ios/run-sim.sh
-
-# Build for physical device (requires Apple Developer account)
-DEVICE_NAME="Your iPhone" ./scripts/ios/run-sim.sh
-
-# Archive for TestFlight/App Store
-./scripts/ios/archive.sh
-```
-
-### iOS App Features:
-- **Send Tab:** Document scanning, text-to-fax, contact picker, recent contacts
-- **Inbox Tab:** View received faxes (when server has inbound enabled)
-- **History Tab:** Track sent faxes, retry failed sends, status updates
-- **Settings Tab:** Server pairing, connectivity testing, notifications
-- **Share Extension:** Fax from any app via iOS share sheet
-
-### iOS-Specific Security (iOS 26):
-- **Enhanced Security capabilities** enabled in entitlements
-- **Pointer authentication, stack zero init, bounds safety** compiler flags
-- **Keychain storage** for server credentials and API keys
-- **App Groups** for sharing data with Share Extension
-- **Certificate pinning** for self-signed server certificates
-- **No PHI stored locally** - everything stays on server
-
-### Pairing Process:
-1. User opens Faxbot server admin console
-2. Generate mobile pairing code in Settings → Mobile Apps
-3. iOS app Settings → enter code or scan QR
-4. App automatically configures server URLs and API key
-5. Secure connection established
-
-### Share Extension Workflow:
-1. User takes photo or selects document in any app
-2. Tap Share → select "Fax" 
-3. Choose recipient from saved contacts or enter number
-4. Fax sends in background via server
-5. User gets notification when complete
-
-### iOS App Limitations:
-- **Requires running Faxbot server** - app is pure client
-- **10MB file size limit** - enforced client-side
-- **PDF/TXT only** - images auto-converted to PDF
-- **iOS 17+ required** - uses modern SwiftUI features
 
 ## The Two SDKs: Node.js and Python
 
@@ -904,61 +839,6 @@ TIFF conversion        |   ✗    |   ✗   |     ✗      |      ✓       |   
 - **Authentication:** Optional API key scenarios
 - **Health checking:** Service availability detection
 
-## Repository Structure (Multi-Repo Architecture)
-
-Faxbot uses a **multi-repository architecture** to separate concerns and enable independent development:
-
-### 1. Core Repository: `faxbot/faxbot` (Main)
-**Contains:** Core API, backends, MCP servers, SDKs, documentation
-- **Branch:** `main` (production releases), `development` (active development)
-- **Components:** FastAPI server, plugin system, Phaxio/SIP/Sinch backends
-- **MCP Servers:** Node.js and Python MCP servers with stdio/HTTP/SSE transports
-- **SDKs:** Node.js and Python client libraries
-- **Admin Console:** React/TypeScript web interface
-
-### 2. iOS App Repository: `DMontgomery40/faxbot.app` 
-**Contains:** Standalone iOS app with SwiftUI interface
-- **Branch:** `main` (production releases)
-- **Components:** iOS 26 app, Share Extension, build scripts
-- **Dependencies:** Connects to any Faxbot server via REST API
-- **Platform:** iOS 17+ with iOS 26 optimizations
-
-### 3. Commercial Website: `faxbot.net` (Private)
-**Contains:** Marketing website, hosted service, billing
-- **Branch:** `main` (production website)
-- **Components:** Astro-based marketing site, compliance documentation
-- **Purpose:** Commercial hosted service at faxbot.net
-
-### Repository Relationships:
-```
-faxbot/faxbot (Core)
-├── Provides REST API
-├── Serves Admin Console
-└── Handles all fax transmission
-
-DMontgomery40/faxbot.app (iOS)
-├── Connects to Core via REST API
-├── Pure client - no server code
-└── Works with any Faxbot server
-
-faxbot.net (Commercial)
-├── Markets the ecosystem
-├── Hosts managed Faxbot instances
-└── Provides billing/support
-```
-
-### Why Multi-Repo:
-1. **Separation of concerns** - iOS vs backend vs marketing
-2. **Independent releases** - iOS app updates don't require server updates
-3. **Team permissions** - iOS developers don't need backend access
-4. **App Store requirements** - Apple prefers focused app repositories
-5. **Licensing clarity** - Core is open source, commercial parts separate
-
-### Cross-Repo Dependencies:
-- **iOS app** depends on Core's REST API specification
-- **Commercial site** depends on Core's Docker images
-- **All repos** share this AGENTS.md for consistency
-
 ## Development Workflow and Open‑Core vs Commercial App
 
 Q: If we plan to add a front end and inbound receiving while maintaining a lightweight MVP for users who only need to send faxes now, should we fork the repo into a separate commercial app and leave this one alone?
@@ -989,40 +869,30 @@ What goes where
 
 ## Branch Policy (v3) - CRITICAL FOR AGENTS
 
-### Multi-Repository Branch Structure
-
-#### Core Repository (`faxbot/faxbot`):
+### Branch Structure
 - **`main`**: Production releases only. **AGENTS MUST NEVER WORK DIRECTLY IN MAIN.**
 - **`development`**: Default branch for general core development work.
 - **`docs-jekyll-site`**: GitHub Pages documentation branch.
-- **App-specific branches**: For platform-specific applications (e.g., `electron_macos`, `electron_windows`, `electron_linux`).
+- **App-specific branches**: For platform-specific applications (e.g., `electron_macos`, `electron_windows`, `electron_linux`, `iOS`).
 
-#### iOS App Repository (`DMontgomery40/faxbot.app`):
-- **`main`**: Production releases and active development (single branch model)
-- **No development branch** - iOS app uses trunk-based development
-
-#### Commercial Website (`faxbot.net`):
-- **`main`**: Production website and active development
-
-### Agent Work Rules (Updated for Multi-Repo)
-1. **NEVER work in `main`** on the core repository - This is for production releases only.
-2. **Core API/MCP/backend work**: Use `development` branch in `faxbot/faxbot`
-3. **iOS app work**: Work directly in `main` branch in `DMontgomery40/faxbot.app`
-4. **Website work**: Work directly in `main` branch in `faxbot.net`
-5. **Electron app work**: Use dedicated branches in core repository:
+### Agent Work Rules
+1. **NEVER work in `main`** - This is for production releases only.
+2. **General core work**: Use `development` branch.
+3. **App-specific work**: Use the dedicated app branch:
    - Electron macOS work → `electron_macos` branch
    - Electron Windows work → `electron_windows` branch  
    - Electron Linux work → `electron_linux` branch
+   - iOS app work → `iOS` branch
+4. **Feature branches**: Only with owner approval, must merge back to appropriate target branch via PR.
 
 ### Branch Selection Logic for Agents
 ```
-If working on Core API/MCP/backends → faxbot/faxbot development branch
-If working on iOS app → DMontgomery40/faxbot.app main branch
-If working on website → faxbot.net main branch
-If working on Electron macOS → faxbot/faxbot electron_macos branch
-If working on Electron Windows → faxbot/faxbot electron_windows branch  
-If working on Electron Linux → faxbot/faxbot electron_linux branch
-NEVER work in main branch of core repository
+If working on Electron macOS → electron_macos
+If working on Electron Windows → electron_windows  
+If working on Electron Linux → electron_linux
+If working on iOS app → iOS
+If working on core API/MCP/docs → development
+NEVER work in main
 ```
 
 ### Release Process
@@ -1114,3 +984,19 @@ Receiving capability recommendation
 10. **Documentation must be backend-specific** - No mixed instructions
 
 **Remember:** You are documenting a revolutionary system that bridges healthcare compliance requirements with modern AI assistant capabilities. No one has done this before. Your documentation could define how this category of software is understood for years to come.
+## Admin‑Demo Sync (Read This First)
+
+When updating the Admin Console UI, keep the public demo in sync without touching synthetic data.
+
+- Use the website repo helper scripts (faxbot.net):
+  - `npm run sync:admin` — copies only UI sources from `faxbot:development` into `vendor/admin_ui_demo/src` (no mocks), then you can build normally.
+  - `./scripts/update-demo.sh --force-main` — one‑click sync + build + force push to `main` (for trusted agents only).
+    - This preserves demo mocks/synthetic data and immediately publishes the refreshed demo via Netlify.
+
+Typical flow (preferred)
+- `cd faxbot_folder/faxbot.net`
+- `./scripts/update-demo.sh --force-main`
+
+Notes
+- Do not edit `vendor/admin_ui_demo/src/mocks/*` unless asked — that’s our synthetic data and API stubs.
+- The sync script pulls from the server UI at `../faxbot/api/admin_ui/src` (development). If your tree differs, pass an explicit path: `./scripts/update-demo.sh --force-main /path/to/faxbot`.
