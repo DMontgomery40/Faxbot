@@ -8,13 +8,15 @@ permalink: /development/api-reference.html
 
 # API Reference
 
+This page reflects the live API surface. Examples include cURL and the two official SDKs (Node.js and Python). Response bodies are shown and can be expanded per endpoint.
+
 ## Base URL
 - Default: `http://localhost:8080`
 - Health: `GET /health` → `{ "status": "ok" }`
 - Readiness: `GET /health/ready` → checks DB, backend config, storage (when inbound enabled), Ghostscript
 
 ## Auth
-- Header `X-API-Key: <token>` when API auth is required
+- Header `X-API-Key: <token>` when API auth is required. For local admin testing, `bootstrap_admin_only` is accepted where enabled.
 - Multi‑key support with scopes and per‑key rate limiting
 
 ## Core (outbound)
@@ -27,9 +29,78 @@ POST `/fax`
   - 202 Accepted: `{ id, to, status, error?, pages?, backend, provider_sid?, created_at, updated_at }`
   - 400 invalid number/params; 413 too large; 415 unsupported type; 401 invalid API key
 
+Examples
+
+Language: cURL
+```bash
+curl -sS -X POST \
+  -H "X-API-Key: $API_KEY" \
+  -F to="+15551234567" \
+  -F file=@/path/to/file.pdf \
+  http://localhost:8080/fax
+```
+
+Language: Node.js SDK
+```js
+const FaxbotClient = require('faxbot');
+const client = new FaxbotClient('http://localhost:8080', process.env.API_KEY);
+const job = await client.sendFax('+15551234567', '/path/to/file.pdf');
+console.log(job);
+```
+
+Language: Python SDK
+```python
+from faxbot import FaxbotClient
+client = FaxbotClient('http://localhost:8080', os.environ.get('API_KEY'))
+job = client.send_fax('+15551234567', '/path/to/file.pdf')
+print(job)
+```
+
+<details>
+<summary>Example 202 Response</summary>
+
+```json
+{
+  "id": "6034835ea0e84528af720eabb147cb7d",
+  "to": "+15553513514",
+  "status": "in_progress",
+  "error": null,
+  "pages": null,
+  "backend": "sinch",
+  "provider_sid": null,
+  "created_at": "2025-09-20T06:57:01.215761",
+  "updated_at": "2025-09-20T06:57:02.274263"
+}
+```
+</details>
+
 GET `/fax/{id}`
 - Returns job status as above
 - 404 if not found; 401 if invalid API key
+
+Language: cURL
+```bash
+curl -sS -H "X-API-Key: $API_KEY" \
+  http://localhost:8080/fax/083fe9ce0b2e440e85aca37681830caa
+```
+
+<details>
+<summary>Example 200 Response</summary>
+
+```json
+{
+  "id": "083fe9ce0b2e440e85aca37681830caa",
+  "to": "+15551234567",
+  "status": "failed",
+  "error": "Sinch create fax error 422: {\"code\":422,\"status\":\"INVALID_ARGUMENT\",\"message\":\"Unprocessable Entity\",\"details\":[{\"message\":\"Bad Request\",\"fieldViolations\":[{\"field\":\"To\",\"description\":\"To must be a valid phone number\"}]}]}",
+  "pages": null,
+  "backend": "sinch",
+  "provider_sid": null,
+  "created_at": "2025-09-20T07:30:38.131946",
+  "updated_at": "2025-09-20T07:30:38.609095"
+}
+```
+</details>
 
 GET `/fax/{id}/pdf?token=...`
 - Serves the original PDF to cloud providers
@@ -74,7 +145,20 @@ Jobs (admin)
 - `GET /admin/fax-jobs` — Filterable list with masked numbers
 - `GET /admin/fax-jobs/{id}` — Job detail (admin view)
 - `GET /admin/fax-jobs/{id}/pdf` — Download outbound PDF (admin‑only)
-- `POST /admin/fax-jobs/{id}/refresh` — Poll provider for status (manifest providers)
+- `POST /admin/fax-jobs/{id}/refresh` — Poll provider for status (enabled only for specific backends/manifests)
+
+```bash
+curl -sS -X POST -H "X-API-Key: $API_KEY" \
+  http://localhost:8080/admin/fax-jobs/6034835ea0e84528af720eabb147cb7d/refresh
+```
+
+<details>
+<summary>Example 400 (Sinch backend)</summary>
+
+```json
+{ "detail": "Refresh not supported for this backend" }
+```
+</details>
 
 Plugins (feature‑gated)
 - `GET /plugins` — List installed plugins (providers and storage)
