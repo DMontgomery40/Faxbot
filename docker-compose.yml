@@ -12,7 +12,7 @@ services:
     volumes:
       - faxdata:/faxdata
     ports:
-      - "8080:8080"
+      - "0.0.0.0:8080:8080"
     # Note: Asterisk dependency is optional - only needed for SIP backend
 
   # Asterisk service - only needed for SIP backend
