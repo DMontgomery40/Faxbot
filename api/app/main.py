@@ -2114,8 +2114,11 @@ def export_settings_env():
     ob = active_outbound()
     ib = active_inbound()
     lines.append(f"FAX_BACKEND={settings.fax_backend}")
-    lines.append(f"FAX_OUTBOUND_BACKEND={ob}")
-    lines.append(f"FAX_INBOUND_BACKEND={ib}")
+    # Include dual-backend envs only when explicitly set
+    if os.getenv("FAX_OUTBOUND_BACKEND"):
+        lines.append(f"FAX_OUTBOUND_BACKEND={ob}")
+    if os.getenv("FAX_INBOUND_BACKEND"):
+        lines.append(f"FAX_INBOUND_BACKEND={ib}")
     lines.append(f"REQUIRE_API_KEY={str(settings.require_api_key).lower()}")
     lines.append(f"ENFORCE_PUBLIC_HTTPS={str(settings.enforce_public_https).lower()}")
     lines.append("# NOTE: Secrets are redacted below. Fill in actual values before use.")
@@ -2160,9 +2163,11 @@ def _export_settings_full_env() -> str:
     kv: dict[str, str] = {}
     # Core
     kv["FAX_BACKEND"] = settings.fax_backend
-    # Hybrid backends (keep legacy as fallback)
-    kv["FAX_OUTBOUND_BACKEND"] = active_outbound()
-    kv["FAX_INBOUND_BACKEND"] = active_inbound()
+    # Hybrid backends (include only when explicitly set)
+    if os.getenv("FAX_OUTBOUND_BACKEND"):
+        kv["FAX_OUTBOUND_BACKEND"] = active_outbound()
+    if os.getenv("FAX_INBOUND_BACKEND"):
+        kv["FAX_INBOUND_BACKEND"] = active_inbound()
     kv["REQUIRE_API_KEY"] = "true" if settings.require_api_key else "false"
     kv["ENFORCE_PUBLIC_HTTPS"] = "true" if settings.enforce_public_https else "false"
     kv["FAX_DISABLED"] = "true" if settings.fax_disabled else "false"
@@ -2276,6 +2281,9 @@ def persist_settings(payload: PersistSettingsIn):
 @app.post("/fax", response_model=FaxJobOut, status_code=202, dependencies=[Depends(require_fax_send)])
 async def send_fax(background: BackgroundTasks, to: str = Form(...), file: UploadFile = File(...)):
     ob = active_outbound()
+    # Preserve legacy behavior in disabled/test mode to avoid cross-test env leakage
+    if settings.fax_disabled:
+        ob = settings.fax_backend
     # Validate destination
     if not PHONE_RE.match(to):
         raise HTTPException(400, detail="'to' must be E.164 or digits only")

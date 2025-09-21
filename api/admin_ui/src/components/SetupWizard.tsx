@@ -29,7 +29,9 @@ interface SetupWizardProps {
 }
 
 interface WizardConfig {
-  backend: string;
+  backend: string; // legacy fallback (both directions if dual unset)
+  outbound_backend?: string;
+  inbound_backend?: string;
   phaxio_api_key?: string;
   phaxio_api_secret?: string;
   public_api_url?: string;
@@ -65,8 +67,10 @@ function SetupWizard({ client, onDone, docsBase }: SetupWizardProps) {
   const [verifyingInbound, setVerifyingInbound] = useState(false);
   const [verifyFound, setVerifyFound] = useState<any | null>(null);
   const [callbacks, setCallbacks] = useState<any | null>(null);
+  const ob = config.outbound_backend || config.backend;
+  const ib = config.inbound_backend;
 
-  const steps = ['Choose Backend', 'Configure Credentials', 'Security Settings', 'Apply & Export'];
+  const steps = ['Choose Providers', 'Configure Credentials', 'Security Settings', 'Apply & Export'];
 
   const handleNext = () => {
     setActiveStep((prevActiveStep) => prevActiveStep + 1);
@@ -121,7 +125,13 @@ function SetupWizard({ client, onDone, docsBase }: SetupWizardProps) {
   const generateEnvContent = () => {
     const lines = [];
     
+    const ob = config.outbound_backend || config.backend;
     lines.push(`FAX_BACKEND=${config.backend}`);
+    lines.push(`FAX_OUTBOUND_BACKEND=${ob}`);
+    if (config.inbound_backend) {
+      lines.push(`FAX_INBOUND_BACKEND=${config.inbound_backend}`);
+      lines.push(`INBOUND_ENABLED=true`);
+    }
     lines.push(`REQUIRE_API_KEY=${config.require_api_key}`);
     lines.push(`ENFORCE_PUBLIC_HTTPS=${config.enforce_public_https}`);
     lines.push(`AUDIT_LOG_ENABLED=${config.audit_log_enabled}`);
@@ -129,7 +139,7 @@ function SetupWizard({ client, onDone, docsBase }: SetupWizardProps) {
     lines.push('');
     lines.push('# Backend-specific configuration');
 
-    if (config.backend === 'phaxio') {
+    if (ob === 'phaxio') {
       lines.push('# Phaxio Configuration');
       lines.push(`PHAXIO_API_KEY=${config.phaxio_api_key || 'your_api_key_here'}`);
       lines.push(`PHAXIO_API_SECRET=${config.phaxio_api_secret || 'your_api_secret_here'}`);
@@ -138,12 +148,12 @@ function SetupWizard({ client, onDone, docsBase }: SetupWizardProps) {
         lines.push(`PHAXIO_STATUS_CALLBACK_URL=${config.public_api_url}/phaxio-callback`);
       }
       lines.push('PHAXIO_VERIFY_SIGNATURE=true');
-    } else if (config.backend === 'sinch') {
+    } else if (ob === 'sinch') {
       lines.push('# Sinch Fax API v3 Configuration');
       lines.push(`SINCH_PROJECT_ID=${config.sinch_project_id || 'your_project_id_here'}`);
       lines.push(`SINCH_API_KEY=${config.sinch_api_key || 'your_api_key_here'}`);
       lines.push(`SINCH_API_SECRET=${config.sinch_api_secret || 'your_api_secret_here'}`);
-    } else if (config.backend === 'signalwire') {
+    } else if (ob === 'signalwire') {
       lines.push('# SignalWire Compatibility Fax API');
       lines.push(`SIGNALWIRE_SPACE_URL=${(config as any).signalwire_space_url || 'example.signalwire.com'}`);
       lines.push(`SIGNALWIRE_PROJECT_ID=${(config as any).signalwire_project_id || 'your_project_id_here'}`);
@@ -153,19 +163,19 @@ function SetupWizard({ client, onDone, docsBase }: SetupWizardProps) {
         lines.push(`PUBLIC_API_URL=${config.public_api_url}`);
         lines.push(`SIGNALWIRE_STATUS_CALLBACK_URL=${config.public_api_url}/signalwire-callback`);
       }
-    } else if (config.backend === 'sip') {
+    } else if (ob === 'sip') {
       lines.push('# SIP/Asterisk Configuration');
       lines.push(`ASTERISK_AMI_HOST=${config.ami_host || 'asterisk'}`);
       lines.push(`ASTERISK_AMI_PORT=${config.ami_port || 5038}`);
       lines.push(`ASTERISK_AMI_USERNAME=${config.ami_username || 'api'}`);
       lines.push(`ASTERISK_AMI_PASSWORD=${config.ami_password || 'change_me'}`);
       lines.push(`FAX_LOCAL_STATION_ID=${config.fax_station_id || '+15551234567'}`);
-    } else if (config.backend === 'freeswitch') {
+    } else if (ob === 'freeswitch') {
       lines.push('# FreeSWITCH Configuration');
       lines.push(`FREESWITCH_GATEWAY_NAME=${(config as any).fs_gateway_name || 'gw_signalwire'}`);
       lines.push(`FREESWITCH_CALLER_ID_NUMBER=${(config as any).fs_caller_id_number || '3035551234'}`);
       lines.push('FREESWITCH_T38_ENABLE=true');
-    } else if (config.backend === 'documo') {
+    } else if (ob === 'documo') {
       lines.push('# Documo (mFax) Configuration');
       lines.push(`DOCUMO_API_KEY=${config.documo_api_key || 'your_api_key_here'}`);
       lines.push(`DOCUMO_SANDBOX=${config.documo_use_sandbox ? 'true' : 'false'}`);
@@ -187,33 +197,38 @@ function SetupWizard({ client, onDone, docsBase }: SetupWizardProps) {
     try {
       const payload: any = {
         backend: config.backend,
+        outbound_backend: config.outbound_backend || config.backend,
         require_api_key: config.require_api_key,
         enforce_public_https: config.enforce_public_https,
         pdf_token_ttl_minutes: config.pdf_token_ttl_minutes,
       };
-      if (config.backend === 'phaxio') {
+      if (config.inbound_backend) {
+        payload.inbound_backend = config.inbound_backend;
+        payload.inbound_enabled = true;
+      }
+      if (ob === 'phaxio') {
         payload.phaxio_api_key = config.phaxio_api_key;
         payload.phaxio_api_secret = config.phaxio_api_secret;
         if (config.public_api_url) payload.public_api_url = config.public_api_url;
-      } else if (config.backend === 'sinch') {
+      } else if (ob === 'sinch') {
         payload.sinch_project_id = config.sinch_project_id;
         payload.sinch_api_key = config.sinch_api_key;
         payload.sinch_api_secret = config.sinch_api_secret;
-      } else if (config.backend === 'signalwire') {
+      } else if (ob === 'signalwire') {
         (payload as any).signalwire_space_url = (config as any).signalwire_space_url;
         (payload as any).signalwire_project_id = (config as any).signalwire_project_id;
         (payload as any).signalwire_api_token = (config as any).signalwire_api_token;
         (payload as any).signalwire_fax_from_e164 = (config as any).signalwire_fax_from_e164;
-      } else if (config.backend === 'documo') {
+      } else if (ob === 'documo') {
         payload.documo_api_key = config.documo_api_key;
         payload.documo_use_sandbox = config.documo_use_sandbox;
-      } else if (config.backend === 'sip') {
+      } else if (ob === 'sip') {
         payload.ami_host = config.ami_host;
         payload.ami_port = config.ami_port;
         payload.ami_username = config.ami_username;
         payload.ami_password = config.ami_password;
         payload.fax_station_id = config.fax_station_id;
-      } else if (config.backend === 'freeswitch') {
+      } else if (ob === 'freeswitch') {
         (payload as any).fs_gateway_name = (config as any).fs_gateway_name;
         (payload as any).fs_caller_id_number = (config as any).fs_caller_id_number;
       }
@@ -253,17 +268,11 @@ function SetupWizard({ client, onDone, docsBase }: SetupWizardProps) {
       case 0:
         return (
           <Box>
-            <Typography variant="h6" gutterBottom>
-              Choose Your Fax Backend
-            </Typography>
+            <Typography variant="h6" gutterBottom>Choose Outbound and Inbound Providers</Typography>
             
             <FormControl fullWidth sx={{ mt: 2 }}>
-              <InputLabel>Backend Type</InputLabel>
-              <Select
-                value={config.backend}
-                onChange={(e) => handleConfigChange('backend', e.target.value)}
-                label="Backend Type"
-              >
+              <InputLabel>Outbound Provider</InputLabel>
+              <Select value={config.outbound_backend || config.backend} onChange={(e)=> handleConfigChange('outbound_backend', e.target.value)} label="Outbound Provider">
                 <MenuItem value="phaxio">Phaxio (Cloud - Recommended)</MenuItem>
                 <MenuItem value="sinch">Sinch Fax API v3 (Cloud)</MenuItem>
                 <MenuItem value="signalwire">SignalWire (Compatibility API)</MenuItem>
@@ -272,21 +281,46 @@ function SetupWizard({ client, onDone, docsBase }: SetupWizardProps) {
                 <MenuItem value="freeswitch">FreeSWITCH (Self-hosted)</MenuItem>
               </Select>
             </FormControl>
+
+            <FormControl fullWidth sx={{ mt: 2 }}>
+              <InputLabel>Inbound Provider</InputLabel>
+              <Select value={config.inbound_backend ?? ''} onChange={(e)=> handleConfigChange('inbound_backend', e.target.value)} label="Inbound Provider">
+                <MenuItem value="">Same as outbound (recommended)</MenuItem>
+                <MenuItem value="phaxio">Phaxio (Webhook)</MenuItem>
+                <MenuItem value="sinch">Sinch (Webhook)</MenuItem>
+                <MenuItem value="sip">SIP/Asterisk (Internal)</MenuItem>
+              </Select>
+            </FormControl>
             
-            {config.backend === 'phaxio' && (
+            {ob === 'phaxio' && (
               <Alert severity="success" sx={{ mt: 2 }}>
                 Best for healthcare: 5-minute setup, automatic HIPAA compliance with BAA
               </Alert>
             )}
             
-            {config.backend === 'sip' && (
+            {ob === 'sip' && (
               <Alert severity="warning" sx={{ mt: 2 }}>
                 Requires technical expertise: T.38 support, port forwarding, NAT configuration
               </Alert>
             )}
-            {config.backend === 'freeswitch' && (
+            {ob === 'freeswitch' && (
               <Alert severity="warning" sx={{ mt: 2 }}>
                 Requires FreeSWITCH with mod_spandsp and gateway; configure result hook to post back status
+              </Alert>
+            )}
+            {(config.inbound_backend||config.backend) === 'phaxio' && (
+              <Alert severity="info" sx={{ mt: 2 }}>
+                Inbound webhook will be <code>/phaxio-inbound</code>. Enable HMAC verification in provider.
+              </Alert>
+            )}
+            {(config.inbound_backend||config.backend) === 'sinch' && (
+              <Alert severity="info" sx={{ mt: 2 }}>
+                Inbound webhook will be <code>/sinch-inbound</code>. Basic and/or HMAC optional.
+              </Alert>
+            )}
+            {(config.inbound_backend||config.backend) === 'sip' && (
+              <Alert severity="info" sx={{ mt: 2 }}>
+                Inbound internal endpoint: <code>/_internal/asterisk/inbound</code> (private network only).
               </Alert>
             )}
           </Box>
@@ -296,7 +330,7 @@ function SetupWizard({ client, onDone, docsBase }: SetupWizardProps) {
         return (
           <Box>
             <Typography variant="h6" gutterBottom>
-              Configure {config.backend.toUpperCase()} Credentials
+              Configure {(config.outbound_backend || config.backend).toUpperCase()} Credentials
             </Typography>
             <Box sx={{ display: 'flex', gap: 1, mb: 2 }}>
               <Button variant="outlined" onClick={handleValidate} disabled={validating}>
@@ -307,7 +341,7 @@ function SetupWizard({ client, onDone, docsBase }: SetupWizardProps) {
               )}
             </Box>
             
-            {config.backend === 'phaxio' && (
+            {ob === 'phaxio' && (
               <Grid container spacing={{ xs: 2, md: 3 }}>
                 <Grid item xs={12}>
                   <SecretInput
@@ -346,7 +380,7 @@ function SetupWizard({ client, onDone, docsBase }: SetupWizardProps) {
               </Grid>
             )}
 
-            {config.backend === 'sinch' && (
+            {ob === 'sinch' && (
               <Grid container spacing={2}>
                 <Grid item xs={12}>
                   <TextField
@@ -375,7 +409,7 @@ function SetupWizard({ client, onDone, docsBase }: SetupWizardProps) {
               </Grid>
             )}
 
-            {config.backend === 'signalwire' && (
+            {ob === 'signalwire' && (
               <Grid container spacing={2}>
                 <Grid item xs={12}>
                   <TextField
@@ -417,7 +451,7 @@ function SetupWizard({ client, onDone, docsBase }: SetupWizardProps) {
               </Grid>
             )}
 
-            {config.backend === 'freeswitch' && (
+            {ob === 'freeswitch' && (
               <Grid container spacing={2}>
                 <Grid item xs={12}>
                   <Alert severity="info" sx={{ mb: 2 }}>
@@ -433,41 +467,9 @@ function SetupWizard({ client, onDone, docsBase }: SetupWizardProps) {
               </Grid>
             )}
 
-            {config.backend === 'signalwire' && (
-              <Grid container spacing={2}>
-                <Grid item xs={12}>
-                  <TextField label="Space URL" value={(config as any).signalwire_space_url || ''} onChange={(e)=>handleConfigChange('signalwire_space_url', e.target.value)} fullWidth />
-                </Grid>
-                <Grid item xs={12}>
-                  <TextField label="Project ID" value={(config as any).signalwire_project_id || ''} onChange={(e)=>handleConfigChange('signalwire_project_id', e.target.value)} fullWidth />
-                </Grid>
-                <Grid item xs={12}>
-                  <SecretInput label="API Token" value={(config as any).signalwire_api_token || ''} onChange={(v)=>handleConfigChange('signalwire_api_token', v)} fullWidth />
-                </Grid>
-                <Grid item xs={12}>
-                  <TextField label="From (fax)" value={(config as any).signalwire_fax_from_e164 || ''} onChange={(e)=>handleConfigChange('signalwire_fax_from_e164', e.target.value)} fullWidth />
-                </Grid>
-                <Grid item xs={12}>
-                  <Alert severity="info">Set PUBLIC_API_URL to an HTTPS URL so SignalWire can fetch MediaUrl tokens; callbacks hit /signalwire-callback.</Alert>
-                </Grid>
-              </Grid>
-            )}
+            
 
-            {config.backend === 'freeswitch' && (
-              <Grid container spacing={2}>
-                <Grid item xs={12}>
-                  <Alert severity="info">Faxbot will originate &amp;txfax via FreeSWITCH. Add an api_hangup_hook to post results back to the API.</Alert>
-                </Grid>
-                <Grid item xs={12}>
-                  <TextField label="Gateway Name" value={(config as any).fs_gateway_name || ''} onChange={(e)=>handleConfigChange('fs_gateway_name', e.target.value)} fullWidth />
-                </Grid>
-                <Grid item xs={12}>
-                  <TextField label="Caller ID Number" value={(config as any).fs_caller_id_number || ''} onChange={(e)=>handleConfigChange('fs_caller_id_number', e.target.value)} fullWidth />
-                </Grid>
-              </Grid>
-            )}
-
-            {config.backend === 'sip' && (
+            {ob === 'sip' && (
               <Grid container spacing={2}>
                 <Grid item xs={12}>
                   <Alert severity="error" sx={{ mb: 2 }}>
@@ -525,7 +527,7 @@ function SetupWizard({ client, onDone, docsBase }: SetupWizardProps) {
             )}
 
             {/* Provider Connect */}
-            {(config.backend === 'phaxio' || config.backend === 'sinch') && (
+            {(ob === 'phaxio' || ob === 'sinch') && (
               <Box sx={{ mt: 3 }}>
                 <Typography variant="subtitle1" gutterBottom>Connect {config.backend.toUpperCase()} Inbound</Typography>
                 <Button variant="outlined" onClick={loadCallbacks} sx={{ mr: 1 }}>Show Callback URL</Button>
@@ -677,15 +679,15 @@ function SetupWizard({ client, onDone, docsBase }: SetupWizardProps) {
                         <Box>
                           <Typography>{key.replace(/_/g,' ')}:</Typography>
                           <Typography variant="caption" color="text.secondary">
-                            {config.backend === 'phaxio' && key.includes('auth') ? 'Set PHAXIO_API_KEY/PHAXIO_API_SECRET in Phaxio console.' : ''}
-                            {config.backend === 'sinch' && key.includes('auth') ? 'Set SINCH project, key and secret in Sinch Fax API.' : ''}
+                            {ob === 'phaxio' && key.includes('auth') ? 'Set PHAXIO_API_KEY/PHAXIO_API_SECRET in Phaxio console.' : ''}
+                            {ob === 'sinch' && key.includes('auth') ? 'Set SINCH project, key and secret in Sinch Fax API.' : ''}
                           </Typography>
                         </Box>
                         <Chip size="small" color={value ? 'success' : 'error'} label={value ? 'Pass' : 'Fail'} />
                       </Box>
                     ))}
                     <Typography variant="caption" color="text.secondary">
-                      Help: <a href={`${docsBase || 'https://dmontgomery40.github.io/Faxbot'}/guides/phaxio-5-minutes/`} target="_blank" rel="noreferrer">Faxbot: Phaxio</a> • <a href={`${docsBase || 'https://dmontgomery40.github.io/Faxbot'}/guides/signalwire-setup/`} target="_blank" rel="noreferrer">Faxbot: SignalWire</a> • <a href={`${docsBase || 'https://dmontgomery40.github.io/Faxbot'}/guides/freeswitch-setup/`} target="_blank" rel="noreferrer">Faxbot: FreeSWITCH</a> • <a href="https://developers.sinch.com/docs/fax/api-reference/" target="_blank" rel="noreferrer">Sinch Fax API</a>
+                      Help: <a href={`${docsBase || 'https://dmontgomery40.github.io/Faxbot'}/backends/phaxio-setup.html`} target="_blank" rel="noreferrer">Faxbot: Phaxio</a> • <a href={`${docsBase || 'https://dmontgomery40.github.io/Faxbot'}/backends/signalwire-setup.html`} target="_blank" rel="noreferrer">Faxbot: SignalWire</a> • <a href={`${docsBase || 'https://dmontgomery40.github.io/Faxbot'}/backends/freeswitch-setup.html`} target="_blank" rel="noreferrer">Faxbot: FreeSWITCH</a> • <a href="https://developers.sinch.com/docs/fax/api-reference/" target="_blank" rel="noreferrer">Sinch Fax API</a>
                     </Typography>
                   </Box>
                 )}

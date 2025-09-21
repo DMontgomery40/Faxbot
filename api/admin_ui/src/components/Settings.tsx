@@ -56,6 +56,10 @@ function Settings({ client }: SettingsProps) {
   const isSmall = useMediaQuery('(max-width:900px)');
   const ctlStyle: React.CSSProperties = { background: 'transparent', color: 'inherit', borderColor: '#444', padding: '6px', borderRadius: 6, width: isSmall ? '100%' : 'auto', maxWidth: isSmall ? '100%' : undefined };
 
+  // Effective provider selections with hybrid fallback
+  const effectiveOutbound = (form.outbound_backend || settings?.hybrid?.outbound_backend || settings?.backend?.type) as string | undefined;
+  const effectiveInbound = (form.inbound_backend || settings?.hybrid?.inbound_backend || settings?.backend?.type) as string | undefined;
+
   const fetchSettings = async () => {
     try {
       setError(null);
@@ -208,15 +212,15 @@ function Settings({ client }: SettingsProps) {
           {/* Backend Configuration */}
           <ResponsiveFormSection
             title="Backend Configuration"
-            subtitle="Choose your fax transport backend"
+            subtitle="Choose your fax transport providers (outbound and inbound)"
             icon={<CloudIcon />}
           >
             <ResponsiveSettingItem
               icon={getStatusIcon(!settings.backend.disabled)}
-              label="Backend Type"
-              value={settings.backend.type.toUpperCase()}
-              helperText="Choose your transport backend. Changing providers may require a restart and provider-specific configuration. For SIP/Asterisk, ensure private networking and T.38 support."
-              onChange={(value) => handleForm('backend', value)}
+              label="Outbound Provider"
+              value={(effectiveOutbound || 'phaxio').toUpperCase()}
+              helperText="Outbound handles sending. Changing providers may require restart and provider-specific config."
+              onChange={(value) => handleForm('outbound_backend', value)}
               type="select"
               options={[
                 { value: 'phaxio', label: 'Phaxio (Cloud)' },
@@ -228,6 +232,30 @@ function Settings({ client }: SettingsProps) {
               ]}
               showCurrentValue={true}
             />
+
+            <ResponsiveSettingItem
+              icon={<CloudIcon />}
+              label="Inbound Provider"
+              value={(effectiveInbound || 'phaxio').toUpperCase()}
+              helperText="Inbound handles receiving/callbacks. Choose 'SIP/Asterisk' for internal posting or a cloud provider for webhooks."
+              onChange={(value) => handleForm('inbound_backend', value)}
+              type="select"
+              options={[
+                { value: 'phaxio', label: 'Phaxio (Webhook)' },
+                { value: 'sinch', label: 'Sinch (Webhook)' },
+                { value: 'sip', label: 'SIP/Asterisk (Internal)' }
+              ]}
+              showCurrentValue={true}
+            />
+            {(!form.inbound_backend && settings.hybrid && !settings.hybrid.inbound_explicit) && (
+              <Chip
+                label="Mode: Single provider. Inbound follows outbound. You can optionally choose a separate inbound provider."
+                color="info"
+                size="small"
+                variant="outlined"
+                sx={{ mt: 1, borderRadius: 1 }}
+              />
+            )}
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 1 }}>
               <Chip
                 label={settings.backend.disabled ? 'Disabled' : 'Active'}
@@ -325,16 +353,6 @@ function Settings({ client }: SettingsProps) {
                         label="Faxbot: Phaxio Setup"
                         component="a"
                         href={`${docsBase}/backends/phaxio-setup.html`}
-                        target="_blank"
-                        rel="noreferrer"
-                        clickable
-                        size="small"
-                        variant="outlined"
-                      />
-                      <Chip
-                        label="Sinch Fax API Docs"
-                        component="a"
-                        href="https://developers.sinch.com/docs/fax/api-reference/"
                         target="_blank"
                         rel="noreferrer"
                         clickable
@@ -564,7 +582,7 @@ function Settings({ client }: SettingsProps) {
               showCurrentValue={true}
             />
 
-            {settings.backend.type === 'sip' && (
+            {effectiveInbound === 'sip' && (
               <Box sx={{ mt: 2 }}>
                 <ResponsiveSettingItem
                   icon={<SecurityIcon />}
@@ -625,7 +643,7 @@ function Settings({ client }: SettingsProps) {
               </Box>
             )}
 
-            {settings.backend.type === 'phaxio' && (
+            {effectiveInbound === 'phaxio' && (
               <ResponsiveSettingItem
                 icon={settings.inbound?.phaxio?.verify_signature ? <CheckCircleIcon color="success" /> : <WarningIcon color="warning" />}
                 label="Verify Phaxio Inbound Signature"
@@ -641,7 +659,7 @@ function Settings({ client }: SettingsProps) {
               />
             )}
 
-            {settings.backend.type === 'sinch' && (
+            {effectiveInbound === 'sinch' && (
               <Box sx={{ mt: 2 }}>
                 <ResponsiveSettingItem
                   icon={settings.inbound?.sinch?.verify_signature ? <CheckCircleIcon color="success" /> : <WarningIcon color="warning" />}
@@ -1030,7 +1048,7 @@ function Settings({ client }: SettingsProps) {
             </ResponsiveFormSection>
         </Stack>
         <Box sx={{ display: 'flex', gap: 1, mt: 2 }}>
-          <Button variant="contained" onClick={async () => { try { setLoading(true); setError(null); setRestartHint(false); const p:any={}; if (form.backend) p.backend=form.backend; if (form.require_api_key!==undefined) p.require_api_key=!!form.require_api_key; if (form.enforce_public_https!==undefined) p.enforce_public_https=!!form.enforce_public_https; if (form.public_api_url) p.public_api_url=String(form.public_api_url); if (form.enable_persisted_settings!==undefined) p.enable_persisted_settings=!!form.enable_persisted_settings; if (form.feature_v3_plugins!==undefined) p.feature_v3_plugins=!!form.feature_v3_plugins; if (form.feature_plugin_install!==undefined) p.feature_plugin_install=!!form.feature_plugin_install; if (form.backend==='phaxio'){ if (form.phaxio_api_key) p.phaxio_api_key=form.phaxio_api_key; if (form.phaxio_api_secret) p.phaxio_api_secret=form.phaxio_api_secret; } if (form.backend==='sinch'){ if (form.sinch_project_id) p.sinch_project_id=form.sinch_project_id; if (form.sinch_api_key) p.sinch_api_key=form.sinch_api_key; if (form.sinch_api_secret) p.sinch_api_secret=form.sinch_api_secret; } if (form.backend==='sip'){ if (form.ami_host) p.ami_host=form.ami_host; if (form.ami_port) p.ami_port=Number(form.ami_port); if (form.ami_username) p.ami_username=form.ami_username; if (form.ami_password) p.ami_password=form.ami_password; if (form.fax_station_id) p.fax_station_id=form.fax_station_id; } if (form.inbound_enabled!==undefined) p.inbound_enabled=!!form.inbound_enabled; if (form.inbound_retention_days!==undefined) p.inbound_retention_days=Number(form.inbound_retention_days); if (form.inbound_token_ttl_minutes!==undefined) p.inbound_token_ttl_minutes=Number(form.inbound_token_ttl_minutes); if (form.asterisk_inbound_secret) p.asterisk_inbound_secret=form.asterisk_inbound_secret; if (form.phaxio_inbound_verify_signature!==undefined) p.phaxio_inbound_verify_signature=!!form.phaxio_inbound_verify_signature; if (form.sinch_inbound_verify_signature!==undefined) p.sinch_inbound_verify_signature=!!form.sinch_inbound_verify_signature; if (form.sinch_inbound_basic_user) p.sinch_inbound_basic_user=form.sinch_inbound_basic_user; if (form.sinch_inbound_basic_pass) p.sinch_inbound_basic_pass=form.sinch_inbound_basic_pass; if (form.sinch_inbound_hmac_secret) p.sinch_inbound_hmac_secret=form.sinch_inbound_hmac_secret; if (form.storage_backend) p.storage_backend=form.storage_backend; if (form.s3_bucket) p.s3_bucket=form.s3_bucket; if (form.s3_region) p.s3_region=form.s3_region; if (form.s3_prefix) p.s3_prefix=form.s3_prefix; if (form.s3_endpoint_url) p.s3_endpoint_url=form.s3_endpoint_url; if (form.s3_kms_key_id) p.s3_kms_key_id=form.s3_kms_key_id; if (form.max_file_size_mb!==undefined) p.max_file_size_mb=Number(form.max_file_size_mb); if (form.max_requests_per_minute!==undefined) p.max_requests_per_minute=Number(form.max_requests_per_minute); if (form.inbound_list_rpm!==undefined) p.inbound_list_rpm=Number(form.inbound_list_rpm); if (form.inbound_get_rpm!==undefined) p.inbound_get_rpm=Number(form.inbound_get_rpm); const res = await client.updateSettings(p); await client.reloadSettings(); await fetchSettings(); setSnack('Settings applied and reloaded'); if (res && res._meta && res._meta.restart_recommended) setRestartHint(true); if (p.enable_persisted_settings!==undefined) setPersistedEnabled(!!p.enable_persisted_settings); } catch(e:any){ setError(e?.message||'Failed to apply settings'); } finally { setLoading(false);} }} disabled={loading}>
+          <Button variant="contained" onClick={async () => { try { setLoading(true); setError(null); setRestartHint(false); const p:any={}; if (form.outbound_backend) p.outbound_backend=form.outbound_backend; else if (form.backend) p.backend=form.backend; if (form.inbound_backend) { p.inbound_backend=form.inbound_backend; p.inbound_enabled=true; } if (form.require_api_key!==undefined) p.require_api_key=!!form.require_api_key; if (form.enforce_public_https!==undefined) p.enforce_public_https=!!form.enforce_public_https; if (form.public_api_url) p.public_api_url=String(form.public_api_url); if (form.enable_persisted_settings!==undefined) p.enable_persisted_settings=!!form.enable_persisted_settings; if (form.feature_v3_plugins!==undefined) p.feature_v3_plugins=!!form.feature_v3_plugins; if (form.feature_plugin_install!==undefined) p.feature_plugin_install=!!form.feature_plugin_install; if ((form.outbound_backend||form.backend)==='phaxio' && form.phaxio_api_key) p.phaxio_api_key=form.phaxio_api_key; if ((form.outbound_backend||form.backend)==='phaxio' && form.phaxio_api_secret) p.phaxio_api_secret=form.phaxio_api_secret; if ((form.outbound_backend||form.backend)==='sinch' && form.sinch_project_id) p.sinch_project_id=form.sinch_project_id; if ((form.outbound_backend||form.backend)==='sinch' && form.sinch_api_key) p.sinch_api_key=form.sinch_api_key; if ((form.outbound_backend||form.backend)==='sinch' && form.sinch_api_secret) p.sinch_api_secret=form.sinch_api_secret; if ((form.outbound_backend||form.backend)==='sip'){ if (form.ami_host) p.ami_host=form.ami_host; if (form.ami_port) p.ami_port=Number(form.ami_port); if (form.ami_username) p.ami_username=form.ami_username; if (form.ami_password) p.ami_password=form.ami_password; if (form.fax_station_id) p.fax_station_id=form.fax_station_id; } if (form.inbound_retention_days!==undefined) p.inbound_retention_days=Number(form.inbound_retention_days); if (form.inbound_token_ttl_minutes!==undefined) p.inbound_token_ttl_minutes=Number(form.inbound_token_ttl_minutes); if (form.asterisk_inbound_secret) p.asterisk_inbound_secret=form.asterisk_inbound_secret; if (form.phaxio_inbound_verify_signature!==undefined) p.phaxio_inbound_verify_signature=!!form.phaxio_inbound_verify_signature; if (form.sinch_inbound_verify_signature!==undefined) p.sinch_inbound_verify_signature=!!form.sinch_inbound_verify_signature; if (form.sinch_inbound_basic_user) p.sinch_inbound_basic_user=form.sinch_inbound_basic_user; if (form.sinch_inbound_basic_pass) p.sinch_inbound_basic_pass=form.sinch_inbound_basic_pass; if (form.sinch_inbound_hmac_secret) p.sinch_inbound_hmac_secret=form.sinch_inbound_hmac_secret; if (form.storage_backend) p.storage_backend=form.storage_backend; if (form.s3_bucket) p.s3_bucket=form.s3_bucket; if (form.s3_region) p.s3_region=form.s3_region; if (form.s3_prefix) p.s3_prefix=form.s3_prefix; if (form.s3_endpoint_url) p.s3_endpoint_url=form.s3_endpoint_url; if (form.s3_kms_key_id) p.s3_kms_key_id=form.s3_kms_key_id; if (form.max_file_size_mb!==undefined) p.max_file_size_mb=Number(form.max_file_size_mb); if (form.max_requests_per_minute!==undefined) p.max_requests_per_minute=Number(form.max_requests_per_minute); if (form.inbound_list_rpm!==undefined) p.inbound_list_rpm=Number(form.inbound_list_rpm); if (form.inbound_get_rpm!==undefined) p.inbound_get_rpm=Number(form.inbound_get_rpm); const res = await client.updateSettings(p); await client.reloadSettings(); await fetchSettings(); setSnack('Settings applied and reloaded'); if (res && res._meta && res._meta.restart_recommended) setRestartHint(true); if (p.enable_persisted_settings!==undefined) setPersistedEnabled(!!p.enable_persisted_settings); } catch(e:any){ setError(e?.message||'Failed to apply settings'); } finally { setLoading(false);} }} disabled={loading}>
             Apply & Reload
           </Button>
           <Button variant="outlined" startIcon={<RefreshIcon />} onClick={fetchSettings} disabled={loading}>

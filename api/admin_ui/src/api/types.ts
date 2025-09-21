@@ -41,6 +41,12 @@ export interface Settings {
     type: string;
     disabled: boolean;
   };
+  hybrid?: {
+    outbound_backend: string;
+    inbound_backend: string;
+    outbound_explicit?: boolean;
+    inbound_explicit?: boolean;
+  };
   phaxio: {
     api_key: string;
     api_secret: string;

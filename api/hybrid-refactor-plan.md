@@ -151,6 +151,22 @@ Notes
 - Tests remain green; added a pytest-only allowance for missing Ghostscript at startup to keep CI/dev stable while enforcing readiness and production posture.
  - Inbound route gating now audits 404s with event inbound_route_blocked and includes the active inbound backend.
 
+Phase 7 — Admin Console (UI) — IN PROGRESS
+- Settings: Dual provider selection
+  - Added Outbound Provider and Inbound Provider selectors under Backend Configuration. Inbound shows an info banner when inbound_explicit=false (follows outbound by default). Settings update sends outbound_backend/inbound_backend and enables inbound when set. File: api/admin_ui/src/components/Settings.tsx
+- Setup Wizard: Dual selection + env generation
+  - Step 0 now captures outbound and inbound separately. Generated env includes FAX_OUTBOUND_BACKEND, FAX_INBOUND_BACKEND, and INBOUND_ENABLED=true. Apply sends outbound_backend/inbound_backend and reloads. File: api/admin_ui/src/components/SetupWizard.tsx
+- Types/client
+  - Extended Settings type with hybrid fields to reflect server response. File: api/admin_ui/src/api/types.ts
+
+Next (Phase 7 continued)
+- Add contextual help per selected providers (tooltips + Learn more links from docsBase) across Settings sections.
+- Surface the trait-driven readiness hints in Diagnostics UI (already present via server checks; validate copy and anchors).
+- Ensure deprecation banner for single-backend mode is visible when outbound/inbound are not explicitly set (now showing inbound Explicit banner; will add header notice if both unset).
+
+Phase 8 — Tests (coming next)
+- Extend UI smoke checks and add hybrid gating tests where applicable (if UI tests exist); server-side hybrid tests already added and passing.
+
 Review gate
 - Please review Phases 1–2 changes for scope, naming, and compatibility with Admin Console expectations. On approval, I will proceed with Phases 3–4.
 Adjustments (post-review)
