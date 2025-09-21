@@ -15,6 +15,9 @@ permalink: /backends/
 Every backend is selected and configured through the Admin Console → **Setup Wizard**. Pick the provider that matches your deployment, fill in the guided form, and Faxbot writes the plugin config for you—no manual YAML or environment gymnastics required.
 
 {: .highlight }
+**New in v3**: [Hybrid configurations](hybrid-setups.html) allow different providers for outbound (sending) and inbound (receiving) operations. Mix cloud and self-hosted backends for optimal cost and control.
+
+{: .highlight }
 Switching providers later is a guided flow. The wizard keeps configs isolated so Phaxio users never see SIP fields and vice versa.
 
 ## Cloud backends (fastest to production)

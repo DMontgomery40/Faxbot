@@ -112,8 +112,8 @@ Advanced
 - [Phaxio End-to-End Test](docs/PHAXIO_E2E_TEST.md) — Simulated callback flow for local testing
 
 ## Notes
-- Send-only. Receiving is out of scope.
-- Set `FAX_BACKEND` to `phaxio` (cloud) or `sip` (self-hosted).
+- Send and receive faxes with hybrid backend support (v3+).
+- Set `FAX_BACKEND` to `phaxio` (cloud) or `sip` (self-hosted), or use `FAX_OUTBOUND_BACKEND`/`FAX_INBOUND_BACKEND` for hybrid configurations.
 - Use `X-API-Key` for auth; secure behind a reverse proxy for rate limiting.
 
 Demo
