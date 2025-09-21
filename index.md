@@ -19,7 +19,7 @@ Most users follow one simple path: start the container, open the Admin Console, 
 ### Why Faxbot
 
 - Open source and self‑hostable end‑to‑end: run it entirely on your infra, modify as needed.
-- One API, many backends: switch Phaxio ↔ Sinch ↔ self‑hosted SIP/Asterisk via environment settings.
+- One API, many backends: switch Phaxio ↔ Sinch ↔ self‑hosted SIP/Asterisk via environment settings, or mix backends with hybrid configurations.
 - Bring‑your‑own SIP trunk: choose any SIP provider; migrate later by changing a couple of env vars.
 - Fully local option: when using SIP, no third‑party cloud in the path; artifacts stay on your storage (S3/MinIO supported).
 - AI assistant tools built‑in: MCP servers (Node & Python) for stdio/HTTP/SSE; desktop stdio supports `filePath` (no base64 size pain).
@@ -50,6 +50,7 @@ Questions? Issues? Please don't hesitate to reach out. See `CONTRIBUTING.md` for
   - [Phaxio Setup]({{ site.baseurl }}/backends/phaxio-setup.html)
   - [Sinch Setup]({{ site.baseurl }}/backends/sinch-setup.html)
   - [SIP/Asterisk Setup]({{ site.baseurl }}/backends/sip-setup.html)
+  - [Hybrid Setups]({{ site.baseurl }}/backends/hybrid-setups.html)
   - [Images & PDFs]({{ site.baseurl }}/backends/images-and-pdfs.html)
 - Plugins
   - [Overview]({{ site.baseurl }}/plugins/)

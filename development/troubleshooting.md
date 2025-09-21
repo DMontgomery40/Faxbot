@@ -13,14 +13,20 @@ nav_order: 3
 - 415 Unsupported file type: only PDF and TXT allowed.
 - Prefer HTTPS for `PUBLIC_API_URL` in production. The cloud backend fetches PDFs from your server; use TLS.
 
+## Hybrid Configuration (v3+)
+- Inbound route 404: wrong provider callback URL. Check Admin Console → **Inbound** → **Callback URLs** for the correct endpoint based on your `FAX_INBOUND_BACKEND`.
+- AMI not starting: ensure at least one of `FAX_OUTBOUND_BACKEND` or `FAX_INBOUND_BACKEND` is set to `sip`.
+- Health check failures: verify both outbound and inbound providers are properly configured. Check `/admin/diagnostics/run` for per-direction status.
+- Mixed backend guidance in UI: ensure you're using the Setup Wizard which isolates provider-specific settings.
+
 ## Phaxio Backend
-- "phaxio not configured": ensure `FAX_BACKEND=phaxio`, `PHAXIO_API_KEY`, `PHAXIO_API_SECRET`.
+- "phaxio not configured": ensure `FAX_BACKEND=phaxio` (or `FAX_OUTBOUND_BACKEND=phaxio` for hybrid), `PHAXIO_API_KEY`, `PHAXIO_API_SECRET`.
 - No status updates: verify your callback URL (`PHAXIO_CALLBACK_URL` or `PHAXIO_STATUS_CALLBACK_URL`) and that your server is publicly reachable.
 - 403 on `/fax/{id}/pdf`: invalid token or wrong `PUBLIC_API_URL`.
 - Phaxio API error: confirm credentials and sufficient account balance.
 
 ## Sinch Fax API v3 Backend
-- "sinch not configured": ensure `FAX_BACKEND=sinch`, `SINCH_PROJECT_ID`, `SINCH_API_KEY`, `SINCH_API_SECRET` (or set `PHAXIO_API_KEY/SECRET` which are used as fallback values).
+- "sinch not configured": ensure `FAX_BACKEND=sinch` (or `FAX_OUTBOUND_BACKEND=sinch` for hybrid), `SINCH_PROJECT_ID`, `SINCH_API_KEY`, `SINCH_API_SECRET` (or set `PHAXIO_API_KEY/SECRET` which are used as fallback values).
 - Region/base URL: if requests fail, try `SINCH_BASE_URL` (e.g., `https://us.fax.api.sinch.com/v3`).
 - Webhooks: current build does not expose a Sinch webhook endpoint; status reflects the immediate response from Sinch. Poll your job via `GET /fax/{id}` if needed.
 

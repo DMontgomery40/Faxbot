@@ -9,7 +9,7 @@ permalink: /deployment/
 
 Services
 - `api`: FastAPI service (required)
-- `asterisk`: SIP/Asterisk backend (only for `FAX_BACKEND=sip`)
+- `asterisk`: SIP/Asterisk backend (only when SIP is selected for inbound or outbound)
 - `faxbot-mcp`: MCP server (optional)
 
 Ports
