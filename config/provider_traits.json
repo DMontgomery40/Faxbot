@@ -1,0 +1,93 @@
+{
+  "_schema": {
+    "version": 1,
+    "canonical_trait_keys": [
+      "requires_ghostscript",
+      "requires_ami",
+      "requires_tiff",
+      "supports_inbound",
+      "inbound_verification",
+      "needs_storage",
+      "outbound_status_only"
+    ],
+    "notes": "This file is JSON (no comments). Traits apply to provider ids. Manifest traits override these defaults."
+  },
+  "phaxio": {
+    "id": "phaxio",
+    "kind": "cloud",
+    "traits": {
+      "requires_ghostscript": true,
+      "requires_ami": false,
+      "requires_tiff": false,
+      "supports_inbound": true,
+      "inbound_verification": "hmac",
+      "needs_storage": true,
+      "outbound_status_only": false
+    }
+  },
+  "sinch": {
+    "id": "sinch",
+    "kind": "cloud",
+    "traits": {
+      "requires_ghostscript": true,
+      "requires_ami": false,
+      "requires_tiff": false,
+      "supports_inbound": true,
+      "inbound_verification": "hmac",
+      "needs_storage": true,
+      "outbound_status_only": false
+    }
+  },
+  "signalwire": {
+    "id": "signalwire",
+    "kind": "cloud",
+    "traits": {
+      "requires_ghostscript": true,
+      "requires_ami": false,
+      "requires_tiff": false,
+      "supports_inbound": false,
+      "inbound_verification": "none",
+      "needs_storage": false,
+      "outbound_status_only": true
+    }
+  },
+  "documo": {
+    "id": "documo",
+    "kind": "cloud",
+    "traits": {
+      "requires_ghostscript": true,
+      "requires_ami": false,
+      "requires_tiff": false,
+      "supports_inbound": false,
+      "inbound_verification": "none",
+      "needs_storage": false,
+      "outbound_status_only": false
+    }
+  },
+  "sip": {
+    "id": "sip",
+    "kind": "self_hosted",
+    "traits": {
+      "requires_ghostscript": true,
+      "requires_ami": true,
+      "requires_tiff": true,
+      "supports_inbound": true,
+      "inbound_verification": "internal_secret",
+      "needs_storage": true,
+      "outbound_status_only": false
+    }
+  },
+  "freeswitch": {
+    "id": "freeswitch",
+    "kind": "self_hosted",
+    "traits": {
+      "requires_ghostscript": true,
+      "requires_ami": false,
+      "requires_tiff": true,
+      "supports_inbound": false,
+      "inbound_verification": "none",
+      "needs_storage": false,
+      "outbound_status_only": false
+    }
+  }
+}

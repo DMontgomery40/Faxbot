@@ -12,7 +12,15 @@ import time
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks, Header, Depends, Query, Request, Response, WebSocket
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from .config import settings, reload_settings
+from .config import (
+    settings,
+    reload_settings,
+    active_outbound,
+    active_inbound,
+    VALID_BACKENDS,
+    providerHasTrait,
+    providerTraitValue,
+)
 from .db import init_db, SessionLocal, FaxJob
 from .models import FaxJobOut
 from .conversion import ensure_dir, txt_to_pdf, pdf_to_tiff
@@ -231,13 +239,13 @@ async def on_startup():
     init_db()
     # Ensure data dir
     ensure_dir(settings.fax_data_dir)
-    # Validate Ghostscript availability where required. For SIP backend, it's mandatory.
-    # For cloud backends (phaxio/sinch) tests and dev may proceed without gs; emit a warning.
-    if shutil.which("gs") is None:
-        if not settings.fax_disabled and settings.fax_backend == "sip":
-            raise RuntimeError("Ghostscript (gs) not found. Install 'ghostscript' — it is required for SIP/TIFF processing.")
+    # Validate Ghostscript availability — required for all configurations
+    _gs_missing = shutil.which("gs") is None
+    if _gs_missing and not settings.fax_disabled:
+        if str(os.getenv("FAXBOT_TEST_MODE", "false")).lower() in {"1","true","yes"}:
+            print("[warn] Ghostscript (gs) not found; allowed via FAXBOT_TEST_MODE for unit tests only")
         else:
-            print("[warn] Ghostscript (gs) not found; continuing (not required for current backend)")
+            raise RuntimeError("Ghostscript (gs) not found. Install 'ghostscript' — it is required for fax file processing.")
     # Security posture warnings
     if not settings.require_api_key and not settings.api_key and not settings.fax_disabled:
         print("[warn] API auth is not enforced (REQUIRE_API_KEY=false and API_KEY unset); /fax requests are unauthenticated. Set API_KEY or REQUIRE_API_KEY for production.")
@@ -246,7 +254,7 @@ async def on_startup():
         insecure = pu.scheme == "http" and pu.hostname not in {"localhost", "127.0.0.1"}
         if insecure:
             msg = "PUBLIC_API_URL is not HTTPS; cloud providers will fetch PDFs over HTTP. Use HTTPS in production."
-            if settings.enforce_public_https and settings.fax_backend == "phaxio":
+            if settings.enforce_public_https and active_outbound() == "phaxio":
                 raise RuntimeError(msg)
             else:
                 print(f"[warn] {msg}")
@@ -264,8 +272,8 @@ async def on_startup():
         use_syslog=settings.audit_log_syslog,
         syslog_address=(settings.audit_log_syslog_address or None),
     )
-    # Start AMI listener and result handler (only for SIP backend)
-    if not settings.fax_disabled and settings.fax_backend == "sip":
+    # Start AMI when required by traits (either direction)
+    if not settings.fax_disabled and providerHasTrait("any", "requires_ami"):
         asyncio.create_task(ami_client.connect())
         ami_client.on_fax_result(_handle_fax_result)
 
@@ -313,34 +321,12 @@ def health_ready():
     except Exception:
         db_ok = False
 
-    # Backend config check
-    backend = settings.fax_backend
-    backend_ok = True
+    # Trait-driven checks
+    ob = active_outbound()
+    ib = active_inbound()
     backend_warnings: List[str] = []
-    if backend == "phaxio":
-        backend_ok = bool(settings.phaxio_api_key and settings.phaxio_api_secret)
-        # PUBLIC_API_URL must be https for production enforcement, unless localhost
-        try:
-            pu = urlparse(settings.public_api_url)
-            if settings.enforce_public_https and (pu.scheme != "https") and pu.hostname not in {"localhost", "127.0.0.1"}:
-                backend_ok = False
-                backend_warnings.append("PUBLIC_API_URL must be HTTPS when ENFORCE_PUBLIC_HTTPS=true")
-        except Exception:
-            backend_warnings.append("Invalid PUBLIC_API_URL")
-    elif backend == "sinch":
-        backend_ok = bool(settings.sinch_project_id and settings.sinch_api_key and settings.sinch_api_secret)
-    elif backend == "signalwire":
-        backend_ok = bool(settings.signalwire_space_url and settings.signalwire_project_id and settings.signalwire_api_token)
-    elif backend == "freeswitch":
-        # Presence checks only; fs_cli availability is recommended but not required at readiness stage
-        backend_ok = True
-    elif backend == "sip":
-        # Presence checks only; AMI connection is handled asynchronously
-        if not settings.ami_password or settings.ami_password == "changeme":
-            backend_warnings.append("ASTERISK_AMI_PASSWORD must be set to a non-default value")
-        backend_ok = True
-    else:
-        backend_warnings.append(f"Unknown backend: {backend}")
+    outbound_ok = ob in VALID_BACKENDS
+    inbound_ok = ib in VALID_BACKENDS
 
     # Storage check (only if inbound enabled)
     storage_ok = True
@@ -356,13 +342,12 @@ def health_ready():
             storage_ok = False
             storage_error = str(e)
 
-    # System dependency check (Ghostscript — required for all backends)
+    # System dependency check (Ghostscript — required)
     gs_installed = shutil.which("gs") is not None
     if not gs_installed:
-        backend_ok = False
         backend_warnings.append("Ghostscript (gs) not installed — required for fax file processing")
 
-    # AMI connection hint for SIP
+    # AMI connection (only when required by traits)
     ami_connected = False
     try:
         from .ami import ami_client as _ac  # type: ignore
@@ -370,19 +355,35 @@ def health_ready():
     except Exception:
         ami_connected = False
 
-    ready = bool(db_ok and backend_ok and gs_installed and (storage_ok or not settings.inbound_enabled))
+    # Required traits for readiness
+    ami_required = providerHasTrait("any", "requires_ami")
+    storage_required = settings.inbound_enabled and providerHasTrait("inbound", "needs_storage")
+    ready = bool(
+        db_ok and gs_installed and outbound_ok and inbound_ok and
+        (not ami_required or ami_connected) and
+        (not storage_required or storage_ok)
+    )
     status_code = 200 if ready else 503
     from fastapi.responses import JSONResponse as _JR
     return _JR(
         content={
             "status": "ready" if ready else "not_ready",
-            "backend": backend,
+            "backend": ob,
             "checks": {
                 "db": db_ok,
-                "backend_config": backend_ok,
-                "storage": storage_ok if settings.inbound_enabled else None,
-                "ami_connected": ami_connected if backend == "sip" else None,
                 "ghostscript": gs_installed,
+                "storage": storage_ok if storage_required else None,
+                "outbound": {
+                    "backend": ob,
+                    "backend_config": outbound_ok,
+                    "ami_connected": ami_connected if providerHasTrait("outbound", "requires_ami") else None,
+                },
+                "inbound": {
+                    "backend": ib,
+                    "enabled": settings.inbound_enabled,
+                    "backend_config": inbound_ok,
+                    "ami_connected": ami_connected if providerHasTrait("inbound", "requires_ami") else None,
+                },
             },
             "warnings": backend_warnings,
             "storage_error": storage_error,
@@ -505,9 +506,17 @@ def get_admin_config():
     Does not include secrets. Requires admin auth (bootstrap env key or keys:manage).
     """
     backend = settings.fax_backend
+    ob = active_outbound()
+    ib = active_inbound()
     # Configured flags
     cfg = {
         "backend": backend,
+        "hybrid": {
+            "outbound": ob,
+            "inbound": ib,
+            "outbound_explicit": bool(os.getenv("FAX_OUTBOUND_BACKEND")),
+            "inbound_explicit": bool(os.getenv("FAX_INBOUND_BACKEND")),
+        },
         "allow_restart": settings.admin_allow_restart,
         "require_api_key": settings.require_api_key,
         "enforce_public_https": settings.enforce_public_https,
@@ -562,7 +571,7 @@ def get_admin_config():
     if settings.feature_v3_plugins:
         cfg["v3_plugins"] = {
             "enabled": True,
-            "active_outbound": settings.fax_backend,
+            "active_outbound": ob,
             "config_path": settings.faxbot_config_path,
             "plugin_install_enabled": settings.feature_plugin_install,
         }
@@ -572,10 +581,18 @@ def get_admin_config():
 @app.get("/admin/settings", dependencies=[Depends(require_admin)])
 def get_admin_settings():
     """Return effective settings with sensitive values masked."""
+    ob = active_outbound()
+    ib = active_inbound()
     return {
         "backend": {
             "type": settings.fax_backend,
             "disabled": settings.fax_disabled,
+        },
+        "hybrid": {
+            "outbound_backend": ob,
+            "inbound_backend": ib,
+            "outbound_explicit": bool(os.getenv("FAX_OUTBOUND_BACKEND")),
+            "inbound_explicit": bool(os.getenv("FAX_INBOUND_BACKEND")),
         },
         "phaxio": {
             "api_key": mask_secret(settings.phaxio_api_key),
@@ -736,6 +753,8 @@ async def validate_settings(payload: ValidateSettingsRequest):
 class UpdateSettingsRequest(BaseModel):
     # Core
     backend: Optional[str] = None  # 'phaxio' | 'sinch' | 'sip'
+    outbound_backend: Optional[str] = None  # hybrid outbound
+    inbound_backend: Optional[str] = None   # hybrid inbound
     require_api_key: Optional[bool] = None
     enforce_public_https: Optional[bool] = None
     public_api_url: Optional[str] = None
@@ -829,6 +848,16 @@ def update_admin_settings(payload: UpdateSettingsRequest):
     # Core
     if payload.backend:
         _set_env_opt("FAX_BACKEND", payload.backend)
+        # If specific hybrid fields not provided, set both to legacy value for convenience
+        if payload.outbound_backend is None:
+            _set_env_opt("FAX_OUTBOUND_BACKEND", payload.backend)
+        if payload.inbound_backend is None:
+            _set_env_opt("FAX_INBOUND_BACKEND", payload.backend)
+    # Hybrid overrides when provided
+    if payload.outbound_backend:
+        _set_env_opt("FAX_OUTBOUND_BACKEND", payload.outbound_backend)
+    if payload.inbound_backend:
+        _set_env_opt("FAX_INBOUND_BACKEND", payload.inbound_backend)
     _set_env_bool("REQUIRE_API_KEY", payload.require_api_key)
     _set_env_bool("ENFORCE_PUBLIC_HTTPS", payload.enforce_public_https)
     _set_env_opt("PUBLIC_API_URL", payload.public_api_url)
@@ -915,11 +944,17 @@ def update_admin_settings(payload: UpdateSettingsRequest):
     # Apply live
     # Detect backend/storage changes for guidance
     old_backend = settings.fax_backend
+    old_ob = active_outbound()
+    old_ib = active_inbound()
     old_storage = (settings.storage_backend or "local").lower()
     reload_settings()
     new_backend = settings.fax_backend
+    new_ob = active_outbound()
+    new_ib = active_inbound()
     new_storage = (settings.storage_backend or "local").lower()
     backend_changed = (old_backend != new_backend)
+    outbound_changed = (old_ob != new_ob)
+    inbound_changed = (old_ib != new_ib)
     storage_changed = (old_storage != new_storage) or any(storage_fields)
     # Changing MCP flags typically requires restart to remount
     mcp_changed = any([
@@ -940,8 +975,10 @@ def update_admin_settings(payload: UpdateSettingsRequest):
     out = get_admin_settings()
     out["_meta"] = {
         "backend_changed": backend_changed,
+        "outbound_changed": outbound_changed,
+        "inbound_changed": inbound_changed,
         "storage_changed": storage_changed,
-        "restart_recommended": backend_changed or new_backend == "sip" or storage_changed or mcp_changed,
+        "restart_recommended": backend_changed or new_ob == "sip" or storage_changed or mcp_changed,
     }
     return out
 
@@ -1571,7 +1608,7 @@ def admin_tunnel_pair() -> PairOut:
 @app.get("/admin/inbound/callbacks", dependencies=[Depends(require_admin)])
 def admin_inbound_callbacks():
     base = settings.public_api_url.rstrip("/")
-    backend = settings.fax_backend
+    backend = active_inbound()
     out: dict[str, Any] = {"backend": backend, "callbacks": []}
     if backend == "phaxio":
         out["callbacks"].append({
@@ -1652,6 +1689,7 @@ def admin_inbound_simulate(payload: SimulateInboundIn):
             to_number=payload.to,
             status=payload.status or "received",
             backend=backend,
+            inbound_backend=active_inbound(),
             provider_sid=None,
             pages=payload.pages,
             size_bytes=size_bytes,
@@ -1801,12 +1839,16 @@ async def admin_refresh_job(job_id: str):
 @app.post("/admin/diagnostics/run", dependencies=[Depends(require_admin)])
 async def run_diagnostics():
     """Run bounded, non-destructive diagnostics for v1."""
+    ob = active_outbound()
+    ib = active_inbound()
     diag: dict[str, Any] = {
         "timestamp": datetime.utcnow().isoformat(),
         "backend": settings.fax_backend,
+        "outbound_backend": ob,
+        "inbound_backend": ib,
         "checks": {},
     }
-    # Backend configured flags
+    # Legacy single-backend flags (kept for compatibility in UI until hybrid UI lands)
     if settings.fax_backend == "phaxio":
         diag["checks"]["phaxio"] = {
             "api_key_set": bool(settings.phaxio_api_key),
@@ -1838,6 +1880,48 @@ async def run_diagnostics():
             sip_checks["ami_reachable"] = False
             sip_checks["ami_error"] = str(e)
         diag["checks"]["sip"] = sip_checks
+
+    # Hybrid per-direction checks (trait-driven)
+    # Outbound
+    out: dict[str, Any] = {"backend": ob, "requires_ami": providerHasTrait("outbound", "requires_ami")}
+    if ob == "phaxio":
+        out["auth_configured"] = bool(settings.phaxio_api_key and settings.phaxio_api_secret)
+        out["public_url_https"] = settings.public_api_url.startswith("https://")
+    elif ob == "sinch":
+        out["auth_configured"] = bool(settings.sinch_project_id and settings.sinch_api_key and settings.sinch_api_secret)
+    elif ob == "signalwire":
+        out["auth_configured"] = bool(settings.signalwire_space_url and settings.signalwire_project_id and settings.signalwire_api_token)
+    elif ob == "documo":
+        out["auth_configured"] = bool(settings.documo_api_key)
+    if providerHasTrait("outbound", "requires_ami"):
+        out["ami_password_not_default"] = settings.ami_password != "changeme"
+        try:
+            from .ami import test_ami_connection
+            out["ami_reachable"] = await test_ami_connection(settings.ami_host, settings.ami_port, settings.ami_username, settings.ami_password)
+        except Exception as e:
+            out["ami_reachable"] = False
+            out["ami_error"] = str(e)
+    diag["checks"]["outbound"] = out
+
+    # Inbound
+    inbound: dict[str, Any] = {
+        "backend": ib,
+        "enabled": settings.inbound_enabled,
+        "requires_ami": providerHasTrait("inbound", "requires_ami"),
+        "needs_storage": providerHasTrait("inbound", "needs_storage"),
+        "inbound_verification": providerTraitValue("inbound", "inbound_verification"),
+    }
+    if settings.inbound_enabled:
+        # Derive verification posture from provider traits
+        # Map to concrete flags when applicable
+        if providerHasTrait("inbound", "requires_ami"):
+            inbound["asterisk_secret_set"] = bool(settings.asterisk_inbound_secret)
+        if ib == "phaxio":
+            inbound["signature_verification"] = settings.phaxio_inbound_verify_signature
+        if ib == "sinch":
+            inbound["basic_auth_configured"] = bool(settings.sinch_inbound_basic_user)
+            inbound["hmac_configured"] = bool(settings.sinch_inbound_hmac_secret)
+    diag["checks"]["inbound"] = inbound
 
     # System checks
     sys: dict[str, Any] = {
@@ -1874,32 +1958,33 @@ async def run_diagnostics():
         pass
     diag["checks"]["system"] = sys
 
-    # Storage
-    if settings.storage_backend.lower() == "s3":
-        st = {
-            "type": "s3",
-            "bucket_set": bool(settings.s3_bucket),
-            "region_set": bool(settings.s3_region),
-            "kms_enabled": bool(settings.s3_kms_key_id),
-        }
-        if settings.s3_bucket and os.getenv("ENABLE_S3_DIAGNOSTICS", "false").lower() == "true":
-            try:
-                import boto3  # type: ignore
-                from botocore.config import Config  # type: ignore
-                s3 = boto3.client(
-                    "s3",
-                    region_name=(settings.s3_region or None),
-                    endpoint_url=(settings.s3_endpoint_url or None),
-                    config=Config(signature_version="s3v4"),
-                )
-                s3.head_bucket(Bucket=settings.s3_bucket)
-                st["accessible"] = True
-            except Exception as e:
-                st["accessible"] = False
-                st["error"] = str(e)[:100]
-        diag["checks"]["storage"] = st
-    else:
-        diag["checks"]["storage"] = {"type": "local", "warning": "Local storage only suitable for development"}
+    # Storage diagnostics only when required by inbound provider traits
+    if providerHasTrait("inbound", "needs_storage"):
+        if settings.storage_backend.lower() == "s3":
+            st = {
+                "type": "s3",
+                "bucket_set": bool(settings.s3_bucket),
+                "region_set": bool(settings.s3_region),
+                "kms_enabled": bool(settings.s3_kms_key_id),
+            }
+            if settings.s3_bucket and os.getenv("ENABLE_S3_DIAGNOSTICS", "false").lower() == "true":
+                try:
+                    import boto3  # type: ignore
+                    from botocore.config import Config  # type: ignore
+                    s3 = boto3.client(
+                        "s3",
+                        region_name=(settings.s3_region or None),
+                        endpoint_url=(settings.s3_endpoint_url or None),
+                        config=Config(signature_version="s3v4"),
+                    )
+                    s3.head_bucket(Bucket=settings.s3_bucket)
+                    st["accessible"] = True
+                except Exception as e:
+                    st["accessible"] = False
+                    st["error"] = str(e)[:100]
+            diag["checks"]["storage"] = st
+        else:
+            diag["checks"]["storage"] = {"type": "local", "warning": "Local storage only suitable for development"}
 
     # Inbound flags
     if settings.inbound_enabled:
@@ -1925,7 +2010,7 @@ async def run_diagnostics():
         plugins_info: dict[str, Any] = {
             "v3_enabled": settings.feature_v3_plugins,
             "plugin_install_enabled": settings.feature_plugin_install,
-            "active_outbound": settings.fax_backend,
+            "active_outbound": ob,
             "installed": 0,
             "manifests": [],
         }
@@ -1973,23 +2058,35 @@ async def run_diagnostics():
         # Don't break diagnostics on plugin scan errors
         pass
 
+    # Traits schema issues (expose unknown trait keys for CI visibility)
+    try:
+        from .config import CANONICAL_TRAIT_KEYS, get_traits_schema_issues
+        diag["checks"]["traits_schema"] = {
+            "allowed_keys": sorted(list(CANONICAL_TRAIT_KEYS)),
+            "issues": get_traits_schema_issues(),
+        }
+    except Exception:
+        pass
+
     # Summary
     critical: list[str] = []
     warnings: list[str] = []
-    if settings.fax_backend == "phaxio":
-        p = diag["checks"].get("phaxio", {})
-        if not p.get("api_key_set"):
+    if ob == "phaxio":
+        p = diag["checks"].get("outbound", {})
+        if not p.get("auth_configured"):
             critical.append("Phaxio API key not set")
-        if not p.get("callback_url_set"):
-            warnings.append("PHAXIO_STATUS_CALLBACK_URL not set")
         if not p.get("public_url_https"):
             warnings.append("PUBLIC_API_URL should be HTTPS")
-    if settings.fax_backend == "sip":
-        s = diag["checks"].get("sip", {})
+    if ob == "sip":
+        s = diag["checks"].get("outbound", {})
         if not s.get("ami_password_not_default"):
             critical.append("AMI password is default 'changeme'")
         if not s.get("ami_reachable"):
             warnings.append("AMI not reachable")
+    if settings.inbound_enabled and ib == "sip":
+        inbound = diag["checks"].get("inbound", {})
+        if not inbound.get("asterisk_secret_set"):
+            critical.append("ASTERISK_INBOUND_SECRET not set for inbound SIP")
     # Ghostscript is required for all backends
     if not sys.get("ghostscript"):
         critical.append("Ghostscript (gs) not installed — required for fax file processing")
@@ -2014,7 +2111,11 @@ async def run_diagnostics():
 def export_settings_env():
     """Generate a .env snippet for current settings (secrets redacted)."""
     lines: List[str] = []
+    ob = active_outbound()
+    ib = active_inbound()
     lines.append(f"FAX_BACKEND={settings.fax_backend}")
+    lines.append(f"FAX_OUTBOUND_BACKEND={ob}")
+    lines.append(f"FAX_INBOUND_BACKEND={ib}")
     lines.append(f"REQUIRE_API_KEY={str(settings.require_api_key).lower()}")
     lines.append(f"ENFORCE_PUBLIC_HTTPS={str(settings.enforce_public_https).lower()}")
     lines.append("# NOTE: Secrets are redacted below. Fill in actual values before use.")
@@ -2059,6 +2160,9 @@ def _export_settings_full_env() -> str:
     kv: dict[str, str] = {}
     # Core
     kv["FAX_BACKEND"] = settings.fax_backend
+    # Hybrid backends (keep legacy as fallback)
+    kv["FAX_OUTBOUND_BACKEND"] = active_outbound()
+    kv["FAX_INBOUND_BACKEND"] = active_inbound()
     kv["REQUIRE_API_KEY"] = "true" if settings.require_api_key else "false"
     kv["ENFORCE_PUBLIC_HTTPS"] = "true" if settings.enforce_public_https else "false"
     kv["FAX_DISABLED"] = "true" if settings.fax_disabled else "false"
@@ -2171,6 +2275,7 @@ def persist_settings(payload: PersistSettingsIn):
 
 @app.post("/fax", response_model=FaxJobOut, status_code=202, dependencies=[Depends(require_fax_send)])
 async def send_fax(background: BackgroundTasks, to: str = Form(...), file: UploadFile = File(...)):
+    ob = active_outbound()
     # Validate destination
     if not PHONE_RE.match(to):
         raise HTTPException(400, detail="'to' must be E.164 or digits only")
@@ -2237,39 +2342,26 @@ async def send_fax(background: BackgroundTasks, to: str = Form(...), file: Uploa
         # Copy the PDF directly
         shutil.copyfile(orig_path, pdf_path)
 
-    # Backend-specific file preparation
-    if settings.fax_backend == "phaxio":
-        # Cloud backend: skip TIFF conversion; provider callback will set final pages
+    # Backend-specific file preparation (trait-driven)
+    pages = None
+    manifest_path = os.path.join(os.getcwd(), "config", "providers", ob, "manifest.json")
+    requires_tiff = False
+    try:
+        from .config import providerHasTrait
+        requires_tiff = bool(providerHasTrait("outbound", "requires_tiff"))
+    except Exception:
+        requires_tiff = (ob in {"sip", "freeswitch"})
+    if settings.feature_v3_plugins and os.path.exists(manifest_path):
         pages = None
-        if settings.fax_disabled:
-            # Test mode: nothing else to prepare
-            pass
-    elif settings.fax_backend == "sinch":
-        # Sinch cloud backend: no local TIFF; provider handles rasterization
-        pages = None
-        # nothing else to prepare here
-    elif settings.fax_backend == "signalwire":
-        # Cloud backend using Compatibility Fax API; no local TIFF
-        pages = None
-    elif settings.fax_backend == "freeswitch":
-        # Self-hosted FreeSWITCH requires TIFF
+    elif requires_tiff:
         if settings.fax_disabled:
             pages = 1
             with open(tiff_path, "wb") as f:
                 f.write(b"TIFF_PLACEHOLDER")
         else:
             pages, _ = pdf_to_tiff(pdf_path, tiff_path)
-    elif settings.feature_v3_plugins and os.path.exists(os.path.join(os.getcwd(), "config", "providers", settings.fax_backend, "manifest.json")):
-        # Manifest providers: use tokenized PDF URL later; no TIFF
-        pages = None
     else:
-        # SIP/Asterisk requires TIFF
-        if settings.fax_disabled:
-            pages = 1
-            with open(tiff_path, "wb") as f:
-                f.write(b"TIFF_PLACEHOLDER")
-        else:
-            pages, _ = pdf_to_tiff(pdf_path, tiff_path)
+        pages = None
 
     # Create job in DB with backend info
     with SessionLocal() as db:
@@ -2280,27 +2372,28 @@ async def send_fax(background: BackgroundTasks, to: str = Form(...), file: Uploa
             tiff_path=tiff_path,
             status="queued",
             pages=pages,
-            backend=settings.fax_backend,
+            backend=ob,
             created_at=datetime.utcnow(),
             updated_at=datetime.utcnow(),
         )
         db.add(job)
         db.commit()
-    audit_event("job_created", job_id=job_id, backend=settings.fax_backend)
+    audit_event("job_created", job_id=job_id, backend=ob)
 
     # Kick off fax sending based on backend
     if not settings.fax_disabled:
-        if settings.fax_backend == "phaxio":
+        if ob == "phaxio":
             background.add_task(_send_via_phaxio, job_id, to, pdf_path)
-        elif settings.fax_backend == "sinch":
+        elif ob == "sinch":
             background.add_task(_send_via_sinch, job_id, to, pdf_path)
-        elif settings.fax_backend == "signalwire":
+        elif ob == "signalwire":
             background.add_task(_send_via_signalwire, job_id, to, pdf_path)
-        elif settings.fax_backend == "freeswitch":
+        elif ob == "freeswitch":
             background.add_task(_send_via_freeswitch, job_id, to, tiff_path)
-        elif settings.feature_v3_plugins and os.path.exists(os.path.join(os.getcwd(), "config", "providers", settings.fax_backend, "manifest.json")):
+        elif settings.feature_v3_plugins and os.path.exists(manifest_path):
             background.add_task(_send_via_manifest, job_id, to, pdf_path)
         else:
+            # Default to SIP/Asterisk
             background.add_task(_originate_job, job_id, to, tiff_path)
 
     return _serialize_job(job)
@@ -2950,6 +3043,10 @@ def get_inbound_pdf(inbound_id: str, token: Optional[str] = Query(default=None),
 def asterisk_inbound(payload: dict, x_internal_secret: Optional[str] = Header(default=None)):
     if not settings.inbound_enabled:
         raise HTTPException(404, detail="Inbound not enabled")
+    # Gate by active inbound backend (allow when not explicitly set for backward compatibility)
+    if os.getenv("FAX_INBOUND_BACKEND") and active_inbound() != "sip":
+        audit_event("inbound_route_blocked", route="/_internal/asterisk/inbound", active_inbound=active_inbound(), inbound_enabled=settings.inbound_enabled)
+        raise HTTPException(404, detail="Inbound route not active for current backend")
     if not settings.asterisk_inbound_secret:
         raise HTTPException(401, detail="Internal secret not configured")
     if x_internal_secret != settings.asterisk_inbound_secret:
@@ -3005,6 +3102,7 @@ def asterisk_inbound(payload: dict, x_internal_secret: Optional[str] = Header(de
             to_number=to_number,
             status=faxstatus or "received",
             backend="sip",
+            inbound_backend=active_inbound(),
             provider_sid=uniqueid or None,
             pages=int(faxpages) if faxpages else pages,
             size_bytes=size_bytes,
@@ -3029,6 +3127,9 @@ def asterisk_inbound(payload: dict, x_internal_secret: Optional[str] = Header(de
 async def phaxio_inbound(request: Request):
     if not settings.inbound_enabled:
         raise HTTPException(404, detail="Inbound not enabled")
+    if os.getenv("FAX_INBOUND_BACKEND") and active_inbound() != "phaxio":
+        audit_event("inbound_route_blocked", route="/phaxio-inbound", active_inbound=active_inbound(), inbound_enabled=settings.inbound_enabled)
+        raise HTTPException(404, detail="Inbound route not active for current backend")
     raw = await request.body()
     if settings.phaxio_inbound_verify_signature:
         provided = request.headers.get("X-Phaxio-Signature") or request.headers.get("X-Phaxio-Signature-SHA256")
@@ -3158,6 +3259,9 @@ async def phaxio_inbound(request: Request):
 async def sinch_inbound(request: Request):
     if not settings.inbound_enabled:
         raise HTTPException(404, detail="Inbound not enabled")
+    if os.getenv("FAX_INBOUND_BACKEND") and active_inbound() != "sinch":
+        audit_event("inbound_route_blocked", route="/sinch-inbound", active_inbound=active_inbound(), inbound_enabled=settings.inbound_enabled)
+        raise HTTPException(404, detail="Inbound route not active for current backend")
     raw = await request.body()
     # Verify Basic if configured
     if settings.sinch_inbound_basic_user:
@@ -3249,6 +3353,7 @@ async def sinch_inbound(request: Request):
             to_number=(str(to_number) if to_number else None),
             status=str(status),
             backend="sinch",
+            inbound_backend=active_inbound(),
             provider_sid=str(provider_sid),
             pages=int(pages) if pages else pages_int,
             size_bytes=size_bytes,

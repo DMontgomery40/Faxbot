@@ -25,6 +25,7 @@ class FaxJob(Base):  # type: ignore
     error = Column(Text, nullable=True)
     pages = Column(Integer, nullable=True)
     backend = Column(String(20), nullable=False, default="sip")  # "sip" or cloud provider key
+    outbound_backend = Column(String(20), nullable=True)  # effective outbound backend (hybrid)
     provider_sid = Column(String(100), nullable=True)  # Cloud provider fax ID
     pdf_url = Column(String(512), nullable=True)  # Public URL for PDF (for cloud backend)
     pdf_token = Column(String(128), nullable=True)  # Secure token for PDF fetch
@@ -55,6 +56,7 @@ class InboundFax(Base):  # type: ignore
     to_number = Column(String(64), index=True, nullable=True)
     status = Column(String(32), index=True, nullable=False, default="received")
     backend = Column(String(20), nullable=False)
+    inbound_backend = Column(String(20), nullable=True)  # effective inbound backend (hybrid)
     provider_sid = Column(String(100), nullable=True)
     pages = Column(Integer, nullable=True)
     size_bytes = Column(Integer, nullable=True)
@@ -127,6 +129,18 @@ def _ensure_optional_columns() -> None:
                 conn.exec_driver_sql("ALTER TABLE fax_jobs ADD COLUMN pdf_token VARCHAR(128)")
             if "pdf_token_expires_at" not in cols:
                 conn.exec_driver_sql("ALTER TABLE fax_jobs ADD COLUMN pdf_token_expires_at DATETIME")
+            if "outbound_backend" not in cols:
+                conn.exec_driver_sql("ALTER TABLE fax_jobs ADD COLUMN outbound_backend VARCHAR(20)")
+                # Populate new column with existing backend values
+                conn.exec_driver_sql("UPDATE fax_jobs SET outbound_backend = backend WHERE outbound_backend IS NULL")
+
+            # Inbound table optional columns
+            inb_cols = set()
+            for row in conn.exec_driver_sql("PRAGMA table_info('inbound_faxes')"):
+                inb_cols.add(row[1])
+            if "inbound_backend" not in inb_cols:
+                conn.exec_driver_sql("ALTER TABLE inbound_faxes ADD COLUMN inbound_backend VARCHAR(20)")
+                conn.exec_driver_sql("UPDATE inbound_faxes SET inbound_backend = backend WHERE inbound_backend IS NULL")
     except Exception:
         # Best effort; do not block startup if inspection fails on non-SQLite
         pass

@@ -1,4 +1,6 @@
 import os
+import json
+from typing import Any, Dict, Optional
 from pydantic import BaseModel, Field
 
 
@@ -45,7 +47,11 @@ class Settings(BaseModel):
     require_api_key: bool = Field(default_factory=lambda: os.getenv("REQUIRE_API_KEY", "false").lower() in {"1", "true", "yes"})
 
     # Fax Backend Selection
+    # Legacy single-backend env (fallback for both outbound/inbound when dual is unset)
     fax_backend: str = Field(default_factory=lambda: os.getenv("FAX_BACKEND", "phaxio").lower())  # default to cloud; require explicit 'sip' for telephony
+    # Dual-backend (hybrid) envs — when set, override legacy for each direction
+    outbound_backend: str = Field(default_factory=lambda: (os.getenv("FAX_OUTBOUND_BACKEND", "") or os.getenv("FAX_BACKEND", "phaxio")).lower())
+    inbound_backend: str = Field(default_factory=lambda: (os.getenv("FAX_INBOUND_BACKEND", "") or os.getenv("FAX_BACKEND", "phaxio")).lower())
 
     # Asterisk AMI (for SIP backend)
     ami_host: str = Field(default_factory=lambda: os.getenv("ASTERISK_AMI_HOST", "asterisk"))
@@ -172,3 +178,213 @@ def reload_settings() -> None:
     new = Settings()
     for name in new.model_fields.keys():  # type: ignore[attr-defined]
         setattr(settings, name, getattr(new, name))
+    # Rebuild traits cache on settings reload
+    try:
+        _refresh_traits_cache()
+    except Exception:
+        pass
+
+# ===== Provider traits registry (declarative) =====
+_TRAITS_CACHE: Dict[str, Any] = {"registry": {}, "loaded_mtime": 0.0, "schema_issues": {}}
+
+# Canonical trait keys — schema contract
+CANONICAL_TRAIT_KEYS: set[str] = {
+    "requires_ghostscript",
+    "requires_ami",
+    "requires_tiff",
+    "supports_inbound",
+    "inbound_verification",
+    "needs_storage",
+    "outbound_status_only",
+}
+
+
+def _traits_file_path() -> str:
+    # Project-relative config folder
+    return os.path.join(os.getcwd(), "config", "provider_traits.json")
+
+
+def _providers_dir() -> str:
+    return os.path.join(os.getcwd(), "config", "providers")
+
+
+def _read_json(path: str) -> Any:
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return None
+    except Exception:
+        return None
+
+
+def _load_base_traits() -> Dict[str, Dict[str, Any]]:
+    base = _read_json(_traits_file_path())
+    reg: Dict[str, Dict[str, Any]] = {}
+    if not base:
+        return reg
+    # Accept either an object keyed by id, or a list of providers
+    if isinstance(base, dict):
+        for pid, obj in base.items():
+            if isinstance(obj, dict):
+                obj.setdefault("id", pid)
+                reg[pid] = obj
+    elif isinstance(base, list):
+        for obj in base:
+            if isinstance(obj, dict) and obj.get("id"):
+                reg[str(obj["id"])]= obj
+    return reg
+
+
+def _merge(a: Dict[str, Any], b: Dict[str, Any]) -> Dict[str, Any]:
+    out = dict(a or {})
+    for k, v in (b or {}).items():
+        if k == "traits" and isinstance(v, dict):
+            tv = dict(out.get("traits") or {})
+            # Filter unknown trait keys and record issues
+            unknown = [kk for kk in v.keys() if kk not in CANONICAL_TRAIT_KEYS]
+            if unknown:
+                issues = _TRAITS_CACHE.get("schema_issues") or {}
+                pid = (a.get("id") or b.get("id") or "unknown")
+                issues.setdefault("unknown_trait_keys", {})[str(pid)] = sorted(set(unknown))
+                _TRAITS_CACHE["schema_issues"] = issues
+            # Merge only canonical keys
+            for kk, vv in v.items():
+                if kk in CANONICAL_TRAIT_KEYS:
+                    tv[kk] = vv
+            out["traits"] = tv
+        else:
+            out[k] = v
+    return out
+
+
+def _scan_manifest_traits() -> Dict[str, Dict[str, Any]]:
+    results: Dict[str, Dict[str, Any]] = {}
+    pdir = _providers_dir()
+    if not os.path.isdir(pdir):
+        return results
+    for pid in os.listdir(pdir):
+        mpath = os.path.join(pdir, pid, "manifest.json")
+        if not os.path.exists(mpath):
+            continue
+        data = _read_json(mpath)
+        if not isinstance(data, dict):
+            continue
+        # Traits are optional in manifests; use if present
+        traits = data.get("traits") if isinstance(data.get("traits"), dict) else None
+        kind = data.get("kind") if isinstance(data.get("kind"), str) else None
+        obj: Dict[str, Any] = {"id": pid}
+        if kind:
+            obj["kind"] = kind
+        if traits:
+            obj["traits"] = traits
+        if obj:
+            results[pid] = obj
+    return results
+
+
+def _build_provider_registry() -> Dict[str, Dict[str, Any]]:
+    reg = _load_base_traits()
+    # Merge in manifests (override base)
+    man = _scan_manifest_traits()
+    for pid, obj in man.items():
+        base = reg.get(pid, {"id": pid, "traits": {}})
+        reg[pid] = _merge(base, obj)
+    return reg
+
+
+def _refresh_traits_cache() -> None:
+    try:
+        mtime = 0.0
+        tf = _traits_file_path()
+        if os.path.exists(tf):
+            mtime = os.stat(tf).st_mtime
+        if _TRAITS_CACHE.get("loaded_mtime") != mtime:
+            _TRAITS_CACHE["schema_issues"] = {}
+            _TRAITS_CACHE["registry"] = _build_provider_registry()
+            _TRAITS_CACHE["loaded_mtime"] = mtime
+        else:
+            # Always rescan manifests since they can change without touching the traits file
+            _TRAITS_CACHE["schema_issues"] = {}
+            _TRAITS_CACHE["registry"] = _build_provider_registry()
+    except Exception:
+        _TRAITS_CACHE["registry"] = {}
+        _TRAITS_CACHE["loaded_mtime"] = 0.0
+
+
+def get_provider_registry() -> Dict[str, Dict[str, Any]]:
+    if not _TRAITS_CACHE.get("registry"):
+        _refresh_traits_cache()
+    return _TRAITS_CACHE.get("registry") or {}
+
+
+def get_traits_schema_issues() -> Dict[str, Any]:
+    return _TRAITS_CACHE.get("schema_issues") or {}
+
+
+def get_provider_traits(provider_id: Optional[str]) -> Dict[str, Any]:
+    if not provider_id:
+        return {}
+    return get_provider_registry().get(provider_id, {})
+
+
+def valid_backends() -> set[str]:
+    return set(get_provider_registry().keys())
+
+
+# Valid backend identifiers supported by the core (dynamic)
+VALID_BACKENDS = valid_backends()
+
+
+def active_outbound() -> str:
+    """Return the effective outbound backend, normalizing and validating.
+    Falls back to legacy fax_backend when dual env is not set or invalid.
+    """
+    ob = (settings.outbound_backend or settings.fax_backend or "").strip().lower()
+    return ob if ob in valid_backends() else settings.fax_backend
+
+
+def active_inbound() -> str:
+    """Return the effective inbound backend, normalizing and validating.
+    Falls back to legacy fax_backend when dual env is not set or invalid.
+    """
+    ib = (settings.inbound_backend or settings.fax_backend or "").strip().lower()
+    return ib if ib in valid_backends() else settings.fax_backend
+
+
+def providerHasTrait(direction: str, trait_name: str) -> bool:
+    try:
+        pid = active_outbound() if direction == "outbound" else active_inbound()
+        if direction == "any":
+            return providerHasTrait("outbound", trait_name) or providerHasTrait("inbound", trait_name)
+        tr = (get_provider_traits(pid).get("traits") or {})
+        val = tr.get(trait_name)
+        return bool(val)
+    except Exception:
+        return False
+
+
+def providerTraitValue(direction: str, trait_name: str):
+    try:
+        pid = active_outbound() if direction == "outbound" else active_inbound()
+        if direction == "any":
+            # Prefer outbound's value, else inbound
+            v = providerTraitValue("outbound", trait_name)
+            return v if v is not None else providerTraitValue("inbound", trait_name)
+        tr = (get_provider_traits(pid).get("traits") or {})
+        return tr.get(trait_name)
+    except Exception:
+        return None
+
+
+def is_inbound_sip() -> bool:
+    # SIP-like inbound if AMI is required by inbound provider
+    return providerHasTrait("inbound", "requires_ami")
+
+
+def is_outbound_cloud() -> bool:
+    try:
+        pid = active_outbound()
+        return (get_provider_traits(pid).get("kind") or "").lower() == "cloud"
+    except Exception:
+        return False
