@@ -22,7 +22,7 @@ class Plugin(IdentityPlugin):
 
     async def test_connection(self) -> Dict[str, Any]:
         try:
-            db_async = import_module("app.db.async_db")
+            db_async = import_module("app.database.async_db")
             engine = getattr(db_async, "engine")
             async with engine.connect() as conn:  # type: ignore
                 await conn.exec_driver_sql("SELECT 1")
@@ -36,7 +36,7 @@ class Plugin(IdentityPlugin):
             try:
                 # ensure models are imported and create tables
                 import app.identity_models as _idm  # noqa: F401
-                db_async = import_module("app.db.async_db")
+                db_async = import_module("app.database.async_db")
                 from app.db import Base
                 await getattr(db_async, "create_tables_dev_only")(Base)  # type: ignore
             except Exception:
@@ -65,7 +65,7 @@ class Plugin(IdentityPlugin):
 
     async def get_user(self, user_id: str) -> Optional[User]:
         from app.identity_models import DBUser
-        db_async = import_module("app.db.async_db")
+        db_async = import_module("app.database.async_db")
         AsyncSessionLocal = getattr(db_async, "AsyncSessionLocal")
         async with AsyncSessionLocal() as db:
             res = await db.execute(select(DBUser).where(DBUser.id == user_id))
@@ -76,7 +76,7 @@ class Plugin(IdentityPlugin):
 
     async def find_user_by_username(self, username: str) -> Optional[User]:
         from app.identity_models import DBUser
-        db_async = import_module("app.db.async_db")
+        db_async = import_module("app.database.async_db")
         AsyncSessionLocal = getattr(db_async, "AsyncSessionLocal")
         async with AsyncSessionLocal() as db:
             res = await db.execute(select(DBUser).where(DBUser.username == username))
@@ -88,7 +88,7 @@ class Plugin(IdentityPlugin):
     async def create_user(self, username: str, password: str, traits: Dict[str, Any] | None = None) -> User:
         from app.identity_models import DBUser
         from app.db import Base
-        db_async = import_module("app.db.async_db")
+        db_async = import_module("app.database.async_db")
         AsyncSessionLocal = getattr(db_async, "AsyncSessionLocal")
         # ensure tables exist in dev mode if requested
         if os.getenv("FAXBOT_DEV_IDENTITY_INIT", "false").lower() in {"1","true","yes"}:
@@ -114,7 +114,7 @@ class Plugin(IdentityPlugin):
 
     async def authenticate_password(self, username: str, password: str) -> AuthResult:
         from app.identity_models import DBUser
-        db_async = import_module("app.db.async_db")
+        db_async = import_module("app.database.async_db")
         AsyncSessionLocal = getattr(db_async, "AsyncSessionLocal")
         async with AsyncSessionLocal() as db:
             res = await db.execute(select(DBUser).where(DBUser.username == username))

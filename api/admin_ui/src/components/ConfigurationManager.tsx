@@ -1,601 +1,544 @@
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Box,
-  Paper,
+  Card,
+  CardContent,
   Typography,
   Button,
   Alert,
+  CircularProgress,
   Grid,
   Chip,
-  CircularProgress,
-  Card,
-  CardContent,
-  Stack,
   TextField,
   MenuItem,
-  Link,
-  useTheme,
-  useMediaQuery,
+  FormControlLabel,
+  Switch,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  Paper,
+  IconButton,
   Tooltip,
-  IconButton
+  Accordion,
+  AccordionSummary,
+  AccordionDetails,
+  Stack,
 } from '@mui/material';
 import {
-  Refresh as RefreshIcon,
-  Storage as StorageIcon,
-  CloudQueue as CloudIcon,
   Settings as SettingsIcon,
+  Refresh as RefreshIcon,
+  Edit as EditIcon,
   Visibility as VisibilityIcon,
   VisibilityOff as VisibilityOffIcon,
-  Info as InfoIcon,
-  FlashOn as FlashOnIcon
+  ExpandMore as ExpandMoreIcon,
+  Cached as CacheIcon,
+  Save as SaveIcon,
+  Cancel as CancelIcon,
+  Security as SecurityIcon,
+  Storage as StorageIcon,
+  Person as PersonIcon,
+  Business as BusinessIcon,
+  Group as GroupIcon,
+  Public as PublicIcon,
 } from '@mui/icons-material';
-
 import AdminAPIClient from '../api/client';
 
 interface ConfigurationManagerProps {
   client: AdminAPIClient;
-  docsBase?: string;
 }
 
-interface ConfigItem {
-  key: string;
+interface ConfigValue {
   value: any;
-  source: 'db' | 'env' | 'default' | 'cache' | null;
+  source: 'db' | 'env' | 'default' | 'cache';
   level?: string;
+  level_id?: string;
+  encrypted?: boolean;
+  updated_at?: string;
 }
 
-interface HierarchyLevel {
-  user: any;
-  group: any;
-  department: any;
-  tenant: any;
-  global: any;
-  env: any;
-  default: any;
+interface ConfigLayer {
+  value: any;
+  source: 'db' | 'env' | 'default' | 'cache';
+  level: string;
+  level_id?: string;
+  encrypted: boolean;
+  updated_at?: string;
 }
 
-interface HierarchyData {
-  key: string;
-  levels: HierarchyLevel;
-  effective: ConfigItem;
-}
-
-// All available configuration keys organized by category
-const CONFIG_CATEGORIES = {
-  System: [
-    'system.public_api_url',
-  ],
-  API: [
-    'api.rate_limit_rpm',
-    'api.session_timeout_hours',
-  ],
-  Security: [
-    'security.enforce_public_https',
-    'security.require_mfa',
-    'security.password_min_length',
-  ],
-  Storage: [
-    'storage.s3.bucket',
-    'storage.s3.region',
-    'storage.s3.endpoint_url',
-  ],
-  Fax: [
-    'fax.timeout_seconds',
-    'fax.max_pages',
-    'fax.retry_attempts',
-  ],
-  Provider: [
-    'provider.health_check_interval',
-    'provider.circuit_breaker_threshold',
-    'provider.circuit_breaker_timeout',
-  ],
-  Webhook: [
-    'webhook.verify_signatures',
-  ],
-  Compliance: [
-    'hipaa.enforce_compliance',
-    'audit.retention_days',
-  ],
-};
-
-const ALL_KEYS = Object.values(CONFIG_CATEGORIES).flat();
-
-function ConfigurationManager({ client, docsBase }: ConfigurationManagerProps) {
-  const theme = useTheme();
-  const isMobile = useMediaQuery(theme.breakpoints.down('md'));
-  
+const ConfigurationManager: React.FC<ConfigurationManagerProps> = ({ client }) => {
+  const [effectiveConfig, setEffectiveConfig] = useState<Record<string, ConfigValue> | null>(null);
+  const [safeKeys, setSafeKeys] = useState<Record<string, any>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState<string | null>(null);
-  const [effectiveConfig, setEffectiveConfig] = useState<Record<string, ConfigItem>>({});
-  const [hierarchyData, setHierarchyData] = useState<Record<string, HierarchyData>>({});
-  const [safeKeys, setSafeKeys] = useState<Record<string, any>>({});
-  const [selectedKey, setSelectedKey] = useState<string>('');
-  const [showValues, setShowValues] = useState<Record<string, boolean>>({});
-  const [selectedCategory, setSelectedCategory] = useState<string>('All');
-  const [searchTerm, setSearchTerm] = useState<string>('');
-  const [cacheStats] = useState<any>({ backend: 'memory', memory_items: 0 });
+  const [cacheStats, setCacheStats] = useState<any>(null);
 
-  // Filter keys based on search and category
-  const filteredKeys = ALL_KEYS.filter(key => {
-    const matchesSearch = searchTerm === '' || key.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesCategory = selectedCategory === 'All' ||
-      Object.entries(CONFIG_CATEGORIES).some(([cat, keys]) =>
-        cat === selectedCategory && keys.includes(key)
-      );
-    return matchesSearch && matchesCategory;
-  });
+  // Edit dialog state
+  const [editDialogOpen, setEditDialogOpen] = useState(false);
+  const [editingKey, setEditingKey] = useState<string>('');
+  const [editingValue, setEditingValue] = useState<string>('');
+  const [editingLevel, setEditingLevel] = useState<string>('global');
+  const [editingLevelId, setEditingLevelId] = useState<string>('');
+  const [editingReason, setEditingReason] = useState<string>('Admin panel update');
+  const [editingEncrypt, setEditingEncrypt] = useState<boolean>(false);
 
-  // Check if user has admin role for configuration management
-  // TODO: Implement proper role-based access control with userTraits
-  const hasConfigAccess = true;
+  // Hierarchy dialog state
+  const [hierarchyDialogOpen, setHierarchyDialogOpen] = useState(false);
+  const [hierarchyKey, setHierarchyKey] = useState<string>('');
+  const [hierarchyLayers, setHierarchyLayers] = useState<ConfigLayer[]>([]);
+  const [hierarchyLoading, setHierarchyLoading] = useState(false);
 
-  const maskSensitive = (value: any, key: string): string => {
-    if (value === null || value === undefined) return 'Not set';
-    const str = String(value);
+  // Visibility state for masked values
+  const [visibleSecrets, setVisibleSecrets] = useState<Set<string>>(new Set());
 
-    // Mask potentially sensitive keys
-    if (key.includes('key') || key.includes('secret') || key.includes('password') || key.includes('token')) {
-      if (str.length <= 4) return '*'.repeat(str.length);
-      return str.substring(0, 4) + '*'.repeat(Math.max(0, str.length - 4));
-    }
+  const levels = [
+    { value: 'global', label: 'Global', icon: <PublicIcon fontSize="small" /> },
+    { value: 'tenant', label: 'Tenant', icon: <BusinessIcon fontSize="small" /> },
+    { value: 'department', label: 'Department', icon: <GroupIcon fontSize="small" /> },
+    { value: 'group', label: 'Group', icon: <GroupIcon fontSize="small" /> },
+    { value: 'user', label: 'User', icon: <PersonIcon fontSize="small" /> },
+  ];
 
-    return str;
-  };
+  useEffect(() => {
+    loadEffectiveConfig();
+    loadSafeKeys();
+  }, []);
 
-  const getSourceIcon = (source: string | null) => {
-    switch (source) {
-      case 'db': return <StorageIcon fontSize="small" />;
-      case 'env': return <CloudIcon fontSize="small" />;
-      case 'default': return <SettingsIcon fontSize="small" />;
-      case 'cache': return <FlashOnIcon fontSize="small" />;
-      default: return <InfoIcon fontSize="small" />;
-    }
-  };
-
-  const getSourceColor = (source: string | null): 'primary' | 'secondary' | 'default' | 'success' | 'warning' => {
-    switch (source) {
-      case 'db': return 'primary';
-      case 'env': return 'warning';
-      case 'default': return 'secondary';
-      case 'cache': return 'success';
-      default: return 'default';
-    }
-  };
-
-  const fetchEffectiveConfig = async () => {
+  const loadEffectiveConfig = async () => {
+    setLoading(true);
+    setError(null);
     try {
-      setLoading(true);
-      setError(null);
+      const result = await client.getEffectiveConfig();
+      setEffectiveConfig(result.values || {});
+      setCacheStats(result.cache_stats);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load configuration');
+    } finally {
+      setLoading(false);
+    }
+  };
 
-      // Fetch effective config for all keys
-      const response = await client.v4GetEffective({ keys: ALL_KEYS });
-      const configMap: Record<string, ConfigItem> = {};
+  const loadSafeKeys = async () => {
+    try {
+      const keys = await client.getSafeEditKeys();
+      setSafeKeys(keys);
+    } catch (err) {
+      console.warn('Failed to load safe edit keys:', err);
+    }
+  };
 
-      if (response.items) {
-        Object.entries(response.items).forEach(([key, item]: [string, any]) => {
-          configMap[key] = {
-            key,
-            value: item.value,
-            source: item.source,
-            level: item.level
-          };
-        });
+  const loadHierarchy = async (key: string) => {
+    setHierarchyLoading(true);
+    try {
+      const result = await client.getConfigHierarchy(key);
+      setHierarchyLayers(result.layers || []);
+    } catch (err) {
+      console.error('Failed to load hierarchy:', err);
+      setHierarchyLayers([]);
+    } finally {
+      setHierarchyLoading(false);
+    }
+  };
+
+  const handleEdit = (key: string, currentValue: ConfigValue) => {
+    setEditingKey(key);
+    setEditingValue(typeof currentValue.value === 'string' ? currentValue.value : JSON.stringify(currentValue.value, null, 2));
+    setEditingLevel(currentValue.level || 'global');
+    setEditingLevelId(currentValue.level_id || '');
+    setEditingEncrypt(currentValue.encrypted || false);
+    setEditDialogOpen(true);
+  };
+
+  const handleSave = async () => {
+    try {
+      let parsedValue: any = editingValue;
+      try {
+        parsedValue = JSON.parse(editingValue);
+      } catch {
+        // Keep as string if not valid JSON
       }
 
-      setEffectiveConfig(configMap);
+      await client.setConfigValue(
+        editingKey,
+        parsedValue,
+        editingLevel,
+        editingLevelId || undefined,
+        editingReason,
+        editingEncrypt
+      );
 
-      // Cache stats would be fetched here if endpoint exists
-      // For now, we'll skip this as it's not critical
-    } catch (err: any) {
-      console.error('Failed to fetch effective config:', err);
-      setError(err.message || 'Failed to fetch configuration');
-    } finally {
-      setLoading(false);
+      setEditDialogOpen(false);
+      await loadEffectiveConfig(); // Refresh the view
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to save configuration');
     }
   };
 
-  const fetchHierarchy = async (key: string) => {
+  const handleViewHierarchy = async (key: string) => {
+    setHierarchyKey(key);
+    setHierarchyDialogOpen(true);
+    await loadHierarchy(key);
+  };
+
+  const handleFlushCache = async () => {
     try {
-      const response = await client.v4GetHierarchy({ key });
-      setHierarchyData(prev => ({
-        ...prev,
-        [key]: response
-      }));
-    } catch (err: any) {
-      console.error('Failed to fetch hierarchy for key:', key, err);
-      // Don't set error for individual hierarchy failures
+      await client.flushConfigCache();
+      await loadEffectiveConfig(); // Refresh after cache flush
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to flush cache');
     }
   };
 
-  const fetchSafeKeys = async () => {
-    try {
-      const response = await client.v4GetSafeKeys();
-      setSafeKeys(response);
-    } catch (err: any) {
-      console.error('Failed to fetch safe keys:', err);
-      // Non-critical, keep going
+  const toggleSecretVisibility = (key: string) => {
+    const newVisible = new Set(visibleSecrets);
+    if (newVisible.has(key)) {
+      newVisible.delete(key);
+    } else {
+      newVisible.add(key);
     }
+    setVisibleSecrets(newVisible);
   };
 
-  const flushCache = async (scope: string = '*') => {
-    try {
-      setLoading(true);
-      await client.v4FlushCache(scope);
-      setSuccess('Cache flushed successfully');
+  const getSourceChip = (source: string) => {
+    const sourceConfig = {
+      db: { color: 'primary' as const, label: 'Database', icon: <StorageIcon fontSize="small" /> },
+      cache: { color: 'secondary' as const, label: 'Cache', icon: <CacheIcon fontSize="small" /> },
+      env: { color: 'warning' as const, label: 'Environment', icon: <SettingsIcon fontSize="small" /> },
+      default: { color: 'default' as const, label: 'Default', icon: <PublicIcon fontSize="small" /> },
+    };
+    const config = sourceConfig[source as keyof typeof sourceConfig] || sourceConfig.default;
 
-      // Refresh data
-      await fetchEffectiveConfig();
-
-      setTimeout(() => setSuccess(null), 3000);
-    } catch (err: any) {
-      console.error('Failed to flush cache:', err);
-      setError(err.message || 'Failed to flush cache');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const toggleShowValue = (key: string) => {
-    setShowValues(prev => ({
-      ...prev,
-      [key]: !prev[key]
-    }));
-  };
-
-  const handleKeySelect = (key: string) => {
-    setSelectedKey(key);
-    if (key && !hierarchyData[key]) {
-      fetchHierarchy(key);
-    }
-  };
-
-  useEffect(() => {
-    if (hasConfigAccess) {
-      fetchEffectiveConfig();
-      fetchSafeKeys();
-    }
-  }, [hasConfigAccess]);
-
-  // Clear messages after some time
-  useEffect(() => {
-    if (error) {
-      const timer = setTimeout(() => setError(null), 5000);
-      return () => clearTimeout(timer);
-    }
-  }, [error]);
-
-  if (!hasConfigAccess) {
     return (
-      <Paper sx={{ p: 3, textAlign: 'center' }}>
-        <Alert severity="warning" sx={{ mb: 2 }}>
-          Configuration management requires admin role
-        </Alert>
-        <Typography color="text.secondary">
-          Contact your administrator for access to hierarchical configuration settings.
+      <Chip
+        size="small"
+        color={config.color}
+        icon={config.icon}
+        label={config.label}
+        variant="outlined"
+      />
+    );
+  };
+
+  const getLevelChip = (level?: string) => {
+    if (!level) return null;
+    const levelConfig = levels.find(l => l.value === level);
+    if (!levelConfig) return <Chip size="small" label={level} />;
+
+    return (
+      <Chip
+        size="small"
+        icon={levelConfig.icon}
+        label={levelConfig.label}
+        variant="filled"
+        color="info"
+      />
+    );
+  };
+
+  const renderValue = (key: string, configValue: ConfigValue) => {
+    const isSecret = configValue.encrypted || key.toLowerCase().includes('secret') || key.toLowerCase().includes('key');
+    const isVisible = visibleSecrets.has(key);
+
+    if (isSecret && !isVisible) {
+      return (
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
+            ••••••••••••
+          </Typography>
+          <IconButton size="small" onClick={() => toggleSecretVisibility(key)}>
+            <VisibilityIcon fontSize="small" />
+          </IconButton>
+        </Box>
+      );
+    }
+
+    const displayValue = typeof configValue.value === 'object'
+      ? JSON.stringify(configValue.value, null, 2)
+      : String(configValue.value);
+
+    return (
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+        <Typography variant="body2" sx={{ fontFamily: 'monospace', wordBreak: 'break-all' }}>
+          {displayValue}
         </Typography>
-      </Paper>
+        {isSecret && (
+          <IconButton size="small" onClick={() => toggleSecretVisibility(key)}>
+            <VisibilityOffIcon fontSize="small" />
+          </IconButton>
+        )}
+      </Box>
+    );
+  };
+
+  if (loading && !effectiveConfig) {
+    return (
+      <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: 200 }}>
+        <CircularProgress />
+      </Box>
     );
   }
 
   return (
-    <Box sx={{ maxWidth: 'xl', mx: 'auto' }}>
-      {/* Header */}
-      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 3, flexWrap: 'wrap', gap: 2 }}>
-        <Box>
-          <Typography variant="h4" gutterBottom sx={{ fontWeight: 600 }}>
-            Configuration Manager
-          </Typography>
-          <Stack direction="row" spacing={2} alignItems="center">
-            <Typography variant="body2" color="text.secondary">
-              Hierarchical configuration with database-first resolution
-            </Typography>
-            {cacheStats && (
-              <Chip
-                icon={<FlashOnIcon />}
-                label={`Cache: ${cacheStats.backend || 'memory'} (${cacheStats.memory_items || 0} items)`}
-                size="small"
-                color="success"
-                variant="outlined"
-              />
-            )}
-            {docsBase && (
-              <Link
-                href={`${docsBase}/configuration`}
-                target="_blank"
-                rel="noopener noreferrer"
-                sx={{ textDecoration: 'none' }}
-              >
-                Learn more
-              </Link>
-            )}
-          </Stack>
-        </Box>
-        <Stack direction="row" spacing={1}>
+    <Box sx={{ p: 3 }}>
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
+        <Typography variant="h4" gutterBottom>
+          Configuration Manager
+        </Typography>
+        <Stack direction="row" spacing={2}>
           <Button
             variant="outlined"
-            startIcon={<RefreshIcon />}
-            onClick={fetchEffectiveConfig}
+            startIcon={<CacheIcon />}
+            onClick={handleFlushCache}
             disabled={loading}
-            size={isMobile ? 'small' : 'medium'}
           >
-            Refresh
+            Flush Cache
           </Button>
           <Button
             variant="contained"
-            color="secondary"
-            startIcon={<FlashOnIcon />}
-            onClick={() => flushCache()}
+            startIcon={<RefreshIcon />}
+            onClick={loadEffectiveConfig}
             disabled={loading}
-            size={isMobile ? 'small' : 'medium'}
           >
-            Flush Cache
+            Refresh
           </Button>
         </Stack>
       </Box>
 
-      {/* Status Messages */}
       {error && (
         <Alert severity="error" sx={{ mb: 3 }} onClose={() => setError(null)}>
           {error}
         </Alert>
       )}
-      {success && (
-        <Alert severity="success" sx={{ mb: 3 }} onClose={() => setSuccess(null)}>
-          {success}
-        </Alert>
+
+      {cacheStats && (
+        <Accordion sx={{ mb: 3 }}>
+          <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+            <Typography variant="h6">Cache Statistics</Typography>
+          </AccordionSummary>
+          <AccordionDetails>
+            <Typography variant="body2" sx={{ fontFamily: 'monospace', whiteSpace: 'pre-wrap' }}>
+              {JSON.stringify(cacheStats, null, 2)}
+            </Typography>
+          </AccordionDetails>
+        </Accordion>
       )}
 
-      {loading && (
-        <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
-          <CircularProgress />
-        </Box>
-      )}
+      <Card>
+        <CardContent>
+          <Typography variant="h6" gutterBottom>
+            Effective Configuration Values
+          </Typography>
 
-      {/* Search and Filter Controls */}
-      {!loading && (
-        <Paper sx={{ p: 2, mb: 3 }}>
-          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
-            <TextField
-              placeholder="Search configuration keys..."
-              size="small"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              sx={{ flex: 1 }}
-              InputProps={{
-                startAdornment: <InfoIcon sx={{ mr: 1, color: 'text.secondary' }} />
-              }}
-            />
-            <TextField
-              select
-              label="Category"
-              value={selectedCategory}
-              onChange={(e) => setSelectedCategory(e.target.value)}
-              size="small"
-              sx={{ minWidth: 150 }}
-            >
-              <MenuItem value="All">All Categories</MenuItem>
-              {Object.keys(CONFIG_CATEGORIES).map(cat => (
-                <MenuItem key={cat} value={cat}>{cat}</MenuItem>
-              ))}
-            </TextField>
-            <Chip
-              label={`${filteredKeys.length} keys`}
-              color="primary"
-              variant="outlined"
-            />
-          </Stack>
-        </Paper>
-      )}
-
-      {!loading && (
-        <Grid container spacing={3}>
-          {/* Effective Configuration */}
-          <Grid item xs={12} lg={6}>
-            <Card sx={{ height: 'fit-content' }}>
-              <CardContent>
-                <Typography variant="h6" gutterBottom sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                  <StorageIcon />
-                  Effective Configuration
-                </Typography>
-                <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                  Current configuration values resolved from the hierarchy
-                </Typography>
-
-                <Stack spacing={2}>
-                  {filteredKeys.map(key => {
-                    const config = effectiveConfig[key];
-                    const isSecret = key.includes('key') || key.includes('secret') || key.includes('password');
-                    const showValue = showValues[key] || false;
-
-                    return (
-                      <Paper
-                        key={key}
-                        variant="outlined"
-                        sx={{ p: 2, cursor: 'pointer' }}
-                        onClick={() => handleKeySelect(key)}
-                      >
-                        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1 }}>
-                          <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
-                            {key}
+          {effectiveConfig && Object.keys(effectiveConfig).length > 0 ? (
+            <TableContainer component={Paper} variant="outlined">
+              <Table>
+                <TableHead>
+                  <TableRow>
+                    <TableCell>Key</TableCell>
+                    <TableCell>Value</TableCell>
+                    <TableCell>Source</TableCell>
+                    <TableCell>Level</TableCell>
+                    <TableCell>Actions</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {Object.entries(effectiveConfig).map(([key, configValue]) => (
+                    <TableRow key={key}>
+                      <TableCell>
+                        <Typography variant="body2" sx={{ fontFamily: 'monospace', fontWeight: 'bold' }}>
+                          {key}
+                        </Typography>
+                        {configValue.encrypted && (
+                          <Chip size="small" icon={<SecurityIcon fontSize="small" />} label="Encrypted" color="warning" />
+                        )}
+                      </TableCell>
+                      <TableCell sx={{ maxWidth: 300 }}>
+                        {renderValue(key, configValue)}
+                      </TableCell>
+                      <TableCell>
+                        {getSourceChip(configValue.source)}
+                      </TableCell>
+                      <TableCell>
+                        {getLevelChip(configValue.level)}
+                        {configValue.level_id && (
+                          <Typography variant="caption" display="block" color="textSecondary">
+                            {configValue.level_id}
                           </Typography>
-                          {config?.source && (
-                            <Chip
-                              icon={getSourceIcon(config.source)}
-                              label={config.source?.toUpperCase() || 'UNKNOWN'}
-                              size="small"
-                              color={getSourceColor(config.source)}
-                              variant="outlined"
-                            />
-                          )}
-                        </Box>
-                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                          <Typography
-                            variant="body2"
-                            color="text.secondary"
-                            sx={{
-                              fontFamily: 'monospace',
-                              flex: 1,
-                              wordBreak: 'break-all'
-                            }}
-                          >
-                            {config ? (
-                              isSecret && !showValue ?
-                                maskSensitive(config.value, key) :
-                                config.value || 'Not set'
-                            ) : 'Loading...'}
-                          </Typography>
-                          {isSecret && config && (
-                            <Tooltip title={showValue ? 'Hide value' : 'Show value'}>
-                              <IconButton
-                                size="small"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  toggleShowValue(key);
-                                }}
-                              >
-                                {showValue ? <VisibilityOffIcon fontSize="small" /> : <VisibilityIcon fontSize="small" />}
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        <Stack direction="row" spacing={1}>
+                          <Tooltip title="View hierarchy">
+                            <IconButton size="small" onClick={() => handleViewHierarchy(key)}>
+                              <VisibilityIcon fontSize="small" />
+                            </IconButton>
+                          </Tooltip>
+                          {(safeKeys[key] || configValue.encrypted) && (
+                            <Tooltip title="Edit value">
+                              <IconButton size="small" onClick={() => handleEdit(key, configValue)}>
+                                <EditIcon fontSize="small" />
                               </IconButton>
                             </Tooltip>
                           )}
-                        </Box>
-                      </Paper>
-                    );
-                  })}
-                </Stack>
-              </CardContent>
-            </Card>
-          </Grid>
-
-          {/* Hierarchy Detail */}
-          <Grid item xs={12} lg={6}>
-            <Card sx={{ height: 'fit-content' }}>
-              <CardContent>
-                <Typography variant="h6" gutterBottom sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                  <InfoIcon />
-                  Configuration Hierarchy
-                </Typography>
-                <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                  Resolution order: User → Group → Department → Tenant → Global → Environment → Default
-                </Typography>
-
-                {selectedKey ? (
-                  <Box>
-                    <TextField
-                      select
-                      fullWidth
-                      label="Selected Configuration Key"
-                      value={selectedKey}
-                      onChange={(e) => handleKeySelect(e.target.value)}
-                      sx={{ mb: 2 }}
-                      size="small"
-                    >
-                      {ALL_KEYS.map(key => (
-                        <MenuItem key={key} value={key}>
-                          {key}
-                        </MenuItem>
-                      ))}
-                    </TextField>
-
-                    {hierarchyData[selectedKey] ? (
-                      <Stack spacing={1}>
-                        {Object.entries(hierarchyData[selectedKey].levels).map(([level, value]) => (
-                          <Paper
-                            key={level}
-                            variant="outlined"
-                            sx={{
-                              p: 1.5,
-                              opacity: value ? 1 : 0.6,
-                              borderColor: value ? theme.palette.primary.main : theme.palette.divider
-                            }}
-                          >
-                            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                              <Typography variant="subtitle2" sx={{ textTransform: 'capitalize', fontWeight: 600 }}>
-                                {level}
-                              </Typography>
-                              {value && (
-                                <Chip
-                                  icon={getSourceIcon(level === 'env' ? 'env' : level === 'default' ? 'default' : 'db')}
-                                  label="SET"
-                                  size="small"
-                                  color="primary"
-                                  variant="filled"
-                                />
-                              )}
-                            </Box>
-                            <Typography
-                              variant="body2"
-                              color="text.secondary"
-                              sx={{
-                                fontFamily: 'monospace',
-                                mt: 0.5,
-                                wordBreak: 'break-all'
-                              }}
-                            >
-                              {value ? String(value) : 'Not set at this level'}
-                            </Typography>
-                          </Paper>
-                        ))}
-                      </Stack>
-                    ) : (
-                      <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}>
-                        <CircularProgress size={24} />
-                      </Box>
-                    )}
-                  </Box>
-                ) : (
-                  <Paper
-                    variant="outlined"
-                    sx={{ p: 3, textAlign: 'center', borderStyle: 'dashed' }}
-                  >
-                    <Typography color="text.secondary">
-                      Select a configuration key to view its hierarchy
-                    </Typography>
-                  </Paper>
-                )}
-              </CardContent>
-            </Card>
-          </Grid>
-        </Grid>
-      )}
-
-      {/* Info Panel with Stats */}
-      <Paper sx={{ mt: 3, p: 2, backgroundColor: theme.palette.action.hover }}>
-        <Grid container spacing={2}>
-          <Grid item xs={12} md={8}>
-            <Typography variant="body2" color="text.secondary">
-              <strong>Configuration Status:</strong> {Object.keys(safeKeys).length > 0 ? 'Edit mode available for safe keys' : 'Read-only mode'}.
-              Resolution order: User → Group → Department → Tenant → Global → Environment → Default.
-              {docsBase && (
-                <>
-                  {' '}
-                  <Link
-                    href={`${docsBase}/configuration/hierarchy`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
-                    View documentation
-                  </Link>
-                </>
-              )}
+                        </Stack>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </TableContainer>
+          ) : (
+            <Typography color="textSecondary">
+              No configuration values found.
             </Typography>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Edit Dialog */}
+      <Dialog open={editDialogOpen} onClose={() => setEditDialogOpen(false)} maxWidth="md" fullWidth>
+        <DialogTitle>Edit Configuration: {editingKey}</DialogTitle>
+        <DialogContent>
+          <Grid container spacing={2} sx={{ mt: 1 }}>
+            <Grid item xs={12}>
+              <TextField
+                label="Value"
+                multiline
+                rows={4}
+                value={editingValue}
+                onChange={(e) => setEditingValue(e.target.value)}
+                fullWidth
+                variant="outlined"
+              />
+            </Grid>
+            <Grid item xs={6}>
+              <TextField
+                select
+                label="Level"
+                value={editingLevel}
+                onChange={(e) => setEditingLevel(e.target.value)}
+                fullWidth
+              >
+                {levels.map((level) => (
+                  <MenuItem key={level.value} value={level.value}>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                      {level.icon}
+                      {level.label}
+                    </Box>
+                  </MenuItem>
+                ))}
+              </TextField>
+            </Grid>
+            <Grid item xs={6}>
+              <TextField
+                label="Level ID (if applicable)"
+                value={editingLevelId}
+                onChange={(e) => setEditingLevelId(e.target.value)}
+                fullWidth
+                placeholder="e.g., tenant_id, user_id"
+              />
+            </Grid>
+            <Grid item xs={12}>
+              <TextField
+                label="Reason for change"
+                value={editingReason}
+                onChange={(e) => setEditingReason(e.target.value)}
+                fullWidth
+              />
+            </Grid>
+            <Grid item xs={12}>
+              <FormControlLabel
+                control={
+                  <Switch
+                    checked={editingEncrypt}
+                    onChange={(e) => setEditingEncrypt(e.target.checked)}
+                  />
+                }
+                label="Encrypt value"
+              />
+            </Grid>
           </Grid>
-          <Grid item xs={12} md={4}>
-            {cacheStats && (
-              <Stack spacing={1}>
-                <Typography variant="body2" sx={{ fontWeight: 600 }}>Cache Statistics</Typography>
-                <Typography variant="caption" color="text.secondary">
-                  Backend: {cacheStats.backend}<br/>
-                  Memory items: {cacheStats.memory_items || 0}<br/>
-                  {cacheStats.redis_keys !== undefined && `Redis keys: ${cacheStats.redis_keys}`}
-                </Typography>
-              </Stack>
-            )}
-          </Grid>
-        </Grid>
-      </Paper>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setEditDialogOpen(false)} startIcon={<CancelIcon />}>
+            Cancel
+          </Button>
+          <Button onClick={handleSave} variant="contained" startIcon={<SaveIcon />}>
+            Save
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Hierarchy Dialog */}
+      <Dialog open={hierarchyDialogOpen} onClose={() => setHierarchyDialogOpen(false)} maxWidth="lg" fullWidth>
+        <DialogTitle>Configuration Hierarchy: {hierarchyKey}</DialogTitle>
+        <DialogContent>
+          {hierarchyLoading ? (
+            <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
+              <CircularProgress />
+            </Box>
+          ) : (
+            <TableContainer component={Paper} variant="outlined" sx={{ mt: 2 }}>
+              <Table>
+                <TableHead>
+                  <TableRow>
+                    <TableCell>Priority</TableCell>
+                    <TableCell>Level</TableCell>
+                    <TableCell>Level ID</TableCell>
+                    <TableCell>Value</TableCell>
+                    <TableCell>Source</TableCell>
+                    <TableCell>Updated</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {hierarchyLayers.map((layer, index) => (
+                    <TableRow key={index} sx={{ bgcolor: index === 0 ? 'action.selected' : 'inherit' }}>
+                      <TableCell>
+                        <Chip size="small" label={index + 1} color={index === 0 ? 'primary' : 'default'} />
+                        {index === 0 && <Typography variant="caption" display="block">Effective</Typography>}
+                      </TableCell>
+                      <TableCell>
+                        {getLevelChip(layer.level)}
+                      </TableCell>
+                      <TableCell>
+                        <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
+                          {layer.level_id || '-'}
+                        </Typography>
+                      </TableCell>
+                      <TableCell>
+                        <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
+                          {typeof layer.value === 'object' ? JSON.stringify(layer.value) : String(layer.value)}
+                        </Typography>
+                      </TableCell>
+                      <TableCell>
+                        {getSourceChip(layer.source)}
+                      </TableCell>
+                      <TableCell>
+                        <Typography variant="caption">
+                          {layer.updated_at ? new Date(layer.updated_at).toLocaleString() : '-'}
+                        </Typography>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </TableContainer>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setHierarchyDialogOpen(false)}>
+            Close
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
-}
+};
 
 export default ConfigurationManager;

@@ -1,133 +1,99 @@
 """
-Hierarchical configuration database models for Phase 3.
+Database models for hierarchical configuration system.
 
-Implements multi-level configuration with encryption at rest
-and comprehensive audit trail.
+Supports User → Group → Department → Tenant → Global → Default resolution
+with encryption, audit trail, and cache invalidation.
 """
 
+import uuid
 from datetime import datetime
-from sqlalchemy import Column, String, Text, Boolean, DateTime, Integer, Index
+from sqlalchemy import Column, String, DateTime, Boolean, Text, Integer
 from sqlalchemy.sql import func
 
-from api.app.db import Base
+from ..db import Base
 
 
-class ConfigGlobal(Base):
-    """Global configuration table - system-wide defaults"""
+class ConfigGlobal(Base):  # type: ignore
+    """Global configuration values - lowest priority in hierarchy."""
     __tablename__ = "config_global"
 
-    key = Column(String(200), primary_key=True, nullable=False)
-    value_encrypted = Column(Text(), nullable=False)
-    value_type = Column(String(20), nullable=False, default='string')
-    encrypted = Column(Boolean(), nullable=False, default=True)
-    description = Column(Text(), nullable=True)
-    category = Column(String(50), nullable=True)
-    created_at = Column(DateTime(), nullable=False, server_default=func.now())
-    updated_at = Column(DateTime(), nullable=False, server_default=func.now(), onupdate=func.now())
-
-    __table_args__ = (
-        Index('idx_global_key', 'key'),
-        Index('idx_global_category', 'category'),
-    )
+    id = Column(String(40), primary_key=True, default=lambda: str(uuid.uuid4()))
+    key = Column(String(200), unique=True, nullable=False, index=True)
+    value_encrypted = Column(Text, nullable=False)
+    encrypted = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
 
 
-class ConfigTenant(Base):
-    """Tenant-level configuration overrides"""
+class ConfigTenant(Base):  # type: ignore
+    """Tenant-level configuration values."""
     __tablename__ = "config_tenant"
 
-    tenant_id = Column(String(100), primary_key=True, nullable=False)
-    key = Column(String(200), primary_key=True, nullable=False)
-    value_encrypted = Column(Text(), nullable=False)
-    value_type = Column(String(20), nullable=False, default='string')
-    encrypted = Column(Boolean(), nullable=False, default=True)
-    created_at = Column(DateTime(), nullable=False, server_default=func.now())
-    updated_at = Column(DateTime(), nullable=False, server_default=func.now(), onupdate=func.now())
+    id = Column(String(40), primary_key=True, default=lambda: str(uuid.uuid4()))
+    tenant_id = Column(String(100), nullable=False, index=True)
+    key = Column(String(200), nullable=False, index=True)
+    value_encrypted = Column(Text, nullable=False)
+    encrypted = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
 
     __table_args__ = (
-        Index('idx_tenant_key', 'tenant_id', 'key'),
+        {'sqlite_autoincrement': True},
     )
 
 
-class ConfigDepartment(Base):
-    """Department-level configuration within a tenant"""
+class ConfigDepartment(Base):  # type: ignore
+    """Department-level configuration values."""
     __tablename__ = "config_department"
 
-    tenant_id = Column(String(100), primary_key=True, nullable=False)
-    department = Column(String(100), primary_key=True, nullable=False)
-    key = Column(String(200), primary_key=True, nullable=False)
-    value_encrypted = Column(Text(), nullable=False)
-    value_type = Column(String(20), nullable=False, default='string')
-    encrypted = Column(Boolean(), nullable=False, default=True)
-    created_at = Column(DateTime(), nullable=False, server_default=func.now())
-    updated_at = Column(DateTime(), nullable=False, server_default=func.now(), onupdate=func.now())
-
-    __table_args__ = (
-        Index('idx_dept_key', 'tenant_id', 'department', 'key'),
-    )
+    id = Column(String(40), primary_key=True, default=lambda: str(uuid.uuid4()))
+    tenant_id = Column(String(100), nullable=False, index=True)
+    department = Column(String(100), nullable=False, index=True)
+    key = Column(String(200), nullable=False, index=True)
+    value_encrypted = Column(Text, nullable=False)
+    encrypted = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
 
 
-class ConfigGroup(Base):
-    """Group-level configuration overrides"""
+class ConfigGroup(Base):  # type: ignore
+    """Group-level configuration values with priority ordering."""
     __tablename__ = "config_group"
 
-    group_id = Column(String(100), primary_key=True, nullable=False)
-    key = Column(String(200), primary_key=True, nullable=False)
-    value_encrypted = Column(Text(), nullable=False)
-    value_type = Column(String(20), nullable=False, default='string')
-    encrypted = Column(Boolean(), nullable=False, default=True)
-    priority = Column(Integer(), nullable=False, default=0)  # For group ordering
-    created_at = Column(DateTime(), nullable=False, server_default=func.now())
-    updated_at = Column(DateTime(), nullable=False, server_default=func.now(), onupdate=func.now())
-
-    __table_args__ = (
-        Index('idx_group_key', 'group_id', 'key'),
-        Index('idx_group_priority', 'group_id', 'priority'),
-    )
+    id = Column(String(40), primary_key=True, default=lambda: str(uuid.uuid4()))
+    group_id = Column(String(100), nullable=False, index=True)
+    key = Column(String(200), nullable=False, index=True)
+    value_encrypted = Column(Text, nullable=False)
+    encrypted = Column(Boolean, nullable=False, default=False)
+    priority = Column(Integer, nullable=False, default=100)  # Higher = higher priority
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
 
 
-class ConfigUser(Base):
-    """User-specific configuration overrides"""
+class ConfigUser(Base):  # type: ignore
+    """User-level configuration values - highest priority in hierarchy."""
     __tablename__ = "config_user"
 
-    user_id = Column(String(100), primary_key=True, nullable=False)
-    key = Column(String(200), primary_key=True, nullable=False)
-    value_encrypted = Column(Text(), nullable=False)
-    value_type = Column(String(20), nullable=False, default='string')
-    encrypted = Column(Boolean(), nullable=False, default=True)
-    created_at = Column(DateTime(), nullable=False, server_default=func.now())
-    updated_at = Column(DateTime(), nullable=False, server_default=func.now(), onupdate=func.now())
-
-    __table_args__ = (
-        Index('idx_user_key', 'user_id', 'key'),
-    )
+    id = Column(String(40), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String(100), nullable=False, index=True)
+    key = Column(String(200), nullable=False, index=True)
+    value_encrypted = Column(Text, nullable=False)
+    encrypted = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
 
 
-class ConfigAudit(Base):
-    """Configuration change audit trail"""
+class ConfigAudit(Base):  # type: ignore
+    """Audit trail for configuration changes."""
     __tablename__ = "config_audit"
 
-    id = Column(String(40), primary_key=True, nullable=False)
-    level = Column(String(20), nullable=False)  # global|tenant|department|group|user
-    level_id = Column(String(200), nullable=True)  # tenant_id, group_id, user_id, etc.
-    key = Column(String(200), nullable=False)
-
-    # Store masked snapshots only; never decrypted secrets
-    old_value_masked = Column(Text(), nullable=True)
-    new_value_masked = Column(Text(), nullable=False)
-
-    # Integrity fingerprint for audit diffs (HMAC with server-side AUDIT_PEPPER)
-    value_hmac = Column(String(64), nullable=False)  # hex sha256
-
-    value_type = Column(String(20), nullable=False)
-    changed_by = Column(String(100), nullable=False)  # user_id or api_key_id
-    changed_at = Column(DateTime(), nullable=False, server_default=func.now())
-    reason = Column(Text(), nullable=True)
-    ip_address = Column(String(45), nullable=True)
-    user_agent = Column(Text(), nullable=True)
-
-    __table_args__ = (
-        Index('idx_audit_level', 'level', 'level_id'),
-        Index('idx_audit_key', 'key'),
-        Index('idx_audit_time', 'changed_at'),
-        Index('idx_audit_user', 'changed_by'),
-    )
+    id = Column(String(40), primary_key=True, default=lambda: str(uuid.uuid4()))
+    key = Column(String(200), nullable=False, index=True)
+    level = Column(String(20), nullable=False)  # global, tenant, department, group, user
+    level_id = Column(String(100), nullable=True)  # ID for the level (tenant_id, user_id, etc)
+    old_value = Column(Text, nullable=True)
+    new_value = Column(Text, nullable=False)
+    encrypted = Column(Boolean, nullable=False, default=False)
+    reason = Column(String(500), nullable=True)
+    changed_by = Column(String(100), nullable=True)
+    changed_at = Column(DateTime, nullable=False, server_default=func.now())

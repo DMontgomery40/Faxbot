@@ -24,6 +24,9 @@ from .config import (
 from .db import init_db, SessionLocal, FaxJob
 from .db import InboundEvent  # for idempotency (provider_sid + event_type)
 from .models import FaxJobOut
+from .models.events import CanonicalEventDB  # Import to register with metadata
+from .models.config import ConfigGlobal, ConfigTenant, ConfigDepartment, ConfigGroup, ConfigUser, ConfigAudit  # Import to register with metadata
+from .monitoring.health import ProviderHealthMonitor
 from .conversion import ensure_dir, txt_to_pdf, pdf_to_tiff
 from .ami import ami_client
 from .phaxio_service import get_phaxio_service
@@ -58,6 +61,7 @@ from .security.permissions import require_permissions
 from .security.user_traits import pack_user_traits
 from .config.hierarchical_provider import HierarchicalConfigProvider, UserContext
 from .services.cache_manager import CacheManager
+from fastapi import APIRouter
 
 
 app = FastAPI(
@@ -125,6 +129,190 @@ def _inbound_dedupe(provider_id: str, external_id: str, window_sec: int = 600) -
     except Exception:
         return False
 
+# ===== Phase 3: optional hierarchical config bootstrap (lazy) =====
+try:
+    from .services.cache_manager import CacheManager  # type: ignore
+    from .config.hierarchical_provider import HierarchicalConfigProvider  # type: ignore
+
+    _REDIS_URL = os.getenv("REDIS_URL")
+    _cmk = os.getenv("CONFIG_MASTER_KEY", "")
+    _cache = CacheManager(_REDIS_URL) if _REDIS_URL else None
+    if _cmk and len(_cmk) == 44:
+        app.state.hierarchical_config = HierarchicalConfigProvider(_cmk, cache_manager=_cache)  # type: ignore[attr-defined]
+    else:
+        # Expose None if not configured; Admin endpoints will be added in Phase 3 PRs
+        app.state.hierarchical_config = None  # type: ignore[attr-defined]
+except Exception:
+    # Do not block startup; Phase 3 endpoints will check availability
+    app.state.hierarchical_config = None  # type: ignore[attr-defined]
+
+# ===== Phase 3: Admin Config (v4) endpoints (read-only for now) =====
+router_cfg_v4 = APIRouter(prefix="/admin/config/v4", tags=["ConfigurationV4"], dependencies=[Depends(require_admin)])
+
+
+@router_cfg_v4.get("/effective")
+async def v4_config_effective(request: Request):
+    hc = getattr(app.state, "hierarchical_config", None)
+    if not hc:
+        raise HTTPException(503, "Hierarchical configuration not initialized")
+
+    # Use a minimal system context for now; later we can derive from auth
+    from .config import settings as _s
+    user_ctx = {
+        "user_id": "admin",
+        "tenant_id": None,
+        "department": None,
+        "groups": [],
+    }
+    # Common keys for initial surface
+    keys = [
+        "fax.timeout_seconds",
+        "fax.retry_attempts",
+        "api.rate_limit_rpm",
+        "notifications.enable_sse",
+    ]
+    out: dict[str, dict[str, Any]] = {}
+    # Resolve values
+    from .config.hierarchical_provider import UserContext  # type: ignore
+    for k in keys:
+        try:
+            cv = await hc.get_effective(k, UserContext(**user_ctx))
+            out[k] = {
+                "value": cv.value,
+                "source": cv.source,
+                "level": cv.level,
+                "level_id": cv.level_id,
+                "encrypted": cv.encrypted,
+                "updated_at": (cv.updated_at.isoformat() if cv.updated_at else None),
+            }
+        except Exception:
+            pass
+    # Cache stats if present
+    cache_stats = {}
+    if getattr(hc, "cache", None):
+        cache_stats = await hc.cache.get_stats()
+    return {"values": out, "cache_stats": cache_stats}
+
+
+@router_cfg_v4.get("/hierarchy")
+async def v4_config_hierarchy(key: str):
+    hc = getattr(app.state, "hierarchical_config", None)
+    if not hc:
+        raise HTTPException(503, "Hierarchical configuration not initialized")
+    from .config.hierarchical_provider import UserContext  # type: ignore
+    layers = await hc.get_hierarchy(key, UserContext(user_id="admin", tenant_id=None, department=None, groups=[]))
+    return {
+        "key": key,
+        "layers": [
+            {
+                "level": v.level,
+                "level_id": v.level_id,
+                "value": v.value,
+                "encrypted": v.encrypted,
+                "updated_at": (v.updated_at.isoformat() if v.updated_at else None),
+            }
+            for v in layers
+        ],
+    }
+
+
+@router_cfg_v4.get("/safe-keys")
+async def v4_config_safe_keys():
+    hc = getattr(app.state, "hierarchical_config", None)
+    if not hc:
+        raise HTTPException(503, "Hierarchical configuration not initialized")
+    return await hc.get_safe_edit_keys()
+
+
+@router_cfg_v4.post("/set")
+async def v4_config_set(
+    key: str = Form(...),
+    value: str = Form(...),
+    level: str = Form(...),
+    level_id: Optional[str] = Form(None),
+    reason: str = Form("Admin panel update"),
+    encrypt: Optional[bool] = Form(None)
+):
+    """Set a configuration value at the specified hierarchy level."""
+    hc = getattr(app.state, "hierarchical_config", None)
+    if not hc:
+        raise HTTPException(503, "Hierarchical configuration not initialized")
+
+    # Validate level
+    valid_levels = ["global", "tenant", "department", "group", "user"]
+    if level not in valid_levels:
+        raise HTTPException(400, f"Invalid level. Must be one of: {valid_levels}")
+
+    # Parse value as JSON
+    try:
+        import json
+        parsed_value = json.loads(value)
+    except (json.JSONDecodeError, ValueError):
+        # If not valid JSON, treat as string
+        parsed_value = value
+
+    # Set the configuration
+    success = await hc.set_config(
+        key=key,
+        value=parsed_value,
+        level=level,  # type: ignore
+        level_id=level_id,
+        reason=reason,
+        encrypt=encrypt
+    )
+
+    if not success:
+        raise HTTPException(500, "Failed to set configuration value")
+
+    return {
+        "success": True,
+        "key": key,
+        "level": level,
+        "level_id": level_id,
+        "reason": reason
+    }
+
+
+@router_cfg_v4.post("/flush-cache")
+async def v4_config_flush_cache(scope: Optional[str] = None):
+    hc = getattr(app.state, "hierarchical_config", None)
+    if not hc or not getattr(hc, "cache", None):
+        raise HTTPException(503, "Cache manager not available")
+    # Basic flush-all for now; scope handling in later PRs
+    await hc.cache.flush_all()
+    return {"success": True, "scope": scope or "all"}
+
+
+app.include_router(router_cfg_v4)
+
+# Diagnostics router (SSE/recent events)
+try:
+    from .routers import admin_diagnostics as _diag
+    from .services.events import EventEmitter
+    # Attach emitter if not present
+    if not hasattr(app.state, "event_emitter") or app.state.event_emitter is None:  # type: ignore[attr-defined]
+        app.state.event_emitter = EventEmitter()  # type: ignore[attr-defined]
+    app.include_router(_diag.router)
+except Exception:
+    # Non-fatal if SSE deps missing
+    pass
+
+# Provider health management router
+try:
+    from .routers import admin_providers as _providers
+    app.include_router(_providers.router)
+except Exception:
+    # Non-fatal if health monitoring deps missing
+    pass
+
+# Webhook hardening router (DLQ + idempotency)
+try:
+    from .routers import webhooks_v2 as _webhooks_v2
+    app.include_router(_webhooks_v2.router)
+except Exception:
+    # Non-fatal if webhook processor deps missing
+    pass
+
 # Send-side idempotency (Idempotency-Key header) — 10 minute window
 _send_idempotency: dict[str, tuple[str, int]] = {}
 
@@ -152,28 +340,6 @@ def _idempotency_put(idem_key: str, job_id: str) -> None:
         _send_idempotency[idem_key] = (job_id, int(time.time()))
     except Exception:
         pass
-
-    # Bootstrap admin user (dev/stage only): create 'admin' if sessions enabled and bootstrap password present
-    try:
-        if os.getenv("FAXBOT_SESSIONS_ENABLED", "false").lower() in {"1","true","yes"}:
-            boot = os.getenv("FAXBOT_BOOTSTRAP_PASSWORD", "")
-            if boot:
-                from .plugins.manager import PluginManager
-                pm = PluginManager()
-                pm.load_all()
-                ident = pm.get_active_by_type("identity")
-                user = None
-                if hasattr(ident, "find_user_by_username"):
-                    user = await ident.find_user_by_username("admin")  # type: ignore
-                if not user and hasattr(ident, "create_user"):
-                    await ident.create_user("admin", boot, traits={"role": "admin"})  # type: ignore
-                    print("[info] Bootstrapped admin user via FAXBOT_BOOTSTRAP_PASSWORD")
-    except Exception as _boot_ex:
-        # Never block startup for bootstrap; log only
-        try:
-            print(f"[warn] Admin bootstrap skipped: {_boot_ex}")
-        except Exception:
-            pass
 
 
 def _ack_response(payload: Optional[dict] = None):
@@ -446,12 +612,98 @@ async def on_startup():
     except Exception:
         pass
 
-    # Phase 3: optional hierarchical config bootstrap (lazy)
+    # Initialize and start provider health monitoring (Phase 3)
     try:
-        # Always available in memory; DB-backed layers will be added in PR14
-        app.state.hierarchical_config = HierarchicalConfigProvider(CacheManager())  # type: ignore[attr-defined]
-    except Exception as _hc_err:
-        print(f"[warn] Hierarchical config bootstrap failed: {_hc_err}")
+        from .config.hierarchical_provider import get_hierarchical_config_provider
+
+        # Get or create event emitter
+        event_emitter = getattr(app.state, "event_emitter", None)
+
+        # Get hierarchical config provider if available
+        config_provider = None
+        try:
+            config_provider = get_hierarchical_config_provider()
+        except Exception:
+            pass
+
+        # Initialize health monitor
+        health_monitor = ProviderHealthMonitor(
+            plugin_manager=None,  # Plugin manager integration will come in later phases
+            event_emitter=event_emitter,
+            config_provider=config_provider
+        )
+
+        # Store in app state for access by other components
+        app.state.health_monitor = health_monitor
+
+        # Start monitoring
+        asyncio.create_task(health_monitor.start_monitoring())
+
+    except Exception as e:
+        # Don't fail startup if health monitoring can't be initialized
+        print(f"[warn] Provider health monitoring initialization failed: {e}")
+        pass
+
+    # Initialize DLQ processor for webhook retries
+    try:
+        from .services.webhook_processor import WebhookProcessor
+        webhook_processor = WebhookProcessor(
+            plugin_manager=plugin_manager,
+            event_emitter=get_event_emitter(),
+            config_provider=get_config_provider()
+        )
+        app.state.webhook_processor = webhook_processor
+
+        # Start DLQ retry processing (runs every 5 minutes)
+        async def dlq_retry_loop():
+            import asyncio
+            while True:
+                try:
+                    await webhook_processor.retry_dlq_entries(max_retries=3)
+                    webhook_processor.clear_idempotency_cache(older_than_minutes=60)
+                except Exception as e:
+                    print(f"[warn] DLQ retry processing error: {e}")
+                await asyncio.sleep(300)  # 5 minutes
+
+        asyncio.create_task(dlq_retry_loop())
+    except Exception as e:
+        # Don't fail startup if DLQ processing can't be initialized
+        print(f"[warn] Webhook DLQ processor initialization failed: {e}")
+        pass
+
+    # Bootstrap admin user (dev/stage only): create 'admin' if sessions enabled and bootstrap password present
+    try:
+        if os.getenv("FAXBOT_SESSIONS_ENABLED", "false").lower() in {"1","true","yes"}:
+            boot = os.getenv("FAXBOT_BOOTSTRAP_PASSWORD", "")
+            if boot:
+                from .plugins.manager import PluginManager
+                pm = PluginManager()
+                pm.load_all()
+                ident = pm.get_active_by_type("identity")
+                user = None
+                if hasattr(ident, "find_user_by_username"):
+                    user = await ident.find_user_by_username("admin")  # type: ignore
+                if not user and hasattr(ident, "create_user"):
+                    await ident.create_user("admin", boot, traits={"role": "admin"})  # type: ignore
+                    print("[info] Bootstrapped admin user via FAXBOT_BOOTSTRAP_PASSWORD")
+    except Exception as _boot_ex:
+        # Never block startup for bootstrap; log only
+        try:
+            print(f"[warn] Admin bootstrap skipped: {_boot_ex}")
+        except Exception:
+            pass
+
+
+@app.on_event("shutdown")
+async def on_shutdown():
+    """Clean shutdown of background services."""
+    # Stop health monitoring
+    try:
+        health_monitor = getattr(app.state, "health_monitor", None)
+        if health_monitor:
+            await health_monitor.stop_monitoring()
+    except Exception as e:
+        print(f"[warn] Error stopping health monitor: {e}")
 
 
 def _handle_fax_result(event):
@@ -810,6 +1062,25 @@ async def admin_import_env(request: Request):
     count = import_env_to_db(prefixes)
     return {"ok": True, "discovered": count, "prefixes": prefixes}
 
+
+# Dependency functions for webhook processor
+def get_plugin_manager():
+    """Get the plugin manager instance."""
+    return plugin_manager
+
+def get_event_emitter():
+    """Get the event emitter instance."""
+    if not hasattr(app.state, "event_emitter") or app.state.event_emitter is None:
+        from .services.events import EventEmitter
+        app.state.event_emitter = EventEmitter()
+    return app.state.event_emitter
+
+def get_config_provider():
+    """Get the hierarchical config provider instance."""
+    if hasattr(app.state, "hierarchical_config") and app.state.hierarchical_config:
+        return app.state.hierarchical_config
+    # Fallback to basic HybridConfigProvider
+    return settings
 
 # Provider traits and active backends — lightweight helper for clients
 @app.get("/admin/providers", dependencies=[Depends(require_admin)])

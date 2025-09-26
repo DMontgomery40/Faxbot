@@ -1,161 +1,213 @@
-from __future__ import annotations
+"""
+Redis cache manager with fallback to in-memory cache.
 
-import asyncio
-import time
+Provides unified caching interface for hierarchical configuration with
+Redis backend and local memory fallback for resilience.
+"""
+
 import json
-import os
-from typing import Any, Dict, Optional
-
-try:
-    import redis.asyncio as redis
-    REDIS_AVAILABLE = True
-except ImportError:
-    REDIS_AVAILABLE = False
+import time
+from typing import Any, Dict, Optional, Union
+import asyncio
 
 
 class CacheManager:
-    """Cache manager with Redis primary and in-memory fallback.
+    """
+    Unified cache manager with Redis primary and in-memory fallback.
 
-    Phase 3 implementation with Redis support for distributed caching
-    and automatic fallback to in-memory storage when Redis is unavailable.
+    Handles cache operations for hierarchical configuration system with
+    automatic fallback when Redis is unavailable.
     """
 
-    def __init__(self, redis_url: Optional[str] = None) -> None:
-        self._store: Dict[str, tuple[Any, Optional[float]]] = {}
-        self._lock = asyncio.Lock()
+    def __init__(self, redis_url: Optional[str] = None):
+        self.redis_url = redis_url
         self.redis_client = None
-        self.redis_available = False
+        self.local_cache: Dict[str, Dict[str, Any]] = {}
+        self.stats = {
+            "hits": 0,
+            "misses": 0,
+            "errors": 0,
+            "redis_available": False,
+        }
 
-        # Try to connect to Redis if available
-        if REDIS_AVAILABLE:
-            redis_url = redis_url or os.getenv('REDIS_URL', 'redis://localhost:6379/0')
-            try:
-                self.redis_client = redis.from_url(
-                    redis_url,
-                    encoding='utf-8',
-                    decode_responses=True
-                )
-                # We'll test connection on first use
-                self.redis_available = True
-            except Exception as e:
-                print(f"[CacheManager] Redis connection failed: {e}")
-                self.redis_available = False
+        if redis_url:
+            self._init_redis()
+
+    def _init_redis(self) -> None:
+        """Initialize Redis connection if available."""
+        try:
+            import redis.asyncio as redis
+            self.redis_client = redis.from_url(
+                self.redis_url,
+                encoding="utf-8",
+                decode_responses=True,
+                socket_timeout=5,
+                socket_connect_timeout=5,
+            )
+            self.stats["redis_available"] = True
+        except ImportError:
+            # Redis not available
+            self.redis_client = None
+            self.stats["redis_available"] = False
+        except Exception:
+            # Redis connection failed
+            self.redis_client = None
+            self.stats["redis_available"] = False
 
     async def get(self, key: str) -> Optional[Any]:
-        """Get value from cache (Redis first, then memory fallback)."""
-
-        # Try Redis first
-        if self.redis_available and self.redis_client:
-            try:
-                value = await self.redis_client.get(key)
-                if value:
-                    try:
+        """Get value from cache (Redis first, then local fallback)."""
+        try:
+            # Try Redis first
+            if self.redis_client and self.stats["redis_available"]:
+                try:
+                    value = await self.redis_client.get(key)
+                    if value is not None:
+                        self.stats["hits"] += 1
                         return json.loads(value)
-                    except json.JSONDecodeError:
-                        return value
-            except Exception as e:
-                # Redis failed, fall back to memory
-                print(f"[CacheManager] Redis get failed, using memory: {e}")
-                self.redis_available = False
+                except Exception:
+                    self.stats["errors"] += 1
+                    self.stats["redis_available"] = False
 
-        # Fall back to in-memory store
-        async with self._lock:
-            rec = self._store.get(key)
-            if not rec:
-                return None
-            val, exp = rec
-            if exp is not None and exp < time.time():
-                self._store.pop(key, None)
-                return None
-            return val
-
-    async def set(self, key: str, value: Any, ttl: Optional[int] = None) -> None:
-        """Set value in cache (Redis + memory)."""
-
-        # Try Redis first
-        if self.redis_available and self.redis_client:
-            try:
-                json_value = json.dumps(value) if not isinstance(value, str) else value
-                if ttl:
-                    await self.redis_client.setex(key, ttl, json_value)
+            # Fallback to local cache
+            if key in self.local_cache:
+                entry = self.local_cache[key]
+                if entry["expires_at"] > time.time():
+                    self.stats["hits"] += 1
+                    return entry["value"]
                 else:
-                    await self.redis_client.set(key, json_value)
-            except Exception as e:
-                # Redis failed, continue with memory
-                print(f"[CacheManager] Redis set failed, using memory: {e}")
-                self.redis_available = False
+                    # Expired
+                    del self.local_cache[key]
 
-        # Also store in memory (as backup or primary)
-        exp = (time.time() + ttl) if ttl else None
-        async with self._lock:
-            self._store[key] = (value, exp)
+            self.stats["misses"] += 1
+            return None
 
-    async def delete_pattern(self, pattern: str) -> int:
-        """Delete keys matching pattern.
-        Returns the count of deleted entries.
-        """
-        deleted_count = 0
+        except Exception:
+            self.stats["errors"] += 1
+            return None
 
-        # Try Redis first
-        if self.redis_available and self.redis_client:
-            try:
-                # Convert pattern to Redis glob pattern
-                redis_pattern = f"*{pattern}*" if '*' not in pattern else pattern
-                cursor = 0
-                while True:
-                    cursor, keys = await self.redis_client.scan(
-                        cursor, match=redis_pattern, count=100
-                    )
+    async def set(self, key: str, value: Any, ttl: int = 300) -> bool:
+        """Set value in cache with TTL (Redis first, local as backup)."""
+        try:
+            json_value = json.dumps(value)
+
+            # Try Redis first
+            if self.redis_client and self.stats["redis_available"]:
+                try:
+                    await self.redis_client.setex(key, ttl, json_value)
+                except Exception:
+                    self.stats["errors"] += 1
+                    self.stats["redis_available"] = False
+
+            # Always store in local cache as backup
+            self.local_cache[key] = {
+                "value": value,
+                "expires_at": time.time() + ttl,
+            }
+
+            return True
+
+        except Exception:
+            self.stats["errors"] += 1
+            return False
+
+    async def delete(self, key: str) -> bool:
+        """Delete key from both Redis and local cache."""
+        try:
+            success = False
+
+            # Try Redis first
+            if self.redis_client and self.stats["redis_available"]:
+                try:
+                    await self.redis_client.delete(key)
+                    success = True
+                except Exception:
+                    self.stats["errors"] += 1
+                    self.stats["redis_available"] = False
+
+            # Remove from local cache
+            if key in self.local_cache:
+                del self.local_cache[key]
+                success = True
+
+            return success
+
+        except Exception:
+            self.stats["errors"] += 1
+            return False
+
+    async def flush_all(self) -> bool:
+        """Flush all cache entries."""
+        try:
+            # Try Redis first
+            if self.redis_client and self.stats["redis_available"]:
+                try:
+                    await self.redis_client.flushdb()
+                except Exception:
+                    self.stats["errors"] += 1
+                    self.stats["redis_available"] = False
+
+            # Clear local cache
+            self.local_cache.clear()
+            return True
+
+        except Exception:
+            self.stats["errors"] += 1
+            return False
+
+    async def flush_pattern(self, pattern: str) -> bool:
+        """Flush cache entries matching pattern (Redis only)."""
+        try:
+            if self.redis_client and self.stats["redis_available"]:
+                try:
+                    keys = await self.redis_client.keys(pattern)
                     if keys:
-                        deleted_count += await self.redis_client.delete(*keys)
-                    if cursor == 0:
-                        break
-            except Exception as e:
-                print(f"[CacheManager] Redis delete_pattern failed: {e}")
-                self.redis_available = False
+                        await self.redis_client.delete(*keys)
+                    return True
+                except Exception:
+                    self.stats["errors"] += 1
+                    self.stats["redis_available"] = False
+                    return False
 
-        # Also clear from memory
-        async with self._lock:
-            keys = [k for k in self._store.keys() if pattern in k]
-            for k in keys:
-                self._store.pop(k, None)
-            deleted_count = max(deleted_count, len(keys))
+            # For local cache, do a simple prefix match
+            keys_to_delete = [k for k in self.local_cache.keys() if pattern.replace("*", "") in k]
+            for key in keys_to_delete:
+                del self.local_cache[key]
+            return True
 
-        return deleted_count
-
-    async def flush_all(self) -> None:
-        """Clear all cache entries."""
-
-        # Try Redis first
-        if self.redis_available and self.redis_client:
-            try:
-                await self.redis_client.flushdb()
-            except Exception as e:
-                print(f"[CacheManager] Redis flush failed: {e}")
-                self.redis_available = False
-
-        # Clear memory store
-        async with self._lock:
-            self._store.clear()
+        except Exception:
+            self.stats["errors"] += 1
+            return False
 
     async def get_stats(self) -> Dict[str, Any]:
         """Get cache statistics."""
-        stats = {
-            "backend": "redis" if self.redis_available else "memory",
-            "memory_items": len(self._store),
-        }
+        stats = dict(self.stats)
+        stats["local_cache_size"] = len(self.local_cache)
 
-        # Add Redis stats if available
-        if self.redis_available and self.redis_client:
+        if self.redis_client and self.stats["redis_available"]:
             try:
-                info = await self.redis_client.info('stats')
-                stats.update({
-                    "redis_connected": True,
-                    "redis_total_connections": info.get('total_connections_received', 0),
-                    "redis_keys": await self.redis_client.dbsize(),
-                })
+                info = await self.redis_client.info("memory")
+                stats["redis_memory_used"] = info.get("used_memory_human", "unknown")
+                stats["redis_connected_clients"] = info.get("connected_clients", 0)
             except Exception:
-                stats["redis_connected"] = False
+                stats["redis_available"] = False
 
         return stats
 
+    async def health_check(self) -> Dict[str, Any]:
+        """Check cache health status."""
+        result = {
+            "redis_available": False,
+            "local_cache_available": True,
+            "error": None,
+        }
+
+        if self.redis_client:
+            try:
+                await self.redis_client.ping()
+                result["redis_available"] = True
+                self.stats["redis_available"] = True
+            except Exception as e:
+                result["error"] = str(e)
+                self.stats["redis_available"] = False
+
+        return result

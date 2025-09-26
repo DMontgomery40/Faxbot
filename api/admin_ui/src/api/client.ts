@@ -103,6 +103,57 @@ export class AdminAPIClient {
     return res.json();
   }
 
+  // Hierarchical Configuration (v4)
+  async getEffectiveConfig(): Promise<{ values: Record<string, any>; cache_stats?: any }> {
+    const res = await this.fetch('/admin/config/v4/effective');
+    return res.json();
+  }
+
+  async getConfigHierarchy(key: string): Promise<{ key: string; layers: any[] }> {
+    const res = await this.fetch(`/admin/config/v4/hierarchy?key=${encodeURIComponent(key)}`);
+    return res.json();
+  }
+
+  async getSafeEditKeys(): Promise<Record<string, any>> {
+    const res = await this.fetch('/admin/config/v4/safe-keys');
+    return res.json();
+  }
+
+  async setConfigValue(
+    key: string,
+    value: any,
+    level: string,
+    levelId?: string,
+    reason?: string,
+    encrypt?: boolean
+  ): Promise<{ success: boolean }> {
+    const formData = new FormData();
+    formData.append('key', key);
+    formData.append('value', typeof value === 'string' ? value : JSON.stringify(value));
+    formData.append('level', level);
+    if (levelId) formData.append('level_id', levelId);
+    if (reason) formData.append('reason', reason);
+    if (encrypt !== undefined) formData.append('encrypt', encrypt.toString());
+
+    const res = await this.fetch('/admin/config/v4/set', {
+      method: 'POST',
+      body: formData,
+      headers: {
+        'X-API-Key': this.apiKey,
+        // Don't set Content-Type, let browser set it for FormData
+      },
+    });
+    return res.json();
+  }
+
+  async flushConfigCache(scope?: string): Promise<{ success: boolean }> {
+    const res = await this.fetch('/admin/config/v4/flush-cache', {
+      method: 'POST',
+      body: JSON.stringify(scope ? { scope } : {}),
+    });
+    return res.json();
+  }
+
   // UI Config (ETag-cached on server)
   async getUiConfig(): Promise<{ schema_version: number; features: any; endpoints: any; docs_base?: string }>{
     const res = await this.fetch('/admin/ui-config');
