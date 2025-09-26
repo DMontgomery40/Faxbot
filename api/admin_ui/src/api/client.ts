@@ -160,6 +160,35 @@ export class AdminAPIClient {
     return res.json();
   }
 
+  // v4 Config (read-only baseline)
+  async v4GetEffective(payload: { keys?: string[]; user_id?: string; tenant_id?: string; department?: string; groups?: string[] } = {}): Promise<{ schema_version: number; items: Record<string, any> }>{
+    const res = await this.fetch('/admin/config/v4/effective', {
+      method: 'POST',
+      body: JSON.stringify(payload || {}),
+    });
+    return res.json();
+  }
+
+  async v4GetHierarchy(payload: { key: string; user_id?: string; tenant_id?: string; department?: string; groups?: string[] }): Promise<any>{
+    const res = await this.fetch('/admin/config/v4/hierarchy', {
+      method: 'POST',
+      body: JSON.stringify(payload || {}),
+    });
+    return res.json();
+  }
+
+  async v4GetSafeKeys(): Promise<Record<string, any>>{
+    const res = await this.fetch('/admin/config/v4/safe-keys');
+    return res.json();
+  }
+
+  async v4FlushCache(scope: string = '*'): Promise<{ ok: boolean; deleted?: number | null; scope: string; backend?: string }>{
+    const res = await this.fetch(`/admin/config/v4/flush-cache?scope=${encodeURIComponent(scope)}`, {
+      method: 'POST',
+    });
+    return res.json();
+  }
+
   // User traits (admin-only)
   async getUserTraits(): Promise<{ schema_version: number; user: { id: string }; traits: string[] }>{
     const res = await this.fetch('/admin/user/traits');

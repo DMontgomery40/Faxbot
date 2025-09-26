@@ -59,6 +59,8 @@ from pydantic import BaseModel
 from .middleware.traits import requires_traits
 from .security.permissions import require_permissions
 from .security.user_traits import pack_user_traits
+from .config.hierarchical_provider import HierarchicalConfigProvider, UserContext
+from .services.cache_manager import CacheManager
 from fastapi import APIRouter
 
 
@@ -1253,6 +1255,90 @@ def admin_config_effective() -> EffectiveConfigOut:
         "S3_KMS_KEY_ID": src("S3_KMS_KEY_ID", settings.s3_kms_key_id),
     }
     return EffectiveConfigOut(schema_version=1, values=values)
+
+
+# === Admin Config (v4) endpoints — read-only baseline ===
+class V4EffectiveIn(BaseModel):
+    keys: Optional[List[str]] = None
+    user_id: Optional[str] = None
+    tenant_id: Optional[str] = None
+    department: Optional[str] = None
+    groups: Optional[List[str]] = None
+
+
+class V4EffectiveOut(BaseModel):
+    schema_version: int
+    items: Dict[str, Dict[str, Any]]
+
+
+@app.post("/admin/config/v4/effective", dependencies=[Depends(require_admin)])
+async def admin_config_v4_effective(payload: V4EffectiveIn) -> V4EffectiveOut:
+    hc: HierarchicalConfigProvider = getattr(app.state, "hierarchical_config", None)  # type: ignore[assignment]
+    if not hc:
+        raise HTTPException(500, detail="hierarchical config not initialized")
+    ctx = UserContext(
+        user_id=payload.user_id,
+        tenant_id=payload.tenant_id,
+        department=payload.department,
+        groups=payload.groups or [],
+    )
+    keys = payload.keys or [
+        "system.public_api_url",
+        "api.rate_limit_rpm",
+        "security.enforce_public_https",
+        "storage.s3.bucket",
+        "storage.s3.region",
+        "storage.s3.endpoint_url",
+    ]
+    out: Dict[str, Dict[str, Any]] = {}
+    for k in keys:
+        try:
+            out[k] = await hc.get_effective(k, ctx)
+        except Exception as ex:  # pragma: no cover
+            out[k] = {"key": k, "error": str(ex), "source": None, "value": None}
+    return V4EffectiveOut(schema_version=1, items=out)
+
+
+class V4HierarchyIn(BaseModel):
+    key: str
+    user_id: Optional[str] = None
+    tenant_id: Optional[str] = None
+    department: Optional[str] = None
+    groups: Optional[List[str]] = None
+
+
+@app.post("/admin/config/v4/hierarchy", dependencies=[Depends(require_admin)])
+async def admin_config_v4_hierarchy(payload: V4HierarchyIn):
+    hc: HierarchicalConfigProvider = getattr(app.state, "hierarchical_config", None)  # type: ignore[assignment]
+    if not hc:
+        raise HTTPException(500, detail="hierarchical config not initialized")
+    ctx = UserContext(
+        user_id=payload.user_id,
+        tenant_id=payload.tenant_id,
+        department=payload.department,
+        groups=payload.groups or [],
+    )
+    return await hc.get_hierarchy(payload.key, ctx)
+
+
+@app.get("/admin/config/v4/safe-keys", dependencies=[Depends(require_admin)])
+async def admin_config_v4_safe_keys():
+    hc: HierarchicalConfigProvider = getattr(app.state, "hierarchical_config", None)  # type: ignore[assignment]
+    if not hc:
+        raise HTTPException(500, detail="hierarchical config not initialized")
+    return await hc.get_safe_edit_keys()
+
+
+@app.post("/admin/config/v4/flush-cache", dependencies=[Depends(require_admin)])
+async def admin_config_v4_flush_cache(scope: Optional[str] = Query(default="*")):
+    hc: HierarchicalConfigProvider = getattr(app.state, "hierarchical_config", None)  # type: ignore[assignment]
+    if not hc:
+        raise HTTPException(500, detail="hierarchical config not initialized")
+    # flush and return a minimal report
+    try:
+        return await hc.flush_cache(scope)
+    except Exception as ex:  # pragma: no cover
+        raise HTTPException(500, detail=str(ex))
 
 
 class ProviderTestOut(BaseModel):
