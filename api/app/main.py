@@ -4721,11 +4721,3 @@ if os.getenv("ENFORCE_SECRET_CHECKS", "false").lower() in {"1","true","yes"}:
     if missing:
         _logging.getLogger(__name__).error(f"Missing required secrets: {', '.join(missing)}")
         raise SystemExit(1)
-    # Idempotency: if a recent job exists for this key, return it
-    if idempotency_key:
-        existing = _idempotency_get_job(idempotency_key)
-        if existing:
-            with SessionLocal() as db:
-                job = db.get(FaxJob, existing)
-                if job:
-                    return _serialize_job(job)
