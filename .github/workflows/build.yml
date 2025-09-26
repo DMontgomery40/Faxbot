@@ -54,6 +54,10 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install jsonschema
+      - name: Install ripgrep for contract greps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ripgrep
       - name: Validate provider traits
         run: |
           python scripts/ci/validate_provider_traits.py
@@ -125,4 +129,3 @@ jobs:
       - name: Typecheck + build
         working-directory: api/admin_ui
         run: npm run build
-
