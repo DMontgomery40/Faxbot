@@ -49,7 +49,8 @@ interface InboundProps {
 }
 
 function Inbound({ client, docsBase }: InboundProps) {
-  const { active } = useTraits();
+  // Traits not currently used here; avoid TS unused binding error
+  useTraits();
   const [faxes, setFaxes] = useState<InboundFax[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -68,13 +69,7 @@ function Inbound({ client, docsBase }: InboundProps) {
     'sip-ami-setup': `${base}/backends/sipsetup.html#sip-ami-setup`,
     'sip-ami-security': `${base}/backends/sipsetup.html#sip-ami-security`,
   };
-  const thirdParty: Record<string,string> = {
-    'phaxio-webhook-hmac': 'https://www.phaxio.com/docs/security/callbacks',
-    'sinch-inbound-webhook': 'https://developers.sinch.com/docs/fax/api-reference/fax/tag/Notifications/#incoming-fax-event-webhook',
-    'sinch-inbound-basic-auth': 'https://developers.sinch.com/docs/voice/api-reference/voice/tag/Webhooks/#authentication',
-    'sip-ami-setup': 'https://medium.com/@lohaniprashant/asterisk-manager-interface-ami-setup-and-configuration-9b4f8d5bf9f9',
-    'sip-ami-security': 'https://medium.com/@lohaniprashant/asterisk-manager-interface-ami-setup-and-configuration-9b4f8d5bf9f9',
-  };
+  // third-party links unused here; keep anchors to our docs only
   
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));

@@ -246,6 +246,10 @@ function SetupWizard({ client, onDone, docsBase }: SetupWizardProps) {
     setEnvContent('');
     setValidationResults(null);
     try {
+      // Derive auth method hints for payload branching
+      const m = (traitValue('outbound','auth.methods') || []) as string[];
+      const basicOnly = Array.isArray(m) && m.includes('basic') && !m.includes('oauth2');
+      const hasOAuth = Array.isArray(m) && m.includes('oauth2');
       const effectiveBackend = (config.outbound_backend || config.backend);
       const payload: any = {
         backend: effectiveBackend,

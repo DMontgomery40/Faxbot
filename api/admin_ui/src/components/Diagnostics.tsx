@@ -171,7 +171,7 @@ function Diagnostics({ client, onNavigate, docsBase }: DiagnosticsProps) {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
   const isSmallMobile = useMediaQuery(theme.breakpoints.down('sm'));
-  const { outboundTraits, inboundTraits } = useTraits();
+  const { active, registry, outboundTraits, inboundTraits } = useTraits();
 
   // const hrefFor = (topic: string): string | undefined => (anchors[topic] || thirdParty[topic]);
 
