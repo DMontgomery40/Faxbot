@@ -151,6 +151,28 @@ def _idempotency_put(idem_key: str, job_id: str) -> None:
     except Exception:
         pass
 
+    # Bootstrap admin user (dev/stage only): create 'admin' if sessions enabled and bootstrap password present
+    try:
+        if os.getenv("FAXBOT_SESSIONS_ENABLED", "false").lower() in {"1","true","yes"}:
+            boot = os.getenv("FAXBOT_BOOTSTRAP_PASSWORD", "")
+            if boot:
+                from .plugins.manager import PluginManager
+                pm = PluginManager()
+                pm.load_all()
+                ident = pm.get_active_by_type("identity")
+                user = None
+                if hasattr(ident, "find_user_by_username"):
+                    user = await ident.find_user_by_username("admin")  # type: ignore
+                if not user and hasattr(ident, "create_user"):
+                    await ident.create_user("admin", boot, traits={"role": "admin"})  # type: ignore
+                    print("[info] Bootstrapped admin user via FAXBOT_BOOTSTRAP_PASSWORD")
+    except Exception as _boot_ex:
+        # Never block startup for bootstrap; log only
+        try:
+            print(f"[warn] Admin bootstrap skipped: {_boot_ex}")
+        except Exception:
+            pass
+
 
 def _ack_response(payload: Optional[dict] = None):
     """Return an ACK response with status 200 in test/compat mode and 202 otherwise.

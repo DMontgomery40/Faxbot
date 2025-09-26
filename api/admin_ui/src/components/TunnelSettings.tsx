@@ -7,9 +7,9 @@ import { useTraits } from '../hooks/useTraits';
 import { ResponsiveFormSection, ResponsiveSelect, ResponsiveTextField, ResponsiveFileUpload } from './common/ResponsiveFormFields';
 import { SmoothLoader, InlineLoader } from './common/SmoothLoader';
 
-type Props = { client: AdminAPIClient; docsBase?: string; hipaaMode?: boolean; inboundBackend?: string; sinchConfigured?: boolean };
+type Props = { client: AdminAPIClient; docsBase?: string; hipaaMode?: boolean; inboundBackend?: string; sinchConfigured?: boolean; readOnly?: boolean };
 
-export default function TunnelSettings({ client, docsBase, hipaaMode }: Props) {
+export default function TunnelSettings({ client, docsBase, hipaaMode, readOnly = false }: Props) {
   const [status, setStatus] = useState<TunnelStatus | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
   const [saving, setSaving] = useState<boolean>(false);
@@ -231,6 +231,7 @@ export default function TunnelSettings({ client, docsBase, hipaaMode }: Props) {
             label="Tunnel Provider"
             value={provider}
             onChange={(v) => setProvider(v as any)}
+            disabled={readOnly}
             options={[
               { value: 'none', label: 'None (local network only)' },
               { value: 'cloudflare', label: cloudflareDisabled ? 'Cloudflare (dev only, disabled in HIPAA)' : 'Cloudflare (dev only)' , disabled: cloudflareDisabled },
@@ -249,11 +250,12 @@ export default function TunnelSettings({ client, docsBase, hipaaMode }: Props) {
                 helperText="Upload your device-specific WireGuard .conf to display as a QR. The file is stored securely and can be deleted."
                 accept=".conf,text/plain"
                 onFileSelect={(f) => setWgFile(f)}
+                disabled={readOnly}
               />
               <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mb: 1 }}>
                 <Button
                   variant="outlined"
-                  disabled={!wgFile}
+                  disabled={!wgFile || readOnly}
                   onClick={async () => {
                     if (!wgFile) return;
                     try {
@@ -337,6 +339,7 @@ export default function TunnelSettings({ client, docsBase, hipaaMode }: Props) {
                 onChange={(v) => setWg({ ...wg, endpoint: v })}
                 placeholder="router.example.com:51820"
                 helperText="Your WireGuard server endpoint (e.g., Firewalla)."
+                disabled={readOnly}
               />
               <ResponsiveTextField
                 label="Server Public Key"
@@ -344,6 +347,7 @@ export default function TunnelSettings({ client, docsBase, hipaaMode }: Props) {
                 onChange={(v) => setWg({ ...wg, server_key: v })}
                 placeholder="base64 key"
                 helperText="Public key of your WireGuard server."
+                disabled={readOnly}
               />
               <ResponsiveTextField
                 label="Client IP (CIDR)"
@@ -351,6 +355,7 @@ export default function TunnelSettings({ client, docsBase, hipaaMode }: Props) {
                 onChange={(v) => setWg({ ...wg, client_ip: v })}
                 placeholder="10.0.0.100/24"
                 helperText="Assigned client IP within your WG network."
+                disabled={readOnly}
               />
               <ResponsiveTextField
                 label="DNS (optional)"
@@ -358,6 +363,7 @@ export default function TunnelSettings({ client, docsBase, hipaaMode }: Props) {
                 onChange={(v) => setWg({ ...wg, dns: v })}
                 placeholder="1.1.1.1"
                 helperText="Custom DNS server for the tunnel."
+                disabled={readOnly}
               />
             </Box>
           )}
@@ -373,6 +379,7 @@ export default function TunnelSettings({ client, docsBase, hipaaMode }: Props) {
                 placeholder="tskey-..."
                 helperText="Use an ephemeral or appropriately scoped key. Do not share."
                 type="password"
+                disabled={readOnly}
               />
               <ResponsiveTextField
                 label="Hostname"
@@ -380,12 +387,13 @@ export default function TunnelSettings({ client, docsBase, hipaaMode }: Props) {
                 onChange={(v) => setTs({ ...ts, hostname: v })}
                 placeholder="faxbot-server"
                 helperText="Device name as it will appear in your Tailnet."
+                disabled={readOnly}
               />
             </Box>
           )}
 
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
-            <Button variant="contained" onClick={applyConfig} disabled={saving} startIcon={<Security fontSize="small" />} sx={{ borderRadius: 2 }}>
+            <Button variant="contained" onClick={applyConfig} disabled={saving || readOnly} startIcon={<Security fontSize="small" />} sx={{ borderRadius: 2 }}>
               Save & Apply
               <InlineLoader loading={saving} />
             </Button>
@@ -393,11 +401,11 @@ export default function TunnelSettings({ client, docsBase, hipaaMode }: Props) {
               Test Connectivity
               <InlineLoader loading={testing} />
             </Button>
-          <Button variant="outlined" onClick={pairIOS} sx={{ borderRadius: 2 }}>
+          <Button variant="outlined" onClick={pairIOS} sx={{ borderRadius: 2 }} disabled={readOnly}>
             Generate iOS Pairing Code
           </Button>
           {isSinchActive && inboundEnabled && (
-            <Button variant="outlined" onClick={registerSinch} disabled={registering} startIcon={<LinkIcon fontSize="small" />} sx={{ borderRadius: 2 }}>
+            <Button variant="outlined" onClick={registerSinch} disabled={registering || readOnly} startIcon={<LinkIcon fontSize="small" />} sx={{ borderRadius: 2 }}>
               Register with Sinch
               <InlineLoader loading={registering} />
             </Button>

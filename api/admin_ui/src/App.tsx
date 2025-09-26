@@ -310,6 +310,8 @@ function AppContent() {
   const hasTrait = (t: string) => !!(userTraits && userTraits.includes(t));
   const terminalDisabled = !hasTrait('ui.terminal');
   const scriptsDisabled = !hasTrait('role.admin');
+  const canSend = hasTrait('ui.send') || hasTrait('role.admin');
+  const isAdmin = hasTrait('role.admin');
 
   useEffect(() => {
     if (tabValue === 5) {
@@ -815,7 +817,7 @@ function AppContent() {
                 <Box>
                   <Diagnostics client={client!} onNavigate={handleNavigate} docsBase={uiConfig?.docs_base || adminConfig?.branding?.docs_base} />
                   <Box sx={{ mt: 4 }}>
-                    <OutboundSmokeTests client={client!} />
+                    <OutboundSmokeTests client={client!} canSend={canSend} />
                   </Box>
                   <Box sx={{ mt: 4 }}>
                     <InboundWebhookTester client={client!} />
@@ -824,7 +826,7 @@ function AppContent() {
               )}
               {toolsTab === 2 && <Logs client={client!} />}
               {toolsTab === 3 && <Plugins client={client!} readOnly={!hasTrait('role.admin')} />}
-              {toolsTab === 4 && <ScriptsTests client={client!} docsBase={uiConfig?.docs_base || adminConfig?.branding?.docs_base} />}
+              {toolsTab === 4 && <ScriptsTests client={client!} docsBase={uiConfig?.docs_base || adminConfig?.branding?.docs_base} canSend={canSend} readOnly={!isAdmin} />}
               {toolsTab === 5 && (
                 <TunnelSettings
                   client={client!}
@@ -832,6 +834,7 @@ function AppContent() {
                   hipaaMode={Boolean(adminConfig?.security?.enforce_https)}
                   inboundBackend={adminConfig?.hybrid?.inbound_backend}
                   sinchConfigured={Boolean(adminConfig?.backend_configured?.sinch)}
+                  readOnly={!isAdmin}
                 />
               )}
             </Box>

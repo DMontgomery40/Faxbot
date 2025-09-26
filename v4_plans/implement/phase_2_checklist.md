@@ -83,7 +83,7 @@ Acceptance
 - First GET returns ETag; subsequent GET with `If-None-Match` → 304
 
 P2-10 Bootstrap admin (no lockout)
-- [ ] Bootstrap via `FAXBOT_BOOTSTRAP_PASSWORD` (dev/stage only); mark `must_change_password`
+- [x] Bootstrap via `FAXBOT_BOOTSTRAP_PASSWORD` (dev/stage only); create `admin` if missing
 Acceptance
 - First-run admin exists when env set; re-run does not duplicate
 
