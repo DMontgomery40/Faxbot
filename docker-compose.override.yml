@@ -1,0 +1,17 @@
+services:
+  api:
+    command: bash -lc "uvicorn app.main:app --host 0.0.0.0 --port 8080 --reload"
+    volumes:
+      - ./api/app:/app/app:delegated
+  admin_ui:
+    image: node:18-alpine
+    working_dir: /ui
+    command: sh -lc "npm ci --prefer-offline --no-audit && npm run dev -- --host"
+    volumes:
+      - ./api/admin_ui:/ui
+    ports:
+      - "5173:5173"
+    depends_on:
+      - api
+
+

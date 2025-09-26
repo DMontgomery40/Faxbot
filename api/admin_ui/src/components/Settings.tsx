@@ -56,7 +56,7 @@ function Settings({ client }: SettingsProps) {
   const [importingEnv, setImportingEnv] = useState<boolean>(false);
   const [importResult, setImportResult] = useState<{discovered:number; prefixes:string[]} | null>(null);
   const [lastGeneratedSecret, setLastGeneratedSecret] = useState<string>('');
-  const { hasTrait, active } = useTraits();
+  const { hasTrait, active, traitValue, registry } = useTraits();
   const handleForm = (field: string, value: any) => setForm((prev: any) => ({ ...prev, [field]: value }));
   const isSmall = useMediaQuery('(max-width:900px)');
   const ctlStyle: React.CSSProperties = { background: 'transparent', color: 'inherit', borderColor: '#444', padding: '6px', borderRadius: 6, width: isSmall ? '100%' : 'auto', maxWidth: isSmall ? '100%' : undefined };
@@ -179,11 +179,14 @@ function Settings({ client }: SettingsProps) {
 
       // Provider-specific settings (traits-aware)
       const activeOutbound = active?.outbound;
-      if (activeOutbound === 'phaxio') {
+      const methods = (traitValue('outbound', 'auth.methods') || []) as string[];
+      // Providers with basic-only auth (e.g., Phaxio-like)
+      if (Array.isArray(methods) && methods.includes('basic') && !methods.includes('oauth2')) {
         if (form.phaxio_api_key) p.phaxio_api_key = form.phaxio_api_key;
         if (form.phaxio_api_secret) p.phaxio_api_secret = form.phaxio_api_secret;
       }
-      if (activeOutbound === 'sinch') {
+      // Providers supporting OAuth2 (e.g., Sinch-like)
+      if (Array.isArray(methods) && methods.includes('oauth2')) {
         if (form.sinch_project_id) p.sinch_project_id = form.sinch_project_id;
         if (form.sinch_api_key) p.sinch_api_key = form.sinch_api_key;
         if (form.sinch_api_secret) p.sinch_api_secret = form.sinch_api_secret;
@@ -485,7 +488,7 @@ function Settings({ client }: SettingsProps) {
           </ResponsiveSettingSection>
 
           {/* Backend-Specific Configuration */}
-          {active?.outbound === 'phaxio' && (
+          {(() => { const m = (traitValue('outbound','auth.methods') || []) as string[]; return Array.isArray(m) && m.includes('basic') && !m.includes('oauth2'); })() && (
                   <>
                   <Box id="settings-phaxio" />
                   <ResponsiveSettingSection
@@ -540,7 +543,7 @@ function Settings({ client }: SettingsProps) {
                   </>
                 )}
 
-                {active?.outbound === 'sinch' && (
+                {(() => { const m = (traitValue('outbound','auth.methods') || []) as string[]; return Array.isArray(m) && m.includes('oauth2'); })() && (
                   <>
                   <Box id="settings-sinch" />
                   <ResponsiveSettingSection
@@ -688,7 +691,7 @@ function Settings({ client }: SettingsProps) {
                   </ResponsiveSettingSection>
                 )}
 
-                {active?.outbound === 'sip' && (
+                {hasTrait('outbound','requires_ami') && (
                   <>
                   <Box id="settings-sip" />
                   <ResponsiveSettingSection
@@ -847,7 +850,7 @@ function Settings({ client }: SettingsProps) {
               showCurrentValue={true}
             />
 
-            {effectiveInbound === 'sip' && (
+            {hasTrait('inbound','requires_ami') && (
               <Box sx={{ mt: 2 }}>
                 <ResponsiveSettingItem
                   icon={<SecurityIcon />}
@@ -908,7 +911,7 @@ function Settings({ client }: SettingsProps) {
               </Box>
             )}
 
-            {effectiveInbound === 'phaxio' && (
+            {traitValue('inbound','webhook.verification') === 'hmac_sha256' && (
               <ResponsiveSettingItem
                 icon={settings.inbound?.phaxio?.verify_signature ? <CheckCircleIcon color="success" /> : <WarningIcon color="warning" />}
                 label="Verify Phaxio Inbound Signature"
@@ -925,7 +928,7 @@ function Settings({ client }: SettingsProps) {
               />
             )}
 
-            {effectiveInbound === 'sinch' && (
+            {traitValue('inbound','webhook.verification') === 'basic_auth' && (
               <Box sx={{ mt: 2 }}>
                 <ResponsiveSettingItem
                   icon={settings.inbound?.sinch?.basic_auth_configured ? <CheckCircleIcon color="success" /> : <WarningIcon color="warning" />}
