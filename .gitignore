@@ -61,3 +61,5 @@ _site/
 docs/_site/
 vendor/
 .bundle/
+
+.venv_ci/

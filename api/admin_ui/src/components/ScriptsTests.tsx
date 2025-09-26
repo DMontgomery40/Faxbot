@@ -142,7 +142,7 @@ const ConsoleBox: React.FC<{ lines: string[]; loading?: boolean; title?: string 
 };
 
 const ScriptsTests: React.FC<Props> = ({ client, docsBase }) => {
-  const { active } = useTraits();
+  const { outboundTraits } = useTraits();
   const [error, setError] = useState<string>('');
   const [busyAuth, setBusyAuth] = useState<boolean>(false);
   const [busyInbound, setBusyInbound] = useState<boolean>(false);
@@ -508,7 +508,7 @@ const ScriptsTests: React.FC<Props> = ({ client, docsBase }) => {
         )}
 
         {/* Backend-specific helpers */}
-        {active?.outbound === 'sip' && (
+        {hasTrait('outbound','requires_ami') && (
           <Grid item xs={12} lg={6}>
             <ResponsiveFormSection
               title="SIP/Asterisk: Inbound Secret"
@@ -553,10 +553,11 @@ const ScriptsTests: React.FC<Props> = ({ client, docsBase }) => {
           </Grid>
         )}
 
-        {active?.outbound === 'phaxio' && (
+        {/* Show callback URL section when outbound supports status callbacks */}
+        {Boolean(outboundTraits?.status_callback) && (
           <Grid item xs={12} lg={6}>
             <ResponsiveFormSection
-              title="Phaxio: Set Callback URL"
+              title="Status Callback URL"
               subtitle="Configure webhook endpoint for status updates"
               icon={<SettingsIcon />}
             >
@@ -580,7 +581,7 @@ const ScriptsTests: React.FC<Props> = ({ client, docsBase }) => {
                 </Stack>
                 <Alert severity="warning" sx={{ borderRadius: 2 }}>
                   <Typography variant="caption">
-                    Ensure this is HTTPS and publicly reachable. Configure webhook verification if your provider supports signatures (Phaxio). For Sinch inbound, use Basic auth.
+                    Ensure this is HTTPS and publicly reachable. Configure verification according to the active providers traits.
                   </Typography>
                 </Alert>
               </Stack>
@@ -591,9 +592,7 @@ const ScriptsTests: React.FC<Props> = ({ client, docsBase }) => {
         {/* Inbound Callbacks Info + Local Parser Tester */}
         <Grid item xs={12}>
           <ResponsiveFormSection
-            title={active?.inbound === 'phaxio' ? 'Phaxio Inbound Callback' : 
-                   active?.inbound === 'sinch' ? 'Sinch Inbound Callback' : 
-                   active?.inbound === 'sip' ? 'Asterisk Inbound (internal)' : 'Inbound Callback'}
+            title="Inbound Callback"
             subtitle="View current callback configuration"
             icon={<InfoIcon />}
           >

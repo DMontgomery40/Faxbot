@@ -1,15 +1,14 @@
-name: Generate and Deploy API Documentation
+name: Generate and Deploy API Documentation (disabled)
 
 on:
-  push:
-    branches: [ development ]
-    paths:
-      - 'api/**'
-      - '.github/workflows/api-docs.yml'
+  # Disabled from automatic triggers due to Redocly failures.
+  # Leave manual trigger available if needed.
   workflow_dispatch:
 
 jobs:
   generate-and-deploy-docs:
+    # Hard-disable job execution until docs pipeline is restored.
+    if: ${{ false }}
     runs-on: ubuntu-latest
 
     steps:

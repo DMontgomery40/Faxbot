@@ -29,6 +29,9 @@ jobs:
           FAX_DISABLED: 'true'
           FAX_DATA_DIR: './faxdata'
           DATABASE_URL: 'sqlite:///./test_faxbot_ci.db'
+          # Ensure webhook/inbound endpoints return 200 in CI (compat)
+          FAXBOT_TEST_MODE: 'true'
+          CALLBACK_COMPAT_200: 'true'
         working-directory: api
         run: |
           mkdir -p faxdata

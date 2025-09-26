@@ -126,21 +126,27 @@ export default function ProviderSetupWizard({
       setError(null);
       
       // Convert config to settings format
-      const settings: any = {
-        backend: config.provider,
-      };
+      const settings: any = { backend: config.provider };
+      // Traits-driven mapping
+      const t = registry?.[config.provider]?.traits || {};
+      const methods = (t?.auth?.methods || []) as string[];
+      const requiresAmi = Boolean(t?.requires_ami);
+      const basicOnly = Array.isArray(methods) && methods.includes('basic') && !methods.includes('oauth2');
+      const hasOAuth = Array.isArray(methods) && methods.includes('oauth2');
 
-      if (config.provider === 'phaxio') {
+      if (basicOnly) {
         settings.phaxio_api_key = config.phaxio_api_key;
         settings.phaxio_api_secret = config.phaxio_api_secret;
         settings.phaxio_callback_url = config.phaxio_callback_url;
         settings.phaxio_verify_signature = config.phaxio_verify_signature;
-      } else if (config.provider === 'sinch') {
+      }
+      if (hasOAuth) {
         settings.sinch_project_id = config.sinch_project_id;
         settings.sinch_api_key = config.sinch_api_key;
         settings.sinch_api_secret = config.sinch_api_secret;
         settings.sinch_base_url = config.sinch_base_url;
-      } else if (config.provider === 'sip') {
+      }
+      if (requiresAmi) {
         settings.ami_host = config.ami_host;
         settings.ami_port = config.ami_port;
         settings.ami_username = config.ami_username;
@@ -170,16 +176,31 @@ export default function ProviderSetupWizard({
       setError(null);
 
       // Convert config to settings format and save
-      const settings: any = {
-        backend: config.provider,
-      };
+      const settings: any = { backend: config.provider };
+      const t = registry?.[config.provider]?.traits || {};
+      const methods = (t?.auth?.methods || []) as string[];
+      const requiresAmi = Boolean(t?.requires_ami);
+      const basicOnly = Array.isArray(methods) && methods.includes('basic') && !methods.includes('oauth2');
+      const hasOAuth = Array.isArray(methods) && methods.includes('oauth2');
 
-      // Add provider-specific settings
-      Object.entries(config).forEach(([key, value]) => {
-        if (key !== 'provider' && value !== undefined && value !== '') {
-          settings[key] = value;
-        }
-      });
+      if (basicOnly) {
+        settings.phaxio_api_key = config.phaxio_api_key;
+        settings.phaxio_api_secret = config.phaxio_api_secret;
+        if (config.public_api_url) settings.public_api_url = config.public_api_url;
+      }
+      if (hasOAuth) {
+        settings.sinch_project_id = config.sinch_project_id;
+        settings.sinch_api_key = config.sinch_api_key;
+        settings.sinch_api_secret = config.sinch_api_secret;
+        if (config.sinch_base_url) settings.sinch_base_url = config.sinch_base_url;
+      }
+      if (requiresAmi) {
+        settings.ami_host = config.ami_host;
+        settings.ami_port = config.ami_port;
+        settings.ami_username = config.ami_username;
+        settings.ami_password = config.ami_password;
+        settings.fax_station_id = config.fax_station_id;
+      }
 
       await client.updateSettings(settings);
       onComplete();
@@ -295,7 +316,7 @@ export default function ProviderSetupWizard({
         </Box>
 
         <Stack spacing={3}>
-          {config.provider === 'phaxio' && (
+          {(() => { const t = registry?.[config.provider]?.traits || {}; const m = (t?.auth?.methods||[]) as string[]; return Array.isArray(m) && m.includes('basic') && !m.includes('oauth2'); })() && (
             <ResponsiveFormSection
               title="Phaxio API Credentials"
               subtitle="Get these from your Phaxio console"
@@ -334,7 +355,7 @@ export default function ProviderSetupWizard({
             </ResponsiveFormSection>
           )}
 
-          {config.provider === 'sinch' && (
+          {(() => { const t = registry?.[config.provider]?.traits || {}; const m = (t?.auth?.methods||[]) as string[]; return Array.isArray(m) && m.includes('oauth2'); })() && (
             <ResponsiveFormSection
               title="Sinch API Credentials"
               subtitle="Get these from your Sinch dashboard"
@@ -374,7 +395,7 @@ export default function ProviderSetupWizard({
             </ResponsiveFormSection>
           )}
 
-          {config.provider === 'sip' && (
+          {Boolean(registry?.[config.provider]?.traits?.requires_ami) && (
             <ResponsiveFormSection
               title="Asterisk AMI Configuration"
               subtitle="Configure connection to your Asterisk server"
