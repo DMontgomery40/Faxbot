@@ -1008,6 +1008,38 @@ async def admin_provider_test(provider_id: str) -> ProviderTestOut:
     return ProviderTestOut(success=ok, message=msg, latency_ms=round(dt, 2))
 
 
+# ===== Admin UI config (ETag-cached) =====
+@app.get("/admin/ui-config", dependencies=[Depends(require_admin)])
+async def admin_ui_config(request: Request):
+    cfg = {
+        "schema_version": 1,
+        "features": {
+            "sessions_enabled": os.getenv("FAXBOT_SESSIONS_ENABLED", "false").lower() in {"1","true","yes"},
+            "csrf_enabled": os.getenv("FAXBOT_CSRF_ENABLED", "false").lower() in {"1","true","yes"},
+        },
+        "endpoints": {
+            "metrics": "/metrics",
+            "providers": "/admin/providers",
+            "config_effective": "/admin/config/effective",
+            "provider_test": "/admin/providers/{id}/test",
+            "auth_login": "/auth/login",
+            "auth_logout": "/auth/logout",
+            "auth_refresh": "/auth/refresh",
+        },
+        # client can render docs links relative to this base
+        "docs_base": os.getenv("DOCS_BASE_URL", "https://docs.faxbot.net"),
+    }
+    body = json.dumps(cfg, sort_keys=True).encode("utf-8")
+    etag = hashlib.sha256(body).hexdigest()
+    inm = request.headers.get("if-none-match") or request.headers.get("If-None-Match")
+    if inm and inm == etag:
+        return Response(status_code=304)
+    resp = JSONResponse(cfg)
+    resp.headers["ETag"] = etag
+    resp.headers["Cache-Control"] = "private, max-age=30"
+    return resp
+
+
 class ValidateSettingsRequest(BaseModel):
     backend: str
     phaxio_api_key: Optional[str] = None

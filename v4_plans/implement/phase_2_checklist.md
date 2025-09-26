@@ -30,7 +30,7 @@ Acceptance
 P2-02 Identity plugin base + provider skeleton (P0)
 - [x] `api/app/plugins/identity/base.py`: `IdentityPlugin(FaxbotPlugin)`, dataclasses (User, Group, Session, AuthResult)
 - [x] Enforce `plugin_type = "identity"` at load-time; manager supports `get_active_by_type("identity")`
-- [ ] Minimal provider stub wired (e.g., `identity/sqlalchemy.py`)
+- [x] Minimal provider stub wired (e.g., `identity/sqlalchemy.py`)
 Acceptance
 - `rg -n "class IdentityProvider|class IdentityPlugin" api/app | wc -l` → 1–2 total (no duplicates)
 - `python -c "from api.app.plugins.manager import PluginManager; pm=PluginManager(); pm.load_all(); print(pm.get_active_by_type('identity'))"` succeeds
@@ -43,8 +43,8 @@ Acceptance
 - `alembic upgrade head` applies cleanly in CI/dev
 
 P2-04 Session storage (peppered hash) + helpers (P0)
-- [ ] Store only peppered hash of session token; never persist raw
-- [ ] Rotation capability (on login/elevation)
+- [x] Store only peppered hash of session token; never persist raw
+- [x] Rotation capability (on login/elevation)
 Acceptance
 - `rg -n "_hash_token|FAXBOT_SESSION_PEPPER" api/app | wc -l` → >0
 - Unit/integration smoke proves validate/revoke via hash
@@ -56,9 +56,9 @@ Acceptance
 - POST without header when cookie present → 403 (dev toggle), unchanged for API-key flows
 
 P2-06 Auth endpoints (dual-mode; API-key preserved)
-- [ ] `/auth/login` (sets HttpOnly, Secure, SameSite=Strict cookie; returns CSRF token if enabled)
-- [ ] `/auth/logout` (cookie clear + revoke)
-- [ ] `/auth/refresh` (rotate + extend expiry)
+- [x] `/auth/login` (sets HttpOnly, Secure, SameSite=Strict cookie; returns CSRF token if enabled)
+- [x] `/auth/logout` (cookie clear + revoke)
+- [x] `/auth/refresh` (rotate + extend expiry)
 Acceptance
 - API keys continue to work unchanged
 - Cookies present only when sessions enabled; CSRF enforced only when flag true
@@ -93,7 +93,7 @@ Acceptance
 - Feature flag off by default; no UI breakage
 
 P2-12 Fail-fast secrets at startup
-- [ ] Fail with actionable error if `CONFIG_MASTER_KEY` or `FAXBOT_SESSION_PEPPER` missing (when sessions enabled)
+- [x] Fail with actionable error if `CONFIG_MASTER_KEY` or `FAXBOT_SESSION_PEPPER` missing (when sessions enabled)
 Acceptance
 - `rg -n "CONFIG_MASTER_KEY|FAXBOT_SESSION_PEPPER" api/app` → checks present
 
