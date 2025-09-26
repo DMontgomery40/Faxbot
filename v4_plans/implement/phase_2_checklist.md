@@ -20,16 +20,16 @@ Status key
 - [ ] pending  [~] in progress  [x] done
 
 P2-01 Async SQLAlchemy invariants (P0)
-- [ ] Add async DB layer: `api/app/db/async.py` (async engine + `AsyncSessionLocal`)
+- [x] Add async DB layer: `api/app/db/async.py` (async engine + `AsyncSessionLocal`)
 - [ ] Ensure identity/session code uses `AsyncSession` + `select()`; no blocking `.query()`
-- [ ] Dev-only DDL helper guarded (prefer Alembic)
+- [x] Dev-only DDL helper guarded (prefer Alembic)
 Acceptance
 - `rg -n "db\.query\(" api/app | wc -l` → 0 in new identity/session code
 - Example helper present in code comments or tests (select/await pattern)
 
 P2-02 Identity plugin base + provider skeleton (P0)
-- [ ] `api/app/plugins/identity/base.py`: `IdentityPlugin(FaxbotPlugin)`, dataclasses (User, Group, Session, AuthResult)
-- [ ] Enforce `plugin_type = "identity"` at load-time; manager supports `get_active_by_type("identity")`
+- [x] `api/app/plugins/identity/base.py`: `IdentityPlugin(FaxbotPlugin)`, dataclasses (User, Group, Session, AuthResult)
+- [x] Enforce `plugin_type = "identity"` at load-time; manager supports `get_active_by_type("identity")`
 - [ ] Minimal provider stub wired (e.g., `identity/sqlalchemy.py`)
 Acceptance
 - `rg -n "class IdentityProvider|class IdentityPlugin" api/app | wc -l` → 1–2 total (no duplicates)
@@ -50,7 +50,7 @@ Acceptance
 - Unit/integration smoke proves validate/revoke via hash
 
 P2-05 CSRF middleware for cookie sessions (P0)
-- [ ] `api/app/middleware/csrf.py` added; mounted only when `FAXBOT_CSRF_ENABLED=true`
+- [x] `api/app/middleware/csrf.py` added; mounted only when `FAXBOT_CSRF_ENABLED=true`
 Acceptance
 - `rg -n "class CSRFMiddleware" api/app` → 1
 - POST without header when cookie present → 403 (dev toggle), unchanged for API-key flows
@@ -130,4 +130,3 @@ Notes
 - Keep Admin routes stable; add parallel /auth/* only.
 - Never log PHI or secrets; audit events use job/user IDs only.
 - Admin Console remains API-key primary until Phase 2 close-out.
-

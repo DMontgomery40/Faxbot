@@ -15,8 +15,9 @@ logger.setLevel(logging.INFO)
 
 # Root of the plugins tree (…/api/app/plugins)
 _PLUGINS_ROOT = Path(__file__).resolve().parent
-# Supported plugin types for discovery in Phase 1 (storage enabled in PR8)
-_SUPPORTED_TYPES = ("transport", "storage")
+# Supported plugin types for discovery
+# Phase 1: transport, storage; Phase 2 adds identity discovery (no behavior change if none present)
+_SUPPORTED_TYPES = ("transport", "storage", "identity")
 
 # Optional: jsonschema validation (if library is available)
 try:
@@ -276,6 +277,7 @@ def _validate_plugin_class(plugin_type: str, cls: type, manifest: Dict[str, Any]
     """Validate that the imported class conforms to expected base/type/scope.
 
     - transport → subclass of TransportPlugin (if available)
+    - identity  → subclass of IdentityPlugin (if available)
     - scope → must be 'global' in Phase 1 (reject tenant/user to avoid mis-scoping)
     """
     try:
@@ -285,6 +287,14 @@ def _validate_plugin_class(plugin_type: str, cls: type, manifest: Dict[str, Any]
                 from .base import TransportPlugin  # type: ignore
                 if not issubclass(cls, TransportPlugin):
                     logger.warning("Class %s is not a TransportPlugin; continuing (compat)", getattr(cls, "__name__", str(cls)))
+            except Exception:
+                # Base not available; skip strictness
+                pass
+        elif plugin_type == "identity":
+            try:
+                from .identity.base import IdentityPlugin  # type: ignore
+                if not issubclass(cls, IdentityPlugin):
+                    logger.warning("Class %s is not an IdentityPlugin; continuing (compat)", getattr(cls, "__name__", str(cls)))
             except Exception:
                 # Base not available; skip strictness
                 pass

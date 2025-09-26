@@ -224,6 +224,15 @@ for _ap in _assets_candidates:
     except Exception:
         pass
 
+# ===== Optional CSRF middleware (cookie sessions only) =====
+try:
+    if os.getenv("FAXBOT_CSRF_ENABLED", "false").lower() in {"1","true","yes"}:
+        from .middleware.csrf import CSRFMiddleware  # type: ignore
+        app.add_middleware(CSRFMiddleware)
+except Exception:
+    # Keep running even if middleware import fails in environments without it
+    pass
+
 # ===== Embedded MCP mounts (optional) =====
 try:
     if os.getenv("ENABLE_MCP_SSE", "false").lower() in {"1","true","yes"}:
