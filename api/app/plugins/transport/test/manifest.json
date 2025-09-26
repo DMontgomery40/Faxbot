@@ -1,0 +1,15 @@
+{
+    "id": "test",
+    "name": "Test Transport",
+    "version": "1.0.0",
+    "type": "transport",
+    "traits": {
+      "send_fax": true,
+      "status_callback": false,
+      "inbound_supported": false,
+      "webhook": { "path": "/callbacks/test", "verification": "none" },
+      "auth": { "methods": [] }
+    },
+    "config_schema": { "type": "object", "properties": {} }
+  }
+  

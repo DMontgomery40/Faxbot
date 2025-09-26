@@ -157,6 +157,84 @@ export class AdminAPIClient {
     return res.json();
   }
 
+  // Events & Diagnostics
+  async getRecentEvents(params: {
+    limit?: number;
+    provider_id?: string;
+    event_type?: string;
+    from_db?: boolean
+  } = {}): Promise<{ events: any[]; total: number; source: string }> {
+    const search = new URLSearchParams();
+    Object.entries(params).forEach(([key, value]) => {
+      if (value !== undefined && value !== null) {
+        search.append(key, String(value));
+      }
+    });
+    const res = await this.fetch(`/admin/diagnostics/events/recent?${search}`);
+    return res.json();
+  }
+
+  async getEventTypes(): Promise<{ event_types: Array<{ value: string; label: string }> }> {
+    const res = await this.fetch('/admin/diagnostics/events/types');
+    return res.json();
+  }
+
+  createEventSSE(): EventSource {
+    // Note: EventSource doesn't support custom headers directly
+    // Pass API key as query parameter for authentication
+    const params = new URLSearchParams();
+    params.append('X-API-Key', this.apiKey);
+    return new EventSource(`${this.baseURL}/admin/diagnostics/events/sse?${params.toString()}`);
+  }
+
+  // Provider Health Management
+  async getProviderHealthStatus(): Promise<{
+    provider_statuses: Record<string, any>;
+    total_providers: number;
+    healthy_count: number;
+    degraded_count: number;
+    circuit_open_count: number;
+    disabled_count: number;
+  }> {
+    const res = await this.fetch('/admin/providers/health');
+    return res.json();
+  }
+
+  async enableProvider(providerId: string): Promise<{
+    success: boolean;
+    provider_id: string;
+    new_status: string;
+    message?: string;
+  }> {
+    const res = await this.fetch('/admin/providers/enable', {
+      method: 'POST',
+      body: JSON.stringify({ provider_id: providerId }),
+    });
+    return res.json();
+  }
+
+  async disableProvider(providerId: string): Promise<{
+    success: boolean;
+    provider_id: string;
+    new_status: string;
+    message?: string;
+  }> {
+    const res = await this.fetch('/admin/providers/disable', {
+      method: 'POST',
+      body: JSON.stringify({ provider_id: providerId }),
+    });
+    return res.json();
+  }
+
+  async shouldAllowRequests(providerId: string): Promise<{
+    provider_id: string;
+    allowed: boolean;
+    reason: string;
+  }> {
+    const res = await this.fetch(`/admin/providers/circuit-breaker/${encodeURIComponent(providerId)}/should-allow`);
+    return res.json();
+  }
+
   // Jobs
   async listJobs(params: { 
     status?: string; 

@@ -46,6 +46,8 @@ import AdminAPIClient from '../api/client';
 import type { DiagnosticsResult } from '../api/types';
 import { useTraits } from '../hooks/useTraits';
 import { ResponsiveFormSection } from './common/ResponsiveFormFields';
+import EventStream from './EventStream';
+import ProviderHealthStatus from './ProviderHealthStatus';
 
 interface DiagnosticsProps {
   client: AdminAPIClient;
@@ -1030,6 +1032,22 @@ function Diagnostics({ client, onNavigate, docsBase }: DiagnosticsProps) {
                 {Object.entries(diagnostics.checks).map(([title, checks]) => (
                   renderCheckSection(title.charAt(0).toUpperCase() + title.slice(1), checks as Record<string, any>)
                 ))}
+              </Box>
+
+              {/* Event Stream */}
+              <Box sx={{ mt: 4 }}>
+                <Typography variant="h6" fontWeight={600} sx={{ mb: 2 }}>
+                  Real-time Event Stream
+                </Typography>
+                <EventStream client={client} />
+              </Box>
+
+              {/* Provider Health Status */}
+              <Box sx={{ mt: 4 }}>
+                <Typography variant="h6" fontWeight={600} sx={{ mb: 2 }}>
+                  Provider Health Status
+                </Typography>
+                <ProviderHealthStatus client={client} />
               </Box>
             </Box>
           </Fade>

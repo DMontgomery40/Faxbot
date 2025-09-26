@@ -12,7 +12,7 @@ Phase 5 is the FINAL phase completing the v4 platform transformation. This phase
 1. **Sinch** - Most widely used, OAuth2 + Basic Auth, regional endpoints
 2. **Phaxio** - HIPAA-ready with BAA, HMAC verification
 3. **SignalWire** - Twilio-compatible (NOTE: Twilio fax API is sunset)
-4. **HumbleFax** - Complex webhook + email inbound, IMAP integration
+4. **HumbleFax** - Most widely used by non-HIPAA customers, Complex webhook + email inbound, IMAP integration
 5. **SIP/Asterisk** - Self-hosted T.38, AMI interface
 6. **FreeSWITCH** - ESL integration, mod_spandsp
 7. **Test/Disabled** - Development and CI/CD

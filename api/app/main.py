@@ -24,6 +24,9 @@ from .config import (
 from .db import init_db, SessionLocal, FaxJob
 from .db import InboundEvent  # for idempotency (provider_sid + event_type)
 from .models import FaxJobOut
+from .models.events import CanonicalEventDB  # Import to register with metadata
+from .models.config import ConfigGlobal, ConfigTenant, ConfigDepartment, ConfigGroup, ConfigUser, ConfigAudit  # Import to register with metadata
+from .monitoring.health import ProviderHealthMonitor
 from .conversion import ensure_dir, txt_to_pdf, pdf_to_tiff
 from .ami import ami_client
 from .phaxio_service import get_phaxio_service
@@ -117,10 +120,12 @@ def _inbound_dedupe(provider_id: str, external_id: str, window_sec: int = 600) -
             _inbound_seen.pop(k, None)
         key = f"{provider_id}:{external_id}"
         ts = _inbound_seen.get(key)
-    if ts and ts >= cutoff:
-        return True
+        if ts and ts >= cutoff:
+            return True
         _inbound_seen[key] = now
-    return False
+        return False
+    except Exception:
+        return False
 
 # ===== Phase 3: optional hierarchical config bootstrap (lazy) =====
 try:
@@ -134,7 +139,7 @@ try:
         app.state.hierarchical_config = HierarchicalConfigProvider(_cmk, cache_manager=_cache)  # type: ignore[attr-defined]
     else:
         # Expose None if not configured; Admin endpoints will be added in Phase 3 PRs
-    app.state.hierarchical_config = None  # type: ignore[attr-defined]
+        app.state.hierarchical_config = None  # type: ignore[attr-defined]
 except Exception:
     # Do not block startup; Phase 3 endpoints will check availability
     app.state.hierarchical_config = None  # type: ignore[attr-defined]
@@ -240,8 +245,22 @@ try:
 except Exception:
     # Non-fatal if SSE deps missing
     pass
-    except Exception:
-        return False
+
+# Provider health management router
+try:
+    from .routers import admin_providers as _providers
+    app.include_router(_providers.router)
+except Exception:
+    # Non-fatal if health monitoring deps missing
+    pass
+
+# Webhook hardening router (DLQ + idempotency)
+try:
+    from .routers import webhooks_v2 as _webhooks_v2
+    app.include_router(_webhooks_v2.router)
+except Exception:
+    # Non-fatal if webhook processor deps missing
+    pass
 
 # Send-side idempotency (Idempotency-Key header) — 10 minute window
 _send_idempotency: dict[str, tuple[str, int]] = {}
@@ -563,6 +582,77 @@ async def on_startup():
             asyncio.create_task(_auto_tunnel_cloudflare_watcher())
     except Exception:
         pass
+
+    # Initialize and start provider health monitoring (Phase 3)
+    try:
+        from .config.hierarchical_provider import get_hierarchical_config_provider
+
+        # Get or create event emitter
+        event_emitter = getattr(app.state, "event_emitter", None)
+
+        # Get hierarchical config provider if available
+        config_provider = None
+        try:
+            config_provider = get_hierarchical_config_provider()
+        except Exception:
+            pass
+
+        # Initialize health monitor
+        health_monitor = ProviderHealthMonitor(
+            plugin_manager=None,  # Plugin manager integration will come in later phases
+            event_emitter=event_emitter,
+            config_provider=config_provider
+        )
+
+        # Store in app state for access by other components
+        app.state.health_monitor = health_monitor
+
+        # Start monitoring
+        asyncio.create_task(health_monitor.start_monitoring())
+
+    except Exception as e:
+        # Don't fail startup if health monitoring can't be initialized
+        print(f"[warn] Provider health monitoring initialization failed: {e}")
+        pass
+
+    # Initialize DLQ processor for webhook retries
+    try:
+        from .services.webhook_processor import WebhookProcessor
+        webhook_processor = WebhookProcessor(
+            plugin_manager=plugin_manager,
+            event_emitter=get_event_emitter(),
+            config_provider=get_config_provider()
+        )
+        app.state.webhook_processor = webhook_processor
+
+        # Start DLQ retry processing (runs every 5 minutes)
+        async def dlq_retry_loop():
+            import asyncio
+            while True:
+                try:
+                    await webhook_processor.retry_dlq_entries(max_retries=3)
+                    webhook_processor.clear_idempotency_cache(older_than_minutes=60)
+                except Exception as e:
+                    print(f"[warn] DLQ retry processing error: {e}")
+                await asyncio.sleep(300)  # 5 minutes
+
+        asyncio.create_task(dlq_retry_loop())
+    except Exception as e:
+        # Don't fail startup if DLQ processing can't be initialized
+        print(f"[warn] Webhook DLQ processor initialization failed: {e}")
+        pass
+
+
+@app.on_event("shutdown")
+async def on_shutdown():
+    """Clean shutdown of background services."""
+    # Stop health monitoring
+    try:
+        health_monitor = getattr(app.state, "health_monitor", None)
+        if health_monitor:
+            await health_monitor.stop_monitoring()
+    except Exception as e:
+        print(f"[warn] Error stopping health monitor: {e}")
 
 
 def _handle_fax_result(event):
@@ -921,6 +1011,25 @@ async def admin_import_env(request: Request):
     count = import_env_to_db(prefixes)
     return {"ok": True, "discovered": count, "prefixes": prefixes}
 
+
+# Dependency functions for webhook processor
+def get_plugin_manager():
+    """Get the plugin manager instance."""
+    return plugin_manager
+
+def get_event_emitter():
+    """Get the event emitter instance."""
+    if not hasattr(app.state, "event_emitter") or app.state.event_emitter is None:
+        from .services.events import EventEmitter
+        app.state.event_emitter = EventEmitter()
+    return app.state.event_emitter
+
+def get_config_provider():
+    """Get the hierarchical config provider instance."""
+    if hasattr(app.state, "hierarchical_config") and app.state.hierarchical_config:
+        return app.state.hierarchical_config
+    # Fallback to basic HybridConfigProvider
+    return settings
 
 # Provider traits and active backends — lightweight helper for clients
 @app.get("/admin/providers", dependencies=[Depends(require_admin)])

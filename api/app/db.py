@@ -113,6 +113,7 @@ def init_db():
     _rebind_engine_if_needed()
     Base.metadata.create_all(engine)
     _ensure_optional_columns()
+    _ensure_dlq_table()
 
 
 def _ensure_optional_columns() -> None:
@@ -171,3 +172,69 @@ def _ensure_optional_columns() -> None:
     except Exception:
         # Do not block startup on migration best-effort failures
         pass
+
+
+def _ensure_dlq_table() -> None:
+    """Ensure webhook_dlq table exists (Phase 3 PR20)."""
+    try:
+        with engine.begin() as conn:
+            dialect = engine.dialect.name
+            if dialect == 'sqlite':
+                # Check if table exists
+                result = conn.exec_driver_sql("SELECT name FROM sqlite_master WHERE type='table' AND name='webhook_dlq'")
+                if not result.fetchone():
+                    # Create table
+                    conn.exec_driver_sql("""
+                        CREATE TABLE webhook_dlq (
+                            id VARCHAR(40) NOT NULL PRIMARY KEY,
+                            provider_id VARCHAR(40) NOT NULL,
+                            external_id VARCHAR(100),
+                            received_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                            status VARCHAR(20) NOT NULL DEFAULT 'queued',
+                            error TEXT,
+                            headers_meta TEXT,
+                            retry_count VARCHAR(10) NOT NULL DEFAULT '0',
+                            last_retry_at DATETIME,
+                            next_retry_at DATETIME
+                        )
+                    """)
+                    # Create indexes
+                    conn.exec_driver_sql("CREATE INDEX ix_webhook_dlq_provider_id ON webhook_dlq (provider_id)")
+                    conn.exec_driver_sql("CREATE INDEX ix_webhook_dlq_status ON webhook_dlq (status)")
+                    conn.exec_driver_sql("CREATE INDEX ix_webhook_dlq_external_id ON webhook_dlq (external_id)")
+                    conn.exec_driver_sql("CREATE INDEX ix_webhook_dlq_next_retry_at ON webhook_dlq (next_retry_at)")
+            else:
+                # PostgreSQL - best effort
+                try:
+                    conn.exec_driver_sql("""
+                        CREATE TABLE IF NOT EXISTS webhook_dlq (
+                            id VARCHAR(40) NOT NULL PRIMARY KEY,
+                            provider_id VARCHAR(40) NOT NULL,
+                            external_id VARCHAR(100),
+                            received_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                            status VARCHAR(20) NOT NULL DEFAULT 'queued',
+                            error TEXT,
+                            headers_meta TEXT,
+                            retry_count VARCHAR(10) NOT NULL DEFAULT '0',
+                            last_retry_at TIMESTAMP,
+                            next_retry_at TIMESTAMP
+                        )
+                    """)
+                    # Create indexes if not exists
+                    conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_webhook_dlq_provider_id ON webhook_dlq (provider_id)")
+                    conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_webhook_dlq_status ON webhook_dlq (status)")
+                    conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_webhook_dlq_external_id ON webhook_dlq (external_id)")
+                    conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_webhook_dlq_next_retry_at ON webhook_dlq (next_retry_at)")
+                except Exception:
+                    pass
+    except Exception:
+        # Don't fail startup if DLQ table creation fails
+        pass
+
+
+# Import models for alembic auto-detection
+try:
+    from .models.webhook_dlq import WebhookDLQ  # noqa: F401
+except ImportError:
+    # Model not available in all environments
+    pass
