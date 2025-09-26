@@ -33,6 +33,7 @@ import ListAltIcon from '@mui/icons-material/ListAlt';
 import InboxIcon from '@mui/icons-material/Inbox';
 import VpnKeyIcon from '@mui/icons-material/VpnKey';
 import CodeIcon from '@mui/icons-material/Code';
+import TuneIcon from '@mui/icons-material/Tune';
 import TerminalIcon from '@mui/icons-material/Terminal';
 import AssessmentIcon from '@mui/icons-material/Assessment';
 import DescriptionIcon from '@mui/icons-material/Description';
@@ -60,6 +61,7 @@ import TunnelSettings from './components/TunnelSettings';
 import ProviderSetupWizard from './components/ProviderSetupWizard';
 import InboundWebhookTester from './components/InboundWebhookTester';
 import OutboundSmokeTests from './components/OutboundSmokeTests';
+import ConfigurationManager from './components/ConfigurationManager';
 import { ThemeProvider } from './theme/ThemeContext';
 import { ThemeToggle } from './components/ThemeToggle';
 
@@ -293,6 +295,7 @@ function AppContent() {
   const settingsItems = [
     { label: 'Setup', icon: <HelpIcon /> },
     { label: 'Settings', icon: <SettingsIcon /> },
+    { label: 'Configuration', icon: <TuneIcon /> },
     { label: 'Keys', icon: <VpnKeyIcon /> },
     { label: 'MCP', icon: <CodeIcon /> },
   ];
@@ -776,8 +779,9 @@ function AppContent() {
                   <Settings client={client!} readOnly={!hasTrait('role.admin')} />
                 </Box>
               )}
-              {settingsTab === 2 && <ApiKeys client={client!} readOnly={!hasTrait('role.admin')} />}
-              {settingsTab === 3 && <MCP client={client!} />}
+              {settingsTab === 2 && <ConfigurationManager client={client!} docsBase={uiConfig?.docs_base || adminConfig?.branding?.docs_base} />}
+              {settingsTab === 3 && <ApiKeys client={client!} readOnly={!hasTrait('role.admin')} />}
+              {settingsTab === 4 && <MCP client={client!} />}
             </Box>
           </Paper>
         </TabPanel>
