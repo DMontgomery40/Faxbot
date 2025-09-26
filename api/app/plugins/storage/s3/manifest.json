@@ -1,0 +1,13 @@
+{
+  "id": "s3",
+  "name": "S3 Storage",
+  "version": "1.0.0",
+  "type": "storage",
+  "traits": {
+    "store_file": true,
+    "kms_supported": true,
+    "endpoint_url_supported": true,
+    "regions": []
+  },
+  "config_schema": { "type": "object", "properties": {} }
+}

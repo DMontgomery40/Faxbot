@@ -1,0 +1,12 @@
+{
+  "id": "local",
+  "name": "Local Storage",
+  "version": "1.0.0",
+  "type": "storage",
+  "traits": {
+    "store_file": true,
+    "kms_supported": false,
+    "endpoint_url_supported": false
+  },
+  "config_schema": { "type": "object", "properties": {} }
+}
