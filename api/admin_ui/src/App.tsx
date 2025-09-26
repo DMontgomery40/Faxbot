@@ -766,11 +766,12 @@ function AppContent() {
                       startIcon={<SettingsIcon />}
                       onClick={() => setProviderWizardOpen(true)}
                       sx={{ borderRadius: 2 }}
+                      disabled={!hasTrait('role.admin')}
                     >
                       Provider Setup Wizard
                     </Button>
                   </Box>
-                  <Settings client={client!} />
+                  <Settings client={client!} readOnly={!hasTrait('role.admin')} />
                 </Box>
               )}
               {settingsTab === 2 && <ApiKeys client={client!} />}
