@@ -108,6 +108,34 @@ def _inbound_dedupe(provider_id: str, external_id: str, window_sec: int = 600) -
     except Exception:
         return False
 
+# Send-side idempotency (Idempotency-Key header) — 10 minute window
+_send_idempotency: dict[str, tuple[str, int]] = {}
+
+def _idempotency_get_job(idem_key: str, window_sec: int = 600) -> Optional[str]:
+    try:
+        now = int(time.time())
+        cutoff = now - window_sec
+        # prune
+        old = [k for k, (_, ts) in _send_idempotency.items() if ts < cutoff]
+        for k in old:
+            _send_idempotency.pop(k, None)
+        rec = _send_idempotency.get(idem_key)
+        if not rec:
+            return None
+        job_id, ts = rec
+        if ts < cutoff:
+            _send_idempotency.pop(idem_key, None)
+            return None
+        return job_id
+    except Exception:
+        return None
+
+def _idempotency_put(idem_key: str, job_id: str) -> None:
+    try:
+        _send_idempotency[idem_key] = (job_id, int(time.time()))
+    except Exception:
+        pass
+
 
 def _enforce_rate_limit(info: Optional[dict], path: str, limit: Optional[int] = None):
     # Choose provided per-route limit, else global
@@ -2596,7 +2624,7 @@ def persist_settings(payload: PersistSettingsIn):
     return {"ok": True, "path": target}
 
 @app.post("/fax", response_model=FaxJobOut, status_code=202, dependencies=[Depends(require_fax_send)])
-async def send_fax(background: BackgroundTasks, to: str = Form(...), file: UploadFile = File(...)):
+async def send_fax(background: BackgroundTasks, to: str = Form(...), file: UploadFile = File(...), idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key")):
     ob = active_outbound()
     # Preserve legacy behavior in disabled/test mode to avoid cross-test env leakage
     if settings.fax_disabled:
@@ -2706,7 +2734,10 @@ async def send_fax(background: BackgroundTasks, to: str = Form(...), file: Uploa
         )
         db.add(job)
         db.commit()
-    audit_event("job_created", job_id=job_id, backend=ob)
+    # Record idempotency and emit canonical event (no PHI)
+    if idempotency_key:
+        _idempotency_put(idempotency_key, job_id)
+    audit_event("FAX_QUEUED", job_id=job_id, backend=ob)
 
     # Kick off fax sending based on backend
     if not settings.fax_disabled:
@@ -2738,6 +2769,7 @@ async def _originate_job(job_id: str, to: str, tiff_path: str):
                 j.updated_at = datetime.utcnow()
                 db.add(j)
                 db.commit()
+        audit_event("FAX_SENT", job_id=job_id, backend="sip")
     except Exception as e:
         with SessionLocal() as db:
             job = db.get(FaxJob, job_id)
@@ -2748,7 +2780,7 @@ async def _originate_job(job_id: str, to: str, tiff_path: str):
                 j.updated_at = datetime.utcnow()
                 db.add(j)
                 db.commit()
-        audit_event("job_failed", job_id=job_id, error=str(e))
+        audit_event("FAX_FAILED", job_id=job_id)
 
 
 @app.get("/fax/{job_id}", response_model=FaxJobOut, dependencies=[Depends(require_fax_read)])
@@ -3278,6 +3310,7 @@ async def _send_via_phaxio(job_id: str, to: str, pdf_path: str):
         
         # Send via Phaxio
         audit_event("job_dispatch", job_id=job_id, method="phaxio")
+        audit_event("FAX_SENT", job_id=job_id, backend="phaxio")
         result = await phaxio_service.send_fax(to, pdf_url, job_id)
         
         # Update job with provider SID
@@ -3290,6 +3323,8 @@ async def _send_via_phaxio(job_id: str, to: str, pdf_path: str):
                 j.updated_at = datetime.utcnow()
                 db.add(j)
                 db.commit()
+                if str(result.get('status') or '').upper() in {"SUCCESS", "COMPLETED"}:
+                    audit_event("FAX_DELIVERED", job_id=job_id, backend="phaxio")
                 
     except Exception as e:
         with SessionLocal() as db:
@@ -3301,7 +3336,7 @@ async def _send_via_phaxio(job_id: str, to: str, pdf_path: str):
                 j.updated_at = datetime.utcnow()
                 db.add(j)
                 db.commit()
-        audit_event("job_failed", job_id=job_id, error=str(e))
+        audit_event("FAX_FAILED", job_id=job_id)
 
 
 async def _send_via_sinch(job_id: str, to: str, pdf_path: str):
@@ -3312,6 +3347,7 @@ async def _send_via_sinch(job_id: str, to: str, pdf_path: str):
             raise Exception("Sinch Fax is not properly configured")
 
         audit_event("job_dispatch", job_id=job_id, method="sinch")
+        audit_event("FAX_SENT", job_id=job_id, backend="sinch")
 
         # Create fax by uploading the PDF directly (multipart/form-data)
         resp = await sinch.send_fax_file(to, pdf_path)
@@ -3336,6 +3372,8 @@ async def _send_via_sinch(job_id: str, to: str, pdf_path: str):
                 j.updated_at = datetime.utcnow()
                 db.add(j)
                 db.commit()
+                if internal_status == "SUCCESS":
+                    audit_event("FAX_DELIVERED", job_id=job_id, backend="sinch")
     except Exception as e:
         with SessionLocal() as db:
             job = db.get(FaxJob, job_id)
@@ -3346,7 +3384,7 @@ async def _send_via_sinch(job_id: str, to: str, pdf_path: str):
                 j.updated_at = datetime.utcnow()
                 db.add(j)
                 db.commit()
-        audit_event("job_failed", job_id=job_id, error=str(e))
+        audit_event("FAX_FAILED", job_id=job_id)
 
 
 async def _send_via_outbound_normalized(job_id: str, to: str, pdf_path: str, tiff_path: str):
@@ -3443,6 +3481,7 @@ async def _send_via_signalwire(job_id: str, to: str, pdf_path: str):
                 db.commit()
 
         audit_event("job_dispatch", job_id=job_id, method="signalwire")
+        audit_event("FAX_SENT", job_id=job_id, backend="signalwire")
         res = await svc.send_fax(to, media_url, job_id)
         prov_sid = str(res.get("provider_sid") or "")
         status = str(res.get("status") or "queued")
@@ -3454,6 +3493,8 @@ async def _send_via_signalwire(job_id: str, to: str, pdf_path: str):
                 job.updated_at = datetime.utcnow()
                 db.add(job)
                 db.commit()
+                if str(status or '').upper() in {"SUCCESS", "COMPLETED"}:
+                    audit_event("FAX_DELIVERED", job_id=job_id, backend="signalwire")
     except Exception as e:
         with SessionLocal() as db:
             job = db.get(FaxJob, job_id)
@@ -3463,7 +3504,7 @@ async def _send_via_signalwire(job_id: str, to: str, pdf_path: str):
                 job.updated_at = datetime.utcnow()
                 db.add(job)
                 db.commit()
-        audit_event("job_failed", job_id=job_id, error=str(e))
+        audit_event("FAX_FAILED", job_id=job_id)
 
 
 async def _send_via_freeswitch(job_id: str, to: str, tiff_path: str):
@@ -3485,6 +3526,7 @@ async def _send_via_freeswitch(job_id: str, to: str, tiff_path: str):
                 j.updated_at = datetime.utcnow()
                 db.add(j)
                 db.commit()
+        audit_event("FAX_SENT", job_id=job_id, backend="freeswitch")
     except Exception as e:
         with SessionLocal() as db:
             job = db.get(FaxJob, job_id)
@@ -3495,7 +3537,7 @@ async def _send_via_freeswitch(job_id: str, to: str, tiff_path: str):
                 j.updated_at = datetime.utcnow()
                 db.add(j)
                 db.commit()
-        audit_event("job_failed", job_id=job_id, error=str(e))
+        audit_event("FAX_FAILED", job_id=job_id)
 
 async def _send_via_manifest(job_id: str, to: str, pdf_path: str):
     try:
@@ -4679,3 +4721,11 @@ if os.getenv("ENFORCE_SECRET_CHECKS", "false").lower() in {"1","true","yes"}:
     if missing:
         _logging.getLogger(__name__).error(f"Missing required secrets: {', '.join(missing)}")
         raise SystemExit(1)
+    # Idempotency: if a recent job exists for this key, return it
+    if idempotency_key:
+        existing = _idempotency_get_job(idempotency_key)
+        if existing:
+            with SessionLocal() as db:
+                job = db.get(FaxJob, existing)
+                if job:
+                    return _serialize_job(job)
