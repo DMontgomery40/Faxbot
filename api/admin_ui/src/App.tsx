@@ -62,6 +62,7 @@ import ProviderSetupWizard from './components/ProviderSetupWizard';
 import InboundWebhookTester from './components/InboundWebhookTester';
 import OutboundSmokeTests from './components/OutboundSmokeTests';
 import ConfigurationManager from './components/ConfigurationManager';
+import PluginMarketplace from './components/PluginMarketplace';
 import { ThemeProvider } from './theme/ThemeContext';
 import { ThemeToggle } from './components/ThemeToggle';
 
@@ -185,11 +186,11 @@ function AppContent() {
         break;
       case 'tools/scripts':
         setTabValue(5);
-        setToolsTab(4);
+        setToolsTab(5);
         break;
       case 'tools/tunnels':
         setTabValue(5);
-        setToolsTab(5);
+        setToolsTab(6);
         break;
       case 'settings/setup':
         setTabValue(4);
@@ -306,6 +307,7 @@ function AppContent() {
     { label: 'Diagnostics', icon: <AssessmentIcon /> },
     { label: 'Logs', icon: <DescriptionIcon /> },
     { label: 'Plugins', icon: <ExtensionIcon /> },
+    { label: 'Marketplace', icon: <ExtensionIcon /> },
     { label: 'Scripts & Tests', icon: <ScienceIcon /> },
     { label: 'Tunnels', icon: <VpnLockIcon /> },
   ];
@@ -319,7 +321,7 @@ function AppContent() {
   useEffect(() => {
     if (tabValue === 5) {
       if (toolsTab === 0 && terminalDisabled) setToolsTab(1);
-      if (toolsTab === 4 && scriptsDisabled) setToolsTab(1);
+      if (toolsTab === 5 && scriptsDisabled) setToolsTab(1);
     }
   }, [tabValue, toolsTab, terminalDisabled, scriptsDisabled]);
 
@@ -810,7 +812,7 @@ function AppContent() {
                     icon={item.icon} 
                     iconPosition="start" 
                     label={item.label} 
-                    disabled={(idx === 0 && terminalDisabled) || (idx === 4 && scriptsDisabled)}
+                    disabled={(idx === 0 && terminalDisabled) || (idx === 5 && scriptsDisabled) || (!isAdmin && item.label === 'Marketplace')}
                   />
                 ))}
               </Tabs>
@@ -830,8 +832,9 @@ function AppContent() {
               )}
               {toolsTab === 2 && <Logs client={client!} />}
               {toolsTab === 3 && <Plugins client={client!} readOnly={!hasTrait('role.admin')} />}
-              {toolsTab === 4 && <ScriptsTests client={client!} docsBase={uiConfig?.docs_base || adminConfig?.branding?.docs_base} canSend={canSend} readOnly={!isAdmin} />}
-              {toolsTab === 5 && (
+              {toolsTab === 4 && <PluginMarketplace />}
+              {toolsTab === 5 && <ScriptsTests client={client!} docsBase={uiConfig?.docs_base || adminConfig?.branding?.docs_base} canSend={canSend} readOnly={!isAdmin} />}
+              {toolsTab === 6 && (
                 <TunnelSettings
                   client={client!}
                   docsBase={uiConfig?.docs_base || adminConfig?.branding?.docs_base}
