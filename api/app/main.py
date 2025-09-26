@@ -54,6 +54,7 @@ except Exception:  # pragma: no cover - optional
     _write_cfg = None  # type: ignore
 from pydantic import BaseModel
 from .middleware.traits import requires_traits
+from .security.permissions import require_permissions
 
 
 app = FastAPI(
@@ -1038,6 +1039,12 @@ async def admin_ui_config(request: Request):
     resp.headers["ETag"] = etag
     resp.headers["Cache-Control"] = "private, max-age=30"
     return resp
+
+
+# ===== Demo: permission-guarded endpoint (non-breaking) =====
+@app.get("/admin/permissions/check", dependencies=[Depends(require_permissions(["admin.console:access"]))])
+async def admin_permissions_check():
+    return {"ok": True}
 
 
 class ValidateSettingsRequest(BaseModel):
