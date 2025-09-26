@@ -5,7 +5,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
-from api.app.db.async_db import AsyncSessionLocal
+from api.app.database.async_db import AsyncSessionLocal
 from api.app.models.events import CanonicalEventDB
 
 

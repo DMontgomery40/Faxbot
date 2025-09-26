@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Literal, Optional
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.app.db.async_db import AsyncSessionLocal  # type: ignore
+from api.app.database.async_db import AsyncSessionLocal  # type: ignore
 from api.app.models.config import (
     ConfigGlobal,
     ConfigTenant,
@@ -330,3 +330,145 @@ class HierarchicalConfigProvider:
 
     async def get_safe_edit_keys(self) -> Dict[str, Dict[str, Any]]:
         return dict(self.SAFE_EDIT_KEYS)
+
+    async def set_config(
+        self,
+        key: str,
+        value: Any,
+        level: ConfigLevel,
+        level_id: Optional[str] = None,
+        reason: str = "Admin update",
+        encrypt: Optional[bool] = None
+    ) -> bool:
+        """Set a configuration value at the specified level."""
+        # Determine if we should encrypt this value
+        should_encrypt = encrypt if encrypt is not None else (key in self.ALWAYS_ENCRYPT_KEYS)
+
+        # Validate the key is safe to edit (optional validation)
+        if key not in self.SAFE_EDIT_KEYS and key not in self.ALWAYS_ENCRYPT_KEYS:
+            # Allow admin to set any key, but warn about unsafe keys
+            pass
+
+        try:
+            async with AsyncSessionLocal() as db:  # type: ignore
+                encrypted_value = self.enc.encrypt(value, should_encrypt)
+                now = datetime.utcnow()
+
+                if level == "global":
+                    # Check if exists
+                    existing = await db.execute(
+                        select(ConfigGlobal).where(ConfigGlobal.key == key)
+                    )
+                    existing_row = existing.scalar_one_or_none()
+
+                    if existing_row:
+                        existing_row.value_encrypted = encrypted_value
+                        existing_row.encrypted = should_encrypt
+                        existing_row.updated_at = now
+                    else:
+                        new_row = ConfigGlobal(
+                            id=str(uuid.uuid4()),
+                            key=key,
+                            value_encrypted=encrypted_value,
+                            encrypted=should_encrypt,
+                            updated_at=now
+                        )
+                        db.add(new_row)
+
+                elif level == "tenant":
+                    if not level_id:
+                        raise ValueError("tenant level requires level_id")
+
+                    existing = await db.execute(
+                        select(ConfigTenant).where(
+                            ConfigTenant.tenant_id == level_id,
+                            ConfigTenant.key == key
+                        )
+                    )
+                    existing_row = existing.scalar_one_or_none()
+
+                    if existing_row:
+                        existing_row.value_encrypted = encrypted_value
+                        existing_row.encrypted = should_encrypt
+                        existing_row.updated_at = now
+                    else:
+                        new_row = ConfigTenant(
+                            id=str(uuid.uuid4()),
+                            tenant_id=level_id,
+                            key=key,
+                            value_encrypted=encrypted_value,
+                            encrypted=should_encrypt,
+                            updated_at=now
+                        )
+                        db.add(new_row)
+
+                elif level == "user":
+                    if not level_id:
+                        raise ValueError("user level requires level_id")
+
+                    existing = await db.execute(
+                        select(ConfigUser).where(
+                            ConfigUser.user_id == level_id,
+                            ConfigUser.key == key
+                        )
+                    )
+                    existing_row = existing.scalar_one_or_none()
+
+                    if existing_row:
+                        existing_row.value_encrypted = encrypted_value
+                        existing_row.encrypted = should_encrypt
+                        existing_row.updated_at = now
+                    else:
+                        new_row = ConfigUser(
+                            id=str(uuid.uuid4()),
+                            user_id=level_id,
+                            key=key,
+                            value_encrypted=encrypted_value,
+                            encrypted=should_encrypt,
+                            updated_at=now
+                        )
+                        db.add(new_row)
+
+                # TODO: Add department and group levels when needed
+
+                # Create audit entry
+                audit_entry = ConfigAudit(
+                    id=str(uuid.uuid4()),
+                    key=key,
+                    level=level,
+                    level_id=level_id,
+                    old_value=None,  # Could get from existing_row if needed
+                    new_value=encrypted_value,
+                    encrypted=should_encrypt,
+                    reason=reason,
+                    changed_at=now,
+                    changed_by="admin"  # Could extract from auth context
+                )
+                db.add(audit_entry)
+
+                await db.commit()
+
+                # Invalidate cache
+                if self.cache:
+                    await self._invalidate_cache_for_key(key)
+
+                return True
+
+        except Exception:
+            return False
+
+    async def _invalidate_cache_for_key(self, key: str) -> None:
+        """Invalidate all cached entries for a specific key."""
+        if not self.cache:
+            return
+
+        try:
+            # For now, just flush all cache entries
+            # In production, we'd want more targeted invalidation
+            await self.cache.flush_pattern(f"cfg:eff:*:{key}")
+        except Exception:
+            # If targeted invalidation fails, flush all
+            try:
+                await self.cache.flush_all()
+            except Exception:
+                pass

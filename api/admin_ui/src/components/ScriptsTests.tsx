@@ -144,7 +144,7 @@ const ConsoleBox: React.FC<{ lines: string[]; loading?: boolean; title?: string 
 };
 
 const ScriptsTests: React.FC<Props> = ({ client, docsBase, readOnly = false, canSend = false }) => {
-  const { outboundTraits, hasTrait } = useTraits();
+  const { hasTrait, outboundTraits } = useTraits();
   const [error, setError] = useState<string>('');
   const [busyAuth, setBusyAuth] = useState<boolean>(false);
   const [busyInbound, setBusyInbound] = useState<boolean>(false);

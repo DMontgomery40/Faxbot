@@ -222,6 +222,55 @@ async def v4_config_safe_keys():
     return await hc.get_safe_edit_keys()
 
 
+@router_cfg_v4.post("/set")
+async def v4_config_set(
+    key: str = Form(...),
+    value: str = Form(...),
+    level: str = Form(...),
+    level_id: Optional[str] = Form(None),
+    reason: str = Form("Admin panel update"),
+    encrypt: Optional[bool] = Form(None)
+):
+    """Set a configuration value at the specified hierarchy level."""
+    hc = getattr(app.state, "hierarchical_config", None)
+    if not hc:
+        raise HTTPException(503, "Hierarchical configuration not initialized")
+
+    # Validate level
+    valid_levels = ["global", "tenant", "department", "group", "user"]
+    if level not in valid_levels:
+        raise HTTPException(400, f"Invalid level. Must be one of: {valid_levels}")
+
+    # Parse value as JSON
+    try:
+        import json
+        parsed_value = json.loads(value)
+    except (json.JSONDecodeError, ValueError):
+        # If not valid JSON, treat as string
+        parsed_value = value
+
+    # Set the configuration
+    success = await hc.set_config(
+        key=key,
+        value=parsed_value,
+        level=level,  # type: ignore
+        level_id=level_id,
+        reason=reason,
+        encrypt=encrypt
+    )
+
+    if not success:
+        raise HTTPException(500, "Failed to set configuration value")
+
+    return {
+        "success": True,
+        "key": key,
+        "level": level,
+        "level_id": level_id,
+        "reason": reason
+    }
+
+
 @router_cfg_v4.post("/flush-cache")
 async def v4_config_flush_cache(scope: Optional[str] = None):
     hc = getattr(app.state, "hierarchical_config", None)
@@ -289,28 +338,6 @@ def _idempotency_put(idem_key: str, job_id: str) -> None:
         _send_idempotency[idem_key] = (job_id, int(time.time()))
     except Exception:
         pass
-
-    # Bootstrap admin user (dev/stage only): create 'admin' if sessions enabled and bootstrap password present
-    try:
-        if os.getenv("FAXBOT_SESSIONS_ENABLED", "false").lower() in {"1","true","yes"}:
-            boot = os.getenv("FAXBOT_BOOTSTRAP_PASSWORD", "")
-            if boot:
-                from .plugins.manager import PluginManager
-                pm = PluginManager()
-                pm.load_all()
-                ident = pm.get_active_by_type("identity")
-                user = None
-                if hasattr(ident, "find_user_by_username"):
-                    user = await ident.find_user_by_username("admin")  # type: ignore
-                if not user and hasattr(ident, "create_user"):
-                    await ident.create_user("admin", boot, traits={"role": "admin"})  # type: ignore
-                    print("[info] Bootstrapped admin user via FAXBOT_BOOTSTRAP_PASSWORD")
-    except Exception as _boot_ex:
-        # Never block startup for bootstrap; log only
-        try:
-            print(f"[warn] Admin bootstrap skipped: {_boot_ex}")
-        except Exception:
-            pass
 
 
 def _ack_response(payload: Optional[dict] = None):
@@ -641,6 +668,28 @@ async def on_startup():
         # Don't fail startup if DLQ processing can't be initialized
         print(f"[warn] Webhook DLQ processor initialization failed: {e}")
         pass
+
+    # Bootstrap admin user (dev/stage only): create 'admin' if sessions enabled and bootstrap password present
+    try:
+        if os.getenv("FAXBOT_SESSIONS_ENABLED", "false").lower() in {"1","true","yes"}:
+            boot = os.getenv("FAXBOT_BOOTSTRAP_PASSWORD", "")
+            if boot:
+                from .plugins.manager import PluginManager
+                pm = PluginManager()
+                pm.load_all()
+                ident = pm.get_active_by_type("identity")
+                user = None
+                if hasattr(ident, "find_user_by_username"):
+                    user = await ident.find_user_by_username("admin")  # type: ignore
+                if not user and hasattr(ident, "create_user"):
+                    await ident.create_user("admin", boot, traits={"role": "admin"})  # type: ignore
+                    print("[info] Bootstrapped admin user via FAXBOT_BOOTSTRAP_PASSWORD")
+    except Exception as _boot_ex:
+        # Never block startup for bootstrap; log only
+        try:
+            print(f"[warn] Admin bootstrap skipped: {_boot_ex}")
+        except Exception:
+            pass
 
 
 @app.on_event("shutdown")

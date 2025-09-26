@@ -1,45 +1,40 @@
 """
-Database models for canonical events with PHI-safe audit trail.
+Database models for canonical event system.
 
-Events capture system state changes without sensitive data,
-enabling diagnostics and monitoring while maintaining HIPAA compliance.
+Provides PHI-free event persistence for diagnostics, monitoring, and SSE streaming.
 """
 
+import uuid
 from datetime import datetime
-from sqlalchemy import Column, String, Text, DateTime, JSON, Index
+from sqlalchemy import Column, String, DateTime, JSON
 from sqlalchemy.sql import func
 
-# Import Base from the same module that other models use
 from ..db import Base
 
 
 class CanonicalEventDB(Base):  # type: ignore
-    """Persistent storage for canonical events (PHI-free)."""
+    """
+    Canonical event storage for system diagnostics and monitoring.
+
+    Stores events without PHI for safe streaming via SSE and audit trails.
+    """
     __tablename__ = "canonical_events"
 
-    # Event identification
-    id = Column(String(40), primary_key=True, nullable=False)
-    type = Column(String(50), nullable=False)
-    occurred_at = Column(DateTime(), nullable=False, server_default=func.now())
+    id = Column(String(40), primary_key=True, default=lambda: str(uuid.uuid4()))
+    type = Column(String(50), nullable=False, index=True)  # EventType enum value
+    occurred_at = Column(DateTime, nullable=False, server_default=func.now(), index=True)
 
-    # Event context (no PHI)
-    job_id = Column(String(40), nullable=True)
-    provider_id = Column(String(50), nullable=True)
+    # Reference fields (no PHI)
+    job_id = Column(String(40), nullable=True, index=True)
+    provider_id = Column(String(50), nullable=True, index=True)
     external_id = Column(String(100), nullable=True)
     user_id = Column(String(100), nullable=True)
+    correlation_id = Column(String(100), nullable=True)
 
-    # Correlation and metadata (PHI-free JSON)
-    correlation_id = Column(String(40), nullable=True)
+    # Metadata (no PHI - only status codes, counts, etc)
     payload_meta = Column(JSON, nullable=True)
 
-    # Audit tracking
-    created_at = Column(DateTime(), nullable=False, server_default=func.now())
-
+    # Indices for efficient querying
     __table_args__ = (
-        Index('idx_events_type', 'type'),
-        Index('idx_events_provider', 'provider_id'),
-        Index('idx_events_job', 'job_id'),
-        Index('idx_events_occurred', 'occurred_at'),
-        Index('idx_events_correlation', 'correlation_id'),
-        Index('idx_events_user', 'user_id'),
+        {'sqlite_autoincrement': True},
     )

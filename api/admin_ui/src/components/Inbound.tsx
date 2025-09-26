@@ -68,7 +68,6 @@ function Inbound({ client, docsBase }: InboundProps) {
     'sip-ami-setup': `${base}/backends/sipsetup.html#sip-ami-setup`,
     'sip-ami-security': `${base}/backends/sipsetup.html#sip-ami-security`,
   };
-  // third-party links unused here; keep anchors to our docs only
   
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
