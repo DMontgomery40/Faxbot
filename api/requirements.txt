@@ -21,4 +21,4 @@ qrcode==7.4.2
 Pillow==10.4.0
 cryptography==43.0.3
 redis==5.2.1
-sse-starlette==2.2.1
+sse-starlette==1.8.2

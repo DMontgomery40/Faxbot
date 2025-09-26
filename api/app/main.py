@@ -1070,6 +1070,55 @@ async def admin_config_v4_flush_cache(scope: Optional[str] = Query(default="*"))
         raise HTTPException(500, detail=str(ex))
 
 
+# PR17: Configuration Write Models
+class V4ConfigSetIn(BaseModel):
+    key: str
+    value: Any
+    level: str  # 'global', 'tenant', 'department', 'group', 'user'
+    level_id: Optional[str] = None  # Required for non-global levels
+    reason: Optional[str] = None
+
+class V4ConfigSetOut(BaseModel):
+    key: str
+    value: Any
+    source: str
+    level: str
+    level_id: Optional[str]
+    encrypted: bool
+    updated_at: str
+
+
+@app.post("/admin/config/v4/set", dependencies=[Depends(require_admin)])
+async def admin_config_v4_set(payload: V4ConfigSetIn, request: Request):
+    """Set configuration value at specified level (safe keys only)."""
+    hc: HierarchicalConfigProvider = getattr(app.state, "hierarchical_config", None)  # type: ignore[assignment]
+    if not hc:
+        raise HTTPException(500, detail="hierarchical config not initialized")
+
+    # Get client info for audit trail
+    client_ip = request.client.host if request.client else None
+    user_agent = request.headers.get('user-agent', '')
+
+    try:
+        result = await hc.set(
+            key=payload.key,
+            value=payload.value,
+            level=payload.level,  # type: ignore
+            level_id=payload.level_id,
+            changed_by="admin_user",  # TODO: Get from auth context
+            reason=payload.reason,
+            ip_address=client_ip,
+            user_agent=user_agent
+        )
+
+        return V4ConfigSetOut(**result)
+
+    except ValueError as e:
+        raise HTTPException(400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(500, detail=f"Failed to set configuration: {str(e)}")
+
+
 class ProviderTestOut(BaseModel):
     success: bool
     message: str

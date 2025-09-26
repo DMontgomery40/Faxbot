@@ -476,3 +476,327 @@ class HierarchicalConfigProvider:
 
         return True
 
+    async def set(
+        self,
+        key: str,
+        value: Any,
+        level: ConfigLevel,
+        level_id: Optional[str] = None,
+        changed_by: str = "system",
+        reason: Optional[str] = None,
+        ip_address: Optional[str] = None,
+        user_agent: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Set configuration value at specified level with audit trail."""
+
+        if not DB_AVAILABLE:
+            raise ValueError("Database not available for configuration updates")
+
+        # Validate key is safe to edit
+        if key not in self.SAFE_EDIT_KEYS:
+            raise ValueError(f"Key '{key}' is not safe to edit via API")
+
+        # Validate value
+        if not await self.validate_config_value(key, value):
+            constraints = self.SAFE_EDIT_KEYS[key]
+            raise ValueError(f"Value does not meet constraints: {constraints}")
+
+        # Determine if this key should be encrypted
+        should_encrypt = self._should_encrypt(key)
+
+        async with AsyncSessionLocal() as db:
+            try:
+                # Get old value for audit
+                old_value = None
+                try:
+                    old_config = await self._get_raw_config(key, level, level_id, db)
+                    if old_config:
+                        old_value = old_config.value_encrypted
+                except Exception:
+                    pass  # No old value is fine
+
+                # Encrypt new value
+                encrypted_value = self.encryption.encrypt_value(value, should_encrypt)
+
+                # Store configuration based on level
+                if level == 'global':
+                    config_record = ConfigGlobal(
+                        key=key,
+                        value_encrypted=encrypted_value,
+                        value_type=type(value).__name__,
+                        encrypted=should_encrypt,
+                        updated_at=datetime.utcnow()
+                    )
+                    # Use merge for upsert behavior
+                    existing = await db.execute(select(ConfigGlobal).where(ConfigGlobal.key == key))
+                    if existing.scalar_one_or_none():
+                        await db.execute(
+                            ConfigGlobal.__table__.update().where(
+                                ConfigGlobal.key == key
+                            ).values(
+                                value_encrypted=encrypted_value,
+                                value_type=type(value).__name__,
+                                encrypted=should_encrypt,
+                                updated_at=datetime.utcnow()
+                            )
+                        )
+                    else:
+                        db.add(config_record)
+
+                elif level == 'tenant':
+                    if not level_id:
+                        raise ValueError("tenant_id required for tenant-level configuration")
+
+                    existing = await db.execute(
+                        select(ConfigTenant).where(
+                            ConfigTenant.tenant_id == level_id,
+                            ConfigTenant.key == key
+                        )
+                    )
+                    if existing.scalar_one_or_none():
+                        await db.execute(
+                            ConfigTenant.__table__.update().where(
+                                ConfigTenant.tenant_id == level_id,
+                                ConfigTenant.key == key
+                            ).values(
+                                value_encrypted=encrypted_value,
+                                value_type=type(value).__name__,
+                                encrypted=should_encrypt,
+                                updated_at=datetime.utcnow()
+                            )
+                        )
+                    else:
+                        config_record = ConfigTenant(
+                            tenant_id=level_id,
+                            key=key,
+                            value_encrypted=encrypted_value,
+                            value_type=type(value).__name__,
+                            encrypted=should_encrypt,
+                            updated_at=datetime.utcnow()
+                        )
+                        db.add(config_record)
+
+                elif level == 'department':
+                    if not level_id or ':' not in level_id:
+                        raise ValueError("level_id must be 'tenant_id:department' for department-level configuration")
+
+                    tenant_id, department = level_id.split(':', 1)
+                    existing = await db.execute(
+                        select(ConfigDepartment).where(
+                            ConfigDepartment.tenant_id == tenant_id,
+                            ConfigDepartment.department == department,
+                            ConfigDepartment.key == key
+                        )
+                    )
+                    if existing.scalar_one_or_none():
+                        await db.execute(
+                            ConfigDepartment.__table__.update().where(
+                                ConfigDepartment.tenant_id == tenant_id,
+                                ConfigDepartment.department == department,
+                                ConfigDepartment.key == key
+                            ).values(
+                                value_encrypted=encrypted_value,
+                                value_type=type(value).__name__,
+                                encrypted=should_encrypt,
+                                updated_at=datetime.utcnow()
+                            )
+                        )
+                    else:
+                        config_record = ConfigDepartment(
+                            tenant_id=tenant_id,
+                            department=department,
+                            key=key,
+                            value_encrypted=encrypted_value,
+                            value_type=type(value).__name__,
+                            encrypted=should_encrypt,
+                            updated_at=datetime.utcnow()
+                        )
+                        db.add(config_record)
+
+                elif level == 'group':
+                    if not level_id:
+                        raise ValueError("group_id required for group-level configuration")
+
+                    existing = await db.execute(
+                        select(ConfigGroup).where(
+                            ConfigGroup.group_id == level_id,
+                            ConfigGroup.key == key
+                        )
+                    )
+                    if existing.scalar_one_or_none():
+                        await db.execute(
+                            ConfigGroup.__table__.update().where(
+                                ConfigGroup.group_id == level_id,
+                                ConfigGroup.key == key
+                            ).values(
+                                value_encrypted=encrypted_value,
+                                value_type=type(value).__name__,
+                                encrypted=should_encrypt,
+                                updated_at=datetime.utcnow()
+                            )
+                        )
+                    else:
+                        config_record = ConfigGroup(
+                            group_id=level_id,
+                            key=key,
+                            value_encrypted=encrypted_value,
+                            value_type=type(value).__name__,
+                            encrypted=should_encrypt,
+                            updated_at=datetime.utcnow()
+                        )
+                        db.add(config_record)
+
+                elif level == 'user':
+                    if not level_id:
+                        raise ValueError("user_id required for user-level configuration")
+
+                    existing = await db.execute(
+                        select(ConfigUser).where(
+                            ConfigUser.user_id == level_id,
+                            ConfigUser.key == key
+                        )
+                    )
+                    if existing.scalar_one_or_none():
+                        await db.execute(
+                            ConfigUser.__table__.update().where(
+                                ConfigUser.user_id == level_id,
+                                ConfigUser.key == key
+                            ).values(
+                                value_encrypted=encrypted_value,
+                                value_type=type(value).__name__,
+                                encrypted=should_encrypt,
+                                updated_at=datetime.utcnow()
+                            )
+                        )
+                    else:
+                        config_record = ConfigUser(
+                            user_id=level_id,
+                            key=key,
+                            value_encrypted=encrypted_value,
+                            value_type=type(value).__name__,
+                            encrypted=should_encrypt,
+                            updated_at=datetime.utcnow()
+                        )
+                        db.add(config_record)
+
+                else:
+                    raise ValueError(f"Invalid level: {level}")
+
+                # Create audit record
+                audit_record = ConfigAudit(
+                    id=uuid.uuid4().hex,
+                    level=level,
+                    level_id=level_id,
+                    key=key,
+                    old_value_masked=self._mask_value(old_value, key) if old_value else None,
+                    new_value_masked=self._mask_value(value, key),
+                    value_hmac=self._compute_value_hmac(value),
+                    value_type=type(value).__name__,
+                    changed_by=changed_by,
+                    reason=reason,
+                    ip_address=ip_address,
+                    user_agent=user_agent
+                )
+                db.add(audit_record)
+
+                await db.commit()
+
+                # Invalidate relevant cache entries
+                await self._invalidate_cache_for_key(key, level, level_id)
+
+                # Return success response
+                return {
+                    "key": key,
+                    "value": value,
+                    "source": "db",
+                    "level": level,
+                    "level_id": level_id,
+                    "encrypted": should_encrypt,
+                    "updated_at": datetime.utcnow().isoformat()
+                }
+
+            except Exception as e:
+                await db.rollback()
+                raise
+
+    async def _get_raw_config(self, key: str, level: ConfigLevel, level_id: Optional[str], db) -> Optional[Any]:
+        """Get raw configuration record from database."""
+        if level == 'global':
+            result = await db.execute(select(ConfigGlobal).where(ConfigGlobal.key == key))
+            return result.scalar_one_or_none()
+        elif level == 'tenant' and level_id:
+            result = await db.execute(
+                select(ConfigTenant).where(
+                    ConfigTenant.tenant_id == level_id,
+                    ConfigTenant.key == key
+                )
+            )
+            return result.scalar_one_or_none()
+        elif level == 'department' and level_id and ':' in level_id:
+            tenant_id, department = level_id.split(':', 1)
+            result = await db.execute(
+                select(ConfigDepartment).where(
+                    ConfigDepartment.tenant_id == tenant_id,
+                    ConfigDepartment.department == department,
+                    ConfigDepartment.key == key
+                )
+            )
+            return result.scalar_one_or_none()
+        elif level == 'group' and level_id:
+            result = await db.execute(
+                select(ConfigGroup).where(
+                    ConfigGroup.group_id == level_id,
+                    ConfigGroup.key == key
+                )
+            )
+            return result.scalar_one_or_none()
+        elif level == 'user' and level_id:
+            result = await db.execute(
+                select(ConfigUser).where(
+                    ConfigUser.user_id == level_id,
+                    ConfigUser.key == key
+                )
+            )
+            return result.scalar_one_or_none()
+        return None
+
+    def _compute_value_hmac(self, value: Any) -> str:
+        """Compute HMAC for audit integrity."""
+        # Use a server-side pepper for audit integrity
+        audit_pepper = os.getenv('AUDIT_PEPPER', 'default-audit-pepper-change-in-production')
+
+        value_str = json.dumps(value) if not isinstance(value, str) else value
+        return hmac.new(
+            audit_pepper.encode(),
+            value_str.encode(),
+            hashlib.sha256
+        ).hexdigest()
+
+    async def _invalidate_cache_for_key(self, key: str, level: ConfigLevel, level_id: Optional[str]):
+        """Invalidate cache entries affected by configuration change."""
+        if not self.cache_manager:
+            return
+
+        patterns_to_invalidate = []
+
+        if level == 'global':
+            # Global changes affect all users
+            patterns_to_invalidate.append(f"cfg:effective:*:{key}")
+        elif level == 'tenant' and level_id:
+            # Tenant changes affect users in that tenant
+            patterns_to_invalidate.append(f"cfg:effective:{level_id}:*:{key}")
+        elif level == 'department' and level_id:
+            # Department changes affect users in that department
+            tenant_id, department = level_id.split(':', 1)
+            patterns_to_invalidate.append(f"cfg:effective:{tenant_id}:{department}:*:{key}")
+        elif level == 'group' and level_id:
+            # Group changes affect users in that group - broader invalidation needed
+            patterns_to_invalidate.append(f"cfg:effective:*:{key}")  # Conservative approach
+        elif level == 'user' and level_id:
+            # User changes only affect that specific user
+            patterns_to_invalidate.append(f"cfg:effective:*:{level_id}:{key}")
+
+        # Invalidate all relevant patterns
+        for pattern in patterns_to_invalidate:
+            await self.cache_manager.delete_pattern(pattern)
+

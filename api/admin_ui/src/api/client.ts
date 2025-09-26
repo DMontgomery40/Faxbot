@@ -138,6 +138,29 @@ export class AdminAPIClient {
     return res.json();
   }
 
+  async v4SetConfig(payload: {
+    key: string;
+    value: any;
+    level: 'global' | 'tenant' | 'department' | 'group' | 'user';
+    level_id?: string;
+    reason?: string;
+  }): Promise<{
+    key: string;
+    value: any;
+    source: string;
+    level: string;
+    level_id?: string;
+    encrypted: boolean;
+    updated_at: string;
+  }>{
+    const res = await this.fetch('/admin/config/v4/set', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    return res.json();
+  }
+
   // User traits (admin-only)
   async getUserTraits(): Promise<{ schema_version: number; user: { id: string }; traits: string[] }>{
     const res = await this.fetch('/admin/user/traits');

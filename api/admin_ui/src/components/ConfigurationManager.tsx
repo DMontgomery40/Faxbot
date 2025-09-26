@@ -27,7 +27,9 @@ import {
   Visibility as VisibilityIcon,
   VisibilityOff as VisibilityOffIcon,
   Info as InfoIcon,
-  FlashOn as FlashOnIcon
+  FlashOn as FlashOnIcon,
+  Save as SaveIcon,
+  Cancel as CancelIcon
 } from '@mui/icons-material';
 
 import AdminAPIClient from '../api/client';
@@ -115,6 +117,14 @@ function ConfigurationManager({ client, docsBase }: ConfigurationManagerProps) {
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [cacheStats] = useState<any>({ backend: 'memory', memory_items: 0 });
+
+  // Editing state
+  const [editingKey, setEditingKey] = useState<string | null>(null);
+  const [editValue, setEditValue] = useState<any>(null);
+  const [editLevel, setEditLevel] = useState<'global' | 'tenant' | 'department' | 'group' | 'user'>('global');
+  const [editLevelId, setEditLevelId] = useState<string>('');
+  const [editReason, setEditReason] = useState<string>('');
+  const [saving, setSaving] = useState<boolean>(false);
 
   // Filter keys based on search and category
   const filteredKeys = ALL_KEYS.filter(key => {
@@ -234,6 +244,58 @@ function ConfigurationManager({ client, docsBase }: ConfigurationManagerProps) {
     } finally {
       setLoading(false);
     }
+  };
+
+  const saveConfigValue = async () => {
+    if (!editingKey) return;
+
+    try {
+      setSaving(true);
+      setError(null);
+
+      await client.v4SetConfig({
+        key: editingKey,
+        value: editValue,
+        level: editLevel,
+        level_id: editLevel === 'global' ? undefined : editLevelId,
+        reason: editReason || 'Configuration update via Admin Console'
+      });
+
+      setSuccess(`Configuration '${editingKey}' updated successfully`);
+
+      // Reset editing state
+      setEditingKey(null);
+      setEditValue(null);
+      setEditLevel('global');
+      setEditLevelId('');
+      setEditReason('');
+
+      // Refresh configuration
+      await fetchEffectiveConfig();
+
+      setTimeout(() => setSuccess(null), 3000);
+    } catch (err: any) {
+      console.error('Failed to save config:', err);
+      setError(err.message || 'Failed to save configuration');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const startEditing = (key: string, currentValue: any) => {
+    setEditingKey(key);
+    setEditValue(currentValue);
+    setEditLevel('global'); // Default to global level
+    setEditLevelId('');
+    setEditReason('');
+  };
+
+  const cancelEditing = () => {
+    setEditingKey(null);
+    setEditValue(null);
+    setEditLevel('global');
+    setEditLevelId('');
+    setEditReason('');
   };
 
   const toggleShowValue = (key: string) => {
@@ -445,19 +507,35 @@ function ConfigurationManager({ client, docsBase }: ConfigurationManagerProps) {
                                 config.value || 'Not set'
                             ) : 'Loading...'}
                           </Typography>
-                          {isSecret && config && (
-                            <Tooltip title={showValue ? 'Hide value' : 'Show value'}>
-                              <IconButton
-                                size="small"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  toggleShowValue(key);
-                                }}
-                              >
-                                {showValue ? <VisibilityOffIcon fontSize="small" /> : <VisibilityIcon fontSize="small" />}
-                              </IconButton>
-                            </Tooltip>
-                          )}
+                          <Stack direction="row" spacing={1}>
+                            {isSecret && config && (
+                              <Tooltip title={showValue ? 'Hide value' : 'Show value'}>
+                                <IconButton
+                                  size="small"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    toggleShowValue(key);
+                                  }}
+                                >
+                                  {showValue ? <VisibilityOffIcon fontSize="small" /> : <VisibilityIcon fontSize="small" />}
+                                </IconButton>
+                              </Tooltip>
+                            )}
+                            {config && key in safeKeys && (
+                              <Tooltip title="Edit configuration">
+                                <IconButton
+                                  size="small"
+                                  color="primary"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    startEditing(key, config.value);
+                                  }}
+                                >
+                                  <SettingsIcon fontSize="small" />
+                                </IconButton>
+                              </Tooltip>
+                            )}
+                          </Stack>
                         </Box>
                       </Paper>
                     );
@@ -557,6 +635,102 @@ function ConfigurationManager({ client, docsBase }: ConfigurationManagerProps) {
             </Card>
           </Grid>
         </Grid>
+      )}
+
+      {/* Configuration Edit Dialog */}
+      {editingKey && (
+        <Paper sx={{ mt: 3, p: 3, border: 2, borderColor: 'primary.main' }}>
+          <Typography variant="h6" gutterBottom sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <SettingsIcon />
+            Edit Configuration: {editingKey}
+          </Typography>
+
+          <Stack spacing={3}>
+            {/* Level Selector */}
+            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
+              <TextField
+                select
+                label="Configuration Level"
+                value={editLevel}
+                onChange={(e) => setEditLevel(e.target.value as any)}
+                sx={{ minWidth: 200 }}
+                size="small"
+              >
+                <MenuItem value="global">Global (System-wide)</MenuItem>
+                <MenuItem value="tenant">Tenant</MenuItem>
+                <MenuItem value="department">Department</MenuItem>
+                <MenuItem value="group">Group</MenuItem>
+                <MenuItem value="user">User</MenuItem>
+              </TextField>
+
+              {editLevel !== 'global' && (
+                <TextField
+                  label={`${editLevel.charAt(0).toUpperCase() + editLevel.slice(1)} ID`}
+                  value={editLevelId}
+                  onChange={(e) => setEditLevelId(e.target.value)}
+                  placeholder={
+                    editLevel === 'department' ? 'tenant_id:department_name' :
+                    editLevel === 'tenant' ? 'tenant_id' :
+                    editLevel === 'group' ? 'group_id' :
+                    'user_id'
+                  }
+                  sx={{ flex: 1 }}
+                  size="small"
+                  required
+                />
+              )}
+            </Stack>
+
+            {/* Value Editor */}
+            <TextField
+              label="Configuration Value"
+              value={editValue}
+              onChange={(e) => {
+                const val = e.target.value;
+                // Try to parse as appropriate type
+                if (val === 'true') setEditValue(true);
+                else if (val === 'false') setEditValue(false);
+                else if (/^\d+$/.test(val)) setEditValue(parseInt(val, 10));
+                else setEditValue(val);
+              }}
+              multiline
+              rows={2}
+              fullWidth
+              size="small"
+              helperText={`Constraints: ${JSON.stringify(safeKeys[editingKey] || {})}`}
+            />
+
+            {/* Reason */}
+            <TextField
+              label="Reason for Change (Optional)"
+              value={editReason}
+              onChange={(e) => setEditReason(e.target.value)}
+              fullWidth
+              size="small"
+              placeholder="Configuration update via Admin Console"
+            />
+
+            {/* Actions */}
+            <Stack direction="row" spacing={2} justifyContent="flex-end">
+              <Button
+                variant="outlined"
+                onClick={cancelEditing}
+                startIcon={<CancelIcon />}
+                disabled={saving}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="contained"
+                onClick={saveConfigValue}
+                startIcon={<SaveIcon />}
+                disabled={saving || (editLevel !== 'global' && !editLevelId)}
+              >
+                {saving ? 'Saving...' : 'Save Configuration'}
+              </Button>
+            </Stack>
+          </Stack>
+        </Paper>
       )}
 
       {/* Info Panel with Stats */}
