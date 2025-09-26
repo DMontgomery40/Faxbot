@@ -56,6 +56,7 @@ from pydantic import BaseModel
 from .middleware.traits import requires_traits
 from .security.permissions import require_permissions
 from .security.user_traits import pack_user_traits
+from fastapi import APIRouter
 
 
 app = FastAPI(
@@ -133,10 +134,100 @@ try:
         app.state.hierarchical_config = HierarchicalConfigProvider(_cmk, cache_manager=_cache)  # type: ignore[attr-defined]
     else:
         # Expose None if not configured; Admin endpoints will be added in Phase 3 PRs
-        app.state.hierarchical_config = None  # type: ignore[attr-defined]
+    app.state.hierarchical_config = None  # type: ignore[attr-defined]
 except Exception:
     # Do not block startup; Phase 3 endpoints will check availability
     app.state.hierarchical_config = None  # type: ignore[attr-defined]
+
+# ===== Phase 3: Admin Config (v4) endpoints (read-only for now) =====
+router_cfg_v4 = APIRouter(prefix="/admin/config/v4", tags=["ConfigurationV4"], dependencies=[Depends(require_admin)])
+
+
+@router_cfg_v4.get("/effective")
+async def v4_config_effective(request: Request):
+    hc = getattr(app.state, "hierarchical_config", None)
+    if not hc:
+        raise HTTPException(503, "Hierarchical configuration not initialized")
+
+    # Use a minimal system context for now; later we can derive from auth
+    from .config import settings as _s
+    user_ctx = {
+        "user_id": "admin",
+        "tenant_id": None,
+        "department": None,
+        "groups": [],
+    }
+    # Common keys for initial surface
+    keys = [
+        "fax.timeout_seconds",
+        "fax.retry_attempts",
+        "api.rate_limit_rpm",
+        "notifications.enable_sse",
+    ]
+    out: dict[str, dict[str, Any]] = {}
+    # Resolve values
+    from .config.hierarchical_provider import UserContext  # type: ignore
+    for k in keys:
+        try:
+            cv = await hc.get_effective(k, UserContext(**user_ctx))
+            out[k] = {
+                "value": cv.value,
+                "source": cv.source,
+                "level": cv.level,
+                "level_id": cv.level_id,
+                "encrypted": cv.encrypted,
+                "updated_at": (cv.updated_at.isoformat() if cv.updated_at else None),
+            }
+        except Exception:
+            pass
+    # Cache stats if present
+    cache_stats = {}
+    if getattr(hc, "cache", None):
+        cache_stats = await hc.cache.get_stats()
+    return {"values": out, "cache_stats": cache_stats}
+
+
+@router_cfg_v4.get("/hierarchy")
+async def v4_config_hierarchy(key: str):
+    hc = getattr(app.state, "hierarchical_config", None)
+    if not hc:
+        raise HTTPException(503, "Hierarchical configuration not initialized")
+    from .config.hierarchical_provider import UserContext  # type: ignore
+    layers = await hc.get_hierarchy(key, UserContext(user_id="admin", tenant_id=None, department=None, groups=[]))
+    return {
+        "key": key,
+        "layers": [
+            {
+                "level": v.level,
+                "level_id": v.level_id,
+                "value": v.value,
+                "encrypted": v.encrypted,
+                "updated_at": (v.updated_at.isoformat() if v.updated_at else None),
+            }
+            for v in layers
+        ],
+    }
+
+
+@router_cfg_v4.get("/safe-keys")
+async def v4_config_safe_keys():
+    hc = getattr(app.state, "hierarchical_config", None)
+    if not hc:
+        raise HTTPException(503, "Hierarchical configuration not initialized")
+    return await hc.get_safe_edit_keys()
+
+
+@router_cfg_v4.post("/flush-cache")
+async def v4_config_flush_cache(scope: Optional[str] = None):
+    hc = getattr(app.state, "hierarchical_config", None)
+    if not hc or not getattr(hc, "cache", None):
+        raise HTTPException(503, "Cache manager not available")
+    # Basic flush-all for now; scope handling in later PRs
+    await hc.cache.flush_all()
+    return {"success": True, "scope": scope or "all"}
+
+
+app.include_router(router_cfg_v4)
     except Exception:
         return False
 

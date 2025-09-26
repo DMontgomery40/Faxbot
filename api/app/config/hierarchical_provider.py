@@ -83,6 +83,13 @@ class HierarchicalConfigProvider:
         "oauth.client_secret",
     }
 
+    SAFE_EDIT_KEYS: Dict[str, Dict[str, Any]] = {
+        "fax.timeout_seconds": {"type": "integer", "min": 5, "max": 300},
+        "fax.retry_attempts": {"type": "integer", "min": 0, "max": 10},
+        "api.rate_limit_rpm": {"type": "integer", "min": 1, "max": 10000},
+        "notifications.enable_sse": {"type": "boolean"},
+    }
+
     def __init__(self, encryption_key: str, cache_manager=None):
         self.enc = ConfigEncryption(encryption_key)
         self.cache = cache_manager
@@ -222,3 +229,104 @@ class HierarchicalConfigProvider:
         parts = [u.tenant_id or "null", u.department or "null", u.user_id or "null", ",".join(sorted(u.groups)) or "null"]
         return f"cfg:{prefix}:{':'.join(parts)}:{key}"
 
+    async def get_hierarchy(self, key: str, user_ctx: UserContext) -> List[ConfigValue]:
+        """Return layered values from highest to lowest priority present + default."""
+        layers: List[ConfigValue] = []
+        try:
+            # user
+            if user_ctx.user_id:
+                async with AsyncSessionLocal() as db:  # type: ignore
+                    q = await db.execute(select(ConfigUser).where(ConfigUser.user_id == user_ctx.user_id, ConfigUser.key == key))
+                    row = q.scalar_one_or_none()
+                    if row:
+                        layers.append(
+                            ConfigValue(
+                                value=self.enc.decrypt(row.value_encrypted, row.encrypted),
+                                source="db",
+                                level="user",
+                                level_id=user_ctx.user_id,
+                                encrypted=row.encrypted,
+                                updated_at=row.updated_at,
+                            )
+                        )
+            # group (first only reported)
+            if user_ctx.groups:
+                async with AsyncSessionLocal() as db:  # type: ignore
+                    q = await db.execute(
+                        select(ConfigGroup)
+                        .where(ConfigGroup.group_id.in_(user_ctx.groups), ConfigGroup.key == key)
+                        .order_by(ConfigGroup.priority.desc())
+                    )
+                    grp = q.first()
+                    if grp:
+                        grp = grp[0]
+                        layers.append(
+                            ConfigValue(
+                                value=self.enc.decrypt(grp.value_encrypted, grp.encrypted),
+                                source="db",
+                                level="group",
+                                level_id=grp.group_id,
+                                encrypted=grp.encrypted,
+                                updated_at=grp.updated_at,
+                            )
+                        )
+            # department
+            if user_ctx.tenant_id and user_ctx.department:
+                async with AsyncSessionLocal() as db:  # type: ignore
+                    q = await db.execute(
+                        select(ConfigDepartment).where(
+                            ConfigDepartment.tenant_id == user_ctx.tenant_id,
+                            ConfigDepartment.department == user_ctx.department,
+                            ConfigDepartment.key == key,
+                        )
+                    )
+                    dep = q.scalar_one_or_none()
+                    if dep:
+                        layers.append(
+                            ConfigValue(
+                                value=self.enc.decrypt(dep.value_encrypted, dep.encrypted),
+                                source="db",
+                                level="department",
+                                level_id=f"{user_ctx.tenant_id}:{user_ctx.department}",
+                                encrypted=dep.encrypted,
+                                updated_at=dep.updated_at,
+                            )
+                        )
+            # tenant
+            if user_ctx.tenant_id:
+                async with AsyncSessionLocal() as db:  # type: ignore
+                    q = await db.execute(select(ConfigTenant).where(ConfigTenant.tenant_id == user_ctx.tenant_id, ConfigTenant.key == key))
+                    ten = q.scalar_one_or_none()
+                    if ten:
+                        layers.append(
+                            ConfigValue(
+                                value=self.enc.decrypt(ten.value_encrypted, ten.encrypted),
+                                source="db",
+                                level="tenant",
+                                level_id=user_ctx.tenant_id,
+                                encrypted=ten.encrypted,
+                                updated_at=ten.updated_at,
+                            )
+                        )
+            # global
+            async with AsyncSessionLocal() as db:  # type: ignore
+                q = await db.execute(select(ConfigGlobal).where(ConfigGlobal.key == key))
+                glob = q.scalar_one_or_none()
+                if glob:
+                    layers.append(
+                        ConfigValue(
+                            value=self.enc.decrypt(glob.value_encrypted, glob.encrypted),
+                            source="db",
+                            level="global",
+                            encrypted=glob.encrypted,
+                            updated_at=glob.updated_at,
+                        )
+                    )
+        except Exception:
+            pass
+        if key in self.BUILT_IN_DEFAULTS:
+            layers.append(ConfigValue(value=self.BUILT_IN_DEFAULTS[key], source="default"))
+        return layers
+
+    async def get_safe_edit_keys(self) -> Dict[str, Dict[str, Any]]:
+        return dict(self.SAFE_EDIT_KEYS)
