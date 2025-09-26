@@ -116,10 +116,27 @@ def _inbound_dedupe(provider_id: str, external_id: str, window_sec: int = 600) -
             _inbound_seen.pop(k, None)
         key = f"{provider_id}:{external_id}"
         ts = _inbound_seen.get(key)
-        if ts and ts >= cutoff:
-            return True
+    if ts and ts >= cutoff:
+        return True
         _inbound_seen[key] = now
-        return False
+    return False
+
+# ===== Phase 3: optional hierarchical config bootstrap (lazy) =====
+try:
+    from .services.cache_manager import CacheManager  # type: ignore
+    from .config.hierarchical_provider import HierarchicalConfigProvider  # type: ignore
+
+    _REDIS_URL = os.getenv("REDIS_URL")
+    _cmk = os.getenv("CONFIG_MASTER_KEY", "")
+    _cache = CacheManager(_REDIS_URL) if _REDIS_URL else None
+    if _cmk and len(_cmk) == 44:
+        app.state.hierarchical_config = HierarchicalConfigProvider(_cmk, cache_manager=_cache)  # type: ignore[attr-defined]
+    else:
+        # Expose None if not configured; Admin endpoints will be added in Phase 3 PRs
+        app.state.hierarchical_config = None  # type: ignore[attr-defined]
+except Exception:
+    # Do not block startup; Phase 3 endpoints will check availability
+    app.state.hierarchical_config = None  # type: ignore[attr-defined]
     except Exception:
         return False
 

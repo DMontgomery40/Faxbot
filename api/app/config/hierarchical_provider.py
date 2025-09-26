@@ -1,0 +1,224 @@
+import json
+import uuid
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Any, Dict, List, Literal, Optional
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from api.app.db.async_db import AsyncSessionLocal  # type: ignore
+from api.app.models.config import (
+    ConfigGlobal,
+    ConfigTenant,
+    ConfigDepartment,
+    ConfigGroup,
+    ConfigUser,
+    ConfigAudit,
+)
+
+from cryptography.fernet import Fernet  # type: ignore
+
+
+ConfigLevel = Literal["global", "tenant", "department", "group", "user"]
+ConfigSource = Literal["db", "env", "default", "cache"]
+
+
+@dataclass
+class UserContext:
+    user_id: Optional[str]
+    tenant_id: Optional[str] = None
+    department: Optional[str] = None
+    groups: List[str] = None  # type: ignore
+
+    def __post_init__(self) -> None:
+        if self.groups is None:
+            self.groups = []
+
+
+@dataclass
+class ConfigValue:
+    value: Any
+    source: ConfigSource
+    level: Optional[ConfigLevel] = None
+    level_id: Optional[str] = None
+    encrypted: bool = False
+    updated_at: Optional[datetime] = None
+
+
+class ConfigEncryption:
+    def __init__(self, master_key: str):
+        if not master_key or len(master_key) != 44:
+            raise ValueError("CONFIG_MASTER_KEY must be a 44-char base64 Fernet key")
+        self.fernet = Fernet(master_key.encode())
+
+    def encrypt(self, value: Any, encrypt_flag: bool) -> str:
+        as_json = json.dumps(value)
+        return (
+            self.fernet.encrypt(as_json.encode()).decode() if encrypt_flag else as_json
+        )
+
+    def decrypt(self, stored: str, is_encrypted: bool) -> Any:
+        try:
+            if is_encrypted:
+                dec = self.fernet.decrypt(stored.encode()).decode()
+                return json.loads(dec)
+            return json.loads(stored)
+        except Exception:
+            return stored
+
+
+class HierarchicalConfigProvider:
+    BUILT_IN_DEFAULTS: Dict[str, Any] = {
+        "fax.timeout_seconds": 30,
+        "fax.max_pages": 100,
+        "fax.retry_attempts": 3,
+        "api.rate_limit_rpm": 60,
+        "notifications.enable_sse": True,
+    }
+
+    ALWAYS_ENCRYPT_KEYS = {
+        "fax.provider.api_key",
+        "fax.provider.secret",
+        "oauth.client_secret",
+    }
+
+    def __init__(self, encryption_key: str, cache_manager=None):
+        self.enc = ConfigEncryption(encryption_key)
+        self.cache = cache_manager
+
+    async def get_effective(
+        self, key: str, user_ctx: UserContext, default: Any = None
+    ) -> ConfigValue:
+        # Cache first
+        if self.cache:
+            ckey = self._cache_key("eff", user_ctx, key)
+            cached = await self.cache.get(ckey)
+            if cached:
+                return ConfigValue(**cached, source="cache")
+
+        val = await self._resolve(key, user_ctx, default)
+
+        if self.cache and val.source == "db":
+            ckey = self._cache_key("eff", user_ctx, key)
+            await self.cache.set(
+                ckey,
+                {
+                    "value": val.value,
+                    "source": "db",
+                    "level": val.level,
+                    "level_id": val.level_id,
+                    "encrypted": val.encrypted,
+                    "updated_at": val.updated_at.isoformat() if val.updated_at else None,
+                },
+                ttl=300,
+            )
+
+        return val
+
+    async def _resolve(
+        self, key: str, user_ctx: UserContext, default: Any = None
+    ) -> ConfigValue:
+        async with AsyncSessionLocal() as db:  # type: ignore
+            # 1. User
+            if user_ctx.user_id:
+                q = await db.execute(
+                    select(ConfigUser).where(
+                        ConfigUser.user_id == user_ctx.user_id,
+                        ConfigUser.key == key,
+                    )
+                )
+                row = q.scalar_one_or_none()
+                if row:
+                    return ConfigValue(
+                        value=self.enc.decrypt(row.value_encrypted, row.encrypted),
+                        source="db",
+                        level="user",
+                        level_id=user_ctx.user_id,
+                        encrypted=row.encrypted,
+                        updated_at=row.updated_at,
+                    )
+
+            # 2. Group (first by priority desc)
+            if user_ctx.groups:
+                q = await db.execute(
+                    select(ConfigGroup)
+                    .where(ConfigGroup.group_id.in_(user_ctx.groups), ConfigGroup.key == key)
+                    .order_by(ConfigGroup.priority.desc())
+                )
+                grp = q.first()
+                if grp:
+                    grp = grp[0]
+                    return ConfigValue(
+                        value=self.enc.decrypt(grp.value_encrypted, grp.encrypted),
+                        source="db",
+                        level="group",
+                        level_id=grp.group_id,
+                        encrypted=grp.encrypted,
+                        updated_at=grp.updated_at,
+                    )
+
+            # 3. Department
+            if user_ctx.tenant_id and user_ctx.department:
+                q = await db.execute(
+                    select(ConfigDepartment).where(
+                        ConfigDepartment.tenant_id == user_ctx.tenant_id,
+                        ConfigDepartment.department == user_ctx.department,
+                        ConfigDepartment.key == key,
+                    )
+                )
+                dep = q.scalar_one_or_none()
+                if dep:
+                    return ConfigValue(
+                        value=self.enc.decrypt(dep.value_encrypted, dep.encrypted),
+                        source="db",
+                        level="department",
+                        level_id=f"{user_ctx.tenant_id}:{user_ctx.department}",
+                        encrypted=dep.encrypted,
+                        updated_at=dep.updated_at,
+                    )
+
+            # 4. Tenant
+            if user_ctx.tenant_id:
+                q = await db.execute(
+                    select(ConfigTenant).where(
+                        ConfigTenant.tenant_id == user_ctx.tenant_id,
+                        ConfigTenant.key == key,
+                    )
+                )
+                ten = q.scalar_one_or_none()
+                if ten:
+                    return ConfigValue(
+                        value=self.enc.decrypt(ten.value_encrypted, ten.encrypted),
+                        source="db",
+                        level="tenant",
+                        level_id=user_ctx.tenant_id,
+                        encrypted=ten.encrypted,
+                        updated_at=ten.updated_at,
+                    )
+
+            # 5. Global
+            q = await db.execute(select(ConfigGlobal).where(ConfigGlobal.key == key))
+            glob = q.scalar_one_or_none()
+            if glob:
+                return ConfigValue(
+                    value=self.enc.decrypt(glob.value_encrypted, glob.encrypted),
+                    source="db",
+                    level="global",
+                    encrypted=glob.encrypted,
+                    updated_at=glob.updated_at,
+                )
+
+        # 6. Built-in defaults
+        if key in self.BUILT_IN_DEFAULTS:
+            return ConfigValue(value=self.BUILT_IN_DEFAULTS[key], source="default")
+
+        # 7. fallback (unset)
+        if default is not None:
+            return ConfigValue(value=default, source="default")
+        raise KeyError(key)
+
+    def _cache_key(self, prefix: str, u: UserContext, key: str) -> str:
+        parts = [u.tenant_id or "null", u.department or "null", u.user_id or "null", ",".join(sorted(u.groups)) or "null"]
+        return f"cfg:{prefix}:{':'.join(parts)}:{key}"
+

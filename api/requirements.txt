@@ -19,3 +19,6 @@ pexpect==4.9.0
 segno==1.6.1
 qrcode==7.4.2
 Pillow==10.4.0
+cryptography==43.0.1
+redis==5.0.8
+sse-starlette==3.0.2
