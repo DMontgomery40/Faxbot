@@ -151,7 +151,10 @@ def _idempotency_put(idem_key: str, job_id: str) -> None:
     except Exception:
         pass
 
-    # Bootstrap admin user (dev/stage only): create 'admin' if sessions enabled and bootstrap password present
+async def _bootstrap_admin_if_enabled() -> None:
+    """Create a default 'admin' user when sessions are enabled and a bootstrap
+    password is provided. Runs asynchronously on startup and never blocks app startup.
+    """
     try:
         if os.getenv("FAXBOT_SESSIONS_ENABLED", "false").lower() in {"1","true","yes"}:
             boot = os.getenv("FAXBOT_BOOTSTRAP_PASSWORD", "")
@@ -441,6 +444,12 @@ async def on_startup():
         # Run when explicitly enabled or provider=cloudflare
         if auto_enabled or provider_env == "cloudflare":
             asyncio.create_task(_auto_tunnel_cloudflare_watcher())
+    except Exception:
+        pass
+
+    # Run non-blocking admin bootstrap if sessions are enabled
+    try:
+        asyncio.create_task(_bootstrap_admin_if_enabled())
     except Exception:
         pass
 
