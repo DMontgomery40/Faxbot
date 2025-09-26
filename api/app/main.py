@@ -3239,7 +3239,7 @@ async def phaxio_callback(request: Request):
     job_id = request.query_params.get("job_id")
     phaxio_service = get_phaxio_service()
     if not phaxio_service or not job_id:
-        return JSONResponse({"status": "accepted"}, status_code=202)
+        return _ack_response()
 
     status_info = await phaxio_service.handle_status_callback(data)
 
@@ -3256,7 +3256,7 @@ async def phaxio_callback(request: Request):
             db.add(job)  # type: ignore[arg-type]
             db.commit()
     audit_event("job_updated", job_id=job_id, status=status_info.get('status'), provider="phaxio")
-    return JSONResponse({"status": "accepted"}, status_code=202)
+    return _ack_response()
 
 
 async def _send_via_phaxio(job_id: str, to: str, pdf_path: str):
@@ -3940,8 +3940,7 @@ async def phaxio_inbound(request: Request):
         db.add(fx)
         db.commit()
     audit_event("inbound_received", job_id=job_id, backend="phaxio")
-    from fastapi.responses import JSONResponse
-    return JSONResponse({"status": "accepted"}, status_code=202)
+    return _ack_response()
 
 
 @app.post("/sinch-inbound")
@@ -4142,8 +4141,7 @@ async def sinch_inbound(request: Request):
             db.add(fx)
             db.commit()
     audit_event("inbound_received", job_id=job_id, backend="sinch", pdf_error=pdf_error)
-    from fastapi.responses import JSONResponse
-    return JSONResponse({"status": "accepted"}, status_code=202)
+    return _ack_response()
 
 
 @app.post("/webhooks/inbound")
