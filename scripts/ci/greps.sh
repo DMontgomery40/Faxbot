@@ -69,4 +69,33 @@ else
   pass "Required secrets referenced in deploy files"
 fi
 
+# 5) Identity provider code must not use sync ORM query patterns
+id_sync=$(rg -n "db\\.query\\(" api/app/plugins/identity api/app/security 2>/dev/null | wc -l | tr -d ' ' || true)
+if [ "${id_sync}" -gt 0 ]; then
+  echo "— identity sync DB hits —"
+  rg -n "db\\.query\\(" api/app/plugins/identity api/app/security 2>/dev/null || true
+  fail "Identity/session code must use async SQLAlchemy (no db.query)"
+else
+  pass "Identity/session code avoids sync db.query()"
+fi
+
+# 6) Exactly one IdentityPlugin implementation
+id_impls=$(rg -n "class\\s+\\w+\\(IdentityPlugin\\)" api/app 2>/dev/null | wc -l | tr -d ' ' || true)
+if [ "${id_impls}" -ne 1 ]; then
+  echo "IdentityPlugin impls: ${id_impls}"
+  rg -n "class\\s+\\w+\\(IdentityPlugin\\)" api/app 2>/dev/null || true
+  fail "Expected exactly one IdentityPlugin implementation"
+else
+  pass "Single IdentityPlugin implementation present"
+fi
+
+# 7) CSRF middleware presence (class + mount reference exists)
+csrf_class=$(rg -n "class\\s+CSRFMiddleware" api/app/middleware 2>/dev/null | wc -l | tr -d ' ' || true)
+csrf_mount=$(rg -n "add_middleware\\(CSRFMiddleware" api/app/main.py 2>/dev/null | wc -l | tr -d ' ' || true)
+if [ "${csrf_class}" -ge 1 ] && [ "${csrf_mount}" -ge 1 ]; then
+  pass "CSRF middleware defined and referenced"
+else
+  fail "CSRF middleware class or mount not found"
+fi
+
 exit ${STATUS}
