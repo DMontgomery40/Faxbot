@@ -106,9 +106,9 @@ jobs:
           context: .
           file: ./Dockerfile
           push: false
-          tags: ghcr.io/${{ github.repository_owner }}/faxbot-api:pr-${{ github.run_id }}
-          cache-from: type=registry,ref=ghcr.io/${{ github.repository_owner }}/faxbot-api:cache
-          cache-to:   type=registry,ref=ghcr.io/${{ github.repository_owner }}/faxbot-api:cache,mode=max
+          tags: ghcr.io/${{ toLower(github.repository_owner) }}/faxbot-api:pr-${{ github.run_id }}
+          cache-from: type=registry,ref=ghcr.io/${{ toLower(github.repository_owner) }}/faxbot-api:cache
+          cache-to:   type=registry,ref=ghcr.io/${{ toLower(github.repository_owner) }}/faxbot-api:cache,mode=max
           build-args: |
             BUILDKIT_INLINE_CACHE=1
 
