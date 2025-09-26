@@ -36,6 +36,8 @@ import InboundWebhookTester from './InboundWebhookTester';
 interface Props {
   client: AdminAPIClient;
   docsBase?: string;
+  readOnly?: boolean;
+  canSend?: boolean;
 }
 
 const ConsoleBox: React.FC<{ lines: string[]; loading?: boolean; title?: string }> = ({ lines, loading, title }) => {
@@ -141,7 +143,7 @@ const ConsoleBox: React.FC<{ lines: string[]; loading?: boolean; title?: string 
   );
 };
 
-const ScriptsTests: React.FC<Props> = ({ client, docsBase }) => {
+const ScriptsTests: React.FC<Props> = ({ client, docsBase, readOnly = false, canSend = false }) => {
   const { outboundTraits } = useTraits();
   const [error, setError] = useState<string>('');
   const [busyAuth, setBusyAuth] = useState<boolean>(false);
@@ -424,7 +426,7 @@ const ScriptsTests: React.FC<Props> = ({ client, docsBase }) => {
                   <Button 
                     variant="contained" 
                     onClick={runAuthSmoke} 
-                    disabled={busyAuth || busyInbound || busyInfo}
+                    disabled={busyAuth || busyInbound || busyInfo || readOnly || !canSend}
                     startIcon={busyAuth ? <CircularProgress size={16} /> : <RunIcon />}
                     sx={{ borderRadius: 2, minWidth: 80 }}
                   >
@@ -433,7 +435,7 @@ const ScriptsTests: React.FC<Props> = ({ client, docsBase }) => {
                   <Button 
                     variant="outlined" 
                     onClick={runSendTestPdfFax} 
-                    disabled={sendPdfBusy || busyInbound || busyInfo}
+                    disabled={sendPdfBusy || busyInbound || busyInfo || !canSend}
                     startIcon={sendPdfBusy ? <CircularProgress size={16} /> : <RunIcon />}
                     sx={{ borderRadius: 2 }}
                   >
@@ -442,7 +444,7 @@ const ScriptsTests: React.FC<Props> = ({ client, docsBase }) => {
                   <Button 
                     variant="outlined" 
                     onClick={runSendTestImageFax} 
-                    disabled={sendImgBusy || busyInbound || busyInfo}
+                    disabled={sendImgBusy || busyInbound || busyInfo || !canSend}
                     startIcon={sendImgBusy ? <CircularProgress size={16} /> : <RunIcon />}
                     sx={{ borderRadius: 2 }}
                   >
@@ -483,13 +485,13 @@ const ScriptsTests: React.FC<Props> = ({ client, docsBase }) => {
                   <Stack direction="row" spacing={1}>
                     <Button 
                       variant="contained" 
-                      onClick={runInboundSim} 
-                      disabled={busyInbound || busyAuth || busyInfo}
-                      startIcon={busyInbound ? <CircularProgress size={16} /> : <RunIcon />}
-                      sx={{ borderRadius: 2, minWidth: 80 }}
-                    >
-                      {busyInbound ? 'Running' : 'Run'}
-                    </Button>
+                    onClick={runInboundSim} 
+                    disabled={busyInbound || busyAuth || busyInfo || readOnly}
+                    startIcon={busyInbound ? <CircularProgress size={16} /> : <RunIcon />}
+                    sx={{ borderRadius: 2, minWidth: 80 }}
+                  >
+                    {busyInbound ? 'Running' : 'Run'}
+                  </Button>
                     <Button 
                       variant="outlined"
                       onClick={clearInbound} 
@@ -535,7 +537,7 @@ const ScriptsTests: React.FC<Props> = ({ client, docsBase }) => {
                     <Button 
                       variant="contained" 
                       onClick={saveSipInboundSecret} 
-                      disabled={busyInfo || busyAuth || busyInbound}
+                      disabled={busyInfo || busyAuth || busyInbound || readOnly}
                       startIcon={busyInfo ? <CircularProgress size={16} /> : <CheckIcon />}
                       sx={{ borderRadius: 2 }}
                     >
@@ -572,7 +574,7 @@ const ScriptsTests: React.FC<Props> = ({ client, docsBase }) => {
                   <Button 
                     variant="contained" 
                     onClick={savePhaxioCallback} 
-                    disabled={busyInfo || busyAuth || busyInbound}
+                    disabled={busyInfo || busyAuth || busyInbound || readOnly}
                     startIcon={busyInfo ? <CircularProgress size={16} /> : <CheckIcon />}
                     sx={{ borderRadius: 2, minWidth: 100 }}
                   >

@@ -37,7 +37,7 @@ import AdminAPIClient from '../api/client';
 import PluginConfigDialog from './PluginConfigDialog';
 import { ResponsiveFormSection, ResponsiveTextField } from './common/ResponsiveFormFields';
 
-type Props = { client: AdminAPIClient };
+type Props = { client: AdminAPIClient; readOnly?: boolean };
 
 type PluginItem = {
   id: string;
@@ -80,7 +80,7 @@ const EXAMPLE_MANIFEST = `{
 
 const BULK_IMPORT_PLACEHOLDER = `[ { "id": "provider1", ... }, { ... } ] or markdown with json code blocks`;
 
-export default function Plugins({ client }: Props) {
+export default function Plugins({ client, readOnly = false }: Props) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>('');
   const [items, setItems] = useState<PluginItem[]>([]);
@@ -269,8 +269,8 @@ export default function Plugins({ client }: Props) {
               title="Outbound Providers" 
               items={ensureDocumo(byCategory('outbound'))} 
               saving={saving} 
-              onActivate={handleMakeActiveOutbound} 
-              onConfigure={handleConfigure} 
+              onActivate={readOnly ? undefined : handleMakeActiveOutbound} 
+              onConfigure={readOnly ? undefined : handleConfigure} 
               registry={registry} 
               icon={<Phone />}
             />
@@ -394,6 +394,7 @@ export default function Plugins({ client }: Props) {
                             setError(e?.message || 'Install failed');
                           }
                         }}
+                        disabled={readOnly}
                         sx={{ borderRadius: 2 }}
                       >
                         Install

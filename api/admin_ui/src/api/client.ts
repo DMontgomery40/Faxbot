@@ -103,6 +103,18 @@ export class AdminAPIClient {
     return res.json();
   }
 
+  // UI Config (ETag-cached on server)
+  async getUiConfig(): Promise<{ schema_version: number; features: any; endpoints: any; docs_base?: string }>{
+    const res = await this.fetch('/admin/ui-config');
+    return res.json();
+  }
+
+  // User traits (admin-only)
+  async getUserTraits(): Promise<{ schema_version: number; user: { id: string }; traits: string[] }>{
+    const res = await this.fetch('/admin/user/traits');
+    return res.json();
+  }
+
   // Provider traits & active backends
   async getProviders(): Promise<ProvidersInfo> {
     const res = await this.fetch('/admin/providers');

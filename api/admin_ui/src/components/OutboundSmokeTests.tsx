@@ -33,6 +33,7 @@ import { ResponsiveFormSection } from './common/ResponsiveFormFields';
 
 interface OutboundSmokeTestsProps {
   client: AdminAPIClient;
+  canSend?: boolean;
 }
 
 interface TestJob {
@@ -66,7 +67,7 @@ const TEST_TYPES = [
   },
 ];
 
-export default function OutboundSmokeTests({ client }: OutboundSmokeTestsProps) {
+export default function OutboundSmokeTests({ client, canSend = true }: OutboundSmokeTestsProps) {
   const theme = useTheme();
   const { active } = useTraits();
 
@@ -382,7 +383,7 @@ export default function OutboundSmokeTests({ client }: OutboundSmokeTestsProps) 
                     variant="outlined"
                     size="small"
                     onClick={() => runSmokeTest(testType.id as 'txt' | 'pdf' | 'image')}
-                    disabled={loading[testType.id]}
+                    disabled={loading[testType.id] || !canSend}
                     startIcon={loading[testType.id] ? undefined : <SendIcon />}
                     sx={{ borderRadius: 1, minWidth: 100 }}
                   >

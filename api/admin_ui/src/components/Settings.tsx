@@ -39,9 +39,10 @@ import TunnelSettings from './TunnelSettings';
 
 interface SettingsProps {
   client: AdminAPIClient;
+  readOnly?: boolean;
 }
 
-function Settings({ client }: SettingsProps) {
+function Settings({ client, readOnly = false }: SettingsProps) {
   const [settings, setSettings] = useState<SettingsType | null>(null);
   const [envContent, setEnvContent] = useState<string>('');
   const [loading, setLoading] = useState(false);
@@ -284,7 +285,7 @@ function Settings({ client }: SettingsProps) {
                 setError(e?.message || 'Failed to save on server');
               } finally { setLoading(false); }
             }}
-            disabled={loading}
+            disabled={loading || readOnly}
           >
             Save .env to server
           </Button>
@@ -305,7 +306,7 @@ function Settings({ client }: SettingsProps) {
                   setLoading(false);
                 }
               }}
-              disabled={loading}
+              disabled={loading || readOnly}
             >
               Save & Restart
             </Button>
@@ -353,6 +354,7 @@ function Settings({ client }: SettingsProps) {
                 { value: 'freeswitch', label: 'FreeSWITCH (Self-hosted)' }
               ]}
               showCurrentValue={true}
+              disabled={readOnly}
             />
 
             <ResponsiveSettingItem
@@ -369,6 +371,7 @@ function Settings({ client }: SettingsProps) {
                 { value: 'sip', label: 'SIP/Asterisk (Internal)' }
               ]}
               showCurrentValue={true}
+              disabled={readOnly}
             />
             {(!form.inbound_backend && settings.hybrid && !settings.hybrid.inbound_explicit) && (
               <Chip
@@ -1293,7 +1296,7 @@ function Settings({ client }: SettingsProps) {
             </ResponsiveFormSection>
         </Stack>
         <Box sx={{ display: 'flex', gap: 1, mt: 2 }}>
-          <Button variant="contained" onClick={handleApplySettings} disabled={loading}>
+          <Button variant="contained" onClick={handleApplySettings} disabled={loading || readOnly}>
             Apply & Reload
           </Button>
           <Button variant="outlined" startIcon={<RefreshIcon />} onClick={fetchSettings} disabled={loading}>
@@ -1307,7 +1310,7 @@ function Settings({ client }: SettingsProps) {
         )}
         {allowRestart && (
           <Box sx={{ mt: 1 }}>
-            <Button variant="outlined" onClick={async () => { try { await client.restart(); } catch (e) { /* ignore */ } }}>
+            <Button variant="outlined" disabled={readOnly} onClick={async () => { try { await client.restart(); } catch (e) { /* ignore */ } }}>
               Restart API
             </Button>
           </Box>

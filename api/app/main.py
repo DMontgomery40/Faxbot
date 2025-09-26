@@ -54,6 +54,8 @@ except Exception:  # pragma: no cover - optional
     _write_cfg = None  # type: ignore
 from pydantic import BaseModel
 from .middleware.traits import requires_traits
+from .security.permissions import require_permissions
+from .security.user_traits import pack_user_traits
 
 
 app = FastAPI(
@@ -77,6 +79,19 @@ app.phaxio_service = _phaxio_module  # type: ignore[attr-defined]
 
 PHONE_RE = re.compile(r"^[+]?\d{6,20}$")
 ALLOWED_CT = {"application/pdf", "text/plain"}
+
+# ===== Phase 2: sessions feature-flag fail-fast for secrets =====
+try:
+    if os.getenv("FAXBOT_SESSIONS_ENABLED", "false").lower() in {"1","true","yes"}:
+        cfg_key = os.getenv("CONFIG_MASTER_KEY", "")
+        pepper = os.getenv("FAXBOT_SESSION_PEPPER", "")
+        if not cfg_key or len(cfg_key) != 44:
+            raise RuntimeError("CONFIG_MASTER_KEY missing or invalid length (44-char base64) while sessions enabled")
+        if not pepper:
+            raise RuntimeError("FAXBOT_SESSION_PEPPER missing while sessions enabled")
+except Exception as _sec_ex:
+    # Hard fail on import when sessions are enabled but secrets missing
+    raise
 
 # Strict verification toggle for inbound signatures
 STRICT_INBOUND = os.getenv("INBOUND_STRICT_VERIFY", "false").lower() in {"1","true","yes"}
@@ -135,6 +150,28 @@ def _idempotency_put(idem_key: str, job_id: str) -> None:
         _send_idempotency[idem_key] = (job_id, int(time.time()))
     except Exception:
         pass
+
+    # Bootstrap admin user (dev/stage only): create 'admin' if sessions enabled and bootstrap password present
+    try:
+        if os.getenv("FAXBOT_SESSIONS_ENABLED", "false").lower() in {"1","true","yes"}:
+            boot = os.getenv("FAXBOT_BOOTSTRAP_PASSWORD", "")
+            if boot:
+                from .plugins.manager import PluginManager
+                pm = PluginManager()
+                pm.load_all()
+                ident = pm.get_active_by_type("identity")
+                user = None
+                if hasattr(ident, "find_user_by_username"):
+                    user = await ident.find_user_by_username("admin")  # type: ignore
+                if not user and hasattr(ident, "create_user"):
+                    await ident.create_user("admin", boot, traits={"role": "admin"})  # type: ignore
+                    print("[info] Bootstrapped admin user via FAXBOT_BOOTSTRAP_PASSWORD")
+    except Exception as _boot_ex:
+        # Never block startup for bootstrap; log only
+        try:
+            print(f"[warn] Admin bootstrap skipped: {_boot_ex}")
+        except Exception:
+            pass
 
 
 def _ack_response(payload: Optional[dict] = None):
@@ -969,6 +1006,22 @@ async def admin_provider_test(provider_id: str) -> ProviderTestOut:
         elif pid == "local":
             ok = True
             msg = "local storage ready"
+        elif pid == "identity":
+            try:
+                from .plugins.manager import PluginManager
+                pm = PluginManager()
+                pm.load_all()
+                ident = pm.get_active_by_type("identity")
+                if hasattr(ident, "test_connection"):
+                    res = await ident.test_connection()  # type: ignore
+                    ok = bool(res.get("success", False))
+                    msg = str(res.get("message", ""))
+                else:
+                    ok = False
+                    msg = "identity provider missing test_connection()"
+            except Exception as ex:
+                ok = False
+                msg = f"identity test failed: {ex}"
         else:
             ok = True
             msg = "no-op test"
@@ -977,6 +1030,79 @@ async def admin_provider_test(provider_id: str) -> ProviderTestOut:
         msg = str(e)
     dt = max(0.0, (_time.perf_counter() - t0) * 1000.0)
     return ProviderTestOut(success=ok, message=msg, latency_ms=round(dt, 2))
+
+
+# ===== Admin UI config (ETag-cached) =====
+@app.get("/admin/ui-config", dependencies=[Depends(require_admin)])
+async def admin_ui_config(request: Request):
+    cfg = {
+        "schema_version": 1,
+        "features": {
+            "sessions_enabled": os.getenv("FAXBOT_SESSIONS_ENABLED", "false").lower() in {"1","true","yes"},
+            "csrf_enabled": os.getenv("FAXBOT_CSRF_ENABLED", "false").lower() in {"1","true","yes"},
+        },
+        "endpoints": {
+            "metrics": "/metrics",
+            "providers": "/admin/providers",
+            "config_effective": "/admin/config/effective",
+            "provider_test": "/admin/providers/{id}/test",
+            "auth_login": "/auth/login",
+            "auth_logout": "/auth/logout",
+            "auth_refresh": "/auth/refresh",
+        },
+        # client can render docs links relative to this base
+        "docs_base": os.getenv("DOCS_BASE_URL", "https://docs.faxbot.net"),
+    }
+    body = json.dumps(cfg, sort_keys=True).encode("utf-8")
+    etag = hashlib.sha256(body).hexdigest()
+    inm = request.headers.get("if-none-match") or request.headers.get("If-None-Match")
+    if inm and inm == etag:
+        return Response(status_code=304)
+    resp = JSONResponse(cfg)
+    resp.headers["ETag"] = etag
+    resp.headers["Cache-Control"] = "private, max-age=30"
+    return resp
+
+
+# ===== Demo: permission-guarded endpoint (non-breaking) =====
+@app.get("/admin/permissions/check", dependencies=[Depends(require_permissions(["admin.console:access"]))])
+async def admin_permissions_check():
+    return {"ok": True}
+
+
+@app.get("/admin/user/traits", dependencies=[Depends(require_admin)])
+async def admin_user_traits(info = Depends(require_admin)):
+    # info contains key_id and scopes for admin keys
+    scopes = (info or {}).get("scopes") or []
+    user_id = (info or {}).get("key_id") or "unknown"
+    return pack_user_traits(user_id, scopes)
+
+
+# ===== Dev helper: create identity user (feature-gated) =====
+class _CreateUserIn(BaseModel):
+    username: str
+    password: str
+    traits: Optional[Dict[str, Any]] = None
+
+
+@app.post("/admin/identity/dev/create-user", dependencies=[Depends(require_admin)])
+async def admin_identity_dev_create_user(payload: _CreateUserIn):
+    # Gate strictly to dev only; avoid accidental prod usage
+    if os.getenv("FAXBOT_DEV_IDENTITY_INIT", "false").lower() not in {"1", "true", "yes"}:
+        raise HTTPException(status_code=404, detail="Not found")
+    try:
+        from .plugins.manager import PluginManager
+        pm = PluginManager()
+        pm.load_all()
+        ident = pm.get_active_by_type("identity")
+        if not hasattr(ident, "create_user"):
+            raise HTTPException(status_code=400, detail="identity provider missing create_user()")
+        user = await ident.create_user(payload.username, payload.password, traits=payload.traits)  # type: ignore
+        return {"ok": True, "id": getattr(user, "id", None), "username": getattr(user, "username", None)}
+    except HTTPException:
+        raise
+    except Exception as ex:
+        raise HTTPException(status_code=500, detail=f"create user failed: {ex}")
 
 
 class ValidateSettingsRequest(BaseModel):
@@ -4788,6 +4914,85 @@ async def admin_terminal_websocket(
     
     # Handle terminal session
     await handle_terminal_websocket(websocket)
+
+# ===== Phase 2: Auth endpoints (guarded by sessions flag) =====
+if os.getenv("FAXBOT_SESSIONS_ENABLED", "false").lower() in {"1","true","yes"}:
+    try:
+        from .plugins.manager import PluginManager
+        _pm_for_auth = PluginManager()
+        _pm_for_auth.load_all()
+    except Exception:
+        _pm_for_auth = None  # type: ignore
+
+    class LoginRequest(BaseModel):
+        username: str
+        password: str
+        ttl_seconds: int | None = 3600
+
+    async def _identity_authenticate(username: str, password: str) -> bool:
+        # Try identity plugin if available
+        try:
+            if _pm_for_auth:
+                ident = _pm_for_auth.get_active_by_type("identity")
+                if hasattr(ident, "authenticate_password"):
+                    res = await ident.authenticate_password(username, password)  # type: ignore
+                    return bool(getattr(res, "success", False))
+        except Exception:
+            pass
+        # Dev fallback: bootstrap admin (do NOT use in prod)
+        boot = os.getenv("FAXBOT_BOOTSTRAP_PASSWORD")
+        return username == "admin" and bool(boot) and password == boot
+
+    @app.post("/auth/login")
+    async def auth_login(payload: LoginRequest, response: Response):
+        if not await _identity_authenticate(payload.username, payload.password):
+            raise HTTPException(status_code=401, detail="Invalid credentials")
+        from .security.auth_sessions import create_session  # lazy import
+        sid, token = create_session(user_id=payload.username, ttl_seconds=payload.ttl_seconds or 3600)
+        cookie_opts = {
+            "httponly": True,
+            "secure": os.getenv("ENFORCE_PUBLIC_HTTPS", "false").lower() in {"1","true","yes"},
+            "samesite": "strict",
+            "path": "/",
+        }
+        response.set_cookie("fb_sess", token, **cookie_opts)
+        csrf_enabled = os.getenv("FAXBOT_CSRF_ENABLED", "false").lower() in {"1","true","yes"}
+        if csrf_enabled:
+            csrf_val = secrets.token_urlsafe(16)
+            response.set_cookie("fb_csrf", csrf_val, secure=cookie_opts["secure"], samesite="strict", path="/")
+            return {"success": True, "csrf": csrf_val}
+        return {"success": True}
+
+    @app.post("/auth/logout")
+    async def auth_logout(response: Response, request: Request):
+        from .security.auth_sessions import revoke_session  # lazy import
+        tok = request.cookies.get("fb_sess")
+        if tok:
+            try:
+                revoke_session(tok)
+            except Exception:
+                pass
+        response.delete_cookie("fb_sess", path="/")
+        response.delete_cookie("fb_csrf", path="/")
+        return {"success": True}
+
+    @app.post("/auth/refresh")
+    async def auth_refresh(response: Response, request: Request):
+        from .security.auth_sessions import rotate_session  # lazy import
+        tok = request.cookies.get("fb_sess")
+        if not tok:
+            raise HTTPException(status_code=401, detail="No session")
+        new_tok = rotate_session(tok)
+        if not new_tok:
+            raise HTTPException(status_code=401, detail="Invalid session")
+        cookie_opts = {
+            "httponly": True,
+            "secure": os.getenv("ENFORCE_PUBLIC_HTTPS", "false").lower() in {"1","true","yes"},
+            "samesite": "strict",
+            "path": "/",
+        }
+        response.set_cookie("fb_sess", new_tok, **cookie_opts)
+        return {"success": True}
 # Optional metrics endpoint
 @app.get("/metrics")
 async def metrics_endpoint():

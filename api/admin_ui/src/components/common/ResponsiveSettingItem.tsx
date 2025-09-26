@@ -30,6 +30,7 @@ interface ResponsiveSettingItemProps {
   fullWidth?: boolean;
   showCurrentValue?: boolean;
   infoLink?: { text: string; url: string };
+  disabled?: boolean;
 }
 
 export function ResponsiveSettingItem({
@@ -46,6 +47,7 @@ export function ResponsiveSettingItem({
   fullWidth = true,
   showCurrentValue = true,
   infoLink,
+  disabled = false,
 }: ResponsiveSettingItemProps) {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
@@ -63,6 +65,7 @@ export function ResponsiveSettingItem({
           onChange={(e) => onChange?.(e.target.value)}
           placeholder={placeholder}
           size="small"
+          disabled={disabled}
           sx={{
             '& .MuiOutlinedInput-root': {
               borderRadius: 2,
@@ -87,6 +90,7 @@ export function ResponsiveSettingItem({
         onChange={(e) => onChange?.(e.target.value)}
         size="small"
         required={required}
+        disabled={disabled}
         InputProps={{
           endAdornment: type === 'password' ? (
             <InputAdornment position="end">
@@ -94,6 +98,7 @@ export function ResponsiveSettingItem({
                 onClick={handleTogglePassword}
                 edge="end"
                 size="small"
+                disabled={disabled}
               >
                 {showPassword ? <VisibilityOff /> : <Visibility />}
               </IconButton>
