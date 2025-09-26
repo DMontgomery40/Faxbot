@@ -78,6 +78,19 @@ app.phaxio_service = _phaxio_module  # type: ignore[attr-defined]
 PHONE_RE = re.compile(r"^[+]?\d{6,20}$")
 ALLOWED_CT = {"application/pdf", "text/plain"}
 
+# ===== Phase 2: sessions feature-flag fail-fast for secrets =====
+try:
+    if os.getenv("FAXBOT_SESSIONS_ENABLED", "false").lower() in {"1","true","yes"}:
+        cfg_key = os.getenv("CONFIG_MASTER_KEY", "")
+        pepper = os.getenv("FAXBOT_SESSION_PEPPER", "")
+        if not cfg_key or len(cfg_key) != 44:
+            raise RuntimeError("CONFIG_MASTER_KEY missing or invalid length (44-char base64) while sessions enabled")
+        if not pepper:
+            raise RuntimeError("FAXBOT_SESSION_PEPPER missing while sessions enabled")
+except Exception as _sec_ex:
+    # Hard fail on import when sessions are enabled but secrets missing
+    raise
+
 # Strict verification toggle for inbound signatures
 STRICT_INBOUND = os.getenv("INBOUND_STRICT_VERIFY", "false").lower() in {"1","true","yes"}
 
@@ -4788,6 +4801,85 @@ async def admin_terminal_websocket(
     
     # Handle terminal session
     await handle_terminal_websocket(websocket)
+
+# ===== Phase 2: Auth endpoints (guarded by sessions flag) =====
+if os.getenv("FAXBOT_SESSIONS_ENABLED", "false").lower() in {"1","true","yes"}:
+    try:
+        from .plugins.manager import PluginManager
+        _pm_for_auth = PluginManager()
+        _pm_for_auth.load_all()
+    except Exception:
+        _pm_for_auth = None  # type: ignore
+
+    class LoginRequest(BaseModel):
+        username: str
+        password: str
+        ttl_seconds: int | None = 3600
+
+    async def _identity_authenticate(username: str, password: str) -> bool:
+        # Try identity plugin if available
+        try:
+            if _pm_for_auth:
+                ident = _pm_for_auth.get_active_by_type("identity")
+                if hasattr(ident, "authenticate_password"):
+                    res = await ident.authenticate_password(username, password)  # type: ignore
+                    return bool(getattr(res, "success", False))
+        except Exception:
+            pass
+        # Dev fallback: bootstrap admin (do NOT use in prod)
+        boot = os.getenv("FAXBOT_BOOTSTRAP_PASSWORD")
+        return username == "admin" and bool(boot) and password == boot
+
+    @app.post("/auth/login")
+    async def auth_login(payload: LoginRequest, response: Response):
+        if not await _identity_authenticate(payload.username, payload.password):
+            raise HTTPException(status_code=401, detail="Invalid credentials")
+        from .security.auth_sessions import create_session  # lazy import
+        sid, token = create_session(user_id=payload.username, ttl_seconds=payload.ttl_seconds or 3600)
+        cookie_opts = {
+            "httponly": True,
+            "secure": os.getenv("ENFORCE_PUBLIC_HTTPS", "false").lower() in {"1","true","yes"},
+            "samesite": "strict",
+            "path": "/",
+        }
+        response.set_cookie("fb_sess", token, **cookie_opts)
+        csrf_enabled = os.getenv("FAXBOT_CSRF_ENABLED", "false").lower() in {"1","true","yes"}
+        if csrf_enabled:
+            csrf_val = secrets.token_urlsafe(16)
+            response.set_cookie("fb_csrf", csrf_val, secure=cookie_opts["secure"], samesite="strict", path="/")
+            return {"success": True, "csrf": csrf_val}
+        return {"success": True}
+
+    @app.post("/auth/logout")
+    async def auth_logout(response: Response, request: Request):
+        from .security.auth_sessions import revoke_session  # lazy import
+        tok = request.cookies.get("fb_sess")
+        if tok:
+            try:
+                revoke_session(tok)
+            except Exception:
+                pass
+        response.delete_cookie("fb_sess", path="/")
+        response.delete_cookie("fb_csrf", path="/")
+        return {"success": True}
+
+    @app.post("/auth/refresh")
+    async def auth_refresh(response: Response, request: Request):
+        from .security.auth_sessions import rotate_session  # lazy import
+        tok = request.cookies.get("fb_sess")
+        if not tok:
+            raise HTTPException(status_code=401, detail="No session")
+        new_tok = rotate_session(tok)
+        if not new_tok:
+            raise HTTPException(status_code=401, detail="Invalid session")
+        cookie_opts = {
+            "httponly": True,
+            "secure": os.getenv("ENFORCE_PUBLIC_HTTPS", "false").lower() in {"1","true","yes"},
+            "samesite": "strict",
+            "path": "/",
+        }
+        response.set_cookie("fb_sess", new_tok, **cookie_opts)
+        return {"success": True}
 # Optional metrics endpoint
 @app.get("/metrics")
 async def metrics_endpoint():
