@@ -37,3 +37,15 @@ def list_plugins():
     # Placeholder: will be populated via trait‑aware registry in later PRs
     return {"plugins": []}
 
+
+@router.post("/install")
+def install_plugin(payload: Dict[str, Any] | None = None):
+    """Remote install a plugin (disabled by default).
+
+    Gate with ADMIN_MARKETPLACE_REMOTE_INSTALL_ENABLED=false by default.
+    """
+    remote_enabled = os.getenv("ADMIN_MARKETPLACE_REMOTE_INSTALL_ENABLED", "false").lower() in {"1", "true", "yes"}
+    if not remote_enabled:
+      raise HTTPException(503, detail="Remote install disabled")
+    # Placeholder only; actual implementation will be added later
+    return {"ok": False, "message": "not_implemented"}
