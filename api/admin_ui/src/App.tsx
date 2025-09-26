@@ -98,6 +98,7 @@ function AppContent() {
   });
   const [client, setClient] = useState<AdminAPIClient | null>(null);
   const [adminConfig, setAdminConfig] = useState<any | null>(null);
+  const [uiConfig, setUiConfig] = useState<any | null>(null);
   const [authenticated, setAuthenticated] = useState(false);
   const [error, setError] = useState('');
   const [tabValue, setTabValue] = useState(0);
@@ -118,6 +119,11 @@ function AppContent() {
       setClient(testClient);
       setAuthenticated(true);
       setAdminConfig(cfg);
+      // Fetch UI config (non-fatal)
+      try {
+        const uic = await testClient.getUiConfig();
+        setUiConfig(uic);
+      } catch { /* ignore if not available */ }
       setError('');
     } catch (e) {
       setError('Invalid API key or insufficient permissions');
@@ -543,6 +549,12 @@ function AppContent() {
               letterSpacing: '0.02em'
             }}
           />
+          {uiConfig?.features?.sessions_enabled && (
+            <Chip label="Sessions" size="small" color="success" sx={{ mr: 1, display: { xs: 'none', sm: 'flex' } }} />
+          )}
+          {uiConfig?.features?.csrf_enabled && (
+            <Chip label="CSRF" size="small" color="info" sx={{ mr: 1, display: { xs: 'none', sm: 'flex' } }} />
+          )}
           <ThemeToggle />
           <Tooltip title="Open Settings">
             <IconButton 
@@ -701,7 +713,7 @@ function AppContent() {
           <JobsList client={client!} />
         </TabPanel>
         <TabPanel value={tabValue} index={3}>
-          <Inbound client={client!} docsBase={adminConfig?.branding?.docs_base} />
+          <Inbound client={client!} docsBase={uiConfig?.docs_base || adminConfig?.branding?.docs_base} />
         </TabPanel>
         {/* Settings group */}
         <TabPanel value={tabValue} index={4}>
@@ -728,7 +740,7 @@ function AppContent() {
               </Tabs>
             </Box>
             <Box sx={{ p: { xs: 2, md: 3 } }}>
-              {settingsTab === 0 && <SetupWizard client={client!} onDone={() => handleTabChange(0)} docsBase={adminConfig?.branding?.docs_base} />}
+              {settingsTab === 0 && <SetupWizard client={client!} onDone={() => handleTabChange(0)} docsBase={uiConfig?.docs_base || adminConfig?.branding?.docs_base} />}
               {settingsTab === 1 && (
                 <Box>
                   <Box sx={{ mb: 3, display: 'flex', justifyContent: 'flex-end' }}>
@@ -777,7 +789,7 @@ function AppContent() {
               {toolsTab === 0 && <Terminal apiKey={apiKey} />}
               {toolsTab === 1 && (
                 <Box>
-                  <Diagnostics client={client!} onNavigate={handleNavigate} docsBase={adminConfig?.branding?.docs_base} />
+                  <Diagnostics client={client!} onNavigate={handleNavigate} docsBase={uiConfig?.docs_base || adminConfig?.branding?.docs_base} />
                   <Box sx={{ mt: 4 }}>
                     <OutboundSmokeTests client={client!} />
                   </Box>
@@ -788,11 +800,11 @@ function AppContent() {
               )}
               {toolsTab === 2 && <Logs client={client!} />}
               {toolsTab === 3 && <Plugins client={client!} />}
-              {toolsTab === 4 && <ScriptsTests client={client!} docsBase={adminConfig?.branding?.docs_base} />}
+              {toolsTab === 4 && <ScriptsTests client={client!} docsBase={uiConfig?.docs_base || adminConfig?.branding?.docs_base} />}
               {toolsTab === 5 && (
                 <TunnelSettings
                   client={client!}
-                  docsBase={adminConfig?.branding?.docs_base}
+                  docsBase={uiConfig?.docs_base || adminConfig?.branding?.docs_base}
                   hipaaMode={Boolean(adminConfig?.security?.enforce_https)}
                   inboundBackend={adminConfig?.hybrid?.inbound_backend}
                   sinchConfigured={Boolean(adminConfig?.backend_configured?.sinch)}

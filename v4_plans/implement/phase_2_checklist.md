@@ -77,7 +77,7 @@ Acceptance
 - Unit test or small helper validates cycle detection path
 
 P2-09 UI config endpoint + caching
-- [ ] `/admin/ui-config` returns minimal config for Admin Console with ETag
+- [x] `/admin/ui-config` returns minimal config for Admin Console with ETag
 Acceptance
 - First GET returns ETag; subsequent GET with `If-None-Match` → 304
 
