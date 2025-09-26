@@ -55,6 +55,7 @@ except Exception:  # pragma: no cover - optional
 from pydantic import BaseModel
 from .middleware.traits import requires_traits
 from .security.permissions import require_permissions
+from .security.user_traits import pack_user_traits
 
 
 app = FastAPI(
@@ -1045,6 +1046,14 @@ async def admin_ui_config(request: Request):
 @app.get("/admin/permissions/check", dependencies=[Depends(require_permissions(["admin.console:access"]))])
 async def admin_permissions_check():
     return {"ok": True}
+
+
+@app.get("/admin/user/traits", dependencies=[Depends(require_admin)])
+async def admin_user_traits(info = Depends(require_admin)):
+    # info contains key_id and scopes for admin keys
+    scopes = (info or {}).get("scopes") or []
+    user_id = (info or {}).get("key_id") or "unknown"
+    return pack_user_traits(user_id, scopes)
 
 
 class ValidateSettingsRequest(BaseModel):

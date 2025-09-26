@@ -99,6 +99,7 @@ function AppContent() {
   const [client, setClient] = useState<AdminAPIClient | null>(null);
   const [adminConfig, setAdminConfig] = useState<any | null>(null);
   const [uiConfig, setUiConfig] = useState<any | null>(null);
+  const [userTraits, setUserTraits] = useState<string[] | null>(null);
   const [authenticated, setAuthenticated] = useState(false);
   const [error, setError] = useState('');
   const [tabValue, setTabValue] = useState(0);
@@ -123,6 +124,11 @@ function AppContent() {
       try {
         const uic = await testClient.getUiConfig();
         setUiConfig(uic);
+      } catch { /* ignore if not available */ }
+      // Fetch user traits (admin-only endpoint)
+      try {
+        const ut = await testClient.getUserTraits();
+        setUserTraits(ut?.traits || null);
       } catch { /* ignore if not available */ }
       setError('');
     } catch (e) {
@@ -300,6 +306,17 @@ function AppContent() {
     { label: 'Scripts & Tests', icon: <ScienceIcon /> },
     { label: 'Tunnels', icon: <VpnLockIcon /> },
   ];
+
+  const hasTrait = (t: string) => !!(userTraits && userTraits.includes(t));
+  const terminalDisabled = !hasTrait('ui.terminal');
+  const scriptsDisabled = !hasTrait('role.admin');
+
+  useEffect(() => {
+    if (tabValue === 5) {
+      if (toolsTab === 0 && terminalDisabled) setToolsTab(1);
+      if (toolsTab === 4 && scriptsDisabled) setToolsTab(1);
+    }
+  }, [tabValue, toolsTab, terminalDisabled, scriptsDisabled]);
 
   if (!authenticated) {
     return (
@@ -780,8 +797,14 @@ function AppContent() {
                 scrollButtons={isMobile ? 'auto' : false}
                 sx={{ px: 2 }}
               >
-                {toolsItems.map((item) => (
-                  <Tab key={item.label} icon={item.icon} iconPosition="start" label={item.label} />
+                {toolsItems.map((item, idx) => (
+                  <Tab 
+                    key={item.label} 
+                    icon={item.icon} 
+                    iconPosition="start" 
+                    label={item.label} 
+                    disabled={(idx === 0 && terminalDisabled) || (idx === 4 && scriptsDisabled)}
+                  />
                 ))}
               </Tabs>
             </Box>

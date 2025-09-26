@@ -64,8 +64,9 @@ Acceptance
 - Cookies present only when sessions enabled; CSRF enforced only when flag true
 
 P2-07 Permission grammar + trait mapping
-- [ ] Canonical permission format `{namespace}.{resource}:{action}`
-- [ ] Static map: traits → permissions; legacy scopes mapper for backward-compat
+- [x] Canonical permission format `{namespace}.{resource}:{action}`
+- [x] Legacy scopes → canonical permissions mapper; canonical → legacy scopes mapper
+- [x] Demo guarded route using permissions (non-breaking)
 Acceptance
 - `rg -n "permissions_to_legacy_scopes" api/app` → 1
 - One guarded route uses permission check (non-breaking demo)
