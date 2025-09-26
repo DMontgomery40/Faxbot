@@ -49,8 +49,7 @@ interface InboundProps {
 }
 
 function Inbound({ client, docsBase }: InboundProps) {
-  // Traits not currently used here; avoid TS unused binding error
-  useTraits();
+  const { hasTrait } = useTraits();
   const [faxes, setFaxes] = useState<InboundFax[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

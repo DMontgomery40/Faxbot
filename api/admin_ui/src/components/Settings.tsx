@@ -57,7 +57,7 @@ function Settings({ client, readOnly = false }: SettingsProps) {
   const [importingEnv, setImportingEnv] = useState<boolean>(false);
   const [importResult, setImportResult] = useState<{discovered:number; prefixes:string[]} | null>(null);
   const [lastGeneratedSecret, setLastGeneratedSecret] = useState<string>('');
-  const { hasTrait, active, traitValue, registry } = useTraits();
+  const { hasTrait, active, traitValue } = useTraits();
   const handleForm = (field: string, value: any) => setForm((prev: any) => ({ ...prev, [field]: value }));
   const isSmall = useMediaQuery('(max-width:900px)');
   const ctlStyle: React.CSSProperties = { background: 'transparent', color: 'inherit', borderColor: '#444', padding: '6px', borderRadius: 6, width: isSmall ? '100%' : 'auto', maxWidth: isSmall ? '100%' : undefined };
@@ -179,7 +179,6 @@ function Settings({ client, readOnly = false }: SettingsProps) {
       if (form.feature_plugin_install !== undefined) p.feature_plugin_install = !!form.feature_plugin_install;
 
       // Provider-specific settings (traits-aware)
-      const activeOutbound = active?.outbound;
       const methods = (traitValue('outbound', 'auth.methods') || []) as string[];
       // Providers with basic-only auth (e.g., Phaxio-like)
       if (Array.isArray(methods) && methods.includes('basic') && !methods.includes('oauth2')) {
