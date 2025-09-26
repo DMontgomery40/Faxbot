@@ -228,6 +228,18 @@ async def v4_config_flush_cache(scope: Optional[str] = None):
 
 
 app.include_router(router_cfg_v4)
+
+# Diagnostics router (SSE/recent events)
+try:
+    from .routers import admin_diagnostics as _diag
+    from .services.events import EventEmitter
+    # Attach emitter if not present
+    if not hasattr(app.state, "event_emitter") or app.state.event_emitter is None:  # type: ignore[attr-defined]
+        app.state.event_emitter = EventEmitter()  # type: ignore[attr-defined]
+    app.include_router(_diag.router)
+except Exception:
+    # Non-fatal if SSE deps missing
+    pass
     except Exception:
         return False
 
