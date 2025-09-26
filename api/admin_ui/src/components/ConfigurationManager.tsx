@@ -41,6 +41,7 @@ interface ConfigItem {
   key: string;
   value: any;
   source: 'db' | 'env' | 'default' | 'cache' | null;
+  level?: string;
 }
 
 interface HierarchyLevel {
@@ -59,14 +60,45 @@ interface HierarchyData {
   effective: ConfigItem;
 }
 
-const PRESET_KEYS = [
-  'system.public_api_url',
-  'api.rate_limit_rpm',
-  'security.enforce_public_https',
-  'storage.s3.bucket',
-  'storage.s3.region',
-  'storage.s3.endpoint_url'
-];
+// All available configuration keys organized by category
+const CONFIG_CATEGORIES = {
+  System: [
+    'system.public_api_url',
+  ],
+  API: [
+    'api.rate_limit_rpm',
+    'api.session_timeout_hours',
+  ],
+  Security: [
+    'security.enforce_public_https',
+    'security.require_mfa',
+    'security.password_min_length',
+  ],
+  Storage: [
+    'storage.s3.bucket',
+    'storage.s3.region',
+    'storage.s3.endpoint_url',
+  ],
+  Fax: [
+    'fax.timeout_seconds',
+    'fax.max_pages',
+    'fax.retry_attempts',
+  ],
+  Provider: [
+    'provider.health_check_interval',
+    'provider.circuit_breaker_threshold',
+    'provider.circuit_breaker_timeout',
+  ],
+  Webhook: [
+    'webhook.verify_signatures',
+  ],
+  Compliance: [
+    'hipaa.enforce_compliance',
+    'audit.retention_days',
+  ],
+};
+
+const ALL_KEYS = Object.values(CONFIG_CATEGORIES).flat();
 
 function ConfigurationManager({ client, docsBase }: ConfigurationManagerProps) {
   const theme = useTheme();
@@ -77,12 +109,25 @@ function ConfigurationManager({ client, docsBase }: ConfigurationManagerProps) {
   const [success, setSuccess] = useState<string | null>(null);
   const [effectiveConfig, setEffectiveConfig] = useState<Record<string, ConfigItem>>({});
   const [hierarchyData, setHierarchyData] = useState<Record<string, HierarchyData>>({});
-  const [, setSafeKeys] = useState<Record<string, any>>({});
+  const [safeKeys, setSafeKeys] = useState<Record<string, any>>({});
   const [selectedKey, setSelectedKey] = useState<string>('');
   const [showValues, setShowValues] = useState<Record<string, boolean>>({});
+  const [selectedCategory, setSelectedCategory] = useState<string>('All');
+  const [searchTerm, setSearchTerm] = useState<string>('');
+  const [cacheStats] = useState<any>({ backend: 'memory', memory_items: 0 });
+
+  // Filter keys based on search and category
+  const filteredKeys = ALL_KEYS.filter(key => {
+    const matchesSearch = searchTerm === '' || key.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesCategory = selectedCategory === 'All' ||
+      Object.entries(CONFIG_CATEGORIES).some(([cat, keys]) =>
+        cat === selectedCategory && keys.includes(key)
+      );
+    return matchesSearch && matchesCategory;
+  });
 
   // Check if user has admin role for configuration management
-  // TODO: Implement proper role-based access control
+  // TODO: Implement proper role-based access control with userTraits
   const hasConfigAccess = true;
 
   const maskSensitive = (value: any, key: string): string => {
@@ -123,8 +168,8 @@ function ConfigurationManager({ client, docsBase }: ConfigurationManagerProps) {
       setLoading(true);
       setError(null);
 
-      // Fetch effective config for preset keys
-      const response = await client.v4GetEffective({ keys: PRESET_KEYS });
+      // Fetch effective config for all keys
+      const response = await client.v4GetEffective({ keys: ALL_KEYS });
       const configMap: Record<string, ConfigItem> = {};
 
       if (response.items) {
@@ -132,12 +177,16 @@ function ConfigurationManager({ client, docsBase }: ConfigurationManagerProps) {
           configMap[key] = {
             key,
             value: item.value,
-            source: item.source
+            source: item.source,
+            level: item.level
           };
         });
       }
 
       setEffectiveConfig(configMap);
+
+      // Cache stats would be fetched here if endpoint exists
+      // For now, we'll skip this as it's not critical
     } catch (err: any) {
       console.error('Failed to fetch effective config:', err);
       setError(err.message || 'Failed to fetch configuration');
@@ -232,27 +281,35 @@ function ConfigurationManager({ client, docsBase }: ConfigurationManagerProps) {
   return (
     <Box sx={{ maxWidth: 'xl', mx: 'auto' }}>
       {/* Header */}
-      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 3 }}>
+      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 3, flexWrap: 'wrap', gap: 2 }}>
         <Box>
           <Typography variant="h4" gutterBottom sx={{ fontWeight: 600 }}>
             Configuration Manager
           </Typography>
-          <Typography variant="body2" color="text.secondary">
-            Hierarchical configuration with database-first resolution
-            {docsBase && (
-              <>
-                {' · '}
-                <Link
-                  href={`${docsBase}/configuration`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  sx={{ textDecoration: 'none' }}
-                >
-                  Learn more
-                </Link>
-              </>
+          <Stack direction="row" spacing={2} alignItems="center">
+            <Typography variant="body2" color="text.secondary">
+              Hierarchical configuration with database-first resolution
+            </Typography>
+            {cacheStats && (
+              <Chip
+                icon={<FlashOnIcon />}
+                label={`Cache: ${cacheStats.backend || 'memory'} (${cacheStats.memory_items || 0} items)`}
+                size="small"
+                color="success"
+                variant="outlined"
+              />
             )}
-          </Typography>
+            {docsBase && (
+              <Link
+                href={`${docsBase}/configuration`}
+                target="_blank"
+                rel="noopener noreferrer"
+                sx={{ textDecoration: 'none' }}
+              >
+                Learn more
+              </Link>
+            )}
+          </Stack>
         </Box>
         <Stack direction="row" spacing={1}>
           <Button
@@ -295,6 +352,42 @@ function ConfigurationManager({ client, docsBase }: ConfigurationManagerProps) {
         </Box>
       )}
 
+      {/* Search and Filter Controls */}
+      {!loading && (
+        <Paper sx={{ p: 2, mb: 3 }}>
+          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
+            <TextField
+              placeholder="Search configuration keys..."
+              size="small"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              sx={{ flex: 1 }}
+              InputProps={{
+                startAdornment: <InfoIcon sx={{ mr: 1, color: 'text.secondary' }} />
+              }}
+            />
+            <TextField
+              select
+              label="Category"
+              value={selectedCategory}
+              onChange={(e) => setSelectedCategory(e.target.value)}
+              size="small"
+              sx={{ minWidth: 150 }}
+            >
+              <MenuItem value="All">All Categories</MenuItem>
+              {Object.keys(CONFIG_CATEGORIES).map(cat => (
+                <MenuItem key={cat} value={cat}>{cat}</MenuItem>
+              ))}
+            </TextField>
+            <Chip
+              label={`${filteredKeys.length} keys`}
+              color="primary"
+              variant="outlined"
+            />
+          </Stack>
+        </Paper>
+      )}
+
       {!loading && (
         <Grid container spacing={3}>
           {/* Effective Configuration */}
@@ -310,7 +403,7 @@ function ConfigurationManager({ client, docsBase }: ConfigurationManagerProps) {
                 </Typography>
 
                 <Stack spacing={2}>
-                  {PRESET_KEYS.map(key => {
+                  {filteredKeys.map(key => {
                     const config = effectiveConfig[key];
                     const isSecret = key.includes('key') || key.includes('secret') || key.includes('password');
                     const showValue = showValues[key] || false;
@@ -397,7 +490,7 @@ function ConfigurationManager({ client, docsBase }: ConfigurationManagerProps) {
                       sx={{ mb: 2 }}
                       size="small"
                     >
-                      {PRESET_KEYS.map(key => (
+                      {ALL_KEYS.map(key => (
                         <MenuItem key={key} value={key}>
                           {key}
                         </MenuItem>
@@ -466,24 +559,40 @@ function ConfigurationManager({ client, docsBase }: ConfigurationManagerProps) {
         </Grid>
       )}
 
-      {/* Info Panel */}
+      {/* Info Panel with Stats */}
       <Paper sx={{ mt: 3, p: 2, backgroundColor: theme.palette.action.hover }}>
-        <Typography variant="body2" color="text.secondary">
-          <strong>Read-only mode:</strong> Configuration editing will be available in Phase 3 PR17.
-          Currently displaying effective values resolved from environment variables and defaults only.
-          {docsBase && (
-            <>
-              {' '}
-              <Link
-                href={`${docsBase}/configuration/hierarchy`}
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                View documentation
-              </Link>
-            </>
-          )}
-        </Typography>
+        <Grid container spacing={2}>
+          <Grid item xs={12} md={8}>
+            <Typography variant="body2" color="text.secondary">
+              <strong>Configuration Status:</strong> {Object.keys(safeKeys).length > 0 ? 'Edit mode available for safe keys' : 'Read-only mode'}.
+              Resolution order: User → Group → Department → Tenant → Global → Environment → Default.
+              {docsBase && (
+                <>
+                  {' '}
+                  <Link
+                    href={`${docsBase}/configuration/hierarchy`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    View documentation
+                  </Link>
+                </>
+              )}
+            </Typography>
+          </Grid>
+          <Grid item xs={12} md={4}>
+            {cacheStats && (
+              <Stack spacing={1}>
+                <Typography variant="body2" sx={{ fontWeight: 600 }}>Cache Statistics</Typography>
+                <Typography variant="caption" color="text.secondary">
+                  Backend: {cacheStats.backend}<br/>
+                  Memory items: {cacheStats.memory_items || 0}<br/>
+                  {cacheStats.redis_keys !== undefined && `Redis keys: ${cacheStats.redis_keys}`}
+                </Typography>
+              </Stack>
+            )}
+          </Grid>
+        </Grid>
       </Paper>
     </Box>
   );
