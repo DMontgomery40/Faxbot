@@ -112,14 +112,19 @@ function SetupWizard({ client, onDone, docsBase }: SetupWizardProps) {
           audit_log_enabled: Boolean((s as any)?.audit_log_enabled ?? false),
           pdf_token_ttl_minutes: Number((s?.limits?.pdf_token_ttl_minutes ?? 60)),
         };
-        // Provider-specific hints
-        if (effectiveOutbound === 'phaxio') {
-          next.phaxio_api_key = s?.phaxio?.api_key ? '' : '';
-          next.phaxio_api_secret = s?.phaxio?.api_secret ? '' : '';
-          next.public_api_url = s?.phaxio?.callback_url ? String(s?.phaxio?.callback_url).replace(/\/phaxio-callback$/, '') : (s as any)?.security?.public_api_url;
-        } else if (effectiveOutbound === 'sinch') {
-          next.sinch_project_id = s?.sinch?.project_id || '';
-        }
+        // Traits-based hints
+        try {
+          const obTraits = (await fetch('/admin/providers', { headers: { 'X-API-Key': localStorage.getItem('faxbot_admin_key') || '' } }).then(r=>r.json())).registry?.[effectiveOutbound]?.traits || {};
+          const methods = (obTraits?.auth?.methods || []) as string[];
+          const hasOAuth = Array.isArray(methods) && methods.includes('oauth2');
+          const basicOnly = Array.isArray(methods) && methods.includes('basic') && !methods.includes('oauth2');
+          if (basicOnly) {
+            next.public_api_url = (s as any)?.security?.public_api_url || '';
+          }
+          if (hasOAuth) {
+            next.sinch_project_id = s?.sinch?.project_id || '';
+          }
+        } catch {}
         setConfig(prev => ({ ...prev, ...next }));
       } catch {
         // keep defaults
@@ -182,22 +187,25 @@ function SetupWizard({ client, onDone, docsBase }: SetupWizardProps) {
     lines.push('');
     lines.push('# Backend-specific configuration');
 
-    if (ob === 'phaxio') {
-      lines.push('# Phaxio Configuration');
-      lines.push(`PHAXIO_API_KEY=${config.phaxio_api_key || 'your_api_key_here'}`);
-      lines.push(`PHAXIO_API_SECRET=${config.phaxio_api_secret || 'your_api_secret_here'}`);
-      if (config.public_api_url) {
-        lines.push(`PUBLIC_API_URL=${config.public_api_url}`);
-        lines.push(`PHAXIO_STATUS_CALLBACK_URL=${config.public_api_url}/phaxio-callback`);
-      }
-      lines.push('PHAXIO_VERIFY_SIGNATURE=true');
-    } else if (ob === 'sinch') {
-      lines.push('# Sinch Fax API v3 Configuration');
-      lines.push(`SINCH_PROJECT_ID=${config.sinch_project_id || 'your_project_id_here'}`);
-      lines.push(`SINCH_API_KEY=${config.sinch_api_key || 'your_api_key_here'}`);
-      lines.push(`SINCH_API_SECRET=${config.sinch_api_secret || 'your_api_secret_here'}`);
+      const m = (traitValue('outbound','auth.methods') || []) as string[];
+      const basicOnly = Array.isArray(m) && m.includes('basic') && !m.includes('oauth2');
+      const hasOAuth = Array.isArray(m) && m.includes('oauth2');
+      if (basicOnly) {
+        lines.push('# Phaxio Configuration');
+        lines.push(`PHAXIO_API_KEY=${config.phaxio_api_key || 'your_api_key_here'}`);
+        lines.push(`PHAXIO_API_SECRET=${config.phaxio_api_secret || 'your_api_secret_here'}`);
+        if (config.public_api_url) {
+          lines.push(`PUBLIC_API_URL=${config.public_api_url}`);
+          lines.push(`PHAXIO_STATUS_CALLBACK_URL=${config.public_api_url}/phaxio-callback`);
+        }
+        lines.push('PHAXIO_VERIFY_SIGNATURE=true');
+    } else if (hasOAuth) {
+        lines.push('# Sinch Fax API v3 Configuration');
+        lines.push(`SINCH_PROJECT_ID=${config.sinch_project_id || 'your_project_id_here'}`);
+        lines.push(`SINCH_API_KEY=${config.sinch_api_key || 'your_api_key_here'}`);
+        lines.push(`SINCH_API_SECRET=${config.sinch_api_secret || 'your_api_secret_here'}`);
     } else if (ob === 'signalwire') {
-      lines.push('# SignalWire Compatibility Fax API');
+        lines.push('# SignalWire Compatibility Fax API');
       lines.push(`SIGNALWIRE_SPACE_URL=${(config as any).signalwire_space_url || 'example.signalwire.com'}`);
       lines.push(`SIGNALWIRE_PROJECT_ID=${(config as any).signalwire_project_id || 'your_project_id_here'}`);
       lines.push(`SIGNALWIRE_API_TOKEN=${(config as any).signalwire_api_token || 'your_api_token_here'}`);
@@ -206,15 +214,15 @@ function SetupWizard({ client, onDone, docsBase }: SetupWizardProps) {
         lines.push(`PUBLIC_API_URL=${config.public_api_url}`);
         lines.push(`SIGNALWIRE_STATUS_CALLBACK_URL=${config.public_api_url}/signalwire-callback`);
       }
-    } else if (ob === 'sip') {
-      lines.push('# SIP/Asterisk Configuration');
-      lines.push(`ASTERISK_AMI_HOST=${config.ami_host || 'asterisk'}`);
-      lines.push(`ASTERISK_AMI_PORT=${config.ami_port || 5038}`);
-      lines.push(`ASTERISK_AMI_USERNAME=${config.ami_username || 'api'}`);
-      lines.push(`ASTERISK_AMI_PASSWORD=${config.ami_password || 'change_me'}`);
-      lines.push(`FAX_LOCAL_STATION_ID=${config.fax_station_id || '+15551234567'}`);
+    } else if (hasTrait('outbound','requires_ami')) {
+        lines.push('# SIP/Asterisk Configuration');
+        lines.push(`ASTERISK_AMI_HOST=${config.ami_host || 'asterisk'}`);
+        lines.push(`ASTERISK_AMI_PORT=${config.ami_port || 5038}`);
+        lines.push(`ASTERISK_AMI_USERNAME=${config.ami_username || 'api'}`);
+        lines.push(`ASTERISK_AMI_PASSWORD=${config.ami_password || 'change_me'}`);
+        lines.push(`FAX_LOCAL_STATION_ID=${config.fax_station_id || '+15551234567'}`);
     } else if (ob === 'freeswitch') {
-      lines.push('# FreeSWITCH Configuration');
+        lines.push('# FreeSWITCH Configuration');
       lines.push(`FREESWITCH_GATEWAY_NAME=${(config as any).fs_gateway_name || 'gw_signalwire'}`);
       lines.push(`FREESWITCH_CALLER_ID_NUMBER=${(config as any).fs_caller_id_number || '3035551234'}`);
       lines.push('FREESWITCH_T38_ENABLE=true');
@@ -250,11 +258,11 @@ function SetupWizard({ client, onDone, docsBase }: SetupWizardProps) {
         payload.inbound_backend = config.inbound_backend;
         payload.inbound_enabled = true;
       }
-      if (ob === 'phaxio') {
+      if (basicOnly) {
         payload.phaxio_api_key = config.phaxio_api_key;
         payload.phaxio_api_secret = config.phaxio_api_secret;
         if (config.public_api_url) payload.public_api_url = config.public_api_url;
-      } else if (ob === 'sinch') {
+      } else if (hasOAuth) {
         payload.sinch_project_id = config.sinch_project_id;
         payload.sinch_api_key = config.sinch_api_key;
         payload.sinch_api_secret = config.sinch_api_secret;
@@ -267,7 +275,7 @@ function SetupWizard({ client, onDone, docsBase }: SetupWizardProps) {
       } else if (ob === 'documo') {
         payload.documo_api_key = config.documo_api_key;
         payload.documo_use_sandbox = config.documo_use_sandbox;
-      } else if (ob === 'sip') {
+      } else if (hasTrait('outbound','requires_ami')) {
         payload.ami_host = config.ami_host;
         payload.ami_port = config.ami_port;
         payload.ami_username = config.ami_username;
@@ -337,13 +345,13 @@ function SetupWizard({ client, onDone, docsBase }: SetupWizardProps) {
               </Select>
             </FormControl>
             
-            {ob === 'phaxio' && (
+            {(() => { const m = (traitValue('outbound','auth.methods') || []) as string[]; return Array.isArray(m) && m.includes('basic') && !m.includes('oauth2'); })() && (
               <Alert severity="success" sx={{ mt: 2 }}>
                 Best for healthcare: 5-minute setup, automatic HIPAA compliance with BAA
               </Alert>
             )}
             
-            {ob === 'sip' && (
+            {hasTrait('outbound','requires_ami') && (
               <Alert severity="warning" sx={{ mt: 2 }}>
                 Requires technical expertise: T.38 support, port forwarding, NAT configuration
               </Alert>
@@ -388,7 +396,7 @@ function SetupWizard({ client, onDone, docsBase }: SetupWizardProps) {
               )}
             </Box>
             
-            {ob === 'phaxio' && (
+            {(() => { const m = (traitValue('outbound','auth.methods') || []) as string[]; return Array.isArray(m) && m.includes('basic') && !m.includes('oauth2'); })() && (
               <Grid container spacing={{ xs: 2, md: 3 }}>
                 <Grid item xs={12}>
                   <SecretInput
@@ -427,7 +435,7 @@ function SetupWizard({ client, onDone, docsBase }: SetupWizardProps) {
               </Grid>
             )}
 
-            {ob === 'sinch' && (
+            {(() => { const m = (traitValue('outbound','auth.methods') || []) as string[]; return Array.isArray(m) && m.includes('oauth2'); })() && (
               <Grid container spacing={2}>
                 <Grid item xs={12}>
                   <Typography variant="body2" color="text.secondary">
@@ -531,7 +539,7 @@ function SetupWizard({ client, onDone, docsBase }: SetupWizardProps) {
 
             
 
-            {ob === 'sip' && (
+            {hasTrait('outbound','requires_ami') && (
               <Grid container spacing={2}>
                 <Grid item xs={12}>
                   <Alert severity="error" sx={{ mb: 2 }}>
@@ -589,7 +597,7 @@ function SetupWizard({ client, onDone, docsBase }: SetupWizardProps) {
             )}
 
             {/* Provider Connect */}
-            {(ob === 'phaxio' || ob === 'sinch') && (
+            {Boolean((traitValue('outbound','webhook.path')) || (traitValue('inbound','webhook.path'))) && (
               <Box sx={{ mt: 3 }}>
                 <Typography variant="subtitle1" gutterBottom>Connect {(config.inbound_backend || config.outbound_backend || config.backend || 'phaxio').toUpperCase()} Inbound</Typography>
                 <Button variant="outlined" onClick={loadCallbacks} sx={{ mr: 1 }}>Show Callback URL</Button>
@@ -785,8 +793,8 @@ function SetupWizard({ client, onDone, docsBase }: SetupWizardProps) {
                         <Box>
                           <Typography>{key.replace(/_/g,' ')}:</Typography>
                           <Typography variant="caption" color="text.secondary">
-                            {ob === 'phaxio' && key.includes('auth') ? 'Set PHAXIO_API_KEY/PHAXIO_API_SECRET in Phaxio console.' : ''}
-                            {ob === 'sinch' && key.includes('auth') ? 'Set SINCH project, key and secret in Sinch Fax API.' : ''}
+                            {(() => { const m = (traitValue('outbound','auth.methods') || []) as string[]; return Array.isArray(m) && m.includes('basic') && !m.includes('oauth2') && key.includes('auth') ? 'Set provider API key/secret in your console.' : '' })()}
+                            {(() => { const m = (traitValue('outbound','auth.methods') || []) as string[]; return Array.isArray(m) && m.includes('oauth2') && key.includes('auth') ? 'Set project, key and secret in your provider console.' : '' })()}
                           </Typography>
                         </Box>
                         <Chip size="small" color={value ? 'success' : 'error'} label={value ? 'Pass' : 'Fail'} />

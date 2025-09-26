@@ -3,6 +3,7 @@ import { Alert, Box, Button, Chip, Dialog, DialogActions, DialogContent, DialogT
 import { Link as LinkIcon, Security, VpnKey, VpnLock } from '@mui/icons-material';
 import AdminAPIClient from '../api/client';
 import type { TunnelStatus } from '../api/types';
+import { useTraits } from '../hooks/useTraits';
 import { ResponsiveFormSection, ResponsiveSelect, ResponsiveTextField, ResponsiveFileUpload } from './common/ResponsiveFormFields';
 import { SmoothLoader, InlineLoader } from './common/SmoothLoader';
 
@@ -76,14 +77,15 @@ export default function TunnelSettings({ client, docsBase, hipaaMode }: Props) {
     (async () => {
       try {
         const s = await client.getSettings();
-        const inbound = (s?.hybrid?.inbound_backend || s?.backend?.type || '').toLowerCase();
-        setIsSinchActive(inbound === 'sinch');
+        // Trait-gated detection: consider Sinch-like when OAuth2 is available for the active inbound provider
+        const methods = (traitValue('inbound', 'auth.methods') || []) as string[];
+        setIsSinchActive(Array.isArray(methods) && methods.includes('oauth2'));
         setInboundEnabled(Boolean(s?.inbound?.enabled));
       } catch {
         // no-op
       }
     })();
-  }, [client]);
+  }, [client, traitValue]);
 
   // Auto-register Sinch webhook when tunnel URL changes (non-HIPAA only)
   useEffect(() => {
@@ -463,3 +465,4 @@ export default function TunnelSettings({ client, docsBase, hipaaMode }: Props) {
     </Box>
   );
 }
+  const { traitValue } = useTraits();

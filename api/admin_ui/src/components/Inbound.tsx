@@ -419,7 +419,7 @@ function Inbound({ client, docsBase }: InboundProps) {
             </Box>
           )}
 
-          {callbacks && active?.inbound === 'sip' && (
+          {callbacks && hasTrait('inbound','requires_ami') && (
             <Box>
               <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 1 }}>
                 Asterisk Inbound Configuration
@@ -619,24 +619,9 @@ same => n,System(curl -s -X POST -H "Content-Type: application/json" -H "X-Inter
                     <Typography variant="body2" sx={{ mb: 1 }}>
                       Most failures are due to webhook configuration or auth. Use the links below for your active inbound provider.
                     </Typography>
-                    {active?.inbound === 'sinch' && (
-                      <Stack direction="row" spacing={1} flexWrap="wrap">
-                        <Button size="small" variant="outlined" href={anchors['sinch-inbound-webhook'] || thirdParty['sinch-inbound-webhook']} target="_blank" rel="noreferrer">Sinch: Inbound webhook</Button>
-                        <Button size="small" variant="outlined" href={anchors['sinch-inbound-basic-auth'] || thirdParty['sinch-inbound-basic-auth']} target="_blank" rel="noreferrer">Sinch: Callback auth</Button>
-                      </Stack>
-                    )}
-                    {active?.inbound === 'phaxio' && (
-                      <Stack direction="row" spacing={1} flexWrap="wrap">
-                        <Button size="small" variant="outlined" href={anchors['phaxio-inbound-setup']} target="_blank" rel="noreferrer">Phaxio: Inbound setup</Button>
-                        <Button size="small" variant="outlined" href={anchors['phaxio-webhook-hmac'] || thirdParty['phaxio-webhook-hmac']} target="_blank" rel="noreferrer">Phaxio: Verify HMAC</Button>
-                      </Stack>
-                    )}
-                    {active?.inbound === 'sip' && (
-                      <Stack direction="row" spacing={1} flexWrap="wrap">
-                        <Button size="small" variant="outlined" href={anchors['sip-ami-setup'] || thirdParty['sip-ami-setup']} target="_blank" rel="noreferrer">Asterisk: AMI setup</Button>
-                        <Button size="small" variant="outlined" href={anchors['sip-ami-security'] || thirdParty['sip-ami-security']} target="_blank" rel="noreferrer">AMI security</Button>
-                      </Stack>
-                    )}
+                    <Stack direction="row" spacing={1} flexWrap="wrap">
+                      <Button size="small" variant="outlined" href={anchors['inbound-overview']} target="_blank" rel="noreferrer">Inbound docs</Button>
+                    </Stack>
                   </Alert>
                 </Box>
               )}

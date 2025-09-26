@@ -7,6 +7,8 @@ services:
     env_file:
       - ./.env
     environment:
+      - CONFIG_MASTER_KEY=${CONFIG_MASTER_KEY}
+      - FAXBOT_SESSION_PEPPER=${FAXBOT_SESSION_PEPPER}
       - FAX_DATA_DIR=/faxdata
       - ENABLE_LOCAL_ADMIN=true
       - ADMIN_ALLOW_RESTART=true

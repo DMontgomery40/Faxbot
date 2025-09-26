@@ -49,57 +49,6 @@ export default function PluginConfigDialog({ open, plugin, initialConfig, onClos
     const pid = (plugin?.id || '').toLowerCase();
     if (!pid) return null;
 
-    if (pid === 'phaxio') {
-      return (
-        <Box>
-          <Alert severity="info" sx={{ mb: 2 }}>
-            Secrets (API key/secret) are configured in Settings → Backend: Phaxio. This form stores only non‑secret values in the plugin config.
-          </Alert>
-          <TextField
-            label="Callback URL"
-            fullWidth
-            size="small"
-            value={config.callback_url || ''}
-            onChange={(e) => setConfig({ ...config, callback_url: e.target.value })}
-            margin="normal"
-          />
-          {help('Example: https://yourdomain.com/phaxio-callback')}
-          <FormControlLabel
-            control={<Checkbox checked={!!config.verify_signature} onChange={(e) => setConfig({ ...config, verify_signature: e.target.checked })} />}
-            label="Verify inbound signatures"
-          />
-        </Box>
-      );
-    }
-
-    if (pid === 'sinch') {
-      return (
-        <Box>
-          <Alert severity="info" sx={{ mb: 2 }}>
-            Secrets (API key/secret) are configured in Settings → Backend: Sinch. This form stores only non‑secret values in the plugin config.
-          </Alert>
-          <TextField
-            label="Project ID"
-            fullWidth
-            size="small"
-            value={config.project_id || ''}
-            onChange={(e) => setConfig({ ...config, project_id: e.target.value })}
-            margin="normal"
-          />
-        </Box>
-      );
-    }
-
-    if (pid === 'sip') {
-      return (
-        <Box>
-          <Alert severity="info">
-            Configure AMI host/port/credentials and Station ID in Settings → Backend: SIP/Asterisk. No additional non‑secret plugin settings are required here.
-          </Alert>
-        </Box>
-      );
-    }
-
     if (pid === 's3') {
       return (
         <Box>
@@ -190,4 +139,3 @@ export default function PluginConfigDialog({ open, plugin, initialConfig, onClos
     </Dialog>
   );
 }
-
