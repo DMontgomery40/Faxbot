@@ -49,9 +49,10 @@ import {
 
 interface ApiKeysProps {
   client: AdminAPIClient;
+  readOnly?: boolean;
 }
 
-function ApiKeys({ client }: ApiKeysProps) {
+function ApiKeys({ client, readOnly = false }: ApiKeysProps) {
   const [keys, setKeys] = useState<ApiKey[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -224,6 +225,7 @@ function ApiKeys({ client }: ApiKeysProps) {
                 size="small"
                 startIcon={<RotateIcon />}
                 onClick={() => handleRotateKey(apiKey.key_id, apiKey.name)}
+                disabled={readOnly}
                 sx={{ flex: 1 }}
               >
                 Rotate
@@ -234,6 +236,7 @@ function ApiKeys({ client }: ApiKeysProps) {
                 color="error"
                 startIcon={<DeleteIcon />}
                 onClick={() => handleRevokeKey(apiKey.key_id, apiKey.name)}
+                disabled={readOnly}
                 sx={{ flex: 1 }}
               >
                 Revoke
@@ -276,6 +279,7 @@ function ApiKeys({ client }: ApiKeysProps) {
             variant="contained"
             startIcon={<AddIcon />}
             onClick={() => setCreateDialogOpen(true)}
+            disabled={readOnly}
             size={isSmallMobile ? 'medium' : 'large'}
             sx={{ 
               borderRadius: 2,
@@ -379,6 +383,7 @@ function ApiKeys({ client }: ApiKeysProps) {
                         <IconButton
                           onClick={() => handleRotateKey(key.key_id, key.name)}
                           size="small"
+                          disabled={readOnly}
                         >
                           <RotateIcon />
                         </IconButton>
@@ -388,6 +393,7 @@ function ApiKeys({ client }: ApiKeysProps) {
                           onClick={() => handleRevokeKey(key.key_id, key.name)}
                           size="small"
                           color="error"
+                          disabled={readOnly}
                         >
                           <DeleteIcon />
                         </IconButton>
@@ -504,6 +510,7 @@ function ApiKeys({ client }: ApiKeysProps) {
                 onClick={handleCreateKey} 
                 variant="contained"
                 startIcon={<AddIcon />}
+                disabled={readOnly}
                 sx={{ borderRadius: 2 }}
               >
                 Create Key

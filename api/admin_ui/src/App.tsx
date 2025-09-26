@@ -774,7 +774,7 @@ function AppContent() {
                   <Settings client={client!} readOnly={!hasTrait('role.admin')} />
                 </Box>
               )}
-              {settingsTab === 2 && <ApiKeys client={client!} />}
+              {settingsTab === 2 && <ApiKeys client={client!} readOnly={!hasTrait('role.admin')} />}
               {settingsTab === 3 && <MCP client={client!} />}
             </Box>
           </Paper>
@@ -823,7 +823,7 @@ function AppContent() {
                 </Box>
               )}
               {toolsTab === 2 && <Logs client={client!} />}
-              {toolsTab === 3 && <Plugins client={client!} />}
+              {toolsTab === 3 && <Plugins client={client!} readOnly={!hasTrait('role.admin')} />}
               {toolsTab === 4 && <ScriptsTests client={client!} docsBase={uiConfig?.docs_base || adminConfig?.branding?.docs_base} />}
               {toolsTab === 5 && (
                 <TunnelSettings
