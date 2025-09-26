@@ -316,6 +316,14 @@ except Exception:
     # Non-fatal if health monitoring deps missing
     pass
 
+# Admin marketplace (Phase 4; disabled by default)
+try:
+    from .routers import admin_marketplace as _marketplace
+    app.include_router(_marketplace.router)
+except Exception:
+    # Non-fatal if marketplace router cannot be imported
+    pass
+
 # Webhook hardening router (DLQ + idempotency)
 try:
     from .routers import webhooks_v2 as _webhooks_v2
