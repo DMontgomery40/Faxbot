@@ -1056,6 +1056,33 @@ async def admin_user_traits(info = Depends(require_admin)):
     return pack_user_traits(user_id, scopes)
 
 
+# ===== Dev helper: create identity user (feature-gated) =====
+class _CreateUserIn(BaseModel):
+    username: str
+    password: str
+    traits: Optional[Dict[str, Any]] = None
+
+
+@app.post("/admin/identity/dev/create-user", dependencies=[Depends(require_admin)])
+async def admin_identity_dev_create_user(payload: _CreateUserIn):
+    # Gate strictly to dev only; avoid accidental prod usage
+    if os.getenv("FAXBOT_DEV_IDENTITY_INIT", "false").lower() not in {"1", "true", "yes"}:
+        raise HTTPException(status_code=404, detail="Not found")
+    try:
+        from .plugins.manager import PluginManager
+        pm = PluginManager()
+        pm.load_all()
+        ident = pm.get_active_by_type("identity")
+        if not hasattr(ident, "create_user"):
+            raise HTTPException(status_code=400, detail="identity provider missing create_user()")
+        user = await ident.create_user(payload.username, payload.password, traits=payload.traits)  # type: ignore
+        return {"ok": True, "id": getattr(user, "id", None), "username": getattr(user, "username", None)}
+    except HTTPException:
+        raise
+    except Exception as ex:
+        raise HTTPException(status_code=500, detail=f"create user failed: {ex}")
+
+
 class ValidateSettingsRequest(BaseModel):
     backend: str
     phaxio_api_key: Optional[str] = None
