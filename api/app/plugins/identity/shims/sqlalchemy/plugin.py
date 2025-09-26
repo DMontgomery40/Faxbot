@@ -8,7 +8,7 @@ concrete class for future manifest-first discovery and development.
 """
 
 from typing import Any, Dict, Optional
-from ....plugins.identity.base import IdentityPlugin, User, Group, Session, AuthResult  # type: ignore
+from app.plugins.identity.base import IdentityPlugin, User, Group, Session, AuthResult  # type: ignore
 
 
 class Plugin(IdentityPlugin):
@@ -42,4 +42,3 @@ class Plugin(IdentityPlugin):
 
 def get_plugin_class():  # pragma: no cover - factory optional
     return Plugin
-

@@ -12,7 +12,6 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
-from ..base import FaxbotPlugin
 
 
 @dataclass
@@ -48,7 +47,7 @@ class AuthResult:
     message: Optional[str] = None
 
 
-class IdentityPlugin(FaxbotPlugin, ABC):
+class IdentityPlugin(ABC):
     plugin_type: str = "identity"
 
     @abstractmethod
@@ -85,4 +84,3 @@ class IdentityPlugin(FaxbotPlugin, ABC):
     @abstractmethod
     async def revoke_session(self, session_id: str) -> None:
         ...
-

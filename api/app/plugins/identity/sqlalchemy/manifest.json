@@ -1,0 +1,20 @@
+{
+  "id": "sqlalchemy",
+  "name": "SQLAlchemy Identity",
+  "version": "0.1.0",
+  "type": "identity",
+  "scope": "global",
+  "traits": {
+    "user_store": true,
+    "session_store": true,
+    "csrf_supported": true
+  },
+  "config_schema": {
+    "type": "object",
+    "properties": {
+      "database_url": { "type": "string" }
+    },
+    "additionalProperties": true
+  }
+}
+
