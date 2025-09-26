@@ -3,6 +3,7 @@ import httpx
 import logging
 import os
 import time
+import anyio
 
 from .config import settings, reload_settings
 
@@ -80,7 +81,9 @@ class SinchFaxService:
             url = f"{base}/projects/{self.project_id}/files"
             try:
                 async with httpx.AsyncClient(timeout=60.0) as client:
-                    files = {"file": (os.path.basename(file_path), open(file_path, "rb"), "application/pdf")}
+                    async with await anyio.open_file(file_path, 'rb') as f:
+                        content = await f.read()
+                    files = {"file": (os.path.basename(file_path), content, "application/pdf")}
                     if self._use_oauth():
                         try:
                             token = await self.get_access_token()
@@ -154,20 +157,21 @@ class SinchFaxService:
                 to = f"+{digits}"
         url = f"{self.base_url}/projects/{self.project_id}/faxes"
         async with httpx.AsyncClient(timeout=60.0) as client:
-            # httpx expects a mapping of field name → (filename, fileobj, content_type)
+            # httpx expects a mapping of field name → (filename, bytes, content_type)
             # For the additional text field, pass as data not files
-            with open(file_path, "rb") as fh:
-                files = {"file": (os.path.basename(file_path), fh, "application/pdf")}
-                data = {"to": to}
-                if self._use_oauth():
-                    try:
-                        token = await self.get_access_token()
-                        resp = await client.post(url, files=files, data=data, headers={"Authorization": f"Bearer {token}"})
-                    except Exception as e:
-                        logger.warning("Sinch OAuth send_fax_file failed; falling back to Basic: %s", e)
-                        resp = await client.post(url, files=files, data=data, auth=self._basic_auth())
-                else:
+            async with await anyio.open_file(file_path, 'rb') as fh:
+                content = await fh.read()
+            files = {"file": (os.path.basename(file_path), content, "application/pdf")}
+            data = {"to": to}
+            if self._use_oauth():
+                try:
+                    token = await self.get_access_token()
+                    resp = await client.post(url, files=files, data=data, headers={"Authorization": f"Bearer {token}"})
+                except Exception as e:
+                    logger.warning("Sinch OAuth send_fax_file failed; falling back to Basic: %s", e)
                     resp = await client.post(url, files=files, data=data, auth=self._basic_auth())
+            else:
+                resp = await client.post(url, files=files, data=data, auth=self._basic_auth())
             if resp.status_code >= 400:
                 raise RuntimeError(f"Sinch create fax error {resp.status_code}: {resp.text}")
             return resp.json()
