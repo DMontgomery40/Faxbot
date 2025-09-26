@@ -982,6 +982,22 @@ async def admin_provider_test(provider_id: str) -> ProviderTestOut:
         elif pid == "local":
             ok = True
             msg = "local storage ready"
+        elif pid == "identity":
+            try:
+                from .plugins.manager import PluginManager
+                pm = PluginManager()
+                pm.load_all()
+                ident = pm.get_active_by_type("identity")
+                if hasattr(ident, "test_connection"):
+                    res = await ident.test_connection()  # type: ignore
+                    ok = bool(res.get("success", False))
+                    msg = str(res.get("message", ""))
+                else:
+                    ok = False
+                    msg = "identity provider missing test_connection()"
+            except Exception as ex:
+                ok = False
+                msg = f"identity test failed: {ex}"
         else:
             ok = True
             msg = "no-op test"

@@ -9,14 +9,21 @@ concrete class for future manifest-first discovery and development.
 
 from typing import Any, Dict, Optional
 from app.plugins.identity.base import IdentityPlugin, User, Group, Session, AuthResult  # type: ignore
+from importlib import import_module
 
 
 class Plugin(IdentityPlugin):
     plugin_id = "sqlalchemy"
 
     async def test_connection(self) -> Dict[str, Any]:
-        # Minimal placeholder; real implementation will perform a lightweight query
-        return {"success": True, "message": "identity/sqlalchemy stub"}
+        try:
+            db_async = import_module("app.db.async_db")
+            engine = getattr(db_async, "engine")
+            async with engine.connect() as conn:  # type: ignore
+                await conn.exec_driver_sql("SELECT 1")
+            return {"success": True, "message": "DB connection OK"}
+        except Exception as e:
+            return {"success": False, "message": f"{e}"}
 
     async def get_user(self, user_id: str) -> Optional[User]:  # pragma: no cover - stub
         raise NotImplementedError

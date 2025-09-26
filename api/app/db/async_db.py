@@ -59,4 +59,3 @@ async def create_tables_dev_only(Base) -> None:  # pragma: no cover - dev-only h
     """
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-
