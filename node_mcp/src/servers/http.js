@@ -6,6 +6,7 @@ import morgan from 'morgan';
 import dotenv from 'dotenv';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
+import crypto from 'node:crypto';
 import { buildServer } from './stdio.js';
 
 dotenv.config();
@@ -68,7 +69,9 @@ app.post('/mcp', checkAuth, async (req, res) => {
           id: null,
         });
       }
-      const transport = new StreamableHTTPServerTransport({});
+      const transport = new StreamableHTTPServerTransport({
+        sessionIdGenerator: () => crypto.randomUUID(),
+      });
       const server = await initServerWithTransport(transport);
       // Process initialize request; the transport will assign sessionId and set header
       await transport.handleRequest(req, res, req.body);
