@@ -612,7 +612,27 @@ def test_postgres_nonhistorical_comparison_and_constraint_semantics(database, al
     assert schema_description(database) == definitions
 
 
-def test_postgres_custom_default_operator_class_is_not_historical(database):
+@pytest.fixture
+def isolated_operator_database(database):
+    """Default operator-class selection is database-wide, not schema-scoped."""
+    if database.dialect.name != 'postgresql':
+        yield database
+        return
+    identity = 'faxbot_operator_test_' + uuid.uuid4().hex
+    with database.connect().execution_options(isolation_level='AUTOCOMMIT') as connection:
+        connection.exec_driver_sql(f'CREATE DATABASE {identity}')
+    isolated = create_database_engine(database.url.set(database=identity))
+    try:
+        yield isolated
+    finally:
+        isolated.dispose()
+        with database.connect().execution_options(isolation_level='AUTOCOMMIT') as connection:
+            connection.exec_driver_sql(f'DROP DATABASE {identity}')
+
+
+def test_postgres_custom_default_operator_class_is_not_historical(database, isolated_operator_database):
+    shared_database = database
+    database = isolated_operator_database
     if database.dialect.name != "postgresql":
         pytest.skip("PostgreSQL operator classes")
     load_history(database, "3a480391")
@@ -625,6 +645,9 @@ def test_postgres_custom_default_operator_class_is_not_historical(database):
         conn.exec_driver_sql("CREATE OPERATOR CLASS casefold_ops DEFAULT FOR TYPE varchar USING btree AS OPERATOR 1 < (varchar,varchar), OPERATOR 2 <= (varchar,varchar), OPERATOR 3 = (varchar,varchar), OPERATOR 4 >= (varchar,varchar), OPERATOR 5 > (varchar,varchar), FUNCTION 1 fold_cmp(varchar,varchar)")
         conn.exec_driver_sql("DROP INDEX ix_api_keys_key_id")
         conn.exec_driver_sql("CREATE UNIQUE INDEX ix_api_keys_key_id ON api_keys (key_id casefold_ops)")
+    # Another normal migration may run concurrently in the shared test database.
+    # Its indexes must retain pg_catalog.text_ops despite this custom default.
+    upgrade_schema(shared_database)
     before, definitions = snapshot(database), schema_description(database)
     with pytest.raises(SchemaUpgradeError):
         upgrade_schema(database)
