@@ -12,7 +12,7 @@ Completed and verified product by October 7, 2026, 10:00 AM Mountain. Keep the f
 - Goal mode: active; not complete.
 - User-selected worker model: `gpt-6.1-sol`, reasoning effort `xhigh`.
 - Primary agent owns architecture, state/recovery design, complex cross-module changes and context-heavy decisions. Bounded implementers and independent reviewers receive sufficient context through task briefs and evidence pointers.
-- No application implementation or deployment has occurred in the first assessment/setup steps.
+- First implementation cycle started after explicit plan approval. No production deployment yet.
 
 ## Completed discovery
 
@@ -25,9 +25,20 @@ Completed and verified product by October 7, 2026, 10:00 AM Mountain. Keep the f
 
 ## Design review and next implementation plan
 
-`../superpowers/specs/2026-10-02-faxbot-refresh-design.md` is a proposed concrete design, opened to the user. An asynchronous question requests written-design approval, especially dedicated self-hosted deployment, retained workflows, and test interfaces. User replied with three clarifications: RBAC must be finished, UI upgrades are welcome (the prior UI is liked but not frozen), and the iOS app exists in TestFlight and is fine-ish. Those changes are incorporated in the written design. No deployment-model change was requested. A concrete first-slice implementation plan remains to be reviewed.
+`../superpowers/specs/2026-10-02-faxbot-refresh-design.md` is a proposed concrete design, opened to the user. An asynchronous question requests written-design approval, especially dedicated self-hosted deployment, retained workflows, and test interfaces. User replied with three clarifications: RBAC must be finished, UI upgrades are welcome (the prior UI is liked but not frozen), and the iOS app exists in TestFlight and is fine-ish. Those changes are incorporated in the written design. No deployment-model change was requested. User explicitly approved the revised design and first implementation plan: "Yes—execute with the agreed agent split". Begin execution; do not request this approval again.
 
-Once reviewed, create a concrete task plan/graph, preserve the user's selected hybrid primary/subagent execution method, and begin the first complete document-integrity slice. Do not redispatch completed inventory work after compaction.
+The concrete task graph and first document-integrity plan are versioned. A Sol 6.1 xhigh implementer owns Task 1 conversion, followed by independent review. The primary owns upload/API integration decisions and Task 2. Do not redispatch completed inventory work after compaction.
+
+## Current implementation evidence
+
+- Worktree `.venv`: Python 3.11 with baseline API requirements installed.
+- Real Ghostscript 10.08.0 is available for PDF-to-TIFF verification; installation completed successfully.
+- Dedicated Colima profile `faxbot-refresh` started successfully. Explicit Docker context `colima-faxbot-refresh` reports Docker 28.4.0 on Linux/aarch64. A dedicated PostgreSQL 16.15 test container is available on loopback port 65432 with synthetic data. Actual application image build succeeded but runtime validation exposed the dependency conflict below; no deployment success is claimed.
+- Task 1 implementation base: `c2d169e6`. Brief, report and task review records live in the ignored `.superpowers/sdd/2026-10-02-faxbot-document-integrity/` directory during execution. Final evidence is promoted here.
+- A read-only DNS/health probe of `https://api.faxbot.net/health` could not resolve that hostname. This does not identify the intended backend or establish that it is down. The user has been asked for the actual deployment URL/location or existing access reference while independent implementation continues.
+- Fresh-database migration probe: `python -m alembic upgrade head` against temporary SQLite fails in `0001_initial` because `ix_fax_jobs_to_number` is declared twice. The schema foundation slice must fix and verify clean installation and legacy upgrades; normal startup currently bypasses this migration path.
+- Existing Admin UI baseline: `npm ci && npm run build` succeeds. Audit reports 12 dependency findings (1 critical, 8 high, 2 moderate, 1 low), with the critical finding in Vitest. Audit details are preserved in the scratch evidence directory for the required dependency slice. Build also warns about Vite's CJS API and the large application bundle. No automated force upgrade was applied.
+- GitHub read-only access check confirms repository administration/push rights and configured secret names for docs deployment, website deployment, OpenAI and package registries. Secret values were not read. Presence of a secret name is not proof the credential works.
 
 ## Important discovered constraints
 
@@ -42,3 +53,11 @@ Once reviewed, create a concrete task plan/graph, preserve the user's selected h
 Matt's implement-spec supplies the whole-spec task-graph pattern; Superpowers SDD supplies bounded briefs and per-task independent review. Do not run two competing orchestration loops. Start with one implementation writer at a time while the monolithic backend is shared; parallelize read-only discovery/review and later only genuinely isolated work. Keep the user's explicit model choice over generic skill tier advice. Primary handling of context-heavy work follows the user's instruction.
 
 Wayfinder is available for unresolved large decisions; do not make a planning-only loop the deliverable. Completion means implementation, validation, release and transferability evidence, not closed planning tickets.
+
+## Document integrity complete; runtime foundation next
+
+- Conversion, upload integration and the whole bounded slice are independently approved at `6a0afbba`; no remaining Critical/Important document findings.
+- Final API suite: **109 passed**, zero skips, four pre-existing lifecycle warnings. Final local HTTP proof preserves all 131 original lines across three PDF pages and three real TIFF frames; malformed input and unauthorized downloads fail correctly.
+- Evidence: [document-integrity verification](evidence/2026-10-02-document-integrity.md).
+- Actual production Dockerfile build uncovered a release blocker: separate MCP installation upgrades Starlette to 1.7.0 while FastAPI 0.112.2 requires <0.39. `pip check` and API import fail in the built container. Next: resolve a supported common API/MCP dependency set, supported lifecycle and actual container startup, then versioned schema/configuration, durable jobs and complete RBAC.
+- This is a completed subsystem, not a deployed or finished product. The full goal remains active.

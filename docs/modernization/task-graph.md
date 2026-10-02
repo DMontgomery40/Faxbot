@@ -5,8 +5,9 @@ This is the whole-product sequence; the detailed first implementation plan is `.
 | Work | Depends on | Verifiable result | Execution owner |
 |---|---|---|---|
 | Product/branch reconciliation | Inventory (done) | Retained capability matrix and exact branch sources | Primary |
-| Document integrity | Reviewed first plan | Actual contents survive upload/conversion; honest failure | Sol implementer + independent review |
-| Versioned schema and configuration foundation | Product reconciliation | Fresh install and upgrade; no swallowed migrations; consistent provider identity | Primary design, bounded Sol implementation |
+| Document integrity (complete, 6a0afbba) | Reviewed first plan | Actual contents survive upload/conversion; honest failure | Sol implementer + independent review |
+| API/MCP runtime and container foundation | Document integrity | Coherent dependencies; pip check and real image startup; supported lifecycle | Bounded Sol implementation + primary container proof |
+| Versioned schema and configuration foundation | Product reconciliation + runtime foundation | Fresh install and upgrade; no swallowed migrations; consistent provider identity | Primary design, bounded Sol implementation |
 | Durable outbound delivery | Document + schema/config | Restart recovery, guarded transitions, no blind ambiguous resend | Primary architecture/integration |
 | Durable inbound receipt | Document + schema/config | Retryable acquisition/storage; deduplication; honest receipt states | Primary design, bounded Sol implementation |
 | Complete identity and RBAC enforcement | Schema/config | Users/groups/roles/resource grants/sessions/keys enforced for direct calls | Primary architecture + Sol bounded tasks |

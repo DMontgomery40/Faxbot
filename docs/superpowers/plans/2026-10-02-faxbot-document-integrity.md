@@ -51,15 +51,15 @@
 - Add `DocumentConversionError(Exception)` for a safe user-facing conversion failure.
 - Add `validate_pdf(pdf_path: str) -> int`, returning the real positive page count or raising DocumentConversionError.
 
-- [ ] Write and run a failing test that writes `contest.txt` containing `First line\nFinal clinical billing marker`, calls txt_to_pdf with FAX_DISABLED both true and false, and uses pypdf to assert both original lines occur in the output. Repeat with a parent directory containing `test`.
-- [ ] Replace environment/path-selected stubs with real conversion. Decode text strictly. Preserve line contents with wrapping and pagination rather than truncating at 120 characters. Use a real embedded font for supported Unicode and reject unsupported characters explicitly rather than render silent replacement glyphs; do not depend on host-specific font installation. A bundled ReportLab font may be used if its glyph coverage is checked. Record the supported text contract.
-- [ ] Add a failing long-line/multipage test with a literal final marker beyond the former truncation limit; implement until parsed output retains all content and correct page count. Add supported accented text and invalid UTF-8/unsupported-character rejection tests.
-- [ ] Add invalid/encrypted/zero-page PDF and corrupt TIFF tests. Implement validate_pdf and accurate page counting with pypdf; no success for magic-header-only files.
-- [ ] Convert a real multipage TIFF through Pillow into a real PDF, preserving page order and image content; validate with independent pixel/page observations. This removes the invalid Ghostscript-TIFF-as-PostScript approach and placeholder fallback.
-- [ ] Add tests for missing Ghostscript, nonzero exit, timeout, and partial raster output. Keep real Ghostscript PDF→TIFF with safe argv, explicit timeout, `-dSAFER`, validated output and page count. External-process failure tests can replace the process seam; successful conversion proof must run real Ghostscript when installed. Use temporary outputs and atomic replacement; clean partial output on failure.
-- [ ] Use synthetic bounded documents. Preserve Pillow's decompression-bomb checks and reject invalid/oversized raster inputs rather than disabling its protections. Do not introduce an unbounded subprocess or whole-document allocation without an explicit limit.
-- [ ] Update existing inbound fixtures that relied on TIFF_PLACEHOLDER to use a valid tiny TIFF. Run `python -m pytest tests/test_conversion.py tests/test_inbound_internal.py tests/test_freeswitch.py -q` from api, with fresh temporary DB/data directory and no external credentials.
-- [ ] Run the full existing API suite once after the task. Report tests actually run, missing-tool checks, exact commit and any unresolved requirement. Commit the reviewed scope with a factual message.
+- [x] Write and run a failing test that writes `contest.txt` containing `First line\nFinal clinical billing marker`, calls txt_to_pdf with FAX_DISABLED both true and false, and uses pypdf to assert both original lines occur in the output. Repeat with a parent directory containing `test`.
+- [x] Replace environment/path-selected stubs with real conversion. Decode text strictly. Preserve line contents with wrapping and pagination rather than truncating at 120 characters. Use a real embedded font for supported Unicode and reject unsupported characters explicitly rather than render silent replacement glyphs; do not depend on host-specific font installation. A bundled ReportLab font may be used if its glyph coverage is checked. Record the supported text contract.
+- [x] Add a failing long-line/multipage test with a literal final marker beyond the former truncation limit; implement until parsed output retains all content and correct page count. Add supported accented text and invalid UTF-8/unsupported-character rejection tests.
+- [x] Add invalid/encrypted/zero-page PDF and corrupt TIFF tests. Implement validate_pdf and accurate page counting with pypdf; no success for magic-header-only files.
+- [x] Convert a real multipage TIFF through Pillow into a real PDF, preserving page order and image content; validate with independent pixel/page observations. This removes the invalid Ghostscript-TIFF-as-PostScript approach and placeholder fallback.
+- [x] Add tests for missing Ghostscript, nonzero exit, timeout, and partial raster output. Keep real Ghostscript PDF→TIFF with safe argv, explicit timeout, `-dSAFER`, validated output and page count. External-process failure tests can replace the process seam; successful conversion proof must run real Ghostscript when installed. Use temporary outputs and atomic replacement; clean partial output on failure.
+- [x] Use synthetic bounded documents. Preserve Pillow's decompression-bomb checks and reject invalid/oversized raster inputs rather than disabling its protections. Do not introduce an unbounded subprocess or whole-document allocation without an explicit limit.
+- [x] Update existing inbound fixtures that relied on TIFF_PLACEHOLDER to use a valid tiny TIFF. Run `python -m pytest tests/test_conversion.py tests/test_inbound_internal.py tests/test_freeswitch.py -q` from api, with fresh temporary DB/data directory and no external credentials.
+- [x] Run the full existing API suite once after the task. Report tests actually run, missing-tool checks, exact commit and any unresolved requirement. Commit the reviewed scope with a factual message.
 
 ### Task 2: Safe upload preparation and HTTP integration
 
@@ -74,14 +74,14 @@
 - Add explicit cleanup for an unaccepted PreparedDocument; accepted artifacts retain existing `{job_id}.pdf` / `{job_id}.tiff` retrieval compatibility.
 - Existing POST /fax remains multipart `to` + `file`, HTTP 202 with existing FaxJobOut on success. Existing authentication remains in force; complete RBAC is a subsequent required slice.
 
-- [ ] Add a failing HTTP test: submit contest.txt with synthetic content in disabled-send mode, then retrieve the job PDF through the authorized admin endpoint and assert its actual text via pypdf. Implement delegation to prepare_upload; remove the send route's independent dummy-PDF/TIFF branches.
-- [ ] Add failing tests for misleading filename extensions and content types: valid PDF bytes with a .txt filename remain a valid original PDF; invalid header-only PDF is rejected; binary/invalid UTF-8 input is rejected; empty upload is rejected. Select supported content by validated bytes, not extension.
-- [ ] Add failing path tests for `../../name.txt`, Windows-style traversal, very long names, and filenames containing separators/control characters. Preserve a safe display name only; generate all disk paths from the internal job identity. Assert artifacts stay within the test data directory and no outside file is created.
-- [ ] Retain the configured MAX_FILE_SIZE_MB enforcement while streaming. Rejected oversized or invalid input leaves no partial artifacts and creates no accepted job. Verify that through HTTP responses, job listing, and the controlled external storage interface where necessary.
-- [ ] Map invalid/unsupported document errors to clear 400/415 responses consistent with current error envelope; missing conversion tooling or internal conversion failure to a sanitized operational error rather than HTTP 202. Do not expose commands, credentials or host paths.
-- [ ] Keep configured outbound selection and response fields unchanged; no provider submission is performed in these tests. Store actual page count from preparation.
-- [ ] Run `python -m pytest tests/test_documents.py tests/test_conversion.py -q`, followed by the full API suite on the final task revision. Run type/static checks if configured and `git diff --check`.
-- [ ] Primary agent verifies an actual uploaded/returned PDF, checks the integration diff, dispatches independent review, resolves findings, and records evidence. Commit the slice after verification.
+- [x] Add a failing HTTP test: submit contest.txt with synthetic content in disabled-send mode, then retrieve the job PDF through the authorized admin endpoint and assert its actual text via pypdf. Implement delegation to prepare_upload; remove the send route's independent dummy-PDF/TIFF branches.
+- [x] Add failing tests for misleading filename extensions and content types: valid PDF bytes with a .txt filename remain a valid original PDF; invalid header-only PDF is rejected; binary/invalid UTF-8 input is rejected; empty upload is rejected. Select supported content by validated bytes, not extension.
+- [x] Add failing path tests for `../../name.txt`, Windows-style traversal, very long names, and filenames containing separators/control characters. Preserve a safe display name only; generate all disk paths from the internal job identity. Assert artifacts stay within the test data directory and no outside file is created.
+- [x] Retain the configured MAX_FILE_SIZE_MB enforcement while streaming. Rejected oversized or invalid input leaves no partial artifacts and creates no accepted job. Verify that through HTTP responses, job listing, and the controlled external storage interface where necessary.
+- [x] Map invalid/unsupported document errors to clear 400/415 responses consistent with current error envelope; missing conversion tooling or internal conversion failure to a sanitized operational error rather than HTTP 202. Do not expose commands, credentials or host paths.
+- [x] Keep configured outbound selection and response fields unchanged; no provider submission is performed in these tests. Store actual page count from preparation.
+- [x] Run `python -m pytest tests/test_documents.py tests/test_conversion.py -q`, followed by the full API suite on the final task revision. Run type/static checks if configured and `git diff --check`.
+- [x] Primary agent verifies an actual uploaded/returned PDF, checks the integration diff, dispatches independent review, resolves findings, and records evidence. Commit the slice after verification.
 
 ## Preflight integration check
 
@@ -96,3 +96,7 @@
 ## Review and evidence
 
 Use one writer at a time in the integration worktree. Task reviewers receive the exact task brief, implementation report, fixed base/head diff package and these global constraints. The primary agent resolves cross-task questions. End this slice with all required regression tests and review passing; do not label the overall goal complete or release it while remaining product/RBAC/docs/deployment gates are open.
+
+## Completion evidence
+
+Both tasks and the whole bounded slice were independently approved at `6a0afbba`. See `../../modernization/evidence/2026-10-02-document-integrity.md` for 109 passing tests, final HTTP/document proof and explicit remaining whole-product release gates.

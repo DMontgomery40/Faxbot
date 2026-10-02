@@ -1,6 +1,6 @@
 # Faxbot finished-product refresh
 
-Status: revised after user review on October 2. User added complete RBAC, permitted UI improvements, and confirmed the existing TestFlight app. Implementation has not started.
+Status: approved by the user on October 2 with complete RBAC, permitted UI improvements, and existing TestFlight compatibility. The user explicitly authorized execution with the agreed primary/agent split. Document integrity is implemented and independently approved at 6a0afbba. Runtime dependencies/container startup are the next required foundation repair.
 
 ## Outcome and constraints
 
@@ -94,7 +94,7 @@ Preserve the user's code-to-docs workflow. Treat OpenAPI, code, configuration sc
 
 ## Testing decisions and proposed public seams
 
-These are the proposed seams for approval before implementation:
+These are the approved seams for implementation and verification:
 
 - Existing HTTP and WebSocket interfaces: document acceptance, authorization, idempotency, jobs, receipts, settings, callbacks and document retrieval. Use real temporary databases and storage where practical.
 - Document conversion interface: independent PDF text/page and TIFF inspection proves contents, pagination, validity and explicit failures. Tests must include filenames containing `test`.
@@ -126,4 +126,4 @@ An unrelated visual rebrand, inventing unrelated billing/CRM features, adding a 
 
 The full refresh is one goal with staged subsystem specifications and complete vertical tasks. Keep a durable acceptance matrix, decision record, task graph and evidence ledger in the integration branch. Use GPT-6.1 Sol at xhigh for bounded implementation and independent review. The primary agent owns cross-module concurrency design, ambiguous provider behavior, branch reconciliation and integration decisions, as requested.
 
-Main is the intended integration target. PR review/CI/merge and deployment must be tracked separately from local tests. Respect existing user authorization, and ask only for material product decisions or truly missing external prerequisites. This proposed design is not implementation completion.
+Main is the intended integration target. PR review/CI/merge and deployment must be tracked separately from local tests. Respect existing user authorization, and ask only for material product decisions or truly missing external prerequisites. Design approval is not implementation completion.
