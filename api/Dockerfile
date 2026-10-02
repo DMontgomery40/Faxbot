@@ -1,4 +1,4 @@
-FROM node:18-alpine AS admin-ui-builder
+FROM node:24.21.0-alpine AS admin-ui-builder
 WORKDIR /build
 COPY api/admin_ui/package*.json ./
 RUN npm ci
@@ -20,8 +20,10 @@ RUN apt-get update \
 
 WORKDIR /app
 
-COPY api/requirements.txt /app/
-RUN pip install --no-cache-dir -r requirements.txt
+COPY api/requirements.txt /app/api/requirements.txt
+COPY python_mcp/requirements.txt python_mcp/runtime-constraints.txt /app/python_mcp/
+RUN pip install --no-cache-dir -r /app/api/requirements.txt -r /app/python_mcp/requirements.txt \
+    && python -m pip check
 
 COPY api/app /app/app
 
@@ -29,8 +31,6 @@ COPY api/app /app/app
 COPY config /app/config
 
 # MCP (Python) — install and include server for embedded mount
-COPY python_mcp/requirements.txt /app/python_mcp/requirements.txt
-RUN pip install --no-cache-dir -r /app/python_mcp/requirements.txt
 COPY python_mcp /app/python_mcp
 
 # Copy admin UI build from the first stage

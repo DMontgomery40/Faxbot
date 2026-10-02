@@ -4,6 +4,7 @@ import re
 import uuid
 import asyncio
 import secrets
+from contextlib import AsyncExitStack, asynccontextmanager
 from datetime import datetime, timedelta
 import tempfile
 from typing import Optional, Any, List, Dict, cast
@@ -51,6 +52,36 @@ except Exception:  # pragma: no cover - optional
 from pydantic import BaseModel
 
 
+@asynccontextmanager
+async def lifespan(application: FastAPI):
+    """Own API tasks and explicitly enter lifespans of enabled MCP mounts."""
+    if getattr(application.state, "runtime_active", False):
+        raise RuntimeError("Faxbot API lifespan is already running")
+    application.state.runtime_active = True
+    tasks: list[asyncio.Task] = []
+    mounts = []
+    owns_ami = False
+    try:
+        owns_ami = await _initialize_runtime(tasks)
+        if owns_ami:
+            ami_client.on_fax_result(_handle_fax_result)
+            tasks.append(asyncio.create_task(ami_client.connect(), name="faxbot-ami-connect"))
+        async with AsyncExitStack() as stack:
+            _mount_enabled_mcp(application, mounts)
+            for mount in mounts:
+                await stack.enter_async_context(mount.app.router.lifespan_context(mount.app))
+            yield
+    finally:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        if owns_ami:
+            await ami_client.close()
+        for mount in mounts:
+            application.router.routes.remove(mount)
+        application.state.runtime_active = False
+
+
 app = FastAPI(
     title="Faxbot API",
     version="1.0.0",
@@ -64,6 +95,7 @@ app = FastAPI(
         "name": "MIT",
         "url": "https://github.com/dmontgomery40/faxbot/blob/main/LICENSE",
     },
+    lifespan=lifespan,
 )
 # Expose phaxio_service module for tests that reference app.phaxio_service
 from . import phaxio_service as _phaxio_module  # noqa: E402
@@ -141,9 +173,9 @@ for _ap in _assets_candidates:
     except Exception:
         pass
 
-# ===== Embedded MCP mounts (optional) =====
-try:
-    if os.getenv("ENABLE_MCP_SSE", "false").lower() in {"1","true","yes"}:
+# ===== Embedded MCP mounts (optional, startup failures are fatal when enabled) =====
+def _mount_enabled_mcp(application: FastAPI, mounts: list):
+    if settings.enable_mcp_sse or settings.enable_mcp_http:
         # Set environment for python_mcp before import
         os.environ.setdefault("FAX_API_URL", "http://localhost:8080")
         if settings.api_key:
@@ -156,23 +188,15 @@ try:
                 os.environ["OAUTH_AUDIENCE"] = settings.oauth_audience
             if settings.oauth_jwks_url:
                 os.environ["OAUTH_JWKS_URL"] = settings.oauth_jwks_url
+    if settings.enable_mcp_sse:
         from python_mcp import server as _mcp_server  # type: ignore
         mount_app = _mcp_server.app if settings.require_mcp_oauth else getattr(_mcp_server, "inner_app")
-        app.mount(settings.mcp_sse_path, mount_app)
-except Exception as _mcp_err:
-    # Do not break API if MCP mount fails; surface in diagnostics
-    print(f"[warn] MCP SSE mount failed: {_mcp_err}")
-
-try:
-    if os.getenv("ENABLE_MCP_HTTP", "false").lower() in {"1","true","yes"}:
-        # Prepare environment
-        os.environ.setdefault("FAX_API_URL", "http://localhost:8080")
-        if settings.api_key:
-            os.environ.setdefault("API_KEY", settings.api_key)
+        application.mount(settings.mcp_sse_path, mount_app)
+        mounts.append(application.router.routes[-1])
+    if settings.enable_mcp_http:
         from python_mcp import http_server as _mcp_http  # type: ignore
-        app.mount(settings.mcp_http_path, _mcp_http.app)
-except Exception as _mcp_http_err:
-    print(f"[warn] MCP HTTP mount failed: {_mcp_http_err}")
+        application.mount(settings.mcp_http_path, _mcp_http.create_app())
+        mounts.append(application.router.routes[-1])
 
 
 # ===== Admin security middleware (loopback + flag) =====
@@ -246,8 +270,7 @@ def sanitize_error(text: Optional[str]) -> Optional[str]:
     return sanitized[:80]
 
 
-@app.on_event("startup")
-async def on_startup():
+async def _initialize_runtime(tasks: list[asyncio.Task]) -> bool:
     # Re-read environment into settings for testability and dynamic config
     reload_settings()
     init_db()
@@ -277,7 +300,7 @@ async def on_startup():
 
     # Start periodic cleanup task for artifacts
     if settings.artifact_ttl_days > 0:
-        asyncio.create_task(_artifact_cleanup_loop())
+        tasks.append(asyncio.create_task(_artifact_cleanup_loop(), name="faxbot-artifact-cleanup"))
     # Init audit logger
     init_audit_logger(
         enabled=settings.audit_log_enabled,
@@ -287,9 +310,7 @@ async def on_startup():
         syslog_address=(settings.audit_log_syslog_address or None),
     )
     # Start AMI when required by traits (either direction)
-    if not settings.fax_disabled and providerHasTrait("any", "requires_ami"):
-        asyncio.create_task(ami_client.connect())
-        ami_client.on_fax_result(_handle_fax_result)
+    return not settings.fax_disabled and providerHasTrait("any", "requires_ami")
 
 
 def _handle_fax_result(event):

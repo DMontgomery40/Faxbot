@@ -25,6 +25,8 @@ import asyncio
 import pathlib
 import os
 import time
+import inspect
+from contextlib import asynccontextmanager
 from typing import Dict, Any, Optional
 
 import httpx
@@ -35,12 +37,7 @@ from starlette.requests import Request
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.routing import Route, Mount
 
-try:
-    # FastMCP available in mcp >= 0.3
-    from mcp.server.fastmcp import FastMCP
-except Exception:
-    # Fallback import path if package layout differs
-    from mcp.server.fastmcp import FastMCP  # type: ignore
+from mcp.server.fastmcp import FastMCP
 
 
 # ===== Config =====
@@ -299,8 +296,34 @@ async def get_inbound_pdf(inboundId: str, asBase64: Optional[bool] = False) -> s
 
 
 
-# Build underlying SSE ASGI app from FastMCP
-inner_app = mcp.sse_app()
+class _SseAsgiEndpoint:
+    """The SDK endpoint streams its response directly through ASGI send."""
+    def __init__(self, endpoint):
+        self.endpoint = endpoint
+
+    async def __call__(self, scope, receive, send):
+        # FastMCP 1.x returns an empty Response after completing the stream.
+        # A normal HTTP Route would send that response a second time on disconnect.
+        await self.endpoint(Request(scope, receive, send))
+
+
+def _sse_app():
+    application = mcp.sse_app()
+    for index, route in enumerate(application.routes):
+        if isinstance(route, Route) and route.path == mcp.settings.sse_path:
+            # Authenticated SDK endpoints are already ASGI callables; retain them.
+            if inspect.iscoroutinefunction(route.endpoint):
+                if route.app.__module__ != "starlette.routing":
+                    raise RuntimeError("Unexpected SDK SSE route wrapper; cannot safely adapt it")
+                application.routes[index] = Route(
+                    route.path, endpoint=_SseAsgiEndpoint(route.endpoint),
+                    methods=route.methods, name=route.name, include_in_schema=route.include_in_schema,
+                )
+    return application
+
+
+# Keep the SDK transport, security checks and original endpoint paths.
+inner_app = _sse_app()
 
 
 class AuthMiddleware(BaseHTTPMiddleware):
@@ -322,10 +345,26 @@ async def health(_request: Request):
     return JSONResponse({"status": "ok", "transport": "sse", "server": "faxbot-mcp", "version": "2.0.0"})
 
 
+@asynccontextmanager
+async def lifespan(application: Starlette):
+    async with inner_app.router.lifespan_context(inner_app):
+        yield
+
+
 app = Starlette(
     routes=[
         Route('/health', health, methods=['GET']),
         Mount('/', app=inner_app),
     ],
+    lifespan=lifespan,
 )
 app.add_middleware(AuthMiddleware)
+
+
+def main() -> None:
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", "3003")))
+
+
+if __name__ == "__main__":
+    main()

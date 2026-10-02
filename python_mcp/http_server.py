@@ -13,6 +13,7 @@ Usage:
     uvicorn http_server:app --host 0.0.0.0 --port 3004
 """
 import os
+from contextlib import asynccontextmanager
 from typing import Optional
 
 from starlette.applications import Starlette
@@ -20,10 +21,7 @@ from starlette.responses import JSONResponse
 from starlette.routing import Mount, Route
 from starlette.middleware.cors import CORSMiddleware
 
-try:
-    from mcp.server.fastmcp import FastMCP
-except Exception:  # pragma: no cover
-    from mcp.server.fastmcp import FastMCP  # type: ignore
+from mcp.server.fastmcp import FastMCP
 
 import httpx
 
@@ -80,30 +78,45 @@ async def get_fax_status(jobId: str) -> str:  # noqa: N803
 
 
 def _http_app_from_mcp(server: FastMCP):
-    # Newer versions provide .http_app(); fallback to .streamable_http_app()
-    if hasattr(server, "http_app"):
-        return server.http_app()
-    if hasattr(server, "streamable_http_app"):
-        return server.streamable_http_app()
-    raise RuntimeError("Installed 'mcp' package does not expose a Streamable HTTP app. Please upgrade 'mcp'.")
+    return server.streamable_http_app()
 
 
 def health(_):
     return JSONResponse({"status": "ok", "transport": "streamable-http", "server": "faxbot-mcp", "version": "2.0.0"})
 
 
-inner = _http_app_from_mcp(mcp)
-app = Starlette(
-    routes=[
-        Route('/health', health),
-        Mount('/', app=inner),
-    ]
-)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_headers=["*"] ,
-    expose_headers=["Mcp-Session-Id"],
-    allow_methods=["*"],
-)
+def create_app() -> Starlette:
+    # SDK session managers are single-use. Each lifespan owns a fresh server/manager.
+    transport_mount = Mount('/', app=_http_app_from_mcp(mcp))
 
+    @asynccontextmanager
+    async def lifespan(application: Starlette):
+        server = FastMCP(name="Faxbot MCP (Python)")
+        server.tool()(send_fax)
+        server.tool()(get_fax_status)
+        inner = _http_app_from_mcp(server)
+        transport_mount.app = inner
+        async with inner.router.lifespan_context(inner):
+            yield
+
+    application = Starlette(routes=[Route('/health', health), transport_mount], lifespan=lifespan)
+    application.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_headers=["*"],
+        expose_headers=["Mcp-Session-Id"],
+        allow_methods=["*"],
+    )
+    return application
+
+
+app = create_app()
+
+
+def main() -> None:
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", "3004")))
+
+
+if __name__ == "__main__":
+    main()

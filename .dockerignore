@@ -1,4 +1,9 @@
 # Exclude heavy and local-only files from Docker build context
+.venv/
+venv/
+**/.venv/
+**/venv/
+.superpowers/
 node_modules/
 api/node_modules/
 node_mcp/node_modules/
@@ -33,3 +38,7 @@ logs/
 .gitignore
 .env
 .env.*
+**/.env
+**/.env.*
+!.env.example
+!**/.env.example

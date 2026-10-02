@@ -176,7 +176,7 @@ def reload_settings() -> None:
     Keeps references stable across modules that imported `settings`.
     """
     new = Settings()
-    for name in new.model_fields.keys():  # type: ignore[attr-defined]
+    for name in type(new).model_fields.keys():
         setattr(settings, name, getattr(new, name))
     # Rebuild traits cache on settings reload
     try:
