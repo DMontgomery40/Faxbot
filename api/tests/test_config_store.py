@@ -239,3 +239,54 @@ def test_profile_metadata_cannot_be_reassigned_and_unbound_history_has_no_fallba
                            {'account': 'different-account', 'identity': identity})
     with pytest.raises(ConfigurationSecretError):
         store.read_profile(identity)
+
+
+def test_connection_acquisition_failure_is_sanitized(database, tmp_path, monkeypatch):
+    from api.app.config_store import ConfigurationStoreError
+    store = make_store(database, tmp_path)
+    first = store.initialize(ConfigurationValues.from_environment({}), actor='test')
+    def fail_connect():
+        raise sa.exc.OperationalError('private-sql', {'password': 'private-secret'}, RuntimeError('private-backend'))
+    monkeypatch.setattr(database, 'connect', fail_connect)
+    with pytest.raises(ConfigurationStoreError) as caught:
+        store.apply(first, first.desired.values.with_patch({'fax_header': 'new'}), restart_required=False, actor='test')
+    assert 'private' not in str(caught.value)
+
+
+def test_rollback_failure_does_not_replace_uncertain_commit(database, tmp_path, monkeypatch):
+    store = make_store(database, tmp_path)
+    first = store.initialize(ConfigurationValues.from_environment({}), actor='test')
+    def fail_commit(connection):
+        raise sa.exc.OperationalError(None, None, RuntimeError('private commit failure'))
+    def fail_rollback(connection):
+        raise sa.exc.OperationalError(None, None, RuntimeError('private rollback failure'))
+    monkeypatch.setattr(sa.engine.Connection, 'commit', fail_commit)
+    monkeypatch.setattr(sa.engine.Connection, 'rollback', fail_rollback)
+    with pytest.raises(ConfigurationCommitUncertain) as caught:
+        store.apply(first, first.desired.values.with_patch({'fax_header': 'new'}), restart_required=False, actor='test')
+    assert 'private' not in str(caught.value)
+
+
+def test_pending_promotion_requires_stopped_installation_ownership_and_exact_candidate(database, tmp_path):
+    from api.app.config_lifecycle import InstallationLifecycle
+    store = make_store(database, tmp_path)
+    first = store.initialize(ConfigurationValues.from_environment({}), actor='test')
+    staged = store.apply(first, first.desired.values.with_patch({'enable_mcp_http': True}), restart_required=True, actor='test')
+    serving = InstallationLifecycle(tmp_path).acquire()
+    serving.mark_serving()
+    try:
+        with InstallationLifecycle(tmp_path) as rolling:
+            with pytest.raises(ConfigurationConflict):
+                store.promote_pending(staged, lifecycle=rolling)
+            assert store.read() == staged
+    finally:
+        serving.close()
+    with InstallationLifecycle(tmp_path) as stopped:
+        newer = store.apply(staged, staged.desired.values.with_patch({'fax_header': 'newer'}), restart_required=True, actor='test')
+        with pytest.raises(ConfigurationConflict):
+            store.promote_pending(staged, lifecycle=stopped)
+        active = store.promote_pending(newer, lifecycle=stopped)
+        assert active.pending is None
+        assert active.active == newer.pending
+        stopped.mark_serving()
+    assert store.read() == active

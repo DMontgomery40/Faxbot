@@ -7,6 +7,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+import sys
 from uuid import uuid4
 
 import sqlalchemy as sa
@@ -14,6 +15,7 @@ import sqlalchemy as sa
 from .config_secrets import ConfigurationCipher, ConfigurationSecretError, load_installation_key
 from .config_values import ConfigurationValues
 from .config_profiles import ConfigurationDocument, ProviderConfiguration, ProviderProfile
+from .config_lifecycle import InstallationLifecycle
 
 
 _LOCK_ID = 0x464158434F4E46
@@ -26,6 +28,10 @@ class ConfigurationStoreError(RuntimeError):
 
 class ConfigurationConflict(ConfigurationStoreError):
     """The editor must reload and validate against the new desired revision."""
+
+
+class ConfigurationNotInitialized(ConfigurationStoreError):
+    """Only this condition permits first-import initialization."""
 
 
 class ConfigurationCommitUncertain(ConfigurationStoreError):
@@ -66,8 +72,11 @@ class ConfigurationStore:
         # Startup migration validates the schema. Runtime reflection avoids
         # coupling live queries to historical migration implementation code.
         metadata = sa.MetaData()
-        metadata.reflect(engine, only=['configuration_state', 'configuration_revisions', 'provider_profiles',
-                                       'fax_jobs', 'fax_job_bindings', 'inbound_fax_bindings'])
+        try:
+            metadata.reflect(engine, only=['configuration_state', 'configuration_revisions', 'provider_profiles',
+                                           'fax_jobs', 'fax_job_bindings', 'inbound_fax_bindings'])
+        except sa.exc.SQLAlchemyError:
+            raise ConfigurationStoreError('Cannot open installation configuration storage.') from None
         self.state = metadata.tables['configuration_state']
         self.revisions = metadata.tables['configuration_revisions']
         self.profiles = metadata.tables['provider_profiles']
@@ -76,7 +85,10 @@ class ConfigurationStore:
 
     @contextmanager
     def _locked(self):
-        with self.engine.connect() as connection:
+        connection = None
+        committed = False
+        try:
+            connection = self.engine.connect()
             try:
                 if connection.dialect.name == 'sqlite':
                     connection.exec_driver_sql('BEGIN IMMEDIATE')
@@ -89,14 +101,32 @@ class ConfigurationStore:
                 yield connection
                 try:
                     connection.commit()
+                    committed = True
                 except sa.exc.SQLAlchemyError:
                     raise ConfigurationCommitUncertain('Configuration commit was not acknowledged; reload before retrying.') from None
-            except sa.exc.SQLAlchemyError:
-                connection.rollback()
-                raise ConfigurationStoreError('Configuration transaction could not complete.') from None
             except BaseException:
-                connection.rollback()
+                # A failed connection may also reject rollback. Preserve the
+                # primary failure, especially the uncertain-commit signal.
+                try:
+                    connection.rollback()
+                except sa.exc.SQLAlchemyError:
+                    try:
+                        connection.invalidate()
+                    except sa.exc.SQLAlchemyError:
+                        pass
                 raise
+        except sa.exc.SQLAlchemyError:
+            raise ConfigurationStoreError('Configuration transaction could not complete.') from None
+        finally:
+            unwinding = sys.exc_info()[0] is not None
+            if connection is not None:
+                try:
+                    connection.close()
+                except sa.exc.SQLAlchemyError:
+                    if not unwinding:
+                        if committed:
+                            raise ConfigurationCommitUncertain('Configuration connection cleanup failed after commit; reload before retrying.') from None
+                        raise ConfigurationStoreError('Configuration connection cleanup failed.') from None
 
     def _head(self, connection):
         rows = connection.execute(sa.select(self.state)).mappings().all()
@@ -261,7 +291,7 @@ class ConfigurationStore:
             with self.engine.connect() as connection:
                 head = self._head(connection)
                 if head is None:
-                    raise ConfigurationStoreError('Configuration has not been initialized.')
+                    raise ConfigurationNotInitialized('Configuration has not been initialized.')
                 return self._snapshot(connection, self._cipher(), head)
         except sa.exc.SQLAlchemyError:
             raise ConfigurationStoreError('Cannot read installation configuration.') from None
@@ -289,4 +319,27 @@ class ConfigurationStore:
                 generation=current.generation + 1,
                 active_revision_id=current.active.id if restart_required else identity,
                 pending_revision_id=identity if restart_required else None, updated_at=datetime.utcnow()))
+            return self._snapshot(connection, cipher, self._head(connection))
+
+    def promote_pending(self, expected: ConfigurationSnapshot, *, lifecycle: InstallationLifecycle):
+        """Publish the exact candidate whose resources the stopped starter prepared.
+
+        The caller keeps lifecycle ownership through resource preparation, this
+        transaction and mark_serving. Failed preparation never calls promotion.
+        """
+        if not isinstance(lifecycle, InstallationLifecycle) or not lifecycle.can_promote:
+            raise ConfigurationConflict('Pending settings require a stopped-installation startup.')
+        with self._locked() as connection:
+            head = self._head(connection)
+            if (head is None or head['installation_id'] != expected.installation_id
+                    or head['generation'] != expected.generation
+                    or (head['pending_revision_id'] or head['active_revision_id']) != expected.desired.id):
+                raise ConfigurationConflict('Pending configuration changed during startup preparation.')
+            cipher = self._cipher()
+            current = self._snapshot(connection, cipher, head)
+            if current.pending is None:
+                return current
+            connection.execute(self.state.update().where(self.state.c.id == _STATE_ID).values(
+                active_revision_id=current.pending.id, pending_revision_id=None,
+                generation=current.generation + 1, updated_at=datetime.utcnow()))
             return self._snapshot(connection, cipher, self._head(connection))
