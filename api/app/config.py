@@ -2,6 +2,10 @@ import os
 import json
 from typing import Any, Dict, Optional
 from pydantic import BaseModel, Field
+from .config_paths import (
+    InvalidProviderPath, faxbot_config_path, provider_manifest_path,
+    provider_traits_path, providers_dir,
+)
 
 
 # Optional: load persisted settings from a file before constructing Settings
@@ -164,7 +168,7 @@ class Settings(BaseModel):
 
     # v3 Plugins (feature-gated)
     feature_v3_plugins: bool = Field(default_factory=lambda: os.getenv("FEATURE_V3_PLUGINS", "false").lower() in {"1","true","yes"})
-    faxbot_config_path: str = Field(default_factory=lambda: os.getenv("FAXBOT_CONFIG_PATH", "config/faxbot.config.json"))
+    faxbot_config_path: str = Field(default_factory=lambda: str(faxbot_config_path()))
     feature_plugin_install: bool = Field(default_factory=lambda: os.getenv("FEATURE_PLUGIN_INSTALL", "false").lower() in {"1","true","yes"})
 
 
@@ -200,12 +204,11 @@ CANONICAL_TRAIT_KEYS: set[str] = {
 
 
 def _traits_file_path() -> str:
-    # Project-relative config folder (cwd); acceptable for prod, but tests may run from different roots.
-    return os.path.join(os.getcwd(), "config", "provider_traits.json")
+    return str(provider_traits_path())
 
 
 def _providers_dir() -> str:
-    return os.path.join(os.getcwd(), "config", "providers")
+    return str(providers_dir())
 
 
 def _read_json(path: str) -> Any:
@@ -264,7 +267,11 @@ def _scan_manifest_traits() -> Dict[str, Dict[str, Any]]:
     if not os.path.isdir(pdir):
         return results
     for pid in os.listdir(pdir):
-        mpath = os.path.join(pdir, pid, "manifest.json")
+        try:
+            mpath = provider_manifest_path(pid)
+        except InvalidProviderPath:
+            # Unsafe entries are not installed providers and must never be read.
+            continue
         if not os.path.exists(mpath):
             continue
         data = _read_json(mpath)

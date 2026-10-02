@@ -41,6 +41,10 @@ from .audit import query_recent_logs
 from .storage import get_storage, reset_storage
 from .auth import verify_db_key, create_api_key, list_api_keys, revoke_api_key, rotate_api_key
 from .plugins.http_provider import HttpManifest, HttpProviderRuntime
+from .config_paths import (
+    InvalidProviderPath, plugin_examples_path, plugin_registry_path,
+    provider_manifest_path, providers_dir,
+)
 from .signalwire_service import get_signalwire_service
 
 # v3 plugins (feature-gated)
@@ -1143,7 +1147,14 @@ def admin_db_status():
 # ====== Manifest Providers (HTTP) — install/validate (admin-only) ======
 
 def _providers_dir() -> str:
-    return os.getenv("FAXBOT_PROVIDERS_DIR", os.path.join(os.getcwd(), "config", "providers"))
+    return str(providers_dir())
+
+
+def _manifest_path(provider_id: str) -> str:
+    try:
+        return str(provider_manifest_path(provider_id))
+    except InvalidProviderPath as error:
+        raise HTTPException(400, detail=str(error)) from None
 
 
 class ManifestIn(BaseModel):
@@ -1155,9 +1166,9 @@ def install_http_manifest(payload: ManifestIn):
     man = HttpManifest.from_dict(payload.manifest or {})
     if not man.id:
         raise HTTPException(400, detail="Manifest id is required")
-    dest_dir = os.path.join(_providers_dir(), man.id)
+    path = _manifest_path(man.id)
+    dest_dir = os.path.dirname(path)
     os.makedirs(dest_dir, exist_ok=True)
-    path = os.path.join(dest_dir, "manifest.json")
     try:
         with open(path, "w", encoding="utf-8") as f:
             json.dump(payload.manifest, f, indent=2)
@@ -1215,7 +1226,7 @@ async def validate_http_manifest(payload: ManifestValidateIn):
 class ImportManifestsIn(BaseModel):
     items: Optional[List[dict]] = None
     markdown: Optional[str] = None
-    source: Optional[str] = None  # 'repo_scrape' reads api_plugins_list.md from CWD
+    source: Optional[str] = None  # 'repo_scrape' reads bundled API examples
 
 
 def _extract_json_blocks(md: str) -> List[dict]:
@@ -1250,7 +1261,7 @@ def import_http_manifests(payload: ImportManifestsIn):
     candidates: List[dict] = []
     if (payload.source or "").lower() == "repo_scrape" and not payload.items and not payload.markdown:
         try:
-            scrape_path = os.path.join(os.getcwd(), "api_plugins_list.md")
+            scrape_path = plugin_examples_path()
             with open(scrape_path, "r", encoding="utf-8") as f:
                 payload.markdown = f.read()
         except Exception as e:
@@ -1270,9 +1281,9 @@ def import_http_manifests(payload: ImportManifestsIn):
             man = HttpManifest.from_dict(data)
             if not man.id:
                 raise ValueError("manifest.id missing")
-            dest_dir = os.path.join(_providers_dir(), man.id)
+            path = str(provider_manifest_path(man.id))
+            dest_dir = os.path.dirname(path)
             os.makedirs(dest_dir, exist_ok=True)
-            path = os.path.join(dest_dir, "manifest.json")
             with open(path, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2)
             imported.append({"id": man.id, "name": man.name, "path": path})
@@ -1826,7 +1837,7 @@ async def admin_refresh_job(job_id: str):
             raise HTTPException(404, detail="Job not found")
         backend = (job.backend or settings.fax_backend).lower()
     # Only handle manifest-backed backends for now
-    mpath = os.path.join(os.getcwd(), "config", "providers", backend, "manifest.json")
+    mpath = _manifest_path(backend)
     if not (settings.feature_v3_plugins and os.path.exists(mpath)):
         raise HTTPException(400, detail="Refresh not supported for this backend")
     try:
@@ -2049,10 +2060,10 @@ async def run_diagnostics():
             prov_dir = _providers_dir()
             if os.path.isdir(prov_dir):
                 for pid in os.listdir(prov_dir):
-                    mpath = os.path.join(prov_dir, pid, "manifest.json")
-                    if not os.path.exists(mpath):
-                        continue
                     try:
+                        mpath = provider_manifest_path(pid)
+                        if not os.path.exists(mpath):
+                            continue
                         with open(mpath, "r", encoding="utf-8") as f:
                             mdata = json.load(f)
                         man = HttpManifest.from_dict(mdata)
@@ -2318,7 +2329,7 @@ async def send_fax(background: BackgroundTasks, to: str = Form(...), file: Uploa
     if not PHONE_RE.match(to):
         raise HTTPException(400, detail="'to' must be E.164 or digits only")
     job_id = uuid.uuid4().hex
-    manifest_path = os.path.join(os.getcwd(), "config", "providers", ob, "manifest.json")
+    manifest_path = _manifest_path(ob)
     use_manifest = settings.feature_v3_plugins and os.path.exists(manifest_path)
     # Built-in telephony backends require real TIFF even if a registry is absent.
     requires_tiff = not use_manifest and (
@@ -2830,7 +2841,7 @@ async def _send_via_freeswitch(job_id: str, to: str, tiff_path: str):
 async def _send_via_manifest(job_id: str, to: str, pdf_path: str):
     try:
         pid = settings.fax_backend
-        mpath = os.path.join(os.getcwd(), "config", "providers", pid, "manifest.json")
+        mpath = provider_manifest_path(pid)
         with open(mpath, "r", encoding="utf-8") as f:
             man = HttpManifest.from_dict(json.load(f))
 
@@ -3478,7 +3489,10 @@ def _installed_plugins() -> list[dict[str, Any]]:
         prov_dir = _providers_dir()
         if os.path.isdir(prov_dir):
             for pid in os.listdir(prov_dir):
-                mpath = os.path.join(prov_dir, pid, "manifest.json")
+                try:
+                    mpath = provider_manifest_path(pid)
+                except InvalidProviderPath:
+                    continue
                 if os.path.exists(mpath):
                     try:
                         with open(mpath, "r", encoding="utf-8") as f:
@@ -3583,7 +3597,7 @@ def get_plugin_config(plugin_id: str):
     if pid == "local":
         return {"enabled": settings.storage_backend == "local", "settings": {}}
     # Manifest providers: return minimal config presence
-    mpath = os.path.join(_providers_dir(), pid, "manifest.json")
+    mpath = _manifest_path(pid)
     if os.path.exists(mpath):
         return {
             "enabled": settings.fax_backend == pid,
@@ -3621,7 +3635,7 @@ def update_plugin_config(plugin_id: str, payload: UpdatePluginConfigIn):
         data["providers"]["storage"]["settings"] = payload.settings or data["providers"]["storage"].get("settings", {})
     else:
         # Accept unknown outbound plugin ids if a manifest exists
-        mpath = os.path.join(_providers_dir(), pid, "manifest.json")
+        mpath = _manifest_path(pid)
         if not os.path.exists(mpath):
             raise HTTPException(404, detail="Plugin not found")
         data.setdefault("providers", {}).setdefault("outbound", {})
@@ -3641,7 +3655,7 @@ def plugin_registry():
         return _plugins_disabled_response()
     # Try to load curated registry file; fallback to built-in list
     try:
-        reg_path = os.getenv("PLUGIN_REGISTRY_PATH", os.path.join(os.getcwd(), "config", "plugin_registry.json"))
+        reg_path = plugin_registry_path()
         if os.path.exists(reg_path):
             import json as _json
             with open(reg_path, "r", encoding="utf-8") as f:
