@@ -28,6 +28,7 @@ MAX_RASTER_TOTAL_PIXELS = 100_000_000
 MAX_PDF_STREAM_BYTES = 4 * 1024 * 1024
 MAX_TOTAL_PDF_STREAM_BYTES = 32 * 1024 * 1024
 GHOSTSCRIPT_TIMEOUT_SECONDS = 120
+SUPPORTED_TIFF_MODES = frozenset({"1", "L", "LA", "P", "RGB", "RGBA", "CMYK"})
 
 
 class DocumentConversionError(Exception):
@@ -246,6 +247,13 @@ def _tiff_frames(image):
             return
         if index >= MAX_DOCUMENT_PAGES:
             raise DocumentConversionError("TIFF exceeds supported page limits.")
+        if image.mode not in SUPPORTED_TIFF_MODES:
+            raise DocumentConversionError("TIFF pixel mode is unsupported.")
+        # Pillow can expose 16-bit RGB samples as mode RGB and discard their
+        # low bits while decoding. Check the original tag before loading pixels.
+        expected_depth = 1 if image.mode == "1" else 8
+        if any(depth != expected_depth for depth in image.tag_v2.get(258, (1,))):
+            raise DocumentConversionError("TIFF sample depth is unsupported.")
         width, height = image.size
         pixels = width * height
         total_pixels += pixels
@@ -256,7 +264,11 @@ def _tiff_frames(image):
 
 
 def tiff_to_pdf(tiff_path: str, pdf_path: str) -> Tuple[int, str]:
-    """Preserve TIFF frame order and pixels in lossless PDF image streams."""
+    """Preserve supported one/eight-bit TIFF frames in lossless PDF streams.
+
+    Accept 1, L, LA, RGB, RGBA, CMYK and eight-bit indexed P. Palettes are
+    explicitly expanded to RGB/RGBA; high-depth and other modes are rejected.
+    """
     _check_file_size(tiff_path)
     try:
         with warnings.catch_warnings():
@@ -273,6 +285,11 @@ def tiff_to_pdf(tiff_path: str, pdf_path: str) -> Tuple[int, str]:
                     width, height = frame.width * 72 / x_dpi, frame.height * 72 / y_dpi
                     if not (0 < width <= 14400 and 0 < height <= 14400):
                         raise ValueError("Unsupported page geometry")
+                    if frame.mode == "P":
+                        has_alpha = "transparency" in frame.info or (
+                            frame.palette is not None and frame.palette.mode == "RGBA"
+                        )
+                        frame = frame.convert("RGBA" if has_alpha else "RGB")
                     document.setPageSize((width, height))
                     document.drawImage(ImageReader(frame), 0, 0, width, height, mask="auto")
                     document.showPage()

@@ -175,6 +175,83 @@ def test_multipage_tiff_preserves_image_pixels_and_order(tmp_path):
     assert [list(page.images)[0].image.size for page in reader.pages] == [(20, 10), (20, 10)]
 
 
+@pytest.mark.parametrize("mode", ["I;16", "I;16L", "I;16B", "I", "F"])
+def test_high_depth_tiff_is_rejected_without_replacing_output(tmp_path, mode):
+    # ImageReader clips integers above 255 and quantizes float samples to RGB.
+    source = tmp_path / "high-depth.tiff"
+    image = Image.new(mode, (4, 1))
+    image.putdata([0.0, 0.25, 0.5, 1.0] if mode == "F" else [0, 1000, 32000, 65535])
+    image.save(source, format="TIFF")
+    output = tmp_path / "existing.pdf"
+    output.write_bytes(b"existing accepted document")
+
+    with pytest.raises(conversion.DocumentConversionError) as error:
+        conversion.tiff_to_pdf(str(source), str(output))
+
+    assert error.value.operational is False
+    assert str(tmp_path) not in str(error.value)
+    assert output.read_bytes() == b"existing accepted document"
+    assert sorted(path.name for path in tmp_path.iterdir()) == ["existing.pdf", "high-depth.tiff"]
+
+
+def test_high_depth_rgb_tiff_is_rejected_before_decoding(monkeypatch, tmp_path):
+    # A real 16-bit RGB TIFF appears as mode RGB before Pillow reduces its samples.
+    source = tmp_path / "rgb16.tiff"
+    tags = [
+        (256, 4, 1, 4), (257, 4, 1, 1), (258, 3, 3, 134),
+        (259, 3, 1, 1), (262, 3, 1, 2), (273, 4, 1, 140),
+        (277, 3, 1, 3), (278, 4, 1, 1), (279, 4, 1, 24), (284, 3, 1, 1),
+    ]
+    data = b"II" + struct.pack("<HIH", 42, 8, len(tags))
+    data += b"".join(struct.pack("<HHII", *tag) for tag in tags)
+    data += struct.pack("<I3H12H", 0, 16, 16, 16, 0, 1000, 32000, 65535, 32000, 1000, 1, 2, 3, 4, 5, 6)
+    source.write_bytes(data)
+    with Image.open(source) as image:
+        assert image.mode == "RGB"
+        assert image.tag_v2[258] == (16, 16, 16)
+    output = tmp_path / "existing.pdf"
+    output.write_bytes(b"existing accepted document")
+
+    def unexpected_decode(*args, **kwargs):
+        pytest.fail("Unsupported sample depth must fail before pixel decoding")
+
+    monkeypatch.setattr(TiffImagePlugin.TiffImageFile, "load", unexpected_decode)
+    with pytest.raises(conversion.DocumentConversionError) as error:
+        conversion.tiff_to_pdf(str(source), str(output))
+
+    assert error.value.operational is False
+    assert str(tmp_path) not in str(error.value)
+    assert output.read_bytes() == b"existing accepted document"
+    assert sorted(path.name for path in tmp_path.iterdir()) == ["existing.pdf", "rgb16.tiff"]
+
+
+@pytest.mark.parametrize("mode, samples, expected_mode, expected", [
+    ("1", [0, 255, 0, 255], "RGB", [(0, 0, 0), (255, 255, 255), (0, 0, 0), (255, 255, 255)]),
+    ("L", [0, 32, 128, 255], "L", [0, 32, 128, 255]),
+    ("RGB", [(10, 20, 30), (40, 50, 60), (70, 80, 90), (100, 110, 120)], "RGB", [(10, 20, 30), (40, 50, 60), (70, 80, 90), (100, 110, 120)]),
+    ("CMYK", [(16, 32, 64, 128)] * 4, "CMYK", [(16, 32, 64, 128)] * 4),
+    ("RGBA", [(10, 20, 30, 64)] * 4, "RGBA", [(10, 20, 30, 64)] * 4),
+    ("LA", [(128, 64)] * 4, "LA", [(128, 64)] * 4),
+    ("P", [0, 1, 2, 3], "RGB", [(10, 20, 30), (40, 50, 60), (70, 80, 90), (100, 110, 120)]),
+])
+def test_supported_tiff_modes_preserve_literal_pixel_samples(
+    tmp_path, mode, samples, expected_mode, expected
+):
+    source = tmp_path / "supported.tiff"
+    image = Image.new(mode, (4, 1))
+    image.putdata(samples)
+    if mode == "P":
+        image.putpalette([10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120] + [0] * 756)
+    image.save(source, format="TIFF")
+    output = tmp_path / "converted.pdf"
+
+    assert conversion.tiff_to_pdf(str(source), str(output)) == (1, str(output))
+
+    converted = list(PdfReader(output).pages[0].images)[0].image
+    assert converted.mode == expected_mode
+    assert [converted.getpixel((index, 0)) for index in range(4)] == expected
+
+
 @pytest.mark.parametrize("data", [b"TIFF_PLACEHOLDER", b"II*\x00truncated", b""])
 def test_corrupt_tiff_fails_without_output(tmp_path, data):
     source = tmp_path / "corrupt.tiff"
