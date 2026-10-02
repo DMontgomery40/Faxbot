@@ -610,3 +610,23 @@ def test_postgres_nonhistorical_comparison_and_constraint_semantics(database, al
         upgrade_schema(database)
     assert snapshot(database) == before
     assert schema_description(database) == definitions
+
+
+def test_postgres_custom_default_operator_class_is_not_historical(database):
+    if database.dialect.name != "postgresql":
+        pytest.skip("PostgreSQL operator classes")
+    load_history(database, "3a480391")
+    seed_history(database)
+    with database.begin() as conn:
+        conn.exec_driver_sql("CREATE FUNCTION fold_cmp(varchar,varchar) RETURNS integer LANGUAGE SQL IMMUTABLE STRICT AS $$ SELECT bttextcmp(lower($1),lower($2)) $$")
+        for operator, function in [("<", "fold_lt"), ("<=", "fold_le"), ("=", "fold_eq"), (">=", "fold_ge"), (">", "fold_gt")]:
+            conn.exec_driver_sql(f"CREATE FUNCTION {function}(varchar,varchar) RETURNS boolean LANGUAGE SQL IMMUTABLE STRICT AS $$ SELECT lower($1) {operator} lower($2) $$")
+            conn.exec_driver_sql(f"CREATE OPERATOR {operator} (LEFTARG=varchar, RIGHTARG=varchar, FUNCTION={function})")
+        conn.exec_driver_sql("CREATE OPERATOR CLASS casefold_ops DEFAULT FOR TYPE varchar USING btree AS OPERATOR 1 < (varchar,varchar), OPERATOR 2 <= (varchar,varchar), OPERATOR 3 = (varchar,varchar), OPERATOR 4 >= (varchar,varchar), OPERATOR 5 > (varchar,varchar), FUNCTION 1 fold_cmp(varchar,varchar)")
+        conn.exec_driver_sql("DROP INDEX ix_api_keys_key_id")
+        conn.exec_driver_sql("CREATE UNIQUE INDEX ix_api_keys_key_id ON api_keys (key_id casefold_ops)")
+    before, definitions = snapshot(database), schema_description(database)
+    with pytest.raises(SchemaUpgradeError):
+        upgrade_schema(database)
+    assert snapshot(database) == before
+    assert schema_description(database) == definitions

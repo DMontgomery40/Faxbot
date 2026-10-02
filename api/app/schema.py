@@ -170,7 +170,12 @@ def _validate_plain_indexes(connection, present):
                     SELECT 1 FROM generate_series(0, i.indnkeyatts - 1) AS pos
                     JOIN pg_opclass op ON op.oid=i.indclass[pos]
                     JOIN pg_attribute a ON a.attrelid=c.oid AND a.attnum=i.indkey[pos]
-                    WHERE NOT op.opcdefault OR i.indoption[pos] <> 0 OR i.indcollation[pos] <> a.attcollation
+                    -- All frozen core/version index keys are VARCHAR, whose
+                    -- historical btree class is pg_catalog.text_ops. A custom
+                    -- class may declare itself DEFAULT and change equality.
+                    WHERE NOT op.opcdefault OR op.opcnamespace <> 'pg_catalog'::regnamespace
+                        OR op.opcname <> 'text_ops'
+                        OR i.indoption[pos] <> 0 OR i.indcollation[pos] <> a.attcollation
                 )
             )
             UNION
