@@ -14,6 +14,9 @@ import stat
 from types import MappingProxyType
 from urllib.parse import urlparse
 
+import h11
+import httpx
+
 from .config_file import ConfigurationFileError, read_configuration_text
 from .config_profiles import ConfigurationDocument, ConfigurationRecordError
 
@@ -126,8 +129,14 @@ def _http_action(action_id: str, action: dict) -> None:
         if _HTTP_TOKEN.fullmatch(name) is None:
             raise ValueError
         _string(value, empty=True)
-        if "\r" in value or "\n" in value:
-            raise ValueError
+    try:
+        wire_headers = httpx.Headers(headers).raw
+        # Validate only literal value grammar; templates and framing remain data.
+        h11.Response(status_code=200, headers=[
+            (b"x-provider-header", value) for _, value in wire_headers
+        ])
+    except (UnicodeError, h11.LocalProtocolError):
+        raise ValueError from None
     body = action.get("body", {})
     _mapping(body)
     kind = body.get("kind", "none")

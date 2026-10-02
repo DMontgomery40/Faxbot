@@ -5,6 +5,8 @@ import json
 import os
 from pathlib import Path
 
+import h11
+import httpx
 import pytest
 
 
@@ -240,6 +242,59 @@ def test_known_action_fields_cannot_reach_runtime_with_malformed_shapes(tmp_path
     with pytest.raises(catalog_module().ProviderCatalogError) as failure:
         catalog_module().ProviderCatalog.load(base, tmp_path / "providers")
     assert "private" not in str(failure.value)
+
+
+@pytest.mark.parametrize("headers", [
+    {"Authorization": "Bearer résumé"},
+    {"Authorization": "Bearer \x00private-marker"},
+    {"Authorization": "Bearer \x0bprivate-marker"},
+    {"Authorization": " private-marker"},
+    {"Authorization": "private-marker\t"},
+], ids=["non_ascii", "nul", "vertical_tab", "leading_space", "trailing_tab"])
+def test_literal_headers_rejected_by_runtime_fail_during_catalog_load(tmp_path, headers):
+    # These literal headers fail before sending a request in the actual runtime.
+    with pytest.raises((UnicodeEncodeError, h11.LocalProtocolError)):
+        request = httpx.Request("POST", "https://synthetic.invalid/fax", headers=headers)
+        h11.Request(method=request.method, target=request.url.raw_path,
+                    headers=request.headers.raw)
+    base = write_json(tmp_path / "traits.json", {})
+    document = manifest()
+    document["actions"]["send_fax"]["headers"] = headers
+    write_json(tmp_path / "providers" / "installed" / "manifest.json", document)
+    with pytest.raises(catalog_module().ProviderCatalogError) as failure:
+        catalog_module().ProviderCatalog.load(base, tmp_path / "providers")
+    assert "private" not in str(failure.value)
+    assert str(tmp_path) not in str(failure.value)
+
+
+@pytest.mark.parametrize("value", [
+    "", "Bearer synthetic", "Bearer\tsynthetic", "Bearer {{creds.api_key}}",
+], ids=["empty", "ordinary", "internal_tab", "template"])
+def test_supported_literal_header_values_remain_captured_and_serializable(tmp_path, value):
+    base = write_json(tmp_path / "traits.json", {})
+    document = manifest()
+    document["actions"]["send_fax"]["headers"] = {"Authorization": value}
+    write_json(tmp_path / "providers" / "installed" / "manifest.json", document)
+    catalog = catalog_module().ProviderCatalog.load(base, tmp_path / "providers")
+    captured = catalog.get("installed").manifest.as_dict()
+    assert captured == document
+    request = httpx.Request("POST", "https://synthetic.invalid/fax",
+                            headers=captured["actions"]["send_fax"]["headers"])
+    h11.Request(method=request.method, target=request.url.raw_path,
+                headers=request.headers.raw)
+    assert request.headers["Authorization"] == value
+
+
+def test_framing_header_templates_remain_recipe_data_in_the_catalog(tmp_path):
+    base = write_json(tmp_path / "traits.json", {})
+    document = manifest()
+    document["actions"]["send_fax"]["headers"] = {
+        "Content-Length": "{{settings.content_length}}",
+        "X-Provider": "{{settings.provider_name}}",
+    }
+    write_json(tmp_path / "providers" / "installed" / "manifest.json", document)
+    catalog = catalog_module().ProviderCatalog.load(base, tmp_path / "providers")
+    assert catalog.get("installed").manifest.as_dict() == document
 
 
 @pytest.mark.parametrize("action", ["send_fax", "get_status", "cancel_fax"])
