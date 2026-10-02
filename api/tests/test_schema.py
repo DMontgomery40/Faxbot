@@ -525,3 +525,88 @@ def test_migrated_columns_match_current_orm_contract(database):
                 assert actual[column.name]["nullable"] == column.nullable
                 assert actual[column.name]["type"]._type_affinity == column.type._type_affinity
                 assert getattr(actual[column.name]["type"], "length", None) == getattr(column.type, "length", None)
+
+
+def test_fixed_width_character_type_is_not_historical_varchar(database):
+    load_history(database, "15f81951", lambda source: source.replace("backend VARCHAR(20)", "backend CHAR(20)"))
+    seed_history(database)
+    before, definitions = snapshot(database), schema_description(database)
+    with pytest.raises(SchemaUpgradeError):
+        upgrade_schema(database)
+    assert snapshot(database) == before
+    assert schema_description(database) == definitions
+
+
+@pytest.mark.parametrize("alteration", ["replace", "ignore", "commented_replace", "index_collation", "column_collation"])
+@pytest.mark.parametrize("stamped", [False, True])
+def test_sqlite_conflict_and_collation_changes_rejected(tmp_path, alteration, stamped):
+    engine = create_database_engine("sqlite:///" + str(tmp_path / "conflict.db"))
+    changes = {
+        "replace": ("PRIMARY KEY (id)", "PRIMARY KEY (id) ON CONFLICT REPLACE"),
+        "ignore": ("PRIMARY KEY (id)", "PRIMARY KEY (id) ON CONFLICT IGNORE"),
+        "commented_replace": ("PRIMARY KEY (id)", "PRIMARY KEY (id) ON /* misleading comment */ CONFLICT REPLACE"),
+        "index_collation": ("ON api_keys (key_id)", "ON api_keys (key_id COLLATE NOCASE)"),
+        "column_collation": ("file_name VARCHAR(255)", "file_name VARCHAR(255) COLLATE NOCASE"),
+    }
+    try:
+        load_history(engine, "dd8bd991" if stamped else "3a480391", lambda source: source.replace(*changes[alteration]))
+        seed_history(engine)
+        with engine.begin() as conn:
+            conn.exec_driver_sql("CREATE TABLE cascade_child (job_id VARCHAR(40) REFERENCES fax_jobs(id) ON DELETE CASCADE)")
+            conn.exec_driver_sql("INSERT INTO cascade_child VALUES ('fax_jobs-original')")
+            if stamped:
+                conn.exec_driver_sql("CREATE TABLE alembic_version (version_num VARCHAR(32) NOT NULL PRIMARY KEY)")
+                conn.execute(sa.text("INSERT INTO alembic_version VALUES (:revision)"), {"revision": HEAD})
+        before, definitions = snapshot(engine), schema_description(engine)
+        with pytest.raises(SchemaUpgradeError):
+            upgrade_schema(engine)
+        assert snapshot(engine) == before
+        assert schema_description(engine) == definitions
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.parametrize("stamped", [False, True])
+def test_postgres_failed_concurrent_unique_index_is_not_enforcement(database, stamped):
+    if database.dialect.name != "postgresql":
+        pytest.skip("PostgreSQL invalid concurrent indexes")
+    load_history(database, "3a480391")
+    seed_history(database)
+    if stamped:
+        upgrade_schema(database)
+    with database.begin() as conn:
+        conn.exec_driver_sql("DROP INDEX ix_api_keys_key_id")
+        conn.exec_driver_sql("INSERT INTO api_keys (id,key_id,key_hash,created_at) SELECT 'duplicate',key_id,key_hash,created_at FROM api_keys")
+    with database.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+        with pytest.raises(sa.exc.IntegrityError):
+            conn.exec_driver_sql("CREATE UNIQUE INDEX CONCURRENTLY ix_api_keys_key_id ON api_keys (key_id)")
+    before, definitions = snapshot(database), schema_description(database)
+    with pytest.raises(SchemaUpgradeError):
+        upgrade_schema(database)
+    assert snapshot(database) == before
+    assert schema_description(database) == definitions
+
+
+@pytest.mark.parametrize("alteration", ["index_collation", "column_collation", "deferred_unique", "operator_class", "casefold_index", "casefold_column", "timestamp_precision"])
+def test_postgres_nonhistorical_comparison_and_constraint_semantics(database, alteration):
+    if database.dialect.name != "postgresql":
+        pytest.skip("PostgreSQL index semantics")
+    changes = {
+        "index_collation": ("ON api_keys (key_id)", 'ON api_keys (key_id COLLATE "C")'),
+        "column_collation": ("file_name VARCHAR(255)", 'file_name VARCHAR(255) COLLATE "C"'),
+        "deferred_unique": ("UNIQUE (provider_sid, event_type)", "UNIQUE (provider_sid, event_type) DEFERRABLE INITIALLY DEFERRED"),
+        "operator_class": ("ON api_keys (key_id)", "ON api_keys (key_id text_pattern_ops)"),
+        "casefold_index": ("ON api_keys (key_id)", "ON api_keys (key_id COLLATE casefold_identity)"),
+        "casefold_column": ("key_id VARCHAR(32)", "key_id VARCHAR(32) COLLATE casefold_identity"),
+        "timestamp_precision": ("TIMESTAMP WITHOUT TIME ZONE", "TIMESTAMP(3) WITHOUT TIME ZONE"),
+    }
+    if alteration.startswith("casefold"):
+        with database.begin() as conn:
+            conn.exec_driver_sql("CREATE COLLATION casefold_identity (provider=icu, locale='und-u-ks-level2', deterministic=false)")
+    load_history(database, "3a480391", lambda source: source.replace(*changes[alteration]))
+    seed_history(database)
+    before, definitions = snapshot(database), schema_description(database)
+    with pytest.raises(SchemaUpgradeError):
+        upgrade_schema(database)
+    assert snapshot(database) == before
+    assert schema_description(database) == definitions

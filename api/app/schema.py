@@ -1,6 +1,7 @@
 """One locked, transactional installation/upgrade path for startup and Alembic."""
 from contextlib import contextmanager
 from pathlib import Path
+import re
 
 import sqlalchemy as sa
 from sqlalchemy.exc import SQLAlchemyError
@@ -127,30 +128,65 @@ def _validate_no_write_hooks(connection, present):
 
 def _same_type(actual, expected):
     if isinstance(expected, sa.Text):
-        return isinstance(actual, sa.Text)
+        return type(actual) in {sa.Text, sa.TEXT}
     if isinstance(expected, sa.String):
-        return isinstance(actual, sa.String) and not isinstance(actual, sa.Text) and actual.length == expected.length
+        return type(actual) in {sa.String, sa.VARCHAR} and actual.length == expected.length
     if isinstance(expected, sa.DateTime):
-        return isinstance(actual, sa.DateTime) and not actual.timezone
+        return (isinstance(actual, sa.DateTime) and not actual.timezone
+                and getattr(actual, "precision", None) in {None, 6})
     return type(actual) in {sa.Integer, sa.INTEGER}
 
 
 def _validate_plain_indexes(connection, present):
     """Check catalogs before reflection, which skips some expression indexes."""
     if connection.dialect.name == "sqlite":
+        # PRAGMA reflection omits conflict algorithms and non-indexed column
+        # collations. Ignore comments/quoted identifiers, inspect SQL keywords.
+        for name, definition in connection.exec_driver_sql("SELECT name,sql FROM sqlite_master WHERE type='table'"):
+            if name not in present:
+                continue
+            tokens = _sqlite_keywords(definition or "")
+            if "COLLATE" in tokens or any(pair == ("ON", "CONFLICT") for pair in zip(tokens, tokens[1:])):
+                _reject("custom SQLite conflict policy or collation in core schema")
         for name in present:
             for index in connection.exec_driver_sql(f"PRAGMA index_list('{name}')").mappings():
                 escaped = index["name"].replace("'", "''")
-                if index["partial"] or any(row[1] == -2 for row in connection.exec_driver_sql(f"PRAGMA index_info('{escaped}')")):
+                fields = connection.exec_driver_sql(f"PRAGMA index_xinfo('{escaped}')").all()
+                if index["partial"] or any(row[1] == -2 for row in fields):
                     _reject(f"partial or expression index in {name}")
+                if any(row[5] and (row[3] or row[4] != "BINARY") for row in fields):
+                    _reject(f"custom index ordering or collation in {name}")
     else:
         names = connection.execute(sa.text("""
             SELECT c.relname FROM pg_index i JOIN pg_class c ON c.oid=i.indrelid
             JOIN pg_namespace n ON n.oid=c.relnamespace
-            WHERE n.nspname=current_schema() AND (i.indexprs IS NOT NULL OR i.indpred IS NOT NULL)
+            JOIN pg_class idx ON idx.oid=i.indexrelid JOIN pg_am am ON am.oid=idx.relam
+            WHERE n.nspname=current_schema() AND (
+                i.indexprs IS NOT NULL OR i.indpred IS NOT NULL
+                OR NOT i.indisvalid OR NOT i.indisready OR NOT i.indislive
+                OR i.indisexclusion OR NOT i.indimmediate OR i.indnullsnotdistinct
+                OR am.amname <> 'btree' OR i.indnatts <> i.indnkeyatts
+                OR EXISTS (
+                    SELECT 1 FROM generate_series(0, i.indnkeyatts - 1) AS pos
+                    JOIN pg_opclass op ON op.oid=i.indclass[pos]
+                    JOIN pg_attribute a ON a.attrelid=c.oid AND a.attnum=i.indkey[pos]
+                    WHERE NOT op.opcdefault OR i.indoption[pos] <> 0 OR i.indcollation[pos] <> a.attcollation
+                )
+            )
+            UNION
+            SELECT c.relname FROM pg_attribute a JOIN pg_class c ON c.oid=a.attrelid
+            JOIN pg_namespace n ON n.oid=c.relnamespace JOIN pg_type t ON t.oid=a.atttypid
+            WHERE n.nspname=current_schema() AND a.attnum > 0 AND NOT a.attisdropped
+                AND a.attcollation <> t.typcollation
         """)).scalars()
         if set(names) & present:
-            _reject("partial or expression index in core schema")
+            _reject("invalid index, nonhistorical index semantics or collation in core schema")
+
+
+def _sqlite_keywords(definition):
+    ignored = r"--[^\n]*(?:\n|$)|/\*.*?\*/|'(?:''|[^'])*'|\"(?:\"\"|[^\"])*\"|`(?:``|[^`])*`|\[[^\]]*\]"
+    unquoted = re.sub(ignored, " ", definition, flags=re.DOTALL)
+    return re.findall(r"[A-Za-z_]+", unquoted.upper())
 
 
 def _allowed_default(table, column, default):
