@@ -61,3 +61,12 @@ Wayfinder is available for unresolved large decisions; do not make a planning-on
 - Evidence: [document-integrity verification](evidence/2026-10-02-document-integrity.md).
 - Actual production Dockerfile build uncovered a release blocker: separate MCP installation upgrades Starlette to 1.7.0 while FastAPI 0.112.2 requires <0.39. `pip check` and API import fail in the built container. Next: resolve a supported common API/MCP dependency set, supported lifecycle and actual container startup, then versioned schema/configuration, durable jobs and complete RBAC.
 - This is a completed subsystem, not a deployed or finished product. The full goal remains active.
+
+## Runtime foundation complete; schema upgrades next
+
+- Runtime source/image implementation a8ca0ac9 and CI-only follow-up c17e10c9 are independently approved, with no Critical/Important findings.
+- Fresh macOS and real Linux image suites:125 passed each, zero warnings. Both actual Docker images start, pass package checks and shut down cleanly. Authenticated document contents, real TIFF output, installed Python package entrypoints and MCP HTTP/SSE initialization are verified. Primary separately exercised MCP send/status through the API and downloaded the preserved original text.
+- Evidence: [runtime foundation verification](evidence/2026-10-02-runtime-foundation.md). Hosted CI/deployment and real fax delivery remain separate gates.
+- Minor for provider/diagnostics and final review: add safe categories to AMI reconnect warning messages; no credential/error-content leakage. Existing UI audit findings remain mandatory UI/dependency work.
+- Primary completed schema architecture and independent design review. Four historical shapes create successfully as test fixtures on both SQLite and actual PostgreSQL16.15. New upgrade regressions reproduce three failures at c17e10c9: cwd-dependent paths (root/unrelated folder) and duplicate index creation (api folder). This is RED evidence, not a completed migration.
+- Next: implement the reviewed additive versioned migration path, preserving historical values, auxiliary references and files. Then provider configuration, durable delivery and full RBAC/client/docs/release gates proceed under the same active goal.

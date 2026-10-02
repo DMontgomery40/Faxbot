@@ -1,6 +1,6 @@
 # Faxbot finished-product refresh
 
-Status: approved by the user on October 2 with complete RBAC, permitted UI improvements, and existing TestFlight compatibility. The user explicitly authorized execution with the agreed primary/agent split. Document integrity is implemented and independently approved at 6a0afbba. Runtime dependencies/container startup are the next required foundation repair.
+Status: approved by the user on October 2 with complete RBAC, permitted UI improvements, and existing TestFlight compatibility. The user explicitly authorized execution with the agreed primary/agent split. Document integrity is implemented and independently approved at 6a0afbba. Runtime dependencies/container startup are independently approved at c17e10c9 with actual image proof. Versioned database upgrades are the next foundation repair.
 
 ## Outcome and constraints
 
