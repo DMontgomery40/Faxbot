@@ -181,7 +181,7 @@ class ConfigurationValues(BaseModel):
                 continue
             alias = field.validation_alias
             key = alias.choices[0] if isinstance(alias, AliasChoices) else alias
-            if (field.json_schema_extra or {}).get("secret") and isinstance(value, str) and re.fullmatch(r"\*{3,}.{0,4}", value):
+            if (field.json_schema_extra or {}).get("secret") and isinstance(value, str) and re.fullmatch(r"\*+[\s\S]{0,4}", value):
                 raise ConfigurationValueError([{"field": key, "reason": "masked_secret"}])
             if not isinstance(value, (str, int, bool)):
                 raise ConfigurationValueError([{"field": key, "reason": "invalid_type"}])

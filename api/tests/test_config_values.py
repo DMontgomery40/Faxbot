@@ -150,3 +150,13 @@ def test_unknown_provider_selection_cannot_fall_back_to_legacy_or_schema_metadat
             unknown.validate_provider_selection(registry)
         assert field in {item['field'] for item in error.value.issues}
     assert known.effective_outbound == 'sip'
+
+
+def test_masks_returned_for_short_or_newline_ending_secrets_cannot_be_saved_as_credentials():
+    import pytest
+    from app.config_values import ConfigurationValueError
+    current = ConfigurationValues.from_environment({'PHAXIO_API_SECRET': 'synthetic-original'})
+    for mask in ('*2345', '**3456', '***', '***\nabc', '********last'):
+        with pytest.raises(ConfigurationValueError):
+            current.with_patch({'phaxio_api_secret': mask})
+    assert current.phaxio_api_secret == 'synthetic-original'
