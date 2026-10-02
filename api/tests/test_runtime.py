@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import socket
 import signal
+import struct
 import subprocess
 import sys
 
@@ -40,7 +41,8 @@ async def test_api_lifespan_stops_cleanup_before_reentering(monkeypatch):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("reject_first_login", [False, True])
-async def test_ami_login_reconnect_and_shutdown_use_owned_connections(monkeypatch, reject_first_login):
+@pytest.mark.parametrize("reset_on_shutdown", [False, True])
+async def test_ami_login_reconnect_and_shutdown_use_owned_connections(monkeypatch, reject_first_login, reset_on_shutdown):
     """Login cannot recurse into connect; reconnect and sockets must stop on close."""
     logins = asyncio.Queue()
     disconnected = asyncio.Queue()
@@ -57,9 +59,15 @@ async def test_ami_login_reconnect_and_shutdown_use_owned_connections(monkeypatc
                          b"Response: Success\r\nMessage: Authentication accepted\r\n\r\n")
             await writer.drain()
             await reader.read()
+        except ConnectionError:
+            # An abortive TCP close is still a completed peer disconnection.
+            pass
         finally:
             writer.close()
-            await writer.wait_closed()
+            try:
+                await writer.wait_closed()
+            except ConnectionError:
+                pass
             disconnected.put_nowait(True)
             peers.discard(asyncio.current_task())
 
@@ -85,6 +93,10 @@ async def test_ami_login_reconnect_and_shutdown_use_owned_connections(monkeypatc
         connections[-1].close()
         await connections[-1].wait_closed()
         assert await asyncio.wait_for(logins.get(), 3) == expected
+        if reset_on_shutdown:
+            client.writer.get_extra_info("socket").setsockopt(
+                socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0)
+            )
         await client.close()
         assert not client._connected.is_set()
         assert client.writer is None
