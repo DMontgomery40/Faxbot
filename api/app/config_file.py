@@ -150,18 +150,17 @@ def format_environment(values: Mapping[str, str]) -> str:
     return text
 
 
-def read_environment(
+def read_configuration_text(
     path: str | Path,
     *,
-    allowed_keys: Collection[str],
-    missing_ok: bool = True,
-) -> dict[str, str]:
-    """Read a regular artifact, allowing only a truly absent optional file."""
+    missing_ok: bool = False,
+) -> str | None:
+    """Read bounded UTF-8 data; only a truly absent optional file returns None."""
     try:
         source_stat = Path(path).lstat()
     except FileNotFoundError:
         if missing_ok:
-            return {}
+            return None
         raise ConfigurationFileError("Configuration artifact is missing.") from None
     except (OSError, ValueError):
         raise ConfigurationFileError("Cannot read configuration artifact.") from None
@@ -193,7 +192,18 @@ def read_environment(
         text = payload.decode("utf-8")
     except UnicodeDecodeError:
         raise ConfigurationFileError("Configuration artifact is not valid UTF-8.") from None
-    return parse_environment(text, allowed_keys=allowed_keys)
+    return text
+
+
+def read_environment(
+    path: str | Path,
+    *,
+    allowed_keys: Collection[str],
+    missing_ok: bool = True,
+) -> dict[str, str]:
+    """Read a regular artifact and parse only caller-approved literal keys."""
+    text = read_configuration_text(path, missing_ok=missing_ok)
+    return {} if text is None else parse_environment(text, allowed_keys=allowed_keys)
 
 
 def _sync_directory(directory: Path) -> None:
