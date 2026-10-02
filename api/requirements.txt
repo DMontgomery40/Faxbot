@@ -20,3 +20,4 @@ boto3==1.34.162
 psycopg2-binary==2.9.9
 websockets==17.1
 pexpect==4.9.0
+cryptography==50.0.2
