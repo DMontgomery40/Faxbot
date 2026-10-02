@@ -2,7 +2,7 @@
 
 ## Goal
 
-Completed and verified product by October 7, 2026, 10:00 AM Mountain. Preserve the UI. No demo-plus-backlog interpretation. Preserve Docs Autopilot / OpenAPI / Redocly / MkDocs / Mike and make updates run on every main commit as requested.
+Completed and verified product by October 7, 2026, 10:00 AM Mountain. Keep the familiar UI as a starting point; upgrades are permitted. Complete RBAC is required. Preserve compatibility with the existing TestFlight iOS app. No demo-plus-backlog interpretation. Preserve Docs Autopilot / OpenAPI / Redocly / MkDocs / Mike and make updates run on every main commit as requested.
 
 ## Execution
 
@@ -23,9 +23,9 @@ Completed and verified product by October 7, 2026, 10:00 AM Mountain. Preserve t
 5. Installed only the additional Matt Pocock workflow skills needed for evaluation/execution: wayfinder, implement-spec, to-spec, to-tickets, implement, tdd. Source pinned to mattpocock/skills commit d81f3a183412e71a5b1e84ca21bc1a35eea03a60; preexisting skills preserved.
 6. Two Sol 6.1 xhigh read-only inventory agents mapped contracts and deployment/docs. Their completed reports will be linked alongside this file.
 
-## Pending design review
+## Design review and next implementation plan
 
-`../superpowers/specs/2026-10-02-faxbot-refresh-design.md` is a proposed concrete design, opened to the user. An asynchronous question requests written-design approval, especially dedicated self-hosted deployment, retained workflows, and test interfaces. No answer has been received at the time of this entry. Do not assume elapsed time equals approval.
+`../superpowers/specs/2026-10-02-faxbot-refresh-design.md` is a proposed concrete design, opened to the user. An asynchronous question requests written-design approval, especially dedicated self-hosted deployment, retained workflows, and test interfaces. User replied with three clarifications: RBAC must be finished, UI upgrades are welcome (the prior UI is liked but not frozen), and the iOS app exists in TestFlight and is fine-ish. Those changes are incorporated in the written design. No deployment-model change was requested. A concrete first-slice implementation plan remains to be reviewed.
 
 Once reviewed, create a concrete task plan/graph, preserve the user's selected hybrid primary/subagent execution method, and begin the first complete document-integrity slice. Do not redispatch completed inventory work after compaction.
 

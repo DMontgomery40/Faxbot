@@ -1,12 +1,12 @@
 # Faxbot finished-product refresh
 
-Status: proposed written design for review; implementation has not started.
+Status: revised after user review on October 2. User added complete RBAC, permitted UI improvements, and confirmed the existing TestFlight app. Implementation has not started.
 
 ## Outcome and constraints
 
-Deliver a completed, verified Faxbot product for the October 7, 2026, 10:00 AM America/Denver handoff meeting. Preserve the existing Admin Console visual design and interaction model. Replace backend internals as necessary to make the existing product dependable and transferable. A demo, passing unit tests, or a backlog of known required repairs does not constitute delivery. Do not remove an existing feature or silently downgrade it to satisfy the deadline.
+Deliver a completed, verified Faxbot product for the October 7, 2026, 10:00 AM America/Denver handoff meeting. Retain the familiar Admin Console design as a starting point; the user explicitly permits UI upgrades where useful. Replace backend internals as necessary to make the existing product dependable and transferable. A demo, passing unit tests, or a backlog of known required repairs does not constitute delivery. Do not remove an existing feature or silently downgrade it to satisfy the deadline.
 
-The existing product is self-hostable fax automation. The recommended deployment contract remains a dedicated installation per operating organization, with scoped operator/integration keys. Supporting independent companies in one shared installation would require an explicit tenant model and is a separate product decision; do not claim that existing global scopes provide tenant isolation.
+The existing product is self-hostable fax automation. The recommended deployment contract remains a dedicated installation per operating organization, with complete role-based access control (RBAC) for users and integrations, including scoped document access. Supporting independent companies in one shared installation would require an explicit tenant model and is a separate product decision; do not claim that existing global scopes provide tenant isolation.
 
 The user requested GPT-6.1 Sol xhigh subagents for bounded work, with the primary agent retaining architecture, integration, and decisions requiring accumulated context. Subagents receive complete task briefs, relevant decisions, expected interfaces, test instructions, and evidence pointers. Use independent review after each complete slice. Never treat a subagent's completion claim as integration or release proof.
 
@@ -45,6 +45,10 @@ A patch-only approach is smaller but leaves recovery, configuration, and provide
 19. As a maintainer, I can regenerate code-derived reference material and instructional docs through Docs Autopilot, OpenAPI/Redocly, MkDocs and Mike.
 20. As a maintainer, each main commit triggers the intended documentation update and versioned publication, with visible failures rather than swallowed errors.
 21. As the recipient, I can reproduce installation and verification without undocumented knowledge from the current owner.
+22. As an administrator, I can manage users, groups, role assignments and permissions through working UI and backend flows.
+23. As an administrator, I can grant only the actions and document/mailbox access a user or integration needs, and verify that direct HTTP/WebSocket calls enforce the same restrictions as the UI.
+24. As an administrator, disabling a user or changing their role takes effect for active sessions and delegated keys, with audit evidence.
+25. As a mobile user, my existing TestFlight app can connect, pair where supported, send, inspect status and receive documents without being forced into an unrelated redesign.
 
 ## Implementation decisions
 
@@ -72,13 +76,17 @@ Do not blindly repeat an externally effective POST after an ambiguous failure. U
 
 One validated provider selection supplies dispatch, traits, inbound verification, diagnostics, and historical job lookup. Built-in and manifest adapters obey the same capability and error contracts. No unknown provider may fall through to SIP. Credential rotation invalidates cached adapters; reject or safely sequence configuration changes that would orphan active attempts. Configuration activation and persistence report failures clearly. Replace best-effort schema mutation with explicit, tested migrations and an upgrade path.
 
-### Access and operator controls
+### Complete RBAC and operator controls
+
+RBAC is mandatory release functionality, not future work or UI-only feature gating. Reconcile the identity and hierarchy work on historical branches; preserve useful concepts, replace scaffolding and unsafe session/authorization behavior. Model authenticated users and integration principals, roles composed of permissions, group membership and resource grants for document/mailbox access. Provide complete admin management flows, documented built-in roles and least-privilege defaults. Test role assignment changes, group/resource restrictions, delegation limits and protection against privilege escalation. Do not infer authority from arbitrary user-editable traits or possession of a generic key-management scope.
+
+Use a single server-side policy decision for every protected operation, including direct HTTP calls, WebSocket sessions, SDK/MCP calls and mobile requests. UI visibility follows effective permissions but is never the enforcement mechanism. Persist sessions or make their lifecycle explicitly safe across worker/restart boundaries; disablement and revocation take effect promptly. Role and permission changes are auditable. Administrative host-shell access is a separately privileged operation. Legacy keys have an explicit migration/compatibility policy that cannot silently widen privileges.
 
 Keep the dedicated-installation trust model explicit. Authentication is required in deployable production configuration; development/test behavior is explicit. Centralize authorization for fax actions, document access, key management, administrative settings and terminal operations. Distinguish host-shell permission from ordinary document or key-management permissions. Protect WebSocket origin/authentication and avoid credentials in URLs where clients permit safer exchange. Signed or tokenized document access has bounded scope and expiry. Test revocation, denied access, token expiry, and use after configuration changes.
 
 ### Clients and operational behavior
 
-Repair existing SDK, MCP, Electron and mobile contract mismatches, then verify their supported workflows. Restore branch-only sources in a deliberate layout if needed. Preserve the Admin Console design; change only what is necessary to make states, errors, capabilities and controls truthful. Tunnel/pairing behavior must actually implement its promised behavior, with explicit configuration and restricted privileges. Never equate a generated code or label with a functioning tunnel.
+Repair existing SDK, MCP, Electron and mobile contract mismatches, then verify their supported workflows. Restore branch-only sources in a deliberate layout if needed. Use the familiar Admin Console as a baseline and improve its usability, information hierarchy and RBAC controls as needed; do not spend the deadline on an unrelated visual rebrand. Tunnel/pairing behavior must actually implement its promised behavior, with explicit configuration and restricted privileges. Never equate a generated code or label with a functioning tunnel.
 
 ### Documentation automation
 
@@ -100,6 +108,7 @@ Use one failing behavior test followed by its implementation, with independent r
 ## Completion gates
 
 - Every retained capability in the reconciled product matrix has an implementation owner, a passing verification method, and recorded evidence.
+- Complete RBAC management and enforcement is demonstrated for users, groups, roles, sessions, integration keys and document/mailbox resources, including denied direct calls and effective revocation.
 - No known content-loss, duplicate-submission, lost-accepted-job, incorrect-provider, unauthorized-document-access, or false-success defect remains.
 - Clean install and upgrade from a representative existing database succeed; backup and restore are demonstrated.
 - Required regression tests, builds, integration checks and independent review pass against the exact release revision.
@@ -111,7 +120,7 @@ Use one failing behavior test followed by its implementation, with independent r
 
 ## Out of scope
 
-Changing the UI's visual identity, inventing unrelated billing/CRM features, adding a new multi-tenant SaaS business model without a user decision, public outreach to prospects, legal/compliance certification claims, or replacing the language/framework solely for fashion. These exclusions do not exclude repairs needed for the existing product to function.
+An unrelated visual rebrand, inventing unrelated billing/CRM features, adding a new multi-tenant SaaS business model without a user decision, public outreach to prospects, legal/compliance certification claims, or replacing the language/framework solely for fashion. These exclusions do not exclude repairs needed for the existing product to function.
 
 ## Execution and continuity
 
