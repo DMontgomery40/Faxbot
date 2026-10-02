@@ -1,4 +1,5 @@
 from fastapi.testclient import TestClient  # type: ignore
+from PIL import Image
 from api.app.main import app
 
 
@@ -10,9 +11,9 @@ def test_internal_asterisk_inbound_flow(monkeypatch, tmp_path):
     monkeypatch.setenv("REQUIRE_API_KEY", "true")
     monkeypatch.setenv("API_KEY", "bootstrap_admin_only")
 
-    # Create a dummy tiff file
+    # Use a real bounded TIFF that the converter can validate and preserve.
     tiff = tmp_path / "in.tiff"
-    tiff.write_bytes(b"TIFF_PLACEHOLDER")
+    Image.new("1", (20, 10), 1).save(tiff, format="TIFF")
 
     with TestClient(app) as client:
         # Post internal event
@@ -52,4 +53,3 @@ def test_internal_asterisk_inbound_flow(monkeypatch, tmp_path):
         r5 = client.get(f"/inbound/{inbound_id}/pdf", headers={"X-API-Key": token})
         assert r5.status_code == 200
         assert r5.headers.get("content-type", "").startswith("application/pdf")
-
