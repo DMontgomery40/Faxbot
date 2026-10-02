@@ -127,6 +127,17 @@ def _validate_no_write_hooks(connection, present):
         """)).scalars()
         if set(hooks) & present:
             _reject("user triggers or rewrite rules on core tables are not supported")
+        # SQLAlchemy's FK reflection omits convalidated. A matching NOT VALID
+        # constraint can hide preexisting orphan bindings and is not equivalent
+        # to the integrity contract of the migration-created schema.
+        invalid = connection.execute(sa.text("""
+            SELECT c.relname FROM pg_constraint k
+            JOIN pg_class c ON c.oid=k.conrelid
+            JOIN pg_namespace n ON n.oid=c.relnamespace
+            WHERE n.nspname=current_schema() AND NOT k.convalidated
+        """)).scalars()
+        if set(invalid) & present:
+            _reject("unvalidated constraints in core schema")
 
 
 def _same_type(actual, expected):

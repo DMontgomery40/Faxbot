@@ -112,3 +112,19 @@ def test_binding_cannot_reference_missing_profile_or_delete_a_referenced_profile
         with database.begin() as connection:
             connection.exec_driver_sql("DELETE FROM provider_profiles WHERE id='profile'")
     assert snapshot(database)['fax_job_bindings'] == [{'id': 'job', 'revision_id': 'revision', 'profile_id': 'profile'}]
+
+
+def test_unvalidated_postgres_foreign_key_is_refused(database):
+    if database.dialect.name != 'postgresql':
+        pytest.skip('PostgreSQL constraint validation metadata')
+    from api.app.schema import SchemaUpgradeError
+    upgrade_schema(database)
+    with database.begin() as connection:
+        constraint = next(item for item in sa.inspect(connection).get_foreign_keys('fax_job_bindings')
+                          if item['constrained_columns'] == ['profile_id'])
+        quoted = connection.dialect.identifier_preparer.quote(constraint['name'])
+        connection.exec_driver_sql(f'ALTER TABLE fax_job_bindings DROP CONSTRAINT {quoted}')
+        connection.exec_driver_sql(f'''ALTER TABLE fax_job_bindings ADD CONSTRAINT {quoted}
+            FOREIGN KEY (profile_id) REFERENCES provider_profiles(id) ON DELETE RESTRICT NOT VALID''')
+    with pytest.raises(SchemaUpgradeError):
+        upgrade_schema(database)
