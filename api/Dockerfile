@@ -26,6 +26,8 @@ RUN pip install --no-cache-dir -r /app/api/requirements.txt -r /app/python_mcp/r
     && python -m pip check
 
 COPY api/app /app/app
+COPY api/alembic /app/alembic
+COPY api/alembic.ini /app/alembic.ini
 
 # Copy provider traits and any provider manifests
 COPY config /app/config

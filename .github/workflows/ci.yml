@@ -9,6 +9,20 @@ on:
 jobs:
   test-api:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: faxbot_test
+          POSTGRES_PASSWORD: faxbot_ci_synthetic
+          POSTGRES_DB: faxbot_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U faxbot_test -d faxbot_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - name: Set up Python
@@ -30,6 +44,7 @@ jobs:
           FAX_DISABLED: 'true'
           FAX_DATA_DIR: './faxdata'
           DATABASE_URL: 'sqlite:///./test_faxbot_ci.db'
+          FAXBOT_SCHEMA_TEST_POSTGRES_URL: 'postgresql+psycopg2://faxbot_test:faxbot_ci_synthetic@127.0.0.1:5432/faxbot_test'
         working-directory: api
         run: |
           mkdir -p faxdata

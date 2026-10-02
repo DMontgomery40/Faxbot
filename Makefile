@@ -25,6 +25,10 @@ test:
 alembic-upgrade:
 	DATABASE_URL=$${DATABASE_URL:-sqlite:///./faxbot.db} alembic -c api/alembic.ini upgrade head
 
+test-schema:
+	@test -n "$$FAXBOT_SCHEMA_TEST_POSTGRES_URL" || (echo "Set FAXBOT_SCHEMA_TEST_POSTGRES_URL to a dedicated disposable PostgreSQL test database"; exit 1)
+	python -m pytest api/tests/test_schema.py -q
+
 alembic-downgrade:
 	DATABASE_URL=$${DATABASE_URL:-sqlite:///./faxbot.db} alembic -c api/alembic.ini downgrade -1
 
