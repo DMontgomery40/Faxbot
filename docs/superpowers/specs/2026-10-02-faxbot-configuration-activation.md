@@ -1,6 +1,6 @@
 # Faxbot configuration and provider activation
 
-Status: selected primary implementation design, independently challenged and clarified, under the approved whole-product refresh. The client contracts were inspected at dcd4c442. A separate bounded path repair is in progress. This document records the selected design; it is not a claim that these changes are implemented.
+Status: selected primary implementation design, independently challenged and clarified, under the approved whole-product refresh. The client contracts were inspected at dcd4c442. The bounded path repair is independently approved and image-verified at48c9ff96. This document records the selected design; it is not a claim that these changes are implemented.
 
 ## Outcome
 

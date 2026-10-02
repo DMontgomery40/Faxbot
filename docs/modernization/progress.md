@@ -89,3 +89,9 @@ Wayfinder is available for unresolved large decisions; do not make a planning-on
 - An isolated baseline probe demonstrates current full export drops hybrid Sinch/SignalWire and inactive Documo credentials, persisted parsing mishandles escaped newlines and mutates unrelated process environment. These are the values/persistence regression targets.
 - Primary has begun the typed immutable values model/tests; a bounded Sol6.1xhigh worker owns only the literal environment-file codec and its tests. These new modules are not yet integrated or claimed complete. Current sole primary-owned integration files are `config_values.py`, `test_config_values.py`, then configuration/main wiring; codec worker owns only `config_file.py` and `test_config_file.py`.
 - Goal remains active. Full RBAC, workers, provider/profile integration, retained clients, generated docs, deployment and real controlled fax proof remain required release gates.
+
+### Configuration value dependency reviewed
+
+- Pure immutable values model is independently approved through `1f5c1f32` (initial `2caa819c`). It preserves79 existing fields/defaults and adds5 previously bypassed bootstrap/endpoint fields. It handles complete hybrid/inactive exports, aliases, inherited selectors/Sinch credentials, explicit empty/null/false/zero patches and safe validation errors. Seven focused behavior tests pass.
+- Review found a short-secret/newline mask gap; reproduced and fixed before approval. Reviewer additionally rejected253 existing-helper mask examples across five secret fields, preserving the original frame and environment. Exact review is in configuration scratch `values-review.md`.
+- This is an approved dependency, not active runtime behavior yet. The file codec and canonical DB/profile integration are underway; legacy settings callers remain to be replaced as one coherent activation path.
