@@ -28,8 +28,8 @@ class FaxJob(Base):  # type: ignore
     status = Column(String(32), index=True, nullable=False, default="queued")
     error = Column(Text, nullable=True)
     pages = Column(Integer, nullable=True)
-    backend = Column(String(20), nullable=False, default="sip")  # "sip" or cloud provider key
-    outbound_backend = Column(String(20), nullable=True)  # effective outbound backend (hybrid)
+    backend = Column(String(255).with_variant(String(20), "sqlite"), nullable=False, default="sip")  # "sip" or cloud provider key
+    outbound_backend = Column(String(255).with_variant(String(20), "sqlite"), nullable=True)  # effective outbound backend (hybrid)
     provider_sid = Column(String(100), nullable=True)  # Cloud provider fax ID
     pdf_url = Column(String(512), nullable=True)  # Public URL for PDF (for cloud backend)
     pdf_token = Column(String(128), nullable=True)  # Secure token for PDF fetch
@@ -59,8 +59,8 @@ class InboundFax(Base):  # type: ignore
     from_number = Column(String(64), index=True, nullable=True)
     to_number = Column(String(64), index=True, nullable=True)
     status = Column(String(32), index=True, nullable=False, default="received")
-    backend = Column(String(20), nullable=False)
-    inbound_backend = Column(String(20), nullable=True)  # effective inbound backend (hybrid)
+    backend = Column(String(255).with_variant(String(20), "sqlite"), nullable=False)
+    inbound_backend = Column(String(255).with_variant(String(20), "sqlite"), nullable=True)  # effective inbound backend (hybrid)
     provider_sid = Column(String(100), nullable=True)
     pages = Column(Integer, nullable=True)
     size_bytes = Column(Integer, nullable=True)

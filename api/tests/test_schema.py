@@ -524,7 +524,7 @@ def test_migrated_columns_match_current_orm_contract(database):
             for column in table.columns:
                 assert actual[column.name]["nullable"] == column.nullable
                 assert actual[column.name]["type"]._type_affinity == column.type._type_affinity
-                assert getattr(actual[column.name]["type"], "length", None) == getattr(column.type, "length", None)
+                assert getattr(actual[column.name]["type"], "length", None) == getattr(column.type.dialect_impl(database.dialect), "length", None)
 
 
 def test_fixed_width_character_type_is_not_historical_varchar(database):

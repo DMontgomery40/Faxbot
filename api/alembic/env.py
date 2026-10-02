@@ -16,6 +16,7 @@ schema = importlib.import_module(package + ".schema")
 legacy = importlib.import_module(package + ".schema_legacy")
 config = context.config
 config.attributes["schema_legacy"] = legacy
+config.attributes["schema_configuration"] = importlib.import_module(package + ".schema_configuration")
 
 
 def migrate(connection):
