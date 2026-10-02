@@ -186,16 +186,29 @@ def test_commit_error_resolves_acceptance_before_cleaning_files(
     else:
         assert response.status_code == 503
         assert jobs["total"] == 0
-        assert list(data_dir.iterdir()) == []
+        # A currently missing row does not rule out a delayed COMMIT.
+        assert "uncertain" in response.json()["detail"]
+        assert len(list(data_dir.glob("*.pdf"))) == 1
 
 
 def test_unknown_database_outcome_retains_document_and_reports_uncertainty(
     document_client, monkeypatch,
 ):
     client, data_dir = document_client
+    session_factory = main.SessionLocal
+    calls = 0
 
+    @contextmanager
     def unavailable_session():
-        raise OSError("/private/database-host-details")
+        nonlocal calls
+        calls += 1
+        if calls > 1:
+            raise OSError("/private/database-host-details")
+        with session_factory() as db:
+            def failed_commit():
+                raise OSError("/private/database-host-details")
+            db.commit = failed_commit
+            yield db
 
     with monkeypatch.context() as patch:
         patch.setattr(main, "SessionLocal", unavailable_session)
@@ -206,6 +219,20 @@ def test_unknown_database_outcome_retains_document_and_reports_uncertainty(
     artifacts = list(data_dir.iterdir())
     assert len(artifacts) == 1 and artifacts[0].suffix == ".pdf"
     assert artifacts[0].stem in response.json()["detail"]
+
+
+def test_failure_before_any_commit_attempt_cleans_prepared_files(document_client, monkeypatch):
+    client, data_dir = document_client
+
+    def unavailable_session():
+        raise OSError("/private/database-host-details")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(main, "SessionLocal", unavailable_session)
+        response = submit(client, b"No database transaction was started")
+    assert response.status_code == 503
+    assert "private" not in response.text
+    assert list(data_dir.iterdir()) == []
 
 
 @pytest.mark.asyncio
@@ -246,6 +273,30 @@ async def test_identity_collision_never_overwrites_or_cleans_existing_artifact(t
     assert error.value.status_code == 503
     assert existing.read_bytes() == b"Previously accepted artifact"
     assert list(tmp_path.iterdir()) == [existing]
+
+
+@pytest.mark.asyncio
+async def test_cleanup_failure_is_sanitized_even_after_partial_publication(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    job_id = "d" * 32
+    existing_tiff = tmp_path / f"{job_id}.tiff"
+    existing_tiff.write_bytes(b"Previous artifact")
+    published_pdf = tmp_path / f"{job_id}.pdf"
+    unlink = Path.unlink
+
+    def fail_owned_unlink(path, *args, **kwargs):
+        if path == published_pdf:
+            raise OSError("/private/storage-mount-details")
+        return unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", fail_owned_unlink)
+    upload = UploadFile(file=BytesIO(b"New document"), filename="document.txt")
+    with pytest.raises(UploadPreparationError) as error:
+        await prepare_upload(upload, job_id=job_id, data_dir=str(tmp_path), max_bytes=100, requires_tiff=True)
+    assert error.value.status_code == 503
+    assert "private" not in str(error.value)
+    assert existing_tiff.read_bytes() == b"Previous artifact"
 
 
 def test_multibyte_text_across_upload_chunk_boundary_is_preserved(document_client):

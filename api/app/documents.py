@@ -9,6 +9,7 @@ import os
 import re
 import tempfile
 import unicodedata
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -26,6 +27,17 @@ class UploadPreparationError(Exception):
         self.status_code = status_code
 
 
+def _cleanup_paths(paths: Iterable[Path]) -> None:
+    failed = False
+    for path in paths:
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            failed = True
+    if failed:
+        raise UploadPreparationError("Document cleanup failed.", status_code=503) from None
+
+
 @dataclass(frozen=True)
 class PreparedDocument:
     original_name: str
@@ -35,9 +47,7 @@ class PreparedDocument:
 
     def cleanup(self) -> None:
         """Remove this preparation's artifacts when acceptance is ruled out."""
-        for filename in (self.pdf_path, self.tiff_path):
-            if filename is not None:
-                Path(filename).unlink(missing_ok=True)
+        _cleanup_paths(Path(name) for name in (self.pdf_path, self.tiff_path) if name is not None)
 
 
 def _display_name(filename: str | None) -> str:
@@ -120,5 +130,4 @@ async def prepare_upload(
         raise UploadPreparationError("Document preparation failed.", status_code=503) from None
     finally:
         if not complete:
-            for path in published:
-                path.unlink(missing_ok=True)
+            _cleanup_paths(published)

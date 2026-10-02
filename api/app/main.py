@@ -2315,6 +2315,7 @@ async def send_fax(background: BackgroundTasks, to: str = Form(...), file: Uploa
     tiff_path = prepared.tiff_path or ""
 
     # Keep the artifacts until durable acceptance is either confirmed or ruled out.
+    commit_attempted = False
     try:
         with SessionLocal() as db:
             job = FaxJob(
@@ -2329,23 +2330,27 @@ async def send_fax(background: BackgroundTasks, to: str = Form(...), file: Uploa
                 updated_at=datetime.utcnow(),
             )
             db.add(job)
+            commit_attempted = True
             db.commit()
     except Exception:
+        if not commit_attempted:
+            try:
+                prepared.cleanup()
+            except UploadPreparationError as error:
+                raise HTTPException(error.status_code, detail=str(error)) from None
+            raise HTTPException(503, detail="Fax could not be queued. Please retry.") from None
         # A connection can fail after COMMIT reached the database. Never remove
-        # the document of a job that might already have been accepted.
+        # a potentially accepted document, even if a fresh read finds no job:
+        # the original transaction might still finish committing afterward.
         try:
             with SessionLocal() as db:
                 job = db.get(FaxJob, job_id)
         except Exception:
-            raise HTTPException(
-                503, detail=f"Fax acceptance is uncertain. Check job {job_id} before retrying."
-            ) from None
+            job = None  # Confirmation unavailable; retain artifacts and report uncertainty.
         if job is None:
-            try:
-                prepared.cleanup()
-            except OSError:
-                raise HTTPException(503, detail="Fax could not be queued; artifact cleanup failed.") from None
-            raise HTTPException(503, detail="Fax could not be queued. Please retry.") from None
+            raise HTTPException(
+                503, detail=f"Fax acceptance is uncertain. Retain job {job_id} for reconciliation."
+            ) from None
     audit_event("job_created", job_id=job_id, backend=ob)
 
     # Kick off fax sending based on backend
