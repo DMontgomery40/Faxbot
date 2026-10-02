@@ -1,6 +1,7 @@
 import pytest
 from unittest.mock import AsyncMock, patch, Mock
 from fastapi.testclient import TestClient
+from pypdf import PdfWriter
 
 from app.phaxio_service import PhaxioFaxService
 from app.main import app
@@ -87,7 +88,9 @@ async def test_phaxio_integration_end_to_end(monkeypatch, tmp_path):
     
     # Create test PDF file
     test_pdf_path = tmp_path / "test.pdf"
-    test_pdf_path.write_bytes(b"%PDF-1.4\n1 0 obj\n<<\n/Type /Catalog\n>>\nendobj\nxref\n0 1\n0000000000 65535 f \ntrailer\n<<\n/Size 1\n/Root 1 0 R\n>>\nstartxref\n9\n%%EOF")
+    document = PdfWriter()
+    document.add_blank_page(width=612, height=792)
+    document.write(test_pdf_path)
     
     with TestClient(app) as client:
         # Test fax submission with Phaxio backend

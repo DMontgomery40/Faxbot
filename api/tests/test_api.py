@@ -21,7 +21,7 @@ def test_send_validation_bad_number():
 
 
 def test_send_txt():
-    """Test sending a text file (conversion functions are mocked globally)."""
+    """Submit real text while the test environment disables fax transmission."""
     with TestClient(app) as c:
         files = {
             "to": (None, "+15551230001"),

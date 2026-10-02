@@ -23,7 +23,8 @@ from .config import (
 )
 from .db import init_db, SessionLocal, FaxJob
 from .models import FaxJobOut
-from .conversion import ensure_dir, txt_to_pdf, pdf_to_tiff
+from .conversion import ensure_dir
+from .documents import prepare_upload, UploadPreparationError
 from .ami import ami_client
 from .phaxio_service import get_phaxio_service
 from .sinch_service import get_sinch_service
@@ -2295,105 +2296,56 @@ async def send_fax(background: BackgroundTasks, to: str = Form(...), file: Uploa
     # Validate destination
     if not PHONE_RE.match(to):
         raise HTTPException(400, detail="'to' must be E.164 or digits only")
-    # Stream upload to disk with magic sniff and size enforcement
-    max_bytes = settings.max_file_size_mb * 1024 * 1024
     job_id = uuid.uuid4().hex
-    orig_path = os.path.join(settings.fax_data_dir, f"{job_id}-{file.filename}")
-    pdf_path = os.path.join(settings.fax_data_dir, f"{job_id}.pdf")
-    tiff_path = os.path.join(settings.fax_data_dir, f"{job_id}.tiff")
-
-    total = 0
-    first_chunk = b""
-    CHUNK = 64 * 1024
-    try:
-        with open(orig_path, "wb") as out:
-            # Read first chunk for magic sniff
-            first_chunk = await file.read(CHUNK)
-            total += len(first_chunk)
-            if total > max_bytes:
-                raise HTTPException(413, detail=f"File exceeds {settings.max_file_size_mb} MB limit")
-            out.write(first_chunk)
-            # Stream the rest
-            while True:
-                chunk = await file.read(CHUNK)
-                if not chunk:
-                    break
-                total += len(chunk)
-                if total > max_bytes:
-                    raise HTTPException(413, detail=f"File exceeds {settings.max_file_size_mb} MB limit")
-                out.write(chunk)
-    except HTTPException:
-        try:
-            if os.path.exists(orig_path):
-                os.remove(orig_path)
-        finally:
-            raise
-
-    # Magic sniff: PDF if starts with %PDF, else treat as text if UTF-8 clean
-    is_pdf = first_chunk.startswith(b"%PDF")
-    is_text = False
-    if not is_pdf:
-        try:
-            first_chunk.decode("utf-8")
-            is_text = True
-        except Exception:
-            is_text = False
-    if not (is_pdf or is_text):
-        # Unsupported type
-        try:
-            os.remove(orig_path)
-        except Exception:
-            pass
-        raise HTTPException(415, detail="Only PDF and TXT are allowed")
-
-    # Convert to PDF if needed
-    if is_text or (file.filename and file.filename.lower().endswith(".txt")):
-        if settings.fax_disabled:
-            # Test mode - skip conversion
-            with open(pdf_path, "wb") as f:
-                f.write(b"%PDF-1.4\ntest\n%%EOF")
-        else:
-            txt_to_pdf(orig_path, pdf_path)
-    else:
-        # Copy the PDF directly
-        shutil.copyfile(orig_path, pdf_path)
-
-    # Backend-specific file preparation (trait-driven)
-    pages = None
     manifest_path = os.path.join(os.getcwd(), "config", "providers", ob, "manifest.json")
-    requires_tiff = False
+    use_manifest = settings.feature_v3_plugins and os.path.exists(manifest_path)
+    # Built-in telephony backends require real TIFF even if a registry is absent.
+    requires_tiff = not use_manifest and (
+        ob in {"sip", "freeswitch"} or bool(providerHasTrait("outbound", "requires_tiff"))
+    )
     try:
-        from .config import providerHasTrait
-        requires_tiff = bool(providerHasTrait("outbound", "requires_tiff"))
-    except Exception:
-        requires_tiff = (ob in {"sip", "freeswitch"})
-    if settings.feature_v3_plugins and os.path.exists(manifest_path):
-        pages = None
-    elif requires_tiff:
-        if settings.fax_disabled:
-            pages = 1
-            with open(tiff_path, "wb") as f:
-                f.write(b"TIFF_PLACEHOLDER")
-        else:
-            pages, _ = pdf_to_tiff(pdf_path, tiff_path)
-    else:
-        pages = None
-
-    # Create job in DB with backend info
-    with SessionLocal() as db:
-        job = FaxJob(
-            id=job_id,
-            to_number=to,
-            file_name=file.filename,
-            tiff_path=tiff_path,
-            status="queued",
-            pages=pages,
-            backend=ob,
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow(),
+        prepared = await prepare_upload(
+            file, job_id=job_id, data_dir=settings.fax_data_dir,
+            max_bytes=settings.max_file_size_mb * 1024 * 1024,
+            requires_tiff=requires_tiff,
         )
-        db.add(job)
-        db.commit()
+    except UploadPreparationError as error:
+        raise HTTPException(error.status_code, detail=str(error)) from None
+    pdf_path = prepared.pdf_path
+    tiff_path = prepared.tiff_path or ""
+
+    # Keep the artifacts until durable acceptance is either confirmed or ruled out.
+    try:
+        with SessionLocal() as db:
+            job = FaxJob(
+                id=job_id,
+                to_number=to,
+                file_name=prepared.original_name,
+                tiff_path=tiff_path,
+                status="queued",
+                pages=prepared.pages,
+                backend=ob,
+                created_at=datetime.utcnow(),
+                updated_at=datetime.utcnow(),
+            )
+            db.add(job)
+            db.commit()
+    except Exception:
+        # A connection can fail after COMMIT reached the database. Never remove
+        # the document of a job that might already have been accepted.
+        try:
+            with SessionLocal() as db:
+                job = db.get(FaxJob, job_id)
+        except Exception:
+            raise HTTPException(
+                503, detail=f"Fax acceptance is uncertain. Check job {job_id} before retrying."
+            ) from None
+        if job is None:
+            try:
+                prepared.cleanup()
+            except OSError:
+                raise HTTPException(503, detail="Fax could not be queued; artifact cleanup failed.") from None
+            raise HTTPException(503, detail="Fax could not be queued. Please retry.") from None
     audit_event("job_created", job_id=job_id, backend=ob)
 
     # Kick off fax sending based on backend
