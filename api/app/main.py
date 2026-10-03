@@ -1736,168 +1736,107 @@ async def admin_refresh_job(job_id: str):
 
 
 @app.post("/admin/diagnostics/run", dependencies=[Depends(require_admin)])
-async def run_diagnostics():
-    """Run bounded, non-destructive diagnostics for v1."""
-    ob = active_outbound()
-    ib = active_inbound()
+def run_diagnostics(request: Request):
+    """Inspect the active installation without submitting a fax.
+
+    Readiness shares the dashboard's captured-profile check. Individual values
+    remain available to older clients; explicit outcomes prevent feature flags
+    and metadata from being mistaken for failed tests.
+    """
+    snapshot = request.scope["faxbot.configuration"]
+    readiness = _readiness_status(request)
+    ob, ib = active_outbound(), active_inbound()
     diag: dict[str, Any] = {
         "timestamp": datetime.utcnow().isoformat(),
-        "backend": settings.fax_backend,
+        "backend": ob,
+        "default_backend": settings.fax_backend,
         "outbound_backend": ob,
         "inbound_backend": ib,
+        "configuration": {
+            "active_revision_id": snapshot.active.id,
+            "desired_revision_id": snapshot.desired.id,
+            "generation": snapshot.generation,
+            "pending_restart": snapshot.pending is not None,
+        },
         "checks": {},
+        "check_outcomes": {},
     }
-    # Legacy single-backend flags (kept for compatibility in UI until hybrid UI lands)
-    if settings.fax_backend == "phaxio":
-        diag["checks"]["phaxio"] = {
-            "api_key_set": bool(settings.phaxio_api_key),
-            "api_secret_set": bool(settings.phaxio_api_secret),
-            "callback_url_set": bool(settings.phaxio_status_callback_url),
-            "signature_verification": settings.phaxio_verify_signature,
-            "public_url_https": settings.public_api_url.startswith("https://"),
-        }
-    elif settings.fax_backend == "sinch":
-        diag["checks"]["sinch"] = {
-            "project_id_set": bool(settings.sinch_project_id),
-            "api_key_set": bool(settings.sinch_api_key),
-            "api_secret_set": bool(settings.sinch_api_secret),
-        }
-    elif settings.fax_backend == "sip":
-        sip_checks: dict[str, Any] = {
-            "ami_host": settings.ami_host,
-            "ami_port": settings.ami_port,
-            "ami_password_not_default": settings.ami_password != "changeme",
-            "station_id_set": bool(settings.fax_station_id),
-        }
-        # Probe AMI reachability best-effort
-        try:
-            from .ami import test_ami_connection
-            sip_checks["ami_reachable"] = await test_ami_connection(
-                settings.ami_host, settings.ami_port, settings.ami_username, settings.ami_password
-            )
-        except Exception as e:
-            sip_checks["ami_reachable"] = False
-            sip_checks["ami_error"] = str(e)
-        diag["checks"]["sip"] = sip_checks
-
-    # Hybrid per-direction checks (trait-driven)
-    # Outbound
-    out: dict[str, Any] = {"backend": ob, "requires_ami": providerHasTrait("outbound", "requires_ami")}
-    if ob == "phaxio":
-        out["auth_configured"] = bool(settings.phaxio_api_key and settings.phaxio_api_secret)
-        out["public_url_https"] = settings.public_api_url.startswith("https://")
-    elif ob == "sinch":
-        out["auth_configured"] = bool(settings.sinch_project_id and settings.sinch_api_key and settings.sinch_api_secret)
-    elif ob == "signalwire":
-        out["auth_configured"] = bool(settings.signalwire_space_url and settings.signalwire_project_id and settings.signalwire_api_token)
-    elif ob == "documo":
-        out["auth_configured"] = bool(settings.documo_api_key)
-    if providerHasTrait("outbound", "requires_ami"):
-        out["ami_password_not_default"] = settings.ami_password != "changeme"
-        try:
-            from .ami import test_ami_connection
-            out["ami_reachable"] = await test_ami_connection(settings.ami_host, settings.ami_port, settings.ami_username, settings.ami_password)
-        except Exception as e:
-            out["ami_reachable"] = False
-            out["ami_error"] = str(e)
-    diag["checks"]["outbound"] = out
-
-    # Inbound
-    inbound: dict[str, Any] = {
-        "backend": ib,
-        "enabled": settings.inbound_enabled,
+    checks = diag["checks"]
+    checks["outbound"] = {
+        **readiness["checks"]["outbound"],
+        "requires_ami": providerHasTrait("outbound", "requires_ami"),
+        "sending_disabled": settings.fax_disabled,
+    }
+    checks["inbound"] = {
+        **readiness["checks"]["inbound"],
         "requires_ami": providerHasTrait("inbound", "requires_ami"),
         "needs_storage": providerHasTrait("inbound", "needs_storage"),
         "inbound_verification": providerTraitValue("inbound", "inbound_verification"),
+        "retention_days": settings.inbound_retention_days,
     }
-    if settings.inbound_enabled:
-        # Derive verification posture from provider traits
-        # Map to concrete flags when applicable
-        if providerHasTrait("inbound", "requires_ami"):
-            inbound["asterisk_secret_set"] = bool(settings.asterisk_inbound_secret)
-        if ib == "phaxio":
-            inbound["signature_verification"] = settings.phaxio_inbound_verify_signature
-        if ib == "sinch":
-            inbound["basic_auth_configured"] = bool(settings.sinch_inbound_basic_user)
-            inbound["hmac_configured"] = bool(settings.sinch_inbound_hmac_secret)
-    diag["checks"]["inbound"] = inbound
-
-    # System checks
-    sys: dict[str, Any] = {
-        "ghostscript": shutil.which("gs") is not None,
-        "fax_data_dir": os.path.exists(settings.fax_data_dir),
+    # Native SIP requirements apply to the captured adapter, never merely to
+    # a same-named manifest override or an unused default provider.
+    for direction in ("outbound", "inbound"):
+        if direction == "inbound" and not settings.inbound_enabled:
+            continue
+        profile_id = snapshot.active.profile_id(direction)
+        if profile_id is None:
+            continue
+        try:
+            profile = _configuration_manager().store.read_profile(profile_id).configuration
+        except (ConfigurationStoreError, ConfigurationSecretError, ValueError):
+            checks[direction]["backend_config"] = False
+            continue
+        if profile.provider_id == "sip" and profile.manifest is None:
+            checks[direction]["ami_password_not_default"] = bool(
+                profile.credentials.get("ami_password") and profile.credentials.get("ami_password") != "changeme")
+            if direction == "inbound":
+                checks[direction]["asterisk_secret_set"] = bool(profile.credentials.get("inbound_secret"))
+    system = {
+        "ghostscript": readiness["checks"]["ghostscript"],
+        "fax_data_dir": os.path.isdir(settings.fax_data_dir),
         "fax_data_writable": False,
-        "database_connected": False,
+        "database_connected": readiness["checks"]["db"],
         "temp_dir_writable": False,
     }
-    # Test fax_data_dir write
+    # These probes create and remove only their own temporary files.
     try:
-        os.makedirs(settings.fax_data_dir, exist_ok=True)
-        test_path = os.path.join(settings.fax_data_dir, f"diag_{uuid.uuid4().hex}")
-        with open(test_path, "w") as f:
-            f.write("ok")
-        os.remove(test_path)
-        sys["fax_data_writable"] = True
-    except Exception:
+        with tempfile.NamedTemporaryFile(dir=settings.fax_data_dir, prefix="faxbot-diagnostic-", delete=True) as probe:
+            probe.write(b"ok")
+            probe.flush()
+        system["fax_data_writable"] = True
+    except OSError:
         pass
-    # DB
     try:
-        from sqlalchemy import text  # type: ignore
-        with SessionLocal() as db:
-            db.execute(text("SELECT 1"))
-            sys["database_connected"] = True
-    except Exception:
+        with tempfile.NamedTemporaryFile(delete=True) as probe:
+            probe.write(b"ok")
+            probe.flush()
+        system["temp_dir_writable"] = True
+    except OSError:
         pass
-    # Temp dir
-    try:
-        with tempfile.NamedTemporaryFile(delete=True) as tmp:
-            tmp.write(b"ok")
-            sys["temp_dir_writable"] = True
-    except Exception:
-        pass
-    diag["checks"]["system"] = sys
-
-    # Storage diagnostics only when required by inbound provider traits
-    if providerHasTrait("inbound", "needs_storage"):
-        if settings.storage_backend.lower() == "s3":
-            st = {
-                "type": "s3",
-                "bucket_set": bool(settings.s3_bucket),
-                "region_set": bool(settings.s3_region),
-                "kms_enabled": bool(settings.s3_kms_key_id),
-            }
-            if settings.s3_bucket and os.getenv("ENABLE_S3_DIAGNOSTICS", "false").lower() == "true":
-                try:
-                    import boto3  # type: ignore
-                    from botocore.config import Config  # type: ignore
-                    s3 = boto3.client(
-                        "s3",
-                        region_name=(settings.s3_region or None),
-                        endpoint_url=(settings.s3_endpoint_url or None),
-                        config=Config(signature_version="s3v4"),
-                    )
-                    s3.head_bucket(Bucket=settings.s3_bucket)
-                    st["accessible"] = True
-                except Exception as e:
-                    st["accessible"] = False
-                    st["error"] = str(e)[:100]
-            diag["checks"]["storage"] = st
-        else:
-            diag["checks"]["storage"] = {"type": "local", "warning": "Local storage only suitable for development"}
-
-    # Inbound flags
-    if settings.inbound_enabled:
-        inbound = {"enabled": True, "retention_days": settings.inbound_retention_days}
-        if settings.fax_backend == "phaxio":
-            inbound["signature_verification"] = settings.phaxio_inbound_verify_signature
-        elif settings.fax_backend == "sinch":
-            inbound["auth_configured"] = bool(settings.sinch_inbound_basic_user or settings.sinch_inbound_hmac_secret)
-        elif settings.fax_backend == "sip":
-            inbound["asterisk_secret_set"] = bool(settings.asterisk_inbound_secret)
-        diag["checks"]["inbound"] = inbound
-
-    # Security summary
-    diag["checks"]["security"] = {
+    checks["system"] = system
+    storage_required = settings.inbound_enabled and providerHasTrait("inbound", "needs_storage")
+    checks["storage"] = {
+        "type": settings.storage_backend,
+        "required_for_active_inbound": storage_required,
+        "configuration_ready": readiness["checks"]["storage"],
+    }
+    if settings.storage_backend.lower() == "s3":
+        checks["storage"].update(bucket_set=bool(settings.s3_bucket),
+            region_set=bool(settings.s3_region), kms_enabled=bool(settings.s3_kms_key_id))
+        if storage_required and settings.s3_bucket and os.getenv("ENABLE_S3_DIAGNOSTICS", "false").lower() == "true":
+            try:
+                import boto3
+                from botocore.config import Config
+                client = boto3.client("s3", region_name=settings.s3_region or None,
+                    endpoint_url=settings.s3_endpoint_url or None,
+                    config=Config(signature_version="s3v4", connect_timeout=3, read_timeout=3,
+                                  retries={"max_attempts": 0}))
+                client.head_bucket(Bucket=settings.s3_bucket)
+                checks["storage"]["accessible"] = True
+            except Exception:
+                checks["storage"]["accessible"] = False
+    checks["security"] = {
         "enforce_https": settings.enforce_public_https,
         "audit_logging": settings.audit_log_enabled,
         "rate_limiting": settings.max_requests_per_minute > 0,
@@ -1949,13 +1888,12 @@ async def run_diagnostics():
                             "issues": issues,
                         })
                         issues_total += len(issues)
-                    except Exception as e:
-                        plugins_info.setdefault("errors", []).append({"id": pid, "error": str(e)})
+                    except Exception:
+                        plugins_info.setdefault("errors", []).append({"id": pid, "error": "Manifest cannot be inspected."})
             plugins_info["installed"] = len(plugins_info["manifests"])  # type: ignore[index]
         diag["checks"]["plugins"] = plugins_info
     except Exception:
-        # Don't break diagnostics on plugin scan errors
-        pass
+        diag["checks"]["plugins"] = {"inspection_error": "Plugin metadata cannot be inspected."}
 
     # Traits schema issues (expose unknown trait keys for CI visibility)
     try:
@@ -1967,42 +1905,67 @@ async def run_diagnostics():
     except Exception:
         pass
 
-    # Summary
     critical: list[str] = []
     warnings: list[str] = []
-    if ob == "phaxio":
-        p = diag["checks"].get("outbound", {})
-        if not p.get("auth_configured"):
-            critical.append("Phaxio API key not set")
-        if not p.get("public_url_https"):
-            warnings.append("PUBLIC_API_URL should be HTTPS")
-    if ob == "sip":
-        s = diag["checks"].get("outbound", {})
-        if not s.get("ami_password_not_default"):
-            critical.append("AMI password is default 'changeme'")
-        if not s.get("ami_reachable"):
-            warnings.append("AMI not reachable")
-    if settings.inbound_enabled and ib == "sip":
-        inbound = diag["checks"].get("inbound", {})
-        if not inbound.get("asterisk_secret_set"):
-            critical.append("ASTERISK_INBOUND_SECRET not set for inbound SIP")
-    # Ghostscript is required for all backends
-    if not sys.get("ghostscript"):
-        critical.append("Ghostscript (gs) not installed — required for fax file processing")
-    if not sys.get("fax_data_writable"):
-        critical.append("Cannot write to fax data dir")
-    if not sys.get("database_connected"):
-        critical.append("Database connection failed")
-    # Plugin warnings
-    try:
-        p = diag["checks"].get("plugins", {})
-        if p.get("v3_enabled") and p.get("installed", 0) > 0:
-            for m in p.get("manifests", []):
-                for issue in (m.get("issues") or []):
-                    warnings.append(f"Plugin {m.get('id')}: {issue}")
-    except Exception:
-        pass
-    diag["summary"] = {"healthy": len(critical) == 0, "critical_issues": critical, "warnings": warnings}
+    outcomes = diag["check_outcomes"]
+    for section, values in checks.items():
+        outcomes[section] = {key: "info" for key in values}
+
+    def required(section, key, message, *, applicable=True):
+        value = checks[section].get(key)
+        if not applicable or value is None:
+            outcomes[section][key] = "not_applicable"
+        else:
+            outcomes[section][key] = "pass" if value is True else "fail"
+            if value is not True:
+                critical.append(message)
+
+    required("outbound", "backend_config", "Active outbound provider is not locally configured. Review the active provider in Settings.")
+    required("outbound", "ami_connected", "Active outbound provider requires an Asterisk AMI connection.")
+    required("inbound", "backend_config", "Active receiving provider is not locally configured. Review inbound settings.", applicable=settings.inbound_enabled)
+    required("inbound", "ami_connected", "Active receiving provider requires an Asterisk AMI connection.", applicable=settings.inbound_enabled)
+    for direction in ("outbound", "inbound"):
+        if "ami_password_not_default" in checks[direction]:
+            required(direction, "ami_password_not_default",
+                     f"Active {direction} Asterisk provider requires a non-default AMI password. Review provider settings.")
+    if "asterisk_secret_set" in checks["inbound"]:
+        required("inbound", "asterisk_secret_set", "Active Asterisk receiving requires an inbound secret. Review provider settings.")
+    required("storage", "configuration_ready", "Active inbound storage is unavailable.", applicable=storage_required)
+    if "accessible" in checks["storage"]:
+        required("storage", "accessible", "Configured inbound S3 bucket could not be accessed.")
+    for key, message in {
+        "ghostscript": "Ghostscript is unavailable for document processing.",
+        "fax_data_dir": "The configured fax data directory is unavailable.",
+        "fax_data_writable": "The configured fax data directory is not writable.",
+        "database_connected": "The installation database is unavailable.",
+        "temp_dir_writable": "The temporary document directory is not writable.",
+    }.items():
+        required("system", key, message)
+    for key, message in {
+        "enforce_https": "Public HTTPS enforcement is disabled; review the installation's network configuration.",
+        "audit_logging": "Audit logging is disabled.",
+        "rate_limiting": "Application request rate limiting is disabled.",
+    }.items():
+        outcomes["security"][key] = "pass" if checks["security"][key] else "warning"
+        if not checks["security"][key]:
+            warnings.append(message)
+    plugins = checks.get("plugins", {})
+    for manifest in plugins.get("manifests", []):
+        for issue in manifest.get("issues", []):
+            warnings.append(f"Installed plugin {manifest['id']}: {issue}")
+    if plugins.get("errors") or plugins.get("inspection_error"):
+        warnings.append("Some installed plugin metadata could not be inspected.")
+        outcomes["plugins"]["errors" if plugins.get("errors") else "inspection_error"] = "warning"
+    if checks.get("traits_schema", {}).get("issues"):
+        outcomes["traits_schema"]["issues"] = "warning"
+        warnings.append("Provider trait metadata has schema issues.")
+    if snapshot.pending is not None:
+        warnings.append("Desired settings are pending a full installation restart; diagnostics describe the active revision.")
+    diag["summary"] = {
+        "healthy": readiness["status"] == "ready" and not critical,
+        "critical_issues": critical,
+        "warnings": warnings,
+    }
     return diag
 
 

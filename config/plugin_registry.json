@@ -37,6 +37,15 @@
       "learn_more": "https://docs.faxbot.net/latest/setup/sinch/"
     },
     {
+      "id": "documo",
+      "name": "Documo mFax",
+      "version": "1.0.0",
+      "categories": ["outbound"],
+      "capabilities": ["send", "get_status"],
+      "description": "Cloud fax via Documo mFax with direct PDF uploads and original-account status polling.",
+      "learn_more": "https://docs.faxbot.net/latest/setup/documo/"
+    },
+    {
       "id": "sip",
       "name": "SIP/Asterisk (Self-hosted)",
       "version": "1.0.0",

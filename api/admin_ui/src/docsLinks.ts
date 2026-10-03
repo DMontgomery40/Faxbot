@@ -4,6 +4,7 @@ const DOCS_PAGES = {
   home: '',
   phaxio: 'setup/phaxio/',
   sinch: 'setup/sinch/',
+  documo: 'setup/documo/',
   signalwire: 'setup/signalwire/',
   freeswitch: 'setup/freeswitch/',
   sip: 'setup/sip-asterisk/',
@@ -42,6 +43,7 @@ export function docsLink(page: DocsPage, configuredBase?: string): string {
 const CURATED_PATHS: Record<string, DocsPage> = {
   'setup/phaxio': 'phaxio',
   'setup/sinch': 'sinch',
+  'setup/documo': 'documo',
   'setup/signalwire': 'signalwire',
   'setup/freeswitch': 'freeswitch',
   'setup/sip-asterisk': 'sip',

@@ -1,83 +1,32 @@
-
 # Diagnostics Matrix
 
-Each check maps to a fix, relevant environment variables, and the UI path to change it.
+Use the active provider and revision shown in [Diagnostics](diagnostics.md) when interpreting a result. The default provider may differ from active outbound or inbound selection. Apply configuration changes through the canonical Settings editor and check whether they became active or remain pending.
 
-[:material-stethoscope: Diagnostics Guide](diagnostics.md){ .md-button }
-[:material-book-open: Backends](../setup/index.md){ .md-button }
-[:material-shield-lock: Security](../security/index.md){ .md-button }
+| Result | Follow-up |
+| --- | --- |
+| Active outbound configuration fails | Open Settings and inspect the active provider's required fields. For a custom manifest, inspect its configured adapter in Plugins. Credentials for an unused default provider do not repair the active adapter. |
+| Required Asterisk AMI connection fails | Verify the active AMI host, port, username, password and Asterisk service. A connection check is not fax-delivery proof. |
+| Native Asterisk password is empty or default | Set a non-default AMI password in both the Asterisk service and the desired provider settings; inspect activation status. |
+| Native Asterisk inbound secret is absent | Configure the receiving secret and matching sender of internal inbound events before testing reception. |
+| Ghostscript fails | Install `gs` in the API runtime and rerun Diagnostics. Document processing requires it. |
+| Fax data directory is absent or unwritable | Check the configured installation path, mount and service-user permissions. Moving installation storage requires the maintenance workflow. |
+| Temporary directory is unwritable | Check runtime temporary-directory permissions and available storage. |
+| Database connection fails | Check the configured database service or SQLite mount and service-user access. Do not replace the installation database to clear the error. |
+| Required inbound storage fails | Review Storage settings and the active receiving provider. The optional S3 access check needs the deployment's `ENABLE_S3_DIAGNOSTICS=true` flag; a missing probe is not proof of bucket access. |
+| Audit, HTTPS enforcement or rate limiting warning | Review the relevant desired settings and the installation's network configuration. These flags alone do not establish end-to-end security. |
+| Plugin or trait metadata warning | Inspect the identified installed manifest and schema. File inventory and the captured active provider revision are distinct. |
+| Desired revision is pending | Arrange a full installation stop/restart, then confirm active and desired identity. Restart API exits only one process. |
+| Receiving or remote plugin installation is disabled | Informational feature state; enable it only when that capability is intended and configured. |
 
----
+## Provider validation
 
-## Backend: Phaxio
+Local readiness does not test callback reachability or remote delivery. Use the relevant setup guide and a destination you control:
 
-Missing API key/secret
-: :material-wrench: Fix — set `PHAXIO_API_KEY`, `PHAXIO_API_SECRET`  
-  :material-cog: UI — Settings → Backend → Phaxio
+- [Phaxio](../setup/phaxio.md)
+- [Sinch](../setup/sinch.md)
+- [Documo](../setup/documo.md)
+- [SignalWire](../setup/signalwire.md)
+- [SIP/Asterisk](../setup/sip-asterisk.md)
+- [FreeSWITCH](../setup/freeswitch.md)
 
-Callback unreachable or unset
-: :material-wrench: Fix — set `PHAXIO_CALLBACK_URL` (or `PHAXIO_STATUS_CALLBACK_URL`) to `<PUBLIC_API_URL>/phaxio-callback`  
-  :material-cog: UI — Settings → Backend → Phaxio; also verify `PUBLIC_API_URL` in Settings → Security
-
-Signature verification disabled
-: :material-wrench: Fix — enable `PHAXIO_VERIFY_SIGNATURE=true`  
-  :material-cog: UI — Settings → Backend → Phaxio (Verify signatures)
-
-## Backend: Sinch
-
-Missing project/credentials
-: :material-wrench: Fix — set `SINCH_PROJECT_ID`, `SINCH_API_KEY`, `SINCH_API_SECRET`  
-  :material-cog: UI — Settings → Backend → Sinch
-
-Wrong region/base URL
-: :material-wrench: Fix — set `SINCH_BASE_URL` to the correct regional endpoint  
-  :material-cog: UI — Settings → Backend → Sinch
-
-## Backend: SIP/Asterisk
-
-AMI unreachable or auth failed
-: :material-wrench: Fix — verify `ASTERISK_AMI_HOST`, `ASTERISK_AMI_PORT`, `ASTERISK_AMI_USERNAME`, `ASTERISK_AMI_PASSWORD`  
-  :material-cog: UI — Settings → Backend → SIP/Asterisk
-
-TIFF conversion unavailable
-: :material-wrench: Fix — install Ghostscript (`gs`) on API host  
-  :material-cog: UI — N/A (server dependency); rerun Diagnostics after install
-
-## Public URL / HTTPS
-
-Missing or HTTP in production
-: :material-wrench: Fix — set `PUBLIC_API_URL` to your HTTPS domain; enable `ENFORCE_PUBLIC_HTTPS=true`  
-  :material-cog: UI — Settings → Security
-
-## Security posture
-
-API key not required
-: :material-wrench: Fix — set `API_KEY` to a strong value; restart if necessary  
-  :material-cog: UI — Settings → Security
-
-Audit logging off (HIPAA profile)
-: :material-wrench: Fix — `AUDIT_LOG_ENABLED=true`; optionally configure file/syslog  
-  :material-cog: UI — Settings → Security → Audit
-
-## Storage (Inbound)
-
-Local path unwritable
-: :material-wrench: Fix — check `FAX_DATA_DIR` permissions or switch to S3  
-  :material-cog: UI — Settings → Storage
-
-S3 not accessible
-: :material-wrench: Fix — verify bucket/region/prefix/endpoint; use role/env credentials; (optional) enable diagnostics for HeadBucket  
-  :material-cog: UI — Settings → Storage
-
-## File limits
-
-Uploads rejected as too large
-: :material-wrench: Fix — raise `MAX_FILE_SIZE_MB` and communicate the limit in the UI  
-  :material-cog: UI — Settings → Security → File limits
-
----
-
-## Actions
-
-- After each change, click “Apply & Reload” and rerun Diagnostics  
-- Use “Restart API” when prompted (if enabled) for backend client reinitialization
+Open Send from Diagnostics to use the retained document, destination and request-intent workflow. Acceptance is not delivery. Verify the final job/provider result and the received document.

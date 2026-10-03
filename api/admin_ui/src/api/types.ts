@@ -275,10 +275,23 @@ export interface PluginConfigurationResult extends PluginConfiguration {
   path: string;
 }
 
+export type DiagnosticsValue = string | number | boolean | null | DiagnosticsValue[] | { [key: string]: DiagnosticsValue };
+export type DiagnosticsOutcome = 'pass' | 'fail' | 'warning' | 'info' | 'not_applicable';
+
 export interface DiagnosticsResult {
   timestamp: string;
   backend: string;
-  checks: Record<string, any>;
+  default_backend: string;
+  outbound_backend: string;
+  inbound_backend: string;
+  configuration: {
+    active_revision_id: string;
+    desired_revision_id: string;
+    generation: number;
+    pending_restart: boolean;
+  };
+  checks: Record<string, Record<string, DiagnosticsValue>>;
+  check_outcomes: Record<string, Record<string, DiagnosticsOutcome>>;
   summary: {
     healthy: boolean;
     critical_issues: string[];

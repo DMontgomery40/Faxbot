@@ -40,11 +40,10 @@ import {
   Send as SendIcon,
   HealthAndSafety as HealthIcon,
   BugReport as DiagnosticIcon,
-  Assessment as AssessmentIcon,
 } from '@mui/icons-material';
 import AdminAPIClient from '../api/client';
 import { docsLink } from '../docsLinks';
-import type { DiagnosticsResult } from '../api/types';
+import type { DiagnosticsOutcome, DiagnosticsResult, DiagnosticsValue } from '../api/types';
 import type { AdminDestination } from '../navigation';
 import { ResponsiveFormSection } from './common/ResponsiveFormFields';
 
@@ -54,29 +53,86 @@ interface DiagnosticsProps {
   docsBase?: string;
 }
 
+type ActionNotice = { severity: 'success' | 'error' | 'info'; text: string };
+
+function explicitOutcome(value: unknown): DiagnosticsOutcome {
+  switch (value) {
+    case 'pass':
+    case 'fail':
+    case 'warning':
+    case 'not_applicable':
+      return value;
+    default:
+      return 'info';
+  }
+}
+
+function OutcomeChip({ outcome }: { outcome: DiagnosticsOutcome }) {
+  const label = outcome === 'not_applicable' ? 'Not applicable' : outcome.charAt(0).toUpperCase() + outcome.slice(1);
+  const color = outcome === 'pass' ? 'success' : outcome === 'fail' ? 'error' : outcome === 'warning' ? 'warning' : 'default';
+  const icon = outcome === 'pass' ? <CheckCircleIcon /> : outcome === 'fail' ? <ErrorIcon /> : outcome === 'warning' ? <WarningIcon /> : <InfoIcon />;
+  return <Chip icon={icon} label={label} color={color} size="small" variant="outlined" sx={{ borderRadius: 1 }} />;
+}
+
+function CheckValue({ value }: { value: DiagnosticsValue }) {
+  let text: string;
+  try {
+    text = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
+  } catch {
+    text = 'Value could not be displayed.';
+  }
+  const limit = 8000;
+  const truncated = text.length > limit;
+  return (
+    <Box sx={{ minWidth: 0, mt: 1 }}>
+      <Box
+        component="pre"
+        sx={{
+          m: 0,
+          fontFamily: 'monospace',
+          fontSize: '0.8125rem',
+          whiteSpace: 'pre-wrap',
+          overflowWrap: 'anywhere',
+          maxHeight: 240,
+          overflow: 'auto',
+        }}
+      >
+        {truncated ? text.slice(0, limit) : text}
+      </Box>
+      {truncated && (
+        <Typography variant="caption" color="text.secondary">
+          Display limited to {limit.toLocaleString()} characters. Copy or download JSON for the full value.
+        </Typography>
+      )}
+    </Box>
+  );
+}
+
 function Diagnostics({ client, onNavigate, docsBase }: DiagnosticsProps) {
   const [diagnostics, setDiagnostics] = useState<DiagnosticsResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [helpOpen, setHelpOpen] = useState(false);
-  const [helpTitle, setHelpTitle] = useState<string>('');
-  const [helpKey, setHelpKey] = useState<string>('');
-  const [testSending, setTestSending] = useState(false);
-  const [testJobId, setTestJobId] = useState<string | null>(null);
-  const [testStatus, setTestStatus] = useState<string | null>(null);
-  const [expandedSections, setExpandedSections] = useState<string[]>(['summary']);
+  const [helpSection, setHelpSection] = useState('');
+  const [helpKey, setHelpKey] = useState('');
+  const [expandedSections, setExpandedSections] = useState<string[]>([]);
+  const [restartState, setRestartState] = useState<'idle' | 'pending' | 'success' | 'error'>('idle');
+  const [restartMessage, setRestartMessage] = useState('');
+  const [exportNotice, setExportNotice] = useState<ActionNotice | null>(null);
+  const [copying, setCopying] = useState(false);
 
   const theme = useTheme();
-  const isMobile = useMediaQuery(theme.breakpoints.down('md'));
   const isSmallMobile = useMediaQuery(theme.breakpoints.down('sm'));
 
   const runDiagnostics = async () => {
+    if (loading) return;
     try {
       setError(null);
+      setExportNotice(null);
       setLoading(true);
       const data = await client.runDiagnostics();
       setDiagnostics(data);
-      setExpandedSections(['summary', ...Object.keys(data.checks || {})]);
+      setExpandedSections(Object.keys(data.checks));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to run diagnostics');
     } finally {
@@ -84,258 +140,147 @@ function Diagnostics({ client, onNavigate, docsBase }: DiagnosticsProps) {
     }
   };
 
-  const copyToClipboard = (text: string) => {
-    navigator.clipboard.writeText(text);
+  const requestRestart = async () => {
+    if (restartState === 'pending') return;
+    setRestartState('pending');
+    setRestartMessage('Requesting API process restart…');
+    try {
+      const result = await client.restart();
+      if (result?.ok !== true) throw new Error('The server did not accept the restart request.');
+      const note = typeof result.note === 'string' ? result.note : 'The API process will exit; its container manager is responsible for restarting it.';
+      setRestartMessage(`Restart request accepted. ${note} Startup has not been confirmed; reconnect and run diagnostics when the installation is available.`);
+      setRestartState('success');
+    } catch (err) {
+      setRestartMessage(err instanceof Error ? err.message : 'Failed to request API process restart');
+      setRestartState('error');
+    }
   };
 
-  const downloadText = (filename: string, text: string) => {
-    const blob = new Blob([text], { type: 'text/plain' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+  const copyDiagnostics = async () => {
+    if (!diagnostics || copying) return;
+    setCopying(true);
+    setExportNotice(null);
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error('Clipboard access is unavailable in this browser. Use Download instead.');
+      await navigator.clipboard.writeText(JSON.stringify(diagnostics, null, 2));
+      setExportNotice({ severity: 'success', text: 'Diagnostics JSON copied to the clipboard.' });
+    } catch (err) {
+      setExportNotice({ severity: 'error', text: err instanceof Error ? err.message : 'Failed to copy diagnostics JSON' });
+    } finally {
+      setCopying(false);
+    }
+  };
+
+  const downloadDiagnostics = () => {
+    if (!diagnostics) return;
+    let url: string | undefined;
+    let anchor: HTMLAnchorElement | undefined;
+    setExportNotice(null);
+    try {
+      const blob = new Blob([JSON.stringify(diagnostics, null, 2)], { type: 'application/json;charset=utf-8' });
+      url = URL.createObjectURL(blob);
+      anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = 'diagnostics.json';
+      document.body.appendChild(anchor);
+      anchor.click();
+      setExportNotice({ severity: 'info', text: 'Diagnostics JSON download requested.' });
+    } catch (err) {
+      setExportNotice({ severity: 'error', text: err instanceof Error ? err.message : 'Failed to download diagnostics JSON' });
+    } finally {
+      anchor?.remove();
+      if (url) {
+        const downloadUrl = url;
+        // Let the browser consume the click before releasing the temporary URL.
+        setTimeout(() => URL.revokeObjectURL(downloadUrl), 1000);
+      }
+    }
   };
 
   const handleSectionToggle = (section: string) => {
-    setExpandedSections(prev => 
-      prev.includes(section) 
-        ? prev.filter(s => s !== section)
-        : [...prev, section]
-    );
+    setExpandedSections(prev => prev.includes(section) ? prev.filter(s => s !== section) : [...prev, section]);
   };
 
-  const renderCheckValue = (value: any) => {
-    if (typeof value === 'boolean') {
-      return (
-        <Chip
-          icon={value ? <CheckCircleIcon /> : <ErrorIcon />}
-          label={value ? 'Pass' : 'Fail'}
-          color={value ? 'success' : 'error'}
-          size="small"
-          variant="outlined"
-          sx={{ borderRadius: 1 }}
-        />
-      );
-    }
-    return <Typography variant="body2">{String(value)}</Typography>;
-  };
+  const displayName = (name: string) => name.replace(/_/g, ' ').replace(/\b\w/g, letter => letter.toUpperCase());
 
-  const anchorFor = (title: string) => {
-    const t = title.toLowerCase();
-    if (t.includes('phaxio')) return '#settings-phaxio';
-    if (t.includes('sinch')) return '#settings-sinch';
-    if (t.includes('sip')) return '#settings-sip';
-    if (t.includes('storage')) return '#settings-storage';
-    if (t.includes('security')) return '#settings-security';
-    if (t.includes('inbound')) return '#settings-inbound';
-    return '#settings-advanced';
-  };
-
-  const helpFor = (title: string, key: string, value: any): string | null => {
-    const t = title.toLowerCase();
-    if (t.includes('phaxio')) {
-      if (key === 'api_key_set' && !value) return 'Set PHAXIO_API_KEY with your Phaxio console key.';
-      if (key === 'api_secret_set' && !value) return 'Set PHAXIO_API_SECRET with your Phaxio console secret.';
-      if (key === 'callback_url_set' && !value) return 'Set PHAXIO_STATUS_CALLBACK_URL so Phaxio can send status updates.';
-      if (key === 'public_url_https' && !value) return 'PUBLIC_API_URL should be HTTPS for PHI; enable TLS.';
+  const getHelpDocs = (section: string) => {
+    const docs = [{ text: 'Settings guide', href: docsLink('storage', docsBase) }];
+    if (section === 'system') docs.push({ text: 'Deployment guide', href: docsLink('deployment', docsBase) });
+    if (section === 'security') docs.push({ text: 'Security guide', href: docsLink('security', docsBase) });
+    if (section === 'inbound') docs.push({ text: 'Receiving guide', href: docsLink('inbound', docsBase) });
+    const provider = section === 'outbound' ? diagnostics?.outbound_backend : section === 'inbound' ? diagnostics?.inbound_backend : section;
+    switch (provider) {
+      case 'phaxio': docs.push({ text: 'Phaxio setup guide', href: docsLink('phaxio', docsBase) }); break;
+      case 'sinch': docs.push({ text: 'Sinch setup guide', href: docsLink('sinch', docsBase) }); break;
+      case 'documo': docs.push({ text: 'Documo setup guide', href: docsLink('documo', docsBase) }); break;
+      case 'signalwire': docs.push({ text: 'SignalWire setup guide', href: docsLink('signalwire', docsBase) }); break;
+      case 'freeswitch': docs.push({ text: 'FreeSWITCH setup guide', href: docsLink('freeswitch', docsBase) }); break;
+      case 'sip': docs.push({ text: 'SIP/Asterisk setup guide', href: docsLink('sip', docsBase) }); break;
     }
-    if (t.includes('sinch')) {
-      if (key === 'project_id_set' && !value) return 'Set SINCH_PROJECT_ID from your Sinch console.';
-      if (key === 'api_key_set' && !value) return 'Set SINCH_API_KEY (or PHAXIO_API_KEY) for Sinch.';
-      if (key === 'api_secret_set' && !value) return 'Set SINCH_API_SECRET (or PHAXIO_API_SECRET) for Sinch.';
-    }
-    if (t.includes('sip')) {
-      if (key === 'ami_password_not_default' && !value) return 'Change ASTERISK_AMI_PASSWORD from default to a secure value.';
-      if (key === 'ami_reachable' && !value) return 'Verify AMI host/port, credentials, and network reachability.';
-    }
-    if (t.includes('storage')) {
-      if (key === 'kms_enabled' && !value) return 'Set S3_KMS_KEY_ID to enable server-side encryption (KMS).';
-      if (key === 'bucket_set' && !value) return 'Set S3_BUCKET to store inbound artifacts.';
-    }
-    if (t.includes('security')) {
-      if (key === 'enforce_https' && !value) return 'Set ENFORCE_PUBLIC_HTTPS=true for HIPAA deployments.';
-      if (key === 'audit_logging' && !value) return 'Enable AUDIT_LOG_ENABLED=true to record security events.';
-      if (key === 'rate_limiting' && !value) return 'Set MAX_REQUESTS_PER_MINUTE to mitigate abuse.';
-      if (key === 'pdf_token_ttl' && !value) return 'Set a reasonable PDF_TOKEN_TTL_MINUTES for Phaxio token links.';
-    }
-    if (t.includes('system')) {
-      if (key === 'ghostscript' && !value) return 'Install ghostscript in production to support PDF→TIFF.';
-      if (key === 'fax_data_writable' && !value) return 'Ensure FAX_DATA_DIR is writable (default /faxdata).';
-      if (key === 'database_connected' && !value) return 'Check DATABASE_URL and ensure DB file or Postgres is reachable.';
-    }
-    if (t.includes('inbound')) {
-      if (key === 'enabled' && !value) return 'Enable inbound to receive faxes.';
-    }
-    return 'See linked docs for configuration details.';
-  };
-
-  const getHelpDocs = (title: string, key: string) => {
-    const t = title.toLowerCase();
-    const docs: { text: string; href?: string }[] = [];
-    
-    if (t.includes('system')) {
-      if (key === 'ghostscript') {
-        docs.push({ text: 'Ghostscript is required for PDF to TIFF conversion (SIP/Asterisk backend).' });
-        docs.push({ text: 'Ghostscript Documentation', href: 'https://ghostscript.readthedocs.io/' });
-        docs.push({ text: 'Install via: apt-get install ghostscript (Linux) or brew install ghostscript (Mac)' });
-      }
-      else if (key === 'fax_data_dir' || key === 'fax_data_writable') {
-        docs.push({ text: 'FAX_DATA_DIR stores temporary files and fax artifacts.' });
-        docs.push({ text: 'Default: /faxdata in container, ./faxdata locally' });
-        docs.push({ text: 'Must be writable by the application process.' });
-        docs.push({ text: 'Deployment Guide', href: docsLink('deployment', docsBase) });
-      }
-      else if (key === 'database_connected') {
-        docs.push({ text: 'Database stores job records and API keys.' });
-        docs.push({ text: 'Default: SQLite at ./faxbot.db' });
-        docs.push({ text: 'Production: Use PostgreSQL with DATABASE_URL' });
-        docs.push({ text: 'Database Setup', href: docsLink('deployment', docsBase) });
-      }
-    }
-    
-    if (t.includes('phaxio')) {
-      docs.push({ text: 'Phaxio Setup Guide', href: docsLink('phaxio', docsBase) });
-      docs.push({ text: 'Phaxio Console', href: 'https://console.phaxio.com' });
-      if (key === 'public_url_https' || key === 'callback_url_set') {
-        docs.push({ text: 'Webhook security requires HTTPS for PHI transmission.' });
-      }
-    }
-    
-    if (t.includes('sip')) {
-      docs.push({ text: 'SIP/Asterisk Setup', href: docsLink('sip', docsBase) });
-      if (key === 'ami_password_not_default') {
-        docs.push({ text: 'Change AMI password in both Asterisk manager.conf and ASTERISK_AMI_PASSWORD env var.' });
-      }
-    }
-    
-    if (t.includes('security')) {
-      docs.push({ text: 'Security Guide', href: docsLink('security', docsBase) });
-      if (key === 'enforce_https') {
-        docs.push({ text: 'HIPAA requires encryption in transit. Enable ENFORCE_PUBLIC_HTTPS=true.' });
-      }
-    }
-    
     return docs;
   };
 
-  const renderCheckSection = (title: string, checks: Record<string, any>) => {
-    const sectionKey = title.toLowerCase().replace(/\s+/g, '_');
-    const isExpanded = expandedSections.includes(sectionKey);
-    
-    const failCount = Object.values(checks).filter(v => v === false).length;
-    const totalCount = Object.keys(checks).length;
-    const hasIssues = failCount > 0;
-    
+  const renderCheckSection = (section: string, checks: Record<string, DiagnosticsValue>) => {
+    const entries = Object.entries(checks);
+    const outcomes = entries.map(([key]) => explicitOutcome(diagnostics?.check_outcomes?.[section]?.[key]));
+    const failCount = outcomes.filter(outcome => outcome === 'fail').length;
+    const warningCount = outcomes.filter(outcome => outcome === 'warning').length;
+    const passCount = outcomes.filter(outcome => outcome === 'pass').length;
+    const infoCount = outcomes.filter(outcome => outcome === 'info').length;
+    const notApplicableCount = outcomes.filter(outcome => outcome === 'not_applicable').length;
+    const sectionIcon = failCount > 0 ? <ErrorIcon color="error" /> : warningCount > 0 ? <WarningIcon color="warning" /> : passCount > 0 && infoCount === 0 && notApplicableCount === 0 ? <CheckCircleIcon color="success" /> : <InfoIcon color="action" />;
+    const counts = [
+      passCount > 0 ? `${passCount} Pass` : '',
+      failCount > 0 ? `${failCount} Fail` : '',
+      warningCount > 0 ? `${warningCount} Warning` : '',
+      infoCount > 0 ? `${infoCount} Info` : '',
+      notApplicableCount > 0 ? `${notApplicableCount} Not applicable` : '',
+    ].filter(Boolean).join(' · ');
+
     return (
-      <Accordion 
-        key={sectionKey}
-        expanded={isExpanded}
-        onChange={() => handleSectionToggle(sectionKey)}
-        sx={{ 
-          borderRadius: 2,
-          mb: 2,
-          '&:before': { display: 'none' },
-          border: '1px solid',
-          borderColor: 'divider',
-        }}
+      <Accordion
+        key={section}
+        expanded={expandedSections.includes(section)}
+        onChange={() => handleSectionToggle(section)}
+        elevation={0}
+        sx={{ mb: 2, '&:before': { display: 'none' }, border: '1px solid', borderColor: 'divider' }}
       >
-        <AccordionSummary
-          expandIcon={<ExpandMoreIcon />}
-          sx={{
-            '& .MuiAccordionSummary-content': {
-              alignItems: 'center',
-              gap: 2,
-            }
-          }}
-        >
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, width: '100%' }}>
-            {hasIssues ? <ErrorIcon color="error" /> : <CheckCircleIcon color="success" />}
-            <Typography variant="h6" fontWeight={600}>
-              {title}
+        <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap', minWidth: 0, width: '100%' }}>
+            {sectionIcon}
+            <Typography variant="h6" fontWeight={600}>{displayName(section)}</Typography>
+            <Typography variant="caption" color="text.secondary" sx={{ ml: { sm: 'auto' }, overflowWrap: 'anywhere' }}>
+              {counts || 'No checks'}
             </Typography>
-            <Chip
-              label={`${totalCount - failCount}/${totalCount} Pass`}
-              color={hasIssues ? 'error' : 'success'}
-              size="small"
-              variant="outlined"
-              sx={{ borderRadius: 1, ml: 'auto' }}
-            />
           </Box>
         </AccordionSummary>
         <AccordionDetails>
           <Stack spacing={2}>
-            {Object.entries(checks).map(([key, value]) => {
-              const help = helpFor(title, key, value);
-              const displayKey = key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
-              
+            {entries.map(([key, value]) => {
+              const outcome = explicitOutcome(diagnostics?.check_outcomes?.[section]?.[key]);
               return (
                 <Paper
                   key={key}
                   elevation={0}
-                  sx={{
-                    p: 2,
-                    border: '1px solid',
-                    borderColor: value === false ? 'error.main' : 'divider',
-                    borderRadius: 2,
-                    backgroundColor: theme.palette.mode === 'dark' 
-                      ? 'rgba(255, 255, 255, 0.02)' 
-                      : 'rgba(0, 0, 0, 0.02)',
-                  }}
+                  sx={{ p: 2, minWidth: 0, border: '1px solid', borderColor: outcome === 'fail' ? 'error.main' : outcome === 'warning' ? 'warning.main' : 'divider', borderRadius: 2 }}
                 >
-                  <Box sx={{ 
-                    display: 'flex', 
-                    alignItems: 'flex-start',
-                    flexDirection: isMobile ? 'column' : 'row',
-                    gap: isMobile ? 1 : 2
-                  }}>
-                    <Box sx={{ flex: 1 }}>
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
-                        <Typography variant="subtitle2" fontWeight={600}>
-                          {displayKey}
-                        </Typography>
-                        {renderCheckValue(value)}
+                  <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1, minWidth: 0 }}>
+                    <Box sx={{ flex: 1, minWidth: 0 }}>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+                        <Typography variant="subtitle2" fontWeight={600} sx={{ overflowWrap: 'anywhere' }}>{displayName(key)}</Typography>
+                        <OutcomeChip outcome={outcome} />
                       </Box>
-                      {help && (
-                        <Typography variant="caption" color="text.secondary">
-                          {help}
-                        </Typography>
-                      )}
+                      <CheckValue value={value} />
                     </Box>
-                    <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-                      {onNavigate && (
-                        <Button
-                          size="small"
-                          variant="outlined"
-                          onClick={() => {
-                            const anchor = anchorFor(title);
-                            onNavigate('settings');
-                            setTimeout(() => {
-                              const el = document.querySelector(anchor);
-                              el?.scrollIntoView({ behavior: 'smooth' });
-                            }, 200);
-                          }}
-                          sx={{ borderRadius: 1 }}
-                        >
-                          Go to Settings
-                        </Button>
-                      )}
-                      <Tooltip title="Get help">
-                        <IconButton
-                          size="small"
-                          onClick={() => {
-                            setHelpTitle(title);
-                            setHelpKey(key);
-                            setHelpOpen(true);
-                          }}
-                        >
-                          <HelpIcon />
-                        </IconButton>
-                      </Tooltip>
-                    </Box>
+                    <Tooltip title="Settings and documentation guidance">
+                      <IconButton size="small" aria-label={`Help for ${displayName(section)} ${displayName(key)}`} onClick={() => {
+                        setHelpSection(section);
+                        setHelpKey(key);
+                        setHelpOpen(true);
+                      }}>
+                        <HelpIcon />
+                      </IconButton>
+                    </Tooltip>
                   </Box>
                 </Paper>
               );
@@ -346,332 +291,142 @@ function Diagnostics({ client, onNavigate, docsBase }: DiagnosticsProps) {
     );
   };
 
-  const getSuggestions = (diagnostics: DiagnosticsResult) => {
-    const suggestions: Array<{ type: 'error' | 'warning' | 'info'; text: string }> = [];
-    
-    diagnostics.summary.critical_issues.forEach(issue => {
-      suggestions.push({ type: 'error', text: issue });
-    });
-    
-    diagnostics.summary.warnings.forEach(warning => {
-      suggestions.push({ type: 'warning', text: warning });
-    });
-    
-    const { checks } = diagnostics;
-    
-    if (diagnostics.backend === 'phaxio') {
-      const phaxio = checks.phaxio || {};
-      if (!phaxio.api_key_set) suggestions.push({ type: 'error', text: 'Set PHAXIO_API_KEY in .env' });
-      if (!phaxio.api_secret_set) suggestions.push({ type: 'error', text: 'Set PHAXIO_API_SECRET in .env' });
-      if (!phaxio.callback_url_set) suggestions.push({ type: 'warning', text: 'Set PHAXIO_STATUS_CALLBACK_URL (or PHAXIO_CALLBACK_URL)' });
-      if (phaxio.public_url_https === false) suggestions.push({ type: 'warning', text: 'Use HTTPS for PUBLIC_API_URL' });
-    }
-    
-    if (diagnostics.backend === 'sip') {
-      const sip = checks.sip || {};
-      if (sip.ami_password_not_default === false) suggestions.push({ type: 'error', text: 'Change ASTERISK_AMI_PASSWORD from default "changeme"' });
-      if (sip.ami_reachable === false) suggestions.push({ type: 'error', text: 'Verify Asterisk AMI host/port/credentials and network reachability' });
-    }
-    
-    const system = checks.system || {};
-    if (system.ghostscript === false) suggestions.push({ type: 'warning', text: 'Install Ghostscript (gs) for PDF→TIFF conversion' });
-    if (system.fax_data_writable === false) suggestions.push({ type: 'error', text: 'Ensure FAX_DATA_DIR exists and is writable' });
-    if (system.database_connected === false) suggestions.push({ type: 'error', text: 'Fix DATABASE_URL connectivity' });
-    
-    return suggestions;
-  };
-
-  const getSuggestionIcon = (type: string) => {
-    switch (type) {
-      case 'error': return <ErrorIcon color="error" />;
-      case 'warning': return <WarningIcon color="warning" />;
-      default: return <InfoIcon color="info" />;
-    }
-  };
-
-  const runSendTestFax = async () => {
-    try {
-      setError(null);
-      setTestSending(true);
-      setTestJobId(null);
-      setTestStatus(null);
-      const blob = new Blob(["Faxbot test"], { type: 'text/plain' });
-      const file = new File([blob], 'test.txt', { type: 'text/plain' });
-      const result = await client.sendFax('+15555550123', file);
-      setTestJobId(result.id);
-      setTestStatus(result.status);
-      
-      let attempts = 0;
-      const poll = async () => {
-        if (!result.id || attempts++ > 10) return;
-        try {
-          const job = await client.getJob(result.id);
-          setTestStatus(job.status);
-          if (['SUCCESS','FAILED','failed','SUCCESSFUL','COMPLETED'].includes(String(job.status))) return;
-          try {
-            const logs = await client.getLogs({ q: result.id, limit: 5 });
-            if (logs.items && logs.items.length > 0) {
-              // Could display logs inline in future
-            }
-          } catch {}
-        } catch {}
-        setTimeout(poll, 2000);
-      };
-      poll();
-    } catch (e: any) {
-      setError(e?.message || 'Test fax failed to start');
-    } finally {
-      setTestSending(false);
-    }
-  };
+  const issues = diagnostics ? [
+    ...diagnostics.summary.critical_issues.map(text => ({ severity: 'error' as const, text })),
+    ...diagnostics.summary.warnings.map(text => ({ severity: 'warning' as const, text })),
+  ] : [];
 
   return (
     <>
       <Box>
-        <Box 
-          display="flex" 
-          justifyContent="space-between" 
-          alignItems={{ xs: 'flex-start', sm: 'center' }}
-          flexDirection={{ xs: 'column', sm: 'row' }}
-          gap={2}
-          mb={3}
-        >
-          <Typography variant="h4" component="h1">
-            System Diagnostics
-          </Typography>
-          <Box display="flex" gap={1}>
-            <Button
-              variant="contained"
-              startIcon={loading ? <CircularProgress size={20} color="inherit" /> : <DiagnosticIcon />}
-              onClick={runDiagnostics}
-              disabled={loading}
-              size={isSmallMobile ? 'medium' : 'large'}
-              sx={{ 
-                borderRadius: 2,
-                minHeight: isSmallMobile ? 40 : 42,
-              }}
-            >
-              {loading ? 'Running...' : 'Run Diagnostics'}
+        <Box display="flex" justifyContent="space-between" alignItems={{ xs: 'flex-start', sm: 'center' }} flexDirection={{ xs: 'column', sm: 'row' }} gap={2} mb={3}>
+          <Typography variant="h4" component="h1">System Diagnostics</Typography>
+          <Box display="flex" gap={1} flexWrap="wrap">
+            <Button variant="contained" startIcon={loading ? <CircularProgress size={20} color="inherit" /> : <DiagnosticIcon />} onClick={runDiagnostics} disabled={loading} size={isSmallMobile ? 'medium' : 'large'} sx={{ borderRadius: 2 }}>
+              {loading ? 'Running…' : 'Run Diagnostics'}
             </Button>
-            <Button
-              variant="outlined"
-              startIcon={<RestartIcon />}
-              onClick={async () => { try { await client.restart(); } catch { /* ignore */ } }}
-              size={isSmallMobile ? 'medium' : 'large'}
-              sx={{ 
-                borderRadius: 2,
-                minHeight: isSmallMobile ? 40 : 42,
-              }}
-            >
-              {isSmallMobile ? 'Restart' : 'Restart API'}
+            <Button variant="outlined" startIcon={restartState === 'pending' ? <CircularProgress size={20} color="inherit" /> : <RestartIcon />} onClick={requestRestart} disabled={restartState === 'pending'} size={isSmallMobile ? 'medium' : 'large'} sx={{ borderRadius: 2 }}>
+              {restartState === 'pending' ? 'Requesting…' : 'Restart API'}
             </Button>
           </Box>
         </Box>
 
-        {error && (
-          <Fade in>
-            <Alert 
-              severity="error" 
-              sx={{ mb: 3, borderRadius: 2 }}
-              onClose={() => setError(null)}
-            >
-              {error}
-            </Alert>
-          </Fade>
+        {error && <Alert severity="error" sx={{ mb: 3, borderRadius: 2 }} onClose={() => setError(null)}>{error}</Alert>}
+        {restartState !== 'idle' && (
+          <Alert severity={restartState === 'error' ? 'error' : restartState === 'success' ? 'success' : 'info'} sx={{ mb: 3, borderRadius: 2 }} onClose={restartState === 'pending' ? undefined : () => setRestartState('idle')}>
+            {restartMessage}
+          </Alert>
         )}
 
         {!diagnostics && !loading && (
           <Fade in>
             <Paper sx={{ p: 4, textAlign: 'center', borderRadius: 2 }}>
               <HealthIcon sx={{ fontSize: 48, color: 'text.secondary', mb: 2 }} />
-              <Typography variant="h6" gutterBottom>
-                Run System Diagnostics
-              </Typography>
+              <Typography variant="h6" gutterBottom>Run System Diagnostics</Typography>
               <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-                Check your Faxbot configuration, backend connectivity, and system health
+                Inspect active configuration and local readiness. Cloud provider delivery is not verified by these checks.
               </Typography>
-              <Button
-                variant="contained"
-                startIcon={<DiagnosticIcon />}
-                onClick={runDiagnostics}
-                sx={{ borderRadius: 2 }}
-              >
-                Start Diagnostics
-              </Button>
+              <Button variant="contained" startIcon={<DiagnosticIcon />} onClick={runDiagnostics} sx={{ borderRadius: 2 }}>Start Diagnostics</Button>
             </Paper>
           </Fade>
         )}
 
         {loading && (
-          <Fade in>
-            <Paper sx={{ p: 4, borderRadius: 2 }}>
-              <Box sx={{ textAlign: 'center' }}>
-                <CircularProgress sx={{ mb: 2 }} />
-                <Typography variant="body1">
-                  Running diagnostics...
-                </Typography>
-                <Typography variant="caption" color="text.secondary">
-                  Checking system health, backend connectivity, and configuration
-                </Typography>
-              </Box>
-              <LinearProgress sx={{ mt: 3 }} />
-            </Paper>
-          </Fade>
+          <Paper sx={{ p: 4, borderRadius: 2, mb: 3 }}>
+            <Box sx={{ textAlign: 'center' }}>
+              <CircularProgress sx={{ mb: 2 }} />
+              <Typography variant="body1">Running diagnostics…</Typography>
+              <Typography variant="caption" color="text.secondary">Checking active configuration and local installation readiness</Typography>
+            </Box>
+            <LinearProgress sx={{ mt: 3 }} />
+          </Paper>
         )}
 
         {diagnostics && (
           <Fade in>
             <Box>
-              {/* Built-in Tests */}
-              <ResponsiveFormSection
-                title="Built-in Tests"
-                subtitle="Test your fax configuration with a sample transmission"
-                icon={<SendIcon />}
-              >
-                <Stack spacing={2}>
-                  <Box sx={{ 
-                    display: 'flex', 
-                    alignItems: 'center', 
-                    gap: 2,
-                    flexWrap: 'wrap'
-                  }}>
-                    <Button 
-                      variant="outlined" 
-                      onClick={runSendTestFax} 
-                      disabled={testSending}
-                      startIcon={testSending ? <CircularProgress size={16} /> : <SendIcon />}
-                      sx={{ borderRadius: 2 }}
-                    >
-                      {testSending ? 'Sending…' : 'Send Test Fax'}
-                    </Button>
-                    {testJobId && (
-                      <Chip
-                        icon={<AssessmentIcon />}
-                        label={`Job: ${testJobId.slice(0, 8)}... • Status: ${testStatus || 'queued'}`}
-                        variant="outlined"
-                        sx={{ borderRadius: 1 }}
-                      />
-                    )}
-                  </Box>
-                  <Typography variant="caption" color="text.secondary">
-                    Uses your current backend settings. For cloud backends without valid credentials this will fail fast with an error.
-                  </Typography>
-                </Stack>
-              </ResponsiveFormSection>
-
-              {/* Summary */}
-              <ResponsiveFormSection
-                title="Diagnostic Summary"
-                subtitle={`Backend: ${diagnostics.backend} • Health: ${diagnostics.summary.healthy ? 'Healthy' : 'Issues Detected'}`}
-                icon={<HealthIcon />}
-              >
+              <ResponsiveFormSection title="Diagnostic Summary" subtitle={`Local readiness: ${diagnostics.summary.healthy ? 'Ready' : 'Issues detected'}`} icon={<HealthIcon />}>
                 <Stack spacing={3}>
                   <Box>
-                    <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 1 }}>
-                      Overall Health
+                    <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 1 }}>Local readiness</Typography>
+                    <Chip icon={diagnostics.summary.healthy ? <CheckCircleIcon /> : <ErrorIcon />} label={diagnostics.summary.healthy ? 'Ready' : 'Issues detected'} color={diagnostics.summary.healthy ? 'success' : 'error'} sx={{ borderRadius: 1 }} />
+                    <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                      These checks describe local readiness for the active configuration. They do not verify cloud provider delivery.
                     </Typography>
-                    <Chip
-                      icon={diagnostics.summary.healthy ? <CheckCircleIcon /> : <ErrorIcon />}
-                      label={diagnostics.summary.healthy ? 'Healthy' : 'Issues Detected'}
-                      color={diagnostics.summary.healthy ? 'success' : 'error'}
-                      sx={{ borderRadius: 1 }}
-                    />
                   </Box>
-
-                  {getSuggestions(diagnostics).length > 0 && (
+                  <Box sx={{ overflowWrap: 'anywhere' }}>
+                    <Typography variant="body2">Active outbound: <strong>{diagnostics.outbound_backend}</strong></Typography>
+                    <Typography variant="body2">Active inbound: <strong>{diagnostics.inbound_backend}</strong></Typography>
+                    <Typography variant="body2">Default provider: <strong>{diagnostics.default_backend}</strong></Typography>
+                    <Typography variant="body2" sx={{ mt: 1 }}>Active revision: <Box component="code">{diagnostics.configuration.active_revision_id}</Box></Typography>
+                    <Typography variant="body2">Desired revision: <Box component="code">{diagnostics.configuration.desired_revision_id}</Box></Typography>
+                    <Typography variant="body2">Configuration generation: {diagnostics.configuration.generation}</Typography>
+                    <Chip label={diagnostics.configuration.pending_restart ? 'Desired changes pending full installation restart' : 'No pending configuration restart'} color={diagnostics.configuration.pending_restart ? 'warning' : 'default'} variant="outlined" size="small" sx={{ mt: 1, height: 'auto', '& .MuiChip-label': { py: 0.5, whiteSpace: 'normal' } }} />
+                    <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 1 }}>Checked at {diagnostics.timestamp}</Typography>
+                  </Box>
+                  {issues.length > 0 && (
                     <Box>
-                      <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 1 }}>
-                        Issues & Suggestions
-                      </Typography>
+                      <Typography variant="subtitle2" fontWeight={600}>Server-reported issues and warnings</Typography>
                       <List dense>
-                        {getSuggestions(diagnostics).map((suggestion, idx) => (
-                          <ListItem key={idx} sx={{ px: 0 }}>
-                            <ListItemIcon sx={{ minWidth: 36 }}>
-                              {getSuggestionIcon(suggestion.type)}
-                            </ListItemIcon>
-                            <ListItemText 
-                              primary={suggestion.text}
-                              primaryTypographyProps={{ 
-                                variant: 'body2',
-                                color: suggestion.type === 'error' ? 'error' : 'text.primary'
-                              }}
-                            />
+                        {issues.map((issue, index) => (
+                          <ListItem key={`${issue.severity}-${index}`} sx={{ px: 0, alignItems: 'flex-start' }}>
+                            <ListItemIcon sx={{ minWidth: 36 }}>{issue.severity === 'error' ? <ErrorIcon color="error" /> : <WarningIcon color="warning" />}</ListItemIcon>
+                            <ListItemText primary={issue.text} primaryTypographyProps={{ variant: 'body2', color: issue.severity === 'error' ? 'error' : 'text.primary', sx: { overflowWrap: 'anywhere' } }} />
                           </ListItem>
                         ))}
                       </List>
                     </Box>
                   )}
-
                   <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-                    <Button
-                      variant="outlined"
-                      startIcon={<ContentCopyIcon />}
-                      onClick={() => copyToClipboard(JSON.stringify(diagnostics, null, 2))}
-                      size="small"
-                      sx={{ borderRadius: 1 }}
-                    >
-                      Copy JSON
-                    </Button>
-                    <Button
-                      variant="outlined"
-                      startIcon={<DownloadIcon />}
-                      onClick={() => downloadText('diagnostics.json', JSON.stringify(diagnostics, null, 2))}
-                      size="small"
-                      sx={{ borderRadius: 1 }}
-                    >
-                      Download
-                    </Button>
+                    {onNavigate && <Button variant="outlined" onClick={() => onNavigate('settings')} size="small">Open Settings</Button>}
+                    <Button variant="outlined" startIcon={<ContentCopyIcon />} onClick={copyDiagnostics} disabled={copying} size="small">{copying ? 'Copying…' : 'Copy JSON'}</Button>
+                    <Button variant="outlined" startIcon={<DownloadIcon />} onClick={downloadDiagnostics} size="small">Download JSON</Button>
+                  </Box>
+                  {exportNotice && <Alert severity={exportNotice.severity} onClose={() => setExportNotice(null)}>{exportNotice.text}</Alert>}
+                </Stack>
+              </ResponsiveFormSection>
+
+              <ResponsiveFormSection title="Test a fax through Send" subtitle="Choose your own document and destination" icon={<SendIcon />}>
+                <Stack spacing={2}>
+                  <Typography variant="body2" color="text.secondary">
+                    Open Send to choose a destination you control and review the active send setting. When sending is disabled, test jobs stay held and will never be automatically transmitted. When enabled, submitting can send a real fax through the active provider. Follow the resulting job to confirm its outcome.
+                  </Typography>
+                  <Box>
+                    <Button variant="outlined" startIcon={<SendIcon />} onClick={() => onNavigate?.('send')} disabled={!onNavigate} sx={{ borderRadius: 2 }}>Open Send</Button>
                   </Box>
                 </Stack>
               </ResponsiveFormSection>
 
-              {/* Check Sections */}
               <Box sx={{ mt: 3 }}>
-                <Typography variant="h6" fontWeight={600} sx={{ mb: 2 }}>
-                  System Checks
+                <Typography variant="h6" fontWeight={600} sx={{ mb: 1 }}>System Checks</Typography>
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                  Disabled features and provider metadata are informational; only applicable checks contribute to readiness.
                 </Typography>
-                {Object.entries(diagnostics.checks).map(([title, checks]) => (
-                  renderCheckSection(title.charAt(0).toUpperCase() + title.slice(1), checks as Record<string, any>)
-                ))}
+                {Object.entries(diagnostics.checks).map(([section, checks]) => renderCheckSection(section, checks))}
               </Box>
             </Box>
           </Fade>
         )}
       </Box>
 
-      {/* Help Dialog */}
-      <Dialog 
-        open={helpOpen} 
-        onClose={() => setHelpOpen(false)}
-        maxWidth="sm"
-        fullWidth
-        fullScreen={isSmallMobile}
-      >
+      <Dialog open={helpOpen} onClose={() => setHelpOpen(false)} maxWidth="sm" fullWidth fullScreen={isSmallMobile}>
         <DialogTitle>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-            <HelpIcon />
-            Help: {helpTitle} - {helpKey.replace(/_/g, ' ')}
-          </Box>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}><HelpIcon />Help: {displayName(helpSection)} — {displayName(helpKey)}</Box>
         </DialogTitle>
         <DialogContent>
           <Stack spacing={2}>
-            {getHelpDocs(helpTitle, helpKey).map((doc, idx) => (
-              <Box key={idx}>
-                {doc.href ? (
-                  <Link href={doc.href} target="_blank" rel="noreferrer">
-                    {doc.text}
-                  </Link>
-                ) : (
-                  <Typography variant="body2">{doc.text}</Typography>
-                )}
-              </Box>
-            ))}
+            <Typography variant="body2">
+              Review provider selection, role-specific settings, and saved and active revisions in Settings. Diagnostics describe the active configuration; desired changes marked pending need a full installation restart.
+            </Typography>
+            <Typography variant="body2">
+              Use the server-reported issues and warnings to identify required action. Informational values describe feature state or metadata.
+            </Typography>
+            {getHelpDocs(helpSection).map(doc => <Link key={doc.href} href={doc.href} target="_blank" rel="noreferrer">{doc.text}</Link>)}
           </Stack>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setHelpOpen(false)} sx={{ borderRadius: 2 }}>
-            Close
-          </Button>
+          {onNavigate && <Button onClick={() => { setHelpOpen(false); onNavigate('settings'); }}>Open Settings</Button>}
+          <Button onClick={() => setHelpOpen(false)} sx={{ borderRadius: 2 }}>Close</Button>
         </DialogActions>
       </Dialog>
     </>

@@ -17,7 +17,7 @@ Manage and test REST API credentials without leaving the Admin Console.
 
 - Use **Send Fax** to queue a test while the new key is active
 - View the auto-generated curl example in the sidebar if you need to script verification
-- Diagnostics → **API Auth** lists recent successes/failures with reasons
+- Diagnostics reports active installation readiness; it does not test a newly created key or provide an API Auth history panel.
 
 ### Quick examples
 
