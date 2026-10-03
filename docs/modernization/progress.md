@@ -129,3 +129,10 @@ Wayfinder is available for unresolved large decisions; do not make a planning-on
 - PDF download completion remains unresolved: clicking DownloadPDF produces no Browser download event or visible outcome in the in-app browser; an independent Sol agent reproduced that observation through real Brave clicks. No successful download or external fax delivery is claimed from the server's200 response.
 - Added an Admin UI build job to PR/main CI in `147a7f86`; hosted execution is pending the next push.
 - GUI review caught two documentation preview defects missed by a strict static build: generated pages offered an edit link to ignored output, and Redocly hydration produced a blank view. The edit action repair is GUI verified; API rendering correction and the clean hosted docs run remain in progress.
+
+### Clean docs and browser acceptance established
+
+- `4f3effef` restores automatic source-reference generation. Both hosted docs workflows passed; the actual downloaded artifact identifies its exact source commit and a clean tree. Primary MkDocs search/navigation and independent Brave API search/Send Fax navigation passed. No main/public-site publication is claimed while PR32 remains a draft.
+- Independent review then identified a rename escape in optional docs patch validation and missing versioned canonical URLs. `e59247f0` repairs both with observed failing regressions. Full focused docs suite:24 passed; independent correction review:13 focused checks passed, approved.
+- `28c7c1bb` and `24f28678` correct Setup/control labels and disabled-Inbox presentation. Independent Sol and primary real GUI replays passed. PDF download completion remains unverified; source/runtime configuration, full RBAC and real delivery work continue under the active goal.
+- Evidence: [docs and GUI checkpoint](evidence/2026-10-02-docs-and-gui.md). Subsequent commits automatically regenerate the code reference; agents use source and matching provenance rather than historical prose.
