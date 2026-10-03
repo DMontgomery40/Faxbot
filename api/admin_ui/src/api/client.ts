@@ -90,6 +90,13 @@ export class AdminAPIClient {
     });
 
     if (!response.ok) {
+      if (path === '/admin/restart' && response.status === 403) {
+        const body = await response.json().catch(() => null);
+        // Decode only this fixed refusal; arbitrary error details stay opaque.
+        if (body?.detail === 'Restart not allowed') {
+          throw new Error("API process restart from this console is disabled for this installation. Use the installation's deployment manager to restart the service.");
+        }
+      }
       if (manifestValidation && (response.status === 400 || response.status === 409)) {
         const body = await response.json().catch(() => null);
         if (typeof body?.detail === 'string' && safeManifestDetails.has(body.detail)) {
