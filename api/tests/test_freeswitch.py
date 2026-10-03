@@ -1,16 +1,24 @@
 from fastapi.testclient import TestClient
 from app.main import app
+import pytest
+import sqlalchemy as sa
 
 
-def test_freeswitch_send_and_result(isolated_installation, monkeypatch, tmp_path):
-    # Configure environment for FreeSWITCH backend in disabled mode
+@pytest.mark.parametrize("attempt_id,secret,status", [
+    (None, "sekret", 409), ("a" * 32, "sekret", 409),
+    ("a" * 32, None, 401), ("a" * 32, "wrong-secret", 401),
+])
+def test_held_freeswitch_job_refuses_unowned_result_without_mutation(
+    isolated_installation, monkeypatch, tmp_path, attempt_id, secret, status,
+):
+    # Queue-only jobs have no issued attempt, even with an installation secret.
     monkeypatch.setenv("FAX_BACKEND", "freeswitch")
     monkeypatch.setenv("FAX_DISABLED", "true")
     monkeypatch.setenv("FAX_DATA_DIR", str(tmp_path))
     monkeypatch.setenv("ASTERISK_INBOUND_SECRET", "sekret")
 
     with TestClient(app) as c:
-        # Submit a simple text fax (conversion paths are stubbed in disabled mode)
+        # The actual upload conversion and durable held acceptance remain real.
         files = {
             "to": (None, "+15551230001"),
             "file": ("test.txt", b"hello world", "text/plain"),
@@ -20,19 +28,28 @@ def test_freeswitch_send_and_result(isolated_installation, monkeypatch, tmp_path
         job = r.json()
         job_id = job["id"]
         assert job_id
-        # Simulate FreeSWITCH outbound result callback
+        assert job["status"] == "queued" and job["delivery_state"] == "held"
+        from app.outbound_store import OutboundStore
+        configuration = app.state.configuration_runtime.manager.store
+        store = OutboundStore(configuration)
+        before, history = store.get(job_id), store.history(job_id)
+        before_job = c.get(f"/fax/{job_id}").json()
         payload = {
             "job_id": job_id,
+            "attempt_id": attempt_id,
             "fax_status": "SUCCESS",
             "fax_result_text": "completed",
             "fax_document_transferred_pages": 1,
             "uuid": "demo-uuid"
         }
-        r2 = c.post("/_internal/freeswitch/outbound_result", json=payload, headers={"X-Internal-Secret": "sekret"})
-        assert r2.status_code == 200
-        # Verify job status updated
+        headers = {"X-Internal-Secret": secret} if secret is not None else {}
+        r2 = c.post("/_internal/freeswitch/outbound_result", json=payload, headers=headers)
+        assert r2.status_code == status
+        assert "sekret" not in r2.text and "wrong-secret" not in r2.text and "demo-uuid" not in r2.text
         r3 = c.get(f"/fax/{job_id}")
         assert r3.status_code == 200
-        j = r3.json()
-        assert j["status"] == "SUCCESS"
-
+        assert r3.json() == before_job
+        assert store.get(job_id) == before and store.history(job_id) == history
+        assert before["attempt_id"] is None and before["dispatch_mode"] == "held"
+        with configuration.engine.connect() as connection:
+            assert connection.scalar(sa.select(sa.func.count()).select_from(store.attempts)) == 0

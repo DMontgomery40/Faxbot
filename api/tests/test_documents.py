@@ -13,7 +13,6 @@ from pypdf import PdfReader
 from reportlab.pdfgen import canvas
 
 from app.main import app
-from app import main
 from app.config_values import ConfigurationValues
 from app.documents import prepare_upload, UploadPreparationError
 
@@ -187,17 +186,17 @@ def acceptance_fault(monkeypatch, data_dir, *, committed=False,
     connect = store.engine.connect
     state = {
         "accept": 0, "insert": 0, "commit": 0, "post_commit_reads": 0,
-        "dispatch": 0, "accepting": False, "commit_attempted": False,
+        "accepting": False, "commit_attempted": False,
     }
 
-    def accepting(revision, job):
+    def accepting(revision, job, **kwargs):
         state["accept"] += 1
         state["revision"] = revision
         state["job_id"] = job["id"]
         assert (data_dir / f"{job['id']}.pdf").is_file(), "fault preceded preparation"
         state["accepting"] = True
         try:
-            return accept(revision, job)
+            return accept(revision, job, **kwargs)
         finally:
             state["accepting"] = False
 
@@ -230,26 +229,29 @@ def acceptance_fault(monkeypatch, data_dir, *, committed=False,
             )
         return connect(*args, **kwargs)
 
-    async def unexpected_dispatch(*args, **kwargs):
-        state["dispatch"] += 1
-        raise AssertionError("Uncertain fax was dispatched")
-
     with monkeypatch.context() as patch:
         patch.setattr(store, "accept_outbound", accepting)
         patch.setattr(sa.engine.Connection, "execute", faulting_execute)
         patch.setattr(sa.engine.Connection, "commit", faulting_commit)
         patch.setattr(store.engine, "connect", guarded_connect)
-        patch.setattr(main, "_dispatch_accepted_job", unexpected_dispatch)
         yield state
 
 
 def assert_durable_acceptance(state, *, committed):
     """Reconcile through a fresh connection after the fault guards are removed."""
+    from app.outbound_store import OutboundStore
     store = app.state.configuration_runtime.manager.store
+    deliveries = OutboundStore(store)
     with store.engine.connect() as connection:
         jobs = connection.execute(sa.select(store.jobs)).mappings().all()
         bindings = connection.execute(sa.select(store.job_bindings)).mappings().all()
-    assert len(jobs) == len(bindings) == int(committed)
+        records = connection.execute(sa.select(deliveries.deliveries)).mappings().all()
+        events = connection.execute(sa.select(deliveries.events)).mappings().all()
+        assert connection.scalar(sa.select(sa.func.count()).select_from(deliveries.attempts)) == 0
+    assert len(jobs) == len(bindings) == len(records) == len(events) == int(committed)
+    # Queue-only acceptance stays held even when the COMMIT acknowledgement
+    # is lost. Neither request failure nor recovery manufactures an attempt.
+    assert deliveries.claim("synthetic-recovery-worker") is None
     if committed:
         job_id = state["job_id"]
         revision = state["revision"]
@@ -261,6 +263,10 @@ def assert_durable_acceptance(state, *, committed):
         profile = store.outbound_profile(job_id)
         assert profile.id == bindings[0]["profile_id"]
         assert jobs[0]["backend"] == profile.configuration.provider_id
+        assert records[0]["id"] == job_id
+        assert records[0]["state"] == records[0]["dispatch_mode"] == "held"
+        assert records[0]["version"] == 1 and records[0]["attempt_id"] is None
+        assert events[0]["job_id"] == job_id and events[0]["kind"] == "accepted"
 
 
 @pytest.mark.parametrize("committed", [False, True])
@@ -271,7 +277,6 @@ def test_commit_error_resolves_acceptance_before_cleaning_files(
     with acceptance_fault(monkeypatch, data_dir, committed=committed) as state:
         response = submit(client, b"Persisted document marker")
     assert state["accept"] == state["insert"] == state["commit"] == 1
-    assert state["dispatch"] == 0
     assert response.status_code == 503
     assert "private" not in response.text
     # Neither a missing row nor a successful recovery read changes lost acknowledgment.
@@ -292,7 +297,7 @@ def test_unknown_database_outcome_retains_document_and_reports_uncertainty(
                           forbid_post_commit_reads=True) as state:
         response = submit(client, b"Retain until acceptance is known")
     assert state["accept"] == state["insert"] == state["commit"] == 1
-    assert state["post_commit_reads"] == state["dispatch"] == 0
+    assert state["post_commit_reads"] == 0
     assert response.status_code == 503
     assert "uncertain" in response.json()["detail"]
     assert "private" not in response.text
@@ -310,7 +315,7 @@ def test_failure_before_any_commit_attempt_cleans_prepared_files(document_client
     with acceptance_fault(monkeypatch, data_dir, fail_before_commit=True) as state:
         response = submit(client, b"Acceptance failed before commit")
     assert state["accept"] == state["insert"] == 1
-    assert state["commit"] == state["dispatch"] == 0
+    assert state["commit"] == 0
     assert response.status_code == 503
     assert "private" not in response.text
     assert_artifacts(data_dir)

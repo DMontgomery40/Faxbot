@@ -10,6 +10,9 @@ import sys
 import pytest
 from fastapi.testclient import TestClient
 
+from api.tests.test_outbound_store import installation
+from api.tests.test_schema import database
+
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -179,50 +182,128 @@ def test_custom_manifest_send_preparation_uses_captured_traits(provider_client):
     assert bound.configuration.traits["requires_tiff"] is False
 
 
+@pytest.fixture
+def captured_provider_installation(installation, monkeypatch, tmp_path):
+    """Capture a validated operator resource without starting an HTTP lifespan."""
+    from api.app.config_paths import provider_traits_path
+    from api.app.config_profiles import ProviderConfiguration
+    from api.app.provider_catalog import ProviderCatalog
+    configuration, store, snapshot = installation
+    providers = tmp_path / "operator-providers"
+    selected = providers / "synthetic-provider.v1" / "manifest.json"
+    selected.parent.mkdir(parents=True)
+    original = manifest()
+    original["actions"]["get_status"]["method"] = "GET"
+    selected.write_text(json.dumps(original))
+    definition = ProviderCatalog.load(provider_traits_path(), providers).get(original["id"])
+    values = snapshot.active.values.with_patch({
+        "backend": original["id"], "outbound_backend": original["id"],
+        "fax_data_dir": str(tmp_path / "artifacts"), "providers_dir": str(providers),
+        "feature_v3_plugins": True,
+    })
+    snapshot = configuration.apply(snapshot, values, actor="test", restart_required=False,
+        providers={"outbound": ProviderConfiguration(definition.id,
+            traits=definition.traits.as_dict(), manifest=definition.manifest.as_dict())})
+    monkeypatch.chdir(tmp_path)
+    return configuration, store, snapshot, selected, original
+
+
+async def accept_resource_document(installation):
+    from datetime import datetime
+    from io import BytesIO
+    from uuid import uuid4
+    from fastapi import UploadFile
+    from api.app.documents import prepare_upload
+    configuration, _, snapshot, _, _ = installation
+    job_id = uuid4().hex
+    prepared = await prepare_upload(
+        UploadFile(file=BytesIO(b"Original resource path document"), filename="document.txt"),
+        job_id=job_id, data_dir=snapshot.active.values.fax_data_dir, max_bytes=100,
+        requires_tiff=False)
+    now = datetime.utcnow()
+    configuration.accept_outbound(snapshot.active, {
+        "id": job_id, "to_number": "+12025550123", "file_name": prepared.original_name,
+        "tiff_path": prepared.tiff_path or "", "status": "queued", "pages": prepared.pages,
+        "created_at": now, "updated_at": now,
+    })
+    return job_id
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("operation", ["dispatch", "historical_refresh"])
-async def test_custom_manifest_dispatch_and_historical_refresh_use_accepted_snapshot(provider_client, monkeypatch, operation):
-    from app import main
-    client, providers = provider_client
-    assert install(client).status_code == 200
-    activate(client)
-    runtime = main.app.state.configuration_runtime
-    accepted_revision = runtime.manager.store.read().active
-    response = client.post("/fax", data={"to": "+15551230001"}, files={"file": ("document.txt", b"Original resource path document", "text/plain")})
-    assert response.status_code == 202
-    job_id = response.json()["id"]
-    bound = runtime.manager.store.outbound_profile(job_id)
-    assert bound.configuration.manifest == manifest()
-    # Rotation and installation edits cannot rewrite an accepted provider frame.
-    activate(client, "phaxio")
+async def test_custom_manifest_dispatch_and_historical_refresh_use_accepted_snapshot(
+    captured_provider_installation, monkeypatch, operation,
+):
+    from contextlib import contextmanager
+    import sqlalchemy as sa
+    from api.app.config import use_configuration
+    from api.app.config_profiles import ProviderConfiguration
+    from api.app.outbound_polling import OutboundPoller
+    from api.app.outbound_transport import CapturedTransport
+    from api.app.outbound_worker import OutboundWorker
+    configuration, store, snapshot, selected, original = captured_provider_installation
+    job_id = await accept_resource_document(captured_provider_installation)
+    assert configuration.outbound_profile(job_id).configuration.manifest == original
+    if operation == "historical_refresh":
+        # A status lookup needs an acknowledged attempt, never a held upload.
+        claim = store.claim("synthetic-original-worker")
+        assert store.begin_submission(claim)
+        store.record_receipt(claim, provider_sid="selected-resource-job", status="in_progress")
+    configuration.apply(snapshot, snapshot.active.values.with_patch({
+        "backend": "phaxio", "outbound_backend": "phaxio",
+    }), actor="test", restart_required=False, providers={"outbound": ProviderConfiguration("phaxio")})
     edited = manifest()
     for action in edited["actions"].values():
         action["url"] = "https://synthetic.invalid/edited-install"
-    (providers / "synthetic-provider.v1" / "manifest.json").write_text(json.dumps(edited))
-    # Only the HTTP transport is synthetic; parsing, templates, DB updates and paths stay real.
-    requests = []
+    selected.write_text(json.dumps(edited))
+    requests, frames = [], []
 
     async def synthetic_http(client, method, url, **kwargs):
-        requests.append(str(url))
         import httpx
-        return httpx.Response(200, json={"id": "selected-resource-job", "status": "sent"}, request=httpx.Request(method, url))
+        requests.append((method, str(url)))
+        return httpx.Response(200, json={"id": "selected-resource-job", "status": "success"},
+            request=httpx.Request(method, url))
 
-    monkeypatch.setattr("app.plugins.http_provider.httpx.AsyncClient.request", synthetic_http)
+    class Runtime:
+        @contextmanager
+        def frame(self, revision):
+            frames.append(revision.id)
+            with use_configuration(revision.values):
+                yield
+
+    monkeypatch.setattr("api.app.plugins.http_provider.httpx.AsyncClient.request", synthetic_http)
     if operation == "dispatch":
-        await main._dispatch_accepted_job(accepted_revision, job_id, "+15551230001",
-            str(Path(accepted_revision.values.fax_data_dir) / f"{job_id}.pdf"), "")
-        expected_url = "https://synthetic.invalid/resource-marker/send"
+        assert await OutboundWorker(store, CapturedTransport(store, Runtime())).step()
+        assert frames == [snapshot.active.id]
+        expected_request = ("POST", "https://synthetic.invalid/resource-marker/send")
     else:
-        # Historical binding uses the job's provider after current selection changes.
-        with runtime.frame():
-            refreshed = await main.admin_refresh_job(job_id)
-        assert refreshed.status == "sent"
-        expected_url = "https://synthetic.invalid/resource-marker/status"
-    with main.SessionLocal() as db:
-        job = db.get(main.FaxJob, job_id)
-        assert job.status == "sent", job.error
-        assert job.provider_sid == "selected-resource-job"
-    assert requests == [expected_url]
+        assert await OutboundPoller(store).refresh(job_id)
+        expected_request = ("GET", "https://synthetic.invalid/resource-marker/status")
+    with configuration.engine.connect() as connection:
+        job = connection.execute(sa.select(configuration.jobs).where(
+            configuration.jobs.c.id == job_id)).mappings().one()
+        assert job["status"] == "success" and job["provider_sid"] == "selected-resource-job"
+        assert connection.scalar(sa.select(sa.func.count()).select_from(store.attempts)) == 1
+    assert store.get(job_id)["state"] == "success"
+    assert requests == [expected_request]
+
+
+@pytest.mark.asyncio
+async def test_held_manifest_refresh_never_contacts_provider(captured_provider_installation, monkeypatch):
+    from api.app.outbound_polling import OutboundPoller
+    configuration, store, snapshot, selected, original = captured_provider_installation
+    snapshot = configuration.apply(snapshot, snapshot.active.values.with_patch({"fax_disabled": True}),
+        actor="test", restart_required=False)
+    fixture = (configuration, store, snapshot, selected, original)
+    job_id = await accept_resource_document(fixture)
+    before, history = store.get(job_id), store.history(job_id)
+    async def forbidden_request(*args, **kwargs):
+        raise AssertionError("Held fax must not contact any provider")
+    monkeypatch.setattr("api.app.plugins.http_provider.httpx.AsyncClient.request", forbidden_request)
+    assert await OutboundPoller(store).refresh(job_id) is False
+    assert store.get(job_id) == before and store.history(job_id) == history
+    assert before["state"] == before["dispatch_mode"] == "held"
+    assert before["attempt_id"] is None
 
 
 @pytest.mark.parametrize("provider_id", ["../escaped", "..", ".", "/absolute", r"..\escaped", "a/b", "a%2Fb", "%2e%2e", "a%252fb", "bad\x00id", " spaced ", "C:escape"])
@@ -285,12 +366,8 @@ def test_escaped_symlink_manifest_is_refused_by_install_scans_and_reads(provider
     assert outside_manifest.read_bytes() == original
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("operation", ["prepare", "dispatch", "historical_refresh"])
-async def test_escaped_manifest_is_never_used_for_a_fax(provider_client, monkeypatch, tmp_path, operation):
+def test_escaped_manifest_cannot_be_selected_for_a_fax(provider_client, monkeypatch, tmp_path):
     from app import main
-    from app.config_store import UnboundProviderProfile
-    from fastapi import HTTPException
     client, providers = provider_client
     outside = tmp_path / "outside-provider"
     outside.mkdir()
@@ -305,39 +382,78 @@ async def test_escaped_manifest_is_never_used_for_a_fax(provider_client, monkeyp
         calls.append(True)
         raise AssertionError("Unsafe or unbound provider must not be contacted")
     monkeypatch.setattr("app.plugins.http_provider.httpx.AsyncClient.request", forbidden_provider_request)
-    if operation == "prepare":
-        selection = client.put("/admin/settings", json={"backend": "escaped", "outbound_backend": "escaped"})
-        assert selection.status_code == 400
-        assert selection.json() == {"detail": "Invalid provider resource."}
-        assert runtime.manager.store.read() == snapshot
-        assert client.get("/admin/fax-jobs").json()["total"] == 0
-        assert not list(Path(snapshot.active.values.fax_data_dir).glob("*.pdf"))
-        assert not list(Path(snapshot.active.values.fax_data_dir).glob("*.tif*"))
-        assert (outside / "manifest.json").read_bytes() == original
-        assert not calls
-        return
+    selection = client.put("/admin/settings", json={"backend": "escaped", "outbound_backend": "escaped"})
+    assert selection.status_code == 400
+    assert selection.json() == {"detail": "Invalid provider resource."}
+    assert runtime.manager.store.read() == snapshot
+    assert client.get("/admin/fax-jobs").json()["total"] == 0
+    assert not list(Path(snapshot.active.values.fax_data_dir).glob("*.pdf"))
+    assert not list(Path(snapshot.active.values.fax_data_dir).glob("*.tif*"))
+    assert (outside / "manifest.json").read_bytes() == original
+    assert not calls
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["dispatch", "historical_refresh"])
+async def test_legacy_escaped_manifest_is_never_used_for_a_fax(installation, monkeypatch, tmp_path, operation):
+    from datetime import datetime
+    from uuid import uuid4
+    import sqlalchemy as sa
+    from api.app.config_paths import provider_traits_path
+    from api.app.config_store import UnboundProviderProfile
+    from api.app.outbound_polling import OutboundPoller
+    from api.app.outbound_store import DeliveryConflict
+    from api.app.outbound_transport import CapturedTransport
+    from api.app.outbound_worker import OutboundWorker
+    from api.app.provider_catalog import ProviderCatalog, ProviderCatalogError
+    configuration, store, snapshot = installation
+    providers = tmp_path / "operator-providers"
+    outside = tmp_path / "outside-provider"
+    outside.mkdir()
+    outside_manifest = outside / "manifest.json"
+    outside_manifest.write_text(json.dumps(manifest("escaped")))
+    providers.mkdir()
+    (providers / "escaped").symlink_to(outside, target_is_directory=True)
+    snapshot = configuration.apply(snapshot, snapshot.active.values.with_patch({
+        "fax_data_dir": str(tmp_path / "artifacts"), "providers_dir": str(providers),
+    }), actor="test", restart_required=False)
+    original = outside_manifest.read_bytes()
+    with pytest.raises(ProviderCatalogError, match="Invalid provider resource"):
+        ProviderCatalog.load(provider_traits_path(), providers)
+    calls = []
+    async def forbidden_provider_request(*args, **kwargs):
+        calls.append(True)
+        raise AssertionError("Unsafe or unbound provider must not be contacted")
+    monkeypatch.setattr("api.app.plugins.http_provider.httpx.AsyncClient.request", forbidden_provider_request)
     # A legacy provider name has no verified account/manifest binding. Reconcile
     # it rather than reading today's installation or borrowing another profile.
-    with main.SessionLocal() as db:
-        job = main.FaxJob(id="escaped-provider-job", to_number="+15551230001", file_name="document.txt", tiff_path="", status="queued", backend="escaped")
-        db.add(job)
-        db.commit()
+    job_id, now = uuid4().hex, datetime.utcnow()
+    with configuration.engine.begin() as connection:
+        connection.execute(configuration.jobs.insert().values(id=job_id, to_number="+12025550123",
+            file_name="document.txt", tiff_path="", status="queued", backend="escaped",
+            created_at=now, updated_at=now))
+        connection.execute(store.deliveries.insert().values(id=job_id, dispatch_mode="legacy",
+            state="reconciliation_required", legacy_status="queued", version=1,
+            created_at=now, updated_at=now))
+        before_job = dict(connection.execute(sa.select(configuration.jobs)).mappings().one())
+    before, history = store.get(job_id), store.history(job_id)
     with pytest.raises(UnboundProviderProfile):
-        runtime.manager.store.outbound_profile("escaped-provider-job")
+        configuration.outbound_profile(job_id)
     if operation == "dispatch":
-        with runtime.frame():
-            await main._send_via_manifest("escaped-provider-job", "+15551230001", "unused.pdf")
-        with main.SessionLocal() as db:
-            job = db.get(main.FaxJob, "escaped-provider-job")
-            assert job.status == "failed"
-            assert job.error == "Provider operation failed; reconcile delivery before retrying."
+        class NoFrame:
+            def frame(self, revision):
+                raise AssertionError("Legacy job must not enter provider preparation")
+        assert await OutboundWorker(store, CapturedTransport(store, NoFrame())).step() is False
     else:
-        with runtime.frame(), pytest.raises(HTTPException) as error:
-            await main.admin_refresh_job("escaped-provider-job")
-        assert error.value.status_code == 409
-        assert "reconciliation" in error.value.detail
+        with pytest.raises(DeliveryConflict, match="No acknowledged provider identity"):
+            await OutboundPoller(store).refresh(job_id)
+    assert store.get(job_id) == before and store.history(job_id) == history
+    with configuration.engine.connect() as connection:
+        assert dict(connection.execute(sa.select(configuration.jobs)).mappings().one()) == before_job
+        assert connection.scalar(sa.select(sa.func.count()).select_from(store.attempts)) == 0
+        assert connection.scalar(sa.select(sa.func.count()).select_from(configuration.job_bindings)) == 0
     assert not calls
-    assert (outside / "manifest.json").read_bytes() == original
+    assert outside_manifest.read_bytes() == original
     assert not list(Path(snapshot.active.values.fax_data_dir).glob("*.pdf"))
     assert not list(Path(snapshot.active.values.fax_data_dir).glob("*.tif*"))
 
