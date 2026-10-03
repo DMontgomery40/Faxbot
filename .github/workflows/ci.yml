@@ -49,3 +49,19 @@ jobs:
         run: |
           mkdir -p faxdata
           pytest -q
+
+  build-admin-ui:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.21.0'
+          cache: npm
+          cache-dependency-path: api/admin_ui/package-lock.json
+      - name: Install Admin UI dependencies
+        working-directory: api/admin_ui
+        run: npm ci
+      - name: Typecheck and build Admin UI
+        working-directory: api/admin_ui
+        run: npm run build
