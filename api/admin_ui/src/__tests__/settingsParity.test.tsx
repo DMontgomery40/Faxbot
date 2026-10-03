@@ -244,6 +244,84 @@ describe('Setup Wizard delivery options', () => {
   });
 });
 
+describe('Installation country', () => {
+  const US_NUMBERS = { default_country: 'US', example: { national: '(201) 555-0123', international: '+1 201-555-0123' },
+    supported_countries: ['US', 'GB', 'DE', 'FR'] };
+  const GB_NUMBERS = { default_country: 'GB', example: { national: '0121 234 5678', international: '+44 121 234 5678' },
+    supported_countries: ['US', 'GB', 'DE', 'FR'] };
+  const countryField = () => screen.findByRole('combobox', { name: 'Installation country' });
+
+  async function chooseCountry(name: string, typed = name.slice(0, 6)) {
+    const field = await countryField();
+    fireEvent.change(field, { target: { value: typed } });
+    fireEvent.click(within(await screen.findByRole('listbox')).getByRole('option', { name }));
+  }
+
+  it('lists countries by name and saves the United Kingdom from Settings', async () => {
+    const writes = settingsHandlers(settingsFixture((data) => { data.numbers = US_NUMBERS; }));
+    render(<Settings client={client()} />);
+    const field = await countryField();
+    await waitFor(() => expect((field as HTMLInputElement).value).toBe('United States'));
+    expect(screen.getByText('Current: United States')).toBeTruthy();
+    expect(screen.getByText('The number partners fax you at, for example (201) 555-0123 or +1 201-555-0123.')).toBeTruthy();
+
+    fireEvent.mouseDown(field);
+    const names = within(await screen.findByRole('listbox')).getAllByRole('option').map((option) => option.textContent);
+    expect(names).toEqual(['France', 'Germany', 'United Kingdom', 'United States']);
+    fireEvent.click(screen.getByRole('option', { name: 'United Kingdom' }));
+    expect((field as HTMLInputElement).value).toBe('United Kingdom');
+    apply();
+    await screen.findByText('Settings saved.');
+    expect(writes).toEqual([{ expected_revision_id: 'rev-a', fax_default_country: 'GB' }]);
+  });
+
+  it('shows UK examples for a UK installation', async () => {
+    settingsHandlers(settingsFixture((data) => { data.numbers = GB_NUMBERS; }));
+    render(<Settings client={client()} />);
+    const field = await countryField();
+    await waitFor(() => expect((field as HTMLInputElement).value).toBe('United Kingdom'));
+    expect(screen.getByText('The number partners fax you at, for example 0121 234 5678 or +44 121 234 5678.')).toBeTruthy();
+    expect(screen.queryByText(/E\.164|\+15551234567|\+13035551234/)).toBeNull();
+  });
+
+  it('shows the server sentence when a number cannot be read', async () => {
+    const detail = 'Enter the full fax number with its area code, or with its country code starting with +.';
+    settingsHandlers(settingsFixture((data) => { data.numbers = GB_NUMBERS; }),
+      () => HttpResponse.json({ detail }, { status: 400 }));
+    render(<Settings client={client()} />);
+    const direct = await section('Direct delivery');
+    fireEvent.change(within(direct).getByLabelText('Our fax number'), { target: { value: '684953' } });
+    apply();
+    expect(await screen.findByText(`${detail} Your edits are kept here; reload before trying again.`)).toBeTruthy();
+  });
+
+  it('chooses the country in the Setup Wizard and keeps a UK fax number as typed until the server saves it', async () => {
+    const data = settingsFixture((fixture) => { fixture.numbers = US_NUMBERS; });
+    const writes = settingsHandlers(data, () => {
+      data.numbers = GB_NUMBERS;
+      data.direct.fax_number = '+441782684953';
+      return null;
+    });
+    server.use(http.get('/plugins', () => HttpResponse.json({ items: [] })));
+    const next = () => fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+    render(<SetupWizard client={client()} />);
+    await screen.findByText('Choose Providers', { selector: 'h6' });
+    await chooseCountry('United Kingdom');
+    next();
+    next();
+    next();
+    await screen.findByText('Delivery Options', { selector: 'h6' });
+    fireEvent.change(screen.getByLabelText('Our fax number'), { target: { value: '01782 684953' } });
+    next();
+    fireEvent.click(screen.getByRole('button', { name: 'Apply Changes' }));
+    await screen.findByText('Settings saved.');
+    expect(writes[0]).toEqual({ expected_revision_id: 'rev-a', fax_default_country: 'GB', direct_fax_number: '01782 684953' });
+    fireEvent.click(screen.getByRole('button', { name: 'Back' }));
+    await waitFor(() => expect((screen.getByLabelText('Our fax number') as HTMLInputElement).value).toBe('+441782684953'));
+    expect(screen.getByText('The number partners fax you at, for example 0121 234 5678 or +44 121 234 5678.')).toBeTruthy();
+  });
+});
+
 describe('Settings email delivery', () => {
   function connectorHandlers(calls: Json[]) {
     server.use(
