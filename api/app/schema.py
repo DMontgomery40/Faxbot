@@ -12,10 +12,11 @@ from .schema_legacy import (
     CORE_TABLES, HYBRIDS, UNIQUE_IDENTITIES, frozen_metadata, has_unique_identity,
 )
 
-from . import schema_configuration
+from . import schema_configuration, schema_outbound
 
 FOUNDATION = "0002_schema_foundation"
-HEAD = schema_configuration.REVISION
+CONFIGURATION = schema_configuration.REVISION
+HEAD = schema_outbound.REVISION
 INITIAL = "0001_initial"
 LOCK_ID = 0x464158424F54  # FAXBOT, stable across processes and releases
 LOCK_TIMEOUT_SECONDS = 10
@@ -91,7 +92,7 @@ def _reject(reason):
 
 
 def _validate_namespace(connection):
-    names = tuple(sorted(CORE_TABLES | schema_configuration.TABLES | {"alembic_version"}))
+    names = tuple(sorted(CORE_TABLES | schema_configuration.TABLES | schema_outbound.TABLES | {"alembic_version"}))
     if connection.dialect.name == "postgresql":
         rows = connection.execute(sa.text("""
             SELECT c.relname, n.nspname, c.relkind, c.relrowsecurity,
@@ -184,11 +185,15 @@ def _validate_plain_indexes(connection, present):
                     SELECT 1 FROM generate_series(0, i.indnkeyatts - 1) AS pos
                     JOIN pg_opclass op ON op.oid=i.indclass[pos]
                     JOIN pg_attribute a ON a.attrelid=c.oid AND a.attnum=i.indkey[pos]
-                    -- All frozen core/version index keys are VARCHAR, whose
-                    -- historical btree class is pg_catalog.text_ops. A custom
-                    -- class may declare itself DEFAULT and change equality.
+                    -- Frozen index keys use only VARCHAR, Integer and naive
+                    -- DateTime. Require their qualified built-in default class;
+                    -- a custom class may declare itself DEFAULT and change equality.
                     WHERE NOT op.opcdefault OR op.opcnamespace <> 'pg_catalog'::regnamespace
-                        OR op.opcname <> 'text_ops'
+                        OR op.opcname <> CASE a.atttypid
+                            WHEN 'pg_catalog.varchar'::regtype THEN 'text_ops'
+                            WHEN 'pg_catalog.int4'::regtype THEN 'int4_ops'
+                            WHEN 'pg_catalog.timestamp'::regtype THEN 'timestamp_ops'
+                            ELSE '' END
                         OR i.indoption[pos] <> 0 OR i.indcollation[pos] <> a.attcollation
                 )
             )
@@ -298,7 +303,8 @@ def validate_schema(connection, *, require_version=False):
     tables = set(inspector.get_table_names())
     present = tables & CORE_TABLES
     extensions = tables & schema_configuration.TABLES
-    protected = present | extensions | ({"alembic_version"} & tables)
+    outbound = tables & schema_outbound.TABLES
+    protected = present | extensions | outbound | ({"alembic_version"} & tables)
     _validate_no_write_hooks(connection, protected)
     _validate_plain_indexes(connection, protected)
     revision = None
@@ -314,14 +320,14 @@ def validate_schema(connection, *, require_version=False):
                 or inspector.get_indexes("alembic_version") or inspector.get_unique_constraints("alembic_version")):
             _reject("invalid version table constraints")
         revisions = connection.execute(sa.text("SELECT version_num FROM alembic_version")).scalars().all()
-        if len(revisions) > 1 or any(value not in {INITIAL, FOUNDATION, HEAD} for value in revisions):
+        if len(revisions) > 1 or any(value not in {INITIAL, FOUNDATION, CONFIGURATION, HEAD} for value in revisions):
             _reject("unknown or multiple migration revisions")
         revision = revisions[0] if revisions else None
     if require_version and revision is None:
         _reject("upgrade did not produce a version")
     if present not in (set(), {"fax_jobs"}, CORE_TABLES) or (revision and present != CORE_TABLES):
         _reject("incomplete core table set")
-    if revision == HEAD:
+    if revision in {CONFIGURATION, HEAD}:
         if extensions != schema_configuration.TABLES:
             _reject("incomplete configuration table set")
         metadata = schema_configuration.frozen_metadata(dialect=connection.dialect.name)
@@ -329,8 +335,14 @@ def validate_schema(connection, *, require_version=False):
         if extensions:
             _reject("configuration tables exist before their migration revision")
         metadata = frozen_metadata()
-    complete = revision in {FOUNDATION, HEAD}
-    for name in sorted(present | extensions):
+    if revision == HEAD:
+        if outbound != schema_outbound.TABLES:
+            _reject("incomplete outbound table set")
+        metadata = schema_outbound.frozen_metadata(dialect=connection.dialect.name)
+    elif outbound:
+        _reject("outbound tables exist before their migration revision")
+    complete = revision in {FOUNDATION, CONFIGURATION, HEAD}
+    for name in sorted(present | extensions | outbound):
         _validate_columns(inspector, name, metadata.tables[name], complete=complete)
         if name == "fax_jobs" and present == CORE_TABLES and "backend" not in {column["name"] for column in inspector.get_columns(name)}:
             _reject("six-table historical schema is missing provider columns")
@@ -341,7 +353,7 @@ def validate_schema(connection, *, require_version=False):
         _validate_indexes(connection, inspector, name, metadata.tables[name], complete=complete)
     # Index names share a schema namespace with unrelated tables. Detect conflicts
     # before any DDL so auxiliary objects can never be replaced or repurposed.
-    planned_metadata = schema_configuration.frozen_metadata(dialect=connection.dialect.name)
+    planned_metadata = schema_outbound.frozen_metadata(dialect=connection.dialect.name)
     planned = {index.name: name for name, table in planned_metadata.tables.items() for index in table.indexes}
     planned.update({f"uq_{name}_identity": name for name in UNIQUE_IDENTITIES})
     for name in tables:
