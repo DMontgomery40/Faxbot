@@ -18,7 +18,8 @@ import { Visibility, VisibilityOff, InfoOutlined } from '@mui/icons-material';
 interface ResponsiveSettingItemProps {
   icon?: React.ReactNode;
   label: string;
-  value?: string;
+  value?: string | number | boolean;
+  editValue?: string | number | boolean;
   helperText?: string;
   placeholder?: string;
   onChange?: (value: string) => void;
@@ -34,6 +35,7 @@ export function ResponsiveSettingItem({
   icon,
   label,
   value,
+  editValue,
   helperText,
   placeholder,
   onChange,
@@ -47,18 +49,31 @@ export function ResponsiveSettingItem({
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const [showPassword, setShowPassword] = React.useState(false);
+  const inputId = React.useId();
+  const labelId = `${inputId}-label`;
+  const helperId = `${inputId}-helper`;
+  const inputValue = String(editValue ?? '');
+  const currentValue = value === undefined ? undefined : String(value);
+  const inputAccessibility = {
+    'aria-labelledby': labelId,
+    'aria-describedby': helperText ? helperId : undefined,
+    readOnly: !onChange,
+  };
 
-  const handleTogglePassword = () => setShowPassword(!showPassword);
+  const handleTogglePassword = () => setShowPassword((previous) => !previous);
 
   const renderInput = () => {
     if (type === 'select' && options) {
       return (
         <TextField
           select
+          id={inputId}
           fullWidth={fullWidth}
-          value={value || ''}
+          value={inputValue}
           onChange={(e) => onChange?.(e.target.value)}
           placeholder={placeholder}
+          inputProps={inputAccessibility}
+          required={required}
           SelectProps={{
             native: true,
           }}
@@ -70,6 +85,9 @@ export function ResponsiveSettingItem({
             }
           }}
         >
+          {!options.some((option) => option.value === inputValue) && (
+            <option value={inputValue}>{inputValue || 'Not selected'}</option>
+          )}
           {options.map((opt) => (
             <option key={opt.value} value={opt.value}>
               {opt.label}
@@ -81,16 +99,22 @@ export function ResponsiveSettingItem({
 
     return (
       <TextField
+        id={inputId}
         fullWidth={fullWidth}
-        type={type === 'password' && !showPassword ? 'password' : 'text'}
+        type={type === 'password' ? (showPassword ? 'text' : 'password') : type}
+        value={inputValue}
         placeholder={placeholder}
         onChange={(e) => onChange?.(e.target.value)}
+        inputProps={inputAccessibility}
         size="small"
         required={required}
         InputProps={{
           endAdornment: type === 'password' ? (
             <InputAdornment position="end">
               <IconButton
+                type="button"
+                aria-label={`${showPassword ? 'Hide' : 'Show'} ${label}`}
+                aria-pressed={showPassword}
                 onClick={handleTogglePassword}
                 edge="end"
                 size="small"
@@ -126,7 +150,7 @@ export function ResponsiveSettingItem({
                 {icon}
               </Box>
             )}
-            <Typography variant="subtitle2" fontWeight={600}>
+            <Typography component="label" id={labelId} htmlFor={inputId} variant="subtitle2" fontWeight={600}>
               {label}
               {required && <span style={{ color: theme.palette.error.main }}> *</span>}
             </Typography>
@@ -138,6 +162,7 @@ export function ResponsiveSettingItem({
                   href={infoLink.url}
                   target="_blank"
                   rel="noreferrer"
+                  aria-label={infoLink.text}
                 >
                   <InfoOutlined fontSize="small" />
                 </IconButton>
@@ -146,7 +171,7 @@ export function ResponsiveSettingItem({
           </Box>
 
           {/* Current value if exists */}
-          {showCurrentValue && value && (
+          {showCurrentValue && currentValue !== undefined && (
             <Typography
               variant="caption"
               sx={{
@@ -160,13 +185,13 @@ export function ResponsiveSettingItem({
                 wordBreak: 'break-all',
               }}
             >
-              Current: {type === 'password' ? '••••••••••••' : (value.length > 30 ? `${value.substring(0, 30)}...` : value)}
+              Current: {type === 'password' && currentValue ? '••••••••••••' : (currentValue.length > 30 ? `${currentValue.substring(0, 30)}...` : currentValue || 'Not set')}
             </Typography>
           )}
 
           {/* Helper text */}
           {helperText && (
-            <Typography variant="caption" color="text.secondary" sx={{ px: 0.5 }}>
+            <Typography id={helperId} variant="caption" color="text.secondary" sx={{ px: 0.5 }}>
               {helperText}
             </Typography>
           )}
@@ -197,7 +222,7 @@ export function ResponsiveSettingItem({
       
       <Stack spacing={1} sx={{ flex: 1 }}>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-          <Typography variant="subtitle2" fontWeight={600}>
+          <Typography component="label" id={labelId} htmlFor={inputId} variant="subtitle2" fontWeight={600}>
             {label}
             {required && <span style={{ color: theme.palette.error.main }}> *</span>}
           </Typography>
@@ -209,6 +234,7 @@ export function ResponsiveSettingItem({
                 href={infoLink.url}
                 target="_blank"
                 rel="noreferrer"
+                aria-label={infoLink.text}
                 sx={{ ml: 'auto' }}
               >
                 <InfoOutlined fontSize="small" />
@@ -217,7 +243,7 @@ export function ResponsiveSettingItem({
           )}
         </Box>
 
-        {showCurrentValue && value && (
+        {showCurrentValue && currentValue !== undefined && (
           <Typography
             variant="caption"
             sx={{
@@ -225,12 +251,12 @@ export function ResponsiveSettingItem({
               fontFamily: type === 'password' ? 'monospace' : 'inherit',
             }}
           >
-            Current: {type === 'password' ? '••••••••••••' : value}
+            Current: {type === 'password' && currentValue ? '••••••••••••' : currentValue || 'Not set'}
           </Typography>
         )}
 
         {helperText && (
-          <Typography variant="caption" color="text.secondary">
+          <Typography id={helperId} variant="caption" color="text.secondary">
             {helperText}
           </Typography>
         )}
