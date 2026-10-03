@@ -121,6 +121,45 @@ def test_restart_cannot_abandon_unresolved_sip_work(environment, patch):
     assert store.read().pending == staged.pending
 
 
+def test_legacy_failed_status_does_not_release_unresolved_ami_delivery(environment):
+    from datetime import datetime
+    from app.config_activation import ConfigurationActivationError
+    environment = {**environment, 'FAX_BACKEND': 'sip', 'FAX_DISABLED': 'false'}
+    first = ConfigurationRuntime(environment).prepare()
+    store = first.manager.store
+    try:
+        store.accept_outbound(first.snapshot.active, {'id': 'legacy-ambiguous',
+            'to_number': '+15555550123', 'file_name': 'synthetic.pdf', 'tiff_path': 'synthetic.tiff',
+            'status': 'queued', 'created_at': datetime.utcnow(), 'updated_at': datetime.utcnow()})
+        with store._locked() as connection:
+            connection.execute(store.jobs.update().values(status='failed'))
+            deliveries = store.delivery_tables['outbound_deliveries']
+            connection.execute(deliveries.update().values(state='reconciliation_required', dispatch_mode='legacy'))
+        first.manager.patch(first.snapshot, {'ami_password': 'replacement'}, actor='test')
+    finally:
+        first.close()
+    with pytest.raises(ConfigurationActivationError, match='drained or reconciled'):
+        ConfigurationRuntime(environment).prepare()
+
+
+def test_permanently_held_acceptance_does_not_pin_an_unused_ami_connection(environment):
+    from datetime import datetime
+    environment = {**environment, 'FAX_BACKEND': 'sip', 'FAX_DISABLED': 'true'}
+    first = ConfigurationRuntime(environment).prepare()
+    try:
+        first.manager.store.accept_outbound(first.snapshot.active, {'id': 'held-job',
+            'to_number': '+15555550123', 'file_name': 'synthetic.pdf', 'tiff_path': 'synthetic.tiff',
+            'status': 'queued', 'created_at': datetime.utcnow(), 'updated_at': datetime.utcnow()})
+        staged = first.manager.patch(first.snapshot, {'ami_password': 'replacement'}, actor='test')
+    finally:
+        first.close()
+    candidate = ConfigurationRuntime(environment).prepare()
+    try:
+        assert candidate.candidate.id == staged.desired.id
+    finally:
+        candidate.close()
+
+
 @pytest.mark.asyncio
 async def test_actual_lifespan_releases_runtime_after_resource_failure(environment, monkeypatch):
     import os

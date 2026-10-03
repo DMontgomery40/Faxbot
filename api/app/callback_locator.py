@@ -2,6 +2,15 @@
 from urllib.parse import unquote_plus, urlencode, urlsplit, urlunsplit
 
 
+def callback_base_url(revision, profile):
+    """Use the captured override or this installation's captured public URL."""
+    configuration = profile.configuration
+    explicit = configuration.settings.get('callback_url')
+    if explicit:
+        return explicit
+    return revision.values.public_api_url.rstrip('/') + '/' + configuration.provider_id + '-callback'
+
+
 def callback_url_with_locators(callback_url: str, job_id: str, attempt_id: str | None = None) -> str:
     """Preserve unrelated query bytes/order; replace reserved locators once.
 

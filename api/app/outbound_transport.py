@@ -18,11 +18,11 @@ def normalize_status(value):
     status = value.lower()
     if status in {'success', 'completed', 'completed_ok', 'delivered'}:
         return 'success'
-    if status in {'failed', 'failure', 'error'}:
+    if status in {'failed', 'failure', 'error', 'busy', 'no-answer'}:
         return 'failed'
     if status in {'cancelled', 'canceled'}:
         return 'cancelled'
-    if status in {'queued', 'in_progress', 'in-progress', 'sending', 'processing', 'pending'}:
+    if status in {'queued', 'in_progress', 'in-progress', 'inprogress', 'pendingbatch', 'sending', 'processing', 'pending'}:
         return 'in_progress'
     raise ValueError('Unrecognized provider status requires reconciliation.')
 
@@ -102,7 +102,14 @@ class CapturedTransport:
                 service = service_from_profile(profile)
                 if manifest is None and not service.is_configured():
                     raise PreparationFailure('provider_unavailable')
+                if manifest is None and pid in {'phaxio', 'signalwire'}:
+                    from .callback_locator import callback_base_url, callback_url_with_locators
+                    service.status_callback_url = callback_base_url(revision, profile)
+                    # Validate now, before the durable marker authorizes I/O.
+                    callback_url_with_locators(service.status_callback_url, claim.job_id, claim.attempt_id)
             except ProviderExecutionError:
+                raise PreparationFailure('provider_unavailable') from None
+            except ValueError:
                 raise PreparationFailure('provider_unavailable') from None
         elif pid == 'sip' and (self.ami is None or not self.ami._connected.is_set()):
             raise PreparationFailure('provider_unavailable')
@@ -110,6 +117,19 @@ class CapturedTransport:
             from .freeswitch_service import fs_cli_available
             if not fs_cli_available():
                 raise PreparationFailure('provider_unavailable')
+        if manifest is None and pid in {'sip', 'freeswitch'}:
+            try:
+                if pid == 'sip':
+                    from .ami import prepare_originate_fields
+                    prepare_originate_fields(claim.job_id, job['to_number'], str(tiff) if tiff else None,
+                        caller_id=values.fax_station_id, attempt_id=claim.attempt_id)
+                else:
+                    from .freeswitch_service import build_originate_command
+                    build_originate_command(job['to_number'], str(tiff) if tiff else None, claim.job_id,
+                        gateway_name=values.fs_gateway_name, caller_id_number=values.fs_caller_id_number,
+                        t38_enable=values.fs_t38_enable, attempt_id=claim.attempt_id)
+            except ValueError:
+                raise PreparationFailure('preparation_failed') from None
         # Multipart manifests consume the already prepared local PDF. Other
         # HTTP templates can refer to the captured, tokenized media capability.
         needs_url = pid in {'phaxio', 'signalwire'} and manifest is None

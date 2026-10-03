@@ -114,15 +114,19 @@ class ConfigurationRuntime:
             getattr(self.snapshot.active.values, field) != getattr(self.candidate.values, field) for field in fields))
         if not replaces_ami:
             return
-        terminal = ('success', 'completed', 'failed', 'disabled', 'cancelled')
+        from .outbound_store import TERMINAL
+        deliveries = store.delivery_tables['outbound_deliveries']
+        resolved = tuple(TERMINAL | {'held'})
         with store.engine.connect() as connection:
             # Includes legacy SIP jobs with no provable binding. Do not silently
             # disconnect their old result channel or infer a replacement account.
-            unresolved = connection.execute(sa.select(store.jobs.c.id).where(
-                store.jobs.c.backend == 'sip', sa.func.lower(store.jobs.c.status).not_in(terminal)).limit(1)).first()
+            unresolved = connection.execute(sa.select(store.jobs.c.id).join(
+                deliveries, deliveries.c.id == store.jobs.c.id).where(
+                store.jobs.c.backend == 'sip', deliveries.c.state.not_in(resolved)).limit(1)).first()
             identities = connection.execute(sa.select(store.job_bindings.c.profile_id).join(
                 store.jobs, store.jobs.c.id == store.job_bindings.c.id).where(
-                sa.func.lower(store.jobs.c.status).not_in(terminal)).distinct()).scalars().all()
+                store.jobs.c.id.in_(sa.select(deliveries.c.id).where(
+                    deliveries.c.state.not_in(resolved)))).distinct()).scalars().all()
         captured_ami = any(store.read_profile(identity).configuration.traits.get('requires_ami') is True
                            for identity in identities)
         if unresolved is not None or captured_ami:
