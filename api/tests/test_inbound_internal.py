@@ -103,3 +103,39 @@ def test_inbound_download_token_is_bounded_and_never_anonymous_otherwise(isolate
             assert client.get(f"/inbound/{inbound_id}/pdf", params={"token": pdf_token}).status_code == 401
         finally:
             engine.dispose()
+
+
+def test_trunk_call_details_add_one_call_record_without_changing_the_fax(isolated_installation, monkeypatch, tmp_path):
+    monkeypatch.setenv("INBOUND_ENABLED", "true")
+    monkeypatch.setenv("ASTERISK_INBOUND_SECRET", "sekret")
+    monkeypatch.setenv("FAX_DATA_DIR", str(tmp_path / "faxdata_call"))
+    monkeypatch.setenv("SIP_TRUNK_PRESET", "telnyx")
+    tiff = tmp_path / "in.tiff"
+    Image.new("1", (20, 10), 1).save(tiff, format="TIFF")
+    call = {"did": "+15555550199", "caller": "+15555550100", "started_at": 1791049108,
+            "answered_at": 1791049108, "ended_at": 1791049134, "pages": 2, "t38": True,
+            "remote_station_id_b64": "KzE1NTU1NTUwMTAw"}
+    with TestClient(app, base_url="http://testserver") as client:
+        payload = {"tiff_path": str(tiff), "to_number": "+15555550199", "from_number": "+15555550100",
+                   "faxstatus": "SUCCESS", "faxpages": 2, "uniqueid": "1791049108.4", "call": call}
+        first = client.post("/_internal/asterisk/inbound", headers={"X-Internal-Secret": "sekret"}, json=payload)
+        assert first.status_code == 200, first.text
+        # A repeated report of the same Asterisk call stores the fax but not a second call.
+        again = client.post("/_internal/asterisk/inbound", headers={"X-Internal-Secret": "sekret"}, json=payload)
+        assert again.status_code == 200
+        plain = _asterisk(client, tiff, uniqueid="no-call-details")
+        engine = sa.create_engine(isolated_installation["DATABASE_URL"])
+        try:
+            with engine.connect() as c:
+                rows = c.execute(sa.text("SELECT direction, call_id, job_id, did, caller, connected_seconds, t38, "
+                                         "pages, trunk_preset, remote_station_id FROM sip_call_records")).all()
+                fax = c.execute(sa.text("SELECT to_number, pages, status FROM inbound_faxes WHERE id = :id"),
+                                {"id": first.json()["id"]}).one()
+                plain_fax = c.execute(sa.text("SELECT to_number FROM inbound_faxes WHERE id = :id"),
+                                      {"id": plain}).one()
+        finally:
+            engine.dispose()
+        assert rows == [("inbound", "1791049108.4", first.json()["id"], "+15555550199", "+15555550100", 26,
+                         "yes", 2, "telnyx", "+15555550100")]
+        assert tuple(fax) == ("+15555550199", 2, "SUCCESS")
+        assert tuple(plain_fax) == ("+15551234567",)

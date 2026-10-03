@@ -27,6 +27,8 @@ from .models import FaxJobOut
 from .conversion import ensure_dir
 from .documents import prepare_upload, UploadPreparationError
 from .ami import ami_client
+from . import sip_calls
+from .sip_http import router as sip_router
 from .phaxio_service import get_phaxio_service
 from .sinch_service import get_sinch_service
 from .signalwire_service import get_signalwire_service
@@ -106,6 +108,7 @@ async def lifespan(application: FastAPI):
                 if owns_ami:
                     ami_client.on_fax_result(_handle_fax_result)
                     ami_client.on_originate_response(_handle_originate_response)
+                    sip_calls.attach(ami_client, runtime.manager.store.engine)
                     tasks.append(asyncio.create_task(ami_client.connect(), name="faxbot-ami-connect"))
                     await asyncio.wait_for(ami_client._connected.wait(), timeout=10)
                 async with AsyncExitStack() as stack:
@@ -446,6 +449,9 @@ def _handle_originate_response(event):
         _observe_native(parts[1], parts[2], 'failed', 'sip', event_key='ami-originate-failure')
     except Exception:
         audit_event('native_result_requires_reconciliation', provider='sip')
+
+
+app.include_router(sip_router)
 
 
 @app.get("/health")
@@ -2713,6 +2719,9 @@ def asterisk_inbound(payload: dict, x_internal_secret: Optional[str] = Header(de
         received_at=now,
         updated_at=now,
     ))
+    if isinstance(payload.get("call"), dict):  # optional trunk call details from the inbound dialplan
+        sip_calls.record_inbound_call(_configuration_manager().store.engine, payload["call"], call_id=uniqueid or job_id,
+                                      inbound_fax_id=job_id, preset=settings.sip_trunk_preset, fax_status=faxstatus)
     audit_event("inbound_received", job_id=job_id, backend="sip")
     return {"id": job_id, "status": "ok"}
 

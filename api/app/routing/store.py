@@ -52,12 +52,26 @@ class CaptureTarget:
     has_decision: bool
 
 
+def _configured_sip_preset():
+    """The active SIP trunk preset, or '' when none is set or configuration is unavailable."""
+    try:
+        # Only bound or installed configuration; never trigger bootstrap loading here.
+        from ..config import managed_configuration_values
+        values = managed_configuration_values()
+        preset = values.sip_trunk_preset if values is not None else ''
+    except Exception:
+        return ''
+    return preset if isinstance(preset, str) else ''
+
+
 class RouteStore:
     TABLES = ('provider_rate_cards', 'delivery_destinations', 'delivery_attempt_costs', 'delivery_charges',
               'direct_peers', 'outbound_attempts', 'fax_jobs')
 
-    def __init__(self, engine):
+    def __init__(self, engine, *, sip_preset=None):
+        """``sip_preset()`` names the configured SIP trunk carrier (see ``card_for``)."""
         self.engine = engine
+        self.sip_preset = sip_preset or _configured_sip_preset
         tables = reflect(engine, self.TABLES)
         self.cards = tables['provider_rate_cards']
         self.destinations = tables['delivery_destinations']
@@ -86,8 +100,22 @@ class RouteStore:
             return read(conn)
 
     def card_for(self, provider_id, direction='outbound', connection=None):
-        return next((card for card in self.current_cards(connection)
-                     if card.provider_id == provider_id and card.direction == direction), None)
+        """The current card for a provider; native SIP uses its trunk carrier's card.
+
+        A fax over Faxbot's own engine is billed by the SIP trunk carrier, so
+        ``sip`` looks up ``sip-<preset>`` first and falls back to a plain
+        ``sip`` card when no preset is set or that carrier has no card.
+        """
+        identities = (provider_id,)
+        if provider_id == 'sip':
+            preset = self.sip_preset()
+            identities = (f'sip-{preset}', 'sip') if preset else ('sip',)
+        cards = self.current_cards(connection)
+        for identity in identities:
+            card = next((card for card in cards if card.provider_id == identity and card.direction == direction), None)
+            if card is not None:
+                return card
+        return None
 
     def replace_cards(self, cards):
         """Make ``cards`` the complete current set; changed cards get a new version."""

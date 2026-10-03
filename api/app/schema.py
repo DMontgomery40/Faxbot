@@ -13,7 +13,7 @@ from .schema_legacy import (
 )
 
 from . import schema_configuration, schema_outbound, schema_access, schema_authentication, schema_capabilities
-from . import schema_delivery
+from . import schema_delivery, schema_sip
 from .schema_checks import canonical_check
 
 FOUNDATION = "0002_schema_foundation"
@@ -22,9 +22,10 @@ OUTBOUND = schema_outbound.REVISION
 ACCESS = schema_access.REVISION
 AUTHENTICATION = schema_authentication.REVISION
 CAPABILITIES = schema_capabilities.REVISION
-HEAD = schema_delivery.REVISION
+DELIVERY = schema_delivery.REVISION
+HEAD = schema_sip.REVISION
 STRICT_TABLES = (schema_access.TABLES | schema_authentication.TABLES | schema_capabilities.TABLES
-                 | schema_delivery.TABLES)
+                 | schema_delivery.TABLES | schema_sip.TABLES)
 INITIAL = "0001_initial"
 LOCK_ID = 0x464158424F54  # FAXBOT, stable across processes and releases
 LOCK_TIMEOUT_SECONDS = 10
@@ -360,7 +361,8 @@ def validate_schema(connection, *, require_version=False):
     authentication = tables & schema_authentication.TABLES
     capabilities = tables & schema_capabilities.TABLES
     delivery = tables & schema_delivery.TABLES
-    protected = (present | extensions | outbound | access | authentication | capabilities | delivery
+    sip = tables & schema_sip.TABLES
+    protected = (present | extensions | outbound | access | authentication | capabilities | delivery | sip
                  | ({"alembic_version"} & tables))
     _validate_no_write_hooks(connection, protected)
     _validate_plain_indexes(connection, protected)
@@ -377,7 +379,7 @@ def validate_schema(connection, *, require_version=False):
                 or inspector.get_indexes("alembic_version") or inspector.get_unique_constraints("alembic_version")):
             _reject("invalid version table constraints")
         revisions = connection.execute(sa.text("SELECT version_num FROM alembic_version")).scalars().all()
-        if len(revisions) > 1 or any(value not in {INITIAL, FOUNDATION, CONFIGURATION, OUTBOUND, ACCESS, AUTHENTICATION, CAPABILITIES, HEAD}
+        if len(revisions) > 1 or any(value not in {INITIAL, FOUNDATION, CONFIGURATION, OUTBOUND, ACCESS, AUTHENTICATION, CAPABILITIES, DELIVERY, HEAD}
                                          for value in revisions):
             _reject("unknown or multiple migration revisions")
         revision = revisions[0] if revisions else None
@@ -385,7 +387,7 @@ def validate_schema(connection, *, require_version=False):
         _reject("upgrade did not produce a version")
     if present not in (set(), {"fax_jobs"}, CORE_TABLES) or (revision and present != CORE_TABLES):
         _reject("incomplete core table set")
-    if revision in {CONFIGURATION, OUTBOUND, ACCESS, AUTHENTICATION, CAPABILITIES, HEAD}:
+    if revision in {CONFIGURATION, OUTBOUND, ACCESS, AUTHENTICATION, CAPABILITIES, DELIVERY, HEAD}:
         if extensions != schema_configuration.TABLES:
             _reject("incomplete configuration table set")
         metadata = schema_configuration.frozen_metadata(dialect=connection.dialect.name)
@@ -393,38 +395,44 @@ def validate_schema(connection, *, require_version=False):
         if extensions:
             _reject("configuration tables exist before their migration revision")
         metadata = frozen_metadata()
-    if revision in {OUTBOUND, ACCESS, AUTHENTICATION, CAPABILITIES, HEAD}:
+    if revision in {OUTBOUND, ACCESS, AUTHENTICATION, CAPABILITIES, DELIVERY, HEAD}:
         if outbound != schema_outbound.TABLES:
             _reject("incomplete outbound table set")
         metadata = schema_outbound.frozen_metadata(dialect=connection.dialect.name)
     elif outbound:
         _reject("outbound tables exist before their migration revision")
-    if revision in {ACCESS, AUTHENTICATION, CAPABILITIES, HEAD}:
+    if revision in {ACCESS, AUTHENTICATION, CAPABILITIES, DELIVERY, HEAD}:
         if access != schema_access.TABLES:
             _reject('incomplete access table set')
         metadata = schema_access.frozen_metadata(dialect=connection.dialect.name)
     elif access:
         _reject('access tables exist before their migration revision')
-    if revision in {AUTHENTICATION, CAPABILITIES, HEAD}:
+    if revision in {AUTHENTICATION, CAPABILITIES, DELIVERY, HEAD}:
         if authentication != schema_authentication.TABLES:
             _reject('incomplete authentication admission table set')
         metadata = schema_authentication.frozen_metadata(dialect=connection.dialect.name)
     elif authentication:
         _reject('authentication admission tables exist before their migration revision')
-    if revision in {CAPABILITIES, HEAD}:
+    if revision in {CAPABILITIES, DELIVERY, HEAD}:
         if capabilities != schema_capabilities.TABLES:
             _reject('incomplete capability table set')
         metadata = schema_capabilities.frozen_metadata(dialect=connection.dialect.name)
     elif capabilities:
         _reject('capability tables exist before their migration revision')
-    if revision == HEAD:
+    if revision in {DELIVERY, HEAD}:
         if delivery != schema_delivery.TABLES:
             _reject('incomplete delivery route table set')
         metadata = schema_delivery.frozen_metadata(dialect=connection.dialect.name)
     elif delivery:
         _reject('delivery route tables exist before their migration revision')
-    complete = revision in {FOUNDATION, CONFIGURATION, OUTBOUND, ACCESS, AUTHENTICATION, CAPABILITIES, HEAD}
-    for name in sorted(present | extensions | outbound | access | authentication | capabilities | delivery):
+    if revision == HEAD:
+        if sip != schema_sip.TABLES:
+            _reject('incomplete SIP call record table set')
+        metadata = schema_sip.frozen_metadata(dialect=connection.dialect.name)
+    elif sip:
+        _reject('SIP call record tables exist before their migration revision')
+    complete = revision in {FOUNDATION, CONFIGURATION, OUTBOUND, ACCESS, AUTHENTICATION, CAPABILITIES, DELIVERY, HEAD}
+    for name in sorted(present | extensions | outbound | access | authentication | capabilities | delivery | sip):
         _validate_columns(connection, inspector, name, metadata.tables[name], complete=complete)
         if name == "fax_jobs" and present == CORE_TABLES and "backend" not in {column["name"] for column in inspector.get_columns(name)}:
             _reject("six-table historical schema is missing provider columns")
@@ -435,7 +443,7 @@ def validate_schema(connection, *, require_version=False):
         _validate_indexes(connection, inspector, name, metadata.tables[name], complete=complete)
     # Index names share a schema namespace with unrelated tables. Detect conflicts
     # before any DDL so auxiliary objects can never be replaced or repurposed.
-    planned_metadata = schema_delivery.frozen_metadata(dialect=connection.dialect.name)
+    planned_metadata = schema_sip.frozen_metadata(dialect=connection.dialect.name)
     planned = {index.name: name for name, table in planned_metadata.tables.items() for index in table.indexes}
     planned.update({planned_metadata.tables[name].primary_key.name: name for name in STRICT_TABLES})
     planned.update({f"uq_{name}_identity": name for name in UNIQUE_IDENTITIES})

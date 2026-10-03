@@ -9,6 +9,7 @@ import { DeliveryWizardFields, deliveryEditorValues } from './delivery/DeliveryS
 import { docsLink } from '../docsLinks';
 import type { ConfigurationWriteResult, Settings, SettingsPatch, ValidationResult } from '../api/types';
 import SecretInput from './common/SecretInput';
+import SipTrunkSettings from './SipTrunkSettings';
 
 interface SetupWizardProps {
   client: AdminAPIClient;
@@ -532,6 +533,7 @@ function SetupWizard({ client, onDone, docsBase }: SetupWizardProps) {
           {ob === 'sip' && settings?.sip.ami_password_is_default && config.ami_password === baseline.ami_password &&
             <Grid item xs={12}><Alert severity="warning">The stored AMI password is still the default. Enter a replacement before enabling remote AMI access.</Alert></Grid>}
         </Grid>
+        {ob === 'sip' && <Box sx={{ mt: 3 }}><SipTrunkSettings client={client} showCalls={false} /></Box>}
       </>}
       <TextField fullWidth disabled={!canEdit} label="Public API URL" value={config.public_api_url ?? ''} sx={{ mt: 2 }}
         onChange={event => handleConfigChange('public_api_url', event.target.value)} helperText="Public address of this server, used by cloud providers to fetch documents and send callbacks." />

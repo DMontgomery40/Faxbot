@@ -31,7 +31,16 @@ else
   printf '%s\n' '[general]' 'enabled=no' 'webenabled=no' > "$out_dir/manager.conf"
 fi
 
-if [ -n "${SIP_USERNAME:-}${SIP_PASSWORD:-}${SIP_SERVER:-}" ]; then
+# Faxbot writes this file from its SIP trunk settings (console "Apply to
+# Asterisk" or "python -m app.sip_trunk write"); it replaces the older
+# SIP_USERNAME/SIP_PASSWORD/SIP_SERVER settings when present.
+trunk_conf=${FAXBOT_TRUNK_CONF:-/faxdata/asterisk/pjsip.conf}
+mkdir -p /faxdata/inbound
+if [ -f "$trunk_conf" ] && [ ! -L "$trunk_conf" ]; then
+  temporary=$(mktemp "$out_dir/.pjsip.conf.XXXXXX")
+  cat "$trunk_conf" > "$temporary"
+  mv -f "$temporary" "$out_dir/pjsip.conf"
+elif [ -n "${SIP_USERNAME:-}${SIP_PASSWORD:-}${SIP_SERVER:-}" ]; then
   [ -n "${SIP_USERNAME:-}" ] && [ -n "${SIP_PASSWORD:-}" ] && [ -n "${SIP_SERVER:-}" ] \
     || refuse 'Incomplete SIP configuration'
   [[ "$SIP_USERNAME" =~ ^[A-Za-z0-9_.+@-]+$ ]] && safe_value "$SIP_PASSWORD" \

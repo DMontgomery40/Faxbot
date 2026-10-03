@@ -28,6 +28,7 @@ This README describes the current source checkout. Published packages and deploy
 
 - **Send and receive faxes.** Prepare PDF, TXT, and supported TIFF documents, track outbound jobs, and organize received faxes in mailboxes. Uncertain submissions wait for confirmation instead of being blindly sent again.
 - **Choose providers independently.** Use separate outbound and inbound providers. Built-in adapters cover Phaxio, Sinch, Documo, HumbleFax, SignalWire, SIP/Asterisk, and FreeSWITCH; supported operations vary by provider. Additional HTTP providers can use manifests. See [provider setup](docs/setup/index.md) and [the plugin registry](docs/plugins/registry.md).
+- **Fax through your own SIP carrier.** Connect a carrier SIP trunk (Telnyx first; SignalWire, Sinch, AnveoDirect, Flowroute or another) to the built-in Asterisk engine, fax over T.38 by the minute with no per-page fee, and keep a record of every call. See [SIP trunk setup](docs/setup/sip-trunk.md).
 - **Choose delivery routes and track spending.** Configure additional outbound routes, rate cards, and destination preferences. Faxbot uses price estimates and delivery history to rank routes, records each attempt, and reconciles reported SignalWire charges separately from delivery status. Unknown charges stay unknown. See [delivery routes](docs/operations/delivery-routes.md).
 - **Deliver incoming documents by email.** One intake queue collects ordinary faxes and direct deliveries. SMTP connectors send the received PDF to configured inboxes, with retries for confirmed temporary failures and review for uncertain outcomes. See [intake](docs/operations/intake.md).
 - **Send directly to verified Faxbot partners.** Enrolled installations can exchange encrypted original PDFs and signed receipts using the recipient's usual fax number. Enrollment requires both installations and a fax challenge; ordinary fax fallback preserves the delivery's identity and uncertainty checks. See [direct delivery](docs/operations/direct-delivery.md).
@@ -105,6 +106,7 @@ Checked items are implemented in the current source checkout. Unchecked items ar
 - [x] Shared intake queue and SMTP email delivery, with console management.
 - [x] Enrolled direct partners, encrypted original-PDF delivery, signed receipts, and controlled fax fallback.
 - [x] Recipient-approved case packets, accepted-document history, and preview through the API.
+- [x] Carrier SIP trunk presets with T.38, per-call records, and native faxes priced by the trunk carrier (proven in a loopback; live carrier call pending).
 - [x] Source-derived reference documentation and scoped AI prose proposals, with maintained planning outside the generated tree.
 
 ### Next

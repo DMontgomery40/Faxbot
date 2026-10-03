@@ -26,8 +26,8 @@ def _background(app):
     from ..ami import ami_client
     from ..outbound_store import OutboundStore
     routes, delivery = RouteStore(engine), OutboundStore(runtime.manager.store)
-    # A SIP call-record source can be passed as observed_seconds=; see docs/operations/delivery-routes.md.
-    recorder = CostRecorder(routes)
+    from ..sip_calls import SipCallRecords  # connected seconds measured on the SIP trunk
+    recorder = CostRecorder(routes, observed_seconds=SipCallRecords(engine).observed_seconds)
 
     def seed():
         routes.seed_cards(load_cards())

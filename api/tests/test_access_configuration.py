@@ -77,6 +77,16 @@ def test_future_fields_fail_closed_until_deliberately_classified():
     assert result.requires_complete_owner is True
 
 
+def test_every_sip_trunk_setting_is_a_provider_setting():
+    from api.app.access.configuration import _PROVIDER_FIELDS
+    trunk = {name for name in ConfigurationValues.model_fields if name.startswith('sip_')}
+    assert trunk == {'sip_trunk_preset', 'sip_trunk_auth', 'sip_trunk_host', 'sip_trunk_port',
+                     'sip_trunk_transport', 'sip_trunk_username', 'sip_trunk_password',
+                     'sip_trunk_outbound_proxy', 'sip_trunk_caller_id', 'sip_trunk_dids', 'sip_t38_enabled',
+                     'sip_fax_preference_header', 'sip_trunk_codecs', 'sip_external_address'}
+    assert trunk <= _PROVIDER_FIELDS
+
+
 def test_raw_patch_cannot_be_mistaken_for_normalized_configuration():
     with pytest.raises(ValueError, match='validated configuration values'):
         configuration_requirements(ConfigurationValues(), {'API_KEY': 'synthetic'})
@@ -89,6 +99,12 @@ def test_raw_patch_cannot_be_mistaken_for_normalized_configuration():
     {'HUMBLEFAX_SECRET_KEY': 'synthetic-humblefax-secret'},
     {'HUMBLEFAX_FROM_NUMBER': '13035550199'},
     {'HUMBLEFAX_ACCESS_KEY': 'synthetic-humblefax-access', 'HUMBLEFAX_SECRET_KEY': 'synthetic-humblefax-secret'},
+    {'SIP_TRUNK_PRESET': 'telnyx', 'SIP_TRUNK_AUTH': 'registration', 'SIP_TRUNK_HOST': 'sip.telnyx.com',
+     'SIP_TRUNK_PORT': '5060', 'SIP_TRUNK_TRANSPORT': 'udp', 'SIP_TRUNK_USERNAME': 'faxbotuser',
+     'SIP_TRUNK_PASSWORD': 'synthetic-humblefax-trunk', 'SIP_TRUNK_OUTBOUND_PROXY': 'proxy.example.net',
+     'SIP_TRUNK_CALLER_ID': '+15555550100', 'SIP_TRUNK_DIDS': '+15555550100', 'SIP_T38_ENABLED': 'false',
+     'SIP_FAX_PREFERENCE_HEADER': 'true', 'SIP_TRUNK_CODECS': 'ulaw', 'SIP_EXTERNAL_ADDRESS': '203.0.113.10'},
+    {'SIP_TRUNK_PASSWORD': 'synthetic-humblefax-trunk'},
 ])
 def test_cloud_provider_credentials_need_provider_permission_not_owner(change):
     before = ConfigurationValues.from_environment({'API_KEY': 'synthetic-bootstrap'})

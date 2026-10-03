@@ -364,3 +364,44 @@ async def test_measured_call_seconds_are_preferred_over_faxbot_timing(installati
     priced = routes.decision(delivery.get(job)['attempt_id'])
     assert seen == [delivery.get(job)['attempt_id']]
     assert (priced['billed_seconds'], priced['estimated_cost_micros'], priced['cost_basis']) == (180, 30_000, 'measured')
+
+
+def test_native_sip_faxes_are_priced_by_the_trunk_carriers_card(installation):
+    """With a Telnyx trunk, a 'sip' attempt uses the sip-telnyx card and its 60/60 rounding."""
+    from api.app.routing.store import CaptureTarget
+    configuration, _, _ = installation
+    preset = {'value': 'telnyx'}
+    routes = RouteStore(configuration.engine, sip_preset=lambda: preset['value'])
+    generic = phaxio_card(provider_id='sip', label='Any SIP trunk', per_page_micros=0,
+                          per_minute_micros=parse_amount('0.02'), billing_increment_seconds=6)
+    telnyx = phaxio_card(provider_id='sip-telnyx', label='Telnyx SIP trunk', per_page_micros=0,
+                         per_minute_micros=parse_amount('0.005'), billing_increment_seconds=60, minimum_seconds=60)
+    routes.replace_cards([generic, telnyx])
+    assert routes.card_for('sip').provider_id == 'sip-telnyx'
+    assert routes.card_for('phaxio') is None
+    preset['value'] = 'flowroute'  # no Flowroute card: the plain sip card still prices it
+    assert routes.card_for('sip').provider_id == 'sip'
+    preset['value'] = ''
+    assert routes.card_for('sip').provider_id == 'sip'
+    preset['value'] = 'telnyx'
+    start = datetime(2026, 10, 3, 12)
+    job = accept(installation)
+    attempt = uuid4().hex
+    with routes.engine.begin() as connection:
+        connection.execute(routes.attempts.insert().values(id=attempt, job_id=job, sequence=1, phase='success',
+            created_at=start, submitted_at=start, completed_at=start + timedelta(seconds=90)))
+    target = CaptureTarget(attempt, job, '+12025550123', 'sip', None, 'success', 2, start,
+                           start + timedelta(seconds=90), False)
+    # 65 measured seconds on the trunk bill as two whole minutes at $0.005.
+    priced = routes.capture(target, observed_seconds=65)
+    assert (priced['billed_seconds'], priced['estimated_cost_micros']) == (120, 10_000)
+
+
+def test_the_configured_sip_preset_comes_from_active_settings():
+    from api.app.config import use_configuration
+    from api.app.config_values import ConfigurationValues
+    from api.app.routing.store import _configured_sip_preset
+    with use_configuration(ConfigurationValues.from_environment({'SIP_TRUNK_PRESET': 'telnyx'})):
+        assert _configured_sip_preset() == 'telnyx'
+    with use_configuration(ConfigurationValues.from_environment({})):
+        assert _configured_sip_preset() == ''

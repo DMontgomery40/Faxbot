@@ -125,9 +125,8 @@ class CapturedTransport:
         if manifest is None and pid in {'sip', 'freeswitch'}:
             try:
                 if pid == 'sip':
-                    from .ami import prepare_originate_fields
-                    prepare_originate_fields(claim.job_id, job['to_number'], str(tiff) if tiff else None,
-                        caller_id=values.fax_station_id, header=values.fax_header,
+                    from .ami import originate_fields_for
+                    originate_fields_for(values, claim.job_id, job['to_number'], str(tiff) if tiff else None,
                         attempt_id=claim.attempt_id)
                 else:
                     from .freeswitch_service import build_originate_command

@@ -142,6 +142,7 @@ nav:
     - Phaxio (Cloud): setup/phaxio.md
     - Sinch (Cloud v3): setup/sinch.md
     - SIP/Asterisk (Self‑hosted): setup/sip-asterisk.md
+    - SIP trunk (your carrier): setup/sip-trunk.md
     - Documo (mFax): setup/documo.md
     - HumbleFax: setup/humblefax.md
     - SignalWire: setup/signalwire.md
