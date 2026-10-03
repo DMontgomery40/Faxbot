@@ -39,7 +39,7 @@ The first and only open‑source, self‑hostable fax platform with a GUI‑firs
 - Phaxio (recommended): set `FAX_BACKEND=phaxio` and `PHAXIO_API_KEY/PHAXIO_API_SECRET`.
 - Sinch: set `FAX_BACKEND=sinch`, `SINCH_PROJECT_ID/SINCH_API_KEY/SINCH_API_SECRET`.
 > Or one of 20 others that we have pre-made manifests for you to quickly load. 
-- SIP/Asterisk: set `FAX_BACKEND=sip` and AMI vars (see docs).
+- SIP/Asterisk: set `FAX_BACKEND=sip` and AMI vars (see docs), then choose your SIP carrier (Telnyx, SignalWire, Sinch, AnveoDirect, Flowroute or another) under Settings, Carrier SIP trunk, to fax by the minute with no per-page fee (see `docs/setup/sip-trunk.md`).
 
 2) Start the API (and Admin Console):
 ```
