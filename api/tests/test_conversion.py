@@ -111,6 +111,85 @@ def test_text_expands_tabs_and_accepts_standard_line_breaks(tmp_path):
     ]
 
 
+def _text_pdf(tmp_path, name, data):
+    source = tmp_path / (name + ".txt")
+    source.write_bytes(data)
+    output = tmp_path / (name + ".pdf")
+    conversion.txt_to_pdf(str(source), str(output))
+    return PdfReader(output, strict=True)
+
+
+def _drawn_lines(reader):
+    """Each positioned text row, page by page; a blank row is drawn as ''."""
+    from pypdf.generic import ContentStream
+    pages = []
+    for page in reader.pages:
+        rows, text, positioned = [], "", False
+        for operands, operator in ContentStream(page.get_contents(), reader).operations:
+            if operator == b"BT":
+                text, positioned = "", False
+            elif operator == b"Tm":
+                positioned = True
+            elif operator == b"Tj":
+                text += operands[0]
+            elif operator == b"ET" and positioned:
+                rows.append(text)
+        pages.append(rows)
+    return pages
+
+
+def _page_streams(reader):
+    return [page.get_contents().get_data() for page in reader.pages]
+
+
+LINE_BREAKS = {"lf": b"\n", "crlf": b"\r\n", "cr": b"\r"}
+
+
+@pytest.mark.parametrize("newline", sorted(LINE_BREAKS))
+@pytest.mark.parametrize("count, pages", [(57, 1), (58, 1), (59, 2), (116, 2), (117, 3)])
+def test_terminal_line_break_ends_the_last_line_without_a_blank_page(tmp_path, newline, count, pages):
+    # 58 lines fill a letter page at 12-point leading inside the 54-point margins.
+    lines = [f"Clinical line {index:03d}".encode() for index in range(count)]
+    body = LINE_BREAKS[newline].join(lines)
+    plain = _text_pdf(tmp_path, "plain", body)
+    terminated = _text_pdf(tmp_path, "terminated", body + LINE_BREAKS[newline])
+    assert len(plain.pages) == len(terminated.pages) == pages
+    # Content pages are drawn identically; the terminator adds nothing.
+    assert _page_streams(terminated) == _page_streams(plain)
+    assert sum(_drawn_lines(terminated), []) == [line.decode() for line in lines]
+
+
+def test_wrapped_final_line_with_terminal_line_break_fills_the_page_exactly(tmp_path):
+    # 57 short lines plus one long line that wraps onto the 58th row: one page.
+    long_line = "A clinical billing word " * 4
+    lines = [f"Line {index:02d}" for index in range(56)] + [long_line * 2]
+    plain = _text_pdf(tmp_path, "plain", "\n".join(lines).encode())
+    terminated = _text_pdf(tmp_path, "terminated", ("\n".join(lines) + "\r\n").encode())
+    drawn = _drawn_lines(plain)
+    assert len(drawn) == 1 and len(drawn[0]) == 58  # the long line wrapped to two rows
+    assert _page_streams(terminated) == _page_streams(plain)
+
+
+@pytest.mark.parametrize("newline", sorted(LINE_BREAKS))
+def test_intentional_blank_lines_are_kept(tmp_path, newline):
+    sep = LINE_BREAKS[newline]
+    reader = _text_pdf(tmp_path, "blank", b"First" + sep + sep + b"Third" + sep + sep)
+    # The internal blank line and the trailing blank line are content; only the
+    # last line break is a terminator.
+    assert _drawn_lines(reader) == [["First", "", "Third", ""]]
+    full = [f"Line {index:02d}".encode() for index in range(58)]
+    spilled = _text_pdf(tmp_path, "spilled", sep.join(full) + sep + sep)
+    assert len(spilled.pages) == 2 and _drawn_lines(spilled)[1] == [""]
+
+
+def test_only_line_breaks_is_still_empty(tmp_path):
+    for data in (b"\n", b"\r\n", b"  \n"):
+        source = tmp_path / "empty.txt"
+        source.write_bytes(data)
+        with pytest.raises(conversion.DocumentConversionError, match="empty"):
+            conversion.txt_to_pdf(str(source), str(tmp_path / "empty.pdf"))
+
+
 def make_pdf(path, *, pages=2):
     """Independent 100-point square pages alternate black-box positions."""
     document = canvas.Canvas(str(path), pagesize=(100, 100))

@@ -88,10 +88,12 @@ def ensure_dir(path: str) -> None:
 def txt_to_pdf(txt_path: str, pdf_path: str) -> None:
     """Render strict UTF-8 using embedded Vera glyphs, wrapping without data loss.
 
-    CRLF/CR/LF are line breaks; tabs expand to eight-column stops. Other control
-    characters and characters missing from Vera's cmap are rejected. Text is
-    rendered left to right without complex-script shaping. Limits apply to
-    source bytes, output bytes and pages independently of transmission settings.
+    CRLF/CR/LF are line breaks; one final line break ends the last line rather
+    than starting an empty one, so it never adds a page. Tabs expand to
+    eight-column stops. Other control characters and characters missing from
+    Vera's cmap are rejected. Text is rendered left to right without
+    complex-script shaping. Limits apply to source bytes, output bytes and pages
+    independently of transmission settings.
     """
     _check_file_size(txt_path)
     try:
@@ -103,6 +105,9 @@ def txt_to_pdf(txt_path: str, pdf_path: str) -> None:
     except (OSError, UnicodeError):
         raise DocumentConversionError("Text document must contain valid UTF-8.") from None
     text = text.replace("\r\n", "\n").replace("\r", "\n")
+    if text.endswith("\n"):
+        # A terminated last line is ordinary text-file form, not an extra line.
+        text = text[:-1]
     font = _text_font()
     if not text.strip():
         raise DocumentConversionError("Text document is empty.")
