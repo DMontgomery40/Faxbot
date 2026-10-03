@@ -9,9 +9,9 @@ import sqlalchemy as sa
 from api.app import schema, schema_capabilities
 from api.app.access.capabilities import CapabilityError, CapabilityService
 from api.app.access.mutation_types import MutationDeniedError, MutationReason
-from api.app.access.types import StaleCredentialError
+from api.app.access.types import ResourceRef, StaleCredentialError
 from api.tests.test_schema import database, snapshot
-from api.tests.test_access_policy import World, NOW
+from api.tests.test_access_policy import World, NOW, ceiling, key_context
 from api.tests.test_access_schema import at_revision
 
 
@@ -72,7 +72,10 @@ def test_consume_is_single_use_kind_bound_and_expires(cw):
             cw.service.consume(kind, secret)
     record = cw.service.consume('terminal', issued.secret)
     assert (record.id, record.principal_id, record.session_id, record.metadata) == (issued.id, 'alice', 'session-alice', {'cols': 80})
-    assert record.consumed_at == NOW
+    assert record.consumed_at == NOW and record.permission == 'host:terminal'
+    # The consumer rechecks with the minting credential itself, never a copied authority.
+    assert record.actor == cw.alice
+    assert cw.control.authorize(record.actor, 'host:terminal', ResourceRef('installation'), now=NOW).allowed
     with pytest.raises(CapabilityError):
         cw.service.consume('terminal', issued.secret)
     late = cw.service.mint('terminal', cw.alice, timedelta(seconds=30), permission='host:terminal')
@@ -91,6 +94,50 @@ def test_consume_refuses_a_disabled_principal_or_revoked_session(cw):
     cw.update('access_principals', 'alice', enabled=0)
     with pytest.raises(CapabilityError):
         cw.service.consume('terminal', second.secret)
+
+
+def test_a_capability_dies_with_its_minting_key_or_session(cw):
+    key = key_context(cw, 'alice')
+    ceiling(cw, 'host:terminal')
+    revoked = cw.service.mint('pairing', key, timedelta(minutes=5), permission='host:terminal')
+    rotated = cw.service.mint('pairing', key, timedelta(minutes=5), permission='host:terminal')
+    (stored,) = [r for r in cw.rows('access_capabilities') if r['id'] == revoked.id]
+    assert stored['session_id'] is None and revoked.secret not in stored['credential']
+    cw.update('access_key_bindings', 'binding', security_version=2)
+    with pytest.raises(CapabilityError):
+        cw.service.consume('pairing', rotated.secret)
+    cw.update('access_key_bindings', 'binding', security_version=1, state='revoked', revoked_at=NOW)
+    with pytest.raises(CapabilityError):
+        cw.service.consume('pairing', revoked.secret)
+    # A refused redemption stays unconsumed; it simply expires.
+    assert all(r['consumed_at'] is None for r in cw.rows('access_capabilities'))
+    record = cw.service.consume('terminal', cw.service.mint('terminal', cw.alice, timedelta(seconds=30),
+                                                            permission='host:terminal').secret)
+    cw.update('access_sessions', 'session-alice', revoked_at=NOW)
+    with pytest.raises(StaleCredentialError):
+        cw.control.authorize(record.actor, 'host:terminal', ResourceRef('installation'), now=NOW)
+
+
+def test_every_credential_kind_round_trips_without_secrets():
+    from api.app.access import capabilities
+    from api.app.access.types import (BootstrapEvidence, KeyEvidence, KeySessionEvidence,
+                                      PasswordSessionEvidence, PrincipalContext)
+    for actor in (PrincipalContext('p', 3, KeyEvidence('b', 2), 'key:abc'),
+                  PrincipalContext('p', 3, KeySessionEvidence('s', 'b', 2), 'key:abc'),
+                  PrincipalContext('p', 3, PasswordSessionEvidence('s', 4), 'principal:p'),
+                  PrincipalContext('bootstrap', 1, BootstrapEvidence('f' * 64, 's'), 'key:env'),
+                  PrincipalContext('bootstrap', 1, BootstrapEvidence('f' * 64), 'key:env')):
+        stored = capabilities._credential(actor, 'host:terminal')
+        assert capabilities._actor(actor.principal_id, stored) == ('host:terminal', actor)
+
+
+def test_consume_requires_the_minted_permission_to_still_be_held(cw):
+    issued = cw.service.mint('terminal', cw.alice, timedelta(seconds=30), permission='host:terminal')
+    assignments = cw.tables['access_assignments']
+    with cw.engine.begin() as c:
+        c.execute(assignments.delete().where(assignments.c.principal_id == 'alice'))
+    with pytest.raises(CapabilityError):
+        cw.service.consume('terminal', issued.secret)
 
 
 def test_pairing_codes_are_six_digits_and_unique_while_active(cw, monkeypatch):

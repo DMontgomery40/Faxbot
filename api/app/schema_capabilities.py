@@ -2,7 +2,9 @@
 
 A capability is a short-lived, one-use secret bound to the principal (and, for
 browser flows, the session) that minted it: a terminal handshake ticket or a
-mobile pairing code. Only a digest of the secret is stored.
+mobile pairing code. Only a digest of the secret is stored. ``credential`` keeps
+the minting credential's nonsecret evidence and permission, so redemption is
+authorized again against current policy and a revoked key or session fails.
 """
 import sqlalchemy as sa
 
@@ -29,6 +31,7 @@ def _definition():
         sa.Column('expires_at', sa.DateTime(), nullable=False),
         sa.Column('consumed_at', sa.DateTime(), nullable=True),
         sa.Column('metadata', sa.Text(), nullable=False),
+        sa.Column('credential', sa.Text(), nullable=False),
         sa.PrimaryKeyConstraint('id', name='pk_access_capabilities'),
         sa.CheckConstraint("kind = 'terminal' OR kind = 'pairing'", name='ck_access_capabilities_kind'),
         sa.CheckConstraint('expires_at >= issued_at AND (consumed_at IS NULL OR consumed_at >= issued_at)',
