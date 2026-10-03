@@ -71,6 +71,37 @@ class OutboundStore:
             return [dict(row) for row in connection.execute(sa.select(self.events).where(
                 self.events.c.job_id == job_id).order_by(self.events.c.created_at, self.events.c.id)).mappings()]
 
+    def _preparing(self, connection, claim, now):
+        row = self._row(connection, claim.job_id)
+        if (not self._owns(row, claim) or row['state'] != 'preparing'
+                or row['claim_expires_at'] is None or row['claim_expires_at'] <= now):
+            raise DeliveryConflict('Delivery preparation lease is no longer current.')
+        revision, profile = self.configuration._outbound_context(connection, claim.job_id)
+        if profile.id != claim.profile_id:
+            raise DeliveryConflict('Delivery preparation profile does not match.')
+        return revision, profile
+
+    def load_dispatch(self, claim):
+        """Read private submission inputs only while the preparation lease is held."""
+        with self.configuration._locked() as connection:
+            revision, profile = self._preparing(connection, claim, datetime.utcnow())
+            job = connection.execute(sa.select(self.configuration.jobs).where(
+                self.configuration.jobs.c.id == claim.job_id)).mappings().one()
+            return revision, profile, dict(job)
+
+    def grant_pdf(self, claim, *, url, token, expires_at):
+        """Persist the captured provider's media capability before submission."""
+        now = datetime.utcnow()
+        if (not isinstance(url, str) or not url or len(url) > 512
+                or not isinstance(token, str) or not token or len(token) > 128
+                or not isinstance(expires_at, datetime) or expires_at <= now):
+            raise ValueError('Invalid delivery media grant.')
+        with self.configuration._locked() as connection:
+            self._preparing(connection, claim, now)
+            connection.execute(self.configuration.jobs.update().where(
+                self.configuration.jobs.c.id == claim.job_id).values(
+                    pdf_url=url, pdf_token=token, pdf_token_expires_at=expires_at))
+
     def _row(self, connection, job_id):
         return connection.execute(sa.select(self.deliveries).where(self.deliveries.c.id == job_id)).mappings().one_or_none()
 
