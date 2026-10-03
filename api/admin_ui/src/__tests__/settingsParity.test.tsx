@@ -306,7 +306,7 @@ describe('Installation country', () => {
     const next = () => fireEvent.click(screen.getByRole('button', { name: 'Next' }));
     render(<SetupWizard client={client()} />);
     await screen.findByText('Choose Providers', { selector: 'h6' });
-    await chooseCountry('United Kingdom');
+    await chooseCountry('United Kingdom', 'GB');
     next();
     next();
     next();

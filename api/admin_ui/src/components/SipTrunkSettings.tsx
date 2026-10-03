@@ -154,8 +154,10 @@ function SipTrunkSettings({ client, showCalls = true }: SipTrunkSettingsProps) {
       ['t38_enabled', 'sip_t38_enabled'], ['fax_preference_header', 'sip_fax_preference_header'],
       ['external_address', 'sip_external_address'],
     ];
+    // The caller ID keeps its spaces while typed and is trimmed when saved.
+    const current: TrunkValues = { ...form, caller_id: form.caller_id.trim() };
     for (const [key, name] of fields) {
-      if (form[key] !== saved[key]) patch[name] = form[key] as string | number | boolean;
+      if (current[key] !== saved[key]) patch[name] = current[key] as string | number | boolean;
     }
     if (form.dids.join(',') !== saved.dids.join(',')) patch.sip_trunk_dids = form.dids.join(',');
     if (form.password) patch.sip_trunk_password = form.password;
@@ -301,7 +303,7 @@ function SipTrunkSettings({ client, showCalls = true }: SipTrunkSettingsProps) {
           <TextField size="small" fullWidth label="Caller ID" value={form.caller_id} required type="tel"
             placeholder={numberPlaceholder(numberFormat)}
             helperText="A number your carrier has assigned to you or verified for you. Faxbot never sends any other number."
-            onChange={(event) => update('caller_id', event.target.value.trim())} />
+            onChange={(event) => update('caller_id', event.target.value)} />
 
           <Box>
             <Typography variant="subtitle2">Fax numbers on this trunk</Typography>

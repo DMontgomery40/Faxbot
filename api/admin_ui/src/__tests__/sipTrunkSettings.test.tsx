@@ -88,7 +88,7 @@ describe('SIP trunk settings', () => {
     expect(screen.getByText('The numbers your carrier sends to this trunk, for example 0121 234 5678 or +44 121 234 5678.'))
       .toBeTruthy();
     expect(callerId.getAttribute('placeholder')).toBe('0121 234 5678');
-    fireEvent.change(callerId, { target: { value: '01782 684953' } });
+    fireEvent.change(callerId, { target: { value: '01782 684953 ' } });
     for (const number of ['01782 684953', '01782 684954']) {
       fireEvent.change(screen.getByLabelText('Add a number'), { target: { value: number } });
       fireEvent.click(screen.getByRole('button', { name: 'Add' }));

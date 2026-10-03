@@ -725,7 +725,7 @@ export class AdminAPIClient {
       }
       if (res.status === 400) {
         const sentence = plainRefusal(new AdminAPIError(res.status, res.statusText, detail));
-        throw new FaxRefusedError(sentence ?? 'The fax was not accepted. Check the number and the document, then try again.');
+        throw new FaxRefusedError(sentence ?? 'The fax was not accepted; check the number and the document, then try again.');
       }
       if (res.status === 503 && typeof detail === 'string') {
         const uncertain = /^Fax acceptance is uncertain\. Retain job ([a-f0-9]{32}) for reconciliation\.$/.exec(detail);

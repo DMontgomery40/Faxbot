@@ -3,7 +3,7 @@
 // way people in that country dial it, so the console only explains the format
 // and never checks digits itself.
 import { useEffect, useMemo, useState } from 'react';
-import { Autocomplete, TextField } from '@mui/material';
+import { Autocomplete, TextField, createFilterOptions } from '@mui/material';
 import type AdminAPIClient from '../../api/client';
 import type { ConsoleContext, NumberFormat, Settings } from '../../api/types';
 
@@ -91,6 +91,9 @@ export const COUNTRY_HELP = 'Fax numbers typed without a country code are read a
 
 type Option = { value: string; label: string };
 
+// Typing a name or a code finds the country, so GB and US work as well as names.
+const filterCountries = createFilterOptions<Option>({ stringify: (option) => `${option.label} ${option.value}` });
+
 // A searchable list of countries by name. Settings labels it with its own row
 // label (labelledBy); the Setup Wizard shows the label on the field.
 export function CountryField({ value, countries, onChange, disabled, id, label, labelledBy, describedBy, helperText, size }: {
@@ -117,6 +120,7 @@ export function CountryField({ value, countries, onChange, disabled, id, label, 
       value={selected as Option}
       onChange={(_, option) => { if (option) onChange(option.value); }}
       getOptionLabel={(option) => option.label}
+      filterOptions={filterCountries}
       isOptionEqualToValue={(option, chosen) => option.value === chosen.value}
       disableClearable
       autoHighlight
