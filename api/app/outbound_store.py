@@ -107,7 +107,15 @@ def record_acceptance(connection, tables, job_id, *, held, now):
         details={'dispatch_mode': mode})
 
 
+FALLBACK_LIMIT = 2
+
+
 class OutboundStore:
+    # Optional callable(job_id, attempt_id) -> bool, consulted inside the
+    # observing transaction when a submitted attempt definitely fails. True
+    # returns the fax to the queue for its next route instead of failing it.
+    fallback_policy = None
+
     def __init__(self, configuration):
         self.configuration = configuration
         self.deliveries = configuration.delivery_tables['outbound_deliveries']
@@ -547,6 +555,16 @@ class OutboundStore:
         connection.execute(self.attempts.update().where(self.attempts.c.id == attempt_id).values(
             phase=status, provider_sid=final_sid, error_category=None,
             completed_at=now if status in TERMINAL else None))
+        if status == 'failed' and self._fallback_due(connection, row, attempt_id):
+            # The next route takes over in this same transaction, so the fax
+            # never reads as failed while another route remains.
+            self._update(connection, row, now, state='ready', attempt_id=None, claim_owner=None,
+                         claim_token=None, claim_expires_at=None, next_poll_at=None)
+            connection.execute(self.configuration.jobs.update().where(self.configuration.jobs.c.id == row['id']).values(
+                status='queued', provider_sid=final_sid, error=None, updated_at=now))
+            _event(connection, self.events, row['id'], 'route_fallback', now, attempt_id=attempt_id,
+                   details={'category': 'provider_failed'})
+            return True
         self._update(connection, row, now, state=status, claim_expires_at=None)
         connection.execute(self.configuration.jobs.update().where(self.configuration.jobs.c.id == row['id']).values(
             status=status, provider_sid=final_sid, error=None, updated_at=now))
@@ -584,6 +602,20 @@ class OutboundStore:
         if isinstance(result, _ObservationRefusal):
             raise DeliveryConflict(result.message)
         return result
+
+    def _fallback_due(self, connection, row, attempt_id):
+        """Ask the installed route policy, within the fallback limit, whether another route remains."""
+        policy = type(self).fallback_policy
+        if policy is None or row['dispatch_mode'] != 'normal':
+            return False
+        used = connection.scalar(sa.select(sa.func.count()).select_from(self.events).where(
+            self.events.c.job_id == row['id'], self.events.c.kind == 'route_fallback'))
+        if used >= FALLBACK_LIMIT or not self._enabled(connection):
+            return False
+        try:
+            return bool(policy(row['id'], attempt_id))
+        except Exception:
+            return False  # Without a usable answer the failure stands.
 
     def _route_profile_on(self, connection, configuration):
         """Reuse an identical stored provider account, or store this one."""
@@ -641,7 +673,7 @@ class OutboundStore:
             return connection.scalar(sa.select(sa.func.count()).select_from(self.events).where(
                 self.events.c.job_id == job_id, self.events.c.kind == 'route_fallback'))
 
-    def requeue_after_failure(self, job_id, *, attempt_id, category, max_fallbacks=2, now=None):
+    def requeue_after_failure(self, job_id, *, attempt_id, category, max_fallbacks=FALLBACK_LIMIT, now=None):
         """Return a definitely failed delivery to the queue for its next route.
 
         ``provider_failed``: the attempt's provider reported a final failure.

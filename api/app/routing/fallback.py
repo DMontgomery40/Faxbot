@@ -65,3 +65,16 @@ class FallbackScheduler:
                                                    max_fallbacks=MAX_FALLBACKS):
                 moved += 1
         return moved > 0
+
+
+class FallbackPolicy:
+    """Installed on the delivery store: True when a failed routed attempt has another usable route."""
+
+    def __init__(self, scheduler):
+        self.scheduler = scheduler
+
+    def __call__(self, job_id, attempt_id):
+        decision = self.scheduler.routes.decision(attempt_id)
+        if decision is None:
+            return False  # Not routed by Faxbot; the failure stands.
+        return self.scheduler.next_route(job_id, attempt_id, decision['route']) is not None

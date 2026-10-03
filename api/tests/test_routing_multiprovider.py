@@ -8,6 +8,7 @@ import hmac
 from uuid import uuid4
 
 import pytest
+import sqlalchemy as sa
 
 from api.tests.test_schema import database
 from api.app.schema import upgrade_schema
@@ -252,6 +253,39 @@ async def test_definite_failure_falls_back_to_the_next_route_at_most_twice(multi
     assert kinds.count('route_fallback') == 1 and kinds.count('claimed') == 2
     fallback = next(event for event in delivery.operator_view(job)['events'] if event['kind'] == 'route_fallback')
     assert fallback['details'] == {'category': 'provider_failed'}
+
+
+@pytest.mark.asyncio
+async def test_installed_policy_requeues_in_the_failure_transaction(multi, monkeypatch):
+    from api.app.routing.fallback import FallbackPolicy
+    configuration, delivery, routes, _ = multi
+    monkeypatch.setattr(OutboundStore, 'fallback_policy', FallbackPolicy(FallbackScheduler(delivery, routes)))
+    job = accept(multi)
+    inner = Inner(delivery, [SubmissionReceipt('FX1', 'failed'), SubmissionReceipt('PX1', 'failed')])
+    worker = OutboundWorker(delivery, RoutedTransport(inner))
+    await worker.step()
+    # The fax never reads as failed while another route remains.
+    row = delivery.get(job)
+    assert row['state'] == 'ready' and row['attempt_id'] is None
+    with configuration.engine.connect() as connection:
+        assert connection.scalar(sa.select(configuration.jobs.c.status).where(configuration.jobs.c.id == job)) == 'queued'
+    kinds = [event['kind'] for event in delivery.history(job)]
+    assert kinds.count('route_fallback') == 1 and 'provider_observed' in kinds  # same instant, either order
+    await worker.step()
+    assert inner.used == ['signalwire', 'phaxio'] and delivery.get(job)['state'] == 'failed'
+    assert await worker.step() is False
+
+
+@pytest.mark.asyncio
+async def test_policy_errors_leave_the_failure_standing(multi, monkeypatch):
+    _, delivery, _, _ = multi
+
+    def broken(job_id, attempt_id):
+        raise RuntimeError('synthetic policy failure')
+    monkeypatch.setattr(OutboundStore, 'fallback_policy', broken)
+    job = accept(multi)
+    await OutboundWorker(delivery, RoutedTransport(Inner(delivery, [SubmissionReceipt('FX1', 'failed')]))).step()
+    assert delivery.get(job)['state'] == 'failed'
 
 
 @pytest.mark.asyncio

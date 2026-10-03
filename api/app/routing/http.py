@@ -10,7 +10,7 @@ from .background import installation_engine, lifespan_tasks, repeat
 from .billing import BillingReconciler
 from .capture import CostRecorder
 from .charges import SignalWireCharges
-from .fallback import FallbackScheduler
+from .fallback import FallbackPolicy, FallbackScheduler
 from .seed import load_cards
 from .costs import InvalidRateCard, RateCard, format_amount, parse_amount
 from .database import DeliveryStoreError, utcnow
@@ -34,13 +34,25 @@ def _background(app):
         return False
     billing = BillingReconciler(routes, {'signalwire': SignalWireCharges(delivery)})
     fallback = FallbackScheduler(delivery, routes, ami=ami_client)
-    return [('faxbot-route-seed', _once(seed)),
+    return [('faxbot-route-policy', _install_policy(OutboundStore, FallbackPolicy(fallback))),
+            ('faxbot-route-seed', _once(seed)),
             ('faxbot-route-costs', repeat(recorder.step, interval=15.0, initial_delay=5.0,
                                           warning='Fax cost estimates are temporarily unavailable.')),
             ('faxbot-route-billing', repeat(billing.step, interval=60.0, initial_delay=30.0,
                                             warning='Provider charges are temporarily unavailable.')),
             ('faxbot-route-fallback', repeat(fallback.step, interval=3.0, initial_delay=3.0,
                                              warning='Fax route fallback is temporarily unavailable.'))]
+
+
+async def _install_policy(store_class, policy):
+    """Hold the route fallback policy on the delivery store for this application's lifetime."""
+    import asyncio
+    store_class.fallback_policy = policy
+    try:
+        await asyncio.Event().wait()
+    finally:
+        if store_class.fallback_policy is policy:
+            store_class.fallback_policy = None
 
 
 async def _once(step):

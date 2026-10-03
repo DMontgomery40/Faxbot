@@ -41,7 +41,7 @@ A provider that is not ready is skipped. A cloud provider needs its credentials.
 
 ## When a route fails
 
-When a provider reports that a fax failed, Faxbot sends it again on the next route it has not tried yet. It does this at most twice per fax. Each retry is a new attempt on the same fax, and the fax history shows why it was retried. While the retry waits, the fax status shows `queued` again.
+When a provider reports that a fax failed, Faxbot sends it again on the next route it has not tried yet. It does this at most twice per fax. Each retry is a new attempt on the same fax, and the fax history shows why it was retried. While another route remains, the fax status goes from `in_progress` back to `queued` and never shows `failed`.
 
 Faxbot never resends a fax whose outcome is unknown, for example when a provider stopped answering mid-request. That fax waits for confirmation from the provider, or from you.
 
