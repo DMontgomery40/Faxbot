@@ -1,23 +1,41 @@
 # Python MCP
 
-Stdio server
-- Path: `python_mcp/stdio_server.py`
-- Env: `FAX_API_URL`, optional `API_KEY`
-- Start:
-  - `python -m venv .venv && source .venv/bin/activate`
-  - `pip install -r requirements.txt`
-  - `export FAX_API_URL=http://localhost:8080`
-  - `python stdio_server.py`
+Built on the MCP Python SDK (`mcp` 2.3.0). Requires Python 3.11 or newer.
 
-SSE server (OAuth2/JWT)
+Install: `pip install -r python_mcp/requirements.txt`
+
+Stdio server
+
+- Path: `python_mcp/stdio_server.py`
+- Env: `FAX_API_URL`, `API_KEY` (used for every tool call)
+- Start: `python python_mcp/stdio_server.py`
+
+Streamable HTTP server
+
+- Path: `python_mcp/http_server.py`
+- Start: `uvicorn http_server:app --host 0.0.0.0 --port 3004` (from `python_mcp/`)
+- Endpoints: `POST /mcp`, `GET /health`
+
+SSE server (compatibility transport)
+
 - Path: `python_mcp/server.py`
-- Env:
-  - `OAUTH_ISSUER`, `OAUTH_AUDIENCE`, optional `OAUTH_JWKS_URL`
-  - `FAX_API_URL`, optional `API_KEY`
-- Start: `uvicorn server:app --host 0.0.0.0 --port 3003`
+- Start: `uvicorn server:app --host 0.0.0.0 --port 3003` (from `python_mcp/`)
+- Endpoints: `GET /sse`, `POST /messages/`, `GET /health`
+
+Both network servers read `FAX_API_URL`, optional `MCP_ALLOWED_HOSTS` and `MCP_ALLOWED_ORIGINS`, and for OAuth `OAUTH_ISSUER`, `OAUTH_AUDIENCE`, optional `OAUTH_JWKS_URL`, `MCP_OAUTH_SUBJECT_KEYS_FILE` and `MCP_RESOURCE_URL`. They never use `API_KEY`.
+
+Embedded in the API
+
+- `ENABLE_MCP_HTTP=true` serves Streamable HTTP at `/mcp/http/mcp`
+- `ENABLE_MCP_SSE=true` serves SSE at `/mcp/sse/sse`
+- `REQUIRE_MCP_OAUTH=true` switches both to OAuth bearer tokens
 
 Tools
-- `send_fax(to, filePath | fileContent+fileName[, fileType])`
+
+- `send_fax(to, fileContent, fileName, fileType?)`. On stdio, `filePath` or `fileUrl` can replace `fileContent`.
 - `get_fax_status(jobId)`
+- `get_fax(id)`
+- `list_inbound(limit?)`
+- `get_inbound_pdf(inboundId, asBase64?)`
 
 See [MCP overview](index.md) for context and tools.

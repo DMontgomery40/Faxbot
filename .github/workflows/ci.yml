@@ -79,3 +79,52 @@ jobs:
         run: npm ci --prefix node_mcp --no-audit --no-fund
       - name: Check Node MCP sources parse and import
         run: npm --prefix node_mcp run check
+
+  check-python-mcp:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install Python MCP dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r python_mcp/requirements.txt pytest==8.3.2 pytest-asyncio==0.23.8 cryptography==50.0.2
+          python -m pip check
+      - name: Test Python MCP servers
+        run: python -m pytest -q python_mcp/tests
+
+  test-node-mcp:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.21.0'
+          cache: npm
+          cache-dependency-path: node_mcp/package-lock.json
+      - name: Install Node MCP dependencies
+        run: npm ci --prefix node_mcp --no-audit --no-fund
+      - name: Test Node MCP servers
+        run: npm --prefix node_mcp test
+
+  check-sdks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.21.0'
+      - name: Test Python SDK
+        run: |
+          python -m pip install --upgrade pip
+          pip install ./sdks/python pytest==8.3.2
+          python -m pytest -q sdks/python/tests
+      - name: Test Node SDK
+        run: |
+          npm install --prefix sdks/node --no-audit --no-fund --no-package-lock
+          npm --prefix sdks/node test
