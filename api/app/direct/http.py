@@ -6,8 +6,6 @@ by an Ed25519 signature from an enrolled partner and they answer 404 while
 direct delivery is switched off.
 """
 from datetime import datetime
-import os
-from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse
@@ -17,6 +15,7 @@ from ..access.route_policy import require_permission
 from ..config_runtime import run_lifecycle_step
 from ..routing.background import installation_engine, lifespan_tasks, repeat_async
 from ..routing.database import DeliveryStoreError
+from ..routing.submit import accept_generated_fax
 from .crypto import DirectProtocolError
 from .identity import IdentityUnavailable
 from .service import DirectReconciler, DirectService, DirectUnavailable, MAX_DOCUMENT_BYTES
@@ -124,37 +123,13 @@ async def send_challenge(peer_id: str, request: Request, identity=Depends(requir
     code = service.new_code()
     organization = values.direct_organization.strip() or 'A Faxbot installation'
     document = service.challenge_document(peer, code, organization)
-    job_id = uuid4().hex
+    access = access_runtime(request)
 
     def accept():
-        profile = runtime.manager.store.read_profile(revision.profile_id('outbound'))
-        configuration = profile.configuration
-        root = values.fax_data_dir
-        pdf = os.path.join(root, job_id + '.pdf')
-        with open(pdf, 'xb') as handle:
-            handle.write(document)
-        tiff = ''
-        if ((configuration.manifest is None and configuration.provider_id in {'sip', 'freeswitch'})
-                or configuration.traits.get('requires_tiff') is True):
-            from ..conversion import pdf_to_tiff
-            tiff = os.path.join(root, job_id + '.tiff')
-            pdf_to_tiff(pdf, tiff)
-        now = datetime.utcnow()
-        access_runtime(request).outbound.accept(identity.actor, revision, {
-            'id': job_id, 'to_number': peer['phone_number'], 'file_name': 'direct-delivery-code.pdf',
-            'tiff_path': tiff, 'status': 'queued', 'pages': 1, 'created_at': now, 'updated_at': now})
-        return service.store.start_challenge(peer_id, code=code, job_id=job_id)
-    try:
-        updated = await _call(accept)
-    except HTTPException:
-        raise
-    except Exception:
-        for suffix in ('.pdf', '.tiff'):
-            try:
-                os.unlink(os.path.join(values.fax_data_dir, job_id + suffix))
-            except OSError:
-                pass
-        raise
+        job_id = accept_generated_fax(runtime, access, identity.actor, revision, to_number=peer['phone_number'],
+                                      document=document, file_name='direct-delivery-code.pdf', pages=1)
+        return job_id, service.store.start_challenge(peer_id, code=code, job_id=job_id)
+    job_id, updated = await _call(accept)
     return {**_peer_view(updated), 'fax_id': job_id}
 
 
