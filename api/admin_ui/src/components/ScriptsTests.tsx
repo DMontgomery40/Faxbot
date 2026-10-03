@@ -242,7 +242,7 @@ const ScriptsTests: React.FC<Props> = ({ client, onNavigate, docsBase }) => {
             Scripts & Tests
           </Typography>
           <Typography variant="body2" color="text.secondary">
-            Open fax and configuration workflows or run inbound and container helpers
+            Try inbound faxes, check callbacks and run container checks
           </Typography>
         </Box>
       </Box>
@@ -252,14 +252,9 @@ const ScriptsTests: React.FC<Props> = ({ client, onNavigate, docsBase }) => {
         icon={<InfoIcon />}
         sx={{ mb: 3, borderRadius: 2 }}
       >
-        <Stack spacing={0.5}>
-          <Typography variant="body2">
-            Manage API keys, review outbound faxes, and configure providers in the established workflows. Inbound and container helpers remain available below.
-          </Typography>
-          <Typography variant="body2">
-            Learn more in the docs: <Link href={docsUrl} target="_blank" rel="noreferrer" color="primary" underline="always" sx={documentationLinkSx}>Scripts & Tests</Link>.
-          </Typography>
-        </Stack>
+        <Typography variant="body2">
+          Learn more in the docs: <Link href={docsUrl} target="_blank" rel="noreferrer" color="primary" underline="always" sx={documentationLinkSx}>Scripts & Tests</Link>.
+        </Typography>
       </Alert>
 
       {error && (
@@ -271,16 +266,16 @@ const ScriptsTests: React.FC<Props> = ({ client, onNavigate, docsBase }) => {
       )}
 
       <Grid container spacing={3}>
-        {/* Established key and outbound workflows */}
+        {/* Keys and Send Fax shortcuts */}
         <Grid item xs={12} lg={6}>
           <ResponsiveFormSection
             title="Keys and Send Fax"
-            subtitle="Manage keys and review a fax before submitting"
+            subtitle="Shortcuts to API keys and sending"
             icon={<KeyIcon />}
           >
             <Stack spacing={2}>
               <Typography variant="body2" color="text.secondary">
-                Manage API keys in Keys. Use Send Fax to choose your document and destination and review whether the active send setting holds the job or allows real transmission.
+                Create an API key or send a test fax to a number you control.
               </Typography>
               <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
                 <Button
@@ -349,19 +344,19 @@ const ScriptsTests: React.FC<Props> = ({ client, onNavigate, docsBase }) => {
           </Grid>
         )}
 
-        {/* Established revision-aware configuration workflow */}
+        {/* Provider and callback settings */}
         <Grid item xs={12} lg={6}>
           <ResponsiveFormSection
             title="Provider and Callback Settings"
-            subtitle="Review credentials, URLs, and saved revisions"
+            subtitle="Credentials, secrets and callback URLs"
             icon={<SettingsIcon />}
           >
             <Stack spacing={2}>
               <Typography variant="body2" color="text.secondary">
-                Configure provider credentials, receiving secrets, and callback URLs in Settings. Review the saved revision and whether changes are active or pending restart there.
+                Set provider credentials, inbound secrets and callback URLs in Settings.
               </Typography>
               <Typography variant="body2" color="text.secondary">
-                SIP/Asterisk internal posting uses the configured inbound secret with the X-Internal-Secret header. Phaxio outbound callbacks require a separate callback token. Use the configured provider's required callback signature verification.
+                Asterisk sends the inbound secret in the X-Internal-Secret header, and Phaxio status callbacks need their own callback token.
               </Typography>
               <Box>
                 <Button
@@ -479,8 +474,7 @@ const ScriptsTests: React.FC<Props> = ({ client, onNavigate, docsBase }) => {
         sx={{ mt: 3, borderRadius: 2 }}
       >
         <Typography variant="caption" color="text.secondary">
-          <strong>Tip:</strong> Review public callback URLs and HTTPS requirements in Settings.
-          Disabled sending holds outbound jobs; it does not simulate provider delivery. Held jobs are not automatically transmitted when sending is enabled.
+          <strong>Tip:</strong> Providers need public HTTPS callback URLs; check them in Settings.
         </Typography>
       </Alert>
     </Box>

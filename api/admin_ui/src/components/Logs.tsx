@@ -10,6 +10,14 @@ type AuditSettingsSnapshot = {
   meta: NonNullable<Settings['_meta']>;
 };
 
+const sinceOptions = [
+  { value: '', label: 'Custom' },
+  { value: '5m', label: 'Last 5m' },
+  { value: '15m', label: 'Last 15m' },
+  { value: '1h', label: 'Last 1h' },
+  { value: '24h', label: 'Last 24h' },
+];
+
 function parseQueryTokens(input: string): { q: string; filters: Record<string,string> } {
   const parts = input.split(/\s+/).filter(Boolean);
   const filters: Record<string, string> = {};
@@ -104,23 +112,23 @@ function Logs({ client }: LogsProps) {
   }, [client]);
 
   const readAuditSettings = async (epoch: number): Promise<AuditSettingsSnapshot | null> => {
-    // Bracket the separately authorized active read with canonical identities,
-    // so a changed configuration cannot be presented as one coherent snapshot.
+    // Read settings before and after the active config so a concurrent change
+    // is reported instead of mixing two configurations.
     const before = await client.getSettings();
     if (epoch !== configurationEpoch.current) return null;
-    if (!before._meta?.desired_revision_id) throw new Error('No canonical desired revision was returned.');
+    if (!before._meta?.desired_revision_id) throw new Error('Settings could not be read.');
     const active = await client.getConfig();
     if (epoch !== configurationEpoch.current) return null;
     const desired = await client.getSettings();
     if (epoch !== configurationEpoch.current) return null;
-    if (!desired._meta?.desired_revision_id) throw new Error('No canonical desired revision was returned.');
+    if (!desired._meta?.desired_revision_id) throw new Error('Settings could not be read.');
     if (before._meta.desired_revision_id !== desired._meta?.desired_revision_id
         || before._meta.active_revision_id !== desired._meta?.active_revision_id
         || before._meta.generation !== desired._meta?.generation) {
-      throw new Error('Settings changed during the audit read. Reload explicitly to review the current revision.');
+      throw new Error('Settings changed while loading.');
     }
     if (typeof desired.security.audit_enabled !== 'boolean' || typeof active.audit_log_enabled !== 'boolean') {
-      throw new Error('Desired and active audit logging values were not available.');
+      throw new Error('Audit logging status was not available.');
     }
     return { desiredEnabled: desired.security.audit_enabled, activeEnabled: active.audit_log_enabled, meta: desired._meta };
   };
@@ -138,8 +146,8 @@ function Logs({ client }: LogsProps) {
       if (!current) return;
       setAuditSnapshot(current);
       setEnableNeedsReload(false);
-    } catch (e: any) {
-      if (epoch === configurationEpoch.current) setEnableError(`Audit settings could not be reloaded. ${e?.message || ''} Reload explicitly, or sign in again, before another change.`);
+    } catch {
+      if (epoch === configurationEpoch.current) setEnableError("Couldn't load audit logging status. Reload to try again.");
     } finally {
       if (epoch === configurationEpoch.current) {
         enableFence.current = false;
@@ -162,7 +170,7 @@ function Logs({ client }: LogsProps) {
     try {
       const desired = await client.getSettings();
       if (epoch !== configurationEpoch.current) return;
-      if (!desired._meta?.desired_revision_id) throw new Error('No canonical desired revision was returned.');
+      if (!desired._meta?.desired_revision_id) throw new Error('Settings could not be read.');
       writeStarted = true;
       setEnableOutcome('unconfirmed');
       const receipt = await client.updateSettings({ audit_log_enabled: true, expected_revision_id: desired._meta.desired_revision_id });
@@ -171,17 +179,17 @@ function Logs({ client }: LogsProps) {
       setEnableOutcome('confirmed');
       setEnableNeedsReload(true);
       setEnableNotice(receipt._meta.apply_state === 'pending_restart'
-        ? `${receipt.changed ? 'Desired audit settings saved durably.' : 'Desired audit settings are unchanged.'} Pending changes require every worker to stop and the installation to restart. Confirm active logging in Settings afterward.`
-        : receipt.changed ? 'Audit logging settings saved durably and active.' : 'Audit logging settings are unchanged and active.');
+        ? `${receipt.changed ? 'Audit logging saved.' : 'Nothing changed.'} Restart Faxbot to apply pending changes.`
+        : receipt.changed ? 'Audit logging is on.' : 'Audit logging is already on.');
       try {
         const current = await readAuditSettings(epoch);
         if (epoch !== configurationEpoch.current) return;
         if (!current) return;
         setAuditSnapshot(current);
         setEnableNeedsReload(false);
-        if (!await run() && epoch === configurationEpoch.current) setEnableError('Save confirmed; logs could not be reloaded. Refresh logs explicitly, or sign in again.');
+        if (!await run() && epoch === configurationEpoch.current) setEnableError("Audit logging saved, but the logs couldn't be refreshed. Select Refresh to try again.");
       } catch {
-        if (epoch === configurationEpoch.current) setEnableError('Save confirmed; audit settings could not be reloaded. Reload settings explicitly, or sign in again, before another change.');
+        if (epoch === configurationEpoch.current) setEnableError("Audit logging saved, but its status couldn't be reloaded. Reload to check it.");
       }
     } catch (e: any) {
       if (epoch !== configurationEpoch.current) return;
@@ -189,10 +197,12 @@ function Logs({ client }: LogsProps) {
         setEnableOutcome(configurationWriteRejected(e) ? 'rejected' : 'unconfirmed');
         setEnableNeedsReload(true);
         setEnableError((e?.message || '').includes('409')
-          ? 'Settings changed after the desired revision loaded. Audit logging was not changed by this request. Reload settings explicitly before trying again.'
-          : `${configurationWriteRejected(e) ? 'Save was rejected.' : 'Save was not confirmed.'} ${e?.message || ''} Reload settings to check the current configuration before another change.`);
+          ? 'Someone else changed these settings. Reload to see the current values, then try again.'
+          : configurationWriteRejected(e)
+            ? `Audit logging couldn't be turned on. ${e?.message || ''}`.trim()
+            : "Couldn't confirm the change. Reload to check whether audit logging is on.");
       } else {
-        setEnableError(`Audit settings could not be loaded; no save was attempted. ${e?.message || ''}`);
+        setEnableError("Couldn't load audit logging settings. Nothing was changed.");
       }
     } finally {
       if (epoch === configurationEpoch.current) {
@@ -201,6 +211,20 @@ function Logs({ client }: LogsProps) {
       }
     }
   };
+
+  const showEnable = !error && items.length === 0;
+  const auditPending = auditSnapshot !== null && auditSnapshot.desiredEnabled !== auditSnapshot.activeEnabled;
+  const auditStatus: { severity: 'success' | 'info' | 'warning'; text: string } | null =
+    enableError ? { severity: 'warning', text: enableError }
+    : enableNotice ? { severity: enableReceipt?._meta.apply_state === 'pending_restart' ? 'warning' : 'success', text: enableNotice }
+    : enableBusy ? { severity: 'info', text: enableNeedsReload ? 'Checking audit logging…' : 'Turning on audit logging…' }
+    : auditSnapshot ? (auditPending
+      ? { severity: 'warning', text: auditSnapshot.desiredEnabled ? 'Audit logging turns on when Faxbot restarts.' : 'Audit logging turns off when Faxbot restarts.' }
+      : { severity: 'info', text: auditSnapshot.activeEnabled ? 'Audit logging is on.' : 'Audit logging is off.' })
+    : enableOutcome === 'unconfirmed' ? { severity: 'warning', text: 'Reload to check whether audit logging is on.' }
+    : showEnable ? { severity: 'info', text: 'If audit logging is off, enable it to record new events.' }
+    : enableNeedsReload ? { severity: 'info', text: 'Reload to check audit logging.' }
+    : null;
 
   return (
     <Box>
@@ -227,20 +251,33 @@ function Logs({ client }: LogsProps) {
               gap: 1,
             }}>
               <FormControl size="small">
-                <InputLabel id="logs-since-label">Since</InputLabel>
-                <Select id="logs-since" labelId="logs-since-label" label="Since" value={sincePreset} onChange={(e)=>setSincePreset(e.target.value as string)}>
-                  <MenuItem value="">Custom</MenuItem>
-                  <MenuItem value="5m">Last 5m</MenuItem>
-                  <MenuItem value="15m">Last 15m</MenuItem>
-                  <MenuItem value="1h">Last 1h</MenuItem>
-                  <MenuItem value="24h">Last 24h</MenuItem>
+                <InputLabel id="logs-since-label" shrink>Since</InputLabel>
+                <Select
+                  id="logs-since"
+                  labelId="logs-since-label"
+                  label="Since"
+                  value={sincePreset}
+                  onChange={(e)=>setSincePreset(e.target.value as string)}
+                  displayEmpty
+                  renderValue={(value) => sinceOptions.find(option => option.value === value)?.label ?? value}
+                >
+                  {sinceOptions.map(option => (
+                    <MenuItem key={option.value} value={option.value}>{option.label}</MenuItem>
+                  ))}
                 </Select>
               </FormControl>
               <TextField label="Custom" value={since} onChange={(e)=>setSince(e.target.value)} size="small" placeholder="e.g., 2025-09-12 14:00" disabled={!!sincePreset} />
             </Box>
             <TextField label="Limit" type="number" value={limit} onChange={(e)=>setLimit(parseInt(e.target.value||'200'))} size="small" />
           </Box>
-          <Box mt={2} display="flex" alignItems="center" gap={2}>
+          <Box sx={{
+            mt: 2,
+            display: 'flex',
+            flexDirection: { xs: 'column', sm: 'row' },
+            alignItems: { xs: 'flex-start', sm: 'center' },
+            flexWrap: 'wrap',
+            gap: { xs: 1, sm: 2 },
+          }}>
             <Button variant="contained" onClick={run} disabled={loading}>Apply Filters</Button>
             <FormControlLabel control={<Switch checked={source==='file'} onChange={(e)=>setSource(e.target.checked?'file':'ring')} />} label="Use file tail" />
             {source==='file' && (
@@ -253,26 +290,17 @@ function Logs({ client }: LogsProps) {
       </Card>
 
       {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
-      {enableNotice && <Alert severity={enableReceipt?._meta.apply_state === 'pending_restart' ? 'warning' : 'success'} sx={{ mb: 2 }}>{enableNotice}</Alert>}
-      {enableOutcome === 'unconfirmed' && <Alert severity="warning" sx={{ mb: 2 }}>
-        The earlier save remains unconfirmed. {auditSnapshot
-          ? 'The desired and active values below describe the currently loaded configuration; they do not establish whether that earlier request committed. Review them before making another change.'
-          : 'Reload audit settings explicitly to inspect desired and active logging before making another change.'}
-      </Alert>}
-      {auditSnapshot && <Alert severity={auditSnapshot.meta.apply_state === 'pending_restart' ? 'warning' : 'info'} sx={{ mb: 2 }}>
-        <Typography variant="body2">Loaded desired audit logging: {auditSnapshot.desiredEnabled ? 'enabled' : 'disabled'}. Loaded active audit logging: {auditSnapshot.activeEnabled ? 'enabled' : 'disabled'}.</Typography>
-        <Typography variant="body2">Desired revision: {auditSnapshot.meta.desired_revision_id}. Active revision: {auditSnapshot.meta.active_revision_id}. Generation: {auditSnapshot.meta.generation}.</Typography>
-        {auditSnapshot.meta.apply_state === 'pending_restart' && <Typography variant="body2">The loaded configuration has pending changes. Active values continue serving until every worker stops and the installation restarts.</Typography>}
-        {auditSnapshot.desiredEnabled && <Typography variant="body2">Desired audit logging is already enabled; no further enable write is needed.</Typography>}
-      </Alert>}
-      {enableError && <Alert severity="warning" sx={{ mb: 2 }}>{enableError}</Alert>}
-      {enableNeedsReload && <Button variant="outlined" onClick={reloadAuditSettings} disabled={enableBusy} sx={{ mb: 2 }}>Reload audit settings</Button>}
-      {(!error && items.length === 0) && (
-        <Alert severity="info" sx={{ mb: 2 }}>
-          <Typography variant="body2">No matching logs. Adjust search, event, or time filters, then refresh.</Typography>
-          {!auditSnapshot && <Typography variant="body2">Audit logging state has not been loaded here. Check Settings → Security to review it.</Typography>}
-          {auditSnapshot && !auditSnapshot.desiredEnabled && !auditSnapshot.activeEnabled && <Typography variant="body2">Loaded desired and active audit logging are disabled. Enabling audit logging records future events.</Typography>}
-          <Button size="small" variant="outlined" sx={{ ml: 2 }} onClick={enableAuditLogging} disabled={enableBusy || enableNeedsReload || auditSnapshot?.desiredEnabled}>Enable Now</Button>
+      {auditStatus && (
+        <Alert severity={auditStatus.severity} sx={{ mb: 2 }}>
+          <Box sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', columnGap: 2, rowGap: 1 }}>
+            <Typography variant="body2">{auditStatus.text}</Typography>
+            {showEnable && !enableNeedsReload && !auditSnapshot?.desiredEnabled && (
+              <Button size="small" variant="outlined" onClick={enableAuditLogging} disabled={enableBusy}>Enable Now</Button>
+            )}
+            {enableNeedsReload && (
+              <Button size="small" variant="outlined" onClick={reloadAuditSettings} disabled={enableBusy}>Reload audit settings</Button>
+            )}
+          </Box>
         </Alert>
       )}
 
