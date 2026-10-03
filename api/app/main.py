@@ -405,7 +405,7 @@ def _observe_native(job_id, attempt_id, status, provider, *, event_key, secret=N
             or not isinstance(attempt_id, str) or re.fullmatch('[a-f0-9]{32}', attempt_id) is None):
         raise DeliveryConflict('Native result has no verified attempt identity.')
     delivery = _deliveries()
-    revision, profile = delivery.configuration.outbound_context(job_id)
+    revision, profile = delivery.attempt_context(job_id, attempt_id)
     if profile.configuration.provider_id != provider or profile.configuration.manifest is not None:
         raise DeliveryConflict('Native result does not match the original provider.')
     if provider == 'freeswitch':

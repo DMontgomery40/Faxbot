@@ -7,8 +7,10 @@ from pydantic import BaseModel, ConfigDict, Field
 from ..access.route_policy import require_permission
 from ..config_runtime import run_lifecycle_step
 from .background import installation_engine, lifespan_tasks, repeat
+from .billing import BillingReconciler
 from .capture import CostRecorder
 from .charges import SignalWireCharges
+from .fallback import FallbackScheduler
 from .costs import InvalidRateCard, RateCard, format_amount, parse_amount
 from .database import DeliveryStoreError, utcnow
 from .numbers import InvalidNumber, normalize_number
@@ -20,9 +22,18 @@ def _background(app):
     engine, runtime = installation_engine(app)
     if engine is None:
         return []
-    recorder = CostRecorder(RouteStore(engine), reporter=SignalWireCharges(runtime.manager.store))
+    from ..ami import ami_client
+    from ..outbound_store import OutboundStore
+    routes, delivery = RouteStore(engine), OutboundStore(runtime.manager.store)
+    recorder = CostRecorder(routes)
+    billing = BillingReconciler(routes, {'signalwire': SignalWireCharges(delivery)})
+    fallback = FallbackScheduler(delivery, routes, ami=ami_client)
     return [('faxbot-route-costs', repeat(recorder.step, interval=15.0, initial_delay=5.0,
-                                          warning='Fax cost capture is temporarily unavailable.'))]
+                                          warning='Fax cost estimates are temporarily unavailable.')),
+            ('faxbot-route-billing', repeat(billing.step, interval=60.0, initial_delay=30.0,
+                                            warning='Provider charges are temporarily unavailable.')),
+            ('faxbot-route-fallback', repeat(fallback.step, interval=3.0, initial_delay=3.0,
+                                             warning='Fax route fallback is temporarily unavailable.'))]
 
 
 router = APIRouter(prefix='/routing', tags=['Delivery routes'], lifespan=lifespan_tasks(_background))
@@ -78,7 +89,9 @@ def _route_view(entry):
     return {'route': entry['route'], 'label': route_label(entry['route']), 'attempts': entry['attempts'],
             'successes': entry['successes'], 'failures': entry['failures'], 'uncertain': entry['uncertain'],
             'success_percent': None if attempts == 0 else (100 * entry['successes']) // attempts,
-            'cost_30_days': _money(entry['cost_micros']), 'last_attempt_at': entry['last_attempt_at']}
+            'estimated_cost_30_days': _money(entry['cost_micros']),
+            'reported_cost_30_days': _money(entry['reported_cost_micros']),
+            'last_attempt_at': entry['last_attempt_at']}
 
 
 def _destination_view(number, row, routes):
@@ -91,7 +104,7 @@ def _destination_view(number, row, routes):
             'accepts_references': bool(row['accepts_references']) if row else False,
             'version': row['version'] if row else 0,
             'routes': sorted((_route_view(entry) for entry in routes.values()), key=lambda item: item['route']),
-            'cost_30_days': _money(total)}
+            'estimated_cost_30_days': _money(total)}
 
 
 @router.get('/destinations', dependencies=[Depends(require_permission('settings:read'))])
@@ -109,9 +122,8 @@ def _recommendation(store, number, revision, bound):
         return []
     planner = RoutePlanner(store, direct_ready=lambda: True)
     plan = planner.plan(to_number=number, bound=bound, values=revision.values, pages=1, alternates=True)
-    automatic = {bound, 'direct'}
     return [{'route': choice.route.key, 'label': route_label(choice.route.key), 'reason': choice.reason,
-             'explanation': REASON_TEXT[choice.reason], 'used_automatically': choice.route.key in automatic,
+             'explanation': REASON_TEXT[choice.reason],
              'estimated_cost_one_page': None if choice.estimated_cost_micros is None else
              {'currency': choice.route.card.currency, 'amount': format_amount(choice.estimated_cost_micros)}}
             for choice in plan.choices]
@@ -169,8 +181,9 @@ async def costs(request: Request, since: datetime | None = Query(default=None)):
         'provider_id': entry['provider_id'], 'label': route_label(entry['provider_id']),
         'attempts': entry['attempts'], 'successes': entry['successes'], 'failures': entry['failures'],
         'uncertain': entry['uncertain'], 'billed_minutes': round(entry['billed_seconds'] / 60, 1),
-        'billed_pages': entry['billed_pages'], 'cost': _money(entry['cost_micros']),
-        'reported_cost': _money(entry['reported_cost_micros'])} for entry in totals]}
+        'billed_pages': entry['billed_pages'], 'estimated_cost': _money(entry['cost_micros']),
+        'reported_cost': _money(entry['reported_cost_micros']), 'settled_cost': _money(entry['settled_cost_micros']),
+        'attempts_without_reported_cost': entry['unreported']} for entry in totals]}
 
 
 def _card_view(card):

@@ -2,6 +2,7 @@
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import datetime, timedelta
+from uuid import uuid4
 
 import pytest
 import sqlalchemy as sa
@@ -96,7 +97,7 @@ async def test_worker_records_route_and_reason_then_cost_is_captured(installatio
     assert CostRecorder(routes).step() is False
     priced = routes.decision(attempt)
     # Three accepted pages at 0.07 each.
-    assert (priced['outcome'], priced['computed_cost_micros'], priced['currency'], priced['billed_pages']) == (
+    assert (priced['outcome'], priced['estimated_cost_micros'], priced['currency'], priced['billed_pages']) == (
         'success', 210_000, 'USD', 3)
     assert priced['cost_basis'] == 'estimated' and priced['rate_card_id'] is not None
     assert routes.pending_captures() == []
@@ -122,14 +123,14 @@ async def test_uncertain_attempt_is_priced_as_if_sent_and_never_resubmitted(inst
     CostRecorder(routes).step()
     priced = routes.decision(delivery.get(job)['attempt_id'])
     assert priced['outcome'] == 'uncertain' and priced['cost_basis'] == 'estimated'
-    assert priced['computed_cost_micros'] == 210_000
+    assert priced['estimated_cost_micros'] == 210_000
     # A late provider receipt settles the attempt; the recorder prices it again.
     claim = replace_claim(delivery, job)
     delivery.record_receipt(claim, provider_sid='remote-late', status='failed')
     assert len(routes.pending_captures()) == 1
     CostRecorder(routes).step()
     priced = routes.decision(delivery.get(job)['attempt_id'])
-    assert priced['outcome'] == 'failed' and priced['computed_cost_micros'] == 0
+    assert priced['outcome'] == 'failed' and priced['estimated_cost_micros'] == 0
 
 
 def replace_claim(delivery, job):
@@ -236,15 +237,12 @@ async def test_direct_route_goes_first_and_only_a_definite_refusal_falls_back(
     assert await OutboundWorker(delivery, RoutedTransport(inner, direct=direct)).step() is False
 
 
-@pytest.mark.asyncio
-async def test_signalwire_reported_charge_is_stored_beside_the_computed_cost(database, tmp_path):
-    import httpx
+def signalwire_installation(database, tmp_path):
     from api.app.schema import upgrade_schema
     from api.app.config_store import ConfigurationStore
     from api.app.config_values import ConfigurationValues
     from api.app.config_profiles import ProviderConfiguration
     from api.app.outbound_store import OutboundStore
-    from api.app.routing.charges import SignalWireCharges, parse_signalwire_charge
     upgrade_schema(database)
     configuration = ConfigurationStore(database, tmp_path / 'installation.key')
     profile = ProviderConfiguration('signalwire', credentials={'api_token': 'synthetic-token'},
@@ -254,22 +252,77 @@ async def test_signalwire_reported_charge_is_stored_beside_the_computed_cost(dat
     delivery, routes = OutboundStore(configuration), RouteStore(database)
     routes.replace_cards([phaxio_card(provider_id='signalwire', label='SignalWire', per_page_micros=0,
                                       per_minute_micros=9500)])
+    return configuration, delivery, routes, snapshot
+
+
+@pytest.mark.asyncio
+async def test_late_provider_charges_are_reconciled_without_reopening_delivery(database, tmp_path):
+    import httpx
+    from api.app.routing.billing import BillingReconciler
+    from api.app.routing.charges import SignalWireCharges, parse_signalwire_charge
+    configuration, delivery, routes, snapshot = signalwire_installation(database, tmp_path)
     job = accept((configuration, delivery, snapshot))
     await OutboundWorker(delivery, RoutedTransport(Inner(delivery, SubmissionReceipt('FX123', 'success')))).step()
+    CostRecorder(routes).step()
+    attempt = delivery.get(job)['attempt_id']
+    delivered = delivery.get(job)
+    history = delivery.history(job)
+    prices = [None, '-0.0285', '-0.0285', '-0.019']
     seen = []
 
     def handler(request):
-        seen.append((str(request.url), request.headers['authorization'].startswith('Basic ')))
-        return httpx.Response(200, json={'sid': 'FX123', 'status': 'delivered', 'price': '-0.0285',
+        seen.append(str(request.url))
+        return httpx.Response(200, json={'sid': 'FX123', 'status': 'delivered', 'price': prices[len(seen) - 1],
                                          'price_unit': 'usd', 'duration': 150, 'num_pages': '3'})
-    reporter = SignalWireCharges(configuration,
-                                 client_factory=lambda: httpx.Client(transport=httpx.MockTransport(handler)))
-    CostRecorder(routes, reporter=reporter).step()
-    priced = routes.decision(delivery.get(job)['attempt_id'])
-    assert seen == [('https://example.signalwire.com/api/laml/2010-04-01/Accounts/project-1/Faxes/FX123.json', True)]
-    # 150 reported seconds bill as 3 whole minutes at 0.0095.
-    assert (priced['reported_cost_micros'], priced['computed_cost_micros'], priced['billed_seconds']) == (
-        28_500, 28_500, 180)
-    assert priced['cost_basis'] == 'measured'
+    source = SignalWireCharges(delivery, client_factory=lambda: httpx.Client(transport=httpx.MockTransport(handler)))
+    billing = BillingReconciler(routes, {'signalwire': source}, retry=timedelta(minutes=10))
+    start = datetime.utcnow()
+    # Delivered with no price yet: unknown stays unknown, never the estimate.
+    billing.step(now=start)
+    row = routes.decision(attempt)
+    assert row['reported_cost_micros'] is None and row['settled_cost_micros'] is None
+    assert row['estimated_cost_micros'] == 0 and row['billing_checks'] == 1  # instant test call
+    billing.step(now=start + timedelta(minutes=1))
+    assert len(seen) == 1  # Not asked again before the retry interval.
+    billing.step(now=start + timedelta(minutes=11))
+    row = routes.decision(attempt)
+    assert (row['reported_cost_micros'], row['reported_currency'], row['settled_cost_micros']) == (28_500, 'USD', None)
+    # The same charge again is a duplicate.
+    assert routes.ingest_charge(attempt, provider_id='signalwire', charge_id='FX123', amount_micros=28_500,
+                                currency='USD', billed_seconds=150) == 'duplicate'
+    billing.step(now=start + timedelta(minutes=22))
+    with routes.engine.connect() as connection:
+        assert connection.execute(sa.select(sa.func.count()).select_from(routes.charges)).scalar_one() == 1
+    # A day after the call ended, a corrected price settles the charge.
+    billing.step(now=start + timedelta(hours=25))
+    row = routes.decision(attempt)
+    assert (row['reported_cost_micros'], row['settled_cost_micros']) == (19_000, 19_000)
+    assert row['settled_at'] is not None
+    assert seen == ['https://example.signalwire.com/api/laml/2010-04-01/Accounts/project-1/Faxes/FX123.json'] * 4
+    billing.step(now=start + timedelta(hours=26))
+    assert len(seen) == 4  # Settled charges are not read again.
+    assert delivery.get(job) == delivered and delivery.history(job) == history
+    totals = routes.cost_totals(start - timedelta(days=1))[0]
+    assert totals['settled_cost_micros'] == {'USD': 19_000} and totals['unreported'] == 0
     assert parse_signalwire_charge({'price': None, 'price_unit': 'USD'}) is None
     assert parse_signalwire_charge({'price': 'free', 'price_unit': 'USD'}) is None
+
+
+def test_whole_minute_rounding_is_per_call_never_on_averages(installation, routes):
+    from api.app.routing.store import CaptureTarget
+    routes.replace_cards([phaxio_card(per_page_micros=0, per_minute_micros=parse_amount('0.01'))])
+    start = datetime(2026, 10, 3, 12)
+    billed = []
+    for index, seconds in enumerate((59, 61)):
+        job = accept(installation)
+        attempt = uuid4().hex
+        with routes.engine.begin() as connection:
+            connection.execute(routes.attempts.insert().values(id=attempt, job_id=job, sequence=1, phase='success',
+                created_at=start, submitted_at=start, completed_at=start + timedelta(seconds=seconds)))
+        target = CaptureTarget(attempt, job, '+12025550123', 'phaxio', None, 'success', 1, start,
+                               start + timedelta(seconds=seconds), False)
+        billed.append(routes.capture(target)['billed_seconds'])
+    # 59 s bills one minute and 61 s bills two: three minutes, not two minutes of average.
+    assert billed == [60, 120]
+    totals = routes.cost_totals(start - timedelta(days=1))[0]
+    assert totals['billed_seconds'] == 180 and totals['cost_micros'] == {'USD': 30_000}

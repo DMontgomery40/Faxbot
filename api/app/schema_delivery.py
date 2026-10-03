@@ -12,7 +12,7 @@ from .schema_capabilities import frozen_metadata as capabilities_metadata
 REVISION = '0008_delivery_routes'
 # Creation order respects foreign keys.
 ORDER = ('provider_rate_cards', 'direct_peers', 'delivery_destinations', 'delivery_attempt_costs',
-         'intake_connectors', 'direct_deliveries', 'intake_items', 'case_documents')
+         'delivery_charges', 'intake_connectors', 'direct_deliveries', 'intake_items', 'case_documents')
 TABLES = frozenset(ORDER)
 
 
@@ -101,10 +101,18 @@ def _definitions():
             sa.Column('ended_at', sa.DateTime(), nullable=True),
             sa.Column('billed_seconds', sa.Integer(), nullable=True),
             sa.Column('billed_pages', sa.Integer(), nullable=True),
-            sa.Column('computed_cost_micros', sa.Integer(), nullable=True),
-            sa.Column('reported_cost_micros', sa.Integer(), nullable=True),
+            # Three separate observations: Faxbot's estimate from the rate card,
+            # what the provider reported (possibly later), and the settled amount.
+            sa.Column('estimated_cost_micros', sa.Integer(), nullable=True),
             sa.Column('currency', sa.String(3), nullable=True),
             sa.Column('cost_basis', sa.String(16), nullable=True),
+            sa.Column('reported_cost_micros', sa.Integer(), nullable=True),
+            sa.Column('reported_currency', sa.String(3), nullable=True),
+            sa.Column('reported_at', sa.DateTime(), nullable=True),
+            sa.Column('settled_cost_micros', sa.Integer(), nullable=True),
+            sa.Column('settled_at', sa.DateTime(), nullable=True),
+            sa.Column('billing_checked_at', sa.DateTime(), nullable=True),
+            sa.Column('billing_checks', sa.Integer(), nullable=False),
             sa.Column('outcome', sa.String(16), nullable=False),
             sa.Column('created_at', sa.DateTime(), nullable=False),
             sa.Column('updated_at', sa.DateTime(), nullable=False),
@@ -114,12 +122,31 @@ def _definitions():
                                name='ck_delivery_attempt_costs_outcome'),
             sa.CheckConstraint("cost_basis IS NULL OR cost_basis = 'measured' OR cost_basis = 'estimated'",
                                name='ck_delivery_attempt_costs_basis'),
+            sa.CheckConstraint('billing_checks >= 0', name='ck_delivery_attempt_costs_checks'),
             sa.ForeignKeyConstraint(['id'], ['outbound_attempts.id'],
                                     name='fk_delivery_attempt_costs_attempt', ondelete='CASCADE'),
             sa.ForeignKeyConstraint(['job_id'], ['fax_jobs.id'],
                                     name='fk_delivery_attempt_costs_job', ondelete='CASCADE'),
             sa.ForeignKeyConstraint(['rate_card_id'], ['provider_rate_cards.id'],
                                     name='fk_delivery_attempt_costs_rate_card', ondelete='SET NULL'),
+        ),
+        'delivery_charges': (
+            # One provider charge per attempt and provider charge identity.
+            _id(),
+            _id('attempt_id'),
+            sa.Column('provider_id', sa.String(64), nullable=False),
+            sa.Column('charge_id', sa.String(100), nullable=False),
+            sa.Column('amount_micros', sa.Integer(), nullable=False),
+            sa.Column('currency', sa.String(3), nullable=False),
+            sa.Column('billed_seconds', sa.Integer(), nullable=True),
+            sa.Column('is_final', sa.Integer(), nullable=False),
+            sa.Column('version', sa.Integer(), nullable=False),
+            sa.Column('observed_at', sa.DateTime(), nullable=False),
+            sa.Column('updated_at', sa.DateTime(), nullable=False),
+            sa.PrimaryKeyConstraint('id', name='pk_delivery_charges'),
+            sa.CheckConstraint('(is_final = 0 OR is_final = 1) AND version >= 1', name='ck_delivery_charges_flags'),
+            sa.ForeignKeyConstraint(['attempt_id'], ['outbound_attempts.id'],
+                                    name='fk_delivery_charges_attempt', ondelete='CASCADE'),
         ),
         'intake_connectors': (
             _id(),
@@ -230,6 +257,7 @@ INDEXES = (
     ('ix_delivery_attempt_costs_destination', 'delivery_attempt_costs', ('destination', 'created_at'), False),
     ('ix_delivery_attempt_costs_job', 'delivery_attempt_costs', ('job_id',), False),
     ('ix_delivery_attempt_costs_created_at', 'delivery_attempt_costs', ('created_at',), False),
+    ('uq_delivery_charges_identity', 'delivery_charges', ('attempt_id', 'charge_id'), True),
     ('uq_direct_deliveries_message', 'direct_deliveries', ('direction', 'message_id'), True),
     ('ix_direct_deliveries_job', 'direct_deliveries', ('job_id',), False),
     ('uq_intake_items_inbound_fax', 'intake_items', ('inbound_fax_id',), True),

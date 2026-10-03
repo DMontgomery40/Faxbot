@@ -224,6 +224,16 @@ class ConfigurationValues(BaseModel):
             raise ConfigurationValueError(issues)
 
     @property
+    def outbound_route_providers(self) -> tuple[str, ...]:
+        """Extra outbound providers listed in FAX_OUTBOUND_ROUTES, in order, without the default one."""
+        result = []
+        for part in self.outbound_routes.split(','):
+            identity = part.strip().lower()
+            if identity and identity != self.effective_outbound and identity not in result:
+                result.append(identity)
+        return tuple(result)
+
+    @property
     def effective_outbound(self) -> str:
         return self.outbound_backend or self.fax_backend
 

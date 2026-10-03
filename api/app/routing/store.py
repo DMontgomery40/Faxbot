@@ -53,8 +53,8 @@ class CaptureTarget:
 
 
 class RouteStore:
-    TABLES = ('provider_rate_cards', 'delivery_destinations', 'delivery_attempt_costs', 'direct_peers',
-              'outbound_attempts', 'fax_jobs')
+    TABLES = ('provider_rate_cards', 'delivery_destinations', 'delivery_attempt_costs', 'delivery_charges',
+              'direct_peers', 'outbound_attempts', 'fax_jobs')
 
     def __init__(self, engine):
         self.engine = engine
@@ -62,6 +62,7 @@ class RouteStore:
         self.cards = tables['provider_rate_cards']
         self.destinations = tables['delivery_destinations']
         self.costs = tables['delivery_attempt_costs']
+        self.charges = tables['delivery_charges']
         self.peers = tables['direct_peers']
         self.attempts = tables['outbound_attempts']
         self.jobs = tables['fax_jobs']
@@ -194,7 +195,7 @@ class RouteStore:
                 return False
             connection.execute(self.costs.insert().values(
                 id=attempt_id, job_id=job_id, destination=destination, route=route, route_reason=reason,
-                provider_id=provider_id, outcome='pending', created_at=now, updated_at=now))
+                provider_id=provider_id, outcome='pending', billing_checks=0, created_at=now, updated_at=now))
             return True
 
     def reroute_decision(self, attempt_id, *, route, provider_id, reason):
@@ -225,34 +226,36 @@ class RouteStore:
             rows = connection.execute(query).mappings().all()
         return [CaptureTarget(row['id'], row['job_id'], destination_key(row['to_number']),
                               row['decided_provider'] or row['backend'],
-                              row['decided_sid'] or row['provider_sid'], row['phase'], row['pages'],
+                              row['provider_sid'] or row['decided_sid'], row['phase'], row['pages'],
                               row['submitted_at'], row['completed_at'], row['decision'] is not None)
                 for row in rows]
 
-    def capture(self, target, *, reported_cost_micros=None, reported_currency=None,
-                reported_seconds=None, now=None):
-        """Price one finished attempt from the provider's current rate card."""
+    def capture(self, target, *, now=None):
+        """Estimate one finished attempt from the provider's current rate card.
+
+        Rounding applies to this call alone under the card's rule, never to an
+        average. Provider-reported and settled amounts are separate observations.
+        """
         now = now or utcnow()
         outcome = OUTCOMES[target.phase]
         card = self.card_for(target.provider_id)
-        seconds = reported_seconds
-        if seconds is None and target.completed_at is not None and target.submitted_at is not None:
+        seconds = None
+        if target.completed_at is not None and target.submitted_at is not None:
             seconds = max(0, int((target.completed_at - target.submitted_at).total_seconds()))
         cost = basis = billed = None
         if card is not None:
             if outcome == 'uncertain':
-                # The fax may have been sent; count what a successful send would cost.
+                # The fax may have been sent; estimate what a successful send would cost.
                 cost, basis = estimate_cost(card, target.pages), 'estimated'
             else:
                 billed = billed_seconds(card, seconds)
                 cost = attempt_cost(card, seconds=seconds, pages=target.pages, delivered=outcome == 'success')
-                basis = 'measured' if reported_seconds is not None else 'estimated'
-        currency = card.currency if card is not None else reported_currency
+                basis = 'estimated'
         values = dict(provider_sid=target.provider_sid, rate_card_id=card.id if card is not None else None,
                       started_at=target.submitted_at, ended_at=target.completed_at,
                       billed_seconds=billed, billed_pages=target.pages if outcome == 'success' else 0,
-                      computed_cost_micros=cost, reported_cost_micros=reported_cost_micros,
-                      currency=currency, cost_basis=basis, outcome=outcome, updated_at=now)
+                      estimated_cost_micros=cost, currency=card.currency if card is not None else None,
+                      cost_basis=basis, outcome=outcome, updated_at=now)
         with write_transaction(self.engine) as connection:
             exists = connection.execute(sa.select(self.costs.c.id).where(self.costs.c.id == target.attempt_id)).first()
             if exists:
@@ -260,9 +263,71 @@ class RouteStore:
             else:
                 connection.execute(self.costs.insert().values(
                     id=target.attempt_id, job_id=target.job_id, destination=target.destination,
-                    route=target.provider_id, route_reason='configured',
-                    provider_id=target.provider_id, created_at=now, **values))
+                    route=target.provider_id, route_reason='configured', provider_id=target.provider_id,
+                    billing_checks=0, created_at=now, **values))
         return values
+
+    # Provider charges ---------------------------------------------------------
+    def billing_due(self, providers, *, now=None, retry=timedelta(minutes=10), give_up=timedelta(days=7), limit=50):
+        """Finished attempts whose provider charge is unknown or not yet settled."""
+        now = now or utcnow()
+        c = self.costs
+        query = (sa.select(c).where(
+            c.c.provider_id.in_(tuple(providers)), c.c.outcome.in_(('success', 'failed')),
+            c.c.provider_sid.is_not(None), c.c.settled_at.is_(None), c.c.created_at >= now - give_up,
+            sa.or_(c.c.billing_checked_at.is_(None), c.c.billing_checked_at <= now - retry))
+            .order_by(sa.func.coalesce(c.c.billing_checked_at, c.c.created_at), c.c.id).limit(limit))
+        with read_connection(self.engine) as connection:
+            return [dict(row) for row in connection.execute(query).mappings()]
+
+    def mark_billing_checked(self, attempt_id, *, now=None):
+        now = now or utcnow()
+        with write_transaction(self.engine) as connection:
+            connection.execute(self.costs.update().where(self.costs.c.id == attempt_id).values(
+                billing_checked_at=now, billing_checks=self.costs.c.billing_checks + 1))
+
+    def ingest_charge(self, attempt_id, *, provider_id, charge_id, amount_micros, currency, billed_seconds=None,
+                      final=False, now=None):
+        """Record one provider charge; returns ``new``, ``duplicate``, ``corrected`` or ``pending``.
+
+        Idempotent on the provider's charge identity. Only billing evidence
+        changes; the delivery itself is never reopened or moved.
+        """
+        if (not isinstance(charge_id, str) or not 0 < len(charge_id) <= 100 or type(amount_micros) is not int
+                or not isinstance(currency, str) or re.fullmatch(r'[A-Z]{3}', currency) is None
+                or _ROUTE.fullmatch(provider_id) is None or type(final) is not bool):
+            raise ValueError('Invalid provider charge.')
+        now = now or utcnow()
+        charges = self.charges
+        with write_transaction(self.engine) as connection:
+            if connection.execute(sa.select(self.costs.c.id).where(self.costs.c.id == attempt_id)).first() is None:
+                return 'pending'
+            row = connection.execute(sa.select(charges).where(
+                charges.c.attempt_id == attempt_id, charges.c.charge_id == charge_id)).mappings().one_or_none()
+            values = dict(amount_micros=amount_micros, currency=currency, billed_seconds=billed_seconds,
+                          is_final=int(final))
+            if row is None:
+                connection.execute(charges.insert().values(id=uuid4().hex, attempt_id=attempt_id,
+                    provider_id=provider_id, charge_id=charge_id, version=1, observed_at=now, updated_at=now,
+                    **values))
+                result = 'new'
+            elif all(row[key] == value for key, value in values.items()):
+                return 'duplicate'
+            else:
+                connection.execute(charges.update().where(charges.c.id == row['id']).values(
+                    version=row['version'] + 1, updated_at=now, **values))
+                result = 'corrected'
+            observed = connection.execute(sa.select(charges).where(charges.c.attempt_id == attempt_id)
+                                          .order_by(charges.c.observed_at, charges.c.id)).mappings().all()
+            unit = observed[0]['currency']
+            same = [charge for charge in observed if charge['currency'] == unit]
+            total = sum(charge['amount_micros'] for charge in same)
+            settled = all(charge['is_final'] for charge in observed) and len(same) == len(observed)
+            connection.execute(self.costs.update().where(self.costs.c.id == attempt_id).values(
+                reported_cost_micros=total, reported_currency=unit, reported_at=now,
+                settled_cost_micros=total if settled else None, settled_at=now if settled else None,
+                updated_at=now))
+            return result
 
     # Evidence ---------------------------------------------------------------
     def route_stats(self, destination, *, now=None, connection=None):
@@ -283,18 +348,20 @@ class RouteStore:
         with read_connection(self.engine) as conn:
             return read(conn)
 
+    @staticmethod
+    def _add(bucket, currency, micros):
+        if currency and micros is not None:
+            bucket[currency] = bucket.get(currency, 0) + int(micros)
+
     def destination_evidence(self, *, now=None, number=None):
-        """Per destination and route: attempts, outcomes and 30-day cost."""
+        """Per destination and route: attempts, outcomes and 30-day estimated cost."""
         since = (now or utcnow()) - timedelta(days=WINDOW_DAYS)
         c = self.costs
         query = sa.select(c.c.destination, c.c.route, c.c.provider_id, c.c.outcome, c.c.currency,
-                          sa.func.count().label('count'),
-                          sa.func.sum(c.c.computed_cost_micros).label('computed'),
-                          sa.func.sum(c.c.reported_cost_micros).label('reported'),
-                          sa.func.max(c.c.created_at).label('last')).where(c.c.created_at >= since)
+                          c.c.estimated_cost_micros, c.c.reported_currency, c.c.reported_cost_micros,
+                          c.c.created_at).where(c.c.created_at >= since, c.c.outcome != 'pending')
         if number is not None:
             query = query.where(c.c.destination == number)
-        query = query.group_by(c.c.destination, c.c.route, c.c.provider_id, c.c.outcome, c.c.currency)
         with read_connection(self.engine) as connection:
             rows = connection.execute(query).mappings().all()
             destinations = {row['phone_number']: dict(row) for row in connection.execute(
@@ -304,46 +371,38 @@ class RouteStore:
         for row in rows:
             routes = evidence.setdefault(row['destination'], {})
             entry = routes.setdefault(row['route'], {'route': row['route'], 'provider_id': row['provider_id'],
-                'attempts': 0, 'successes': 0, 'failures': 0, 'uncertain': 0, 'cost_micros': {}, 'last_attempt_at': None})
-            count = row['count']
-            if row['outcome'] in {'success', 'failed', 'uncertain'}:
-                entry['attempts'] += count
-            entry['successes'] += count if row['outcome'] == 'success' else 0
-            entry['failures'] += count if row['outcome'] == 'failed' else 0
-            entry['uncertain'] += count if row['outcome'] == 'uncertain' else 0
-            if row['currency'] and row['computed'] is not None:
-                entry['cost_micros'][row['currency']] = entry['cost_micros'].get(row['currency'], 0) + int(row['computed'])
-            if entry['last_attempt_at'] is None or (row['last'] and row['last'] > entry['last_attempt_at']):
-                entry['last_attempt_at'] = row['last']
+                'attempts': 0, 'successes': 0, 'failures': 0, 'uncertain': 0, 'cost_micros': {},
+                'reported_cost_micros': {}, 'last_attempt_at': None})
+            entry['attempts'] += 1
+            entry['successes'] += row['outcome'] == 'success'
+            entry['failures'] += row['outcome'] == 'failed'
+            entry['uncertain'] += row['outcome'] == 'uncertain'
+            self._add(entry['cost_micros'], row['currency'], row['estimated_cost_micros'])
+            self._add(entry['reported_cost_micros'], row['reported_currency'], row['reported_cost_micros'])
+            if entry['last_attempt_at'] is None or row['created_at'] > entry['last_attempt_at']:
+                entry['last_attempt_at'] = row['created_at']
         return destinations, evidence
 
     def cost_totals(self, since):
         c = self.costs
-        query = (sa.select(c.c.provider_id, c.c.outcome, c.c.currency, sa.func.count().label('count'),
-                           sa.func.sum(c.c.computed_cost_micros).label('computed'),
-                           sa.func.sum(c.c.reported_cost_micros).label('reported'),
-                           sa.func.sum(c.c.billed_seconds).label('seconds'),
-                           sa.func.sum(c.c.billed_pages).label('pages'))
-                 .where(c.c.created_at >= since, c.c.outcome != 'pending')
-                 .group_by(c.c.provider_id, c.c.outcome, c.c.currency))
+        query = sa.select(c.c.provider_id, c.c.outcome, c.c.currency, c.c.estimated_cost_micros,
+                          c.c.reported_currency, c.c.reported_cost_micros, c.c.settled_cost_micros,
+                          c.c.billed_seconds, c.c.billed_pages).where(c.c.created_at >= since, c.c.outcome != 'pending')
         with read_connection(self.engine) as connection:
             rows = connection.execute(query).mappings().all()
         totals = {}
         for row in rows:
             entry = totals.setdefault(row['provider_id'], {'provider_id': row['provider_id'], 'attempts': 0,
                 'successes': 0, 'failures': 0, 'uncertain': 0, 'billed_seconds': 0, 'billed_pages': 0,
-                'cost_micros': {}, 'reported_cost_micros': {}})
-            count = row['count']
-            entry['attempts'] += count
-            entry['successes'] += count if row['outcome'] == 'success' else 0
-            entry['failures'] += count if row['outcome'] == 'failed' else 0
-            entry['uncertain'] += count if row['outcome'] == 'uncertain' else 0
-            entry['billed_seconds'] += int(row['seconds'] or 0)
-            entry['billed_pages'] += int(row['pages'] or 0)
-            if row['currency']:
-                if row['computed'] is not None:
-                    entry['cost_micros'][row['currency']] = entry['cost_micros'].get(row['currency'], 0) + int(row['computed'])
-                if row['reported'] is not None:
-                    entry['reported_cost_micros'][row['currency']] = (
-                        entry['reported_cost_micros'].get(row['currency'], 0) + int(row['reported']))
+                'cost_micros': {}, 'reported_cost_micros': {}, 'settled_cost_micros': {}, 'unreported': 0})
+            entry['attempts'] += 1
+            entry['successes'] += row['outcome'] == 'success'
+            entry['failures'] += row['outcome'] == 'failed'
+            entry['uncertain'] += row['outcome'] == 'uncertain'
+            entry['billed_seconds'] += int(row['billed_seconds'] or 0)
+            entry['billed_pages'] += int(row['billed_pages'] or 0)
+            self._add(entry['cost_micros'], row['currency'], row['estimated_cost_micros'])
+            self._add(entry['reported_cost_micros'], row['reported_currency'], row['reported_cost_micros'])
+            self._add(entry['settled_cost_micros'], row['reported_currency'], row['settled_cost_micros'])
+            entry['unreported'] += row['reported_cost_micros'] is None
         return sorted(totals.values(), key=lambda entry: entry['provider_id'])

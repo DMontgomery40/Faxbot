@@ -5,7 +5,7 @@ share one short installation transaction, so Apply cannot race authorization of
 an external submission. An expired submission is uncertainty, never permission
 to transmit it again.
 """
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 import hashlib
 import json
@@ -23,10 +23,11 @@ _EVENT_KINDS = frozenset({'accepted', 'legacy_migrated', 'binding_unavailable',
     'held_acceptance_restored', 'claimed', 'dispatch_paused', 'submission_authorized',
     'submission_uncertain', 'preparation_failed', 'preparation_expired',
     'provider_observation_refused', 'terminal_conflict', 'late_observation',
-    'provider_observed', 'operator_identity_bound'})
+    'provider_observed', 'operator_identity_bound', 'route_assigned', 'route_fallback'})
 _CATEGORIES = frozenset({'transport_ambiguous', 'response_unusable', 'submission_cancelled',
     'worker_lost', 'artifact_unavailable', 'provider_unavailable', 'preparation_failed',
-    'profile_mismatch', 'sid_mismatch'})
+    'profile_mismatch', 'sid_mismatch', 'provider_failed', 'partner_not_received'})
+_ROUTE = re.compile(r'[a-z0-9][a-z0-9_.-]{0,63}', re.ASCII)
 
 
 def _valid_actor(actor):
@@ -52,6 +53,7 @@ def _safe_event_details(encoded):
                 or (name == 'dispatch_mode' and value in {'normal', 'held', 'legacy'})
                 or (name == 'actor' and _valid_actor(value))
                 or (name == 'provider_sid' and _PROVIDER_SID.fullmatch(value) is not None)
+                or (name == 'route' and _ROUTE.fullmatch(value) is not None)
                 or (name == 'legacy_status' and re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9 _.-]{0,127}', value, re.ASCII))):
             result[name] = value
     return result
@@ -134,10 +136,38 @@ class OutboundStore:
         if attempt is not None and attempt['job_id'] != row['id']:
             attempt = None
         try:
-            revision, profile = self.configuration._outbound_context(connection, row['id'])
-        except (ConfigurationStoreError, ConfigurationSecretError, ConfigurationRecordError, ConfigurationValueError):
+            revision, profile = self._attempt_context(connection, row['id'], attempt)
+        except (ConfigurationStoreError, ConfigurationSecretError, ConfigurationRecordError, ConfigurationValueError,
+                DeliveryConflict):
             revision, profile = None, None
         return attempt, revision, profile
+
+    def _attempt_context(self, connection, job_id, attempt=None):
+        """The accepted revision and the provider account this attempt actually uses.
+
+        An attempt uses the fax's accepted provider unless ``assign_route`` bound
+        it, before submission, to another route listed in that same revision.
+        """
+        revision, bound = self.configuration._outbound_context(connection, job_id)
+        if attempt is None or attempt['profile_id'] is None or attempt['profile_id'] == bound.id:
+            return revision, bound
+        head = self.configuration._head(connection)
+        if head is None:
+            raise DeliveryConflict('Delivery account is unavailable.')
+        profile = self.configuration._profile(connection, self.configuration._cipher(), head['installation_id'],
+                                              attempt['profile_id'])
+        if profile.configuration.provider_id not in revision.values.outbound_route_providers:
+            raise DeliveryConflict('Delivery route is not permitted by the accepted configuration.')
+        return revision, profile
+
+    def attempt_context(self, job_id, attempt_id):
+        """Authenticate the account that issued one attempt; for result authentication."""
+        with self.configuration.engine.connect() as connection:
+            attempt = connection.execute(sa.select(self.attempts).where(
+                self.attempts.c.id == attempt_id)).mappings().one_or_none()
+            if attempt is not None and attempt['job_id'] != job_id:
+                raise DeliveryConflict('Attempt does not belong to this delivery.')
+            return self._attempt_context(connection, job_id, attempt)
 
     def _bind_refusal(self, connection, row, attempt, profile):
         if row['state'] != 'reconciliation_required':
@@ -270,7 +300,7 @@ class OutboundStore:
                            self.deliveries.c.id).limit(1)).mappings().one_or_none()
             if row is None:
                 return None
-            _, profile = self.configuration._outbound_context(connection, row['id'])
+            _, profile = self._attempt_context(connection, row['id'], {'profile_id': row['profile_id']})
             if profile.id != row['profile_id']:
                 raise DeliveryConflict('Delivery account does not match its accepted attempt.')
             seconds = _automatic_poll_interval(profile.configuration, interval_seconds)
@@ -302,7 +332,7 @@ class OutboundStore:
                 or attempt['job_id'] != job_id or not attempt['provider_sid']
                 or attempt['submitted_at'] is None):
             raise DeliveryConflict('No acknowledged provider identity is available for refresh.')
-        _, profile = self.configuration._outbound_context(connection, job_id)
+        _, profile = self._attempt_context(connection, job_id, attempt)
         if profile.id != attempt['profile_id']:
             raise DeliveryConflict('Delivery account does not match its accepted attempt.')
         if automatic and _automatic_poll_interval(profile.configuration, 30) == 0:
@@ -314,8 +344,10 @@ class OutboundStore:
         if (not self._owns(row, claim) or row['state'] != 'preparing'
                 or row['claim_expires_at'] is None or row['claim_expires_at'] <= now):
             raise DeliveryConflict('Delivery preparation lease is no longer current.')
-        revision, profile = self.configuration._outbound_context(connection, claim.job_id)
-        if profile.id != claim.profile_id:
+        attempt = connection.execute(sa.select(self.attempts).where(
+            self.attempts.c.id == claim.attempt_id)).mappings().one_or_none()
+        revision, profile = self._attempt_context(connection, claim.job_id, attempt)
+        if attempt is None or profile.id != attempt['profile_id'] or profile.id != claim.profile_id:
             raise DeliveryConflict('Delivery preparation profile does not match.')
         return revision, profile
 
@@ -526,7 +558,16 @@ class OutboundStore:
             row = self._row(connection, claim.job_id)
             if not self._owns(row, claim):
                 raise DeliveryConflict('Submission acknowledgement belongs to an obsolete attempt.')
-            result = self._observe(connection, row, attempt_id=claim.attempt_id, profile_id=claim.profile_id,
+            profile_id = claim.profile_id
+            attempt_profile = connection.scalar(sa.select(self.attempts.c.profile_id).where(
+                self.attempts.c.id == claim.attempt_id))
+            if attempt_profile != profile_id:
+                # Only assign_route changes an attempt away from the fax's accepted
+                # account. The worker's original claim then reports for that route.
+                _, accepted = self.configuration._outbound_context(connection, claim.job_id)
+                if profile_id == accepted.id:
+                    profile_id = attempt_profile
+            result = self._observe(connection, row, attempt_id=claim.attempt_id, profile_id=profile_id,
                 provider_sid=provider_sid, status=status, now=now)
         if isinstance(result, _ObservationRefusal):
             raise DeliveryConflict(result.message)
@@ -543,3 +584,99 @@ class OutboundStore:
         if isinstance(result, _ObservationRefusal):
             raise DeliveryConflict(result.message)
         return result
+
+    def _route_profile_on(self, connection, configuration):
+        """Reuse an identical stored provider account, or store this one."""
+        from .config_profiles import ConfigurationRecordError
+        from .config_secrets import ConfigurationSecretError
+        store = self.configuration
+        installation = store._head(connection)['installation_id']
+        cipher = store._cipher()
+        candidates = connection.execute(sa.select(store.profiles.c.id).where(
+            store.profiles.c.provider_id == configuration.provider_id).order_by(
+            store.profiles.c.created_at.desc()).limit(50)).scalars().all()
+        for identity in candidates:
+            try:
+                if store._profile(connection, cipher, installation, identity).configuration == configuration:
+                    return identity
+            except (ConfigurationSecretError, ConfigurationRecordError):
+                continue
+        return store._select_profiles(connection, cipher, installation, {'outbound': configuration}, ())[0][1]
+
+    def assign_route(self, claim, configuration, *, now=None):
+        """Bind a preparing attempt to one route its accepted revision permits.
+
+        Allowed only while this worker holds the preparation lease, before the
+        durable submission marker. Results for the attempt are then accepted
+        only from that route's account. Returns the claim to prepare with.
+        """
+        from .config_profiles import ProviderConfiguration
+        if not isinstance(configuration, ProviderConfiguration):
+            raise ValueError('Invalid delivery route.')
+        with self.configuration._locked() as connection:
+            now = now or datetime.utcnow()
+            row = self._row(connection, claim.job_id)
+            if (not self._owns(row, claim) or row['state'] != 'preparing'
+                    or row['claim_expires_at'] is None or row['claim_expires_at'] <= now):
+                raise DeliveryConflict('Delivery preparation lease is no longer current.')
+            revision, bound = self.configuration._outbound_context(connection, claim.job_id)
+            if configuration == bound.configuration:
+                profile_id = bound.id
+            elif configuration.provider_id in revision.values.outbound_route_providers:
+                profile_id = self._route_profile_on(connection, configuration)
+            else:
+                raise DeliveryConflict('Delivery route is not permitted by the accepted configuration.')
+            updated = connection.execute(self.attempts.update().where(
+                self.attempts.c.id == claim.attempt_id, self.attempts.c.job_id == claim.job_id,
+                self.attempts.c.phase == 'preparing', self.attempts.c.submitted_at.is_(None)).values(
+                    profile_id=profile_id))
+            if updated.rowcount != 1:
+                raise DeliveryConflict('Delivery preparation lease is no longer current.')
+            _event(connection, self.events, claim.job_id, 'route_assigned', now, attempt_id=claim.attempt_id,
+                   details={'route': configuration.provider_id})
+            return replace(claim, profile_id=profile_id)
+
+    def fallback_count(self, job_id):
+        with self.configuration.engine.connect() as connection:
+            return connection.scalar(sa.select(sa.func.count()).select_from(self.events).where(
+                self.events.c.job_id == job_id, self.events.c.kind == 'route_fallback'))
+
+    def requeue_after_failure(self, job_id, *, attempt_id, category, max_fallbacks=2, now=None):
+        """Return a definitely failed delivery to the queue for its next route.
+
+        ``provider_failed``: the attempt's provider reported a final failure.
+        ``partner_not_received``: a direct partner signed that it never received
+        the document. Never used for an ambiguous outcome. The next claim creates
+        a new attempt; at most ``max_fallbacks`` per fax.
+        """
+        if category not in {'provider_failed', 'partner_not_received'} or type(max_fallbacks) is not int:
+            raise ValueError('Invalid delivery fallback.')
+        with self.configuration._locked() as connection:
+            now = now or datetime.utcnow()
+            row = self._row(connection, job_id)
+            if row is None or row['attempt_id'] != attempt_id or row['dispatch_mode'] != 'normal':
+                return False
+            attempt = connection.execute(sa.select(self.attempts).where(
+                self.attempts.c.id == attempt_id)).mappings().one_or_none()
+            if attempt is None or attempt['job_id'] != job_id or attempt['submitted_at'] is None:
+                return False
+            if category == 'provider_failed':
+                definite = (row['state'] == 'failed' and attempt['phase'] == 'failed'
+                            and attempt['error_category'] is None and attempt['completed_at'] is not None)
+            else:
+                definite = row['state'] == 'reconciliation_required' and attempt['phase'] == 'uncertain'
+            used = connection.scalar(sa.select(sa.func.count()).select_from(self.events).where(
+                self.events.c.job_id == job_id, self.events.c.kind == 'route_fallback'))
+            if not definite or used >= max_fallbacks or not self._enabled(connection):
+                return False
+            if category == 'partner_not_received':
+                connection.execute(self.attempts.update().where(self.attempts.c.id == attempt_id).values(
+                    phase='failed', error_category=category, completed_at=now))
+            # Detach the finished attempt so a late result for it cannot move the requeued fax.
+            self._update(connection, row, now, state='ready', attempt_id=None, claim_owner=None,
+                         claim_token=None, claim_expires_at=None, next_poll_at=None)
+            connection.execute(self.configuration.jobs.update().where(self.configuration.jobs.c.id == job_id).values(
+                status='queued', error=None, updated_at=now))
+            _event(connection, self.events, job_id, 'route_fallback', now, attempt_id=attempt_id,
+                   details={'category': category})
+            return True

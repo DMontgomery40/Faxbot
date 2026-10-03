@@ -35,13 +35,8 @@ def route_label(key):
 
 def extra_routes(values, bound):
     """Provider identities listed in ``FAX_OUTBOUND_ROUTES``, excluding the outbound provider."""
-    seen, result = {bound, DIRECT}, []
-    for part in (values.outbound_routes or '').split(','):
-        identity = part.strip().lower()
-        if identity and re.fullmatch(r'[a-z0-9][a-z0-9_.-]{0,63}', identity) and identity not in seen:
-            seen.add(identity)
-            result.append(identity)
-    return result
+    return [identity for identity in values.outbound_route_providers
+            if identity not in {bound, DIRECT} and re.fullmatch(r'[a-z0-9][a-z0-9_.-]{0,63}', identity)]
 
 
 @dataclass(frozen=True)
