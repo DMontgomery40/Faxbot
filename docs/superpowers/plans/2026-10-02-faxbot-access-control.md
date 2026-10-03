@@ -56,11 +56,16 @@
 - [x] Implement authoritative current-policy reads, common visibility predicate and key/principal binding without exposing password/token hashes.
 - Task 2A policy/store foundation independently reviewed, including PostgreSQL ABORT transaction-boundary correction; 137 internal SQLite/PostgreSQL cases passed. Authentication proof issuance, mutations and runtime enforcement remain pending.
 
-- [ ] Implement versioned user/group/role/assignment/key mutations with explicit typed methods; define each exact signature in the worker brief before dispatch, not a generic unvalidated command dictionary.
-- [ ] Prove delegation across affected role/group assignments, revoked key rotation refusal, atomic audit and two-store last-Owner/stale-editor races on both databases.
-- [ ] Independent review and commit; primary integrates an explicit operation/resource matrix, never a generic admin fallback.
+- [x] Implement versioned user/group/role/assignment/key mutations with explicit typed methods; define each exact signature in the worker brief before dispatch, not a generic unvalidated command dictionary.
+- [x] Prove delegation across affected role/group assignments, revoked key rotation refusal, atomic audit and two-store last-Owner/stale-editor races on both databases.
+- [x] Independent review and commit of the internal mutation layer (09728046): 473 focused internal cases passed, including 179 owned cases across SQLite/PostgreSQL. Runtime integration is tracked below.
+- [ ] Primary integrates an explicit operation/resource matrix, never a generic admin fallback. The current 53-route source inventory and required policy mapping are recorded in the execution scratchpad; existing HTTP enforcement remains legacy.
 
 ### Task3: Persistent login, sessions and first-owner recovery
+
+- Session design independently reviewed. Prepared opaque token/CSRF codec implemented and independently reviewed (96 pure cases); persistent service implementation underway. Canonical bootstrap rotation already invalidates sessions atomically (9fb20c65), but the new reader is not yet wired into HTTP authentication.
+- Fax resource/visibility transaction bridge independently reviewed (145 focused core/resource cases, no skips); route/acceptance integration remains pending.
+
 
 **Files:** access/sessions.py,router.py;auth.py/main.py/config integration by primary;test_access_sessions.py;console login/session views.
 **Interfaces:** opaque session result exposes a token only at issuance and a CSRF value; `authenticate_session(token,now)->PrincipalContext|None`; login/logout/password/reset/revoke routes from spec. Expiry12hours absolute/30minutes idle; no authority cached in token.
