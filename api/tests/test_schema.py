@@ -11,6 +11,7 @@ import pytest
 import sqlalchemy as sa
 
 from api.app.schema import HEAD, SchemaUpgradeError, create_database_engine, upgrade_schema
+from api.app.config_values import ConfigurationValues
 
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURES = Path(__file__).with_name("fixtures") / "schema"
@@ -381,7 +382,8 @@ def test_same_url_preserves_engine_and_imported_session_factory(database, monkey
     factory = db.SessionLocal
     try:
         monkeypatch.setattr(db, "engine", database)
-        monkeypatch.setattr(db.settings, "database_url", database.url.render_as_string(hide_password=False))
+        monkeypatch.setattr(db, "settings", ConfigurationValues.from_environment(
+            {"DATABASE_URL": database.url.render_as_string(hide_password=False)}))
         db.SessionLocal.configure(bind=database)
         db.init_db()
         db.init_db()
@@ -414,7 +416,7 @@ def test_failed_candidate_preserves_working_binding_and_disposes_candidate(tmp_p
         upgrade_schema(working)
         monkeypatch.setattr(db, "engine", working)
         monkeypatch.setattr(db, "create_database_engine", candidate_factory)
-        monkeypatch.setattr(db.settings, "database_url", broken_url)
+        monkeypatch.setattr(db, "settings", ConfigurationValues.from_environment({"DATABASE_URL": broken_url}))
         db.SessionLocal.configure(bind=working)
         with pytest.raises(SchemaUpgradeError):
             db.init_db()
@@ -445,7 +447,7 @@ def test_successful_rebinding_is_serialized_and_disposes_old_engine(tmp_path, mo
     try:
         monkeypatch.setattr(db, "engine", old)
         monkeypatch.setattr(db, "create_database_engine", candidate_factory)
-        monkeypatch.setattr(db.settings, "database_url", target)
+        monkeypatch.setattr(db, "settings", ConfigurationValues.from_environment({"DATABASE_URL": target}))
         db.SessionLocal.configure(bind=old)
         with ThreadPoolExecutor(max_workers=3) as pool:
             list(pool.map(lambda _: db.init_db(), range(3)))
