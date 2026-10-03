@@ -40,11 +40,29 @@ class _RoutedOperation:
         return await self.conventional.submit()
 
 
+_AUTOMATIC = object()
+
+
+def _installation_direct_route(inner):
+    """The installation's direct route, built from the captured transport's runtime."""
+    runtime = getattr(inner, 'runtime', None)
+    store = getattr(getattr(runtime, 'manager', None), 'store', None)
+    if store is None:
+        return None
+    try:
+        from ..direct.service import DirectRoute, DirectService
+        return DirectRoute(DirectService(store.engine, values=lambda: store.read().active.values,
+                                         environment=getattr(runtime, 'environment', {})))
+    except Exception:
+        logging.getLogger(__name__).warning('Direct delivery is unavailable; faxes use their providers.')
+        return None
+
+
 class RoutedTransport:
-    def __init__(self, inner, *, direct=None, route_store=None):
+    def __init__(self, inner, *, direct=_AUTOMATIC, route_store=None):
         self.inner = inner
         self.store = inner.store
-        self.direct = direct
+        self.direct = _installation_direct_route(inner) if direct is _AUTOMATIC else direct
         self._route_store = route_store
 
     def routes(self):
@@ -135,5 +153,13 @@ class RoutedTransport:
                     conventional = await stack.enter_async_context(self.inner.prepare(claim))
                 except PreparationFailure:
                     conventional = None  # Direct delivery can still proceed alone.
-            direct = await stack.enter_async_context(self.direct.prepare(claim, plan, job))
+            try:
+                direct = await stack.enter_async_context(self.direct.prepare(claim, plan, job))
+            except Exception:
+                # Nothing was sent; the conventional route is still a first send.
+                if conventional is None:
+                    raise PreparationFailure('provider_unavailable') from None
+                await run_lifecycle_step(lambda: self.record_fallback(claim, plan))
+                yield conventional
+                return
             yield _RoutedOperation(self, claim, plan, direct, conventional)
