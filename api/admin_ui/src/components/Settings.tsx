@@ -684,7 +684,7 @@ function Settings({ client }: SettingsProps) {
                 sx={{ alignItems: 'flex-start', '& .MuiFormControlLabel-label': { mt: 0.5 } }}
               />
               <Typography variant="caption" color="text.secondary" sx={{ ml: 4, mb: 1 }}>
-                Keeps outbound jobs queued without sending them. This does not simulate a delivered fax.
+                New jobs accepted while disabled stay held when sending is re-enabled. Pauses ready work, but cannot recall attempts already issued.
               </Typography>
               
               <FormControlLabel

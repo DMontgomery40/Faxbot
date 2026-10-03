@@ -6,7 +6,7 @@
       "version": "1.0.0",
       "categories": ["outbound"],
       "capabilities": ["send", "get_status", "webhook"],
-      "description": "Recommended for most users; HIPAA-ready with BAA.",
+      "description": "Cloud fax sending with account credentials and a separate status callback token.",
       "learn_more": "https://docs.faxbot.net/providers/phaxio"
     },
     {
@@ -51,7 +51,7 @@
       "version": "1.0.0",
       "categories": ["storage"],
       "capabilities": ["store", "retrieve", "delete"],
-      "description": "Local storage for development only.",
+      "description": "Keeps fax artifacts on this installation's local disk or mounted volume.",
       "learn_more": "https://docs.faxbot.net/storage/local"
     },
     {
