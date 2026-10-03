@@ -480,7 +480,7 @@ function Settings({ client }: SettingsProps) {
               ]}
               showCurrentValue={!pendingRestart}
             />
-            {textField('Public API URL', 'public_api_url', 'Base URL used for callbacks and signed document links. This is separate from a provider callback URL.')}
+            {textField('Public API URL', 'public_api_url', 'Base URL captured when a fax is accepted, for document links and outbound callbacks without an override.')}
             {textField('Audit Log Format', 'audit_log_format')}
             {textField('Audit Log File', 'audit_log_file', 'An empty value removes the file destination.')}
             {toggleField('Audit Syslog', 'audit_log_syslog')}
@@ -542,7 +542,7 @@ function Settings({ client }: SettingsProps) {
                       label="Callback Token"
                       value={settings.phaxio.callback_token ?? ''}
                       editValue={form.phaxio_callback_token ?? ''}
-                      helperText="Use the separate Callback Token from the Phaxio console to verify callbacks."
+                      helperText="Separate Callback Token from the Phaxio console, required for authenticated outbound callbacks. Leave unchanged to preserve it."
                       placeholder="Update PHAXIO_CALLBACK_TOKEN"
                       onChange={(value) => handleForm('phaxio_callback_token', value)}
                       type="password"
@@ -551,15 +551,15 @@ function Settings({ client }: SettingsProps) {
 
                     <ResponsiveSettingItem
                       icon={getStatusIcon(!!settings.phaxio.callback_url)}
-                      label="Callback URL"
+                      label="Outbound Callback URL Override"
                       value={settings.phaxio.callback_url ?? ''}
                       editValue={form.phaxio_status_callback_url ?? ''}
-                      helperText="Explicit Phaxio status callback override. Empty preserves the provider default callback behavior; it does not change Public API URL."
+                      helperText="Leave empty to use /phaxio-callback under the Public API URL captured when a fax is accepted. A value overrides that URL for newly accepted faxes."
                       placeholder="https://localhost:8080/phaxio-callback"
                       onChange={(value) => handleForm('phaxio_status_callback_url', value)}
                       showCurrentValue={!pendingRestart && (!!settings.phaxio.callback_url)}
                     />
-                    {toggleField('Verify Phaxio Outbound Signature', 'phaxio_verify_signature')}
+                    {toggleField('Authenticated Phaxio Outbound Callbacks', 'phaxio_verify_signature', 'For newly accepted faxes, disabling this rejects callback updates. Faxbot continues polling status with each fax’s original account.')}
                   </ResponsiveSettingSection>
                 )}
 
@@ -949,7 +949,7 @@ function Settings({ client }: SettingsProps) {
                 placeholder="+13035551234"
                 showCurrentValue={!pendingRestart && (!!settings.signalwire?.from_fax)}
               />
-              {textField('SignalWire Callback URL', 'signalwire_status_callback_url')}
+              {textField('SignalWire Outbound Callback URL Override', 'signalwire_status_callback_url', 'Leave empty to use /signalwire-callback under the Public API URL captured when a fax is accepted. A value overrides that URL for newly accepted faxes.')}
               {textField('SignalWire Webhook Signing Key', 'signalwire_webhook_signing_key', 'Leave the mask unchanged to preserve the existing signing key.', 'password')}
               {textField('SignalWire From (SMS)', 'signalwire_sms_from_e164', 'Masked when configured; unchanged masks preserve the existing number.')}
               {textField('SignalWire Status Poll Seconds', 'signalwire_status_poll_seconds', 'Zero disables status polling.', 'number')}

@@ -66,14 +66,14 @@ export default function PluginConfigDialog({ open, plugin, initialConfig, loadin
             Configure API credentials in Settings → Backend: Phaxio. This form updates the same desired revision and preserves fields you leave unchanged.
           </Alert>
           <TextField
-            label="Callback URL"
+            label="Outbound Callback URL Override"
             fullWidth
             size="small"
             value={config.callback_url || ''}
             onChange={(e) => setConfig({ ...config, callback_url: e.target.value })}
             margin="normal"
           />
-          {help('Example: https://yourdomain.com/phaxio-callback')}
+          {help('Leave empty to use /phaxio-callback under the Public API URL captured when a fax is accepted. A value overrides that URL for newly accepted faxes.')}
           <TextField
             label="Callback Token"
             type="password"
@@ -82,12 +82,13 @@ export default function PluginConfigDialog({ open, plugin, initialConfig, loadin
             value={config.callback_token || ''}
             onChange={(e) => setConfig({ ...config, callback_token: e.target.value })}
             margin="normal"
-            helperText="Separate Callback Token from the Phaxio console. Leave unchanged to preserve it."
+            helperText="Separate Callback Token from the Phaxio console, required for authenticated outbound callbacks. Leave unchanged to preserve it."
           />
           <FormControlLabel
             control={<Checkbox checked={!!config.verify_signature} onChange={(e) => setConfig({ ...config, verify_signature: e.target.checked })} />}
-            label="Verify outbound status signatures"
+            label="Enable authenticated outbound callbacks"
           />
+          {help('For newly accepted faxes, disabling this rejects callback updates. Faxbot continues polling status with each fax’s original account.')}
         </Box>
       );
     }
