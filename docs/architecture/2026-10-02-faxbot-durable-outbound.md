@@ -1,6 +1,6 @@
 # Durable outbound delivery
 
-Status: primary implementation design under independent review. Implements the approved whole-product refresh; no additional user approval is needed. This slice finishes outbound acceptance, dispatch, status/recovery and their operator flows. Inbound receipt acquisition and full RBAC have separate subsequent implementation slices, but this work must provide stable profile/principal seams for them.
+Implements the approved whole-product refresh. This slice finishes outbound acceptance, dispatch, status/recovery and their operator flows. Inbound receipt acquisition and full RBAC have separate subsequent implementation slices, but this work must provide stable profile/principal seams for them.
 
 ## Required behavior
 

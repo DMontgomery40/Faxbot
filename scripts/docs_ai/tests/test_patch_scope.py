@@ -79,8 +79,8 @@ def test_actual_index_rejects_extra_non_docs_staged_change(repository):
 
 
 @pytest.mark.parametrize('name', [
-    'api/notes.md', 'docs/generated/notes.md', 'docs/superpowers/notes.md',
-    'docs/modernization/notes.md', 'docs/AGENTS.md', 'docs/CLAUDE.md', 'docs/SKILL.md',
+    'api/notes.md', 'docs/generated/notes.md', 'docs/architecture/notes.md',
+    'docs/AGENTS.md', 'docs/CLAUDE.md', 'docs/SKILL.md',
 ])
 def test_rejects_non_instructional_markdown_targets(repository, name):
     path = repository / name

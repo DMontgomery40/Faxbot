@@ -1,7 +1,5 @@
 # Faxbot schema foundation design
 
-Status: primary design completed and independently reviewed on October2,2026. Implements the already approved upgrade/data-preservation requirement. Runtime prerequisite passed at c17e10c9; schema implementation begins next.
-
 ## Verified source history
 
 - c41a51bc: only fax_jobs, original nine fields (id,to_number,file_name,tiff_path,status,error,pages,created_at,updated_at). These jobs were SIP; safely backfill backend=sip on adoption, not current deployment default.
@@ -52,4 +50,4 @@ Configuration/provider activation is a distinct next task; do not combine it int
 
 ## Independent design review resolved
 
-Read ../../modernization/evidence/2026-10-02-schema-design-review.md before implementation. Primary accepted both P1 design corrections: (1) strictly additive foundation changes with no DROP/RENAME/batch recreation of core tables, adding absent original backend as VARCHAR(20) NOT NULL DEFAULT 'sip' and retaining that default; (2) reject nonhistorical user triggers/rewrite behavior on core tables before backfill. Add CASCADE/RESTRICT auxiliary-child preservation and trigger rejection fixtures. Default and uniqueness equivalence are explicitly whitelisted, not normalized by destructive rewrite. Also validate stamped 0001/head schema and version-table shape, same-process binding serialization, and same target schema throughout PostgreSQL introspection/DDL. Review approves amended design direction, not implementation.
+Read the independent design review findings below before implementation. Primary accepted both P1 design corrections: (1) strictly additive foundation changes with no DROP/RENAME/batch recreation of core tables, adding absent original backend as VARCHAR(20) NOT NULL DEFAULT 'sip' and retaining that default; (2) reject nonhistorical user triggers/rewrite behavior on core tables before backfill. Add CASCADE/RESTRICT auxiliary-child preservation and trigger rejection fixtures. Default and uniqueness equivalence are explicitly whitelisted, not normalized by destructive rewrite. Also validate stamped 0001/head schema and version-table shape, same-process binding serialization, and same target schema throughout PostgreSQL introspection/DDL. Review approves amended design direction, not implementation.

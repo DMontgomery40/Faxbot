@@ -4,7 +4,8 @@
 
 This branch includes persistent authentication endpoints under `/auth` and current
 permission checks for outbound submission and operator fax views. The console and
-remaining installation, inbound and client adapters are tracked in the [repository access-control plan](https://github.com/DMontgomery40/Faxbot/blob/feat/faxbot-refresh/docs/superpowers/plans/2026-10-02-faxbot-access-control.md).
+remaining installation, inbound and client adapters are tracked in the repository access-control design
+(`docs/architecture/2026-10-02-faxbot-access-control.md`).
 The new session endpoints alone do not establish complete RBAC for the installation.
 
 The authentication API provides password login, key-to-session login, current
