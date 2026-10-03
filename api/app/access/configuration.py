@@ -17,6 +17,7 @@ from ..config_profiles import ConfigurationDocument
 # Everything not explicitly ordinary is Owner-protected, including future fields.
 # These sets classify canonical values, never submitted aliases or secret masks.
 _ORDINARY_FIELDS = frozenset({
+    'route_min_success_percent', 'intake_email_subject',
     'max_file_size_mb', 'fax_disabled', 'fax_header', 'fax_station_id',
     'artifact_ttl_days', 'cleanup_interval_minutes', 'inbound_retention_days',
 })
@@ -34,6 +35,9 @@ _PROVIDER_FIELDS = frozenset({
     'signalwire_status_poll_seconds',
     'documo_api_key', 'documo_base_url', 'documo_use_sandbox',
     'humblefax_access_key', 'humblefax_secret_key', 'humblefax_from_number',
+    'outbound_routes', 'direct_delivery_enabled', 'direct_organization', 'direct_fax_number',
+    'intake_email_enabled', 'intake_smtp_host', 'intake_smtp_port', 'intake_smtp_security',
+    'intake_smtp_username', 'intake_smtp_password', 'intake_email_from', 'intake_email_to',
     'inbound_enabled', 'asterisk_inbound_secret', 'sinch_inbound_basic_user',
     'sinch_inbound_basic_pass', 'sinch_inbound_hmac_secret',
     'storage_backend', 's3_bucket', 's3_prefix', 's3_region', 's3_endpoint_url',
