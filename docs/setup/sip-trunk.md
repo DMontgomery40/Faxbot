@@ -82,6 +82,8 @@ To receive faxes on a number you already have, either:
 - **Port it** to your new carrier with the carrier's porting process. Everyone keeps dialing the same number, and you stop paying the old provider once the port completes.
 - **Forward it** from your current provider to a number on the new trunk. Forwarding can add a charge for the forwarded leg, and some providers bill two or three legs for one forwarded call, so check before relying on it.
 
+For cheap number hosting and mobile numbers, see [Fax numbers on SIP](sip-numbers.md).
+
 ## What a call costs
 
 Carriers bill fax calls like voice calls: by connected minutes, rounded up to the carrier's billing increment, plus a monthly fee for each number. There is no per-page charge on the trunk. Faxbot's starting rate cards (`config/rate_cards.json`) list each preset carrier's advertised prices, advertised on 2026-10-03:
