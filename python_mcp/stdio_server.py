@@ -1,36 +1,32 @@
+"""Faxbot MCP stdio server (Python).
+
+For local assistants that launch the server as a subprocess. The stdio server
+is one integration identity: every tool call uses ``API_KEY`` from the
+environment. Diagnostics go to stderr; stdout carries only JSON-RPC.
+
+Environment: FAX_API_URL (default http://localhost:8080), API_KEY.
+Run: python stdio_server.py
 """
-Faxbot MCP stdio server (Python) for local assistants.
+from mcp.server.mcpserver import MCPServer
 
-The stdio server is one integration identity: it sends the configured API_KEY
-to Faxbot on every call and may read local files (filePath) or URLs (fileUrl).
-Stdout carries only JSON-RPC; diagnostics go to stderr.
-
-Usage:
-    pip install -r requirements.txt
-    export FAX_API_URL=http://localhost:8080
-    export API_KEY=your_integration_key
-    python stdio_server.py
-"""
-import os
-import sys
-from pathlib import Path
-
-if not __package__:
-    # Allow `python python_mcp/stdio_server.py` from any working directory.
-    sys.path.insert(0, str(Path(__file__).resolve().parent))
-    from faxbot_tools import build_server, environment_api_url
+if __package__:
+    from .faxbot_tools import SERVER_NAME, SERVER_VERSION, environment_configuration, register_tools
 else:
-    from .faxbot_tools import build_server, environment_api_url
+    from faxbot_tools import SERVER_NAME, SERVER_VERSION, environment_configuration, register_tools
 
-FAX_API_URL = environment_api_url()
-API_KEY = os.getenv("API_KEY", "")
 
-mcp = build_server(api_base_url=lambda: FAX_API_URL, stdio_api_key=API_KEY)
+def build_server() -> MCPServer:
+    configuration = environment_configuration()
+    server = MCPServer(SERVER_NAME, version=SERVER_VERSION, log_level='WARNING')
+    return register_tools(server, lambda _ctx: configuration, local_files=True)
+
+
+mcp = build_server()
 
 
 def main() -> None:
-    mcp.run("stdio")
+    mcp.run('stdio')
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()

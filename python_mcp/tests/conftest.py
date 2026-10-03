@@ -1,90 +1,94 @@
-"""Local fakes: a Faxbot REST API that records the forwarded key, and a threaded uvicorn runner."""
+"""A local fake Faxbot API and a threaded uvicorn runner for MCP transport tests."""
 import json
+import os
+import re
 import socket
+import sys
 import threading
 import time
-from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 
 import pytest
 
-PDF_BYTES = b"%PDF-1.4\n% synthetic inbound fax\n%%EOF\n"
-JOB = {"id": "job-1", "status": "queued", "to": "+15551230000", "backend": "test",
-       "pages": None, "error": None, "created_at": "2026-10-03T12:00:00", "updated_at": "2026-10-03T12:00:00"}
-INBOUND = {"id": "in-1", "fr": "+15559870000", "to": "+15551230000", "status": "received",
-           "backend": "sip", "pages": 1, "received_at": "2026-10-03T11:00:00"}
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+PDF_BYTES = b'%PDF-1.4\n% synthetic inbound fax\n'
 
 
 class FakeFaxbot:
+    """Records every request with the X-API-Key it carried (None when absent)."""
     def __init__(self):
         self.requests = []
         self.inbound_envelope = False
-        self.jwks = None
-        self.server = None
+        self.jwks = {'keys': []}
+        fake = self
 
-    @property
-    def url(self):
-        return f"http://127.0.0.1:{self.server.server_address[1]}"
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *args):
+                pass
+
+            def _reply(self, status, body, content_type='application/json'):
+                data = body if isinstance(body, bytes) else json.dumps(body).encode()
+                self.send_response(status)
+                self.send_header('Content-Type', content_type)
+                self.send_header('Content-Length', str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
+            def _record(self):
+                length = int(self.headers.get('Content-Length') or 0)
+                body = self.rfile.read(length) if length else b''
+                key = self.headers.get('X-API-Key')
+                fake.requests.append({'method': self.command, 'path': self.path, 'key': key, 'body': body})
+                return key, body
+
+            def do_POST(self):  # noqa: N802
+                key, body = self._record()
+                if self.path != '/fax':
+                    return self._reply(404, {'detail': 'Not Found'})
+                to = re.search(rb'name="to"\r\n\r\n([^\r]*)', body)
+                self._reply(202, {'id': f'job-for-{key}', 'status': 'queued',
+                                  'to': to.group(1).decode() if to else None})
+
+            def do_GET(self):  # noqa: N802
+                if self.path == '/.well-known/jwks.json':
+                    return self._reply(200, fake.jwks)
+                key, _ = self._record()
+                path = self.path.split('?')[0]
+                if path == '/health':
+                    return self._reply(200, {'status': 'ok'})
+                if path == '/fax/missing' or path == '/inbound/missing':
+                    return self._reply(404, {'detail': 'Not found'})
+                if match := re.fullmatch(r'/fax/([^/]+)', path):
+                    return self._reply(200, {'id': match.group(1), 'to': '+15551230000', 'status': 'SUCCESS',
+                                             'pages': 1, 'backend': 'sip', 'created_at': '2026-10-03T10:00:00',
+                                             'updated_at': '2026-10-03T10:01:00', 'caller': key})
+                if path == '/inbound':
+                    items = [{'id': 'a1b2c3', 'fr': '+15550001111', 'to': '+15550002222', 'status': 'received',
+                              'backend': 'sip', 'pages': 2, 'received_at': '2026-10-03T09:00:00'}]
+                    return self._reply(200, {'items': items} if fake.inbound_envelope else items)
+                if match := re.fullmatch(r'/inbound/([^/]+)/pdf', path):
+                    return self._reply(200, PDF_BYTES, 'application/pdf')
+                if match := re.fullmatch(r'/inbound/([^/]+)', path):
+                    return self._reply(200, {'id': match.group(1), 'fr': '+15550001111', 'to': '+15550002222',
+                                             'status': 'received', 'backend': 'sip', 'pages': 2})
+                self._reply(404, {'detail': 'Not Found'})
+
+        self.server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+        self.url = f'http://127.0.0.1:{self.server.server_address[1]}'
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
 
     def keys(self):
-        return [request["key"] for request in self.requests]
-
-
-def _handler(fake):
-    class Handler(BaseHTTPRequestHandler):
-        def log_message(self, *args):
-            pass
-
-        def _send(self, status, body, content_type="application/json"):
-            data = body if isinstance(body, bytes) else json.dumps(body).encode()
-            self.send_response(status)
-            self.send_header("Content-Type", content_type)
-            self.send_header("Content-Length", str(len(data)))
-            self.end_headers()
-            self.wfile.write(data)
-
-        def _record(self):
-            length = int(self.headers.get("Content-Length") or 0)
-            body = self.rfile.read(length) if length else b""
-            fake.requests.append({"method": self.command, "path": self.path.split("?")[0],
-                                  "key": self.headers.get("X-API-Key"), "body": body})
-            return body
-
-        def do_POST(self):
-            body = self._record()
-            if self.path == "/fax" and b'name="to"' in body and b'name="file"' in body:
-                self._send(202, {"id": JOB["id"], "status": JOB["status"]})
-            else:
-                self._send(400, {"detail": "bad request"})
-
-        def do_GET(self):
-            path = self.path.split("?")[0]
-            if path == "/jwks.json" and fake.jwks:
-                self._send(200, fake.jwks)
-                return
-            self._record()
-            if path == f"/fax/{JOB['id']}":
-                self._send(200, JOB)
-            elif path.startswith("/fax/"):
-                self._send(404, {"detail": "Job not found"})
-            elif path == "/inbound":
-                self._send(200, {"items": [INBOUND]} if fake.inbound_envelope else [INBOUND])
-            elif path == f"/inbound/{INBOUND['id']}":
-                self._send(200, INBOUND)
-            elif path == f"/inbound/{INBOUND['id']}/pdf":
-                self._send(200, PDF_BYTES, "application/pdf")
-            else:
-                self._send(404, {"detail": "Not found"})
-
-    return Handler
+        return [request['key'] for request in self.requests]
 
 
 @pytest.fixture
 def fake_faxbot():
     fake = FakeFaxbot()
-    fake.server = ThreadingHTTPServer(("127.0.0.1", 0), _handler(fake))
-    thread = threading.Thread(target=fake.server.serve_forever, daemon=True)
-    thread.start()
+    fake.thread.start()
     try:
         yield fake
     finally:
@@ -92,24 +96,36 @@ def fake_faxbot():
         fake.server.server_close()
 
 
-@contextmanager
-def serve_app(application):
-    """Run an ASGI app with uvicorn on an ephemeral loopback port."""
-    import uvicorn
+class RunningApp:
+    def __init__(self, app):
+        import uvicorn
+        with socket.socket() as probe:
+            probe.bind(('127.0.0.1', 0))
+            port = probe.getsockname()[1]
+        self.url = f'http://127.0.0.1:{port}'
+        self.server = uvicorn.Server(uvicorn.Config(app, host='127.0.0.1', port=port, lifespan='on',
+                                                    log_level='warning'))
+        self.thread = threading.Thread(target=self.server.run, daemon=True)
 
-    sock = socket.socket()
-    sock.bind(("127.0.0.1", 0))
-    server = uvicorn.Server(uvicorn.Config(application, log_level="warning", lifespan="on"))
-    thread = threading.Thread(target=server.run, kwargs={"sockets": [sock]}, daemon=True)
-    thread.start()
-    deadline = time.monotonic() + 10
-    while not server.started:
-        if time.monotonic() > deadline or not thread.is_alive():
-            raise RuntimeError("MCP test server did not start")
-        time.sleep(0.01)
-    try:
-        yield f"http://127.0.0.1:{sock.getsockname()[1]}"
-    finally:
-        server.should_exit = True
-        thread.join(10)
-        sock.close()
+    def __enter__(self):
+        self.thread.start()
+        deadline = time.monotonic() + 10
+        while not self.server.started:
+            if time.monotonic() > deadline or not self.thread.is_alive():
+                raise RuntimeError('MCP test server did not start')
+            time.sleep(0.02)
+        return self
+
+    def __exit__(self, *exc):
+        self.server.should_exit = True
+        self.thread.join(10)
+
+
+@pytest.fixture
+def serve():
+    return RunningApp
+
+
+@pytest.fixture
+def stdio_env(fake_faxbot):
+    return {'PATH': os.environ.get('PATH', ''), 'FAX_API_URL': fake_faxbot.url, 'API_KEY': 'stdio-integration-key'}
