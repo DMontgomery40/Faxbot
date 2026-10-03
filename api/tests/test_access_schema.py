@@ -12,13 +12,12 @@ from alembic.config import Config
 import pytest
 import sqlalchemy as sa
 
-from api.app.schema import API_DIRECTORY, SchemaUpgradeError, upgrade_schema, validate_schema
+from api.app.schema import API_DIRECTORY, HEAD, SchemaUpgradeError, upgrade_schema, validate_schema
 from api.tests.test_schema import database, snapshot, schema_description
 from api.tests.test_outbound_schema import add_job
 
 
 PRIOR = '0004_outbound_delivery'
-HEAD = '0005_access_control'
 OLD = datetime(2025, 1, 2, 3, 4, 5, 123456)
 NAMESPACE = uuid.UUID('f56f5b6b-2485-4af6-8840-a535b333a28c')
 TABLES = {
@@ -240,7 +239,7 @@ FOREIGN_KEYS = {
 
 
 def test_exact_access_structure_and_reflected_frozen_constraints(database):
-    upgrade_schema(database)
+    at_revision(database, '0005_access_control')
     with database.connect() as conn:
         inspector = sa.inspect(conn)
         assert {name for name in inspector.get_table_names() if name.startswith('access_')} == TABLES

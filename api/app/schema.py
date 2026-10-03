@@ -12,13 +12,15 @@ from .schema_legacy import (
     CORE_TABLES, HYBRIDS, UNIQUE_IDENTITIES, frozen_metadata, has_unique_identity,
 )
 
-from . import schema_configuration, schema_outbound, schema_access
+from . import schema_configuration, schema_outbound, schema_access, schema_authentication
 from .schema_checks import canonical_check
 
 FOUNDATION = "0002_schema_foundation"
 CONFIGURATION = schema_configuration.REVISION
 OUTBOUND = schema_outbound.REVISION
-HEAD = schema_access.REVISION
+ACCESS = schema_access.REVISION
+HEAD = schema_authentication.REVISION
+STRICT_TABLES = schema_access.TABLES | schema_authentication.TABLES
 INITIAL = "0001_initial"
 LOCK_ID = 0x464158424F54  # FAXBOT, stable across processes and releases
 LOCK_TIMEOUT_SECONDS = 10
@@ -94,7 +96,7 @@ def _reject(reason):
 
 
 def _validate_namespace(connection):
-    names = tuple(sorted(CORE_TABLES | schema_configuration.TABLES | schema_outbound.TABLES | schema_access.TABLES | {"alembic_version"}))
+    names = tuple(sorted(CORE_TABLES | schema_configuration.TABLES | schema_outbound.TABLES | STRICT_TABLES | {"alembic_version"}))
     if connection.dialect.name == "postgresql":
         rows = connection.execute(sa.text("""
             SELECT c.relname, n.nspname, c.relkind, c.relrowsecurity,
@@ -225,7 +227,7 @@ def _allowed_default(table, column, default):
 
 def _validate_checks(connection, inspector, name, table):
     actual = inspector.get_check_constraints(name)
-    if name not in schema_access.TABLES:
+    if name not in STRICT_TABLES:
         if actual:
             _reject(f"unexpected check constraints in {name}")
         return
@@ -272,7 +274,7 @@ def _validate_columns(connection, inspector, name, expected, *, complete):
         _reject(f"missing required columns in {name}")
     if inspector.get_pk_constraint(name).get("constrained_columns") != ["id"]:
         _reject(f"unexpected primary key in {name}")
-    if name in schema_access.TABLES and inspector.get_pk_constraint(name).get('name') != expected.primary_key.name:
+    if name in STRICT_TABLES and inspector.get_pk_constraint(name).get('name') != expected.primary_key.name:
         _reject(f"unexpected primary key name in {name}")
     _validate_checks(connection, inspector, name, expected)
     actual_foreign_keys = inspector.get_foreign_keys(name)
@@ -280,7 +282,7 @@ def _validate_columns(connection, inspector, name, expected, *, complete):
         (tuple(element.parent.name for element in constraint.elements),
          constraint.referred_table.name,
          tuple(element.column.name for element in constraint.elements), constraint.ondelete,
-         constraint.name if name in schema_access.TABLES else None)
+         constraint.name if name in STRICT_TABLES else None)
         for constraint in expected.foreign_key_constraints
     }
     actual_shapes = set()
@@ -292,7 +294,7 @@ def _validate_columns(connection, inspector, name, expected, *, complete):
             _reject(f"unsupported foreign key semantics in {name}")
         actual_shapes.add((tuple(constraint["constrained_columns"]), constraint["referred_table"],
                            tuple(constraint["referred_columns"]), options.get("ondelete"),
-                           constraint.get('name') if name in schema_access.TABLES else None))
+                           constraint.get('name') if name in STRICT_TABLES else None))
     if actual_shapes != expected_foreign_keys or len(actual_foreign_keys) != len(expected_foreign_keys):
         _reject(f"unexpected foreign keys in {name}")
     for key, column in columns.items():
@@ -305,7 +307,7 @@ def _validate_columns(connection, inspector, name, expected, *, complete):
 
 def _validate_indexes(connection, inspector, name, table, *, complete):
     expected = {index.name: (tuple(col.name for col in index.columns), bool(index.unique)) for index in table.indexes}
-    if name in schema_access.TABLES:
+    if name in STRICT_TABLES:
         actual = {index['name']: (tuple(index['column_names']), bool(index['unique']))
                   for index in inspector.get_indexes(name)}
         if actual != expected or inspector.get_unique_constraints(name):
@@ -351,7 +353,8 @@ def validate_schema(connection, *, require_version=False):
     extensions = tables & schema_configuration.TABLES
     outbound = tables & schema_outbound.TABLES
     access = tables & schema_access.TABLES
-    protected = present | extensions | outbound | access | ({"alembic_version"} & tables)
+    authentication = tables & schema_authentication.TABLES
+    protected = present | extensions | outbound | access | authentication | ({"alembic_version"} & tables)
     _validate_no_write_hooks(connection, protected)
     _validate_plain_indexes(connection, protected)
     revision = None
@@ -367,14 +370,14 @@ def validate_schema(connection, *, require_version=False):
                 or inspector.get_indexes("alembic_version") or inspector.get_unique_constraints("alembic_version")):
             _reject("invalid version table constraints")
         revisions = connection.execute(sa.text("SELECT version_num FROM alembic_version")).scalars().all()
-        if len(revisions) > 1 or any(value not in {INITIAL, FOUNDATION, CONFIGURATION, OUTBOUND, HEAD} for value in revisions):
+        if len(revisions) > 1 or any(value not in {INITIAL, FOUNDATION, CONFIGURATION, OUTBOUND, ACCESS, HEAD} for value in revisions):
             _reject("unknown or multiple migration revisions")
         revision = revisions[0] if revisions else None
     if require_version and revision is None:
         _reject("upgrade did not produce a version")
     if present not in (set(), {"fax_jobs"}, CORE_TABLES) or (revision and present != CORE_TABLES):
         _reject("incomplete core table set")
-    if revision in {CONFIGURATION, OUTBOUND, HEAD}:
+    if revision in {CONFIGURATION, OUTBOUND, ACCESS, HEAD}:
         if extensions != schema_configuration.TABLES:
             _reject("incomplete configuration table set")
         metadata = schema_configuration.frozen_metadata(dialect=connection.dialect.name)
@@ -382,20 +385,26 @@ def validate_schema(connection, *, require_version=False):
         if extensions:
             _reject("configuration tables exist before their migration revision")
         metadata = frozen_metadata()
-    if revision in {OUTBOUND, HEAD}:
+    if revision in {OUTBOUND, ACCESS, HEAD}:
         if outbound != schema_outbound.TABLES:
             _reject("incomplete outbound table set")
         metadata = schema_outbound.frozen_metadata(dialect=connection.dialect.name)
     elif outbound:
         _reject("outbound tables exist before their migration revision")
-    if revision == HEAD:
+    if revision in {ACCESS, HEAD}:
         if access != schema_access.TABLES:
             _reject('incomplete access table set')
         metadata = schema_access.frozen_metadata(dialect=connection.dialect.name)
     elif access:
         _reject('access tables exist before their migration revision')
-    complete = revision in {FOUNDATION, CONFIGURATION, OUTBOUND, HEAD}
-    for name in sorted(present | extensions | outbound | access):
+    if revision == HEAD:
+        if authentication != schema_authentication.TABLES:
+            _reject('incomplete authentication admission table set')
+        metadata = schema_authentication.frozen_metadata(dialect=connection.dialect.name)
+    elif authentication:
+        _reject('authentication admission tables exist before their migration revision')
+    complete = revision in {FOUNDATION, CONFIGURATION, OUTBOUND, ACCESS, HEAD}
+    for name in sorted(present | extensions | outbound | access | authentication):
         _validate_columns(connection, inspector, name, metadata.tables[name], complete=complete)
         if name == "fax_jobs" and present == CORE_TABLES and "backend" not in {column["name"] for column in inspector.get_columns(name)}:
             _reject("six-table historical schema is missing provider columns")
@@ -406,9 +415,9 @@ def validate_schema(connection, *, require_version=False):
         _validate_indexes(connection, inspector, name, metadata.tables[name], complete=complete)
     # Index names share a schema namespace with unrelated tables. Detect conflicts
     # before any DDL so auxiliary objects can never be replaced or repurposed.
-    planned_metadata = schema_access.frozen_metadata(dialect=connection.dialect.name)
+    planned_metadata = schema_authentication.frozen_metadata(dialect=connection.dialect.name)
     planned = {index.name: name for name, table in planned_metadata.tables.items() for index in table.indexes}
-    planned.update({planned_metadata.tables[name].primary_key.name: name for name in schema_access.TABLES})
+    planned.update({planned_metadata.tables[name].primary_key.name: name for name in STRICT_TABLES})
     planned.update({f"uq_{name}_identity": name for name in UNIQUE_IDENTITIES})
     if connection.dialect.name == 'postgresql':
         current = connection.exec_driver_sql('SELECT current_schema()').scalar_one()
