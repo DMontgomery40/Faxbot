@@ -100,7 +100,7 @@ class CapturedTransport:
         if manifest is not None or pid not in {'sip', 'freeswitch'}:
             try:
                 service = service_from_profile(profile)
-                if manifest is None and not service.is_configured():
+                if not service.is_configured():
                     raise PreparationFailure('provider_unavailable')
                 if manifest is None and pid in {'phaxio', 'signalwire'}:
                     from .callback_locator import callback_base_url, callback_url_with_locators

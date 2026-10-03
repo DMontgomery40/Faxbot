@@ -431,10 +431,31 @@ def health():
     return {"status": "ok"}
 
 
-@app.get("/health/ready")
-def health_ready(request: Request):
-    """Readiness probe. Returns 200 when core dependencies are ready.
-    Checks: DB connectivity; backend configuration; storage configuration when inbound is enabled.
+def _outbound_profile_ready(revision):
+    """Inspect the active captured adapter without contacting a fax provider."""
+    identity = revision.profile_id('outbound')
+    if identity is None:
+        return False
+    try:
+        profile = _configuration_manager().store.read_profile(identity)
+        configuration = profile.configuration
+        if configuration.manifest is not None or configuration.provider_id not in {'sip', 'freeswitch'}:
+            return service_from_profile(profile).is_configured()
+        if configuration.provider_id == 'sip':
+            return bool(configuration.settings.get('ami_host')
+                        and configuration.settings.get('ami_username')
+                        and configuration.credentials.get('ami_password'))
+        return bool(fs_cli_available() and configuration.settings.get('gateway_name')
+                    and configuration.settings.get('caller_id_number'))
+    except (ProviderExecutionError, ConfigurationStoreError, ConfigurationSecretError, ValueError):
+        return False
+
+
+def _readiness_status(request: Request):
+    """Shared local readiness snapshot; does not prove provider delivery.
+
+    Inspect active configuration, DB and native dependencies, plus inbound
+    storage when required. Never contact a cloud fax provider from this probe.
     """
     # DB check
     db_ok = False
@@ -451,7 +472,7 @@ def health_ready(request: Request):
     ib = active_inbound()
     backend_warnings: List[str] = []
     revision = request.scope["faxbot.configuration"].active
-    outbound_ok = revision.profile_id("outbound") is not None
+    outbound_ok = _outbound_profile_ready(revision)
     inbound_ok = not settings.inbound_enabled or revision.profile_id("inbound") is not None
 
     # Storage check (only if inbound enabled)
@@ -464,9 +485,9 @@ def health_ready(request: Request):
             if settings.storage_backend == "s3" and not settings.s3_bucket:
                 storage_ok = False
                 storage_error = "S3_BUCKET not set"
-        except Exception as e:
+        except Exception:
             storage_ok = False
-            storage_error = str(e)
+            storage_error = "Configured inbound storage is unavailable."
 
     # System dependency check (Ghostscript — required)
     gs_installed = shutil.which("gs") is not None
@@ -489,10 +510,7 @@ def health_ready(request: Request):
         (not ami_required or ami_connected) and
         (not storage_required or storage_ok)
     )
-    status_code = 200 if ready else 503
-    from fastapi.responses import JSONResponse as _JR
-    return _JR(
-        content={
+    return {
             "status": "ready" if ready else "not_ready",
             "backend": ob,
             "checks": {
@@ -513,9 +531,13 @@ def health_ready(request: Request):
             },
             "warnings": backend_warnings,
             "storage_error": storage_error,
-        },
-        status_code=status_code,
-    )
+        }
+
+
+@app.get("/health/ready")
+def health_ready(request: Request):
+    status = _readiness_status(request)
+    return JSONResponse(status, status_code=200 if status['status'] == 'ready' else 503)
 
 
 def require_api_key(request: Request, x_api_key: Optional[str] = Header(default=None)):
@@ -846,42 +868,29 @@ async def admin_restart():
 
 
 @app.get("/admin/health-status", dependencies=[Depends(require_admin)])
-async def get_health_status():
-    # Basic dashboard counters and posture
-    from .outbound_summary import dashboard_counts
-    store = _configuration_manager().store
-    with store.engine.connect() as connection:
-        jobs = dashboard_counts(connection, store.delivery_tables['outbound_deliveries'],
-                                now=datetime.utcnow())
-    # Lightweight health signals (avoid duplicating full readiness logic)
-    # DB check
-    db_ok = True
-    try:
-        from sqlalchemy import text  # type: ignore
+async def get_health_status(request: Request):
+    def inspect():
+        from sqlalchemy import or_
+        from .db import APIKey
+        from .outbound_summary import dashboard_counts
+        store = _configuration_manager().store
+        now = datetime.utcnow()
+        with store.engine.connect() as connection:
+            jobs = dashboard_counts(connection, store.delivery_tables['outbound_deliveries'], now=now)
+        readiness = _readiness_status(request)
         with SessionLocal() as db:
-            db.execute(text("SELECT 1"))
-    except Exception:
-        db_ok = False
-    # Ghostscript
-    gs_ok = shutil.which("gs") is not None
-    # Backend configured
-    backend = settings.fax_backend
-    backend_ok = True
-    if backend == "phaxio":
-        backend_ok = bool(settings.phaxio_api_key and settings.phaxio_api_secret)
-    elif backend == "sinch":
-        backend_ok = bool(settings.sinch_project_id and settings.sinch_api_key and settings.sinch_api_secret)
-    # backend_ok remains True for sip; AMI connectivity is handled asynchronously
-    backend_healthy = bool(db_ok and gs_ok and backend_ok)
-    return {
-        "timestamp": datetime.utcnow().isoformat(),
-        "backend": backend,
-        "backend_healthy": backend_healthy,
-        "jobs": jobs,
-        "inbound_enabled": settings.inbound_enabled,
-        "api_keys_configured": bool(settings.api_key),
-        "require_auth": settings.require_api_key,
-    }
+            db_key_present = db.query(APIKey.id).filter(APIKey.revoked_at.is_(None),
+                or_(APIKey.expires_at.is_(None), APIKey.expires_at > now)).first() is not None
+        return {
+            "timestamp": now.isoformat() + 'Z',
+            "backend": readiness['backend'],
+            "backend_healthy": readiness['status'] == 'ready',
+            "jobs": jobs,
+            "inbound_enabled": settings.inbound_enabled,
+            "api_keys_configured": bool(settings.api_key) or db_key_present,
+            "require_auth": bool(settings.require_api_key or settings.api_key),
+        }
+    return await run_lifecycle_step(inspect)
 
 
 @app.get("/admin/db-status", dependencies=[Depends(require_admin)])
