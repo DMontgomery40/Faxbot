@@ -590,6 +590,8 @@ def get_admin_config():
     # Configured flags
     cfg = {
         "backend": backend,
+        "fax_disabled": settings.fax_disabled,
+        "max_file_size_mb": settings.max_file_size_mb,
         "hybrid": {
             "outbound": ob,
             "inbound": ib,
@@ -1902,7 +1904,8 @@ async def run_diagnostics():
 def export_settings_env():
     """Display the complete desired configuration with opaque secret placeholders."""
     values = _configuration_manager().store.read().desired.values
-    return {"env": format_environment(values.to_environment(redact_secrets=True))}
+    content = format_environment(values.to_environment(redact_secrets=True))
+    return {"env": content, "env_content": content}
 
 
 def _export_settings_full_env() -> str:
@@ -1939,7 +1942,9 @@ def persist_settings(payload: PersistSettingsIn):
     return {"ok": True, "path": str(target)}
 
 @app.post("/fax", response_model=FaxJobOut, status_code=202, dependencies=[Depends(require_fax_send)])
-async def send_fax(request: Request, background: BackgroundTasks, to: str = Form(...), file: UploadFile = File(...)):
+async def send_fax(request: Request, background: BackgroundTasks, to: str = Form(...), file: UploadFile = File(...), queue_only: bool = Form(False)):
+    if queue_only and not settings.fax_disabled:
+        raise HTTPException(409, detail="Queue-only request refused because outbound sending is now enabled. Refresh Send before submitting again.")
     manager = _configuration_manager()
     revision = request.scope['faxbot.configuration'].active
     identity = revision.profile_id('outbound')
@@ -1948,7 +1953,7 @@ async def send_fax(request: Request, background: BackgroundTasks, to: str = Form
     profile = manager.store.read_profile(identity)
     ob = profile.configuration.provider_id
     use_manifest = profile.configuration.manifest is not None
-    if ob not in {'sip', 'freeswitch'}:
+    if use_manifest or ob not in {'sip', 'freeswitch'}:
         try:
             service_from_profile(profile)
         except ProviderExecutionError:
@@ -1956,7 +1961,7 @@ async def send_fax(request: Request, background: BackgroundTasks, to: str = Form
     if not PHONE_RE.match(to):
         raise HTTPException(400, detail="'to' must be E.164 or digits only")
     job_id = uuid.uuid4().hex
-    requires_tiff = ob in {'sip', 'freeswitch'} or profile.configuration.traits.get('requires_tiff', False) is True
+    requires_tiff = profile.configuration.traits.get('requires_tiff', False) is True
     try:
         prepared = await prepare_upload(
             file, job_id=job_id, data_dir=settings.fax_data_dir,
@@ -2000,12 +2005,12 @@ async def _dispatch_accepted_job(revision, job_id, to, pdf_path, tiff_path):
         raise ConfigurationConflict('Accepted job profile does not match the dispatch revision.')
     with runtime.frame(revision):
         pid = profile.configuration.provider_id
-        if pid == 'sip':
+        if profile.configuration.manifest is not None:
+            await _send_via_manifest(job_id, to, pdf_path)
+        elif pid == 'sip':
             await _originate_job(job_id, to, tiff_path)
         elif pid == 'freeswitch':
             await _send_via_freeswitch(job_id, to, tiff_path)
-        elif profile.configuration.manifest is not None:
-            await _send_via_manifest(job_id, to, pdf_path)
         elif pid == 'phaxio':
             await _send_via_phaxio(job_id, to, pdf_path)
         elif pid == 'sinch':
