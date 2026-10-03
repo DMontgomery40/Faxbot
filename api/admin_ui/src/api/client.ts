@@ -213,8 +213,19 @@ export class AdminAPIClient {
       const detail = await readDetail(res);
       if (detail?.startsWith(CSRF_FAILURE) && await this.refreshCsrf()) res = await attempt();
     }
-    if (res.status === 401 && !extras.quiet401) this.onUnauthorized?.();
+    if (res.status === 401 && !extras.quiet401 && await this.credentialRejected(path)) this.onUnauthorized?.();
     return res;
+  }
+
+  // A 401 from a single route may only mean that route does not accept this
+  // kind of credential; the session has ended only if /auth/me agrees.
+  private async credentialRejected(path: string): Promise<boolean> {
+    if (path.startsWith('/auth/')) return true;
+    const probe = await fetch(`${this.baseURL}/auth/me`, {
+      credentials: 'same-origin',
+      headers: this.authHeaders('GET'),
+    }).catch(() => null);
+    return probe?.status === 401;
   }
 
   private async refreshCsrf(): Promise<boolean> {

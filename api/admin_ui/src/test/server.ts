@@ -45,8 +45,8 @@ interface Key {
   id: string;
   token: string;
   principal_id: string;
-  name: string;
-  note: string;
+  name: string | null;
+  note: string | null;
   expires_at: string | null;
   created_at: string;
   last_used_at: string | null;
@@ -86,6 +86,10 @@ function createState() {
     ['key_old', { id: 'key_old', token: 'fbk_live_old', principal_id: 'p_scanner', name: 'Old scanner', note: '',
       expires_at: null, created_at: created, last_used_at: null, revoked_at: '2026-10-02T09:00:00', pending_review: false,
       ceiling: [], version: 4 }],
+    // A migrated wildcard key: no name or note, waiting for review.
+    ['key_legacy', { id: 'key_legacy', token: 'fbk_live_legacy', principal_id: 'p_scanner', name: null, note: null,
+      expires_at: null, created_at: created, last_used_at: null, revoked_at: null, pending_review: true,
+      ceiling: [], version: 1 }],
   ]);
   const roles = new Map<string, Role>([
     ['role_owner', { id: 'role_owner', name: 'Owner', description: 'Everything', builtin: true, enabled: true, permissions: ALL_PERMISSIONS.map(([p]) => p), version: 1 }],

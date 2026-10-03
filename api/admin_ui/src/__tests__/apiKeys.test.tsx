@@ -70,4 +70,18 @@ describe('API keys', () => {
     expect(within(row).getByText('Revoked')).toBeTruthy();
     expect(within(row).queryByRole('button')).toBeNull();
   });
+
+  it('edits a migrated key that has no name or note', async () => {
+    const { client, me } = await signedInClient();
+    render(<ApiKeys client={client} me={me} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit Unnamed key' }));
+    const form = await screen.findByRole('dialog', { name: 'Edit key' });
+    fireEvent.change(within(form).getByLabelText('Name'), { target: { value: 'Front scanner' } });
+    fireEvent.click(within(form).getByRole('button', { name: 'Save' }));
+    expect(await screen.findByText('Front scanner')).toBeTruthy();
+    expect(backend.requestsTo('PATCH', '/access/keys/key_legacy')[0].body).toEqual({
+      name: 'Front scanner', version: 1, expected_policy_version: 7,
+    });
+    expect(await screen.findByRole('button', { name: 'Approve Front scanner' })).toBeTruthy();
+  });
 });

@@ -21,7 +21,7 @@ import {
   ContentCopy as ContentCopyIcon,
 } from '@mui/icons-material';
 import { IconButton } from '@mui/material';
-import AdminAPIClient from '../api/client';
+import AdminAPIClient, { AdminAPIError } from '../api/client';
 import type { HealthStatus } from '../api/types';
 import type { AdminDestination } from '../navigation';
 
@@ -48,7 +48,9 @@ function Dashboard({ client, onNavigate }: DashboardProps) {
       const data = await client.getHealthStatus();
       setHealth(data);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to fetch health status');
+      setError(err instanceof AdminAPIError && (err.status === 401 || err.status === 403)
+        ? 'Server health is not available to this account.'
+        : 'Could not load server health. Try again.');
     } finally {
       setLoading(false);
     }

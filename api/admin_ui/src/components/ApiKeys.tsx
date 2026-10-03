@@ -78,6 +78,8 @@ function keyStatus(key: AccessKey): { label: string; tone: 'success' | 'default'
 
 const emptyDraft = (permissions: string[]): KeyDraft => ({ principalId: '', name: '', note: '', expires: '', permissions });
 
+const keyName = (key: AccessKey) => key.name || 'Unnamed key';
+
 export default function ApiKeys({ client, me }: ApiKeysProps) {
   const { isMobile } = useSmallScreens();
   const catalogue = useCatalogue(client);
@@ -138,13 +140,13 @@ export default function ApiKeys({ client, me }: ApiKeysProps) {
   };
 
   const openEdit = (key: AccessKey) => {
-    setDraft({ principalId: key.principal.id, name: key.name, note: key.note, expires: localDay(key.expires_at), permissions: [] });
+    setDraft({ principalId: key.principal.id, name: key.name ?? '', note: key.note ?? '', expires: localDay(key.expires_at), permissions: [] });
     setFormError(null);
     setEditor({ mode: 'edit', keyId: key.id });
   };
 
   const openApprove = (key: AccessKey) => {
-    setDraft({ principalId: key.principal.kind === 'bootstrap' ? '' : key.principal.id, name: key.name, note: key.note, expires: '', permissions: defaultPermissions });
+    setDraft({ principalId: key.principal.kind === 'bootstrap' ? '' : key.principal.id, name: key.name ?? '', note: key.note ?? '', expires: '', permissions: defaultPermissions });
     setFormError(null);
     setEditor({ mode: 'approve', keyId: key.id });
   };
@@ -178,8 +180,8 @@ export default function ApiKeys({ client, me }: ApiKeysProps) {
         if (!key) throw new Error('This key no longer exists. Reload and try again.');
         const expiresAt = draft.expires ? endOfLocalDay(draft.expires) : null;
         await client.updateKey(key.id, {
-          ...(draft.name.trim() !== key.name ? { name: draft.name.trim() } : {}),
-          ...(draft.note.trim() !== key.note ? { note: draft.note.trim() } : {}),
+          ...(draft.name.trim() !== (key.name ?? '') ? { name: draft.name.trim() } : {}),
+          ...(draft.note.trim() !== (key.note ?? '') ? { note: draft.note.trim() } : {}),
           ...(draft.expires !== localDay(key.expires_at) ? { expires_at: expiresAt } : {}),
           version: key.version,
         });
@@ -211,7 +213,7 @@ export default function ApiKeys({ client, me }: ApiKeysProps) {
         setPending(null);
         setReveal({
           title: 'Key replaced',
-          message: `The old key for "${key.name || 'this key'}" no longer works. Copy the new key now. It is shown only once.`,
+          message: `The old key for "${keyName(key)}" no longer works. Copy the new key now. It is shown only once.`,
           label: 'New API key',
           secret: result.token,
         });
@@ -243,19 +245,19 @@ export default function ApiKeys({ client, me }: ApiKeysProps) {
       <>
         {key.pending_review && (
           <Tooltip title="Approve">
-            <IconButton aria-label={`Approve ${key.name}`} size="small" color="primary" onClick={() => openApprove(key)}><ApproveIcon /></IconButton>
+            <IconButton aria-label={`Approve ${keyName(key)}`} size="small" color="primary" onClick={() => openApprove(key)}><ApproveIcon /></IconButton>
           </Tooltip>
         )}
         <Tooltip title="Edit">
-          <IconButton aria-label={`Edit ${key.name}`} size="small" onClick={() => openEdit(key)}><EditIcon /></IconButton>
+          <IconButton aria-label={`Edit ${keyName(key)}`} size="small" onClick={() => openEdit(key)}><EditIcon /></IconButton>
         </Tooltip>
         <Tooltip title="Replace key">
-          <IconButton aria-label={`Rotate ${key.name}`} size="small" onClick={() => { setPendingError(null); setPending({ action: 'rotate', keyId: key.id }); }}>
+          <IconButton aria-label={`Rotate ${keyName(key)}`} size="small" onClick={() => { setPendingError(null); setPending({ action: 'rotate', keyId: key.id }); }}>
             <RotateIcon />
           </IconButton>
         </Tooltip>
         <Tooltip title="Revoke">
-          <IconButton aria-label={`Revoke ${key.name}`} size="small" color="error" onClick={() => { setPendingError(null); setPending({ action: 'revoke', keyId: key.id }); }}>
+          <IconButton aria-label={`Revoke ${keyName(key)}`} size="small" color="error" onClick={() => { setPendingError(null); setPending({ action: 'revoke', keyId: key.id }); }}>
             <DeleteIcon />
           </IconButton>
         </Tooltip>
@@ -288,7 +290,7 @@ export default function ApiKeys({ client, me }: ApiKeysProps) {
                   <CardContent>
                     <Stack spacing={1.5}>
                       <Box display="flex" justifyContent="space-between" alignItems="center" gap={1}>
-                        <Typography variant="h6" fontWeight={600}>{key.name || 'Unnamed key'}</Typography>
+                        <Typography variant="h6" fontWeight={600}>{keyName(key)}</Typography>
                         <StatusChip label={status.label} tone={status.tone} />
                       </Box>
                       <Typography variant="body2">Belongs to {key.principal.display_name}</Typography>
@@ -321,7 +323,7 @@ export default function ApiKeys({ client, me }: ApiKeysProps) {
                   return (
                     <TableRow key={key.id} hover>
                       <TableCell>
-                        <Typography variant="body2" fontWeight={600}>{key.name || 'Unnamed key'}</Typography>
+                        <Typography variant="body2" fontWeight={600}>{keyName(key)}</Typography>
                         {key.note && <Typography variant="caption" color="text.secondary">{key.note}</Typography>}
                       </TableCell>
                       <TableCell>
@@ -383,14 +385,15 @@ export default function ApiKeys({ client, me }: ApiKeysProps) {
         open={pending !== null}
         title={pending?.action === 'rotate' ? 'Replace this key?' : 'Revoke this key?'}
         text={pending?.action === 'rotate'
-          ? `The current key for "${pendingKey?.name || 'this key'}" stops working immediately and a new one is shown once.`
-          : `"${pendingKey?.name || 'This key'}" stops working immediately. This cannot be undone.`}
+          ? `The current key for "${pendingKey ? keyName(pendingKey) : 'this key'}" stops working immediately and a new one is shown once.`
+          : `"${pendingKey ? keyName(pendingKey) : 'This key'}" stops working immediately. This cannot be undone.`}
         confirmLabel={pending?.action === 'rotate' ? 'Replace key' : 'Revoke'}
         danger={pending?.action === 'revoke'}
         busy={busy}
         error={pendingError}
         onConfirm={() => void confirmPending()}
         onCancel={() => setPending(null)}
+        onReload={() => void reload()}
       />
 
       <SecretDialog reveal={reveal} onClose={() => setReveal(null)} />

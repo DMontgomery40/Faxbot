@@ -433,6 +433,7 @@ export default function Users({ client, me }: { client: AdminAPIClient; me: Auth
         error={pendingError}
         onConfirm={() => void confirmPending()}
         onCancel={() => setPending(null)}
+        onReload={() => void reload()}
       />
 
       <Drawer anchor="right" open={detailId !== null} onClose={() => setDetailId(null)}

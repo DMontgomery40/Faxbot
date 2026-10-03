@@ -10,7 +10,7 @@ import {
   useMediaQuery,
   useTheme,
 } from '@mui/material';
-import AdminAPIClient, { accessErrorMessage } from '../api/client';
+import AdminAPIClient, { accessErrorMessage, isNotAvailable } from '../api/client';
 import SecretDialog, { type SecretReveal } from './access/SecretDialog';
 
 // First-run: the installation key can create the first named owner.
@@ -39,7 +39,9 @@ export default function OwnerEnrollment({ client, onEnrolled }: { client: AdminA
       setLogin('');
       setDisplayName('');
     } catch (failure) {
-      setError(accessErrorMessage(failure));
+      setError(isNotAvailable(failure)
+        ? 'Creating the first owner is not available on this server yet.'
+        : accessErrorMessage(failure));
     } finally {
       setBusy(false);
     }

@@ -34,7 +34,7 @@ interface TerminalProps {
   client: AdminAPIClient;
 }
 
-type AccessState = 'checking' | 'enabled' | 'disabled' | 'forbidden' | 'error';
+type AccessState = 'checking' | 'enabled' | 'disabled' | 'error';
 type ConnectionState = 'connecting' | 'connected' | 'disconnected' | 'forbidden' | 'error';
 
 const terminalTheme = (mode: string) => ({
@@ -160,8 +160,10 @@ const Terminal: React.FC<TerminalProps> = ({ client }) => {
     }).catch((failure: unknown) => {
       if (!current) return;
       window.clearTimeout(timeout);
-      const forbidden = failure instanceof AdminAPIError && (failure.status === 401 || failure.status === 403);
-      setAccess(forbidden ? 'forbidden' : 'error');
+      // The actions list has its own permission; when it is refused, let the
+      // terminal ticket request decide whether this account may connect.
+      const refused = failure instanceof AdminAPIError && (failure.status === 401 || failure.status === 403);
+      setAccess(refused ? 'enabled' : 'error');
     });
     return () => { current = false; window.clearTimeout(timeout); };
   }, [client, availabilityAttempt]);
@@ -464,10 +466,6 @@ const Terminal: React.FC<TerminalProps> = ({ client }) => {
 
       {access === 'disabled' && <Alert severity="info" sx={{ mb: 2, borderRadius: 2 }}>
         The terminal is turned off for this installation.
-      </Alert>}
-
-      {access === 'forbidden' && <Alert severity="warning" sx={{ mb: 2, borderRadius: 2 }}>
-        This account is not allowed to use the terminal.
       </Alert>}
 
       {access === 'error' && <Alert severity="warning" sx={{ mb: 2, borderRadius: 2 }}>

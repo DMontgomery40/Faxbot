@@ -197,7 +197,7 @@ export default function Sessions({ client, me }: { client: AdminAPIClient; me: A
       <ConfirmDialog open={ending !== null} title={ending?.current ? 'Sign out of this session?' : 'End this session?'}
         text={ending?.current ? 'You will return to the sign-in screen.' : 'Whoever is using this session is signed out immediately.'}
         confirmLabel={ending?.current ? 'Sign out' : 'End session'} danger busy={busy} error={error}
-        onConfirm={() => void end()} onCancel={() => setEnding(null)} />
+        onConfirm={() => void end()} onCancel={() => setEnding(null)} onReload={() => void reload()} />
     </Box>
   );
 }

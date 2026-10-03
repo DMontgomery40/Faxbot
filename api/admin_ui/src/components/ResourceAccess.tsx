@@ -206,7 +206,7 @@ function AssignmentsSection({ client, canManage }: { client: AdminAPIClient; can
 
       <ConfirmDialog open={removing !== null} title="Remove access?"
         text={removing ? `${removing.subject.name} loses ${removing.role.name} on ${resourceLabel(removing.resource).toLowerCase()}.` : ''}
-        confirmLabel="Remove" danger busy={busy} error={error} onConfirm={() => void remove()} onCancel={() => setRemoving(null)} />
+        confirmLabel="Remove" danger busy={busy} error={error} onConfirm={() => void remove()} onCancel={() => setRemoving(null)} onReload={() => void reloadAll()} />
     </Box>
   );
 }

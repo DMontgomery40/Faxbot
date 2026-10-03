@@ -103,6 +103,21 @@ describe('console sign-in', () => {
     expect(backend.requestsTo('GET', '/auth/me').length).toBeGreaterThan(mesBefore);
   });
 
+  it('stays signed in when one route refuses this kind of credential', async () => {
+    const { server } = await import('../test/server');
+    const { http, HttpResponse } = await import('msw');
+    server.use(http.get('/admin/fax-jobs', () => HttpResponse.json({ detail: 'Unauthorized' }, { status: 401 })));
+    render(<App />);
+    await signInWithPassword('admin', 'correct horse');
+    await screen.findByText('Ada Admin');
+    const probesBefore = backend.requestsTo('GET', '/auth/me').length;
+    fireEvent.click(screen.getByRole('tab', { name: 'Jobs' }));
+    await waitFor(() => expect(backend.requestsTo('GET', '/auth/me').length).toBeGreaterThan(probesBefore));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(screen.queryByRole('heading', { name: 'Sign in' })).toBeNull();
+    expect(screen.getByText('Ada Admin')).toBeTruthy();
+  });
+
   it('returns to sign-in when the session ends', async () => {
     render(<App />);
     await signInWithPassword('admin', 'correct horse');

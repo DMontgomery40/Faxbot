@@ -124,7 +124,7 @@ export function EmptyState({ icon, title, text, action }: { icon: React.ReactNod
   );
 }
 
-export function ConfirmDialog({ open, title, text, confirmLabel, danger, busy, error, onConfirm, onCancel }: {
+export function ConfirmDialog({ open, title, text, confirmLabel, danger, busy, error, onConfirm, onCancel, onReload }: {
   open: boolean;
   title: string;
   text: string;
@@ -134,13 +134,14 @@ export function ConfirmDialog({ open, title, text, confirmLabel, danger, busy, e
   error?: unknown;
   onConfirm: () => void;
   onCancel: () => void;
+  onReload?: () => void;
 }) {
   const { isSmallMobile } = useSmallScreens();
   return (
     <Dialog open={open} onClose={() => !busy && onCancel()} maxWidth="xs" fullWidth fullScreen={isSmallMobile}>
       <DialogTitle>{title}</DialogTitle>
       <DialogContent>
-        {error ? <Alert severity={isConflict(error) ? 'warning' : 'error'} sx={{ mb: 2, borderRadius: 2 }}>{accessErrorMessage(error)}</Alert> : null}
+        {error ? <ErrorBanner error={error} onReload={onReload} /> : null}
         <Typography>{text}</Typography>
       </DialogContent>
       <DialogActions sx={{ px: 3, pb: 3 }}>

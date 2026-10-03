@@ -206,7 +206,7 @@ export default function Groups({ client, me }: { client: AdminAPIClient; me: Aut
       if (group) {
         await client.updateGroup(group.id, {
           ...(draft.name.trim() !== group.name ? { name: draft.name.trim() } : {}),
-          ...(draft.description.trim() !== group.description ? { description: draft.description.trim() } : {}),
+          ...(draft.description.trim() !== (group.description ?? '') ? { description: draft.description.trim() } : {}),
           ...(draft.enabled !== group.enabled ? { enabled: draft.enabled } : {}),
           version: group.version,
         });
@@ -265,7 +265,7 @@ export default function Groups({ client, me }: { client: AdminAPIClient; me: Aut
                       {canManage && (
                         <Tooltip title="Edit">
                           <IconButton aria-label={`Edit ${group.name}`} size="small"
-                            onClick={() => { setError(null); setDraft({ groupId: group.id, name: group.name, description: group.description, enabled: group.enabled }); }}>
+                            onClick={() => { setError(null); setDraft({ groupId: group.id, name: group.name, description: group.description ?? '', enabled: group.enabled }); }}>
                             <EditIcon />
                           </IconButton>
                         </Tooltip>

@@ -390,7 +390,7 @@ export interface PermissionInfo {
 export interface AccessRole {
   id: string;
   name: string;
-  description: string;
+  description: string | null;
   builtin: boolean;
   enabled: boolean;
   permissions: string[];
@@ -427,8 +427,9 @@ export interface KeyCeiling {
 export interface AccessKey {
   id: string;
   principal: { id: string; display_name: string; kind: PrincipalKind };
-  name: string;
-  note: string;
+  // Older migrated keys may have no name or note.
+  name: string | null;
+  note: string | null;
   expires_at: string | null;
   created_at: string;
   last_used_at: string | null;
@@ -448,7 +449,7 @@ export interface AccessUserDetail extends AccessUser {
 export interface AccessGroup {
   id: string;
   name: string;
-  description: string;
+  description: string | null;
   enabled: boolean;
   member_count: number;
   version: number;

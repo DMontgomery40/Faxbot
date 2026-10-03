@@ -78,7 +78,7 @@ export default function Roles({ client, me }: { client: AdminAPIClient; me: Auth
       if (role) {
         await client.updateRole(role.id, {
           ...(draft.name.trim() !== role.name ? { name: draft.name.trim() } : {}),
-          ...(draft.description.trim() !== role.description ? { description: draft.description.trim() } : {}),
+          ...(draft.description.trim() !== (role.description ?? '') ? { description: draft.description.trim() } : {}),
           ...(!sameSet(draft.permissions, role.permissions) ? { permissions: draft.permissions } : {}),
           ...(draft.enabled !== role.enabled ? { enabled: draft.enabled } : {}),
           version: role.version,
@@ -110,7 +110,7 @@ export default function Roles({ client, me }: { client: AdminAPIClient; me: Auth
             {role.builtin ? <StatusChip label="Built-in" tone="info" /> : <StatusChip label={role.enabled ? 'Active' : 'Disabled'} tone={role.enabled ? 'success' : 'default'} />}
             {!role.builtin && canManage && (
               <Button size="small" startIcon={<EditIcon />} aria-label={`Edit ${role.name}`}
-                onClick={() => { setError(null); setDraft({ roleId: role.id, name: role.name, description: role.description, enabled: role.enabled, permissions: role.permissions }); }}>
+                onClick={() => { setError(null); setDraft({ roleId: role.id, name: role.name, description: role.description ?? '', enabled: role.enabled, permissions: role.permissions }); }}>
                 Edit
               </Button>
             )}
