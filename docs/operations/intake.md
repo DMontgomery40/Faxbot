@@ -13,7 +13,8 @@ Each received fax shows one of these in its **Email delivery** column (a line on
 | Delivered to (addresses) | The email server accepted it, at the time shown. |
 | Waiting for email delivery | Faxbot will deliver it shortly, or it is waiting for you to send it. |
 | Not delivered | Faxbot could not deliver it. The line below says why. |
-| No email delivery set up for this number | No email delivery covers the number the fax was sent to. |
+| No email delivery set up for this number | No email delivery covered the number the fax was sent to when it arrived. After setting one up, select **Retry delivery**. |
+| - | An older fax with no delivery record, such as one received without a document. |
 
 Documents received by direct delivery have no fax record; the Inbox lists them under **Received by direct delivery**.
 

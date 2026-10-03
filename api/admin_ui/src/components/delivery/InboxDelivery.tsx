@@ -2,7 +2,7 @@
 // line per fax, and a retry when a delivery did not go through.
 import { Box, Button, Card, CardContent, Paper, Stack, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Typography } from '@mui/material';
 import type { IntakeItem } from '../../api/deliveryTypes';
-import { formatServerTime } from '../../api/time';
+import { formatServerTime, parseServerTime } from '../../api/time';
 import { StatusChip, useSmallScreens } from '../access/AccessViews';
 
 // The server's sentence for a fax whose number has no email delivery.
@@ -18,9 +18,18 @@ export interface InboxDeliveryStatus {
   retry: boolean;
 }
 
-export function inboxDeliveryStatus(item: IntakeItem | undefined): InboxDeliveryStatus {
-  // Faxbot picks up a new fax within seconds; until then it is simply waiting.
-  if (!item) return { label: 'Waiting for email delivery', detail: null, tone: 'info', retry: false };
+// A fax with no delivery record is waiting only while it is new: Faxbot picks
+// up a fax within seconds. An older one may be outside the list that was read,
+// or have no document to deliver, so nothing is claimed about it.
+const PICKUP_WINDOW_MS = 10 * 60 * 1000;
+
+export function isNewFax(receivedAt: string | null | undefined, now = Date.now()): boolean {
+  const received = parseServerTime(receivedAt);
+  return received !== null && now - received.getTime() < PICKUP_WINDOW_MS;
+}
+
+export function inboxDeliveryStatus(item: IntakeItem | undefined, isNew = true): InboxDeliveryStatus | null {
+  if (!item) return isNew ? { label: 'Waiting for email delivery', detail: null, tone: 'info', retry: false } : null;
   const reason = GENERIC.has(item.status) ? null : item.status;
   if (item.state === 'delivered') {
     const to = item.delivered_to?.length ? item.delivered_to.join(', ') : null;
@@ -29,20 +38,23 @@ export function inboxDeliveryStatus(item: IntakeItem | undefined): InboxDelivery
   }
   if (item.state === 'failed') return { label: 'Not delivered', detail: reason, tone: 'error', retry: true };
   if (item.state === 'sending') return { label: 'Waiting for email delivery', detail: null, tone: 'info', retry: false };
+  // Once email delivery is set up for the number, Retry delivery sends it.
   if (item.status === NO_EMAIL_DELIVERY && !item.next_attempt_at) {
-    return { label: 'No email delivery set up for this number', detail: null, tone: 'default', retry: false };
+    return { label: 'No email delivery set up for this number', detail: null, tone: 'default', retry: item.needs_action };
   }
   return { label: 'Waiting for email delivery', detail: reason, tone: item.needs_action ? 'warning' : 'info', retry: item.needs_action };
 }
 
-export function DeliveryStatusLine({ item, canRetry, busy, onRetry, label }: {
+export function DeliveryStatusLine({ item, canRetry, busy, onRetry, label, isNew = true }: {
   item: IntakeItem | undefined;
   canRetry: boolean;
   busy: boolean;
   onRetry: (item: IntakeItem) => void;
   label: string;
+  isNew?: boolean;
 }) {
-  const status = inboxDeliveryStatus(item);
+  const status = inboxDeliveryStatus(item, isNew);
+  if (!status) return <Typography variant="body2" color="text.secondary">-</Typography>;
   return (
     <Box>
       <StatusChip label={status.label} tone={status.tone} />

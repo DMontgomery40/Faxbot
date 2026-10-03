@@ -5,13 +5,13 @@ import { http, HttpResponse } from 'msw';
 import AdminAPIClient from '../api/client';
 import Inbound from '../components/Inbound';
 import { visibleTools } from '../navigation';
-import { formatServerTime } from '../api/time';
+import { formatServerTime, toServerTime } from '../api/time';
 import { server } from '../test/server';
 
 const client = () => new AdminAPIClient({ kind: 'key', key: 'synthetic-key' });
 
-const fax = (id: string, from: string) => ({ id, fr: from, to: '+15550100001', status: 'received', backend: 'sip', pages: 2,
-  received_at: '2026-10-03T12:00:00' });
+const fax = (id: string, from: string, received_at = '2026-09-01T12:00:00') => ({ id, fr: from, to: '+15550100001', status: 'received',
+  backend: 'sip', pages: 2, received_at });
 
 const item = (overrides: Record<string, unknown>) => ({
   id: 'item', source: 'fax', inbound_fax_id: null, received_at: '2026-10-03T12:00:00', pages: 2, from_number: '+15550109999',
@@ -23,7 +23,7 @@ function inbox(retries: string[] = []) {
   server.use(
     http.get('/inbound', () => HttpResponse.json([
       fax('fax-delivered', '+15550101111'), fax('fax-waiting', '+15550102222'), fax('fax-failed', '+15550103333'),
-      fax('fax-unrouted', '+15550104444'), fax('fax-new', '+15550105555'),
+      fax('fax-unrouted', '+15550104444'), fax('fax-new', '+15550105555', toServerTime(new Date())), fax('fax-old', '+15550107777'),
     ])),
     http.get('/admin/inbound/callbacks', () => HttpResponse.json({ callbacks: [] })),
     http.get('/intake/items', ({ request }) => {
@@ -67,9 +67,12 @@ describe('Inbox email delivery', () => {
     expect(within(failed).getByText('The email server refused the recipient address. Faxbot stopped retrying.')).toBeTruthy();
     const unrouted = await rowFor('+15550104444');
     expect(within(unrouted).getByText('No email delivery set up for this number')).toBeTruthy();
-    expect(within(unrouted).queryByRole('button', { name: /Retry delivery/ })).toBeNull();
-    // Not picked up yet: still simply waiting.
+    // Just received and not picked up yet: simply waiting.
     expect(within(await rowFor('+15550105555')).getByText('Waiting for email delivery')).toBeTruthy();
+    // An older fax with no delivery record (no document, or older than the list read): nothing is claimed.
+    const old = await rowFor('+15550107777');
+    expect(within(old).queryByText(/Waiting|Delivered|Not delivered/)).toBeNull();
+    expect(within(old).getByText('-')).toBeTruthy();
     // Direct deliveries have no fax record; they are listed with their delivery too.
     expect(screen.getByText('Received by direct delivery')).toBeTruthy();
     expect(screen.getByText('Delivered to billing@clinic.example')).toBeTruthy();
@@ -83,6 +86,15 @@ describe('Inbox email delivery', () => {
     expect(await screen.findByText('Faxbot will deliver it shortly.')).toBeTruthy();
     expect(retries).toEqual(['i3']);
     expect(within(await rowFor('+15550101111')).queryByRole('button', { name: /Retry delivery/ })).toBeNull();
+  });
+
+  it('sends a fax that arrived before email delivery covered its number, once it does', async () => {
+    const retries = inbox();
+    render(<Inbound client={client()} inboundEnabled permissions={operator} />);
+    const unrouted = await rowFor('+15550104444');
+    fireEvent.click(within(unrouted).getByRole('button', { name: `Retry delivery of the fax from ${masked('+15550104444')}` }));
+    expect(await screen.findByText('Faxbot will deliver it shortly.')).toBeTruthy();
+    expect(retries).toEqual(['i4']);
   });
 
   it('offers no retry to people who cannot change settings', async () => {

@@ -162,6 +162,19 @@ describe('Settings save status', () => {
     expect(await screen.findByText('Someone else changed these settings. Your edits are kept here; reload to see the current values.')).toBeTruthy();
   });
 
+  it('checks the minimum delivery rate and email server port before saving', async () => {
+    const writes = settingsHandlers(settingsFixture());
+    render(<Settings client={client()} />);
+    fireEvent.change(within(await section('Delivery routes')).getByLabelText('Minimum delivery rate (%)'), { target: { value: '150' } });
+    apply();
+    expect(await screen.findByText('Enter a minimum delivery rate from 0 to 100.')).toBeTruthy();
+    fireEvent.change(within(await section('Delivery routes')).getByLabelText('Minimum delivery rate (%)'), { target: { value: '80' } });
+    fireEvent.change(within(await section('Intake defaults')).getByLabelText('Port'), { target: { value: '70000' } });
+    apply();
+    expect(await screen.findByText('Enter an email server port from 1 to 65535.')).toBeTruthy();
+    expect(writes).toEqual([]);
+  });
+
   it('says so in one sentence when the account may not change these settings', async () => {
     settingsHandlers(settingsFixture(), () => HttpResponse.json({ detail: 'This operation is not permitted.' }, { status: 403 }));
     render(<Settings client={client()} />);

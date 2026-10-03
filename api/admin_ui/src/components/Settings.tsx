@@ -27,12 +27,12 @@ import {
   Settings as SettingsIcon,
 } from '@mui/icons-material';
 import AdminAPIClient, { configurationWriteRejected, isForbidden } from '../api/client';
+import { DeliverySettingsSections, EMAIL_DELIVERY_SECTION, deliveryEditorValues } from './delivery/DeliverySettings';
 import { DEFAULT_DOCS_BASE, docsLink } from '../docsLinks';
 import type { ConfigurationWriteResult, Settings as SettingsType, SettingsPatch } from '../api/types';
 import { ResponsiveSettingItem, ResponsiveSettingSection } from './common/ResponsiveSettingItem';
 import { ResponsiveTextField, ResponsiveFormSection } from './common/ResponsiveFormFields';
 import TunnelSettings from './TunnelSettings';
-import { DeliverySettingsSections, EMAIL_DELIVERY_SECTION, deliveryEditorValues } from './delivery/DeliverySettings';
 
 interface SettingsProps {
   client: AdminAPIClient;
@@ -45,6 +45,12 @@ interface SettingsProps {
 
 type FormValue = string | number | boolean;
 type SettingsForm = Record<string, FormValue>;
+
+// Limits checked before saving, so a value the server would refuse gets a plain sentence.
+const FIELD_RANGES: Record<string, { min: number; max: number; message: string }> = {
+  route_min_success_percent: { min: 0, max: 100, message: 'Enter a minimum delivery rate from 0 to 100.' },
+  intake_smtp_port: { min: 1, max: 65535, message: 'Enter an email server port from 1 to 65535.' },
+};
 
 // Each control starts with the loaded settings, including redacted secrets.
 // Comparing against this snapshot prevents unrelated edits from writing masks,
@@ -195,6 +201,8 @@ function Settings({ client, canWrite = false, focus, onFocused }: SettingsProps)
           throw new Error(`Enter a whole number for ${field.replace(/_/g, ' ')}. An empty number does not clear the setting.`);
         }
         patch[field] = typeof loadedForm[field] === 'number' ? Number(value) : value;
+        const range = FIELD_RANGES[field];
+        if (range && (Number(value) < range.min || Number(value) > range.max)) throw new Error(range.message);
       }
       setSaveResult(null);
       writeStarted = true;

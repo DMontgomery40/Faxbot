@@ -43,7 +43,7 @@ import { docsLink } from '../docsLinks';
 import type { InboundFax } from '../api/types';
 import type { IntakeItem } from '../api/deliveryTypes';
 import { parseServerTime } from '../api/time';
-import { DeliveryStatusLine, DirectDeliveries } from './delivery/InboxDelivery';
+import { DeliveryStatusLine, DirectDeliveries, isNewFax } from './delivery/InboxDelivery';
 import { DeliveryError, Notice } from './delivery/shared';
 import type { AdminDestination } from '../navigation';
 import { ResponsiveFormSection } from './common/ResponsiveFormFields';
@@ -311,7 +311,7 @@ function Inbound({ client, docsBase, inboundEnabled, onNavigate, permissions }: 
             {deliveries !== null && (
               <Box>
                 <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 0.5 }}>Email delivery</Typography>
-                <DeliveryStatusLine item={deliveryFor.get(fax.id)} canRetry={canRetryDelivery} busy={retrying}
+                <DeliveryStatusLine item={deliveryFor.get(fax.id)} canRetry={canRetryDelivery} busy={retrying} isNew={isNewFax(fax.received_at)}
                   onRetry={(item) => void retryDelivery(item)} label={`the fax from ${maskPhoneNumber(fax.fr)}`} />
               </Box>
             )}
@@ -686,7 +686,7 @@ same => n,System(curl -s -X POST -H "Content-Type: application/json" -H "X-Inter
                         </TableCell>
                         {deliveries !== null && (
                           <TableCell>
-                            <DeliveryStatusLine item={deliveryFor.get(fax.id)} canRetry={canRetryDelivery} busy={retrying}
+                            <DeliveryStatusLine item={deliveryFor.get(fax.id)} canRetry={canRetryDelivery} busy={retrying} isNew={isNewFax(fax.received_at)}
                               onRetry={(item) => void retryDelivery(item)} label={`the fax from ${maskPhoneNumber(fax.fr)}`} />
                           </TableCell>
                         )}
