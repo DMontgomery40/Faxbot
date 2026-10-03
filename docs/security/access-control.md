@@ -10,7 +10,7 @@ How people and apps sign in is covered in [Authentication](authentication.md).
 
 **Integrations** are apps, scanners, scripts and other systems. They have no password and only use [API keys](#keys). Add them on the same **Users** screen. Each iPhone that pairs with Faxbot becomes its own integration named after the device.
 
-**The installation key** is the `API_KEY` value from the installation's configuration. It can do everything. Use it to create the first owner and to recover owner access, not for daily work. If `API_KEY` is empty, the installation key cannot sign in at all.
+**The installation key** is the `API_KEY` value saved in the installation's configuration. It can do everything. Use it to create the first owner and to recover owner access, not for daily work. If `API_KEY` is empty, the installation key cannot sign in at all.
 
 ## Groups
 
@@ -110,7 +110,7 @@ When the iPhone app pairs, Faxbot creates an integration for that device and giv
 
 A new installation has no users. To create the first owner:
 
-1. Make sure `API_KEY` is set in the installation's configuration.
+1. Set `API_KEY` in the environment before the installation starts for the first time. Faxbot saves it then; later `.env` edits do not change it.
 2. Open the admin console, select **Sign in with API key** and paste the `API_KEY` value.
 3. Select **Create the first owner**, then enter a username and display name.
 4. Copy the temporary password. It is shown only once.
@@ -122,7 +122,7 @@ The **Create the first owner** prompt appears only while no owner exists.
 
 If every owner is locked out, sign in to the console with the installation key (`API_KEY`), as in the steps above. The installation key can do everything an Owner can, including resetting an owner's password on the **Users** screen or adding a new owner.
 
-Keep `API_KEY` somewhere safe, such as a password manager. If it is empty, nobody can recover owner access this way. Changing it is itself an owner-only change.
+Keep `API_KEY` somewhere safe, such as a password manager. If it is empty, nobody can recover owner access this way. On an existing installation, only an Owner can change it, through the settings API (`PUT /admin/settings` with `api_key`); the Settings screen does not show it, and editing `.env` does not change it.
 
 ## Audit
 

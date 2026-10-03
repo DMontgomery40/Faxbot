@@ -368,8 +368,8 @@ async def _initialize_runtime(tasks: list[asyncio.Task]) -> bool:
             raise RuntimeError("Ghostscript (gs) not found. Install 'ghostscript' — it is required for fax file processing.")
     # Security posture warnings
     if not settings.api_key:
-        print("[info] API_KEY is not set. Every API request still needs an API key or a signed-in console session; "
-              "set API_KEY to create the first owner or to recover owner access.")
+        print("[info] No installation key (API_KEY) is saved. Every API request still needs an API key or a signed-in "
+              "console session. An Owner can save an installation key through the settings API for owner recovery.")
     pu = urlparse(settings.public_api_url)
     insecure = pu.scheme == "http" and pu.hostname not in {"localhost", "127.0.0.1", "::1"}
     if insecure:

@@ -28,7 +28,7 @@ Public API URL is a setting, not a tunnel launcher. Start a tunnel yourself, pas
 
 ## 3. Review security settings
 
-Review public HTTPS enforcement, audit logging and how long document download links last. These are individual settings, not a compliance profile. **Require API Key** is kept for older configurations and no longer changes anything: every request needs an API key or a signed-in session. Use Settings for other security, storage and receiving fields.
+Review public HTTPS enforcement, audit logging and how long document download links last. These are individual settings, not a compliance profile. **Require API Key** no longer turns off authentication: every request needs an API key or a signed-in session. Use Settings for other security, storage and receiving fields.
 
 ## 4. Apply and export
 

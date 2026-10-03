@@ -62,14 +62,15 @@ ok "STORAGE_BACKEND=${STORAGE}"
 title "Base settings"
 require MAX_FILE_SIZE_MB "Max upload size in MB (default 10)"
 # Every API request needs an API key or a signed-in console session.
-# API_KEY is the installation key used to create the first owner and to recover owner access.
+# API_KEY is the installation key used to create the first owner and to recover
+# owner access. Faxbot reads it from the environment only on the first start.
 if [[ -n "${API_KEY:-}" ]]; then
-  ok "API_KEY present (installation key for first-owner setup and owner recovery)"
+  ok "API_KEY present (read on first start; used for first-owner setup and owner recovery)"
 else
-  warn "API_KEY is not set; set it to create the first owner or recover owner access"
+  warn "API_KEY is not set; set it before the first start so you can create the first owner"
 fi
 if [[ -n "${REQUIRE_API_KEY:-}" ]] && ! istrue "${REQUIRE_API_KEY}"; then
-  warn "REQUIRE_API_KEY=false has no effect; requests always need an API key or a console session"
+  warn "REQUIRE_API_KEY=false no longer turns off authentication; requests always need an API key or a console session"
 fi
 
 case "$(printf '%s' "${BACKEND}" | tr '[:upper:]' '[:lower:]')" in
