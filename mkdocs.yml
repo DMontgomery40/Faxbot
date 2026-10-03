@@ -66,6 +66,10 @@ plugins:
 
   - exclude:
       glob:
+        # Working plans and historical assessments are repository evidence,
+        # not current operator instructions or search results.
+        - 'superpowers/**'
+        - 'modernization/**'
         - 'api/admin_ui/node_modules/**'
         - 'api/**/node_modules/**'
         - 'vendor/**'
