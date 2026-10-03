@@ -12,7 +12,7 @@ Faxbot has settings ready for these carriers. Each preset uses the carrier's own
 | --- | --- | --- | --- |
 | Telnyx | Username and password, or server IP address | Credentials from a Telnyx SIP connection | Turn on "Enable T.38 Fax Gateway" for each number. Telnyx expects your server to switch a received call to T.38, which Faxbot does. |
 | SignalWire | Username and password | Your space SIP domain, such as `example.sip.signalwire.com` | SignalWire does not publish fixed signaling addresses or T.38 details for SIP, so test a fax first. |
-| Sinch | Username and password, or server IP address | Your trunk domain, such as `example.pstn.sinch.com` | Sinch expects numbers in international format with a plus sign. |
+| Sinch | Username and password, or server IP address | Your trunk domain, such as `example.pstn.sinch.com` | Sinch does not document T.38 or fax for Elastic SIP Trunking; ask Sinch to confirm it for your trunk and send test faxes first. Sinch asks every outgoing call for the trunk username and password; to receive, add a registered SIP endpoint with the same username and password. |
 | AnveoDirect | Server IP address only | Your server's public IP address in the AnveoDirect portal | AnveoDirect does not support registration. |
 | Flowroute | Username and password, or server IP address | Credentials, or your eight-digit tech prefix for IP sign-in | Flowroute expects North American numbers as 1 plus ten digits; Faxbot formats them for you. |
 | Another carrier | Either | The server, port and credentials your carrier gave you | Faxbot sends numbers exactly as they were entered. |
@@ -21,7 +21,7 @@ Carrier pages used for the presets:
 
 - Telnyx: [sip.telnyx.com](https://sip.telnyx.com/), [voice.json](https://sip.telnyx.com/voice.json), [getting started](https://developers.telnyx.com/docs/voice/sip-trunking/get-started), [credential types](https://developers.telnyx.com/docs/voice/sip-trunking/authentication/credential-types), [caller ID policy](https://developers.telnyx.com/docs/voice/sip-trunking/configuration/caller-id-policy), [fax with T.38](https://support.telnyx.com/en/articles/1130672-fax-service-with-telnyx-via-t-38-or-g711), [IP addresses](https://developers.telnyx.com/docs/voice/sip-trunking/network-configuration/ip-whitelisting)
 - SignalWire: [SIP trunking](https://signalwire.com/docs/platform/voice/sip/trunking), [bring your own carrier](https://signalwire.com/docs/platform/voice/sip/bring-your-own-carrier)
-- Sinch: [Elastic SIP Trunking test plan](https://developers.sinch.com/docs/est/test-plan)
+- Sinch: [Elastic SIP Trunking](https://developers.sinch.com/docs/est), [test plan](https://developers.sinch.com/docs/est/test-plan), [LiveKit guide](https://developers.sinch.com/docs/est/integration-guides/livekit), [Ribbon guide](https://developers.sinch.com/docs/est/integration-guides/ribbon-sbc)
 - AnveoDirect: [FAQ](https://www.anveodirect.com/about/faq)
 - Flowroute: [points of presence](https://developer.flowroute.com/docs/inbound-and-outbound-calling-with-flowroute-new-pops/), [IP authentication](https://support.bcmone.com/flowroute-support/docs/set-up-ip-based-authentication-for-outbound-calls), [faxing](https://flowroute.com/faxing/)
 

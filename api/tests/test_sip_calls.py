@@ -236,3 +236,16 @@ async def test_a_broken_record_store_never_blocks_the_call(monkeypatch):
             assert await task is None
         finally:
             sip_calls.detach()
+
+
+def test_route_cost_capture_uses_the_measured_connected_seconds(records):
+    """The routing ledger prices a native fax from the trunk's connected time, not Faxbot's timing."""
+    from types import SimpleNamespace
+    from app.routing.capture import CostRecorder
+    records.record_submission(submission(), now=NOW)
+    recorder = CostRecorder(None, observed_seconds=records.observed_seconds)
+    assert recorder._observed(SimpleNamespace(attempt_id=ATTEMPT, phase='success')) is None
+    records.record_fax_result(fax_result(), now=NOW + timedelta(seconds=74))
+    assert recorder._observed(SimpleNamespace(attempt_id=ATTEMPT, phase='success')) == 65
+    assert recorder._observed(SimpleNamespace(attempt_id=ATTEMPT, phase='uncertain')) is None
+    assert recorder._observed(SimpleNamespace(attempt_id='f' * 32, phase='failed')) is None
