@@ -64,11 +64,13 @@ async def _exercise(transport, caller, mode):
         sent = await client.call_tool('send_fax', {'to': '+15551234567', 'fileContent': PDF_B64,
                                                    'fileName': 'letter.pdf'})
         status = await client.call_tool('get_fax_status', {'jobId': f'status-{caller}'})
-        details = await client.call_tool('get_fax', {'id': 'missing'})
+        details = await client.call_tool('get_fax', {'id': 'a1b2c3'})
+        missing = await client.call_tool('get_fax', {'id': 'missing'})
         inbound = await client.call_tool('list_inbound', {'limit': 5})
         pdf = await client.call_tool('get_inbound_pdf', {'inboundId': 'a1b2c3', 'asBase64': True})
         link = await client.call_tool('get_inbound_pdf', {'inboundId': 'a1b2c3'})
         resource = await client.read_resource('faxbot://inbound/a1b2c3/pdf')
+        assert missing.is_error and '404' in missing.content[0].text
         return client.protocol_version, sent, status, details, inbound, pdf, link, resource
 
 
@@ -104,7 +106,7 @@ async def test_each_caller_key_is_forwarded_and_the_environment_key_never_is(
         assert version == expected
         assert sent.structured_content == {'id': f'job-for-{key}', 'status': 'queued'}
         assert status.structured_content['id'] == f'status-{caller}'
-        assert details.is_error and '404' in details.content[0].text
+        assert details.structured_content['direction'] == 'inbound'  # /fax/a1b2c3 is 404, so /inbound is used
         assert inbound.structured_content['items'][0]['id'] == 'a1b2c3'
         assert base64.b64decode(pdf.content[0].resource.blob).startswith(b'%PDF')
         assert link.content[0].uri == 'faxbot://inbound/a1b2c3/pdf'
@@ -113,7 +115,7 @@ async def test_each_caller_key_is_forwarded_and_the_environment_key_never_is(
                    if request['path'].startswith('/fax/status-')}
     assert status_keys == {'/fax/status-alice': 'alice-key', '/fax/status-bob': 'bob-key'}
     assert set(fake_faxbot.keys()) == {'alice-key', 'bob-key'}
-    assert len(calls) == 12, 'the provider supplies the base URL once per Faxbot-bound call'
+    assert len(calls) == 14, 'the provider supplies the base URL once per Faxbot-bound call'
 
 
 @pytest.mark.parametrize('module, path', [(http_server, '/mcp'), (server, '/sse')])

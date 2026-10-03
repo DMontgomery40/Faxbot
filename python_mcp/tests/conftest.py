@@ -60,7 +60,7 @@ class FakeFaxbot:
                 path = self.path.split('?')[0]
                 if path == '/health':
                     return self._reply(200, {'status': 'ok'})
-                if path == '/fax/missing' or path == '/inbound/missing':
+                if path in ('/fax/missing', '/fax/a1b2c3', '/inbound/missing'):  # inbound ids are hex too
                     return self._reply(404, {'detail': 'Not found'})
                 if match := re.fullmatch(r'/fax/([^/]+)', path):
                     return self._reply(200, {'id': match.group(1), 'to': '+15551230000', 'status': 'SUCCESS',
