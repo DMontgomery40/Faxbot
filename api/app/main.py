@@ -46,7 +46,7 @@ from .config_paths import (
 )
 from .signalwire_service import get_signalwire_service
 
-from pydantic import BaseModel, ConfigDict, create_model
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, create_model
 from .config_values import ConfigurationValues, ConfigurationValueError
 from .config_views import project_admin_settings
 from .config_activation import ConfigurationActivationError
@@ -151,6 +151,9 @@ from fastapi.exception_handlers import request_validation_exception_handler
 
 @app.exception_handler(RequestValidationError)
 async def _request_validation_error(request, exc):
+    if request.url.path.startswith('/admin/fax-jobs/') and request.url.path.endswith('/reconcile'):
+        # Pydantic errors include raw rejected values and arbitrary extra keys.
+        return JSONResponse({'detail': 'Invalid provider identity reconciliation input.'}, status_code=422)
     if request.url.path.startswith('/admin/settings') or request.url.path.startswith('/plugins/'):
         return JSONResponse({'detail': [
             {'loc': error['loc'], 'type': error['type'], 'msg': 'Invalid configuration input.'}
@@ -1625,6 +1628,56 @@ async def get_admin_job(job_id: str):
             "updated_at": job.updated_at,
             "file_name": job.file_name,
         }
+
+
+class ProviderIdentityConfirmation(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    expected_version: int = Field(strict=True, gt=0)
+    provider_sid: str = Field(strict=True, pattern=r'^[A-Za-z0-9_-]{1,100}$')
+    confirm_original_account: StrictBool
+
+
+def _operator_delivery(job_id: str):
+    with SessionLocal() as db:
+        if db.get(FaxJob, job_id) is None:
+            raise HTTPException(404, detail='Job not found')
+    try:
+        return _deliveries().operator_view(job_id)
+    except DeliveryConflict:
+        raise HTTPException(409, detail='Delivery history is unavailable; reload the job before continuing.') from None
+
+
+@app.get('/admin/fax-jobs/{job_id}/delivery', dependencies=[Depends(require_admin)])
+async def admin_delivery_history(job_id: str):
+    """Bounded evidence from the accepted account, excluding captured secrets."""
+    return await run_lifecycle_step(lambda: _operator_delivery(job_id))
+
+
+@app.post('/admin/fax-jobs/{job_id}/reconcile')
+async def admin_bind_provider_identity(job_id: str, confirmation: ProviderIdentityConfirmation,
+                                       principal=Depends(require_admin)):
+    """Attach an operator-confirmed receipt; this never authorizes transmission."""
+    if confirmation.confirm_original_account is not True:
+        raise HTTPException(400, detail='Confirm that this fax ID matches the fax in its original provider account.')
+
+    def bind():
+        with SessionLocal() as db:
+            if db.get(FaxJob, job_id) is None:
+                raise HTTPException(404, detail='Job not found')
+        delivery = _deliveries()
+        try:
+            delivery.bind_provider_identity(job_id,
+                expected_version=confirmation.expected_version,
+                provider_sid=confirmation.provider_sid,
+                actor='key:' + principal['key_id'])
+        except DeliveryConflict as exc:
+            # Store conflicts are fixed messages and contain no provider payloads.
+            raise HTTPException(409, detail=str(exc)) from None
+        except ValueError:
+            raise HTTPException(400, detail='Invalid provider identity reconciliation input.') from None
+        return delivery.operator_view(job_id)
+
+    return await run_lifecycle_step(bind)
 
 
 @app.get("/admin/fax-jobs/{job_id}/pdf", dependencies=[Depends(require_admin)])
