@@ -51,6 +51,7 @@ def project_admin_settings(snapshot: ConfigurationSnapshot, pending_fields: Iter
         'phaxio': {
             'api_key': mask_secret(values.phaxio_api_key),
             'api_secret': mask_secret(values.phaxio_api_secret),
+            'callback_token': mask_secret(values.phaxio_callback_token),
             'callback_url': values.phaxio_status_callback_url,
             'verify_signature': values.phaxio_verify_signature,
             'configured': bool(values.phaxio_api_key and values.phaxio_api_secret),

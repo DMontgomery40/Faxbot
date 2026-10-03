@@ -33,6 +33,21 @@ def environment(tmp_path):
             'PHAXIO_API_SECRET': 'original-secret'}
 
 
+def test_phaxio_callback_token_is_distinct_captured_and_redacted(database, tmp_path):
+    from api.app.config_views import project_admin_settings
+    control = manager(database, tmp_path)
+    first = control.initialize({**environment(tmp_path), 'PHAXIO_CALLBACK_TOKEN': 'callback-only-secret'})
+    original = control.store.read_profile(first.active.profile_id('outbound'))
+    assert original.configuration.credentials['callback_token'] == 'callback-only-secret'
+    assert original.configuration.credentials['api_secret'] == 'original-secret'
+    assert project_admin_settings(first)['phaxio']['callback_token'] == '***'
+    assert 'callback-only-secret' not in repr(first.active.values)
+    changed = control.patch(first, {'phaxio_callback_token': ''}, actor='admin')
+    assert project_admin_settings(changed)['phaxio']['callback_token'] == ''
+    assert control.store.read_profile(changed.active.profile_id('outbound')).configuration.credentials['callback_token'] == ''
+    assert control.store.read_profile(first.active.profile_id('outbound')).configuration.credentials['callback_token'] == 'callback-only-secret'
+
+
 def test_manager_ignores_changed_bootstrap_after_initialization_and_rotates_live_profile(database, tmp_path):
     control = manager(database, tmp_path)
     first = control.initialize(environment(tmp_path))

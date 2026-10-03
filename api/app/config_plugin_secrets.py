@@ -5,7 +5,7 @@ from referencing import Registry, Resource
 from referencing.jsonschema import DRAFT202012, specification_with
 
 
-SECRET_PLUGIN_FIELDS = frozenset({'api_key', 'api_secret', 'api_token', 'token', 'password', 'secret', 'signing_key'})
+SECRET_PLUGIN_FIELDS = frozenset({'api_key', 'api_secret', 'api_token', 'token', 'callback_token', 'password', 'secret', 'signing_key'})
 
 
 class ConfigurationPluginSecretError(ValueError):

@@ -70,6 +70,7 @@ export interface Settings {
   phaxio: {
     api_key: string;
     api_secret: string;
+    callback_token: string;
     callback_url: string;
     verify_signature: boolean;
     configured: boolean;

@@ -74,6 +74,16 @@ export default function PluginConfigDialog({ open, plugin, initialConfig, loadin
             margin="normal"
           />
           {help('Example: https://yourdomain.com/phaxio-callback')}
+          <TextField
+            label="Callback Token"
+            type="password"
+            fullWidth
+            size="small"
+            value={config.callback_token || ''}
+            onChange={(e) => setConfig({ ...config, callback_token: e.target.value })}
+            margin="normal"
+            helperText="Separate Callback Token from the Phaxio console. Leave unchanged to preserve it."
+          />
           <FormControlLabel
             control={<Checkbox checked={!!config.verify_signature} onChange={(e) => setConfig({ ...config, verify_signature: e.target.checked })} />}
             label="Verify outbound status signatures"

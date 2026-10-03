@@ -2,6 +2,7 @@
 
 PLUGIN_FIELDS = {
     'phaxio': {'api_key': 'phaxio_api_key', 'api_secret': 'phaxio_api_secret',
+               'callback_token': 'phaxio_callback_token',
                'callback_url': 'phaxio_status_callback_url', 'verify_signature': 'phaxio_verify_signature',
                'inbound_verify_signature': 'phaxio_inbound_verify_signature'},
     'sinch': {'project_id': 'sinch_project_id', 'api_key': 'sinch_api_key',

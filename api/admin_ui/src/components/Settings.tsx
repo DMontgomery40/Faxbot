@@ -62,6 +62,7 @@ function editorValues(data: SettingsType): SettingsForm {
     inbound_enabled: data.inbound.enabled,
     phaxio_api_key: data.phaxio.api_key,
     phaxio_api_secret: data.phaxio.api_secret,
+    phaxio_callback_token: data.phaxio.callback_token,
     phaxio_status_callback_url: data.phaxio.callback_url,
     phaxio_verify_signature: data.phaxio.verify_signature,
     sinch_project_id: data.sinch.project_id,
@@ -536,6 +537,18 @@ function Settings({ client }: SettingsProps) {
                       showCurrentValue={!pendingRestart && (!!settings.phaxio.api_secret)}
                     />
                     
+                    <ResponsiveSettingItem
+                      icon={getStatusIcon(!!settings.phaxio.callback_token)}
+                      label="Callback Token"
+                      value={settings.phaxio.callback_token ?? ''}
+                      editValue={form.phaxio_callback_token ?? ''}
+                      helperText="Use the separate Callback Token from the Phaxio console to verify callbacks."
+                      placeholder="Update PHAXIO_CALLBACK_TOKEN"
+                      onChange={(value) => handleForm('phaxio_callback_token', value)}
+                      type="password"
+                      showCurrentValue={!pendingRestart && !!settings.phaxio.callback_token}
+                    />
+
                     <ResponsiveSettingItem
                       icon={getStatusIcon(!!settings.phaxio.callback_url)}
                       label="Callback URL"

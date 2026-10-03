@@ -43,6 +43,7 @@ class ConfigurationValues(BaseModel):
     fs_t38_enable: bool = Field(True, validation_alias='FREESWITCH_T38_ENABLE')
     phaxio_api_key: str = Field('', validation_alias='PHAXIO_API_KEY', repr=False, json_schema_extra={'secret': True})
     phaxio_api_secret: str = Field('', validation_alias='PHAXIO_API_SECRET', repr=False, json_schema_extra={'secret': True})
+    phaxio_callback_token: str = Field('', validation_alias='PHAXIO_CALLBACK_TOKEN', repr=False, json_schema_extra={'secret': True})
     phaxio_status_callback_url: str = Field('', validation_alias=AliasChoices('PHAXIO_STATUS_CALLBACK_URL', 'PHAXIO_CALLBACK_URL'))
     phaxio_verify_signature: bool = Field(True, validation_alias='PHAXIO_VERIFY_SIGNATURE')
     public_api_url: str = Field('http://localhost:8080', validation_alias='PUBLIC_API_URL')
