@@ -29,13 +29,16 @@ def _background(app):
     from ..sip_calls import SipCallRecords  # connected seconds measured on the SIP trunk
     recorder = CostRecorder(routes, observed_seconds=SipCallRecords(engine).observed_seconds)
 
-    def seed():
+    # Starting rate cards go in before the API serves its first request, so a
+    # rate-card save can never race the seed.
+    try:
         routes.seed_cards(load_cards())
-        return False
+    except Exception:
+        import logging
+        logging.getLogger(__name__).warning('Starting rate cards could not be loaded.')
     billing = BillingReconciler(routes, {'signalwire': SignalWireCharges(delivery)})
     fallback = FallbackScheduler(delivery, routes, ami=ami_client)
     return [('faxbot-route-policy', _install_policy(OutboundStore, FallbackPolicy(fallback))),
-            ('faxbot-route-seed', _once(seed)),
             ('faxbot-route-costs', repeat(recorder.step, interval=15.0, initial_delay=5.0,
                                           warning='Fax cost estimates are temporarily unavailable.')),
             ('faxbot-route-billing', repeat(billing.step, interval=60.0, initial_delay=30.0,

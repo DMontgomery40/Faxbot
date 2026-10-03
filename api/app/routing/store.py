@@ -124,41 +124,49 @@ class RouteStore:
             raise RoutingInputError('Each provider can have one sending and one receiving rate card.')
         if len(cards) > 100:
             raise RoutingInputError('Keep at most 100 rate cards.')
-        now = utcnow()
         with write_transaction(self.engine) as connection:
-            current = {(card.provider_id, card.direction): card for card in self.current_cards(connection)}
-            wanted = {}
-            for card in cards:
-                existing = current.get((card.provider_id, card.direction))
-                if existing is not None and replace(existing, id=None) == replace(card, id=None):
-                    wanted[(card.provider_id, card.direction)] = existing.id
-                    continue
-                identity = uuid4().hex
-                connection.execute(self.cards.insert().values(
-                    id=identity, provider_id=card.provider_id, direction=card.direction,
-                    label=card.label.strip(), currency=card.currency,
-                    per_minute_micros=card.per_minute_micros, per_page_micros=card.per_page_micros,
-                    per_call_micros=card.per_call_micros,
-                    billing_increment_seconds=card.billing_increment_seconds,
-                    minimum_seconds=card.minimum_seconds, source_url=card.source_url,
-                    captured_on=card.captured_on, created_at=now))
-                wanted[(card.provider_id, card.direction)] = identity
-            retired = [card.id for key, card in current.items() if wanted.get(key) != card.id]
-            if retired:
-                connection.execute(self.cards.update().where(self.cards.c.id.in_(retired)).values(superseded_at=now))
-            return self.current_cards(connection)
+            return self._write_cards(connection, cards)
+
+    def _write_cards(self, connection, cards):
+        now = utcnow()
+        current = {(card.provider_id, card.direction): card for card in self.current_cards(connection)}
+        wanted = {}
+        for card in cards:
+            existing = current.get((card.provider_id, card.direction))
+            if existing is not None and replace(existing, id=None) == replace(card, id=None):
+                wanted[(card.provider_id, card.direction)] = existing.id
+                continue
+            identity = uuid4().hex
+            connection.execute(self.cards.insert().values(
+                id=identity, provider_id=card.provider_id, direction=card.direction,
+                label=card.label.strip(), currency=card.currency,
+                per_minute_micros=card.per_minute_micros, per_page_micros=card.per_page_micros,
+                per_call_micros=card.per_call_micros,
+                billing_increment_seconds=card.billing_increment_seconds,
+                minimum_seconds=card.minimum_seconds, source_url=card.source_url,
+                captured_on=card.captured_on, created_at=now))
+            wanted[(card.provider_id, card.direction)] = identity
+        retired = [card.id for key, card in current.items() if wanted.get(key) != card.id]
+        if retired:
+            connection.execute(self.cards.update().where(self.cards.c.id.in_(retired)).values(superseded_at=now))
+        return self.current_cards(connection)
 
     def seed_cards(self, cards):
-        """Load starting rate cards once, only into an empty table; the table stays authoritative."""
+        """Load starting rate cards once, only into an empty table; the table stays authoritative.
+
+        The emptiness check and the insert share one serialized write
+        transaction, so cards an operator saves while Faxbot starts are never
+        replaced by the shipped set.
+        """
         if not cards:
             return False
-        with read_connection(self.engine) as connection:
-            if connection.scalar(sa.select(sa.func.count()).select_from(self.cards)):
-                return False
         unique = {}
         for card in cards:
             unique.setdefault((card.provider_id, card.direction), card)
-        self.replace_cards(list(unique.values()))
+        with write_transaction(self.engine) as connection:
+            if connection.scalar(sa.select(sa.func.count()).select_from(self.cards)):
+                return False
+            self._write_cards(connection, list(unique.values()))
         return bool(unique)
 
     # Destinations ---------------------------------------------------------

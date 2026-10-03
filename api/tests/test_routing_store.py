@@ -80,6 +80,34 @@ def test_destination_updates_are_versioned(routes):
         routes.update_destination('+15550100001', preferred_route='Not A Route!')
 
 
+def test_seed_waits_for_a_rate_card_save_in_progress(routes, tmp_path):
+    """An operator save that is mid-write when the seed runs is never replaced by the shipped set.
+
+    The seed's emptiness check and insert share one serialized write transaction,
+    so it only runs after the save commits, sees the table is not empty, and stops.
+    """
+    import json
+    import threading
+    import time
+    from api.app.routing.database import write_transaction
+    from api.app.routing.seed import load_cards
+    path = tmp_path / 'rate_cards.json'
+    path.write_text(json.dumps({'carriers': {
+        'sip': {'label': 'Telnyx Elastic SIP', 'per_minute': '0.005', 'rounding': 'whole_minute',
+                'source_url': 'https://telnyx.com/pricing/elastic-sip', 'advertised_on': '2026-10-03'}}}))
+    shipped = load_cards(path)
+    outcome = {}
+    seed = threading.Thread(target=lambda: outcome.setdefault('seeded', routes.seed_cards(shipped)))
+    with write_transaction(routes.engine) as connection:
+        seed.start()
+        time.sleep(0.5)  # The seed has started and must now be waiting for this save.
+        routes._write_cards(connection, [phaxio_card()])
+    seed.join(timeout=20)
+    assert not seed.is_alive()
+    assert outcome['seeded'] is False
+    assert [card.provider_id for card in routes.current_cards()] == ['phaxio']
+
+
 @pytest.mark.asyncio
 async def test_worker_records_route_and_reason_then_cost_is_captured(installation, routes):
     _, delivery, _ = installation

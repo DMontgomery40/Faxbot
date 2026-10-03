@@ -33,6 +33,16 @@ def scoped_key(client, scopes):
     return {'X-API-Key': response.json()['token']}
 
 
+def test_shipped_rate_cards_are_in_place_before_the_first_request(client):
+    """The seed finishes during startup, so a save right after start is never overwritten by it."""
+    shipped = client.get('/routing/rate-cards', headers=ADMIN).json()['cards']
+    assert shipped, 'starting rate cards should already be loaded'
+    saved = client.put('/routing/rate-cards', headers=ADMIN, json={'cards': [TELNYX, PHAXIO]})
+    assert saved.status_code == 200, saved.text
+    current = client.get('/routing/rate-cards', headers=ADMIN).json()['cards']
+    assert sorted(card['provider_id'] for card in current) == ['phaxio', 'sip']
+
+
 def test_rate_cards_round_trip_as_money(client):
     response = client.put('/routing/rate-cards', headers=ADMIN, json={'cards': [TELNYX, PHAXIO]})
     assert response.status_code == 200, response.text
@@ -45,7 +55,8 @@ def test_rate_cards_round_trip_as_money(client):
 
 
 def test_destination_recommendation_ranks_configured_routes_by_cost(client):
-    client.put('/routing/rate-cards', headers=ADMIN, json={'cards': [TELNYX, PHAXIO]})
+    cards = client.put('/routing/rate-cards', headers=ADMIN, json={'cards': [TELNYX, PHAXIO]})
+    assert cards.status_code == 200, cards.text
     response = client.patch('/routing/destinations/+1 (202) 555-0123', headers=ADMIN,
                             json={'display_name': 'County clinic', 'preferred_route': None})
     assert response.status_code == 200, response.text
