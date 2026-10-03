@@ -72,12 +72,16 @@ PRESETS: dict[str, TrunkPreset] = {preset.id: preset for preset in (
         id='telnyx', label='Telnyx', host='sip.telnyx.com', port=5060, transport='udp',
         auth_modes=('registration', 'ip'), codecs=('ulaw', 'alaw'), dial_format='e164',
         signaling_addresses=('192.76.120.10', '64.16.250.10'),
-        t38=('T.38 is turned on per number with "Enable T.38 Fax Gateway". For calls you receive, '
-             'Telnyx expects your server to switch the call to T.38, which Faxbot does.'),
+        t38=('In the Telnyx portal, turn on "Enable T.38 Fax Gateway" for each number, and set the connection '
+             'option "T.38 fax re-invite initiated by" to Telnyx. For faxes you send, Telnyx then switches the '
+             'call to T.38 as soon as the receiving machine answers. Faxbot also works with Customer, but then '
+             'Faxbot waits about ten seconds before switching the call itself. For faxes you receive, Faxbot '
+             'switches the call to T.38 whichever option you choose.'),
         notes=('Telnyx accepts credentials (registration) or IP address authentication.',
                'The caller ID must be a number on your Telnyx account or one Telnyx has verified.',
                'The US signaling addresses are 192.76.120.10 and 64.16.250.10.',
-               'Choose an outbound voice profile for the connection so it can place calls.'),
+               'Choose an outbound voice profile for the connection so it can place calls.',
+               'Keep only the G.711 U and G.711 A codecs on the connection.'),
         sources=(Source('https://sip.telnyx.com/voice.json'),
                  Source('https://sip.telnyx.com/'),
                  Source('https://developers.telnyx.com/docs/voice/sip-trunking/get-started'),
@@ -90,7 +94,7 @@ PRESETS: dict[str, TrunkPreset] = {preset.id: preset for preset in (
     TrunkPreset(
         id='signalwire', label='SignalWire', host='', port=5060, transport='udp',
         auth_modes=('registration',), codecs=('ulaw', 'alaw'), dial_format='e164',
-        t38='SignalWire does not document T.38 for SIP endpoints, so test a fax before relying on it.',
+        t38='T.38 is not documented by the carrier. Confirm it with SignalWire support and send test faxes first.',
         notes=('Enter your space SIP domain, for example example.sip.signalwire.com.',
                'SignalWire does not publish fixed signaling addresses, so Faxbot uses SIP credentials.'),
         sources=(Source('https://signalwire.com/docs/platform/voice/sip/trunking'),
@@ -99,8 +103,7 @@ PRESETS: dict[str, TrunkPreset] = {preset.id: preset for preset in (
     TrunkPreset(
         id='sinch', label='Sinch', host='', port=5060, transport='udp',
         auth_modes=('registration',), codecs=('ulaw', 'alaw'), dial_format='e164',
-        t38=('Sinch does not document T.38 or fax for Elastic SIP Trunking. Ask Sinch to confirm T.38 '
-             'on your trunk and send test faxes before relying on it.'),
+        t38='T.38 is not documented by the carrier. Confirm it with Sinch support and send test faxes first.',
         notes=('Enter your trunk domain, for example example.pstn.sinch.com.',
                'Sinch asks every outgoing call for the trunk username and password.',
                'For receiving, use a registered SIP endpoint with the same username and password.',
@@ -117,7 +120,7 @@ PRESETS: dict[str, TrunkPreset] = {preset.id: preset for preset in (
         id='anveo', label='AnveoDirect', host='sbc.anveo.com', port=5060, transport='udp',
         auth_modes=('ip',), codecs=('ulaw', 'alaw'), dial_format='e164',
         signaling_addresses=('169.48.232.158', '204.216.109.55', '176.9.39.206', '72.9.149.25'),
-        t38='AnveoDirect does not state T.38 support on its connection page, so test a fax before relying on it.',
+        t38='T.38 is not documented on the carrier\'s connection page. Confirm it with AnveoDirect and send test faxes first.',
         notes=('AnveoDirect authenticates by IP address and does not support registration.',
                'Add your server public IP address in the AnveoDirect portal.'),
         sources=(Source('https://www.anveodirect.com/about/faq'),),

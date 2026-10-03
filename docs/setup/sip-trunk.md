@@ -4,16 +4,46 @@ Faxbot can send and receive ordinary faxes with its own fax engine (Asterisk wit
 
 You can use a trunk for sending only, receiving only, or both.
 
+## Telnyx (recommended)
+
+Telnyx documents T.38 fax on its SIP connections, so it is the carrier to start with.
+
+### In the Telnyx portal
+
+1. Create a SIP connection that uses **credentials** for authentication. Note its username and password.
+2. Give the connection an **outbound voice profile** so it can place calls.
+3. Under the connection's codecs, keep only **G.711 U** and **G.711 A**.
+4. Set **T.38 fax re-invite initiated by** to **Telnyx**. When you send a fax, Telnyx switches the call to T.38 as soon as the receiving machine answers. Faxbot also works with **Customer**, but then it waits about ten seconds before switching the call itself. This option does not affect faxes you receive: Faxbot switches those calls to T.38 itself.
+5. Buy or port a number, assign it to the connection, and turn on **Enable T.38 Fax Gateway** for that number.
+
+A Telnyx trial account can only call verified numbers until you upgrade it.
+
+### In Faxbot
+
+| Setting | Value |
+| --- | --- |
+| Carrier | Telnyx |
+| How Faxbot signs in | Username and password |
+| Server | Leave empty to use `sip.telnyx.com` |
+| Port | Leave empty to use 5060 |
+| Transport | Leave as the default, UDP |
+| Username and password | The connection's credentials |
+| Caller ID | Your Telnyx number in international format, such as `+17205550100` |
+| Fax numbers on this trunk | The same number, in the same format |
+| Use T.38 fax over IP | On |
+
+Faxbot registers with Telnyx using these credentials. Registration is what lets Telnyx deliver incoming faxes to Faxbot, so keep the username and password filled in even if you only receive. Then select **Save trunk settings**, **Apply to Asterisk**, restart the Asterisk service, and select **Check trunk status**.
+
 ## Choose a carrier
 
 Faxbot has settings ready for these carriers. Each preset uses the carrier's own connection documentation, read on 2026-10-03.
 
 | Carrier | How Faxbot signs in | What you enter | Notes |
 | --- | --- | --- | --- |
-| Telnyx | Username and password, or server IP address | Credentials from a Telnyx SIP connection | Turn on "Enable T.38 Fax Gateway" for each number. Telnyx expects your server to switch a received call to T.38, which Faxbot does. |
-| SignalWire | Username and password | Your space SIP domain, such as `example.sip.signalwire.com` | SignalWire does not publish fixed signaling addresses or T.38 details for SIP, so test a fax first. |
-| Sinch | Username and password | Your trunk domain, such as `example.pstn.sinch.com` | Sinch does not document T.38 or fax for Elastic SIP Trunking; ask Sinch to confirm it for your trunk and send test faxes first. Sinch asks every outgoing call for the trunk username and password; to receive, add a registered SIP endpoint with the same username and password. Sinch does not publish the addresses it sends calls from, so Faxbot does not offer IP sign-in for Sinch. |
-| AnveoDirect | Server IP address only | Your server's public IP address in the AnveoDirect portal | AnveoDirect does not support registration. |
+| Telnyx | Username and password, or server IP address | Credentials from a Telnyx SIP connection | See [Telnyx (recommended)](#telnyx-recommended). |
+| SignalWire | Username and password | Your space SIP domain, such as `example.sip.signalwire.com` | T.38 is not documented by the carrier; confirm it with SignalWire support and send test faxes first. SignalWire does not publish fixed signaling addresses. |
+| Sinch | Username and password | Your trunk domain, such as `example.pstn.sinch.com` | T.38 is not documented by the carrier; confirm it with Sinch support and send test faxes first. Sinch asks every outgoing call for the trunk username and password; to receive, add a registered SIP endpoint with the same username and password. Sinch does not publish the addresses it sends calls from, so Faxbot does not offer IP sign-in for Sinch. |
+| AnveoDirect | Server IP address only | Your server's public IP address in the AnveoDirect portal | AnveoDirect does not support registration. T.38 is not documented on its connection page; confirm it with AnveoDirect first. |
 | Flowroute | Username and password, or server IP address | Credentials, or your eight-digit tech prefix for IP sign-in | Flowroute expects North American numbers as 1 plus ten digits; Faxbot formats them for you. |
 | Another carrier | Either | The server, port and credentials your carrier gave you | Faxbot sends numbers exactly as they were entered. |
 
