@@ -20,7 +20,7 @@ NOW = datetime(2026, 10, 3, 12, 0, 0)
 
 
 def test_sip_call_records_are_head_after_delivery_routes():
-    assert schema.HEAD == schema_sip.REVISION == '0009_sip_call_records'
+    assert schema.SIP == schema_sip.REVISION == '0009_sip_call_records'
     assert schema.DELIVERY == '0008_delivery_routes'
     assert schema_sip.TABLES <= schema.STRICT_TABLES
 
