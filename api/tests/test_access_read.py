@@ -77,11 +77,34 @@ def test_roles_list_builtin_and_custom_with_permissions_and_versions(rworld):
         assert reason(lambda: w.reads.roles(w.actor, limit=limit)) == MutationReason.INVALID_INPUT
 
 
-def test_legacy_per_key_roles_are_not_listed_as_assignable_roles(rworld):
+def test_legacy_per_key_roles_are_not_listed_and_never_show_generated_names(rworld):
     w = rworld
-    w.insert('access_roles', id='legacy-role', name='Legacy integration x', normalized_name='legacy integration x',
+    generated = 'Legacy integration 0123456789abcdef0123456789abcdef'
+    w.insert('access_roles', id='legacy-role', name=generated, normalized_name=generated.lower(),
              description='', kind='legacy')
+    w.insert('access_role_permissions', role_id='legacy-role', permission_id='fax:read')
     assert 'legacy-role' not in {item['id'] for item in w.reads.roles(w.actor, limit=200)['items']}
+    w.user('robot')
+    w.assignment('robot', 'legacy-role')
+    [assignment] = w.reads.user(w.actor, 'robot')['assignments']
+    assert assignment['role'] == {'id': 'legacy-role', 'name': 'Key permissions', 'builtin': False}
+    assert all(generated not in str(item) for item in w.reads.assignments(w.actor, limit=200)['items'])
+
+
+@pytest.mark.parametrize('permission, read', [
+    ('users:manage', lambda reads, actor: reads.users(actor)),
+    ('groups:manage', lambda reads, actor: reads.groups(actor)),
+    ('roles:manage', lambda reads, actor: reads.roles(actor)),
+    ('grants:manage', lambda reads, actor: reads.assignments(actor)),
+    ('mailboxes:manage', lambda reads, actor: reads.mailboxes(actor)),
+])
+def test_a_category_manager_can_reread_what_it_edits(rworld, permission, read):
+    w = rworld
+    manager = w.restricted('manager', {permission})
+    page = read(w.reads, manager)
+    assert set(page) == {'items', 'next_cursor'}
+    if permission == 'users:manage':
+        assert len(page['items']) > 1  # not just the self-read fallback
 
 
 def test_users_list_filters_and_principals_read_themselves(rworld):

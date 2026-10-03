@@ -26,6 +26,7 @@ from .types import ResourceRef, ScopedPermission
 INSTALLATION = ResourceRef('installation')
 INSTALLATION_NAME = 'Whole installation'
 LEGACY_NAME = 'Unassigned faxes'
+LEGACY_ROLE_NAME = 'Key permissions'
 _GROUP_ORDER = ('fax', 'inbound', 'mailbox', 'identity', 'config', 'host', 'audit')
 _KIND_RANK = {'installation': 0, 'legacy': 1, 'mailbox': 2, 'personal': 3}
 
@@ -131,11 +132,19 @@ class AccessReads:
     def _source(self, connection, actor, now):
         return self.control._current_source_on(connection, actor, now)
 
+    def _decision(self, connection, actor, permission, now):
+        # Whoever may manage a category may also read it, so an edit can be reread.
+        decision = self.control.authorize_on(connection, actor, permission, INSTALLATION, now=now)
+        manage = permission[:-len(':read')] + ':manage' if permission.endswith(':read') else None
+        if not decision.allowed and decision.reason.value == 'forbidden' and manage in PERMISSIONS:
+            decision = self.control.authorize_on(connection, actor, manage, INSTALLATION, now=now)
+        return decision
+
     def _allowed(self, connection, actor, permission, now):
-        return self.control.authorize_on(connection, actor, permission, INSTALLATION, now=now).allowed
+        return self._decision(connection, actor, permission, now).allowed
 
     def _require(self, connection, actor, permission, now):
-        decision = self.control.authorize_on(connection, actor, permission, INSTALLATION, now=now)
+        decision = self._decision(connection, actor, permission, now)
         if not decision.allowed:
             _deny(MutationReason.RESET_REQUIRED if decision.reason.value == 'reset_required' else MutationReason.FORBIDDEN)
 
@@ -188,7 +197,9 @@ class AccessReads:
                        if row['principal_id'] is not None else
                        {'kind': 'group', 'id': row['group_id'], 'name': row['group_name']})
             items.append({'id': row['id'], 'subject': subject,
-                'role': {'id': row['role_id'], 'name': row['role_name'], 'builtin': row['role_kind'] == 'builtin'},
+                # Per-key legacy roles carry generated identifiers in their stored names.
+                'role': {'id': row['role_id'], 'name': LEGACY_ROLE_NAME if row['role_kind'] == 'legacy' else row['role_name'],
+                         'builtin': row['role_kind'] == 'builtin'},
                 'resource': {'id': row['resource_id'], 'kind': kind, 'name': name}, 'version': row['version']})
         return items
 
