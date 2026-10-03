@@ -32,6 +32,11 @@ class DispatchClaim:
     expires_at: datetime
 
 
+@dataclass(frozen=True)
+class _ObservationRefusal:
+    message: str
+
+
 def _event(connection, events, job_id, kind, now, *, attempt_id=None, details=None, dedupe_key=None):
     connection.execute(events.insert().values(id=uuid4().hex, job_id=job_id,
         attempt_id=attempt_id, kind=kind, dedupe_key=dedupe_key,
@@ -191,6 +196,17 @@ class OutboundStore:
                     attempt_id=row['attempt_id'])
             return len(rows)
 
+    def _refuse_observation(self, connection, row, *, attempt_id, category, message, now, event_key):
+        # Accepted event digests are lowercase hexadecimal. This separate prefix
+        # prevents an accepted identity from suppressing its refusal evidence.
+        dedupe = ('r' + hashlib.sha256((category + '\0' + event_key).encode()).hexdigest()[:63]
+                  if event_key is not None else None)
+        if not dedupe or not connection.execute(sa.select(self.events.c.id).where(
+                self.events.c.job_id == row['id'], self.events.c.dedupe_key == dedupe)).first():
+            _event(connection, self.events, row['id'], 'provider_observation_refused', now,
+                attempt_id=attempt_id, details={'category': category}, dedupe_key=dedupe)
+        return _ObservationRefusal(message)
+
     def _observe(self, connection, row, *, attempt_id, profile_id, provider_sid, status, now, event_key=None):
         if status not in OBSERVED:
             raise DeliveryConflict('Provider status requires reconciliation.')
@@ -199,11 +215,17 @@ class OutboundStore:
             raise DeliveryConflict('Provider identity requires reconciliation.')
         attempt = connection.execute(sa.select(self.attempts).where(self.attempts.c.id == attempt_id)).mappings().one_or_none()
         if (row is None or row['attempt_id'] != attempt_id or attempt is None
-                or attempt['job_id'] != row['id'] or attempt['profile_id'] != profile_id
+                or attempt['job_id'] != row['id']
                 or attempt['submitted_at'] is None):
             raise DeliveryConflict('Provider observation does not match a submitted attempt.')
+        if attempt['profile_id'] != profile_id:
+            return self._refuse_observation(connection, row, attempt_id=attempt_id,
+                category='profile_mismatch', message='Provider observation does not match a submitted attempt.',
+                now=now, event_key=event_key)
         if attempt['provider_sid'] and provider_sid and attempt['provider_sid'] != provider_sid:
-            raise DeliveryConflict('Provider identity does not match the accepted attempt.')
+            return self._refuse_observation(connection, row, attempt_id=attempt_id,
+                category='sid_mismatch', message='Provider identity does not match the accepted attempt.',
+                now=now, event_key=event_key)
         dedupe = hashlib.sha256(event_key.encode()).hexdigest() if event_key is not None else None
         if dedupe and connection.execute(sa.select(self.events.c.id).where(
                 self.events.c.job_id == row['id'], self.events.c.dedupe_key == dedupe)).first():
@@ -233,14 +255,20 @@ class OutboundStore:
             row = self._row(connection, claim.job_id)
             if not self._owns(row, claim):
                 raise DeliveryConflict('Submission acknowledgement belongs to an obsolete attempt.')
-            return self._observe(connection, row, attempt_id=claim.attempt_id, profile_id=claim.profile_id,
+            result = self._observe(connection, row, attempt_id=claim.attempt_id, profile_id=claim.profile_id,
                 provider_sid=provider_sid, status=status, now=now)
+        if isinstance(result, _ObservationRefusal):
+            raise DeliveryConflict(result.message)
+        return result
 
     def observe(self, job_id, *, attempt_id, profile_id, provider_sid, status, event_key, now=None):
         """Call only after the transport owner authenticates the bounded event."""
         if not isinstance(event_key, str) or not event_key or len(event_key) > 512:
             raise DeliveryConflict('Invalid provider event identity.')
         with self.configuration._locked() as connection:
-            return self._observe(connection, self._row(connection, job_id), attempt_id=attempt_id,
+            result = self._observe(connection, self._row(connection, job_id), attempt_id=attempt_id,
                 profile_id=profile_id, provider_sid=provider_sid, status=status,
                 event_key=event_key, now=now or datetime.utcnow())
+        if isinstance(result, _ObservationRefusal):
+            raise DeliveryConflict(result.message)
+        return result

@@ -1,5 +1,7 @@
 """Durable worker ownership; no HTTP or user-facing acceptance substitutes."""
 from datetime import datetime, timedelta
+from dataclasses import replace
+import json
 from uuid import uuid4
 
 import pytest
@@ -264,3 +266,79 @@ def test_late_receipt_can_fill_identity_without_regressing_early_terminal_result
         job = connection.execute(sa.select(configuration.jobs).where(configuration.jobs.c.id == identity)).mappings().one()
         assert job['status'] == 'success' and job['provider_sid'] == 'remote-123'
     assert not any(event['kind'] == 'terminal_conflict' for event in delivery.history(identity))
+
+
+@pytest.mark.parametrize('operation', ['observe', 'record_receipt'])
+@pytest.mark.parametrize('mismatch', ['profile', 'sid'])
+def test_authenticated_identity_refusal_is_durably_audited_without_changing_delivery(installation, operation, mismatch):
+    configuration, delivery, _ = installation
+    identity = accept(installation)
+    claim = delivery.claim('worker-one')
+    assert delivery.begin_submission(claim)
+    delivery.record_receipt(claim, provider_sid='synthetic-original-sid', status='in_progress')
+    before = delivery.get(identity)
+    history = delivery.history(identity)
+    with configuration.engine.connect() as connection:
+        original_job = dict(connection.execute(sa.select(configuration.jobs).where(configuration.jobs.c.id == identity)).mappings().one())
+        original_attempt = dict(connection.execute(sa.select(delivery.attempts).where(delivery.attempts.c.id == claim.attempt_id)).mappings().one())
+    profile = 'synthetic-wrong-profile' if mismatch == 'profile' else claim.profile_id
+    sid = 'synthetic-wrong-sid' if mismatch == 'sid' else 'synthetic-original-sid'
+
+    def refuse():
+        if operation == 'observe':
+            delivery.observe(identity, attempt_id=claim.attempt_id, profile_id=profile,
+                provider_sid=sid, status='success', event_key='verified-rejected-event')
+        else:
+            delivery.record_receipt(replace(claim, profile_id=profile), provider_sid=sid, status='success')
+
+    with pytest.raises(DeliveryConflict):
+        refuse()
+    assert delivery.get(identity) == before
+    audit = delivery.history(identity)
+    assert len(audit) == len(history) + 1
+    refused = next(event for event in audit if event['kind'] == 'provider_observation_refused')
+    assert refused['attempt_id'] == claim.attempt_id
+    assert json.loads(refused['details']) == {'category': mismatch + '_mismatch'}
+    assert len(refused['details']) < 100
+    assert profile not in refused['details'] and sid not in refused['details'] and claim.token not in refused['details']
+    with configuration.engine.connect() as connection:
+        assert dict(connection.execute(sa.select(configuration.jobs).where(configuration.jobs.c.id == identity)).mappings().one()) == original_job
+        assert dict(connection.execute(sa.select(delivery.attempts).where(delivery.attempts.c.id == claim.attempt_id)).mappings().one()) == original_attempt
+    if operation == 'observe':
+        with pytest.raises(DeliveryConflict):
+            refuse()
+        assert delivery.history(identity) == audit
+
+
+def test_refused_event_has_separate_dedupe_identity_from_accepted_event(installation):
+    _, delivery, _ = installation
+    identity = accept(installation)
+    claim = delivery.claim('worker-one')
+    assert delivery.begin_submission(claim)
+    delivery.observe(identity, attempt_id=claim.attempt_id, profile_id=claim.profile_id,
+        provider_sid='synthetic-original-sid', status='in_progress', event_key='same-provider-event')
+    with pytest.raises(DeliveryConflict):
+        delivery.observe(identity, attempt_id=claim.attempt_id, profile_id=claim.profile_id,
+            provider_sid='synthetic-wrong-sid', status='success', event_key='same-provider-event')
+    events = [event for event in delivery.history(identity) if event['kind'] in {'provider_observed', 'provider_observation_refused'}]
+    assert len(events) == 2
+    assert len({event['dedupe_key'] for event in events}) == 2
+    assert delivery.get(identity)['state'] == 'in_progress'
+
+
+@pytest.mark.parametrize('missing', ['job', 'attempt'])
+def test_unknown_observation_target_does_not_create_misleading_audit(installation, missing):
+    configuration, delivery, _ = installation
+    identity = accept(installation)
+    claim = delivery.claim('worker-one')
+    assert delivery.begin_submission(claim)
+    with configuration.engine.connect() as connection:
+        before = connection.scalar(sa.select(sa.func.count()).select_from(delivery.events))
+    with pytest.raises(DeliveryConflict):
+        delivery.observe('nonexistent-job' if missing == 'job' else identity,
+            attempt_id='nonexistent-attempt' if missing == 'attempt' else claim.attempt_id,
+            profile_id='synthetic-wrong-profile', provider_sid='synthetic-wrong-sid',
+            status='success', event_key='unknown-target-event')
+    with configuration.engine.connect() as connection:
+        assert connection.scalar(sa.select(sa.func.count()).select_from(delivery.events)) == before
+    assert delivery.get(identity)['state'] == 'submitting'
