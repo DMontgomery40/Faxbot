@@ -5,6 +5,7 @@ import json
 
 from .config_file import ConfigurationFileError, read_configuration_text, read_environment
 from .config_plugin_fields import PLUGIN_FIELDS
+from .config_plugin_secrets import reject_masked_plugin_secrets
 from .config_profiles import ConfigurationDocument, ConfigurationRecordError
 from .config_values import ConfigurationValues, ConfigurationValueError
 
@@ -89,6 +90,7 @@ def _import_plugins(values, environment, legacy):
         else:
             if provider in state['settings'] and state['settings'][provider] != settings:
                 _conflict()
+            reject_masked_plugin_secrets(settings)
             state['settings'][provider] = settings
     return values, state
 

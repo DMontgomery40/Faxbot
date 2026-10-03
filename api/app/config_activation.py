@@ -1,6 +1,5 @@
 """Build complete operation profiles and apply validated canonical edits."""
 from pathlib import Path
-import re
 from jsonschema import Draft202012Validator, validators
 from jsonschema.exceptions import SchemaError, ValidationError
 from referencing import Registry
@@ -8,6 +7,7 @@ from referencing.exceptions import Unresolvable
 
 from .config_bootstrap import load_bootstrap_configuration, default_plugin_state
 from .config_plugin_fields import PLUGIN_FIELDS
+from .config_plugin_secrets import SECRET_PLUGIN_FIELDS, ConfigurationPluginSecretError, reject_masked_plugin_secrets
 from .config_profiles import ConfigurationDocument, ProviderConfiguration
 from .config_store import ConfigurationNotInitialized
 from .config_values import ConfigurationValues
@@ -24,11 +24,14 @@ _RESTART_FIELDS = frozenset({'enable_mcp_sse', 'mcp_sse_path', 'enable_mcp_http'
     'audit_log_enabled', 'audit_log_format', 'audit_log_file', 'audit_log_syslog', 'audit_log_syslog_address',
     'artifact_ttl_days', 'cleanup_interval_minutes', 'fax_disabled'})
 _AMI_FIELDS = frozenset({'ami_host', 'ami_port', 'ami_username', 'ami_password'})
-_SECRET_PLUGIN_FIELDS = frozenset({'api_key', 'api_secret', 'api_token', 'token', 'password', 'secret', 'signing_key'})
 
 
 def _validate_manifest_settings(manifest, settings):
     if manifest is None or 'config_schema' not in manifest:
+        try:
+            reject_masked_plugin_secrets(settings)
+        except ConfigurationPluginSecretError:
+            raise ConfigurationActivationError('Masked credentials cannot be saved as secrets.') from None
         return
     schema = manifest['config_schema']
     try:
@@ -40,26 +43,24 @@ def _validate_manifest_settings(manifest, settings):
         validator.check_schema(schema)
         # No retrieve callback: external refs cannot turn settings validation
         # into filesystem or network access. Local $defs remain supported.
-        validator(schema, registry=Registry(), format_checker=validator.FORMAT_CHECKER).validate(settings)
+        instance_validator = validator(schema, registry=Registry(), format_checker=validator.FORMAT_CHECKER)
+        instance_validator.validate(settings)
+        reject_masked_plugin_secrets(settings, schema=schema, validator=instance_validator)
+    except ConfigurationPluginSecretError:
+        raise ConfigurationActivationError('Masked credentials cannot be saved as secrets.') from None
     except (SchemaError, ValidationError, Unresolvable, ValueError, RecursionError):
         raise ConfigurationActivationError('Plugin settings do not satisfy the installed configuration schema.') from None
 
 
-def _merge_plugin_settings(previous, patch, *, schema=None, secret=False):
+def _merge_plugin_settings(previous, patch):
     merged = dict(previous) if patch else {}
-    properties = schema.get('properties', {}) if isinstance(schema, dict) else {}
     for key, value in patch.items():
         if value is None:
             continue
-        subschema = properties.get(key, {})
-        is_secret = secret or key in _SECRET_PLUGIN_FIELDS or key == 'credentials' or (
-            isinstance(subschema, dict) and (subschema.get('writeOnly') is True or subschema.get('format') == 'password'))
         if isinstance(value, dict):
             prior = merged.get(key, {})
-            merged[key] = _merge_plugin_settings(prior if isinstance(prior, dict) else {}, value, schema=subschema, secret=is_secret)
+            merged[key] = _merge_plugin_settings(prior if isinstance(prior, dict) else {}, value)
         else:
-            if is_secret and isinstance(value, str) and re.fullmatch(r'\*+[\s\S]{0,4}', value):
-                raise ConfigurationActivationError('Masked credentials cannot be saved as secrets.')
             merged[key] = value
     return merged
 
@@ -99,7 +100,7 @@ def _configuration_for(values, definition, plugin_settings):
             raise ConfigurationActivationError('Invalid manifest credentials.')
         credentials.update(explicit_credentials)
         for key in list(data):
-            if key in _SECRET_PLUGIN_FIELDS or key == 'username':
+            if key in SECRET_PLUGIN_FIELDS or key == 'username':
                 credentials[key] = data.pop(key)
         settings.update(data)
     else:
@@ -215,9 +216,7 @@ class ConfigurationManager:
                 values = values.with_patch(patch)
             else:
                 previous = state['settings'].get(provider_id, {})
-                definition = catalog.get(provider_id)
-                manifest = definition.manifest.as_dict() if definition.manifest is not None else {}
-                merged = _merge_plugin_settings(previous, settings, schema=manifest.get('config_schema'))
+                merged = _merge_plugin_settings(previous, settings)
                 state['settings'][provider_id] = ConfigurationDocument(merged).as_dict()
         if enabled is not None:
             selected = values.storage_backend if role == 'storage' else getattr(values, 'effective_' + role)

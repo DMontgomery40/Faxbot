@@ -1,11 +1,13 @@
 """Canonical edits select complete profiles and stage lifespan-owned changes."""
 from types import SimpleNamespace
+import json
 
 import pytest
 
 from api.tests.test_schema import database
 from api.app.schema import upgrade_schema
-from api.app.config_store import ConfigurationStore
+from api.app.config_store import ConfigurationStore, ConfigurationNotInitialized
+from api.app.config_bootstrap import ConfigurationBootstrapError
 from api.app.config_profiles import ConfigurationDocument
 from api.app.config_activation import ConfigurationManager, ConfigurationActivationError
 
@@ -119,3 +121,102 @@ def test_manifest_schema_validation_never_fetches_external_references(monkeypatc
         _validate_manifest_settings({'config_schema': {'$ref': 'https://example.test/schema'}}, {})
     _validate_manifest_settings({'config_schema': {'$defs': {'key': {'type': 'string'}},
         'type': 'object', 'properties': {'key': {'$ref': '#/$defs/key'}}}}, {'key': 'literal'})
+
+
+class SchemaCatalog(ManifestCatalog):
+    def __init__(self, schema):
+        self.schema = schema
+
+    def get(self, identity):
+        definition = super().get(identity)
+        if identity == 'custom':
+            manifest = definition.manifest.as_dict()
+            manifest['config_schema'] = self.schema
+            definition = SimpleNamespace(**{**vars(definition), 'manifest': ConfigurationDocument(manifest)})
+        return definition
+
+
+SECRET_SCHEMAS = [
+    {'$defs': {'secret': {'type': 'string', 'writeOnly': True}}, 'type': 'object',
+     'properties': {'clientSecret': {'$ref': '#/$defs/secret'}}},
+    {'type': 'object', 'allOf': [{'properties': {'clientSecret': {'type': 'string', 'writeOnly': True}}}]},
+    {'type': 'object', 'anyOf': [{'properties': {'clientSecret': {'type': 'string', 'writeOnly': True}}}, {}]},
+    {'type': 'object', 'oneOf': [{'required': ['clientSecret'],
+      'properties': {'clientSecret': {'type': 'string', 'format': 'password'}}}, {'required': ['other']}]},
+    {'type': 'object', 'if': {'required': ['clientSecret']},
+     'then': {'properties': {'clientSecret': {'type': 'string', 'writeOnly': True}}}},
+]
+
+
+@pytest.mark.parametrize('schema', SECRET_SCHEMAS, ids=['ref', 'allOf', 'anyOf', 'oneOf', 'conditional'])
+def test_schema_secret_masks_do_not_replace_saved_credentials(database, tmp_path, schema):
+    control = manager(database, tmp_path)
+    control.catalog_loader = lambda values: SchemaCatalog(schema)
+    first = control.initialize({**environment(tmp_path), 'FEATURE_V3_PLUGINS': 'true'})
+    saved = control.patch_plugin(first, 'custom', settings={'clientSecret': 'original'}, actor='admin')
+    for mask in ('*2345', '**3456', '***', '***\nabc', '********last'):
+        with pytest.raises(ConfigurationActivationError):
+            control.patch_plugin(saved, 'custom', settings={'clientSecret': mask}, actor='admin')
+        assert control.store.read() == saved
+    changed = control.patch_plugin(saved, 'custom', settings={'clientSecret': 'replacement'}, actor='admin')
+    assert changed.active.plugins.as_dict()['settings']['custom']['clientSecret'] == 'replacement'
+
+
+@pytest.mark.parametrize('schema, settings', [
+    (ManifestCatalog().get('custom').manifest.as_dict()['config_schema'],
+     {'credentials': {'username': 'operator', 'password': '***'}}),
+    (SECRET_SCHEMAS[0], {'clientSecret': '***'}),
+], ids=['nested-credentials', 'referenced-secret'])
+def test_custom_legacy_masks_leave_canonical_configuration_absent(database, tmp_path, schema, settings):
+    control = manager(database, tmp_path)
+    control.catalog_loader = lambda values: SchemaCatalog(schema)
+    path = tmp_path / 'legacy.json'
+    document = json.dumps({'version': 1, 'providers': {'outbound': {'plugin': 'custom', 'enabled': True,
+        'settings': settings}}})
+    path.write_text(document)
+    with pytest.raises((ConfigurationBootstrapError, ConfigurationActivationError)):
+        control.initialize({**environment(tmp_path), 'FAXBOT_CONFIG_PATH': str(path), 'FEATURE_V3_PLUGINS': 'true'})
+    with pytest.raises(ConfigurationNotInitialized):
+        control.store.read()
+    assert path.read_text() == document
+
+
+def test_unevaluated_secret_fields_preserve_nonsecret_fields(database, tmp_path):
+    schema = {'allOf': [{'type': 'object', 'properties': {'label': {'type': 'string'}}}],
+              'unevaluatedProperties': {'type': 'string', 'writeOnly': True}}
+    control = manager(database, tmp_path)
+    control.catalog_loader = lambda values: SchemaCatalog(schema)
+    first = control.initialize({**environment(tmp_path), 'FEATURE_V3_PLUGINS': 'true'})
+    saved = control.patch_plugin(first, 'custom', settings={'label': '***', 'clientSecret': 'original'}, actor='admin')
+    with pytest.raises(ConfigurationActivationError):
+        control.patch_plugin(saved, 'custom', settings={'clientSecret': '***'}, actor='admin')
+    assert control.store.read() == saved
+
+
+@pytest.mark.parametrize('schema, settings', [
+    ({'$id': 'https://example.test/root', '$defs': {'nested': {'$id': 'child',
+        '$defs': {'secret': {'type': 'string', 'writeOnly': True}}, 'type': 'object',
+        'properties': {'clientSecret': {'$ref': '#/$defs/secret'}}}},
+      'type': 'object', 'properties': {'nested': {'$ref': 'child'}}}, {'nested': {'clientSecret': '***'}}),
+    ({'$defs': {'secret': {'$anchor': 'private', 'type': 'string', 'writeOnly': True}},
+      'type': 'object', 'properties': {'keys': {'type': 'array', 'items': {'$ref': '#private'}}}}, {'keys': ['***']}),
+    ({'$defs': {'node': {'type': 'object', 'properties': {'child': {'$ref': '#/$defs/node'},
+        'clientSecret': {'type': 'string', 'writeOnly': True}}}}, '$ref': '#/$defs/node'},
+     {'child': {'clientSecret': '***'}}),
+], ids=['embedded-resource', 'anchor-array', 'recursive'])
+def test_secret_annotations_in_local_resources_remain_offline_and_effective(schema, settings):
+    from api.app.config_activation import _validate_manifest_settings
+    with pytest.raises(ConfigurationActivationError, match='Masked credentials'):
+        _validate_manifest_settings({'config_schema': schema}, settings)
+
+
+def test_nonmatching_secret_branch_does_not_reject_nonsecret_mask_text():
+    from api.app.config_activation import _validate_manifest_settings
+    secret_branch = {'required': ['mode'], 'properties': {'mode': {'const': 'private'},
+                     'clientSecret': {'type': 'string', 'writeOnly': True}}}
+    public_branch = {'required': ['mode'], 'properties': {'mode': {'const': 'public'},
+                     'clientSecret': {'type': 'string'}}}
+    value = {'mode': 'public', 'clientSecret': '***'}
+    _validate_manifest_settings({'config_schema': {'anyOf': [secret_branch, public_branch]}}, value)
+    _validate_manifest_settings({'config_schema': {'if': {'properties': {'mode': {'const': 'private'}}},
+        'then': secret_branch, 'else': public_branch}}, value)

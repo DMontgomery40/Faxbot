@@ -49,3 +49,14 @@ def test_existing_malformed_import_does_not_fall_back_to_environment(tmp_path, a
                    'ENABLE_PERSISTED_SETTINGS': str(artifact == 'persisted').lower(), 'PERSISTED_ENV_PATH': str(path)}
     with pytest.raises(ConfigurationBootstrapError):
         load_bootstrap_configuration(environment)
+
+
+def test_custom_legacy_credentials_refuse_masks_and_preserve_artifact(tmp_path):
+    path = tmp_path / 'plugins.json'
+    document = json.dumps({'version': 1, 'providers': {'outbound': {'plugin': 'custom', 'enabled': True,
+        'settings': {'credentials': {'username': 'operator', 'password': '***'}}}}})
+    path.write_text(document)
+    with pytest.raises(ConfigurationBootstrapError) as caught:
+        load_bootstrap_configuration({'FAXBOT_CONFIG_PATH': str(path)})
+    assert 'operator' not in str(caught.value)
+    assert path.read_text() == document
