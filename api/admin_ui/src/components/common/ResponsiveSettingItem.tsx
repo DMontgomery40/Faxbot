@@ -29,6 +29,8 @@ interface ResponsiveSettingItemProps {
   fullWidth?: boolean;
   showCurrentValue?: boolean;
   infoLink?: { text: string; url: string };
+  // A custom control in place of the built-in input, labelled by this row.
+  renderControl?: (labels: { id: string; labelledBy: string; describedBy?: string }) => React.ReactNode;
 }
 
 export function ResponsiveSettingItem({
@@ -45,6 +47,7 @@ export function ResponsiveSettingItem({
   fullWidth = true,
   showCurrentValue = true,
   infoLink,
+  renderControl,
 }: ResponsiveSettingItemProps) {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
@@ -63,6 +66,9 @@ export function ResponsiveSettingItem({
   const handleTogglePassword = () => setShowPassword((previous) => !previous);
 
   const renderInput = () => {
+    if (renderControl) {
+      return renderControl({ id: inputId, labelledBy: labelId, describedBy: helperText ? helperId : undefined });
+    }
     if (type === 'select' && options) {
       return (
         <TextField

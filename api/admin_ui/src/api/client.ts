@@ -107,6 +107,20 @@ export class AdminAPIError extends Error {
   }
 }
 
+// A refusal the server wrote as one plain sentence for the person entering a
+// value, such as a fax number it cannot read. Generic refusals stay generic.
+const PLAIN_SENTENCE = /^[A-Z][^<>{}]{3,240}[.!?]$/;
+const GENERIC_REFUSALS = new Set(['Invalid access request.', 'Invalid fax request.', 'Invalid credential input.']);
+
+export function plainRefusal(error: unknown): string | null {
+  if (!(error instanceof AdminAPIError) || (error.status !== 400 && error.status !== 422)) return null;
+  const detail = error.detail?.trim();
+  return detail && PLAIN_SENTENCE.test(detail) && !GENERIC_REFUSALS.has(detail) ? detail : null;
+}
+
+// The server refused a fax before accepting it, so nothing was sent.
+export class FaxRefusedError extends Error {}
+
 export function configurationWriteRejected(error: unknown): boolean {
   return error instanceof AdminAPIError && [400, 401, 403, 404, 409, 413, 422].includes(error.status);
 }
@@ -708,6 +722,10 @@ export class AdminAPIClient {
             || detail === 'Accepted fax record is unavailable; reconcile before submitting another request.') {
           throw new Error(detail);
         }
+      }
+      if (res.status === 400) {
+        const sentence = plainRefusal(new AdminAPIError(res.status, res.statusText, detail));
+        throw new FaxRefusedError(sentence ?? 'The fax was not accepted; check the number and the document, then try again.');
       }
       if (res.status === 503 && typeof detail === 'string') {
         const uncertain = /^Fax acceptance is uncertain\. Retain job ([a-f0-9]{32}) for reconciliation\.$/.exec(detail);

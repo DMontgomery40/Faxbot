@@ -3,7 +3,7 @@ import { fireEvent, render, screen, within } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import AdminAPIClient from '../api/client';
 import DeliveryRoutes from '../components/DeliveryRoutes';
-import { server } from '../test/server';
+import { backend, server } from '../test/server';
 
 type Recorded = { method: string; path: string; body: unknown };
 
@@ -118,5 +118,23 @@ describe('delivery routes', () => {
     expect(await screen.findByText('Telnyx SIP trunk')).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Add rate card' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Add partner' })).toBeNull();
+  });
+
+  it('looks up a number typed the UK way for a UK installation and shows the number the server found', async () => {
+    backend.state.country = 'GB';
+    backend.state.numberExample = '0121 234 5678';
+    routingHandlers(async () => undefined);
+    const looked: string[] = [];
+    server.use(http.get('/routing/destinations/:number', ({ params }) => {
+      looked.push(String(params.number));
+      return HttpResponse.json({ ...destination, number: '+441782684953', display_name: null, direct_partner: null,
+        recommended_routes: [], available_routes: [], routes: [] });
+    }));
+    render(<DeliveryRoutes client={new AdminAPIClient({ kind: 'key', key: 'bootstrap-secret' })} canWrite />);
+    const lookup = await screen.findByPlaceholderText('0121 234 5678');
+    fireEvent.change(lookup, { target: { value: '01782 684953' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Look up' }));
+    expect(await screen.findByRole('dialog', { name: '+441782684953' })).toBeTruthy();
+    expect(looked).toEqual(['01782 684953']);
   });
 });

@@ -4,12 +4,13 @@ import {
   TextField, FormControl, InputLabel, Select, MenuItem, Alert,
   CircularProgress, Grid, Paper, Chip, Switch, FormControlLabel,
 } from '@mui/material';
-import AdminAPIClient, { configurationWriteRejected } from '../api/client';
+import AdminAPIClient, { configurationWriteRejected, plainRefusal } from '../api/client';
 import { DeliveryWizardFields, deliveryEditorValues } from './delivery/DeliverySettings';
 import { docsLink } from '../docsLinks';
 import type { ConfigurationWriteResult, Settings, SettingsPatch, ValidationResult } from '../api/types';
 import SecretInput from './common/SecretInput';
 import SipTrunkSettings from './SipTrunkSettings';
+import { COUNTRY_HELP, CountryField } from './common/numbers';
 
 interface SetupWizardProps {
   client: AdminAPIClient;
@@ -110,6 +111,7 @@ function editorValues(data: Settings): WizardConfig {
     fax_station_id: data.sip.station_id,
     fs_gateway_name: data.fs?.gateway_name ?? '',
     fs_caller_id_number: data.fs?.caller_id_number ?? '',
+    ...(data.numbers ? { fax_default_country: data.numbers.default_country } : {}),
     ...deliveryEditorValues(data),
   };
 }
@@ -352,7 +354,8 @@ function SetupWizard({ client, onDone, docsBase }: SetupWizardProps) {
         setNotice({ severity: 'error', text: 'Someone else changed these settings. Your edits are kept here; reload to see the current values.' });
       } else {
         setNeedsReload(true);
-        setNotice({ severity: 'error', text: configurationWriteRejected(error) ?
+        setNotice({ severity: 'error', text: plainRefusal(error) ?
+          `${plainRefusal(error)} Your edits are kept here; reload before trying again.` : configurationWriteRejected(error) ?
           `Settings were not saved (${message}). Your edits are kept here; reload before trying again.` :
           'The save could not be confirmed. Reload to check whether your changes were saved.' });
       }
@@ -508,6 +511,12 @@ function SetupWizard({ client, onDone, docsBase }: SetupWizardProps) {
       <Typography sx={{ mt: 2 }}>Outbound: {ob} · Inbound: {ib}</Typography>
       <FormControlLabel control={<Switch disabled={!canEdit} checked={!!config.inbound_enabled} onChange={event => handleConfigChange('inbound_enabled', event.target.checked)} />} label="Enable inbound handling" />
       <Alert severity="info" sx={{ mt: 1 }}>Leave an override empty to use the default provider; inbound handling is turned on separately.</Alert>
+      {settings?.numbers && <Box sx={{ mt: 3 }}>
+        <CountryField label="Installation country" helperText={COUNTRY_HELP} disabled={!canEdit}
+          value={String(config.fax_default_country ?? settings.numbers.default_country)}
+          countries={settings.numbers.supported_countries}
+          onChange={code => handleConfigChange('fax_default_country', code)} />
+      </Box>}
     </Box>;
 
     if (activeStep === 1) return <Box>
