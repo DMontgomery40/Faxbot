@@ -25,8 +25,9 @@ import {
   Warning as WarningIcon,
   Error as ErrorIcon,
   Settings as SettingsIcon,
+  Public as PublicIcon,
 } from '@mui/icons-material';
-import AdminAPIClient, { configurationWriteRejected, isForbidden } from '../api/client';
+import AdminAPIClient, { configurationWriteRejected, isForbidden, plainRefusal } from '../api/client';
 import { DeliverySettingsSections, EMAIL_DELIVERY_SECTION, deliveryEditorValues } from './delivery/DeliverySettings';
 import { DEFAULT_DOCS_BASE, docsLink } from '../docsLinks';
 import type { ConfigurationWriteResult, Settings as SettingsType, SettingsPatch } from '../api/types';
@@ -34,6 +35,7 @@ import { ResponsiveSettingItem, ResponsiveSettingSection } from './common/Respon
 import { ResponsiveTextField, ResponsiveFormSection } from './common/ResponsiveFormFields';
 import TunnelSettings from './TunnelSettings';
 import SipTrunkSettings from './SipTrunkSettings';
+import { COUNTRY_HELP, CountryField, countryName, internationalHint, settingsNumberFormat } from './common/numbers';
 
 interface SettingsProps {
   client: AdminAPIClient;
@@ -136,6 +138,7 @@ function editorValues(data: SettingsType): SettingsForm {
     oauth_issuer: data.mcp?.oauth.issuer ?? '',
     oauth_audience: data.mcp?.oauth.audience ?? '',
     oauth_jwks_url: data.mcp?.oauth.jwks_url ?? '',
+    ...(data.numbers ? { fax_default_country: data.numbers.default_country } : {}),
     ...deliveryEditorValues(data),
   };
 }
@@ -236,6 +239,8 @@ function Settings({ client, canWrite = false, focus, onFocused }: SettingsProps)
         ? 'Someone else changed these settings. Your edits are kept here; reload to see the current values.'
         : isForbidden(err)
           ? 'You do not have permission to change some of these settings. Your edits are kept here; reload before trying again.'
+        : plainRefusal(err)
+          ? `${plainRefusal(err)} Your edits are kept here; reload before trying again.`
         : configurationWriteRejected(err)
           ? `Settings were not saved (${message}). Your edits are kept here; reload before trying again.`
           : 'The save could not be confirmed. Reload to check whether your changes were saved.');
@@ -493,6 +498,22 @@ function Settings({ client, canWrite = false, focus, onFocused }: SettingsProps)
                 sx={{ borderRadius: 1 }}
               />
             </Box>
+            {settings.numbers && (
+              <ResponsiveSettingItem
+                icon={<PublicIcon />}
+                label="Installation country"
+                value={countryName(String(loadedForm.fax_default_country ?? settings.numbers.default_country))}
+                helperText={COUNTRY_HELP}
+                showCurrentValue={!pendingRestart}
+                renderControl={({ id, labelledBy, describedBy }) => (
+                  <CountryField id={id} labelledBy={labelledBy} describedBy={describedBy} size="small"
+                    value={String(form.fax_default_country ?? settings.numbers!.default_country)}
+                    countries={settings.numbers!.supported_countries}
+                    disabled={!canEdit}
+                    onChange={(code) => handleForm('fax_default_country', code)} />
+                )}
+              />
+            )}
           </ResponsiveFormSection>
 
           {/* Security Settings */}
@@ -746,8 +767,8 @@ function Settings({ client, canWrite = false, focus, onFocused }: SettingsProps)
                       label="Station ID"
                       value={settings.sip.station_id || ''}
                       editValue={form.fax_station_id ?? ''}
-                      helperText="Your fax header/DID in E.164 format (e.g., +15551234567)."
-                      placeholder="FAX_LOCAL_STATION_ID"
+                      helperText={internationalHint(settingsNumberFormat(settings), 'Your fax number')}
+                      placeholder={settingsNumberFormat(settings)?.international || undefined}
                       onChange={(value) => handleForm('fax_station_id', value)}
                       showCurrentValue={!pendingRestart && (!!settings.sip.station_id)}
                     />
@@ -1057,9 +1078,9 @@ function Settings({ client, canWrite = false, focus, onFocused }: SettingsProps)
                 label="From (fax)"
                 value={settings.signalwire?.from_fax || ''}
                 editValue={form.signalwire_fax_from_e164 ?? ''}
-                helperText="Your fax number in E.164 format (e.g., +13035551234)"
+                helperText={internationalHint(settingsNumberFormat(settings), 'Your fax number')}
                 onChange={(value) => handleForm('signalwire_fax_from_e164', value)}
-                placeholder="+13035551234"
+                placeholder={settingsNumberFormat(settings)?.international || undefined}
                 showCurrentValue={!pendingRestart && (!!settings.signalwire?.from_fax)}
               />
               {textField('SignalWire Outbound Callback URL Override', 'signalwire_status_callback_url', 'Leave empty to use /signalwire-callback on the Public API URL.')}

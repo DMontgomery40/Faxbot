@@ -21,6 +21,7 @@ import type { Settings } from '../../api/types';
 import { ResponsiveFormSection } from '../common/ResponsiveFormFields';
 import { ResponsiveSettingItem } from '../common/ResponsiveSettingItem';
 import SecretInput from '../common/SecretInput';
+import { numberHint, settingsNumberFormat } from '../common/numbers';
 import DirectCardDialog from './DirectCardDialog';
 import EmailDelivery from './EmailDelivery';
 import { DeliveryError } from './shared';
@@ -232,7 +233,7 @@ export function DeliverySettingsSections({ client, settings, form, loaded, onCha
             onChange={(checked) => onChange('direct_delivery_enabled', checked)}
             helper="Verified partners can send documents straight to this Faxbot, and faxes to them go directly." />
           {text('Organization name', 'direct_organization', 'The name partners see on your card and on code faxes.')}
-          {text('Our fax number', 'direct_fax_number', 'The number partners fax you at, for example +12025550123.')}
+          {text('Our fax number', 'direct_fax_number', numberHint(settingsNumberFormat(settings), 'The number partners fax you at'))}
           <ResponsiveSettingItem icon={<VpnKeyIcon />} label="Private key" editValue="On this server"
             helperText={KEY_LOCATION} showCurrentValue={false} />
           {notice && <Alert severity="success" onClose={() => setNotice(null)}>{notice}</Alert>}
@@ -311,7 +312,7 @@ export function DeliveryWizardFields({ settings, config, baseline, onChange, out
           <FormControlLabel control={<Switch disabled={disabled} checked={Boolean(config.direct_delivery_enabled)}
             onChange={(event) => onChange('direct_delivery_enabled', event.target.checked)} />} label="Use direct delivery with other Faxbot installations" />
           {field('Organization name', 'direct_organization', 'The name partners see on your card.')}
-          {field('Our fax number', 'direct_fax_number', 'The number partners fax you at, for example +12025550123.')}
+          {field('Our fax number', 'direct_fax_number', numberHint(settingsNumberFormat(settings), 'The number partners fax you at'))}
         </Box>
       )}
       {settings.intake && (

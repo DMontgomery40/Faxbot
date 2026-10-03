@@ -207,6 +207,7 @@ export function Field({ label, value, onChange, ...rest }: {
   value: string;
   onChange: (value: string) => void;
   helperText?: string;
+  placeholder?: string;
   type?: string;
   multiline?: boolean;
   required?: boolean;

@@ -67,17 +67,52 @@ describe('SIP trunk settings', () => {
       sip_trunk_dids: '+15555550100,+15555550101' }]);
   });
 
-  it('refuses a caller ID that is not an international number before saving', async () => {
+  it('sends UK numbers as typed for a UK installation and shows the numbers the server saved', async () => {
+    const numbers = { default_country: 'GB', example: { national: '0121 234 5678', international: '+44 121 234 5678' },
+      supported_countries: ['GB', 'US'] };
+    let current: Record<string, unknown> = { ...settings({ caller_id: '', dids: [] }), numbers };
+    const writes: Array<Record<string, unknown>> = [];
+    server.use(
+      http.get('/admin/sip/presets', () => HttpResponse.json({ presets: PRESETS })),
+      http.get('/admin/settings', () => HttpResponse.json(current)),
+      http.get('/admin/sip/calls', () => HttpResponse.json({ items: [], next_cursor: null })),
+      http.put('/admin/settings', async ({ request }) => {
+        writes.push(await request.json() as Record<string, unknown>);
+        current = { ...settings({ caller_id: '+441782684953', dids: ['+441782684953', '+441782684954'] }), numbers };
+        return HttpResponse.json({ ok: true, changed: true, _meta: { active_revision_id: 'rev-2',
+          desired_revision_id: 'rev-2', generation: 2, apply_state: 'applied', restart_recommended: false } });
+      }),
+    );
+    render(<SipTrunkSettings client={client()} />);
+    const callerId = await screen.findByLabelText(/Caller ID/);
+    expect(screen.getByText('The numbers your carrier sends to this trunk, for example 0121 234 5678 or +44 121 234 5678.'))
+      .toBeTruthy();
+    expect(callerId.getAttribute('placeholder')).toBe('0121 234 5678');
+    fireEvent.change(callerId, { target: { value: '01782 684953' } });
+    for (const number of ['01782 684953', '01782 684954']) {
+      fireEvent.change(screen.getByLabelText('Add a number'), { target: { value: number } });
+      fireEvent.click(screen.getByRole('button', { name: 'Add' }));
+    }
+    fireEvent.click(screen.getByRole('button', { name: 'Save trunk settings' }));
+    expect(await screen.findByText('Saved. Apply the trunk to Asterisk to use it.')).toBeTruthy();
+    expect(writes).toEqual([{ expected_revision_id: 'rev-1', sip_trunk_caller_id: '01782 684953',
+      sip_trunk_dids: '01782 684953,01782 684954' }]);
+    expect(await screen.findByText('+441782684954')).toBeTruthy();
+    expect((screen.getByLabelText(/Caller ID/) as HTMLInputElement).value).toBe('+441782684953');
+  });
+
+  it('shows the server sentence when it cannot read a number', async () => {
+    const detail = 'Enter the full fax number with its area code, or with its country code starting with +.';
     server.use(
       http.get('/admin/sip/presets', () => HttpResponse.json({ presets: PRESETS })),
       http.get('/admin/settings', () => HttpResponse.json(settings())),
       http.get('/admin/sip/calls', () => HttpResponse.json({ items: [], next_cursor: null })),
+      http.put('/admin/settings', () => HttpResponse.json({ detail }, { status: 400 })),
     );
     render(<SipTrunkSettings client={client()} />);
-    const callerId = await screen.findByLabelText(/Caller ID/);
-    fireEvent.change(callerId, { target: { value: '5555550100' } });
+    fireEvent.change(await screen.findByLabelText(/Caller ID/), { target: { value: '5550100' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save trunk settings' }));
-    expect(await screen.findByText('Enter the caller ID in international format, for example +15551234567.')).toBeTruthy();
+    expect(await screen.findByText(detail)).toBeTruthy();
   });
 
   it('offers only the sign-in methods a carrier supports', async () => {

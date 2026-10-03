@@ -79,6 +79,7 @@ import {
   type TopTab,
 } from './navigation';
 import type { AdminConfig, AuthMe, ConsoleContext } from './api/types';
+import { contextNumberFormat } from './components/common/numbers';
 
 // The console once kept an API key here. It is removed on first boot and
 // never replayed: secrets do not live in persistent browser storage.
@@ -305,6 +306,7 @@ function ConsoleShell({ client, me, initialContext, onSignOut, onIdentityChanged
   const adminConfig: AdminConfig | null = context.send ? {
     fax_disabled: context.send.fax_disabled,
     max_file_size_mb: context.send.max_file_size_mb,
+    number_format: contextNumberFormat(context.send),
     branding: context.branding,
     inbound: { enabled: Boolean(context.inbound_enabled) },
     v3_plugins: { enabled: pluginsEnabled },

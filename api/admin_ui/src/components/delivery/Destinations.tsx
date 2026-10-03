@@ -10,6 +10,7 @@ import AdminAPIClient from '../../api/client';
 import type { Destination, DestinationDetail } from '../../api/deliveryTypes';
 import { EmptyState, Field, FormDialog, useSmallScreens } from '../access/AccessViews';
 import { DeliveryError, formatMoney, formatMoneyList, formatPercent } from './shared';
+import { numberPlaceholder, useNumberFormat } from '../common/numbers';
 
 function routeSummary(destination: Destination): string {
   if (destination.routes.length === 0) return 'No faxes sent yet';
@@ -70,7 +71,7 @@ export function DestinationDialog({ client, number, canWrite, onClose, onSaved }
   ];
 
   return (
-    <FormDialog open={number !== null} title={detail?.display_name || number || ''} submitLabel="Save" busy={busy}
+    <FormDialog open={number !== null} title={detail?.display_name || detail?.number || number || ''} submitLabel="Save" busy={busy}
       error={null} canSubmit={canWrite && detail !== null} onSubmit={() => void save()} onClose={onClose}>
       <DeliveryError error={error} onClose={() => setError(null)} />
       {detail && (
@@ -126,6 +127,7 @@ export default function Destinations({ client, destinations, canWrite, onChanged
   const { isMobile } = useSmallScreens();
   const [open, setOpen] = useState<string | null>(null);
   const [lookup, setLookup] = useState('');
+  const numberFormat = useNumberFormat(client);
 
   const saved = () => { setOpen(null); onChanged(); };
 
@@ -133,7 +135,8 @@ export default function Destinations({ client, destinations, canWrite, onChanged
     <Box>
       <Box display="flex" gap={1} alignItems="center" mb={2} flexWrap="wrap">
         <TextField size="small" label="Fax number" value={lookup} onChange={(e) => setLookup(e.target.value)}
-          placeholder="+1 555 010 0001" sx={{ minWidth: 220 }} />
+          type="tel" placeholder={numberPlaceholder(numberFormat)}
+          sx={{ minWidth: 220 }} />
         <Button variant="outlined" disabled={!lookup.trim()} onClick={() => setOpen(lookup.trim())} sx={{ borderRadius: 2 }}>
           Look up
         </Button>

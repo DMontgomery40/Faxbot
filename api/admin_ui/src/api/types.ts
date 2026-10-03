@@ -5,6 +5,8 @@
 export interface AdminConfig {
   fax_disabled: boolean;
   max_file_size_mb: number;
+  // How fax numbers are written in the installation country, when known.
+  number_format?: NumberFormat | null;
   branding?: { docs_base?: string; logo_path?: string };
   inbound?: { enabled: boolean };
   v3_plugins?: { enabled: boolean };
@@ -36,6 +38,17 @@ export interface DeliveryMetadata {
 export interface FaxSendResult extends DeliveryMetadata {
   id: string;
   status: string;
+  // The destination as the server saved it, in international form.
+  to?: string;
+}
+
+// The installation country (ISO 3166 alpha-2) and a sample fax number written
+// the way people there dial it and in international form. Either sample may be
+// empty when the server does not know one.
+export interface NumberFormat {
+  country: string;
+  national: string;
+  international: string;
 }
 
 export interface FaxJob extends DeliveryMetadata {
@@ -222,6 +235,11 @@ export interface Settings {
     organization: string;
     fax_number: string;
   };
+  numbers?: {
+    default_country: string;
+    example: { national: string; international: string };
+    supported_countries: string[];
+  };
   audit?: {
     enabled: boolean;
     format: string;
@@ -395,7 +413,7 @@ export interface ConsoleContext {
   policy_version: number;
   permissions: string[];
   navigation: { jobs: boolean; inbox: boolean; send: boolean };
-  send: { fax_disabled: boolean; max_file_size_mb: number } | null;
+  send: { fax_disabled: boolean; max_file_size_mb: number; default_country?: string; number_example?: string } | null;
   inbound_enabled: boolean | null;
   branding: { docs_base: string; logo_path: string };
   provider_view: { plugins_enabled: boolean; install_enabled: boolean; active_outbound: string; active_inbound: string } | null;

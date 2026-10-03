@@ -29,9 +29,10 @@ import {
   useTheme,
 } from '@mui/material';
 import AdminAPIClient, { AdminAPIError, isForbidden } from '../api/client';
-import type { SettingsPatch } from '../api/types';
+import type { NumberFormat, SettingsPatch } from '../api/types';
 import type { SipCallRecord, SipPreset, SipTrunkSettings as TrunkValues, SipTrunkStatus } from '../api/sipTypes';
 import SecretInput from './common/SecretInput';
+import { numberHint, numberPlaceholder, settingsNumberFormat } from './common/numbers';
 
 interface SipTrunkSettingsProps {
   client: AdminAPIClient;
@@ -40,8 +41,6 @@ interface SipTrunkSettingsProps {
 }
 
 type Notice = { severity: 'success' | 'info' | 'warning' | 'error'; text: string } | null;
-
-const E164 = /^\+[1-9][0-9]{6,14}$/;
 
 const EMPTY: TrunkValues = {
   preset: '', auth: 'registration', host: '', port: 0, transport: '', username: '', password: '',
@@ -94,6 +93,7 @@ function SipTrunkSettings({ client, showCalls = true }: SipTrunkSettingsProps) {
   const [calls, setCalls] = useState<SipCallRecord[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [callsNote, setCallsNote] = useState<string | null>(null);
+  const [numberFormat, setNumberFormat] = useState<NumberFormat | null>(null);
 
   const preset = useMemo(() => presets.find((item) => item.id === form.preset), [presets, form.preset]);
 
@@ -105,6 +105,7 @@ function SipTrunkSettings({ client, showCalls = true }: SipTrunkSettingsProps) {
       setSaved(trunk);
       setForm(trunk);
       setRevision(settings._meta?.desired_revision_id);
+      setNumberFormat(settingsNumberFormat(settings));
     } catch (error) {
       setNotice({ severity: 'error', text: failure(error, 'Trunk settings could not be loaded. Try again.') });
     }
@@ -136,21 +137,15 @@ function SipTrunkSettings({ client, showCalls = true }: SipTrunkSettingsProps) {
     }));
   };
 
+  // Numbers are kept as typed until saved; the server saves them in international form.
   const addDid = () => {
     const number = didEntry.trim();
-    if (!E164.test(number)) {
-      setNotice({ severity: 'warning', text: 'Enter the number in international format, for example +15551234567.' });
-      return;
-    }
+    if (!number) return;
     if (!form.dids.includes(number)) update('dids', [...form.dids, number]);
     setDidEntry('');
   };
 
   const save = async () => {
-    if (form.caller_id && !E164.test(form.caller_id)) {
-      setNotice({ severity: 'warning', text: 'Enter the caller ID in international format, for example +15551234567.' });
-      return;
-    }
     const patch: SettingsPatch = { expected_revision_id: revision };
     const fields: Array<[keyof TrunkValues, string]> = [
       ['preset', 'sip_trunk_preset'], ['auth', 'sip_trunk_auth'], ['host', 'sip_trunk_host'],
@@ -303,14 +298,14 @@ function SipTrunkSettings({ client, showCalls = true }: SipTrunkSettingsProps) {
             helperText="Only if Asterisk is behind a router or firewall: the address your carrier should send calls and fax data to."
             onChange={(event) => update('external_address', event.target.value.trim())} />
 
-          <TextField size="small" fullWidth label="Caller ID" value={form.caller_id} required
-            placeholder="+15551234567"
+          <TextField size="small" fullWidth label="Caller ID" value={form.caller_id} required type="tel"
+            placeholder={numberPlaceholder(numberFormat)}
             helperText="A number your carrier has assigned to you or verified for you. Faxbot never sends any other number."
             onChange={(event) => update('caller_id', event.target.value.trim())} />
 
           <Box>
             <Typography variant="subtitle2">Fax numbers on this trunk</Typography>
-            <Typography variant="body2" color="text.secondary">The numbers your carrier sends to this trunk.</Typography>
+            <Typography variant="body2" color="text.secondary">{numberHint(numberFormat, 'The numbers your carrier sends to this trunk')}</Typography>
             <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap', my: 1 }} useFlexGap>
               {form.dids.length === 0 && <Typography variant="body2">No numbers yet.</Typography>}
               {form.dids.map((number) => (
@@ -319,7 +314,7 @@ function SipTrunkSettings({ client, showCalls = true }: SipTrunkSettingsProps) {
               ))}
             </Stack>
             <Stack direction="row" spacing={1}>
-              <TextField size="small" label="Add a number" value={didEntry} placeholder="+15551234567"
+              <TextField size="small" label="Add a number" value={didEntry} type="tel" placeholder={numberPlaceholder(numberFormat)}
                 onChange={(event) => setDidEntry(event.target.value)}
                 onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); addDid(); } }} />
               <Button variant="outlined" onClick={addDid}>Add</Button>

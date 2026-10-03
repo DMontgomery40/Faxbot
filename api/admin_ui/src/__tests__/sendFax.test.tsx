@@ -32,7 +32,7 @@ function openSend() {
 }
 
 async function send(number: string, file: File) {
-  fireEvent.change(screen.getByPlaceholderText('+15551234567'), { target: { value: number } });
+  fireEvent.change(screen.getByRole('textbox', { name: /Destination Number/ }), { target: { value: number } });
   fireEvent.change(window.document.querySelector('input[type="file"]') as HTMLInputElement, { target: { files: [file] } });
   fireEvent.click(screen.getByRole('button', { name: 'Send Fax' }));
 }
@@ -155,5 +155,57 @@ describe('Send keeps the send identity across a reload', () => {
       setItem.mockRestore();
       getItem.mockRestore();
     }
+  });
+});
+
+describe('Send follows the installation country', () => {
+  beforeEach(() => window.sessionStorage.clear());
+
+  const gb = { ...config, number_format: { country: 'GB', national: '0121 234 5678', international: '' } };
+  const us = { ...config, number_format: { country: 'US', national: '(201) 555-0123', international: '' } };
+  const openFor = (settings: typeof gb) =>
+    render(<SendFax client={client()} config={settings} configLoading={false} configError={null} />);
+
+  it('shows the UK example for a UK installation and sends a number typed the UK way', async () => {
+    // jsdom's form data does not reach the test server, so read what the console adds to it.
+    const append = vi.spyOn(FormData.prototype, 'append');
+    const sent = () => append.mock.calls.filter(([name]) => name === 'to').map(([, value]) => value);
+    server.use(http.post('/fax', () => {
+      return HttpResponse.json({ id: 'c'.repeat(32), status: 'queued', delivery_state: 'ready', to: '+441782684953' },
+        { status: 202 });
+    }));
+    openFor(gb);
+    expect(screen.getByText('For example 0121 234 5678, or a number starting with + and its country code.')).toBeTruthy();
+    expect(screen.getByPlaceholderText('0121 234 5678')).toBeTruthy();
+    expect(screen.getByText(/Numbers without a country code are read as United Kingdom numbers, for example 0121 234 5678/))
+      .toBeTruthy();
+    expect(screen.queryByText(/555/)).toBeNull();
+
+    try {
+      await send('01782 684953', document());
+      expect(await screen.findByText('Fax queued for sending.')).toBeTruthy();
+      expect(sent()).toEqual(['01782684953']);
+    } finally {
+      append.mockRestore();
+    }
+    expect(screen.getByText('+441782684953')).toBeTruthy();
+  });
+
+  it('still shows the US example for a US installation', () => {
+    openFor(us);
+    expect(screen.getByText('For example (201) 555-0123, or a number starting with + and its country code.')).toBeTruthy();
+    expect(screen.getByPlaceholderText('(201) 555-0123')).toBeTruthy();
+    expect(screen.getByText(/read as United States numbers, for example \(201\) 555-0123/)).toBeTruthy();
+  });
+
+  it('shows the server sentence when it cannot read the number, and keeps no send to resume', async () => {
+    const detail = 'Enter the full fax number with its area code, or with its country code starting with +.';
+    server.use(http.post('/fax', () => HttpResponse.json({ detail }, { status: 400 })));
+    openFor(gb);
+    await send('684953', document());
+    expect(await screen.findByText(detail)).toBeTruthy();
+    expect(screen.queryByText(/To retry without creating a duplicate/)).toBeNull();
+    expect(screen.queryByText(/HTTP/)).toBeNull();
+    expect(window.sessionStorage.getItem('faxbot_pending_send')).toBeNull();
   });
 });

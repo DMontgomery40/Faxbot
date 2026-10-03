@@ -10,6 +10,7 @@ type Json = Record<string, any>;
 const CSRF_DETAIL = 'Browser request verification failed. Refresh your session and try again.';
 const AUTH_DETAIL = 'Authentication required or credentials no longer valid.';
 const CONFLICT_DETAIL = 'Access policy changed. Reload and try again.';
+export const NUMBER_DETAIL = 'Enter the full fax number with its area code, or with its country code starting with +.';
 
 export const ALL_PERMISSIONS: Array<[string, string]> = [
   ['fax:send', 'fax'], ['fax:read', 'fax'], ['fax:document', 'fax'], ['fax:refresh', 'fax'], ['fax:reconcile', 'fax'],
@@ -113,6 +114,12 @@ function createState() {
     principals, keys, roles, groups, memberships, mailboxes, rules, assignments,
     sequence: 100,
     requests: [] as Captured[],
+    // Installation country and how fax numbers typed there are saved. A test
+    // sets resolveNumber to stand in for the server's reading of a number;
+    // null refuses it with the server's sentence.
+    country: 'US',
+    numberExample: '(201) 555-0123',
+    resolveNumber: ((value: string) => value) as (value: string) => string | null,
   };
 }
 
@@ -279,7 +286,8 @@ const accessHandlers = [
     generation: 1,
     permissions: actor.principal.permissions,
     navigation: { jobs: true, inbox: true, send: actor.principal.permissions.includes('fax:send') },
-    send: actor.principal.permissions.includes('fax:send') ? { fax_disabled: true, max_file_size_mb: 10 } : null,
+    send: actor.principal.permissions.includes('fax:send')
+      ? { fax_disabled: true, max_file_size_mb: 10, default_country: s().country, number_example: s().numberExample } : null,
     inbound_enabled: true,
     branding: { docs_base: 'https://docs.faxbot.net/latest/', logo_path: '/admin/ui/faxbot_full_logo.png' },
     provider_view: null,
@@ -546,7 +554,9 @@ const accessHandlers = [
   guarded('post', '/access/inbound-rules', ({ body }) => {
     const invalid = strict(body, ['to_number', 'mailbox_id', 'expected_policy_version']) ?? stale(body);
     if (invalid) return invalid;
-    const rule: Rule = { id: nextId('rule'), to_number: body.to_number, mailbox_id: body.mailbox_id, version: 1 };
+    const toNumber = s().resolveNumber(body.to_number);
+    if (toNumber === null) return fail(400, NUMBER_DETAIL);
+    const rule: Rule = { id: nextId('rule'), to_number: toNumber, mailbox_id: body.mailbox_id, version: 1 };
     s().rules.set(rule.id, rule);
     return committed({ rule });
   }),
@@ -555,7 +565,10 @@ const accessHandlers = [
     if (!r) return fail(404, 'Access target not found.');
     const invalid = strict(body, ['version', 'expected_policy_version'], ['to_number', 'mailbox_id']) ?? stale(body, [body.version, r.version]);
     if (invalid) return invalid;
-    for (const field of ['to_number', 'mailbox_id'] as const) if (field in body) (r as Json)[field] = body[field];
+    const toNumber = 'to_number' in body ? s().resolveNumber(body.to_number) : r.to_number;
+    if (toNumber === null) return fail(400, NUMBER_DETAIL);
+    if ('to_number' in body) r.to_number = toNumber;
+    if ('mailbox_id' in body) r.mailbox_id = body.mailbox_id;
     r.version += 1;
     return committed({ rule: r });
   }),
