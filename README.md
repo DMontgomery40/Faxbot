@@ -60,7 +60,7 @@ docker compose --profile mcp up -d --build faxbot-mcp-sse
 
 
 ## Command line
-The `faxbot` command covers everything the Admin Console does: send and read faxes, manage users, groups, roles and API keys, change settings, check routes and costs, set up intake and direct delivery, and pair phones. Add `--json` for scripts.
+The `faxbot` command does what the Admin Console does, apart from its built-in terminal: send and read faxes, manage users, groups, roles and API keys, change settings, check routes and costs, set up intake and direct delivery, and pair phones. Add `--json` for scripts.
 ```
 docker compose exec api faxbot health
 FAXBOT_API_KEY=... faxbot send +15551234567 referral.pdf

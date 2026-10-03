@@ -1,6 +1,6 @@
 # Command line
 
-The `faxbot` command does everything the Admin Console does, from a terminal or a script: send faxes, read received ones, manage users and keys, change settings, check delivery costs, pair phones. It talks to a running Faxbot server with an API key, the same way the SDKs do.
+The `faxbot` command does what the Admin Console does, from a terminal or a script: send faxes, read received ones, manage users and keys, change settings, check delivery costs, pair phones. The console's built-in terminal is the one exception; you are already in one. It talks to a running Faxbot server with an API key, the same way the SDKs do.
 
 A few commands under `faxbot admin` work on a **stopped** installation instead, straight from its database and files: owner recovery, backup, restore, database upgrade and status.
 
@@ -59,7 +59,9 @@ faxbot inbound list                            # received faxes
 faxbot inbound pdf <received fax id> -o fax.pdf
 faxbot users add jsmith --name "Jane Smith"    # shows a temporary password once
 faxbot access grant jsmith "Fax operator"
-faxbot keys create --for "Front desk scanner" -p fax:send -p fax:read
+faxbot integrations add "Front desk scanner"   # an identity for an app or device
+faxbot access grant "Front desk scanner" "Fax operator"
+faxbot keys create --for "Front desk scanner" -p fax:send -p fax:read   # shows the key once
 faxbot routing costs
 ```
 
