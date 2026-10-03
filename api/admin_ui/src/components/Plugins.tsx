@@ -19,10 +19,6 @@ import {
   Fade,
   CircularProgress,
   Collapse,
-  Dialog,
-  DialogTitle,
-  DialogContent,
-  DialogActions,
 } from '@mui/material';
 import { 
   Extension, 
@@ -39,10 +35,17 @@ import {
 } from '@mui/icons-material';
 import AdminAPIClient from '../api/client';
 import type { AdminConfig, PluginConfiguration, PluginConfigurationPatch, Settings } from '../api/types';
+import type { AdminDestination } from '../navigation';
 import PluginConfigDialog from './PluginConfigDialog';
-import { ResponsiveFormSection, ResponsiveTextField } from './common/ResponsiveFormFields';
+import { ResponsiveFormSection } from './common/ResponsiveFormFields';
 
-type Props = { client: AdminAPIClient; config: AdminConfig | null; configLoading: boolean; configError: string | null };
+type Props = {
+  client: AdminAPIClient;
+  config: AdminConfig | null;
+  configLoading: boolean;
+  configError: string | null;
+  onNavigate: (destination: AdminDestination) => void;
+};
 
 type PluginItem = {
   id: string;
@@ -86,7 +89,7 @@ const EXAMPLE_MANIFEST = `{
 
 const BULK_IMPORT_PLACEHOLDER = `[ { "id": "provider1", ... }, { ... } ] or markdown with json code blocks`;
 
-export default function Plugins({ client, config, configLoading: activeConfigLoading, configError: activeConfigError }: Props) {
+export default function Plugins({ client, config, configLoading: activeConfigLoading, configError: activeConfigError, onNavigate }: Props) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>('');
   const [items, setItems] = useState<PluginItem[]>([]);
@@ -103,16 +106,11 @@ export default function Plugins({ client, config, configLoading: activeConfigLoa
   const [activeProviders, setActiveProviders] = useState<{ outbound: string; storage: string } | null>(null);
   const [query, setQuery] = useState('');
   const [manifestJson, setManifestJson] = useState<string>('');
-  const [manifestTo, setManifestTo] = useState<string>('+15551234567');
-  const [manifestFileUrl, setManifestFileUrl] = useState<string>('');
   const [manifestResult, setManifestResult] = useState<any | null>(null);
   const [bulkText, setBulkText] = useState<string>('');
   const [bulkImportRes, setBulkImportRes] = useState<any | null>(null);
   const [manifestExpanded, setManifestExpanded] = useState(false);
   const [bulkExpanded, setBulkExpanded] = useState(false);
-  const [testSend, setTestSend] = useState<{ manifest: any; to: string; fileUrl: string } | null>(null);
-  const [testSending, setTestSending] = useState(false);
-  const realSendAvailable = !activeConfigLoading && !activeConfigError && config?.fax_disabled === false;
 
   const theme = useTheme();
   const isSmallMobile = useMediaQuery(theme.breakpoints.down('sm'));
@@ -218,30 +216,6 @@ export default function Plugins({ client, config, configLoading: activeConfigLoa
       setError(mutationError(e, 'Failed to save plugin config'));
     } finally {
       setSaving(null);
-    }
-  };
-
-  const handleConfirmTestSend = async () => {
-    if (!testSend || testSending) return;
-    if (!realSendAvailable) {
-      setTestSend(null);
-      setError('Real test sending is unavailable under the active settings. Reopen Tools to refresh the delivery mode.');
-      return;
-    }
-    try {
-      setTestSending(true);
-      setError(''); setNote(''); setManifestResult(null);
-      const result = await client.validateHttpManifest({
-        manifest: testSend.manifest, to: testSend.to,
-        file_url: testSend.fileUrl, render_only: false,
-      });
-      setManifestResult(result);
-      setTestSend(null);
-    } catch (failure: any) {
-      setError(failure?.message || 'Real test send failed');
-      setTestSend(null);
-    } finally {
-      setTestSending(false);
     }
   };
 
@@ -361,7 +335,7 @@ export default function Plugins({ client, config, configLoading: activeConfigLoa
             {/* HTTP Manifest Tester */}
             <ResponsiveFormSection
               title="HTTP Manifest Tester (Preview)"
-              subtitle="Validate a manifest without sending, or explicitly confirm a real test fax. Installing saves the provider manifest."
+              subtitle="Validate the draft without sending. Installing saves the provider manifest and does not activate it."
               icon={<ScienceIcon />}
             >
               <Box>
@@ -392,21 +366,6 @@ export default function Plugins({ client, config, configLoading: activeConfigLoa
                       }}
                     />
                     
-                    <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
-                      <ResponsiveTextField
-                        label="To Number" 
-                        value={manifestTo} 
-                        onChange={setManifestTo}
-                        icon={<Phone />}
-                      />
-                      <ResponsiveTextField
-                        label="File URL (tokenized)" 
-                        value={manifestFileUrl} 
-                        onChange={setManifestFileUrl}
-                        placeholder="https://.../file.pdf?token=..."
-                      />
-                    </Stack>
-                    
                     <Stack direction="row" spacing={1} flexWrap="wrap">
                       <Button 
                         size="medium" 
@@ -427,22 +386,6 @@ export default function Plugins({ client, config, configLoading: activeConfigLoa
                       </Button>
                       <Button 
                         size="medium" 
-                        variant="outlined" 
-                        disabled={!realSendAvailable || testSending}
-                        onClick={() => {
-                          try {
-                            const parsed = JSON.parse(manifestJson || '{}');
-                            setTestSend({ manifest: parsed, to: manifestTo, fileUrl: manifestFileUrl });
-                          } catch {
-                            setError('Enter valid manifest JSON before sending a real test fax.');
-                          }
-                        }}
-                        sx={{ borderRadius: 2 }}
-                      >
-                        Send real test fax
-                      </Button>
-                      <Button 
-                        size="medium" 
                         variant="contained" 
                         onClick={async () => {
                           try {
@@ -459,13 +402,29 @@ export default function Plugins({ client, config, configLoading: activeConfigLoa
                       >
                         Install
                       </Button>
+                      <Button
+                        size="medium"
+                        variant="outlined"
+                        onClick={() => onNavigate('send')}
+                        sx={{ borderRadius: 2 }}
+                      >
+                        Open Send
+                      </Button>
                     </Stack>
 
-                    {!realSendAvailable && <Alert severity="info">
-                      {activeConfigLoading ? 'Checking the active delivery mode…'
-                        : activeConfigError || !config ? 'Real test sending is unavailable because active settings could not be loaded. Reopen Tools to refresh.'
-                        : 'Real test sending is disabled by the active settings. Validate remains available without sending.'}
-                    </Alert>}
+                    <Alert severity="info">
+                      To test a fax, install and configure the provider, select it as active outbound in Settings,
+                      then open Send to upload a document and create a tracked fax. Send uses the active provider,
+                      not this draft preview.
+                      <Typography variant="body2" sx={{ mt: 1 }}>
+                        {activeConfigLoading ? 'Checking the active delivery mode…'
+                          : activeConfigError || !config || typeof config.fax_disabled !== 'boolean'
+                            ? 'Active delivery mode could not be loaded. Open Send to refresh it; submission stays unavailable until active settings load.'
+                            : config.fax_disabled
+                              ? 'Current active mode permanently holds new test faxes without transmission. Enabling sending later does not release held jobs.'
+                              : 'Current active mode permits real fax transmission through the selected active outbound provider.'}
+                      </Typography>
+                    </Alert>
                     
                     {manifestResult && (
                       <Paper sx={{ p: 2, borderRadius: 2, bgcolor: 'background.paper' }}>
@@ -606,23 +565,6 @@ export default function Plugins({ client, config, configLoading: activeConfigLoa
               onSave={handleSaveConfig}
             />
 
-            <Dialog open={testSend !== null} onClose={() => { if (!testSending) setTestSend(null); }} maxWidth="sm" fullWidth>
-              <DialogTitle>Confirm real test fax</DialogTitle>
-              <DialogContent>
-                <Alert severity="warning" sx={{ mb: 2 }}>
-                  This action contacts the provider endpoint and can transmit a fax. It does not create a tracked Faxbot queue job.
-                </Alert>
-                <Typography>Provider: {String(testSend?.manifest?.id || 'Not specified')}</Typography>
-                <Typography>Recipient: {testSend?.to || 'Not specified'}</Typography>
-                <Typography variant="body2" sx={{ mt: 2 }}>Use Validate to inspect the manifest without sending. Confirm only when the provider, recipient, and document are intended for a real test.</Typography>
-              </DialogContent>
-              <DialogActions>
-                <Button disabled={testSending} onClick={() => setTestSend(null)}>Cancel</Button>
-                <Button variant="contained" color="warning" disabled={!realSendAvailable || testSending} onClick={handleConfirmTestSend}>
-                  {testSending ? 'Sending…' : 'Confirm real test send'}
-                </Button>
-              </DialogActions>
-            </Dialog>
           </>
         )}
       </Stack>
