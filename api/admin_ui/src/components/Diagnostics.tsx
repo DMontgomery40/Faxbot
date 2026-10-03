@@ -147,7 +147,7 @@ function Diagnostics({ client, onNavigate, docsBase }: DiagnosticsProps) {
     try {
       const result = await client.restart();
       if (result?.ok !== true) throw new Error('The restart request was not accepted.');
-      setRestartMessage('Faxbot is restarting. Run diagnostics again once it is back.');
+      setRestartMessage('Restart requested. Run diagnostics again once Faxbot is back.');
       setRestartState('success');
     } catch (err) {
       setRestartMessage(err instanceof Error ? err.message : "Couldn't restart Faxbot.");

@@ -356,7 +356,7 @@ const ScriptsTests: React.FC<Props> = ({ client, onNavigate, docsBase }) => {
                 Set provider credentials, inbound secrets and callback URLs in Settings.
               </Typography>
               <Typography variant="body2" color="text.secondary">
-                Asterisk posts inbound faxes with the X-Internal-Secret header, and Phaxio status callbacks need their own callback token.
+                Asterisk sends the inbound secret in the X-Internal-Secret header, and Phaxio status callbacks need their own callback token.
               </Typography>
               <Box>
                 <Button

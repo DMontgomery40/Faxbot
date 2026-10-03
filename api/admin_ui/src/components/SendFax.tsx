@@ -176,7 +176,7 @@ function SendFax({ client, config, configLoading, configError }: SendFaxProps) {
     } catch (err) {
       setResult({
         type: 'error',
-        message: `${err instanceof Error ? err.message : "Couldn't confirm the fax was submitted."}${intentRef.current ? " Sending again from this form won't create a duplicate." : ''}`,
+        message: `${err instanceof Error ? err.message : "Couldn't confirm the fax was submitted."}${intentRef.current ? ' To retry without creating a duplicate, send again without changing anything or leaving this page.' : ''}`,
       });
     } finally {
       submittingRef.current = false;
