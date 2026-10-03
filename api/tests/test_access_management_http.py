@@ -4,6 +4,8 @@ Key clients use X-API-Key over HTTPS; browser clients log in with a password
 and send the session cookie with Origin and X-CSRF-Token. The bootstrap key
 passes every check, so denials use a real user created through the API.
 """
+from datetime import datetime, timedelta, timezone
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -158,8 +160,14 @@ def test_auth_me_reports_owner_status_and_what_the_actor_may_grant(client):
     assert changed.status_code == 200, changed.text
     owner.token = _session_token(changed)
     me = owner.refresh()
-    assert me['is_owner'] is True and me['can_enroll_owner'] is True
+    # can_enroll_owner drives the first-owner prompt, so it is off once a named Owner exists.
+    assert me['is_owner'] is True and me['can_enroll_owner'] is False
     assert me['grantable']['installation'] == sorted(PERMISSIONS)
+    assert client.get('/auth/me', headers=B).json()['can_enroll_owner'] is False
+    # A complete Owner may still enroll another Owner through the API.
+    second = owner.post('/auth/owner/enroll', {'login': 'second', 'display_name': 'Second',
+                                               'expected_policy_version': policy_version(client)})
+    assert second.status_code == 200, second.text
 
     plain, _ = ready_user(client, 'plain')
     me = plain.refresh()
@@ -479,6 +487,27 @@ def test_key_lifecycle_through_the_key_projection(client):
         'expected_policy_version': policy_version(client)}).status_code == 403
     assert plain.post('/access/keys', {'principal': {'id': principal['id'], 'version': principal['version']},
         'ceiling': [], 'expected_policy_version': policy_version(client)}).status_code == 403
+
+
+def test_key_expiry_is_accepted_as_iso_text_and_stored_as_naive_utc(client):
+    integration = client.post('/access/integrations', headers=B, json={'display_name': 'Expiring', 'enabled': True,
+        'expected_policy_version': policy_version(client)}).json()['integration']
+    future = (datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=30)).replace(microsecond=0)
+    issued = client.post('/access/keys', headers=B, json={'principal': {'id': integration['id'], 'version': 1},
+        'name': 'temp', 'note': '', 'expires_at': future.isoformat(), 'ceiling': [],
+        'expected_policy_version': policy_version(client)})
+    assert issued.status_code == 200, issued.text
+    key = issued.json()['key']
+    assert key['expires_at'] == future.isoformat()
+    later = future + timedelta(days=1)
+    aware = later.replace(tzinfo=timezone(timedelta(hours=2))) + timedelta(hours=2)
+    patched = client.patch(f"/access/keys/{key['id']}", headers=B, json={'expires_at': aware.isoformat(),
+        'version': key['version'], 'expected_policy_version': policy_version(client)})
+    assert patched.status_code == 200, patched.text
+    assert patched.json()['key']['expires_at'] == later.isoformat()
+    assert patched.json()['key']['version'] == key['version'] + 1
+    assert client.patch(f"/access/keys/{key['id']}", headers=B, json={'expires_at': 'next tuesday',
+        'version': key['version'] + 1, 'expected_policy_version': policy_version(client)}).status_code == 400
 
 
 def test_key_ceiling_cannot_exceed_the_issuer(client):

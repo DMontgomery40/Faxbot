@@ -17,6 +17,7 @@ from .authentication import AuthenticationThrottledError
 from .credentials import InvalidCredentialInputError
 from .fax_resources import FaxAccessError
 from .mutation_types import MutationDeniedError, OwnerEnrollment, StaleVersionError
+from .mutations import _Graph
 from .sessions import SessionCursor, SessionDeniedError
 from .transport import TransportError, credential_source, single_header
 from .types import AccessError, AccessUnavailableError, AuthenticationError, ResourceRef
@@ -384,8 +385,10 @@ def _me(service, identity):
             'password_change_required':source.reset_required,
             'policy_version':service.store.require_lock_on(connection),
             'permissions':sorted(permissions), 'session':session,
-            # Exactly what enroll_owner enforces: the bootstrap credential or a complete Owner.
-            'can_enroll_owner':not source.reset_required and service.control.is_complete_owner_on(connection, actor, now=now)}
+            # The console's first-owner prompt: the bootstrap credential before any named Owner exists.
+            # POST /auth/owner/enroll itself also accepts a complete Owner, and bootstrap recovery later.
+            'can_enroll_owner':source.bootstrap and service.control.is_complete_owner_on(connection, actor, now=now)
+                and not _Graph(connection, service.store.tables).owners(service.credential_codec)}
         if identity.source == 'session':
             result['csrf_token'] = service.session_codec.csrf_value(identity.cookie_token)
     result.update(service.reads.me_extras(actor))
