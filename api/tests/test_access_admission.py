@@ -16,7 +16,7 @@ import pytest
 import sqlalchemy as sa
 
 from api.tests.test_schema import database
-from api.app.schema import SchemaUpgradeError, upgrade_schema
+from api.app.schema import HEAD, SchemaUpgradeError, upgrade_schema
 from api.app.schema_access import frozen_metadata as access_metadata
 from api.app.access.store import AccessStore
 from api.app.access.types import (
@@ -40,7 +40,7 @@ class World:
         schema, self.module = modules()
         upgrade_schema(engine)
         with engine.connect() as c:
-            assert c.execute(sa.text('SELECT version_num FROM alembic_version')).scalar_one() == '0006_auth_admission'
+            assert c.execute(sa.text('SELECT version_num FROM alembic_version')).scalar_one() == HEAD
         self.buckets = schema.frozen_metadata(dialect=engine.dialect.name).tables['access_auth_buckets']
         self.engine, self.store = engine, AccessStore(engine)
         self.service = self.module.AuthenticationAdmission(self.store, installation_key=KEY, clock=lambda: NOW)
