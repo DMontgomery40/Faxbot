@@ -13,6 +13,19 @@ import type {
   InboundFax
 } from './types';
 
+// These manifest validation messages contain no paths, credentials, or provider
+// responses. All other server error bodies remain opaque to the UI.
+const safeManifestDetails = new Set([
+  'Manifest id is required',
+  'Manifest id required',
+  'manifest.id missing',
+  'Invalid provider id or path',
+  'HTTP provider id is reserved for storage.',
+  'Invalid HTTP provider manifest.',
+  'No manifest candidates provided',
+  'Fax sending is disabled. Validate the manifest without sending, or use Send to queue a test document.',
+]);
+
 export class AdminAPIClient {
   private baseURL: string;
   private apiKey: string;
@@ -23,7 +36,7 @@ export class AdminAPIClient {
     this.apiKey = apiKey;
   }
 
-  private async fetch(path: string, options: RequestInit = {}): Promise<Response> {
+  private async fetch(path: string, options: RequestInit = {}, manifestValidation = false): Promise<Response> {
     const response = await fetch(`${this.baseURL}${path}`, {
       ...options,
       headers: {
@@ -34,6 +47,12 @@ export class AdminAPIClient {
     });
 
     if (!response.ok) {
+      if (manifestValidation && (response.status === 400 || response.status === 409)) {
+        const body = await response.json().catch(() => null);
+        if (typeof body?.detail === 'string' && safeManifestDetails.has(body.detail)) {
+          throw new Error(body.detail);
+        }
+      }
       throw new Error(`API Error: ${response.status} ${response.statusText}`);
     }
 
@@ -325,7 +344,7 @@ export class AdminAPIClient {
     const res = await this.fetch('/admin/plugins/http/validate', {
       method: 'POST',
       body: JSON.stringify(payload || {}),
-    });
+    }, true);
     return res.json();
   }
 
@@ -333,7 +352,7 @@ export class AdminAPIClient {
     const res = await this.fetch('/admin/plugins/http/install', {
       method: 'POST',
       body: JSON.stringify(payload || {}),
-    });
+    }, true);
     return res.json();
   }
 
@@ -343,12 +362,18 @@ export class AdminAPIClient {
     return res.json();
   }
 
-  async importHttpManifests(payload: { items?: any[]; markdown?: string }): Promise<{ ok: boolean; imported: any[]; errors: any[] }>{
+  async importHttpManifests(payload: { items?: any[]; markdown?: string; source?: 'repo_scrape' }): Promise<{ ok: boolean; imported: any[]; errors: Array<{ error: string }> }>{
     const res = await this.fetch('/admin/plugins/http/import-manifests', {
       method: 'POST',
       body: JSON.stringify(payload || {}),
-    });
-    return res.json();
+    }, true);
+    const result = await res.json();
+    return {
+      ...result,
+      errors: (Array.isArray(result.errors) ? result.errors : []).map((failure: any) => ({
+        error: safeManifestDetails.has(failure?.error) ? failure.error : 'Manifest could not be imported.',
+      })),
+    };
   }
 
   // Polling helper

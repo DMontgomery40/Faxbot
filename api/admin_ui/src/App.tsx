@@ -706,10 +706,10 @@ function AppContent() {
               </Tabs>
             </Box>
             <Box sx={{ p: { xs: 2, md: 3 } }}>
-              {selectedToolsTab === 'terminal' && <Terminal apiKey={apiKey} />}
+              {selectedToolsTab === 'terminal' && <Terminal apiKey={apiKey} client={client!} />}
               {selectedToolsTab === 'diagnostics' && <Diagnostics client={client!} onNavigate={handleNavigate} docsBase={adminConfig?.branding?.docs_base} />}
               {selectedToolsTab === 'logs' && <Logs client={client!} />}
-              {selectedToolsTab === 'plugins' && adminConfig?.v3_plugins?.enabled && <Plugins client={client!} />}
+              {selectedToolsTab === 'plugins' && adminConfig?.v3_plugins?.enabled && <Plugins client={client!} config={adminConfig} configLoading={activeConfigLoading} configError={activeConfigError} />}
               {selectedToolsTab === 'scripts' && <ScriptsTests client={client!} docsBase={adminConfig?.branding?.docs_base} />}
             </Box>
           </Paper>}

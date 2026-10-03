@@ -19,6 +19,10 @@ import {
   Fade,
   CircularProgress,
   Collapse,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
 } from '@mui/material';
 import { 
   Extension, 
@@ -34,11 +38,11 @@ import {
   ExpandLess as ExpandLessIcon,
 } from '@mui/icons-material';
 import AdminAPIClient from '../api/client';
-import type { PluginConfiguration, PluginConfigurationPatch, Settings } from '../api/types';
+import type { AdminConfig, PluginConfiguration, PluginConfigurationPatch, Settings } from '../api/types';
 import PluginConfigDialog from './PluginConfigDialog';
 import { ResponsiveFormSection, ResponsiveTextField } from './common/ResponsiveFormFields';
 
-type Props = { client: AdminAPIClient };
+type Props = { client: AdminAPIClient; config: AdminConfig | null; configLoading: boolean; configError: string | null };
 
 type PluginItem = {
   id: string;
@@ -82,7 +86,7 @@ const EXAMPLE_MANIFEST = `{
 
 const BULK_IMPORT_PLACEHOLDER = `[ { "id": "provider1", ... }, { ... } ] or markdown with json code blocks`;
 
-export default function Plugins({ client }: Props) {
+export default function Plugins({ client, config, configLoading: activeConfigLoading, configError: activeConfigError }: Props) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>('');
   const [items, setItems] = useState<PluginItem[]>([]);
@@ -106,6 +110,9 @@ export default function Plugins({ client }: Props) {
   const [bulkImportRes, setBulkImportRes] = useState<any | null>(null);
   const [manifestExpanded, setManifestExpanded] = useState(false);
   const [bulkExpanded, setBulkExpanded] = useState(false);
+  const [testSend, setTestSend] = useState<{ manifest: any; to: string; fileUrl: string } | null>(null);
+  const [testSending, setTestSending] = useState(false);
+  const realSendAvailable = !activeConfigLoading && !activeConfigError && config?.fax_disabled === false;
 
   const theme = useTheme();
   const isSmallMobile = useMediaQuery(theme.breakpoints.down('sm'));
@@ -211,6 +218,30 @@ export default function Plugins({ client }: Props) {
       setError(mutationError(e, 'Failed to save plugin config'));
     } finally {
       setSaving(null);
+    }
+  };
+
+  const handleConfirmTestSend = async () => {
+    if (!testSend || testSending) return;
+    if (!realSendAvailable) {
+      setTestSend(null);
+      setError('Real test sending is unavailable under the active settings. Reopen Tools to refresh the delivery mode.');
+      return;
+    }
+    try {
+      setTestSending(true);
+      setError(''); setNote(''); setManifestResult(null);
+      const result = await client.validateHttpManifest({
+        manifest: testSend.manifest, to: testSend.to,
+        file_url: testSend.fileUrl, render_only: false,
+      });
+      setManifestResult(result);
+      setTestSend(null);
+    } catch (failure: any) {
+      setError(failure?.message || 'Real test send failed');
+      setTestSend(null);
+    } finally {
+      setTestSending(false);
     }
   };
 
@@ -330,7 +361,7 @@ export default function Plugins({ client }: Props) {
             {/* HTTP Manifest Tester */}
             <ResponsiveFormSection
               title="HTTP Manifest Tester (Preview)"
-              subtitle="Paste a manifest JSON and validate or dry‑run a send. Installing saves to the providers directory."
+              subtitle="Validate a manifest without sending, or explicitly confirm a real test fax. Installing saves the provider manifest."
               icon={<ScienceIcon />}
             >
               <Box>
@@ -397,24 +428,18 @@ export default function Plugins({ client }: Props) {
                       <Button 
                         size="medium" 
                         variant="outlined" 
-                        onClick={async () => {
+                        disabled={!realSendAvailable || testSending}
+                        onClick={() => {
                           try {
-                            setError(''); setNote(''); setManifestResult(null);
                             const parsed = JSON.parse(manifestJson || '{}');
-                            const r = await client.validateHttpManifest({ 
-                              manifest: parsed, 
-                              to: manifestTo, 
-                              file_url: manifestFileUrl, 
-                              render_only: false 
-                            });
-                            setManifestResult(r);
-                          } catch (e: any) {
-                            setError(e?.message || 'Dry‑run failed');
+                            setTestSend({ manifest: parsed, to: manifestTo, fileUrl: manifestFileUrl });
+                          } catch {
+                            setError('Enter valid manifest JSON before sending a real test fax.');
                           }
                         }}
                         sx={{ borderRadius: 2 }}
                       >
-                        Dry‑run Send
+                        Send real test fax
                       </Button>
                       <Button 
                         size="medium" 
@@ -435,6 +460,12 @@ export default function Plugins({ client }: Props) {
                         Install
                       </Button>
                     </Stack>
+
+                    {!realSendAvailable && <Alert severity="info">
+                      {activeConfigLoading ? 'Checking the active delivery mode…'
+                        : activeConfigError || !config ? 'Real test sending is unavailable because active settings could not be loaded. Reopen Tools to refresh.'
+                        : 'Real test sending is disabled by the active settings. Validate remains available without sending.'}
+                    </Alert>}
                     
                     {manifestResult && (
                       <Paper sx={{ p: 2, borderRadius: 2, bgcolor: 'background.paper' }}>
@@ -507,7 +538,6 @@ export default function Plugins({ client }: Props) {
                             }
                             const res = await client.importHttpManifests(payload);
                             setBulkImportRes(res);
-                            setNote(`Imported ${res.imported?.length || 0} provider(s)`);
                             await load();
                           } catch (e: any) {
                             setError(e?.message || 'Import failed');
@@ -523,9 +553,8 @@ export default function Plugins({ client }: Props) {
                         onClick={async () => {
                           try {
                             setError(''); setNote(''); setBulkImportRes(null);
-                            const res = await client.importHttpManifests({ source: 'repo_scrape' } as any);
+                            const res = await client.importHttpManifests({ source: 'repo_scrape' });
                             setBulkImportRes(res);
-                            setNote(`Imported ${res.imported?.length || 0} provider(s) from repo scrape`);
                             await load();
                           } catch (e: any) {
                             setError(e?.message || 'Import from repo failed');
@@ -539,6 +568,11 @@ export default function Plugins({ client }: Props) {
                     
                     {bulkImportRes && (
                       <Paper sx={{ p: 2, borderRadius: 2, bgcolor: 'background.paper' }}>
+                        <Alert severity={(bulkImportRes.imported?.length || 0) === 0
+                          ? (bulkImportRes.errors?.length || 0) > 0 ? 'error' : 'warning'
+                          : (bulkImportRes.errors?.length || 0) > 0 ? 'warning' : 'success'} sx={{ mb: 2 }}>
+                          Imported {bulkImportRes.imported?.length || 0} provider(s). {bulkImportRes.errors?.length || 0} failed.
+                        </Alert>
                         <Typography variant="subtitle2" fontWeight={600} gutterBottom>
                           Import Summary
                         </Typography>
@@ -571,6 +605,24 @@ export default function Plugins({ client }: Props) {
               onReload={() => { if (configPlugin) handleConfigure(configPlugin); }}
               onSave={handleSaveConfig}
             />
+
+            <Dialog open={testSend !== null} onClose={() => { if (!testSending) setTestSend(null); }} maxWidth="sm" fullWidth>
+              <DialogTitle>Confirm real test fax</DialogTitle>
+              <DialogContent>
+                <Alert severity="warning" sx={{ mb: 2 }}>
+                  This action contacts the provider endpoint and can transmit a fax. It does not create a tracked Faxbot queue job.
+                </Alert>
+                <Typography>Provider: {String(testSend?.manifest?.id || 'Not specified')}</Typography>
+                <Typography>Recipient: {testSend?.to || 'Not specified'}</Typography>
+                <Typography variant="body2" sx={{ mt: 2 }}>Use Validate to inspect the manifest without sending. Confirm only when the provider, recipient, and document are intended for a real test.</Typography>
+              </DialogContent>
+              <DialogActions>
+                <Button disabled={testSending} onClick={() => setTestSend(null)}>Cancel</Button>
+                <Button variant="contained" color="warning" disabled={!realSendAvailable || testSending} onClick={handleConfirmTestSend}>
+                  {testSending ? 'Sending…' : 'Confirm real test send'}
+                </Button>
+              </DialogActions>
+            </Dialog>
           </>
         )}
       </Stack>
