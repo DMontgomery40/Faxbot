@@ -18,7 +18,7 @@ import {
   CheckCircle as SuccessIcon,
   Error as ErrorIcon,
 } from '@mui/icons-material';
-import AdminAPIClient, { normalizeFaxDestination, reconciliationNotice } from '../api/client';
+import AdminAPIClient, { normalizeFaxDestination } from '../api/client';
 import type { AdminConfig, FaxSendResult } from '../api/types';
 import {
   ResponsiveTextField,
@@ -44,7 +44,7 @@ interface SubmissionIntent {
 function submissionKey(): string {
   if (typeof window.crypto?.randomUUID === 'function') return window.crypto.randomUUID();
   if (typeof window.crypto?.getRandomValues !== 'function') {
-    throw new Error('Protected fax submission is unavailable in this browser. No request was sent.');
+    throw new Error("This browser can't send faxes from the console. Nothing was sent.");
   }
   // getRandomValues remains available for ordinary HTTP self-hosted instances.
   const bytes = window.crypto.getRandomValues(new Uint8Array(16));
@@ -57,29 +57,27 @@ function submissionKey(): string {
 function acceptanceMessage(response: FaxSendResult): string {
   switch ((response.delivery_state || response.status).toLowerCase()) {
     case 'held':
-      return 'Test fax accepted and held. It will never be automatically transmitted, even after outbound sending is enabled.';
+      return 'Test fax queued. It is held and will not be sent.';
     case 'ready':
-      return 'Fax accepted and ready for dispatch. Delivery is not yet confirmed.';
+    case 'queued':
+      return 'Fax queued for sending.';
     case 'preparing':
-      return 'Fax job is preparing for transmission. Delivery is not yet confirmed.';
+      return 'Fax is being prepared.';
     case 'submitting':
-      return 'Fax submission is underway. Delivery is not yet confirmed.';
     case 'in_progress':
-      return 'Fax transmission is in progress. Delivery is not yet confirmed.';
+      return 'Fax is sending.';
     case 'success':
     case 'completed':
-      return 'Fax job reports successful delivery.';
+      return 'Fax delivered.';
     case 'failed':
-      return 'Fax job failed. Review its details in Jobs before submitting another fax.';
+      return 'Fax failed. See Jobs for details.';
     case 'cancelled':
     case 'canceled':
-      return 'Fax job was cancelled.';
+      return 'Fax cancelled.';
     case 'reconciliation_required':
-      return reconciliationNotice(response.reconciliation_reason);
-    case 'queued':
-      return 'Fax accepted and queued. Delivery is not yet confirmed. Check Jobs for the latest status.';
+      return "Faxbot couldn't confirm whether this fax was sent. Check Jobs before sending it again.";
     default:
-      return 'Fax request accepted. Check Jobs for its current delivery status.';
+      return 'Fax submitted.';
   }
 }
 
@@ -137,7 +135,7 @@ function SendFax({ client, config, configLoading, configError }: SendFaxProps) {
       setFileError('Please select a PDF or TXT file.');
       hasError = true;
     } else if (allowedBytes !== null && file.size > allowedBytes) {
-      setFileError(`The upload limit for this request is ${allowedBytes / (1024 * 1024)} MB. Choose a smaller document.`);
+      setFileError(`Files can be up to ${allowedBytes / (1024 * 1024)} MB. Choose a smaller document.`);
       hasError = true;
     }
     
@@ -178,7 +176,7 @@ function SendFax({ client, config, configLoading, configError }: SendFaxProps) {
     } catch (err) {
       setResult({
         type: 'error',
-        message: `${err instanceof Error ? err.message : 'Fax acceptance was not confirmed.'}${intentRef.current ? ' Retrying the unchanged destination and document in this open form reuses the same request. Leaving or reloading starts a new request.' : ''}`,
+        message: `${err instanceof Error ? err.message : "Couldn't confirm the fax was submitted."}${intentRef.current ? " Sending again from this form won't create a duplicate." : ''}`,
       });
     } finally {
       submittingRef.current = false;
@@ -200,12 +198,12 @@ function SendFax({ client, config, configLoading, configError }: SendFaxProps) {
         {faxDisabled ? 'Queue Test Fax' : 'Send Fax'}
       </Typography>
 
-      {configLoading && <Alert severity="info" sx={{ mb: 3 }}>Loading active send configuration…</Alert>}
+      {configLoading && <Alert severity="info" sx={{ mb: 3 }}>Loading send settings…</Alert>}
       {!configLoading && !configReady && <Alert severity="error" sx={{ mb: 3 }}>
-        {configError ?? 'Active send configuration is unavailable. Leave and reopen Send to refresh it.'}
+        {configError ?? "Send settings couldn't be loaded. Reopen this page to try again."}
       </Alert>}
       {faxDisabled && <Alert severity="warning" sx={{ mb: 3 }}>
-        Outbound sending is disabled. Test jobs are held and will never be automatically transmitted, even after sending is enabled.
+        Sending is turned off, so faxes queued here are held as tests and never sent.
       </Alert>}
 
       <Box sx={{ maxWidth: { xs: '100%', md: 800 } }}>
@@ -213,7 +211,7 @@ function SendFax({ client, config, configLoading, configError }: SendFaxProps) {
           <Box>
             <ResponsiveFormSection
               title={faxDisabled ? 'New Queued Test Fax' : 'New Fax Submission'}
-              subtitle={faxDisabled ? 'Queue a PDF or TXT document without transmitting it' : 'Submit a PDF or TXT document to the fax job queue'}
+              subtitle={faxDisabled ? 'Queue a PDF or TXT document as a test' : 'Send a PDF or TXT document'}
               icon={<SendIcon />}
             >
               <Stack spacing={2}>
@@ -247,11 +245,11 @@ function SendFax({ client, config, configLoading, configError }: SendFaxProps) {
                     if (intentRef.current && intentRef.current.file !== file) intentRef.current = null;
                     setFile(file);
                     setFileError(file && maxFileSizeBytes !== null && file.size > maxFileSizeBytes
-                      ? `The active upload limit is ${maxFileSizeMb} MB. Choose a smaller document.`
+                      ? `Files can be up to ${maxFileSizeMb} MB. Choose a smaller document.`
                       : null);
                   }}
                   accept=".pdf,.txt,application/pdf,text/plain"
-                  helperText={maxFileSizeMb === null ? 'PDF or TXT files only. Active upload limit is loading.' : `PDF or TXT files only. New requests: maximum ${maxFileSizeMb} MB. Unchanged retries retain the original limit.`}
+                  helperText={maxFileSizeMb === null ? 'PDF or TXT files only.' : `PDF or TXT, up to ${maxFileSizeMb} MB.`}
                   disabled={!configReady || loading}
                   required
                   error={!!fileError}
@@ -374,27 +372,17 @@ function SendFax({ client, config, configLoading, configError }: SendFaxProps) {
                   <Typography variant="body2" color="text.secondary">
                     • PDF files: Standard documents, forms, letters<br />
                     • TXT files: Plain text will be converted to PDF automatically<br />
-                    • Maximum file size for new requests: {maxFileSizeMb === null ? 'unavailable until active settings load' : `${maxFileSizeMb} MB`}<br />
+                    • Maximum file size: {maxFileSizeMb === null ? 'unavailable' : `${maxFileSizeMb} MB`}<br />
                     • Images: Convert to PDF first using a PDF creator
                   </Typography>
                 </Box>
 
                 <Box>
                   <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 0.5 }}>
-                    {faxDisabled ? 'Queue-only Test Jobs' : 'Job Status'}
+                    Job Status
                   </Typography>
                   <Typography variant="body2" color="text.secondary">
-                    {faxDisabled ? <>Test jobs remain held permanently. Enabling sending never automatically transmits them.</> : <>Queue acceptance does not confirm delivery. Delivery timing and status depend on the configured provider.</>}<br />
-                    Check the Jobs tab to monitor the accepted job.
-                  </Typography>
-                </Box>
-                <Box>
-                  <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 0.5 }}>Retrying a Submission</Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    Retrying an unchanged destination and the same selected document reuses the request while this form stays open.
-                    Unchanged retries also retain the original delivery mode and upload limit.
-                    Changing the destination or document, clearing the form, navigating away or reloading starts a new request.
-                    Check Jobs before starting another request when acceptance is uncertain.
+                    Follow each fax in the Jobs tab; delivery time depends on your provider.
                   </Typography>
                 </Box>
               </Stack>
