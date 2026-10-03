@@ -10,14 +10,14 @@ The builtin HumbleFax adapter uploads prepared PDFs directly and polls the origi
 
 ## Configure the installation
 
-1. Open **Settings** or **Setup Wizard** and load the current desired revision.
+1. Open **Settings** or **Setup Wizard**.
 2. Select **HumbleFax** as the outbound provider.
 3. Paste the access key and secret key. Leave unchanged secret masks alone.
 4. Optional: enter **HumbleFax From Number** as 10 digits, or 11 digits starting with `1` (for example `13035550199`). It must be a fax number on the same HumbleFax account.
-5. Apply the changed fields with the loaded revision. If the change is pending, stop every API worker and restart the installation; confirm that the desired revision is active.
+5. Apply the changes. If Faxbot asks for a restart, stop every API process and start the installation again, then confirm that no restart is pending.
 6. Use **Send** with a synthetic document and a controlled destination. Disabled sending creates permanently held jobs; real transmission requires sending to be enabled. Inspect **Jobs** and the HumbleFax sent history for the result and document fidelity.
 
-Setup does not authenticate HumbleFax keys. Readiness checks local configuration, not account access or delivery. The key pair must permit both sending faxes and reading sent fax details. For first bootstrap, the corresponding environment names are `FAX_OUTBOUND_BACKEND=humblefax`, `HUMBLEFAX_ACCESS_KEY`, `HUMBLEFAX_SECRET_KEY` and `HUMBLEFAX_FROM_NUMBER`. Existing installations use canonical Settings, not later `.env` edits.
+Setup does not authenticate HumbleFax keys. Readiness checks local configuration, not account access or delivery. The key pair must permit both sending faxes and reading sent fax details. When a new installation starts for the first time, it can read `FAX_OUTBOUND_BACKEND=humblefax`, `HUMBLEFAX_ACCESS_KEY`, `HUMBLEFAX_SECRET_KEY` and `HUMBLEFAX_FROM_NUMBER` from the environment. After that, change them in Settings; later `.env` edits are not imported.
 
 ## Destinations
 
@@ -44,7 +44,7 @@ HumbleFax cancellation, webhooks and inbound faxes are not implemented by this a
 
 ## Configuration and troubleshooting
 
-- Credentials are captured in encrypted canonical configuration; a redacted template is not a recovery backup.
+- Faxbot stores the credentials encrypted in its database. The exported `.env` template hides them and is not a backup.
 - When HumbleFax rejects the key pair, it creates no fax and Faxbot does not resend. The job still shows that it requires reconciliation. Recreate or recopy both keys from **Developer Settings**, apply them in Settings, then send a new fax. Editing current credentials does not replace an accepted attempt's captured account.
 - A sender number that is not on the account is rejected by HumbleFax. Clear **HumbleFax From Number** to use the account default.
 - HumbleFax documents a limit of 5 requests per second per IP address and blocks an address for 60 seconds when it is exceeded. Read failures and rate limits preserve uncertainty; inspect the original fax before considering another submission.

@@ -23,11 +23,11 @@
 
 Note on branding: New Phaxio signups and dashboards may redirect to Sinch. That is expected — Phaxio is a Sinch company. This backend continues to work with those credentials.
 
-### 2. Configure the desired revision
+### 2. Configure Faxbot
 
-On an existing installation, load Settings or Setup, select Phaxio for outbound and edit the corresponding credential/URL fields. Apply only intended changes; inspect active/desired status. Pending changes require every API worker to stop and the installation restart. Blank direction overrides independently inherit the default provider.
+On an existing installation, open Settings or Setup, select Phaxio for outbound and fill in the credential and address fields. Apply only the changes you mean. If Faxbot asks for a restart, stop every API process and start the installation again. An empty outbound or inbound override uses the default provider.
 
-The following `.env` values are for first bootstrap only; they do not override an initialized canonical store:
+The following `.env` values only apply when a new installation starts for the first time; later edits are not imported:
 
 ```env
 FAX_BACKEND=phaxio
@@ -68,7 +68,7 @@ How this works: you talk to the Faxbot API (your local/server endpoint). Faxbot 
       -F file=@./example.pdf
     ```
 
-- The 202 response includes a durable job ID and delivery metadata; it is acceptance, not delivery. Disabled sending creates held work that never automatically transmits after re-enabling. Check the issued attempt and original provider account for a real result.
+- The 202 response includes the job ID and delivery details. It means Faxbot accepted the fax, not that it was delivered. While sending is disabled, faxes are held and are never sent automatically later. Check Jobs and your Phaxio account for the real result.
 - Check status:
 
     ```bash

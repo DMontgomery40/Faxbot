@@ -15,7 +15,6 @@ fi
 "$VENV_DIR/bin/python" -m pip install -q -r "$ROOT_DIR/api/requirements.txt"
 
 # Default dev env (override by exporting before running)
-export REQUIRE_API_KEY="${REQUIRE_API_KEY:-true}"
 export FAX_DISABLED="${FAX_DISABLED:-true}"
 export FAX_BACKEND="${FAX_BACKEND:-phaxio}"
 export FAX_DATA_DIR="${FAX_DATA_DIR:-$ROOT_DIR/faxdata}"
@@ -23,7 +22,6 @@ export ENABLE_LOCAL_ADMIN="${ENABLE_LOCAL_ADMIN:-true}"
 
 PORT="${PORT:-8080}"
 echo "[i] Starting direct-loopback development server on http://127.0.0.1:${PORT}"
-echo "[i] REQUIRE_API_KEY: $REQUIRE_API_KEY"
 echo "[i] FAX_DISABLED: $FAX_DISABLED"
 echo "[i] FAX_BACKEND: $FAX_BACKEND"
 echo "[i] FAX_DATA_DIR: $FAX_DATA_DIR"

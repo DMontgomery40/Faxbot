@@ -514,6 +514,15 @@ def test_repository_base_keeps_known_builtin_definitions(tmp_path):
     assert catalog.get("signalwire").traits.as_dict()["supports_inbound"] is False
 
 
+def test_fallback_backend_ids_match_the_repository_builtins_when_the_registry_is_unavailable(tmp_path, monkeypatch):
+    config = import_module("api.app.config")
+    repository = Path(__file__).resolve().parents[2]
+    catalog = catalog_module().ProviderCatalog.load(
+        repository / "config" / "provider_traits.json", tmp_path / "providers")
+    monkeypatch.setattr(config, "get_provider_registry", lambda: {})
+    assert config.valid_backends() == set(catalog.provider_ids)
+
+
 @pytest.mark.parametrize("control", ["\0", "\n", "\r", "\t", "\x7f"])
 def test_action_urls_reject_control_characters(tmp_path, control):
     base = write_json(tmp_path / "traits.json", {})

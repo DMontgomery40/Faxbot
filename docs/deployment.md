@@ -8,9 +8,9 @@ Services
 
 Ports
 - `8080`: API
-- `3001`: MCP HTTP (Node)
-- `3002`: MCP SSE (Node)
-- `3003`: MCP SSE (Python)
+- `3001`: MCP Streamable HTTP (Node)
+- `3004`: MCP Streamable HTTP (Python)
+- `3003`: MCP SSE (Python, for older clients)
 - SIP/Asterisk only: `5060` (SIP), `5038` (AMI internal), `4000-4999` (UDPTL)
 
 Storage and database
@@ -20,10 +20,10 @@ Storage and database
 
 Configuration and activation
 
-- Environment and legacy plugin JSON are bootstrap inputs when canonical state is absent. Keep container ports, mounts and telephony service settings in deployment configuration.
-- On an existing installation, load Settings, edit the desired fields and apply with its loaded revision. Inspect active/desired identity and pending fields.
-- For pending changes, stop every API worker and restart the installation; verify the desired revision is active afterward. Restarting one worker while others remain running, or calling readonly reload, is insufficient.
-- Back up the database, original installation encryption key and artifacts together; a redacted environment export is not a restore.
+- Environment variables and the legacy plugin JSON file are read once, when a new installation starts for the first time. Keep container ports, mounts and telephony service settings in the deployment configuration.
+- On an existing installation, change settings on the admin console's Settings screen and apply.
+- When Settings asks for a restart, stop every API process and start the installation again, then load Settings to confirm nothing is pending. Restarting one process while others keep running, or using the reload button, is not enough.
+- Back up the database, the installation key file and stored documents together; the exported `.env` template is not a backup.
 
 Public URL and TLS
 

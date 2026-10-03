@@ -52,6 +52,8 @@ function Logs({ client }: LogsProps) {
   const [enableResult, setEnableResult] = useState<ConfigurationWriteResult | null>(null);
   const [enableOutcome, setEnableOutcome] = useState<'none' | 'unconfirmed' | 'rejected' | 'confirmed'>('none');
   const [auditSnapshot, setAuditSnapshot] = useState<AuditSettingsSnapshot | null>(null);
+  // Saved audit logging value that takes effect at the next restart, if any.
+  const [pendingAudit, setPendingAudit] = useState<boolean | null>(null);
   const enableFence = useRef(false);
   const configurationEpoch = useRef(0);
 
@@ -108,6 +110,18 @@ function Logs({ client }: LogsProps) {
     setEnableResult(null);
     setEnableOutcome('none');
     setAuditSnapshot(null);
+    setPendingAudit(null);
+    const epoch = configurationEpoch.current;
+    // People who can read logs may not be allowed to read settings; without
+    // settings the screen keeps its general prompt.
+    client.getSettings().then((loaded) => {
+      if (epoch !== configurationEpoch.current) return;
+      const meta = loaded._meta;
+      if (meta?.apply_state === 'pending_restart' && meta.pending_fields?.includes('audit_log_enabled')
+          && typeof loaded.security?.audit_enabled === 'boolean') {
+        setPendingAudit(loaded.security.audit_enabled);
+      }
+    }).catch(() => undefined);
     return () => { configurationEpoch.current += 1; };
   }, [client]);
 
@@ -221,6 +235,8 @@ function Logs({ client }: LogsProps) {
     : auditSnapshot ? (auditPending
       ? { severity: 'warning', text: auditSnapshot.desiredEnabled ? 'Audit logging turns on when Faxbot restarts.' : 'Audit logging turns off when Faxbot restarts.' }
       : { severity: 'info', text: auditSnapshot.activeEnabled ? 'Audit logging is on.' : 'Audit logging is off.' })
+    : pendingAudit !== null && enableOutcome === 'none'
+      ? { severity: 'warning', text: pendingAudit ? 'Audit logging turns on when Faxbot restarts.' : 'Audit logging turns off when Faxbot restarts.' }
     : enableOutcome === 'unconfirmed' ? { severity: 'warning', text: 'Reload to check whether audit logging is on.' }
     : showEnable ? { severity: 'info', text: 'If audit logging is off, enable it to record new events.' }
     : enableNeedsReload ? { severity: 'info', text: 'Reload to check audit logging.' }
@@ -294,7 +310,7 @@ function Logs({ client }: LogsProps) {
         <Alert severity={auditStatus.severity} sx={{ mb: 2 }}>
           <Box sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', columnGap: 2, rowGap: 1 }}>
             <Typography variant="body2">{auditStatus.text}</Typography>
-            {showEnable && !enableNeedsReload && !auditSnapshot?.desiredEnabled && (
+            {showEnable && !enableNeedsReload && !auditSnapshot?.desiredEnabled && pendingAudit === null && (
               <Button size="small" variant="outlined" onClick={enableAuditLogging} disabled={enableBusy}>Enable Now</Button>
             )}
             {enableNeedsReload && (

@@ -123,6 +123,7 @@ nav:
   - Security:
     - Overview: security/index.md
     - Authentication: security/authentication.md
+    - Access Control: security/access-control.md
     - OAuth/OIDC Setup: security/oauth-setup.md
     - Network & Transports: security/network.md
     - HIPAA Requirements: HIPAA_REQUIREMENTS.md
@@ -148,6 +149,7 @@ nav:
       - Providers: generated/providers.md
     - API:
       - Reference: api.md
+      - Access and Sign-in: reference/access-api.md
       - Canonical Events: api/canonical-events.md
     - SDKs: sdks/index.md
     - MCP:

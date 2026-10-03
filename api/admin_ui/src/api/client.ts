@@ -51,25 +51,30 @@ const safeRefreshDetails = new Set([
   'Provider status is temporarily unavailable. This fax has not been resubmitted.',
 ]);
 
-// Fixed server sentences shown as-is, except where the server wording is not
-// product copy; those map to a plain equivalent.
+// Fixed 409 refusals from attaching a provider fax ID (outbound_store.py
+// _bind_refusal and bind_provider_identity). Plain server sentences are shown
+// as-is; the others map to a plain equivalent.
 const safeReconciliationDetails = new Map<string, string>([
-  ['Delivery record is unavailable.', 'Delivery record is unavailable.'],
-  ['Delivery changed; reload before attaching a provider identity.', 'Delivery changed; reload before attaching a provider identity.'],
-  ['Only an unresolved submitted delivery can receive a confirmed provider identity.', 'Only an unresolved submitted delivery can receive a confirmed provider identity.'],
-  ['Historical delivery requires deliberate maintenance reconciliation of its original account.', 'Historical delivery requires deliberate maintenance reconciliation of its original account.'],
-  ['Held or unsupported dispatch mode requires deliberate maintenance reconciliation.', 'Held or unsupported dispatch mode requires deliberate maintenance reconciliation.'],
-  ['No verified submitted attempt is available; deliberate maintenance reconciliation is required.', 'No verified submitted attempt is available; deliberate maintenance reconciliation is required.'],
-  ['The attempt is not an unresolved submission; deliberate maintenance reconciliation is required.', 'The attempt is not an unresolved submission; deliberate maintenance reconciliation is required.'],
-  ['The original provider account could not be authenticated; deliberate maintenance reconciliation is required.', 'The original provider account could not be authenticated; deliberate maintenance reconciliation is required.'],
-  ['A provider identity is already attached; refresh the original account instead.', 'A provider identity is already attached; refresh the original account instead.'],
-  ['This captured provider cannot refresh status; deliberate maintenance reconciliation is required.', 'This provider cannot refresh status; deliberate maintenance reconciliation is required.'],
-  ['This provider identity already belongs to another delivery from the original account.', 'This provider identity already belongs to another delivery from the original account.'],
+  ['Delivery record is unavailable.', 'This fax is no longer available. Reload the job.'],
+  ['Delivery changed; reload before attaching a provider identity.', 'This fax changed. Reload the job and try again.'],
+  ['This provider identity already belongs to another delivery from the original account.',
+    'This fax ID already belongs to another fax from the same provider account.'],
+  ...[
+    'This fax is not waiting for confirmation, so it does not need a provider fax ID.',
+    'This fax was sent by an older Faxbot version; check its status in your provider account.',
+    'This fax was not sent through a provider, so there is no fax ID to attach.',
+    'Faxbot has no record of sending this fax, so there is no fax ID to attach.',
+    'This fax already has a final result, so there is no fax ID to attach.',
+    'The provider account that sent this fax is no longer set up; check the fax in that account.',
+    'This fax already has a provider fax ID; use Refresh to update its status.',
+    'This provider cannot look up fax status; check the fax in your provider account.',
+  ].map((detail): [string, string] => [detail, detail]),
 ]);
 
-const safeReconciliationInputDetails = new Set([
-  'Confirm that this fax ID matches the fax in its original provider account.',
-  'Invalid provider identity reconciliation input.',
+const safeReconciliationInputDetails = new Map<string, string>([
+  ['Confirm that this fax ID matches the fax in its original provider account.',
+    'Confirm that this fax ID matches the fax in its original provider account.'],
+  ['Invalid provider identity reconciliation input.', 'Enter the fax ID exactly as your provider shows it.'],
 ]);
 
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
@@ -515,10 +520,16 @@ export class AdminAPIClient {
     return this.json('/admin/config');
   }
 
-  async getMcpHealth(path: string = '/mcp/sse/health'): Promise<any> {
-    const res = await fetch(`${this.baseURL}${path}`);
+  // The embedded MCP server answers <mount>/health on the API origin without a
+  // credential. Only its own reply counts; a page fallback or other 200 does not.
+  async getMcpHealth(path: string = '/mcp/sse/health'): Promise<{ status: 'ok'; server: 'faxbot-mcp'; transport?: string }> {
+    const res = await fetch(`${this.baseURL}${path}`, { cache: 'no-store', credentials: 'omit' });
     if (!res.ok) throw new Error(`MCP not healthy (${res.status})`);
-    return res.json();
+    const body = await res.json().catch(() => null);
+    if (!body || typeof body !== 'object' || body.status !== 'ok' || body.server !== 'faxbot-mcp') {
+      throw new Error('MCP health reply was not recognized');
+    }
+    return body;
   }
 
   // Logs
@@ -552,7 +563,9 @@ export class AdminAPIClient {
         if (detail && attaching && res.status === 409 && safeReconciliationDetails.has(detail)) {
           throw new Error(safeReconciliationDetails.get(detail));
         }
-        if (detail && attaching && res.status === 400 && safeReconciliationInputDetails.has(detail)) throw new Error(detail);
+        if (detail && attaching && res.status === 400 && safeReconciliationInputDetails.has(detail)) {
+          throw new Error(safeReconciliationInputDetails.get(detail));
+        }
         if (!attaching && res.status === 409 && detail === 'Delivery history is unavailable; reload the job before continuing.') {
           throw new Error(detail);
         }

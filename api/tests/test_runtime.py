@@ -417,6 +417,24 @@ async def test_enabled_embedded_mcp_sdk_initialize_and_tool_listing(tmp_path):
                 assert "to" in send.input_schema["required"]
 
 
+def test_embedded_mcp_health_paths_answer_the_console_without_credentials(isolated_installation, monkeypatch):
+    """The MCP screen checks <mount>/health on the API origin; only that path is open."""
+    from fastapi.testclient import TestClient
+    monkeypatch.setenv("API_KEY", "synthetic-bootstrap")
+    monkeypatch.setenv("PUBLIC_API_URL", "https://testserver")
+    monkeypatch.setenv("FAXBOT_CONSOLE_ORIGINS", "https://testserver")
+    monkeypatch.setenv("ENABLE_MCP_HTTP", "true")
+    monkeypatch.setenv("ENABLE_MCP_SSE", "true")
+    with TestClient(main.app, base_url="https://testserver", headers={"Origin": "https://testserver"}) as client:
+        for path, transport in (("/mcp/http/health", "streamable-http"), ("/mcp/sse/health", "sse")):
+            response = client.get(path)
+            assert response.status_code == 200
+            assert response.json()["status"] == "ok"
+            assert response.json()["server"] == "faxbot-mcp"
+            assert response.json()["transport"] == transport
+        assert client.post("/mcp/http/mcp", json={}).status_code in {401, 403}
+
+
 @pytest.mark.asyncio
 async def test_standalone_http_lifespan_initializes_session_manager(tmp_path):
     """The standalone wrapper must enter the mounted SDK app lifespan as well."""

@@ -1,108 +1,66 @@
 # Authentication
 
-## Refresh implementation status
+Every request to the Faxbot API needs a credential: an API key in the `X-API-Key` header, or a signed-in admin console session. `REQUIRE_API_KEY=false` does not turn this off. The only routes that work without a credential are the ones that cannot carry one:
 
-This branch includes persistent authentication endpoints under `/auth` and current
-permission checks for outbound submission and operator fax views. The console and
-remaining installation, inbound and client adapters are tracked in the repository access-control design
-(`docs/architecture/2026-10-02-faxbot-access-control.md`).
-The new session endpoints alone do not establish complete RBAC for the installation.
+- health checks such as `GET /health`
+- the console sign-in routes `POST /auth/login` and `POST /auth/key-login`
+- provider callbacks and provider document downloads, which carry their own signature or single-job link
+- `POST /mobile/pair`, which needs a current pairing code instead
 
-The authentication API provides password login, key-to-session login, current
-identity, logout, password replacement, session listing and session revocation.
-Use the generated OpenAPI reference for the exact request models. Sessions expire
-after 12 hours, or 30 minutes without use, and cannot outlive their source key.
-Revoked, disabled or changed sources are checked against current installation state.
+Who can do what after signing in is covered in [Access Control](access-control.md). The exact request and response formats for the sign-in routes are in the [Access and Sign-in API](../reference/access-api.md) reference.
 
-### Browser and client transport
+## Sign in to the admin console
 
-Authentication and the converted outbound endpoints require HTTPS for remote clients, including
-header-only API-key clients. Browser requests must use a trusted console origin.
-Set deployment `FAXBOT_CONSOLE_ORIGINS` to a comma-separated list of origins, such
-as `https://fax.internal.example,https://fax.example:8443`. Entries contain a scheme,
-host and optional port, without paths. If omitted, the active `PUBLIC_API_URL`
-origin is used. Configure an override when the console host differs from the
-provider callback host. Only trust proxy headers from the actual reverse proxy.
+The sign-in screen offers two ways in.
 
-For local development, run `scripts/run-uvicorn-dev.sh`, or use the installed
-runtime from the repository root:
+**Username and password.** People get a username from an Owner or Administrator on the **Users** screen, together with a temporary password. The first sign-in asks for a new password before anything else works. Passwords need at least 12 characters. Changing a password ends every other session for that person.
+
+**API key.** Select **Sign in with API key** and paste a Faxbot API key. The console then works with exactly the permissions that key has. The session ends when the key expires or is revoked, even if the session's own time has not run out.
+
+The installation key in `API_KEY` can also sign in this way. Use it to create the first owner and to recover owner access, then sign in with a named account for daily work. See [first owner](access-control.md#create-the-first-owner) and [owner recovery](access-control.md#recover-owner-access).
+
+## Sessions
+
+A console session lasts at most 12 hours. It also ends after 30 minutes without activity. Signing out, changing your password, or an administrator disabling your account or revoking the session ends it immediately.
+
+Everyone can see and end their own sessions on **Settings → Sessions**. Seeing other people's sessions needs the `sessions:read` permission, and ending them needs `sessions:revoke`.
+
+Faxbot keeps the session in a browser cookie that scripts cannot read. Over HTTPS the cookie is also marked secure, so the browser only sends it over HTTPS. API keys and session tokens never belong in URLs or in browser storage.
+
+## Browser protections
+
+Sign-in requests, and any change made with a session cookie, must come from a page Faxbot trusts. Faxbot compares the browser's `Origin` header with this list:
+
+- `FAXBOT_CONSOLE_ORIGINS`, a comma-separated list of origins such as `https://fax.internal.example,https://fax.example:8443` (scheme, host and optional port, no paths)
+- if that is not set, the origin of `PUBLIC_API_URL`
+
+Set `FAXBOT_CONSOLE_ORIGINS` when people open the console at a different address than the one providers use for callbacks.
+
+Changes made with a session cookie must also send the `X-CSRF-Token` header. The value comes from `GET /auth/me`, and the admin console sends it automatically. Requests that send `X-API-Key` do not use the cookie at all, even when the key is wrong.
+
+## HTTPS and plain HTTP
+
+Console sessions need HTTPS. There are two exceptions:
+
+- **Local development.** `scripts/run-uvicorn-dev.sh`, or `python -m api.app.server --loopback --port 8080` from the repository root, listens only on `127.0.0.1` and allows sessions over plain HTTP from `http://localhost` and `http://127.0.0.1` on that port.
+- **Private networks.** Setting `FAXBOT_ALLOW_INSECURE_HTTP_SESSIONS=true` in the deployment environment allows sessions over plain HTTP. Use it only on a private network or VPN that you control, such as a WireGuard or Tailscale network. On any other network the session cookie can be read in transit. This is a deployment setting; it is not available on the Settings screen.
+
+API keys work over any transport, HTTP or HTTPS, and from any client, including the desktop app. Outside a network you trust, use HTTPS or a VPN anyway: on plain HTTP the key travels unencrypted.
+
+## API keys
+
+API keys look like `fbk_live_<id>_<secret>`. The full key is shown once, when it is created or rotated. Every key belongs to a user or an integration and can never do more than its owner is allowed to do. A key can also carry a narrower permission list. See [Keys](access-control.md#keys) for creating, rotating and revoking keys, and for the keys that the iPhone app receives when it pairs.
+
+Send the key in the `X-API-Key` header:
 
 ```sh
-python -m api.app.server --loopback --port 8080
+curl -H "X-API-Key: $FAXBOT_API_KEY" https://fax.example.com/fax/$JOB_ID
 ```
 
-This explicit development launcher binds `127.0.0.1`, disables proxy rewriting,
-and enables the loopback transport profile. Setting
-`FAXBOT_ALLOW_INSECURE_LOOPBACK=true` on an ordinary Uvicorn process is insufficient.
-The launcher supplies localhost/127.0.0.1 origins for its port unless an explicit
-origin list is configured. It does not print or generate a bootstrap key.
+`MAX_REQUESTS_PER_MINUTE` limits how often one credential can send faxes or read fax status. Repeated failed sign-ins are slowed down. Both return HTTP 429 with a `Retry-After` header.
 
-HTTPS sessions use an HttpOnly, Secure, SameSite=Strict, host-only cookie. Local
-development uses a separate cookie. Login requires an allowed browser Origin;
-cookie-authenticated changes additionally require `X-CSRF-Token` from `/auth/me`.
-Explicit `X-API-Key` takes precedence over a cookie, including when the supplied
-key is invalid. API keys and session tokens do not belong in URLs or browser
-persistent storage. Authentication responses are marked `no-store`.
+## What a refused request looks like
 
-### Console context
-
-`GET /auth/context` returns current navigation hints and permitted active settings
-without requiring administrator settings access. Senders receive the active held
-mode and upload limit; permitted inbox users receive the inbound enabled flag.
-Provider feature and selection hints require `providers:read`. No provider secrets,
-document data, filesystem paths or pending configuration are returned.
-
-Jobs and Inbox navigation depends on the user's permitted resource scopes, even
-when those scopes contain no faxes. Document access alone does not enable metadata
-navigation. Password-reset-required sessions receive no ordinary navigation or
-feature hints. The response is a snapshot: every later operation independently
-checks current credentials and permissions. The console client integration remains
-tracked in the repository plan.
-
-### Outbound permissions
-
-Submission requires current `fax:send` access to the authenticated principal's own
-personal container. Acceptance records that resource with the fax and its captured
-provider account in one transaction. Rotating or revoking a human credential does
-not requeue or cancel an already accepted provider attempt.
-
-Job lists, filtered totals, detail and delivery history require `fax:read` on the
-individual resources. Visibility is applied before counting and pagination. A
-retained document requires the independent `fax:document` permission; document
-access does not grant metadata access. Refresh additionally requires `fax:refresh`,
-and receipt reconciliation requires `fax:reconcile` plus metadata access.
-
-Request replay preserves the credential's stable namespace. A replay still needs
-current send permission and permission to read the original fax; knowing an old
-idempotency key is not authority. A revoked or disabled source returns 401. Hidden
-and missing resources return 404; a visible resource with a denied action returns 403.
-
-`MAX_REQUESTS_PER_MINUTE` retains the optional send/status request limit. Password
-and database-key verification also use the installation's bounded authentication
-admission service. Throttled responses provide `Retry-After`.
-
-### Integration boundaries
-
-The settings read, edit, reload and redacted-export adapters and provider list,
-registry, configuration read and configuration edit adapters use current installation
-permissions. Writes return a durable receipt independently of permission to read
-the resulting configuration. Field-sensitive changes can require additional
-provider authority or a complete Owner. These adapters do not complete provider
-installation, credential probes, recovery-file publication or other host actions.
-
-The provider registry requires `providers:read`: its configured file and fallback
-can describe this installation. Registry responses include only display metadata;
-they do not return arbitrary fields from the configured JSON file.
-
-The remaining legacy key-management routes are not the completed named-user and
-scoped-key management contract. Their free-text owner labels and historical scopes
-must not be interpreted as new role assignments or unrestricted console authority.
-The console login migration, inbound permissions, provider-fetch capabilities,
-terminal access and retained client integration remain release requirements in the
-repository plan. The converted endpoints do not permit unauthenticated access
-merely because legacy `REQUIRE_API_KEY` is false.
-
-The generated reference describes the actual registered request and response
-models. Complete RBAC and production readiness require the remaining route and
-client integration plus real browser and delivery verification; successful
-authentication alone does not establish those results.
+- **401**: the credential is missing, wrong, expired, revoked, or belongs to a disabled account.
+- **403**: the credential is valid but lacks the permission, or the request came from an origin Faxbot does not trust.
+- **404**: the fax or other item does not exist, or you are not allowed to know it exists.

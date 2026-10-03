@@ -523,7 +523,7 @@ function ConsoleShell({ client, me, initialContext, onSignOut, onIdentityChanged
         <TabPanel value="inbox" current={currentTab}>
           {contextLoading ? <Alert severity="info">Loading…</Alert>
             : contextError ? <Alert severity="error">{contextError}</Alert>
-            : <Inbound client={client} inboundEnabled={context.inbound_enabled ?? undefined} onNavigate={handleNavigate} docsBase={docsBase} />}
+            : <Inbound client={client} inboundEnabled={context.inbound_enabled ?? undefined} onNavigate={handleNavigate} docsBase={docsBase} permissions={permissions} />}
         </TabPanel>
         <TabPanel value="settings" current={currentTab}>
           <Paper elevation={0} sx={groupPaperSx}>

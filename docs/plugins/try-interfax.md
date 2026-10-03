@@ -6,7 +6,7 @@ The mandatory adapter must preserve the identity returned by InterFAX and normal
 
 ## Prerequisites
 
-On an existing installation, load Settings, enable v3 plugins and apply with the loaded desired revision. Inspect active/pending status and complete an installation-wide stop/start when pending. `FEATURE_V3_PLUGINS=true` is a first-bootstrap environment input, not an import into an initialized canonical store.
+On an existing installation, open Settings, turn on v3 plugins and apply. If Settings asks for a restart, stop every Faxbot API process and start the installation again. `FEATURE_V3_PLUGINS=true` in the environment only applies when a new installation starts for the first time.
 
 ## 1) Prepare the manifest definition
 
@@ -55,7 +55,7 @@ The `job_id` and `status` response entries above describe the current JSON-field
 
 ## 2) Configure credentials
 
-In Admin Console → Plugins → `interfax`, set Basic-auth credentials with `{"username":"YOUR_INTERFAX_USERNAME","password":"YOUR_INTERFAX_PASSWORD"}`. Omit unchanged masked credentials. Save with the loaded desired revision and inspect active/pending status. Enabling the plugin does not complete the adapter requirements.
+In Admin Console → Plugins → `interfax`, set Basic-auth credentials with `{"username":"YOUR_INTERFAX_USERNAME","password":"YOUR_INTERFAX_PASSWORD"}`. Leave hidden credentials unchanged unless you are replacing them. Save, and restart if Faxbot asks for it. Enabling the plugin does not complete the adapter requirements.
 
 For local document checks, use a supported provider with sending actively disabled and inspect held artifacts. Held work is not simulated success and never automatically dispatches when sending is enabled.
 
