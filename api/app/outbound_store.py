@@ -22,6 +22,20 @@ class DeliveryConflict(RuntimeError):
     """A stale or mismatched delivery operation must be reconciled."""
 
 
+def _automatic_poll_interval(configuration, default):
+    """Captured native policy; an HTTP manifest defines its own status action."""
+    if configuration.manifest is not None:
+        return default if 'get_status' in configuration.manifest.get('actions', {}) else 0
+    if configuration.provider_id == 'signalwire':
+        seconds = configuration.settings.get('status_poll_seconds', 0)
+        if type(seconds) is not int or seconds < 0:
+            raise DeliveryConflict('Captured provider polling policy is invalid.')
+        return seconds
+    if configuration.provider_id in {'sip', 'freeswitch'}:
+        return 0
+    return default
+
+
 @dataclass(frozen=True)
 class DispatchClaim:
     job_id: str
@@ -70,6 +84,60 @@ class OutboundStore:
         with self.configuration.engine.connect() as connection:
             return [dict(row) for row in connection.execute(sa.select(self.events).where(
                 self.events.c.job_id == job_id).order_by(self.events.c.created_at, self.events.c.id)).mappings()]
+
+    def reserve_poll(self, *, now=None, interval_seconds=30):
+        """Reserve a status read, never a submission or replacement attempt."""
+        if not 1 <= interval_seconds <= 3600:
+            raise ValueError('Invalid delivery polling interval.')
+        with self.configuration._locked() as connection:
+            now = datetime.utcnow() if now is None else now
+            row = connection.execute(sa.select(self.deliveries, self.attempts.c.profile_id).join(self.attempts,
+                self.attempts.c.id == self.deliveries.c.attempt_id).where(
+                    self.deliveries.c.state.in_(['in_progress', 'reconciliation_required']),
+                    self.attempts.c.job_id == self.deliveries.c.id,
+                    self.attempts.c.submitted_at.is_not(None),
+                    self.attempts.c.provider_sid.is_not(None),
+                    sa.or_(self.deliveries.c.next_poll_at.is_(None),
+                           self.deliveries.c.next_poll_at <= now)
+                ).order_by(sa.func.coalesce(self.deliveries.c.next_poll_at, self.deliveries.c.created_at),
+                           self.deliveries.c.created_at,
+                           self.deliveries.c.id).limit(1)).mappings().one_or_none()
+            if row is None:
+                return None
+            _, profile = self.configuration._outbound_context(connection, row['id'])
+            if profile.id != row['profile_id']:
+                raise DeliveryConflict('Delivery account does not match its accepted attempt.')
+            seconds = _automatic_poll_interval(profile.configuration, interval_seconds)
+            # Disabled/unsupported checks get a bounded revisit time, then the
+            # loop can immediately reserve the next eligible read.
+            try:
+                next_poll_at = now + timedelta(seconds=seconds or 3600)
+            except OverflowError:
+                next_poll_at = datetime.max
+            connection.execute(self.deliveries.update().where(self.deliveries.c.id == row['id']).values(
+                next_poll_at=next_poll_at))
+            return row['id']
+
+    def poll_target(self, job_id, *, automatic=False):
+        """Authenticate original account and attempt before a read-only lookup."""
+        with self.configuration._locked() as connection:
+            row = self._row(connection, job_id)
+            if row is None:
+                raise DeliveryConflict('Delivery record is unavailable.')
+            if row['state'] in TERMINAL or row['state'] == 'held':
+                return None
+            attempt = connection.execute(sa.select(self.attempts).where(
+                self.attempts.c.id == row['attempt_id'])).mappings().one_or_none()
+            if (row['state'] not in {'in_progress', 'reconciliation_required'} or attempt is None
+                    or attempt['job_id'] != job_id or not attempt['provider_sid']
+                    or attempt['submitted_at'] is None):
+                raise DeliveryConflict('No acknowledged provider identity is available for refresh.')
+            _, profile = self.configuration._outbound_context(connection, job_id)
+            if profile.id != attempt['profile_id']:
+                raise DeliveryConflict('Delivery account does not match its accepted attempt.')
+            if automatic and _automatic_poll_interval(profile.configuration, 30) == 0:
+                return None
+            return profile, attempt['id'], attempt['provider_sid']
 
     def _preparing(self, connection, claim, now):
         row = self._row(connection, claim.job_id)
