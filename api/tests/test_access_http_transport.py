@@ -1,79 +1,92 @@
-"""Owner transport policy over the real HTTP app: header keys anywhere, cookies only when safe."""
+"""Credential transport policy through the real HTTP application.
+
+API-key clients (iOS, SDKs, Electron, MCP) authenticate with X-API-Key over any
+transport and with any Origin. Browser cookie sessions need HTTPS, the loopback
+development listener, or the explicit VPN-only insecure-session opt-in.
+"""
 import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.config_values import ConfigurationValues
 
 BOOTSTRAP = 'synthetic-transport-bootstrap-key'
 
 
 @pytest.fixture
-def installation(monkeypatch, tmp_path):
-    for name in ConfigurationValues.environment_keys():
-        monkeypatch.delenv(name, raising=False)
-    monkeypatch.delenv('FAXBOT_ALLOW_INSECURE_HTTP_SESSIONS', raising=False)
-    monkeypatch.delenv('FAXBOT_ALLOW_INSECURE_LOOPBACK', raising=False)
-    for name, value in {
-        'DATABASE_URL': f"sqlite:///{tmp_path / 'transport.db'}",
-        'FAX_DATA_DIR': str(tmp_path / 'data'),
-        'FAXBOT_INSTALLATION_KEY_PATH': str(tmp_path / '.configuration.key'),
-        'FAX_DISABLED': 'true',
-        'REQUIRE_API_KEY': 'true',
-        'API_KEY': BOOTSTRAP,
-        'PUBLIC_API_URL': 'https://fax.example',
-        'FAXBOT_CONSOLE_ORIGINS': 'http://testserver',
-        'ENABLE_PERSISTED_SETTINGS': 'false',
-        'ENABLE_MCP_SSE': 'false',
-        'ENABLE_MCP_HTTP': 'false',
-    }.items():
-        monkeypatch.setenv(name, value)
+def installation(isolated_installation, monkeypatch):
+    monkeypatch.setenv('REQUIRE_API_KEY', 'true')
+    monkeypatch.setenv('API_KEY', BOOTSTRAP)
+    monkeypatch.setenv('PUBLIC_API_URL', 'https://fax.example')
     return monkeypatch
 
 
-@pytest.mark.parametrize('origin', [None, 'null', 'https://unlisted.example'])
-def test_header_key_authenticates_over_plain_http_without_origin_rules(installation, origin):
-    headers = {'X-API-Key': BOOTSTRAP}
-    if origin is not None:
-        headers['Origin'] = origin
-    with TestClient(app, base_url='http://testserver') as client:
+def _set_cookie(response):
+    return [value for name, value in response.headers.multi_items() if name.lower() == 'set-cookie']
+
+
+@pytest.mark.parametrize('origin', [None, 'null', 'https://unrelated.example'])
+def test_api_key_works_over_plain_http_with_any_origin(installation, origin):
+    headers = {'X-API-Key': BOOTSTRAP, **({'Origin': origin} if origin else {})}
+    with TestClient(app, base_url='http://192.0.2.10:8080') as client:
         me = client.get('/auth/me', headers=headers)
         assert me.status_code == 200, me.text
         assert me.json()['source'] == 'key' and 'csrf_token' not in me.json()
-        assert client.get('/auth/context', headers=headers).status_code == 200
-        # Health stays public and tolerates an empty key header (iOS reachability probe).
-        health = client.get('/health', headers={'X-API-Key': ''})
-        assert health.status_code == 200 and health.json() == {'status': 'ok'}
-        # A wrong key is still 401, never a transport failure.
-        assert client.get('/auth/me', headers={'X-API-Key': 'wrong', 'Origin': 'null'}).status_code == 401
+        # Unsafe key requests need no Origin or CSRF either (the iOS/SDK send contract).
+        sent = client.post('/fax', data={'to': '+15551230001'},
+            files={'file': ('note.txt', b'synthetic transport note', 'text/plain')}, headers=headers)
+        assert sent.status_code == 202, sent.text
+        assert set(sent.json()) >= {'id', 'status'}
+        assert client.get('/fax/' + sent.json()['id'], headers=headers).status_code == 200
+        assert client.get('/health', headers={'X-API-Key': ''}).status_code == 200
 
 
-def test_cookie_login_over_plain_http_is_refused_by_default(installation):
-    with TestClient(app, base_url='http://testserver') as client:
-        response = client.post('/auth/key-login', json={'api_key': BOOTSTRAP},
-            headers={'Origin': 'http://testserver'})
-        assert response.status_code == 403
-        assert 'set-cookie' not in response.headers
+def test_plain_http_without_credentials_is_unauthenticated_not_transport_denied(installation):
+    with TestClient(app, base_url='http://192.0.2.10:8080') as client:
+        response = client.get('/auth/me')
+        assert response.status_code == 401
+        assert client.get('/auth/me', headers={'X-API-Key': 'wrong'}).status_code == 401
 
 
-def test_explicit_insecure_http_sessions_issue_plain_cookie_and_keep_csrf(installation):
-    installation.setenv('FAXBOT_ALLOW_INSECURE_HTTP_SESSIONS', 'true')
-    with TestClient(app, base_url='http://testserver') as client:
+def test_plain_http_browser_session_requires_explicit_opt_in(installation):
+    installation.setenv('FAXBOT_CONSOLE_ORIGINS', 'http://192.0.2.10:8080')
+    with TestClient(app, base_url='http://192.0.2.10:8080') as client:
         login = client.post('/auth/key-login', json={'api_key': BOOTSTRAP},
-            headers={'Origin': 'http://testserver'})
+            headers={'Origin': 'http://192.0.2.10:8080'})
+        assert login.status_code == 403
+        assert not _set_cookie(login)
+        stray = client.get('/auth/me', headers={'Cookie': 'faxbot_session=forged'})
+        assert stray.status_code == 403
+
+
+def test_opted_in_plain_http_session_uses_non_secure_unprefixed_cookie(installation):
+    installation.setenv('FAXBOT_ALLOW_INSECURE_HTTP_SESSIONS', 'true')
+    installation.setenv('FAXBOT_CONSOLE_ORIGINS', 'http://192.0.2.10:8080')
+    origin = {'Origin': 'http://192.0.2.10:8080'}
+    with TestClient(app, base_url='http://192.0.2.10:8080') as client:
+        assert client.post('/auth/key-login', json={'api_key': BOOTSTRAP}).status_code == 403
+        assert client.post('/auth/key-login', json={'api_key': BOOTSTRAP},
+            headers={'Origin': 'http://evil.example'}).status_code == 403
+        login = client.post('/auth/key-login', json={'api_key': BOOTSTRAP}, headers=origin)
         assert login.status_code == 200, login.text
-        cookie = login.headers['set-cookie']
+        (cookie,) = _set_cookie(login)
         assert cookie.startswith('faxbot_session=')
         assert 'secure' not in cookie.lower() and 'httponly' in cookie.lower()
         assert 'samesite=strict' in cookie.lower()
         me = client.get('/auth/me')
         assert me.status_code == 200 and me.json()['source'] == 'session'
         csrf = me.json()['csrf_token']
-        # Cross-origin login is still refused.
-        assert client.post('/auth/key-login', json={'api_key': BOOTSTRAP},
-            headers={'Origin': 'http://evil.example'}).status_code == 403
-        # Unsafe cookie requests still need Origin and CSRF.
-        assert client.post('/auth/logout', headers={'Origin': 'http://testserver'}).status_code == 403
+        # Cookie-authenticated unsafe requests keep exact Origin and CSRF.
         assert client.post('/auth/logout', headers={'X-CSRF-Token': csrf}).status_code == 403
-        out = client.post('/auth/logout', headers={'Origin': 'http://testserver', 'X-CSRF-Token': csrf})
-        assert out.status_code == 200, out.text
+        assert client.post('/auth/logout', headers=origin).status_code == 403
+        assert client.post('/auth/logout', headers={**origin, 'X-CSRF-Token': csrf}).status_code == 200
+
+
+def test_https_session_cookie_is_host_prefixed_and_secure(installation):
+    installation.setenv('FAXBOT_CONSOLE_ORIGINS', 'https://fax.example')
+    with TestClient(app, base_url='https://fax.example') as client:
+        login = client.post('/auth/key-login', json={'api_key': BOOTSTRAP},
+            headers={'Origin': 'https://fax.example'})
+        assert login.status_code == 200, login.text
+        (cookie,) = _set_cookie(login)
+        assert cookie.startswith('__Host-faxbot_session=') and 'secure' in cookie.lower()
+        assert client.get('/auth/me').json()['source'] == 'session'
