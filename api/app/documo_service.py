@@ -49,7 +49,7 @@ def _receipt(response: httpx.Response, *, requested_sid: str | None = None) -> d
     payload = response.json()
     if not isinstance(payload, dict) or not _valid_identity(payload.get('messageId')):
         raise ValueError
-    provider_sid = payload['messageId']
+    provider_sid = payload['messageId'].lower()
     if requested_sid is not None and provider_sid != requested_sid:
         raise ValueError
     if 'status' not in payload and requested_sid is None:
@@ -114,6 +114,7 @@ class DocumoFaxService:
             raise ValueError('Documo is not configured.')
         if not _valid_identity(provider_sid):
             raise ValueError('Documo provider identity is invalid.')
+        provider_sid = provider_sid.lower()
         try:
             async with httpx.AsyncClient(timeout=15.0, transport=self.transport,
                     follow_redirects=False, trust_env=False) as client:

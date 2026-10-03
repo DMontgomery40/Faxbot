@@ -178,6 +178,23 @@ def test_poll_uses_original_origin_literal_key_and_matching_uuid():
     assert not request.content
 
 
+@pytest.mark.parametrize('operation', ['create', 'poll'])
+def test_uppercase_response_uuid_has_one_canonical_identity(document, operation):
+    service, requests = service_with_response({'messageId': SID.upper(), 'status': 'processing'})
+    result = asyncio.run(service.send_fax_file(DESTINATION, document) if operation == 'create'
+                         else service.get_fax_status(SID))
+    assert result == {'provider_sid': SID, 'status': 'in_progress'}
+    assert len(requests) == 1
+
+
+def test_uppercase_requested_uuid_uses_canonical_path_and_matches_lowercase_response():
+    service, requests = service_with_response({'messageId': SID, 'status': 'success'})
+    assert asyncio.run(service.get_fax_status(SID.upper())) == {
+        'provider_sid': SID, 'status': 'success'}
+    assert [str(request.url) for request in requests] == [
+        f'https://api.documo.com/v1/fax/{SID}/info']
+
+
 @pytest.mark.parametrize('sid', [None, '', True, 42, 'remote-42', SID + '/info', '{' + SID + '}'])
 def test_poll_identity_refused_before_http(sid):
     service, requests = service_with_response({'messageId': SID, 'status': 'success'})
@@ -205,7 +222,7 @@ def test_unusable_create_ack_is_sanitized_without_retry(document, payload):
 
 @pytest.mark.parametrize('payload', [
     {'messageId': SID}, {'messageId': SID, 'status': None},
-    {'messageId': SID, 'status': 'unknown'}, {'messageId': OTHER_SID, 'status': 'success'},
+    {'messageId': SID, 'status': 'unknown'}, {'messageId': OTHER_SID.upper(), 'status': 'success'},
     {'status': 'success'}, [PRIVATE],
 ])
 def test_poll_requires_real_explicit_status_and_same_identity(payload):
