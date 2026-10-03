@@ -282,7 +282,7 @@ def providers_status():
 
 
 def health():
-    """Check that the server answers and whether it is ready to send faxes. No API key needed."""
+    """Check that the server answers and whether it is ready to send faxes (exit code 1 when not). No key needed."""
     api = state.api()
     live = api.get('/health', auth=False)
     ready = api.get('/health/ready', auth=False, allow=(503,))

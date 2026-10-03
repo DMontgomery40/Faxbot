@@ -116,7 +116,7 @@ $ faxbot me [OPTIONS]
 
 ## `faxbot health`
 
-Check that the server answers and whether it is ready to send faxes. No API key needed.
+Check that the server answers and whether it is ready to send faxes (exit code 1 when not). No key needed.
 
 **Usage**:
 

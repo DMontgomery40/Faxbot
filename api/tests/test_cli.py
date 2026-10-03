@@ -362,6 +362,10 @@ def test_pairing_a_device_and_reusing_the_code(cli):
     again = cli('pair', 'device', issued['code'], key=None)
     assert again.exit_code == 4
     assert again.stderr.strip() == 'This pairing code did not work. Create a new code in the console and try again.'
+    saved = cli.json('pair', 'device', cli.json('pair', 'new')['code'], '--save-profile', 'phone', key=None)
+    assert saved['saved_profile'] == 'phone' and 'token' not in saved
+    as_phone = cli('--profile', 'phone', '--json', 'me', key=None, url=None)
+    assert as_phone.exit_code == 0 and json.loads(as_phone.stdout)['principal']['kind'] == 'integration'
 
 
 def test_logs_tunnel_actions_restart_and_database(cli):
