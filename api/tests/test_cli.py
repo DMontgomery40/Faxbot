@@ -6,6 +6,7 @@ server: credential transport, access policy, routing and storage.
 """
 from io import BytesIO
 import json
+import re
 import os
 from pathlib import Path
 import stat
@@ -125,11 +126,13 @@ def restricted_key(cli, name='Front desk scanner', role='Fax operator', permissi
 def test_help_lists_every_command_group_without_starting_the_server():
     result = CliRunner().invoke(cli_app, ['--help'], env={'COLUMNS': '200'})
     assert result.exit_code == 0
+    # Hosted CI forces colour, so compare the help text without escape codes.
+    plain = re.sub(r'\x1b\[[0-9;]*m', '', result.stdout)
     for group in ('send', 'status', 'jobs', 'inbound', 'users', 'integrations', 'groups', 'roles', 'access',
                   'resources', 'keys', 'sessions', 'mailboxes', 'numbers', 'audit', 'settings', 'providers',
                   'routing', 'intake', 'direct', 'cases', 'pair', 'owner', 'health', 'diagnostics', 'me',
                   'config', 'admin'):
-        assert f' {group} ' in result.stdout
+        assert f' {group} ' in plain
 
 
 def test_me_health_and_errors_map_to_plain_sentences(cli):
