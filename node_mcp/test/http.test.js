@@ -54,7 +54,9 @@ test('each HTTP caller key is forwarded and API_KEY never is', async () => {
       const send = result.tools.find((tool) => tool.name === 'send_fax');
       assert.deepEqual(send.inputSchema.required, ['to', 'fileContent', 'fileName']);
       assert.equal(send.inputSchema.properties.filePath, undefined, 'network callers cannot read server files');
-      assert.deepEqual(result.sent.structuredContent, { id: `job-for-${key}`, status: 'queued' });
+      assert.ok(send.inputSchema.properties.operationId);
+      const operation = fake.posts().find((post) => post.key === key).operation;
+      assert.deepEqual(result.sent.structuredContent, { id: `job-1-for-${key}`, status: 'queued', operationId: operation });
       assert.equal(result.status.structuredContent.id, `status-${caller}`);
       assert.equal(result.details.structuredContent.direction, 'inbound');
       assert.equal(result.details.structuredContent.fr, '+15550001111');

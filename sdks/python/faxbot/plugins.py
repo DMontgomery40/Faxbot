@@ -2,8 +2,6 @@
 
 from typing import Any, Dict, List, Optional
 
-import requests
-
 
 class PluginManager:
     """List, configure and install Faxbot provider plugins."""
@@ -15,7 +13,7 @@ class PluginManager:
 
     def _check_plugin_support(self) -> None:
         try:
-            resp = requests.get(
+            resp = self.client._session.get(
                 f"{self.client.base_url}/plugins",
                 headers=self.client._headers,
                 timeout=5,
@@ -29,7 +27,7 @@ class PluginManager:
         """Return installed plugins (GET /plugins answers {"items": [...]})."""
         if not self.enabled:
             return []
-        resp = requests.get(
+        resp = self.client._session.get(
             f"{self.client.base_url}/plugins",
             headers=self.client._headers,
             timeout=10,
@@ -40,7 +38,7 @@ class PluginManager:
 
     def get_plugin_config(self, plugin_id: str) -> Dict[str, Any]:
         """Return {"enabled", "settings", "role", "_meta"}; secrets are masked."""
-        resp = requests.get(
+        resp = self.client._session.get(
             f"{self.client.base_url}/plugins/{plugin_id}/config",
             headers=self.client._headers,
             timeout=10,
@@ -69,7 +67,7 @@ class PluginManager:
             "role": role,
             "expected_revision_id": expected_revision_id,
         }
-        resp = requests.put(
+        resp = self.client._session.put(
             f"{self.client.base_url}/plugins/{plugin_id}/config",
             json={key: value for key, value in patch.items() if value is not None},
             headers=self.client._headers,
@@ -85,7 +83,7 @@ class PluginManager:
         """
         if not isinstance(manifest, dict):
             raise TypeError("install_plugin takes an HTTP provider manifest (a dict with an 'id').")
-        resp = requests.post(
+        resp = self.client._session.post(
             f"{self.client.base_url}/admin/plugins/http/install",
             json={"manifest": manifest},
             headers=self.client._headers,
