@@ -2,6 +2,7 @@
 import typer
 
 from .. import profiles, state
+from ..client import segment
 from ..errors import CliError, EXIT_NOT_FOUND
 from ..output import local_time, text
 
@@ -125,6 +126,13 @@ def settings_validate(backend: str = typer.Argument(..., help='Provider to check
     state.out().result(result, human)
 
 
+@settings.command('persist')
+def settings_persist():
+    """Write the full settings, including secrets, to the installation's private recovery file. Owners only."""
+    result = state.api().post('/admin/settings/persist', json={})
+    state.out().result(result, lambda out: out.line(f"Settings written to {result.get('path')} on the server."))
+
+
 @settings.command('export')
 def settings_export():
     """Print the settings as environment lines. Secrets are replaced with ***."""
@@ -163,6 +171,101 @@ def providers_list():
          for item in items]))
 
 
+@providers.command('callbacks')
+def providers_callbacks():
+    """Show the addresses your receiving provider must call for incoming faxes."""
+    result = state.api().get('/admin/inbound/callbacks')
+    state.out().result(result, lambda out: out.table(['Callback', 'Address', 'Notes'],
+        [[item.get('name'), item.get('url'), item.get('notes')] for item in result.get('callbacks', [])],
+        empty='The receiving provider needs no callback address.'))
+
+
+@providers.command('config')
+def providers_config(provider: str = typer.Argument(..., help="Provider from 'faxbot providers list'."),
+                     role: str = typer.Option(None, '--role', help='outbound, inbound or storage.')):
+    """Show a provider's settings. Secrets are masked."""
+    result = state.api().get(f'/plugins/{segment(provider)}/config', params={'role': role})
+
+    def human(out):
+        rows = []
+        _flatten('', result.get('settings', {}), rows)
+        out.fields([('Provider', provider), ('Role', result.get('role')), ('In use', result.get('enabled'))])
+        out.table(['Setting', 'Value'], rows, empty='This provider has no settings.')
+    state.out().result(result, human)
+
+
+@providers.command('configure')
+def providers_configure(provider: str = typer.Argument(..., help="Provider from 'faxbot providers list'."),
+                        assignments: list[str] = typer.Argument(None, metavar='NAME=VALUE...',
+                                                                help='Provider settings to change.'),
+                        secret: list[str] = typer.Option(None, '--secret', metavar='NAME',
+                                                         help='Ask for this setting without showing it. Repeat for more.'),
+                        role: str = typer.Option(None, '--role', help='outbound, inbound or storage.'),
+                        enable: bool = typer.Option(False, '--enable', help='Use this provider for the role.'),
+                        disable: bool = typer.Option(False, '--disable', help='Stop using this provider for the role.')):
+    """Change a provider's settings, or start or stop using it."""
+    if enable and disable:
+        raise CliError('Choose --enable or --disable, not both.')
+    changes = {}
+    for item in assignments or []:
+        name, separator, raw = item.partition('=')
+        if not separator or not name.strip():
+            raise CliError(f"Write each setting as NAME=VALUE; '{item}' has no '='.")
+        changes[name.strip()] = _value(raw)
+    for name in secret or []:
+        changes[name] = typer.prompt(f'Value for {name}', hide_input=True, confirmation_prompt=True)
+    body = {'role': role}
+    if changes:
+        body['settings'] = changes
+    if enable or disable:
+        body['enabled'] = enable
+    if not changes and not (enable or disable):
+        raise CliError('Nothing to change. Give NAME=VALUE pairs, --secret NAME, --enable or --disable.')
+    api = state.api()
+    current = api.get(f'/plugins/{segment(provider)}/config', params={'role': role})
+    result = api.put(f'/plugins/{segment(provider)}/config',
+                     json={**body, 'expected_revision_id': current['_meta']['desired_revision_id']})
+    state.out().result(result, lambda out: out.line(
+        'Nothing changed.' if not result.get('changed') else 'Saved. Restart Faxbot to apply it.'
+        if result.get('_meta', {}).get('restart_recommended') else 'Saved and applied.'))
+
+
+@providers.command('registry')
+def providers_registry():
+    """List providers available to install from the provider registry."""
+    result = state.api().get('/plugin-registry')
+    items = result.get('items', []) if isinstance(result, dict) else []
+    state.out().result(result, lambda out: out.table(['Provider', 'Name', 'Description'],
+        [[item.get('id'), item.get('name'), item.get('description')] for item in items], empty='The registry is empty.'))
+
+
+def _manifest(path):
+    import json
+    try:
+        with open(path, encoding='utf-8') as handle:
+            return json.load(handle)
+    except OSError:
+        raise CliError(f'Cannot read {path}.') from None
+    except ValueError:
+        raise CliError(f'{path} is not valid JSON.') from None
+
+
+@providers.command('validate')
+def providers_validate(manifest: str = typer.Argument(..., help='HTTP provider manifest (JSON file).')):
+    """Check an HTTP provider manifest without installing it or sending anything."""
+    result = state.api().post('/admin/plugins/http/validate', json={'manifest': _manifest(manifest), 'render_only': True})
+    state.out().result(result, lambda out: out.line('The manifest is valid.' if result.get('ok', True)
+                                                    else 'The manifest has problems: ' + text(result.get('error'))))
+
+
+@providers.command('install')
+def providers_install(manifest: str = typer.Argument(..., help='HTTP provider manifest (JSON file).')):
+    """Install an HTTP provider from its manifest."""
+    result = state.api().post('/admin/plugins/http/install', json={'manifest': _manifest(manifest)})
+    state.out().result(result, lambda out: out.line(f"Provider {result.get('id')} installed. Configure it with "
+                                                    f"faxbot providers configure {result.get('id')}."))
+
+
 @providers.command('status')
 def providers_status():
     """Show whether the active provider is ready and how many faxes are in each state."""
@@ -196,6 +299,21 @@ def health():
     state.out().result(result, human)
     if (ready or {}).get('status') != 'ready':
         raise typer.Exit(1)
+
+
+@diagnostics.command('database')
+def diagnostics_database():
+    """Show whether the database answers and how many records you can see."""
+    result = state.api().get('/admin/db-status')
+
+    def human(out):
+        sqlite = result.get('sqlite') or {}
+        out.fields([('Database', result.get('engine')), ('Connected', result.get('connected')),
+                    ('File', sqlite.get('path')), ('Size (bytes)', sqlite.get('size_bytes'))])
+        counts = result.get('counts') or {}
+        out.table(['Records', 'Count'], [[name.replace('_', ' '), '-' if count is None else count]
+                                          for name, count in counts.items()])
+    state.out().result(result, human)
 
 
 @diagnostics.command('run')

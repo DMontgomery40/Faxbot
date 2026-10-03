@@ -207,3 +207,12 @@ def inbound_pdf(inbound_id: str = typer.Argument(..., help='Received fax ID.'),
     """Download the document of a received fax."""
     response = state.api().get(f'/inbound/{segment(inbound_id)}/pdf', raw=True, headers={'Accept': 'application/pdf'})
     _report_saved(save_document(response, output, f'inbound_{inbound_id}.pdf', force), len(response.content))
+
+
+@inbound.command('simulate')
+def inbound_simulate(from_number: str = typer.Option('+15550000000', '--from', help='Sender fax number to show.'),
+                     to_number: str = typer.Option(None, '--to', help='Your fax number it arrived on.'),
+                     pages: int = typer.Option(1, '--pages', min=1, help='Number of pages to show.')):
+    """Add a test received fax with a placeholder document, to check mailboxes and delivery."""
+    result = state.api().post('/admin/inbound/simulate', json={'fr': from_number, 'to': to_number, 'pages': pages})
+    state.out().result(result, lambda out: out.line(f"Test fax received with ID {result['id']}."))

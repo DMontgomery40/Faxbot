@@ -42,6 +42,9 @@ _TRANSLATED = {
     'Browser request verification failed. Refresh your session and try again.':
         'Faxbot did not accept this request. Sign in again and retry.',
     'Inbound not enabled': 'Receiving faxes is turned off on this installation.',
+    'Restart not allowed': 'This installation does not allow restarts from the API. Set ADMIN_ALLOW_RESTART=true '
+                           'to allow them.',
+    'AUDIT_LOG_FILE not configured': 'The server does not keep an activity log file. Set AUDIT_LOG_FILE to keep one.',
     'v3 plugins feature disabled': 'Provider plugins are turned off on this installation.',
 }
 

@@ -28,8 +28,7 @@ API_ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = API_ROOT.parent
 
 
-@pytest.fixture
-def server(monkeypatch, tmp_path):
+def _serve(monkeypatch, tmp_path, **extra):
     for name in ConfigurationValues.environment_keys():
         monkeypatch.delenv(name, raising=False)
     for name in ('FAXBOT_URL', 'FAXBOT_API_KEY', 'FAXBOT_PROFILE', 'FAXBOT_CLI_DEBUG'):
@@ -59,6 +58,7 @@ def server(monkeypatch, tmp_path):
         'FAXBOT_CLI_CONFIG': str(tmp_path / 'cli-config' / 'config.toml'),
         'COLUMNS': '200',
         'TZ': 'UTC',
+        **extra,
     }.items():
         monkeypatch.setenv(name, value)
     time.tzset()
@@ -67,6 +67,17 @@ def server(monkeypatch, tmp_path):
         yield client
     main_module.app.state.direct_http = None
     time.tzset()
+
+
+@pytest.fixture
+def server(monkeypatch, tmp_path):
+    yield from _serve(monkeypatch, tmp_path)
+
+
+@pytest.fixture
+def plugins_cli(monkeypatch, tmp_path):
+    for client in _serve(monkeypatch, tmp_path, FEATURE_V3_PLUGINS='true'):
+        yield Cli(client)
 
 
 class Cli:
@@ -186,11 +197,8 @@ def test_sending_is_refused_for_a_key_without_permission(cli, tmp_path):
     assert denied.stderr.strip() == 'This API key is not allowed to do that.'
 
 
-def test_received_faxes_list_get_and_download(cli, server, tmp_path):
-    simulated = server.post('/admin/inbound/simulate', headers={'X-API-Key': BOOTSTRAP},
-                            json={'fr': '+15559990000', 'to': '+15551112222', 'pages': 1})
-    assert simulated.status_code == 200, simulated.text
-    inbound_id = simulated.json()['id']
+def test_received_faxes_simulate_list_get_and_download(cli, tmp_path):
+    inbound_id = cli.json('inbound', 'simulate', '--from', '+15559990000', '--to', '+15551112222')['id']
     items = cli.json('inbound', 'list')
     assert [item['id'] for item in items] == [inbound_id]
     assert cli.json('inbound', 'get', inbound_id)['to'] == '+15551112222'
@@ -356,6 +364,41 @@ def test_pairing_a_device_and_reusing_the_code(cli):
     assert again.stderr.strip() == 'This pairing code did not work. Create a new code in the console and try again.'
 
 
+def test_logs_tunnel_actions_restart_and_database(cli):
+    logs = cli.json('logs', 'list', '--limit', '5')
+    assert 'items' in logs and logs['count'] <= 5
+    tail = cli('logs', 'tail')
+    assert tail.exit_code == 9 and tail.stderr.strip() == ('The server does not keep an activity log file. Set '
+                                                           'AUDIT_LOG_FILE to keep one.')
+    assert cli.json('tunnel', 'status')['enabled'] is False
+    assert cli.json('actions', 'list') == {'enabled': False, 'items': []}
+    unconfirmed = cli('--json', 'restart')
+    assert unconfirmed.exit_code == 1 and 'Add --yes' in json.loads(unconfirmed.stdout)['error']['message']
+    refused = cli('restart', '--yes')
+    assert refused.exit_code == 4 and 'ADMIN_ALLOW_RESTART' in refused.stderr
+    database = cli.json('diagnostics', 'database')
+    assert database['engine'] == 'sqlite' and database['connected'] is True
+    callbacks = cli.json('providers', 'callbacks')
+    assert callbacks['backend'] == 'phaxio' and callbacks['callbacks'][0]['url'].endswith('/phaxio-inbound')
+    turned_off = cli('providers', 'config', 'phaxio')
+    assert turned_off.exit_code == 5
+    assert turned_off.stderr.strip() == 'Provider plugins are turned off on this installation.'
+
+
+def test_provider_plugins_list_config_and_configure(plugins_cli):
+    cli = plugins_cli
+    providers = cli.json('providers', 'list')
+    assert any(item['id'] == 'phaxio' and item['enabled'] for item in providers)
+    shown = cli.json('providers', 'config', 'phaxio')
+    assert shown['enabled'] is True and set(shown['settings']) >= {'api_key', 'callback_url'}
+    saved = cli('providers', 'configure', 'phaxio', '--secret', 'api_key', input='synthetic-phaxio-key\n' * 2)
+    assert saved.exit_code == 0, saved.stderr
+    assert 'synthetic-phaxio-key' not in saved.stdout
+    masked = cli.json('providers', 'config', 'phaxio')['settings']['api_key']
+    assert masked and 'synthetic-phaxio-key' not in masked
+    assert isinstance(cli.json('providers', 'registry'), dict)
+
+
 # -- routing, intake, direct delivery, cases ------------------------------------------------
 
 def test_routing_destinations_costs_and_rate_cards(cli, tmp_path):
@@ -385,6 +428,9 @@ def test_intake_connectors_items_and_test_email(cli):
     tested = cli('--json', 'intake', 'connectors', 'test', 'Front desk email')
     assert tested.exit_code == 1 and json.loads(tested.stdout)['ok'] is False
     assert cli.json('intake', 'items')['items'] == []
+    updated = cli.json('intake', 'connectors', 'update', 'Front desk email', '--name', 'Desk email', '--disable')
+    assert updated['name'] == 'Desk email' and updated['enabled'] is False and updated['version'] == 2
+    cli.json('intake', 'connectors', 'update', 'Desk email', '--name', 'Front desk email', '--enable')
     assert cli('intake', 'retry', 'missing-item').exit_code in (5, 6, 9)
     cli.json('intake', 'connectors', 'remove', 'Front desk email')
     assert cli.json('intake', 'connectors', 'list') == []

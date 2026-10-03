@@ -221,6 +221,40 @@ def connectors_add(name: str = typer.Argument(..., help='Connector name.'),
                                                        f"faxbot intake connectors test \"{connector['name']}\""))
 
 
+@connectors.command('update')
+def connectors_update(name: str = typer.Argument(..., help='Connector name.'),
+                      new_name: str = typer.Option(None, '--name', help='New name.'),
+                      host: str = typer.Option(None, '--host', help='Mail server address.'),
+                      port: int = typer.Option(None, '--port', help='Mail server port.'),
+                      security: str = typer.Option(None, '--security', help='starttls, tls or none.'),
+                      username: str = typer.Option(None, '--username', help='Mail server sign-in name.'),
+                      ask_password: bool = typer.Option(False, '--ask-password', help='Ask for a new mail server '
+                                                                                      'password without showing it.'),
+                      recipients: list[str] = typer.Option(None, '--to', help='Replace the recipients. Repeat for more.'),
+                      from_address: str = typer.Option(None, '--from', help='Sender email address.'),
+                      subject: str = typer.Option(None, '--subject', help='Email subject.'),
+                      match_number: str = typer.Option(None, '--fax-number', help="Only this fax number; 'all' for "
+                                                                                 'every number.'),
+                      enable: bool = typer.Option(False, '--enable', help='Switch on.'),
+                      disable: bool = typer.Option(False, '--disable', help='Switch off.')):
+    """Change an email connector. Settings you leave out stay as they are."""
+    if enable and disable:
+        raise CliError('Choose --enable or --disable, not both.')
+    api = state.api()
+    current = _connector(api, name)
+    body = {'name': new_name or current['name'], 'host': host or current['host'],
+            'port': port if port is not None else current['port'], 'security': security or current['security'],
+            'username': username if username is not None else current['username'],
+            'from_address': from_address or current['from_address'], 'recipients': recipients or current['recipients'],
+            'subject_template': subject or current['subject_template'],
+            'match_number': None if match_number == 'all' else (match_number or current.get('match_number')),
+            'enabled': True if enable else False if disable else current['enabled'],
+            'password': typer.prompt('Mail server password', hide_input=True) if ask_password else None,
+            'version': current['version']}
+    connector = api.put('/intake/connectors/' + segment(current['id']), json=body)
+    state.out().result(connector, lambda out: out.line(f"Connector {connector['name']} updated."))
+
+
 @connectors.command('test')
 def connectors_test(name: str = typer.Argument(..., help='Connector name.')):
     """Send a test email through a connector."""

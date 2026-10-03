@@ -32,6 +32,7 @@ $ faxbot [OPTIONS] COMMAND [ARGS]...
 * `status`: Show where a sent fax is now.
 * `me`: Show who this API key belongs to and what...
 * `health`: Check that the server answers and whether...
+* `restart`: Restart the Faxbot server process, when...
 * `jobs`: Sent faxes: list them, read details,...
 * `inbound`: Received faxes: list them, read details...
 * `owner`: Create an owner with the installation key.
@@ -54,6 +55,9 @@ $ faxbot [OPTIONS] COMMAND [ARGS]...
 * `intake`: The intake queue: received documents being...
 * `direct`: Direct delivery: send faxes to verified...
 * `cases`: Case packets: send only the documents a...
+* `logs`: The activity log: sign-ins, faxes, pairing...
+* `tunnel`: Remote access tunnels (Cloudflare,...
+* `actions`: Approved maintenance actions on the server...
 * `config`: Save server addresses and API keys as...
 * `admin`: Run a stopped installation on this...
 
@@ -122,6 +126,21 @@ $ faxbot health [OPTIONS]
 
 **Options**:
 
+* `--help`: Show this message and exit.
+
+## `faxbot restart`
+
+Restart the Faxbot server process, when the installation allows it.
+
+**Usage**:
+
+```console
+$ faxbot restart [OPTIONS]
+```
+
+**Options**:
+
+* `-y, --yes`: Do not ask for confirmation.
 * `--help`: Show this message and exit.
 
 ## `faxbot jobs`
@@ -278,6 +297,7 @@ $ faxbot inbound [OPTIONS] COMMAND [ARGS]...
 * `list`: List received faxes you can see.
 * `get`: Show one received fax.
 * `pdf`: Download the document of a received fax.
+* `simulate`: Add a test received fax with a placeholder...
 
 ### `faxbot inbound list`
 
@@ -332,6 +352,23 @@ $ faxbot inbound pdf [OPTIONS] {inbound_id}
 
 * `-o, --output <str>`: File to write. Use &#x27;-&#x27; for standard output.
 * `--force`: Replace the file if it exists.
+* `--help`: Show this message and exit.
+
+### `faxbot inbound simulate`
+
+Add a test received fax with a placeholder document, to check mailboxes and delivery.
+
+**Usage**:
+
+```console
+$ faxbot inbound simulate [OPTIONS]
+```
+
+**Options**:
+
+* `--from <str>`: Sender fax number to show.  [default: +15550000000]
+* `--to <str>`: Your fax number it arrived on.
+* `--pages <int range>`: Number of pages to show.  [default: 1; x&gt;=1]
 * `--help`: Show this message and exit.
 
 ## `faxbot owner`
@@ -1319,6 +1356,7 @@ $ faxbot settings [OPTIONS] COMMAND [ARGS]...
 * `get`: Show the installation settings, including...
 * `set`: Change settings.
 * `validate`: Check provider credentials without saving...
+* `persist`: Write the full settings, including...
 * `export`: Print the settings as environment lines.
 
 ### `faxbot settings get`
@@ -1382,6 +1420,20 @@ $ faxbot settings validate [OPTIONS] {backend}
 * `--ami-port <int>`: Asterisk manager port (sip).
 * `--help`: Show this message and exit.
 
+### `faxbot settings persist`
+
+Write the full settings, including secrets, to the installation&#x27;s private recovery file. Owners only.
+
+**Usage**:
+
+```console
+$ faxbot settings persist [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
 ### `faxbot settings export`
 
 Print the settings as environment lines. Secrets are replaced with ***.
@@ -1413,6 +1465,12 @@ $ faxbot providers [OPTIONS] COMMAND [ARGS]...
 **Commands**:
 
 * `list`: List installed fax and storage providers...
+* `callbacks`: Show the addresses your receiving provider...
+* `config`: Show a provider&#x27;s settings.
+* `configure`: Change a provider&#x27;s settings, or start or...
+* `registry`: List providers available to install from...
+* `validate`: Check an HTTP provider manifest without...
+* `install`: Install an HTTP provider from its manifest.
 * `status`: Show whether the active provider is ready...
 
 ### `faxbot providers list`
@@ -1424,6 +1482,112 @@ List installed fax and storage providers and which ones are in use.
 ```console
 $ faxbot providers list [OPTIONS]
 ```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+### `faxbot providers callbacks`
+
+Show the addresses your receiving provider must call for incoming faxes.
+
+**Usage**:
+
+```console
+$ faxbot providers callbacks [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+### `faxbot providers config`
+
+Show a provider&#x27;s settings. Secrets are masked.
+
+**Usage**:
+
+```console
+$ faxbot providers config [OPTIONS] {provider}
+```
+
+**Arguments**:
+
+* `provider`: Provider from &#x27;faxbot providers list&#x27;.  [required]
+
+**Options**:
+
+* `--role <str>`: outbound, inbound or storage.
+* `--help`: Show this message and exit.
+
+### `faxbot providers configure`
+
+Change a provider&#x27;s settings, or start or stop using it.
+
+**Usage**:
+
+```console
+$ faxbot providers configure [OPTIONS] {provider} [NAME=VALUE...]
+```
+
+**Arguments**:
+
+* `provider`: Provider from &#x27;faxbot providers list&#x27;.  [required]
+* `NAME=VALUE...`: Provider settings to change.
+
+**Options**:
+
+* `--secret NAME`: Ask for this setting without showing it. Repeat for more.
+* `--role <str>`: outbound, inbound or storage.
+* `--enable`: Use this provider for the role.
+* `--disable`: Stop using this provider for the role.
+* `--help`: Show this message and exit.
+
+### `faxbot providers registry`
+
+List providers available to install from the provider registry.
+
+**Usage**:
+
+```console
+$ faxbot providers registry [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+### `faxbot providers validate`
+
+Check an HTTP provider manifest without installing it or sending anything.
+
+**Usage**:
+
+```console
+$ faxbot providers validate [OPTIONS] {manifest}
+```
+
+**Arguments**:
+
+* `manifest`: HTTP provider manifest (JSON file).  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+### `faxbot providers install`
+
+Install an HTTP provider from its manifest.
+
+**Usage**:
+
+```console
+$ faxbot providers install [OPTIONS] {manifest}
+```
+
+**Arguments**:
+
+* `manifest`: HTTP provider manifest (JSON file).  [required]
 
 **Options**:
 
@@ -1459,7 +1623,22 @@ $ faxbot diagnostics [OPTIONS] COMMAND [ARGS]...
 
 **Commands**:
 
+* `database`: Show whether the database answers and how...
 * `run`: Run the installation checks and list...
+
+### `faxbot diagnostics database`
+
+Show whether the database answers and how many records you can see.
+
+**Usage**:
+
+```console
+$ faxbot diagnostics database [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
 
 ### `faxbot diagnostics run`
 
@@ -1706,6 +1885,7 @@ $ faxbot intake connectors [OPTIONS] COMMAND [ARGS]...
 
 * `list`: List intake connectors.
 * `add`: Add an email connector for received...
+* `update`: Change an email connector.
 * `test`: Send a test email through a connector.
 * `remove`: Remove a connector.
 
@@ -1749,6 +1929,36 @@ $ faxbot intake connectors add [OPTIONS] {name}
 * `--subject <str>`: Email subject.  [default: Fax from {from_number}]
 * `--fax-number <str>`: Only documents sent to this fax number. Default: all.
 * `--disabled`: Create it switched off.
+* `--help`: Show this message and exit.
+
+#### `faxbot intake connectors update`
+
+Change an email connector. Settings you leave out stay as they are.
+
+**Usage**:
+
+```console
+$ faxbot intake connectors update [OPTIONS] {name}
+```
+
+**Arguments**:
+
+* `name`: Connector name.  [required]
+
+**Options**:
+
+* `--name <str>`: New name.
+* `--host <str>`: Mail server address.
+* `--port <int>`: Mail server port.
+* `--security <str>`: starttls, tls or none.
+* `--username <str>`: Mail server sign-in name.
+* `--ask-password`: Ask for a new mail server password without showing it.
+* `--to <str>`: Replace the recipients. Repeat for more.
+* `--from <str>`: Sender email address.
+* `--subject <str>`: Email subject.
+* `--fax-number <str>`: Only this fax number; &#x27;all&#x27; for every number.
+* `--enable`: Switch on.
+* `--disable`: Switch off.
 * `--help`: Show this message and exit.
 
 #### `faxbot intake connectors test`
@@ -2003,6 +2213,184 @@ $ faxbot cases send [OPTIONS] {case_id} {to} {files}...
 
 * `--title <str>`: Title for each document, in the same order. Default: the file name.
 * `--preview`: Show what would be sent without sending.
+* `--help`: Show this message and exit.
+
+## `faxbot logs`
+
+The activity log: sign-ins, faxes, pairing and terminal use.
+
+**Usage**:
+
+```console
+$ faxbot logs [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `list`: Show recent activity log entries kept by...
+* `tail`: Show the end of the activity log file...
+
+### `faxbot logs list`
+
+Show recent activity log entries kept by the running server.
+
+**Usage**:
+
+```console
+$ faxbot logs list [OPTIONS]
+```
+
+**Options**:
+
+* `--search <str>`: Only entries containing this text.
+* `--event <str>`: Only this kind of entry, for example job_created.
+* `--since <str>`: Only entries after this time, for example 2026-10-01.
+* `--limit <int range>`: How many entries to show.  [default: 200; x&gt;=1]
+* `--help`: Show this message and exit.
+
+### `faxbot logs tail`
+
+Show the end of the activity log file (when the server writes one).
+
+**Usage**:
+
+```console
+$ faxbot logs tail [OPTIONS]
+```
+
+**Options**:
+
+* `--search <str>`: Only lines containing this text.
+* `--event <str>`: Only this kind of entry.
+* `--lines <int range>`: How many of the last lines to show.  [default: 200; 1&lt;=x&lt;=20000]
+* `--help`: Show this message and exit.
+
+## `faxbot tunnel`
+
+Remote access tunnels (Cloudflare, WireGuard or Tailscale).
+
+**Usage**:
+
+```console
+$ faxbot tunnel [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `status`: Show the remote access tunnel.
+* `set`: Choose and configure the remote access...
+* `test`: Check that the server can be reached at...
+
+### `faxbot tunnel status`
+
+Show the remote access tunnel.
+
+**Usage**:
+
+```console
+$ faxbot tunnel status [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+### `faxbot tunnel set`
+
+Choose and configure the remote access tunnel. A Tailscale auth key is read from TAILSCALE_AUTH_KEY.
+
+**Usage**:
+
+```console
+$ faxbot tunnel set [OPTIONS] {provider}
+```
+
+**Arguments**:
+
+* `provider`: none, cloudflare, wireguard or tailscale.  [required]
+
+**Options**:
+
+* `--disable`: Save the settings but keep the tunnel off.
+* `--cloudflare-domain <str>`: Custom domain (Cloudflare).
+* `--wireguard-endpoint <str>`: Server endpoint (WireGuard).
+* `--wireguard-public-key <str>`: Server&#x27;s public key (WireGuard).
+* `--wireguard-client-ip <str>`: This computer&#x27;s tunnel address (WireGuard).
+* `--wireguard-dns <str>`: DNS server (WireGuard).
+* `--tailscale-hostname <str>`: Host name (Tailscale).
+* `--help`: Show this message and exit.
+
+### `faxbot tunnel test`
+
+Check that the server can be reached at its public address.
+
+**Usage**:
+
+```console
+$ faxbot tunnel test [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+## `faxbot actions`
+
+Approved maintenance actions on the server computer.
+
+**Usage**:
+
+```console
+$ faxbot actions [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `list`: List the approved maintenance actions this...
+* `run`: Run an approved maintenance action and...
+
+### `faxbot actions list`
+
+List the approved maintenance actions this server allows.
+
+**Usage**:
+
+```console
+$ faxbot actions list [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+### `faxbot actions run`
+
+Run an approved maintenance action and show its output.
+
+**Usage**:
+
+```console
+$ faxbot actions run [OPTIONS] {action}
+```
+
+**Arguments**:
+
+* `action`: Action from &#x27;faxbot actions list&#x27;.  [required]
+
+**Options**:
+
 * `--help`: Show this message and exit.
 
 ## `faxbot config`
