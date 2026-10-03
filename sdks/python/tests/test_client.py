@@ -145,13 +145,25 @@ def test_send_fax_posts_multipart_with_the_key_and_requires_202(fake, document):
 
 def test_a_lost_response_is_recovered_with_the_same_operation_id(fake, document):
     fake['plan'] = ['drop']
-    client = FaxbotClient(fake['url'], api_key='sdk-key', retry_backoff=0)
+    client = FaxbotClient(fake['url'], api_key='sdk-key', retries=2, retry_backoff=0)
     job = client.send_fax('+15551234567', str(document))
     posts = fake['posts']()
     assert len(posts) == 2 and posts[0]['operation'] == posts[1]['operation']
     # The retry reopened the file: an exhausted handle would upload an empty document.
     assert b'%PDF-1.4 synthetic' in posts[1]['body']
     assert fake['jobs'] == [job] == [{'id': 'job-1', 'status': 'queued'}]
+
+
+def test_by_default_a_lost_response_is_never_sent_again_until_the_caller_resumes(fake, document):
+    # Older servers ignore the operation id, so the client never resends on its own.
+    fake['plan'] = ['drop']
+    client = FaxbotClient(fake['url'], api_key='sdk-key', retry_backoff=0)
+    with pytest.raises(FaxSubmissionUncertain) as caught:
+        client.send_fax('+15551234567', str(document))
+    assert [post['operation'] for post in fake['posts']()] == [caught.value.operation_id]
+    assert len(fake['jobs']) == 1
+    assert client.resume_fax(caught.value.operation_id, '+15551234567', str(document)) == fake['jobs'][0]
+    assert len(fake['jobs']) == 1
 
 
 def test_an_unconfirmed_fax_is_finished_with_its_operation_id(fake, document):

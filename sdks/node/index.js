@@ -73,12 +73,14 @@ class FaxbotClient {
    * @param {string} [baseUrl="http://localhost:8080"] - Base URL of the Faxbot API.
    * @param {string|null} [apiKey=null] - API key for authentication (optional).
    * @param {Object} [options]
-   * @param {number} [options.retries=2] - How many more times sendFax sends the same fax, with the same
-   *   operation id, after a connection error, a timeout or HTTP 502/503/504. Use 0 against a Faxbot
-   *   server that does not support Idempotency-Key.
+   * @param {number} [options.retries=0] - How many more times sendFax sends the same fax, with the same
+   *   operation id, after a connection error, a timeout or HTTP 502/503/504. The default 0 never sends
+   *   again on its own: an unconfirmed send throws with `uncertain` and `operationId`, and the caller
+   *   finishes it with resumeFax. Raise it only for Faxbot servers that support Idempotency-Key; older
+   *   servers would send the fax twice.
    * @param {number} [options.retryBackoffMs=500] - Wait before the first retry; each later retry waits twice as long.
    */
-  constructor(baseUrl = 'http://localhost:8080', apiKey = null, { retries = 2, retryBackoffMs = 500 } = {}) {
+  constructor(baseUrl = 'http://localhost:8080', apiKey = null, { retries = 0, retryBackoffMs = 500 } = {}) {
     if (!Number.isInteger(retries) || retries < 0) throw new Error('retries must be a whole number, 0 or more');
     if (typeof retryBackoffMs !== 'number' || !(retryBackoffMs >= 0)) throw new Error('retryBackoffMs must be 0 or more');
     // Remove trailing slash from baseUrl if present for consistency

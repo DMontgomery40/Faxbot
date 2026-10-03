@@ -33,8 +33,9 @@ SERVER_VERSION = '3.0.0'
 INBOUND_PDF_URI = 'faxbot://inbound/{inbound_id}/pdf'
 
 # One send_fax call sends the same fax again, with the same operation id, at most this many more times
-# after a transport failure or HTTP 502/503/504. Read at call time so tests can shorten the waits.
-SEND_RETRIES = 2
+# after a transport failure or HTTP 502/503/504. The default 0 never sends again on its own; the tool
+# error names the operationId for an explicit resume. Read at call time so tests can change it.
+SEND_RETRIES = 0
 SEND_RETRY_BACKOFF = 0.5  # seconds before the first retry; each later retry waits twice as long
 _RETRYABLE_STATUSES = frozenset({502, 503, 504})
 # The request may or may not have reached Faxbot.

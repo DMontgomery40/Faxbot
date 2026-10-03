@@ -101,7 +101,7 @@ test('sendFax posts multipart with the key; getStatus and checkHealth use the do
 
 test('a lost response is recovered with the same operation id', () => withFake(async (fake) => {
   fake.state.plan = ['drop'];
-  const client = new FaxbotClient(fake.url, 'sdk-key', { retryBackoffMs: 0 });
+  const client = new FaxbotClient(fake.url, 'sdk-key', { retries: 2, retryBackoffMs: 0 });
   const job = await client.sendFax('+15551234567', writeDocument());
   const posts = fake.posts();
   assert.equal(posts.length, 2);
@@ -109,6 +109,19 @@ test('a lost response is recovered with the same operation id', () => withFake(a
   // The retry reopened the file: a consumed stream would upload an empty document.
   assert.match(posts[1].body, /%PDF-1.4 synthetic/);
   assert.deepEqual(fake.state.jobs, [job]);
+}));
+
+test('by default a lost response is never sent again until the caller resumes', () => withFake(async (fake) => {
+  // Older servers ignore the operation id, so the client never resends on its own.
+  fake.state.plan = ['drop'];
+  const document = writeDocument();
+  const client = new FaxbotClient(fake.url, 'sdk-key');
+  const error = await client.sendFax('+15551234567', document).then(() => assert.fail('expected an error'), (e) => e);
+  assert.equal(error.uncertain, true);
+  assert.deepEqual(fake.posts().map((post) => post.operation), [error.operationId]);
+  assert.equal(fake.state.jobs.length, 1);
+  assert.deepEqual(await client.resumeFax(error.operationId, '+15551234567', document), fake.state.jobs[0]);
+  assert.equal(fake.state.jobs.length, 1);
 }));
 
 test('an unconfirmed fax is finished with its operation id', () => withFake(async (fake) => {

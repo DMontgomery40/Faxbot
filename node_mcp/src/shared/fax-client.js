@@ -52,8 +52,9 @@ async function apiError(response) {
 }
 
 // retries: how many more times one sendFax call sends the same fax, with the same operation id,
-// after a transport failure or HTTP 502/503/504; retryBackoffMs doubles after each retry.
-export function createFaxClient({ baseUrl = 'http://localhost:8080', apiKey = '', retries = 2, retryBackoffMs = 500 } = {}) {
+// after a transport failure or HTTP 502/503/504; retryBackoffMs doubles after each retry. The
+// default 0 never sends again on its own; the tool error names the operationId for an explicit resume.
+export function createFaxClient({ baseUrl = 'http://localhost:8080', apiKey = '', retries = 0, retryBackoffMs = 500 } = {}) {
   const base = String(baseUrl).replace(/\/+$/, '');
 
   async function call(method, path, { expect, body, timeoutMs = 15000 } = {}) {

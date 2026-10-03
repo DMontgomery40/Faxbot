@@ -207,11 +207,10 @@ class LoseFirstAnswer:
 
 
 def test_sdk_recovers_a_lost_answer_as_one_job_and_one_provider_submission(isolated_installation, monkeypatch, tmp_path):
-    import sys
     import time
     from pathlib import Path
     import requests
-    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "sdks" / "python"))
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "sdks" / "python"))
     from faxbot import FaxbotClient, FaxOperationConflict
     for name, value in {"FAX_DISABLED": "false", "FAX_BACKEND": "phaxio", "PHAXIO_API_KEY": "synthetic-key",
                         "PHAXIO_API_SECRET": "synthetic-secret"}.items():

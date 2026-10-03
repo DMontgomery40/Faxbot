@@ -37,7 +37,7 @@ Resource template: `faxbot://inbound/{inbound_id}/pdf`, which returns the receiv
 
 ### Sending a fax once
 
-Each `send_fax` call is one fax with an operation id. The server sends the id to Faxbot as the `Idempotency-Key` header and returns it as `operationId`. A call without `operationId` is a new fax, even for a document sent before. The document is read once per call. When the connection drops, times out, or Faxbot answers 502, 503 or 504, the call sends the same request again with the same id, up to 2 more times (waiting 0.5 s, then 1 s). Faxbot answers with the original job instead of sending the fax twice. A 4xx answer is never retried.
+Each `send_fax` call is one fax with an operation id. The server sends the id to Faxbot as the `Idempotency-Key` header and returns it as `operationId`. A call without `operationId` is a new fax, even for a document sent before. The document is read once per call. The call never sends a fax again on its own. When the connection drops, times out, or Faxbot answers 502, 503 or 504, the tool error names the operation id; Faxbot answers a resend with that id with the original job instead of sending the fax twice. A 4xx answer is final.
 
 If no attempt is confirmed, the tool error names the operation id. To finish that same fax, call `send_fax` again with the same number and document plus that id:
 
@@ -45,7 +45,7 @@ If no attempt is confirmed, the tool error names the operation id. To finish tha
 {"to": "+15551234567", "fileContent": "<same base64>", "fileName": "letter.pdf", "operationId": "<id from the error>"}
 ```
 
-The same id with a different number or document fails with HTTP 409. The MCP server keeps no ids or documents; the caller keeps the id. Faxbot servers released before Idempotency-Key support ignore the header, so on those servers a retry after a lost response can send the fax twice.
+The same id with a different number or document fails with HTTP 409. The MCP server keeps no ids or documents; the caller keeps the id. Faxbot servers released before Idempotency-Key support ignore the header, so on those servers resending after a lost response can send the fax twice; check the job list there instead.
 
 ## Checks
 

@@ -96,7 +96,7 @@ class FaxbotClient:
     """
 
     def __init__(self, base_url: str = "http://localhost:8080", api_key: Optional[str] = None, *,
-                 session: Optional[Any] = None, retries: int = 2, retry_backoff: float = 0.5) -> None:
+                 session: Optional[Any] = None, retries: int = 0, retry_backoff: float = 0.5) -> None:
         """Initialize the FaxbotClient.
 
         Args:
@@ -106,8 +106,10 @@ class FaxbotClient:
             session: Optional ``requests.Session`` (or compatible object) used for every request.
                      The API key is sent with each request and never stored on the session.
             retries: How many more times ``send_fax`` sends the same fax, with the same operation id,
-                     after a connection error, a timeout or HTTP 502/503/504. Use 0 against a Faxbot
-                     server that does not support Idempotency-Key.
+                     after a connection error, a timeout or HTTP 502/503/504. The default 0 never sends
+                     again on its own: an unconfirmed send raises ``FaxSubmissionUncertain`` and the
+                     caller finishes it with ``resume_fax``. Raise it only for Faxbot servers that
+                     support Idempotency-Key; older servers would send the fax twice.
             retry_backoff: Seconds to wait before the first retry; each later retry waits twice as long.
         """
         if int(retries) < 0:
