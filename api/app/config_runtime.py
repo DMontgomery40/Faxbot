@@ -1,5 +1,6 @@
 """Installation startup ownership and immutable request configuration frames."""
 from contextlib import contextmanager
+from contextvars import copy_context
 from pathlib import Path
 import asyncio
 
@@ -17,7 +18,9 @@ from .config_store import ConfigurationStore, ConfigurationNotInitialized
 
 async def run_lifecycle_step(operation):
     """A cancelled startup must join its file/DB work before releasing ownership."""
-    task = asyncio.create_task(asyncio.to_thread(operation))
+    # Shutdown cancels child Tasks too; hold the executor Future directly so
+    # cancellation cannot masquerade as completion of the ownership thread.
+    task = asyncio.get_running_loop().run_in_executor(None, copy_context().run, operation)
     try:
         return await asyncio.shield(task)
     except asyncio.CancelledError:

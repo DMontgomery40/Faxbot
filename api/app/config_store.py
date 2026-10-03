@@ -284,49 +284,61 @@ class ConfigurationStore:
             raise ConfigurationStoreError('Cannot read accepted fax upload limit.') from None
 
     def accept_outbound(self, prepared_revision: ConfigurationRevision, job: dict, *, request_identity=None):
-        """Commit a prepared job and exact provider binding under the Apply lock.
+        """Internal trusted acceptance with no human authorization of its own.
 
-        Preparation and validation occur before entry. A new active revision
-        makes that preparation stale, even if it happens to name the same
-        provider. Pending edits alone do not alter the active preparation frame.
+        Human route integration must use AuthorizedOutbound. This retained
+        delivery/maintenance primitive does not infer authority or ownership
+        from a job or replay namespace.
         """
+        with self._locked() as connection:
+            return self._accept_outbound_on(connection, prepared_revision, job,
+                                            request_identity=request_identity)
+
+    def _accept_outbound_on(self, connection, prepared_revision, job, *, request_identity=None):
+        """Write on the caller's existing configuration installation lock.
+
+        AuthorizedOutbound acquires config then access, verifies the current
+        creator/replay visibility, and adds resource/audit before this commits.
+        No nested transaction or independent commit is opened here.
+        """
+        self.access_store._transaction_on(connection)
+        self.access_store._physical_transaction_on(connection)
         if (not isinstance(job, dict) or not isinstance(job.get('id'), str)
                 or not job['id'] or job.get('status') != 'queued'
                 or set(job) - set(self.jobs.c.keys())):
             raise ConfigurationStoreError('Invalid prepared fax job.')
         data = dict(job)
-        with self._locked() as connection:
-            if request_identity is not None:
-                from .request_identity import find_replay, IdempotentReplay
-                existing = find_replay(connection, self.delivery_tables['outbound_deliveries'], request_identity)
-                if existing is not None:
-                    # Replay wins before current configuration/provider preflight.
-                    # No new job, artifact binding or history entry is created.
-                    raise IdempotentReplay(existing)
-            head = self._head(connection)
-            if head is None or head['active_revision_id'] != prepared_revision.id:
-                raise ConfigurationConflict('Configuration changed during fax preparation; prepare again before acceptance.')
-            cipher = self._cipher()
-            active = self._revision(connection, cipher, head['installation_id'], head['active_revision_id'])
-            identity = active.profile_id('outbound')
-            if identity is None:
-                raise ConfigurationStoreError('Outbound fax delivery is disabled.')
-            if identity != prepared_revision.profile_id('outbound'):
-                raise ConfigurationConflict('Provider binding changed during fax preparation.')
-            profile = self._profile(connection, cipher, head['installation_id'], identity)
-            data.update(backend=profile.configuration.provider_id, outbound_backend=profile.configuration.provider_id)
-            connection.execute(self.jobs.insert().values(**data))
-            connection.execute(self.job_bindings.insert().values(id=data['id'], revision_id=active.id, profile_id=identity))
-            from .outbound_store import record_acceptance
-            record_acceptance(connection, self.delivery_tables, data['id'], held=active.values.fax_disabled,
-                              now=data.get('created_at') or datetime.utcnow())
-            if request_identity is not None:
-                deliveries = self.delivery_tables['outbound_deliveries']
-                connection.execute(deliveries.update().where(deliveries.c.id == data['id']).values(
-                    principal_scope=request_identity.principal_scope,
-                    idempotency_digest=request_identity.idempotency_digest,
-                    request_fingerprint=request_identity.request_fingerprint))
-            return profile
+        if request_identity is not None:
+            from .request_identity import find_replay, IdempotentReplay
+            existing = find_replay(connection, self.delivery_tables['outbound_deliveries'], request_identity)
+            if existing is not None:
+                # Replay wins before current configuration/provider preflight.
+                # No new job, artifact binding or history entry is created.
+                raise IdempotentReplay(existing)
+        head = self._head(connection)
+        if head is None or head['active_revision_id'] != prepared_revision.id:
+            raise ConfigurationConflict('Configuration changed during fax preparation; prepare again before acceptance.')
+        cipher = self._cipher()
+        active = self._revision(connection, cipher, head['installation_id'], head['active_revision_id'])
+        identity = active.profile_id('outbound')
+        if identity is None:
+            raise ConfigurationStoreError('Outbound fax delivery is disabled.')
+        if identity != prepared_revision.profile_id('outbound'):
+            raise ConfigurationConflict('Provider binding changed during fax preparation.')
+        profile = self._profile(connection, cipher, head['installation_id'], identity)
+        data.update(backend=profile.configuration.provider_id, outbound_backend=profile.configuration.provider_id)
+        connection.execute(self.jobs.insert().values(**data))
+        connection.execute(self.job_bindings.insert().values(id=data['id'], revision_id=active.id, profile_id=identity))
+        from .outbound_store import record_acceptance
+        record_acceptance(connection, self.delivery_tables, data['id'], held=active.values.fax_disabled,
+                          now=data.get('created_at') or datetime.utcnow())
+        if request_identity is not None:
+            deliveries = self.delivery_tables['outbound_deliveries']
+            connection.execute(deliveries.update().where(deliveries.c.id == data['id']).values(
+                principal_scope=request_identity.principal_scope,
+                idempotency_digest=request_identity.idempotency_digest,
+                request_fingerprint=request_identity.request_fingerprint))
+        return profile
 
     def _outbound_context(self, connection, job_id):
         binding = connection.execute(sa.select(self.job_bindings).where(self.job_bindings.c.id == job_id)).mappings().one_or_none()

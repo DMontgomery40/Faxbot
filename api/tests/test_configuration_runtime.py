@@ -208,6 +208,33 @@ async def test_cancelled_startup_joins_ownership_work_before_cleanup():
     assert finished.is_set()
 
 
+@pytest.mark.asyncio
+async def test_shutdown_child_cancellation_preserves_startup_ownership_until_thread_finishes():
+    import asyncio
+    import threading
+    from app.config_runtime import run_lifecycle_step
+    started, release, finished = threading.Event(), threading.Event(), threading.Event()
+    before = asyncio.all_tasks()
+    def operation():
+        started.set()
+        assert release.wait(5)
+        finished.set()
+    task = asyncio.create_task(run_lifecycle_step(operation))
+    try:
+        assert await asyncio.to_thread(started.wait, 5)
+        for child in asyncio.all_tasks() - before:
+            child.cancel()
+        for _ in range(4):
+            await asyncio.sleep(0)
+        assert not task.done()
+        assert not finished.is_set()
+    finally:
+        release.set()
+        await asyncio.gather(task, return_exceptions=True)
+    assert task.cancelled()
+    assert finished.is_set()
+
+
 def test_shared_serving_lease_refuses_database_upgrade_before_any_ddl(environment):
     import sqlalchemy as sa
     from app.config_bootstrap import ConfigurationBootstrapError
