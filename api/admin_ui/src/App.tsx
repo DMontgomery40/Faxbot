@@ -610,7 +610,7 @@ function AppContent() {
           <JobsList client={client!} />
         </TabPanel>
         <TabPanel value={tabValue} index={3}>
-          <Inbound client={client!} docsBase={adminConfig?.branding?.docs_base} />
+          <Inbound client={client!} inboundEnabled={adminConfig?.inbound?.enabled} onNavigate={handleNavigate} docsBase={adminConfig?.branding?.docs_base} />
         </TabPanel>
         {/* Settings group */}
         <TabPanel value={tabValue} index={4}>

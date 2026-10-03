@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
   Box,
   Typography,
@@ -40,18 +40,23 @@ import {
 } from '@mui/icons-material';
 import AdminAPIClient from '../api/client';
 import type { InboundFax } from '../api/types';
+import type { AdminDestination } from '../navigation';
 import { ResponsiveFormSection } from './common/ResponsiveFormFields';
 
 interface InboundProps {
   client: AdminAPIClient;
   docsBase?: string;
+  inboundEnabled?: boolean;
+  onNavigate?: (destination: AdminDestination) => void;
 }
 
-function Inbound({ client, docsBase }: InboundProps) {
+function Inbound({ client, docsBase, inboundEnabled, onNavigate }: InboundProps) {
   const [faxes, setFaxes] = useState<InboundFax[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [hasLoaded, setHasLoaded] = useState(false);
   const [callbacks, setCallbacks] = useState<any | null>(null);
+  const [callbacksError, setCallbacksError] = useState<string | null>(null);
   const [simulating, setSimulating] = useState(false);
   const [copySnackbar, setCopySnackbar] = useState<string>('');
   
@@ -59,18 +64,41 @@ function Inbound({ client, docsBase }: InboundProps) {
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
   const isSmallMobile = useMediaQuery(theme.breakpoints.down('sm'));
 
-  const fetchInbound = async () => {
+  const fetchInbound = useCallback(async () => {
+    if (inboundEnabled === false) {
+      setFaxes([]);
+      setError(null);
+      setHasLoaded(false);
+      setLoading(false);
+      return;
+    }
     try {
       setError(null);
       setLoading(true);
       const data = await client.listInbound();
       setFaxes(data);
+      setHasLoaded(true);
     } catch (err) {
+      setHasLoaded(false);
       setError(err instanceof Error ? err.message : 'Failed to fetch inbound faxes');
     } finally {
       setLoading(false);
     }
-  };
+  }, [client, inboundEnabled]);
+
+  const fetchCallbacks = useCallback(async () => {
+    setCallbacksError(null);
+    if (inboundEnabled === false) {
+      setCallbacks(null);
+      return;
+    }
+    try {
+      setCallbacks(await client.getInboundCallbacks());
+    } catch (err) {
+      setCallbacks(null);
+      setCallbacksError(err instanceof Error ? err.message : 'Failed to fetch callback configuration');
+    }
+  }, [client, inboundEnabled]);
 
   const downloadPdf = async (id: string) => {
     try {
@@ -89,17 +117,16 @@ function Inbound({ client, docsBase }: InboundProps) {
   };
 
   useEffect(() => {
-    fetchInbound();
-    (async () => {
-      try { setCallbacks(await client.getInboundCallbacks()); } catch {}
-    })();
-  }, [client]);
+    void fetchInbound();
+    void fetchCallbacks();
+  }, [fetchInbound, fetchCallbacks]);
 
   useEffect(() => {
+    if (inboundEnabled === false) return;
     // Auto-refresh inbound faxes every 15 seconds
     const interval = setInterval(fetchInbound, 15000);
     return () => clearInterval(interval);
-  }, [client]);
+  }, [fetchInbound, inboundEnabled]);
 
   const getStatusIcon = (status: string) => {
     switch (status.toLowerCase()) {
@@ -263,8 +290,11 @@ function Inbound({ client, docsBase }: InboundProps) {
           <Button
             variant="outlined"
             startIcon={<RefreshIcon />}
-            onClick={fetchInbound}
-            disabled={loading}
+            onClick={() => {
+              void fetchInbound();
+              void fetchCallbacks();
+            }}
+            disabled={loading || inboundEnabled === false}
             size={isSmallMobile ? 'medium' : 'large'}
             sx={{ 
               borderRadius: 2,
@@ -277,6 +307,7 @@ function Inbound({ client, docsBase }: InboundProps) {
             variant="outlined"
             startIcon={<TestIcon />}
             onClick={async () => { 
+              if (inboundEnabled === false) return;
               try { 
                 setSimulating(true); 
                 await client.simulateInbound(); 
@@ -287,7 +318,7 @@ function Inbound({ client, docsBase }: InboundProps) {
                 setSimulating(false);
               } 
             }}
-            disabled={simulating}
+            disabled={simulating || loading || inboundEnabled === false}
             size={isSmallMobile ? 'medium' : 'large'}
             sx={{ 
               borderRadius: 2,
@@ -298,6 +329,16 @@ function Inbound({ client, docsBase }: InboundProps) {
           </Button>
         </Box>
       </Box>
+
+      {inboundEnabled === false && (
+        <Alert
+          severity="info"
+          sx={{ mb: 3, borderRadius: 2 }}
+          action={onNavigate && <Button color="inherit" onClick={() => onNavigate('settings')}>Go to Settings</Button>}
+        >
+          Receiving faxes is disabled. Configure your receiving provider, then enable Inbound in Settings.
+        </Alert>
+      )}
 
       {error && (
         <Fade in>
@@ -318,6 +359,7 @@ function Inbound({ client, docsBase }: InboundProps) {
         icon={<InboxIcon />}
       >
         <Stack spacing={2}>
+          {callbacksError && <Alert severity="error">Unable to load callback configuration: {callbacksError}</Alert>}
           <Alert 
             severity="info" 
             sx={{ 
@@ -335,7 +377,7 @@ function Inbound({ client, docsBase }: InboundProps) {
             </Typography>
           </Alert>
 
-          {callbacks && callbacks.callbacks && callbacks.callbacks.length > 0 && (
+          {inboundEnabled !== false && callbacks && callbacks.callbacks && callbacks.callbacks.length > 0 && (
             <Box>
               <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 1 }}>
                 Provider Callback URLs
@@ -396,7 +438,7 @@ function Inbound({ client, docsBase }: InboundProps) {
             </Box>
           )}
 
-          {callbacks && callbacks.backend === 'sip' && (
+          {inboundEnabled !== false && callbacks && callbacks.backend === 'sip' && (
             <Box>
               <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 1 }}>
                 Asterisk Inbound Configuration
@@ -485,6 +527,7 @@ same => n,System(curl -s -X POST -H "Content-Type: application/json" -H "X-Inter
       </ResponsiveFormSection>
 
       {/* Faxes List */}
+      {inboundEnabled !== false && (
       <Box sx={{ mt: 3 }}>
         {loading && faxes.length === 0 ? (
           <Paper sx={{ p: 4, textAlign: 'center', borderRadius: 2 }}>
@@ -495,10 +538,10 @@ same => n,System(curl -s -X POST -H "Content-Type: application/json" -H "X-Inter
             <Paper sx={{ p: 4, textAlign: 'center', borderRadius: 2 }}>
               <InboxIcon sx={{ fontSize: 48, color: 'text.secondary', mb: 2 }} />
               <Typography variant="h6" gutterBottom>
-                No Inbound Faxes
+                {hasLoaded ? 'No Inbound Faxes' : 'Unable to Load Inbound Faxes'}
               </Typography>
               <Typography variant="body2" color="text.secondary">
-                {error ? 'Check your API key permissions' : 'Inbound faxes will appear here when received'}
+                {hasLoaded ? 'Inbound faxes will appear here when received' : 'Use Refresh to retry. See the error above for details.'}
               </Typography>
             </Paper>
           </Fade>
@@ -598,6 +641,7 @@ same => n,System(curl -s -X POST -H "Content-Type: application/json" -H "X-Inter
           </Fade>
         )}
       </Box>
+      )}
 
       {/* Copy Snackbar */}
       <Snackbar
