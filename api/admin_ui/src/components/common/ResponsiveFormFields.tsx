@@ -119,7 +119,10 @@ export function ResponsiveTextField({
             endAdornment: type === 'password' ? (
               <InputAdornment position="end">
                 <IconButton
-                  onClick={() => setShowPassword(!showPassword)}
+                  type="button"
+                  aria-label={`${showPassword ? 'Hide' : 'Show'} ${label}`}
+                  aria-pressed={showPassword}
+                  onClick={() => setShowPassword((previous) => !previous)}
                   edge="end"
                   size="small"
                 >
@@ -181,6 +184,10 @@ export function ResponsiveSelect({
 }: ResponsiveSelectProps) {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
+  const fieldId = React.useId();
+  const labelId = `${fieldId}-label`;
+  const descriptionId = `${fieldId}-description`;
+  const errorId = `${fieldId}-error`;
 
   return (
     <Box sx={{ mb: isMobile ? 2.5 : 3, width: fullWidth ? '100%' : 'auto' }}>
@@ -192,6 +199,7 @@ export function ResponsiveSelect({
             </Box>
           )}
           <Typography 
+            id={labelId}
             variant="subtitle2" 
             fontWeight={600}
             color={error ? 'error' : 'textPrimary'}
@@ -202,12 +210,15 @@ export function ResponsiveSelect({
         </Box>
 
         {helperText && !error && (
-          <Typography variant="caption" color="text.secondary">
+          <Typography id={descriptionId} variant="caption" color="text.secondary">
             {helperText}
           </Typography>
         )}
 
         <Select
+          id={fieldId}
+          labelId={labelId}
+          aria-describedby={error && errorMessage ? errorId : helperText && !error ? descriptionId : undefined}
           fullWidth={fullWidth}
           value={value || ''}
           onChange={(e) => onChange?.(e.target.value)}
@@ -235,7 +246,7 @@ export function ResponsiveSelect({
         </Select>
 
         {error && errorMessage && (
-          <Typography variant="caption" color="error">
+          <Typography id={errorId} variant="caption" color="error">
             {errorMessage}
           </Typography>
         )}
