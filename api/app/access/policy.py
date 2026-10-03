@@ -9,7 +9,8 @@ import sqlalchemy as sa
 from .catalog import INBOUND_PERMISSIONS, OUTBOUND_PERMISSIONS, PERMISSIONS
 from .types import (AccessDecision, AccessUnavailableError, AuthenticationError, BootstrapEvidence,
                     DecisionReason, KeyEvidence, KeySessionEvidence, PasswordSessionEvidence,
-                    PrincipalContext, ResourceRef, ScopedPermission, StaleCredentialError)
+                    PrincipalContext, ResourceRef, ScopedPermission, StaleCredentialError,
+                    InvalidScopeError, ScopeProjection)
 
 
 def _safe_storage(method):
@@ -309,6 +310,27 @@ class AccessControl:
         return sa.select(resource.c.id).select_from(tree).where(valid, resource.c.id == resource_id,
             resource.c.kind.in_(self._scope_kinds(permission)),
             self._authority_predicate(context, source, permission, resource, parent))
+
+    @_safe_storage
+    def scope_projection_on(self, connection, permissions: frozenset[str], resource: ResourceRef):
+        """Project known role members onto a valid grant scope, without granting authority.
+
+        Callers must separately authorize the mutation and check can_grant_on
+        for its affected before/after edges in this same locked transaction.
+        """
+        self.store.require_lock_on(connection)
+        if (type(permissions) is not frozenset or not self._valid_ref(resource)
+                or any(type(item) is not str or item not in PERMISSIONS for item in permissions)):
+            raise InvalidScopeError()
+        node, _, tree, valid = self._resource_query()
+        kind = connection.execute(sa.select(node.c.kind).select_from(tree)
+                                  .where(valid, node.c.id == resource.id)).scalar_one_or_none()
+        if kind is None:
+            raise InvalidScopeError()
+        applicable = tuple(ScopedPermission(permission, resource) for permission in sorted(permissions)
+                           if kind in self._scope_kinds(permission))
+        inactive = permissions - frozenset(item.permission for item in applicable)
+        return ScopeProjection(applicable, inactive)
 
     @_safe_storage
     def can_grant_on(self, connection, actor, requested: tuple[ScopedPermission, ...], *, now):

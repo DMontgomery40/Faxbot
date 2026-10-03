@@ -20,6 +20,10 @@ class InvalidTransactionError(AccessError):
     code = "invalid_transaction"
 
 
+class InvalidScopeError(AccessError):
+    code = "invalid_scope"
+
+
 class AuthenticationError(AccessError):
     code = "unauthenticated"
 
@@ -88,6 +92,12 @@ class PrincipalContext(_SafeEvidence):
 class ScopedPermission(_SafeEvidence):
     permission: str
     resource: ResourceRef
+
+
+@dataclass(frozen=True)
+class ScopeProjection:
+    applicable: tuple[ScopedPermission, ...]
+    inactive: frozenset[str]
 
 
 @dataclass(frozen=True)
