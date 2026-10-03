@@ -20,9 +20,9 @@ from .types import AccessUnavailableError, InvalidTransactionError
 def delivery_fields(row):
     reason = None
     if row['delivery_state'] == 'reconciliation_required':
-        reason = ('Historical delivery has no verified transmission record.'
+        reason = ('Faxbot has no delivery record for this older fax; check its status in your provider account.'
             if row['dispatch_mode'] == 'legacy' else
-            'Transmission outcome is uncertain. Check the original provider before taking action.')
+            'Faxbot could not confirm delivery; check your provider account before sending this fax again.')
     return {'delivery_state': row['delivery_state'], 'dispatch_mode': row['dispatch_mode'],
             'delivery_version': row['delivery_version'], 'reconciliation_reason': reason}
 

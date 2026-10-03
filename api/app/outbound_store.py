@@ -141,27 +141,27 @@ class OutboundStore:
 
     def _bind_refusal(self, connection, row, attempt, profile):
         if row['state'] != 'reconciliation_required':
-            return 'Only an unresolved submitted delivery can receive a confirmed provider identity.'
+            return 'This fax is not waiting for confirmation, so it does not need a provider fax ID.'
         if row['dispatch_mode'] == 'legacy':
-            return 'Historical delivery requires deliberate maintenance reconciliation of its original account.'
+            return 'This fax was sent by an older Faxbot version; check its status in your provider account.'
         if row['dispatch_mode'] != 'normal':
-            return 'Held or unsupported dispatch mode requires deliberate maintenance reconciliation.'
+            return 'This fax was not sent through a provider, so there is no fax ID to attach.'
         if attempt is None or attempt['submitted_at'] is None:
-            return 'No verified submitted attempt is available; deliberate maintenance reconciliation is required.'
+            return 'Faxbot has no record of sending this fax, so there is no fax ID to attach.'
         if attempt['phase'] not in {'uncertain', 'submitting', 'in_progress'} or attempt['completed_at'] is not None:
-            return 'The attempt is not an unresolved submission; deliberate maintenance reconciliation is required.'
+            return 'This fax already has a final result, so there is no fax ID to attach.'
         if profile is None or profile.id != attempt['profile_id']:
-            return 'The original provider account could not be authenticated; deliberate maintenance reconciliation is required.'
+            return 'The provider account that sent this fax is no longer set up; check the fax in that account.'
         job_sid = connection.scalar(sa.select(self.configuration.jobs.c.provider_sid).where(
             self.configuration.jobs.c.id == row['id']))
         if attempt['provider_sid'] is not None or job_sid is not None:
-            return 'A provider identity is already attached; refresh the original account instead.'
+            return 'This fax already has a provider fax ID; use Refresh to update its status.'
         configuration = profile.configuration
         manifest = configuration.manifest
         supported = ('get_status' in manifest.get('actions', {}) if manifest is not None
                      else configuration.provider_id in {'phaxio', 'signalwire', 'sinch', 'documo', 'humblefax'})
         if not supported:
-            return 'This captured provider cannot refresh status; deliberate maintenance reconciliation is required.'
+            return 'This provider cannot look up fax status; check the fax in your provider account.'
         return None
 
     def bind_provider_identity(self, job_id, *, expected_version, provider_sid, actor):

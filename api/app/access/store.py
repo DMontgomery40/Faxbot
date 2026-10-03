@@ -38,6 +38,7 @@ class AccessStore:
         "access_memberships", "access_permissions", "access_roles", "access_role_permissions",
         "access_resources", "access_assignments", "access_key_bindings", "access_key_grants",
         "access_sessions", "access_audit", "api_keys", "mailboxes", "fax_jobs", "inbound_faxes",
+        "inbound_rules", "access_mailbox_routes",
     )
 
     def __init__(self, engine: Engine):

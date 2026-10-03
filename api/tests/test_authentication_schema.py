@@ -9,11 +9,13 @@ from api.tests.test_schema import database, snapshot
 from api.tests.test_access_schema import at_revision, add_key
 
 
-HEAD = '0006_auth_admission'
+ADMISSION = '0006_auth_admission'
+HEAD = schema.HEAD
 
 
-def test_registered_head_is_authentication_admission():
-    assert schema.HEAD == HEAD
+def test_authentication_admission_revision_is_registered_before_head():
+    assert schema_authentication.REVISION == schema.AUTHENTICATION == ADMISSION
+    assert schema.HEAD != ADMISSION
 
 
 def test_fresh_upgrade_and_repeat_preserve_admission_debt(database):
@@ -103,7 +105,7 @@ def test_stamped_authentication_shape_cannot_bypass_validation(database, change)
         table.c.updated_at.nullable = True
     with database.begin() as connection:
         table.create(connection)
-        connection.execute(sa.text('UPDATE alembic_version SET version_num=:head'), {'head': HEAD})
+        connection.execute(sa.text('UPDATE alembic_version SET version_num=:head'), {'head': ADMISSION})
     before = snapshot(database)
     with pytest.raises(schema.SchemaUpgradeError):
         schema.upgrade_schema(database)

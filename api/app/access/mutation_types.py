@@ -92,6 +92,19 @@ class KeyMetadata:
 
 
 @dataclass(frozen=True)
+class MailboxValues:
+    label: str
+    enabled: bool
+
+
+@dataclass(frozen=True)
+class InboundRuleValues:
+    """Route faxes sent to to_number into the stable mailbox id, never a label."""
+    to_number: str
+    mailbox_id: str
+
+
+@dataclass(frozen=True)
 class MutationReceipt:
     target: VersionedEntity
     policy_version: int

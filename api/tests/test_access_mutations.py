@@ -707,6 +707,7 @@ def test_all_connection_first_operations_require_lock_before_any_input_or_write(
         'add_membership', 'remove_membership', 'create_custom_role', 'update_custom_role',
         'create_assignment', 'remove_assignment', 'issue_key', 'update_key_metadata',
         'rotate_key', 'revoke_key', 'approve_pending_key', 'issue_integration_key',
+        'create_mailbox', 'update_mailbox', 'create_inbound_rule', 'update_inbound_rule',
     }
     assert {n[:-3] for n in vars(M.AccessMutations) if n.endswith('_on')} == names
     before = w.policy(), len(w.rows('access_audit'))
@@ -782,3 +783,122 @@ def test_usable_key_actor_attribution_is_resolved_and_stale_key_attribution_is_n
         w.call('create_group', T.GroupValues('Another', '', True), actor=actor)
     audit = next(r for r in w.rows('access_audit') if r['id'] not in before_ids)
     assert all(audit[f] is None for f in ('actor_principal_id', 'actor_key_binding_id', 'actor_session_id'))
+
+
+def mailbox_resource(w, mailbox_id):
+    return next(r for r in w.rows('access_resources') if r['kind'] == 'mailbox' and r['mailbox_id'] == mailbox_id)
+
+
+def inbound_fax(w, identity, parent):
+    w.insert('inbound_faxes', id=identity, status='received', backend='phaxio', received_at=NOW)
+    return w.resource('resource-' + identity, 'inbound', parent, 'mailbox', inbound_fax_id=identity)
+
+
+def test_mailbox_creation_adds_its_resource_atomically_with_audit(mworld):
+    w = mworld
+    before = w.policy()
+    receipt = w.call('create_mailbox', T.MailboxValues('  Front Desk  ', True))
+    mailbox = w.row('mailboxes', receipt.target.id)
+    resource = mailbox_resource(w, receipt.target.id)
+    assert mailbox['label'] == 'Front Desk'
+    assert (resource['parent_id'], resource['enabled'], resource['version']) == ('installation', 1, 1)
+    assert receipt.target == T.VersionedEntity(mailbox['id'], 1)
+    assert receipt.related == (T.VersionedEntity(resource['id'], 1),)
+    assert receipt.policy_version == before + 1 == w.policy()
+    audit = next(r for r in w.rows('access_audit') if r['operation'] == 'create_mailbox')
+    assert (audit['outcome'], audit['target_kind'], audit['target_id']) == ('allowed', 'mailbox', mailbox['id'])
+    disabled = w.call('create_mailbox', T.MailboxValues('Night', False))
+    assert mailbox_resource(w, disabled.target.id)['enabled'] == 0
+    denied(w, T.MutationReason.DUPLICATE, 'create_mailbox', T.MailboxValues('front desk', True))
+    denied(w, T.MutationReason.INVALID_INPUT, 'create_mailbox', T.MailboxValues('   ', True))
+    assert len(w.rows('mailboxes')) == 2
+
+
+def test_mailbox_management_requires_mailboxes_manage_at_installation(mworld):
+    w = mworld
+    reader = w.restricted('reader', {'mailboxes:read', 'users:manage'})
+    denied(w, T.MutationReason.FORBIDDEN, 'create_mailbox', T.MailboxValues('Billing', True), actor=reader)
+    manager = w.restricted('manager', {'mailboxes:manage'})
+    receipt = w.call('create_mailbox', T.MailboxValues('Billing', True), actor=manager)
+    denied(w, T.MutationReason.FORBIDDEN, 'update_mailbox', receipt.target, T.MailboxValues('Other', True), actor=reader)
+    assert w.row('mailboxes', receipt.target.id)['label'] == 'Billing'
+
+
+def test_mailbox_rename_keeps_ids_updates_bound_rules_and_rejects_stale_editors(mworld):
+    w = mworld
+    created = w.call('create_mailbox', T.MailboxValues('Front Desk', True))
+    resource_id = mailbox_resource(w, created.target.id)['id']
+    rule = w.call('create_inbound_rule', T.InboundRuleValues('+15551230001', created.target.id))
+    noop = w.call('update_mailbox', created.target, T.MailboxValues('Front Desk', True))
+    assert noop.changed is False and noop.target == created.target and noop.policy_version == w.policy()
+    renamed = w.call('update_mailbox', created.target, T.MailboxValues('Reception', True))
+    assert renamed.target == T.VersionedEntity(created.target.id, 2)
+    assert renamed.related == (T.VersionedEntity(resource_id, 2),)
+    assert w.row('mailboxes', created.target.id)['label'] == 'Reception'
+    assert mailbox_resource(w, created.target.id)['id'] == resource_id
+    assert w.row('inbound_rules', rule.target.id)['mailbox_label'] == 'Reception'
+    assert w.row('access_mailbox_routes', rule.target.id)['mailbox_id'] == created.target.id
+    denied(w, T.MutationReason.STALE_VERSION, 'update_mailbox', created.target, T.MailboxValues('Again', True))
+    denied(w, T.MutationReason.INVALID_TARGET, 'update_mailbox', T.VersionedEntity('missing', 1), T.MailboxValues('X', True))
+    other = w.call('create_mailbox', T.MailboxValues('Billing', True))
+    denied(w, T.MutationReason.DUPLICATE, 'update_mailbox', other.target, T.MailboxValues('RECEPTION', True))
+
+
+def test_disabling_a_mailbox_hides_its_faxes_until_enabled_again(mworld):
+    w = mworld
+    viewer = w.restricted('viewer', {'inbound:read'})
+    created = w.call('create_mailbox', T.MailboxValues('Front Desk', True))
+    fax = ResourceRef(inbound_fax(w, 'fax-1', mailbox_resource(w, created.target.id)['id']))
+    assert w.control.authorize(viewer, 'inbound:read', fax, now=NOW).allowed
+    disabled = w.call('update_mailbox', created.target, T.MailboxValues('Front Desk', False))
+    assert mailbox_resource(w, created.target.id)['enabled'] == 0
+    assert not w.control.authorize(viewer, 'inbound:read', fax, now=NOW).allowed
+    w.call('update_mailbox', disabled.target, T.MailboxValues('Front Desk', True))
+    assert w.control.authorize(viewer, 'inbound:read', fax, now=NOW).allowed
+
+
+def test_mailbox_without_resource_reports_version_zero_and_gains_one_on_update(mworld):
+    w = mworld
+    w.insert('mailboxes', id='orphan', label='Orphan', allowed_scopes=None, note=None)
+    receipt = w.call('update_mailbox', T.VersionedEntity('orphan', 0), T.MailboxValues('Orphan', True))
+    assert receipt.changed and receipt.target == T.VersionedEntity('orphan', 1)
+    assert mailbox_resource(w, 'orphan')['version'] == 1
+
+
+def test_inbound_rules_bind_numbers_to_stable_mailbox_ids(mworld):
+    w = mworld
+    front = w.call('create_mailbox', T.MailboxValues('Front Desk', True)).target
+    billing = w.call('create_mailbox', T.MailboxValues('Billing', True)).target
+    before = w.policy()
+    rule = w.call('create_inbound_rule', T.InboundRuleValues(' +15551230001 ', front.id))
+    assert rule.target == T.VersionedEntity(rule.target.id, 1) and rule.policy_version == before + 1
+    stored = w.row('inbound_rules', rule.target.id)
+    assert (stored['to_number'], stored['mailbox_label']) == ('+15551230001', 'Front Desk')
+    assert w.row('access_mailbox_routes', rule.target.id)['mailbox_id'] == front.id
+    denied(w, T.MutationReason.DUPLICATE, 'create_inbound_rule', T.InboundRuleValues('+15551230001', billing.id))
+    denied(w, T.MutationReason.INVALID_INPUT, 'create_inbound_rule', T.InboundRuleValues('call me', billing.id))
+    denied(w, T.MutationReason.INVALID_TARGET, 'create_inbound_rule', T.InboundRuleValues('+15551230002', 'missing'))
+    moved = w.call('update_inbound_rule', rule.target, T.InboundRuleValues('+15551230009', billing.id))
+    assert moved.target == T.VersionedEntity(rule.target.id, 2)
+    assert w.row('access_mailbox_routes', rule.target.id)['mailbox_id'] == billing.id
+    stored = w.row('inbound_rules', rule.target.id)
+    assert (stored['to_number'], stored['mailbox_label']) == ('+15551230009', 'Billing')
+    denied(w, T.MutationReason.STALE_VERSION, 'update_inbound_rule', rule.target, T.InboundRuleValues('+15551230009', front.id))
+    reader = w.restricted('reader', {'mailboxes:read'})
+    denied(w, T.MutationReason.FORBIDDEN, 'update_inbound_rule', moved.target,
+           T.InboundRuleValues('+15551230009', front.id), actor=reader)
+    audit = [r for r in w.rows('access_audit') if r['target_kind'] == 'inbound_rule' and r['outcome'] == 'allowed']
+    assert [r['operation'] for r in sorted(audit, key=lambda r: r['policy_version_after'])] == [
+        'create_inbound_rule', 'update_inbound_rule']
+
+
+def test_unmatched_migrated_rule_is_bound_from_version_zero(mworld):
+    w = mworld
+    mailbox = w.call('create_mailbox', T.MailboxValues('Front Desk', True)).target
+    w.insert('inbound_rules', id='legacy-rule', to_number='+15550000000', mailbox_label='Gone')
+    denied(w, T.MutationReason.STALE_VERSION, 'update_inbound_rule', T.VersionedEntity('legacy-rule', 1),
+           T.InboundRuleValues('+15550000000', mailbox.id))
+    bound = w.call('update_inbound_rule', T.VersionedEntity('legacy-rule', 0), T.InboundRuleValues('+15550000000', mailbox.id))
+    assert bound.target == T.VersionedEntity('legacy-rule', 1)
+    assert w.row('access_mailbox_routes', 'legacy-rule')['mailbox_id'] == mailbox.id
+    assert w.row('inbound_rules', 'legacy-rule')['mailbox_label'] == 'Front Desk'

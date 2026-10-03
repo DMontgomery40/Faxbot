@@ -20,6 +20,7 @@ config.attributes["schema_configuration"] = importlib.import_module(package + ".
 config.attributes["schema_outbound"] = importlib.import_module(package + ".schema_outbound")
 config.attributes["schema_access"] = importlib.import_module(package + ".schema_access")
 config.attributes["schema_authentication"] = importlib.import_module(package + ".schema_authentication")
+config.attributes["schema_capabilities"] = importlib.import_module(package + ".schema_capabilities")
 
 
 def migrate(connection):

@@ -16,7 +16,9 @@ OUTBOUND_PERMISSIONS = frozenset({"fax:read", "fax:document", "fax:refresh", "fa
 INBOUND_PERMISSIONS = frozenset({"inbound:list", "inbound:read", "inbound:document"})
 GLOBAL_PERMISSIONS = PERMISSIONS - OUTBOUND_PERMISSIONS - INBOUND_PERMISSIONS - {"fax:send"}
 # The ordinary scopes an integration API key may carry, granted at installation.
-KEY_SCOPES = frozenset({"fax:send", "fax:read", "inbound:list", "inbound:read", "keys:manage"})
+# Document scopes let mobile and SDK keys download fax PDFs; metadata never implies them.
+KEY_SCOPES = frozenset({"fax:send", "fax:read", "fax:document", "inbound:list", "inbound:read",
+                        "inbound:document", "keys:manage"})
 BUILTIN_ROLE_PERMISSIONS = MappingProxyType({
     "role_owner": PERMISSIONS,
     "role_administrator": PERMISSIONS - {"host:restart", "host:actions", "host:terminal", "owner:recover"},
