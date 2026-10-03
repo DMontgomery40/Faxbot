@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "faxbot-mcp"
-version = "1.0.0"
+version = "3.0.0"
 description = "Faxbot MCP servers (Python): stdio, HTTP, SSE"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -14,7 +14,7 @@ authors = [
 ]
 keywords = ["mcp", "fax", "faxbot", "sse", "streamable-http"]
 dependencies = [
-  "mcp==1.30.0",
+  "mcp==2.3.0",
   "starlette==1.7.0",
   "uvicorn==0.54.0",
   "python-jose==3.5.0",
@@ -34,4 +34,4 @@ faxbot-mcp-py-http = "http_server:main"
 faxbot-mcp-py-sse = "server:main"
 
 [tool.setuptools]
-py-modules = ["server", "http_server", "stdio_server"]
+py-modules = ["server", "http_server", "stdio_server", "faxbot_tools", "transport_config"]
