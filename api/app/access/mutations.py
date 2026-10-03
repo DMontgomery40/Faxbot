@@ -26,8 +26,8 @@ from .catalog import KEY_SCOPES, PERMISSIONS
 from .credentials import (CredentialCodec, InvalidCredentialInputError,
     PreparedTemporaryPassword, PreparedNewKey, PreparedKeyRotation, normalize_login)
 from .mutation_types import (AssignmentValues, CustomRoleValues, GroupSubject,
-    GroupValues, IntegrationKeyValues, IntegrationValues, KeyMetadata, KeyMutationReceipt, KeyValues,
-    MutationDeniedError, MutationOutcome, MutationReason, MutationReceipt,
+    GroupValues, InboundRuleValues, IntegrationKeyValues, IntegrationValues, KeyMetadata, KeyMutationReceipt, KeyValues,
+    MailboxValues, MutationDeniedError, MutationOutcome, MutationReason, MutationReceipt,
     OwnerEnrollment, PrincipalSubject, StaleVersionError, UserValues, VersionedEntity)
 from .types import (AccessUnavailableError, AuthenticationError, InvalidScopeError,
     InvalidTransactionError, PrincipalContext, ResourceRef, ScopedPermission,
@@ -871,3 +871,136 @@ class AccessMutations:
 
     def approve_pending_key(self, actor: PrincipalContext, target: VersionedEntity, principal: VersionedEntity, ceiling: tuple[ScopedPermission, ...], *, expected_policy_version: int, now: datetime) -> KeyMutationReceipt:
         return self._standalone(self.approve_pending_key_on, actor, target, principal, ceiling, expected_policy_version=expected_policy_version, now=now)
+
+    # Mailboxes: the stable id is mailboxes.id; its enabled state and editor
+    # version live on the mailbox's access_resources row, which never changes id.
+    # A disabled mailbox receives no new faxes (routing falls back to the
+    # unassigned container) and its faxes are hidden until it is enabled again.
+
+    def _mailbox_values(self, a, values, exclude=None):
+        if type(values) is not MailboxValues or type(values.enabled) is not bool: _deny()
+        label, normalized = _name(values.label)
+        mailboxes = self.tables['mailboxes']
+        for identity, existing in a.connection.execute(sa.select(mailboxes.c.id, mailboxes.c.label)):
+            if identity != exclude and type(existing) is str and unicodedata.normalize('NFKC', existing).strip().casefold() == normalized:
+                _deny(MutationReason.DUPLICATE)
+        return label
+
+    @staticmethod
+    def _optional_version(target):
+        # Mailboxes without a resource row and rules without a route binding
+        # (left unmatched by the access migration) report version 0.
+        if (type(target) is not VersionedEntity or not _id(target.id)
+                or type(target.version) is not int or target.version < 0):
+            _deny()
+
+    def create_mailbox_on(self, connection: Connection, actor: PrincipalContext, values: MailboxValues, *, expected_policy_version: int, now: datetime) -> MutationOutcome[MutationReceipt]:
+        def planner(a):
+            label = self._mailbox_values(a, values)
+            identity, resource_id = uuid.uuid4().hex, uuid.uuid4().hex
+            def writes():
+                self._insert(a.connection, 'mailboxes', id=identity, label=label, allowed_scopes=None, note=None,
+                    created_at=a.now, updated_at=a.now)
+                self._insert(a.connection, 'access_resources', id=resource_id, kind='mailbox', parent_id='installation',
+                    parent_kind='installation', principal_id=None, mailbox_id=identity, fax_job_id=None,
+                    inbound_fax_id=None, enabled=int(values.enabled), version=1, created_at=a.now, updated_at=a.now)
+            return self._plan(a, identity, 1, True, writes, related=(VersionedEntity(resource_id, 1),))
+        return self._run(connection, actor, 'create_mailbox', 'mailbox', 'mailboxes:manage', planner, expected_policy_version=expected_policy_version, now=now)
+
+    def create_mailbox(self, actor: PrincipalContext, values: MailboxValues, *, expected_policy_version: int, now: datetime) -> MutationReceipt:
+        return self._standalone(self.create_mailbox_on, actor, values, expected_policy_version=expected_policy_version, now=now)
+
+    def update_mailbox_on(self, connection: Connection, actor: PrincipalContext, target: VersionedEntity, values: MailboxValues, *, expected_policy_version: int, now: datetime) -> MutationOutcome[MutationReceipt]:
+        """Rename and/or enable or disable; the mailbox id and resource id never change."""
+        def planner(a):
+            self._optional_version(target)
+            mailboxes, resources = self.tables['mailboxes'], self.tables['access_resources']
+            row = a.connection.execute(sa.select(mailboxes).where(mailboxes.c.id == target.id)).mappings().one_or_none()
+            if row is None: _deny(MutationReason.INVALID_TARGET)
+            a.target_id = row['id']
+            resource = a.connection.execute(sa.select(resources).where(resources.c.kind == 'mailbox',
+                resources.c.mailbox_id == row['id'])).mappings().one_or_none()
+            version = resource['version'] if resource is not None else 0
+            if version != target.version: _deny(MutationReason.STALE_VERSION)
+            label = self._mailbox_values(a, values, exclude=row['id'])
+            renamed = row['label'] != label
+            changed = renamed or resource is None or resource['enabled'] != int(values.enabled)
+            resource_id = resource['id'] if resource is not None else uuid.uuid4().hex
+            def writes():
+                if not changed: return
+                if renamed:
+                    self._update(a.connection, 'mailboxes', row['id'], label=label, updated_at=a.now)
+                    rules, routes = self.tables['inbound_rules'], self.tables['access_mailbox_routes']
+                    a.connection.execute(rules.update().where(rules.c.id.in_(
+                        sa.select(routes.c.id).where(routes.c.mailbox_id == row['id']))).values(mailbox_label=label))
+                if resource is None:
+                    self._insert(a.connection, 'access_resources', id=resource_id, kind='mailbox', parent_id='installation',
+                        parent_kind='installation', principal_id=None, mailbox_id=row['id'], fax_job_id=None,
+                        inbound_fax_id=None, enabled=int(values.enabled), version=1, created_at=a.now, updated_at=a.now)
+                else:
+                    self._update(a.connection, 'access_resources', resource_id, enabled=int(values.enabled),
+                        version=version + 1, updated_at=a.now)
+            new_version = version + int(changed)
+            return self._plan(a, row['id'], new_version, changed, writes, related=(VersionedEntity(resource_id, new_version),))
+        return self._run(connection, actor, 'update_mailbox', 'mailbox', 'mailboxes:manage', planner, expected_policy_version=expected_policy_version, now=now)
+
+    def update_mailbox(self, actor: PrincipalContext, target: VersionedEntity, values: MailboxValues, *, expected_policy_version: int, now: datetime) -> MutationReceipt:
+        return self._standalone(self.update_mailbox_on, actor, target, values, expected_policy_version=expected_policy_version, now=now)
+
+    def _rule_values(self, a, values, exclude=None):
+        if type(values) is not InboundRuleValues or type(values.to_number) is not str or not _id(values.mailbox_id): _deny()
+        number = values.to_number.strip()
+        if re.fullmatch(r'\+?[0-9]{2,20}', number) is None: _deny()
+        mailboxes, rules = self.tables['mailboxes'], self.tables['inbound_rules']
+        mailbox = a.connection.execute(sa.select(mailboxes.c.id, mailboxes.c.label).where(
+            mailboxes.c.id == values.mailbox_id)).first()
+        if mailbox is None: _deny(MutationReason.INVALID_TARGET)
+        query = sa.select(rules.c.id).where(rules.c.to_number == number)
+        if exclude is not None:
+            query = query.where(rules.c.id != exclude)
+        if a.connection.execute(query).first() is not None: _deny(MutationReason.DUPLICATE)
+        return number, mailbox
+
+    def create_inbound_rule_on(self, connection: Connection, actor: PrincipalContext, values: InboundRuleValues, *, expected_policy_version: int, now: datetime) -> MutationOutcome[MutationReceipt]:
+        def planner(a):
+            number, mailbox = self._rule_values(a, values)
+            identity = uuid.uuid4().hex
+            def writes():
+                self._insert(a.connection, 'inbound_rules', id=identity, to_number=number,
+                    mailbox_label=mailbox.label, created_at=a.now)
+                self._insert(a.connection, 'access_mailbox_routes', id=identity, mailbox_id=mailbox.id,
+                    version=1, created_at=a.now, updated_at=a.now)
+            return self._plan(a, identity, 1, True, writes)
+        return self._run(connection, actor, 'create_inbound_rule', 'inbound_rule', 'mailboxes:manage', planner, expected_policy_version=expected_policy_version, now=now)
+
+    def create_inbound_rule(self, actor: PrincipalContext, values: InboundRuleValues, *, expected_policy_version: int, now: datetime) -> MutationReceipt:
+        return self._standalone(self.create_inbound_rule_on, actor, values, expected_policy_version=expected_policy_version, now=now)
+
+    def update_inbound_rule_on(self, connection: Connection, actor: PrincipalContext, target: VersionedEntity, values: InboundRuleValues, *, expected_policy_version: int, now: datetime) -> MutationOutcome[MutationReceipt]:
+        """Change the number or bind the rule to another mailbox id; version 0 binds an unmatched rule."""
+        def planner(a):
+            self._optional_version(target)
+            rules, routes = self.tables['inbound_rules'], self.tables['access_mailbox_routes']
+            row = a.connection.execute(sa.select(rules).where(rules.c.id == target.id)).mappings().one_or_none()
+            if row is None: _deny(MutationReason.INVALID_TARGET)
+            a.target_id = row['id']
+            route = a.connection.execute(sa.select(routes).where(routes.c.id == row['id'])).mappings().one_or_none()
+            version = route['version'] if route is not None else 0
+            if version != target.version: _deny(MutationReason.STALE_VERSION)
+            number, mailbox = self._rule_values(a, values, exclude=row['id'])
+            changed = (route is None or route['mailbox_id'] != mailbox.id or row['to_number'] != number
+                       or row['mailbox_label'] != mailbox.label)
+            def writes():
+                if not changed: return
+                self._update(a.connection, 'inbound_rules', row['id'], to_number=number, mailbox_label=mailbox.label)
+                if route is None:
+                    self._insert(a.connection, 'access_mailbox_routes', id=row['id'], mailbox_id=mailbox.id,
+                        version=1, created_at=a.now, updated_at=a.now)
+                else:
+                    self._update(a.connection, 'access_mailbox_routes', row['id'], mailbox_id=mailbox.id,
+                        version=version + 1, updated_at=a.now)
+            return self._plan(a, row['id'], version + int(changed), changed, writes)
+        return self._run(connection, actor, 'update_inbound_rule', 'inbound_rule', 'mailboxes:manage', planner, expected_policy_version=expected_policy_version, now=now)
+
+    def update_inbound_rule(self, actor: PrincipalContext, target: VersionedEntity, values: InboundRuleValues, *, expected_policy_version: int, now: datetime) -> MutationReceipt:
+        return self._standalone(self.update_inbound_rule_on, actor, target, values, expected_policy_version=expected_policy_version, now=now)
