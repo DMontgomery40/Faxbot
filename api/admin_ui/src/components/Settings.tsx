@@ -32,6 +32,7 @@ import type { ConfigurationWriteResult, Settings as SettingsType, SettingsPatch 
 import { ResponsiveSettingItem, ResponsiveSettingSection } from './common/ResponsiveSettingItem';
 import { ResponsiveTextField, ResponsiveFormSection } from './common/ResponsiveFormFields';
 import TunnelSettings from './TunnelSettings';
+import SipTrunkSettings from './SipTrunkSettings';
 
 interface SettingsProps {
   client: AdminAPIClient;
@@ -699,6 +700,7 @@ function Settings({ client }: SettingsProps) {
                       onChange={(value) => handleForm('fax_station_id', value)}
                       showCurrentValue={!pendingRestart && (!!settings.sip.station_id)}
                     />
+                    <SipTrunkSettings client={client} />
                   </ResponsiveSettingSection>
                 )}
 

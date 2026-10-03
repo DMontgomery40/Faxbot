@@ -10,7 +10,14 @@ from .config import settings
 
 LOGIN_TIMEOUT_SECONDS = 10.0
 ORIGINATE_RESPONSE_TIMEOUT_SECONDS = 10.0
+STATUS_TIMEOUT_SECONDS = 5.0
 AMI_MAX_LINE_BYTES = 1024
+# Read-only status answers keep only these event fields. Everything else in a
+# status reply (notably AuthDetail events, which carry the SIP password) is
+# dropped as it is read and never stored, returned or logged.
+STATUS_EVENT_FIELDS = {
+    "outboundregistrationdetail": ("ObjectName", "Status", "ServerUri", "NextReg"),
+}
 
 
 def _validate_headers(fields: Dict[str, str]):
@@ -178,6 +185,7 @@ class AMIClient:
         self._conn_lock = asyncio.Lock()
         self._connection_task: Optional[asyncio.Task] = None
         self._pending_actions: Dict[str, asyncio.Future] = {}
+        self._queries: Dict[str, Dict[str, object]] = {}
 
     async def connect(self):
         async with self._conn_lock:
@@ -273,9 +281,20 @@ class AMIClient:
                 future.set_exception(
                     ConnectionError("AMI connection closed before acknowledgement")
                 )
+        queries, self._queries = self._queries, {}
+        for query in queries.values():
+            for key in ("response", "done"):
+                future = query[key]
+                if not future.done():
+                    future.set_exception(ConnectionError("AMI connection closed"))
+                    future.exception()
 
     def _dispatch(self, msg: Dict[str, str]):
         fields = {key.lower(): value for key, value in msg.items()}
+        query = self._queries.get(fields.get("actionid", "")) if fields.get("actionid") else None
+        if query is not None:
+            self._collect(query, msg, fields)
+            return
         if "event" not in fields and "response" in fields:
             future = self._pending_actions.get(fields.get("actionid"))
             if future is not None and not future.done():
@@ -288,6 +307,55 @@ class AMIClient:
             event == "userevent" and fields.get("userevent", "").lower() == "faxresult"
         ):
             self._emit("FaxResult", msg)
+
+    @staticmethod
+    def _collect(query, msg: Dict[str, str], fields: Dict[str, str]):
+        if "event" not in fields:
+            if not query["response"].done():
+                query["response"].set_result(
+                    {"response": fields.get("response", ""), "value": fields.get("value", ""),
+                     "message": fields.get("message", "")})
+            return
+        allowed = STATUS_EVENT_FIELDS.get(fields["event"].lower())
+        if allowed:
+            query["events"].append({key: msg[key] for key in allowed if key in msg})
+        if fields.get("eventlist", "").lower() == "complete" and not query["done"].done():
+            query["done"].set_result(True)
+
+    async def status_query(self, fields: Dict[str, str], *, collect: bool = False):
+        """One read-only status action on the existing connection; never connects or retries.
+
+        Returns the reply (response, value, message) and, for list actions, the
+        allowlisted events. Raises ConnectionError or TimeoutError.
+        """
+        action_id = "faxbot-status:" + uuid4().hex
+        fields = {**fields, "ActionID": action_id}
+        _validate_headers(fields)
+        loop = asyncio.get_running_loop()
+        query = {"response": loop.create_future(), "done": loop.create_future(), "events": []}
+        self._queries[action_id] = query
+        try:
+            async with asyncio.timeout(STATUS_TIMEOUT_SECONDS):
+                writer = self.writer
+                if not self._connected.is_set() or writer is None:
+                    raise ConnectionError("AMI connection unavailable")
+                writer.write(("".join(f"{k}: {v}\r\n" for k, v in fields.items()) + "\r\n").encode())
+                await writer.drain()
+                response = await query["response"]
+                if collect and response["response"].lower() == "success":
+                    await query["done"]
+                return response, list(query["events"])
+        except TimeoutError:
+            raise TimeoutError("AMI status timed out") from None
+        except ConnectionError:
+            raise
+        except OSError:
+            raise ConnectionError("AMI status unavailable") from None
+        finally:
+            self._queries.pop(action_id, None)
+            for key in ("response", "done"):
+                if not query[key].done():
+                    query[key].cancel()
 
     def _emit(self, name: str, msg: Dict[str, str]):
         for cb in list(self._listeners.get(name, ())):

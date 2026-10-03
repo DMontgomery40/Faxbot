@@ -1,3 +1,4 @@
+import type { SipCallPage, SipPreset, SipTrunkStatus } from './sipTypes';
 import type {
   HealthStatus,
   FaxJob,
@@ -499,6 +500,23 @@ export class AdminAPIClient {
 
   async restart(): Promise<any> {
     return this.json('/admin/restart', { method: 'POST' });
+  }
+
+  // SIP trunk for Faxbot's own fax engine
+  async getSipPresets(): Promise<{ presets: SipPreset[] }> {
+    return this.json('/admin/sip/presets');
+  }
+
+  async getSipStatus(): Promise<SipTrunkStatus> {
+    return this.json('/admin/sip/status');
+  }
+
+  async applySipTrunk(): Promise<{ ok: true; message: string }> {
+    return this.json('/admin/sip/apply', { method: 'POST' });
+  }
+
+  async listSipCalls(params: { cursor?: string | null; limit?: number; direction?: 'outbound' | 'inbound' } = {}): Promise<SipCallPage> {
+    return this.json(`/admin/sip/calls${query(params)}`);
   }
 
   // Diagnostics

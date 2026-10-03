@@ -892,3 +892,50 @@ def test_inbound_dialplan_only_passes_filtered_or_encoded_caller_values_to_the_s
     for raw in ("${FAXSTATUS}", "${FAXPAGES}", "${FAXMODE}", "${UNIQUEID}", "${FAXBOT_STATION64}"):
         assert command.count(raw) == command.count("," + raw + ")"), raw
     assert done[-1].endswith("Return()")
+
+
+@pytest.mark.asyncio
+async def test_status_query_keeps_allowlisted_fields_and_drops_auth_details(monkeypatch):
+    """PJSIPShowRegistrationsOutbound also emits AuthDetail with the SIP password; it must vanish."""
+    async with connected_stream(monkeypatch) as (client, writer):
+        task = asyncio.create_task(client.status_query({"Action": "PJSIPShowRegistrationsOutbound"}, collect=True))
+        raw = (await writer.requests.get()).decode()
+        action_id = next(line.split(": ", 1)[1] for line in raw.splitlines() if line.startswith("ActionID: "))
+        assert action_id.startswith("faxbot-status:")
+        frames = [
+            f"Response: Success\r\nActionID: {action_id}\r\nEventList: start\r\nMessage: Following\r\n\r\n",
+            (f"Event: OutboundRegistrationDetail\r\nActionID: {action_id}\r\nObjectName: trunk-registration\r\n"
+             "Status: Registered\r\nServerUri: sip:sip.telnyx.com:5060\r\nOutboundAuth: trunk-auth\r\n"
+             "ClientUri: sip:faxbotuser@sip.telnyx.com:5060\r\n\r\n"),
+            (f"Event: AuthDetail\r\nActionID: {action_id}\r\nObjectName: trunk-auth\r\nUsername: faxbotuser\r\n"
+             "Password: synthetic-private-password\r\n\r\n"),
+            "Event: UserEvent\r\nUserEvent: FaxResult\r\nJobID: unrelated\r\n\r\n",
+            (f"Event: OutboundRegistrationDetailComplete\r\nActionID: {action_id}\r\nEventList: Complete\r\n"
+             "ListItems: 1\r\n\r\n"),
+        ]
+        fax_events = []
+        client.on_fax_result(fax_events.append)
+        for frame in frames:
+            client.reader.feed_data(frame.encode())
+        response, events = await asyncio.wait_for(task, 1)
+        assert response == {"response": "Success", "value": "", "message": "Following"}
+        assert events == [{"ObjectName": "trunk-registration", "Status": "Registered",
+                           "ServerUri": "sip:sip.telnyx.com:5060"}]
+        assert "synthetic-private-password" not in repr((response, events))
+        assert [event["JobID"] for event in fax_events] == ["unrelated"]
+        assert not client._queries
+
+
+@pytest.mark.asyncio
+async def test_status_query_never_connects_and_cleans_up_on_disconnect(monkeypatch):
+    client = ami.AMIClient()
+    with pytest.raises(ConnectionError):
+        await client.status_query({"Action": "Getvar", "Variable": "DEVICE_STATE(PJSIP/trunk-endpoint)"})
+    assert not client._queries and client._connection_task is None
+    async with connected_stream(monkeypatch) as (client, writer):
+        task = asyncio.create_task(client.status_query({"Action": "Getvar", "Variable": "X"}))
+        await writer.requests.get()
+        client.reader.feed_eof()
+        with pytest.raises(ConnectionError):
+            await asyncio.wait_for(task, 1)
+        assert not client._queries
