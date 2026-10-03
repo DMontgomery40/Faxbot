@@ -65,3 +65,17 @@ jobs:
       - name: Typecheck and build Admin UI
         working-directory: api/admin_ui
         run: npm run build
+
+  check-node-mcp:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.21.0'
+          cache: npm
+          cache-dependency-path: node_mcp/package-lock.json
+      - name: Install Node MCP dependencies
+        run: npm ci --prefix node_mcp --no-audit --no-fund
+      - name: Check Node MCP sources parse and import
+        run: npm --prefix node_mcp run check
