@@ -64,7 +64,7 @@ const credentialFields: Record<string, CredentialField[]> = {
 const isMask = (value: FormValue) => typeof value === 'string' && /^\*+$/.test(value);
 const errorText = (error: unknown, fallback: string) => error instanceof Error ? error.message : fallback;
 
-// These are the canonical patch names, copied from the desired projection.
+// These are the settings patch names, copied from the loaded settings.
 // The baseline includes masks so unrelated edits never submit stored secrets.
 function editorValues(data: Settings): WizardConfig {
   return {
@@ -138,6 +138,14 @@ function SetupWizard({ client, onDone, docsBase }: SetupWizardProps) {
   const builtinSelected = !!credentialFields[ob] && !manifestSelected &&
     (!settings?.features?.v3_plugins || catalogReady);
   const docsURL = docsLink('home', docsBase);
+  // Loaded settings are authoritative; after a save that could not be reloaded, fall back to the save result.
+  const pendingRestart = needsReload ? saveReceipt?._meta.apply_state === 'pending_restart' : settings?._meta?.apply_state === 'pending_restart';
+  const pendingCount = needsReload ? 0 : settings?._meta?.pending_fields?.length ?? 0;
+  const restartMessage = pendingCount ?
+    `Restart Faxbot to apply ${pendingCount} pending ${pendingCount === 1 ? 'change' : 'changes'}.` :
+    'Restart Faxbot to apply pending changes.';
+  const showPaused = needsReload && !!settings && !loading && !busy && !loadError &&
+    notice?.severity !== 'error' && notice?.severity !== 'warning';
 
   const stopWatching = useCallback(() => {
     watcherEpoch.current += 1;
@@ -178,14 +186,14 @@ function SetupWizard({ client, onDone, docsBase }: SetupWizardProps) {
     } else {
       setProviders([]);
       setCatalogReady(false);
-      setCatalogNotice('Installed provider metadata is unavailable. Existing provider IDs are preserved.');
+      setCatalogNotice('Installed provider plugins could not be listed; your current provider choice is kept.');
     }
     if (desired.status === 'fulfilled' && desired.value._meta?.desired_revision_id) {
       hydrate(desired.value);
     } else {
       setNeedsReload(true);
       setLoadError(desired.status === 'rejected' ? errorText(desired.reason, 'Settings could not be loaded.') :
-        'The server did not return a canonical desired revision. Reload before editing.');
+        'Settings could not be loaded. Reload to try again.');
     }
     setLoading(false);
   }, [client, stopWatching]);
@@ -245,14 +253,14 @@ function SetupWizard({ client, onDone, docsBase }: SetupWizardProps) {
     setValidationNote(null);
     setNotice(null);
     if (!builtinSelected || !['phaxio', 'sinch', 'sip'].includes(ob)) {
-      setValidationNote('Setup has no credential check for this provider. Configure it in Tools → Plugins and inspect Diagnostics; no provider or fax validation was performed.');
+      setValidationNote('Setup can’t check credentials for this provider; configure it in Tools → Plugins and run Diagnostics.');
       return;
     }
     const fields = ob === 'phaxio' ? ['phaxio_api_key', 'phaxio_api_secret'] :
       ob === 'sinch' ? ['sinch_project_id', 'sinch_api_key', 'sinch_api_secret'] :
         ['ami_host', 'ami_port', 'ami_username', 'ami_password'];
     if (fields.some(field => config[field] === '' || isMask(config[field]))) {
-      setValidationNote('Enter fresh credentials to run this check. Stored secret masks cannot be validated here; unchanged credentials remain saved. Inspect Diagnostics for the active configuration.');
+      setValidationNote('Enter the credentials again to check them here, or run Diagnostics to check the saved ones.');
       return;
     }
     if (ob === 'sip' && (!Number.isSafeInteger(config.ami_port) || Number(config.ami_port) < 1 || Number(config.ami_port) > 65535)) {
@@ -268,8 +276,8 @@ function SetupWizard({ client, onDone, docsBase }: SetupWizardProps) {
       if (epoch !== requestEpoch.current) return;
       setValidationResults(result);
       setValidationNote(ob === 'sinch' ?
-        'Sinch checks credential presence only; it does not authenticate with Sinch. No fax was sent and inbound delivery was not tested.' :
-        'These checks use the supplied credentials and local prerequisites. No fax was sent; they do not verify fax delivery or inbound document readiness.');
+        'For Sinch, this only checks that the credentials are filled in; it doesn’t sign in to Sinch.' :
+        'These checks test the credentials only; no fax was sent.');
     } catch (error) {
       if (epoch === requestEpoch.current) setNotice({ severity: 'error', text: errorText(error, 'Validation failed.') });
     } finally {
@@ -280,14 +288,14 @@ function SetupWizard({ client, onDone, docsBase }: SetupWizardProps) {
   const applySettings = async () => {
     if (!canEdit || actionFence.current || !desiredRevision) return;
     if (!changedFields.length) {
-      setApplyResult({ severity: 'info', text: 'No changes to save. The loaded desired revision is unchanged.' });
+      setApplyResult({ severity: 'info', text: 'No changes to save.' });
       return;
     }
     const payload: SettingsPatch = { expected_revision_id: desiredRevision };
     for (const field of changedFields) {
       const value = config[field];
       if (isMask(value)) {
-        setNotice({ severity: 'error', text: 'A changed field contains a stored mask. Reload it, enter a replacement, or explicitly clear it.' });
+        setNotice({ severity: 'error', text: 'A secret field contains only asterisks; enter a new value or clear it.' });
         return;
       }
       if (['ami_port', 'pdf_token_ttl_minutes'].includes(field) &&
@@ -311,26 +319,28 @@ function SetupWizard({ client, onDone, docsBase }: SetupWizardProps) {
       setNeedsReload(true);
       setEnvContent('');
       setApplyResult(result._meta.apply_state === 'pending_restart' ?
-        { severity: 'warning', text: `${result.changed ? 'Desired configuration saved durably.' : 'Desired configuration is unchanged.'} Every API worker must stop and the installation restart for the pending changes; active settings remain in effect for those fields.` } :
-        { severity: 'success', text: `${result.changed ? 'Configuration saved durably and active.' : 'Configuration is unchanged and active.'} Existing fax attempts retain their captured settings.` });
+        { severity: 'warning', text: result.changed ? 'Settings saved.' : 'Nothing changed.' } :
+        { severity: 'success', text: result.changed ? 'Settings saved.' : 'Nothing changed.' });
       try {
         const desired = await client.getSettings();
         if (epoch !== requestEpoch.current) return;
-        if (!desired._meta?.desired_revision_id) throw new Error('No canonical desired revision was returned.');
+        if (!desired._meta?.desired_revision_id) throw new Error('Settings could not be loaded.');
         hydrate(desired);
       } catch {
         if (epoch !== requestEpoch.current) return;
-        setNotice({ severity: 'warning', text: 'Save confirmed; the settings view could not be reloaded. Editing is paused. Reload explicitly, or sign in again, before another save.' });
+        setNotice({ severity: 'warning', text: 'The page could not refresh. Reload before making more changes.' });
       }
     } catch (error) {
       if (epoch !== requestEpoch.current) return;
       const message = errorText(error, 'Save failed.');
       if (/\b409\b/.test(message)) {
         setNeedsReload(true);
-        setNotice({ severity: 'error', text: 'Settings changed after this editor loaded. Your draft is retained. Reload explicitly to review the current revision before saving again.' });
+        setNotice({ severity: 'error', text: 'Someone else changed these settings. Your edits are kept here; reload to see the current values.' });
       } else {
         setNeedsReload(true);
-        setNotice({ severity: 'error', text: `${configurationWriteRejected(error) ? 'Save was rejected. Your draft is retained.' : 'Save was not confirmed.'} ${message} Reload to check the current configuration before saving again.` });
+        setNotice({ severity: 'error', text: configurationWriteRejected(error) ?
+          `Settings were not saved (${message}). Your edits are kept here; reload before trying again.` :
+          'The save could not be confirmed. Reload to check whether your changes were saved.' });
       }
     } finally {
       finishAction(epoch);
@@ -403,7 +413,7 @@ function SetupWizard({ client, onDone, docsBase }: SetupWizardProps) {
     const epoch = requestEpoch.current;
     try {
       const result = await client.simulateInbound({ backend: callbacks.backend });
-      if (epoch === requestEpoch.current) setNotice({ severity: 'info', text: `Synthetic inbound record created (${result.id}). This does not verify a provider receipt or a usable document.` });
+      if (epoch === requestEpoch.current) setNotice({ severity: 'info', text: `Test inbound fax created (${result.id}).` });
     } catch (error) {
       if (epoch === requestEpoch.current) setNotice({ severity: 'error', text: errorText(error, 'Inbound simulation failed.') });
     } finally {
@@ -425,7 +435,7 @@ function SetupWizard({ client, onDone, docsBase }: SetupWizardProps) {
         const result = await client.getLogs({ event: 'inbound_received', since });
         if (epoch !== watcherEpoch.current) return;
         if (result.items?.length) {
-          setInboundObservation(`New inbound log event observed (${String(result.items[0].backend || 'unknown provider')}). This is not proof of document readiness.`);
+          setInboundObservation(`Inbound fax activity detected (${String(result.items[0].backend || 'unknown provider')}).`);
           stopWatching();
           return;
         }
@@ -436,7 +446,7 @@ function SetupWizard({ client, onDone, docsBase }: SetupWizardProps) {
         return;
       }
       if (++polls >= 30) {
-        setInboundObservation('No new inbound log event observed during this watch. This does not determine provider or document readiness.');
+        setInboundObservation('No inbound fax activity in the last minute.');
         stopWatching();
       } else {
         watcherTimer.current = setTimeout(() => { void poll(); }, 2000);
@@ -479,19 +489,19 @@ function SetupWizard({ client, onDone, docsBase }: SetupWizardProps) {
       {providerControl('backend', 'Default Provider')}
       {providerControl('outbound_backend', 'Outbound Override', true)}
       {providerControl('inbound_backend', 'Inbound Override', true)}
-      <Typography sx={{ mt: 2 }}>Desired outbound: {ob} · Desired inbound: {ib}</Typography>
+      <Typography sx={{ mt: 2 }}>Outbound: {ob} · Inbound: {ib}</Typography>
       <FormControlLabel control={<Switch disabled={!canEdit} checked={!!config.inbound_enabled} onChange={event => handleConfigChange('inbound_enabled', event.target.checked)} />} label="Enable inbound handling" />
-      <Alert severity="info" sx={{ mt: 1 }}>Each empty override inherits the default provider independently. Choosing an inbound provider does not enable inbound handling or verify receipt.</Alert>
+      <Alert severity="info" sx={{ mt: 1 }}>Leave an override empty to use the default provider; inbound handling is turned on separately.</Alert>
     </Box>;
 
     if (activeStep === 1) return <Box>
       <Typography variant="h6" gutterBottom>Configure {providerOptions.get(ob)?.name || ob} Credentials</Typography>
-      <Alert severity="info" sx={{ mb: 2 }}>Stored values are masked. Leave a mask unchanged to preserve it; replace it or clear the field explicitly to change it. These fields edit the desired revision.</Alert>
+      <Alert severity="info" sx={{ mb: 2 }}>Saved secrets are hidden; leave them unchanged to keep them.</Alert>
       <Button variant="outlined" onClick={handleValidate}>Check Supplied Outbound Credentials</Button>
       {renderValidation()}
-      {!builtinSelected ? <Alert severity="info" sx={{ mt: 2 }}>This provider's credential panel is not available in Setup. Keep its selection and configure it in Tools → Plugins; use Settings for other shared fields.</Alert> : <>
-        {ob === 'sip' && <Alert severity="warning" sx={{ mt: 2 }}>Keep AMI on the private network. Do not expose its port to the internet.</Alert>}
-        {ob === 'freeswitch' && <Alert severity="info" sx={{ mt: 2 }}>FreeSWITCH requires mod_spandsp, a gateway and the Faxbot result hook. These fields alone do not verify that deployment.</Alert>}
+      {!builtinSelected ? <Alert severity="info" sx={{ mt: 2 }}>Configure this provider in Tools → Plugins.</Alert> : <>
+        {ob === 'sip' && <Alert severity="warning" sx={{ mt: 2 }}>Keep AMI on your private network; never expose its port to the internet.</Alert>}
+        {ob === 'freeswitch' && <Alert severity="info" sx={{ mt: 2 }}>FreeSWITCH also needs mod_spandsp, a gateway and the Faxbot result hook.</Alert>}
         <Grid container spacing={2} sx={{ mt: 0 }}>
           {credentialFields[ob].map(field => <Grid item xs={12} key={field.key}>
             {field.secret ? <SecretInput fullWidth disabled={!canEdit} label={field.label} value={config[field.key] ?? ''}
@@ -501,7 +511,7 @@ function SetupWizard({ client, onDone, docsBase }: SetupWizardProps) {
           </Grid>)}
           {ob === 'phaxio' && <Grid item xs={12}>
             <FormControlLabel control={<Switch disabled={!canEdit} checked={!!config.phaxio_verify_signature} onChange={event => handleConfigChange('phaxio_verify_signature', event.target.checked)} />} label="Verify outbound status signatures" />
-            <Alert severity="info">When verification is disabled, outbound callback updates are rejected; original-account polling continues. Inbound verification is configured separately in Settings.</Alert>
+            <Alert severity="info">When off, Phaxio status callbacks are rejected and Faxbot checks status by polling instead.</Alert>
           </Grid>}
           {ob === 'documo' && <Grid item xs={12}><FormControlLabel control={<Switch disabled={!canEdit} checked={!!config.documo_use_sandbox} onChange={event => handleConfigChange('documo_use_sandbox', event.target.checked)} />} label="Use Documo sandbox" /></Grid>}
           {ob === 'sip' && settings?.sip.ami_password_is_default && config.ami_password === baseline.ami_password &&
@@ -509,20 +519,19 @@ function SetupWizard({ client, onDone, docsBase }: SetupWizardProps) {
         </Grid>
       </>}
       <TextField fullWidth disabled={!canEdit} label="Public API URL" value={config.public_api_url ?? ''} sx={{ mt: 2 }}
-        onChange={event => handleConfigChange('public_api_url', event.target.value)} helperText="Used by hosted providers to fetch documents and derive callback URLs. Review HTTPS and reachability separately." />
+        onChange={event => handleConfigChange('public_api_url', event.target.value)} helperText="Public address of this server, used by cloud providers to fetch documents and send callbacks." />
       <Box sx={{ mt: 3 }}>
         <Typography variant="subtitle1">Active Inbound Callback Details</Typography>
-        <Typography variant="body2" sx={{ mb: 1 }}>These details come from active settings, independently of the unsaved desired choices above.</Typography>
+        <Typography variant="body2" sx={{ mb: 1 }}>Callback URLs for the inbound provider Faxbot is using now.</Typography>
         <Button variant="outlined" onClick={loadCallbacks}>Show Active Callback Details</Button>
         {callbacks && <Paper sx={{ p: 2, mt: 2 }}>
-          <Typography>Active inbound provider: {callbacks.backend}</Typography>
-          {!callbacks.callbacks?.length && <Alert severity="info" sx={{ mt: 1 }}>No callback URL is available from this route for the active provider.</Alert>}
+          <Typography>Inbound provider: {callbacks.backend}</Typography>
+          {!callbacks.callbacks?.length && <Alert severity="info" sx={{ mt: 1 }}>This provider has no callback URL to configure.</Alert>}
           {callbacks.callbacks?.map(callback => <Box key={callback.name} sx={{ mt: 1 }}>
             <Typography>{callback.name}</Typography>
             <Box component="pre" sx={{ overflow: 'auto', overflowWrap: 'anywhere', whiteSpace: 'pre-wrap' }}>{callback.url}</Box>
             <Button onClick={() => { void copyToClipboard(callback.url); }}>Copy URL</Button>
           </Box>)}
-          <Alert severity="info" sx={{ mt: 1 }}>Callback URLs and log events do not verify an inbound document. Simulation creates a synthetic record, not a provider delivery.</Alert>
           <Box sx={{ mt: 2, display: 'flex', gap: 1, flexWrap: 'wrap' }}>
             <Button variant="outlined" onClick={simulateInbound}>Simulate Inbound Record</Button>
             <Button variant="outlined" onClick={startWatching} disabled={verifyingInbound}>{verifyingInbound ? 'Watching inbound logs…' : 'Watch New Inbound Log Events'}</Button>
@@ -536,7 +545,6 @@ function SetupWizard({ client, onDone, docsBase }: SetupWizardProps) {
 
     if (activeStep === 2) return <Box>
       <Typography variant="h6" gutterBottom>Security Settings</Typography>
-      <Alert severity="info" sx={{ mb: 2 }}>Review access, transport and audit settings for this installation. These controls alone do not establish compliance.</Alert>
       <Grid container spacing={2}>
         {[
           ['require_api_key', 'Require API Key'],
@@ -550,16 +558,16 @@ function SetupWizard({ client, onDone, docsBase }: SetupWizardProps) {
 
     return <Box>
       <Typography variant="h6" gutterBottom>Apply & Export</Typography>
-      <Typography sx={{ mb: 2 }}>{changedFields.length ? `${changedFields.length} changed field(s). Only those changes will be saved.` : 'No unsaved changes.'}</Typography>
+      <Typography sx={{ mb: 2 }}>{changedFields.length ? `${changedFields.length} unsaved ${changedFields.length === 1 ? 'change' : 'changes'}.` : 'No unsaved changes.'}</Typography>
       <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
         <Button variant="outlined" onClick={handleValidate}>Check Supplied Outbound Credentials</Button>
         <Button variant="contained" onClick={applySettings}>Apply Changes</Button>
-        <Button variant="outlined" onClick={exportSettings} disabled={changedFields.length > 0}>Export Redacted Desired Template</Button>
+        <Button variant="outlined" onClick={exportSettings} disabled={changedFields.length > 0}>Export .env Template</Button>
       </Box>
-      {changedFields.length > 0 && <Alert severity="info" sx={{ mt: 2 }}>Save or explicitly Reload to discard your draft before exporting. Export contains the server's current desired settings, not unsaved values.</Alert>}
+      {changedFields.length > 0 && <Alert severity="info" sx={{ mt: 2 }}>Apply or discard your changes before exporting.</Alert>}
       {renderValidation()}
       {envContent && <Box sx={{ mt: 2 }}>
-        <Alert severity="info">Redacted template of the server's current desired configuration. Secret values are redacted; this is not a complete recovery backup and pending settings may differ from active settings.</Alert>
+        <Alert severity="info">Secrets are masked; this file is not a full backup.</Alert>
         <Box sx={{ display: 'flex', gap: 1, my: 2 }}><Button variant="outlined" onClick={() => { void copyToClipboard(envContent); }}>Copy</Button><Button variant="outlined" onClick={downloadEnv}>Download</Button></Box>
         <Paper sx={{ p: 2 }}><Box component="pre" sx={{ m: 0, fontSize: '0.875rem', overflow: 'auto' }}>{envContent}</Box></Paper>
       </Box>}
@@ -569,23 +577,16 @@ function SetupWizard({ client, onDone, docsBase }: SetupWizardProps) {
   return <Box>
     <Typography variant="h4" component="h1" gutterBottom>Setup Wizard</Typography>
     <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2 }}>
-      <Typography>Edit the canonical desired configuration.</Typography>
+      <Typography>Choose providers, enter credentials and review security.</Typography>
       <Button variant="outlined" onClick={() => { if (!actionFence.current) void loadSettings(); }} disabled={loading || busy}>Reload{changedFields.length ? ' (discard draft)' : ''}</Button>
     </Box>
-    {loading && <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}><CircularProgress size={24} /><Typography>Loading desired settings…</Typography></Box>}
+    {loading && <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}><CircularProgress size={24} /><Typography>Loading settings…</Typography></Box>}
     {loadError && <Alert severity="error" sx={{ mb: 2 }}>{loadError}</Alert>}
-    {needsReload && saveReceipt ? <Paper sx={{ p: 2, mb: 2, overflowWrap: 'anywhere' }}>
-      <Typography variant="body2">Confirmed saved desired revision: {saveReceipt._meta.desired_revision_id}</Typography>
-      <Typography variant="body2">Active revision: {saveReceipt._meta.active_revision_id} · Generation: {saveReceipt._meta.generation}</Typography>
-    </Paper> : settings?._meta && <Paper sx={{ p: 2, mb: 2, overflowWrap: 'anywhere' }}>
-      <Typography variant="body2">Active revision: {settings._meta.active_revision_id} · Generation: {settings._meta.generation}</Typography>
-      <Typography variant="body2">Loaded desired revision: {settings._meta.desired_revision_id}</Typography>
-      {settings._meta.apply_state === 'pending_restart' ? <Alert severity="warning" sx={{ mt: 1 }}>Every API worker must stop and the installation restart to activate these pending desired fields: {settings._meta.pending_fields.join(', ')}.</Alert> : <Typography variant="body2">Loaded desired revision is active.</Typography>}
-    </Paper>}
+    {pendingRestart && !(applyResult && saveReceipt) && <Alert severity="warning" sx={{ mb: 2 }}>{restartMessage}</Alert>}
     {catalogNotice && <Alert severity="info" sx={{ mb: 2 }}>{catalogNotice}</Alert>}
     {notice && <Alert severity={notice.severity} sx={{ mb: 2 }} onClose={() => setNotice(null)}>{notice.text}</Alert>}
-    {applyResult && <Alert severity={applyResult.severity} sx={{ mb: 2 }}>{applyResult.text}</Alert>}
-    {needsReload && settings && <Alert severity="warning" sx={{ mb: 2 }}>Editing and saving are paused. Your draft remains visible; Reload explicitly discards it and loads the current revision.</Alert>}
+    {applyResult && <Alert severity={applyResult.severity} sx={{ mb: 2 }}>{applyResult.text}{saveReceipt && pendingRestart ? ` ${restartMessage}` : ''}</Alert>}
+    {showPaused && <Alert severity="warning" sx={{ mb: 2 }}>Editing is paused. Reload to continue.</Alert>}
     {settings && <>
       <Stepper activeStep={activeStep} sx={{ mb: 4 }}>{steps.map(label => <Step key={label}><StepLabel>{label}</StepLabel></Step>)}</Stepper>
       <Card><CardContent><Box component="fieldset" disabled={!canEdit} sx={{ m: 0, p: 0, border: 0, minWidth: 0 }}>{renderStepContent()}</Box></CardContent></Card>

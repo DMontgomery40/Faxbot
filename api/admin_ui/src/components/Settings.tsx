@@ -40,7 +40,7 @@ interface SettingsProps {
 type FormValue = string | number | boolean;
 type SettingsForm = Record<string, FormValue>;
 
-// Each control starts with the desired revision, including redacted secrets.
+// Each control starts with the loaded settings, including redacted secrets.
 // Comparing against this snapshot prevents unrelated edits from writing masks,
 // defaults, inactive provider selections, or the opaque database URL.
 function editorValues(data: SettingsType): SettingsForm {
@@ -146,6 +146,10 @@ function Settings({ client }: SettingsProps) {
   };
   const revisionMeta = needsReload && saveReceipt ? saveReceipt._meta : settings?._meta;
   const pendingRestart = revisionMeta?.apply_state === 'pending_restart';
+  const pendingCount = settings?._meta?.pending_fields?.length ?? 0;
+  const restartMessage = pendingCount
+    ? `Restart Faxbot to apply ${pendingCount} pending ${pendingCount === 1 ? 'change' : 'changes'}.`
+    : 'Restart Faxbot to apply pending changes.';
   const loadedOutbound = settings?.hybrid?.outbound_backend ?? settings?.backend.type ?? '';
   const loadedInbound = settings?.hybrid?.inbound_backend ?? settings?.backend.type ?? '';
   const effectiveOutbound = form.outbound_backend || form.backend || loadedOutbound;
@@ -165,7 +169,7 @@ function Settings({ client }: SettingsProps) {
   const applySettings = async () => {
     if (actionFence.current || loading) return;
     if (!desiredRevision) {
-      setError('Load a canonical settings revision before applying changes.');
+      setError('Load Settings before applying changes.');
       return;
     }
     actionFence.current = true;
@@ -191,16 +195,16 @@ function Settings({ client }: SettingsProps) {
       setNeedsReload(true);
       setEnvContent('');
       setSnack(receipt._meta.apply_state === 'pending_restart'
-        ? `${receipt.changed ? 'Desired settings saved durably.' : 'Desired settings are unchanged.'} A full installation restart is required to activate the pending revision.`
-        : receipt.changed ? 'Settings saved durably and active.' : 'Settings are unchanged and active.');
+        ? `${receipt.changed ? 'Settings saved.' : 'Nothing changed.'} Restart Faxbot to apply pending changes.`
+        : receipt.changed ? 'Settings saved.' : 'Nothing changed.');
       try {
         const data = await client.getSettings();
         if (epoch !== requestEpoch.current) return;
-        if (!data._meta?.desired_revision_id) throw new Error('No canonical desired revision was returned.');
+        if (!data._meta?.desired_revision_id) throw new Error('Settings could not be loaded.');
         hydrate(data);
       } catch {
         if (epoch !== requestEpoch.current) return;
-        setError('Save confirmed; the settings view could not be reloaded. Editing is paused. Load Settings explicitly, or sign in again, before another save.');
+        setError('The page could not refresh. Click Load Settings before making more changes.');
       }
     } catch (err) {
       if (epoch !== requestEpoch.current) return;
@@ -211,8 +215,10 @@ function Settings({ client }: SettingsProps) {
       }
       setNeedsReload(true);
       setError(message.includes('409')
-        ? 'Settings changed since this revision was loaded. Your draft is retained. Load Settings explicitly to discard it and review the current revision before saving again.'
-        : `${configurationWriteRejected(err) ? 'Save was rejected. Your draft is retained.' : 'Save was not confirmed.'} ${message} Load Settings to check the current configuration before saving again.`);
+        ? 'Someone else changed these settings. Your edits are kept here; reload to see the current values.'
+        : configurationWriteRejected(err)
+          ? `Settings were not saved (${message}). Your edits are kept here; reload before trying again.`
+          : 'The save could not be confirmed. Reload to check whether your changes were saved.');
     } finally {
       if (epoch === requestEpoch.current) {
         actionFence.current = false;
@@ -256,7 +262,7 @@ function Settings({ client }: SettingsProps) {
       setLoading(true);
       const data = await client.getSettings();
       if (epoch !== requestEpoch.current) return;
-      if (!data._meta?.desired_revision_id) throw new Error('The server did not return a canonical desired revision. Load Settings before editing.');
+      if (!data._meta?.desired_revision_id) throw new Error('Settings could not be loaded. Click Load Settings to try again.');
       hydrate(data);
       try {
         const cfg = await client.getConfig();
@@ -345,7 +351,7 @@ function Settings({ client }: SettingsProps) {
               try {
                 setLoading(true); setError(null);
                 const res = await client.persistSettings();
-                setSnack(`Recovery .env written to ${res.path}. A complete backup also needs the database and installation key.`);
+                setSnack(`Recovery .env saved to ${res.path}. A full backup also needs the database and installation key.`);
               } catch (e: any) {
                 setError(e?.message || 'Failed to save on server');
               } finally { setLoading(false); }
@@ -363,13 +369,15 @@ function Settings({ client }: SettingsProps) {
           {error}
         </Alert>
       )}
-      {needsReload && settings && <Alert severity="warning" sx={{ mb: 3 }}>
-        Editing and saving are paused. The previous editor values remain visible. Load Settings explicitly to discard them and load the current desired revision.
-      </Alert>}
-
-      <Alert severity="info" sx={{ mb: 3 }}>
-        <Typography variant="body2">Apply saves the desired revision durably in the configuration database. Hot changes activate immediately; restart-required changes stay pending until every worker stops and the installation starts again. Secret masks preserve existing values; clear a field explicitly to remove its value.</Typography>
-      </Alert>
+      {settings && needsReload && !loading && !error ? (
+        <Alert severity="warning" sx={{ mb: 3 }}>
+          Editing is paused. Click Load Settings to continue.
+        </Alert>
+      ) : settings && pendingRestart && !needsReload ? (
+        <Alert severity="warning" sx={{ mb: 3 }}>
+          {restartMessage}
+        </Alert>
+      ) : null}
 
       {loading && !settings ? (
         <Box display="flex" justifyContent="center" py={4}>
@@ -377,24 +385,12 @@ function Settings({ client }: SettingsProps) {
         </Box>
       ) : settings ? (
         <Box>
-        <Alert severity={pendingRestart ? 'warning' : 'info'} sx={{ mb: 3 }}>
-          <Typography variant="subtitle1">
-            {needsReload ? 'Reload required before editing' : pendingRestart ? 'Pending restart — editing desired settings' : 'Editing applied settings'}
-          </Typography>
-          <Typography variant="body2" sx={{ overflowWrap: 'anywhere' }}>
-            {needsReload && saveReceipt ? 'Confirmed saved' : 'Loaded'} desired revision: {revisionMeta?.desired_revision_id ?? 'unavailable'}. Active revision: {revisionMeta?.active_revision_id ?? 'unavailable'}. Generation: {revisionMeta?.generation ?? 'unavailable'}.
-          </Typography>
-          {pendingRestart && !needsReload && <Typography variant="body2">
-            These controls show the saved desired values. The active revision continues serving until a full installation restart. Pending fields: {settings._meta?.pending_fields.join(', ') || 'restart-required configuration'}.
-          </Typography>}
-          {!desiredRevision && <Typography variant="body2">Apply is disabled until the server supplies a desired revision.</Typography>}
-        </Alert>
         <Box component="fieldset" disabled={!canEdit} sx={{ border: 0, m: 0, p: 0, minWidth: 0 }}>
         <Stack spacing={3}>
           {/* Backend Configuration */}
           <ResponsiveFormSection
             title="Backend Configuration"
-            subtitle="Edit the default and independent outbound/inbound overrides in the desired revision"
+            subtitle="Choose the default provider and optional outbound and inbound overrides"
             icon={<CloudIcon />}
           >
             <ResponsiveSettingItem
@@ -403,7 +399,7 @@ function Settings({ client }: SettingsProps) {
               value={settings.backend.type.toUpperCase()}
               editValue={form.backend ?? settings.backend.type}
               onChange={(value) => handleForm('backend', value)}
-              helperText="Each direction inherits this default when its override is empty. Changing an override does not enable receiving."
+              helperText="Used for sending and receiving unless an override is set below."
               type="select"
               options={[
                 { value: 'phaxio', label: 'Phaxio' },
@@ -420,7 +416,7 @@ function Settings({ client }: SettingsProps) {
               label="Outbound Provider"
               value={loadedOutbound.toUpperCase()}
               editValue={form.outbound_backend ?? ''}
-              helperText="Outbound handles sending. Changing providers may require restart and provider-specific config."
+              helperText="Provider used to send faxes."
               onChange={(value) => handleForm('outbound_backend', value)}
               type="select"
               options={[
@@ -440,7 +436,7 @@ function Settings({ client }: SettingsProps) {
               label="Inbound Provider"
               value={loadedInbound.toUpperCase()}
               editValue={form.inbound_backend ?? ''}
-              helperText="Inbound handles receiving/callbacks. Choose 'SIP/Asterisk' for internal posting or a cloud provider for webhooks."
+              helperText="Provider used to receive faxes: SIP/Asterisk for your own phone system, or a cloud provider."
               onChange={(value) => handleForm('inbound_backend', value)}
               type="select"
               options={[
@@ -453,7 +449,7 @@ function Settings({ client }: SettingsProps) {
             />
             {form.inbound_backend === '' && (
               <Chip
-                label={`Inbound inherits the default provider (${String(form.backend)}), independently of the outbound override.`}
+                label={`Inbound uses the default provider (${String(form.backend)}).`}
                 color="info"
                 size="small"
                 variant="outlined"
@@ -462,7 +458,7 @@ function Settings({ client }: SettingsProps) {
             )}
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 1 }}>
               <Chip
-                label={settings.backend.disabled ? 'Fax sending disabled in desired settings' : 'Fax sending enabled in desired settings'}
+                label={settings.backend.disabled ? 'Fax sending is off' : 'Fax sending is on'}
                 color={settings.backend.disabled ? 'error' : 'success'}
                 size="small"
                 variant="outlined"
@@ -482,7 +478,7 @@ function Settings({ client }: SettingsProps) {
               label="API Key Required"
               value={settings.security.require_api_key ? 'Yes' : 'No'}
               editValue={form.require_api_key ?? settings.security.require_api_key}
-              helperText="Require a key for protected requests. Mint DB-backed keys in the Keys tab and pass them as X-API-Key."
+              helperText="Require clients to send an API key, created in the Keys tab, in the X-API-Key header."
               onChange={(value) => handleForm('require_api_key', value === 'true')}
               type="select"
               options={[
@@ -497,7 +493,7 @@ function Settings({ client }: SettingsProps) {
               label="HTTPS Enforced"
               value={settings.security.enforce_https ? 'Yes' : 'No'}
               editValue={form.enforce_public_https ?? settings.security.enforce_https}
-              helperText="Enforce HTTPS for public document links. Private deployment access and cloud callback access must be configured separately."
+              helperText="Require HTTPS for public document links."
               onChange={(value) => handleForm('enforce_public_https', value === 'true')}
               type="select"
               options={[
@@ -512,7 +508,7 @@ function Settings({ client }: SettingsProps) {
               label="Audit Logging"
               value={settings.security.audit_enabled ? 'Enabled' : 'Disabled'}
               editValue={form.audit_log_enabled ?? settings.security.audit_enabled}
-              helperText="Enable structured logs for admin actions and fax lifecycle. Set AUDIT_LOG_FILE to persist; view in Logs tab."
+              helperText="Record admin actions and fax activity; view them in the Logs tab."
               onChange={(value) => handleForm('audit_log_enabled', value === 'true')}
               type="select"
               options={[
@@ -527,7 +523,7 @@ function Settings({ client }: SettingsProps) {
               label="Allow .env import for first bootstrap"
               value={settings.persisted?.enabled ? 'Enabled' : 'Disabled'}
               editValue={form.enable_persisted_settings ?? settings.persisted?.enabled ?? false}
-              helperText="An explicitly enabled literal .env can seed a new installation once. Existing installations load their canonical database revision; changing the file does not apply settings."
+              helperText="Lets a .env file set up a new Faxbot once; later edits to the file are ignored."
               onChange={(value) => handleForm('enable_persisted_settings', value === 'true')}
               type="select"
               options={[
@@ -536,9 +532,9 @@ function Settings({ client }: SettingsProps) {
               ]}
               showCurrentValue={!pendingRestart}
             />
-            {textField('Public API URL', 'public_api_url', 'Base URL captured when a fax is accepted, for document links and outbound callbacks without an override.')}
+            {textField('Public API URL', 'public_api_url', 'Public address of this server, used for document links and provider callbacks.')}
             {textField('Audit Log Format', 'audit_log_format')}
-            {textField('Audit Log File', 'audit_log_file', 'An empty value removes the file destination.')}
+            {textField('Audit Log File', 'audit_log_file', 'Leave empty to stop writing audit logs to a file.')}
             {toggleField('Audit Syslog', 'audit_log_syslog')}
             {textField('Audit Syslog Address', 'audit_log_syslog_address')}
           </ResponsiveFormSection>
@@ -574,7 +570,7 @@ function Settings({ client }: SettingsProps) {
                       label="API Key"
                       value={settings.phaxio.api_key?.replace(/./g, '*').slice(0, 20) || ''}
                       editValue={form.phaxio_api_key ?? ''}
-                      helperText="Get from Phaxio console. Use a service account and keep this secret safe."
+                      helperText="Find this in the Phaxio console; keep it secret."
                       placeholder="Update PHAXIO_API_KEY"
                       onChange={(value) => handleForm('phaxio_api_key', value)}
                       type="password"
@@ -586,7 +582,7 @@ function Settings({ client }: SettingsProps) {
                       label="API Secret"
                       value={settings.phaxio.api_secret?.replace(/./g, '*').slice(0, 20) || ''}
                       editValue={form.phaxio_api_secret ?? ''}
-                      helperText="Get from Phaxio console. Required alongside API key for provider API calls."
+                      helperText="Shown next to the API key in the Phaxio console."
                       placeholder="Update PHAXIO_API_SECRET"
                       onChange={(value) => handleForm('phaxio_api_secret', value)}
                       type="password"
@@ -598,7 +594,7 @@ function Settings({ client }: SettingsProps) {
                       label="Callback Token"
                       value={settings.phaxio.callback_token ?? ''}
                       editValue={form.phaxio_callback_token ?? ''}
-                      helperText="Separate Callback Token from the Phaxio console, required for authenticated outbound callbacks. Leave unchanged to preserve it."
+                      helperText="The Callback Token from the Phaxio console (not the API secret), used to verify status callbacks."
                       placeholder="Update PHAXIO_CALLBACK_TOKEN"
                       onChange={(value) => handleForm('phaxio_callback_token', value)}
                       type="password"
@@ -610,21 +606,21 @@ function Settings({ client }: SettingsProps) {
                       label="Outbound Callback URL Override"
                       value={settings.phaxio.callback_url ?? ''}
                       editValue={form.phaxio_status_callback_url ?? ''}
-                      helperText="Leave empty to use /phaxio-callback under the Public API URL captured when a fax is accepted. A value overrides that URL for newly accepted faxes."
+                      helperText="Leave empty to use /phaxio-callback on the Public API URL."
                       placeholder="https://localhost:8080/phaxio-callback"
                       onChange={(value) => handleForm('phaxio_status_callback_url', value)}
                       showCurrentValue={!pendingRestart && (!!settings.phaxio.callback_url)}
                     />
-                    {toggleField('Authenticated Phaxio Outbound Callbacks', 'phaxio_verify_signature', 'For newly accepted faxes, disabling this rejects callback updates. Faxbot continues polling status with each fax’s original account.')}
+                    {toggleField('Authenticated Phaxio Outbound Callbacks', 'phaxio_verify_signature', 'When off, Phaxio status callbacks are rejected and Faxbot checks status by polling instead.')}
                   </ResponsiveSettingSection>
                 )}
 
                 {providerSelected('sinch') && (
                   <ResponsiveSettingSection title="Sinch Configuration" subtitle="Configure your Sinch fax endpoint and credentials">
                     {textField('Sinch Project ID', 'sinch_project_id')}
-                    {textField('Sinch Base URL', 'sinch_base_url', 'Optional endpoint override. An empty value uses the provider default.')}
-                    {textField('Sinch API Key', 'sinch_api_key', 'Leave the mask unchanged to preserve the existing key.', 'password')}
-                    {textField('Sinch API Secret', 'sinch_api_secret', 'Leave the mask unchanged to preserve the existing secret.', 'password')}
+                    {textField('Sinch Base URL', 'sinch_base_url', 'Leave empty to use the standard Sinch endpoint.')}
+                    {textField('Sinch API Key', 'sinch_api_key', 'Leave unchanged to keep the saved key.', 'password')}
+                    {textField('Sinch API Secret', 'sinch_api_secret', 'Leave unchanged to keep the saved secret.', 'password')}
                   </ResponsiveSettingSection>
                 )}
 
@@ -651,7 +647,7 @@ function Settings({ client }: SettingsProps) {
                       label="Sandbox Mode"
                       value={settings.documo?.sandbox ? 'Sandbox' : 'Production'}
                       editValue={form.documo_use_sandbox ?? settings.documo?.sandbox ?? false}
-                      helperText="Select Documo’s sandbox endpoint. Provider behavior and account access still depend on Documo configuration."
+                      helperText="Send through Documo’s sandbox instead of production."
                       onChange={(value) => handleForm('documo_use_sandbox', value === 'true')}
                       type="select"
                       options={[
@@ -686,7 +682,7 @@ function Settings({ client }: SettingsProps) {
                       label="AMI Password"
                       value={settings.sip.ami_password_is_default ? 'Using default (insecure)' : 'Custom password set'}
                       editValue={form.ami_password ?? ''}
-                      helperText="Must not be the default. Update in both Faxbot and Asterisk manager.conf; never expose 5038 publicly."
+                      helperText="Must match Asterisk manager.conf and must not be the default; never expose port 5038 publicly."
                       placeholder="Update ASTERISK_AMI_PASSWORD"
                       onChange={(value) => handleForm('ami_password', value)}
                       type="password"
@@ -709,7 +705,7 @@ function Settings({ client }: SettingsProps) {
           {/* Feature Flags */}
           <ResponsiveFormSection
             title="Feature Flags"
-            subtitle="Activation status after Apply identifies which changes require a full installation restart."
+            subtitle="Optional features; some take effect after a restart."
             icon={<SettingsIcon />}
           >
             <Stack spacing={2}>
@@ -740,7 +736,7 @@ function Settings({ client }: SettingsProps) {
                 sx={{ alignItems: 'flex-start', '& .MuiFormControlLabel-label': { mt: 0.5 } }}
               />
               <Typography variant="caption" color="text.secondary" sx={{ ml: 4, mb: 1 }}>
-                New jobs accepted while disabled stay held when sending is re-enabled. Pauses ready work, but cannot recall attempts already issued.
+                Stops sending; faxes submitted while sending is off stay on hold after you turn it back on.
               </Typography>
               
               <FormControlLabel
@@ -827,9 +823,9 @@ function Settings({ client }: SettingsProps) {
                 <ResponsiveSettingItem
                   icon={<SecurityIcon />}
                   label="Asterisk Inbound Secret"
-                  value={lastGeneratedSecret ? 'Generated draft (copy below)' : (settings.inbound.sip?.configured ? 'Configured' : 'Not configured')}
+                  value={lastGeneratedSecret ? 'New secret (copy below)' : (settings.inbound.sip?.configured ? 'Configured' : 'Not configured')}
                   editValue={form.asterisk_inbound_secret ?? ''}
-                  helperText="Shared secret used by your Asterisk dialplan to POST inbound fax metadata to Faxbot. Keep this private and only use it on the private network."
+                  helperText="Shared secret your Asterisk dialplan sends when posting inbound faxes to Faxbot; keep it private."
                   onChange={(value) => handleForm('asterisk_inbound_secret', value)}
                   placeholder="ASTERISK_INBOUND_SECRET"
                   type="password"
@@ -846,12 +842,12 @@ function Settings({ client }: SettingsProps) {
                         if (cryptoObj && typeof cryptoObj.getRandomValues === 'function') {
                           cryptoObj.getRandomValues(bytes);
                         } else {
-                          throw new Error('Secure random generation is unavailable in this browser.');
+                          throw new Error('This browser can’t generate a secure secret.');
                         }
                         const b64 = btoa(String.fromCharCode(...Array.from(bytes))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
                         setLastGeneratedSecret(b64);
                         handleForm('asterisk_inbound_secret', b64);
-                        setSnack('Generated an inbound secret draft. Apply settings to save it durably.');
+                        setSnack('New secret generated. Apply settings to save it.');
                       } catch(e:any){ setError(e?.message||'Failed to generate secret'); }
                     }}
                     sx={{ borderRadius: 1 }}
@@ -921,7 +917,7 @@ function Settings({ client }: SettingsProps) {
                   label="Sinch Inbound Basic Auth User"
                   value={settings.inbound?.sinch?.basic_auth_configured ? 'Configured' : 'Not configured'}
                   editValue={form.sinch_inbound_basic_user ?? ''}
-                  helperText="Faxbot-enforced optional auth. Use if your provider supports setting Basic credentials on callbacks."
+                  helperText="Optional: require HTTP Basic credentials on Sinch callbacks."
                   onChange={(value) => handleForm('sinch_inbound_basic_user', value)}
                   placeholder="SINCH_INBOUND_BASIC_USER"
                   showCurrentValue={false}
@@ -944,7 +940,7 @@ function Settings({ client }: SettingsProps) {
                   label="Sinch Inbound HMAC Secret"
                   value={settings.inbound?.sinch?.hmac_configured ? 'Configured' : 'Not configured'}
                   editValue={form.sinch_inbound_hmac_secret ?? ''}
-                  helperText="Faxbot-enforced optional HMAC validation. Configure the same shared secret in your provider if supported."
+                  helperText="Optional: verify Sinch callbacks with this shared secret; set the same value in Sinch."
                   onChange={(value) => handleForm('sinch_inbound_hmac_secret', value)}
                   placeholder="SINCH_INBOUND_HMAC_SECRET"
                   type="password"
@@ -1005,9 +1001,9 @@ function Settings({ client }: SettingsProps) {
                 placeholder="+13035551234"
                 showCurrentValue={!pendingRestart && (!!settings.signalwire?.from_fax)}
               />
-              {textField('SignalWire Outbound Callback URL Override', 'signalwire_status_callback_url', 'Leave empty to use /signalwire-callback under the Public API URL captured when a fax is accepted. A value overrides that URL for newly accepted faxes.')}
-              {textField('SignalWire Webhook Signing Key', 'signalwire_webhook_signing_key', 'Leave the mask unchanged to preserve the existing signing key.', 'password')}
-              {textField('SignalWire From (SMS)', 'signalwire_sms_from_e164', 'Masked when configured; unchanged masks preserve the existing number.')}
+              {textField('SignalWire Outbound Callback URL Override', 'signalwire_status_callback_url', 'Leave empty to use /signalwire-callback on the Public API URL.')}
+              {textField('SignalWire Webhook Signing Key', 'signalwire_webhook_signing_key', 'Leave unchanged to keep the saved signing key.', 'password')}
+              {textField('SignalWire From (SMS)', 'signalwire_sms_from_e164', 'Leave unchanged to keep the saved number.')}
               {textField('SignalWire Status Poll Seconds', 'signalwire_status_poll_seconds', 'Zero disables status polling.', 'number')}
             </ResponsiveFormSection>
           )}
@@ -1021,7 +1017,7 @@ function Settings({ client }: SettingsProps) {
                   <Typography variant="h6" gutterBottom>FreeSWITCH</Typography>
                   {textField('ESL Host', 'fs_esl_host', 'FreeSWITCH ESL host on the private network.')}
                   {textField('ESL Port', 'fs_esl_port', 'FreeSWITCH ESL port.', 'number')}
-                  {textField('ESL Password', 'fs_esl_password', 'Existing credentials are masked. Leave unchanged to preserve, or explicitly clear to remove.', 'password')}
+                  {textField('ESL Password', 'fs_esl_password', 'Leave unchanged to keep the saved password, or clear it to remove it.', 'password')}
                   {textField('Gateway Name', 'fs_gateway_name')}
                   {textField('Caller ID Number', 'fs_caller_id_number')}
                   {toggleField('Enable FreeSWITCH T.38', 'fs_t38_enable')}
@@ -1048,7 +1044,6 @@ function Settings({ client }: SettingsProps) {
                       Use service name "api" for Docker Compose networking; otherwise set your API host. Ensure your dialplan sets <code>faxbot_job_id</code> (the originate flow sets it automatically).
                     </Typography>
                   </Box>
-                  <Alert severity="info">For result updates, set an api_hangup_hook in your dialplan to POST to /_internal/freeswitch/outbound_result with X-Internal-Secret and include fax variables and the channel variable faxbot_job_id.</Alert>
                 </CardContent>
               </Card>
             </Grid>
@@ -1063,7 +1058,7 @@ function Settings({ client }: SettingsProps) {
               label="Storage Backend"
               value={(settings.storage?.backend ?? 'local').toUpperCase()}
               editValue={form.storage_backend ?? settings.storage?.backend ?? 'local'}
-              helperText="Local stores fax artifacts in this installation; S3 uses your configured bucket. Choose storage appropriate for your deployment and data policy."
+              helperText="Where fax files are stored: on this server, or in your S3 bucket."
               onChange={(value) => handleForm('storage_backend', value)}
               type="select"
               options={[
@@ -1162,7 +1157,7 @@ function Settings({ client }: SettingsProps) {
             )}
           </ResponsiveFormSection>
 
-          <ResponsiveFormSection title="MCP Configuration" subtitle="MCP transport and OAuth settings belong to the desired revision; mounting changes require a full installation restart." icon={<SettingsIcon />}>
+          <ResponsiveFormSection title="MCP Configuration" subtitle="Connections for AI assistants; changes take effect after a restart." icon={<SettingsIcon />}>
             {toggleField('Enable MCP SSE', 'enable_mcp_sse')}
             {textField('MCP SSE Path', 'mcp_sse_path')}
             {toggleField('Enable MCP HTTP', 'enable_mcp_http')}
@@ -1186,11 +1181,11 @@ function Settings({ client }: SettingsProps) {
                     label="Database URL (redacted, read-only)"
                     value={settings.database?.url ?? ''}
                     editValue={settings.database?.url ?? ''}
-                    helperText={`Driver: ${settings.database?.scheme ?? 'unknown'}. The database URL is opaque to protect credentials, paths, and query parameters.`}
+                    helperText={`Driver: ${settings.database?.scheme ?? 'unknown'}. Credentials are hidden.`}
                     showCurrentValue={false}
                   />
                   <Alert severity="info" sx={{ mt: 2 }}>
-                    Changing the database requires a planned maintenance operation with every worker stopped. This editor cannot move configuration, job history, or artifacts to a new database.
+                    The database can’t be changed here; moving to a new database is a planned maintenance task.
                   </Alert>
                 </Box>
 
@@ -1200,7 +1195,7 @@ function Settings({ client }: SettingsProps) {
                   value={String(form.max_file_size_mb ?? settings.limits?.max_file_size_mb ?? 10)}
                   onChange={(value) => handleForm('max_file_size_mb', value === '' ? '' : Number(value))}
                   placeholder="10"
-                  helperText="Installation limit for raw document uploads in MB. Provider upload limits are separate."
+                  helperText="Largest document Faxbot accepts; your provider may have its own limit."
                   type="number"
                   icon={<CloudIcon />}
                 />
@@ -1211,7 +1206,7 @@ function Settings({ client }: SettingsProps) {
                   value={String(form.max_requests_per_minute ?? settings.limits?.rate_limit_rpm ?? 60)}
                   onChange={(value) => handleForm('max_requests_per_minute', value === '' ? '' : Number(value))}
                   placeholder="60"
-                  helperText="Per-key requests per minute. Set to mitigate abuse; 0 disables global rate limiting."
+                  helperText="Requests per minute allowed for each API key; 0 turns the limit off."
                   type="number"
                   icon={<SecurityIcon />}
                 />
@@ -1221,7 +1216,7 @@ function Settings({ client }: SettingsProps) {
                   value={String(form.inbound_list_rpm ?? settings.limits?.inbound_list_rpm ?? 30)}
                   onChange={(value) => handleForm('inbound_list_rpm', value === '' ? '' : Number(value))}
                   placeholder="30"
-                  helperText="Rate limit for listing inbound faxes (per key). Keep conservative for HIPAA workloads."
+                  helperText="Requests per minute for each API key when listing inbound faxes."
                   type="number"
                   icon={<SecurityIcon />}
                 />
@@ -1237,7 +1232,7 @@ function Settings({ client }: SettingsProps) {
                 />
 
                 {textField('PDF Token TTL (minutes)', 'pdf_token_ttl_minutes', '', 'number')}
-                {textField('Artifact TTL (days)', 'artifact_ttl_days', 'Zero retains outbound artifacts without TTL cleanup.', 'number')}
+                {textField('Artifact TTL (days)', 'artifact_ttl_days', 'Days to keep sent fax files; 0 keeps them indefinitely.', 'number')}
                 {textField('Cleanup Interval (minutes)', 'cleanup_interval_minutes', '', 'number')}
                 <Alert 
                   severity="info" 
@@ -1256,7 +1251,7 @@ function Settings({ client }: SettingsProps) {
         </Box>
         <Box sx={{ display: 'flex', gap: 1, mt: 2 }}>
           <Button variant="contained" onClick={applySettings} disabled={!canEdit || changedFields.length === 0}>
-            Apply settings (save durably)
+            Apply settings
           </Button>
           <Button variant="outlined" startIcon={<RefreshIcon />} onClick={fetchSettings} disabled={loading}>
             Refresh
@@ -1266,7 +1261,7 @@ function Settings({ client }: SettingsProps) {
         </Box>
       ) : (
         <Typography variant="body2" color="text.secondary">
-          Click "Load Settings" to view the desired configuration revision
+          Click "Load Settings" to view and edit settings.
         </Typography>
       )}
 
@@ -1308,7 +1303,7 @@ function Settings({ client }: SettingsProps) {
             </Paper>
             
             <Alert severity="warning" sx={{ mt: 2 }}>
-              This export masks secrets and cannot restore the installation by itself. Apply settings saves durably; a complete recovery backup also needs the database and installation key.
+              Secrets are masked; a full backup also needs the database and installation key.
             </Alert>
           </CardContent>
         </Card>
