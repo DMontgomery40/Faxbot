@@ -31,6 +31,19 @@ import type {
   KeyCeiling,
   ResourceKind,
 } from './types';
+import type {
+  Destination,
+  DestinationDetail,
+  DestinationPatch,
+  DirectCard,
+  DirectPartner,
+  EmailConnector,
+  EmailConnectorInput,
+  IntakeCounts,
+  IntakeItem,
+  ProviderCosts,
+  RateCard,
+} from './deliveryTypes';
 
 // These manifest validation messages contain no paths, credentials, or provider
 // responses. All other server error bodies remain opaque to the UI.
@@ -735,6 +748,84 @@ export class AdminAPIClient {
       running = false;
       if (timer !== undefined) window.clearTimeout(timer);
     };
+  }
+
+  // Delivery routes, intake and direct delivery
+  async listDestinations(): Promise<{ window_days: number; destinations: Destination[] }> {
+    return this.json('/routing/destinations');
+  }
+
+  async getDestination(number: string): Promise<DestinationDetail> {
+    return this.json(`/routing/destinations/${id(number)}`);
+  }
+
+  async updateDestination(number: string, patch: DestinationPatch): Promise<Destination> {
+    return this.json(`/routing/destinations/${id(number)}`, { method: 'PATCH', body: JSON.stringify(patch) });
+  }
+
+  async getRouteCosts(): Promise<{ since: string; providers: ProviderCosts[] }> {
+    return this.json('/routing/costs');
+  }
+
+  async listRateCards(): Promise<{ cards: RateCard[] }> {
+    return this.json('/routing/rate-cards');
+  }
+
+  async saveRateCards(cards: RateCard[]): Promise<{ cards: RateCard[] }> {
+    const body = cards.map(({ id: _id, ...card }) => card);
+    return this.json('/routing/rate-cards', { method: 'PUT', body: JSON.stringify({ cards: body }) });
+  }
+
+  async listIntakeItems(): Promise<{ items: IntakeItem[]; counts: IntakeCounts }> {
+    return this.json('/intake/items');
+  }
+
+  async retryIntakeItem(itemId: string): Promise<IntakeItem> {
+    return this.json(`/intake/items/${id(itemId)}/retry`, { method: 'POST', body: '{}' });
+  }
+
+  async listEmailConnectors(): Promise<{ connectors: EmailConnector[] }> {
+    return this.json('/intake/connectors');
+  }
+
+  async createEmailConnector(input: EmailConnectorInput): Promise<EmailConnector> {
+    return this.json('/intake/connectors', { method: 'POST', body: JSON.stringify(input) });
+  }
+
+  async updateEmailConnector(connectorId: string, input: EmailConnectorInput): Promise<EmailConnector> {
+    return this.json(`/intake/connectors/${id(connectorId)}`, { method: 'PUT', body: JSON.stringify(input) });
+  }
+
+  async deleteEmailConnector(connectorId: string): Promise<{ deleted: boolean }> {
+    return this.json(`/intake/connectors/${id(connectorId)}`, { method: 'DELETE' });
+  }
+
+  async testEmailConnector(connectorId: string): Promise<{ ok: boolean; detail: string }> {
+    return this.json(`/intake/connectors/${id(connectorId)}/test`, { method: 'POST', body: '{}' });
+  }
+
+  async getDirectCard(): Promise<{ card: DirectCard }> {
+    return this.json('/direct/card');
+  }
+
+  async listDirectPartners(): Promise<{ peers: DirectPartner[] }> {
+    return this.json('/direct/peers');
+  }
+
+  async addDirectPartner(card: string): Promise<DirectPartner> {
+    return this.json('/direct/peers', { method: 'POST', body: JSON.stringify({ card }) });
+  }
+
+  async sendDirectCode(partnerId: string): Promise<DirectPartner & { fax_id: string }> {
+    return this.json(`/direct/peers/${id(partnerId)}/challenge`, { method: 'POST', body: '{}' });
+  }
+
+  async confirmDirectCode(partnerId: string, code: string): Promise<{ confirmed: boolean; detail: string }> {
+    return this.json(`/direct/peers/${id(partnerId)}/confirm`, { method: 'POST', body: JSON.stringify({ code }) });
+  }
+
+  async removeDirectPartner(partnerId: string): Promise<DirectPartner> {
+    return this.json(`/direct/peers/${id(partnerId)}/revoke`, { method: 'POST', body: '{}' });
   }
 }
 

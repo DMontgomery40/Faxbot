@@ -43,6 +43,8 @@ import GroupsIcon from '@mui/icons-material/Groups';
 import BadgeIcon from '@mui/icons-material/Badge';
 import LockOpenIcon from '@mui/icons-material/LockOpen';
 import DevicesIcon from '@mui/icons-material/Devices';
+import AltRouteIcon from '@mui/icons-material/AltRoute';
+import MoveToInboxIcon from '@mui/icons-material/MoveToInbox';
 import AdminAPIClient, { AdminAPIError, type ClientCredential } from './api/client';
 import Dashboard from './components/Dashboard';
 import SetupWizard from './components/SetupWizard';
@@ -62,6 +64,8 @@ import Groups from './components/Groups';
 import Roles from './components/Roles';
 import ResourceAccess from './components/ResourceAccess';
 import Sessions from './components/Sessions';
+import DeliveryRoutes from './components/DeliveryRoutes';
+import Intake from './components/Intake';
 import LoginScreen from './components/LoginScreen';
 import PasswordChange from './components/PasswordChange';
 import OwnerEnrollment from './components/OwnerEnrollment';
@@ -257,6 +261,7 @@ const SETTINGS_ICONS: Record<SettingsTab, React.ReactElement> = {
 };
 
 const TOOL_ICONS: Record<ToolTab, React.ReactElement> = {
+  routes: <AltRouteIcon />, intake: <MoveToInboxIcon />,
   terminal: <TerminalIcon />, diagnostics: <AssessmentIcon />, logs: <DescriptionIcon />,
   plugins: <ExtensionIcon />, scripts: <ScienceIcon />,
 };
@@ -572,6 +577,8 @@ function ConsoleShell({ client, me, initialContext, onSignOut, onIdentityChanged
                   </Tabs>
                 </Box>
                 <Box sx={{ p: { xs: 2, md: 3 } }}>
+                  {currentTool === 'routes' && <DeliveryRoutes client={client} canWrite={permissions.has('settings:write')} />}
+                  {currentTool === 'intake' && <Intake client={client} canWrite={permissions.has('settings:write')} />}
                   {currentTool === 'terminal' && <Terminal client={client} />}
                   {currentTool === 'diagnostics' && <Diagnostics client={client} onNavigate={handleNavigate} docsBase={docsBase} />}
                   {currentTool === 'logs' && <Logs client={client} />}
