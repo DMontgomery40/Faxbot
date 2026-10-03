@@ -142,6 +142,26 @@ def project_admin_settings(snapshot: ConfigurationSnapshot, pending_fields: Iter
             's3_kms_enabled': bool(values.s3_kms_key_id),
         },
         'database': _database_view(values.database_url),
+        'routing': {
+            'outbound_routes': values.outbound_routes,
+            'min_success_percent': values.route_min_success_percent,
+        },
+        'intake': {
+            'email_enabled': values.intake_email_enabled,
+            'smtp_host': values.intake_smtp_host,
+            'smtp_port': values.intake_smtp_port,
+            'smtp_security': values.intake_smtp_security,
+            'smtp_username': values.intake_smtp_username,
+            'smtp_password': mask_secret(values.intake_smtp_password),
+            'email_from': values.intake_email_from,
+            'email_to': values.intake_email_to,
+            'email_subject': values.intake_email_subject,
+        },
+        'direct': {
+            'enabled': values.direct_delivery_enabled,
+            'organization': values.direct_organization,
+            'fax_number': values.direct_fax_number,
+        },
         'inbound': {
             'enabled': values.inbound_enabled,
             'retention_days': values.inbound_retention_days,

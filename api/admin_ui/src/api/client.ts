@@ -36,6 +36,7 @@ import type {
   DestinationDetail,
   DestinationPatch,
   DirectCard,
+  DirectDeliveryRecord,
   DirectPartner,
   EmailConnector,
   EmailConnectorInput,
@@ -198,6 +199,7 @@ export class AdminAPIClient {
   private onUnauthorized?: () => void;
   // Last access policy version seen from /auth/me or a management reply.
   policyVersion: number | null = null;
+  private policyRefresh: Promise<void> | null = null;
 
   constructor(credential: ClientCredential = { kind: 'session', csrf: null }, options: ClientOptions = {}) {
     this.baseURL = window.location.origin;
@@ -288,6 +290,7 @@ export class AdminAPIClient {
   // Management mutations carry the last seen policy version and record the
   // new one from the reply.
   private async accessWrite<T extends object>(path: string, body: object, method: 'POST' | 'PATCH' = 'POST'): Promise<T & PolicyResult> {
+    if (this.policyRefresh) await this.policyRefresh;
     const result = await this.json<T & PolicyResult>(path, {
       method,
       body: JSON.stringify({ ...body, expected_policy_version: this.policyVersion ?? 0 }),
@@ -312,6 +315,20 @@ export class AdminAPIClient {
     }
     if (Number.isSafeInteger(me.policy_version)) this.policyVersion = me.policy_version;
     return me;
+  }
+
+  // Re-read the access policy version when someone starts a change (a dialog
+  // opens), so only edits made by others while it is open are refused. A
+  // write waits for a refresh that is still in flight; a failed refresh keeps
+  // the last known version.
+  refreshPolicy(): Promise<void> {
+    if (!this.policyRefresh) {
+      const pending: Promise<void> = this.me({ quiet401: true }).then(() => undefined, () => undefined).finally(() => {
+        if (this.policyRefresh === pending) this.policyRefresh = null;
+      });
+      this.policyRefresh = pending;
+    }
+    return this.policyRefresh;
   }
 
   async context(): Promise<ConsoleContext> {
@@ -645,7 +662,10 @@ export class AdminAPIClient {
   }
 
   async createTunnelPairing(): Promise<{ code: string; expires_at: string }> {
-    return this.json('/admin/tunnel/pair', { method: 'POST', body: '{}' });
+    const result = await this.json<{ code: string; expires_at: string }>('/admin/tunnel/pair', { method: 'POST', body: '{}' });
+    // Issuing a code changes access policy; keep later edits current.
+    void this.refreshPolicy();
+    return result;
   }
 
   async sendFax(to: string, file: File, options: { queueOnly?: boolean; idempotencyKey?: string } = {}): Promise<FaxSendResult> {
@@ -789,8 +809,8 @@ export class AdminAPIClient {
     return this.json('/routing/rate-cards', { method: 'PUT', body: JSON.stringify({ cards: body }) });
   }
 
-  async listIntakeItems(): Promise<{ items: IntakeItem[]; counts: IntakeCounts }> {
-    return this.json('/intake/items');
+  async listIntakeItems(params: { limit?: number } = {}): Promise<{ items: IntakeItem[]; counts: IntakeCounts }> {
+    return this.json(`/intake/items${query(params)}`);
   }
 
   async retryIntakeItem(itemId: string): Promise<IntakeItem> {
@@ -835,6 +855,10 @@ export class AdminAPIClient {
 
   async confirmDirectCode(partnerId: string, code: string): Promise<{ confirmed: boolean; detail: string }> {
     return this.json(`/direct/peers/${id(partnerId)}/confirm`, { method: 'POST', body: JSON.stringify({ code }) });
+  }
+
+  async listDirectDeliveries(): Promise<{ deliveries: DirectDeliveryRecord[] }> {
+    return this.json('/direct/deliveries');
   }
 
   async removeDirectPartner(partnerId: string): Promise<DirectPartner> {

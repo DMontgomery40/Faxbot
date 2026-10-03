@@ -44,6 +44,7 @@ import {
 import AdminAPIClient from '../api/client';
 import { docsLink } from '../docsLinks';
 import type { DiagnosticsOutcome, DiagnosticsResult, DiagnosticsValue } from '../api/types';
+import { formatServerTime } from '../api/time';
 import type { AdminDestination } from '../navigation';
 import { ResponsiveFormSection } from './common/ResponsiveFormFields';
 
@@ -74,10 +75,37 @@ function OutcomeChip({ outcome }: { outcome: DiagnosticsOutcome }) {
   return <Chip icon={icon} label={label} color={color} size="small" variant="outlined" sx={{ borderRadius: 1 }} />;
 }
 
+// Plain sentences for fixed server notes that use internal words.
+const PLAIN_NOTES: Record<string, string> = {
+  'Desired settings are pending a full installation restart; diagnostics describe the active revision.':
+    'Some saved settings take effect after Faxbot restarts; these results describe the settings in use now.',
+};
+
+// What Copy and Download hand out: configuration as plain facts, without
+// internal revision identifiers or counters.
+export function diagnosticsForExport(result: DiagnosticsResult) {
+  return {
+    ...result,
+    configuration: { pending_restart: result.configuration.pending_restart },
+    summary: { ...result.summary, warnings: result.summary.warnings.map((text) => PLAIN_NOTES[text] ?? text) },
+  };
+}
+
+function plainValue(value: DiagnosticsValue): string {
+  if (value === null) return 'Not set';
+  if (typeof value === 'boolean') return value ? 'Yes' : 'No';
+  if (typeof value === 'number') return value.toLocaleString();
+  if (typeof value === 'string') return value;
+  if (Array.isArray(value) && value.every((item) => typeof item === 'string' || typeof item === 'number')) {
+    return value.length ? value.join(', ') : 'None';
+  }
+  return JSON.stringify(value, null, 2);
+}
+
 function CheckValue({ value }: { value: DiagnosticsValue }) {
   let text: string;
   try {
-    text = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
+    text = plainValue(value);
   } catch {
     text = 'Value could not be displayed.';
   }
@@ -161,7 +189,7 @@ function Diagnostics({ client, onNavigate, docsBase }: DiagnosticsProps) {
     setExportNotice(null);
     try {
       if (!navigator.clipboard?.writeText) throw new Error('Clipboard access is unavailable in this browser. Use Download instead.');
-      await navigator.clipboard.writeText(JSON.stringify(diagnostics, null, 2));
+      await navigator.clipboard.writeText(JSON.stringify(diagnosticsForExport(diagnostics), null, 2));
       setExportNotice({ severity: 'success', text: 'Diagnostics JSON copied to the clipboard.' });
     } catch (err) {
       setExportNotice({ severity: 'error', text: err instanceof Error ? err.message : 'Failed to copy diagnostics JSON' });
@@ -176,7 +204,7 @@ function Diagnostics({ client, onNavigate, docsBase }: DiagnosticsProps) {
     let anchor: HTMLAnchorElement | undefined;
     setExportNotice(null);
     try {
-      const blob = new Blob([JSON.stringify(diagnostics, null, 2)], { type: 'application/json;charset=utf-8' });
+      const blob = new Blob([JSON.stringify(diagnosticsForExport(diagnostics), null, 2)], { type: 'application/json;charset=utf-8' });
       url = URL.createObjectURL(blob);
       anchor = document.createElement('a');
       anchor.href = url;
@@ -293,7 +321,7 @@ function Diagnostics({ client, onNavigate, docsBase }: DiagnosticsProps) {
 
   const issues = diagnostics ? [
     ...diagnostics.summary.critical_issues.map(text => ({ severity: 'error' as const, text })),
-    ...diagnostics.summary.warnings.map(text => ({ severity: 'warning' as const, text })),
+    ...diagnostics.summary.warnings.map(text => ({ severity: 'warning' as const, text: PLAIN_NOTES[text] ?? text })),
   ] : [];
 
   return (
@@ -354,8 +382,8 @@ function Diagnostics({ client, onNavigate, docsBase }: DiagnosticsProps) {
                     <Typography variant="body2">Outbound provider: <strong>{diagnostics.outbound_backend}</strong></Typography>
                     <Typography variant="body2">Inbound provider: <strong>{diagnostics.inbound_backend}</strong></Typography>
                     <Typography variant="body2">Default provider: <strong>{diagnostics.default_backend}</strong></Typography>
-                    <Typography variant="body2">Restart needed: <strong>{diagnostics.configuration.pending_restart ? 'Yes' : 'No'}</strong></Typography>
-                    <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 1 }}>Checked at {diagnostics.timestamp}</Typography>
+                    <Typography variant="body2">Saved changes waiting for a restart: <strong>{diagnostics.configuration.pending_restart ? 'Yes' : 'No'}</strong></Typography>
+                    <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 1 }}>Checked at {formatServerTime(diagnostics.timestamp)}</Typography>
                   </Box>
                   {issues.length > 0 && (
                     <Box>

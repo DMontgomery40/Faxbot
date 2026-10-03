@@ -5,14 +5,19 @@ Only a confirmed session commit returns (receipt, private preparation); the
 transport owner may then set its cookie. This module never discloses secrets or
 establishes Origin/CSRF/cookie policy by itself.
 """
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from functools import wraps
+
+import sqlalchemy as sa
 
 from .credentials import normalize_login, InvalidCredentialInputError, _valid_public_key_id
 from .mutation_types import StaleVersionError
 from .sessions import SessionDeniedError, SessionReason
 from .types import (AccessError, AccessUnavailableError, AuthenticationError,
                     InvalidTransactionError, PrincipalContext, PasswordSessionEvidence)
+
+
+KEY_USE_INTERVAL = timedelta(minutes=1)
 
 
 class AuthenticationThrottledError(AccessError):
@@ -181,7 +186,15 @@ class AuthenticationService:
         self._reserve('key_request', public_id)
         proof = self._key_proof(public_id, secret)
         with self.store.transaction() as connection:
-            return self.proofs.authenticate_key_on(connection, proof, now=self._clock())
+            now = self._clock()
+            actor = self.proofs.authenticate_key_on(connection, proof, now=now)
+            # Record use for the Keys screen, at most once a minute per key.
+            keys = self.store.tables['api_keys']
+            connection.execute(keys.update().where(
+                keys.c.id == actor.credential.binding_id,
+                sa.or_(keys.c.last_used_at.is_(None), keys.c.last_used_at <= now - KEY_USE_INTERVAL),
+            ).values(last_used_at=now))
+            return actor
 
     @_safe_backend
     def change_password(self, actor, current_password, replacement_password):

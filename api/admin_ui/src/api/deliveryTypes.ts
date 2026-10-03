@@ -84,6 +84,8 @@ export interface RateCard {
 export interface IntakeItem {
   id: string;
   source: 'fax' | 'direct';
+  // The received fax this item delivers (the Inbox's fax id); null for a direct delivery.
+  inbound_fax_id?: string | null;
   received_at: string;
   pages: number | null;
   from_number: string | null;
@@ -95,6 +97,8 @@ export interface IntakeItem {
   next_attempt_at: string | null;
   delivered_at: string | null;
   connector: string | null;
+  // Where a delivered item was emailed.
+  delivered_to?: string[];
 }
 
 export interface IntakeCounts {
@@ -159,4 +163,18 @@ export interface DirectPartner {
   verified_at: string | null;
   expires_at: string | null;
   version: number;
+}
+
+// GET /direct/deliveries: recent direct deliveries. For a sent document the
+// message id is the fax's delivery attempt id.
+export interface DirectDeliveryRecord {
+  message_id: string;
+  direction: 'inbound' | 'outbound';
+  partner: string | null;
+  fax_number: string;
+  state: 'sending' | 'accepted' | 'refused' | 'uncertain';
+  status: string;
+  size_bytes: number;
+  created_at: string;
+  accepted_at: string | null;
 }

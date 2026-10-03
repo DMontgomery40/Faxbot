@@ -569,6 +569,12 @@ const consoleHandlers = [
   http.get('/admin/fax-jobs', () => json({ total: 0, jobs: [] })),
   http.get('/inbound', () => json([])),
   http.get('/admin/inbound/callbacks', () => json({ callbacks: [] })),
+  // Delivery routes, intake and direct delivery: empty until a test says otherwise.
+  http.get('/routing/costs', () => json({ since: '2026-09-03T00:00:00', providers: [] })),
+  http.get('/intake/items', () => json({ items: [], counts: { received: 0, sending: 0, delivered: 0, failed: 0 } })),
+  http.get('/intake/connectors', () => json({ connectors: [] })),
+  http.get('/direct/peers', () => json({ peers: [] })),
+  http.get('/direct/deliveries', () => json({ deliveries: [] })),
 ];
 
 export const server = setupServer(...accessHandlers, ...consoleHandlers);

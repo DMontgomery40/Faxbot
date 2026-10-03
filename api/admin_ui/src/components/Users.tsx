@@ -286,7 +286,7 @@ export default function Users({ client, me }: { client: AdminAPIClient; me: Auth
         </Tooltip>
       ) : (
         <Tooltip title="Enable">
-          <IconButton aria-label={`Enable ${user.display_name}`} size="small" disabled={busy} onClick={() => void setEnabled(user, true)}><CheckIcon /></IconButton>
+          <IconButton aria-label={`Enable ${user.display_name}`} size="small" disabled={busy} onClick={() => void client.refreshPolicy().then(() => setEnabled(user, true))}><CheckIcon /></IconButton>
         </Tooltip>
       ))}
       {canManage && user.kind === 'user' && (
@@ -392,7 +392,7 @@ export default function Users({ client, me }: { client: AdminAPIClient; me: Auth
         </Box>
       )}
 
-      <FormDialog
+      <FormDialog client={client}
         open={creating !== null}
         title={creating?.kind === 'integration' ? 'Add integration' : 'Add person'}
         submitLabel={creating?.kind === 'integration' ? 'Add integration' : 'Add person'}
@@ -421,7 +421,7 @@ export default function Users({ client, me }: { client: AdminAPIClient; me: Auth
         )}
       </FormDialog>
 
-      <ConfirmDialog
+      <ConfirmDialog client={client}
         open={pending !== null}
         title={pending?.action === 'reset' ? 'Reset password?' : 'Disable this account?'}
         text={pending?.action === 'reset'

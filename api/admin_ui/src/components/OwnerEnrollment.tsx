@@ -12,6 +12,7 @@ import {
 } from '@mui/material';
 import AdminAPIClient, { accessErrorMessage, isNotAvailable } from '../api/client';
 import SecretDialog, { type SecretReveal } from './access/SecretDialog';
+import { usePolicyRefresh } from './access/AccessViews';
 
 // First-run: the installation key can create the first named owner.
 export default function OwnerEnrollment({ client, onEnrolled }: { client: AdminAPIClient; onEnrolled: () => void }) {
@@ -23,6 +24,7 @@ export default function OwnerEnrollment({ client, onEnrolled }: { client: AdminA
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [reveal, setReveal] = useState<SecretReveal | null>(null);
+  usePolicyRefresh(client, open);
 
   const submit = async () => {
     setBusy(true);

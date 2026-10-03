@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import AdminAPIClient from '../api/client';
 import ResourceAccess, { INSTALLATION_WARNING } from '../components/ResourceAccess';
 import { backend } from '../test/server';
@@ -19,6 +19,7 @@ describe('resource access', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Add mailbox' }));
     const dialog = await screen.findByRole('dialog', { name: 'Add mailbox' });
     fireEvent.change(within(dialog).getByLabelText('Mailbox name'), { target: { value: 'Billing' } });
+    await act(() => client.refreshPolicy()); // the dialog read the policy version when it opened
 
     backend.bumpPolicy(); // another administrator changed access meanwhile
     fireEvent.click(within(dialog).getByRole('button', { name: 'Add mailbox' }));

@@ -6,7 +6,7 @@ import TunnelSettings from '../components/TunnelSettings';
 import { toServerTime } from '../api/time';
 import { backend, server } from '../test/server';
 
-describe('iPhone pairing', () => {
+describe('phone pairing', () => {
   it('shows the six-digit code large with a QR code and a countdown', async () => {
     const expires = toServerTime(new Date(Date.now() + 5 * 60 * 1000));
     server.use(
@@ -18,8 +18,8 @@ describe('iPhone pairing', () => {
     await client.me();
     render(<TunnelSettings client={client} />);
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Pair an iPhone' }));
-    const dialog = await screen.findByRole('dialog', { name: 'Pair an iPhone' });
+    fireEvent.click(await screen.findByRole('button', { name: 'Pair a phone' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Pair a phone' });
     expect((await within(dialog).findByTestId('pairing-code')).textContent).toBe('482913');
     expect(within(dialog).getByRole('img', { name: 'Pairing code 482913' })).toBeTruthy();
     expect(within(dialog).getByText(/^Expires in [45]:\d\d$/)).toBeTruthy();

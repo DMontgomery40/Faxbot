@@ -16,14 +16,90 @@ import { darken } from '@mui/material/styles';
 import {
   Refresh as RefreshIcon,
   CheckCircle as CheckCircleIcon,
-  Warning as WarningIcon,
   Error as ErrorIcon,
   ContentCopy as ContentCopyIcon,
 } from '@mui/icons-material';
 import { IconButton } from '@mui/material';
-import AdminAPIClient, { AdminAPIError } from '../api/client';
+import AdminAPIClient, { AdminAPIError, isNotAvailable } from '../api/client';
 import type { HealthStatus } from '../api/types';
+import type { DirectPartner, IntakeCounts, Money, ProviderCosts } from '../api/deliveryTypes';
 import type { AdminDestination } from '../navigation';
+import { formatMoney, formatMoneyList } from './delivery/shared';
+
+type CardData<T> = { kind: 'loading' } | { kind: 'ready'; data: T } | { kind: 'denied' | 'unavailable' | 'error' };
+
+async function settle<T>(request: Promise<T>): Promise<CardData<T>> {
+  try {
+    return { kind: 'ready', data: await request };
+  } catch (error) {
+    if (error instanceof AdminAPIError && (error.status === 401 || error.status === 403)) return { kind: 'denied' };
+    return { kind: isNotAvailable(error) ? 'unavailable' : 'error' };
+  }
+}
+
+const CARD_TEXT = {
+  denied: 'Not available to this account.',
+  unavailable: 'Not available on this server.',
+  error: 'Could not load this. Select Refresh to try again.',
+};
+
+// Totals per currency; amounts are decimal strings.
+function totalCost(providers: ProviderCosts[]): Money[] {
+  const totals = new Map<string, number>();
+  for (const provider of providers) {
+    for (const cost of provider.estimated_cost) totals.set(cost.currency, (totals.get(cost.currency) ?? 0) + Number(cost.amount));
+  }
+  return [...totals].map(([currency, amount]) => ({ currency, amount: amount.toFixed(4) }));
+}
+
+const clickableCardSx = {
+  cursor: 'pointer',
+  height: '100%',
+  '&:hover': {
+    backgroundColor: 'rgba(59, 160, 255, 0.08)',
+    transform: 'translateY(-2px)',
+    boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+  },
+  transition: 'all 0.2s ease-in-out',
+};
+
+// A dashboard card for one delivery area. It opens its screen only when its
+// data is available to this account.
+function DeliveryCard<T>({ title, hint, data, onOpen, children }: {
+  title: string;
+  hint: string;
+  data: CardData<T>;
+  onOpen?: () => void;
+  children: (value: T) => React.ReactNode;
+}) {
+  const ready = data.kind === 'ready';
+  const body = (
+    <CardContent sx={{ pb: { xs: 1, sm: 2 } }}>
+      <Typography variant="h6" component="h2" gutterBottom sx={{ fontSize: { xs: '1rem', sm: '1.25rem' } }}>{title}</Typography>
+      {data.kind === 'loading' ? <CircularProgress size={20} aria-label={`Loading ${title}`} />
+        : data.kind === 'ready' ? children(data.data)
+        : <Typography variant="body2" color="text.secondary">{CARD_TEXT[data.kind]}</Typography>}
+    </CardContent>
+  );
+  if (!ready || !onOpen) return <Card sx={{ height: '100%' }}>{body}</Card>;
+  return (
+    <Tooltip title={hint} arrow>
+      <Card sx={clickableCardSx} onClick={onOpen} role="button" aria-label={title} tabIndex={0}
+        onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onOpen(); } }}>
+        {body}
+      </Card>
+    </Tooltip>
+  );
+}
+
+function Line({ label, value, color }: { label: string; value: React.ReactNode; color?: string }) {
+  return (
+    <Box display="flex" justifyContent="space-between" gap={2}>
+      <Typography variant="body2">{label}</Typography>
+      <Typography variant="body2" fontWeight="bold" color={color ?? 'text.primary'} sx={{ textAlign: 'right' }}>{value}</Typography>
+    </Box>
+  );
+}
 
 interface DashboardProps {
   client: AdminAPIClient;
@@ -41,6 +117,21 @@ function Dashboard({ client, onNavigate }: DashboardProps) {
   const [justApplied, setJustApplied] = useState<boolean>(false);
   const [cfg, setCfg] = useState<any | null>(null);
   const [plugins, setPlugins] = useState<any[] | null>(null);
+  const [spending, setSpending] = useState<CardData<ProviderCosts[]>>({ kind: 'loading' });
+  const [intake, setIntake] = useState<CardData<IntakeCounts>>({ kind: 'loading' });
+  const [partners, setPartners] = useState<CardData<DirectPartner[]>>({ kind: 'loading' });
+
+  // Delivery cards load on entry and on Refresh, not on every health poll.
+  const fetchDelivery = async () => {
+    const [costs, queue, peers] = await Promise.all([
+      settle(client.getRouteCosts().then((result) => result.providers)),
+      settle(client.listIntakeItems({ limit: 1 }).then((result) => result.counts)),
+      settle(client.listDirectPartners().then((result) => result.peers)),
+    ]);
+    setSpending(costs);
+    setIntake(queue);
+    setPartners(peers);
+  };
 
   const fetchHealth = async () => {
     try {
@@ -78,6 +169,7 @@ function Dashboard({ client, onNavigate }: DashboardProps) {
 
   useEffect(() => {
     fetchHealth();
+    void fetchDelivery();
     if (sessionStorage.getItem('fb_admin_applied') === '1') {
       setJustApplied(true);
       sessionStorage.removeItem('fb_admin_applied');
@@ -124,7 +216,7 @@ function Dashboard({ client, onNavigate }: DashboardProps) {
         <Button
           variant="outlined"
           startIcon={<RefreshIcon />}
-          onClick={fetchHealth}
+          onClick={() => { void fetchHealth(); void fetchDelivery(); }}
           disabled={loading}
         >
           Refresh
@@ -291,9 +383,9 @@ function Dashboard({ client, onNavigate }: DashboardProps) {
                   </Typography>
                   <Box display="flex" flexDirection="column" gap={1}>
                     <Box display="flex" alignItems="center">
-                      {health.require_auth ? <CheckCircleIcon color="success" /> : <WarningIcon color="warning" sx={{ color: warningTextColor }} />}
+                      <CheckCircleIcon color="success" />
                       <Typography variant="body2" sx={{ ml: 1 }}>
-                        {health.require_auth ? 'Auth Required' : 'Auth Optional'}
+                        Authentication required
                       </Typography>
                     </Box>
                     <Box display="flex" alignItems="center">
@@ -308,6 +400,51 @@ function Dashboard({ client, onNavigate }: DashboardProps) {
             </Tooltip>
           </Grid>
 
+          {/* Spending by provider, last 30 days */}
+          <Grid item xs={12} sm={6} lg={4}>
+            <DeliveryCard title="Spending, last 30 days" hint="Click to view delivery routes" data={spending} onOpen={() => onNavigate?.('routes')}>
+              {(providers) => providers.length === 0 ? (
+                <Typography variant="body2" color="text.secondary">No faxes sent in the last 30 days.</Typography>
+              ) : (
+                <Box display="flex" flexDirection="column" gap={1}>
+                  {providers.map((provider) => (
+                    <Line key={provider.provider_id} label={provider.label} value={formatMoneyList(provider.estimated_cost, 'No price set')} />
+                  ))}
+                  {providers.length > 1 && <Line label="Total" value={totalCost(providers).map(formatMoney).join(' + ') || 'No price set'} />}
+                </Box>
+              )}
+            </DeliveryCard>
+          </Grid>
+
+          {/* Received faxes waiting for or done with email delivery */}
+          <Grid item xs={12} sm={6} lg={4}>
+            <DeliveryCard title="Email delivery" hint="Click to view the inbox" data={intake} onOpen={() => onNavigate?.('inbox')}>
+              {(counts) => (
+                <Box display="flex" flexDirection="column" gap={1}>
+                  <Line label="Waiting" value={counts.received + counts.sending} />
+                  <Line label="Delivered" value={counts.delivered} />
+                  <Line label="Not delivered" value={counts.failed} color={counts.failed > 0 ? 'error' : undefined} />
+                </Box>
+              )}
+            </DeliveryCard>
+          </Grid>
+
+          {/* Direct delivery partners */}
+          <Grid item xs={12} sm={6} lg={4}>
+            <DeliveryCard title="Direct partners" hint="Click to view direct partners" data={partners} onOpen={() => onNavigate?.('routes')}>
+              {(peers) => {
+                const verified = peers.filter((peer) => peer.state === 'verified').length;
+                const pending = peers.filter((peer) => peer.state === 'pending').length;
+                return (
+                  <Box display="flex" flexDirection="column" gap={1}>
+                    <Line label="Verified" value={verified} />
+                    <Line label="Waiting for verification" value={pending} color={pending > 0 ? warningTextColor : undefined} />
+                  </Box>
+                );
+              }}
+            </DeliveryCard>
+          </Grid>
+
           {/* Config Overview */}
           <Grid item xs={12} md={6}>
             <Card>
@@ -318,8 +455,8 @@ function Dashboard({ client, onNavigate }: DashboardProps) {
                   <Grid item xs={6}><Chip size="small" label={cfg?.backend ?? 'Unavailable'} /></Grid>
                   <Grid item xs={6}><Typography variant="body2" color="text.secondary">Storage</Typography></Grid>
                   <Grid item xs={6}><Chip size="small" label={cfg?.storage?.backend || 'local'} /></Grid>
-                  <Grid item xs={6}><Typography variant="body2" color="text.secondary">Require API Key</Typography></Grid>
-                  <Grid item xs={6}><Chip size="small" label={(cfg?.require_api_key ? 'Enabled' : 'Disabled')} color={cfg?.require_api_key ? 'success' : 'default'} variant="outlined" /></Grid>
+                  <Grid item xs={6}><Typography variant="body2" color="text.secondary">Authentication</Typography></Grid>
+                  <Grid item xs={6}><Chip size="small" label="Required" color="success" variant="outlined" /></Grid>
                   <Grid item xs={6}><Typography variant="body2" color="text.secondary">Enforce HTTPS</Typography></Grid>
                   <Grid item xs={6}><Chip size="small" label={(cfg?.enforce_public_https ? 'Enabled' : 'Disabled')} color={cfg?.enforce_public_https ? 'success' : 'default'} variant="outlined" /></Grid>
                   <Grid item xs={6}><Typography variant="body2" color="text.secondary">v3 Plugins</Typography></Grid>

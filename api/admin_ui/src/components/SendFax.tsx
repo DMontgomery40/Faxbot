@@ -25,6 +25,7 @@ import {
   ResponsiveFileUpload,
   ResponsiveFormSection,
 } from './common/ResponsiveFormFields';
+import { clearPendingSend, loadPendingSend, savePendingSend, sendFingerprint } from './sendIntent';
 
 interface SendFaxProps {
   client: AdminAPIClient;
@@ -39,6 +40,8 @@ interface SubmissionIntent {
   file: File;
   queueOnly: boolean;
   maxFileSizeBytes: number;
+  fingerprint: string;
+  createdAt: number;
 }
 
 function submissionKey(): string {
@@ -91,6 +94,7 @@ function SendFax({ client, config, configLoading, configError }: SendFaxProps) {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<{ type: 'success' | 'error' | 'warning' | 'info'; message: string; jobId?: string } | null>(null);
   const intentRef = useRef<SubmissionIntent | null>(null);
+  const [resuming, setResuming] = useState(false);
   const submittingRef = useRef(false);
 
   // Validation states
@@ -153,10 +157,20 @@ function SendFax({ client, config, configLoading, configError }: SendFaxProps) {
 
     try {
       if (!intentRef.current || intentRef.current.destination !== destination || intentRef.current.file !== file) {
-        intentRef.current = { key: submissionKey(), destination, file: file!,
-          queueOnly: faxDisabled, maxFileSizeBytes: maxFileSizeBytes! };
+        // The same document to the same number after a reload continues that send.
+        const fingerprint = sendFingerprint(destination, file!);
+        const earlier = loadPendingSend(fingerprint);
+        intentRef.current = earlier
+          ? { key: earlier.key, destination, file: file!, queueOnly: earlier.queueOnly,
+            maxFileSizeBytes: earlier.maxFileSizeBytes, fingerprint, createdAt: earlier.createdAt }
+          : { key: submissionKey(), destination, file: file!, queueOnly: faxDisabled,
+            maxFileSizeBytes: maxFileSizeBytes!, fingerprint, createdAt: Date.now() };
+        setResuming(earlier !== null);
       }
       const intent = intentRef.current;
+      // Kept before the upload starts, so a lost answer can be retried with the same key.
+      savePendingSend({ key: intent.key, fingerprint: intent.fingerprint, queueOnly: intent.queueOnly,
+        maxFileSizeBytes: intent.maxFileSizeBytes, createdAt: intent.createdAt });
       const response = await client.sendFax(intent.destination, intent.file,
         { queueOnly: intent.queueOnly, idempotencyKey: intent.key });
       const state = (response.delivery_state || response.status).toLowerCase();
@@ -167,8 +181,10 @@ function SendFax({ client, config, configLoading, configError }: SendFaxProps) {
         jobId: response.id,
       });
       
-      // Clear form on success
+      // Clear form on success; a new send gets a new key, even for the same document and number.
       intentRef.current = null;
+      clearPendingSend();
+      setResuming(false);
       setToNumber('');
       setFile(null);
       setUploadPickerVersion(version => version + 1);
@@ -176,7 +192,8 @@ function SendFax({ client, config, configLoading, configError }: SendFaxProps) {
     } catch (err) {
       setResult({
         type: 'error',
-        message: `${err instanceof Error ? err.message : "Couldn't confirm the fax was submitted."}${intentRef.current ? ' To retry without creating a duplicate, send again without changing anything or leaving this page.' : ''}`,
+        message: `${err instanceof TypeError ? "Couldn't reach the server, so the fax may or may not have been submitted."
+          : err instanceof Error ? err.message : "Couldn't confirm the fax was submitted."}${intentRef.current ? ' To retry without creating a duplicate, send the same document to the same number again, even after reloading this page.' : ''}`,
       });
     } finally {
       submittingRef.current = false;
@@ -287,6 +304,8 @@ function SendFax({ client, config, configLoading, configError }: SendFaxProps) {
                       variant="outlined"
                       onClick={() => {
                         intentRef.current = null;
+                        clearPendingSend();
+                        setResuming(false);
                         setToNumber('');
                         setFile(null);
                         setUploadPickerVersion(version => version + 1);
@@ -311,6 +330,10 @@ function SendFax({ client, config, configLoading, configError }: SendFaxProps) {
             </ResponsiveFormSection>
           </Box>
         </Fade>
+
+        {resuming && !result && (
+          <Alert severity="info" sx={{ mt: 3, borderRadius: 2 }}>Resuming your earlier send.</Alert>
+        )}
 
         {/* Result Alert */}
         {result && (

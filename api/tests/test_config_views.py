@@ -78,6 +78,7 @@ def test_empty_credentials_are_empty_and_all_nonempty_credentials_have_opaque_ma
         'SIGNALWIRE_WEBHOOK_SIGNING_KEY': 'synthetic-webhook-key', 'ASTERISK_AMI_PASSWORD': 'synthetic-ami-password',
         'FREESWITCH_ESL_PASSWORD': 'synthetic-esl-password', 'ASTERISK_INBOUND_SECRET': 'synthetic-inbound-secret',
         'SINCH_INBOUND_BASIC_PASS': 'synthetic-basic-password', 'SINCH_INBOUND_HMAC_SECRET': 'synthetic-hmac-secret',
+        'INTAKE_SMTP_PASSWORD': 'synthetic-intake-password',
         'DATABASE_URL': 'postgresql://synthetic-user:synthetic-db-password@db.invalid/faxbot?token=synthetic-query-secret',
     }
     view = project_admin_settings(snapshot(environment))
@@ -90,13 +91,15 @@ def test_empty_credentials_are_empty_and_all_nonempty_credentials_have_opaque_ma
     assert view['sip']['ami_password'] == view['fs']['esl_password'] == '***'
     assert view['inbound']['sip']['asterisk_secret'] == '***'
     assert view['inbound']['sinch']['basic_pass'] == view['inbound']['sinch']['hmac_secret'] == '***'
+    assert view['intake']['smtp_password'] == '***'
     assert view['database']['url'] == '***'
     serialized = json.dumps(view)
     for secret in ('synthetic-admin-key', 'synthetic-phaxio-secret', 'synthetic-sinch-key', 'synthetic-sinch-secret',
                    'synthetic-documo-key', 'synthetic-humblefax-access', 'synthetic-humblefax-secret',
                    'synthetic-signalwire-token', 'synthetic-webhook-key',
                    'synthetic-ami-password', 'synthetic-esl-password', 'synthetic-inbound-secret',
-                   'synthetic-basic-password', 'synthetic-hmac-secret', 'synthetic-db-password', 'synthetic-query-secret'):
+                   'synthetic-basic-password', 'synthetic-hmac-secret', 'synthetic-db-password', 'synthetic-query-secret',
+                   'synthetic-intake-password'):
         assert secret not in serialized
 
     empty = project_admin_settings(snapshot({key: '' for key in environment}))
@@ -109,6 +112,7 @@ def test_empty_credentials_are_empty_and_all_nonempty_credentials_have_opaque_ma
     assert empty['sip']['ami_password'] == empty['fs']['esl_password'] == ''
     assert empty['inbound']['sip']['asterisk_secret'] == ''
     assert empty['inbound']['sinch']['basic_pass'] == empty['inbound']['sinch']['hmac_secret'] == ''
+    assert empty['intake']['smtp_password'] == ''
     assert empty['database']['url'] == ''
     assert empty['phaxio']['configured'] is False
     assert empty['documo']['configured'] is False
@@ -172,3 +176,28 @@ def test_editor_has_omitted_provider_and_resource_settings_and_preserves_false_z
     assert view['inbound']['retention_days'] == 0
     assert view['limits']['rate_limit_rpm'] == view['limits']['inbound_list_rpm'] == view['limits']['inbound_get_rpm'] == 0
     assert view['limits']['artifact_ttl_days'] == 0
+
+
+def test_editor_projects_delivery_routes_intake_email_and_direct_delivery_settings():
+    from api.app.config_views import project_admin_settings
+
+    view = project_admin_settings(snapshot({
+        'FAX_OUTBOUND_ROUTES': 'sip, phaxio', 'FAX_ROUTE_MIN_SUCCESS_PERCENT': '0',
+        'INTAKE_EMAIL_ENABLED': 'true', 'INTAKE_SMTP_HOST': 'smtp.example.invalid', 'INTAKE_SMTP_PORT': '465',
+        'INTAKE_SMTP_SECURITY': 'tls', 'INTAKE_SMTP_USERNAME': 'fax', 'INTAKE_EMAIL_FROM': 'fax@example.invalid',
+        'INTAKE_EMAIL_TO': 'desk@example.invalid', 'INTAKE_EMAIL_SUBJECT': 'Fax for {to_number}',
+        'DIRECT_DELIVERY_ENABLED': 'false', 'DIRECT_ORGANIZATION': 'County Clinic', 'DIRECT_FAX_NUMBER': '+12025550123',
+    }))
+    # The raw list is kept as written so an editor can show and save it unchanged.
+    assert view['routing'] == {'outbound_routes': 'sip, phaxio', 'min_success_percent': 0}
+    assert view['intake'] == {
+        'email_enabled': True, 'smtp_host': 'smtp.example.invalid', 'smtp_port': 465, 'smtp_security': 'tls',
+        'smtp_username': 'fax', 'smtp_password': '', 'email_from': 'fax@example.invalid',
+        'email_to': 'desk@example.invalid', 'email_subject': 'Fax for {to_number}',
+    }
+    assert view['direct'] == {'enabled': False, 'organization': 'County Clinic', 'fax_number': '+12025550123'}
+
+    defaults = project_admin_settings(snapshot())
+    assert defaults['routing'] == {'outbound_routes': '', 'min_success_percent': 80}
+    assert defaults['intake']['email_enabled'] is False and defaults['intake']['smtp_port'] == 587
+    assert defaults['direct'] == {'enabled': False, 'organization': '', 'fax_number': ''}

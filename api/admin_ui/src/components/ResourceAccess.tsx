@@ -189,7 +189,7 @@ function AssignmentsSection({ client, canManage }: { client: AdminAPIClient; can
           </TableContainer>
         )}
 
-      <FormDialog open={draft !== null} title="Give access" submitLabel="Give access" busy={busy} error={error}
+      <FormDialog client={client} open={draft !== null} title="Give access" submitLabel="Give access" busy={busy} error={error}
         canSubmit={Boolean(draft?.subject && draft.roleId && draft.resourceId)} onSubmit={() => void submit()}
         onClose={() => setDraft(null)} onReload={() => void reloadAll()}>
         {draft && data && (
@@ -204,7 +204,7 @@ function AssignmentsSection({ client, canManage }: { client: AdminAPIClient; can
         )}
       </FormDialog>
 
-      <ConfirmDialog open={removing !== null} title="Remove access?"
+      <ConfirmDialog client={client} open={removing !== null} title="Remove access?"
         text={removing ? `${removing.subject.name} loses ${removing.role.name} on ${resourceLabel(removing.resource).toLowerCase()}.` : ''}
         confirmLabel="Remove" danger busy={busy} error={error} onConfirm={() => void remove()} onCancel={() => setRemoving(null)} onReload={() => void reloadAll()} />
     </Box>
@@ -223,6 +223,8 @@ function MailboxesSection({ client, canManage }: { client: AdminAPIClient; canMa
     setError(null);
     try {
       if (change) {
+        // A one-click change starts now; act on the current access policy.
+        await client.refreshPolicy();
         await client.updateMailbox(change.mailbox.id, { enabled: change.enabled, version: change.mailbox.version });
       } else if (draft?.mailboxId) {
         const mailbox = data?.find((m) => m.id === draft.mailboxId);
@@ -296,7 +298,7 @@ function MailboxesSection({ client, canManage }: { client: AdminAPIClient; canMa
             </Table>
           </TableContainer>
         )}
-      <FormDialog open={draft !== null} title={draft?.mailboxId ? 'Rename mailbox' : 'Add mailbox'}
+      <FormDialog client={client} open={draft !== null} title={draft?.mailboxId ? 'Rename mailbox' : 'Add mailbox'}
         submitLabel={draft?.mailboxId ? 'Save' : 'Add mailbox'} busy={busy} error={error}
         canSubmit={Boolean(draft?.label.trim())} onSubmit={() => void save()} onClose={() => setDraft(null)} onReload={() => void reloadAll()}>
         {draft && (
@@ -395,7 +397,7 @@ function NumbersSection({ client, canManage }: { client: AdminAPIClient; canMana
             </Table>
           </TableContainer>
         )}
-      <FormDialog open={draft !== null} title={draft?.ruleId ? 'Edit fax number' : 'Add fax number'}
+      <FormDialog client={client} open={draft !== null} title={draft?.ruleId ? 'Edit fax number' : 'Add fax number'}
         submitLabel={draft?.ruleId ? 'Save' : 'Add number'} busy={busy} error={error}
         canSubmit={Boolean(draft?.toNumber.trim() && draft.mailboxId)} onSubmit={() => void save()} onClose={() => setDraft(null)}
         onReload={() => void reloadAll()}>

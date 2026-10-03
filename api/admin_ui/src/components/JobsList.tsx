@@ -34,6 +34,8 @@ import {
 import { Refresh as RefreshIcon } from '@mui/icons-material';
 import AdminAPIClient from '../api/client';
 import type { FaxJob, OperatorDelivery, DeliveryHistoryEvent } from '../api/types';
+import type { DirectDeliveryRecord } from '../api/deliveryTypes';
+import { ROUTE_LABELS } from './delivery/DeliverySettings';
 
 interface JobsListProps {
   client: AdminAPIClient;
@@ -89,6 +91,8 @@ const eventLabels: Record<string, string> = {
   late_observation: 'Late provider update',
   provider_observed: 'Provider status update',
   operator_identity_bound: 'Provider fax ID added',
+  route_assigned: 'Route chosen',
+  route_fallback: 'Trying the next route',
 };
 
 const categoryLabels: Record<string, string> = {
@@ -101,7 +105,35 @@ const categoryLabels: Record<string, string> = {
   preparation_failed: 'Could not prepare fax',
   profile_mismatch: 'Provider account did not match',
   sid_mismatch: 'Provider fax ID did not match',
+  provider_failed: 'The provider reported that the fax failed',
+  partner_not_received: 'The direct delivery partner did not receive it',
 };
+
+// How a fax went by direct delivery, from the partner's answer. The direct
+// record's message id is the delivery attempt id; a fax that fell back to
+// fax after a refusal has the direct attempt among its earlier events.
+type DirectOutcome = { text: string; severity: 'success' | 'info' | 'warning'; hideFaxId: boolean };
+
+function directOutcome(delivery: OperatorDelivery | null, records: DirectDeliveryRecord[] | null): DirectOutcome | null {
+  if (!delivery || !records) return null;
+  const current = delivery.attempt?.id ?? null;
+  const attempts = new Set([current, ...delivery.events.map((event) => event.attempt_id)].filter(Boolean));
+  const sent = records.filter((record) => record.direction === 'outbound' && attempts.has(record.message_id));
+  const forCurrent = sent.find((record) => record.message_id === current);
+  const partner = (record: DirectDeliveryRecord) => record.partner || 'the partner';
+  if (forCurrent?.state === 'accepted') {
+    return { text: `Delivered directly to ${partner(forCurrent)}.`, severity: 'success', hideFaxId: true };
+  }
+  if (forCurrent && (forCurrent.state === 'sending' || forCurrent.state === 'uncertain')) {
+    return { text: "Waiting for the partner's answer.", severity: 'info', hideFaxId: true };
+  }
+  // A refusal means nothing reached the partner and the fax went by fax, which
+  // may still need its provider fax ID.
+  if (sent.some((record) => record.state === 'refused')) {
+    return { text: 'Direct delivery refused, sent by fax instead.', severity: 'warning', hideFaxId: false };
+  }
+  return null;
+}
 
 function eventDetails(event: DeliveryHistoryEvent): string {
   const details = event.details;
@@ -111,6 +143,7 @@ function eventDetails(event: DeliveryHistoryEvent): string {
     details.dispatch_mode && `Sending mode: ${statusLabel(details.dispatch_mode)}`,
     details.actor && `Operator: ${details.actor}`,
     details.provider_sid && `Provider fax ID: ${details.provider_sid}`,
+    details.route && `Route: ${ROUTE_LABELS[details.route] ?? (details.route === 'direct' ? 'Direct delivery' : details.route)}`,
     details.legacy_status && `Earlier status: ${details.legacy_status}`,
   ].filter(Boolean).join(' • ');
 }
@@ -128,6 +161,7 @@ function JobsList({ client }: JobsListProps) {
   const [jobActionError, setJobActionError] = useState<string | null>(null);
   const [jobActionMessage, setJobActionMessage] = useState<string | null>(null);
   const [delivery, setDelivery] = useState<OperatorDelivery | null>(null);
+  const [directRecords, setDirectRecords] = useState<DirectDeliveryRecord[] | null>(null);
   const [deliveryError, setDeliveryError] = useState<string | null>(null);
   const [detailBusy, setDetailBusy] = useState(false);
   const [reviewRequired, setReviewRequired] = useState(true);
@@ -230,10 +264,12 @@ function JobsList({ client }: JobsListProps) {
     setOriginalAccountConfirmed(false);
     setReviewRequired(true);
     setDeliveryError(null);
-    const [jobResult, deliveryResult] = await Promise.allSettled([
-      client.getJob(selection.jobId), client.getDelivery(selection.jobId),
+    const [jobResult, deliveryResult, directResult] = await Promise.allSettled([
+      client.getJob(selection.jobId), client.getDelivery(selection.jobId), client.listDirectDeliveries(),
     ]);
     if (detailSelectionRef.current !== selection) return false;
+    // Direct delivery records need settings access; without them the dialog works as before.
+    setDirectRecords(directResult.status === 'fulfilled' ? directResult.value.deliveries : null);
     if (jobResult.status === 'fulfilled') setSelectedJob(jobResult.value);
     else setJobActionError(jobResult.reason instanceof Error ? jobResult.reason.message : "Couldn't load job details. Select Reload Delivery to try again.");
     if (deliveryResult.status === 'fulfilled') setDelivery(deliveryResult.value);
@@ -311,7 +347,7 @@ function JobsList({ client }: JobsListProps) {
 
   const handleAttachProviderIdentity = async () => {
     const selection = detailSelectionRef.current;
-    if (!selection || !delivery?.can_bind_provider_identity || reviewRequired
+    if (!selection || !canAttachFaxId || !delivery || reviewRequired
         || !selectedJob || !validProviderId || !originalAccountConfirmed) return;
     const action = beginDetailAction(selection);
     if (!action) return;
@@ -367,6 +403,9 @@ function JobsList({ client }: JobsListProps) {
       }
     } finally { finishDetailAction(selection, action); }
   };
+
+  const direct = directOutcome(delivery, directRecords);
+  const canAttachFaxId = Boolean(delivery?.can_bind_provider_identity) && !direct?.hideFaxId;
 
   const detailJob = selectedJob && delivery
     && delivery.version >= (selectedJob.delivery_version ?? 0) ? {
@@ -647,6 +686,7 @@ function JobsList({ client }: JobsListProps) {
             Select Reload Delivery to see the latest details before adding a fax ID.
           </Alert>}
           {delivery && <>
+            {direct && <Alert severity={direct.severity} sx={{ mb: 2 }}>{direct.text}</Alert>}
             <List dense>
               <ListItem><ListItemText primary="Original Provider" secondary={delivery.provider_id ?? 'Unavailable'} /></ListItem>
               <ListItem><ListItemText primary="Original Provider Account" secondary={delivery.profile_id ?? 'Unavailable'} /></ListItem>
@@ -658,11 +698,11 @@ function JobsList({ client }: JobsListProps) {
               <ListItem><ListItemText primary="Submitted" secondary={delivery.attempt.submitted_at ? formatDate(delivery.attempt.submitted_at) : 'Not yet'} /></ListItem>
               <ListItem><ListItemText primary="Completed" secondary={delivery.attempt.completed_at ? formatDate(delivery.attempt.completed_at) : 'Not yet'} /></ListItem>
             </List> : <Typography variant="body2" color="text.secondary" sx={{ my: 1 }}>No send attempts yet.</Typography>}
-            {!delivery.can_bind_provider_identity && delivery.state === 'reconciliation_required' && <Typography
+            {!delivery.can_bind_provider_identity && !direct?.hideFaxId && delivery.state === 'reconciliation_required' && <Typography
               variant="body2" color="text.secondary" sx={{ my: 2 }}>
               A provider fax ID can't be added to this fax from here.
             </Typography>}
-            {delivery.can_bind_provider_identity && selectedJob && <Box component="form"
+            {canAttachFaxId && selectedJob && <Box component="form"
               onSubmit={(event) => { event.preventDefault(); void handleAttachProviderIdentity(); }} sx={{ my: 2 }}>
               <Typography variant="subtitle1" component="h3" gutterBottom>Attach Confirmed Provider Fax ID</Typography>
               <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>

@@ -1,0 +1,76 @@
+import { describe, expect, it, vi } from 'vitest';
+import { fireEvent, render, screen } from '@testing-library/react';
+import { http, HttpResponse } from 'msw';
+import AdminAPIClient from '../api/client';
+import Dashboard from '../components/Dashboard';
+import { server } from '../test/server';
+
+const client = () => new AdminAPIClient({ kind: 'key', key: 'synthetic-key' });
+
+const provider = (provider_id: string, label: string, amount: string) => ({
+  provider_id, label, attempts: 4, successes: 4, failures: 0, uncertain: 0, billed_minutes: 6, billed_pages: 12,
+  estimated_cost: [{ currency: 'USD', amount }], reported_cost: [], settled_cost: [], attempts_without_reported_cost: 4,
+});
+
+const peer = (id: string, state: string) => ({
+  id, organization: id, fax_number: '+15550100001', endpoint: 'https://partner.example', state, status: '', code_sent: false,
+  code_expires_at: null, verified_at: null, expires_at: null, version: 1,
+});
+
+describe('Dashboard delivery cards', () => {
+  it('shows spending by provider, email delivery counts and verified partners, each opening its screen', async () => {
+    server.use(
+      http.get('/routing/costs', () => HttpResponse.json({ since: '2026-09-03T00:00:00', providers: [
+        provider('sip', 'Your SIP trunk (Asterisk)', '1.25'), provider('phaxio', 'Phaxio', '3.50'),
+      ] })),
+      http.get('/intake/items', () => HttpResponse.json({ items: [], counts: { received: 2, sending: 1, delivered: 40, failed: 1 } })),
+      http.get('/direct/peers', () => HttpResponse.json({ peers: [peer('a', 'verified'), peer('b', 'verified'), peer('c', 'pending'), peer('d', 'revoked')] })),
+    );
+    const navigate = vi.fn();
+    render(<Dashboard client={client()} onNavigate={navigate} />);
+
+    const spending = await screen.findByRole('button', { name: 'Spending, last 30 days' });
+    expect(spending.textContent).toContain('Your SIP trunk (Asterisk)$1.25');
+    expect(spending.textContent).toContain('Phaxio$3.50');
+    expect(spending.textContent).toContain('Total$4.75');
+
+    const delivery = await screen.findByRole('button', { name: 'Email delivery' });
+    expect(delivery.textContent).toContain('Waiting3');
+    expect(delivery.textContent).toContain('Delivered40');
+    expect(delivery.textContent).toContain('Not delivered1');
+
+    const partners = await screen.findByRole('button', { name: 'Direct partners' });
+    expect(partners.textContent).toContain('Verified2');
+    expect(partners.textContent).toContain('Waiting for verification1');
+
+    fireEvent.click(spending);
+    fireEvent.click(delivery);
+    fireEvent.click(partners);
+    expect(navigate.mock.calls.map(([destination]) => destination)).toEqual(['routes', 'inbox', 'routes']);
+  });
+
+  it('says a card is not available to this account when permission is missing', async () => {
+    const denied = () => HttpResponse.json({ detail: 'This operation is not permitted.' }, { status: 403 });
+    server.use(http.get('/routing/costs', denied), http.get('/intake/items', denied), http.get('/direct/peers', denied));
+    const navigate = vi.fn();
+    render(<Dashboard client={client()} onNavigate={navigate} />);
+    expect(await screen.findAllByText('Not available to this account.')).toHaveLength(3);
+    expect(screen.queryByRole('button', { name: 'Spending, last 30 days' })).toBeNull();
+    fireEvent.click(screen.getByText('Spending, last 30 days'));
+    expect(navigate).not.toHaveBeenCalled();
+  });
+
+  it('says plainly when nothing was sent', async () => {
+    render(<Dashboard client={client()} />);
+    expect(await screen.findByText('No faxes sent in the last 30 days.')).toBeTruthy();
+  });
+});
+
+describe('Dashboard authentication', () => {
+  it('states authentication is required and never that it is optional', async () => {
+    render(<Dashboard client={client()} />);
+    expect(await screen.findByText('Authentication required')).toBeTruthy();
+    expect(screen.queryByText('Auth Optional')).toBeNull();
+    expect(screen.queryByText('Require API Key')).toBeNull();
+  });
+});
