@@ -82,8 +82,12 @@ class CapturedCallbacks:
             else:
                 sid, status = _one(fields, {'FaxSid', 'sid'}), _one(fields, {'FaxStatus', 'status'})
             status = normalize_status(status)
-            event = json.dumps({'fields': fields, 'files': [(name, hashlib.sha256(data).hexdigest())
-                for name, data in files]}, sort_keys=True, separators=(',', ':'))
+            # Match signature ordering: distinct names may move, but repeated
+            # names retain their signed wire order. Never sort their values.
+            event = json.dumps({'fields': sorted(fields, key=lambda part: part[0]),
+                'files': [(name, hashlib.sha256(data).hexdigest())
+                          for name, data in sorted(files, key=lambda part: part[0])]},
+                sort_keys=True, separators=(',', ':'))
             key = 'callback:' + hashlib.sha256(event.encode()).hexdigest()
         except (TypeError, ValueError):
             raise CallbackRejected() from None
