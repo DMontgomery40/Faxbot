@@ -74,6 +74,7 @@ def test_empty_credentials_are_empty_and_all_nonempty_credentials_have_opaque_ma
         'API_KEY': 'synthetic-admin-key', 'PHAXIO_API_KEY': 'k', 'PHAXIO_API_SECRET': 'synthetic-phaxio-secret',
         'SINCH_API_KEY': 'synthetic-sinch-key', 'SINCH_API_SECRET': 'synthetic-sinch-secret',
         'DOCUMO_API_KEY': 'synthetic-documo-key', 'SIGNALWIRE_API_TOKEN': 'synthetic-signalwire-token',
+        'HUMBLEFAX_ACCESS_KEY': 'synthetic-humblefax-access', 'HUMBLEFAX_SECRET_KEY': 'synthetic-humblefax-secret',
         'SIGNALWIRE_WEBHOOK_SIGNING_KEY': 'synthetic-webhook-key', 'ASTERISK_AMI_PASSWORD': 'synthetic-ami-password',
         'FREESWITCH_ESL_PASSWORD': 'synthetic-esl-password', 'ASTERISK_INBOUND_SECRET': 'synthetic-inbound-secret',
         'SINCH_INBOUND_BASIC_PASS': 'synthetic-basic-password', 'SINCH_INBOUND_HMAC_SECRET': 'synthetic-hmac-secret',
@@ -84,6 +85,7 @@ def test_empty_credentials_are_empty_and_all_nonempty_credentials_have_opaque_ma
     assert view['phaxio']['api_key'] == view['phaxio']['api_secret'] == '***'
     assert view['sinch']['api_key'] == view['sinch']['api_secret'] == '***'
     assert view['documo']['api_key'] == '***'
+    assert view['humblefax']['access_key'] == view['humblefax']['secret_key'] == '***'
     assert view['signalwire']['api_token'] == view['signalwire']['webhook_signing_key'] == '***'
     assert view['sip']['ami_password'] == view['fs']['esl_password'] == '***'
     assert view['inbound']['sip']['asterisk_secret'] == '***'
@@ -91,7 +93,8 @@ def test_empty_credentials_are_empty_and_all_nonempty_credentials_have_opaque_ma
     assert view['database']['url'] == '***'
     serialized = json.dumps(view)
     for secret in ('synthetic-admin-key', 'synthetic-phaxio-secret', 'synthetic-sinch-key', 'synthetic-sinch-secret',
-                   'synthetic-documo-key', 'synthetic-signalwire-token', 'synthetic-webhook-key',
+                   'synthetic-documo-key', 'synthetic-humblefax-access', 'synthetic-humblefax-secret',
+                   'synthetic-signalwire-token', 'synthetic-webhook-key',
                    'synthetic-ami-password', 'synthetic-esl-password', 'synthetic-inbound-secret',
                    'synthetic-basic-password', 'synthetic-hmac-secret', 'synthetic-db-password', 'synthetic-query-secret'):
         assert secret not in serialized
@@ -101,6 +104,7 @@ def test_empty_credentials_are_empty_and_all_nonempty_credentials_have_opaque_ma
     assert empty['phaxio']['api_key'] == empty['phaxio']['api_secret'] == ''
     assert empty['sinch']['api_key'] == empty['sinch']['api_secret'] == ''
     assert empty['documo']['api_key'] == empty['signalwire']['api_token'] == ''
+    assert empty['humblefax']['access_key'] == empty['humblefax']['secret_key'] == ''
     assert empty['signalwire']['webhook_signing_key'] == ''
     assert empty['sip']['ami_password'] == empty['fs']['esl_password'] == ''
     assert empty['inbound']['sip']['asterisk_secret'] == ''
@@ -108,6 +112,7 @@ def test_empty_credentials_are_empty_and_all_nonempty_credentials_have_opaque_ma
     assert empty['database']['url'] == ''
     assert empty['phaxio']['configured'] is False
     assert empty['documo']['configured'] is False
+    assert empty['humblefax']['configured'] is False
     assert empty['signalwire']['configured'] is False
 
 

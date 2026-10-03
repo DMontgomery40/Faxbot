@@ -73,6 +73,9 @@ function editorValues(data: SettingsType): SettingsForm {
     documo_api_key: data.documo?.api_key ?? '',
     documo_base_url: data.documo?.base_url ?? '',
     documo_use_sandbox: data.documo?.sandbox ?? false,
+    humblefax_access_key: data.humblefax?.access_key ?? '',
+    humblefax_secret_key: data.humblefax?.secret_key ?? '',
+    humblefax_from_number: data.humblefax?.from_number ?? '',
     ami_host: data.sip.ami_host,
     ami_port: data.sip.ami_port,
     ami_username: data.sip.ami_username,
@@ -406,6 +409,7 @@ function Settings({ client }: SettingsProps) {
                 { value: 'sinch', label: 'Sinch' },
                 { value: 'signalwire', label: 'SignalWire' },
                 { value: 'documo', label: 'Documo' },
+                { value: 'humblefax', label: 'HumbleFax' },
                 { value: 'sip', label: 'SIP/Asterisk' },
                 { value: 'freeswitch', label: 'FreeSWITCH' }
               ]}
@@ -425,6 +429,7 @@ function Settings({ client }: SettingsProps) {
                 { value: 'sinch', label: 'Sinch (Cloud)' },
                 { value: 'signalwire', label: 'SignalWire (Cloud)' },
                 { value: 'documo', label: 'Documo (Cloud)' },
+                { value: 'humblefax', label: 'HumbleFax (Cloud)' },
                 { value: 'sip', label: 'SIP/Asterisk (Self-hosted)' },
                 { value: 'freeswitch', label: 'FreeSWITCH (Self-hosted)' }
               ]}
@@ -656,6 +661,37 @@ function Settings({ client }: SettingsProps) {
                       ]}
                       showCurrentValue={false}
                     />
+                  </ResponsiveSettingSection>
+                )}
+
+                {providerSelected('humblefax') && (
+                  <ResponsiveSettingSection
+                    title="HumbleFax Configuration"
+                    subtitle="Configure your HumbleFax API keys"
+                  >
+                    <ResponsiveSettingItem
+                      icon={getStatusIcon(!!settings?.humblefax?.configured)}
+                      label="HumbleFax Access Key"
+                      value={settings?.humblefax?.configured ? 'Configured' : ''}
+                      editValue={form.humblefax_access_key ?? ''}
+                      helperText="Enter the access key from your HumbleFax account."
+                      placeholder="HUMBLEFAX_ACCESS_KEY"
+                      onChange={(value) => handleForm('humblefax_access_key', value)}
+                      type="password"
+                      showCurrentValue={!pendingRestart && (settings?.humblefax?.configured)}
+                    />
+                    <ResponsiveSettingItem
+                      icon={getStatusIcon(!!settings?.humblefax?.configured)}
+                      label="HumbleFax Secret Key"
+                      value={settings?.humblefax?.configured ? 'Configured' : ''}
+                      editValue={form.humblefax_secret_key ?? ''}
+                      helperText="Enter the secret key from your HumbleFax account."
+                      placeholder="HUMBLEFAX_SECRET_KEY"
+                      onChange={(value) => handleForm('humblefax_secret_key', value)}
+                      type="password"
+                      showCurrentValue={!pendingRestart && (settings?.humblefax?.configured)}
+                    />
+                    {textField('HumbleFax From Number', 'humblefax_from_number', 'Optional. 10 digits, or 11 digits starting with 1. Leave empty to use the account default number.')}
                   </ResponsiveSettingSection>
                 )}
 

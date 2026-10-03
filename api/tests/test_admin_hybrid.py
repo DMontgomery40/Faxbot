@@ -108,3 +108,41 @@ def test_export_env_preserves_explicit_and_inherited_directional_values(isolated
         content3 = parse_environment(r3.json()["env_content"], allowed_keys=ConfigurationValues.environment_keys())
         assert content3["FAX_OUTBOUND_BACKEND"] == "sinch"
         assert content3["FAX_INBOUND_BACKEND"] == "sip"
+
+
+def test_humblefax_is_reported_configured_and_listed_like_other_cloud_providers(isolated_installation, monkeypatch):
+    monkeypatch.setenv("API_KEY", "bootstrap_admin_only")
+    monkeypatch.setenv("PUBLIC_API_URL", "https://testserver")
+    monkeypatch.setenv("FAXBOT_CONSOLE_ORIGINS", "https://testserver")
+    monkeypatch.setenv("FEATURE_V3_PLUGINS", "true")
+    monkeypatch.setenv("FAX_BACKEND", "humblefax")
+    monkeypatch.setenv("HUMBLEFAX_ACCESS_KEY", "synthetic-humblefax-access")
+    monkeypatch.setenv("HUMBLEFAX_SECRET_KEY", "synthetic-humblefax-secret")
+
+    with TestClient(app, base_url="https://testserver") as client:
+        config = client.get("/admin/config", headers=_admin_headers())
+        assert config.status_code == 200
+        assert config.json()["backend_configured"]["humblefax"] is True
+        assert config.json()["backend_configured"]["documo"] is False
+        assert "synthetic-humblefax" not in config.text
+
+        plugins = client.get("/plugins", headers=_admin_headers())
+        assert plugins.status_code == 200
+        items = {item["id"]: item for item in plugins.json()["items"]}
+        assert items["humblefax"]["categories"] == items["documo"]["categories"] == ["outbound"]
+        assert items["humblefax"]["capabilities"] == items["documo"]["capabilities"] == ["send", "get_status"]
+        assert items["humblefax"]["enabled"] is True
+        assert items["documo"]["enabled"] is False
+
+
+def test_humblefax_needs_both_keys_to_count_as_configured(isolated_installation, monkeypatch):
+    monkeypatch.setenv("API_KEY", "bootstrap_admin_only")
+    monkeypatch.setenv("PUBLIC_API_URL", "https://testserver")
+    monkeypatch.setenv("FAXBOT_CONSOLE_ORIGINS", "https://testserver")
+    monkeypatch.setenv("FAX_BACKEND", "phaxio")
+    monkeypatch.setenv("HUMBLEFAX_ACCESS_KEY", "synthetic-humblefax-access")
+
+    with TestClient(app, base_url="https://testserver") as client:
+        config = client.get("/admin/config", headers=_admin_headers())
+        assert config.status_code == 200
+        assert config.json()["backend_configured"]["humblefax"] is False

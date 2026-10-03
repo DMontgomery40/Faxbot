@@ -15,6 +15,7 @@ Edit the desired outbound provider's fields. Unchanged stored masks preserve sec
 - Phaxio: API Key, API Secret, separate Callback Token, Status Callback URL and outbound signature verification. Set Public API URL to a reachable HTTPS endpoint. An empty status URL derives from the public URL. Verification disabled rejects outbound callback updates; original-account polling continues.
 - Sinch: Project ID, API Key and API Secret. Its direct-upload path does not need a provider-fetch PDF URL.
 - Documo: API Key and sandbox selection.
+- HumbleFax: Access Key, Secret Key and an optional From Number. HumbleFax only sends faxes, so it is not offered as an inbound provider.
 - SignalWire: Space URL, Project ID, API Token and From number; configure the signing key and other shared fields in Settings.
 - SIP/Asterisk: AMI host, port, user/password and station ID. Keep AMI private and configure the separate Asterisk trunk deployment.
 - FreeSWITCH: gateway and caller ID. Configure ESL and the result hook separately; Setup does not install a working telephony stack.
@@ -49,6 +50,7 @@ Read the result: settings are durably saved and either active or pending restart
 - [Phaxio](../setup/phaxio.md)
 - [Sinch](../setup/sinch.md)
 - [Documo](../setup/documo.md)
+- [HumbleFax](../setup/humblefax.md)
 - [SIP/Asterisk](../setup/sip-asterisk.md)
 - [FreeSWITCH](../setup/freeswitch.md)
 - [SignalWire](../setup/signalwire.md)

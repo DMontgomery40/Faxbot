@@ -257,7 +257,7 @@ def valid_backends() -> set[str]:
     keys.discard("_schema")
     if not keys:
         # Fallback to known providers to avoid treating everything as legacy
-        return {"phaxio", "sinch", "sip", "signalwire", "documo", "freeswitch"}
+        return {"phaxio", "sinch", "sip", "signalwire", "documo", "humblefax", "freeswitch"}
     return keys
 
 
