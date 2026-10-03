@@ -473,10 +473,15 @@ def _restore_postgresql(installation, source, manifest, force):
     if manifest.get('schema_revision') != HEAD:
         raise CliError('This backup was made by a different Faxbot version. Restore it with the matching version, '
                        'then upgrade.')
+    order = json.loads((source / 'database' / 'tables.json').read_text(encoding='utf-8'))['order']
     engine = engine_for(installation)
     try:
         existing = _postgresql_tables(engine)
         if existing.tables:
+            foreign = sorted(set(existing.tables) - set(order))
+            if foreign:
+                raise CliError('The target database schema also holds tables that are not part of this Faxbot '
+                               'backup. Restore into an empty database or schema.', EXIT_CONFLICT)
             if not force:
                 raise CliError('The target database already has tables. Add --force to replace them.', EXIT_CONFLICT)
             with engine.begin() as connection:
@@ -487,7 +492,6 @@ def _restore_postgresql(installation, source, manifest, force):
         except SchemaUpgradeError as error:
             raise CliError(str(error)) from None
         metadata = _postgresql_tables(engine)
-        order = json.loads((source / 'database' / 'tables.json').read_text(encoding='utf-8'))['order']
         with engine.begin() as connection:
             names = [name for name in order if name in metadata.tables and name != 'alembic_version']
             if names:

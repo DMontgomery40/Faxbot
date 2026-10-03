@@ -185,6 +185,20 @@ def test_recover_owner_then_enroll_an_owner_and_sign_in(installation):
     assert status['counts']['owners'] == 2 and status['configuration']['generation'] == 2
 
 
+def test_recovery_with_settings_waiting_for_a_restart_takes_effect_at_the_next_start(installation):
+    with installation.serve() as client:
+        staged = installation.remote_json(client, 'settings', 'set', 'artifact_ttl_days=9')
+        assert staged['_meta']['apply_state'] == 'pending_restart'
+    recovered = installation.admin_json('recover-owner', '--yes')
+    assert recovered['active_after_restart'] is True
+    secret = recovered['installation_key']
+    with installation.serve() as client:
+        assert installation.remote(client, 'me').exit_code == 3
+        assert installation.remote_json(client, 'me', key=secret)['principal']['kind'] == 'bootstrap'
+        limits = installation.remote_json(client, 'settings', 'get', 'limits', key=secret)['limits']
+        assert limits['artifact_ttl_days'] == 9
+
+
 def test_recover_owner_needs_the_installation_key_file(installation, monkeypatch, tmp_path):
     monkeypatch.setenv('FAXBOT_INSTALLATION_KEY_PATH', str(tmp_path / 'missing.key'))
     result = installation.admin('recover-owner', '--yes')
@@ -317,6 +331,13 @@ def test_postgresql_status_migrate_backup_and_restore(postgres_url, monkeypatch,
     with admin.begin() as connection:
         connection.exec_driver_sql(f'DROP SCHEMA {namespace} CASCADE')
         connection.exec_driver_sql(f'CREATE SCHEMA {namespace}')
+        connection.exec_driver_sql(f'CREATE TABLE {namespace}.someone_elses (id integer)')
+    shared = installation.admin('restore', folder, '--force')
+    assert shared.exit_code == 6 and 'not part of this Faxbot backup' in shared.stderr
+    with admin.begin() as connection:
+        assert connection.exec_driver_sql(
+            f"SELECT count(*) FROM information_schema.tables WHERE table_schema = '{namespace}'").scalar() == 1
+        connection.exec_driver_sql(f'DROP TABLE {namespace}.someone_elses')
     restored = installation.admin_json('restore', folder)
     assert restored['data_files'] == made['data_files']
     with installation.serve() as client:

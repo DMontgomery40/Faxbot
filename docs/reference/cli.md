@@ -182,6 +182,7 @@ $ faxbot jobs list [OPTIONS]
 * `--provider <str>`: Only faxes sent through this provider.
 * `--limit <int range>`: How many faxes to show.  [default: 50; 1&lt;=x&lt;=100]
 * `--offset <int range>`: Skip this many of the newest faxes.  [default: 0; x&gt;=0]
+* `--ids`: Also show fax IDs, for jobs get, pdf and refresh.
 * `--help`: Show this message and exit.
 
 ### `faxbot jobs get`
@@ -314,6 +315,7 @@ $ faxbot inbound list [OPTIONS]
 * `--to <str>`: Only faxes sent to this number.
 * `--status <str>`: Only faxes with this status.
 * `--mailbox <str>`: Only faxes in this mailbox.
+* `--ids`: Also show received fax IDs, for inbound get and pdf.
 * `--help`: Show this message and exit.
 
 ### `faxbot inbound get`
@@ -1847,6 +1849,7 @@ $ faxbot intake items [OPTIONS]
 
 * `--state <str>`: received, sending, delivered or failed.
 * `--limit <int range>`: How many to show.  [default: 100; 1&lt;=x&lt;=500]
+* `--ids`: Also show item IDs, for intake retry.
 * `--help`: Show this message and exit.
 
 ### `faxbot intake retry`
@@ -2191,6 +2194,7 @@ $ faxbot cases documents [OPTIONS] {case_id}
 **Options**:
 
 * `--to <str>`: Recipient fax number.  [required]
+* `--ids`: Also show the fax ID each document was sent in.
 * `--help`: Show this message and exit.
 
 ### `faxbot cases send`

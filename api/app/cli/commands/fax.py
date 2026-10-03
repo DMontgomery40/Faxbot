@@ -76,15 +76,17 @@ def jobs_list(status_filter: str = typer.Option(None, '--status', help='Only fax
                                                                        'SUCCESS or FAILED.'),
               provider: str = typer.Option(None, '--provider', help='Only faxes sent through this provider.'),
               limit: int = typer.Option(50, '--limit', min=1, max=100, help='How many faxes to show.'),
-              offset: int = typer.Option(0, '--offset', min=0, help='Skip this many of the newest faxes.')):
+              offset: int = typer.Option(0, '--offset', min=0, help='Skip this many of the newest faxes.'),
+              ids: bool = typer.Option(False, '--ids', help='Also show fax IDs, for jobs get, pdf and refresh.')):
     """List sent faxes, newest first. Fax numbers are partly hidden."""
     page = state.api().get('/admin/fax-jobs', params={'status': status_filter, 'backend': provider,
                                                       'limit': limit, 'offset': offset})
 
     def human(out):
-        out.table(['Fax ID', 'To', 'Status', 'Pages', 'Provider', 'Accepted'],
-                  [[job['id'], job['to_number'], job['status'], job['pages'], job['backend'],
-                    local_time(job['created_at'])] for job in page['jobs']], empty='No sent faxes.')
+        out.table((['Fax ID'] if ids else []) + ['To', 'Status', 'Pages', 'Provider', 'Accepted'],
+                  [([job['id']] if ids else []) + [job['to_number'], job['status'], job['pages'], job['backend'],
+                                                   local_time(job['created_at'])] for job in page['jobs']],
+                  empty='No sent faxes.')
         if page['total'] > offset + len(page['jobs']):
             out.line(f"Showing {len(page['jobs'])} of {page['total']}. Use --offset to see more.")
     state.out().result(page, human)
@@ -183,14 +185,15 @@ def _inbound_fields(item):
 @inbound.command('list')
 def inbound_list(to_number: str = typer.Option(None, '--to', help='Only faxes sent to this number.'),
                  status_filter: str = typer.Option(None, '--status', help='Only faxes with this status.'),
-                 mailbox: str = typer.Option(None, '--mailbox', help='Only faxes in this mailbox.')):
+                 mailbox: str = typer.Option(None, '--mailbox', help='Only faxes in this mailbox.'),
+                 ids: bool = typer.Option(False, '--ids', help='Also show received fax IDs, for inbound get and pdf.')):
     """List received faxes you can see."""
     items = state.api().get('/inbound', params={'to_number': to_number, 'status': status_filter, 'mailbox': mailbox})
     state.out().result(items, lambda out: out.table(
-        ['Received fax ID', 'From', 'To', 'Pages', 'Mailbox', 'Received'],
-        [[item['id'], item.get('fr'), item.get('to'), item.get('pages'), item.get('mailbox'),
-          local_time(item.get('received_at') or item.get('created_at'))] for item in items],
-        empty='No received faxes.'))
+        (['Received fax ID'] if ids else []) + ['From', 'To', 'Pages', 'Mailbox', 'Received'],
+        [([item['id']] if ids else []) + [item.get('fr'), item.get('to'), item.get('pages'), item.get('mailbox'),
+                                          local_time(item.get('received_at') or item.get('created_at'))]
+         for item in items], empty='No received faxes.'))
 
 
 @inbound.command('get')

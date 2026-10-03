@@ -47,7 +47,7 @@ faxbot --url https://fax.example.com config set-profile clinic
 
 You are asked for the API key without it being shown. Profiles live in `~/.config/faxbot/config.toml`, which only you can read (mode 600). Saving a profile makes it the default unless you add `--no-use`; choose another with `--profile NAME`, `FAXBOT_PROFILE`, or `faxbot config use NAME`. `faxbot config show` lists profiles without showing keys.
 
-The order is: `--url` and `--key`, then `FAXBOT_URL` and `FAXBOT_API_KEY`, then the profile, then `http://localhost:8080`.
+The order is: `--url` and `--key`, then `FAXBOT_URL` and `FAXBOT_API_KEY`, then the profile, then `http://localhost:8080`. A saved key is only ever sent to the address saved with it: when `--url` or `FAXBOT_URL` names a different server, give that server's key with `--key` or `FAXBOT_API_KEY`.
 
 ## Everyday use
 

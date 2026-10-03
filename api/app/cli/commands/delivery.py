@@ -155,14 +155,17 @@ def routing_rate_cards(replace: str = typer.Option(None, '--replace', metavar='F
 
 @intake.command('items')
 def intake_items(state_filter: str = typer.Option(None, '--state', help='received, sending, delivered or failed.'),
-                 limit: int = typer.Option(100, '--limit', min=1, max=500, help='How many to show.')):
+                 limit: int = typer.Option(100, '--limit', min=1, max=500, help='How many to show.'),
+                 ids: bool = typer.Option(False, '--ids', help='Also show item IDs, for intake retry.')):
     """List received documents and their delivery, newest first."""
     result = state.api().get('/intake/items', params={'state': state_filter, 'limit': limit})
 
     def human(out):
-        out.table(['Item ID', 'Received', 'From', 'To', 'Pages', 'Delivery', 'Status', 'Needs action'],
-                  [[item['id'], local_time(item['received_at']), item.get('from_number'), item.get('to_number'),
-                    item.get('pages'), item.get('connector'), item['status'], item['needs_action']]
+        out.table((['Item ID'] if ids else []) + ['Received', 'From', 'To', 'Pages', 'Delivery', 'Status',
+                                                  'Needs action'],
+                  [([item['id']] if ids else []) + [local_time(item['received_at']), item.get('from_number'),
+                                                    item.get('to_number'), item.get('pages'), item.get('connector'),
+                                                    item['status'], item['needs_action']]
                    for item in result.get('items', [])], empty='The intake queue is empty.')
         counts = result.get('counts', {})
         out.line(', '.join(f'{count} {name}' for name, count in counts.items()))
@@ -362,15 +365,16 @@ def direct_deliveries():
 
 @cases.command('documents')
 def cases_documents(case_id: str = typer.Argument(..., help='Your case reference.'),
-                    to: str = typer.Option(..., '--to', help='Recipient fax number.')):
+                    to: str = typer.Option(..., '--to', help='Recipient fax number.'),
+                    ids: bool = typer.Option(False, '--ids', help='Also show the fax ID each document was sent in.')):
     """List the documents of a case already sent to a recipient, and which they accepted."""
     result = state.api().get(f'/cases/{segment(case_id)}/documents', params={'to': to})
 
     def human(out):
         out.line(f"Recipient accepts references: {text(result.get('accepts_references'))}")
-        out.table(['Document', 'Pages', 'Accepted', 'Reference', 'Fax ID'],
-                  [[item['title'], item['pages'], local_time(item.get('accepted_at'), empty='no'), item['reference'],
-                    item.get('fax_id')] for item in result.get('documents', [])],
+        out.table(['Document', 'Pages', 'Accepted', 'Reference'] + (['Fax ID'] if ids else []),
+                  [[item['title'], item['pages'], local_time(item.get('accepted_at'), empty='no'), item['reference']]
+                   + ([item.get('fax_id')] if ids else []) for item in result.get('documents', [])],
                   empty='Nothing has been sent for this case to this recipient.')
     state.out().result(result, human)
 

@@ -5,6 +5,7 @@ import sys
 
 from rich.console import Console
 from rich.table import Table
+from rich.text import Text
 from rich import box
 
 
@@ -64,7 +65,8 @@ class Output:
     @property
     def console(self):
         # Created per call so a replaced sys.stdout (tests, pipes) is honoured.
-        return Console(file=sys.stdout, highlight=False, soft_wrap=False)
+        # Names, notes and errors come from the server: never read them as markup or emoji codes.
+        return Console(file=sys.stdout, highlight=False, soft_wrap=False, markup=False, emoji=False)
 
     def json(self, data):
         sys.stdout.write(json.dumps(data, indent=2, default=str, ensure_ascii=False) + '\n')
@@ -93,11 +95,12 @@ class Output:
         if not rows:
             self.line(empty)
             return
-        table = Table(title=title, box=box.SIMPLE_HEAD, show_lines=False, title_justify='left')
+        table = Table(title=Text(title) if title else None, box=box.SIMPLE_HEAD, show_lines=False,
+                      title_justify='left')
         for column in columns:
-            table.add_column(column, overflow='fold')
+            table.add_column(Text(column), overflow='fold')
         for row in rows:
-            table.add_row(*[text(cell) for cell in row])
+            table.add_row(*[Text(text(cell)) for cell in row])
         self.console.print(table)
 
     def fields(self, pairs, *, title=None):
@@ -106,7 +109,7 @@ class Output:
         table.add_column('Field', style='bold', no_wrap=True)
         table.add_column('Value', overflow='fold')
         for label, value in pairs:
-            table.add_row(label, text(value))
+            table.add_row(Text(label), Text(text(value)))
         self.console.print(table)
 
 

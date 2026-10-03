@@ -76,8 +76,11 @@ def main(
     out = Output(json_mode=json_output, quiet=quiet)
     document = profiles.load()
     name, saved = profiles.select(document, profile)
-    ctx.obj = state.begin(ctx, State(url=(url or saved.get('url') or profiles.DEFAULT_URL).rstrip('/'),
-                                     key=key or saved.get('key') or None, profile=name, out=out,
+    saved_url = (saved.get('url') or profiles.DEFAULT_URL).rstrip('/')
+    address = (url or saved_url).rstrip('/')
+    # A saved key is sent only to the server it was saved for, never to another --url or FAXBOT_URL.
+    saved_key = saved.get('key') if address == saved_url else None
+    ctx.obj = state.begin(ctx, State(url=address, key=key or saved_key or None, profile=name, out=out,
                                      client_factory=supplied.get('client_factory')))
 
 

@@ -174,7 +174,8 @@ def test_send_status_jobs_and_documents(cli, tmp_path):
     listing = cli.json('jobs', 'list')
     assert listing['total'] == 2 and all(job['to_number'].startswith('*') for job in listing['jobs'])
     table = cli('jobs', 'list')
-    assert table.exit_code == 0 and sent['id'] in table.stdout
+    assert table.exit_code == 0 and sent['id'] not in table.stdout and '+15551230001' not in table.stdout
+    assert sent['id'] in cli('jobs', 'list', '--ids').stdout
     assert cli.json('jobs', 'get', sent['id'])['id'] == sent['id']
     history = cli.json('jobs', 'history', sent['id'])
     assert history['state'] == 'held'
@@ -201,6 +202,7 @@ def test_received_faxes_simulate_list_get_and_download(cli, tmp_path):
     inbound_id = cli.json('inbound', 'simulate', '--from', '+15559990000', '--to', '+15551112222')['id']
     items = cli.json('inbound', 'list')
     assert [item['id'] for item in items] == [inbound_id]
+    assert inbound_id not in cli('inbound', 'list').stdout and inbound_id in cli('inbound', 'list', '--ids').stdout
     assert cli.json('inbound', 'get', inbound_id)['to'] == '+15551112222'
     target = tmp_path / 'received.pdf'
     cli.json('inbound', 'pdf', inbound_id, '--output', target)
@@ -282,6 +284,18 @@ def test_users_groups_roles_access_mailboxes_numbers_audit_and_sessions(cli, ser
     assert sessions[0]['session_id'] not in cli('sessions', 'list', '--for', 'alice').stdout
     assert cli.json('sessions', 'revoke', sessions[0]['session_id'])['changed'] is True
     assert cli.json('sessions', 'list', '--for', 'alice')[0]['revoked_at'] is not None
+
+
+def test_names_from_the_server_are_printed_exactly(cli):
+    name = 'Desk [a] [/] x :warning:'
+    cli.json('users', 'add', 'desk', '--name', name)
+    cli.json('groups', 'add', 'Night [b] shift')
+    cli.json('groups', 'members', 'add', 'Night [b] shift', 'desk')
+    for args in (('users', 'list'), ('users', 'get', 'desk'), ('groups', 'get', 'Night [b] shift')):
+        result = cli(*args)
+        assert result.exit_code == 0, (args, result.stderr)
+        assert name in result.stdout, args
+    assert 'Night [b] shift' in cli('groups', 'list').stdout
 
 
 def test_management_is_refused_without_permission_and_after_policy_change(cli):
@@ -496,6 +510,10 @@ def test_profiles_keep_the_key_private_and_are_used_by_default(cli, tmp_path):
     assert cli.json('config', 'show', key=None)['profiles'][1] == {'profile': 'other', 'url': ORIGIN,
                                                                    'key_saved': False, 'default': False}
     cli.json('config', 'remove', 'other', key=None)
+    elsewhere = cli('me', key=None, url='https://elsewhere.example')
+    assert elsewhere.exit_code == 3 and elsewhere.stderr.startswith('No API key.')
+    trailing = cli('--json', 'me', key=None, url=ORIGIN + '/')
+    assert trailing.exit_code == 0
     unknown = cli('--profile', 'missing', 'me', key=None)
     assert unknown.exit_code == 1 and "no saved profile named 'missing'" in unknown.stderr
 
