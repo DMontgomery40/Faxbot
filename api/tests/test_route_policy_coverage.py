@@ -25,6 +25,7 @@ OWN_AUTHENTICATION = {
     ("POST", "/_internal/asterisk/inbound"): "internal shared secret",
     ("POST", "/_internal/freeswitch/outbound_result"): "internal shared secret",
     ("POST", "/mobile/pair"): "single-use pairing code minted by a principal with tunnels:pair",
+    ("WS", "/admin/terminal"): "single-use ticket from POST /admin/terminal/ticket; host:terminal rechecked while open",
     ("GET", "/openapi.json"): "API description",
     ("GET", "/docs"): "API description",
     ("GET", "/docs/oauth2-redirect"): "API description",
@@ -34,9 +35,7 @@ OWN_AUTHENTICATION = {
 STATIC_MOUNTS = {"/admin/ui", "/assets"}
 # Still on legacy guards at this revision; other slices convert them. Remove each
 # entry when its route declares policy; the pending test below fails until then.
-PENDING = {
-    ("WS", "/admin/terminal"): "converted by the terminal handshake owner",
-}
+PENDING: dict = {}
 PRIVILEGED = {"host:restart", "host:actions", "host:terminal", "providers:install", "owner:recover"}
 # Routes converted from require_admin: (permission, audited).
 CONVERTED = {
@@ -55,6 +54,7 @@ CONVERTED = {
     ("POST", "/admin/tunnel/config"): ("tunnels:manage", False),
     ("POST", "/admin/tunnel/test"): ("tunnels:read", False),
     ("POST", "/admin/tunnel/pair"): ("tunnels:pair", False),
+    ("POST", "/admin/terminal/ticket"): ("host:terminal", True),
     ("GET", "/admin/inbound/callbacks"): ("providers:read", False),
     ("POST", "/admin/inbound/simulate"): ("providers:write", False),
     ("POST", "/admin/diagnostics/run"): ("diagnostics:read", False),

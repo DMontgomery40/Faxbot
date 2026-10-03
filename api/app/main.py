@@ -3287,52 +3287,103 @@ def freeswitch_outbound_result(payload: FSOutboundResultIn, x_internal_secret: O
     return {'ok': True, 'applied': applied}
 
 
-# Terminal WebSocket endpoint for Admin Console
-@app.websocket("/admin/terminal")
-async def admin_terminal_websocket(
-    websocket: WebSocket,
-    api_key: Optional[str] = Header(None, alias="X-API-Key")
-):
-    """WebSocket terminal for Admin Console - requires admin authentication."""
-    # Check admin authentication
-    if not api_key or api_key != settings.api_key:
-        # Try to get API key from query params for WebSocket auth
-        import urllib.parse
-        # Starlette's websocket.url.query is a string; older versions may return bytes
-        _q = websocket.url.query
-        try:
-            query_str = _q.decode()  # type: ignore[attr-defined]
-        except AttributeError:
-            query_str = str(_q or "")
-        query_params = urllib.parse.parse_qs(query_str)
-        ws_api_key = query_params.get('api_key', [None])[0]
-        
-        if not ws_api_key or ws_api_key != settings.api_key:
-            # Check if they have a valid DB-backed key with admin privileges
-            from .auth import verify_db_key
-            key_data = verify_db_key(ws_api_key or api_key or "")
-            if not key_data or 'keys:manage' not in key_data.get('scopes', []):
-                await websocket.close(code=1008, reason="Unauthorized")
-                return
-    
-    # Authentication does not override the installation's host execution gate.
-    if not _admin_exec_enabled():
-        await websocket.close(code=1008, reason="Administrative execution is disabled")
-        return
+# Host terminal for the console. POST /admin/terminal/ticket mints a single-use
+# ticket for the caller (host:terminal and the exec gate). The WebSocket takes no
+# credential in its URL: its first message must be {"type": "auth", "ticket": ...}
+# within _TERMINAL_AUTH_SECONDS. A socket that arrives with a browser session
+# cookie, or whose ticket a browser session minted, also needs an exact allowed
+# Origin. terminal.py keeps rechecking host:terminal for the minting credential.
+from .access.transport import SESSION_COOKIES, TransportError, credential_source  # noqa: E402
 
-    # Import terminal handler
-    from .terminal import handle_terminal_websocket, check_terminal_requirements
-    
-    # Check requirements
-    issues = check_terminal_requirements()
-    if issues:
-        await websocket.accept()
-        await websocket.send_text(json.dumps({
-            'type': 'error',
-            'message': f'Terminal not available: {", ".join(issues)}'
-        }))
-        await websocket.close()
+_TERMINAL_TICKET_TTL = timedelta(seconds=60)
+_TERMINAL_AUTH_SECONDS = 5.0
+_TERMINAL_UNAVAILABLE = "The terminal is not available on this server."
+
+
+class TerminalTicketOut(BaseModel):
+    ticket: str
+    expires_at: datetime
+
+
+def _terminal_available() -> bool:
+    from . import terminal as terminal_module
+    return _admin_exec_enabled() and not terminal_module.check_terminal_requirements()
+
+
+@app.post("/admin/terminal/ticket", response_model=TerminalTicketOut, responses=_PERMISSION_RESPONSES)
+async def admin_terminal_ticket(request: Request, identity=Depends(require_permission('host:terminal', audit=True))):
+    """A ticket, valid once for 60 seconds, that opens one terminal WebSocket as the caller."""
+    if not _terminal_available():
+        raise HTTPException(404, detail=_TERMINAL_UNAVAILABLE)
+    service = access_runtime(request)
+    issued = await run_lifecycle_step(private_operation(lambda: service.capabilities.mint(
+        'terminal', identity.actor, _TERMINAL_TICKET_TTL, permission='host:terminal')))
+    return TerminalTicketOut(ticket=issued.secret, expires_at=issued.expires_at)
+
+
+def _browser_socket(scope) -> bool:
+    try:
+        return any(credential_source(scope, name)[0] == 'session' for name in SESSION_COOKIES)
+    except TransportError:
+        # Duplicate or malformed credentials: hold the socket to the browser rules, which refuse it.
+        return True
+
+
+async def _close_terminal(websocket: WebSocket, code: int):
+    try:
+        await websocket.close(code=code)
+    except Exception:
+        pass
+
+
+async def _terminal_ticket(websocket: WebSocket) -> Optional[str]:
+    """The ticket from the first message, or None when it is late or malformed."""
+    try:
+        message = await asyncio.wait_for(websocket.receive_text(), _TERMINAL_AUTH_SECONDS)
+        data = json.loads(message)
+    except Exception:
+        return None
+    ticket = data.get('ticket') if isinstance(data, dict) and data.get('type') == 'auth' else None
+    return ticket if isinstance(ticket, str) and 0 < len(ticket) <= 256 else None
+
+
+@app.websocket("/admin/terminal")
+async def admin_terminal_websocket(websocket: WebSocket):
+    """Host terminal WebSocket; authenticated only by a ticket in the first message."""
+    from . import terminal as terminal_module
+    service = getattr(websocket.app.state, 'access_runtime', None)
+    transport = getattr(websocket.app.state, 'credential_transport', None)
+    # Credentials never travel in the URL, so any query string is refused outright.
+    if websocket.url.query or service is None or transport is None or not _terminal_available():
+        await _close_terminal(websocket, 1008)
         return
-    
-    # Handle terminal session
-    await handle_terminal_websocket(websocket)
+    await websocket.accept()
+    ticket = await _terminal_ticket(websocket)
+    if ticket is None:
+        await _close_terminal(websocket, 1008)
+        return
+    try:
+        record = await run_lifecycle_step(lambda: service.capabilities.consume('terminal', ticket))
+    except Exception:
+        await _close_terminal(websocket, 1008)
+        return
+    if record.session_id is not None or _browser_socket(websocket.scope):
+        try:
+            transport.validate(websocket.scope, public_url=settings.public_api_url, require_origin=True)
+        except AccessError:
+            await _close_terminal(websocket, 1008)
+            return
+
+    def still_authorized() -> bool:
+        try:
+            return _terminal_available() and service.control.authorize(
+                record.actor, 'host:terminal', ResourceRef('installation'), now=access_utcnow()).allowed
+        except Exception:
+            return False
+
+    audit_event("terminal_opened", principal_id=record.principal_id)
+    try:
+        await terminal_module.handle_terminal_websocket(websocket,
+            authorized=lambda: run_lifecycle_step(still_authorized))
+    finally:
+        audit_event("terminal_closed", principal_id=record.principal_id)
