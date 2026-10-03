@@ -440,6 +440,7 @@ function AppContent() {
         position="sticky" 
         elevation={0} 
         sx={{ 
+          color: 'text.primary',
           backdropFilter: 'blur(10px)',
           background: muiTheme.palette.mode === 'dark' 
             ? 'rgba(15, 15, 17, 0.9)' 
