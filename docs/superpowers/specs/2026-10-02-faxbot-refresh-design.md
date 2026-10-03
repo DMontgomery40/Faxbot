@@ -1,5 +1,7 @@
 # Faxbot finished-product refresh
 
+> **Status update, October 3, 2026:** This document records the approved requirements/design, not completed implementation. Work is paused for agent handoff at application commit `a14a23e1`; full product/RBAC/client/delivery completion is absent. The current factual review is [architecture-review.md](../../modernization/architecture-review.md). The user's latest requirement is to remove developer/log/chat-style text introduced into the product UI. Older sequencing below is historical and is not a new recommendation from the handoff.
+
 Status: approved by the user on October 2 with complete RBAC, permitted UI improvements, and existing TestFlight compatibility. The user explicitly authorized execution with the agreed primary/agent split. Document integrity is implemented and independently approved at 6a0afbba. Runtime dependencies/container startup are independently approved at c17e10c9 with actual image proof. Versioned database upgrades are the next foundation repair.
 
 ## Outcome and constraints

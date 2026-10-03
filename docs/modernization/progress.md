@@ -1,5 +1,11 @@
 # Faxbot refresh progress
 
+## Current handoff status — October 3, 2026
+
+**The product is unfinished. Goal mode is paused at the user's handoff request; subagents are interrupted.** Application HEAD/origin is `a14a23e1857a52337bb2c7353db6845c014272eb`, draft PR32. This status supersedes the older chronological entries below. The branch contains 144 commits/295 changed files from base 7e0c15fa. Latest completed API CI at 66333d7a failed8 tests (3,089 passed,24 skipped); a14 CI was still running at the current check, with UI/docs passed.
+
+The user explicitly requires removal of developer/log/chat-style text injected into the UI. That cleanup has not been performed. Full management/RBAC, retained clients, real delivery and release proof remain incomplete. See [current architecture review](architecture-review.md) for the factual integration and verification status. The detailed local-only handoff is `.superpowers/sdd/2026-10-03-faxbot-handoff/FAXBOT-HANDOFF-2026-10-03.md` in the implementation worktree. No implementation sequence is prescribed by this handoff update.
+
 ## Goal
 
 Completed and verified product by October 7, 2026, 10:00 AM Mountain. Keep the familiar UI as a starting point; upgrades are permitted. Complete RBAC is required. Preserve compatibility with the existing TestFlight iOS app. No demo-plus-backlog interpretation. Preserve Docs Autopilot / OpenAPI / Redocly / MkDocs / Mike and make updates run on every main commit as requested.
