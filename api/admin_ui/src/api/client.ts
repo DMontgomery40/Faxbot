@@ -4,7 +4,6 @@ import type {
   FaxSendResult,
   OperatorDelivery,
   ProviderIdentityConfirmation,
-  ApiKey,
   Settings,
   SettingsPatch,
   PluginConfiguration,
@@ -449,23 +448,6 @@ export class AdminAPIClient {
 
   async updateInboundRule(ruleId: string, data: { to_number?: string; mailbox_id?: string; version: number }) {
     return this.accessWrite<{ rule?: InboundRule }>(`/access/inbound-rules/${id(ruleId)}`, data, 'PATCH');
-  }
-
-  // Legacy key routes, replaced by /access/keys in ApiKeys.
-  async createApiKey(data: { name?: string; owner?: string; scopes?: string[] }): Promise<{ key_id: string; token: string }> {
-    return this.json('/admin/api-keys', { method: 'POST', body: JSON.stringify(data) });
-  }
-
-  async listApiKeys(): Promise<ApiKey[]> {
-    return this.json('/admin/api-keys');
-  }
-
-  async revokeApiKey(keyId: string): Promise<void> {
-    await this.fetch(`/admin/api-keys/${id(keyId)}`, { method: 'DELETE' });
-  }
-
-  async rotateApiKey(keyId: string): Promise<{ token: string }> {
-    return this.json(`/admin/api-keys/${id(keyId)}/rotate`, { method: 'POST' });
   }
 
   // Terminal handshake: a short-lived, single-use ticket sent as the first
