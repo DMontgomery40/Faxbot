@@ -305,7 +305,7 @@ def test_high_depth_rgb_tiff_is_rejected_before_decoding(monkeypatch, tmp_path):
 
 
 @pytest.mark.parametrize("mode, samples, expected_mode, expected", [
-    ("1", [0, 255, 0, 255], "RGB", [(0, 0, 0), (255, 255, 255), (0, 0, 0), (255, 255, 255)]),
+    ("1", [0, 255, 0, 255], "1", [0, 255, 0, 255]),
     ("L", [0, 32, 128, 255], "L", [0, 32, 128, 255]),
     ("RGB", [(10, 20, 30), (40, 50, 60), (70, 80, 90), (100, 110, 120)], "RGB", [(10, 20, 30), (40, 50, 60), (70, 80, 90), (100, 110, 120)]),
     ("CMYK", [(16, 32, 64, 128)] * 4, "CMYK", [(16, 32, 64, 128)] * 4),
@@ -329,6 +329,225 @@ def test_supported_tiff_modes_preserve_literal_pixel_samples(
     converted = list(PdfReader(output).pages[0].images)[0].image
     assert converted.mode == expected_mode
     assert [converted.getpixel((index, 0)) for index in range(4)] == expected
+
+
+def bilevel_pattern(width=96, height=40, seed=7):
+    """An asymmetric one-bit page: a mirrored, flipped or inverted copy differs."""
+    import random
+    image = Image.new("1", (width, height), 1)
+    for x in range(width // 3):
+        image.putpixel((x, 0), 0)  # top edge from the left
+    for y in range(height // 2):
+        image.putpixel((0, y), 0)  # left edge from the top
+    for x in range(width - 12, width - 4):
+        for y in range(height - 9, height - 3):
+            image.putpixel((x, y), 0)  # block near the lower right
+    noise = random.Random(seed)
+    for _ in range(width * height // 20):
+        image.putpixel((noise.randrange(8, width - 16), noise.randrange(4, height - 12)), 0)
+    return image
+
+
+def _g4_strip(image):
+    """libtiff's Group 4 strip for an image stored BlackIsZero (Pillow's mode 1 form)."""
+    from io import BytesIO
+    encoded = BytesIO()
+    image.save(encoded, "TIFF", compression="group4",
+               strip_size=((image.width + 7) // 8) * image.height)
+    encoded.seek(0)
+    with Image.open(encoded) as written:
+        assert written.tag_v2[262] == 1 and len(written.tag_v2[273]) == 1
+        offset, count = written.tag_v2[273][0], written.tag_v2[279][0]
+    return encoded.getvalue()[offset:offset + count]
+
+
+def _inverted(image):
+    return Image.frombytes("1", image.size, bytes(255 - value for value in image.tobytes()))
+
+
+def write_bilevel_tiff(path, pages, *, photometric, compression, dpi=(204, 98)):
+    """Write one-bit pages with explicit photometric and compression tags.
+
+    Fax TIFFs are usually WhiteIsZero; Pillow can only write BlackIsZero, so
+    WhiteIsZero pages store the inverted bits (or the G4 code of the inverted
+    image) under photometric 0, which decodes back to the same picture.
+    """
+    strips = []
+    for page in pages:
+        stored = _inverted(page) if photometric == 0 else page
+        strips.append(_g4_strip(stored) if compression == 4 else stored.tobytes())
+    data = bytearray(b"II*\x00\x00\x00\x00\x00")
+    previous_link = 4
+    for page, strip in zip(pages, strips):
+        strip_offset = len(data)
+        data += strip
+        if len(data) % 2:
+            data += b"\x00"
+        rational_offset = len(data)
+        data += struct.pack("<IIII", int(dpi[0]), 1, int(dpi[1]), 1)
+        tags = [(256, 4, 1, page.width), (257, 4, 1, page.height), (258, 3, 1, 1),
+                (259, 3, 1, compression), (262, 3, 1, photometric), (273, 4, 1, strip_offset),
+                (277, 3, 1, 1), (278, 4, 1, page.height), (279, 4, 1, len(strip)),
+                (282, 5, 1, rational_offset), (283, 5, 1, rational_offset + 8), (296, 3, 1, 2)]
+        ifd = len(data)
+        struct.pack_into("<I", data, previous_link, ifd)
+        data += struct.pack("<H", len(tags))
+        data += b"".join(struct.pack("<HHII", *tag) for tag in tags)
+        previous_link = len(data)
+        data += b"\x00\x00\x00\x00"
+    path.write_bytes(bytes(data))
+    with Image.open(path) as written:  # the fixture itself decodes to the intended pages
+        for index, page in enumerate(pages):
+            written.seek(index)
+            assert written.mode == "1" and written.tobytes() == page.tobytes()
+
+
+def _page_image(reader, page):
+    xobjects = page["/Resources"]["/XObject"].get_object()
+    assert len(xobjects) == 1
+    return next(iter(xobjects.values())).get_object()
+
+
+def force_bilevel_encoder(monkeypatch, name):
+    monkeypatch.setattr(conversion, "_bilevel_stream", lambda frame: next(
+        candidate for candidate in conversion._bilevel_candidates(frame) if candidate[1] == name))
+
+
+def _ghostscript_render(pdf, out, dpi):
+    subprocess.run(["gs", "-q", "-dSAFER", "-dNOPAUSE", "-dBATCH", "-dNOINTERPOLATE",
+                    "-sDEVICE=pnggray", f"-r{dpi[0]}x{dpi[1]}", f"-sOutputFile={out}", str(pdf)],
+                   check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+@pytest.mark.parametrize("encoder", ["g4", "flate"])
+@pytest.mark.parametrize("compression", [1, 4])
+@pytest.mark.parametrize("photometric", [0, 1])
+def test_one_bit_tiff_stays_one_bit_with_exact_pixels_and_geometry(
+    monkeypatch, tmp_path, encoder, compression, photometric
+):
+    force_bilevel_encoder(monkeypatch, {"g4": "CCITTFaxDecode", "flate": "FlateDecode"}[encoder])
+    pattern = bilevel_pattern()
+    source = tmp_path / "fax.tiff"
+    write_bilevel_tiff(source, [pattern], photometric=photometric, compression=compression)
+    output = tmp_path / "fax.pdf"
+
+    assert conversion.tiff_to_pdf(str(source), str(output)) == (1, str(output))
+
+    reader = PdfReader(output, strict=True)
+    page = reader.pages[0]
+    image = _page_image(reader, page)
+    assert image["/BitsPerComponent"] == 1 and image["/ColorSpace"] == "/DeviceGray"
+    assert (image["/Width"], image["/Height"]) == pattern.size
+    if encoder == "flate":
+        assert image["/Filter"] == ["/FlateDecode"]
+        assert image.get_data() == pattern.tobytes()  # packed rows, 1 = white
+    else:
+        assert image["/Filter"] == ["/CCITTFaxDecode"]
+        parameters = image["/DecodeParms"][0]
+        assert (parameters["/K"], parameters["/Columns"], parameters["/Rows"]) == (-1, *pattern.size)
+        assert list(page.images)[0].image.tobytes() == pattern.tobytes()
+    # Physical size follows the TIFF resolution: 96 x 40 pixels at 204 x 98 DPI.
+    width, height = 96 * 72 / 204, 40 * 72 / 98
+    assert [float(value) for value in page.mediabox] == pytest.approx([0, 0, width, height], abs=1e-4)
+    from pypdf.generic import ContentStream
+    operations = ContentStream(page.get_contents(), reader).operations
+    drawn = [index for index, (_, operator) in enumerate(operations) if operator == b"Do"]
+    assert len(drawn) == 1
+    matrix = [float(value) for value in operations[drawn[0] - 1][0]]
+    assert operations[drawn[0] - 1][1] == b"cm"
+    assert matrix == pytest.approx([width, 0, 0, height, 0, 0], abs=1e-4)  # upright, unmirrored, full page
+
+
+@pytest.mark.skipif(shutil.which("gs") is None, reason="real Ghostscript not installed")
+@pytest.mark.parametrize("encoder", ["g4", "flate"])
+@pytest.mark.parametrize("photometric", [0, 1])
+def test_ghostscript_renders_one_bit_pages_pixel_for_pixel(monkeypatch, tmp_path, encoder, photometric):
+    # An independent renderer confirms black stays black and nothing is flipped.
+    force_bilevel_encoder(monkeypatch, {"g4": "CCITTFaxDecode", "flate": "FlateDecode"}[encoder])
+    pages = [bilevel_pattern(seed=1), _inverted(bilevel_pattern(seed=2)).transpose(Image.Transpose.ROTATE_180)]
+    source = tmp_path / "fax.tiff"
+    write_bilevel_tiff(source, pages, photometric=photometric, compression=4)
+    output = tmp_path / "fax.pdf"
+    assert conversion.tiff_to_pdf(str(source), str(output)) == (2, str(output))
+    for index, expected in enumerate(pages):
+        single = tmp_path / f"page-{index}.pdf"
+        writer = PdfWriter()
+        writer.add_page(PdfReader(output).pages[index])
+        writer.write(single)
+        rendered_path = tmp_path / f"page-{index}.png"
+        _ghostscript_render(single, rendered_path, (204, 98))
+        with Image.open(rendered_path) as rendered:
+            assert rendered.size == expected.size
+            assert rendered.convert("1", dither=Image.Dither.NONE).tobytes() == expected.tobytes()
+    # The second page is mostly black: polarity is carried per pixel, not assumed.
+    black = [page.histogram()[0] / (page.width * page.height) for page in pages]
+    assert black[0] < 0.5 < black[1]
+
+
+def test_multipage_mixed_tiff_keeps_page_order_modes_and_sizes(tmp_path):
+    first, third = bilevel_pattern(seed=3), bilevel_pattern(width=64, height=50, seed=4)
+    gray = Image.new("L", (30, 20), 0)
+    gray.putdata([value % 256 for value in range(600)])
+    pieces = tmp_path / "pieces"
+    pieces.mkdir()
+    write_bilevel_tiff(pieces / "a.tiff", [first], photometric=0, compression=4)
+    write_bilevel_tiff(pieces / "c.tiff", [third], photometric=1, compression=4, dpi=(204, 196))
+    with Image.open(pieces / "a.tiff") as a, Image.open(pieces / "c.tiff") as c:
+        a.load()
+        c.load()
+        source = tmp_path / "mixed.tiff"
+        a.save(source, save_all=True, append_images=[gray, c], compression="tiff_deflate",
+               dpi=(204, 98))
+    output = tmp_path / "mixed.pdf"
+
+    assert conversion.tiff_to_pdf(str(source), str(output)) == (3, str(output))
+
+    reader = PdfReader(output, strict=True)
+    images = [_page_image(reader, page) for page in reader.pages]
+    assert [image["/BitsPerComponent"] for image in images] == [1, 8, 1]
+    assert [image["/ColorSpace"] for image in images] == ["/DeviceGray"] * 3
+    decoded = [list(page.images)[0].image for page in reader.pages]
+    assert decoded[0].tobytes() == first.tobytes() and decoded[2].tobytes() == third.tobytes()
+    assert decoded[1].mode == "L" and decoded[1].tobytes() == gray.tobytes()
+
+
+def test_one_bit_pages_use_the_smaller_lossless_encoding(monkeypatch, tmp_path):
+    import random
+    from PIL import ImageDraw
+    sparse = Image.new("1", (400, 300), 1)
+    draw = ImageDraw.Draw(sparse)  # curved line art: Group 4 codes slowly moving edges compactly
+    draw.ellipse((20, 20, 380, 280), outline=0, width=3)
+    draw.ellipse((100, 75, 200, 150), fill=0)
+    draw.polygon([(10, 290), (200, 30), (390, 260)], outline=0, width=2)
+    dense = Image.new("1", (400, 300), 1)
+    noise = random.Random(9)
+    for _ in range(12000):
+        dense.putpixel((noise.randrange(400), noise.randrange(300)), 0)
+    source = tmp_path / "pages.tiff"
+    write_bilevel_tiff(source, [sparse, dense], photometric=0, compression=4)
+    output = tmp_path / "pages.pdf"
+    assert conversion.tiff_to_pdf(str(source), str(output)) == (2, str(output))
+    reader = PdfReader(output, strict=True)
+    chosen = []
+    for page, original in zip(reader.pages, (sparse, dense)):
+        image = _page_image(reader, page)
+        sizes = {name: len(data) for data, name, _ in conversion._bilevel_candidates(original)}
+        assert image["/Filter"] == ["/" + min(sizes, key=sizes.get)]
+        chosen.append(image["/Filter"][0])
+        assert list(page.images)[0].image.tobytes() == original.tobytes()
+    assert chosen == ["/CCITTFaxDecode", "/FlateDecode"]  # line art, then dense noise
+    monkeypatch.setattr(conversion.features, "check", lambda feature: False)  # no libtiff: Flate only
+    assert [name for _, name, _ in conversion._bilevel_candidates(sparse)] == ["FlateDecode"]
+
+
+def test_identical_one_bit_pages_are_each_drawn(tmp_path):
+    page = bilevel_pattern(seed=5)
+    source = tmp_path / "repeat.tiff"
+    write_bilevel_tiff(source, [page, page, page], photometric=0, compression=4)
+    output = tmp_path / "repeat.pdf"
+    assert conversion.tiff_to_pdf(str(source), str(output)) == (3, str(output))
+    reader = PdfReader(output, strict=True)
+    assert all(list(p.images)[0].image.tobytes() == page.tobytes() for p in reader.pages)
 
 
 @pytest.mark.parametrize("data", [b"TIFF_PLACEHOLDER", b"II*\x00truncated", b""])
