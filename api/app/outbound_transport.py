@@ -66,6 +66,8 @@ class PreparedSubmission:
             return _receipt(result)
         if pid == 'sinch':
             return _receipt(await self.service.send_fax_file(to, self.pdf_path), sinch=True)
+        if pid == 'documo':
+            return _receipt(await self.service.send_fax_file(to, self.pdf_path))
         if pid == 'sip':
             await self.ami.originate_sendfax(self.claim.job_id, to, self.tiff_path,
                 attempt_id=self.claim.attempt_id)

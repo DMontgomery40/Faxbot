@@ -55,10 +55,11 @@ def test_builtin_service_uses_captured_frame_after_input_and_environment_change(
     assert {name: getattr(rebuilt, name) for name in expected_fields} == expected_fields
 
 
-@pytest.mark.parametrize('identity', ['phaxio', 'sinch', 'signalwire'])
+@pytest.mark.parametrize('identity', ['phaxio', 'sinch', 'signalwire', 'documo'])
 def test_missing_captured_credentials_never_borrow_current_environment(monkeypatch, identity):
     for name in ('PHAXIO_API_KEY', 'PHAXIO_API_SECRET', 'SINCH_API_KEY', 'SINCH_API_SECRET',
-                 'SINCH_PROJECT_ID', 'SIGNALWIRE_API_TOKEN', 'SIGNALWIRE_SPACE_URL', 'SIGNALWIRE_PROJECT_ID'):
+                 'SINCH_PROJECT_ID', 'SIGNALWIRE_API_TOKEN', 'SIGNALWIRE_SPACE_URL', 'SIGNALWIRE_PROJECT_ID',
+                 'DOCUMO_API_KEY', 'DOCUMO_BASE_URL', 'DOCUMO_SANDBOX'):
         monkeypatch.setenv(name, 'current-environment-value')
     assert not service_from_profile(profile(identity)).is_configured()
 
@@ -76,7 +77,7 @@ def intercept_http(monkeypatch, handler):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('identity', ['custom', 'phaxio', 'sip', 'freeswitch'])
+@pytest.mark.parametrize('identity', ['custom', 'phaxio', 'sip', 'freeswitch', 'documo'])
 async def test_manifest_runtime_keeps_original_endpoint_credentials_and_settings(monkeypatch, identity):
     from api.app.plugins.http_provider import HttpProviderRuntime
     original_manifest = manifest(identity, 'https://provider.invalid/original')
@@ -106,7 +107,7 @@ async def test_manifest_runtime_keeps_original_endpoint_credentials_and_settings
 
 
 @pytest.mark.parametrize('identity, captured_manifest', [
-    ('sip', None), ('freeswitch', None), ('unknown', None), ('documo', None),
+    ('sip', None), ('freeswitch', None), ('unknown', None),
 ])
 def test_unsupported_profiles_fail_explicitly_without_telephony_fallback(identity, captured_manifest):
     from api.app.provider_execution import UnsupportedProviderExecutionError

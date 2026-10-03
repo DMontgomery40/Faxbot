@@ -159,7 +159,7 @@ class OutboundStore:
         configuration = profile.configuration
         manifest = configuration.manifest
         supported = ('get_status' in manifest.get('actions', {}) if manifest is not None
-                     else configuration.provider_id in {'phaxio', 'signalwire', 'sinch'})
+                     else configuration.provider_id in {'phaxio', 'signalwire', 'sinch', 'documo'})
         if not supported:
             return 'This captured provider cannot refresh status; deliberate maintenance reconciliation is required.'
         return None
@@ -180,15 +180,25 @@ class OutboundStore:
             reason = self._bind_refusal(connection, row, attempt, profile)
             if reason is not None:
                 raise DeliveryConflict(reason)
+            documo_uuid = (profile.configuration.manifest is None
+                           and profile.configuration.provider_id == 'documo')
+            if documo_uuid:
+                if re.fullmatch(r'[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}', provider_sid) is None:
+                    raise ValueError('Invalid provider identity reconciliation input.')
+                provider_sid = provider_sid.lower()
+            attempt_sid = self.attempts.c.provider_sid
+            if documo_uuid:
+                attempt_sid = sa.func.lower(attempt_sid)
             owned_attempt = connection.execute(sa.select(self.attempts.c.id).where(
                     self.attempts.c.profile_id == profile.id,
-                    self.attempts.c.provider_sid == provider_sid,
+                    attempt_sid == provider_sid,
                     self.attempts.c.job_id != job_id).limit(1)).first()
             # Captured pre-upgrade jobs can retain a SID and verified binding
             # without a fabricated outbound attempt. That identity is owned too.
             jobs, bindings = self.configuration.jobs, self.configuration.job_bindings
+            job_sid_column = sa.func.lower(jobs.c.provider_sid) if documo_uuid else jobs.c.provider_sid
             owned_job = connection.execute(sa.select(jobs.c.id).join(bindings, bindings.c.id == jobs.c.id).where(
-                bindings.c.profile_id == profile.id, jobs.c.provider_sid == provider_sid,
+                bindings.c.profile_id == profile.id, job_sid_column == provider_sid,
                 jobs.c.id != job_id).limit(1)).first()
             if owned_attempt or owned_job:
                 raise DeliveryConflict('This provider identity already belongs to another delivery from the original account.')
