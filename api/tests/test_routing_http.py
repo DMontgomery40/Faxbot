@@ -81,3 +81,18 @@ def test_routing_requires_settings_permissions(client):
         response = client.request(method, path, json=body, headers=sender)
         assert response.status_code == 403, (method, path, response.status_code)
     assert client.get('/routing/destinations').status_code == 401
+
+
+def test_route_fallback_policy_lives_with_the_application(isolated_installation, monkeypatch):
+    import time
+    from app.outbound_store import OutboundStore
+    from app.routing.fallback import FallbackPolicy
+    monkeypatch.setenv('API_KEY', BOOTSTRAP)
+    monkeypatch.setenv('REQUIRE_API_KEY', 'true')
+    assert OutboundStore.fallback_policy is None
+    with TestClient(main.app, base_url='https://testserver'):
+        deadline = time.monotonic() + 5
+        while OutboundStore.fallback_policy is None and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert isinstance(OutboundStore.fallback_policy, FallbackPolicy)
+    assert OutboundStore.fallback_policy is None
