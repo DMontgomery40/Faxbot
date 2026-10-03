@@ -610,6 +610,11 @@ def require_scopes(required: List[str], path: Optional[str] = None, rpm: int | s
     return _dep
 
 
+# The legacy guards above remain only for /admin/tunnel/pair and /inbound*.
+# Every other protected route declares its permission with require_permission.
+from .access.route_policy import authorize as authorize_operation, request_audit, require_permission  # noqa: E402
+
+
 class CreateAPIKeyIn(BaseModel):
     name: Optional[str] = None
     owner: Optional[str] = None
@@ -788,8 +793,11 @@ class ValidateSettingsRequest(BaseModel):
     ami_password: Optional[str] = None
 
 
-@app.post("/admin/settings/validate", dependencies=[Depends(require_admin)],
-          responses=_CONFIGURATION_VALIDATION_RESPONSES)
+_PERMISSION_RESPONSES = {status: _PUBLIC_DETAIL_RESPONSES[status] for status in (401, 403, 429, 503)}
+
+
+@app.post("/admin/settings/validate", dependencies=[Depends(require_permission('providers:write'))],
+          responses={**_PERMISSION_RESPONSES, **_CONFIGURATION_VALIDATION_RESPONSES})
 async def validate_settings(payload: ValidateSettingsRequest):
     """Validate connectivity/non-destructive checks for the selected backend."""
     results: dict[str, Any] = {"backend": payload.backend, "checks": {}, "test_fax": None}
@@ -923,7 +931,8 @@ def admin_reload_settings(request: Request, identity=Depends(require_identity)):
     return _settings_view(access_runtime(request).configuration_access.settings(identity.actor))
 
 
-@app.post("/admin/restart", dependencies=[Depends(require_admin)])
+@app.post("/admin/restart", dependencies=[Depends(require_permission('host:restart', audit=True))],
+          responses=_PERMISSION_RESPONSES)
 async def admin_restart():
     """Optional: restart the API process (for containerized deployments). Controlled by ADMIN_ALLOW_RESTART."""
     if not settings.admin_allow_restart:
@@ -935,7 +944,8 @@ async def admin_restart():
     return {"ok": True, "note": "Process will exit; container manager should restart it."}
 
 
-@app.get("/admin/health-status", dependencies=[Depends(require_admin)])
+@app.get("/admin/health-status", dependencies=[Depends(require_permission('diagnostics:read'))],
+         responses=_PERMISSION_RESPONSES)
 async def get_health_status(request: Request):
     def inspect():
         from sqlalchemy import or_
@@ -961,8 +971,23 @@ async def get_health_status(request: Request):
     return await run_lifecycle_step(inspect)
 
 
-@app.get("/admin/db-status", dependencies=[Depends(require_admin)])
-def admin_db_status():
+@private_operation
+def _visible_counts(service, actor):
+    """Count only rows this actor could list; the key total requires keys:manage."""
+    with service.store.transaction() as connection:
+        now = access_utcnow()
+        def visible(permission, kind):
+            ids = service.control.visible_resource_ids_on(connection, actor, permission, kind, now=now)
+            return connection.execute(sa.select(sa.func.count()).select_from(ids.subquery())).scalar_one()
+        keys = None
+        if service.control.authorize_on(connection, actor, 'keys:manage', ResourceRef('installation'), now=now).allowed:
+            keys = connection.execute(sa.select(sa.func.count()).select_from(service.store.tables['api_keys'])).scalar_one()
+        return {"fax_jobs": visible('fax:read', 'outbound'), "api_keys": keys,
+                "inbound_fax": visible('inbound:list', 'inbound')}
+
+
+@app.get("/admin/db-status", responses=_PERMISSION_RESPONSES)
+def admin_db_status(request: Request, identity=Depends(require_permission('diagnostics:read'))):
     from sqlalchemy import text  # type: ignore
     url = settings.database_url
     engine = "unknown"
@@ -983,29 +1008,14 @@ def admin_db_status():
 
     connected = False
     err = None
-    counts = {}
     try:
         with SessionLocal() as db:
             db.execute(text("SELECT 1"))
             connected = True
-            # Try lightweight counts
-            try:
-                counts["fax_jobs"] = db.query(FaxJob).count()
-            except Exception:  # pragma: no cover
-                counts["fax_jobs"] = None
-            try:
-                from .auth import APIKey  # type: ignore
-                counts["api_keys"] = db.query(APIKey).count()
-            except Exception:
-                counts["api_keys"] = None
-            try:
-                from .db import InboundFax  # type: ignore
-                counts["inbound_fax"] = db.query(InboundFax).count()
-            except Exception:
-                counts["inbound_fax"] = None
     except Exception as e:  # pragma: no cover
         connected = False
         err = str(e)
+    counts = _visible_counts(access_runtime(request), identity.actor) if connected else {}
 
     sqlite_info = None
     if sqlite_file:
@@ -1047,8 +1057,11 @@ class ManifestIn(BaseModel):
     manifest: dict
 
 
-@app.post("/admin/plugins/http/install", dependencies=[Depends(require_admin)])
-def install_http_manifest(payload: ManifestIn):
+@app.post("/admin/plugins/http/install", dependencies=[Depends(require_permission('providers:install', audit=True))],
+          responses=_PERMISSION_RESPONSES)
+def install_http_manifest(payload: ManifestIn, request: Request):
+    if not request.scope["faxbot.configuration"].active.values.feature_v3_plugins:
+        return _plugins_disabled_response()
     document = payload.manifest or {}
     if not document.get("id"):
         raise HTTPException(400, detail="Manifest id is required")
@@ -1078,7 +1091,8 @@ class ManifestValidateIn(BaseModel):
     render_only: bool | None = True
 
 
-@app.post("/admin/plugins/http/validate", dependencies=[Depends(require_admin)])
+@app.post("/admin/plugins/http/validate", dependencies=[Depends(require_permission('providers:write'))],
+          responses=_PERMISSION_RESPONSES)
 async def validate_http_manifest(payload: ManifestValidateIn):
     """Validate a draft without issuing a provider request.
 
@@ -1153,11 +1167,14 @@ def _extract_json_blocks(md: str) -> List[dict]:
     return blocks
 
 
-@app.post("/admin/plugins/http/import-manifests", dependencies=[Depends(require_admin)])
-def import_http_manifests(payload: ImportManifestsIn):
+@app.post("/admin/plugins/http/import-manifests",
+          dependencies=[Depends(require_permission('providers:install', audit=True))], responses=_PERMISSION_RESPONSES)
+def import_http_manifests(payload: ImportManifestsIn, request: Request):
     """Bulk import provider manifests from JSON list or scraped markdown.
     For markdown, extracts JSON code fences and imports objects that look like manifests.
     """
+    if not request.scope["faxbot.configuration"].active.values.feature_v3_plugins:
+        return _plugins_disabled_response()
     candidates: List[dict] = []
     if (payload.source or "").lower() == "repo_scrape" and not payload.items and not payload.markdown:
         try:
@@ -1200,7 +1217,7 @@ class LogsQuery(BaseModel):
     limit: Optional[int] = 200
 
 
-@app.get("/admin/logs", dependencies=[Depends(require_admin)])
+@app.get("/admin/logs", dependencies=[Depends(require_permission('logs:read'))], responses=_PERMISSION_RESPONSES)
 def admin_logs(q: Optional[str] = None, event: Optional[str] = None, since: Optional[str] = None, limit: int = 200):
     """Return recent audit logs from in-process ring buffer with simple filtering.
     For persistent logs, configure AUDIT_LOG_FILE and use external tooling; this endpoint focuses on interactive UI needs.
@@ -1212,7 +1229,7 @@ def admin_logs(q: Optional[str] = None, event: Optional[str] = None, since: Opti
     return {"items": rows, "count": len(rows)}
 
 
-@app.get("/admin/logs/tail", dependencies=[Depends(require_admin)])
+@app.get("/admin/logs/tail", dependencies=[Depends(require_permission('logs:read'))], responses=_PERMISSION_RESPONSES)
 def admin_logs_tail(q: Optional[str] = None, event: Optional[str] = None, lines: int = 2000):
     """Tail the audit log file when AUDIT_LOG_FILE is configured.
     Returns last N lines (default 2000), filtered by substring and/or event name when logs are JSON.
@@ -1342,7 +1359,8 @@ def _admin_exec_enabled() -> bool:
     return os.getenv("ENABLE_LOCAL_ADMIN", "false").lower() in {"1","true","yes"}
 
 
-@app.get("/admin/actions", dependencies=[Depends(require_admin)])
+@app.get("/admin/actions", dependencies=[Depends(require_permission('host:actions', audit=True))],
+         responses=_PERMISSION_RESPONSES)
 def admin_actions_list():
     if not _admin_exec_enabled():
         return {"enabled": False, "items": []}
@@ -1359,8 +1377,9 @@ class RunActionIn(BaseModel):
     id: str
 
 
-@app.post("/admin/actions/run", dependencies=[Depends(require_admin)])
-def admin_actions_run(payload: RunActionIn):
+@app.post("/admin/actions/run", responses=_PERMISSION_RESPONSES)
+def admin_actions_run(payload: RunActionIn, request: Request,
+                      identity=Depends(require_permission('host:actions', audit=True))):
     if not _admin_exec_enabled():
         raise HTTPException(403, detail="Admin exec is disabled. Set ENABLE_ADMIN_EXEC=true for local-only use.")
     meta = _ACTIONS_REGISTRY.get(payload.id)
@@ -1370,6 +1389,9 @@ def admin_actions_run(payload: RunActionIn):
     backs = meta.get("backend") or ["*"]
     if "*" not in backs and settings.fax_backend not in backs:
         raise HTTPException(400, detail="Action not applicable for current backend")
+    # Recheck immediately before execution and record which action ran.
+    authorize_operation(access_runtime(request), identity.actor, 'host:actions',
+                        audit=request_audit(request, action=payload.id))
     try:
         if meta.get("kind") == "python":
             res = meta.get("runner")()
@@ -1443,7 +1465,8 @@ def _hipaa_posture_enabled() -> bool:
         return False
 
 
-@app.get("/admin/tunnel/status", dependencies=[Depends(require_admin)])
+@app.get("/admin/tunnel/status", dependencies=[Depends(require_permission('tunnels:read'))],
+         responses=_PERMISSION_RESPONSES)
 def admin_tunnel_status() -> TunnelStatusOut:
     # Compose a conservative status view; do not leak secrets
     enabled = bool(_TUNNEL_STATE.get("enabled"))
@@ -1483,7 +1506,8 @@ def admin_tunnel_status() -> TunnelStatusOut:
     )
 
 
-@app.post("/admin/tunnel/config", dependencies=[Depends(require_admin)])
+@app.post("/admin/tunnel/config", dependencies=[Depends(require_permission('tunnels:manage'))],
+          responses=_PERMISSION_RESPONSES)
 def admin_tunnel_config(payload: TunnelConfigIn) -> TunnelStatusOut:
     # Validate provider
     provider = (payload.provider or "none").lower()
@@ -1513,7 +1537,8 @@ def admin_tunnel_config(payload: TunnelConfigIn) -> TunnelStatusOut:
     return admin_tunnel_status()
 
 
-@app.post("/admin/tunnel/test", dependencies=[Depends(require_admin)])
+@app.post("/admin/tunnel/test", dependencies=[Depends(require_permission('tunnels:read'))],
+          responses=_PERMISSION_RESPONSES)
 def admin_tunnel_test() -> TunnelTestOut:
     # Perform a bounded local probe; do not reach out to public endpoints from here
     try:
@@ -1547,7 +1572,8 @@ def admin_tunnel_pair() -> PairOut:
     return PairOut(code=code, expires_at=expires)
 
 
-@app.get("/admin/inbound/callbacks", dependencies=[Depends(require_admin)])
+@app.get("/admin/inbound/callbacks", dependencies=[Depends(require_permission('providers:read'))],
+         responses=_PERMISSION_RESPONSES)
 def admin_inbound_callbacks():
     base = settings.public_api_url.rstrip("/")
     backend = active_inbound()
@@ -1599,7 +1625,8 @@ class SimulateInboundIn(BaseModel):
     status: Optional[str] = "received"
 
 
-@app.post("/admin/inbound/simulate", dependencies=[Depends(require_admin)])
+@app.post("/admin/inbound/simulate", dependencies=[Depends(require_permission('providers:write'))],
+          responses=_PERMISSION_RESPONSES)
 def admin_inbound_simulate(payload: SimulateInboundIn):
     if not settings.inbound_enabled:
         raise HTTPException(400, detail="Inbound not enabled")
@@ -1750,7 +1777,8 @@ async def admin_refresh_job(job_id: str, request: Request, identity=Depends(requ
     return await run_lifecycle_step(private_operation(lambda: _accepted_job_response(access_runtime(request), identity.actor, job_id)))
 
 
-@app.post("/admin/diagnostics/run", dependencies=[Depends(require_admin)])
+@app.post("/admin/diagnostics/run", dependencies=[Depends(require_permission('diagnostics:read'))],
+          responses=_PERMISSION_RESPONSES)
 def run_diagnostics(request: Request):
     """Inspect the active installation without submitting a fax.
 
@@ -2002,8 +2030,9 @@ class PersistSettingsIn(BaseModel):
     path: str | None = None
 
 
-@app.post("/admin/settings/persist", dependencies=[Depends(require_admin)],
-          responses=_CONFIGURATION_VALIDATION_RESPONSES)
+@app.post("/admin/settings/persist",
+          dependencies=[Depends(require_permission('owner:recover', audit=True, complete_owner=True))],
+          responses={**_PERMISSION_RESPONSES, **_CONFIGURATION_VALIDATION_RESPONSES})
 def persist_settings(payload: PersistSettingsIn):
     """Atomically export desired settings to the installation's private recovery file.
 
