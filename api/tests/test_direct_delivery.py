@@ -54,6 +54,7 @@ class ToB:
         assert url.startswith('https://testserver/')
         path = url[len('https://testserver'):]
         if self.mode == 'drop':
+            self.dropped = (method, path, kwargs)
             raise httpx.ReadTimeout('request lost before reaching the partner')
         response = await asyncio.to_thread(self.client.request, method, path, **kwargs)
         if method == 'POST':
@@ -160,7 +161,7 @@ def b_items(client):
 def stored_document(client):
     engine = main.app.state.configuration_runtime.manager.store.engine
     with engine.connect() as connection:
-        rows = connection.execute(sa.text("SELECT document_path FROM direct_deliveries WHERE direction='inbound'")).all()
+        rows = connection.execute(sa.text("SELECT document_path FROM direct_deliveries WHERE direction='inbound' AND document_path IS NOT NULL")).all()
     return [open(row[0], 'rb').read() for row in rows]
 
 
@@ -265,6 +266,11 @@ async def test_signed_not_received_falls_back_to_fax_under_the_same_job(pair):
     assert row['state'] == 'in_progress' and conventional.submissions == 1
     assert pair['routes'].decision(row['attempt_id'])['route'] == 'phaxio'
     assert b_items(pair['b_client']) == []
+    # The upload that was presumed lost arrives late; the partner's answer fenced it.
+    method, path, kwargs = pair['to_b'].dropped
+    late = pair['b_client'].request(method, path, **kwargs)
+    assert late.status_code == 409 and '"reason":"withdrawn"' in late.json()['statement']
+    assert b_items(pair['b_client']) == [] and stored_document(pair['b_client']) == []
 
 
 @pytest.mark.asyncio
@@ -288,6 +294,15 @@ def test_partner_routes_are_signature_authenticated_and_hidden_when_disabled(pai
     peers = client.get('/direct/peers', headers=ADMIN).json()['peers']
     assert [peer['organization'] for peer in peers] == ['Valley Hospital']
     assert peers[0]['status'].endswith('.')
+
+
+def test_delivery_endpoint_rejects_malformed_bodies_before_any_work(pair):
+    client = pair['b_client']
+    assert client.post('/direct/deliveries', data={'manifest': '{}'}).status_code == 400
+    too_many = client.post('/direct/deliveries', data={'manifest': '{}', 'signature': 'x', 'extra': 'y'},
+                           files={'document': ('d', b'x', 'application/octet-stream')})
+    assert too_many.status_code == 400
+    assert b_items(client) == []
 
 
 def test_challenge_fax_carries_a_code_and_is_an_ordinary_fax(pair):

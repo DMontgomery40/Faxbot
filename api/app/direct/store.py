@@ -201,6 +201,24 @@ class DirectStore:
                                    to_number=parsed['recipient']['fax_number'], now=now)
             return self.find('inbound', message_id, connection), True
 
+    def answer_or_fence(self, message_id, peer, *, now=None):
+        """The received record for a sender's question, or a fence so it can never be accepted later.
+
+        A "not received" answer lets the sender fall back to fax, so a delayed
+        upload of the same message must not be accepted afterwards. The fence and
+        an acceptance share the message id's unique record: whichever commits
+        first wins, and the other sees it.
+        """
+        now = now or utcnow()
+        with write_transaction(self.engine) as connection:
+            existing = self.find('inbound', message_id, connection)
+            if existing is not None:
+                return existing
+            connection.execute(self.deliveries.insert().values(
+                id=uuid4().hex, direction='inbound', message_id=message_id, peer_id=peer['id'], recipient_number='',
+                digest='0' * 64, size_bytes=0, manifest='', state='refused', created_at=now, updated_at=now))
+            return None
+
     def awaiting_partner(self, *, limit=20):
         """Sent documents whose answer was lost while the fax waits for confirmation."""
         d, o = self.deliveries, self.outbound
@@ -216,5 +234,6 @@ class DirectStore:
             rows = connection.execute(sa.select(self.deliveries, self.peers.c.organization)
                                       .select_from(self.deliveries.outerjoin(self.peers,
                                                                              self.peers.c.id == self.deliveries.c.peer_id))
+                                      .where(self.deliveries.c.manifest != '')
                                       .order_by(self.deliveries.c.created_at.desc()).limit(limit)).mappings()
             return [dict(row) for row in rows]

@@ -89,11 +89,11 @@ class DirectService:
         values = self.values()
         from ..routing.numbers import InvalidNumber, normalize_number
         if not values.direct_organization.strip():
-            raise DirectConflict('Enter your organization name for direct delivery in Settings first.')
+            raise DirectConflict('Add your organization name for direct delivery to the installation settings first.')
         try:
             number = normalize_number(values.direct_fax_number)
         except InvalidNumber:
-            raise DirectConflict('Enter the fax number partners send to for direct delivery in Settings first.') from None
+            raise DirectConflict('Add the fax number partners send to for direct delivery to the installation settings first.') from None
         return card(self.identity(create=True), organization=values.direct_organization.strip(), fax_number=number,
                     endpoint=values.public_api_url.rstrip('/'))
 
@@ -104,6 +104,11 @@ class DirectService:
             except ValueError:
                 raise DirectProtocolError('malformed', 'This is not a Faxbot direct delivery card.') from None
         fields = check_card(document)
+        from urllib.parse import urlsplit
+        endpoint = urlsplit(fields['endpoint'])
+        if (self.values().enforce_public_https and endpoint.scheme != 'https'
+                and endpoint.hostname not in {'localhost', '127.0.0.1', '::1'}):
+            raise DirectConflict("The partner's address must use HTTPS.")
         return self.store.add_peer(fields, own_signing_key=self.identity(create=True).signing_key)
 
     # Receiving --------------------------------------------------------------
@@ -118,6 +123,10 @@ class DirectService:
 
     def _refusal(self, identity, message_id, reason, text):
         return signed(identity, {'type': 'refusal', 'message_id': message_id, 'reason': reason, 'detail': text})
+
+    def _withdrawn(self, identity, message_id):
+        return self._refusal(identity, message_id, 'withdrawn',
+                             'The sender asked about this document before it arrived, so it was not accepted.')
 
     def receive(self, manifest_bytes, signature, ciphertext, *, now=None):
         """Verify, decrypt, store unchanged and queue one document; returns (status, body)."""
@@ -143,6 +152,8 @@ class DirectService:
         if manifest['recipient']['signing_key'] != identity.signing_key or manifest['recipient']['fax_number'] != own_number:
             return 403, self._refusal(identity, message_id, 'wrong_recipient', 'This document is addressed to another recipient.')
         existing = self.store.find('inbound', message_id)
+        if existing is not None and existing['state'] == 'refused':
+            return 409, self._withdrawn(identity, message_id)
         if existing is not None:
             if existing['manifest'].encode('ascii') != manifest_bytes:
                 return 409, self._refusal(identity, message_id, 'replay', 'This message id was already used for a different document.')
@@ -179,6 +190,8 @@ class DirectService:
             raise
         if not created_now:
             path.unlink(missing_ok=True)
+            if row['state'] == 'refused':
+                return 409, self._withdrawn(identity, message_id)
             if row['manifest'].encode('ascii') != manifest_bytes:
                 return 409, self._refusal(identity, message_id, 'replay', 'This message id was already used for a different document.')
         return 200, json.loads(row['receipt'])
@@ -196,8 +209,8 @@ class DirectService:
                 raise DirectProtocolError('stale', "The request time does not match this installation's clock.")
         except (DirectProtocolError, UnicodeEncodeError):
             return 403, {'detail': 'This request is not from an enrolled partner.'}
-        row = self.store.find('inbound', message_id)
-        if row is None or row['peer_id'] != peer['id']:
+        row = self.store.answer_or_fence(message_id, peer, now=now)
+        if row is None or row['peer_id'] != peer['id'] or row['state'] != 'accepted':
             return 200, signed(identity, {'type': 'status', 'message_id': message_id, 'status': 'not_received',
                                           'answered_at': timestamp()})
         return 200, {**signed(identity, {'type': 'status', 'message_id': message_id, 'status': 'accepted',

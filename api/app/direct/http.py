@@ -7,7 +7,7 @@ direct delivery is switched off.
 """
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -179,9 +179,28 @@ def _partner_call(operation):
 
 
 @router.post('/deliveries')
-async def receive_delivery(request: Request, manifest: str = Form(..., max_length=16384),
-                           signature: str = Form(..., max_length=128), document: UploadFile = File(...)):
+async def receive_delivery(request: Request):
+    """Multipart fields ``manifest`` and ``signature`` and file ``document``.
+
+    The body is bounded before it is parsed, because the caller is not yet
+    authenticated: the signature is checked against the enrolled partner after.
+    """
     service = service_for(request.app)
+    values = await run_lifecycle_step(service.values)
+    if not values.direct_delivery_enabled:
+        raise HTTPException(404, detail='Not found.')
+    length = request.headers.get('content-length', '')
+    if not length.isdigit():
+        raise HTTPException(411, detail='Send the document with a Content-Length header.')
+    if int(length) > MAX_DOCUMENT_BYTES + 65536:
+        raise HTTPException(413, detail='This document is too large.')
+    try:
+        form = await request.form(max_files=1, max_fields=2, max_part_size=16384)
+    except Exception:
+        raise HTTPException(400, detail='The message is not in the direct delivery format.') from None
+    manifest, signature, document = form.get('manifest'), form.get('signature'), form.get('document')
+    if not isinstance(manifest, str) or not isinstance(signature, str) or document is None or isinstance(document, str):
+        raise HTTPException(400, detail='The message is not in the direct delivery format.')
     try:
         manifest_bytes = manifest.encode('ascii')
     except UnicodeEncodeError:
