@@ -18,6 +18,8 @@ export interface HealthStatus {
     queued: number;
     in_progress: number;
     recent_failures: number;
+    held?: number;
+    reconciliation_required?: number;
   };
   inbound_enabled: boolean;
   api_keys_configured: boolean;

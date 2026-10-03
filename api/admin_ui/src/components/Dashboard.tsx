@@ -183,23 +183,23 @@ function Dashboard({ client, onNavigate }: DashboardProps) {
               >
               <CardContent sx={{ pb: { xs: 1, sm: 2 } }}>
                 <Typography variant="h6" component="h2" gutterBottom sx={{ fontSize: { xs: '1rem', sm: '1.25rem' } }}>
-                  Job Queue
+                  Outbound Delivery
                 </Typography>
                 <Box display="flex" flexDirection="column" gap={1}>
                   <Box display="flex" justifyContent="space-between">
-                    <Typography variant="body2">Queued:</Typography>
+                    <Typography variant="body2">Ready / Preparing:</Typography>
                     <Typography variant="body2" fontWeight="bold">
                       {health.jobs.queued}
                     </Typography>
                   </Box>
                   <Box display="flex" justifyContent="space-between">
-                    <Typography variant="body2">In Progress:</Typography>
+                    <Typography variant="body2">Submitting / In Progress:</Typography>
                     <Typography variant="body2" fontWeight="bold">
                       {health.jobs.in_progress}
                     </Typography>
                   </Box>
                   <Box display="flex" justifyContent="space-between">
-                    <Typography variant="body2">Recent Failures:</Typography>
+                    <Typography variant="body2">Failures (Last 24 Hours):</Typography>
                     <Typography 
                       variant="body2" 
                       fontWeight="bold"
@@ -208,7 +208,28 @@ function Dashboard({ client, onNavigate }: DashboardProps) {
                       {health.jobs.recent_failures}
                     </Typography>
                   </Box>
+                  <Box display="flex" justifyContent="space-between">
+                    <Typography variant="body2">Held Test Faxes:</Typography>
+                    <Typography variant="body2" fontWeight="bold">
+                      {health.jobs.held ?? 'Unavailable'}
+                    </Typography>
+                  </Box>
+                  <Box display="flex" justifyContent="space-between">
+                    <Typography variant="body2">Reconciliation Required:</Typography>
+                    <Typography variant="body2" fontWeight="bold"
+                      color={(health.jobs.reconciliation_required ?? 0) > 0 ? 'warning.main' : 'text.primary'}>
+                      {health.jobs.reconciliation_required ?? 'Unavailable'}
+                    </Typography>
+                  </Box>
                 </Box>
+                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
+                  Held test faxes never transmit automatically, even after enabling sending.
+                </Typography>
+                {(health.jobs.reconciliation_required ?? 0) > 0 && (
+                  <Typography variant="caption" color="warning.main" sx={{ display: 'block', mt: 1 }}>
+                    Check the original provider before taking action. Do not retry transmission blindly.
+                  </Typography>
+                )}
               </CardContent>
               </Card>
             </Tooltip>

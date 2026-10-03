@@ -845,12 +845,11 @@ async def admin_restart():
 @app.get("/admin/health-status", dependencies=[Depends(require_admin)])
 async def get_health_status():
     # Basic dashboard counters and posture
-    with SessionLocal() as db:
-        queued = db.query(FaxJob).filter(FaxJob.status == "queued").count()
-        in_prog = db.query(FaxJob).filter(FaxJob.status == "in_progress").count()
-        recent_fail = db.query(FaxJob).filter(
-            FaxJob.status == "failed", FaxJob.updated_at > datetime.utcnow() - timedelta(hours=1)
-        ).count()
+    from .outbound_summary import dashboard_counts
+    store = _configuration_manager().store
+    with store.engine.connect() as connection:
+        jobs = dashboard_counts(connection, store.delivery_tables['outbound_deliveries'],
+                                now=datetime.utcnow())
     # Lightweight health signals (avoid duplicating full readiness logic)
     # DB check
     db_ok = True
@@ -875,7 +874,7 @@ async def get_health_status():
         "timestamp": datetime.utcnow().isoformat(),
         "backend": backend,
         "backend_healthy": backend_healthy,
-        "jobs": {"queued": queued, "in_progress": in_prog, "recent_failures": recent_fail},
+        "jobs": jobs,
         "inbound_enabled": settings.inbound_enabled,
         "api_keys_configured": bool(settings.api_key),
         "require_auth": settings.require_api_key,
