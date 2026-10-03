@@ -152,7 +152,10 @@ def test_phaxio_unsigned_unbound_callback_is_refused_without_mutation(
         assert client.get(f"/fax/{job_id}").json() == before_job
         assert store.get(job_id) == before and store.history(job_id) == history
         assert before["attempt_id"] is None and before["dispatch_mode"] == "held"
-        assert client.get("/admin/fax-jobs").json()["total"] == 1
+        import sqlalchemy as sa
+        configuration = store.configuration
+        with configuration.engine.connect() as connection:
+            assert connection.scalar(sa.select(sa.func.count()).select_from(configuration.jobs)) == 1
 
 
 def test_disabled_phaxio_callbacks_refuse_even_valid_captured_signature(installation):
