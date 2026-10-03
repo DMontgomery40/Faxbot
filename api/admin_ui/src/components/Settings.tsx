@@ -225,7 +225,6 @@ function Settings({ client }: SettingsProps) {
               onChange={(value) => handleForm('outbound_backend', value)}
               type="select"
               options={[
-                { value: '', label: 'Inherit default provider' },
                 { value: 'phaxio', label: 'Phaxio (Cloud)' },
                 { value: 'sinch', label: 'Sinch (Cloud)' },
                 { value: 'signalwire', label: 'SignalWire (Cloud)' },
@@ -245,7 +244,6 @@ function Settings({ client }: SettingsProps) {
               onChange={(value) => handleForm('inbound_backend', value)}
               type="select"
               options={[
-                { value: '', label: 'Inherit default provider' },
                 { value: 'phaxio', label: 'Phaxio (Webhook)' },
                 { value: 'sinch', label: 'Sinch (Webhook)' },
                 { value: 'sip', label: 'SIP/Asterisk (Internal)' }
