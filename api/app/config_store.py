@@ -74,7 +74,8 @@ class ConfigurationStore:
         metadata = sa.MetaData()
         try:
             metadata.reflect(engine, only=['configuration_state', 'configuration_revisions', 'provider_profiles',
-                                           'fax_jobs', 'fax_job_bindings', 'inbound_fax_bindings'])
+                                           'fax_jobs', 'fax_job_bindings', 'inbound_fax_bindings',
+                                           'outbound_deliveries', 'outbound_attempts', 'outbound_events'])
         except sa.exc.SQLAlchemyError:
             raise ConfigurationStoreError('Cannot open installation configuration storage.') from None
         self.state = metadata.tables['configuration_state']
@@ -82,6 +83,8 @@ class ConfigurationStore:
         self.profiles = metadata.tables['provider_profiles']
         self.jobs = metadata.tables['fax_jobs']
         self.job_bindings = metadata.tables['fax_job_bindings']
+        self.delivery_tables = {name: metadata.tables[name] for name in
+                                ('outbound_deliveries', 'outbound_attempts', 'outbound_events')}
 
     @contextmanager
     def _locked(self):
@@ -247,24 +250,34 @@ class ConfigurationStore:
             data.update(backend=profile.configuration.provider_id, outbound_backend=profile.configuration.provider_id)
             connection.execute(self.jobs.insert().values(**data))
             connection.execute(self.job_bindings.insert().values(id=data['id'], revision_id=active.id, profile_id=identity))
+            from .outbound_store import record_acceptance
+            record_acceptance(connection, self.delivery_tables, data['id'], held=active.values.fax_disabled,
+                              now=data.get('created_at') or datetime.utcnow())
             return profile
 
-    def outbound_profile(self, job_id):
+    def _outbound_context(self, connection, job_id):
+        binding = connection.execute(sa.select(self.job_bindings).where(self.job_bindings.c.id == job_id)).mappings().one_or_none()
+        if binding is None:
+            raise UnboundProviderProfile('Fax has no verified provider binding; reconcile its original account before provider operations.')
+        head = self._head(connection)
+        if head is None:
+            raise ConfigurationStoreError('Configuration has not been initialized.')
+        cipher = self._cipher()
+        revision = self._revision(connection, cipher, head['installation_id'], binding['revision_id'])
+        if revision.profile_id('outbound') != binding['profile_id']:
+            raise ConfigurationSecretError('Cannot authenticate fax provider binding.')
+        return revision, self._profile(connection, cipher, head['installation_id'], binding['profile_id'])
+
+    def outbound_context(self, job_id):
+        """Return the authenticated acceptance revision and provider together."""
         try:
             with self.engine.connect() as connection:
-                binding = connection.execute(sa.select(self.job_bindings).where(self.job_bindings.c.id == job_id)).mappings().one_or_none()
-                if binding is None:
-                    raise UnboundProviderProfile('Fax has no verified provider binding; reconcile its original account before provider operations.')
-                head = self._head(connection)
-                if head is None:
-                    raise ConfigurationStoreError('Configuration has not been initialized.')
-                cipher = self._cipher()
-                revision = self._revision(connection, cipher, head['installation_id'], binding['revision_id'])
-                if revision.profile_id('outbound') != binding['profile_id']:
-                    raise ConfigurationSecretError('Cannot authenticate fax provider binding.')
-                return self._profile(connection, cipher, head['installation_id'], binding['profile_id'])
+                return self._outbound_context(connection, job_id)
         except sa.exc.SQLAlchemyError:
             raise ConfigurationStoreError('Cannot read fax provider binding.') from None
+
+    def outbound_profile(self, job_id):
+        return self.outbound_context(job_id)[1]
 
     def initialize(self, values: ConfigurationValues, *, actor: str, providers=None, plugins=None):
         candidates = self._provider_candidates(providers)

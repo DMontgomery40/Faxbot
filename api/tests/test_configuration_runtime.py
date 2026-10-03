@@ -167,3 +167,32 @@ async def test_cancelled_startup_joins_ownership_work_before_cleanup():
     with pytest.raises(asyncio.CancelledError):
         await task
     assert finished.is_set()
+
+
+def test_shared_serving_lease_refuses_database_upgrade_before_any_ddl(environment):
+    import sqlalchemy as sa
+    from app.config_bootstrap import ConfigurationBootstrapError
+    from app.config_lifecycle import InstallationLifecycle
+    from app.schema import create_database_engine
+    from app.schema_configuration import frozen_metadata, REVISION
+
+    engine = create_database_engine(environment['DATABASE_URL'])
+    with engine.begin() as connection:
+        frozen_metadata().create_all(connection)
+        connection.exec_driver_sql('CREATE TABLE alembic_version (version_num VARCHAR(32) NOT NULL PRIMARY KEY)')
+        connection.execute(sa.text('INSERT INTO alembic_version VALUES (:revision)'), {'revision': REVISION})
+    Path(environment['FAX_DATA_DIR']).mkdir(parents=True, exist_ok=True)
+    serving = InstallationLifecycle(Path(environment['FAX_DATA_DIR']))
+    serving.acquire()
+    serving.mark_serving()
+    candidate = ConfigurationRuntime(environment)
+    try:
+        with pytest.raises(ConfigurationBootstrapError, match='Stop all Faxbot workers'):
+            candidate.prepare()
+        with engine.connect() as connection:
+            assert connection.scalar(sa.text('SELECT version_num FROM alembic_version')) == REVISION
+            assert 'outbound_deliveries' not in sa.inspect(connection).get_table_names()
+    finally:
+        candidate.close()
+        serving.close()
+        engine.dispose()

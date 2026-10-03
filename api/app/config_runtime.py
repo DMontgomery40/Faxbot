@@ -52,6 +52,7 @@ class ConfigurationRuntime:
         directory.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.lifecycle.acquire()
         try:
+            self._require_stopped_schema_upgrade()
             with use_configuration(self.locations):
                 db.init_db()
             key_path = self.environment.get('FAXBOT_INSTALLATION_KEY_PATH') or str(directory / '.configuration.key')
@@ -81,6 +82,24 @@ class ConfigurationRuntime:
         except BaseException:
             self.lifecycle.close()
             raise
+
+    def _require_stopped_schema_upgrade(self):
+        """Mixed old/new delivery writers cannot coexist during a migration."""
+        if self.lifecycle.can_promote:
+            return
+        from .schema import HEAD, create_database_engine
+        engine = create_database_engine(self.locations.database_url)
+        try:
+            with engine.connect() as connection:
+                revisions = (connection.execute(sa.text('SELECT version_num FROM alembic_version')).scalars().all()
+                             if sa.inspect(connection).has_table('alembic_version') else [])
+            if revisions != [HEAD]:
+                raise ConfigurationBootstrapError(
+                    'Stop all Faxbot workers before upgrading the installation database; no migration was attempted.')
+        except sa.exc.SQLAlchemyError:
+            raise ConfigurationBootstrapError('Cannot verify installation schema before worker startup.') from None
+        finally:
+            engine.dispose()
 
     def _check_telephony_drain(self):
         if self.candidate is not self.snapshot.pending:
