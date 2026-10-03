@@ -71,6 +71,7 @@ from .access.catalog import KEY_SCOPES
 from .access.mutation_types import IntegrationKeyValues, MutationDeniedError, MutationReason, VersionedEntity
 from .access.types import AccessError, AccessUnavailableError, ResourceRef
 from .access.http import router as authentication_router, PrivateAuthMiddleware, access_error_response
+from .access.management_http import router as management_router
 from .access.http import require_identity, runtime as access_runtime, private_operation
 from .access.http import PRIVATE_HEADERS, private_response_path, utcnow as access_utcnow
 from .access.configuration_access import configuration_write_receipt
@@ -149,6 +150,7 @@ app.add_middleware(ConfigurationMiddleware)
 app.add_middleware(PrivateAuthMiddleware)
 app.add_exception_handler(AccessError, access_error_response)
 app.include_router(authentication_router)
+app.include_router(management_router)
 
 
 async def _configuration_error_handler(request, exc):

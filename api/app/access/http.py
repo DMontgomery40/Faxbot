@@ -16,8 +16,7 @@ from .auth_work import AuthenticationBusyError
 from .authentication import AuthenticationThrottledError
 from .credentials import InvalidCredentialInputError
 from .fax_resources import FaxAccessError
-from .mutation_types import MutationDeniedError, StaleVersionError
-from .mutations import _Graph
+from .mutation_types import MutationDeniedError, OwnerEnrollment, StaleVersionError
 from .sessions import SessionCursor, SessionDeniedError
 from .transport import TransportError, credential_source, single_header
 from .types import AccessError, AccessUnavailableError, AuthenticationError, ResourceRef
@@ -75,9 +74,11 @@ async def access_error_response(request, error):
                    404:'Fax not found.'}[status]
     elif isinstance(error, (SessionDeniedError, MutationDeniedError)):
         code = error.code
-        status = {'invalid_input':400, 'invalid_target':404, 'stale_version':409}.get(code, 403)
+        status = {'invalid_input':400, 'duplicate':400, 'invalid_target':404, 'stale_version':409}.get(code, 403)
         message = {400:'Invalid access request.', 404:'Access target not found.',
             409:'Access policy changed. Reload and try again.', 403:'This operation is not permitted.'}[status]
+        message = {'duplicate':'That name is already in use.', 'last_owner':'The installation must keep at least one owner.',
+            'owner_required':'Only an owner can do this.'}.get(code, message)
     elif isinstance(error, InvalidCredentialInputError):
         status, message = 400, 'Invalid credential input.'
     else:
@@ -202,6 +203,12 @@ class SessionRevoke(StrictInput):
     expected_policy_version: int = Field(ge=1)
 
 
+class OwnerEnrollmentInput(StrictInput):
+    login: str = Field(min_length=1, max_length=128)
+    display_name: str = Field(min_length=1, max_length=200)
+    expected_policy_version: int = Field(ge=1)
+
+
 class AuthOutput(BaseModel):
     model_config = ConfigDict(extra='forbid')
 
@@ -232,6 +239,10 @@ class AuthCurrentSessionResponse(AuthOutput):
     expires_at: datetime
 
 
+class AuthGrantableResponse(AuthOutput):
+    installation: list[str] = Field(description='Permissions this actor may grant at the installation resource.')
+
+
 class AuthMeResponse(AuthOutput):
     principal: AuthPrincipalResponse
     source: Literal['key', 'session']
@@ -240,6 +251,8 @@ class AuthMeResponse(AuthOutput):
     permissions: list[str]
     session: AuthCurrentSessionResponse | None
     can_enroll_owner: bool
+    is_owner: bool
+    grantable: AuthGrantableResponse
     csrf_token: str | None = Field(default=None, repr=False,
         description='Present only for an authenticated browser cookie session.')
 
@@ -371,11 +384,28 @@ def _me(service, identity):
             'password_change_required':source.reset_required,
             'policy_version':service.store.require_lock_on(connection),
             'permissions':sorted(permissions), 'session':session,
-            'can_enroll_owner':source.bootstrap and service.control.is_complete_owner_on(connection, actor, now=now)
-                and not _Graph(connection, service.store.tables).owners(service.credential_codec)}
+            # Exactly what enroll_owner enforces: the bootstrap credential or a complete Owner.
+            'can_enroll_owner':not source.reset_required and service.control.is_complete_owner_on(connection, actor, now=now)}
         if identity.source == 'session':
             result['csrf_token'] = service.session_codec.csrf_value(identity.cookie_token)
+    result.update(service.reads.me_extras(actor))
     return result
+
+
+def committed_view(read, fallback):
+    """Reread a committed entity for the response; a failed reread must not lose a disclosed secret."""
+    try:
+        return read()
+    except Exception:
+        return fallback
+
+
+def user_fallback(receipt, login, display_name, *, kind='user'):
+    """The created or reset principal as its receipt knows it, used only when the reread failed."""
+    return {'id':receipt.target.id, 'kind':kind, 'login':login if kind == 'user' else None,
+            'display_name':display_name, 'enabled':True,
+            'password_change_required':True if kind == 'user' else None,
+            'created_at':None, 'last_login_at':None, 'version':receipt.target.version}
 
 
 @router.get('/me', response_model=AuthMeResponse, response_model_exclude_unset=True)
@@ -422,15 +452,18 @@ async def change_password(body: PasswordChange, request: Request, response: Resp
     responses={400: AUTH_ERROR_RESPONSES[400]})
 async def sessions(request: Request, limit: int = Query(default=50, ge=1, le=100),
         cursor_time: datetime | None = None, cursor_id: str | None = Query(default=None, max_length=40),
+        principal_id: str | None = Query(default=None, max_length=40,
+            description="Another principal's sessions (requires sessions:read); omit for your own."),
         identity=Depends(require_identity)):
     if (cursor_time is None) != (cursor_id is None) or (cursor_time is not None and cursor_time.tzinfo is not None):
         raise HTTPException(400, detail='Invalid session cursor.')
     cursor = SessionCursor(cursor_time, cursor_id) if cursor_time is not None else None
+    target = None if principal_id == identity.actor.principal_id else principal_id
     service = runtime(request)
     @private_operation
     def read():
         with service.store.transaction() as connection:
-            return asdict(service.sessions.list_sessions_on(connection, identity.actor,
+            return asdict(service.sessions.list_sessions_on(connection, identity.actor, principal_id=target,
                 cursor=cursor, limit=limit, now=utcnow()))
     return await run_lifecycle_step(read)
 
@@ -451,3 +484,22 @@ async def revoke_session(session_id: str, body: SessionRevoke, request: Request,
         selected = transport(request)
         response.delete_cookie(selected.cookie_name, path='/', secure=selected.secure, httponly=True, samesite='strict')
     return asdict(result)
+
+
+@router.post('/owner/enroll', responses={status: AUTH_ERROR_RESPONSES[status] for status in (400, 404, 409)},
+    summary='Enroll an owner',
+    description='Create a named Owner with a temporary password shown once. Allowed when /auth/me reports '
+        'can_enroll_owner: the installation bootstrap credential or a complete Owner.')
+async def enroll_owner(body: OwnerEnrollmentInput, request: Request, identity=Depends(require_identity)):
+    service = runtime(request)
+    @private_operation
+    def enroll():
+        prepared = service.credential_codec.prepare_temporary_password()
+        receipt = service.mutations.enroll_owner(identity.actor, OwnerEnrollment(body.login, body.display_name),
+            prepared, expected_policy_version=body.expected_policy_version, now=utcnow())
+        return receipt, prepared
+    receipt, prepared = await service.work.run(enroll)
+    user = await run_lifecycle_step(lambda: committed_view(lambda: service.reads.user(identity.actor, receipt.target.id),
+        user_fallback(receipt, body.login, body.display_name)))
+    return {'temporary_password':prepared._temporary_secret_for_committed_adapter(), 'user':user,
+            'policy_version':receipt.policy_version}
