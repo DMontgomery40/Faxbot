@@ -32,7 +32,12 @@ case $file in
   *[!A-Za-z0-9/._-]*) exit 0 ;;
 esac
 [ -f "$file" ] || exit 0
-[ -n "${ASTERISK_INBOUND_SECRET:-}" ] || exit 0
+secret=${ASTERISK_INBOUND_SECRET:-}
+# Faxbot's Apply writes the console-set secret here (mode 0600).
+if [ -z "$secret" ] && [ -f /faxdata/asterisk/inbound.secret ]; then
+  secret=$(cat /faxdata/asterisk/inbound.secret)
+fi
+[ -n "$secret" ] || exit 0
 
 number() { if [ -n "$1" ]; then printf '%s' "$1"; else printf 'null'; fi; }
 text() { if [ -n "$1" ]; then printf '"%s"' "$1"; else printf 'null'; fi; }
@@ -51,7 +56,7 @@ url="${FAXBOT_API_URL:-http://api:8080}/_internal/asterisk/inbound"
 attempt=0
 while [ "$attempt" -lt 5 ]; do
   attempt=$((attempt + 1))
-  printf 'X-Internal-Secret: %s\n' "$ASTERISK_INBOUND_SECRET" | curl -sS -o /dev/null --connect-timeout 5 --max-time 60 \
+  printf 'X-Internal-Secret: %s\n' "$secret" | curl -sS -o /dev/null --connect-timeout 5 --max-time 60 \
     -H @- -H 'Content-Type: application/json' --data-binary "$body" "$url" 2>/dev/null
   result=$?
   # 7: could not connect, so Faxbot cannot have received this fax yet.

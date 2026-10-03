@@ -37,6 +37,7 @@ export interface SipTrunkSettings {
   t38_enabled: boolean;
   fax_preference_header: boolean;
   codecs: string;
+  external_address: string;
 }
 
 export type SipRegistration = 'registered' | 'not_registered' | 'rejected' | 'not_used' | 'unknown';

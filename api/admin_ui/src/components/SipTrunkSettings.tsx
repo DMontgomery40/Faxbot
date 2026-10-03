@@ -46,7 +46,7 @@ const E164 = /^\+[1-9][0-9]{6,14}$/;
 const EMPTY: TrunkValues = {
   preset: '', auth: 'registration', host: '', port: 0, transport: '', username: '', password: '',
   password_set: false, outbound_proxy: '', caller_id: '', dids: [], t38_enabled: true,
-  fax_preference_header: false, codecs: '',
+  fax_preference_header: false, codecs: '', external_address: '',
 };
 
 const RESULT_TEXT: Record<SipCallRecord['disposition'], string> = {
@@ -157,6 +157,7 @@ function SipTrunkSettings({ client, showCalls = true }: SipTrunkSettingsProps) {
       ['port', 'sip_trunk_port'], ['transport', 'sip_trunk_transport'], ['username', 'sip_trunk_username'],
       ['outbound_proxy', 'sip_trunk_outbound_proxy'], ['caller_id', 'sip_trunk_caller_id'],
       ['t38_enabled', 'sip_t38_enabled'], ['fax_preference_header', 'sip_fax_preference_header'],
+      ['external_address', 'sip_external_address'],
     ];
     for (const [key, name] of fields) {
       if (form[key] !== saved[key]) patch[name] = form[key] as string | number | boolean;
@@ -296,6 +297,11 @@ function SipTrunkSettings({ client, showCalls = true }: SipTrunkSettingsProps) {
           <TextField size="small" fullWidth label="Outbound proxy (optional)" value={form.outbound_proxy}
             helperText="Only if your carrier asks for one."
             onChange={(event) => update('outbound_proxy', event.target.value.trim())} />
+
+          <TextField size="small" fullWidth label="Public IP address (optional)" value={form.external_address}
+            placeholder="203.0.113.10"
+            helperText="Only if Asterisk is behind a router or firewall: the address your carrier should send calls and fax data to."
+            onChange={(event) => update('external_address', event.target.value.trim())} />
 
           <TextField size="small" fullWidth label="Caller ID" value={form.caller_id} required
             placeholder="+15551234567"

@@ -98,12 +98,14 @@ PRESETS: dict[str, TrunkPreset] = {preset.id: preset for preset in (
     ),
     TrunkPreset(
         id='sinch', label='Sinch', host='', port=5060, transport='udp',
-        auth_modes=('registration', 'ip'), codecs=('ulaw', 'alaw'), dial_format='e164',
+        auth_modes=('registration',), codecs=('ulaw', 'alaw'), dial_format='e164',
         t38=('Sinch does not document T.38 or fax for Elastic SIP Trunking. Ask Sinch to confirm T.38 '
              'on your trunk and send test faxes before relying on it.'),
         notes=('Enter your trunk domain, for example example.pstn.sinch.com.',
                'Sinch asks every outgoing call for the trunk username and password.',
                'For receiving, use a registered SIP endpoint with the same username and password.',
+               'Faxbot signs in to Sinch with a username and password, because Sinch does not publish '
+               'the addresses it sends calls from on a page Faxbot could verify.',
                'Sinch expects called numbers and caller ID in E.164 format with a plus sign.'),
         sources=(Source('https://developers.sinch.com/docs/est/test-plan'),
                  Source('https://developers.sinch.com/docs/est'),
@@ -140,6 +142,7 @@ PRESETS: dict[str, TrunkPreset] = {preset.id: preset for preset in (
 )}
 
 _DEFAULT_PORTS = {'udp': 5060, 'tcp': 5060, 'tls': 5061}
+PRIVATE_NETWORKS = ('10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', '127.0.0.0/8')
 _DIGITS = re.compile(r'\+?[0-9]{3,20}', re.ASCII)
 
 
@@ -159,6 +162,7 @@ class Trunk:
     t38: bool
     fax_preference: bool
     codecs: tuple[str, ...]
+    external_address: str = ''
 
 
 def configured(values) -> bool:
@@ -199,7 +203,8 @@ def effective_trunk(values, *, for_calls=False) -> Trunk:
                  username=values.sip_trunk_username, password=values.sip_trunk_password,
                  outbound_proxy=values.sip_trunk_outbound_proxy, caller_id=values.sip_trunk_caller_id,
                  dids=values.sip_trunk_did_list, t38=values.sip_t38_enabled,
-                 fax_preference=values.sip_fax_preference_header, codecs=codecs)
+                 fax_preference=values.sip_fax_preference_header, codecs=codecs,
+                 external_address=values.sip_external_address)
 
 
 def dial_number(trunk: Trunk, number: str) -> str:
@@ -233,6 +238,12 @@ def _transport_section(trunk: Trunk):
                   'ca_list_file=/etc/ssl/certs/ca-certificates.crt', 'verify_server=yes']
     else:
         lines.append('bind=0.0.0.0:5060')
+    if trunk.external_address:
+        # Behind NAT, advertise the public address to the carrier; private
+        # networks (including Docker's) keep their own addresses.
+        lines += [f'external_media_address={trunk.external_address}',
+                  f'external_signaling_address={trunk.external_address}',
+                  *(f'local_net={network}' for network in PRIVATE_NETWORKS)]
     return name, lines
 
 
@@ -291,12 +302,34 @@ def configuration_path(values) -> Path:
     return Path(values.fax_data_dir) / 'asterisk' / 'pjsip.conf'
 
 
+def secret_path(values) -> Path:
+    return Path(values.fax_data_dir) / 'asterisk' / 'inbound.secret'
+
+
 def write_asterisk_configuration(values) -> Path:
-    """Atomically write the private pjsip.conf the Asterisk container loads at start."""
+    """Atomically write the private files the Asterisk container reads.
+
+    ``pjsip.conf`` is loaded when Asterisk starts. ``inbound.secret`` holds the
+    shared secret the inbound dialplan sends with each received fax, so a
+    secret set in the console reaches Asterisk too; it is removed when unset.
+    """
     text = render_pjsip(values)
     target = configuration_path(values)
     target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    descriptor, temporary = tempfile.mkstemp(prefix='.pjsip.', dir=target.parent)
+    _write_private(target, text)
+    secret = secret_path(values)
+    if values.asterisk_inbound_secret:
+        _write_private(secret, values.asterisk_inbound_secret)
+    else:
+        try:
+            secret.unlink()
+        except FileNotFoundError:
+            pass
+    return target
+
+
+def _write_private(target: Path, text: str):
+    descriptor, temporary = tempfile.mkstemp(prefix='.' + target.name + '.', dir=target.parent)
     try:
         os.fchmod(descriptor, 0o600)
         with os.fdopen(descriptor, 'w', encoding='utf-8') as handle:
@@ -310,7 +343,6 @@ def write_asterisk_configuration(values) -> Path:
         except FileNotFoundError:
             pass
         raise
-    return target
 
 
 def preset_catalog():

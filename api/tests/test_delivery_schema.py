@@ -9,7 +9,7 @@ from api.tests.test_schema import database, snapshot
 from api.tests.test_access_schema import at_revision
 
 
-def test_delivery_revision_follows_capabilities():
+def test_delivery_revision_is_head_after_capabilities():
     assert schema.DELIVERY == schema_delivery.REVISION == '0008_delivery_routes'
     assert schema.CAPABILITIES == '0007_access_capabilities'
     assert schema_delivery.TABLES <= schema.STRICT_TABLES

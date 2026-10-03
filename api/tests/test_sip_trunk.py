@@ -21,7 +21,8 @@ CASES = {
     'sinch-registration': {'SIP_TRUNK_PRESET': 'sinch', 'SIP_TRUNK_HOST': 'example.pstn.sinch.com',
                            'SIP_TRUNK_USERNAME': 'faxbot', 'SIP_TRUNK_PASSWORD': PASSWORD,
                            'SIP_TRUNK_TRANSPORT': 'tls'},
-    'sinch-ip': {'SIP_TRUNK_PRESET': 'sinch', 'SIP_TRUNK_AUTH': 'ip', 'SIP_TRUNK_HOST': 'example.pstn.sinch.com'},
+    'telnyx-registration-nat': {'SIP_TRUNK_PRESET': 'telnyx', 'SIP_TRUNK_USERNAME': 'faxbotuser',
+                                'SIP_TRUNK_PASSWORD': PASSWORD, 'SIP_EXTERNAL_ADDRESS': '203.0.113.10'},
     'anveo-ip': {'SIP_TRUNK_PRESET': 'anveo', 'SIP_TRUNK_AUTH': 'ip', 'SIP_TRUNK_CODECS': 'ulaw'},
     'flowroute-registration': {'SIP_TRUNK_PRESET': 'flowroute', 'SIP_TRUNK_USERNAME': '12345678',
                                'SIP_TRUNK_PASSWORD': PASSWORD},
@@ -76,6 +77,11 @@ def test_registration_needs_credentials_and_errors_never_echo_values():
     with pytest.raises(sip_trunk.TrunkConfigurationError) as error:
         sip_trunk.render_pjsip(values({'SIP_TRUNK_PRESET': 'flowroute', 'SIP_TRUNK_AUTH': 'ip'}))
     assert error.value.fields == ('sip_trunk_username',)
+    # Sinch receiving addresses are unpublished, so IP sign-in could send but never receive.
+    with pytest.raises(sip_trunk.TrunkConfigurationError) as error:
+        sip_trunk.render_pjsip(values({'SIP_TRUNK_PRESET': 'sinch', 'SIP_TRUNK_AUTH': 'ip',
+                                       'SIP_TRUNK_HOST': 'example.pstn.sinch.com'}))
+    assert error.value.fields == ('sip_trunk_auth',)
 
 
 def test_calls_need_a_carrier_authorized_caller_id_but_configuration_does_not():
@@ -117,15 +123,30 @@ def test_unusable_destination_is_refused_before_dialing(number):
 
 
 def test_written_configuration_is_private_and_replaced_atomically(tmp_path):
-    configured = values({**CASES['telnyx-registration'], 'FAX_DATA_DIR': str(tmp_path)})
+    configured = values({**CASES['telnyx-registration'], 'FAX_DATA_DIR': str(tmp_path),
+                         'ASTERISK_INBOUND_SECRET': 'synthetic-inbound-secret'})
     path = sip_trunk.write_asterisk_configuration(configured)
     assert path == tmp_path / 'asterisk' / 'pjsip.conf'
     assert stat.S_IMODE(os.stat(path).st_mode) == 0o600
     assert path.read_text() == (FIXTURES / 'telnyx-registration.conf').read_text()
+    secret = tmp_path / 'asterisk' / 'inbound.secret'
+    assert secret.read_text() == 'synthetic-inbound-secret' and stat.S_IMODE(os.stat(secret).st_mode) == 0o600
     path.write_text('stale')
     sip_trunk.write_asterisk_configuration(configured)
     assert path.read_text() != 'stale'
+    assert sorted(item.name for item in path.parent.iterdir()) == ['inbound.secret', 'pjsip.conf']
+    # Clearing the inbound secret in Faxbot removes the copy Asterisk reads.
+    sip_trunk.write_asterisk_configuration(values({**CASES['telnyx-registration'], 'FAX_DATA_DIR': str(tmp_path)}))
     assert sorted(item.name for item in path.parent.iterdir()) == ['pjsip.conf']
+
+
+def test_public_address_is_advertised_only_outside_private_networks():
+    rendered = sip_trunk.render_pjsip(values(CASES['telnyx-registration-nat']))
+    assert 'external_media_address=203.0.113.10\nexternal_signaling_address=203.0.113.10\n' in rendered
+    assert 'local_net=172.16.0.0/12' in rendered and 'local_net=10.0.0.0/8' in rendered
+    assert 'external_' not in sip_trunk.render_pjsip(values(CASES['telnyx-registration']))
+    with pytest.raises(Exception):
+        values({'SIP_EXTERNAL_ADDRESS': '203.0.113.10;evil'})
 
 
 def test_command_line_writes_from_the_environment_without_printing_secrets(tmp_path, monkeypatch, capsys):

@@ -117,6 +117,7 @@ def project_admin_settings(snapshot: ConfigurationSnapshot, pending_fields: Iter
                 't38_enabled': values.sip_t38_enabled,
                 'fax_preference_header': values.sip_fax_preference_header,
                 'codecs': values.sip_trunk_codecs,
+                'external_address': values.sip_external_address,
             },
         },
         'security': {

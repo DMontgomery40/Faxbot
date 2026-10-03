@@ -154,3 +154,25 @@ def test_each_route_declares_the_permission_the_console_relies_on():
                         ('GET', '/admin/sip/status'): [('providers:read', False)],
                         ('POST', '/admin/sip/apply'): [('providers:write', False)],
                         ('GET', '/admin/sip/calls'): [('diagnostics:read', False)]}
+
+
+def test_console_save_then_apply_writes_the_new_trunk(bare_client, isolated_installation):
+    current = bare_client.get('/admin/settings', headers=ADMIN).json()
+    saved = bare_client.put('/admin/settings', headers=ADMIN, json={
+        'expected_revision_id': current['_meta']['desired_revision_id'], 'sip_trunk_preset': 'flowroute',
+        'sip_trunk_username': '12345678', 'sip_trunk_password': PASSWORD, 'sip_trunk_caller_id': '+15555550100',
+        'sip_trunk_dids': '+15555550100', 'sip_fax_preference_header': True,
+        'sip_external_address': '203.0.113.10', 'asterisk_inbound_secret': 'synthetic-inbound-secret'})
+    assert saved.status_code == 200, saved.text
+    assert saved.json()['_meta']['apply_state'] == 'applied'
+    applied = bare_client.post('/admin/sip/apply', headers=ADMIN)
+    assert applied.status_code == 200, applied.text
+    folder = os.path.join(isolated_installation['FAX_DATA_DIR'], 'asterisk')
+    text = open(os.path.join(folder, 'pjsip.conf')).read()
+    assert 'Faxbot SIP trunk for Flowroute' in text and 'username=12345678' in text
+    assert 'external_signaling_address=203.0.113.10' in text
+    assert open(os.path.join(folder, 'inbound.secret')).read() == 'synthetic-inbound-secret'
+    view = bare_client.get('/admin/settings', headers=ADMIN).json()['sip']['trunk']
+    assert view['preset'] == 'flowroute' and view['password'] == '***' and view['fax_preference_header'] is True
+    status = bare_client.get('/admin/sip/status', headers=ADMIN).json()
+    assert status['applied'] is True and status['dids'] == ['+15555550100']

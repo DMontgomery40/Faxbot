@@ -12,7 +12,7 @@ Faxbot has settings ready for these carriers. Each preset uses the carrier's own
 | --- | --- | --- | --- |
 | Telnyx | Username and password, or server IP address | Credentials from a Telnyx SIP connection | Turn on "Enable T.38 Fax Gateway" for each number. Telnyx expects your server to switch a received call to T.38, which Faxbot does. |
 | SignalWire | Username and password | Your space SIP domain, such as `example.sip.signalwire.com` | SignalWire does not publish fixed signaling addresses or T.38 details for SIP, so test a fax first. |
-| Sinch | Username and password, or server IP address | Your trunk domain, such as `example.pstn.sinch.com` | Sinch does not document T.38 or fax for Elastic SIP Trunking; ask Sinch to confirm it for your trunk and send test faxes first. Sinch asks every outgoing call for the trunk username and password; to receive, add a registered SIP endpoint with the same username and password. |
+| Sinch | Username and password | Your trunk domain, such as `example.pstn.sinch.com` | Sinch does not document T.38 or fax for Elastic SIP Trunking; ask Sinch to confirm it for your trunk and send test faxes first. Sinch asks every outgoing call for the trunk username and password; to receive, add a registered SIP endpoint with the same username and password. Sinch does not publish the addresses it sends calls from, so Faxbot does not offer IP sign-in for Sinch. |
 | AnveoDirect | Server IP address only | Your server's public IP address in the AnveoDirect portal | AnveoDirect does not support registration. |
 | Flowroute | Username and password, or server IP address | Credentials, or your eight-digit tech prefix for IP sign-in | Flowroute expects North American numbers as 1 plus ten digits; Faxbot formats them for you. |
 | Another carrier | Either | The server, port and credentials your carrier gave you | Faxbot sends numbers exactly as they were entered. |
@@ -54,10 +54,15 @@ If you manage settings with an environment file instead of the console, set the 
 | `SIP_T38_ENABLED` | `true` by default |
 | `SIP_FAX_PREFERENCE_HEADER` | `false` by default; see below |
 | `SIP_TRUNK_CODECS` | `ulaw`, `alaw` or both; leave empty for the preset |
+| `SIP_EXTERNAL_ADDRESS` | Your public IP address, only when Asterisk is behind a router or firewall |
 
 Asterisk reads the trunk when it starts. Faxbot writes it to `asterisk/pjsip.conf` inside the shared fax data folder; while that file exists it replaces the older `SIP_USERNAME`, `SIP_PASSWORD` and `SIP_SERVER` settings.
 
-Open UDP 5060 (or the carrier's port) and the T.38 media range, UDP 4000 to 4999, to the Asterisk host. Keep the Asterisk manager port, 5038, private.
+Open UDP 5060 (or the carrier's port) and UDP 4000 to 4999 to the Asterisk host: T.38 uses 4000 to 4499 and audio uses 4500 to 4999. Keep the Asterisk manager port, 5038, private.
+
+If Asterisk is behind a router or firewall, or runs in Docker with port publishing, enter your public IP address under **Public IP address**. Without it, the carrier is told a private address and calls connect with no fax data. On a server with a public address you can leave it empty.
+
+**Apply to Asterisk** also saves the inbound secret from **Inbound Receiving**, so Asterisk can report received faxes to Faxbot.
 
 ## T.38
 
