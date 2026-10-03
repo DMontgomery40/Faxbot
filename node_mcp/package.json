@@ -1,7 +1,7 @@
 {
   "name": "faxbot-node-mcp",
-  "version": "1.0.1",
-  "description": "Node.js MCP servers for Faxbot (stdio, HTTP, SSE)",
+  "version": "3.0.0",
+  "description": "Node.js MCP servers for Faxbot (stdio, Streamable HTTP)",
   "main": "src/servers/stdio.js",
   "type": "module",
   "repository": {
@@ -12,25 +12,30 @@
   "bugs": { "url": "https://github.com/DMontgomery40/Faxbot/issues" },
   "homepage": "https://github.com/DMontgomery40/Faxbot",
   "publishConfig": { "access": "public" },
+  "engines": { "node": ">=20" },
   "scripts": {
     "stdio": "node src/servers/stdio.js",
     "http": "node src/servers/http.js",
-    "sse": "node src/servers/sse.js",
     "ws": "node src/servers/ws.js",
-    "check": "node scripts/check-imports.js"
+    "test": "node --test",
+    "check": "node scripts/check-imports.js && node --test"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.17.5",
+    "@modelcontextprotocol/express": "2.0.2",
+    "@modelcontextprotocol/node": "2.1.1",
+    "@modelcontextprotocol/server": "2.3.0",
     "axios": "^1.7.0",
-    "form-data": "^4.0.0",
-    "fs": "^0.0.1-security",
-    "path": "^0.12.7",
-    "express": "^4.19.2",
-    "helmet": "^7.1.0",
     "cors": "^2.8.5",
-    "morgan": "^1.10.0",
-    "jose": "^5.2.4",
     "dotenv": "^16.4.5",
-    "ws": "^8.18.0"
+    "express": "^4.19.2",
+    "form-data": "^4.0.0",
+    "helmet": "^7.1.0",
+    "jose": "^5.2.4",
+    "morgan": "^1.10.0",
+    "ws": "^8.18.0",
+    "zod": "^4.2.0"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/client": "2.3.0"
   }
 }
