@@ -139,6 +139,8 @@ Future work will extend Faxbot from document delivery into accountable correspon
 
 Any control required by a selected real workflow is a prerequisite to using its records, regardless of stage number. Templates must state their scope, version, required settings, evidence and remaining organizational responsibilities. Customer-specific forms and integrations stay optional; these capabilities are not yet implemented as an enterprise workflow.
 
+Enterprise software acceptance uses synthetic/local tests. Live customer end-to-end validation is separate and never a CI, merge or release requirement; see the [testing boundary](CONTRIBUTING.md#enterprise-testing-boundary).
+
 ### Later and experimental
 
 - [ ] Destination-level scheduling and verified same-installation delivery, guided by actual traffic and retry costs.

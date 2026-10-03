@@ -78,6 +78,14 @@ Options:
 
 If your change affects a specific fax backend or MCP transport, also test it against that backend or transport.
 
+### Enterprise testing boundary
+
+Enterprise features are verified with synthetic fixtures, unit tests, mocked connector contracts and local integration tests, including local end-to-end flows where useful. These checks must still pass. We do not have real customer organizations, enterprise identity tenants, case systems or regulatory portals available for live acceptance testing.
+
+Missing live enterprise validation, credentials, customer access or production data must **never block CI, merge, release or completion of an otherwise implemented generic capability**. Mark that capability implemented when its software checks pass; separately label external integrations or templates that have not been validated. Customer configuration and activation requirements apply to that deployment, not repository build gates.
+
+Any future live customer acceptance is separate, explicitly requested work and opt-in only. Never add it to required checks, automatically run it because credentials happen to exist, or fail ordinary tests because those credentials are absent. Record “not live-validated” honestly without treating it as a failing software test. This rule overrides broader live-verification language in older plans for enterprise work.
+
 ## Code Style
 
 - **Python**: Follow PEP 8, use `black` for formatting

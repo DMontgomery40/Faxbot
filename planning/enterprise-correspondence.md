@@ -141,6 +141,8 @@ For example, an administrator could configure two mailboxes with different opera
 
 ## Implementation sequence and acceptance criteria
 
+**Testing boundary:** all acceptance criteria below are exercised with synthetic data, mocks and local test services. We cannot perform real customer enterprise end-to-end acceptance ourselves, and it is not required for CI, merge, release or completion of a generic capability. Live customer validation is separate, opt-in work; missing access or credentials is not a project blocker. Follow the [enterprise testing policy](../CONTRIBUTING.md#enterprise-testing-boundary). Deployment-specific controls and template applicability checks below do not create repository CI gates.
+
 The smallest useful foundation is **E0 plus E1**: one trustworthy import, an owned queue, an acknowledgement target and an evidence export. Do not require a new fax carrier, a case-system replacement, a large template catalog or AI to demonstrate it. Conversely, a control required for the selected real workflow must be available before using its records, regardless of stage number. Synthetic evaluation can precede workforce federation; a real workflow that requires SSO or legal holds cannot.
 
 | Stage | Proposed scope and code seam | Acceptance criteria |
@@ -151,7 +153,7 @@ The smallest useful foundation is **E0 plus E1**: one trustworthy import, an own
 | E3: templates and setup | Versioned declarative templates using the E2 resolver; extend wizard/config validation/activation. | UK/AU/US draft examples remain inactive without required sources and applicability. Preview explains inherited settings, conflicts and missing controls; stale apply fails. A version update produces a diff without rewriting historical evidence. Staff use inherited settings. |
 | E4: enterprise integrations | Workforce identity/provisioning, approved OCR/AI and a supported case-system adapter through the same contracts. | Deprovisioning revokes sessions/delegated access and exports as designed. AI returns attributed proposals, cannot approve itself and cannot use a disallowed endpoint. Lost external acknowledgements reconcile without duplicate actions; displayed completion reflects the actual case-system receipt. |
 
-Before each stage, inspect the current checkout and reuse completed work rather than rebuilding it from the dated research. Use additive migrations and existing frozen-schema conventions. Keep public fax contracts and current provider flexibility intact. Use synthetic fixtures and local/mocked connectors for development; separately label any real integration verification. Measure handling steps, time to accepted ownership, missed acknowledgements, unresolved handoffs and export completeness. Report actual invoice savings only with measured charges and operating costs.
+Before each stage, inspect the current checkout and reuse completed work rather than rebuilding it from the dated research. Use additive migrations and existing frozen-schema conventions. Keep public fax contracts and current provider flexibility intact. Passing the applicable synthetic/local checks is sufficient software acceptance; record real integrations as not live-validated where applicable. Handling-time and financial measurements belong to a later customer evaluation and are not release gates.
 
 ## Deferred integration and customer decisions
 

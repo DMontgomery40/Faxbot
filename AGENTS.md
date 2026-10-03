@@ -31,6 +31,7 @@ The future enterprise direction adds accountable correspondence: reusable intake
 
 ## Enterprise planning boundaries
 
+- **Enterprise testing is synthetic/local only for development and CI.** Unit tests, mocked contracts and local integration tests are the acceptance criteria. Missing live customer systems, enterprise credentials or real end-to-end validation must never block CI, merge, release or completion of the generic capability. Record external validation separately as not performed. See the [testing boundary](CONTRIBUTING.md#enterprise-testing-boundary); it takes precedence over broader live-verification language in older plans.
 - Keep product defaults, documentation and core models company-neutral. Do not assume a customer's provider, telephony stack, legal duties or case system. Record integration questions for the selected future pilot.
 - Preserve independent inbound and outbound providers. The supported trust model remains a dedicated installation per organization; policy scopes do not establish multi-tenant isolation.
 - Keep document acquisition, transport success, owner acknowledgement, internal approval and business completion distinct. Existing SMTP acceptance and case-ledger fax success cannot stand in for human or external-system acknowledgement.

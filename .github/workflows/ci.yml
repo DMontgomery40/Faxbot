@@ -1,5 +1,8 @@
 name: CI
 
+# Enterprise checks use synthetic data, mocks and local services only.
+# Never require live enterprise E2E, customer credentials or customer access here.
+# Missing external validation is not a merge/release gate; see CONTRIBUTING.md.
 on:
   push:
     branches: [ main, master ]

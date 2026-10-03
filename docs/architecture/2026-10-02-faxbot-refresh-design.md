@@ -103,6 +103,8 @@ Use one failing behavior test followed by its implementation, with independent r
 
 ## Completion gates
 
+These gates cover the existing fax refresh. Enterprise work follows the [synthetic/local testing boundary](../../CONTRIBUTING.md#enterprise-testing-boundary): unavailable customer systems, credentials or live enterprise end-to-end validation are not CI, merge, release or software-completion blockers.
+
 - Every retained capability in the reconciled product matrix has an implementation owner, a passing verification method, and recorded evidence.
 - Complete RBAC management and enforcement is demonstrated for users, groups, roles, sessions, integration keys and document/mailbox resources, including denied direct calls and effective revocation.
 - No known content-loss, duplicate-submission, lost-accepted-job, incorrect-provider, unauthorized-document-access, or false-success defect remains.
@@ -112,7 +114,7 @@ Use one failing behavior test followed by its implementation, with independent r
 - Real controlled send and receive, callback progression, restart recovery and document fidelity are demonstrated for the release's supported integrations; simulator evidence is labeled separately.
 - Documentation updates automatically on a main commit, builds and publishes successfully, and identifies the release revision.
 - Release/deployment artifacts, runbook, credentials-transfer procedure, dependency/license inventory and recipient setup are complete and reproducible.
-- Any unavailable external credential, endpoint, account, hardware or signing prerequisite remains an explicit unmet completion gate. It cannot be converted into a passing claim or silently removed from scope.
+- For explicitly in-scope live verification of the existing fax refresh, unavailable credentials, endpoints, accounts, hardware or signing prerequisites remain recorded as unmet. This does not apply to future enterprise integrations or customer acceptance; those are outside these gates.
 
 ## Out of scope
 
