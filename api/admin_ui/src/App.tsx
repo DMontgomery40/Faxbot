@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Box,
   AppBar,
@@ -57,6 +57,7 @@ import Terminal from './components/Terminal';
 import ScriptsTests from './components/ScriptsTests';
 import { ThemeProvider } from './theme/ThemeContext';
 import { ThemeToggle } from './components/ThemeToggle';
+import type { AdminDestination } from './navigation';
 
 interface TabPanelProps {
   children?: React.ReactNode;
@@ -87,10 +88,12 @@ function AppContent() {
   const isMobile = useMediaQuery(muiTheme.breakpoints.down('md'));
   const isTablet = useMediaQuery(muiTheme.breakpoints.down('lg'));
   
-  const [apiKey, setApiKey] = useState<string>(() => {
+  const [initialStoredKey] = useState<string>(() => {
     // Load from localStorage (temporary storage, cleared on logout)
     return localStorage.getItem('faxbot_admin_key') || '';
   });
+  const [apiKey, setApiKey] = useState(initialStoredKey);
+  const restoredStoredKey = useRef(false);
   const [client, setClient] = useState<AdminAPIClient | null>(null);
   const [adminConfig, setAdminConfig] = useState<any | null>(null);
   const [authenticated, setAuthenticated] = useState(false);
@@ -100,7 +103,7 @@ function AppContent() {
   const [toolsTab, setToolsTab] = useState(0); // 0: Terminal, 1: Diagnostics, 2: Logs, 3: Plugins, 4: Scripts & Tests
   const [mobileOpen, setMobileOpen] = useState(false);
 
-  const handleLogin = async (key: string) => {
+  const handleLogin = useCallback(async (key: string) => {
     try {
       const testClient = new AdminAPIClient(key);
       // Test the key by fetching config
@@ -117,7 +120,7 @@ function AppContent() {
       setError('Invalid API key or insufficient permissions');
       setAuthenticated(false);
     }
-  };
+  }, []);
 
   const handleLogout = () => {
     localStorage.removeItem('faxbot_admin_key');
@@ -127,10 +130,9 @@ function AppContent() {
     setTabValue(0);
   };
 
-  const handleKeyPress = (event: React.KeyboardEvent) => {
-    if (event.key === 'Enter') {
-      handleLogin(apiKey);
-    }
+  const handleLoginSubmit = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (apiKey) void handleLogin(apiKey);
   };
 
   const handleTabChange = (newValue: number) => {
@@ -140,12 +142,35 @@ function AppContent() {
     }
   };
 
-  // Auto-login if key exists
-  useEffect(() => {
-    if (apiKey && !authenticated) {
-      handleLogin(apiKey);
+  const handleNavigate = (destination: AdminDestination) => {
+    switch (destination) {
+      case 'jobs':
+        handleTabChange(2);
+        break;
+      case 'inbox':
+        handleTabChange(3);
+        break;
+      case 'settings':
+        setSettingsTab(1);
+        handleTabChange(4);
+        break;
+      case 'keys':
+        setSettingsTab(2);
+        handleTabChange(4);
+        break;
+      case 'diagnostics':
+        setToolsTab(1);
+        handleTabChange(5);
+        break;
     }
-  }, [apiKey, authenticated]);
+  };
+
+  // Restore the initial stored key once; editing the login field never submits.
+  useEffect(() => {
+    if (restoredStoredKey.current) return;
+    restoredStoredKey.current = true;
+    if (initialStoredKey) void handleLogin(initialStoredKey);
+  }, [initialStoredKey, handleLogin]);
 
   const tabIcons = [
     <DashboardIcon />,
@@ -286,6 +311,8 @@ function AppContent() {
           <Container maxWidth="sm" sx={{ flex: 1, display: 'flex', alignItems: 'center', pb: 8 }}>
             <Fade in={true} timeout={1000}>
               <Paper 
+                component="form"
+                onSubmit={handleLoginSubmit}
                 elevation={0}
                 sx={{ 
                   p: 4, 
@@ -325,7 +352,6 @@ function AppContent() {
                   type="password"
                   value={apiKey}
                   onChange={(e) => setApiKey(e.target.value)}
-                  onKeyPress={handleKeyPress}
                   placeholder="fbk_live_... or bootstrap key"
                   sx={{ mt: 3 }}
                   autoFocus
@@ -334,7 +360,7 @@ function AppContent() {
                 <Button
                   fullWidth
                   variant="contained"
-                  onClick={() => handleLogin(apiKey)}
+                  type="submit"
                   sx={{ 
                     mt: 3,
                     py: 1.5,
@@ -575,7 +601,7 @@ function AppContent() {
         </Drawer>
         
         <TabPanel value={tabValue} index={0}>
-          <Dashboard client={client!} onNavigate={handleTabChange} />
+          <Dashboard client={client!} onNavigate={handleNavigate} />
         </TabPanel>
         <TabPanel value={tabValue} index={1}>
           <SendFax client={client!} />
@@ -644,7 +670,7 @@ function AppContent() {
             </Box>
             <Box sx={{ p: { xs: 2, md: 3 } }}>
               {toolsTab === 0 && <Terminal apiKey={apiKey} />}
-              {toolsTab === 1 && <Diagnostics client={client!} onNavigate={handleTabChange} docsBase={adminConfig?.branding?.docs_base} />}
+              {toolsTab === 1 && <Diagnostics client={client!} onNavigate={handleNavigate} docsBase={adminConfig?.branding?.docs_base} />}
               {toolsTab === 2 && <Logs client={client!} />}
               {toolsTab === 3 && adminConfig?.v3_plugins?.enabled && <Plugins client={client!} />}
               {(toolsTab === 4 || (toolsTab === 3 && !adminConfig?.v3_plugins?.enabled)) && <ScriptsTests client={client!} docsBase={adminConfig?.branding?.docs_base} />}

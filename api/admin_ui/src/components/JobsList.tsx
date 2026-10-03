@@ -36,6 +36,14 @@ interface JobsListProps {
   client: AdminAPIClient;
 }
 
+const statusOptions = [
+  { value: '', label: 'All Statuses' },
+  { value: 'queued', label: 'Queued' },
+  { value: 'in_progress', label: 'In Progress' },
+  { value: 'SUCCESS', label: 'Success' },
+  { value: 'FAILED', label: 'Failed' },
+];
+
 function JobsList({ client }: JobsListProps) {
   const [jobs, setJobs] = useState<FaxJob[]>([]);
   const [loading, setLoading] = useState(true);
@@ -44,6 +52,7 @@ function JobsList({ client }: JobsListProps) {
   const [total, setTotal] = useState(0);
   const [selectedJob, setSelectedJob] = useState<FaxJob | null>(null);
   const [jobDetailOpen, setJobDetailOpen] = useState(false);
+  const [jobActionError, setJobActionError] = useState<string | null>(null);
 
   const fetchJobs = async () => {
     try {
@@ -100,6 +109,7 @@ function JobsList({ client }: JobsListProps) {
     try {
       const jobDetails = await client.getJob(jobId);
       setSelectedJob(jobDetails);
+      setJobActionError(null);
       setJobDetailOpen(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to fetch job details');
@@ -109,6 +119,7 @@ function JobsList({ client }: JobsListProps) {
   const handleCloseJobDetail = () => {
     setJobDetailOpen(false);
     setSelectedJob(null);
+    setJobActionError(null);
   };
 
   return (
@@ -130,17 +141,19 @@ function JobsList({ client }: JobsListProps) {
       <Grid container spacing={2} sx={{ mb: 3 }}>
         <Grid item xs={12} sm={6} md={3}>
           <FormControl fullWidth>
-            <InputLabel>Status Filter</InputLabel>
+            <InputLabel id="jobs-status-label" shrink>Status Filter</InputLabel>
             <Select
+              id="jobs-status-filter"
+              labelId="jobs-status-label"
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value)}
               label="Status Filter"
+              displayEmpty
+              renderValue={(value) => statusOptions.find(option => option.value === value)?.label ?? value}
             >
-              <MenuItem value="">All Statuses</MenuItem>
-              <MenuItem value="queued">Queued</MenuItem>
-              <MenuItem value="in_progress">In Progress</MenuItem>
-              <MenuItem value="SUCCESS">Success</MenuItem>
-              <MenuItem value="FAILED">Failed</MenuItem>
+              {statusOptions.map(option => (
+                <MenuItem key={option.value} value={option.value}>{option.label}</MenuItem>
+              ))}
             </Select>
           </FormControl>
         </Grid>
@@ -272,6 +285,7 @@ function JobsList({ client }: JobsListProps) {
           Job Details
         </DialogTitle>
         <DialogContent>
+          {jobActionError && <Alert severity="error" sx={{ mb: 2 }}>{jobActionError}</Alert>}
           {selectedJob && (
             <List>
               <ListItem>
@@ -359,6 +373,7 @@ function JobsList({ client }: JobsListProps) {
         <DialogActions>
           {selectedJob && (
             <Button onClick={async () => {
+              setJobActionError(null);
               try {
                 const blob = await client.downloadJobPdf(selectedJob.id);
                 const url = URL.createObjectURL(blob);
@@ -366,21 +381,26 @@ function JobsList({ client }: JobsListProps) {
                 a.href = url;
                 a.download = `fax_${selectedJob.id}.pdf`;
                 document.body.appendChild(a);
-                a.click();
-                document.body.removeChild(a);
-                URL.revokeObjectURL(url);
-              } catch (e) {
-                // ignore for now; could add error state
+                try {
+                  a.click();
+                } finally {
+                  a.remove();
+                  // Allow asynchronous browser download handling before releasing the blob.
+                  window.setTimeout(() => URL.revokeObjectURL(url), 60000);
+                }
+              } catch (err) {
+                setJobActionError(err instanceof Error ? err.message : 'Failed to download PDF');
               }
             }}>Download PDF</Button>
           )}
           {selectedJob && (
             <Button onClick={async () => {
+              setJobActionError(null);
               try {
                 const updated = await client.refreshJob(selectedJob.id);
                 setSelectedJob(updated);
-              } catch (e) {
-                // ignore; could show an alert on failure
+              } catch (err) {
+                setJobActionError(err instanceof Error ? err.message : 'Failed to refresh job status');
               }
             }}>Refresh Status</Button>
           )}

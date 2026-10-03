@@ -21,10 +21,11 @@ import {
 import { IconButton } from '@mui/material';
 import AdminAPIClient from '../api/client';
 import type { HealthStatus } from '../api/types';
+import type { AdminDestination } from '../navigation';
 
 interface DashboardProps {
   client: AdminAPIClient;
-  onNavigate?: (tabIndex: number) => void;
+  onNavigate?: (destination: AdminDestination) => void;
 }
 
 function Dashboard({ client, onNavigate }: DashboardProps) {
@@ -143,7 +144,7 @@ function Dashboard({ client, onNavigate }: DashboardProps) {
                   },
                   transition: 'all 0.2s ease-in-out',
                 }}
-                onClick={() => onNavigate?.(9)} // Navigate to Diagnostics tab (index 9)
+                onClick={() => onNavigate?.('diagnostics')}
               >
               <CardContent sx={{ pb: { xs: 1, sm: 2 } }}>
                 <Box display="flex" alignItems="center" mb={{ xs: 1, sm: 2 }}>
@@ -178,7 +179,7 @@ function Dashboard({ client, onNavigate }: DashboardProps) {
                   },
                   transition: 'all 0.2s ease-in-out',
                 }}
-                onClick={() => onNavigate?.(2)} // Navigate to Jobs tab (index 2)
+                onClick={() => onNavigate?.('jobs')}
               >
               <CardContent sx={{ pb: { xs: 1, sm: 2 } }}>
                 <Typography variant="h6" component="h2" gutterBottom sx={{ fontSize: { xs: '1rem', sm: '1.25rem' } }}>
@@ -226,7 +227,7 @@ function Dashboard({ client, onNavigate }: DashboardProps) {
                   },
                   transition: 'all 0.2s ease-in-out',
                 }}
-                onClick={() => onNavigate?.(3)} // Navigate to Inbound tab (index 3)
+                onClick={() => onNavigate?.('inbox')}
               >
                 <CardContent sx={{ pb: { xs: 1, sm: 2 } }}>
                   <Typography variant="h6" component="h2" gutterBottom sx={{ fontSize: { xs: '1rem', sm: '1.25rem' } }}>
@@ -244,7 +245,7 @@ function Dashboard({ client, onNavigate }: DashboardProps) {
 
           {/* Security Status */}
           <Grid item xs={12} sm={6} lg={3}>
-            <Tooltip title="Click to view security settings" arrow>
+            <Tooltip title="Click to manage API keys" arrow>
               <Card 
                 sx={{ 
                   cursor: 'pointer',
@@ -255,7 +256,7 @@ function Dashboard({ client, onNavigate }: DashboardProps) {
                   },
                   transition: 'all 0.2s ease-in-out',
                 }}
-                onClick={() => onNavigate?.(6)} // Navigate to Settings tab (index 6)
+                onClick={() => onNavigate?.('keys')}
               >
                 <CardContent sx={{ pb: { xs: 1, sm: 2 } }}>
                   <Typography variant="h6" component="h2" gutterBottom sx={{ fontSize: { xs: '1rem', sm: '1.25rem' } }}>

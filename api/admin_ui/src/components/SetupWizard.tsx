@@ -293,8 +293,8 @@ function SetupWizard({ client, onDone, docsBase }: SetupWizardProps) {
             </FormControl>
             
             {ob === 'phaxio' && (
-              <Alert severity="success" sx={{ mt: 2 }}>
-                Best for healthcare: 5-minute setup, automatic HIPAA compliance with BAA
+              <Alert severity="info" sx={{ mt: 2 }}>
+                Phaxio uses a hosted fax API. Configure your account credentials and callback URL.
               </Alert>
             )}
             

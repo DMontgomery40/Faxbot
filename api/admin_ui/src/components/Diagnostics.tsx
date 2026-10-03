@@ -44,11 +44,12 @@ import {
 } from '@mui/icons-material';
 import AdminAPIClient from '../api/client';
 import type { DiagnosticsResult } from '../api/types';
+import type { AdminDestination } from '../navigation';
 import { ResponsiveFormSection } from './common/ResponsiveFormFields';
 
 interface DiagnosticsProps {
   client: AdminAPIClient;
-  onNavigate?: (index: number) => void;
+  onNavigate?: (destination: AdminDestination) => void;
   docsBase?: string;
 }
 
@@ -310,7 +311,7 @@ function Diagnostics({ client, onNavigate, docsBase }: DiagnosticsProps) {
                           variant="outlined"
                           onClick={() => {
                             const anchor = anchorFor(title);
-                            onNavigate(1);
+                            onNavigate('settings');
                             setTimeout(() => {
                               const el = document.querySelector(anchor);
                               el?.scrollIntoView({ behavior: 'smooth' });

@@ -66,6 +66,9 @@ export function ResponsiveTextField({
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const [showPassword, setShowPassword] = React.useState(false);
+  const fieldId = React.useId();
+  const descriptionId = `${fieldId}-description`;
+  const errorId = `${fieldId}-helper-text`;
 
   return (
     <Box sx={{ mb: isMobile ? 2.5 : 3, width: fullWidth ? '100%' : 'auto' }}>
@@ -77,22 +80,25 @@ export function ResponsiveTextField({
             </Box>
           )}
           <Typography 
+            component="label"
+            htmlFor={fieldId}
             variant="subtitle2" 
             fontWeight={600}
             color={error ? 'error' : 'textPrimary'}
           >
             {label}
-            {required && <span style={{ color: theme.palette.error.main }}> *</span>}
+            {required && <span aria-hidden="true" style={{ color: theme.palette.error.main }}> *</span>}
           </Typography>
         </Box>
 
         {helperText && !error && (
-          <Typography variant="caption" color="text.secondary">
+          <Typography id={descriptionId} variant="caption" color="text.secondary">
             {helperText}
           </Typography>
         )}
 
         <TextField
+          id={fieldId}
           fullWidth={fullWidth}
           value={value || ''}
           onChange={(e) => onChange?.(e.target.value)}
@@ -100,6 +106,10 @@ export function ResponsiveTextField({
           type={type === 'password' && !showPassword ? 'password' : type === 'password' ? 'text' : type}
           error={error}
           helperText={error ? errorMessage : ''}
+          FormHelperTextProps={{ id: errorId }}
+          inputProps={{
+            'aria-describedby': error && errorMessage ? errorId : helperText && !error ? descriptionId : undefined,
+          }}
           disabled={disabled}
           required={required}
           multiline={multiline}
