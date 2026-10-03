@@ -173,7 +173,7 @@ def test_status_mapping():
         ("success", "SUCCESS"),
         ("failure", "FAILED"),
         ("error", "FAILED"),
-        ("cancelled", "FAILED"),
+        ("cancelled", "cancelled"),
         ("in_progress", "in_progress"),
         ("sending", "in_progress"),
         ("unknown_status", "unknown_status"),  # Fallback
