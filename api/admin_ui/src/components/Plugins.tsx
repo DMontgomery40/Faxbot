@@ -34,6 +34,7 @@ import {
   ExpandLess as ExpandLessIcon,
 } from '@mui/icons-material';
 import AdminAPIClient from '../api/client';
+import { curatedDocsLink } from '../docsLinks';
 import type { AdminConfig, PluginConfiguration, PluginConfigurationPatch, Settings } from '../api/types';
 import type { AdminDestination } from '../navigation';
 import PluginConfigDialog from './PluginConfigDialog';
@@ -90,6 +91,7 @@ const EXAMPLE_MANIFEST = `{
 const BULK_IMPORT_PLACEHOLDER = `[ { "id": "provider1", ... }, { ... } ] or markdown with json code blocks`;
 
 export default function Plugins({ client, config, configLoading: activeConfigLoading, configError: activeConfigError, onNavigate }: Props) {
+  const docsBase = config?.branding?.docs_base;
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>('');
   const [items, setItems] = useState<PluginItem[]>([]);
@@ -311,6 +313,7 @@ export default function Plugins({ client, config, configLoading: activeConfigLoa
               onActivate={handleMakeActiveOutbound} 
               onConfigure={handleConfigure} 
               registry={registry} 
+              docsBase={docsBase}
               icon={<Phone />}
             />
             
@@ -323,12 +326,14 @@ export default function Plugins({ client, config, configLoading: activeConfigLoa
               onActivate={undefined} 
               onConfigure={handleConfigure} 
               registry={registry} 
+              docsBase={docsBase}
               icon={<StorageIcon />}
             />
             
             <Discover 
               title="Discover (Curated Registry)" 
               items={registryOnly()} 
+              docsBase={docsBase}
               icon={<CloudDownloadIcon />}
             />
             
@@ -581,6 +586,7 @@ function Section({
   onActivate, 
   onConfigure, 
   registry,
+  docsBase,
   icon 
 }: { 
   title: string; 
@@ -591,6 +597,7 @@ function Section({
   onActivate?: (id: string) => void; 
   onConfigure?: (p: PluginItem) => void; 
   registry: PluginItem[];
+  docsBase?: string;
   icon?: React.ReactNode;
 }) {
   const joinCaps = (caps: string[]) => caps.join(', ');
@@ -607,7 +614,9 @@ function Section({
         {(items || []).map(p => {
           const reg = p.source === 'manifest' ? undefined : regIndex.get(p.id);
           const desc = p.description || reg?.description;
-          const learn = p.learn_more || reg?.learn_more;
+          const learn = p.source === 'manifest'
+            ? p.learn_more
+            : curatedDocsLink(p.learn_more || reg?.learn_more, docsBase);
           
           return (
             <Grid item xs={12} sm={6} lg={4} key={p.id}>
@@ -731,7 +740,7 @@ function Section({
   );
 }
 
-function Discover({ title, items, icon }: { title: string; items: any[]; icon?: React.ReactNode }) {
+function Discover({ title, items, icon, docsBase }: { title: string; items: any[]; icon?: React.ReactNode; docsBase?: string }) {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
   
@@ -795,7 +804,7 @@ function Discover({ title, items, icon }: { title: string; items: any[]; icon?: 
                 
                 <CardActions sx={{ p: 2, pt: 0 }}>
                   {r.learn_more ? (
-                    <MLink href={r.learn_more} target="_blank" rel="noreferrer" sx={{ fontSize: '0.875rem' }}>
+                    <MLink href={curatedDocsLink(r.learn_more, docsBase)} target="_blank" rel="noreferrer" sx={{ fontSize: '0.875rem' }}>
                       Learn more
                     </MLink>
                   ) : (

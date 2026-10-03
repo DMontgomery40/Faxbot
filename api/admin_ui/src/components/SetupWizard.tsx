@@ -5,6 +5,7 @@ import {
   CircularProgress, Grid, Paper, Chip, Switch, FormControlLabel,
 } from '@mui/material';
 import AdminAPIClient from '../api/client';
+import { docsLink } from '../docsLinks';
 import type { Settings, SettingsPatch, ValidationResult } from '../api/types';
 import SecretInput from './common/SecretInput';
 
@@ -135,7 +136,7 @@ function SetupWizard({ client, onDone, docsBase }: SetupWizardProps) {
   const manifestSelected = providers.some(provider => provider.id === ob && provider.source === 'manifest');
   const builtinSelected = !!credentialFields[ob] && !manifestSelected &&
     (!settings?.features?.v3_plugins || catalogReady);
-  const docsURL = (docsBase || 'https://dmontgomery40.github.io/Faxbot').replace(/\/$/, '');
+  const docsURL = docsLink('home', docsBase);
 
   const stopWatching = useCallback(() => {
     watcherEpoch.current += 1;
@@ -518,7 +519,7 @@ function SetupWizard({ client, onDone, docsBase }: SetupWizardProps) {
             {verifyingInbound && <Button onClick={stopWatching}>Stop Watching</Button>}
           </Box>
           {inboundObservation && <Alert severity="info" sx={{ mt: 1 }}>{inboundObservation}</Alert>}
-          <Typography variant="caption" sx={{ display: 'block', mt: 2 }}><a href={`${docsURL}/`} target="_blank" rel="noreferrer">Faxbot Docs</a> · <a href="https://developers.sinch.com/docs/fax/api-reference/" target="_blank" rel="noreferrer">Sinch Fax API Docs</a></Typography>
+          <Typography variant="caption" sx={{ display: 'block', mt: 2 }}><a href={docsURL} target="_blank" rel="noreferrer">Faxbot Docs</a> · <a href="https://developers.sinch.com/docs/fax/api-reference/" target="_blank" rel="noreferrer">Sinch Fax API Docs</a></Typography>
         </Paper>}
       </Box>
     </Box>;

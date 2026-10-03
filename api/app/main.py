@@ -674,7 +674,7 @@ def get_admin_config():
         "phaxio_verify_signature": settings.phaxio_verify_signature,
         "persisted_settings_enabled": settings.enable_persisted_settings,
         "branding": {
-            "docs_base": os.getenv("DOCS_BASE_URL", "https://dmontgomery40.github.io/Faxbot"),
+            "docs_base": os.getenv("DOCS_BASE_URL", "https://docs.faxbot.net/latest/"),
             "logo_path": "/admin/ui/faxbot_full_logo.png",
         },
         "mcp": {

@@ -39,6 +39,7 @@ import {
   Info as InfoIcon,
 } from '@mui/icons-material';
 import AdminAPIClient from '../api/client';
+import { docsLink } from '../docsLinks';
 import type { InboundFax } from '../api/types';
 import type { AdminDestination } from '../navigation';
 import { ResponsiveFormSection } from './common/ResponsiveFormFields';
@@ -508,7 +509,7 @@ same => n,System(curl -s -X POST -H "Content-Type: application/json" -H "X-Inter
                   </Button>
                   <Button 
                     size="small" 
-                    href={`${docsBase || 'https://dmontgomery40.github.io/Faxbot'}/backends/sip-setup.html#inbound-receiving-quickstart-wip`} 
+                    href={docsLink('inbound', docsBase)}
                     target="_blank" 
                     rel="noreferrer"
                     fullWidth={isSmallMobile}

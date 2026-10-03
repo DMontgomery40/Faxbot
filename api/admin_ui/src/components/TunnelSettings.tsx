@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Box, Button, Chip, Dialog, DialogActions, DialogContent, DialogTitle, Link, Paper, Stack, Typography } from '@mui/material';
 import { Cloud, Security, VpnKey, VpnLock } from '@mui/icons-material';
 import AdminAPIClient from '../api/client';
+import { docsLink } from '../docsLinks';
 import type { TunnelStatus } from '../api/types';
 import { ResponsiveFormSection, ResponsiveSelect, ResponsiveTextField } from './common/ResponsiveFormFields';
 import { SmoothLoader, InlineLoader } from './common/SmoothLoader';
@@ -21,7 +22,7 @@ export default function TunnelSettings({ client, docsBase, hipaaMode }: Props) {
   const [wg, setWg] = useState<{ endpoint?: string; server_key?: string; client_ip?: string; dns?: string }>({});
   const [ts, setTs] = useState<{ auth_key?: string; hostname?: string }>({});
 
-  const learnMoreUrl = useMemo(() => `${docsBase || ''}/networking/tunnels`, [docsBase]);
+  const learnMoreUrl = docsLink('tunnels', docsBase);
 
   const fetchStatus = async () => {
     setLoading(true);

@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useState } from 'react';
 import {
   Box,
   Button,
@@ -29,6 +29,7 @@ import {
   Info as InfoIcon,
 } from '@mui/icons-material';
 import AdminAPIClient from '../api/client';
+import { docsLink } from '../docsLinks';
 import { ResponsiveFormSection, ResponsiveTextField } from './common/ResponsiveFormFields';
 
 interface Props {
@@ -158,7 +159,7 @@ const ScriptsTests: React.FC<Props> = ({ client, docsBase }) => {
 
   const theme = useTheme();
 
-  const docsUrl = useMemo(() => `${docsBase || 'https://dmontgomery40.github.io/Faxbot'}/development/scripts-and-tests.html`, [docsBase]);
+  const docsUrl = docsLink('scripts', docsBase);
 
   const pushAuth = (line: string) => setAuthLines((prev) => [...prev, line]);
   const clearAuth = () => setAuthLines([]);

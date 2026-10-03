@@ -27,6 +27,7 @@ import {
   Settings as SettingsIcon,
 } from '@mui/icons-material';
 import AdminAPIClient from '../api/client';
+import { DEFAULT_DOCS_BASE, docsLink } from '../docsLinks';
 import type { Settings as SettingsType, SettingsPatch } from '../api/types';
 import { ResponsiveSettingItem, ResponsiveSettingSection } from './common/ResponsiveSettingItem';
 import { ResponsiveTextField, ResponsiveFormSection } from './common/ResponsiveFormFields';
@@ -131,7 +132,7 @@ function Settings({ client }: SettingsProps) {
   const [snack, setSnack] = useState<string | null>(null);
   const [form, setForm] = useState<SettingsForm>({});
   const [loadedForm, setLoadedForm] = useState<SettingsForm>({});
-  const [docsBase, setDocsBase] = useState<string>('https://dmontgomery40.github.io/Faxbot');
+  const [docsBase, setDocsBase] = useState<string>(DEFAULT_DOCS_BASE);
   const [lastGeneratedSecret, setLastGeneratedSecret] = useState<string>('');
   const handleForm = (field: string, value: FormValue) => setForm((prev) => ({ ...prev, [field]: value }));
   const pendingRestart = settings?._meta?.apply_state === 'pending_restart';
@@ -216,7 +217,7 @@ function Settings({ client }: SettingsProps) {
       const data = await client.getSettings();
       try {
         const cfg = await client.getConfig();
-        if (cfg?.branding?.docs_base) setDocsBase(cfg.branding.docs_base);
+        setDocsBase(cfg?.branding?.docs_base || DEFAULT_DOCS_BASE);
       } catch { /* Settings remain usable when branding is unavailable. */ }
       hydrate(data);
       setSnack(null);
@@ -504,7 +505,7 @@ function Settings({ client }: SettingsProps) {
                       <Chip
                         label="Faxbot: Phaxio Setup"
                         component="a"
-                        href={`${docsBase}/backends/phaxio-setup.html`}
+                        href={docsLink('phaxio', docsBase)}
                         target="_blank"
                         rel="noreferrer"
                         clickable

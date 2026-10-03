@@ -424,7 +424,7 @@ function AppContent() {
                 </Button>
                 
                 <Typography variant="caption" sx={{ mt: 2, display: 'block', opacity: 0.8 }}>
-                  Use an API key with 'keys:manage' scope or the bootstrap API_KEY from your .env
+                  Use an API key with 'keys:manage' scope or the installation bootstrap key
                 </Typography>
               </Paper>
             </Fade>

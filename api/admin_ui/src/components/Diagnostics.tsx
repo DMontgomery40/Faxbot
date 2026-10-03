@@ -43,6 +43,7 @@ import {
   Assessment as AssessmentIcon,
 } from '@mui/icons-material';
 import AdminAPIClient from '../api/client';
+import { docsLink } from '../docsLinks';
 import type { DiagnosticsResult } from '../api/types';
 import type { AdminDestination } from '../navigation';
 import { ResponsiveFormSection } from './common/ResponsiveFormFields';
@@ -186,18 +187,18 @@ function Diagnostics({ client, onNavigate, docsBase }: DiagnosticsProps) {
         docs.push({ text: 'FAX_DATA_DIR stores temporary files and fax artifacts.' });
         docs.push({ text: 'Default: /faxdata in container, ./faxdata locally' });
         docs.push({ text: 'Must be writable by the application process.' });
-        docs.push({ text: 'Deployment Guide', href: `${docsBase || 'https://dmontgomery40.github.io/Faxbot'}/deployment/` });
+        docs.push({ text: 'Deployment Guide', href: docsLink('deployment', docsBase) });
       }
       else if (key === 'database_connected') {
         docs.push({ text: 'Database stores job records and API keys.' });
         docs.push({ text: 'Default: SQLite at ./faxbot.db' });
         docs.push({ text: 'Production: Use PostgreSQL with DATABASE_URL' });
-        docs.push({ text: 'Database Setup', href: `${docsBase || 'https://dmontgomery40.github.io/Faxbot'}/deployment/#database-configuration` });
+        docs.push({ text: 'Database Setup', href: docsLink('deployment', docsBase) });
       }
     }
     
     if (t.includes('phaxio')) {
-      docs.push({ text: 'Phaxio Setup Guide', href: `${docsBase || 'https://dmontgomery40.github.io/Faxbot'}/backends/phaxio-setup.html` });
+      docs.push({ text: 'Phaxio Setup Guide', href: docsLink('phaxio', docsBase) });
       docs.push({ text: 'Phaxio Console', href: 'https://console.phaxio.com' });
       if (key === 'public_url_https' || key === 'callback_url_set') {
         docs.push({ text: 'Webhook security requires HTTPS for PHI transmission.' });
@@ -205,14 +206,14 @@ function Diagnostics({ client, onNavigate, docsBase }: DiagnosticsProps) {
     }
     
     if (t.includes('sip')) {
-      docs.push({ text: 'SIP/Asterisk Setup', href: `${docsBase || 'https://dmontgomery40.github.io/Faxbot'}/backends/sip-setup.html` });
+      docs.push({ text: 'SIP/Asterisk Setup', href: docsLink('sip', docsBase) });
       if (key === 'ami_password_not_default') {
         docs.push({ text: 'Change AMI password in both Asterisk manager.conf and ASTERISK_AMI_PASSWORD env var.' });
       }
     }
     
     if (t.includes('security')) {
-      docs.push({ text: 'Security Guide', href: `${docsBase || 'https://dmontgomery40.github.io/Faxbot'}/security/` });
+      docs.push({ text: 'Security Guide', href: docsLink('security', docsBase) });
       if (key === 'enforce_https') {
         docs.push({ text: 'HIPAA requires encryption in transit. Enable ENFORCE_PUBLIC_HTTPS=true.' });
       }
