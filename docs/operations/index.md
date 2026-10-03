@@ -8,6 +8,7 @@ Operate and troubleshoot Faxbot day to day.
 ## Areas
 
 - [Admin Console](../admin-console.md)
+- [Delivery routes](delivery-routes.md) · [Intake](intake.md) · [Direct delivery](direct-delivery.md)
 - [Terminal](../terminal.md)
 - Tools: [Scripts & Tests](../tools/scripts-and-tests.md) · [Node MCP Scripts](../tools/node-mcp-scripts.md) · [API Tests](../tools/api-tests.md)
 - [Troubleshooting](../troubleshooting.md)
