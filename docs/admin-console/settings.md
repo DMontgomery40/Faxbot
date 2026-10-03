@@ -1,44 +1,43 @@
-
 # Settings
 
-All runtime configuration lives here once the Setup Wizard has been completed. Every field includes inline helper text and a **Learn more** link that deep-links to the matching docs page.
+Settings edits the installation's canonical **desired** configuration. The page shows the loaded desired revision, active revision, generation and pending fields. A displayed desired value can differ from the value currently used by requests.
 
-## Backend tab
+## Edit and apply
 
-- Pick the active outbound provider or swap to Test Mode without touching `.env`
-- Each provider reveals only the fields it needs (Phaxio keys, Sinch project ID, SIP trunk credentials, etc.)
-- Security profiles (HIPAA vs Non-PHI) control defaults like HTTPS enforcement and signature verification
-- Applying changes regenerates the plugin config and restarts the API in-place
+1. Click **Load Settings** and review the loaded revision.
+2. Change only the fields you intend to update. Leave stored secret masks unchanged to preserve them; enter a replacement or clear the field explicitly to change a secret.
+3. Click **Apply settings (save durably)**. The editor sends changed fields with its loaded desired revision. A conflict retains your draft; explicitly load settings again and review before retrying.
+4. Read the result. Applied changes are active and saved in the database. Pending changes are saved but do not take effect until every API worker stops and the installation restarts successfully.
+5. After a coordinated restart, load settings again and confirm the desired revision is active. Restarting one worker while others remain running does not promote pending settings; the readonly Reload endpoint does not promote them either.
 
-## Security tab
+The process/container `.env` and legacy plugin JSON are bootstrap inputs for an installation without canonical state. Editing them and restarting does not override an existing canonical revision. Use the Settings editor for existing installations; keep deployment-only container/trunk settings in the deployment configuration.
 
-- Require REST API keys and mint them on the **API Keys** page
-- Enforce HTTPS for callback URLs, toggle audit logging, and set rate limits
-- Adjust max upload size and allowed file types; warnings surface in Send Fax when values are restrictive
+## Provider directions and disabled sending
 
-## Storage & Inbound tab
+Default provider, outbound override and inbound override are independent. An empty direction override inherits the default provider. Choosing an inbound provider does not turn inbound handling on; use its separate enable control. Installed manifest providers can be configured in **Tools → Plugins** without resetting the default provider.
 
-- Select local storage (dev only) or S3/S3-compatible with optional SSE-KMS
-- Configure inbound fax retention windows, download token TTL, and per-scope rate limits
-- Warnings surface when HIPAA defaults are relaxed so you can document exceptions
+**Disable fax sending (queue only)** accepts new uploads as held jobs. Re-enabling sending never automatically transmits those held jobs. Pausing ready work cannot recall an attempt already issued. Review [Fax Disabled](../setup/test-mode.md) before testing.
 
-## MCP tab
+## Available controls
 
-- Enable/disable Node and Python MCP transports (stdio, HTTP, SSE)
-- Provide OAuth issuer/audience for SSE when handling PHI
-- Copy/paste starter configs for Claude Desktop, Cursor, and Windsurf
+- Provider credentials and URLs, including Phaxio's separate Callback Token and outbound signature flag.
+- REST authentication, HTTPS enforcement, audit settings and request/upload limits.
+- Installation-local or S3-compatible artifact storage, inbound enablement, retention and token settings.
+- Embedded Python MCP HTTP/SSE and OAuth settings. Standalone Node/Python MCP processes have their own launch configuration.
 
-## Export & versioning
+A database target or installation path change is maintenance work, not a live datastore move. The database URL is displayed opaquely and is read-only; preserve the database, installation key and artifacts during maintenance.
 
-- Download the resolved config for change control
-- Reapply the last known-good configuration if a test change causes an outage
+## Export and recovery
 
-Need step-by-step provider help? Jump to [Backends](../setup/index.md) for detailed walkthroughs tailored to each option.
+**Export .env** returns a redacted template of desired settings. It masks secrets and does not activate configuration or restore the installation by itself. **Write recovery .env**, when enabled, writes the private desired recovery file on the server; it does not promote pending settings. A complete recovery backup also requires the database, original installation encryption key and artifacts.
 
-## Under the Hood
+## API contract
 
-- Read settings: `GET /admin/settings` (sanitized values for display)
-- Validate backend creds: `POST /admin/settings/validate`
-- Apply runtime changes: `PUT /admin/settings`
-- Reload from environment: `POST /admin/settings/reload`
-- Persist a server-side `.env`: `POST /admin/settings/persist` (when enabled)
+- `GET /admin/settings`: sanitized desired values plus `_meta` active/desired identity and apply state.
+- `PUT /admin/settings`: changed canonical fields plus the loaded `expected_revision_id`; inspect the returned `_meta.apply_state` and `pending_fields`.
+- `POST /admin/settings/reload`: reads durable state; it does not import environment or activate pending changes.
+- `GET /admin/settings/export`: redacted desired template.
+- `POST /admin/settings/persist`: writes a recovery environment file; it does not become the authoritative runtime store.
+- `POST /admin/settings/validate`: checks explicitly supplied credentials for supported builtins. Stored masks and a green presence check are not delivery proof.
+
+See the [Setup Wizard](setup-wizard.md) for a guided edit and [provider guides](../setup/index.md) for deployment prerequisites.

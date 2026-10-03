@@ -5,17 +5,17 @@ Cloud providers must reach your Faxbot API to fetch PDFs and deliver callbacks. 
 
 ## Quick helpers
 
-- **Cloudflare Tunnel** (`cloudflared`): free, persistent, HIPAA-friendly when terminated locally
+- **Cloudflare Tunnel** (`cloudflared`): supplies a public HTTPS URL; quick-tunnel URLs are temporary.
 - **ngrok**: fast for demos; remember to lock scopes and rotate URLs frequently
-- Scripted helper: `scripts/setup-phaxio-tunnel.sh` spins up a tunnel, sets `PUBLIC_API_URL`, updates callback URLs, and restarts the API container if Docker is available
+- Legacy bootstrap helper: `scripts/setup-phaxio-tunnel.sh` starts a tunnel, edits repository `.env` and stops/restarts Compose. It does not patch canonical settings on an existing installation; use the manual steps below.
 
 ## Manual steps
 
 1. Start your tunnel to `http://localhost:8080`
 2. Copy the generated HTTPS URL
 3. In the Admin Console Setup Wizard (Phaxio/SignalWire) or **Settings → Backends**, paste the URL when prompted
-4. Faxbot will derive the callback endpoint (`<public>/phaxio-callback`, `<public>/signalwire-callback`, etc.) automatically
-5. Use **Diagnostics → Webhooks** to verify reachability and signature status
+4. Review each provider’s explicit callback URL or its empty-value default derived from Public API URL. Apply with the loaded desired revision and inspect active/pending status. Complete an installation-wide stop/start when pending, then confirm active identity.
+5. Inspect Diagnostics configuration checks and perform a controlled provider check separately. A configured URL or local presence check does not prove provider reachability, signed callback receipt or document delivery.
 
 ## Production checklist
 

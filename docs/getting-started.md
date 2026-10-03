@@ -25,29 +25,30 @@ Welcome to Faxbot! This section will help you get up and running quickly.
 
 ## What is Faxbot?
 
-Faxbot is the first and only open‑source, self‑hostable fax API that combines:
+Faxbot is an open-source, self-hostable fax API that combines:
 
 - Simple REST API for sending faxes
 - Multiple backend options (cloud and self‑hosted)
 - AI assistant integration via MCP
-- HIPAA‑aligned defaults with relaxed profiles for non‑PHI
+- Installation-local configuration, access controls and audit settings
 - Developer SDKs for Node.js and Python
 
 ## Launch Faxbot
 
-1. Copy `.env.example` to `.env` (you can adjust later in the UI).
+1. For first bootstrap, copy `.env.example` to `.env`. Once canonical state exists, use Settings for server configuration changes.
 2. Start the API: `docker compose up -d --build api`
 3. Open the Admin Console at `http://localhost:8080/admin/ui/`.
 
 ??? tip "Console not found?"
-    Add `ENABLE_LOCAL_ADMIN=true` to `.env`, then restart the API.
+    Set the deployment gate `ENABLE_LOCAL_ADMIN=true`, install the built UI at `/app/admin_ui/dist` in the container or `api/admin_ui/dist` locally and restart the serving API. These UI deployment inputs are separate from canonical runtime settings; `.env` edits/restart do not import canonical provider/security changes.
 
 ## Complete the Setup Wizard
 
 1. In the console, open **Setup Wizard**.
-2. Choose your outbound provider (Phaxio, Sinch, SIP/Asterisk, SignalWire, or Test Mode).
-3. Enter credentials and security preferences (helper text and “Learn more” links guide each field).
-4. Apply settings. The API reloads, and your backend is ready.
+2. Review the loaded default provider and independent outbound/inbound overrides. Preserve existing custom selections.
+3. Change the intended credentials and security fields; leave unchanged stored masks alone.
+4. Apply and inspect active/desired status. Pending changes require every API worker to stop and the installation restart; confirm the desired revision is active afterward. Provider selection and saved settings do not prove delivery.
+5. For document checks without transmission, enable [disabled sending](setup/test-mode.md) in Settings and confirm it is active. New uploads remain held rather than becoming simulated successes.
 
 ## What to do next
 

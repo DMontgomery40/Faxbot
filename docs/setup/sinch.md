@@ -8,9 +8,11 @@ When to use
 
 Key differences vs `phaxio` backend
 - `phaxio`: Provider fetches your PDF via `PUBLIC_API_URL` and posts status to `/phaxio-callback` (HMAC verification supported). No Sinch project ID required.
-- `sinch`: Faxbot uploads your PDF directly to Sinch (multipart). PUBLIC_API_URL and `/phaxio-callback` are not used. Webhook integration for Sinch is under evaluation; current builds reflect the provider’s initial status response.
+- `sinch`: Faxbot uploads your PDF directly to Sinch (multipart). PUBLIC_API_URL and `/phaxio-callback` are not used. Outbound status polling uses the accepted job’s captured Sinch account and remote fax ID; inbound webhook ingestion is separate.
 
-Environment
+Configuration
+
+On an existing installation, edit the desired Sinch selection and credentials in Settings/Setup, apply with the loaded revision and inspect active/pending status. Complete an installation-wide stop/start when pending. The following environment values are first-bootstrap inputs only.
 ```env
 FAX_BACKEND=sinch
 SINCH_PROJECT_ID=your_project_id
@@ -31,7 +33,7 @@ curl -X POST http://localhost:8080/fax \
   -F to=+15551234567 \
   -F file=@./example.pdf
 ```
-The response includes a job ID and the `backend: "sinch"` field.
+The 202 response includes a durable job ID and delivery state. Acceptance precedes provider submission; disabled sending leaves the job held even after sending is re-enabled.
 
 ### Quick examples (SDKs)
 
@@ -56,7 +58,7 @@ print('Queued', job['id'])
 ```
 
 Status updates
-- Immediate status is mapped from Sinch’s response. Additional webhook handling may be added later; for now, poll your own app state via `GET /fax/{id}`.
+- Read `GET /fax/{id}` or Jobs for stored delivery state. Supported status polling uses the original captured account/remote ID and does not resubmit. An unknown outcome requires reconciliation with that account, not a blind retry.
 
 Notes
 - Only PDF and TXT files are accepted. Convert images (PNG/JPG) to PDF first.

@@ -1,82 +1,51 @@
-# API_REFERENCE.md
+# API Reference
 
-The [generated source reference](generated/index.md) contains the current OpenAPI contract and records its source commit. This page remains instructional prose and can describe older behavior. Runtime availability and provider delivery require separate verification. The legacy `faxbot.net/api` site has a separate compatibility deployment.
+The [generated source reference](generated/index.md) supplies the current OpenAPI contract and source provenance. This guide explains acceptance, captured configuration and delivery outcomes for operators. The legacy `faxbot.net/api` deployment has its own compatibility lifecycle.
 
-## Base URL
-- Default: `http://localhost:8080`
-- Health: `GET /health` → `{ "status": "ok" }`
+## Base URL and authentication
 
-## Auth
-- Header `X-API-Key: <key>` if `API_KEY` is set in environment.
-- If `API_KEY` is blank, auth is disabled (not recommended).
+Use your installation's API URL; the local default is `http://localhost:8080`. Send the current client key as `X-API-Key`. Canonical API-key enforcement and database-issued scoped keys determine access; editing process `.env` does not rotate an initialized installation's key. See [Authentication](security/authentication.md) and [Settings](admin-console/settings.md).
 
-## Endpoints
+## Submit a document
 
-1) POST `/fax`
-- Multipart form
-  - `to`: destination number (E.164 or digits)
-  - `file`: PDF or TXT
-- Responses
-  - 202 Accepted: `{ id, to, status, error?, pages?, backend, provider_sid?, created_at, updated_at }`
-  - 400 bad number; 413 file too large; 415 unsupported type; 401 invalid API key
-- Example
-```
-curl -X POST http://localhost:8080/fax \
-  -H "X-API-Key: $API_KEY" \
-  -F to=+15551234567 \
-  -F file=@./example.pdf
+`POST /fax` accepts multipart `to` and `file` fields. Supported PDF, TXT and TIFF preparation preserves document contents and validates the active upload limit. The optional `queue_only=true` condition refuses a stale queue-only form when sending has become enabled.
+
+```sh
+curl -X POST http://localhost:8080/fax   -H "X-API-Key: $API_KEY"   -F to=+15551234567   -F file=@./synthetic.pdf
 ```
 
-2) GET `/fax/{id}`
-- Returns job status as above.
-- 404 if not found; 401 if invalid API key.
-```
+A 202 response records durable acceptance, with a job ID, compatibility status and delivery metadata. It is not a provider submission acknowledgement or terminal delivery. New jobs accepted with sending disabled are held with no issued attempt and never automatically transmit after re-enabling. Normal acceptance records ready work for the dispatcher.
+
+Typical refusals include invalid number/document, unsupported type, oversized upload, authentication/scope failure and a conflicting queue-only request. See generated OpenAPI for exact models and response codes. If an outcome is uncertain, retain any returned job ID and inspect the original record/provider before submitting another request.
+
+## Read job state
+
+`GET /fax/{job_id}` returns the stored job and delivery metadata; it does not transmit or retry it. Read with a key permitted for fax status:
+
+```sh
 curl -H "X-API-Key: $API_KEY" http://localhost:8080/fax/$JOB_ID
 ```
 
-3) GET `/fax/{id}/pdf?token=...`
-- Serves the original PDF for cloud provider to fetch.
-- No API auth; requires token that matches stored URL.
-- 403 invalid/expired token; 404 not found.
+Relevant fields include `id`, `to`, `status`, `pages`, captured `backend`, `provider_sid`, timestamps, `delivery_state`, `dispatch_mode`, `delivery_version` and `reconciliation_reason`. Use delivery state and attempt evidence, not a compatibility status label alone, to distinguish held/ready work, preparing/submitting, in-progress, terminal outcomes and reconciliation required.
 
-4) POST `/phaxio-callback`
-- For Phaxio status webhooks. Expects form-encoded fields (e.g., `fax[status]`, `fax[id]`).
-- Faxbot submits the captured callback URL with `job_id` and `attempt_id` query locators. Both must match the accepted job/attempt; the captured account and provider fax ID must also match.
-- Returns `{ "ok": true, "applied": ... }` for an authenticated observation.
-- `X-Phaxio-Signature` is verified with the separate `PHAXIO_CALLBACK_TOKEN`: lowercase hexadecimal HMAC-SHA1 over the exact captured public URL/query, stably name-sorted form fields and file-part SHA1 digests. See [outbound callback verification](setup/webhooks.md#outbound-status-phaxio).
-- Missing/invalid authentication or a captured `PHAXIO_VERIFY_SIGNATURE=false` rejects callback updates (401). Disabling verification does not accept unsigned callbacks; status polling continues with the captured original account when its provider fax ID is known.
+Acceptance captures provider/account credentials, manifest/traits, URLs and configuration identity. Later settings changes do not move an existing attempt to a new account. Supported polling and authenticated callbacks observe that original attempt without resubmitting. Historical rows without a verified transmission record require reconciliation rather than automatic send. An uncertain provider response, timeout or missing callback is not permission to retry transmission blindly.
 
-## Models
-- FaxJobOut
-  - `id: string`
-  - `to: string`
-  - `status: string` (queued | in_progress | SUCCESS | FAILED | disabled)
-  - `error?: string`
-  - `pages?: number`
-  - `backend: string` ("phaxio", "sinch", or "sip")
-  - `provider_sid?: string`
-  - `created_at: ISO8601`
-  - `updated_at: ISO8601`
+## Provider PDF access
 
-## Notes
-- Backend chosen via `FAX_BACKEND` env var: `phaxio` (cloud via Phaxio/Phaxio‑by‑Sinch V2 style), `sinch` (cloud via Sinch Fax API v3 direct upload), or `sip` (self‑hosted Asterisk).
-- TXT files are converted to PDF before TIFF conversion.
-- If Ghostscript is missing, TIFF step is stubbed with pages=1; install for production.
-- For the `phaxio` backend, TIFF conversion is skipped; page count is finalized via the provider callback (`/phaxio-callback`, HMAC verification supported).
-- For the `sinch` backend, the API uploads your PDF directly to Sinch. Webhook support is under evaluation; status reflects the provider’s immediate response and may be updated by polling in future versions.
-- Tokenized PDF access has a TTL (`PDF_TOKEN_TTL_MINUTES`, default 60). The `/fax/{id}/pdf?token=...` link expires after TTL.
-- Optional retention: enable automatic cleanup of artifacts by setting `ARTIFACT_TTL_DAYS>0` (default disabled). Cleanup runs every `CLEANUP_INTERVAL_MINUTES` (default 1440).
+`GET /fax/{job_id}/pdf?token=...` serves the prepared PDF using the accepted token and expiry. It has no API-key header requirement for provider fetching, but rejects an invalid/expired token. A tokenized URL is sensitive. Reopening a job does not mint a new provider URL or retry its attempt. Admin Jobs offers a separate authenticated PDF download.
 
-## Phone Numbers
-- Preferred format: E.164 (e.g., `+15551234567`).
-- Validation: API accepts `+` and 6–20 digits.
-- Cloud path (Phaxio): the service may attempt best‑effort normalization for non‑E.164 input; provide E.164 to avoid ambiguity.
+Document conversion never substitutes a placeholder for a missing dependency or disabled sending. Required TIFF conversion fails honestly when Ghostscript is unavailable. Builtin Phaxio/Sinch/SignalWire use PDF paths; captured traits determine whether another provider requires TIFF.
 
-## Audit Logging (Optional)
-- Enable structured audit logs for SIEM ingestion:
-  - `AUDIT_LOG_ENABLED=true`
-  - `AUDIT_LOG_FORMAT=json` (default)
-  - `AUDIT_LOG_FILE=/var/log/faxbot_audit.log` (optional)
-  - `AUDIT_LOG_SYSLOG=true` and `AUDIT_LOG_SYSLOG_ADDRESS=/dev/log` (optional)
-- Events: `job_created`, `job_dispatch`, `job_updated`, `job_failed`, `pdf_served`.
-- Logs contain job IDs and metadata only (no PHI).
+## Outbound Phaxio callbacks
+
+`POST /phaxio-callback` expects signed form fields and the captured `job_id`/`attempt_id` query locators. The captured account, attempt and provider fax ID must also match. An authenticated observation returns `{ "ok": true, "applied": ... }`.
+
+`X-Phaxio-Signature` uses the separate `PHAXIO_CALLBACK_TOKEN`: lowercase hexadecimal HMAC-SHA1 over the exact captured URL/query, stably name-sorted form fields and file-part SHA1 digests. See [outbound callback verification](setup/webhooks.md#outbound-status-phaxio).
+
+Missing/invalid authentication or captured `PHAXIO_VERIFY_SIGNATURE=false` rejects callback updates. Disabling verification does not authorize unsigned updates; polling continues with the captured original account when its provider fax ID is known. Inbound handlers are separate and are not certified by this outbound contract.
+
+## Configuration, retention and logs
+
+Edit existing server settings through [canonical Settings](admin-console/settings.md), using the loaded desired revision and the response's active/pending state. Environment files are bootstrap inputs, not ordinary runtime imports. Pending changes require every API worker to stop and the installation restart.
+
+PDF URL TTL and artifact cleanup settings are canonical fields. Keep artifacts needed for reconciliation and recovery; changing cleanup configuration is distinct from proving provider delivery. Audit logs can record events such as `job_created` and `pdf_served`; a PDF fetch or log event is not terminal fax delivery. Inspect durable job/attempt state and the original provider result.

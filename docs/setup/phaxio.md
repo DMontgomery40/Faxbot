@@ -19,8 +19,11 @@
 
 Note on branding: New Phaxio signups and dashboards may redirect to Sinch. That is expected — Phaxio is a Sinch company. This backend continues to work with those credentials.
 
-2) Set environment variables
-- Edit `.env` (or create from `.env.example`). Set:
+2) Configure the desired revision
+
+On an existing installation, load Settings or Setup, select Phaxio for outbound and edit the corresponding credential/URL fields. Apply only intended changes; inspect active/desired status. Pending changes require every API worker to stop and the installation restart. Blank direction overrides independently inherit the default provider.
+
+The following `.env` values are for first bootstrap only; they do not override an initialized canonical store:
 ```env
 FAX_BACKEND=phaxio
 PHAXIO_API_KEY=your_key
@@ -28,8 +31,8 @@ PHAXIO_API_SECRET=your_secret
 PHAXIO_CALLBACK_TOKEN=your_account_callback_token
 PHAXIO_VERIFY_SIGNATURE=true
 PUBLIC_API_URL=https://your-domain.com
-PHAXIO_CALLBACK_URL=https://your-domain.com/phaxio-callback   # Preferred name
-# PHAXIO_STATUS_CALLBACK_URL=https://your-domain.com/phaxio-callback  # Alias also supported
+PHAXIO_STATUS_CALLBACK_URL=https://your-domain.com/phaxio-callback
+# PHAXIO_CALLBACK_URL is also accepted at bootstrap
 API_KEY=your_secure_api_key   # Optional but recommended; used as X-API-Key
 ```
 - Note: PUBLIC_API_URL must be reachable by Phaxio to fetch PDFs.
@@ -46,7 +49,7 @@ make up-cloud   # or: docker compose up -d --build api
 How this works: you talk to the Faxbot API (your local/server endpoint). Faxbot then calls the official Phaxio API on your behalf and gives Phaxio a public URL to fetch your PDF. You do not call Phaxio endpoints directly from your client. Ensure `PUBLIC_API_URL` is reachable from Phaxio and that your callback URL (`PHAXIO_CALLBACK_URL` or `PHAXIO_STATUS_CALLBACK_URL`) points back to your server.
 
 4) Test sending a fax
-- Convert TXT→PDF→TIFF is handled automatically.
+- PDF/TXT preparation preserves document contents. Phaxio receives a PDF URL; its builtin path does not require TIFF conversion.
 - Example (replace number):
 ```bash
 curl -X POST http://localhost:8080/fax \
@@ -54,7 +57,7 @@ curl -X POST http://localhost:8080/fax \
   -F to=+15551234567 \
   -F file=@./example.pdf
 ```
-- Response includes `id`, `status`, `backend`, timestamps.
+- The 202 response includes a durable job ID and delivery metadata; it is acceptance, not delivery. Disabled sending creates held work that never automatically transmits after re-enabling. Check the issued attempt and original provider account for a real result.
 - Check status:
 ```bash
 curl -H "X-API-Key: your_secure_api_key" http://localhost:8080/fax/<job_id>

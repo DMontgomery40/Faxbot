@@ -49,8 +49,11 @@ If you’re on CGNAT (carrier-grade NAT) or can’t port forward:
 - Use a cloud VM (e.g., small Linux instance) with a public IP and open the same ports there.
 - Or choose the Phaxio cloud backend instead of SIP.
 
-## Configure Environment
-Edit `.env`:
+## Configure API and Asterisk separately
+
+On an existing installation, select SIP for the desired outbound direction and edit AMI/station/header fields in Settings. Apply with the loaded revision, complete any pending installation-wide restart and confirm active identity. These canonical API values are not replaced by later `.env` edits.
+
+Asterisk trunk/transport settings are separate deployment inputs rendered at that container’s startup. Configure its environment and align the API’s canonical AMI credentials with the rendered manager credentials. For first bootstrap, the API names below can also be supplied in `.env`:
 ```
 FAX_BACKEND=sip
 
@@ -80,9 +83,9 @@ docker compose up -d --build
 
 ## How It Works
 1. API converts input file to PDF, then to fax-optimized TIFF (Ghostscript).
-2. API creates a job and originates a Local channel via AMI.
-3. Asterisk dials your SIP trunk; on answer, executes `SendFAX()` in T.38.
-4. Asterisk emits `UserEvent(FaxResult, ...)`; API updates job status.
+2. Durable acceptance records a ready or held job and its immutable configuration; held work is never automatically dispatched.
+3. An issued SIP attempt originates directly to `PJSIP/<destination>@trunk-endpoint`; on answer the dedicated `faxbot-send` context runs `SendFAX()` without another `Dial`.
+4. The hangup handler emits a result with both JobID and AttemptID. AMI acceptance is not delivery; the matching issued attempt and original captured provider must authenticate the result. Real trunk fax delivery remains an operational check.
 
 ## Logs & Debugging
 - API: `docker compose logs -f api`
@@ -95,7 +98,7 @@ docker compose up -d --build
 - T.38 disabled at provider → enable UDPTL and verify `udptl.conf` range.
 - NAT issues → enable `rtp_symmetric`, `force_rport`, correct `match` and `from_domain`.
 - Wrong credentials → check `pjsip.conf` generated from templates (envsubst in `start.sh`).
-- Ghostscript missing → API warns and stubs conversion; install for production.
+- Ghostscript missing → required conversion fails honestly; install it before submitting. No stub or placeholder counts as prepared fax content.
 - CGNAT / no port forwarding → use a cloud VM or Phaxio backend.
 
 ## Test Send
@@ -170,9 +173,9 @@ PersistentKeepalive = 25
 Restart Asterisk with `external_*` addresses set to the tunnel’s public IP if required.
 
 ## Understanding the Asterisk Configuration
-- `asterisk/etc/asterisk/templates/pjsip.conf.template` is rendered from your `.env` at container start.
-- `asterisk/etc/asterisk/templates/manager.conf.template` uses `${ASTERISK_AMI_USERNAME}` as the user section and `${ASTERISK_AMI_PASSWORD}` for the secret. Ensure these match your API env so AMI auth succeeds.
-- The `faxout` dialplan in `extensions.conf` uses `SendFAX()` with T.38 and emits `UserEvent(FaxResult)` on completion.
+- `asterisk/etc/asterisk/templates/pjsip.conf.template` is rendered from the Asterisk container environment at startup. Without trunk configuration, startup stays offline with no registration.
+- `asterisk/etc/asterisk/templates/manager.conf.template` uses `${ASTERISK_AMI_USERNAME}` as the user section and `${ASTERISK_AMI_PASSWORD}` for the secret. Ensure these match the API’s active canonical AMI credentials. Manager access is disabled when Asterisk deployment AMI credentials are omitted; supplying both renders the account.
+- The dedicated `faxbot-send` context executes `SendFAX()` and emits the terminal result from its hangup handler. The older `faxout` context remains for compatibility; the new originate path does not use it.
 - The API listens for that event via AMI to update job status.
 
 ## Minimal Telephony Glossary

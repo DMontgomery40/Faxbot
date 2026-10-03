@@ -18,8 +18,16 @@ Storage and database
 - SQLite for dev; use Postgres in production (`DATABASE_URL`)
 - S3/S3‑compatible for inbound artifacts; for SSE‑KMS see AWS docs below
 
+Configuration and activation
+
+- Environment and legacy plugin JSON are bootstrap inputs when canonical state is absent. Keep container ports, mounts and telephony service settings in deployment configuration.
+- On an existing installation, load Settings, edit the desired fields and apply with its loaded revision. Inspect active/desired identity and pending fields.
+- For pending changes, stop every API worker and restart the installation; verify the desired revision is active afterward. Restarting one worker while others remain running, or calling readonly reload, is insufficient.
+- Back up the database, original installation encryption key and artifacts together; a redacted environment export is not a restore.
+
 Public URL and TLS
-- Set `PUBLIC_API_URL` to your HTTPS endpoint
+
+- In Settings, set `PUBLIC_API_URL` to your HTTPS endpoint
 - `ENFORCE_PUBLIC_HTTPS=true` for production with cloud backends
 - For quick testing, use a tunnel:
   - Cloudflare Tunnel: <https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/do-more-with-tunnels/trycloudflare/>

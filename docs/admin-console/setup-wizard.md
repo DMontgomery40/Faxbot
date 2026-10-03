@@ -1,213 +1,54 @@
-
 # Setup Wizard
 
-New to fax? Start here. This wizard gets you sending in minutes and explains each choice in plain language, with direct links to the third‑party pages you’ll need.
+Setup is a guided editor of canonical desired settings. On entry it loads the installation's existing values and revision; it does not reset a configured installation to provider or security defaults.
 
-[:material-book-open-variant: Backends Guide](../setup/index.md){ .md-button }
-[:material-shield-lock: Security Docs](../security/index.md){ .md-button }
+## 1. Choose providers
 
-## What you’re choosing
-- Phaxio by Sinch (cloud): A developer fax API (Phaxio is part of Sinch). Simple and reliable. Two flavors in Faxbot:
-  - “Phaxio” flow: Phaxio fetches your PDF from your server via a public URL. Best if you already have a domain or can run a tunnel. Supports webhooks to update status.
-  - “Sinch (Direct Upload)”: Faxbot uploads the PDF directly to Sinch. Best if you do not have a public URL or domain yet. Send-only works without webhooks.
-- Documo mFax (cloud): Direct upload to Documo. No domain/tunnel required. Good beginner option alongside Sinch.
-- SIP / Asterisk (self‑hosted): No third‑party cloud, uses your SIP trunk. More advanced; skip for now if you’re just getting started.
+Review the default provider, outbound override and inbound override. Empty overrides independently use the default provider. For example, default Phaxio plus outbound `my-provider` and an empty inbound override means desired outbound `my-provider`, desired inbound Phaxio.
 
-=== "Phaxio"
+Installed provider IDs remain selectable. A custom manifest provider keeps its selection; configure its credentials in **Tools → Plugins** when Setup has no panel for it. Enable inbound handling separately. A provider selection is not proof of inbound receipt.
 
-    - Best when you already have a public HTTPS URL or can run a tunnel.  
-    - Webhooks update status; HMAC verification is on by default.  
-    - HIPAA‑friendly with a BAA.
+## 2. Configure credentials
 
-    ```env
-    FAX_BACKEND=phaxio
-    PHAXIO_API_KEY=...
-    PHAXIO_API_SECRET=...
-    PUBLIC_API_URL=https://yourdomain.example
-    PHAXIO_CALLBACK_URL=https://yourdomain.example/phaxio-callback
-    PHAXIO_VERIFY_SIGNATURE=true
-    ```
+Edit the desired outbound provider's fields. Unchanged stored masks preserve secrets; replacement values or explicit empty fields change them.
 
-=== "Sinch (Direct Upload)"
+- Phaxio: API Key, API Secret, separate Callback Token, Status Callback URL and outbound signature verification. Set Public API URL to a reachable HTTPS endpoint. An empty status URL derives from the public URL. Verification disabled rejects outbound callback updates; original-account polling continues.
+- Sinch: Project ID, API Key and API Secret. Its direct-upload path does not need a provider-fetch PDF URL.
+- Documo: API Key and sandbox selection.
+- SignalWire: Space URL, Project ID, API Token and From number; configure the signing key and other shared fields in Settings.
+- SIP/Asterisk: AMI host, port, user/password and station ID. Keep AMI private and configure the separate Asterisk trunk deployment.
+- FreeSWITCH: gateway and caller ID. Configure ESL and the result hook separately; Setup does not install a working telephony stack.
 
-    - Fastest “no‑domain” option; send‑only works without webhooks.  
-    - Credentials live in your Sinch project.
+Public API URL is shared configuration, not a tunnel launcher. For an existing installation, start a tunnel manually, paste its URL here or in Settings, then apply. The legacy `setup-phaxio-tunnel.sh` edits bootstrap `.env` and restarts Compose; it does not patch an initialized canonical store. See [Public Access](../setup/public-access.md).
 
-    ```env
-    FAX_BACKEND=sinch
-    SINCH_PROJECT_ID=...
-    SINCH_API_KEY=...
-    SINCH_API_SECRET=...
-    # Optional regional override
-    # SINCH_BASE_URL=https://us.fax.api.sinch.com/v3
-    ```
+**Check Supplied Outbound Credentials** only uses explicit, unmasked values for supported Phaxio, Sinch and SIP checks. Sinch's current check tests presence, not authentication. Custom and other unsupported providers show a Diagnostics/Plugins note. These checks do not send a fax or verify inbound document readiness.
 
-=== "Documo (mFax)"
+**Show Active Callback Details** reads the active inbound projection independently of your desired draft. **Simulate Inbound Record** creates a synthetic record; it is not provider delivery or proof of a usable PDF. **Watch New Inbound Log Events** observes logs only and can be stopped; a synthetic event can satisfy that observation.
 
-    - No domain required; direct upload to Documo.  
-    - Optional sandbox for evaluation.
+## 3. Review security settings
 
-    ```env
-    FAX_BACKEND=documo
-    DOCUMO_API_KEY=...
-    # DOCUMO_SANDBOX=true
-    ```
+Review API-key enforcement, public HTTPS enforcement, audit logging and PDF token TTL. These controls are individual configuration choices, not a compliance profile or delivery certification. Use Settings for other security, storage and inbound fields.
 
-=== "SIP / Asterisk"
+## 4. Apply and export
 
-    - Self‑hosted telephony; requires SIP trunk + AMI.  
-    - PDF→TIFF conversion; result events via AMI.
+**Apply Changes** submits only fields differing from the loaded baseline, with the loaded desired revision. Unchanged Apply makes no mutation. Conflicts retain your draft and pause editing/saving until an explicit **Reload (discard draft)** loads the current revision.
 
-    ```env
-    FAX_BACKEND=sip
-    ASTERISK_AMI_HOST=asterisk
-    ASTERISK_AMI_PORT=5038
-    ASTERISK_AMI_USERNAME=api
-    ASTERISK_AMI_PASSWORD=change_me
-    ```
+Read the result: settings are durably saved and either active or pending restart. For pending changes, every API worker must stop and the installation restart; confirm the active/desired identity afterward. Setup does not restart the server or automatically navigate away. **Done** is explicit; it labels unsaved draft discard.
 
-!!! note "v3"
-    The wizard writes safe defaults and can export a ready‑to‑use `.env`. You can optionally persist the `.env` on the server from Settings.
+**Export Redacted Desired Template** calls the server export and is blocked while your draft is unsaved. Its output is the server's current desired template, with secret values masked. Copy and Download are available, but the template is not a complete recovery backup or a mechanism to apply changes. See [Settings](settings.md).
 
-!!! tip "Do I need a domain?"
-    - No, if you pick “Sinch (Direct Upload)”. You can send faxes without any public URL.  
-    - Yes (or a tunnel) if you pick “Phaxio” and want status callbacks or if Phaxio must fetch your PDF from your server.  
-    - You can always add a domain later. For quick tests, use the included tunnel script: `scripts/setup-phaxio-tunnel.sh`.
+## Check a document
 
-## Beginner 5‑minute path (no domain required)
-1. Choose backend: “Sinch (Direct Upload)”.
-2. Create a Sinch/Phaxio account:
-   - Sign up: <https://dashboard.sinch.com/signup> (this is where Phaxio signups redirect — that’s normal).
-   - After signup, create a project, then get your Project ID and API key/secret.
-     - Help: Sinch Fax docs → <https://developers.sinch.com/docs/fax/overview/>
-3. In the wizard, paste:
-   - Project ID → `SINCH_PROJECT_ID`
-   - API key → `SINCH_API_KEY`
-   - API secret → `SINCH_API_SECRET`
-4. Click “Apply”. Then send a test fax in the Admin Console or via curl.
+1. In Settings, enable **Disable fax sending (queue only)** and complete any required coordinated restart. Confirm it is active before submitting.
+2. Open **Send**, attach a synthetic PDF/TXT within the displayed active upload limit and use **Queue**.
+3. In **Jobs**, inspect its held state and prepared document. Held jobs have no issued attempt and never become automatic deliveries when sending is re-enabled.
+4. For a real delivery check, use a controlled destination after configuring the provider and confirming sending is active. Acceptance alone is not delivery; inspect the issued attempt and the original provider's result. See the [Phaxio delivery check](../tools/phaxio-e2e-test.md).
 
-## Alternative: Documo (no domain required)
-1. Choose backend: “Documo (mFax)”.
-2. Create an account and API key:
-   - Sign up: <https://www.mfax.io/pricing>
-   - Enable API and create an API key in the Documo web app.
-   - Docs: <https://docs.documo.com>
-3. In the wizard, paste:
-   - API key → `DOCUMO_API_KEY`
-   - Optional: enable sandbox → `DOCUMO_SANDBOX=true`
-4. Click “Apply”, then send a test fax. No public URL is required for sending.
+## Provider guides
 
-## If you have a domain (or can run a temporary tunnel)
-1. Choose backend: “Phaxio (Recommended)”.
-2. Create an account and get credentials:
-   - Phaxio site: <https://www.phaxio.com> → Sign Up takes you to Sinch (expected).
-   - Direct signup: <https://dashboard.sinch.com/signup>
-   - Get: `PHAXIO_API_KEY` and `PHAXIO_API_SECRET` (same as Sinch API key/secret in many accounts).
-   - Official Phaxio docs: <https://www.phaxio.com/docs/>
-3. Make your API reachable over HTTPS:
-   - Option A: use your domain, e.g. `https://api.yourdomain.com`
-   - Option B: quick test tunnel → run `scripts/setup-phaxio-tunnel.sh` to get a temporary `https://...trycloudflare.com` URL.
-4. In the wizard, set:
-   - `PUBLIC_API_URL` to your HTTPS URL
-   - `PHAXIO_CALLBACK_URL` to `https://YOUR_URL/phaxio-callback`
-   - Paste your API key/secret
-5. Click “Apply”, then send a test fax. Status updates arrive via callback (HMAC verified by default).
-
-## Security profile
-- HIPAA (strict): requires API key for your Faxbot API, enforces HTTPS, enables audit logging, verifies provider signatures.
-- Non‑PHI (convenience): relaxed defaults for local/dev; you can switch to HIPAA later without changing providers.
-
-## What is Phaxio? What is Sinch?
-- Phaxio is a developer‑focused fax API. It’s part of Sinch now. When you click “Sign Up” on phaxio.com, you’ll be redirected to a Sinch signup page — that is expected. Your credentials work with Faxbot’s Phaxio flow and the Sinch (direct upload) flow.
-
-## Where do I find credentials?
-- Sinch dashboard (recommended): <https://dashboard.sinch.com>
-  - Create a project → note “Project ID”
-  - Create/locate API key + secret
-- Phaxio docs if you prefer the legacy console: <https://www.phaxio.com/docs/>
-
-## Apply & reload
-- “Apply” writes settings to the running API with safe defaults.
-- “Generate .env” gives you a copy‑ready file. If enabled, “Save .env to server” writes it for persistence.
-
-## Helpful tips
-- No domain? Pick “Sinch (Direct Upload)” and you can send immediately.
-- For Phaxio tests without a domain, run: `scripts/setup-phaxio-tunnel.sh` (uses Cloudflare Tunnel; falls back to ngrok if installed).
-- If a change affects persistent connections (e.g., Asterisk AMI), you’ll be prompted to restart the API.
-- Secrets are not stored in plugin manifests; they live in environment variables.
-
-## Example .env snippets
-- Phaxio (HIPAA profile)
-```env
-FAX_BACKEND=phaxio
-PHAXIO_API_KEY=... 
-PHAXIO_API_SECRET=...
-PUBLIC_API_URL=https://yourdomain.example
-PHAXIO_CALLBACK_URL=https://yourdomain.example/phaxio-callback
-PHAXIO_VERIFY_SIGNATURE=true
-API_KEY=generate_a_strong_key
-ENFORCE_PUBLIC_HTTPS=true
-AUDIT_LOG_ENABLED=true
-PDF_TOKEN_TTL_MINUTES=60
-```
-- Sinch (direct upload)
-```env
-FAX_BACKEND=sinch
-SINCH_PROJECT_ID=...
-SINCH_API_KEY=...
-SINCH_API_SECRET=...
-# Optional regional override
-# SINCH_BASE_URL=https://us.fax.api.sinch.com/v3
-API_KEY=generate_a_strong_key
-```
-- SIP/Asterisk (self‑hosted)
-```env
-FAX_BACKEND=sip
-ASTERISK_AMI_HOST=asterisk
-ASTERISK_AMI_PORT=5038
-ASTERISK_AMI_USERNAME=api
-ASTERISK_AMI_PASSWORD=change_me
-FAX_LOCAL_STATION_ID=+15551234567
-FAX_HEADER=Faxbot
-API_KEY=generate_a_strong_key
-```
-
-## Warnings and prompts
-- Missing HTTPS on `PUBLIC_API_URL` with cloud backends → warning with quick‑fix link to the tunnel script.
-- Empty `API_KEY` in production → prompt to enable auth.
-- Ghostscript not found for SIP/Asterisk → warn that conversion/pages may be stubbed.
-
-## Learn more
-- Phaxio: [Backend setup](../setup/phaxio.md) • Official docs: https://www.phaxio.com/docs/
-- Sinch: [Backend setup](../setup/sinch.md) • Sign up: https://dashboard.sinch.com/signup • Docs: https://developers.sinch.com/docs/fax/overview/
-- SIP/Asterisk: [Backend setup](../setup/sip-asterisk.md)
-- Security: [Authentication](../security/authentication.md), [HIPAA](../HIPAA_REQUIREMENTS.md), [OAuth/OIDC](../security/oauth-setup.md)
-
----
-
-## Quick test (optional)
-
-=== "Console"
-
-    - Use Admin Console → Send Fax to queue a test after applying settings.  
-    - Attach a small PDF or TXT (≤10 MB).  
-    - Watch status on Jobs; callbacks update status for Phaxio when reachable.
-
-=== "curl"
-
-!!! tip "Tab anchors"
-    You can right‑click a tab to copy a direct link to it. For example, link to the “Sinch (Direct Upload)” tab with `#sinch-direct-upload`.
-
-    ```bash
-    # assumes API_KEY is enabled; replace placeholders
-    BASE="http://localhost:8080"
-    curl -X POST "$BASE/fax" \
-      -H "X-API-Key: $API_KEY" \
-      -F to=+15551234567 \
-      -F file=@./document.pdf
-    ```
-
-    ```bash
-    # check status later
-    curl -H "X-API-Key: $API_KEY" "$BASE/fax/$JOB_ID"
-    ```
+- [Phaxio](../setup/phaxio.md)
+- [Sinch](../setup/sinch.md)
+- [Documo](../setup/documo.md)
+- [SIP/Asterisk](../setup/sip-asterisk.md)
+- [FreeSWITCH](../setup/freeswitch.md)
+- [SignalWire](../setup/signalwire.md)

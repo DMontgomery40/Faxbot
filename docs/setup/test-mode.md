@@ -1,25 +1,26 @@
+# Fax Disabled: Held Test Jobs
 
-# Test Mode (Fax Disabled)
+Use **Disable fax sending (queue only)** to check upload preparation and operator workflows without issuing new fax attempts.
 
-Enable this option when you want to exercise the Admin Console, SDKs, or automated tests without reaching any real fax provider.
+## Configure an existing installation
 
-## How it works
+1. Open **Settings**, load the desired revision and turn on **Disable fax sending (queue only)**.
+2. Apply the changed field. If it is pending, stop every API worker and restart the installation.
+3. Load Settings again and confirm the desired revision is active and sending is disabled.
+4. In **Send**, attach a synthetic document and use **Queue**. The server refuses a stale queue-only form if another operator has enabled sending; refresh Send before proceeding.
 
-- Faxbot skips all outbound provider calls and immediately returns simulated responses
-- Jobs move through `queued → SUCCESS` with mock metadata (pages, provider SID)
-- Upload, PDF conversion, and storage flows still run so you can validate file handling
-- Ideal for CI pipelines, demos, and smoke tests in clinics before production go-live
+For an installation without canonical state, `FAX_DISABLED=true` is a bootstrap environment value. Changing that environment variable on an existing installation does not replace its canonical revision.
 
-## Configure
+## What happens
 
-1. Admin Console → **Setup Wizard**
-2. Choose **Test Mode (Fax Disabled)**
-3. Apply. Faxbot writes `FAX_DISABLED=true` in the config store.
+- PDF/TXT/TIFF preparation preserves supported source content and produces real document artifacts; disabled sending does not select placeholders.
+- Acceptance creates a held job with `dispatch_mode=held` and `delivery_state=held`. It has no issued provider attempt, provider acknowledgement or simulated success.
+- Held jobs never transmit automatically when sending is re-enabled. A fabricated result callback cannot mark them delivered.
+- Disabling sending pauses ready work. It cannot recall an attempt already issued; an existing attempt may still produce a result.
+- Inbound handling is configured separately. The disabled flag is not a general block on every possible diagnostic network check.
 
-You can still enable authentication, storage, and inbound settings—only outbound transmission is short-circuited.
+## Enable real sending
 
-## Tips
+Load Settings, turn the disabled control off, apply and complete any required coordinated restart. Confirm the active state before creating a new request for a controlled destination. Previously held jobs remain held. Review uncertain or historical jobs against the original provider before taking action; never blindly resubmit them.
 
-- Pair with the [API key helper](../admin-console/settings.md) to validate auth flows without burning provider credits
-- Use the SDKs’ built-in health checks to confirm connectivity while remaining in a sandbox state
-- When you are ready for real faxes, rerun the Setup Wizard, choose your provider, and apply the changes. Faxbot rolls back the simulation automatically.
+See [API Tests](../tools/api-tests.md) for isolated internal checks and [Settings](../admin-console/settings.md) for revisions and recovery.
