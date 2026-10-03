@@ -15,7 +15,8 @@ def test_internal_asterisk_inbound_flow(isolated_installation, monkeypatch, tmp_
     tiff = tmp_path / "in.tiff"
     Image.new("1", (20, 10), 1).save(tiff, format="TIFF")
 
-    with TestClient(app) as client:
+    # API keys authenticate only over HTTPS (or explicitly allowed loopback).
+    with TestClient(app, base_url="https://testserver") as client:
         # Post internal event
         r = client.post(
             "/_internal/asterisk/inbound",

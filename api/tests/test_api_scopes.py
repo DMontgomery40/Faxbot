@@ -55,14 +55,16 @@ def test_scope_enforcement_read_requires_scope(isolated_installation, monkeypatc
         r3 = client.post(
             "/admin/api-keys",
             headers={"X-API-Key": "bootstrap_admin_only"},
-            json={"name": "read-only2", "owner": "tester", "scopes": ["fax:read"]},
+            # Spec "Persisted schema and migration": owner is free text and grants nothing.
+            json={"name": "read-only2", "owner": "someone-else", "scopes": ["fax:read"]},
         )
         read_token = r3.json()["token"]
 
-        # Using send-only token to read should fail with 403
+        # Using send-only token to read should fail; it cannot see the fax at all.
         r4 = client.get(f"/fax/{job_id}", headers={"X-API-Key": send_token})
-        assert r4.status_code == 403
+        # Spec "Resource and role model": an invisible individual resource returns 404.
+        assert r4.status_code == 404
 
-        # Using read-only token to read should succeed
+        # Read-only token succeeds through its installation-wide fax:read assignment
         r5 = client.get(f"/fax/{job_id}", headers={"X-API-Key": read_token})
         assert r5.status_code == 200

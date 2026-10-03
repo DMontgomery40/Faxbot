@@ -74,6 +74,17 @@ class KeyValues:
 
 
 @dataclass(frozen=True)
+class IntegrationKeyValues:
+    """A new integration principal and its first key; owner is metadata only."""
+    display_name: str
+    owner: str | None
+    name: str | None
+    note: str | None
+    expires_at: datetime | None
+    permissions: frozenset[str]
+
+
+@dataclass(frozen=True)
 class KeyMetadata:
     name: str | None
     note: str | None
