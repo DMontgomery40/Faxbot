@@ -1,11 +1,8 @@
 from typing import Optional, Dict, Any, Tuple
 import httpx
-import logging
 import os
 
 from .config import settings, reload_settings
-
-logger = logging.getLogger(__name__)
 
 
 class SinchFaxService:
@@ -38,16 +35,16 @@ class SinchFaxService:
 
     async def upload_file(self, file_path: str) -> int:
         if not os.path.exists(file_path):
-            raise FileNotFoundError(file_path)
+            raise FileNotFoundError('Sinch attachment is unavailable.')
         url = f"{self.base_url}/projects/{self.project_id}/files"
         try:
             async with httpx.AsyncClient(timeout=60.0) as client:
                 with open(file_path, "rb") as handle:
                     files = {"file": (os.path.basename(file_path), handle, "application/pdf")}
                     resp = await client.post(url, files=files, auth=self._auth())
-        except (httpx.HTTPError, httpx.InvalidURL):
+        except (httpx.HTTPError, httpx.InvalidURL, OSError):
             raise RuntimeError("Sinch file upload request failed.") from None
-        if resp.status_code >= 400:
+        if not 200 <= resp.status_code < 300:
             raise RuntimeError(f"Sinch file upload failed (HTTP {resp.status_code}).")
         try:
             data = resp.json()
@@ -59,6 +56,8 @@ class SinchFaxService:
             raise RuntimeError("Unexpected Sinch upload response.") from None
 
     async def send_fax(self, to_number: str, file_id: int) -> Dict[str, Any]:
+        if not self.is_configured():
+            raise ValueError('Sinch is not properly configured')
         # Normalize number to E.164 if possible
         to = to_number
         if not to.startswith('+'):
@@ -67,42 +66,57 @@ class SinchFaxService:
                 to = f"+{digits}"
         url = f"{self.base_url}/projects/{self.project_id}/faxes"
         payload = {"to": to, "file": file_id}
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.post(url, json=payload, auth=self._auth())
-            if resp.status_code >= 400:
-                raise RuntimeError(f"Sinch create fax error {resp.status_code}: {resp.text}")
-            return resp.json()
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                resp = await client.post(url, json=payload, auth=self._auth())
+        except (httpx.HTTPError, httpx.InvalidURL):
+            raise RuntimeError('Sinch create request failed.') from None
+        return self._fax_response(resp)
+
+    @staticmethod
+    def _fax_response(resp: httpx.Response) -> Dict[str, Any]:
+        if not 200 <= resp.status_code < 300:
+            raise RuntimeError(f'Sinch request failed (HTTP {resp.status_code}).') from None
+        try:
+            data = resp.json()
+            if not isinstance(data, dict):
+                raise ValueError
+            return data
+        except (TypeError, ValueError):
+            raise RuntimeError('Unexpected Sinch response.') from None
 
     async def get_fax_status(self, fax_id: str) -> Dict[str, Any]:
+        if not self.is_configured():
+            raise ValueError('Sinch is not properly configured')
         url = f"{self.base_url}/projects/{self.project_id}/faxes/{fax_id}"
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.get(url, auth=self._auth())
-            resp.raise_for_status()
-            return resp.json()
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                resp = await client.get(url, auth=self._auth())
+        except (httpx.HTTPError, httpx.InvalidURL):
+            raise RuntimeError('Sinch status request failed.') from None
+        return self._fax_response(resp)
 
     async def send_fax_file(self, to_number: str, file_path: str) -> Dict[str, Any]:
         """Create a fax by posting the file directly as multipart/form-data.
 
         This mirrors what the Sinch console does and avoids a separate /files upload.
         """
-        if not os.path.exists(file_path):
-            raise FileNotFoundError(file_path)
+        if not self.is_configured():
+            raise ValueError('Sinch is not properly configured')
         to = to_number
         if not to.startswith('+'):
             digits = ''.join(c for c in to if c.isdigit())
             if len(digits) >= 10:
                 to = f"+{digits}"
         url = f"{self.base_url}/projects/{self.project_id}/faxes"
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            # httpx expects a mapping of field name → (filename, fileobj, content_type)
-            # For the additional text field, pass as data not files
-            with open(file_path, "rb") as fh:
-                files = {"file": (os.path.basename(file_path), fh, "application/pdf")}
-                data = {"to": to}
-                resp = await client.post(url, files=files, data=data, auth=self._auth())
-            if resp.status_code >= 400:
-                raise RuntimeError(f"Sinch create fax error {resp.status_code}: {resp.text}")
-            return resp.json()
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                with open(file_path, 'rb') as fh:
+                    files = {'file': (os.path.basename(file_path), fh, 'application/pdf')}
+                    resp = await client.post(url, files=files, data={'to': to}, auth=self._auth())
+        except (httpx.HTTPError, httpx.InvalidURL, OSError):
+            raise RuntimeError('Sinch multipart create request failed.') from None
+        return self._fax_response(resp)
 
 
 _sinch_service: Optional[SinchFaxService] = None

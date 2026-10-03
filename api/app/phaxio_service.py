@@ -1,11 +1,8 @@
-import asyncio
 from typing import Optional, Dict, Any
 import httpx
-import logging
 
 from .config import settings, reload_settings
-
-logger = logging.getLogger(__name__)
+from .callback_locator import callback_url_with_locators
 
 
 class PhaxioFaxService:
@@ -29,7 +26,7 @@ class PhaxioFaxService:
     def is_configured(self) -> bool:
         return bool(self.api_key and self.api_secret)
 
-    async def send_fax(self, to_number: str, pdf_url: str, job_id: str) -> Dict[str, Any]:
+    async def send_fax(self, to_number: str, pdf_url: str, job_id: str, *, attempt_id: Optional[str] = None) -> Dict[str, Any]:
         """
         Send a fax using Phaxio. Uses content_url to avoid uploading files.
         
@@ -52,10 +49,10 @@ class PhaxioFaxService:
             if len(clean_number) >= 10:
                 to_number = f"+{clean_number}"
         
-        # Compose callback URL with our job_id to correlate
+        # Captured locators are also used to reconstruct the signed public URL.
         callback_url = None
         if self.status_callback_url:
-            callback_url = f"{self.status_callback_url}?job_id={job_id}"
+            callback_url = callback_url_with_locators(self.status_callback_url, job_id, attempt_id)
 
         data = {
             "to": to_number,
@@ -64,71 +61,63 @@ class PhaxioFaxService:
         if callback_url:
             data["callback_url"] = callback_url
             
-        logger.info(f"Sending fax via Phaxio: job_id={job_id}, to={to_number}, pdf_url=redacted")
-
         auth = (self.api_key, self.api_secret)
+        # The durable owner marks submission before this one create request.
+        # A timeout/parse failure can mean acceptance; no generic retry is safe.
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                resp = await client.post(f"{self.BASE_URL}/faxes", data=data, auth=auth)
+        except (httpx.HTTPError, httpx.InvalidURL):
+            raise RuntimeError('Phaxio create request failed.') from None
+        payload = self._response(resp)
+        data = payload.get('data')
+        if payload.get('success') is not True or not isinstance(data, dict) or not data.get('id'):
+            raise RuntimeError('Unexpected Phaxio create response.') from None
+        if (not isinstance(data['id'], (str, int)) or isinstance(data['id'], bool)
+                or not isinstance(data.get('status', 'queued'), str)):
+            raise RuntimeError('Unexpected Phaxio create response.') from None
+        try:
+            return {'provider_sid': str(data['id']),
+                    'status': self._map_status_str(data.get('status', 'queued'))}
+        except (TypeError, ValueError, AttributeError):
+            raise RuntimeError('Unexpected Phaxio create response.') from None
 
-        # Basic retry with exponential backoff
-        attempts = 3
-        delay = 1.0
-        from typing import Optional
-        last_err: Optional[Exception] = None
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            for _ in range(attempts):
-                try:
-                    resp = await client.post(f"{self.BASE_URL}/faxes", data=data, auth=auth)
-                    if resp.status_code >= 400:
-                        try:
-                            j = resp.json()
-                            msg = j.get("message") or str(j)
-                        except Exception:
-                            msg = resp.text
-                        error_msg = f"Phaxio API error {resp.status_code}: {msg}"
-                        logger.error(error_msg)
-                        raise Exception(error_msg)
-                    
-                    payload = resp.json()
-                    if not payload.get("success", False):
-                        error_msg = f"Phaxio API returned success=false: {payload.get('message', 'Unknown error')}"
-                        logger.error(error_msg)
-                        raise Exception(error_msg)
-                        
-                    data = payload.get("data", {})
-                    fax_id = data.get("id")
-                    if not fax_id:
-                        raise Exception("Phaxio API did not return a fax ID")
-                        
-                    result = {
-                        "provider_sid": str(fax_id),
-                        "status": self._map_status_str(data.get("status", "queued")),
-                    }
-                    logger.info(f"Phaxio fax sent successfully: {result}")
-                    return result
-                except Exception as e:
-                    last_err = e
-                    await asyncio.sleep(delay)
-                    delay = min(delay * 2, 8.0)
-        # Exhausted retries
-        assert last_err is not None
-        raise last_err
+    @staticmethod
+    def _response(resp: httpx.Response) -> Dict[str, Any]:
+        if not 200 <= resp.status_code < 300:
+            raise RuntimeError(f'Phaxio request failed (HTTP {resp.status_code}).') from None
+        try:
+            payload = resp.json()
+            if not isinstance(payload, dict):
+                raise ValueError
+            return payload
+        except (TypeError, ValueError):
+            raise RuntimeError('Unexpected Phaxio response.') from None
 
     async def get_fax_status(self, provider_sid: str) -> Dict[str, Any]:
         if not self.is_configured():
             raise ValueError("Phaxio is not properly configured")
         auth = (self.api_key, self.api_secret)
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.get(f"{self.BASE_URL}/faxes/{provider_sid}", auth=auth)
-            resp.raise_for_status()
-            payload = resp.json().get("data", {})
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                resp = await client.get(f"{self.BASE_URL}/faxes/{provider_sid}", auth=auth)
+            payload = self._response(resp).get('data')
+            if not isinstance(payload, dict):
+                raise ValueError
             return self._map_status(payload)
+        except (httpx.HTTPError, httpx.InvalidURL, TypeError, ValueError, AttributeError):
+            raise RuntimeError('Phaxio status request failed.') from None
 
     async def cancel_fax(self, provider_sid: str) -> bool:
         if not self.is_configured():
             raise ValueError("Phaxio is not properly configured")
         auth = (self.api_key, self.api_secret)
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.post(f"{self.BASE_URL}/faxes/{provider_sid}/cancel", auth=auth)
-            return resp.status_code == 200
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                resp = await client.post(f"{self.BASE_URL}/faxes/{provider_sid}/cancel", auth=auth)
+                return resp.status_code == 200
+        except (httpx.HTTPError, httpx.InvalidURL):
+            raise RuntimeError('Phaxio cancellation request failed.') from None
 
     async def handle_status_callback(self, callback_data: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -150,19 +139,22 @@ class PhaxioFaxService:
             "status": internal,
             "provider_status": status,
             "pages": int(pages) if pages else None,
-            "error_type": error_type,
-            "error_message": error_message,
+            "error_type": 'provider_error' if error_type else None,
+            "error_message": 'Provider reported an error.' if error_message else None,
         }
 
     def _map_status(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         status = payload.get("status") or ""
+        sid = payload.get('id')
+        if (sid is not None and (not isinstance(sid, (str, int)) or isinstance(sid, bool))) or not isinstance(status, str):
+            raise ValueError('Unexpected Phaxio status response.') from None
         return {
             "provider_sid": str(payload.get("id")),
             "status": self._map_status_str(status),
             "provider_status": status,
             "pages": payload.get("num_pages"),
-            "error_type": payload.get("error_type"),
-            "error_message": payload.get("error_message"),
+            "error_type": 'provider_error' if payload.get('error_type') else None,
+            "error_message": 'Provider reported an error.' if payload.get('error_message') else None,
         }
 
     @staticmethod

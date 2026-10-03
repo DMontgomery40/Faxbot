@@ -135,7 +135,7 @@ class HttpProviderRuntime:
         host = urlparse(url).hostname or ""
         if self.m.allowed_domains:
             if host not in self.m.allowed_domains:
-                raise RuntimeError(f"Host {host} not in allowlist")
+                raise RuntimeError('Provider endpoint is outside its captured allowlist.') from None
 
     async def send_fax(self, *, to: str, file_url: Optional[str] = None, file_path: Optional[str] = None, from_number: Optional[str] = None, extra: Dict[str, Any] | None = None) -> Dict[str, Any]:
         act = self.m.actions.get("send_fax")
@@ -149,8 +149,10 @@ class HttpProviderRuntime:
             "settings": self.settings,
             "creds": self.creds,
         }
+        # Extra locators cannot replace captured credentials/settings/documents.
+        ctx.update({key: (extra or {}).get(key) for key in ('job_id', 'attempt_id')})
         # URL + path params
-        url = act.url
+        url = _render(act.url, ctx)
         for pp in (act.path_params or []):
             name = str(pp.get("name") or "")
             src = str(pp.get("source") or name)
@@ -158,7 +160,7 @@ class HttpProviderRuntime:
             url = url.replace("{" + name + "}", str(val or ""))
         self._check_domain(url)
 
-        headers = dict(act.headers or {})
+        headers = {name: _render(value, ctx) for name, value in (act.headers or {}).items()}
         params: Dict[str, str] = {}
         self._apply_auth(headers, params)
 
@@ -166,14 +168,18 @@ class HttpProviderRuntime:
         files: Any = None
         if act.body_kind == "json":
             rendered = _render(act.body_template, ctx)
-            body_data = json.loads(rendered) if (rendered or "").strip().startswith("{") else {}
+            try:
+                body_data = json.loads(rendered) if (rendered or "").strip().startswith("{") else {}
+            except (TypeError, ValueError):
+                raise RuntimeError('Provider request template could not be rendered.') from None
         elif act.body_kind == "form":
             # Expect template like: key1={{ var }}&key2={{ var2 }}
             rendered = _render(act.body_template, ctx)
             pairs = [kv for kv in (rendered.split("&") if rendered else []) if kv]
+            body_data = {}
             for kv in pairs:
                 k, _, v = kv.partition("=")
-                params[k] = v
+                body_data[k] = v
         elif act.body_kind == "multipart":
             # Support a simple query-like template where a special key 'attachment' or 'file'
             # indicates the binary PDF part. Example:
@@ -190,62 +196,73 @@ class HttpProviderRuntime:
                 else:
                     form_fields[k] = v
             body_data = form_fields
-            # Attach file bytes by downloading file_url (preferred) or reading local path
+            # The prepared local artifact wins; never switch to a token URL when
+            # the supplied file cannot be read, or submit a missing attachment.
             file_bytes: Optional[bytes] = None
             filename = "fax.pdf"
-            if file_url:
-                filename = (urlparse(file_url).path.rsplit('/', 1)[-1] or filename)
-                async with httpx.AsyncClient(timeout=httpx.Timeout(self.m.timeout_ms / 1000.0)) as client:
-                    r = await client.get(str(file_url))
-                    r.raise_for_status()
-                    file_bytes = r.content
-            elif file_path:
-                try:
+            try:
+                if attach_key and file_path:
                     with open(file_path, 'rb') as f:
                         file_bytes = f.read()
                     filename = file_path.rsplit('/', 1)[-1] or filename
-                except Exception:
-                    file_bytes = None
-            if attach_key and file_bytes is not None:
+                elif attach_key and file_url:
+                    filename = (urlparse(file_url).path.rsplit('/', 1)[-1] or filename)
+                    async with httpx.AsyncClient(timeout=httpx.Timeout(self.m.timeout_ms / 1000.0)) as client:
+                        r = await client.get(str(file_url))
+                        r.raise_for_status()
+                        file_bytes = r.content
+            except (OSError, httpx.HTTPError, httpx.InvalidURL, TypeError, ValueError):
+                raise RuntimeError('Provider attachment could not be read.') from None
+            if attach_key and file_bytes:
                 files = {attach_key: (filename, file_bytes, 'application/pdf')}
+            elif attach_key:
+                raise RuntimeError('Provider attachment is required.') from None
             else:
                 files = None
         elif act.body_kind == "none":
             pass
         else:
-            raise RuntimeError(f"Unsupported body.kind: {act.body_kind}")
+            raise RuntimeError('Unsupported provider request body.') from None
 
         timeout = httpx.Timeout(self.m.timeout_ms / 1000.0)
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            if act.body_kind == "multipart":
-                resp = await client.request(act.method, url, headers=headers, params=params, data=body_data, files=files)
-            elif act.body_kind == "form":
-                resp = await client.request(act.method, url, headers=headers, params=params, data=params)
-            else:
-                resp = await client.request(act.method, url, headers=headers, params=params, json=body_data, files=files)
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                if act.body_kind == "multipart":
+                    resp = await client.request(act.method, url, headers=headers, params=params, data=body_data, files=files)
+                elif act.body_kind == "form":
+                    resp = await client.request(act.method, url, headers=headers, params=params, data=body_data)
+                else:
+                    resp = await client.request(act.method, url, headers=headers, params=params, json=body_data, files=files)
+        except (httpx.HTTPError, httpx.InvalidURL, TypeError, ValueError, OSError):
+            raise RuntimeError('Provider create request failed.') from None
+        return self._mapped_response(resp, act)
+
+    def _mapped_response(self, resp: httpx.Response, act: HttpAction, provider_sid: Optional[str] = None) -> Dict[str, Any]:
+        if not 200 <= resp.status_code < 300:
+            raise RuntimeError(f'Provider request failed (HTTP {resp.status_code}).') from None
         try:
             data = resp.json()
-        except Exception:
-            data = {"status_code": resp.status_code, "text": resp.text}
-
-        rm = act.response_map or {}
-        job_id_expr = rm.get("job_id") or "id"
-        status_expr = rm.get("status") or "status"
-        error_expr = rm.get("error")
-        job_id = _extract_path(data, job_id_expr) if isinstance(job_id_expr, str) else None
-        status = _extract_path(data, status_expr) if isinstance(status_expr, str) else None
-        if isinstance(rm.get("status_map"), dict) and status in rm["status_map"]:
-            status = rm["status_map"][status]
-        result = {
-            "provider_id": self.m.id,
-            "job_id": job_id or "",
-            "status": status or ("FAILED" if resp.status_code >= 400 else "queued"),
-        }
-        if error_expr:
-            err = _extract_path(data, error_expr)
-            if err:
-                result["error"] = err
-        return result
+            if not isinstance(data, dict):
+                raise ValueError
+            rm = act.response_map or {}
+            job_id_expr = rm.get('job_id') or 'id'
+            status_expr = rm.get('status') or 'status'
+            jid = _extract_path(data, job_id_expr) if isinstance(job_id_expr, str) else None
+            status = _extract_path(data, status_expr) if isinstance(status_expr, str) else None
+            if jid is not None and (not isinstance(jid, (str, int)) or isinstance(jid, bool)):
+                raise ValueError
+            if status is not None and not isinstance(status, str):
+                raise ValueError
+            if isinstance(rm.get('status_map'), dict) and status in rm['status_map']:
+                status = rm['status_map'][status]
+            if status is not None and not isinstance(status, str):
+                raise ValueError
+            result = {'provider_id': self.m.id, 'job_id': jid or provider_sid or '', 'status': status or 'queued'}
+            if rm.get('error') and _extract_path(data, rm['error']):
+                result['error'] = 'Provider reported an error.'
+            return result
+        except (TypeError, ValueError, AttributeError):
+            raise RuntimeError('Unexpected provider response.') from None
 
     async def get_status(self, *, job_id: Optional[str] = None, provider_sid: Optional[str] = None, extra: Dict[str, Any] | None = None) -> Dict[str, Any]:
         """Poll status via manifest get_status action (if defined)."""
@@ -254,12 +271,12 @@ class HttpProviderRuntime:
             raise RuntimeError("Manifest missing get_status action")
         ctx = {
             "job_id": job_id or provider_sid,
-            "provider_sid": provider_sid or job_id,
+            "provider_sid": provider_sid,
             "settings": self.settings,
             "creds": self.creds,
         }
         # URL + path params
-        url = act.url
+        url = _render(act.url, ctx)
         for pp in (act.path_params or []):
             name = str(pp.get("name") or "")
             src = str(pp.get("source") or name)
@@ -267,48 +284,36 @@ class HttpProviderRuntime:
             url = url.replace("{" + name + "}", str(val or ""))
         self._check_domain(url)
 
-        headers = dict(act.headers or {})
+        headers = {name: _render(value, ctx) for name, value in (act.headers or {}).items()}
         params: Dict[str, str] = {}
         self._apply_auth(headers, params)
 
         body_data: Any = None
         if act.body_kind == "json":
             rendered = _render(act.body_template, ctx)
-            body_data = json.loads(rendered) if (rendered or "").strip().startswith("{") else {}
+            try:
+                body_data = json.loads(rendered) if (rendered or "").strip().startswith("{") else {}
+            except (TypeError, ValueError):
+                raise RuntimeError('Provider request template could not be rendered.') from None
         elif act.body_kind == "form":
             rendered = _render(act.body_template, ctx)
             pairs = [kv for kv in (rendered.split("&") if rendered else []) if kv]
+            body_data = {}
             for kv in pairs:
                 k, _, v = kv.partition("=")
-                params[k] = v
+                body_data[k] = v
         elif act.body_kind == "none":
             pass
         else:
-            raise RuntimeError(f"Unsupported body.kind: {act.body_kind}")
+            raise RuntimeError('Unsupported provider request body.') from None
 
         timeout = httpx.Timeout(self.m.timeout_ms / 1000.0)
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.request(act.method, url, headers=headers, params=params, json=body_data)
         try:
-            data = resp.json()
-        except Exception:
-            data = {"status_code": resp.status_code, "text": resp.text}
-
-        rm = act.response_map or {}
-        job_id_expr = rm.get("job_id") or "id"
-        status_expr = rm.get("status") or "status"
-        error_expr = rm.get("error")
-        jid = _extract_path(data, job_id_expr) if isinstance(job_id_expr, str) else None
-        status = _extract_path(data, status_expr) if isinstance(status_expr, str) else None
-        if isinstance(rm.get("status_map"), dict) and status in rm["status_map"]:
-            status = rm["status_map"][status]
-        result = {
-            "provider_id": self.m.id,
-            "job_id": jid or (job_id or provider_sid or ""),
-            "status": status or ("FAILED" if resp.status_code >= 400 else "queued"),
-        }
-        if error_expr:
-            err = _extract_path(data, error_expr)
-            if err:
-                result["error"] = err
-        return result
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                if act.body_kind == 'form':
+                    resp = await client.request(act.method, url, headers=headers, params=params, data=body_data)
+                else:
+                    resp = await client.request(act.method, url, headers=headers, params=params, json=body_data)
+        except (httpx.HTTPError, httpx.InvalidURL, TypeError, ValueError, OSError):
+            raise RuntimeError('Provider status request failed.') from None
+        return self._mapped_response(resp, act, provider_sid)
