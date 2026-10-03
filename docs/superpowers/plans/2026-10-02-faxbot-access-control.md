@@ -88,5 +88,5 @@
 - [ ] Replace host action/restart/plugin install permissions and WebSocket query secrets; enforce Origin, one-use exchange and per-input/current-policy checks.
 - [ ] Bind MCP transport sessions to validated subjects; preserve explicitly scoped stdio integration mode. Implement bounded mobile pairing and revocable device keys; repair retained client permission handling.
 - [ ] Prove accepted outbound lifecycle/replay independence from session/key rotation, plus prompt revocation of subsequent actions. Hosted negative direct calls supplement real available-client/GUI acceptance.
-- [ ] Complete backup/restore/owner recovery, policy audit/export, versioned docs generation and exact-commit CI/browser verification.
+- [ ] Complete backup/restore/owner recovery, policy audit/export, versioned docs generation and exact-commit CI/browser verification. Generate an access reference from the live runtime catalogue and registered operation matrix, with exact source hashes; distinguish schema declarations from enforced routes. Maintain operator migration/Owner recovery instructions explicitly, since Autopilot's diff proposal does not rewrite them automatically.
 - [ ] Audit every spec requirement, operation and client; fix gaps. Only then call complete RBAC, while retaining the whole-product provider/inbound/deployment completion gates.
