@@ -5,6 +5,8 @@ root containment policy, without promising safety against concurrent hostile
 filesystem changes. Cataloguing a manifest does not activate its capabilities.
 """
 
+from __future__ import annotations
+
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 import json
@@ -47,6 +49,7 @@ class ProviderDefinition:
     traits: ConfigurationDocument = field(repr=False)
     manifest: ConfigurationDocument | None = field(repr=False)
     kind: str
+    native_definition: ProviderDefinition | None = field(default=None, repr=False)
 
 
 def _json_object(pairs: list[tuple[str, object]]) -> dict:
@@ -195,6 +198,26 @@ def _http_manifest(document: dict) -> None:
         raise ValueError
 
 
+def validate_http_provider_document(document: dict) -> None:
+    """Validate an HTTP provider recipe without resolving paths or writing files.
+
+    Storage identities retain their separate role contract. Callers validating
+    installation paths do that first so containment failures remain distinct.
+    """
+    try:
+        document = ConfigurationDocument(document).as_dict()
+        _identity(document.get("id"))
+        if document["id"].lower() in {"local", "s3"}:
+            raise ProviderCatalogError("HTTP provider id is reserved for storage.") from None
+        _http_manifest(document)
+        _traits(document.get("traits", {}))
+        _kind(document)
+    except ProviderCatalogError:
+        raise
+    except (ConfigurationRecordError, ValueError, TypeError, RecursionError):
+        raise ProviderCatalogError("Invalid HTTP provider manifest.") from None
+
+
 def _manifest_paths(providers_directory: Path):
     root = Path(providers_directory)
     try:
@@ -260,7 +283,7 @@ class ProviderCatalog:
                 manifest = _read_json(path)
                 if manifest.get("id") != provider_id:
                     raise ValueError
-                _http_manifest(manifest)
+                validate_http_provider_document(manifest)
                 previous = definitions.get(provider_id)
                 traits = (
                     previous.traits.as_dict() if previous is not None else {
@@ -274,6 +297,7 @@ class ProviderCatalog:
                     ConfigurationDocument(traits),
                     ConfigurationDocument(manifest),
                     _kind(manifest, previous.kind if previous is not None else "cloud"),
+                    (previous.native_definition or previous) if previous is not None else None,
                 )
         except (ValueError, TypeError, OSError, RuntimeError):
             raise ProviderCatalogError("Invalid provider resource.") from None

@@ -111,6 +111,86 @@ def test_provider_cannot_be_selected_as_storage_and_unknown_storage_has_no_fallb
     assert control.store.read() == first
 
 
+def native_override_catalog(tmp_path, identity):
+    from api.app.config_paths import provider_traits_path
+    from api.app.provider_catalog import ProviderCatalog
+    providers = tmp_path / 'providers'
+    destination = providers / identity / 'manifest.json'
+    destination.parent.mkdir(parents=True)
+    destination.write_text(json.dumps({'id': identity, 'kind': 'cloud',
+        'traits': {'requires_tiff': False, 'requires_ami': False, 'supports_inbound': False},
+        'actions': {'send_fax': {'url': 'https://synthetic.invalid/fax'}}}))
+    return ProviderCatalog.load(provider_traits_path(), providers)
+
+
+@pytest.mark.parametrize('identity', ['sip', 'freeswitch'])
+@pytest.mark.parametrize('plugins_enabled', [False, True])
+def test_compilation_uses_native_definition_only_when_manifest_plugins_disabled(tmp_path, identity, plugins_enabled):
+    from api.app.config_activation import compile_profiles
+    from api.app.config_bootstrap import default_plugin_state
+    from api.app.config_values import ConfigurationValues
+    catalog = native_override_catalog(tmp_path, identity)
+    values = ConfigurationValues.from_environment({'FAX_BACKEND': identity,
+        'FEATURE_V3_PLUGINS': str(plugins_enabled).lower()})
+    configuration = compile_profiles(values, catalog, default_plugin_state(values))['outbound']
+    assert (configuration.manifest is not None) is plugins_enabled
+    assert configuration.traits['requires_tiff'] is (not plugins_enabled)
+    assert configuration.traits['requires_ami'] is (not plugins_enabled and identity == 'sip')
+    if plugins_enabled:
+        assert configuration.manifest == catalog.get(identity).manifest.as_dict()
+
+
+def test_disabled_manifest_uses_native_inbound_capabilities_from_same_definition(tmp_path):
+    from api.app.config_activation import compile_profiles
+    from api.app.config_bootstrap import default_plugin_state
+    from api.app.config_values import ConfigurationValues
+    catalog = native_override_catalog(tmp_path, 'sip')
+    values = ConfigurationValues.from_environment({'FAX_BACKEND': 'sip', 'INBOUND_ENABLED': 'true',
+        'FEATURE_V3_PLUGINS': 'false'})
+    configurations = compile_profiles(values, catalog, default_plugin_state(values))
+    assert set(configurations) == {'outbound', 'inbound'}
+    for configuration in configurations.values():
+        assert configuration.manifest is None
+        assert configuration.traits['supports_inbound'] is True
+        assert configuration.traits['requires_ami'] is True
+        assert configuration.traits['requires_tiff'] is True
+    enabled = values.with_patch({'feature_v3_plugins': True})
+    with pytest.raises(ConfigurationActivationError, match='does not support inbound'):
+        compile_profiles(enabled, catalog, default_plugin_state(enabled))
+
+
+def test_disabled_custom_manifest_does_not_borrow_a_native_definition(tmp_path):
+    from api.app.config_activation import compile_profiles
+    from api.app.config_bootstrap import default_plugin_state
+    from api.app.config_values import ConfigurationValues
+    catalog = native_override_catalog(tmp_path, 'custom-only')
+    values = ConfigurationValues.from_environment({'FAX_BACKEND': 'custom-only', 'FEATURE_V3_PLUGINS': 'false'})
+    with pytest.raises(ConfigurationActivationError, match='requires plugins to be enabled'):
+        compile_profiles(values, catalog, default_plugin_state(values))
+
+
+def test_disabled_override_schema_does_not_validate_native_settings(tmp_path):
+    from api.app.config_activation import compile_profiles
+    from api.app.config_bootstrap import default_plugin_state
+    from api.app.config_paths import provider_traits_path
+    from api.app.config_values import ConfigurationValues
+    from api.app.provider_catalog import ProviderCatalog
+    native_override_catalog(tmp_path, 'sip')
+    destination = tmp_path / 'providers' / 'sip' / 'manifest.json'
+    document = json.loads(destination.read_text())
+    document['config_schema'] = {'type': 'object', 'required': ['manifest-only-setting']}
+    destination.write_text(json.dumps(document))
+    catalog = ProviderCatalog.load(provider_traits_path(), tmp_path / 'providers')
+    values = ConfigurationValues.from_environment({'FAX_BACKEND': 'sip', 'FEATURE_V3_PLUGINS': 'false'})
+    state = default_plugin_state(values)
+    state['settings']['sip'] = {'native-setting': 'literal'}
+    native = compile_profiles(values, catalog, state)['outbound']
+    assert native.manifest is None
+    assert native.traits['requires_ami'] is True
+    with pytest.raises(ConfigurationActivationError, match='configuration schema'):
+        compile_profiles(values.with_patch({'feature_v3_plugins': True}), catalog, state)
+
+
 def test_manifest_schema_validation_never_fetches_external_references(monkeypatch):
     import urllib.request
     from api.app.config_activation import _validate_manifest_settings

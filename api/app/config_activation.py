@@ -114,6 +114,13 @@ def _configuration_for(values, definition, plugin_settings):
                                  traits=definition.traits.as_dict(), manifest=manifest)
 
 
+def _effective_definition(values, definition):
+    """Disabled HTTP plugins restore the complete retained native definition."""
+    if not values.feature_v3_plugins:
+        return getattr(definition, 'native_definition', None) or definition
+    return definition
+
+
 def compile_profiles(values, catalog, state):
     values.validate_provider_selection({identity: True for identity in catalog.provider_ids})
     if values.storage_backend not in {'local', 's3'}:
@@ -122,13 +129,13 @@ def compile_profiles(values, catalog, state):
     if set(state['settings']) - set(catalog.provider_ids):
         raise ConfigurationActivationError('Plugin settings refer to an unavailable provider.')
     for identity, settings in state['settings'].items():
-        definition = catalog.get(identity)
+        definition = _effective_definition(values, catalog.get(identity))
         _validate_manifest_settings(definition.manifest.as_dict() if definition.manifest is not None else None, settings)
     profiles = {}
     for role, identity in [('outbound', values.effective_outbound), ('inbound', values.effective_inbound)]:
         if not state['roles'][role]['enabled'] or (role == 'inbound' and not values.inbound_enabled):
             continue
-        definition = catalog.get(identity)
+        definition = _effective_definition(values, catalog.get(identity))
         traits = definition.traits.as_dict()
         if role == 'inbound' and not traits.get('supports_inbound', False):
             raise ConfigurationActivationError('Selected provider does not support inbound fax.')

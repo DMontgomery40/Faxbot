@@ -145,13 +145,58 @@ def test_manifests_capture_complete_contents_and_override_base_traits(tmp_path):
         "requires_ami": True, "requires_tiff": False, "supports_inbound": True,
         "future": "manifest", "needs_storage": True,
     }
+    native = catalog.get("sip").native_definition
+    assert native.id == "sip"
+    assert native.manifest is None
+    assert native.native_definition is None
+    assert native.traits.as_dict() == {
+        "requires_ami": True, "requires_tiff": True, "supports_inbound": True,
+        "future": "base", "needs_storage": True,
+    }
+    detached_native_traits = native.traits.as_dict()
+    detached_native_traits["requires_tiff"] = False
+    assert native.traits.as_dict()["requires_tiff"] is True
     assert catalog.get("builtin").manifest is None
+    assert catalog.get("builtin").native_definition is None
     assert catalog.get("new-provider").kind == "cloud"
     assert catalog.get("new-provider").traits.as_dict() == {
         "requires_ami": False, "requires_tiff": False, "supports_inbound": True,
         "future_count": 4,
     }
     assert catalog.get("new-provider").manifest.as_dict() == new
+    assert catalog.get("new-provider").native_definition is None
+
+
+@pytest.mark.parametrize("identity", ["local", "s3"])
+def test_http_manifest_cannot_replace_reserved_storage_identity(tmp_path, identity):
+    base = write_json(tmp_path / "traits.json", {})
+    document = manifest(identity)
+    installed = write_json(tmp_path / "providers" / identity / "manifest.json", document)
+    original = installed.read_bytes()
+    with pytest.raises(catalog_module().ProviderCatalogError):
+        catalog_module().ProviderCatalog.load(base, tmp_path / "providers")
+    assert installed.read_bytes() == original
+
+
+@pytest.mark.parametrize("identity", ["local", "s3", "LOCAL", "S3"])
+def test_shared_http_document_validator_reserves_storage_identity(identity):
+    module = catalog_module()
+    with pytest.raises(module.ProviderCatalogError, match="reserved for storage"):
+        module.validate_http_provider_document(manifest(identity))
+
+
+def test_shared_http_document_validator_preserves_supported_recipe_and_rejects_bad_traits():
+    module = catalog_module()
+    document = manifest("sip", action="get_status")
+    document["actions"]["get_status"]["headers"] = {"Authorization": "Bearer {{credentials.api_key}}"}
+    original = json.dumps(document)
+    assert module.validate_http_provider_document(document) is None
+    assert json.dumps(document) == original
+    document["traits"] = {"requires_tiff": "private-invalid-false"}
+    with pytest.raises(module.ProviderCatalogError) as failure:
+        module.validate_http_provider_document(document)
+    assert "private" not in str(failure.value)
+    assert failure.value.__suppress_context__
 
 
 def test_new_load_sees_new_installs_while_prior_snapshots_are_immutable(tmp_path):
