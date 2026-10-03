@@ -74,6 +74,16 @@ Running your own fax engine on a SIP trunk removes the per-page fee. For example
 
 If the installation ships `config/rate_cards.json`, Faxbot loads it once as starting rate cards when you have none. Your edits always take precedence.
 
+## SSLFax
+
+SSLFax is a HylaFAX+ feature. During an ordinary fax call, it moves the pages onto an encrypted internet connection, so the call ends sooner. It was tested on 2026-10-03 with HylaFAX+ 7.0.11 at both ends over a local test line. A 6-page fax took 12 seconds instead of 50, with identical pages, and fell back to an ordinary fax when the connection could not be made. It needs:
+
+- a fax engine with SSLFax at both ends
+- an audio (G.711) call rather than T.38
+- an internet address the sender can reach, to receive this way
+
+It saves money only on routes billed by the minute. Faxbot's Asterisk fax engine does not support SSLFax, so Faxbot does not currently offer it.
+
 ## Case packets
 
 When you fax the same case to a recipient again and again, Faxbot can leave out the documents the recipient already has. Turn on **Accepts a one-page index instead of documents it already received for a case** in the number's **Details** only after the recipient agrees.
