@@ -76,6 +76,7 @@ from .access.http import PRIVATE_HEADERS, private_response_path, utcnow as acces
 from .access.configuration_access import configuration_write_receipt
 from .access.fax_resources import FaxAccessError
 from .routing.http import router as routing_router
+from .intake.http import router as intake_router
 from .routing.transport import RoutedTransport
 
 
@@ -152,6 +153,7 @@ app.add_middleware(PrivateAuthMiddleware)
 app.add_exception_handler(AccessError, access_error_response)
 app.include_router(authentication_router)
 app.include_router(routing_router)
+app.include_router(intake_router)
 
 
 async def _configuration_error_handler(request, exc):
