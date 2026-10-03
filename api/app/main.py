@@ -1058,7 +1058,7 @@ class ManifestIn(BaseModel):
 
 
 @app.post("/admin/plugins/http/install", dependencies=[Depends(require_permission('providers:install', audit=True))],
-          responses=_PERMISSION_RESPONSES)
+          responses={**_PERMISSION_RESPONSES, 404: _PUBLIC_DETAIL_RESPONSES[404]})
 def install_http_manifest(payload: ManifestIn, request: Request):
     if not request.scope["faxbot.configuration"].active.values.feature_v3_plugins:
         return _plugins_disabled_response()
@@ -1168,7 +1168,8 @@ def _extract_json_blocks(md: str) -> List[dict]:
 
 
 @app.post("/admin/plugins/http/import-manifests",
-          dependencies=[Depends(require_permission('providers:install', audit=True))], responses=_PERMISSION_RESPONSES)
+          dependencies=[Depends(require_permission('providers:install', audit=True))],
+          responses={**_PERMISSION_RESPONSES, 404: _PUBLIC_DETAIL_RESPONSES[404]})
 def import_http_manifests(payload: ImportManifestsIn, request: Request):
     """Bulk import provider manifests from JSON list or scraped markdown.
     For markdown, extracts JSON code fences and imports objects that look like manifests.
