@@ -3,6 +3,7 @@ import type {
   FaxJob,
   ApiKey,
   Settings,
+  SettingsPatch,
   DiagnosticsResult,
   ValidationResult,
   InboundFax
@@ -54,7 +55,7 @@ export class AdminAPIClient {
     return res.json();
   }
 
-  async exportSettings(): Promise<{ env_content: string; requires_restart: boolean; note: string }> {
+  async exportSettings(): Promise<{ env: string }> {
     const res = await this.fetch('/admin/settings/export');
     return res.json();
   }
@@ -67,7 +68,7 @@ export class AdminAPIClient {
     return res.json();
   }
 
-  async updateSettings(settings: any): Promise<any> {
+  async updateSettings(settings: SettingsPatch): Promise<Settings> {
     const res = await this.fetch('/admin/settings', {
       method: 'PUT',
       body: JSON.stringify(settings),
@@ -75,7 +76,7 @@ export class AdminAPIClient {
     return res.json();
   }
 
-  async reloadSettings(): Promise<any> {
+  async reloadSettings(): Promise<Settings> {
     const res = await this.fetch('/admin/settings/reload', { method: 'POST' });
     return res.json();
   }

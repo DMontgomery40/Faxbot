@@ -37,6 +37,14 @@ export interface ApiKey {
 }
 
 export interface Settings {
+  _meta?: {
+    active_revision_id: string;
+    desired_revision_id: string;
+    generation: number;
+    apply_state: 'applied' | 'pending_restart';
+    pending_fields: string[];
+    [hint: string]: unknown;
+  };
   backend: {
     type: string;
     disabled: boolean;
@@ -44,6 +52,8 @@ export interface Settings {
   hybrid?: {
     outbound_backend: string;
     inbound_backend: string;
+    outbound_override?: string;
+    inbound_override?: string;
     outbound_explicit?: boolean;
     inbound_explicit?: boolean;
   };
@@ -62,6 +72,7 @@ export interface Settings {
   };
   sinch: {
     project_id: string;
+    base_url?: string;
     api_key: string;
     api_secret: string;
     configured: boolean;
@@ -72,6 +83,9 @@ export interface Settings {
     api_token: string;
     from_fax: string;
     callback_url?: string;
+    from_sms?: string;
+    webhook_signing_key?: string;
+    status_poll_seconds?: number;
     configured: boolean;
   };
   sip: {
@@ -86,11 +100,13 @@ export interface Settings {
   fs?: {
     esl_host?: string;
     esl_port?: number;
+    esl_password?: string;
     gateway_name?: string;
     caller_id_number?: string;
     t38_enable?: boolean;
   };
   security: {
+    api_key?: string;
     require_api_key: boolean;
     enforce_https: boolean;
     audit_enabled: boolean;
@@ -103,10 +119,30 @@ export interface Settings {
     s3_region?: string;
     s3_prefix?: string;
     s3_endpoint_url?: string;
+    s3_kms_key_id?: string;
   };
   database?: {
     url: string;
     persistent: boolean;
+    scheme?: string;
+    editable?: boolean;
+    maintenance_required?: boolean;
+  };
+  audit?: {
+    enabled: boolean;
+    format: string;
+    file: string;
+    syslog: boolean;
+    syslog_address: string;
+  };
+  persisted?: { enabled: boolean; path: string };
+  mcp?: {
+    sse_enabled: boolean;
+    sse_path: string;
+    http_enabled: boolean;
+    http_path: string;
+    require_oauth: boolean;
+    oauth: { issuer: string; audience: string; jwks_url: string };
   };
   inbound: {
     enabled: boolean;
@@ -123,6 +159,9 @@ export interface Settings {
       verify_signature: boolean;
       basic_auth_configured: boolean;
       hmac_configured: boolean;
+      basic_user?: string;
+      basic_pass?: string;
+      hmac_secret?: string;
     };
   };
   features?: {
@@ -137,8 +176,16 @@ export interface Settings {
     rate_limit_rpm: number;
     inbound_list_rpm?: number;
     inbound_get_rpm?: number;
+    artifact_ttl_days?: number;
+    cleanup_interval_minutes?: number;
   };
 }
+
+// Settings uses flat ConfigurationValues public patch names. Null preserves a
+// value; an explicit empty string clears a string, and false/zero are values.
+export type SettingsPatch = Record<string, string | number | boolean | null | undefined> & {
+  expected_revision_id?: string;
+};
 
 export interface DiagnosticsResult {
   timestamp: string;
