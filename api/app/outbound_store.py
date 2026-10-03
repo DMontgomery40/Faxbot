@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 import hashlib
 import json
+import re
 from uuid import uuid4
 
 import sqlalchemy as sa
@@ -16,6 +17,44 @@ import sqlalchemy as sa
 
 TERMINAL = frozenset({'success', 'failed', 'cancelled'})
 OBSERVED = TERMINAL | {'in_progress'}
+_PROVIDER_SID = re.compile(r'[A-Za-z0-9_-]{1,100}', re.ASCII)
+_ACTOR = re.compile(r'key:[A-Za-z0-9][A-Za-z0-9_.-]{0,95}', re.ASCII)
+_EVENT_KINDS = frozenset({'accepted', 'legacy_migrated', 'binding_unavailable',
+    'held_acceptance_restored', 'claimed', 'dispatch_paused', 'submission_authorized',
+    'submission_uncertain', 'preparation_failed', 'preparation_expired',
+    'provider_observation_refused', 'terminal_conflict', 'late_observation',
+    'provider_observed', 'operator_identity_bound'})
+_CATEGORIES = frozenset({'transport_ambiguous', 'response_unusable', 'submission_cancelled',
+    'worker_lost', 'artifact_unavailable', 'provider_unavailable', 'preparation_failed',
+    'profile_mismatch', 'sid_mismatch'})
+
+
+def _valid_actor(actor):
+    return isinstance(actor, str) and (actor in {'admin', 'development'} or _ACTOR.fullmatch(actor) is not None)
+
+
+def _safe_event_details(encoded):
+    """Expose only known structured evidence, never arbitrary history content."""
+    if not isinstance(encoded, str) or len(encoded) > 4096:
+        return {}
+    try:
+        details = json.loads(encoded)
+    except (ValueError, RecursionError):
+        return {}
+    if not isinstance(details, dict):
+        return {}
+    result = {}
+    for name, value in details.items():
+        if not isinstance(value, str):
+            continue
+        if ((name == 'status' and value in OBSERVED)
+                or (name == 'category' and value in _CATEGORIES)
+                or (name == 'dispatch_mode' and value in {'normal', 'held', 'legacy'})
+                or (name == 'actor' and _valid_actor(value))
+                or (name == 'provider_sid' and _PROVIDER_SID.fullmatch(value) is not None)
+                or (name == 'legacy_status' and re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9 _.-]{0,127}', value, re.ASCII))):
+            result[name] = value
+    return result
 
 
 class DeliveryConflict(RuntimeError):
@@ -84,6 +123,115 @@ class OutboundStore:
         with self.configuration.engine.connect() as connection:
             return [dict(row) for row in connection.execute(sa.select(self.events).where(
                 self.events.c.job_id == job_id).order_by(self.events.c.created_at, self.events.c.id)).mappings()]
+
+    def _operator_context(self, connection, row):
+        from .config_profiles import ConfigurationRecordError
+        from .config_secrets import ConfigurationSecretError
+        from .config_store import ConfigurationStoreError
+        from .config_values import ConfigurationValueError
+        attempt = connection.execute(sa.select(self.attempts).where(
+            self.attempts.c.id == row['attempt_id'])).mappings().one_or_none()
+        if attempt is not None and attempt['job_id'] != row['id']:
+            attempt = None
+        try:
+            revision, profile = self.configuration._outbound_context(connection, row['id'])
+        except (ConfigurationStoreError, ConfigurationSecretError, ConfigurationRecordError, ConfigurationValueError):
+            revision, profile = None, None
+        return attempt, revision, profile
+
+    def _bind_refusal(self, connection, row, attempt, profile):
+        if row['state'] != 'reconciliation_required':
+            return 'Only an unresolved submitted delivery can receive a confirmed provider identity.'
+        if row['dispatch_mode'] == 'legacy':
+            return 'Historical delivery requires deliberate maintenance reconciliation of its original account.'
+        if row['dispatch_mode'] != 'normal':
+            return 'Held or unsupported dispatch mode requires deliberate maintenance reconciliation.'
+        if attempt is None or attempt['submitted_at'] is None:
+            return 'No verified submitted attempt is available; deliberate maintenance reconciliation is required.'
+        if attempt['phase'] not in {'uncertain', 'submitting', 'in_progress'} or attempt['completed_at'] is not None:
+            return 'The attempt is not an unresolved submission; deliberate maintenance reconciliation is required.'
+        if profile is None or profile.id != attempt['profile_id']:
+            return 'The original provider account could not be authenticated; deliberate maintenance reconciliation is required.'
+        job_sid = connection.scalar(sa.select(self.configuration.jobs.c.provider_sid).where(
+            self.configuration.jobs.c.id == row['id']))
+        if attempt['provider_sid'] is not None or job_sid is not None:
+            return 'A provider identity is already attached; refresh the original account instead.'
+        configuration = profile.configuration
+        manifest = configuration.manifest
+        supported = ('get_status' in manifest.get('actions', {}) if manifest is not None
+                     else configuration.provider_id in {'phaxio', 'signalwire', 'sinch'})
+        if not supported:
+            return 'This captured provider cannot refresh status; deliberate maintenance reconciliation is required.'
+        return None
+
+    def bind_provider_identity(self, job_id, *, expected_version, provider_sid, actor):
+        """Attach external evidence to one issued attempt, without resend authority."""
+        if (type(expected_version) is not int or expected_version <= 0
+                or not isinstance(provider_sid, str) or _PROVIDER_SID.fullmatch(provider_sid) is None
+                or not _valid_actor(actor)):
+            raise ValueError('Invalid provider identity reconciliation input.')
+        with self.configuration._locked() as connection:
+            row = self._row(connection, job_id)
+            if row is None:
+                raise DeliveryConflict('Delivery record is unavailable.')
+            if row['version'] != expected_version:
+                raise DeliveryConflict('Delivery changed; reload before attaching a provider identity.')
+            attempt, _, profile = self._operator_context(connection, row)
+            reason = self._bind_refusal(connection, row, attempt, profile)
+            if reason is not None:
+                raise DeliveryConflict(reason)
+            owned_attempt = connection.execute(sa.select(self.attempts.c.id).where(
+                    self.attempts.c.profile_id == profile.id,
+                    self.attempts.c.provider_sid == provider_sid,
+                    self.attempts.c.job_id != job_id).limit(1)).first()
+            # Captured pre-upgrade jobs can retain a SID and verified binding
+            # without a fabricated outbound attempt. That identity is owned too.
+            jobs, bindings = self.configuration.jobs, self.configuration.job_bindings
+            owned_job = connection.execute(sa.select(jobs.c.id).join(bindings, bindings.c.id == jobs.c.id).where(
+                bindings.c.profile_id == profile.id, jobs.c.provider_sid == provider_sid,
+                jobs.c.id != job_id).limit(1)).first()
+            if owned_attempt or owned_job:
+                raise DeliveryConflict('This provider identity already belongs to another delivery from the original account.')
+            now = datetime.utcnow()
+            connection.execute(self.attempts.update().where(self.attempts.c.id == attempt['id']).values(
+                provider_sid=provider_sid))
+            connection.execute(self.configuration.jobs.update().where(
+                self.configuration.jobs.c.id == job_id).values(provider_sid=provider_sid, updated_at=now))
+            self._update(connection, row, now, next_poll_at=None)
+            _event(connection, self.events, job_id, 'operator_identity_bound', now,
+                attempt_id=attempt['id'], details={'actor': actor, 'provider_sid': provider_sid})
+            version = row['version'] + 1
+        return version
+
+    def operator_view(self, job_id):
+        """Read a consistent bounded operator projection of the original account."""
+        with self.configuration._locked() as connection:
+            row = self._row(connection, job_id)
+            if row is None:
+                raise DeliveryConflict('Delivery record is unavailable.')
+            attempt, revision, profile = self._operator_context(connection, row)
+            reason = self._bind_refusal(connection, row, attempt, profile)
+            count = connection.scalar(sa.select(sa.func.count()).select_from(self.events).where(
+                self.events.c.job_id == job_id))
+            events = connection.execute(sa.select(self.events).where(self.events.c.job_id == job_id)
+                .order_by(self.events.c.created_at.desc(), self.events.c.id.desc()).limit(100)).mappings().all()
+            phases = OBSERVED | {'preparing', 'submitting', 'uncertain', 'abandoned'}
+            safe_attempt = None if attempt is None else {
+                'id': attempt['id'], 'phase': attempt['phase'] if attempt['phase'] in phases else 'unknown',
+                'provider_sid': attempt['provider_sid'] if isinstance(attempt['provider_sid'], str)
+                    and _PROVIDER_SID.fullmatch(attempt['provider_sid']) else None,
+                'submitted_at': attempt['submitted_at'], 'completed_at': attempt['completed_at'],
+            }
+            return {'version': row['version'], 'state': row['state'], 'dispatch_mode': row['dispatch_mode'],
+                'provider_id': profile.configuration.provider_id if profile is not None else None,
+                'profile_id': profile.id if profile is not None else None,
+                'revision_id': revision.id if revision is not None else None,
+                'attempt': safe_attempt, 'can_bind_provider_identity': reason is None, 'bind_refusal_reason': reason,
+                'events_truncated': count > 100,
+                'events': [{'id': event['id'], 'attempt_id': event['attempt_id'],
+                    'kind': event['kind'] if event['kind'] in _EVENT_KINDS else 'unknown',
+                    'created_at': event['created_at'], 'details': _safe_event_details(event['details'])}
+                    for event in reversed(events)]}
 
     def reserve_poll(self, *, now=None, interval_seconds=30):
         """Reserve a status read, never a submission or replacement attempt."""
