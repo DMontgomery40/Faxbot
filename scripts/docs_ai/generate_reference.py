@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Generate public references from source without loading operator settings."""
 import argparse
+import ast
 import hashlib
 import json
 import os
@@ -8,11 +9,17 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import textwrap
 
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 COVERAGE = "source declarations; no live installation state or provider verification"
+CALLBACK_SOURCES = {
+    "api/app/provider_signatures.py": ("_pairs", "verify_phaxio_signature"),
+    "api/app/callback_locator.py": ("callback_base_url", "callback_url_with_locators"),
+    "api/app/outbound_callbacks.py": ("CapturedCallbacks.receive",),
+}
 
 
 def git(*arguments):
@@ -79,6 +86,33 @@ def _header(title, provenance):
         "Generated from this revision's source declarations. These defaults and traits do not report a running installation's active settings, prove provider delivery, or establish that newly added components are integrated.", ""]
 
 
+def source_excerpt(path, symbol):
+    """Read an exact declaration without importing its module or dependencies."""
+    source = (ROOT / path).read_text(encoding="utf-8")
+    node = ast.parse(source)
+    for name in symbol.split("."):
+        declarations = [
+            entry for entry in node.body
+            if isinstance(entry, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
+            and entry.name == name
+        ]
+        if len(declarations) != 1:
+            raise ValueError(f"Missing source declaration: {path}:{symbol}")
+        node = declarations[0]
+    start = min([node.lineno] + [entry.lineno for entry in node.decorator_list])
+    return textwrap.dedent("\n".join(source.splitlines()[start - 1:node.end_lineno]))
+
+
+def callback_reference(provenance):
+    lines = _header("Outbound callback source reference", provenance)
+    lines += ["These excerpts are read directly from source with Python's AST; callback runtime modules are not imported. The build provenance hashes each listed module. The verifier, URL construction and captured-attempt acceptance code below are regenerated on every source build.", "",
+        "[Maintained Phaxio setup and verification guidance](../setup/webhooks.md#outbound-status-phaxio). This reference covers outbound observations; it does not establish inbound verification readiness.", ""]
+    for path, symbols in CALLBACK_SOURCES.items():
+        for symbol in symbols:
+            lines += [f"## {symbol}", "", f"Source: `{path}`.", "", "```python", source_excerpt(path, symbol), "```", ""]
+    return "\n".join(lines) + "\n"
+
+
 def generate(output_directory, *, source_sha=None, source_ref=None, require_clean=False):
     revision = git("rev-parse", "HEAD")
     if source_sha is not None and source_sha != revision:
@@ -90,6 +124,7 @@ def generate(output_directory, *, source_sha=None, source_ref=None, require_clea
     providers = provider_reference()
     spec = openapi_reference()
     inputs = ["api/app/main.py", "api/app/config_values.py", "api/app/provider_catalog.py", "config/provider_traits.json"]
+    inputs.extend(CALLBACK_SOURCES)
     inputs.extend(str(path.relative_to(ROOT)) for path in sorted((ROOT / "config/providers").glob("*/manifest.json")))
     provenance = {
         "source_sha": revision, "source_ref": source_ref or git("rev-parse", "--abbrev-ref", "HEAD"),
@@ -125,8 +160,9 @@ def generate(output_directory, *, source_sha=None, source_ref=None, require_clea
         lines += [f"| `{key}` | `{json.dumps(value)}` |" for key, value in sorted(definition["traits"].items())]
         lines += ["", "Bundled manifest: " + (f"`{definition['manifest_digest']}`" if definition["manifest_digest"] else "none; built-in traits only") + ".", ""]
     (output / "providers.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    (output / "outbound-callbacks.md").write_text(callback_reference(provenance), encoding="utf-8")
     lines = _header("Generated source reference", provenance)
-    lines += ["- [API route and model reference (Redocly)](api.html)", "- [OpenAPI JSON](openapi.json)", "- [Typed configuration reference](configuration.md)", "- [Provider declarations](providers.md)", "- [Build provenance](provenance.json)", "",
+    lines += ["- [API route and model reference (Redocly)](api.html)", "- [OpenAPI JSON](openapi.json)", "- [Typed configuration reference](configuration.md)", "- [Provider declarations](providers.md)", "- [Outbound callback source reference](outbound-callbacks.md)", "- [Build provenance](provenance.json)", "",
         "Instructional pages remain maintained prose. These generated references supplement those pages and make their source revision inspectable. The legacy `faxbot.net/api` site has a separate compatibility deployment and is not refreshed by this build."]
     (output / "index.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
     return provenance

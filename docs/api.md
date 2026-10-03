@@ -41,9 +41,10 @@ curl -H "X-API-Key: $API_KEY" http://localhost:8080/fax/$JOB_ID
 
 4) POST `/phaxio-callback`
 - For Phaxio status webhooks. Expects form-encoded fields (e.g., `fax[status]`, `fax[id]`).
-- Correlation via query param `?job_id=...`.
-- Returns `{ status: "ok" }`.
-- Signature verification: if `PHAXIO_VERIFY_SIGNATURE=true` (default), the server verifies `X-Phaxio-Signature` (HMAC-SHA256 of the raw body using `PHAXIO_API_SECRET`). Requests without a valid signature are rejected (401).
+- Faxbot submits the captured callback URL with `job_id` and `attempt_id` query locators. Both must match the accepted job/attempt; the captured account and provider fax ID must also match.
+- Returns `{ "ok": true, "applied": ... }` for an authenticated observation.
+- `X-Phaxio-Signature` is verified with the separate `PHAXIO_CALLBACK_TOKEN`: lowercase hexadecimal HMAC-SHA1 over the exact captured public URL/query, stably name-sorted form fields and file-part SHA1 digests. See [outbound callback verification](setup/webhooks.md#outbound-status-phaxio).
+- Missing/invalid authentication or a captured `PHAXIO_VERIFY_SIGNATURE=false` rejects callback updates (401). Disabling verification does not accept unsigned callbacks; status polling continues with the captured original account when its provider fax ID is known.
 
 ## Models
 - FaxJobOut

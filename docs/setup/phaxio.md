@@ -15,6 +15,7 @@
 - Log in to the Phaxio console and retrieve:
   - PHAXIO_API_KEY
   - PHAXIO_API_SECRET
+  - PHAXIO_CALLBACK_TOKEN: the separate account Callback Token, required for authenticated outbound status callbacks.
 
 Note on branding: New Phaxio signups and dashboards may redirect to Sinch. That is expected — Phaxio is a Sinch company. This backend continues to work with those credentials.
 
@@ -24,6 +25,8 @@ Note on branding: New Phaxio signups and dashboards may redirect to Sinch. That 
 FAX_BACKEND=phaxio
 PHAXIO_API_KEY=your_key
 PHAXIO_API_SECRET=your_secret
+PHAXIO_CALLBACK_TOKEN=your_account_callback_token
+PHAXIO_VERIFY_SIGNATURE=true
 PUBLIC_API_URL=https://your-domain.com
 PHAXIO_CALLBACK_URL=https://your-domain.com/phaxio-callback   # Preferred name
 # PHAXIO_STATUS_CALLBACK_URL=https://your-domain.com/phaxio-callback  # Alias also supported
@@ -81,9 +84,10 @@ print('Queued', job['id'])
 
 5) Configure callback (optional but recommended)
 - Phaxio will POST status to your callback URL (`PHAXIO_CALLBACK_URL` or `PHAXIO_STATUS_CALLBACK_URL`).
-- This API exposes `POST /phaxio-callback` and will update job status when the request includes `?job_id=<id>`.
+- Faxbot adds `job_id` and `attempt_id` query locators to the URL submitted to Phaxio. A locator alone does not authenticate a callback: the signature, captured provider account, attempt and provider fax ID must also match.
 - Ensure your PUBLIC_API_URL and callback URL are reachable from Phaxio.
-- Security: by default, callbacks must include a valid `X-Phaxio-Signature` (HMAC-SHA256 of the raw body using `PHAXIO_API_SECRET`). You can disable this by setting `PHAXIO_VERIFY_SIGNATURE=false` (not recommended).
+- Obtain the account Callback Token from Phaxio's callback settings and set `PHAXIO_CALLBACK_TOKEN`; `PHAXIO_API_SECRET` remains the send/status API credential. Faxbot verifies `X-Phaxio-Signature` as lowercase hexadecimal HMAC-SHA1 over the exact captured callback URL/query, stably name-sorted form fields and file-part SHA1 digests. See [the outbound callback contract](webhooks.md#outbound-status-phaxio).
+- A job captured with `PHAXIO_VERIFY_SIGNATURE=false` disables outbound callback updates by rejecting them; it does not accept unsigned updates. Status polling still uses its captured original API credentials when its provider fax ID is known. Later configuration changes do not replace a previously accepted job's captured callback token, URL or verification setting.
  - Optional retention: set `ARTIFACT_TTL_DAYS>0` to automatically delete PDFs after the specified number of days (cleanup runs daily by default).
 
 ## Costs & HIPAA
@@ -102,7 +106,7 @@ print('Queued', job['id'])
 
 ## Troubleshooting
 - "phaxio not configured": verify `FAX_BACKEND=phaxio` and both API key/secret.
-- No status updates: confirm callback URL and public reachability.
+- No callback updates: confirm the captured callback URL/query, public reachability, account Callback Token and `PHAXIO_VERIFY_SIGNATURE=true`. Polling can still report status from the captured original account.
 - 403 when fetching PDF: token mismatch or expired URL.
 - See docs/TROUBLESHOOTING.md for more.
 

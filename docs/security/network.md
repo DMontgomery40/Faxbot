@@ -23,8 +23,11 @@ Guidance for securing MCP transports and webhooks when running Faxbot in product
 ## Webhooks & Callbacks
 
 - Phaxio (outbound status)
-  - Endpoint: `POST /phaxio-callback`
-  - Signature: `X-Phaxio-Signature` (HMAC-SHA256 of raw body using `PHAXIO_API_SECRET`)
+  - Endpoint: `POST /phaxio-callback?job_id=<job_id>&attempt_id=<attempt_id>`; Faxbot adds these locators to the submitted callback URL.
+  - Signature: `X-Phaxio-Signature`, a lowercase hexadecimal HMAC-SHA1 using the separate account `PHAXIO_CALLBACK_TOKEN`.
+  - Verification covers the exact captured public URL and query, followed by stably name-sorted form fields and file-part SHA1 digests. The API secret authenticates send/status API calls; it is not the callback token.
+  - A job captured with `PHAXIO_VERIFY_SIGNATURE=false` rejects outbound callback updates. Status polling continues through its captured original account when a provider fax ID is available.
+  - See [outbound callback verification](../setup/webhooks.md#outbound-status-phaxio) for ordering and correlation details.
   - Always use HTTPS public URLs; avoid exposing staging/test endpoints publicly.
 
 - Phaxio (inbound)
@@ -47,4 +50,3 @@ Guidance for securing MCP transports and webhooks when running Faxbot in product
 - Set security headers (HSTS, CSP, X-Content-Type-Options, Referrer-Policy, X-Frame-Options, Permissions-Policy).
 - Limit request sizes; apply rate limits and IP restrictions as needed.
 - Do not log PHI; log IDs and generic metadata only.
-
