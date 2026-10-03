@@ -35,7 +35,6 @@ Mako==1.4.3
 MarkupSafe==3.0.3
 mcp-types==2.3.0
 mcp==2.3.0
-mcp-types==2.3.0
 multidict==6.9.1
 opentelemetry-api==1.45.0
 packaging==26.3

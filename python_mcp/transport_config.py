@@ -1,18 +1,30 @@
-"""MCP transport configuration and per-request Faxbot credentials.
+"""Faxbot REST location and per-request caller credentials for the MCP servers.
 
-HTTP and SSE callers present their own Faxbot API key (X-API-Key or
-Authorization: Bearer). When OAuth is configured the bearer token is a JWT and
-the Faxbot key comes from X-API-Key or from a stored per-subject key file.
+Network transports (Streamable HTTP, SSE) never use a shared Faxbot key. Each
+MCP HTTP request must carry the caller's own Faxbot API key, either as
+``Authorization: Bearer <key>`` or ``X-API-Key: <key>``. When OAuth is
+configured, the Bearer token is a JWT instead, and its subject is mapped to a
+Faxbot API key from an operator-maintained JSON file. Only the stdio server
+uses the ``API_KEY`` environment variable, as a single integration identity.
 """
-from collections.abc import Callable
-from dataclasses import dataclass, field
+from __future__ import annotations
+
 import json
 import os
 import time
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field
+from typing import Any
 
 import httpx
 from jose import jwt
 from starlette.responses import JSONResponse
+
+API_KEY_SCOPE = 'faxbot.api_key'
+"""ASGI scope key holding the resolved caller key for one MCP HTTP request."""
+
+MAX_REQUEST_BODY_SIZE = 16 * 1024 * 1024
+"""A 10 MB fax is about 13.4 MB as base64 JSON."""
 
 
 @dataclass(frozen=True)
@@ -25,8 +37,6 @@ class APIConfiguration:
 
 
 APIConfigurationProvider = Callable[[], APIConfiguration]
-CALLER_KEY_SCOPE = 'faxbot.api_key'
-PROTECTED_RESOURCE_PATH = '/.well-known/oauth-protected-resource'
 
 
 @dataclass(frozen=True)
@@ -83,31 +93,20 @@ class BearerTokenVerifier:
         )
 
 
-class SubjectKeyMap:
-    """JSON file mapping OAuth subjects to their Faxbot API keys: {"<sub>": "<key>"}.
+def load_subject_keys(path: str) -> dict[str, str]:
+    """Read ``{"<oauth subject>": "<faxbot api key>"}`` from an operator-owned file."""
+    if not path:
+        return {}
+    with open(path, encoding='utf-8') as handle:
+        document = json.load(handle)
+    if not isinstance(document, dict) or not all(
+            isinstance(subject, str) and isinstance(key, str) and key for subject, key in document.items()):
+        raise ValueError('MCP_OAUTH_SUBJECT_KEYS_FILE must map OAuth subjects to Faxbot API keys.')
+    return document
 
-    The file is re-read when it changes so keys can be rotated without a restart.
-    """
-    def __init__(self, path: str = ''):
-        self.path = path
-        self._loaded = (None, {})
 
-    def lookup(self, subject) -> str:
-        if not self.path or not isinstance(subject, str) or not subject:
-            return ''
-        try:
-            stamp = os.stat(self.path).st_mtime_ns
-        except OSError:
-            return ''
-        if self._loaded[0] != stamp:
-            try:
-                with open(self.path, encoding='utf-8') as handle:
-                    data = json.load(handle)
-            except (OSError, ValueError):
-                data = {}
-            self._loaded = (stamp, data if isinstance(data, dict) else {})
-        key = self._loaded[1].get(subject)
-        return key.strip() if isinstance(key, str) else ''
+def env_list(name: str) -> list[str]:
+    return [item.strip() for item in os.getenv(name, '').split(',') if item.strip()]
 
 
 def _header(scope, name: bytes) -> str:
@@ -115,12 +114,28 @@ def _header(scope, name: bytes) -> str:
 
 
 class CallerCredentialMiddleware:
-    """Require a caller credential on every MCP request and record the Faxbot key to forward."""
-    def __init__(self, app, *, verifier=None, subject_keys: SubjectKeyMap | None = None, issuer: str = ''):
+    """Resolve the caller's Faxbot API key before any MCP message is handled.
+
+    Requests without a usable credential are refused here, so no MCP message
+    reaches a tool and nothing is forwarded to Faxbot. Browser requests are
+    accepted only from the listed origins (none by default).
+    """
+    def __init__(self, app, *, verifier=None, subject_keys: Callable[[], Mapping[str, str]] | None = None,
+                 allowed_origins: list[str] | None = None, resource_url: str = '',
+                 authorization_server: str = ''):
         self.app = app
         self.verifier = verifier
-        self.subject_keys = subject_keys or SubjectKeyMap()
-        self.issuer = issuer
+        self.subject_keys = subject_keys or (lambda: {})
+        self.allowed_origins = set(allowed_origins or ())
+        self.resource_url = resource_url.rstrip('/')
+        self.authorization_server = authorization_server
+        self.metadata_url = f'{self.resource_url}/.well-known/oauth-protected-resource' if self.resource_url else ''
+
+    def _challenge(self, status: int, error: str):
+        header = 'Bearer'
+        if self.metadata_url:
+            header += f' resource_metadata="{self.metadata_url}"'
+        return JSONResponse({'error': error}, status_code=status, headers={'WWW-Authenticate': header})
 
     async def __call__(self, scope, receive, send):
         if scope['type'] != 'http':
@@ -128,47 +143,42 @@ class CallerCredentialMiddleware:
             return
         path = scope.get('path', '')
         root = scope.get('root_path', '')
-        relative_path = path[len(root):] if root and path.startswith(root + '/') else path
-        if relative_path == '/health':
+        relative = path[len(root):] if root and path.startswith(root) else path
+        if relative == '/health':
             await self.app(scope, receive, send)
             return
-        if self.verifier is not None and relative_path == PROTECTED_RESOURCE_PATH:
-            await JSONResponse(self._resource_metadata(scope))(scope, receive, send)
+        if relative == '/.well-known/oauth-protected-resource' and self.metadata_url:
+            await JSONResponse({'resource': self.resource_url, 'authorization_servers': [self.authorization_server],
+                                'bearer_methods_supported': ['header']})(scope, receive, send)
+            return
+        origin = _header(scope, b'origin')
+        if origin and origin not in self.allowed_origins:
+            await JSONResponse({'error': 'Origin not allowed'}, status_code=403)(scope, receive, send)
             return
         authorization = _header(scope, b'authorization')
-        bearer = authorization[7:].strip() if authorization[:7].lower() == 'bearer ' else ''
-        api_key = _header(scope, b'x-api-key')
-        if self.verifier is None:
-            api_key = api_key or bearer
-            if not api_key:
-                await self._unauthorized(scope, receive, send)
-                return
-        else:
+        if self.verifier is not None:
             try:
                 claims = await self.verifier(authorization)
             except Exception:
-                await self._unauthorized(scope, receive, send)
+                await self._challenge(401, 'Unauthorized')(scope, receive, send)
                 return
-            scope.setdefault('state', {})['user'] = claims
-            api_key = api_key or self.subject_keys.lookup(claims.get('sub'))
+            api_key = self.subject_keys().get(str(claims.get('sub') or ''), '')
             if not api_key:
-                await JSONResponse({'error': 'No Faxbot API key is linked to this account.'},
+                await JSONResponse({'error': 'No Faxbot API key is assigned to this account.'},
                                    status_code=403)(scope, receive, send)
                 return
-        scope[CALLER_KEY_SCOPE] = api_key
+            scope.setdefault('state', {})['user'] = claims
+        else:
+            api_key = authorization[7:].strip() if authorization[:7].lower() == 'bearer ' else ''
+            api_key = api_key or _header(scope, b'x-api-key')
+            if not api_key:
+                await self._challenge(401, 'Unauthorized')(scope, receive, send)
+                return
+        scope[API_KEY_SCOPE] = api_key
         await self.app(scope, receive, send)
 
-    def _base_url(self, scope) -> str:
-        host = _header(scope, b'host') or 'localhost'
-        return f"{scope.get('scheme', 'http')}://{host}{scope.get('root_path', '')}"
 
-    def _resource_metadata(self, scope) -> dict:
-        return {'resource': self._base_url(scope), 'authorization_servers': [self.issuer],
-                'bearer_methods_supported': ['header']}
-
-    async def _unauthorized(self, scope, receive, send):
-        challenge = 'Bearer'
-        if self.verifier is not None:
-            challenge += f' resource_metadata="{self._base_url(scope)}{PROTECTED_RESOURCE_PATH}"'
-        await JSONResponse({'error': 'Unauthorized'}, status_code=401,
-                           headers={'WWW-Authenticate': challenge})(scope, receive, send)
+def caller_api_key(request: Any) -> str:
+    """The key resolved by CallerCredentialMiddleware for the request carrying this message."""
+    scope = getattr(request, 'scope', None) or {}
+    return scope.get(API_KEY_SCOPE, '')
