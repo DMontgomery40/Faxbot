@@ -71,7 +71,10 @@ Open‑source, self‑hostable fax API with modular backends, a mobile‑ready A
 
 ## Build & Integrate
 
-- REST API reference: https://faxbot.net/api/v1/ and Swagger Explorer at https://faxbot.net/api/v1/swagger
+Faxbot's API runs on your self-hosted installation. The `faxbot.net` website, simulated demo and static API-reference pages are separate from your server.
+
+- REST API reference: [Generated source reference](generated/index.md) and [API guide](api.md)
+- Swagger UI: open `/docs` on your installation, for example `http://localhost:8080/docs` in local development
 - SDK docs: [Overview](sdks/index.md), [Node](sdks/node.md), [Python](sdks/python.md)
 - AI workflows: [MCP integration](mcp/index.md) with Node and Python servers
 

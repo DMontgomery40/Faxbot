@@ -243,6 +243,41 @@ class AuthMeResponse(AuthOutput):
         description='Present only for an authenticated browser cookie session.')
 
 
+class ConsoleNavigationResponse(AuthOutput):
+    jobs: bool
+    inbox: bool
+    send: bool
+
+
+class ConsoleSendResponse(AuthOutput):
+    fax_disabled: bool
+    max_file_size_mb: int
+
+
+class ConsoleBrandingResponse(AuthOutput):
+    docs_base: str
+    logo_path: Literal['/admin/ui/faxbot_full_logo.png']
+
+
+class ConsoleProviderResponse(AuthOutput):
+    plugins_enabled: bool
+    install_enabled: bool
+    active_outbound: str
+    active_inbound: str
+
+
+class ConsoleContextResponse(AuthOutput):
+    policy_version: int
+    active_revision_id: str
+    generation: int
+    permissions: list[str]
+    navigation: ConsoleNavigationResponse
+    send: ConsoleSendResponse | None
+    inbound_enabled: bool | None
+    branding: ConsoleBrandingResponse
+    provider_view: ConsoleProviderResponse | None
+
+
 class AuthSessionSummaryResponse(AuthOutput):
     session_id: str
     source_kind: Literal['password', 'key', 'bootstrap']
@@ -345,6 +380,18 @@ def _me(service, identity):
 @router.get('/me', response_model=AuthMeResponse, response_model_exclude_unset=True)
 async def me(request: Request, identity=Depends(require_identity)):
     return await run_lifecycle_step(lambda: _me(runtime(request), identity))
+
+
+@router.get('/context', response_model=ConsoleContextResponse,
+    summary='Console context',
+    description='Current permission-scoped navigation and active configuration hints. '
+        'These hints do not authorize later operations; each operation checks current access again.')
+async def console_context(request: Request, identity=Depends(require_identity)):
+    service = runtime(request)
+    @private_operation
+    def snapshot():
+        return service.context.snapshot(identity.actor)
+    return await run_lifecycle_step(snapshot)
 
 
 @router.post('/logout', response_model=AuthLogoutResponse)

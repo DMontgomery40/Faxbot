@@ -86,7 +86,8 @@ async def lifespan(application: FastAPI):
         await run_lifecycle_step(runtime.prepare)
         application.state.configuration_runtime = runtime
         application.state.credential_transport = CredentialTransport(os.environ)
-        application.state.access_runtime = await run_lifecycle_step(lambda: AccessRuntime(runtime.manager.store))
+        application.state.access_runtime = await run_lifecycle_step(lambda: AccessRuntime(
+            runtime.manager.store, docs_base=os.getenv('DOCS_BASE_URL', 'https://docs.faxbot.net/latest/')))
         with runtime.frame(runtime.candidate):
             try:
                 owns_ami = await _initialize_runtime(tasks)

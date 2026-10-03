@@ -15,6 +15,7 @@ from .authentication import AuthenticationService
 from .auth_work import AuthenticationWork
 from .bootstrap import BootstrapCredentials
 from .credentials import CredentialCodec
+from .context import ConsoleContext
 from .fax_resources import FaxResources
 from .mutations import AccessMutations
 from .outbound import AuthorizedOutbound
@@ -26,7 +27,7 @@ from .sessions import AccessSessions
 from .types import AccessUnavailableError
 
 
-def _prepare(configuration):
+def _prepare(configuration, docs_base):
     if not isinstance(configuration, ConfigurationStore):
         raise AccessUnavailableError()
     key = load_installation_key(configuration.key_path, allow_create=False)
@@ -51,20 +52,21 @@ def _prepare(configuration):
     fax_resources = FaxResources(control)
     outbound = AuthorizedOutbound(configuration, fax_resources)
     queries = AuthorizedFaxQueries(configuration, fax_resources)
+    context = ConsoleContext(configuration, control, docs_base=docs_base)
     work = AuthenticationWork()
     return (store, credential_codec, session_codec, bootstrap, control, proofs,
-            mutations, sessions, admission, authentication, fax_resources, outbound, queries, work)
+            mutations, sessions, admission, authentication, fax_resources, outbound, queries, context, work)
 
 
 class AccessRuntime:
     __slots__ = ('configuration', 'store', 'credential_codec', 'session_codec',
                  'bootstrap', 'control', 'proofs', 'mutations', 'sessions',
-                 'admission', 'authentication', 'fax_resources', 'outbound', 'queries', 'work')
+                 'admission', 'authentication', 'fax_resources', 'outbound', 'queries', 'context', 'work')
 
-    def __init__(self, configuration: ConfigurationStore):
+    def __init__(self, configuration: ConfigurationStore, *, docs_base='https://docs.faxbot.net/latest/'):
         services = None
         try:
-            services = _prepare(configuration)
+            services = _prepare(configuration, docs_base)
         except Exception:
             pass
         # The preparation frame and its backend error are not retained as the
@@ -74,7 +76,7 @@ class AccessRuntime:
         self.configuration = configuration
         (self.store, self.credential_codec, self.session_codec, self.bootstrap,
          self.control, self.proofs, self.mutations, self.sessions, self.admission,
-         self.authentication, self.fax_resources, self.outbound, self.queries, self.work) = services
+         self.authentication, self.fax_resources, self.outbound, self.queries, self.context, self.work) = services
 
     def __repr__(self):
         return 'AccessRuntime()'

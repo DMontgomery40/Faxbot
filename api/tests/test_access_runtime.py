@@ -94,8 +94,21 @@ def test_exact_existing_store_and_service_identity_without_publication(configura
     assert runtime.fax_resources.control is runtime.control
     assert runtime.outbound.configuration is configuration
     assert runtime.outbound.resources is runtime.fax_resources
+    assert runtime.context.configuration is configuration
+    assert runtime.context.control is runtime.control
+    assert runtime.context.docs_base == 'https://docs.faxbot.net/latest/'
     assert state(configuration) == before
     assert not hasattr(runtime, 'serving')
+
+
+def test_context_documentation_base_is_explicit_and_bounded(configuration):
+    before = state(configuration)
+    runtime = R.AccessRuntime(configuration, docs_base='https://example.test/faxbot/v4/')
+    assert runtime.context.docs_base == 'https://example.test/faxbot/v4/'
+    with pytest.raises(AccessUnavailableError) as error:
+        R.AccessRuntime(configuration, docs_base='https://example.test/?token=secret')
+    assert error.value.__context__ is None and error.value.__cause__ is None
+    assert state(configuration) == before
 
 
 def test_key_loaded_once_and_dummy_hash_prepared_outside_transactions(configuration, monkeypatch):

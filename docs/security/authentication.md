@@ -43,6 +43,21 @@ Explicit `X-API-Key` takes precedence over a cookie, including when the supplied
 key is invalid. API keys and session tokens do not belong in URLs or browser
 persistent storage. Authentication responses are marked `no-store`.
 
+### Console context
+
+`GET /auth/context` returns current navigation hints and permitted active settings
+without requiring administrator settings access. Senders receive the active held
+mode and upload limit; permitted inbox users receive the inbound enabled flag.
+Provider feature and selection hints require `providers:read`. No provider secrets,
+document data, filesystem paths or pending configuration are returned.
+
+Jobs and Inbox navigation depends on the user's permitted resource scopes, even
+when those scopes contain no faxes. Document access alone does not enable metadata
+navigation. Password-reset-required sessions receive no ordinary navigation or
+feature hints. The response is a snapshot: every later operation independently
+checks current credentials and permissions. The console client integration remains
+tracked in the repository plan.
+
 ### Outbound permissions
 
 Submission requires current `fax:send` access to the authenticated principal's own
@@ -58,8 +73,8 @@ and receipt reconciliation requires `fax:reconcile` plus metadata access.
 
 Request replay preserves the credential's stable namespace. A replay still needs
 current send permission and permission to read the original fax; knowing an old
-idempotency key is not authority. A revoked or disabled source returns401. Hidden
-and missing resources return404; a visible resource with a denied action returns403.
+idempotency key is not authority. A revoked or disabled source returns 401. Hidden
+and missing resources return 404; a visible resource with a denied action returns 403.
 
 `MAX_REQUESTS_PER_MINUTE` retains the optional send/status request limit. Password
 and database-key verification also use the installation's bounded authentication

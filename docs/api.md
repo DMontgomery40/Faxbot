@@ -1,10 +1,12 @@
 # API Reference
 
-The [generated source reference](generated/index.md) supplies the current OpenAPI contract and source provenance. This guide explains acceptance, captured configuration and delivery outcomes for operators. The legacy `faxbot.net/api` deployment has its own compatibility lifecycle.
+The [generated source reference](generated/index.md) supplies the current OpenAPI contract and source provenance. This guide explains acceptance, captured configuration and delivery outcomes for operators. Faxbot's API runs on your self-hosted installation; the public website, simulated demo and static API-reference documentation on `faxbot.net` are separate from your server.
 
 ## Base URL and authentication
 
 Use your installation's API URL; the local default is `http://localhost:8080`. Send the current client key as `X-API-Key`. Canonical API-key enforcement and database-issued scoped keys determine access; editing process `.env` does not rotate an initialized installation's key. See [Authentication](security/authentication.md) and [Settings](admin-console/settings.md).
+
+Open `/docs` on that server for its Swagger UI (`http://localhost:8080/docs` in local development); `/openapi.json` provides its schema. Remote clients, including iOS, connect to your installation through its configured secure tunnel or VPN. See [Networking & Tunnels](networking/tunnels.md).
 
 ## Submit a document
 
