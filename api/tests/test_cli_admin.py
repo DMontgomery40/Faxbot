@@ -218,6 +218,9 @@ def test_backup_and_restore_round_trip_on_sqlite(installation, tmp_path):
         if path.is_file():
             assert stat.S_IMODE(path.stat().st_mode) == 0o600, path
     assert installation.admin('backup', folder).exit_code == 6
+    inside = installation.admin('backup', data_dir / 'nested')
+    assert inside.exit_code == 6 and 'outside the data folder' in inside.stderr
+    assert not (data_dir / 'nested').exists()
 
     occupied = installation.admin('restore', folder)
     assert occupied.exit_code == 6 and 'Add --force' in occupied.stderr

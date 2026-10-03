@@ -134,6 +134,7 @@ nav:
     - Delivery routes: operations/delivery-routes.md
     - Intake: operations/intake.md
     - Direct delivery: operations/direct-delivery.md
+    - Command line: operations/cli.md
     - Guides:
       - Images & PDFs: guides/images-and-pdfs.md
       - Networking & Tunnels: networking/tunnels.md
@@ -155,6 +156,7 @@ nav:
       - Reference: api.md
       - Access and Sign-in: reference/access-api.md
       - Canonical Events: api/canonical-events.md
+    - Command line: reference/cli.md
     - SDKs: sdks/index.md
     - MCP:
       - Overview: mcp/index.md

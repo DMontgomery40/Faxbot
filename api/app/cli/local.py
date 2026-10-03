@@ -356,7 +356,9 @@ def _excluded_data(installation):
 
 
 def backup(installation, target):
-    target = Path(target).absolute()
+    target = Path(target).resolve()
+    if target.is_relative_to(installation.data_dir.resolve()):
+        raise CliError('Choose a backup folder outside the data folder.', EXIT_CONFLICT)
     if not installation.key_path.is_file():
         raise CliError(f'The installation key file {installation.key_path} was not found. A backup without it '
                        'cannot be restored. Set FAXBOT_INSTALLATION_KEY_PATH or use --key-file.', EXIT_NOT_FOUND)
@@ -530,7 +532,9 @@ def _restore_sqlite(installation, source):
 def restore(installation, source, *, force=False):
     """Put a verified backup in place. Without force, refuse to replace anything that exists."""
     from ..schema import HEAD
-    source = Path(source).absolute()
+    source = Path(source).resolve()
+    if source.is_relative_to(installation.data_dir.resolve()):
+        raise CliError('Move the backup folder out of the data folder before restoring it.', EXIT_CONFLICT)
     manifest = verify(source)
     if manifest['database'] != installation.dialect:
         raise CliError(f"This backup holds a {manifest['database']} database, but DATABASE_URL points to "

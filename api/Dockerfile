@@ -29,6 +29,10 @@ COPY api/app /app/app
 COPY api/alembic /app/alembic
 COPY api/alembic.ini /app/alembic.ini
 
+# The faxbot command line, for example: docker compose exec api faxbot health
+RUN printf '#!/bin/sh\nexec env PYTHONPATH=/app python -m app.cli "$@"\n' > /usr/local/bin/faxbot \
+    && chmod 755 /usr/local/bin/faxbot
+
 # Copy provider traits and any provider manifests
 COPY config /app/config
 
