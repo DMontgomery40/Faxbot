@@ -45,7 +45,7 @@ HumbleFax cancellation, webhooks and inbound faxes are not implemented by this a
 ## Configuration and troubleshooting
 
 - Credentials are captured in encrypted canonical configuration; a redacted template is not a recovery backup.
-- A rejected key pair stops the attempt at HumbleFax. Recreate or recopy both keys from **Developer Settings**, then apply them in Settings. Editing current credentials does not replace an accepted attempt's captured account.
+- When HumbleFax rejects the key pair, it creates no fax and Faxbot does not resend. The job still shows that it requires reconciliation. Recreate or recopy both keys from **Developer Settings**, apply them in Settings, then send a new fax. Editing current credentials does not replace an accepted attempt's captured account.
 - A sender number that is not on the account is rejected by HumbleFax. Clear **HumbleFax From Number** to use the account default.
 - HumbleFax documents a limit of 5 requests per second per IP address and blocks an address for 60 seconds when it is exceeded. Read failures and rate limits preserve uncertainty; inspect the original fax before considering another submission.
 - Document retention, caller name and account notifications are HumbleFax account settings, not controls enforced by this panel. Faxbot always asks HumbleFax not to add a cover sheet.
