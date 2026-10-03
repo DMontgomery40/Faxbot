@@ -182,7 +182,8 @@ def test_0007_upgrade_preserves_0006_state_and_validates_frozen_shape(database):
     before = snapshot(database)
     schema.upgrade_schema(database)
     after = snapshot(database)
-    assert after['alembic_version'] == [{'version_num': schema_capabilities.REVISION}] == [{'version_num': schema.HEAD}]
+    assert schema_capabilities.REVISION == schema.CAPABILITIES
+    assert after['alembic_version'] == [{'version_num': schema.HEAD}]
     assert after['access_capabilities'] == []
     for name, rows in before.items():
         if name != 'alembic_version':

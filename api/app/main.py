@@ -75,6 +75,8 @@ from .access.http import require_identity, runtime as access_runtime, private_op
 from .access.http import PRIVATE_HEADERS, private_response_path, utcnow as access_utcnow
 from .access.configuration_access import configuration_write_receipt
 from .access.fax_resources import FaxAccessError
+from .routing.http import router as routing_router
+from .routing.transport import RoutedTransport
 
 
 @asynccontextmanager
@@ -109,7 +111,7 @@ async def lifespan(application: FastAPI):
                         await stack.enter_async_context(mount.app.router.lifespan_context(mount.app))
                     await run_lifecycle_step(runtime.publish_ready)
                     delivery = OutboundStore(runtime.manager.store)
-                    worker = OutboundWorker(delivery, CapturedTransport(delivery, runtime, ami=ami_client))
+                    worker = OutboundWorker(delivery, RoutedTransport(CapturedTransport(delivery, runtime, ami=ami_client)))
                     tasks.append(asyncio.create_task(worker.run(), name='faxbot-outbound-worker'))
                     tasks.append(asyncio.create_task(OutboundPoller(delivery).run(), name='faxbot-outbound-poller'))
                     yield
@@ -149,6 +151,7 @@ app.add_middleware(ConfigurationMiddleware)
 app.add_middleware(PrivateAuthMiddleware)
 app.add_exception_handler(AccessError, access_error_response)
 app.include_router(authentication_router)
+app.include_router(routing_router)
 
 
 async def _configuration_error_handler(request, exc):
