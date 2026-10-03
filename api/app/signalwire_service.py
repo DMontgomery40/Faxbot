@@ -90,8 +90,8 @@ class SignalWireFaxService:
             raise RuntimeError('SignalWire status request failed.') from None
         j = self._response(resp)
         sid = j.get('sid') or provider_sid
-        status = j.get('status') or j.get('faxStatus') or 'queued'
-        if not isinstance(sid, str) or not isinstance(status, str):
+        status = j.get('status', j.get('faxStatus'))
+        if not isinstance(sid, str) or not isinstance(status, str) or not status.strip():
             raise RuntimeError('Unexpected SignalWire status response.') from None
         status = status.lower()
         return {'provider_sid': sid,
@@ -118,7 +118,8 @@ class SignalWireFaxService:
             'success': 'SUCCESS',
             'failed': 'FAILED',
             'error': 'FAILED',
-            'canceled': 'FAILED',
+            'canceled': 'cancelled',
+            'cancelled': 'cancelled',
         }
         return mapping.get(s, s or 'queued')
 

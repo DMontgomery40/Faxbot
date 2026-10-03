@@ -144,12 +144,14 @@ class PhaxioFaxService:
         }
 
     def _map_status(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        status = payload.get("status") or ""
+        status = payload.get("status")
         sid = payload.get('id')
-        if (sid is not None and (not isinstance(sid, (str, int)) or isinstance(sid, bool))) or not isinstance(status, str):
+        if (not isinstance(sid, (str, int)) or isinstance(sid, bool)
+                or (isinstance(sid, str) and not sid.strip())
+                or not isinstance(status, str) or not status.strip()):
             raise ValueError('Unexpected Phaxio status response.') from None
         return {
-            "provider_sid": str(payload.get("id")),
+            "provider_sid": str(sid),
             "status": self._map_status_str(status),
             "provider_status": status,
             "pages": payload.get("num_pages"),
@@ -165,7 +167,8 @@ class PhaxioFaxService:
             "success": "SUCCESS",
             "failure": "FAILED",
             "error": "FAILED",
-            "cancelled": "FAILED",
+            "cancelled": "cancelled",
+            "canceled": "cancelled",
             "in_progress": "in_progress",
             "sending": "in_progress",
         }

@@ -237,7 +237,8 @@ class HttpProviderRuntime:
             raise RuntimeError('Provider create request failed.') from None
         return self._mapped_response(resp, act)
 
-    def _mapped_response(self, resp: httpx.Response, act: HttpAction, provider_sid: Optional[str] = None) -> Dict[str, Any]:
+    def _mapped_response(self, resp: httpx.Response, act: HttpAction, provider_sid: Optional[str] = None,
+                         *, require_status: bool = False) -> Dict[str, Any]:
         if not 200 <= resp.status_code < 300:
             raise RuntimeError(f'Provider request failed (HTTP {resp.status_code}).') from None
         try:
@@ -253,9 +254,13 @@ class HttpProviderRuntime:
                 raise ValueError
             if status is not None and not isinstance(status, str):
                 raise ValueError
+            if require_status and (not isinstance(status, str) or not status.strip()):
+                raise ValueError
             if isinstance(rm.get('status_map'), dict) and status in rm['status_map']:
                 status = rm['status_map'][status]
             if status is not None and not isinstance(status, str):
+                raise ValueError
+            if require_status and (not isinstance(status, str) or not status.strip()):
                 raise ValueError
             result = {'provider_id': self.m.id, 'job_id': jid or provider_sid or '', 'status': status or 'queued'}
             if rm.get('error') and _extract_path(data, rm['error']):
@@ -316,4 +321,4 @@ class HttpProviderRuntime:
                     resp = await client.request(act.method, url, headers=headers, params=params, json=body_data)
         except (httpx.HTTPError, httpx.InvalidURL, TypeError, ValueError, OSError):
             raise RuntimeError('Provider status request failed.') from None
-        return self._mapped_response(resp, act, provider_sid)
+        return self._mapped_response(resp, act, provider_sid, require_status=True)
