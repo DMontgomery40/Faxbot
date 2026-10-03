@@ -71,6 +71,7 @@ from .access.catalog import KEY_SCOPES
 from .access.mutation_types import IntegrationKeyValues, MutationDeniedError, MutationReason, VersionedEntity
 from .access.types import AccessError, AccessUnavailableError, ResourceRef
 from .access.http import router as authentication_router, PrivateAuthMiddleware, access_error_response
+from .access.management_http import router as management_router
 from .access.http import require_identity, runtime as access_runtime, private_operation
 from .access.http import PRIVATE_HEADERS, private_response_path, utcnow as access_utcnow
 from .access.configuration_access import configuration_write_receipt
@@ -149,6 +150,7 @@ app.add_middleware(ConfigurationMiddleware)
 app.add_middleware(PrivateAuthMiddleware)
 app.add_exception_handler(AccessError, access_error_response)
 app.include_router(authentication_router)
+app.include_router(management_router)
 
 
 async def _configuration_error_handler(request, exc):
@@ -1459,8 +1461,6 @@ _TUNNEL_STATE: Dict[str, Any] = {
     "error": None,
 }
 
-_PAIR_CODES: Dict[str, Dict[str, Any]] = {}
-
 
 def _hipaa_posture_enabled() -> bool:
     try:
@@ -1562,18 +1562,147 @@ def admin_tunnel_test() -> TunnelTestOut:
         return TunnelTestOut(ok=False, message=str(e)[:120])
 
 
+# Mobile pairing. The console mints a six-digit, single-use code bound to its
+# issuer; the phone exchanges it at /mobile/pair for its own device key: a new
+# integration identity holding exactly _DEVICE_SCOPES at installation, listed
+# and revocable under /access/keys like any other key.
+from .access.mutation_types import StaleVersionError  # noqa: E402
+from .access.types import ScopedPermission  # noqa: E402
+
+_DEVICE_SCOPES = frozenset({"fax:send", "fax:read", "fax:document", "inbound:list", "inbound:read", "inbound:document"})
+_PAIR_TTL = timedelta(minutes=5)
+_PAIR_WINDOW_SECONDS = 60.0
+_PAIR_ATTEMPTS_PER_IP = 5
+# Across all addresses, so a six-digit code cannot be guessed from many clients at once.
+_PAIR_ATTEMPTS_TOTAL = 30
+_PAIR_ATTEMPTS: Dict[str, List[float]] = {}
+_PAIR_REFUSED = "This pairing code did not work. Create a new code in the console and try again."
+
+
 class PairOut(BaseModel):
     code: str
     expires_at: datetime
 
 
-@app.post("/admin/tunnel/pair", dependencies=[Depends(require_admin)])
-def admin_tunnel_pair() -> PairOut:
-    # Generate a short-lived numeric code; do not include secrets in the QR/content
-    code = str(secrets.randbelow(899999) + 100000)
-    expires = datetime.utcnow() + timedelta(minutes=5)
-    _PAIR_CODES[code] = {"expires_at": expires, "created_at": datetime.utcnow()}
-    return PairOut(code=code, expires_at=expires)
+class MobilePairOut(BaseModel):
+    base_urls: Dict[str, Optional[str]]
+    token: str
+
+
+@private_operation
+def _mint_pairing_code(service, actor):
+    # A code is only useful if its issuer may also issue the device key it turns into.
+    with service.store.transaction() as connection:
+        now = access_utcnow()
+        decisions = (
+            service.control.authorize_on(connection, actor, 'keys:manage', ResourceRef('installation'), now=now),
+            service.control.can_grant_on(connection, actor, tuple(ScopedPermission(permission, ResourceRef('installation'))
+                                                                 for permission in sorted(_DEVICE_SCOPES)), now=now))
+    if not all(decision.allowed for decision in decisions):
+        reset = any(decision.reason.value == 'reset_required' for decision in decisions)
+        raise MutationDeniedError(MutationReason.RESET_REQUIRED if reset else MutationReason.FORBIDDEN)
+    return service.capabilities.mint('pairing', actor, _PAIR_TTL, permission='tunnels:pair')
+
+
+@app.post("/admin/tunnel/pair", response_model=PairOut, responses=_PERMISSION_RESPONSES)
+async def admin_tunnel_pair(request: Request, identity=Depends(require_permission('tunnels:pair'))):
+    """A six-digit code, valid once for five minutes, that pairs one phone as a device of this installation."""
+    issued = await run_lifecycle_step(lambda: _mint_pairing_code(access_runtime(request), identity.actor))
+    return PairOut(code=issued.secret, expires_at=issued.expires_at)
+
+
+def _pair_attempt_allowed(client_ip: str) -> bool:
+    now = time.monotonic()
+    for address in list(_PAIR_ATTEMPTS):
+        recent = [at for at in _PAIR_ATTEMPTS[address] if now - at < _PAIR_WINDOW_SECONDS]
+        if recent:
+            _PAIR_ATTEMPTS[address] = recent
+        else:
+            del _PAIR_ATTEMPTS[address]
+    attempts = _PAIR_ATTEMPTS.get(client_ip, [])
+    if len(attempts) >= _PAIR_ATTEMPTS_PER_IP or sum(map(len, _PAIR_ATTEMPTS.values())) >= _PAIR_ATTEMPTS_TOTAL:
+        return False
+    _PAIR_ATTEMPTS[client_ip] = attempts + [now]
+    return True
+
+
+def _device_name(value) -> str:
+    text = "".join(c for c in value if c.isprintable()).strip() if isinstance(value, str) else ""
+    return text[:60].strip() or "Mobile device"
+
+
+@private_operation
+def _issue_device_key(service, actor, device_name):
+    values = IntegrationKeyValues(display_name=f"Device: {device_name}", owner=None, name=device_name,
+                                  note="Paired from the mobile app.", expires_at=None, permissions=_DEVICE_SCOPES)
+    for attempt in range(2):
+        prepared = service.credential_codec.prepare_new_key()
+        try:
+            receipt = service.mutations.issue_integration_key(actor, values, prepared,
+                expected_policy_version=_policy_version(service), now=access_utcnow())
+        except StaleVersionError:
+            # Another change landed between reading and issuing; nothing was written.
+            if attempt:
+                raise
+            continue
+        return receipt, prepared
+
+
+def _mobile_base_urls() -> Dict[str, Optional[str]]:
+    tunnel = None
+    if (_TUNNEL_STATE.get("enabled") and str(_TUNNEL_STATE.get("provider") or "").lower() == "cloudflare"
+            and not _hipaa_posture_enabled()):
+        tunnel = _TUNNEL_STATE.get("public_url") or None
+    return {"local": os.getenv("MOBILE_LOCAL_BASE") or None, "tunnel": tunnel,
+            "public": settings.public_api_url or None}
+
+
+async def _pair_payload(request: Request) -> dict:
+    """The JSON object body, at most 4 KiB; anything else is an empty payload."""
+    raw = bytearray()
+    async for chunk in request.stream():
+        raw.extend(chunk)
+        if len(raw) > 4096:
+            return {}
+    try:
+        payload = json.loads(bytes(raw))
+    except ValueError:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+@app.post("/mobile/pair", response_model=MobilePairOut,
+          responses={403: {"model": PublicDetailErrorResponse, "description": "Pairing failed."}},
+          openapi_extra={"requestBody": {"required": True, "content": {"application/json": {"schema": {
+              "type": "object", "required": ["code"], "properties": {
+                  "code": {"type": "string", "pattern": "^[0-9]{6}$"}, "device_name": {"type": "string"}}}}}}})
+async def mobile_pair(request: Request):
+    """Exchange a pairing code from the console for this device's own API key. Any failure is 403."""
+    def refused(message=_PAIR_REFUSED, reason="invalid_code"):
+        audit_event("mobile_pair_refused", reason=reason)
+        return JSONResponse({"detail": message}, status_code=403, headers=PRIVATE_HEADERS)
+
+    if not _pair_attempt_allowed(request.client.host if request.client else "unknown"):
+        return refused("Too many pairing attempts. Wait a minute and try again.", "rate_limited")
+    payload = await _pair_payload(request)
+    code = payload.get("code").strip() if isinstance(payload.get("code"), str) else ""
+    if re.fullmatch(r"[0-9]{6}", code) is None:
+        return refused()
+    try:
+        service = access_runtime(request)
+        record = await run_lifecycle_step(lambda: service.capabilities.consume("pairing", code))
+    except AccessError:
+        return refused()
+    device_name = _device_name(payload.get("device_name"))
+    try:
+        receipt, prepared = await service.work.run(lambda: _issue_device_key(service, record.actor, device_name))
+    except AccessError:
+        return refused("Pairing could not finish. Create a new code in the console and try again.", "issue_failed")
+    audit_event("mobile_paired", key_id=receipt.public_key_id, principal_id=receipt.principal_id,
+                issued_by=record.principal_id)
+    # The token is disclosed once, only after the device key committed.
+    return JSONResponse({"base_urls": _mobile_base_urls(), "token": prepared._token_for_committed_adapter()},
+                        headers=PRIVATE_HEADERS)
 
 
 @app.get("/admin/inbound/callbacks", dependencies=[Depends(require_permission('providers:read'))],
@@ -2189,18 +2318,24 @@ def _may_manage_keys(service, connection, actor):
 
 @private_operation
 def _list_keys(service, actor):
-    with service.store.transaction() as connection:
-        if not _may_manage_keys(service, connection, actor):
-            raise MutationDeniedError(MutationReason.FORBIDDEN)
-        keys, grants = service.store.tables['api_keys'], service.store.tables['access_key_grants']
-        ceilings: Dict[str, List[str]] = {}
-        for binding_id, permission in connection.execute(sa.select(grants.c.key_binding_id, grants.c.permission_id)
-                .where(grants.c.resource_id == 'installation').order_by(grants.c.permission_id)):
-            ceilings.setdefault(binding_id, []).append(permission)
-        rows = connection.execute(sa.select(keys).order_by(keys.c.created_at, keys.c.key_id)).mappings().all()
-    return [APIKeyMeta(key_id=row['key_id'], name=row['name'], owner=row['owner'], scopes=ceilings.get(row['id'], []),
-                       created_at=row['created_at'], last_used_at=row['last_used_at'], expires_at=row['expires_at'],
-                       revoked_at=row['revoked_at'], note=row['note']) for row in rows]
+    """The /access/keys projection in the legacy shape; a revoked key keeps its revoked_at."""
+    items, cursor = [], None
+    while True:
+        page = service.reads.keys(actor, cursor=cursor, limit=200)
+        items.extend(page['items'])
+        cursor = page['next_cursor']
+        if cursor is None:
+            break
+    owners: Dict[str, Optional[str]] = {}
+    if items:
+        keys = service.store.tables['api_keys']
+        with service.store.transaction() as connection:
+            owners = dict(connection.execute(sa.select(keys.c.key_id, keys.c.owner)
+                .where(keys.c.key_id.in_([item['id'] for item in items]))).all())
+    return [APIKeyMeta(key_id=item['id'], name=item['name'], owner=owners.get(item['id']),
+                       scopes=[grant['permission'] for grant in item['ceiling'] if grant['resource_id'] == 'installation'],
+                       created_at=item['created_at'], last_used_at=item['last_used_at'], expires_at=item['expires_at'],
+                       revoked_at=item['revoked_at'], note=item['note']) for item in items]
 
 
 @private_operation
@@ -3152,52 +3287,103 @@ def freeswitch_outbound_result(payload: FSOutboundResultIn, x_internal_secret: O
     return {'ok': True, 'applied': applied}
 
 
-# Terminal WebSocket endpoint for Admin Console
-@app.websocket("/admin/terminal")
-async def admin_terminal_websocket(
-    websocket: WebSocket,
-    api_key: Optional[str] = Header(None, alias="X-API-Key")
-):
-    """WebSocket terminal for Admin Console - requires admin authentication."""
-    # Check admin authentication
-    if not api_key or api_key != settings.api_key:
-        # Try to get API key from query params for WebSocket auth
-        import urllib.parse
-        # Starlette's websocket.url.query is a string; older versions may return bytes
-        _q = websocket.url.query
-        try:
-            query_str = _q.decode()  # type: ignore[attr-defined]
-        except AttributeError:
-            query_str = str(_q or "")
-        query_params = urllib.parse.parse_qs(query_str)
-        ws_api_key = query_params.get('api_key', [None])[0]
-        
-        if not ws_api_key or ws_api_key != settings.api_key:
-            # Check if they have a valid DB-backed key with admin privileges
-            from .auth import verify_db_key
-            key_data = verify_db_key(ws_api_key or api_key or "")
-            if not key_data or 'keys:manage' not in key_data.get('scopes', []):
-                await websocket.close(code=1008, reason="Unauthorized")
-                return
-    
-    # Authentication does not override the installation's host execution gate.
-    if not _admin_exec_enabled():
-        await websocket.close(code=1008, reason="Administrative execution is disabled")
-        return
+# Host terminal for the console. POST /admin/terminal/ticket mints a single-use
+# ticket for the caller (host:terminal and the exec gate). The WebSocket takes no
+# credential in its URL: its first message must be {"type": "auth", "ticket": ...}
+# within _TERMINAL_AUTH_SECONDS. A socket that arrives with a browser session
+# cookie, or whose ticket a browser session minted, also needs an exact allowed
+# Origin. terminal.py keeps rechecking host:terminal for the minting credential.
+from .access.transport import SESSION_COOKIES, TransportError, credential_source  # noqa: E402
 
-    # Import terminal handler
-    from .terminal import handle_terminal_websocket, check_terminal_requirements
-    
-    # Check requirements
-    issues = check_terminal_requirements()
-    if issues:
-        await websocket.accept()
-        await websocket.send_text(json.dumps({
-            'type': 'error',
-            'message': f'Terminal not available: {", ".join(issues)}'
-        }))
-        await websocket.close()
+_TERMINAL_TICKET_TTL = timedelta(seconds=60)
+_TERMINAL_AUTH_SECONDS = 5.0
+_TERMINAL_UNAVAILABLE = "The terminal is not available on this server."
+
+
+class TerminalTicketOut(BaseModel):
+    ticket: str
+    expires_at: datetime
+
+
+def _terminal_available() -> bool:
+    from . import terminal as terminal_module
+    return _admin_exec_enabled() and not terminal_module.check_terminal_requirements()
+
+
+@app.post("/admin/terminal/ticket", response_model=TerminalTicketOut, responses=_PERMISSION_RESPONSES)
+async def admin_terminal_ticket(request: Request, identity=Depends(require_permission('host:terminal', audit=True))):
+    """A ticket, valid once for 60 seconds, that opens one terminal WebSocket as the caller."""
+    if not _terminal_available():
+        raise HTTPException(404, detail=_TERMINAL_UNAVAILABLE)
+    service = access_runtime(request)
+    issued = await run_lifecycle_step(private_operation(lambda: service.capabilities.mint(
+        'terminal', identity.actor, _TERMINAL_TICKET_TTL, permission='host:terminal')))
+    return TerminalTicketOut(ticket=issued.secret, expires_at=issued.expires_at)
+
+
+def _browser_socket(scope) -> bool:
+    try:
+        return any(credential_source(scope, name)[0] == 'session' for name in SESSION_COOKIES)
+    except TransportError:
+        # Duplicate or malformed credentials: hold the socket to the browser rules, which refuse it.
+        return True
+
+
+async def _close_terminal(websocket: WebSocket, code: int):
+    try:
+        await websocket.close(code=code)
+    except Exception:
+        pass
+
+
+async def _terminal_ticket(websocket: WebSocket) -> Optional[str]:
+    """The ticket from the first message, or None when it is late or malformed."""
+    try:
+        message = await asyncio.wait_for(websocket.receive_text(), _TERMINAL_AUTH_SECONDS)
+        data = json.loads(message)
+    except Exception:
+        return None
+    ticket = data.get('ticket') if isinstance(data, dict) and data.get('type') == 'auth' else None
+    return ticket if isinstance(ticket, str) and 0 < len(ticket) <= 256 else None
+
+
+@app.websocket("/admin/terminal")
+async def admin_terminal_websocket(websocket: WebSocket):
+    """Host terminal WebSocket; authenticated only by a ticket in the first message."""
+    from . import terminal as terminal_module
+    service = getattr(websocket.app.state, 'access_runtime', None)
+    transport = getattr(websocket.app.state, 'credential_transport', None)
+    # Credentials never travel in the URL, so any query string is refused outright.
+    if websocket.url.query or service is None or transport is None or not _terminal_available():
+        await _close_terminal(websocket, 1008)
         return
-    
-    # Handle terminal session
-    await handle_terminal_websocket(websocket)
+    await websocket.accept()
+    ticket = await _terminal_ticket(websocket)
+    if ticket is None:
+        await _close_terminal(websocket, 1008)
+        return
+    try:
+        record = await run_lifecycle_step(lambda: service.capabilities.consume('terminal', ticket))
+    except Exception:
+        await _close_terminal(websocket, 1008)
+        return
+    if record.session_id is not None or _browser_socket(websocket.scope):
+        try:
+            transport.validate(websocket.scope, public_url=settings.public_api_url, require_origin=True)
+        except AccessError:
+            await _close_terminal(websocket, 1008)
+            return
+
+    def still_authorized() -> bool:
+        try:
+            return _terminal_available() and service.control.authorize(
+                record.actor, 'host:terminal', ResourceRef('installation'), now=access_utcnow()).allowed
+        except Exception:
+            return False
+
+    audit_event("terminal_opened", principal_id=record.principal_id)
+    try:
+        await terminal_module.handle_terminal_websocket(websocket,
+            authorized=lambda: run_lifecycle_step(still_authorized))
+    finally:
+        audit_event("terminal_closed", principal_id=record.principal_id)
