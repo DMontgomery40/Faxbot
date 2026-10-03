@@ -62,6 +62,12 @@ def project_admin_settings(snapshot: ConfigurationSnapshot, pending_fields: Iter
             'sandbox': values.documo_use_sandbox,
             'configured': bool(values.documo_api_key),
         },
+        'humblefax': {
+            'access_key': mask_secret(values.humblefax_access_key),
+            'secret_key': mask_secret(values.humblefax_secret_key),
+            'from_number': values.humblefax_from_number,
+            'configured': bool(values.humblefax_access_key and values.humblefax_secret_key),
+        },
         'sinch': {
             'project_id': values.sinch_project_id,
             'base_url': values.sinch_base_url,

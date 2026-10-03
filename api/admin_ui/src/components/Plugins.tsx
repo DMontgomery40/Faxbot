@@ -35,7 +35,7 @@ import {
 } from '@mui/icons-material';
 import AdminAPIClient, { configurationWriteRejected } from '../api/client';
 import { curatedDocsLink } from '../docsLinks';
-import type { AdminConfig, ConfigurationWriteReceipt, PluginConfiguration, PluginConfigurationPatch, Settings } from '../api/types';
+import type { AdminConfig, ConfigurationWriteResult, PluginConfiguration, PluginConfigurationPatch, Settings } from '../api/types';
 import type { AdminDestination } from '../navigation';
 import PluginConfigDialog from './PluginConfigDialog';
 import { ResponsiveFormSection } from './common/ResponsiveFormFields';
@@ -108,7 +108,7 @@ export default function Plugins({ client, config, configLoading: activeConfigLoa
   const actionFence = useRef(false);
   const listLoadId = useRef(0);
   const clientEpoch = useRef(0);
-  const [saveReceipt, setSaveReceipt] = useState<ConfigurationWriteReceipt | null>(null);
+  const [saveResult, setSaveResult] = useState<ConfigurationWriteResult | null>(null);
   const [settings, setSettings] = useState<Settings | null>(null);
   const [activeProviders, setActiveProviders] = useState<{ outbound: string; storage: string } | null>(null);
   const [query, setQuery] = useState('');
@@ -167,7 +167,7 @@ export default function Plugins({ client, config, configLoading: activeConfigLoa
     configWritable.current = false;
     setSaving(null);
     setNote('');
-    setSaveReceipt(null);
+    setSaveResult(null);
     setConfigOpen(false);
     setConfigPlugin(null);
     setConfigData(null);
@@ -207,7 +207,7 @@ export default function Plugins({ client, config, configLoading: activeConfigLoa
     }
   };
 
-  const saveMessage = (data: ConfigurationWriteReceipt) => data._meta.apply_state === 'pending_restart'
+  const saveMessage = (data: ConfigurationWriteResult) => data._meta.apply_state === 'pending_restart'
     ? `${data.changed ? 'Settings saved.' : 'Nothing changed.'} Restart Faxbot to apply pending changes.`
     : data.changed ? 'Settings saved.' : 'Nothing changed.';
 
@@ -222,13 +222,13 @@ export default function Plugins({ client, config, configLoading: activeConfigLoa
     const pluginId = configPlugin.id;
     const epoch = clientEpoch.current;
     actionFence.current = true;
-    let receipt: ConfigurationWriteReceipt;
+    let writeResult: ConfigurationWriteResult;
     try {
       setSaving(pluginId);
       setError('');
       setNote('');
-      setSaveReceipt(null);
-      receipt = await client.updatePluginConfig(pluginId, payload);
+      setSaveResult(null);
+      writeResult = await client.updatePluginConfig(pluginId, payload);
       if (epoch !== clientEpoch.current) return;
     } catch (e: any) {
       if (epoch !== clientEpoch.current) return;
@@ -250,8 +250,8 @@ export default function Plugins({ client, config, configLoading: activeConfigLoa
     setConfigError('');
     setSettings(null);
     setActiveProviders(null);
-    setSaveReceipt(receipt);
-    const saved = saveMessage(receipt);
+    setSaveResult(writeResult);
+    const saved = saveMessage(writeResult);
     setNote(saved);
     try {
       try {
@@ -284,13 +284,13 @@ export default function Plugins({ client, config, configLoading: activeConfigLoa
     if (actionFence.current || !desiredRevision) return;
     const epoch = clientEpoch.current;
     actionFence.current = true;
-    let receipt: ConfigurationWriteReceipt;
+    let writeResult: ConfigurationWriteResult;
     try {
       setSaving(pluginId);
       setError('');
       setNote('');
-      setSaveReceipt(null);
-      receipt = await client.updatePluginConfig(pluginId, {
+      setSaveResult(null);
+      writeResult = await client.updatePluginConfig(pluginId, {
         enabled: true, role: 'outbound', expected_revision_id: desiredRevision,
       });
       if (epoch !== clientEpoch.current) return;
@@ -307,8 +307,8 @@ export default function Plugins({ client, config, configLoading: activeConfigLoa
     setConfigData(null);
     setSettings(null);
     setActiveProviders(null);
-    setSaveReceipt(receipt);
-    const saved = saveMessage(receipt);
+    setSaveResult(writeResult);
+    const saved = saveMessage(writeResult);
     setNote(saved);
     try {
       if (!await load() && epoch === clientEpoch.current) setNote(saved);
@@ -337,7 +337,7 @@ export default function Plugins({ client, config, configLoading: activeConfigLoa
   const renderedClientEpoch = clientEpoch.current;
   const pendingCount = settings?._meta?.pending_fields?.length ?? 0;
   const showRestartNotice = settings?._meta?.apply_state === 'pending_restart'
-    && !(note && saveReceipt?._meta.apply_state === 'pending_restart');
+    && !(note && saveResult?._meta.apply_state === 'pending_restart');
 
   return (
     <Box sx={{ p: { xs: 2, sm: 0 } }}>
@@ -387,7 +387,7 @@ export default function Plugins({ client, config, configLoading: activeConfigLoa
         
         {note && (
           <Fade in>
-            <Alert severity={saveReceipt?._meta.apply_state === 'pending_restart' ? 'warning' : 'success'} onClose={() => setNote('')} sx={{ borderRadius: 2 }}>
+            <Alert severity={saveResult?._meta.apply_state === 'pending_restart' ? 'warning' : 'success'} onClose={() => setNote('')} sx={{ borderRadius: 2 }}>
               {note}
             </Alert>
           </Fade>

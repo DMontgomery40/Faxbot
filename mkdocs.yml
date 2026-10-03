@@ -113,6 +113,7 @@ nav:
     - Sinch (Cloud v3): setup/sinch.md
     - SIP/Asterisk (Self‑hosted): setup/sip-asterisk.md
     - Documo (mFax): setup/documo.md
+    - HumbleFax: setup/humblefax.md
     - SignalWire: setup/signalwire.md
     - FreeSWITCH: setup/freeswitch.md
     - Test Mode: setup/test-mode.md

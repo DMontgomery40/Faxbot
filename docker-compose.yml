@@ -58,31 +58,6 @@ services:
     stdin_open: true
     tty: true
 
-  # Optional: Faxbot MCP SSE (OAuth2/JWT) for HIPAA-grade integrations
-  faxbot-mcp-sse:
-    build:
-      context: ./node_mcp
-      dockerfile: Dockerfile
-    env_file:
-      - ./.env
-    environment:
-      - FAX_API_URL=http://api:8080
-      - API_KEY=${API_KEY}
-      - OAUTH_ISSUER=${OAUTH_ISSUER}
-      - OAUTH_AUDIENCE=${OAUTH_AUDIENCE}
-      - OAUTH_JWKS_URL=${OAUTH_JWKS_URL}
-      - MCP_SSE_PORT=3002
-    command: ["node", "src/servers/sse.js"]
-    depends_on:
-      - api
-    ports:
-      - "3002:3002"
-    profiles:
-      - mcp
-    stdin_open: true
-    tty: true
-
-  # Optional: Python MCP SSE (OAuth2/JWT). Alternative to Node SSE.
   faxbot-mcp-py-sse:
     build:
       context: ./python_mcp

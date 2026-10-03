@@ -15,6 +15,8 @@ PLUGIN_FIELDS = {
                    'webhook_signing_key': 'signalwire_webhook_signing_key',
                    'status_poll_seconds': 'signalwire_status_poll_seconds'},
     'documo': {'api_key': 'documo_api_key', 'base_url': 'documo_base_url', 'sandbox': 'documo_use_sandbox'},
+    'humblefax': {'access_key': 'humblefax_access_key', 'secret_key': 'humblefax_secret_key',
+                  'from_number': 'humblefax_from_number'},
     'sip': {'ami_host': 'ami_host', 'ami_port': 'ami_port', 'ami_username': 'ami_username',
             'ami_password': 'ami_password', 'inbound_secret': 'asterisk_inbound_secret'},
     'freeswitch': {'esl_host': 'fs_esl_host', 'esl_port': 'fs_esl_port', 'esl_password': 'fs_esl_password',

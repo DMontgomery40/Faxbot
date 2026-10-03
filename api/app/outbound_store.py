@@ -159,7 +159,7 @@ class OutboundStore:
         configuration = profile.configuration
         manifest = configuration.manifest
         supported = ('get_status' in manifest.get('actions', {}) if manifest is not None
-                     else configuration.provider_id in {'phaxio', 'signalwire', 'sinch', 'documo'})
+                     else configuration.provider_id in {'phaxio', 'signalwire', 'sinch', 'documo', 'humblefax'})
         if not supported:
             return 'This provider cannot look up fax status; check the fax in your provider account.'
         return None

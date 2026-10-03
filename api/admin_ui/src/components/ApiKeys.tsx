@@ -1,547 +1,402 @@
-import { useState, useEffect } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Box,
-  Typography,
+  Button,
+  Card,
+  CardContent,
+  IconButton,
+  Paper,
+  Stack,
   Table,
   TableBody,
   TableCell,
   TableContainer,
   TableHead,
   TableRow,
-  Button,
-  Alert,
-  Dialog,
-  DialogTitle,
-  DialogContent,
-  DialogActions,
-  Chip,
-  CircularProgress,
-  Paper,
-  IconButton,
   Tooltip,
-  useMediaQuery,
-  useTheme,
-  Stack,
-  Card,
-  CardContent,
-  Fade,
-  Grow,
-  Snackbar,
+  Typography,
 } from '@mui/material';
-import {
-  Add as AddIcon,
-  Refresh as RefreshIcon,
-  Delete as DeleteIcon,
-  Cached as RotateIcon,
-  ContentCopy as CopyIcon,
-  VpnKey as KeyIcon,
-  Security as SecurityIcon,
-  Person as PersonIcon,
-  CalendarToday as DateIcon,
-  CheckCircle as SuccessIcon,
-} from '@mui/icons-material';
+import AddIcon from '@mui/icons-material/Add';
+import RotateIcon from '@mui/icons-material/Cached';
+import DeleteIcon from '@mui/icons-material/Delete';
+import EditIcon from '@mui/icons-material/Edit';
+import ApproveIcon from '@mui/icons-material/TaskAlt';
+import KeyIcon from '@mui/icons-material/VpnKey';
 import AdminAPIClient from '../api/client';
-import type { ApiKey } from '../api/types';
+import type { AccessKey, AccessUser, AuthMe } from '../api/types';
+import { endOfLocalDay, formatServerTime, isPast, localDay } from '../api/time';
+import SecretDialog, { type SecretReveal } from './access/SecretDialog';
 import {
-  ResponsiveTextField,
-  ResponsiveFormSection,
-} from './common/ResponsiveFormFields';
+  ConfirmDialog,
+  EmptyState,
+  ErrorBanner,
+  Field,
+  FormDialog,
+  LoadStateView,
+  PermissionChips,
+  PermissionPicker,
+  ScreenHeader,
+  SelectField,
+  StatusChip,
+  loadFailure,
+  useCatalogue,
+  useSmallScreens,
+  type LoadState,
+} from './access/AccessViews';
+import { grantable } from './access/permissions';
 
 interface ApiKeysProps {
   client: AdminAPIClient;
+  me: AuthMe;
 }
 
-function ApiKeys({ client }: ApiKeysProps) {
-  const [keys, setKeys] = useState<ApiKey[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [createDialogOpen, setCreateDialogOpen] = useState(false);
-  const [newKeyResult, setNewKeyResult] = useState<string | null>(null);
-  const [copySnackbar, setCopySnackbar] = useState(false);
-  const [formData, setFormData] = useState({
-    name: '',
-    owner: '',
-    scopes: 'fax:send,fax:read',
-  });
+type Principal = Pick<AccessUser, 'id' | 'kind' | 'display_name' | 'version'>;
 
-  const theme = useTheme();
-  const isMobile = useMediaQuery(theme.breakpoints.down('md'));
-  const isSmallMobile = useMediaQuery(theme.breakpoints.down('sm'));
+interface KeyDraft {
+  principalId: string;
+  name: string;
+  note: string;
+  expires: string;
+  permissions: string[];
+}
 
-  const fetchKeys = async () => {
+type Editor =
+  | { mode: 'create' }
+  | { mode: 'edit'; keyId: string }
+  | { mode: 'approve'; keyId: string };
+
+type Pending = { action: 'rotate' | 'revoke'; keyId: string };
+
+const KIND_LABEL: Record<string, string> = { user: 'Person', integration: 'Integration', bootstrap: 'Installation key' };
+
+function keyStatus(key: AccessKey): { label: string; tone: 'success' | 'default' | 'warning' | 'error' } {
+  if (key.revoked_at) return { label: 'Revoked', tone: 'default' };
+  if (key.pending_review) return { label: 'Needs review', tone: 'warning' };
+  if (isPast(key.expires_at)) return { label: 'Expired', tone: 'error' };
+  return { label: 'Active', tone: 'success' };
+}
+
+const emptyDraft = (permissions: string[]): KeyDraft => ({ principalId: '', name: '', note: '', expires: '', permissions });
+
+const keyName = (key: AccessKey) => key.name || 'Unnamed key';
+
+export default function ApiKeys({ client, me }: ApiKeysProps) {
+  const { isMobile } = useSmallScreens();
+  const catalogue = useCatalogue(client);
+  const allowed = useMemo(() => grantable(me), [me]);
+  const defaultPermissions = useMemo(() => ['fax:send', 'fax:read'].filter((p) => allowed.has(p)), [allowed]);
+
+  const [keys, setKeys] = useState<AccessKey[]>([]);
+  const [principals, setPrincipals] = useState<Principal[]>([]);
+  const [installationId, setInstallationId] = useState<string | null>(null);
+  const [state, setState] = useState<LoadState>('loading');
+  const [error, setError] = useState<unknown>(null);
+
+  const [editor, setEditor] = useState<Editor | null>(null);
+  const [draft, setDraft] = useState<KeyDraft>(() => emptyDraft(defaultPermissions));
+  const [formError, setFormError] = useState<unknown>(null);
+  const [pending, setPending] = useState<Pending | null>(null);
+  const [pendingError, setPendingError] = useState<unknown>(null);
+  const [busy, setBusy] = useState(false);
+  const [reveal, setReveal] = useState<SecretReveal | null>(null);
+
+  const load = useCallback(async () => {
+    setState((current) => (current === 'ready' ? current : 'loading'));
     try {
-      setError(null);
-      setLoading(true);
-      const data = await client.listApiKeys();
-      setKeys(data);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to fetch API keys');
-    } finally {
-      setLoading(false);
+      const [keyPage, userPage, installation] = await Promise.all([
+        client.listKeys(),
+        client.listUsers({ kind: 'all', limit: 200 }).catch(() => null),
+        client.listResources('installation').catch(() => null),
+      ]);
+      setKeys(keyPage.items);
+      const known = new Map<string, Principal>();
+      if (me.principal.kind !== 'bootstrap') known.set(me.principal.id, me.principal);
+      for (const user of userPage?.items ?? []) if (user.kind !== 'bootstrap') known.set(user.id, user);
+      setPrincipals([...known.values()]);
+      setInstallationId(installation?.items[0]?.id ?? null);
+      setState('ready');
+    } catch (failure) {
+      setState(loadFailure(failure));
     }
+  }, [client, me.principal]);
+
+  useEffect(() => { void load(); }, [load]);
+
+  const reload = async () => {
+    setError(null);
+    setFormError(null);
+    setPendingError(null);
+    await client.me().catch(() => undefined);
+    await load();
   };
 
-  useEffect(() => {
-    fetchKeys();
-  }, [client]);
+  const keyById = (keyId: string) => keys.find((key) => key.id === keyId);
+  const principalById = (principalId: string) => principals.find((principal) => principal.id === principalId);
 
-  const handleCreateKey = async () => {
-    try {
-      const scopes = formData.scopes.split(',').map(s => s.trim()).filter(Boolean);
-      const result = await client.createApiKey({
-        name: formData.name || undefined,
-        owner: formData.owner || undefined,
-        scopes,
-      });
-      
-      setNewKeyResult(result.token);
-      setFormData({ name: '', owner: '', scopes: 'fax:send,fax:read' });
-      await fetchKeys();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to create API key');
-    }
+  const openCreate = () => {
+    setDraft(emptyDraft(defaultPermissions));
+    setFormError(null);
+    setEditor({ mode: 'create' });
   };
 
-  const handleRotateKey = async (keyId: string, keyName?: string) => {
-    if (!confirm(`Rotate key "${keyName || keyId}"? The old token will be invalidated.`)) {
-      return;
-    }
-    
-    try {
-      const result = await client.rotateApiKey(keyId);
-      setNewKeyResult(result.token);
-      await fetchKeys();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to rotate API key');
-    }
+  const openEdit = (key: AccessKey) => {
+    setDraft({ principalId: key.principal.id, name: key.name ?? '', note: key.note ?? '', expires: localDay(key.expires_at), permissions: [] });
+    setFormError(null);
+    setEditor({ mode: 'edit', keyId: key.id });
   };
 
-  const handleRevokeKey = async (keyId: string, keyName?: string) => {
-    if (!confirm(`Revoke key "${keyName || keyId}"? This action cannot be undone.`)) {
-      return;
-    }
-    
-    try {
-      await client.revokeApiKey(keyId);
-      await fetchKeys();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to revoke API key');
-    }
+  const openApprove = (key: AccessKey) => {
+    setDraft({ principalId: key.principal.kind === 'bootstrap' ? '' : key.principal.id, name: key.name ?? '', note: key.note ?? '', expires: '', permissions: defaultPermissions });
+    setFormError(null);
+    setEditor({ mode: 'approve', keyId: key.id });
   };
 
-  const formatDate = (dateString?: string) => {
-    if (!dateString) return '-';
+  const ceiling = () => draft.permissions.map((permission) => ({ permission, resource_id: installationId as string }));
+
+  const submit = async () => {
+    if (!editor) return;
+    setBusy(true);
+    setFormError(null);
     try {
-      const date = new Date(dateString);
-      if (isSmallMobile) {
-        return date.toLocaleDateString();
+      if (editor.mode === 'create') {
+        const principal = principalById(draft.principalId);
+        if (!principal) throw new Error('Choose who this key belongs to.');
+        const result = await client.createKey({
+          principal: { id: principal.id, version: principal.version },
+          name: draft.name.trim(),
+          note: draft.note.trim(),
+          expires_at: draft.expires ? endOfLocalDay(draft.expires) : null,
+          ceiling: ceiling(),
+        });
+        setEditor(null);
+        setReveal({
+          title: 'Key created',
+          message: 'Copy this key now. It is shown only once.',
+          label: 'API key',
+          secret: result.token,
+        });
+      } else if (editor.mode === 'edit') {
+        const key = keyById(editor.keyId);
+        if (!key) throw new Error('This key no longer exists. Reload and try again.');
+        const expiresAt = draft.expires ? endOfLocalDay(draft.expires) : null;
+        await client.updateKey(key.id, {
+          ...(draft.name.trim() !== (key.name ?? '') ? { name: draft.name.trim() } : {}),
+          ...(draft.note.trim() !== (key.note ?? '') ? { note: draft.note.trim() } : {}),
+          ...(draft.expires !== localDay(key.expires_at) ? { expires_at: expiresAt } : {}),
+          version: key.version,
+        });
+        setEditor(null);
+      } else {
+        const key = keyById(editor.keyId);
+        const principal = principalById(draft.principalId);
+        if (!key || !principal) throw new Error('Choose who this key belongs to.');
+        await client.approveKey(key.id, { principal: { id: principal.id, version: principal.version }, ceiling: ceiling(), version: key.version });
+        setEditor(null);
       }
-      return date.toLocaleString();
-    } catch {
-      return dateString;
+      await load();
+    } catch (failure) {
+      setFormError(failure);
+    } finally {
+      setBusy(false);
     }
   };
 
-  const copyToClipboard = async (text: string) => {
+  const confirmPending = async () => {
+    if (!pending) return;
+    const key = keyById(pending.keyId);
+    if (!key) return;
+    setBusy(true);
+    setPendingError(null);
     try {
-      await navigator.clipboard.writeText(text);
-      setCopySnackbar(true);
-    } catch (err) {
-      // Fallback for older browsers
-      const textArea = document.createElement("textarea");
-      textArea.value = text;
-      document.body.appendChild(textArea);
-      textArea.select();
-      document.execCommand('copy');
-      document.body.removeChild(textArea);
-      setCopySnackbar(true);
+      if (pending.action === 'rotate') {
+        const result = await client.rotateKey(key.id, key.version);
+        setPending(null);
+        setReveal({
+          title: 'Key replaced',
+          message: `The old key for "${keyName(key)}" no longer works. Copy the new key now. It is shown only once.`,
+          label: 'New API key',
+          secret: result.token,
+        });
+      } else {
+        await client.revokeKey(key.id, key.version);
+        setPending(null);
+      }
+      await load();
+    } catch (failure) {
+      setPendingError(failure);
+    } finally {
+      setBusy(false);
     }
   };
 
-  const MobileKeyCard = ({ apiKey }: { apiKey: ApiKey }) => (
-    <Grow in timeout={300}>
-      <Card sx={{ mb: 2, borderRadius: 2 }}>
-        <CardContent>
-          <Stack spacing={2}>
-            {/* Header */}
-            <Box>
-              <Typography variant="h6" fontWeight={600}>
-                {apiKey.name || 'Unnamed Key'}
-              </Typography>
-              <Typography variant="caption" color="text.secondary">
-                ID: {apiKey.key_id}
-              </Typography>
-            </Box>
+  const principalOptions = principals.map((principal) => ({
+    value: principal.id,
+    label: `${principal.display_name} (${KIND_LABEL[principal.kind] ?? principal.kind})`,
+  }));
 
-            {/* Details */}
-            <Stack spacing={1}>
-              {apiKey.owner && (
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                  <PersonIcon fontSize="small" color="action" />
-                  <Typography variant="body2">{apiKey.owner}</Typography>
-                </Box>
-              )}
-              
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <DateIcon fontSize="small" color="action" />
-                <Typography variant="body2">
-                  Created: {formatDate(apiKey.created_at)}
-                </Typography>
-              </Box>
+  const pendingKey = pending ? keyById(pending.keyId) : undefined;
+  const canSubmit = editor?.mode === 'edit'
+    ? Boolean(draft.name.trim())
+    : Boolean(draft.principalId && draft.permissions.length > 0 && installationId && (editor?.mode === 'approve' || draft.name.trim()));
 
-              {apiKey.last_used_at && (
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                  <DateIcon fontSize="small" color="action" />
-                  <Typography variant="body2">
-                    Last used: {formatDate(apiKey.last_used_at)}
-                </Typography>
-                </Box>
-              )}
-            </Stack>
+  const actions = (key: AccessKey) => {
+    if (key.revoked_at) return null;
+    return (
+      <>
+        {key.pending_review && (
+          <Tooltip title="Approve">
+            <IconButton aria-label={`Approve ${keyName(key)}`} size="small" color="primary" onClick={() => openApprove(key)}><ApproveIcon /></IconButton>
+          </Tooltip>
+        )}
+        <Tooltip title="Edit">
+          <IconButton aria-label={`Edit ${keyName(key)}`} size="small" onClick={() => openEdit(key)}><EditIcon /></IconButton>
+        </Tooltip>
+        <Tooltip title="Replace key">
+          <IconButton aria-label={`Rotate ${keyName(key)}`} size="small" onClick={() => { setPendingError(null); setPending({ action: 'rotate', keyId: key.id }); }}>
+            <RotateIcon />
+          </IconButton>
+        </Tooltip>
+        <Tooltip title="Revoke">
+          <IconButton aria-label={`Revoke ${keyName(key)}`} size="small" color="error" onClick={() => { setPendingError(null); setPending({ action: 'revoke', keyId: key.id }); }}>
+            <DeleteIcon />
+          </IconButton>
+        </Tooltip>
+      </>
+    );
+  };
 
-            {/* Scopes */}
-            <Box>
-              <Typography variant="caption" color="text.secondary" sx={{ mb: 0.5, display: 'block' }}>
-                Permissions:
-              </Typography>
-              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
-                {apiKey.scopes?.map((scope) => (
-                  <Chip
-                    key={scope}
-                    label={scope}
-                    size="small"
-                    variant="outlined"
-                    sx={{ borderRadius: 1 }}
-                  />
-                ))}
-              </Box>
-            </Box>
-
-            {/* Actions */}
-            <Box sx={{ display: 'flex', gap: 1, pt: 1 }}>
-              <Button
-                variant="outlined"
-                size="small"
-                startIcon={<RotateIcon />}
-                onClick={() => handleRotateKey(apiKey.key_id, apiKey.name)}
-                sx={{ flex: 1 }}
-              >
-                Rotate
-              </Button>
-              <Button
-                variant="outlined"
-                size="small"
-                color="error"
-                startIcon={<DeleteIcon />}
-                onClick={() => handleRevokeKey(apiKey.key_id, apiKey.name)}
-                sx={{ flex: 1 }}
-              >
-                Revoke
-              </Button>
-            </Box>
-          </Stack>
-        </CardContent>
-      </Card>
-    </Grow>
-  );
+  const permissionsOf = (key: AccessKey) => [...new Set(key.ceiling.map((entry) => entry.permission))];
 
   return (
     <Box>
-      <Box 
-        display="flex" 
-        justifyContent="space-between" 
-        alignItems={{ xs: 'flex-start', sm: 'center' }}
-        flexDirection={{ xs: 'column', sm: 'row' }}
-        gap={2}
-        mb={3}
-      >
-        <Typography variant="h4" component="h1">
-          API Keys
-        </Typography>
-        <Box display="flex" gap={1}>
-          <Button
-            variant="outlined"
-            startIcon={<RefreshIcon />}
-            onClick={fetchKeys}
-            disabled={loading}
-            size={isSmallMobile ? 'medium' : 'large'}
-            sx={{ 
-              borderRadius: 2,
-              minHeight: isSmallMobile ? 40 : 42,
-            }}
-          >
-            Refresh
-          </Button>
-          <Button
-            variant="contained"
-            startIcon={<AddIcon />}
-            onClick={() => setCreateDialogOpen(true)}
-            size={isSmallMobile ? 'medium' : 'large'}
-            sx={{ 
-              borderRadius: 2,
-              minHeight: isSmallMobile ? 40 : 42,
-            }}
-          >
-            Create Key
-          </Button>
-        </Box>
-      </Box>
+      <ScreenHeader title="API Keys" subtitle="Keys let apps, scanners and phones use Faxbot." onRefresh={() => void reload()} busy={state === 'loading'}>
+        <Button variant="contained" startIcon={<AddIcon />} onClick={openCreate} disabled={state !== 'ready'}>
+          Create key
+        </Button>
+      </ScreenHeader>
 
-      {error && (
-        <Fade in>
-          <Alert 
-            severity="error" 
-            sx={{ mb: 3, borderRadius: 2 }}
-            onClose={() => setError(null)}
-          >
-            {error}
-          </Alert>
-        </Fade>
-      )}
+      <ErrorBanner error={error} onReload={() => void reload()} onClose={() => setError(null)} />
 
-      {loading ? (
-        <Box display="flex" justifyContent="center" py={4}>
-          <CircularProgress />
-        </Box>
-      ) : keys.length === 0 ? (
-        <Fade in>
-          <Paper sx={{ p: 4, textAlign: 'center', borderRadius: 2 }}>
-            <KeyIcon sx={{ fontSize: 48, color: 'text.secondary', mb: 2 }} />
-            <Typography variant="h6" gutterBottom>
-              No API Keys
-            </Typography>
-            <Typography color="text.secondary" sx={{ mb: 3 }}>
-              Create your first API key to start using the Faxbot API
-            </Typography>
-            <Button
-              variant="contained"
-              startIcon={<AddIcon />}
-              onClick={() => setCreateDialogOpen(true)}
-              sx={{ borderRadius: 2 }}
-            >
-              Create Your First Key
-            </Button>
-          </Paper>
-        </Fade>
-      ) : isMobile ? (
-        // Mobile Layout
-        <Box>
-          {keys.map((key) => (
-            <MobileKeyCard key={key.key_id} apiKey={key} />
-          ))}
-        </Box>
-      ) : (
-        // Desktop Layout
-        <Fade in>
+      {state !== 'ready' ? <LoadStateView state={state} onRetry={() => void load()} />
+        : keys.length === 0 ? (
+          <EmptyState icon={<KeyIcon />} title="No API keys" text="Create a key for an app, scanner or phone that sends faxes."
+            action={<Button variant="contained" startIcon={<AddIcon />} onClick={openCreate} sx={{ borderRadius: 2 }}>Create key</Button>} />
+        ) : isMobile ? (
+          <Stack spacing={2}>
+            {keys.map((key) => {
+              const status = keyStatus(key);
+              return (
+                <Card key={key.id} sx={{ borderRadius: 2 }}>
+                  <CardContent>
+                    <Stack spacing={1.5}>
+                      <Box display="flex" justifyContent="space-between" alignItems="center" gap={1}>
+                        <Typography variant="h6" fontWeight={600}>{keyName(key)}</Typography>
+                        <StatusChip label={status.label} tone={status.tone} />
+                      </Box>
+                      <Typography variant="body2">Belongs to {key.principal.display_name}</Typography>
+                      <Typography variant="body2" color="text.secondary">Expires: {formatServerTime(key.expires_at, 'Never')}</Typography>
+                      <PermissionChips permissions={permissionsOf(key)} />
+                      <Box>{actions(key)}</Box>
+                    </Stack>
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </Stack>
+        ) : (
           <TableContainer component={Paper} sx={{ borderRadius: 2 }}>
             <Table>
               <TableHead>
                 <TableRow>
-                  <TableCell>Name / ID</TableCell>
-                  <TableCell>Owner</TableCell>
-                  <TableCell>Scopes</TableCell>
-                  <TableCell>Created</TableCell>
-                  <TableCell>Last Used</TableCell>
+                  <TableCell>Name</TableCell>
+                  <TableCell>Belongs to</TableCell>
+                  <TableCell>Permissions</TableCell>
+                  <TableCell>Expires</TableCell>
+                  <TableCell>Last used</TableCell>
+                  <TableCell>Status</TableCell>
                   <TableCell align="right">Actions</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
-                {keys.map((key) => (
-                  <TableRow key={key.key_id} hover>
-                    <TableCell>
-                      <Box>
-                        <Typography variant="body2" fontWeight={600}>
-                          {key.name || 'Unnamed'}
-                        </Typography>
-                        <Typography variant="caption" color="text.secondary">
-                          {key.key_id}
-                        </Typography>
-                      </Box>
-                    </TableCell>
-                    <TableCell>{key.owner || '-'}</TableCell>
-                    <TableCell>
-                      <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
-                        {key.scopes?.map((scope) => (
-                          <Chip
-                            key={scope}
-                            label={scope}
-                            size="small"
-                            variant="outlined"
-                            sx={{ borderRadius: 1 }}
-                          />
-                        ))}
-                      </Box>
-                    </TableCell>
-                    <TableCell>{formatDate(key.created_at)}</TableCell>
-                    <TableCell>{formatDate(key.last_used_at)}</TableCell>
-                    <TableCell align="right">
-                      <Tooltip title="Rotate Key">
-                        <IconButton
-                          onClick={() => handleRotateKey(key.key_id, key.name)}
-                          size="small"
-                        >
-                          <RotateIcon />
-                        </IconButton>
-                      </Tooltip>
-                      <Tooltip title="Revoke Key">
-                        <IconButton
-                          onClick={() => handleRevokeKey(key.key_id, key.name)}
-                          size="small"
-                          color="error"
-                        >
-                          <DeleteIcon />
-                        </IconButton>
-                      </Tooltip>
-                    </TableCell>
-                  </TableRow>
-                ))}
+                {keys.map((key) => {
+                  const status = keyStatus(key);
+                  return (
+                    <TableRow key={key.id} hover>
+                      <TableCell>
+                        <Typography variant="body2" fontWeight={600}>{keyName(key)}</Typography>
+                        {key.note && <Typography variant="caption" color="text.secondary">{key.note}</Typography>}
+                      </TableCell>
+                      <TableCell>
+                        <Typography variant="body2">{key.principal.display_name}</Typography>
+                        <Typography variant="caption" color="text.secondary">{KIND_LABEL[key.principal.kind] ?? key.principal.kind}</Typography>
+                      </TableCell>
+                      <TableCell><PermissionChips permissions={permissionsOf(key)} limit={4} /></TableCell>
+                      <TableCell>{formatServerTime(key.expires_at, 'Never')}</TableCell>
+                      <TableCell>{formatServerTime(key.last_used_at, 'Never')}</TableCell>
+                      <TableCell><StatusChip label={status.label} tone={status.tone} /></TableCell>
+                      <TableCell align="right" sx={{ whiteSpace: 'nowrap' }}>{actions(key)}</TableCell>
+                    </TableRow>
+                  );
+                })}
               </TableBody>
             </Table>
           </TableContainer>
-        </Fade>
-      )}
+        )}
 
-      {/* Create Key Dialog */}
-      <Dialog 
-        open={createDialogOpen} 
-        onClose={() => !newKeyResult && setCreateDialogOpen(false)}
-        maxWidth="sm"
-        fullWidth
-        fullScreen={isSmallMobile}
+      <FormDialog
+        open={editor !== null}
+        title={editor?.mode === 'edit' ? 'Edit key' : editor?.mode === 'approve' ? 'Approve key' : 'Create key'}
+        submitLabel={editor?.mode === 'edit' ? 'Save' : editor?.mode === 'approve' ? 'Approve' : 'Create key'}
+        busy={busy}
+        error={formError}
+        canSubmit={canSubmit}
+        onSubmit={() => void submit()}
+        onClose={() => setEditor(null)}
+        onReload={() => void reload()}
       >
-        <DialogTitle>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-            <KeyIcon />
-            Create New API Key
+        {editor?.mode === 'approve' && (
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+            This older key could do anything. Choose who it belongs to and what it may do.
+          </Typography>
+        )}
+        {editor?.mode !== 'edit' && (
+          <SelectField label="Belongs to" value={draft.principalId} onChange={(principalId) => setDraft({ ...draft, principalId })}
+            options={principalOptions} helperText="A person or an integration. The key can never do more than its owner." />
+        )}
+        {editor?.mode !== 'approve' && (
+          <>
+            <Field label="Name" value={draft.name} onChange={(name) => setDraft({ ...draft, name })} autoFocus={editor?.mode === 'edit'} />
+            <Field label="Note" value={draft.note} onChange={(note) => setDraft({ ...draft, note })} />
+            <Field label="Expires" type="date" value={draft.expires} onChange={(expires) => setDraft({ ...draft, expires })}
+              helperText="Leave empty for a key that does not expire." />
+          </>
+        )}
+        {editor?.mode !== 'edit' && (
+          <Box sx={{ mt: 2 }}>
+            <Typography variant="subtitle1" sx={{ mb: 1 }}>What this key may do</Typography>
+            {!installationId && <Typography color="error" variant="body2">Keys cannot be created on this server yet.</Typography>}
+            <PermissionPicker catalogue={catalogue} selected={draft.permissions} allowed={allowed}
+              onChange={(permissions) => setDraft({ ...draft, permissions })} />
           </Box>
-        </DialogTitle>
-        <DialogContent>
-          {!newKeyResult ? (
-            <Box sx={{ pt: 1 }}>
-              <ResponsiveTextField
-                label="Key Name"
-                value={formData.name}
-                onChange={(value) => setFormData({ ...formData, name: value })}
-                placeholder="Production API Key"
-                helperText="A friendly name to identify this key"
-                icon={<KeyIcon />}
-              />
-              
-              <ResponsiveTextField
-                label="Owner"
-                value={formData.owner}
-                onChange={(value) => setFormData({ ...formData, owner: value })}
-                placeholder="service@example.com"
-                helperText="Email or identifier of the key owner"
-                icon={<PersonIcon />}
-              />
-              
-              <ResponsiveTextField
-                label="Permissions (Scopes)"
-                value={formData.scopes}
-                onChange={(value) => setFormData({ ...formData, scopes: value })}
-                placeholder="fax:send,fax:read"
-                helperText="Comma-separated list of permissions. Available: fax:send, fax:read, inbound:list, inbound:read, keys:manage"
-                icon={<SecurityIcon />}
-              />
-            </Box>
-          ) : (
-            <Box>
-              <Alert 
-                severity="success" 
-                icon={<SuccessIcon />}
-                sx={{ mb: 3, borderRadius: 2 }}
-              >
-                API key created successfully! Copy it now - you won't be able to see it again.
-              </Alert>
-              
-              <ResponsiveFormSection
-                title="Your New API Key"
-                subtitle="Save this key securely - it won't be shown again"
-                icon={<KeyIcon />}
-              >
-                <Box
-                  sx={{
-                    p: 2,
-                    backgroundColor: theme.palette.mode === 'dark'
-                      ? 'rgba(255, 255, 255, 0.05)'
-                      : 'rgba(0, 0, 0, 0.05)',
-                    borderRadius: 1,
-                    fontFamily: 'monospace',
-                    wordBreak: 'break-all',
-                    position: 'relative',
-                  }}
-                >
-                  <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
-                    {newKeyResult}
-                  </Typography>
-                  <IconButton
-                    onClick={() => copyToClipboard(newKeyResult)}
-                    size="small"
-                    sx={{
-                      position: 'absolute',
-                      top: 8,
-                      right: 8,
-                    }}
-                  >
-                    <CopyIcon fontSize="small" />
-                  </IconButton>
-                </Box>
-              </ResponsiveFormSection>
-            </Box>
-          )}
-        </DialogContent>
-        <DialogActions sx={{ px: 3, pb: 3 }}>
-          {!newKeyResult ? (
-            <>
-              <Button 
-                onClick={() => setCreateDialogOpen(false)}
-                sx={{ borderRadius: 2 }}
-              >
-                Cancel
-              </Button>
-              <Button 
-                onClick={handleCreateKey} 
-                variant="contained"
-                startIcon={<AddIcon />}
-                sx={{ borderRadius: 2 }}
-              >
-                Create Key
-              </Button>
-            </>
-          ) : (
-            <>
-              <Button
-                onClick={() => copyToClipboard(newKeyResult)}
-                startIcon={<CopyIcon />}
-                sx={{ borderRadius: 2 }}
-              >
-                Copy Key
-              </Button>
-              <Button
-                onClick={() => {
-                  setNewKeyResult(null);
-                  setCreateDialogOpen(false);
-                }}
-                variant="contained"
-                sx={{ borderRadius: 2 }}
-              >
-                Done
-              </Button>
-            </>
-          )}
-        </DialogActions>
-      </Dialog>
+        )}
+      </FormDialog>
 
-      {/* Copy Snackbar */}
-      <Snackbar
-        open={copySnackbar}
-        autoHideDuration={2000}
-        onClose={() => setCopySnackbar(false)}
-        message="Copied to clipboard!"
+      <ConfirmDialog
+        open={pending !== null}
+        title={pending?.action === 'rotate' ? 'Replace this key?' : 'Revoke this key?'}
+        text={pending?.action === 'rotate'
+          ? `The current key for "${pendingKey ? keyName(pendingKey) : 'this key'}" stops working immediately and a new one is shown once.`
+          : `"${pendingKey ? keyName(pendingKey) : 'This key'}" stops working immediately. This cannot be undone.`}
+        confirmLabel={pending?.action === 'rotate' ? 'Replace key' : 'Revoke'}
+        danger={pending?.action === 'revoke'}
+        busy={busy}
+        error={pendingError}
+        onConfirm={() => void confirmPending()}
+        onCancel={() => setPending(null)}
+        onReload={() => void reload()}
       />
+
+      <SecretDialog reveal={reveal} onClose={() => setReveal(null)} />
     </Box>
   );
 }
-
-export default ApiKeys;

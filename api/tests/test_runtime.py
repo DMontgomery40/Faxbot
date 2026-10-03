@@ -256,7 +256,7 @@ async def test_ami_probe_requires_successful_bounded_login(monkeypatch, response
 
 @pytest.mark.asyncio
 async def test_standalone_http_repeated_lifespans_release_sessions():
-    """A terminated SDK manager cannot be reused and its sessions must be released."""
+    """Each lifespan owns a fresh stateless SDK manager; no request task survives shutdown."""
     import json
     from python_mcp import http_server
     from sse_starlette.sse import AppStatus
@@ -266,30 +266,28 @@ async def test_standalone_http_repeated_lifespans_release_sessions():
     try:
         for _ in range(2):
             async with http_server.app.router.lifespan_context(http_server.app):
-                inner = http_server.app.routes[-1].app
-                manager = next(route for route in inner.routes if route.path == "/mcp").endpoint.session_manager
                 async with httpx.AsyncClient(transport=httpx.ASGITransport(app=http_server.app), base_url="http://127.0.0.1:8080") as client:
-                    headers = {"Accept": "application/json, text/event-stream"}
+                    headers = {"Accept": "application/json, text/event-stream", "X-API-Key": "synthetic-caller-key"}
                     response = await client.post("/mcp", headers=headers, json={
                         "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
-                            "protocolVersion": "2025-03-26", "capabilities": {}, "clientInfo": {"name": "runtime-test", "version": "1"},
+                            "protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "runtime-test", "version": "1"},
                         },
                     })
                     assert response.status_code == 200
-                    headers["Mcp-Session-Id"] = response.headers["Mcp-Session-Id"]
+                    assert "Mcp-Session-Id" not in response.headers, "remote transport must be stateless"
                     notification = await client.post("/mcp", headers=headers, json={"jsonrpc": "2.0", "method": "notifications/initialized"})
                     assert notification.status_code == 202
                     response = await client.post("/mcp", headers=headers, json={"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
                     assert response.status_code == 200
-                    payload = json.loads(next(line[6:] for line in response.text.splitlines() if line.startswith("data: ")))
-                    assert {t["name"] for t in payload["result"]["tools"]} == {"send_fax", "get_fax_status"}
-            assert manager._task_group is None
-            assert not manager._server_instances
+                    body = response.text
+                    payload = json.loads(next((line[6:] for line in body.splitlines() if line.startswith("data: ")), body))
+                    assert {t["name"] for t in payload["result"]["tools"]} == {
+                        "send_fax", "get_fax_status", "get_fax", "list_inbound", "get_inbound_pdf"}
             await asyncio.sleep(0)
             remaining = asyncio.all_tasks() - before
             watchers = {task for task in remaining if task.get_coro().__qualname__ == "_shutdown_watcher"
                         and task.get_coro().cr_code.co_filename.endswith("sse_starlette/sse.py")}
-            assert len(watchers) == 1
+            assert len(watchers) <= 1
             assert remaining == watchers, "application/session task survived shutdown"
             if server_watchers:
                 assert watchers == server_watchers, "repeated lifespan created another framework watcher"
@@ -398,37 +396,40 @@ async def running_server(module, tmp_path, **flags):
 
 @pytest.mark.asyncio
 async def test_enabled_embedded_mcp_sdk_initialize_and_tool_listing(tmp_path):
-    """Both mounted transports must initialize and enumerate their original tools."""
-    from mcp import ClientSession
+    """Both mounted transports must initialize and enumerate the documented tools."""
+    import httpx2
+    from mcp import Client
     from mcp.client.sse import sse_client
     from mcp.client.streamable_http import streamable_http_client
 
+    caller = {"X-API-Key": "synthetic-caller-key"}
+    names = {"send_fax", "get_fax_status", "list_inbound", "get_fax", "get_inbound_pdf"}
     async with running_server("app.main:app", tmp_path, ENABLE_MCP_HTTP="true", ENABLE_MCP_SSE="true") as url:
-        for transport, path, names in (
-            (streamable_http_client, "/mcp/http/mcp", {"send_fax", "get_fax_status"}),
-            (sse_client, "/mcp/sse/sse", {"send_fax", "get_fax_status", "list_inbound", "get_fax", "get_inbound_pdf"}),
+        for transport in (
+            streamable_http_client(url + "/mcp/http/mcp", http_client=httpx2.AsyncClient(headers=caller)),
+            sse_client(url + "/mcp/sse/sse", headers=caller),
         ):
-            async with transport(url + path) as streams:
-                async with ClientSession(streams[0], streams[1]) as session:
-                    initialized = await session.initialize()
-                    assert initialized.serverInfo.name == "Faxbot MCP (Python)"
-                    result = await session.list_tools()
-                    assert {tool.name for tool in result.tools} == names
-                    send = next(t for t in result.tools if t.name == "send_fax")
-                    assert "to" in send.inputSchema["required"]
+            async with Client(transport, cache=None) as client:
+                assert client.server_info.name == "Faxbot MCP (Python)"
+                result = await client.list_tools()
+                assert {tool.name for tool in result.tools} == names
+                send = next(t for t in result.tools if t.name == "send_fax")
+                assert "to" in send.input_schema["required"]
 
 
 @pytest.mark.asyncio
 async def test_standalone_http_lifespan_initializes_session_manager(tmp_path):
     """The standalone wrapper must enter the mounted SDK app lifespan as well."""
-    from mcp import ClientSession
+    import httpx2
+    from mcp import Client
     from mcp.client.streamable_http import streamable_http_client
 
     async with running_server("python_mcp.http_server:app", tmp_path) as url:
-        async with streamable_http_client(url + "/mcp") as streams:
-            async with ClientSession(streams[0], streams[1]) as session:
-                await session.initialize()
-                assert {tool.name for tool in (await session.list_tools()).tools} == {"send_fax", "get_fax_status"}
+        transport = streamable_http_client(url + "/mcp", http_client=httpx2.AsyncClient(
+            headers={"Authorization": "Bearer synthetic-caller-key"}))
+        async with Client(transport, cache=None) as client:
+            assert {tool.name for tool in (await client.list_tools()).tools} == {
+                "send_fax", "get_fax_status", "get_fax", "list_inbound", "get_inbound_pdf"}
 
 
 @pytest.mark.asyncio

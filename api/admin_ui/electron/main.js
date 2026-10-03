@@ -32,11 +32,14 @@ function createWindow() {
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
   });
 
-  // Load the app
-  const startUrl = isDev 
-    ? 'http://localhost:5173' 
-    : `file://${path.join(__dirname, '../dist/index.html')}`;
-  
+  // Load the console from the Faxbot server itself so the page and the API
+  // share one origin (sign-in cookies and requests work as in a browser).
+  // Development uses the Vite dev server (port 3000, base /admin/ui/).
+  const startUrl = isDev
+    ? (process.env.VITE_DEV_SERVER_URL || 'http://localhost:3000/admin/ui/')
+    : (process.env.FAXBOT_URL || 'http://127.0.0.1:8080/admin/ui/');
+  const startOrigin = new URL(startUrl).origin;
+
   mainWindow.loadURL(startUrl);
 
   // Show window when ready to prevent visual flash
@@ -64,7 +67,7 @@ function createWindow() {
   mainWindow.webContents.on('will-navigate', (event, navigationUrl) => {
     const parsedUrl = new URL(navigationUrl);
     
-    if (parsedUrl.origin !== startUrl.split('/').slice(0, 3).join('/')) {
+    if (parsedUrl.origin !== startOrigin) {
       event.preventDefault();
       shell.openExternal(navigationUrl);
     }

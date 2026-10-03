@@ -68,6 +68,9 @@ class PreparedSubmission:
             return _receipt(await self.service.send_fax_file(to, self.pdf_path), sinch=True)
         if pid == 'documo':
             return _receipt(await self.service.send_fax_file(to, self.pdf_path))
+        if pid == 'humblefax':
+            # The attempt identity lets an operator find this fax in HumbleFax history.
+            return _receipt(await self.service.send_fax_file(to, self.pdf_path, uuid=self.claim.attempt_id))
         if pid == 'sip':
             await self.ami.originate_sendfax(self.claim.job_id, to, self.tiff_path,
                 attempt_id=self.claim.attempt_id)
@@ -132,6 +135,13 @@ class CapturedTransport:
                         gateway_name=values.fs_gateway_name, caller_id_number=values.fs_caller_id_number,
                         t38_enable=values.fs_t38_enable, attempt_id=claim.attempt_id)
             except ValueError:
+                raise PreparationFailure('preparation_failed') from None
+        if manifest is None and pid == 'humblefax':
+            from .humblefax_service import humblefax_number
+            try:
+                humblefax_number(job['to_number'])
+            except ValueError:
+                # HumbleFax sends only to US/Canadian numbers; refuse before submission.
                 raise PreparationFailure('preparation_failed') from None
         # Multipart manifests consume the already prepared local PDF. Other
         # HTTP templates can refer to the captured, tokenized media capability.

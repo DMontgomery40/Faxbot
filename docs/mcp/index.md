@@ -3,29 +3,41 @@
 <div class="grid cards" markdown>
 
 - :material-nodejs: **Node Server**  
-  stdio, HTTP, SSE transports.  
+  stdio and Streamable HTTP.  
   [Open](node.md)
 
 - :material-language-python: **Python Server**  
-  stdio and SSE transports.  
+  stdio, Streamable HTTP and SSE.  
   [Open](python.md)
 
 - :material-connection: **Transports**  
-  Capabilities and limits across stdio/HTTP/SSE.  
+  Authentication and limits per transport.  
   [Reference](transports.md)
 
 </div>
 
-Faxbot provides MCP servers in Node and Python with identical tools:
-- Tools: `send_fax`, `get_fax_status`
-- Transports:
-  - stdio (local desktop assistants)
-  - HTTP (Node streamable HTTP)
-  - SSE + OAuth2 (Node and Python)
+Faxbot provides MCP servers in Node (MCP TypeScript SDK 2.3) and Python (MCP Python SDK 2.3). Both speak MCP protocol revision 2026-07-28 and still serve clients that use the 2025 `initialize` handshake.
 
-See also: [Transports](transports.md)
+Tools (same names and arguments on every server):
+
+- `send_fax(to, fileContent, fileName, fileType?)`. On stdio, `filePath` or `fileUrl` can replace `fileContent`.
+- `get_fax_status(jobId)`
+- `get_fax(id)`: a sent fax job or a received fax
+- `list_inbound(limit?)`
+- `get_inbound_pdf(inboundId, asBase64?)`
+
+Resource template: `faxbot://inbound/{inbound_id}/pdf` (a received fax PDF).
+
+Transports:
+
+- stdio: local desktop assistants (Node and Python)
+- Streamable HTTP: the remote transport (Node and Python)
+- SSE: compatibility transport for older clients (Python only)
+
+Keys: each Streamable HTTP or SSE request carries the caller's own Faxbot API key (`Authorization: Bearer <key>` or `X-API-Key`), and the server forwards it to Faxbot. With OAuth configured, the token's subject is mapped to a stored Faxbot key. Only stdio uses `API_KEY`, as one integration identity. See [Transports](transports.md).
 
 Limits and file handling
+
 - stdio: use `filePath` to avoid base64 limits
-- HTTP/SSE: JSON limit is ~16 MB for Node; REST API raw file limit is 10 MB
+- Streamable HTTP and SSE: base64 `fileContent` only; request bodies up to 16 MB. The REST API's raw file limit is 10 MB
 - Allowed types: PDF, TXT

@@ -64,3 +64,6 @@ vendor/
 .bundle/
 
 site/
+
+# Claude Code agent worktrees
+.claude/worktrees/

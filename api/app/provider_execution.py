@@ -7,6 +7,7 @@ from .config_profiles import ProviderConfiguration, ProviderProfile
 
 if TYPE_CHECKING:
     from .documo_service import DocumoFaxService
+    from .humblefax_service import HumbleFaxFaxService
     from .phaxio_service import PhaxioFaxService
     from .plugins.http_provider import HttpProviderRuntime
     from .signalwire_service import SignalWireFaxService
@@ -29,7 +30,8 @@ def _string(values, name):
 
 
 def service_from_profile(profile: ProviderProfile) -> (
-        PhaxioFaxService | SinchFaxService | SignalWireFaxService | DocumoFaxService | HttpProviderRuntime):
+        PhaxioFaxService | SinchFaxService | SignalWireFaxService | DocumoFaxService
+        | HumbleFaxFaxService | HttpProviderRuntime):
     """Return a new adapter; never resolve current credentials or installed files.
 
     A captured HTTP manifest takes precedence for every provider identity.
@@ -61,6 +63,10 @@ def service_from_profile(profile: ProviderProfile) -> (
             from .documo_service import DocumoFaxService
             return DocumoFaxService(api_key=_string(credentials, 'api_key'),
                 base_url=_string(settings, 'base_url'), sandbox=settings.get('sandbox', False))
+        if identity == 'humblefax':
+            from .humblefax_service import HumbleFaxFaxService
+            return HumbleFaxFaxService(access_key=_string(credentials, 'access_key'),
+                secret_key=_string(credentials, 'secret_key'), from_number=_string(settings, 'from_number'))
         if identity == 'signalwire':
             from .signalwire_service import SignalWireFaxService
             return SignalWireFaxService(space_url=_string(settings, 'space_url'),
