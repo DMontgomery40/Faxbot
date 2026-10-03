@@ -10,7 +10,9 @@ import {
   CircularProgress,
   Alert,
   Tooltip,
+  useTheme,
 } from '@mui/material';
+import { darken } from '@mui/material/styles';
 import {
   Refresh as RefreshIcon,
   CheckCircle as CheckCircleIcon,
@@ -29,6 +31,10 @@ interface DashboardProps {
 }
 
 function Dashboard({ client, onNavigate }: DashboardProps) {
+  const theme = useTheme();
+  const warningTextColor = theme.palette.mode === 'light'
+    ? darken(theme.palette.warning.light, 0.6)
+    : theme.palette.warning.main;
   const [health, setHealth] = useState<HealthStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -220,7 +226,7 @@ function Dashboard({ client, onNavigate }: DashboardProps) {
                   <Box display="flex" justifyContent="space-between">
                     <Typography variant="body2">Reconciliation Required:</Typography>
                     <Typography variant="body2" fontWeight="bold"
-                      color={(health.jobs.reconciliation_required ?? 0) > 0 ? 'warning.main' : 'text.primary'}>
+                      color={(health.jobs.reconciliation_required ?? 0) > 0 ? warningTextColor : 'text.primary'}>
                       {health.jobs.reconciliation_required ?? 'Unavailable'}
                     </Typography>
                   </Box>
@@ -229,7 +235,7 @@ function Dashboard({ client, onNavigate }: DashboardProps) {
                   Held test faxes never transmit automatically, even after enabling sending.
                 </Typography>
                 {(health.jobs.reconciliation_required ?? 0) > 0 && (
-                  <Typography variant="caption" color="warning.main" sx={{ display: 'block', mt: 1 }}>
+                  <Typography variant="caption" color={warningTextColor} sx={{ display: 'block', mt: 1 }}>
                     Check the original provider before taking action. Do not retry transmission blindly.
                   </Typography>
                 )}
@@ -261,6 +267,7 @@ function Dashboard({ client, onNavigate }: DashboardProps) {
                     label={health.inbound_enabled ? 'Enabled' : 'Disabled'}
                     color={health.inbound_enabled ? 'success' : 'warning'}
                     variant="outlined"
+                    sx={{ color: health.inbound_enabled ? undefined : warningTextColor }}
                   />
                 </CardContent>
               </Card>
@@ -288,7 +295,7 @@ function Dashboard({ client, onNavigate }: DashboardProps) {
                   </Typography>
                   <Box display="flex" flexDirection="column" gap={1}>
                     <Box display="flex" alignItems="center">
-                      {health.require_auth ? <CheckCircleIcon color="success" /> : <WarningIcon color="warning" />}
+                      {health.require_auth ? <CheckCircleIcon color="success" /> : <WarningIcon color="warning" sx={{ color: warningTextColor }} />}
                       <Typography variant="body2" sx={{ ml: 1 }}>
                         {health.require_auth ? 'Auth Required' : 'Auth Optional'}
                       </Typography>
