@@ -19,6 +19,7 @@ import {
   Error as ErrorIcon,
 } from '@mui/icons-material';
 import AdminAPIClient from '../api/client';
+import type { AdminConfig } from '../api/types';
 import {
   ResponsiveTextField,
   ResponsiveFileUpload,
@@ -27,9 +28,12 @@ import {
 
 interface SendFaxProps {
   client: AdminAPIClient;
+  config: AdminConfig | null;
+  configLoading: boolean;
+  configError: string | null;
 }
 
-function SendFax({ client }: SendFaxProps) {
+function SendFax({ client, config, configLoading, configError }: SendFaxProps) {
   const theme = useTheme();
   const isSmallMobile = useMediaQuery(theme.breakpoints.down('sm'));
   
@@ -40,7 +44,12 @@ function SendFax({ client }: SendFaxProps) {
 
   // Validation states
   const [toNumberError, setToNumberError] = useState(false);
-  const [fileError, setFileError] = useState(false);
+  const [fileError, setFileError] = useState<string | null>(null);
+  const configReady = !configLoading && !configError && typeof config?.fax_disabled === 'boolean'
+    && Number.isSafeInteger(config.max_file_size_mb) && config.max_file_size_mb > 0;
+  const faxDisabled = configReady && config?.fax_disabled === true;
+  const maxFileSizeMb = configReady ? config!.max_file_size_mb : null;
+  const maxFileSizeBytes = maxFileSizeMb === null ? null : maxFileSizeMb * 1024 * 1024;
 
   const validatePhone = (number: string): boolean => {
     // Basic validation - allow digits, spaces, dashes, parentheses, and +
@@ -53,9 +62,10 @@ function SendFax({ client }: SendFaxProps) {
   };
 
   const handleSend = async () => {
+    if (!configReady) return;
     // Reset errors
     setToNumberError(false);
-    setFileError(false);
+    setFileError(null);
     
     // Validate inputs
     let hasError = false;
@@ -66,14 +76,17 @@ function SendFax({ client }: SendFaxProps) {
     }
     
     if (!file) {
-      setFileError(true);
+      setFileError('Please select a PDF or TXT file.');
+      hasError = true;
+    } else if (maxFileSizeBytes !== null && file.size > maxFileSizeBytes) {
+      setFileError(`The active upload limit is ${maxFileSizeMb} MB. Choose a smaller document.`);
       hasError = true;
     }
     
     if (hasError) {
       setResult({
         type: 'error',
-        message: 'Please fix the errors above before sending.',
+        message: 'Please fix the errors above before submitting.',
       });
       return;
     }
@@ -82,10 +95,12 @@ function SendFax({ client }: SendFaxProps) {
     setResult(null);
 
     try {
-      const response = await client.sendFax(toNumber, file!);
+      const response = await client.sendFax(toNumber, file!, { queueOnly: faxDisabled });
       setResult({
         type: 'success',
-        message: `Fax queued successfully!`,
+        message: faxDisabled
+          ? 'Test fax accepted and queued. No fax will be delivered while outbound sending is disabled.'
+          : 'Fax accepted and queued. Delivery is not yet confirmed.',
         jobId: response.id,
       });
       
@@ -104,7 +119,7 @@ function SendFax({ client }: SendFaxProps) {
   };
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !loading && toNumber && file) {
+    if (e.key === 'Enter' && !loading && configReady && toNumber && file) {
       handleSend();
     }
   };
@@ -112,15 +127,23 @@ function SendFax({ client }: SendFaxProps) {
   return (
     <Box onKeyPress={handleKeyPress}>
       <Typography variant="h4" component="h1" gutterBottom sx={{ mb: 3 }}>
-        Send Fax
+        {faxDisabled ? 'Queue Test Fax' : 'Send Fax'}
       </Typography>
+
+      {configLoading && <Alert severity="info" sx={{ mb: 3 }}>Loading active send configuration…</Alert>}
+      {!configLoading && !configReady && <Alert severity="error" sx={{ mb: 3 }}>
+        {configError ?? 'Active send configuration is unavailable. Leave and reopen Send to refresh it.'}
+      </Alert>}
+      {faxDisabled && <Alert severity="warning" sx={{ mb: 3 }}>
+        Outbound sending is disabled. Accepted jobs only queue; no actual fax delivery or simulated delivery occurs while this setting is active.
+      </Alert>}
 
       <Box sx={{ maxWidth: { xs: '100%', md: 800 } }}>
         <Fade in timeout={300}>
           <Box>
             <ResponsiveFormSection
-              title="New Fax Transmission"
-              subtitle="Send a fax to any phone number with PDF or TXT file attachment"
+              title={faxDisabled ? 'New Queued Test Fax' : 'New Fax Submission'}
+              subtitle={faxDisabled ? 'Queue a PDF or TXT document without transmitting it' : 'Submit a PDF or TXT document to the fax job queue'}
               icon={<SendIcon />}
             >
               <Stack spacing={2}>
@@ -145,14 +168,16 @@ function SendFax({ client }: SendFaxProps) {
                   value={file}
                   onFileSelect={(file) => {
                     setFile(file);
-                    if (fileError) setFileError(false);
+                    setFileError(file && maxFileSizeBytes !== null && file.size > maxFileSizeBytes
+                      ? `The active upload limit is ${maxFileSizeMb} MB. Choose a smaller document.`
+                      : null);
                   }}
                   accept=".pdf,.txt,application/pdf,text/plain"
-                  helperText="PDF or TXT files only. Maximum size: 10MB"
-                  maxSize={10 * 1024 * 1024} // 10MB
+                  helperText={maxFileSizeMb === null ? 'PDF or TXT files only. Active upload limit is loading.' : `PDF or TXT files only. Maximum size: ${maxFileSizeMb} MB`}
+                  disabled={!configReady || loading}
                   required
-                  error={fileError}
-                  errorMessage="Please select a PDF or TXT file to send"
+                  error={!!fileError}
+                  errorMessage={fileError ?? undefined}
                   icon={<DocumentIcon />}
                 />
 
@@ -166,7 +191,7 @@ function SendFax({ client }: SendFaxProps) {
                     variant="contained"
                     startIcon={loading ? <CircularProgress size={20} color="inherit" /> : <SendIcon />}
                     onClick={handleSend}
-                    disabled={loading}
+                    disabled={loading || !configReady}
                     size="large"
                     fullWidth={isSmallMobile}
                     sx={{
@@ -178,7 +203,7 @@ function SendFax({ client }: SendFaxProps) {
                       fontWeight: 500,
                     }}
                   >
-                    {loading ? 'Sending...' : 'Send Fax'}
+                    {loading ? 'Submitting…' : (faxDisabled ? 'Queue test fax' : 'Send Fax')}
                   </Button>
 
                   {(toNumber || file) && !loading && (
@@ -189,7 +214,7 @@ function SendFax({ client }: SendFaxProps) {
                         setFile(null);
                         setResult(null);
                         setToNumberError(false);
-                        setFileError(false);
+                        setFileError(null);
                       }}
                       size="large"
                       fullWidth={isSmallMobile}
@@ -248,7 +273,7 @@ function SendFax({ client }: SendFaxProps) {
           <Box sx={{ mt: 4 }}>
             <ResponsiveFormSection
               title="Quick Tips"
-              subtitle="Best practices for successful fax transmission"
+              subtitle="Prepare the document and track its job status"
             >
               <Stack spacing={2}>
                 <Box>
@@ -269,20 +294,18 @@ function SendFax({ client }: SendFaxProps) {
                   <Typography variant="body2" color="text.secondary">
                     • PDF files: Standard documents, forms, letters<br />
                     • TXT files: Plain text will be converted to PDF automatically<br />
-                    • Maximum file size: 10MB<br />
+                    • Maximum file size: {maxFileSizeMb === null ? 'unavailable until active settings load' : `${maxFileSizeMb} MB`}<br />
                     • Images: Convert to PDF first using a PDF creator
                   </Typography>
                 </Box>
 
                 <Box>
                   <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 0.5 }}>
-                    Transmission Time
+                    {faxDisabled ? 'Queue-only Test Jobs' : 'Job Status'}
                   </Typography>
                   <Typography variant="body2" color="text.secondary">
-                    • Most faxes complete within 2-5 minutes<br />
-                    • Large documents may take longer<br />
-                    • Check the Jobs tab to monitor progress<br />
-                    • You'll see real-time status updates there
+                    {faxDisabled ? <>Accepted jobs stay queued while outbound sending is disabled. This does not transmit a fax or simulate delivery.</> : <>Queue acceptance does not confirm delivery. Delivery timing and status depend on the configured provider.</>}<br />
+                    Check the Jobs tab to monitor the accepted job.
                   </Typography>
                 </Box>
               </Stack>

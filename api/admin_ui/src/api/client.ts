@@ -267,11 +267,11 @@ export class AdminAPIClient {
     return res.json();
   }
 
-  // Send test fax
-  async sendFax(to: string, file: File): Promise<{ id: string; status: string }> {
+  async sendFax(to: string, file: File, options: { queueOnly?: boolean } = {}): Promise<{ id: string; status: string }> {
     const formData = new FormData();
     formData.append('to', to);
     formData.append('file', file);
+    if (options.queueOnly) formData.append('queue_only', 'true');
 
     const res = await fetch(`${this.baseURL}/fax`, {
       method: 'POST',
@@ -282,6 +282,9 @@ export class AdminAPIClient {
     });
 
     if (!res.ok) {
+      if (options.queueOnly && res.status === 409) {
+        throw new Error('Queue-only submission was refused because active settings changed. Leave and reopen Send to review the current delivery mode before trying again.');
+      }
       throw new Error(`Send failed: ${res.status}`);
     }
 

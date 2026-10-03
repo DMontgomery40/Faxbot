@@ -58,6 +58,7 @@ import ScriptsTests from './components/ScriptsTests';
 import { ThemeProvider } from './theme/ThemeContext';
 import { ThemeToggle } from './components/ThemeToggle';
 import type { AdminDestination } from './navigation';
+import type { AdminConfig } from './api/types';
 
 interface TabPanelProps {
   children?: React.ReactNode;
@@ -95,7 +96,9 @@ function AppContent() {
   const [apiKey, setApiKey] = useState(initialStoredKey);
   const restoredStoredKey = useRef(false);
   const [client, setClient] = useState<AdminAPIClient | null>(null);
-  const [adminConfig, setAdminConfig] = useState<any | null>(null);
+  const [adminConfig, setAdminConfig] = useState<AdminConfig | null>(null);
+  const [sendConfigLoading, setSendConfigLoading] = useState(false);
+  const [sendConfigError, setSendConfigError] = useState<string | null>(null);
   const [authenticated, setAuthenticated] = useState(false);
   const [error, setError] = useState('');
   const [tabValue, setTabValue] = useState(0);
@@ -136,6 +139,10 @@ function AppContent() {
   };
 
   const handleTabChange = (newValue: number) => {
+    if (newValue === 1 && tabValue !== 1) {
+      setSendConfigLoading(true);
+      setSendConfigError(null);
+    }
     setTabValue(newValue);
     if (isMobile) {
       setMobileOpen(false);
@@ -171,6 +178,24 @@ function AppContent() {
     restoredStoredKey.current = true;
     if (initialStoredKey) void handleLogin(initialStoredKey);
   }, [initialStoredKey, handleLogin]);
+
+  // Returning from Settings must use active values rather than the initial
+  // login snapshot or a pending desired revision. Fetch through App's existing
+  // authenticated client; Send itself does not acquire an admin config reader.
+  useEffect(() => {
+    if (!client || tabValue !== 1) return;
+    let current = true;
+    setSendConfigLoading(true);
+    setSendConfigError(null);
+    void client.getConfig().then((config: AdminConfig) => {
+      if (current) setAdminConfig(config);
+    }).catch(() => {
+      if (current) setSendConfigError('Could not refresh active send settings. Leave and reopen Send to try again.');
+    }).finally(() => {
+      if (current) setSendConfigLoading(false);
+    });
+    return () => { current = false; };
+  }, [client, tabValue]);
 
   const tabIcons = [
     <DashboardIcon />,
@@ -604,7 +629,7 @@ function AppContent() {
           <Dashboard client={client!} onNavigate={handleNavigate} />
         </TabPanel>
         <TabPanel value={tabValue} index={1}>
-          <SendFax client={client!} />
+          <SendFax client={client!} config={adminConfig} configLoading={sendConfigLoading} configError={sendConfigError} />
         </TabPanel>
         <TabPanel value={tabValue} index={2}>
           <JobsList client={client!} />

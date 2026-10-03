@@ -1,5 +1,15 @@
 // TypeScript types for the admin API
 
+// These are the active operator fields consumed by App, unlike Settings,
+// which edits the desired revision.
+export interface AdminConfig {
+  fax_disabled: boolean;
+  max_file_size_mb: number;
+  branding?: { docs_base?: string; logo_path?: string };
+  inbound?: { enabled: boolean };
+  v3_plugins?: { enabled: boolean };
+}
+
 export interface HealthStatus {
   timestamp: string;
   backend: string;
