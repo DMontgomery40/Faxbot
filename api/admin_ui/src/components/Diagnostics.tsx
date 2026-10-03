@@ -143,15 +143,14 @@ function Diagnostics({ client, onNavigate, docsBase }: DiagnosticsProps) {
   const requestRestart = async () => {
     if (restartState === 'pending') return;
     setRestartState('pending');
-    setRestartMessage('Requesting API process restart…');
+    setRestartMessage('Requesting restart…');
     try {
       const result = await client.restart();
-      if (result?.ok !== true) throw new Error('The server did not accept the restart request.');
-      const note = typeof result.note === 'string' ? result.note : 'The API process will exit; its container manager is responsible for restarting it.';
-      setRestartMessage(`Restart request accepted. ${note} Startup has not been confirmed; reconnect and run diagnostics when the installation is available.`);
+      if (result?.ok !== true) throw new Error('The restart request was not accepted.');
+      setRestartMessage('Faxbot is restarting. Run diagnostics again once it is back.');
       setRestartState('success');
     } catch (err) {
-      setRestartMessage(err instanceof Error ? err.message : 'Failed to request API process restart');
+      setRestartMessage(err instanceof Error ? err.message : "Couldn't restart Faxbot.");
       setRestartState('error');
     }
   };
@@ -272,7 +271,7 @@ function Diagnostics({ client, onNavigate, docsBase }: DiagnosticsProps) {
                       </Box>
                       <CheckValue value={value} />
                     </Box>
-                    <Tooltip title="Settings and documentation guidance">
+                    <Tooltip title="Help">
                       <IconButton size="small" aria-label={`Help for ${displayName(section)} ${displayName(key)}`} onClick={() => {
                         setHelpSection(section);
                         setHelpKey(key);
@@ -324,7 +323,7 @@ function Diagnostics({ client, onNavigate, docsBase }: DiagnosticsProps) {
               <HealthIcon sx={{ fontSize: 48, color: 'text.secondary', mb: 2 }} />
               <Typography variant="h6" gutterBottom>Run System Diagnostics</Typography>
               <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-                Inspect active configuration and local readiness. Cloud provider delivery is not verified by these checks.
+                Check this installation's settings and dependencies. No fax is sent.
               </Typography>
               <Button variant="contained" startIcon={<DiagnosticIcon />} onClick={runDiagnostics} sx={{ borderRadius: 2 }}>Start Diagnostics</Button>
             </Paper>
@@ -336,7 +335,7 @@ function Diagnostics({ client, onNavigate, docsBase }: DiagnosticsProps) {
             <Box sx={{ textAlign: 'center' }}>
               <CircularProgress sx={{ mb: 2 }} />
               <Typography variant="body1">Running diagnostics…</Typography>
-              <Typography variant="caption" color="text.secondary">Checking active configuration and local installation readiness</Typography>
+              <Typography variant="caption" color="text.secondary">Checking settings and dependencies</Typography>
             </Box>
             <LinearProgress sx={{ mt: 3 }} />
           </Paper>
@@ -345,28 +344,21 @@ function Diagnostics({ client, onNavigate, docsBase }: DiagnosticsProps) {
         {diagnostics && (
           <Fade in>
             <Box>
-              <ResponsiveFormSection title="Diagnostic Summary" subtitle={`Local readiness: ${diagnostics.summary.healthy ? 'Ready' : 'Issues detected'}`} icon={<HealthIcon />}>
+              <ResponsiveFormSection title="Diagnostic Summary" subtitle={diagnostics.summary.healthy ? 'Ready' : 'Issues detected'} icon={<HealthIcon />}>
                 <Stack spacing={3}>
                   <Box>
-                    <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 1 }}>Local readiness</Typography>
                     <Chip icon={diagnostics.summary.healthy ? <CheckCircleIcon /> : <ErrorIcon />} label={diagnostics.summary.healthy ? 'Ready' : 'Issues detected'} color={diagnostics.summary.healthy ? 'success' : 'error'} sx={{ borderRadius: 1 }} />
-                    <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-                      These checks describe local readiness for the active configuration. They do not verify cloud provider delivery.
-                    </Typography>
                   </Box>
                   <Box sx={{ overflowWrap: 'anywhere' }}>
-                    <Typography variant="body2">Active outbound: <strong>{diagnostics.outbound_backend}</strong></Typography>
-                    <Typography variant="body2">Active inbound: <strong>{diagnostics.inbound_backend}</strong></Typography>
+                    <Typography variant="body2">Outbound provider: <strong>{diagnostics.outbound_backend}</strong></Typography>
+                    <Typography variant="body2">Inbound provider: <strong>{diagnostics.inbound_backend}</strong></Typography>
                     <Typography variant="body2">Default provider: <strong>{diagnostics.default_backend}</strong></Typography>
-                    <Typography variant="body2" sx={{ mt: 1 }}>Active revision: <Box component="code">{diagnostics.configuration.active_revision_id}</Box></Typography>
-                    <Typography variant="body2">Desired revision: <Box component="code">{diagnostics.configuration.desired_revision_id}</Box></Typography>
-                    <Typography variant="body2">Configuration generation: {diagnostics.configuration.generation}</Typography>
-                    <Chip label={diagnostics.configuration.pending_restart ? 'Desired changes pending full installation restart' : 'No pending configuration restart'} color={diagnostics.configuration.pending_restart ? 'warning' : 'default'} variant="outlined" size="small" sx={{ mt: 1, height: 'auto', '& .MuiChip-label': { py: 0.5, whiteSpace: 'normal' } }} />
+                    <Typography variant="body2">Restart needed: <strong>{diagnostics.configuration.pending_restart ? 'Yes' : 'No'}</strong></Typography>
                     <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 1 }}>Checked at {diagnostics.timestamp}</Typography>
                   </Box>
                   {issues.length > 0 && (
                     <Box>
-                      <Typography variant="subtitle2" fontWeight={600}>Server-reported issues and warnings</Typography>
+                      <Typography variant="subtitle2" fontWeight={600}>Issues</Typography>
                       <List dense>
                         {issues.map((issue, index) => (
                           <ListItem key={`${issue.severity}-${index}`} sx={{ px: 0, alignItems: 'flex-start' }}>
@@ -389,7 +381,7 @@ function Diagnostics({ client, onNavigate, docsBase }: DiagnosticsProps) {
               <ResponsiveFormSection title="Test a fax through Send" subtitle="Choose your own document and destination" icon={<SendIcon />}>
                 <Stack spacing={2}>
                   <Typography variant="body2" color="text.secondary">
-                    Open Send to choose a destination you control and review the active send setting. When sending is disabled, test jobs stay held and will never be automatically transmitted. When enabled, submitting can send a real fax through the active provider. Follow the resulting job to confirm its outcome.
+                    Send a test fax to a number you control, then follow it in Jobs.
                   </Typography>
                   <Box>
                     <Button variant="outlined" startIcon={<SendIcon />} onClick={() => onNavigate?.('send')} disabled={!onNavigate} sx={{ borderRadius: 2 }}>Open Send</Button>
@@ -400,7 +392,7 @@ function Diagnostics({ client, onNavigate, docsBase }: DiagnosticsProps) {
               <Box sx={{ mt: 3 }}>
                 <Typography variant="h6" fontWeight={600} sx={{ mb: 1 }}>System Checks</Typography>
                 <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                  Disabled features and provider metadata are informational; only applicable checks contribute to readiness.
+                  Info items don't affect the overall status.
                 </Typography>
                 {Object.entries(diagnostics.checks).map(([section, checks]) => renderCheckSection(section, checks))}
               </Box>
@@ -416,10 +408,7 @@ function Diagnostics({ client, onNavigate, docsBase }: DiagnosticsProps) {
         <DialogContent>
           <Stack spacing={2}>
             <Typography variant="body2">
-              Review provider selection, role-specific settings, and saved and active revisions in Settings. Diagnostics describe the active configuration; desired changes marked pending need a full installation restart.
-            </Typography>
-            <Typography variant="body2">
-              Use the server-reported issues and warnings to identify required action. Informational values describe feature state or metadata.
+              Provider and receiving options are in Settings; the guides below cover setup in detail.
             </Typography>
             {getHelpDocs(helpSection).map(doc => <Link key={doc.href} href={doc.href} target="_blank" rel="noreferrer">{doc.text}</Link>)}
           </Stack>
