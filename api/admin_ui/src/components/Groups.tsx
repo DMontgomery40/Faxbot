@@ -39,6 +39,7 @@ import {
   SelectField,
   StatusChip,
   loadFailure,
+  usePolicyRefresh,
   type LoadState,
 } from './access/AccessViews';
 import { resourceLabel } from './access/permissions';
@@ -79,6 +80,8 @@ function GroupMembers({ client, groupId, canManage, onChanged, onClose }: {
   }, [client, groupId, canManage]);
 
   useEffect(() => { void load(); }, [load]);
+  // Adding and removing members happen in this panel.
+  usePolicyRefresh(client, true);
 
   const reload = async () => {
     setError(null);
@@ -278,7 +281,7 @@ export default function Groups({ client, me }: { client: AdminAPIClient; me: Aut
           </TableContainer>
         )}
 
-      <FormDialog open={draft !== null} title={draft?.groupId ? 'Edit group' : 'Create group'} submitLabel={draft?.groupId ? 'Save' : 'Create group'}
+      <FormDialog client={client} open={draft !== null} title={draft?.groupId ? 'Edit group' : 'Create group'} submitLabel={draft?.groupId ? 'Save' : 'Create group'}
         busy={busy} error={error} canSubmit={Boolean(draft?.name.trim())} onSubmit={() => void save()}
         onClose={() => setDraft(null)} onReload={() => void reload()}>
         {draft && (

@@ -22,10 +22,12 @@ import DeleteIcon from '@mui/icons-material/Delete';
 import EditIcon from '@mui/icons-material/Edit';
 import ApproveIcon from '@mui/icons-material/TaskAlt';
 import KeyIcon from '@mui/icons-material/VpnKey';
+import PhoneIcon from '@mui/icons-material/PhoneIphone';
 import AdminAPIClient from '../api/client';
 import type { AccessKey, AccessUser, AuthMe } from '../api/types';
 import { endOfLocalDay, formatServerTime, isPast, localDay } from '../api/time';
 import SecretDialog, { type SecretReveal } from './access/SecretDialog';
+import PairPhoneDialog from './access/PairPhoneDialog';
 import {
   ConfirmDialog,
   EmptyState,
@@ -99,6 +101,8 @@ export default function ApiKeys({ client, me }: ApiKeysProps) {
   const [pendingError, setPendingError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
   const [reveal, setReveal] = useState<SecretReveal | null>(null);
+  const [pairing, setPairing] = useState(false);
+  const canPair = me.permissions.includes('tunnels:pair');
 
   const load = useCallback(async () => {
     setState((current) => (current === 'ready' ? current : 'loading'));
@@ -270,6 +274,11 @@ export default function ApiKeys({ client, me }: ApiKeysProps) {
   return (
     <Box>
       <ScreenHeader title="API Keys" subtitle="Keys let apps, scanners and phones use Faxbot." onRefresh={() => void reload()} busy={state === 'loading'}>
+        {canPair && (
+          <Button variant="outlined" startIcon={<PhoneIcon />} onClick={() => setPairing(true)}>
+            Pair a phone
+          </Button>
+        )}
         <Button variant="contained" startIcon={<AddIcon />} onClick={openCreate} disabled={state !== 'ready'}>
           Create key
         </Button>
@@ -295,6 +304,7 @@ export default function ApiKeys({ client, me }: ApiKeysProps) {
                       </Box>
                       <Typography variant="body2">Belongs to {key.principal.display_name}</Typography>
                       <Typography variant="body2" color="text.secondary">Expires: {formatServerTime(key.expires_at, 'Never')}</Typography>
+                      <Typography variant="body2" color="text.secondary">Last used: {formatServerTime(key.last_used_at, 'Never')}</Typography>
                       <PermissionChips permissions={permissionsOf(key)} />
                       <Box>{actions(key)}</Box>
                     </Stack>
@@ -343,7 +353,7 @@ export default function ApiKeys({ client, me }: ApiKeysProps) {
           </TableContainer>
         )}
 
-      <FormDialog
+      <FormDialog client={client}
         open={editor !== null}
         title={editor?.mode === 'edit' ? 'Edit key' : editor?.mode === 'approve' ? 'Approve key' : 'Create key'}
         submitLabel={editor?.mode === 'edit' ? 'Save' : editor?.mode === 'approve' ? 'Approve' : 'Create key'}
@@ -381,7 +391,7 @@ export default function ApiKeys({ client, me }: ApiKeysProps) {
         )}
       </FormDialog>
 
-      <ConfirmDialog
+      <ConfirmDialog client={client}
         open={pending !== null}
         title={pending?.action === 'rotate' ? 'Replace this key?' : 'Revoke this key?'}
         text={pending?.action === 'rotate'
@@ -397,6 +407,9 @@ export default function ApiKeys({ client, me }: ApiKeysProps) {
       />
 
       <SecretDialog reveal={reveal} onClose={() => setReveal(null)} />
+
+      {/* A paired phone gets its own key; show it when the dialog closes. */}
+      <PairPhoneDialog client={client} open={pairing} onClose={() => { setPairing(false); void load(); }} />
     </Box>
   );
 }

@@ -150,7 +150,7 @@ export default function Roles({ client, me }: { client: AdminAPIClient; me: Auth
         </Stack>
       )}
 
-      <FormDialog open={draft !== null} title={draft?.roleId ? 'Edit role' : 'Create role'} submitLabel={draft?.roleId ? 'Save' : 'Create role'}
+      <FormDialog client={client} open={draft !== null} title={draft?.roleId ? 'Edit role' : 'Create role'} submitLabel={draft?.roleId ? 'Save' : 'Create role'}
         busy={busy} error={error} canSubmit={Boolean(draft?.name.trim() && draft.permissions.length > 0)}
         onSubmit={() => void save()} onClose={() => setDraft(null)} onReload={() => void reload()}>
         {draft && (

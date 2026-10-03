@@ -124,7 +124,16 @@ export function EmptyState({ icon, title, text, action }: { icon: React.ReactNod
   );
 }
 
-export function ConfirmDialog({ open, title, text, confirmLabel, danger, busy, error, onConfirm, onCancel, onReload }: {
+// An access change starts when its dialog opens: read the current policy
+// version then, so the change is refused only if someone else edits access
+// while the dialog is open.
+export function usePolicyRefresh(client: AdminAPIClient | undefined, open: boolean) {
+  useEffect(() => {
+    if (open && client) void client.refreshPolicy();
+  }, [client, open]);
+}
+
+export function ConfirmDialog({ open, title, text, confirmLabel, danger, busy, error, onConfirm, onCancel, onReload, client }: {
   open: boolean;
   title: string;
   text: string;
@@ -135,8 +144,11 @@ export function ConfirmDialog({ open, title, text, confirmLabel, danger, busy, e
   onConfirm: () => void;
   onCancel: () => void;
   onReload?: () => void;
+  // Pass for access changes; the policy version is refreshed on open.
+  client?: AdminAPIClient;
 }) {
   const { isSmallMobile } = useSmallScreens();
+  usePolicyRefresh(client, open);
   return (
     <Dialog open={open} onClose={() => !busy && onCancel()} maxWidth="xs" fullWidth fullScreen={isSmallMobile}>
       <DialogTitle>{title}</DialogTitle>
@@ -155,7 +167,7 @@ export function ConfirmDialog({ open, title, text, confirmLabel, danger, busy, e
 }
 
 // A form dialog. Errors show inside it so the typed draft stays in place.
-export function FormDialog({ open, title, submitLabel, busy, error, canSubmit, onSubmit, onClose, onReload, children }: {
+export function FormDialog({ open, title, submitLabel, busy, error, canSubmit, onSubmit, onClose, onReload, children, client }: {
   open: boolean;
   title: string;
   submitLabel: string;
@@ -166,8 +178,11 @@ export function FormDialog({ open, title, submitLabel, busy, error, canSubmit, o
   onClose: () => void;
   onReload?: () => void;
   children: React.ReactNode;
+  // Pass for access changes; the policy version is refreshed on open.
+  client?: AdminAPIClient;
 }) {
   const { isSmallMobile } = useSmallScreens();
+  usePolicyRefresh(client, open);
   return (
     <Dialog open={open} onClose={() => !busy && onClose()} maxWidth="sm" fullWidth fullScreen={isSmallMobile}>
       <DialogTitle>{title}</DialogTitle>

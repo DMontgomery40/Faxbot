@@ -1,9 +1,8 @@
 import { useEffect, useState } from 'react';
-import { Alert, Box, Button, Chip, CircularProgress, Dialog, DialogActions, DialogContent, DialogTitle, Link, Paper, Stack, Typography } from '@mui/material';
+import { Box, Button, Chip, Link, Paper, Stack, Typography } from '@mui/material';
 import { Cloud, Security, VpnKey, VpnLock } from '@mui/icons-material';
-import AdminAPIClient, { AdminAPIError } from '../api/client';
-import { parseServerTime } from '../api/time';
-import QrCode from './common/QrCode';
+import AdminAPIClient from '../api/client';
+import PairPhoneDialog from './access/PairPhoneDialog';
 import { docsLink } from '../docsLinks';
 import type { TunnelStatus } from '../api/types';
 import { ResponsiveFormSection, ResponsiveSelect, ResponsiveTextField } from './common/ResponsiveFormFields';
@@ -16,8 +15,7 @@ export default function TunnelSettings({ client, docsBase, hipaaMode }: Props) {
   const [loading, setLoading] = useState<boolean>(false);
   const [saving, setSaving] = useState<boolean>(false);
   const [testing, setTesting] = useState<boolean>(false);
-  const [pairDialog, setPairDialog] = useState<{ open: boolean; code?: string; expires_at?: string; error?: string }>({ open: false });
-  const [remaining, setRemaining] = useState<number | null>(null);
+  const [pairing, setPairing] = useState(false);
   const [logsLoading, setLogsLoading] = useState<boolean>(false);
   const [logs, setLogs] = useState<string[]>([]);
 
@@ -79,31 +77,6 @@ export default function TunnelSettings({ client, docsBase, hipaaMode }: Props) {
       setTesting(false);
     }
   };
-
-  const pairIOS = async () => {
-    setPairDialog({ open: true });
-    setRemaining(null);
-    try {
-      const res = await client.createTunnelPairing();
-      setPairDialog({ open: true, code: res.code, expires_at: res.expires_at });
-    } catch (e: unknown) {
-      setPairDialog({
-        open: true,
-        error: e instanceof AdminAPIError && e.status === 403
-          ? 'This account is not allowed to pair devices.'
-          : 'Could not create a pairing code. Try again.',
-      });
-    }
-  };
-
-  useEffect(() => {
-    if (!pairDialog.open || !pairDialog.expires_at) return;
-    const expires = parseServerTime(pairDialog.expires_at)?.getTime() ?? 0;
-    const tick = () => setRemaining(Math.max(0, Math.ceil((expires - Date.now()) / 1000)));
-    tick();
-    const timer = window.setInterval(tick, 1000);
-    return () => window.clearInterval(timer);
-  }, [pairDialog.open, pairDialog.expires_at]);
 
   const cloudflareDisabled = Boolean(hipaaMode);
 
@@ -228,8 +201,8 @@ export default function TunnelSettings({ client, docsBase, hipaaMode }: Props) {
               Test Connectivity
               <InlineLoader loading={testing} />
             </Button>
-            <Button variant="outlined" onClick={pairIOS} sx={{ borderRadius: 2 }}>
-              Pair an iPhone
+            <Button variant="outlined" onClick={() => setPairing(true)} sx={{ borderRadius: 2 }}>
+              Pair a phone
             </Button>
             <Button variant="text" onClick={fetchLogs} disabled={logsLoading} sx={{ borderRadius: 2 }}>
               View Cloudflared Logs (tail)
@@ -251,41 +224,7 @@ export default function TunnelSettings({ client, docsBase, hipaaMode }: Props) {
         </Paper>
       )}
 
-      {/* Pairing dialog */}
-      <Dialog open={pairDialog.open} onClose={() => setPairDialog({ open: false })} maxWidth="xs" fullWidth>
-        <DialogTitle>Pair an iPhone</DialogTitle>
-        <DialogContent>
-          {pairDialog.error ? (
-            <Alert severity="error" sx={{ borderRadius: 2 }}>{pairDialog.error}</Alert>
-          ) : !pairDialog.code ? (
-            <Box display="flex" justifyContent="center" py={4}><CircularProgress aria-label="Creating pairing code" /></Box>
-          ) : remaining === 0 ? (
-            <Alert severity="info" sx={{ borderRadius: 2 }}>This code has expired. Create a new one.</Alert>
-          ) : (
-            <Stack alignItems="center" spacing={2}>
-              <Typography variant="body2" sx={{ textAlign: 'center' }}>
-                In the Faxbot app, scan this code or type the number.
-              </Typography>
-              <Box sx={{ p: 1, bgcolor: '#ffffff', borderRadius: 2, lineHeight: 0 }}>
-                <QrCode value={pairDialog.code} size={208} label={`Pairing code ${pairDialog.code}`} />
-              </Box>
-              <Typography variant="h2" component="p" data-testid="pairing-code"
-                sx={{ fontFamily: 'monospace', fontWeight: 700, letterSpacing: '0.2em', textAlign: 'center' }}>
-                {pairDialog.code}
-              </Typography>
-              {remaining !== null && (
-                <Typography variant="body2" color="text.secondary">
-                  Expires in {Math.floor(remaining / 60)}:{String(remaining % 60).padStart(2, '0')}
-                </Typography>
-              )}
-            </Stack>
-          )}
-        </DialogContent>
-        <DialogActions>
-          {(pairDialog.error || remaining === 0) && <Button onClick={() => void pairIOS()}>New code</Button>}
-          <Button onClick={() => setPairDialog({ open: false })}>Close</Button>
-        </DialogActions>
-      </Dialog>
+      <PairPhoneDialog client={client} open={pairing} onClose={() => setPairing(false)} />
     </Box>
   );
 }
