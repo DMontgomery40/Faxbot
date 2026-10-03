@@ -40,10 +40,10 @@
 **Interfaces:** `schema_access.REVISION='0005_access_control'`, `TABLES`, `frozen_metadata(*,dialect='sqlite')->MetaData`, `upgrade_access(connection,operations)->None`. Freeze exact table/column/constraint inventory in the reviewed task brief before implementation. Existing `upgrade_schema(engine)` remains the only production migration entry.
 
 - [x] Primary and independent reviewer settled concrete metadata/legacy mapping; task brief pins15 tables,36 permissions, source-bound sessions and stable mailbox routes. No runtime auth changes in this task.
-- [ ] Write internal failing clean/0004 SQLite/PostgreSQL upgrades, preserved key/token/delivery rows, normalized login/role uniqueness, invalid FK/assignment/resource shapes, legacy-owner noninference and rollback/namespace conflict cases.
-- [ ] Implement the frozen schema, deterministic seed catalogue/builtin roles, conservative key/principal/resource migration and safe schema validation of0001–0005.
-- [ ] Run only migration/schema module tests locally in isolated databases; all expected cases pass without modifying existing migration files.
-- [ ] Independent spec/code review, exact-file commit; no claim new schema enforces routes yet.
+- [x] Write internal failing clean/0004 SQLite/PostgreSQL upgrades, preserved key/token/delivery rows, normalized login/role uniqueness, invalid FK/assignment/resource shapes, legacy-owner noninference and rollback/namespace conflict cases.
+- [x] Implement the frozen schema, deterministic seed catalogue/builtin roles, conservative key/principal/resource migration and safe schema validation of0001–0005.
+- [x] Run only migration/schema module tests locally in isolated databases; all expected cases pass without modifying existing migration files.
+- [x] Independent spec/code review, exact-file commit; no claim new schema enforces routes yet.
 
 ### Task2: One policy and mutation module
 

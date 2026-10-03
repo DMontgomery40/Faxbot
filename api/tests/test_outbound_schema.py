@@ -7,7 +7,7 @@ from alembic.config import Config
 import pytest
 import sqlalchemy as sa
 
-from api.app.schema import API_DIRECTORY, SchemaUpgradeError, upgrade_schema, validate_schema
+from api.app.schema import API_DIRECTORY, SchemaUpgradeError, validate_schema
 from api.tests.test_schema import database, isolated_operator_database, snapshot, schema_description
 
 
@@ -15,6 +15,15 @@ PRIOR = "0003_configuration"
 HEAD = "0004_outbound_delivery"
 TABLES = {"outbound_attempts", "outbound_deliveries", "outbound_events"}
 OLD = datetime(2025, 1, 2, 3, 4, 5, 123456)
+
+
+def upgrade_schema(engine):
+    """These historical assertions intentionally target the frozen0004 contract."""
+    config = Config(str(API_DIRECTORY / "alembic.ini"))
+    config.set_main_option("script_location", str(API_DIRECTORY / "alembic"))
+    with engine.connect() as connection:
+        config.attributes["connection"] = connection
+        command.upgrade(config, HEAD)
 
 
 def prior_schema(engine):
