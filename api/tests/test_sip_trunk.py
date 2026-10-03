@@ -138,3 +138,26 @@ def test_command_line_writes_from_the_environment_without_printing_secrets(tmp_p
     monkeypatch.setenv('SIP_TRUNK_PASSWORD', '')
     assert sip_trunk.main(['write']) == 1
     assert sip_trunk.main([]) == 2
+
+
+def test_rate_card_seed_covers_every_carrier_preset_with_dated_sources():
+    import json
+    import re
+    from datetime import date
+    document = json.loads((Path(__file__).resolve().parents[2] / 'config' / 'rate_cards.json').read_text())
+    cards = document['cards']
+    carriers = {preset for preset in sip_trunk.PRESETS if preset != 'custom'}
+    assert {(card['preset'], card['direction']) for card in cards} == {
+        (preset, direction) for preset in carriers for direction in ('outbound', 'inbound')}
+    money = re.compile(r'[0-9]+(?:\.[0-9]{1,6})?')
+    for card in cards:
+        assert card['provider_id'] == 'sip-' + card['preset'] and card['provider'] == 'sip'
+        assert card['currency'] == 'USD' and date.fromisoformat(card['advertised_on']) == date(2026, 10, 3)
+        assert card['source_url'].startswith('https://') and card['source_url'] in card['sources'] or \
+            card['source_url'] == card['sources'][0]
+        for field in ('per_minute', 'per_page', 'per_call', 'number_rental_monthly', 'number_setup'):
+            assert card[field] is None or money.fullmatch(card[field]), (card['label'], field)
+        assert card['billing_increment_seconds'] in (None, 1, 6, 60)
+        assert card['rounding'] in {'whole_minute', 'per_second', '6_second', 'not_published'}
+        assert (card['billing_increment_seconds'] is None) == (card['rounding'] == 'not_published')
+        assert card['notes'].endswith('.')
