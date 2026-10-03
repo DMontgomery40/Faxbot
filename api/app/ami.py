@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import contextlib
 import logging
 import re
@@ -9,6 +10,7 @@ from .config import settings
 
 LOGIN_TIMEOUT_SECONDS = 10.0
 ORIGINATE_RESPONSE_TIMEOUT_SECONDS = 10.0
+AMI_MAX_LINE_BYTES = 1024
 
 
 def _validate_headers(fields: Dict[str, str]):
@@ -19,6 +21,12 @@ def _validate_headers(fields: Dict[str, str]):
             or any(ord(char) < 32 or ord(char) == 127 for char in value)
         ):
             raise ValueError("Unsupported AMI header value")
+        try:
+            line_bytes = len(f"{key}: {value}\r\n".encode("utf-8"))
+        except UnicodeEncodeError:
+            raise ValueError("Unsupported AMI header value") from None
+        if line_bytes > AMI_MAX_LINE_BYTES:
+            raise ValueError("AMI header exceeds the supported wire limit")
 
 
 def prepare_originate_fields(
@@ -27,12 +35,14 @@ def prepare_originate_fields(
     tiff_path: str,
     *,
     caller_id: str,
+    header: str = "",
     attempt_id: Optional[str] = None,
 ) -> Dict[str, str]:
-    """Validate native arguments before a durable submission marker or any I/O.
+    """Prepare one direct PJSIP call before a durable marker or any I/O.
 
     Spaces are literal path characters. Dialplan/variable separators and
-    expansion/quoting syntax are unsupported rather than silently escaped.
+    expansion/quoting syntax in paths are refused. Captured UTF-8 metadata is
+    base64 encoded so commas and expansion syntax remain literal data.
     """
     for identity in (job_id,) if attempt_id is None else (job_id, attempt_id):
         if not isinstance(identity, str) or not re.fullmatch(
@@ -45,7 +55,16 @@ def prepare_originate_fields(
         r"[A-Za-z0-9_./ -]+", tiff_path
     ):
         raise ValueError("Unsupported AMI artifact path syntax")
-    variables = {"JOBID": job_id, "DEST": dest, "FAXFILE": tiff_path}
+    _validate_headers({"CallerID": caller_id})
+    metadata = {}
+    for key, value in (("FAXHEADER64", header), ("FAXSTATION64", caller_id)):
+        if not isinstance(value, str) or "\x00" in value:
+            raise ValueError("Unsupported AMI fax metadata")
+        try:
+            metadata[key] = base64.b64encode(value.encode("utf-8")).decode("ascii")
+        except UnicodeEncodeError:
+            raise ValueError("Unsupported AMI fax metadata") from None
+    variables = {"JOBID": job_id, "FAXFILE": tiff_path, **metadata}
     if attempt_id is not None:
         variables["FAXATTEMPT"] = attempt_id
     fields = {
@@ -53,8 +72,8 @@ def prepare_originate_fields(
         "ActionID": (
             f"faxbot:{job_id}:{attempt_id}" if attempt_id is not None else str(uuid4())
         ),
-        "Channel": "Local/s@faxout",
-        "Context": "faxout",
+        "Channel": f"PJSIP/{dest}@trunk-endpoint",
+        "Context": "faxbot-send",
         "Exten": "s",
         "Priority": "1",
         "Async": "true",
@@ -275,6 +294,7 @@ class AMIClient:
             dest,
             tiff_path,
             caller_id=settings.fax_station_id,
+            header=settings.fax_header,
             attempt_id=attempt_id,
         )
         await self._send_action(fields)

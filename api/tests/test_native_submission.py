@@ -1,7 +1,10 @@
 """Internal native acknowledgement contracts; no real telephony commands."""
 
 import asyncio
+import base64
 from contextlib import asynccontextmanager
+from pathlib import Path
+import re
 import subprocess
 
 import pytest
@@ -33,12 +36,15 @@ def test_native_preparation_is_explicit_and_matches_the_issued_contract():
     assert fields == {
         "Action": "Originate",
         "ActionID": f"faxbot:{JOB}:{ATTEMPT}",
-        "Channel": "Local/s@faxout",
-        "Context": "faxout",
+        "Channel": "PJSIP/+15555550123@trunk-endpoint",
+        "Context": "faxbot-send",
         "Exten": "s",
         "Priority": "1",
         "Async": "true",
-        "Variable": f"JOBID={JOB},DEST=+15555550123,FAXFILE=/fax data/a.tif,FAXATTEMPT={ATTEMPT}",
+        "Variable": (
+            f"JOBID={JOB},FAXFILE=/fax data/a.tif,FAXHEADER64=,"
+            f"FAXSTATION64=KzE1NTU1NTUwMTAw,FAXATTEMPT={ATTEMPT}"
+        ),
         "CallerID": "+15555550100",
     }
     assert build(
@@ -54,6 +60,132 @@ def test_native_preparation_is_explicit_and_matches_the_issued_contract():
         f"faxbot_job_id={JOB},faxbot_attempt_id={ATTEMPT}"
         + "}sofia/gateway/my_gateway/15555550123 &txfax(/fax/a.tif)"
     )
+
+
+@pytest.mark.parametrize(
+    "header", ["", "Faxbot", "Captured, Ω ^ ${ENV(FAX_HEADER)}\r\nnot-an-AMI-header"]
+)
+def test_ami_captured_metadata_is_encoded_without_variable_or_header_injection(header):
+    station = 'Synthetic, "Ω" ${ENV(FAX_LOCAL_STATION_ID)}'
+    fields = ami.prepare_originate_fields(
+        JOB,
+        "15555550123",
+        "/fax/a.tif",
+        caller_id=station,
+        header=header,
+        attempt_id=ATTEMPT,
+    )
+    variables = dict(part.split("=", 1) for part in fields["Variable"].split(","))
+    assert set(variables) == {
+        "JOBID",
+        "FAXFILE",
+        "FAXHEADER64",
+        "FAXSTATION64",
+        "FAXATTEMPT",
+    }
+    assert base64.b64decode(variables["FAXHEADER64"], validate=True).decode() == header
+    assert (
+        base64.b64decode(variables["FAXSTATION64"], validate=True).decode() == station
+    )
+    assert fields["Channel"] == "PJSIP/15555550123@trunk-endpoint"
+    assert fields["CallerID"] == station
+    assert "\r" not in fields["Variable"] and "\n" not in fields["Variable"]
+
+
+@pytest.mark.parametrize(
+    "header", [None, 17, "synthetic\x00header", "synthetic\ud800header"]
+)
+def test_ami_unrepresentable_header_is_refused_during_preflight(header):
+    with pytest.raises(ValueError) as error:
+        ami.prepare_originate_fields(
+            JOB,
+            "15555550123",
+            "/fax/a.tif",
+            caller_id="15555550100",
+            header=header,
+        )
+    assert "synthetic" not in str(error.value)
+
+
+@pytest.mark.parametrize("field", ["header", "caller_id", "tiff_path"])
+def test_ami_oversized_wire_line_is_refused_before_submission(field):
+    kwargs = {"header": "Faxbot", "caller_id": "15555550100", "tiff_path": "/fax/a.tif"}
+    kwargs[field] = "a" * 1000
+    with pytest.raises(ValueError) as error:
+        ami.prepare_originate_fields(JOB, "15555550123", **kwargs, attempt_id=ATTEMPT)
+    assert kwargs[field] not in str(error.value)
+
+
+def test_ami_line_boundary_counts_encoded_bytes_and_crlf():
+    ami._validate_headers({"Variable": "a" * 1012})
+    with pytest.raises(ValueError):
+        ami._validate_headers({"Variable": "a" * 1013})
+    with pytest.raises(ValueError):
+        ami._validate_headers({"CallerID": "Ω" * 507})
+
+
+def test_ami_dedicated_dialplan_has_one_send_and_one_terminal_hangup_observation():
+    """The direct post-answer flow cannot enter a second Dial or emit success twice."""
+    text = (
+        Path(__file__).resolve().parents[2] / "asterisk/etc/asterisk/extensions.conf"
+    ).read_text()
+    contexts = {}
+    context = None
+    for raw in text.splitlines():
+        line = raw.strip()
+        if line.startswith("["):
+            context = line[1:-1]
+            contexts[context] = []
+        elif context and line and not line.startswith(";"):
+            contexts[context].append(line)
+    assert {
+        "faxout",
+        "faxsend",
+        "fax-hangup",
+    } <= contexts.keys(), "legacy contexts were removed"
+    send, terminal = contexts["faxbot-send"], contexts["faxbot-result"]
+    applications = []
+    for line in send + terminal:
+        match = re.fullmatch(
+            r"(?:exten\s*=>\s*[^,]+,[^,]+|same\s*=>\s*[^,]+),([A-Za-z]+)\((.*)\)", line
+        )
+        assert match, f"unexpected dedicated dialplan syntax: {line}"
+        applications.append(match.group(1))
+    assert set(applications) <= {
+        "Set",
+        "GotoIf",
+        "Goto",
+        "SendFAX",
+        "Hangup",
+        "UserEvent",
+        "Return",
+    }
+    assert applications.count("SendFAX") == 1
+    assert sum("UserEvent(FaxResult," in line for line in send) == 0
+    assert sum("UserEvent(FaxResult," in line for line in terminal) == 1
+    assert (
+        "CHANNEL(hangup_handler_push)=faxbot-result,s,1(${JOBID},${FAXATTEMPT})"
+        in send[0]
+    )
+    assert sum("hangup_handler_push" in line for line in send + terminal) == 1
+    assert any("FAXRESULT_EMITTED" in line and "GotoIf" in line for line in terminal)
+    assert any("Set(FAXRESULT_EMITTED=1)" in line for line in terminal)
+    assert terminal[-1].endswith("Return()")
+    event = next(line for line in terminal if "UserEvent(FaxResult," in line)
+    for field in (
+        "JobID:${ARG1}",
+        "AttemptID:${ARG2}",
+        "Status:${FAXSTATUS}",
+        "Error:${FAXERROR}",
+        "Pages:${FAXPAGES}",
+    ):
+        assert field in event
+    flow = "\n".join(send + terminal)
+    assert "ENV(" not in flow and "Local/" not in flow
+    assert "Set(FAXOPT(headerinfo)=${BASE64_DECODE(${FAXHEADER64})})" in flow
+    assert "Set(FAXOPT(localstationid)=${BASE64_DECODE(${FAXSTATION64})})" in flow
+    assert flow.index("BASE64_DECODE(ZmF4Ym90)") < flow.index("SendFAX(")
+    assert "HEADER_CODEC_UNAVAILABLE" in flow
 
 
 class StreamWriter:
@@ -96,6 +228,42 @@ async def connected_stream(monkeypatch):
             await client.close()
             read_task.cancel()
             await asyncio.gather(read_task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_ami_adapter_issues_captured_metadata_even_when_environment_changes(
+    monkeypatch,
+):
+    async with connected_stream(monkeypatch) as (client, writer):
+        header, station = "Captured, Ω ${unsafe}", "15555550177"
+        values = ConfigurationValues.from_environment(
+            {"FAX_HEADER": header, "FAX_LOCAL_STATION_ID": station}
+        )
+        monkeypatch.setenv("FAX_HEADER", "later-environment")
+        monkeypatch.setenv("FAX_LOCAL_STATION_ID", "15555550999")
+        with use_configuration(values):
+            task = asyncio.create_task(
+                client.originate_sendfax(
+                    JOB, "15555550123", "/fax/a.tif", attempt_id=ATTEMPT
+                )
+            )
+        try:
+            raw = (await writer.requests.get()).decode()
+            fields = dict(line.split(": ", 1) for line in raw.splitlines() if line)
+            variables = dict(
+                part.split("=", 1) for part in fields["Variable"].split(",")
+            )
+            assert base64.b64decode(variables["FAXHEADER64"]).decode() == header
+            assert base64.b64decode(variables["FAXSTATION64"]).decode() == station
+            assert fields["CallerID"] == station
+            assert fields["Channel"] == "PJSIP/15555550123@trunk-endpoint"
+            assert fields["Context"] == "faxbot-send"
+            assert header not in raw and "later-environment" not in raw
+            feed_response(client, fields["ActionID"])
+            await task
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
 
 
 def feed_response(client, action_id, *, response="Success", event=None):
