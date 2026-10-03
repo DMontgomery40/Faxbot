@@ -2,6 +2,8 @@ import type {
   HealthStatus,
   FaxJob,
   FaxSendResult,
+  OperatorDelivery,
+  ProviderIdentityConfirmation,
   ApiKey,
   Settings,
   SettingsPatch,
@@ -31,6 +33,25 @@ const safeRefreshDetails = new Set([
   'This provider reports status through callbacks; refresh is unsupported.',
   'This fax requires reconciliation with its original provider account before refresh.',
   'Provider status is temporarily unavailable. This fax has not been resubmitted.',
+]);
+
+const safeReconciliationDetails = new Set([
+  'Delivery record is unavailable.',
+  'Delivery changed; reload before attaching a provider identity.',
+  'Only an unresolved submitted delivery can receive a confirmed provider identity.',
+  'Historical delivery requires deliberate maintenance reconciliation of its original account.',
+  'Held or unsupported dispatch mode requires deliberate maintenance reconciliation.',
+  'No verified submitted attempt is available; deliberate maintenance reconciliation is required.',
+  'The attempt is not an unresolved submission; deliberate maintenance reconciliation is required.',
+  'The original provider account could not be authenticated; deliberate maintenance reconciliation is required.',
+  'A provider identity is already attached; refresh the original account instead.',
+  'This captured provider cannot refresh status; deliberate maintenance reconciliation is required.',
+  'This provider identity already belongs to another delivery from the original account.',
+]);
+
+const safeReconciliationInputDetails = new Set([
+  'Confirm that this fax ID matches the fax in its original provider account.',
+  'Invalid provider identity reconciliation input.',
 ]);
 
 export function normalizeFaxDestination(number: string): string {
@@ -195,6 +216,35 @@ export class AdminAPIClient {
   async getJob(id: string): Promise<FaxJob> {
     const res = await this.fetch(`/admin/fax-jobs/${id}`);
     return res.json();
+  }
+
+  private async deliveryRequest(id: string, confirmation?: ProviderIdentityConfirmation): Promise<OperatorDelivery> {
+    const attaching = confirmation !== undefined;
+    const res = await fetch(`${this.baseURL}/admin/fax-jobs/${encodeURIComponent(id)}/${attaching ? 'reconcile' : 'delivery'}`, {
+      method: attaching ? 'POST' : 'GET',
+      headers: { 'X-API-Key': this.apiKey, 'Content-Type': 'application/json' },
+      ...(attaching ? { body: JSON.stringify(confirmation) } : {}),
+    });
+    if (!res.ok) {
+      if (res.status === 400 || res.status === 409) {
+        const body = await res.json().catch(() => null);
+        const detail = body?.detail;
+        const safe = typeof detail === 'string' && (attaching
+          ? (res.status === 409 ? safeReconciliationDetails : safeReconciliationInputDetails).has(detail)
+          : res.status === 409 && detail === 'Delivery history is unavailable; reload the job before continuing.');
+        if (safe) throw new Error(detail);
+      }
+      throw new Error(`${attaching ? 'Provider identity attachment' : 'Delivery history request'} failed (HTTP ${res.status}). Reload delivery before continuing.`);
+    }
+    return res.json();
+  }
+
+  async getDelivery(id: string): Promise<OperatorDelivery> {
+    return this.deliveryRequest(id);
+  }
+
+  async attachProviderIdentity(id: string, confirmation: ProviderIdentityConfirmation): Promise<OperatorDelivery> {
+    return this.deliveryRequest(id, confirmation);
   }
 
   async downloadJobPdf(id: string): Promise<Blob> {

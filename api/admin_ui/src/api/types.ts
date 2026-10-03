@@ -51,6 +51,47 @@ export interface FaxJob extends DeliveryMetadata {
   file_name?: string;
 }
 
+export interface DeliveryHistoryEvent {
+  id: string;
+  attempt_id: string | null;
+  kind: string;
+  created_at: string;
+  details: {
+    category?: string;
+    status?: string;
+    dispatch_mode?: string;
+    actor?: string;
+    provider_sid?: string;
+    legacy_status?: string;
+  };
+}
+
+export interface OperatorDelivery {
+  version: number;
+  state: string;
+  dispatch_mode: string;
+  provider_id: string | null;
+  profile_id: string | null;
+  revision_id: string | null;
+  attempt: {
+    id: string;
+    phase: string;
+    provider_sid: string | null;
+    submitted_at: string | null;
+    completed_at: string | null;
+  } | null;
+  can_bind_provider_identity: boolean;
+  bind_refusal_reason: string | null;
+  events: DeliveryHistoryEvent[];
+  events_truncated: boolean;
+}
+
+export interface ProviderIdentityConfirmation {
+  expected_version: number;
+  provider_sid: string;
+  confirm_original_account: true;
+}
+
 export interface ApiKey {
   key_id: string;
   name?: string;
