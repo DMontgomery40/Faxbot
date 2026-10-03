@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import AdminAPIClient from '../api/client';
+import Inbound from '../components/Inbound';
 import Logs from '../components/Logs';
 import MCP from '../components/MCP';
 import { server } from '../test/server';
@@ -149,5 +150,44 @@ describe('MCP health check', () => {
   it('does not count an unrelated JSON reply as a healthy MCP server', async () => {
     mcpServer(() => HttpResponse.json({ status: 'ok' }));
     await expect(keyClient().getMcpHealth('/mcp/http/health')).rejects.toThrow();
+  });
+});
+
+describe('Inbox for people without provider access', () => {
+  function inboxServer() {
+    const calls = { callbacks: 0 };
+    server.use(
+      http.get('/inbound', () => HttpResponse.json([])),
+      http.get('/admin/inbound/callbacks', () => {
+        calls.callbacks += 1;
+        return HttpResponse.json({ detail: 'Permission denied.' }, { status: 403 });
+      }),
+    );
+    return calls;
+  }
+
+  it('hides provider setup and test faxes from a fax operator and never shows a raw error', async () => {
+    const calls = inboxServer();
+    const operator = new Set(['fax:send', 'fax:read', 'fax:document', 'inbound:list', 'inbound:read', 'inbound:document']);
+    render(<Inbound client={keyClient()} inboundEnabled permissions={operator} />);
+
+    expect(await screen.findByText('No Inbound Faxes')).toBeTruthy();
+    expect(screen.queryByText('Inbound Fax Configuration')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Add Test Fax' })).toBeNull();
+    expect(screen.queryByText(/API Error|403|Forbidden/)).toBeNull();
+    expect(calls.callbacks).toBe(0);
+  });
+
+  it('shows provider setup to provider readers and the test fax button only with provider changes allowed', async () => {
+    inboxServer();
+    const { unmount } = render(<Inbound client={keyClient()} inboundEnabled permissions={new Set(['inbound:list', 'providers:read'])} />);
+    expect(await screen.findByText('Inbound Fax Configuration')).toBeTruthy();
+    expect(await screen.findByText("Callback details couldn't be loaded. Select Refresh to try again.")).toBeTruthy();
+    expect(screen.queryByText(/API Error|Forbidden/)).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Add Test Fax' })).toBeNull();
+    unmount();
+
+    render(<Inbound client={keyClient()} inboundEnabled permissions={new Set(['inbound:list', 'providers:read', 'providers:write'])} />);
+    expect(await screen.findByRole('button', { name: 'Add Test Fax' })).toBeTruthy();
   });
 });
