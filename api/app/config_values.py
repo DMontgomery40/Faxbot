@@ -41,6 +41,27 @@ class ConfigurationValues(BaseModel):
     fs_gateway_name: str = Field('gw_signalwire', validation_alias='FREESWITCH_GATEWAY_NAME')
     fs_caller_id_number: str = Field('3035551234', validation_alias='FREESWITCH_CALLER_ID_NUMBER')
     fs_t38_enable: bool = Field(True, validation_alias='FREESWITCH_T38_ENABLE')
+    # SIP trunk for Faxbot's own fax engine (Asterisk). Empty preset keeps the
+    # older SIP_USERNAME/SIP_SERVER container settings; empty host, port,
+    # transport and codecs use the preset's documented values (see sip_trunk.py).
+    sip_trunk_preset: str = Field('', validation_alias='SIP_TRUNK_PRESET',
+                                  pattern=r'^(?:|telnyx|signalwire|sinch|anveo|flowroute|custom)$')
+    sip_trunk_auth: str = Field('registration', validation_alias='SIP_TRUNK_AUTH', pattern=r'^(?:registration|ip)$')
+    sip_trunk_host: str = Field('', validation_alias='SIP_TRUNK_HOST',
+                                pattern=r'^(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*)?$')
+    sip_trunk_port: int = Field(0, validation_alias='SIP_TRUNK_PORT', ge=0, le=65535)
+    sip_trunk_transport: str = Field('', validation_alias='SIP_TRUNK_TRANSPORT', pattern=r'^(?:|udp|tcp|tls)$')
+    sip_trunk_username: str = Field('', validation_alias='SIP_TRUNK_USERNAME', pattern=r'^[A-Za-z0-9_.+-]{0,128}$')
+    sip_trunk_password: str = Field('', validation_alias='SIP_TRUNK_PASSWORD', repr=False, json_schema_extra={'secret': True},
+                                    pattern=r'^(?:[!-:<-\[\]-~](?:[ !-:<-\[\]-~]{0,126}[!-:<-\[\]-~])?)?$')
+    sip_trunk_outbound_proxy: str = Field('', validation_alias='SIP_TRUNK_OUTBOUND_PROXY',
+                                          pattern=r'^(?:[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?(?::[0-9]{1,5})?)?$')
+    sip_trunk_caller_id: str = Field('', validation_alias='SIP_TRUNK_CALLER_ID', pattern=r'^(?:\+[1-9][0-9]{6,14})?$')
+    sip_trunk_dids: str = Field('', validation_alias='SIP_TRUNK_DIDS',
+                                pattern=r'^(?:\+[1-9][0-9]{6,14}(?:\s*,\s*\+[1-9][0-9]{6,14}){0,99})?$')
+    sip_t38_enabled: bool = Field(True, validation_alias='SIP_T38_ENABLED')
+    sip_fax_preference_header: bool = Field(False, validation_alias='SIP_FAX_PREFERENCE_HEADER')
+    sip_trunk_codecs: str = Field('', validation_alias='SIP_TRUNK_CODECS', pattern=r'^(?:(?:ulaw|alaw)(?:,(?:ulaw|alaw))?)?$')
     phaxio_api_key: str = Field('', validation_alias='PHAXIO_API_KEY', repr=False, json_schema_extra={'secret': True})
     phaxio_api_secret: str = Field('', validation_alias='PHAXIO_API_SECRET', repr=False, json_schema_extra={'secret': True})
     phaxio_callback_token: str = Field('', validation_alias='PHAXIO_CALLBACK_TOKEN', repr=False, json_schema_extra={'secret': True})
@@ -211,3 +232,13 @@ class ConfigurationValues(BaseModel):
     @property
     def effective_inbound(self) -> str:
         return self.inbound_backend or self.fax_backend
+
+    @property
+    def sip_trunk_did_list(self) -> tuple[str, ...]:
+        """Numbers the carrier routes to this trunk, in entered order, without repeats."""
+        result = []
+        for part in self.sip_trunk_dids.split(','):
+            number = part.strip()
+            if number and number not in result:
+                result.append(number)
+        return tuple(result)
