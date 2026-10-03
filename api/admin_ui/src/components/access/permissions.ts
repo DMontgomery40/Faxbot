@@ -1,4 +1,4 @@
-import type { AuthMe, PermissionGroup, PermissionInfo } from '../../api/types';
+import type { AccessResource, AuthMe, PermissionGroup, PermissionInfo } from '../../api/types';
 
 // Plain-language names for the permission catalogue.
 export const PERMISSION_LABELS: Record<string, string> = {
@@ -72,4 +72,14 @@ export function permissionLabel(permission: string): string {
 // Permissions the signed-in identity may hand out at the installation.
 export function grantable(me: AuthMe): Set<string> {
   return new Set(me.grantable?.installation ?? me.permissions);
+}
+
+export function resourceLabel(resource: Pick<AccessResource, 'kind' | 'name'>): string {
+  switch (resource.kind) {
+    case 'installation': return 'Everything';
+    case 'mailbox': return `Mailbox: ${resource.name}`;
+    case 'personal': return `${resource.name}'s own faxes`;
+    case 'legacy': return 'Earlier faxes without an owner';
+    default: return resource.name;
+  }
 }

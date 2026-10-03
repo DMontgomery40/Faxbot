@@ -50,20 +50,11 @@ import {
   loadFailure,
   type LoadState,
 } from './access/AccessViews';
+import { resourceLabel } from './access/permissions';
 
 type Section = 'assignments' | 'mailboxes' | 'numbers';
 
 export const INSTALLATION_WARNING = 'Applies to every fax and mailbox, including history';
-
-export function resourceLabel(resource: Pick<AccessResource, 'kind' | 'name'>): string {
-  switch (resource.kind) {
-    case 'installation': return 'Everything';
-    case 'mailbox': return `Mailbox: ${resource.name}`;
-    case 'personal': return `${resource.name}'s own faxes`;
-    case 'legacy': return 'Earlier faxes without an owner';
-    default: return resource.name;
-  }
-}
 
 // Shared reload: refresh the policy version, then the section's data.
 function useSection<T>(client: AdminAPIClient, fetcher: () => Promise<T>) {
