@@ -60,6 +60,8 @@ import { ThemeToggle } from './components/ThemeToggle';
 import type { AdminDestination } from './navigation';
 import type { AdminConfig } from './api/types';
 
+type ToolDestination = 'terminal' | 'diagnostics' | 'logs' | 'plugins' | 'scripts';
+
 interface TabPanelProps {
   children?: React.ReactNode;
   index: number;
@@ -97,13 +99,13 @@ function AppContent() {
   const restoredStoredKey = useRef(false);
   const [client, setClient] = useState<AdminAPIClient | null>(null);
   const [adminConfig, setAdminConfig] = useState<AdminConfig | null>(null);
-  const [sendConfigLoading, setSendConfigLoading] = useState(false);
-  const [sendConfigError, setSendConfigError] = useState<string | null>(null);
+  const [activeConfigLoading, setActiveConfigLoading] = useState(false);
+  const [activeConfigError, setActiveConfigError] = useState<string | null>(null);
   const [authenticated, setAuthenticated] = useState(false);
   const [error, setError] = useState('');
   const [tabValue, setTabValue] = useState(0);
   const [settingsTab, setSettingsTab] = useState(0); // 0: Setup, 1: Settings, 2: Keys, 3: MCP
-  const [toolsTab, setToolsTab] = useState(0); // 0: Terminal, 1: Diagnostics, 2: Logs, 3: Plugins, 4: Scripts & Tests
+  const [toolsTab, setToolsTab] = useState<ToolDestination>('terminal');
   const [mobileOpen, setMobileOpen] = useState(false);
 
   const handleLogin = useCallback(async (key: string) => {
@@ -139,9 +141,9 @@ function AppContent() {
   };
 
   const handleTabChange = (newValue: number) => {
-    if (newValue === 1 && tabValue !== 1) {
-      setSendConfigLoading(true);
-      setSendConfigError(null);
+    if ((newValue === 1 || newValue === 3 || newValue === 5) && tabValue !== newValue) {
+      setActiveConfigLoading(true);
+      setActiveConfigError(null);
     }
     setTabValue(newValue);
     if (isMobile) {
@@ -166,7 +168,7 @@ function AppContent() {
         handleTabChange(4);
         break;
       case 'diagnostics':
-        setToolsTab(1);
+        setToolsTab('diagnostics');
         handleTabChange(5);
         break;
     }
@@ -179,20 +181,25 @@ function AppContent() {
     if (initialStoredKey) void handleLogin(initialStoredKey);
   }, [initialStoredKey, handleLogin]);
 
-  // Returning from Settings must use active values rather than the initial
-  // login snapshot or a pending desired revision. Fetch through App's existing
-  // authenticated client; Send itself does not acquire an admin config reader.
+  // Config-dependent sections refresh active values on entry, including return
+  // from Settings. Children do not acquire another admin configuration reader.
   useEffect(() => {
-    if (!client || tabValue !== 1) return;
+    if (!client || (tabValue !== 1 && tabValue !== 3 && tabValue !== 5)) return;
     let current = true;
-    setSendConfigLoading(true);
-    setSendConfigError(null);
+    setActiveConfigLoading(true);
+    setActiveConfigError(null);
     void client.getConfig().then((config: AdminConfig) => {
-      if (current) setAdminConfig(config);
+      if (!current) return;
+      setAdminConfig(config);
+      if (!config.v3_plugins?.enabled) {
+        setToolsTab((selected) => selected === 'plugins' ? 'terminal' : selected);
+      }
     }).catch(() => {
-      if (current) setSendConfigError('Could not refresh active send settings. Leave and reopen Send to try again.');
+      if (current) setActiveConfigError(tabValue === 1
+        ? 'Could not refresh active send settings. Leave and reopen Send to try again.'
+        : 'Could not refresh active settings. Leave and reopen this section to try again.');
     }).finally(() => {
-      if (current) setSendConfigLoading(false);
+      if (current) setActiveConfigLoading(false);
     });
     return () => { current = false; };
   }, [client, tabValue]);
@@ -220,13 +227,14 @@ function AppContent() {
     { label: 'MCP', icon: <CodeIcon /> },
   ];
 
-  const toolsItems = [
-    { label: 'Terminal', icon: <TerminalIcon /> },
-    { label: 'Diagnostics', icon: <AssessmentIcon /> },
-    { label: 'Logs', icon: <DescriptionIcon /> },
-    ...(adminConfig?.v3_plugins?.enabled ? [{ label: 'Plugins', icon: <ExtensionIcon /> }] : []),
-    { label: 'Scripts & Tests', icon: <ScienceIcon /> },
+  const toolsItems: { value: ToolDestination; label: string; icon: React.ReactElement }[] = [
+    { value: 'terminal', label: 'Terminal', icon: <TerminalIcon /> },
+    { value: 'diagnostics', label: 'Diagnostics', icon: <AssessmentIcon /> },
+    { value: 'logs', label: 'Logs', icon: <DescriptionIcon /> },
+    ...(adminConfig?.v3_plugins?.enabled ? [{ value: 'plugins' as const, label: 'Plugins', icon: <ExtensionIcon /> }] : []),
+    { value: 'scripts', label: 'Scripts & Tests', icon: <ScienceIcon /> },
   ];
+  const selectedToolsTab = toolsTab === 'plugins' && !adminConfig?.v3_plugins?.enabled ? 'terminal' : toolsTab;
 
   if (!authenticated) {
     return (
@@ -605,11 +613,11 @@ function AppContent() {
               <ListItem sx={{ px: 3 }}>
                 <ListItemText primary="Tools" primaryTypographyProps={{ fontWeight: 600 }} />
               </ListItem>
-              {toolsItems.map((item, idx) => (
+              {toolsItems.map((item) => (
                 <ListItem 
                   button 
                   key={item.label}
-                  onClick={() => { handleTabChange(5); setToolsTab(idx); }}
+                  onClick={() => { handleTabChange(5); setToolsTab(item.value); }}
                   sx={{
                     borderRadius: '0 24px 24px 0',
                     mx: 1,
@@ -629,13 +637,15 @@ function AppContent() {
           <Dashboard client={client!} onNavigate={handleNavigate} />
         </TabPanel>
         <TabPanel value={tabValue} index={1}>
-          <SendFax client={client!} config={adminConfig} configLoading={sendConfigLoading} configError={sendConfigError} />
+          <SendFax client={client!} config={adminConfig} configLoading={activeConfigLoading} configError={activeConfigError} />
         </TabPanel>
         <TabPanel value={tabValue} index={2}>
           <JobsList client={client!} />
         </TabPanel>
         <TabPanel value={tabValue} index={3}>
-          <Inbound client={client!} inboundEnabled={adminConfig?.inbound?.enabled} onNavigate={handleNavigate} docsBase={adminConfig?.branding?.docs_base} />
+          {activeConfigLoading ? <Alert severity="info">Loading active configuration…</Alert>
+            : activeConfigError ? <Alert severity="error">{activeConfigError}</Alert>
+            : <Inbound client={client!} inboundEnabled={adminConfig?.inbound?.enabled} onNavigate={handleNavigate} docsBase={adminConfig?.branding?.docs_base} />}
         </TabPanel>
         {/* Settings group */}
         <TabPanel value={tabValue} index={4}>
@@ -671,7 +681,9 @@ function AppContent() {
         </TabPanel>
         {/* Tools group */}
         <TabPanel value={tabValue} index={5}>
-          <Paper 
+          {activeConfigLoading ? <Alert severity="info">Loading active configuration…</Alert>
+            : activeConfigError ? <Alert severity="error">{activeConfigError}</Alert>
+            : <Paper
             elevation={0}
             sx={{ 
               borderRadius: 3,
@@ -682,25 +694,25 @@ function AppContent() {
           >
             <Box sx={{ borderBottom: 1, borderColor: 'divider', backgroundColor: muiTheme.palette.action.hover }}>
               <Tabs
-                value={toolsTab}
+                value={selectedToolsTab}
                 onChange={(_, v) => setToolsTab(v)}
                 variant={isMobile ? 'scrollable' : 'standard'}
                 scrollButtons={isMobile ? 'auto' : false}
                 sx={{ px: 2 }}
               >
                 {toolsItems.map((item) => (
-                  <Tab key={item.label} icon={item.icon} iconPosition="start" label={item.label} />
+                  <Tab key={item.value} value={item.value} icon={item.icon} iconPosition="start" label={item.label} />
                 ))}
               </Tabs>
             </Box>
             <Box sx={{ p: { xs: 2, md: 3 } }}>
-              {toolsTab === 0 && <Terminal apiKey={apiKey} />}
-              {toolsTab === 1 && <Diagnostics client={client!} onNavigate={handleNavigate} docsBase={adminConfig?.branding?.docs_base} />}
-              {toolsTab === 2 && <Logs client={client!} />}
-              {toolsTab === 3 && adminConfig?.v3_plugins?.enabled && <Plugins client={client!} />}
-              {(toolsTab === 4 || (toolsTab === 3 && !adminConfig?.v3_plugins?.enabled)) && <ScriptsTests client={client!} docsBase={adminConfig?.branding?.docs_base} />}
+              {selectedToolsTab === 'terminal' && <Terminal apiKey={apiKey} />}
+              {selectedToolsTab === 'diagnostics' && <Diagnostics client={client!} onNavigate={handleNavigate} docsBase={adminConfig?.branding?.docs_base} />}
+              {selectedToolsTab === 'logs' && <Logs client={client!} />}
+              {selectedToolsTab === 'plugins' && adminConfig?.v3_plugins?.enabled && <Plugins client={client!} />}
+              {selectedToolsTab === 'scripts' && <ScriptsTests client={client!} docsBase={adminConfig?.branding?.docs_base} />}
             </Box>
-          </Paper>
+          </Paper>}
         </TabPanel>
       </Container>
     </Box>
