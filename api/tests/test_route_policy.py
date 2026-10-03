@@ -126,6 +126,16 @@ def test_missing_or_empty_key_is_unauthenticated(client):
         assert _call(client, method, path, body, {"X-API-Key": ""}).status_code == 401, (method, path)
 
 
+def test_legacy_anonymous_mode_no_longer_opens_converted_routes(isolated_installation, monkeypatch):
+    # REQUIRE_API_KEY=false with no API_KEY used to mean "anonymous dev mode".
+    assert isolated_installation["REQUIRE_API_KEY"] == "false"
+    monkeypatch.setenv("PUBLIC_API_URL", "https://testserver")
+    monkeypatch.setenv("FAXBOT_CONSOLE_ORIGINS", "https://testserver")
+    with TestClient(main.app, base_url="https://testserver", headers={"Origin": "https://testserver"}) as client:
+        for method, path, body in CONVERTED:
+            assert _call(client, method, path, body).status_code == 401, (method, path)
+
+
 def test_fax_send_and_key_manager_keys_are_denied_every_converted_route(client, tmp_path, monkeypatch):
     # This sweep sends more key requests than the authentication bursts allow.
     monkeypatch.setitem(admission._BUDGETS, "key_request", admission._Budget("key-request", 100, timedelta(milliseconds=1)))
