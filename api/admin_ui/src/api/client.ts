@@ -36,6 +36,7 @@ import type {
   DestinationDetail,
   DestinationPatch,
   DirectCard,
+  DirectDeliveryRecord,
   DirectPartner,
   EmailConnector,
   EmailConnectorInput,
@@ -854,6 +855,10 @@ export class AdminAPIClient {
 
   async confirmDirectCode(partnerId: string, code: string): Promise<{ confirmed: boolean; detail: string }> {
     return this.json(`/direct/peers/${id(partnerId)}/confirm`, { method: 'POST', body: JSON.stringify({ code }) });
+  }
+
+  async listDirectDeliveries(): Promise<{ deliveries: DirectDeliveryRecord[] }> {
+    return this.json('/direct/deliveries');
   }
 
   async removeDirectPartner(partnerId: string): Promise<DirectPartner> {

@@ -164,3 +164,17 @@ export interface DirectPartner {
   expires_at: string | null;
   version: number;
 }
+
+// GET /direct/deliveries: recent direct deliveries. For a sent document the
+// message id is the fax's delivery attempt id.
+export interface DirectDeliveryRecord {
+  message_id: string;
+  direction: 'inbound' | 'outbound';
+  partner: string | null;
+  fax_number: string;
+  state: 'sending' | 'accepted' | 'refused' | 'uncertain';
+  status: string;
+  size_bytes: number;
+  created_at: string;
+  accepted_at: string | null;
+}

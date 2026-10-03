@@ -63,6 +63,7 @@ export interface DeliveryHistoryEvent {
     actor?: string;
     provider_sid?: string;
     legacy_status?: string;
+    route?: string;
   };
 }
 
