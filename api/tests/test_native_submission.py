@@ -1,0 +1,569 @@
+"""Internal native acknowledgement contracts; no real telephony commands."""
+
+import asyncio
+from contextlib import asynccontextmanager
+import subprocess
+
+import pytest
+
+from app import ami, freeswitch_service
+from app.config import use_configuration
+from app.config_values import ConfigurationValues
+
+
+JOB = "0123456789abcdef0123456789abcdef"
+ATTEMPT = "11111111-2222-4333-8444-555555555555"
+ACK_UUID = "ABCDEF01-2345-4678-9ABC-DEF012345678"
+
+
+def test_native_preparation_is_explicit_and_matches_the_issued_contract():
+    """Preflight must validate/build the same operation without transport I/O or config reads."""
+    prepare = getattr(ami, "prepare_originate_fields", None)
+    build = getattr(freeswitch_service, "build_originate_command", None)
+    assert callable(prepare) and callable(
+        build
+    ), "native preflight interface is missing"
+    fields = prepare(
+        JOB,
+        "+15555550123",
+        "/fax data/a.tif",
+        caller_id="+15555550100",
+        attempt_id=ATTEMPT,
+    )
+    assert fields == {
+        "Action": "Originate",
+        "ActionID": f"faxbot:{JOB}:{ATTEMPT}",
+        "Channel": "Local/s@faxout",
+        "Context": "faxout",
+        "Exten": "s",
+        "Priority": "1",
+        "Async": "true",
+        "Variable": f"JOBID={JOB},DEST=+15555550123,FAXFILE=/fax data/a.tif,FAXATTEMPT={ATTEMPT}",
+        "CallerID": "+15555550100",
+    }
+    assert build(
+        "15555550123",
+        "/fax/a.tif",
+        JOB,
+        gateway_name="my_gateway",
+        caller_id_number="15555550100",
+        t38_enable=False,
+        attempt_id=ATTEMPT,
+    ) == (
+        "bgapi originate {origination_caller_id_number=15555550100,"
+        f"faxbot_job_id={JOB},faxbot_attempt_id={ATTEMPT}"
+        + "}sofia/gateway/my_gateway/15555550123 &txfax(/fax/a.tif)"
+    )
+
+
+class StreamWriter:
+    """Owned in-memory wire boundary; the production parser reads real frames."""
+
+    def __init__(self):
+        self.requests = asyncio.Queue()
+        self.writes = []
+        self.closed = False
+
+    def write(self, data):
+        self.writes.append(data)
+        self.requests.put_nowait(data)
+
+    async def drain(self):
+        await asyncio.sleep(0)
+
+    def close(self):
+        self.closed = True
+
+    async def wait_closed(self):
+        pass
+
+
+@asynccontextmanager
+async def connected_stream(monkeypatch):
+    monkeypatch.setattr(ami, "ORIGINATE_RESPONSE_TIMEOUT_SECONDS", 0.05, raising=False)
+    client = ami.AMIClient()
+    client.reader = asyncio.StreamReader()
+    client.writer = writer = StreamWriter()
+    client._connected.set()
+    read_task = asyncio.create_task(client._read_loop())
+    values = ConfigurationValues.from_environment(
+        {"FAX_LOCAL_STATION_ID": "+15555550100"}
+    )
+    with use_configuration(values):
+        try:
+            yield client, writer
+        finally:
+            await client.close()
+            read_task.cancel()
+            await asyncio.gather(read_task, return_exceptions=True)
+
+
+def feed_response(client, action_id, *, response="Success", event=None):
+    fields = [f"Response: {response}", f"ActionID: {action_id}"]
+    if event:
+        fields.insert(0, f"Event: {event}")
+    client.reader.feed_data(("\r\n".join(fields) + "\r\n\r\n").encode())
+
+
+@pytest.mark.asyncio
+async def test_ami_drain_is_not_acceptance_and_only_matching_response_acknowledges(
+    monkeypatch,
+):
+    """Removing the pending response wait would accept an unacknowledged action."""
+    async with connected_stream(monkeypatch) as (client, writer):
+        task = asyncio.create_task(
+            client.originate_sendfax(JOB, "+15555550123", "/fax data/fax.tif")
+        )
+        try:
+            raw = (await writer.requests.get()).decode()
+            await asyncio.sleep(0)
+            assert not task.done(), "socket drain was incorrectly treated as acceptance"
+            action_id = next(
+                line.removeprefix("ActionID: ")
+                for line in raw.splitlines()
+                if line.startswith("ActionID: ")
+            )
+            feed_response(client, "unrelated-action")
+            feed_response(client, action_id, event="OriginateResponse")
+            await asyncio.sleep(0)
+            assert (
+                not task.done()
+            ), "an event or another action acknowledged this request"
+            feed_response(client, action_id)
+            assert await task is None
+            assert len(writer.writes) == 1
+            assert not client._pending_actions
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_ami_concurrent_responses_keep_attempt_identity_and_listener_separate(
+    monkeypatch,
+):
+    """Swapping futures or treating an asynchronous event as the action reply is unsafe."""
+    async with connected_stream(monkeypatch) as (client, writer):
+        events, fax_events = [], []
+        client.on_originate_response(events.append)
+        client.on_fax_result(fax_events.append)
+        second_attempt = "66666666-7777-4888-9999-000000000000"
+        tasks = [
+            asyncio.create_task(
+                client.originate_sendfax(
+                    JOB, "15555550123", "/fax/a.tif", attempt_id=value
+                )
+            )
+            for value in (ATTEMPT, second_attempt)
+        ]
+        try:
+            first, second = [(await writer.requests.get()).decode() for _ in range(2)]
+            assert f"ActionID: faxbot:{JOB}:{ATTEMPT}\r\n" in first
+            assert f"FAXATTEMPT={ATTEMPT}" in first
+            assert f"ActionID: faxbot:{JOB}:{second_attempt}\r\n" in second
+            feed_response(
+                client,
+                f"faxbot:{JOB}:{ATTEMPT}",
+                response="Failure",
+                event="OriginateResponse",
+            )
+            feed_response(client, f"faxbot:{JOB}:{second_attempt}")
+            await tasks[1]
+            assert not tasks[0].done()
+            assert events == [
+                {
+                    "Event": "OriginateResponse",
+                    "Response": "Failure",
+                    "ActionID": f"faxbot:{JOB}:{ATTEMPT}",
+                }
+            ]
+            client.reader.feed_data(
+                b"Event: UserEvent\r\nUserEvent: FaxResult\r\nJobID: synthetic-job\r\n\r\n"
+            )
+            feed_response(client, f"faxbot:{JOB}:{ATTEMPT}")
+            await tasks[0]
+            assert fax_events == [
+                {
+                    "Event": "UserEvent",
+                    "UserEvent": "FaxResult",
+                    "JobID": "synthetic-job",
+                }
+            ]
+            assert not client._pending_actions
+        finally:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "failure", ["timeout", "error", "disconnect", "close", "cancel"]
+)
+async def test_ami_uncertain_failure_cleans_pending_without_replaying(
+    monkeypatch, failure
+):
+    """Each uncertain outcome must issue once and leave no stale future for reconnect."""
+    async with connected_stream(monkeypatch) as (client, writer):
+        task = asyncio.create_task(
+            client.originate_sendfax(
+                JOB, "15555550123", "/fax/a.tif", attempt_id=ATTEMPT
+            )
+        )
+        await writer.requests.get()
+        if failure == "error":
+            feed_response(client, f"faxbot:{JOB}:{ATTEMPT}", response="Error")
+        elif failure == "disconnect":
+            client.reader.feed_eof()
+        elif failure == "close":
+            await client.close()
+        elif failure == "cancel":
+            task.cancel()
+        expected = (
+            asyncio.CancelledError
+            if failure == "cancel"
+            else (TimeoutError, ConnectionError)
+        )
+        with pytest.raises(expected):
+            await asyncio.wait_for(task, 1)
+        assert len(writer.writes) == 1
+        assert not client._pending_actions
+
+
+@pytest.mark.asyncio
+async def test_ami_reconnect_never_reissues_the_unacknowledged_native_action():
+    """The owned supervisor may reconnect/login, but must not replay an issued action."""
+    logins, actions = asyncio.Queue(), []
+    peers = set()
+    writers = []
+
+    async def peer(reader, writer):
+        peers.add(asyncio.current_task())
+        writers.append(writer)
+        first = len(writers) == 1
+        try:
+            logins.put_nowait(await reader.readuntil(b"\r\n\r\n"))
+            writer.write(
+                b"Response: Success\r\nMessage: Authentication accepted\r\n\r\n"
+            )
+            await writer.drain()
+            if first:
+                actions.append(await reader.readuntil(b"\r\n\r\n"))
+            else:
+                replay = await reader.read()
+                if replay:
+                    actions.append(replay)
+        finally:
+            writer.close()
+            await writer.wait_closed()
+            peers.discard(asyncio.current_task())
+
+    server = await asyncio.start_server(peer, "127.0.0.1", 0)
+    values = ConfigurationValues.from_environment(
+        {
+            "ASTERISK_AMI_HOST": "127.0.0.1",
+            "ASTERISK_AMI_PORT": str(server.sockets[0].getsockname()[1]),
+            "ASTERISK_AMI_USERNAME": "synthetic-native-peer",
+            "ASTERISK_AMI_PASSWORD": "synthetic-native-secret",
+        }
+    )
+    client = ami.AMIClient()
+    try:
+        with use_configuration(values):
+            await asyncio.wait_for(client.connect(), 2)
+            await asyncio.wait_for(logins.get(), 1)
+            with pytest.raises(ConnectionError):
+                await client.originate_sendfax(
+                    JOB, "15555550123", "/fax/a.tif", attempt_id=ATTEMPT
+                )
+        await asyncio.wait_for(logins.get(), 3)
+        await client.close()
+        await asyncio.gather(*peers)
+        assert len(writers) == 2
+        assert len(actions) == 1
+        assert f"ActionID: faxbot:{JOB}:{ATTEMPT}\r\n".encode() in actions[0]
+        assert not client._pending_actions
+        assert client.writer is None
+    finally:
+        await client.close()
+        for writer in writers:
+            writer.close()
+        server.close()
+        await server.wait_closed()
+        await asyncio.gather(*peers, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_ami_duplicate_pending_attempt_does_not_replace_the_first_future(
+    monkeypatch,
+):
+    async with connected_stream(monkeypatch) as (client, writer):
+        first = asyncio.create_task(
+            client.originate_sendfax(
+                JOB, "15555550123", "/fax/a.tif", attempt_id=ATTEMPT
+            )
+        )
+        try:
+            await writer.requests.get()
+            with pytest.raises(ConnectionError):
+                await client.originate_sendfax(
+                    JOB, "15555550123", "/fax/a.tif", attempt_id=ATTEMPT
+                )
+            feed_response(client, f"faxbot:{JOB}:{ATTEMPT}")
+            await first
+            assert len(writer.writes) == 1
+            assert not client._pending_actions
+        finally:
+            first.cancel()
+            await asyncio.gather(first, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_ami_acknowledgement_can_arrive_before_drain_returns(monkeypatch):
+    async with connected_stream(monkeypatch) as (client, writer):
+        drained = asyncio.Event()
+
+        async def delayed_drain():
+            await drained.wait()
+
+        writer.drain = delayed_drain
+        task = asyncio.create_task(
+            client.originate_sendfax(
+                JOB, "15555550123", "/fax/a.tif", attempt_id=ATTEMPT
+            )
+        )
+        try:
+            await writer.requests.get()
+            client.reader.feed_data(
+                (
+                    f"rEsPoNsE: Success\r\naCtIoNiD: faxbot:{JOB}:{ATTEMPT}\r\n\r\n"
+                ).encode()
+            )
+            await asyncio.sleep(0)
+            drained.set()
+            await task
+            assert len(writer.writes) == 1
+            assert not client._pending_actions
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_ami_drain_failure_is_sanitized_and_cleans_the_registered_future(
+    monkeypatch,
+):
+    async with connected_stream(monkeypatch) as (client, writer):
+
+        async def fail():
+            raise OSError("synthetic-private-destination")
+
+        writer.drain = fail
+        with pytest.raises(ConnectionError) as error:
+            await client.originate_sendfax(
+                JOB, "15555550123", "/fax/a.tif", attempt_id=ATTEMPT
+            )
+        assert "private" not in str(error.value)
+        assert error.value.__suppress_context__
+        assert len(writer.writes) == 1
+        assert not client._pending_actions
+
+
+@pytest.mark.asyncio
+async def test_ami_login_injection_is_rejected_before_credentials_are_written():
+    writer = StreamWriter()
+    with pytest.raises(ValueError) as error:
+        await ami._login(
+            asyncio.StreamReader(),
+            writer,
+            "synthetic-user",
+            "private-secret\r\nAction: Command",
+        )
+    assert "secret" not in str(error.value)
+    assert not writer.writes
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("dest", "1555\r\nAction: Command"),
+        ("dest", "1555&other"),
+        ("job_id", "job,DEST=other"),
+        ("attempt_id", "attempt:other"),
+        ("tiff_path", "/fax/file,DEST=other.tif"),
+        ("tiff_path", "/fax/a^other.tif"),
+        ("tiff_path", "/fax/a)\r\nAction: Command"),
+        ("tiff_path", "/fax/${DANGEROUS}.tif"),
+    ],
+)
+async def test_ami_rejects_injection_before_any_write(monkeypatch, field, value):
+    """Input validation must fail before the native action crosses the wire."""
+    async with connected_stream(monkeypatch) as (client, writer):
+        kwargs = {
+            "job_id": JOB,
+            "dest": "15555550123",
+            "tiff_path": "/fax/a.tif",
+            "attempt_id": ATTEMPT,
+        }
+        kwargs[field] = value
+        with pytest.raises(ValueError) as error:
+            await client.originate_sendfax(**kwargs)
+        assert value not in str(error.value)
+        assert not writer.writes
+        assert not client._pending_actions
+
+
+@pytest.mark.asyncio
+async def test_ami_rejects_header_injection_without_exposing_station_id(monkeypatch):
+    async with connected_stream(monkeypatch) as (client, writer):
+        bad = "synthetic-private\r\nAction: Command"
+        with use_configuration(
+            ConfigurationValues.from_environment({"FAX_LOCAL_STATION_ID": bad})
+        ):
+            with pytest.raises(ValueError) as error:
+                await client.originate_sendfax(JOB, "15555550123", "/fax/a.tif")
+        assert "synthetic-private" not in str(error.value)
+        assert not writer.writes
+
+
+@pytest.fixture
+def fs_boundary(monkeypatch):
+    calls = []
+    monkeypatch.setattr(freeswitch_service, "fs_cli_available", lambda: True)
+
+    def output(args, **kwargs):
+        calls.append((args, kwargs))
+        return f"+OK Job-UUID: {ACK_UUID}\n"
+
+    monkeypatch.setattr(freeswitch_service.subprocess, "check_output", output)
+    return calls
+
+
+def test_freeswitch_returns_canonical_acceptance_uuid_with_bounded_single_command(
+    fs_boundary,
+):
+    """Returning raw fs_cli output or removing its timeout breaks the acceptance seam."""
+    values = ConfigurationValues.from_environment(
+        {
+            "FREESWITCH_GATEWAY_NAME": "gw_signalwire",
+            "FREESWITCH_CALLER_ID_NUMBER": "+15555550100",
+        }
+    )
+    with use_configuration(values):
+        result = freeswitch_service.originate_txfax(
+            "+15555550123", "/var/fax/a.tif", JOB, attempt_id=ATTEMPT
+        )
+    assert result == "abcdef01-2345-4678-9abc-def012345678"
+    assert len(fs_boundary) == 1
+    args, kwargs = fs_boundary[0]
+    assert args == [
+        "fs_cli",
+        "-x",
+        "bgapi originate {origination_caller_id_number=+15555550100,"
+        f"faxbot_job_id={JOB},faxbot_attempt_id={ATTEMPT},fax_enable_t38_request=true,"
+        "fax_enable_t38=true}sofia/gateway/gw_signalwire/+15555550123 &txfax(/var/fax/a.tif)",
+    ]
+    assert kwargs["timeout"] == 30
+    assert kwargs["stderr"] == subprocess.PIPE
+    assert kwargs.get("shell", False) is False
+
+
+@pytest.mark.parametrize(
+    "output",
+    [
+        "-ERR synthetic-private",
+        "+OK",
+        "+OK Job-UUID: invalid",
+        "",
+        "+OK Job-UUID: " + ACK_UUID + "\n-ERR leaked",
+        "+OK " + ACK_UUID,
+    ],
+)
+def test_freeswitch_unexpected_output_is_not_acceptance(
+    monkeypatch, fs_boundary, output
+):
+    monkeypatch.setattr(
+        freeswitch_service.subprocess, "check_output", lambda *a, **kw: output
+    )
+    with pytest.raises(RuntimeError) as error:
+        freeswitch_service.originate_txfax("15555550123", "/fax/a.tif", JOB)
+    assert "synthetic-private" not in str(error.value)
+    assert "leaked" not in str(error.value)
+
+
+@pytest.mark.parametrize("failure", ["timeout", "exit", "oserror"])
+def test_freeswitch_subprocess_failure_is_sanitized_and_not_retried(
+    monkeypatch, fs_boundary, failure
+):
+    issued = []
+
+    def fail(args, **kwargs):
+        issued.append(args)
+        if failure == "timeout":
+            raise subprocess.TimeoutExpired(
+                args, 30, output="synthetic-private", stderr="synthetic-stderr"
+            )
+        if failure == "exit":
+            raise subprocess.CalledProcessError(
+                1, args, output="synthetic-private", stderr="synthetic-stderr"
+            )
+        raise OSError("synthetic-private")
+
+    monkeypatch.setattr(freeswitch_service.subprocess, "check_output", fail)
+    with pytest.raises(RuntimeError) as error:
+        freeswitch_service.originate_txfax(
+            "15555550123", "/fax/private-artifact.tif", JOB
+        )
+    assert len(issued) == 1
+    assert "private" not in str(error.value)
+    assert "stderr" not in str(error.value)
+    assert error.value.__suppress_context__
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("to_number", "1555 &echo"),
+        ("to_number", "1555\napi status"),
+        ("job_id", "job,other=1"),
+        ("attempt_id", "attempt}other"),
+        ("tiff_path", "/fax/a.tif) &echo("),
+        ("tiff_path", "/fax/space name.tif"),
+        ("tiff_path", "/fax/${danger}.tif"),
+        ("tiff_path", "/fax/a;other.tif"),
+        ("tiff_path", "/fax/'quoted'.tif"),
+        ("tiff_path", "/fax/a\nother.tif"),
+    ],
+)
+def test_freeswitch_refuses_unsupported_command_syntax_before_subprocess(
+    fs_boundary, field, value
+):
+    kwargs = {
+        "to_number": "15555550123",
+        "tiff_path": "/fax/a.tif",
+        "job_id": JOB,
+        "attempt_id": ATTEMPT,
+    }
+    kwargs[field] = value
+    with pytest.raises(ValueError) as error:
+        freeswitch_service.originate_txfax(**kwargs)
+    assert value not in str(error.value)
+    assert not fs_boundary
+
+
+@pytest.mark.parametrize(
+    "setting,value",
+    [
+        ("FREESWITCH_GATEWAY_NAME", "gw/other}bad"),
+        ("FREESWITCH_CALLER_ID_NUMBER", "1555,other=1"),
+    ],
+)
+def test_freeswitch_configuration_cannot_inject_native_command(
+    fs_boundary, setting, value
+):
+    with use_configuration(ConfigurationValues.from_environment({setting: value})):
+        with pytest.raises(ValueError) as error:
+            freeswitch_service.originate_txfax("15555550123", "/fax/a.tif", JOB)
+    assert value not in str(error.value)
+    assert not fs_boundary
