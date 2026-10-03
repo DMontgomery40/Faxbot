@@ -55,6 +55,7 @@ $ faxbot [OPTIONS] COMMAND [ARGS]...
 * `direct`: Direct delivery: send faxes to verified...
 * `cases`: Case packets: send only the documents a...
 * `config`: Save server addresses and API keys as...
+* `admin`: Run a stopped installation on this...
 
 ## `faxbot send`
 
@@ -2095,4 +2096,117 @@ $ faxbot config remove [OPTIONS] {name}
 
 **Options**:
 
+* `--help`: Show this message and exit.
+
+## `faxbot admin`
+
+Run a stopped installation on this computer: recover owner access, back up, restore, upgrade the database and check its state.
+
+**Usage**:
+
+```console
+$ faxbot admin [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--database-url URL`: Installation database. Default: ./faxbot.db, as the server.  [env var: DATABASE_URL]
+* `--data-dir FOLDER`: Installation data folder. Default: ./faxdata, as the server.  [env var: FAX_DATA_DIR]
+* `--key-file FILE`: Installation encryption key. Default: .configuration.key in the data folder.  [env var: FAXBOT_INSTALLATION_KEY_PATH]
+* `--direct-key-file FILE`: Direct delivery key. Default: .direct-identity.key in the data folder.  [env var: FAXBOT_DIRECT_KEY_PATH]
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `status`: Show the database schema version, saved...
+* `migrate`: Upgrade the installation database to this...
+* `recover-owner`: Recover owner access: set a fresh...
+* `backup`: Back up the database, the data folder and...
+* `restore`: Restore a backup after checking every file...
+
+### `faxbot admin status`
+
+Show the database schema version, saved configuration state and record counts.
+
+**Usage**:
+
+```console
+$ faxbot admin status [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+### `faxbot admin migrate`
+
+Upgrade the installation database to this version of Faxbot.
+
+**Usage**:
+
+```console
+$ faxbot admin migrate [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+### `faxbot admin recover-owner`
+
+Recover owner access: set a fresh installation key and show it once.
+
+For when no owner can sign in and the installation key (API_KEY) is empty or
+lost. Run it with Faxbot stopped. Anything using the old installation key
+stops working. Then start Faxbot and create an owner with faxbot owner enroll.
+
+**Usage**:
+
+```console
+$ faxbot admin recover-owner [OPTIONS]
+```
+
+**Options**:
+
+* `-y, --yes`: Do not ask for confirmation.
+* `--help`: Show this message and exit.
+
+### `faxbot admin backup`
+
+Back up the database, the data folder and the installation keys, with a manifest of checksums.
+
+The backup contains private keys and fax documents. Keep it as safe as the
+installation itself.
+
+**Usage**:
+
+```console
+$ faxbot admin backup [OPTIONS] {folder}
+```
+
+**Arguments**:
+
+* `folder`: New, empty folder for the backup.  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+### `faxbot admin restore`
+
+Restore a backup after checking every file against its manifest.
+
+**Usage**:
+
+```console
+$ faxbot admin restore [OPTIONS] {folder}
+```
+
+**Arguments**:
+
+* `folder`: Backup folder made by faxbot admin backup.  [required]
+
+**Options**:
+
+* `--force`: Replace an existing database, data folder and keys.
 * `--help`: Show this message and exit.
