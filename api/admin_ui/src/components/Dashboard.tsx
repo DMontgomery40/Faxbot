@@ -165,10 +165,7 @@ function Dashboard({ client, onNavigate }: DashboardProps) {
                   variant="outlined"
                 />
                 <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-                  Active outbound provider: {health.backend}
-                </Typography>
-                <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 1 }}>
-                  Checks local configuration and dependencies. Delivery is verified for each fax.
+                  Outbound provider: {health.backend}
                 </Typography>
               </CardContent>
               </Card>
@@ -224,19 +221,16 @@ function Dashboard({ client, onNavigate }: DashboardProps) {
                     </Typography>
                   </Box>
                   <Box display="flex" justifyContent="space-between">
-                    <Typography variant="body2">Reconciliation Required:</Typography>
+                    <Typography variant="body2">Needs review:</Typography>
                     <Typography variant="body2" fontWeight="bold"
                       color={(health.jobs.reconciliation_required ?? 0) > 0 ? warningTextColor : 'text.primary'}>
                       {health.jobs.reconciliation_required ?? 'Unavailable'}
                     </Typography>
                   </Box>
                 </Box>
-                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
-                  Held test faxes never transmit automatically, even after enabling sending.
-                </Typography>
                 {(health.jobs.reconciliation_required ?? 0) > 0 && (
                   <Typography variant="caption" color={warningTextColor} sx={{ display: 'block', mt: 1 }}>
-                    Check the original provider before taking action. Do not retry transmission blindly.
+                    Check your provider account before resending faxes that need review.
                   </Typography>
                 )}
               </CardContent>
