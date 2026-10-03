@@ -76,6 +76,17 @@ npm install faxbot
 
 The Node and Python MCP servers provide fax tools for AI assistants over stdio and Streamable HTTP; Python also supports legacy SSE. Remote requests use the caller's own Faxbot identity. See [MCP setup](docs/mcp/index.md) and [transport authentication](docs/mcp/transports.md).
 
+## Command line
+
+The `faxbot` command does what the Admin Console does, apart from its built-in terminal: send and read faxes, manage users, groups, roles and API keys, change settings, check routes and costs, set up intake and direct delivery, and pair phones. Output is readable by default and `--json` for scripts.
+
+```
+docker compose exec api faxbot health
+FAXBOT_API_KEY=... faxbot send +15551234567 referral.pdf
+```
+
+With Faxbot stopped, `faxbot admin` recovers owner access, backs up and restores an installation, and upgrades its database. See [Command line](docs/operations/cli.md) and the [command reference](docs/reference/cli.md).
+
 ## Mobile and desktop
 
 The iOS companion connects to your Faxbot server to send faxes and check status. Pair it with a short-lived, single-use code from the console. See the [iOS guide](docs/apps/ios.md) for setup and TestFlight invitations, and the [desktop notes](ELECTRON_DESKTOP_APPS.md) for the Electron app.
@@ -107,6 +118,7 @@ Checked items are implemented in the current source checkout. Unchecked items ar
 - [x] Enrolled direct partners, encrypted original-PDF delivery, signed receipts, and controlled fax fallback.
 - [x] Recipient-approved case packets, accepted-document history, and preview through the API.
 - [x] Carrier SIP trunk presets with T.38, per-call records, and native faxes priced by the trunk carrier (proven in a loopback; live carrier call pending).
+- [x] `faxbot` command line covering the product, with stopped-server owner recovery, backup, restore, and database upgrades.
 - [x] Source-derived reference documentation and scoped AI prose proposals, with maintained planning outside the generated tree.
 
 ### Next

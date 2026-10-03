@@ -160,6 +160,7 @@ nav:
     - Network & Transports: security/network.md
     - HIPAA Requirements: HIPAA_REQUIREMENTS.md
   - Operations:
+    - Command line: operations/cli.md
     - Overview: operations/index.md
     - Delivery routes: operations/delivery-routes.md
     - Intake: operations/intake.md
@@ -172,6 +173,7 @@ nav:
       - Phaxio E2E Test: tools/phaxio-e2e-test.md
     - Troubleshooting: troubleshooting.md
   - Reference:
+    - Command line: reference/cli.md
     - Overview: reference/index.md
     - Generated source:
       - Overview: generated/index.md

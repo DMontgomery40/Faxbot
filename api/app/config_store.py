@@ -602,3 +602,35 @@ class ConfigurationStore:
                 active_revision_id=current.pending.id, pending_revision_id=None,
                 generation=current.generation + 1, updated_at=now))
             return self._snapshot(connection, cipher, self._head(connection))
+
+    def recover_bootstrap(self, secret: str):
+        """Stopped-installation owner recovery: one new revision carrying a fresh bootstrap secret.
+
+        Only the host operator, holding the database and the installation key,
+        reaches this; there is no HTTP route. The caller proves the installation is
+        stopped and reveals the secret once. The new revision copies the desired
+        values with only ``api_key`` replaced and keeps provider bindings. Without a
+        pending revision it becomes active at once, which revokes earlier bootstrap
+        sessions and advances the access policy version; with one, it stays pending
+        and the next stopped-installation startup activates both together. The
+        recovery audit row commits in the same transaction.
+        """
+        if type(secret) is not str or not 32 <= len(secret) <= 256 or not secret.isprintable() or secret.strip() != secret:
+            raise ConfigurationStoreError('Invalid installation recovery secret.')
+        with self._locked() as connection:
+            before = self.access_store.lock_on(connection)
+            head = self._head(connection)
+            if head is None:
+                raise ConfigurationNotInitialized('Configuration has not been initialized.')
+            cipher = self._cipher()
+            current = self._snapshot(connection, cipher, head)
+            values = current.desired.values.with_patch({'api_key': secret})
+            pending = current.pending is not None
+            now = _utc_now()
+            result = self._write_candidate_on(connection, current, cipher, values, restart_required=pending,
+                actor='host:owner-recovery', candidates=None, plugin_document=current.desired.plugins, now=now)
+            after = self.access_store.require_lock_on(connection)
+            self._audit_configuration_on(connection, (None, None, None), 'owner.recover', before, after, False, {
+                'source': 'host_terminal', 'configuration_generation_before': current.generation,
+                'configuration_generation_after': result.generation, 'pending_restart': pending}, now)
+            return result

@@ -9,6 +9,7 @@ Operate and troubleshoot Faxbot day to day.
 
 - [Admin Console](../admin-console.md)
 - [Delivery routes](delivery-routes.md) · [Intake](intake.md) · [Direct delivery](direct-delivery.md)
+- [Command line](cli.md): every console task from a terminal or script, plus backup, restore and owner recovery
 - [Terminal](../terminal.md)
 - Tools: [Scripts & Tests](../tools/scripts-and-tests.md) · [Node MCP Scripts](../tools/node-mcp-scripts.md) · [API Tests](../tools/api-tests.md)
 - [Troubleshooting](../troubleshooting.md)

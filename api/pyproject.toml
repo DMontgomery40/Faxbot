@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "faxbot-server"
+version = "1.0.0"
+description = "Faxbot API server and the faxbot command line."
+requires-python = ">=3.11"
+license = { text = "MIT" }
+# Runtime dependencies stay pinned in requirements.txt with ../python_mcp/runtime-constraints.txt.
+# Install those first (pip install -r api/requirements.txt -r python_mcp/requirements.txt);
+# this file only declares the package and its console script.
+dependencies = []
+
+[project.scripts]
+faxbot = "app.cli.main:run"
+
+[tool.setuptools.packages.find]
+include = ["app", "app.*"]
