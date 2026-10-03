@@ -24,3 +24,5 @@ pexpect==4.9.0
 cryptography==50.0.2
 jsonschema==4.26.0
 referencing==0.37.0
+typer==0.27.2
+rich==15.0.0

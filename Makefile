@@ -38,6 +38,16 @@ test-local:
 ui-build:
 	cd api/admin_ui && npm ci --no-audit --no-fund && npm run build
 
+# The faxbot command line from this checkout, for example: make cli ARGS="health"
+# Paths in ARGS stay relative to where make runs. See docs/operations/cli.md.
+.PHONY: cli cli-docs
+cli:
+	PYTHONPATH=$(CURDIR)/api $(abspath $(VENV))/bin/python -m app.cli $(ARGS)
+
+# Regenerate docs/reference/cli.md from the command definitions (checked by api/tests/test_cli.py).
+cli-docs:
+	cd api && $(abspath $(VENV))/bin/python -m app.cli.reference > ../docs/reference/cli.md
+
 # Alembic helpers (run locally)
 alembic-upgrade:
 	DATABASE_URL=$${DATABASE_URL:-sqlite:///./faxbot.db} alembic -c api/alembic.ini upgrade head
