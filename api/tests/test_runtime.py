@@ -45,6 +45,30 @@ async def test_api_lifespan_stops_cleanup_before_reentering(isolated_installatio
 
 
 @pytest.mark.asyncio
+async def test_access_preparation_failure_releases_installation_for_restart(isolated_installation, monkeypatch):
+    """Internal lifecycle ownership only; no request or user-flow acceptance."""
+    from app.access.types import AccessUnavailableError
+    original = main.AccessRuntime
+    def fail(configuration):
+        raise AccessUnavailableError()
+    monkeypatch.setattr(main, 'AccessRuntime', fail)
+    with pytest.raises(AccessUnavailableError):
+        async with main.app.router.lifespan_context(main.app):
+            pytest.fail('Incomplete access runtime must not publish readiness')
+    assert main.app.state.runtime_active is False
+    assert main.app.state.configuration_runtime is None
+    assert main.app.state.access_runtime is None
+    assert main.app.state.credential_transport is None
+    monkeypatch.setattr(main, 'AccessRuntime', original)
+    async with main.app.router.lifespan_context(main.app):
+        configuration = main.app.state.configuration_runtime
+        access = main.app.state.access_runtime
+        assert configuration.serving
+        assert access.store is configuration.manager.store.access_store
+    assert main.app.state.access_runtime is None
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("reject_first_login", [False, True])
 @pytest.mark.parametrize("reset_on_shutdown", [False, True])
 async def test_ami_login_reconnect_and_shutdown_use_owned_connections(monkeypatch, reject_first_login, reset_on_shutdown):

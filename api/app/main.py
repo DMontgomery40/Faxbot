@@ -64,6 +64,10 @@ from .provider_execution import UnsupportedProviderExecutionError
 from .outbound_transport import CapturedTransport, normalize_status
 from .outbound_callbacks import CapturedCallbacks, CallbackRejected
 from .request_identity import RequestIdentity, IdempotentReplay, IdempotencyConflict, fingerprint_upload
+from .access.runtime import AccessRuntime
+from .access.transport import CredentialTransport
+from .access.types import AccessError, AccessUnavailableError
+from .access.http import router as authentication_router, PrivateAuthMiddleware, access_error_response
 
 
 @asynccontextmanager
@@ -79,6 +83,8 @@ async def lifespan(application: FastAPI):
     try:
         await run_lifecycle_step(runtime.prepare)
         application.state.configuration_runtime = runtime
+        application.state.credential_transport = CredentialTransport(os.environ)
+        application.state.access_runtime = await run_lifecycle_step(lambda: AccessRuntime(runtime.manager.store))
         with runtime.frame(runtime.candidate):
             try:
                 owns_ami = await _initialize_runtime(tasks)
@@ -109,6 +115,8 @@ async def lifespan(application: FastAPI):
     finally:
         runtime.close()
         application.state.configuration_runtime = None
+        application.state.access_runtime = None
+        application.state.credential_transport = None
         application.state.runtime_active = False
 
 
@@ -128,6 +136,9 @@ app = FastAPI(
     lifespan=lifespan,
 )
 app.add_middleware(ConfigurationMiddleware)
+app.add_middleware(PrivateAuthMiddleware)
+app.add_exception_handler(AccessError, access_error_response)
+app.include_router(authentication_router)
 
 
 async def _configuration_error_handler(request, exc):
@@ -151,6 +162,8 @@ from fastapi.exception_handlers import request_validation_exception_handler
 
 @app.exception_handler(RequestValidationError)
 async def _request_validation_error(request, exc):
+    if request.url.path.startswith('/auth/') or request.url.path.startswith('/access/'):
+        return JSONResponse({'detail':'Invalid access request.'}, status_code=422)
     if request.url.path.startswith('/admin/fax-jobs/') and request.url.path.endswith('/reconcile'):
         # Pydantic errors include raw rejected values and arbitrary extra keys.
         return JSONResponse({'detail': 'Invalid provider identity reconciliation input.'}, status_code=422)
@@ -2807,6 +2820,10 @@ async def _handle_http_exc(request: Request, exc: HTTPException):
 
 @app.exception_handler(Exception)
 async def _handle_any_exc(request: Request, exc: Exception):
+    if request.url.path.startswith('/auth/') or request.url.path.startswith('/access/'):
+        # ServerErrorMiddleware is outside the privacy middleware. Its fallback
+        # response must carry the same fixed unavailable body and private headers.
+        return await access_error_response(request, AccessUnavailableError())
     try:
         audit_event("api_error", path=request.url.path, status=500, detail="internal_error")
     except Exception:

@@ -63,15 +63,15 @@
 
 ### Task3: Persistent login, sessions and first-owner recovery
 
-- Session design independently reviewed. Prepared opaque token/CSRF codec implemented and independently reviewed (96 pure cases); persistent service implemented and independently reviewed (117 owned session cases). Canonical bootstrap rotation already invalidates sessions atomically (9fb20c65), but the new reader is not yet wired into HTTP authentication.
+- Session design independently reviewed. Prepared opaque token/CSRF codec implemented and independently reviewed (96 pure cases); persistent service implemented and independently reviewed (117 owned session cases). Canonical bootstrap rotation invalidates sessions atomically (9fb20c65); the new /auth adapter uses this current reader. Legacy business-route conversion remains pending.
 - Fax resource/visibility transaction bridge independently reviewed (145 focused core/resource cases, no skips). Current-source acceptance/replay composition committed e7acc9b6 (120 internal cases); runtime route cutover remains pending.
-- Shared pre-KDF admission and immutable migration0006 independently reviewed. Actual new-head schema/admission/session validation: 527 passed, 23 expected dialect-specific skips. Credential/session composition independently reviewed (41 owned / 223 combined internal cases); HTTP transport and GUI login remain unimplemented.
+- Shared pre-KDF admission and immutable migration0006 independently reviewed. Actual new-head schema/admission/session validation: 527 passed, 23 expected dialect-specific skips. Credential/session composition independently reviewed (41 owned / 223 combined internal cases). Hosted b9a7e457 CI passed 2,765 tests with24 dialect skips; its exact generated docs preview was checked through Browser. Installation-owned service assembly (84 focused cases), transport policy (29 pure cases) and HTTP authentication adapter are implemented and independently reviewed, including the corrected unexpected-error privacy path. Real Browser acceptance is pending. Console login migration and business-route policy conversion remain pending.
 
 
 **Files:** access/sessions.py,router.py;auth.py/main.py/config integration by primary;test_access_sessions.py;console login/session views.
 **Interfaces:** opaque session result exposes a token only at issuance and a CSRF value; `authenticate_session(token,now)->PrincipalContext|None`; login/logout/password/reset/revoke routes from spec. Expiry12hours absolute/30minutes idle; no authority cached in token.
 
-- [ ] Write internal failed/disabled login, reset-required restrictions, password change, expired/revoked session, cross-worker persistence and rotation tests with fixed clocks/synthetic credentials.
+- [x] Write internal failed/disabled login, reset-required restrictions, password change, expired/revoked session, cross-worker persistence and rotation tests with fixed clocks/synthetic credentials.
 - [ ] Implement cookie/CSRF/Origin handling, production-auth refusal and explicit deployment-only development mode. Preserve header API-key clients and explicit key-to-session login.
 - [ ] Add current identity/effective-permission console bootstrap, named-user login, visible restoration, logout/password and session management.
 - [ ] Primary actual CUA login/logout/change/revoke/second-tab replay; record UI bugs, Sol repairs, replay. Hosted direct-call tests cover missing/forged Origin and CSRF separately.

@@ -1,4 +1,49 @@
-# Authentication (API Keys)
+# Authentication
+
+## Refresh implementation status
+
+This branch includes persistent authentication endpoints under `/auth`. The existing
+console and business routes still use the legacy key guards described below; their
+conversion is tracked in the [access-control plan](../superpowers/plans/2026-10-02-faxbot-access-control.md).
+The new session endpoints alone do not establish complete RBAC for the installation.
+
+The authentication API provides password login, key-to-session login, current
+identity, logout, password replacement, session listing and session revocation.
+Use the generated OpenAPI reference for the exact request models. Sessions expire
+after 12 hours, or 30 minutes without use, and cannot outlive their source key.
+Revoked, disabled or changed sources are checked against current installation state.
+
+### Browser and client transport
+
+The new authentication endpoints require HTTPS for remote clients, including
+header-only API-key clients. Browser requests must use a trusted console origin.
+Set deployment `FAXBOT_CONSOLE_ORIGINS` to a comma-separated list of origins, such
+as `https://fax.internal.example,https://fax.example:8443`. Entries contain a scheme,
+host and optional port, without paths. If omitted, the active `PUBLIC_API_URL`
+origin is used. Configure an override when the console host differs from the
+provider callback host. Only trust proxy headers from the actual reverse proxy.
+
+For local development, run `scripts/run-uvicorn-dev.sh`, or use the installed
+runtime from the repository root:
+
+```sh
+python -m api.app.server --loopback --port 8080
+```
+
+This explicit development launcher binds `127.0.0.1`, disables proxy rewriting,
+and enables the loopback transport profile. Setting
+`FAXBOT_ALLOW_INSECURE_LOOPBACK=true` on an ordinary Uvicorn process is insufficient.
+The launcher supplies localhost/127.0.0.1 origins for its port unless an explicit
+origin list is configured. It does not print or generate a bootstrap key.
+
+HTTPS sessions use an HttpOnly, Secure, SameSite=Strict, host-only cookie. Local
+development uses a separate cookie. Login requires an allowed browser Origin;
+cookie-authenticated changes additionally require `X-CSRF-Token` from `/auth/me`.
+Explicit `X-API-Key` takes precedence over a cookie, including when the supplied
+key is invalid. API keys and session tokens do not belong in URLs or browser
+persistent storage. Authentication responses are marked `no-store`.
+
+### Legacy key routes awaiting conversion
 
 Faxbot authenticates requests using an `X-API-Key` header. There are two key types:
 
@@ -9,7 +54,7 @@ Faxbot authenticates requests using an `X-API-Key` header. There are two key typ
 
 1) Set a temporary bootstrap admin key in the server environment (for example in `.env`):
 ```
-API_KEY=bootstrap_admin_only
+API_KEY=<your-private-random-bootstrap-key>
 REQUIRE_API_KEY=true
 ```
 2) Create a per‑user/service key via the admin endpoint (authenticate with the bootstrap `API_KEY`):
