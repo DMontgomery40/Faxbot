@@ -38,6 +38,13 @@ test-local:
 ui-build:
 	cd api/admin_ui && npm ci --no-audit --no-fund && npm run build
 
+# T.38 loopback proof: two Faxbot Asterisk containers exchange a two-page fax.
+# Needs Docker; DOCKER_CONTEXT defaults to colima-faxbot-refresh.
+DOCKER_CONTEXT ?= colima-faxbot-refresh
+.PHONY: native-proof
+native-proof:
+	cd api && mkdir -p faxdata && FAXBOT_NATIVE_PROOF=1 FAXBOT_DOCKER_CONTEXT=$(DOCKER_CONTEXT) FAX_DISABLED=true FAX_DATA_DIR=./faxdata DATABASE_URL='sqlite:///./test_faxbot_ci.db' $(abspath $(VENV))/bin/python -m pytest -q -s -p no:cacheprovider -m native tests/test_t38_loopback.py
+
 # Alembic helpers (run locally)
 alembic-upgrade:
 	DATABASE_URL=$${DATABASE_URL:-sqlite:///./faxbot.db} alembic -c api/alembic.ini upgrade head

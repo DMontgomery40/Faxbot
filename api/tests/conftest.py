@@ -37,3 +37,7 @@ def isolated_installation(monkeypatch, tmp_path):
     for name, value in environment.items():
         monkeypatch.setenv(name, value)
     return environment
+
+
+def pytest_configure(config):
+    config.addinivalue_line('markers', 'native: needs Docker and the Faxbot Asterisk image; runs only with FAXBOT_NATIVE_PROOF=1')
