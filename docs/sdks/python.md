@@ -40,4 +40,4 @@ print("Status:", status["status"])
 
 ## MCP Note
 - MCP (Model Context Protocol) is not part of this SDK. It is a separate integration layer for AI assistants.
-- Refer to `docs/MCP_INTEGRATION.md` in the repository for MCP setup and usage.
+- See [MCP integration](../mcp/index.md) for MCP setup and usage.
