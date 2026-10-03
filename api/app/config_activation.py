@@ -18,7 +18,7 @@ class ConfigurationActivationError(ValueError):
 
 
 _MAINTENANCE_FIELDS = frozenset({'database_url', 'fax_data_dir', 'providers_dir',
-                                 'plugin_registry_path', 'faxbot_config_path'})
+                                 'plugin_registry_path', 'faxbot_config_path', 'persisted_env_path'})
 _RESTART_FIELDS = frozenset({'enable_mcp_sse', 'mcp_sse_path', 'enable_mcp_http', 'mcp_http_path',
     'require_mcp_oauth', 'oauth_issuer', 'oauth_audience', 'oauth_jwks_url',
     'audit_log_enabled', 'audit_log_format', 'audit_log_file', 'audit_log_syslog', 'audit_log_syslog_address',

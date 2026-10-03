@@ -33,6 +33,15 @@ def bundled_config_dir() -> Path:
 
 
 def _configured_path(variable: str, filename: str) -> Path:
+    # Lazy import avoids coupling the immutable value model's bundled defaults
+    # to runtime ownership. Standalone path tools retain explicit env semantics.
+    from .config import managed_configuration_values
+    values = managed_configuration_values()
+    if values is not None:
+        fields = {'FAXBOT_PROVIDERS_DIR': 'providers_dir',
+                  'FAXBOT_CONFIG_PATH': 'faxbot_config_path',
+                  'PLUGIN_REGISTRY_PATH': 'plugin_registry_path'}
+        return Path(getattr(values, fields[variable])).absolute()
     override = os.getenv(variable)
     if override is not None:
         return Path(os.path.abspath(override))

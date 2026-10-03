@@ -2,6 +2,7 @@ import os
 from typing import Optional, Tuple, IO
 
 from .config import settings
+from functools import lru_cache
 
 
 class Storage:
@@ -35,25 +36,30 @@ class LocalStorage(Storage):
 
 
 class S3Storage(Storage):
-    def __init__(self):
+    def __init__(self, *, bucket=None, prefix=None, region=None, endpoint=None, kms_key=None):
+        self.bucket = settings.s3_bucket if bucket is None else bucket
+        self.prefix = settings.s3_prefix if prefix is None else prefix
+        self.kms_key = settings.s3_kms_key_id if kms_key is None else kms_key
+        region = settings.s3_region if region is None else region
+        endpoint = settings.s3_endpoint_url if endpoint is None else endpoint
         import boto3  # type: ignore
 
         self._s3 = boto3.client(
             "s3",
-            region_name=(settings.s3_region or None),
-            endpoint_url=(settings.s3_endpoint_url or None),
+            region_name=(region or None),
+            endpoint_url=(endpoint or None),
         )
-        if not settings.s3_bucket:
+        if not self.bucket:
             raise RuntimeError("S3 storage selected but S3_BUCKET is not set")
 
     def put_pdf(self, local_path: str, object_name: str) -> str:
-        bucket = settings.s3_bucket
-        prefix = settings.s3_prefix or ""
+        bucket = self.bucket
+        prefix = self.prefix or ""
         key = f"{prefix}{object_name}" if prefix else object_name
         extra = {}
-        if settings.s3_kms_key_id:
+        if self.kms_key:
             extra["ServerSideEncryption"] = "aws:kms"
-            extra["SSEKMSKeyId"] = settings.s3_kms_key_id
+            extra["SSEKMSKeyId"] = self.kms_key
         with open(local_path, "rb") as f:
             self._s3.upload_fileobj(f, bucket, key, ExtraArgs=extra)
         # Optionally delete local file – the caller may manage retention; keep file for now
@@ -80,9 +86,6 @@ def _parse_s3_uri(uri: str) -> Tuple[str, str]:
     return bucket, key
 
 
-_storage: Optional[Storage] = None
-_storage_sig: Optional[tuple] = None
-
 def _signature() -> tuple:
     return (
         (settings.storage_backend or "local").lower(),
@@ -94,26 +97,20 @@ def _signature() -> tuple:
     )
 
 
+@lru_cache(maxsize=32)
+def _storage_for(backend, bucket, region, endpoint, kms_key, prefix):
+    if backend == 's3':
+        return S3Storage(bucket=bucket, prefix=prefix, region=region, endpoint=endpoint, kms_key=kms_key)
+    if backend == 'local':
+        return LocalStorage()
+    raise RuntimeError('Unknown storage backend.')
+
+
 def get_storage() -> Storage:
-    global _storage
-    global _storage_sig
-    sig = _signature()
-    if _storage is not None and _storage_sig == sig:
-        return _storage
-    if (settings.storage_backend or "local").lower() == "s3":
-        try:
-            _storage = S3Storage()
-        except Exception:
-            # Fail closed with explicit error if configured but invalid
-            raise
-    else:
-        _storage = LocalStorage()
-    _storage_sig = sig
-    return _storage
+    # Returning a local cache result prevents another request's selection from
+    # replacing the shared object between construction and return.
+    return _storage_for(*_signature())
 
 
 def reset_storage() -> None:
-    """Clear cached storage so next get_storage() reflects updated settings."""
-    global _storage, _storage_sig
-    _storage = None
-    _storage_sig = None
+    _storage_for.cache_clear()

@@ -136,3 +136,8 @@ Wayfinder is available for unresolved large decisions; do not make a planning-on
 - Independent review then identified a rename escape in optional docs patch validation and missing versioned canonical URLs. `e59247f0` repairs both with observed failing regressions. Full focused docs suite:24 passed; independent correction review:13 focused checks passed, approved.
 - `28c7c1bb` and `24f28678` correct Setup/control labels and disabled-Inbox presentation. Independent Sol and primary real GUI replays passed. PDF download completion remains unverified; source/runtime configuration, full RBAC and real delivery work continue under the active goal.
 - Evidence: [docs and GUI checkpoint](evidence/2026-10-02-docs-and-gui.md). Subsequent commits automatically regenerate the code reference; agents use source and matching provenance rather than historical prose.
+
+
+## Canonical runtime integration checkpoint
+
+The actual API now uses the durable configuration store for startup, request frames, settings/plugin edits and accepted outbound profile binding. The Settings editor uses desired revisions, durable Apply and stale-editor refusal; real Browser acceptance verified hot-value persistence, coordinated pending promotion after full fixture restart, explicit clears and concurrent-editor protection. See [evidence](evidence/2026-10-02-canonical-runtime.md). Combined internal configuration checks passed 123 tests. Remaining full-product gates in the evidence record are still active; this checkpoint does not mark the refresh complete.
