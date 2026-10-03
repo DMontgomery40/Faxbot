@@ -14,6 +14,7 @@ import {
   IconButton,
   Tooltip,
   Chip,
+  Link,
 } from '@mui/material';
 import {
   PlayArrow as RunIcon,
@@ -36,6 +37,14 @@ interface Props {
   onNavigate: (destination: AdminDestination) => void;
   docsBase?: string;
 }
+
+const documentationLinkSx = {
+  '&:focus-visible': {
+    outline: '2px solid',
+    outlineColor: 'primary.main',
+    outlineOffset: 2,
+  },
+};
 
 const ConsoleBox: React.FC<{ lines: string[]; loading?: boolean; title?: string }> = ({ lines, loading, title }) => {
   const theme = useTheme();
@@ -248,7 +257,7 @@ const ScriptsTests: React.FC<Props> = ({ client, onNavigate, docsBase }) => {
             Manage API keys, review outbound faxes, and configure providers in the established workflows. Inbound and container helpers remain available below.
           </Typography>
           <Typography variant="body2">
-            Learn more in the docs: <a href={docsUrl} target="_blank" rel="noreferrer">Scripts & Tests</a>.
+            Learn more in the docs: <Link href={docsUrl} target="_blank" rel="noreferrer" color="primary" underline="always" sx={documentationLinkSx}>Scripts & Tests</Link>.
           </Typography>
         </Stack>
       </Alert>
@@ -366,8 +375,8 @@ const ScriptsTests: React.FC<Props> = ({ client, onNavigate, docsBase }) => {
                 </Button>
               </Box>
               <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
-                <a href={docsLink('sip', docsBase)} target="_blank" rel="noreferrer">SIP/Asterisk setup guide</a>
-                <a href={docsLink('phaxio', docsBase)} target="_blank" rel="noreferrer">Phaxio setup guide</a>
+                <Link href={docsLink('sip', docsBase)} target="_blank" rel="noreferrer" color="primary" underline="always" sx={documentationLinkSx}>SIP/Asterisk setup guide</Link>
+                <Link href={docsLink('phaxio', docsBase)} target="_blank" rel="noreferrer" color="primary" underline="always" sx={documentationLinkSx}>Phaxio setup guide</Link>
               </Stack>
             </Stack>
           </ResponsiveFormSection>
