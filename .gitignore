@@ -49,13 +49,14 @@ pnpm-debug.log*
 
 # Local data / logs
 faxdata/
+.archived/
 *.db
 logs/
 *.log
 
-# Project-specific
-/AGENTS.md
+# Keep nested agent notes local; share the root project guide.
 AGENTS.md
+!/AGENTS.md
 
 # Ignore built sites and vendor
 _site/
@@ -64,3 +65,6 @@ vendor/
 .bundle/
 
 site/
+
+# Claude Code agent worktrees
+.claude/worktrees/

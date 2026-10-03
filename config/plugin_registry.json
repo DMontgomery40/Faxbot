@@ -6,8 +6,8 @@
       "version": "1.0.0",
       "categories": ["outbound"],
       "capabilities": ["send", "get_status", "webhook"],
-      "description": "Recommended for most users; HIPAA-ready with BAA.",
-      "learn_more": "https://docs.faxbot.net/providers/phaxio"
+      "description": "Cloud fax sending with account credentials and a separate status callback token.",
+      "learn_more": "https://docs.faxbot.net/latest/setup/phaxio/"
     },
     {
       "id": "signalwire",
@@ -16,7 +16,7 @@
       "categories": ["outbound"],
       "capabilities": ["send", "get_status", "webhook"],
       "description": "Cloud fax using Twilio‑style Compatibility API.",
-      "learn_more": "https://dmontgomery40.github.io/Faxbot/backends/signalwire-setup.html"
+      "learn_more": "https://docs.faxbot.net/latest/setup/signalwire/"
     },
     {
       "id": "freeswitch",
@@ -25,7 +25,7 @@
       "categories": ["outbound"],
       "capabilities": ["send"],
       "description": "Self‑hosted fax via mod_spandsp (txfax/rxfax).",
-      "learn_more": "https://dmontgomery40.github.io/Faxbot/backends/freeswitch-setup.html"
+      "learn_more": "https://docs.faxbot.net/latest/setup/freeswitch/"
     },
     {
       "id": "sinch",
@@ -34,7 +34,25 @@
       "categories": ["outbound"],
       "capabilities": ["send", "get_status"],
       "description": "Direct Sinch upload model for Phaxio by Sinch accounts.",
-      "learn_more": "https://docs.faxbot.net/providers/sinch"
+      "learn_more": "https://docs.faxbot.net/latest/setup/sinch/"
+    },
+    {
+      "id": "documo",
+      "name": "Documo mFax",
+      "version": "1.0.0",
+      "categories": ["outbound"],
+      "capabilities": ["send", "get_status"],
+      "description": "Cloud fax via Documo mFax with direct PDF uploads and original-account status polling.",
+      "learn_more": "https://docs.faxbot.net/latest/setup/documo/"
+    },
+    {
+      "id": "humblefax",
+      "name": "HumbleFax",
+      "version": "1.0.0",
+      "categories": ["outbound"],
+      "capabilities": ["send", "get_status"],
+      "description": "Cloud fax via HumbleFax with direct PDF uploads and original-account status polling.",
+      "learn_more": "https://docs.faxbot.net/latest/setup/humblefax/"
     },
     {
       "id": "sip",
@@ -43,7 +61,7 @@
       "categories": ["outbound"],
       "capabilities": ["send", "get_status"],
       "description": "Advanced users; requires SIP trunk + T.38 and AMI.",
-      "learn_more": "https://docs.faxbot.net/providers/asterisk"
+      "learn_more": "https://docs.faxbot.net/latest/setup/sip-asterisk/"
     },
     {
       "id": "local",
@@ -51,8 +69,8 @@
       "version": "1.0.0",
       "categories": ["storage"],
       "capabilities": ["store", "retrieve", "delete"],
-      "description": "Local storage for development only.",
-      "learn_more": "https://docs.faxbot.net/storage/local"
+      "description": "Keeps fax artifacts on this installation's local disk or mounted volume.",
+      "learn_more": "https://docs.faxbot.net/latest/admin-console/settings/#available-controls"
     },
     {
       "id": "s3",
@@ -61,7 +79,7 @@
       "categories": ["storage"],
       "capabilities": ["store", "retrieve", "delete"],
       "description": "Production storage with SSE-KMS recommended for PHI.",
-      "learn_more": "https://docs.faxbot.net/storage/s3"
+      "learn_more": "https://docs.faxbot.net/latest/admin-console/settings/#available-controls"
     }
   ]
 }

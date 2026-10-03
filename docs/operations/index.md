@@ -8,10 +8,12 @@ Operate and troubleshoot Faxbot day to day.
 ## Areas
 
 - [Admin Console](../admin-console.md)
+- [Delivery routes](delivery-routes.md) · [Intake](intake.md) · [Direct delivery](direct-delivery.md)
+- [Command line](cli.md): every console task from a terminal or script, plus backup, restore and owner recovery
 - [Terminal](../terminal.md)
 - Tools: [Scripts & Tests](../tools/scripts-and-tests.md) · [Node MCP Scripts](../tools/node-mcp-scripts.md) · [API Tests](../tools/api-tests.md)
 - [Troubleshooting](../troubleshooting.md)
-- [Third‑Party References](../third-party.md)
+- [Reference guides](../reference/index.md)
 
 ## Quick Links
 
@@ -21,9 +23,9 @@ Operate and troubleshoot Faxbot day to day.
   Health checks and actionable guidance.  
   [Open](../admin-console/diagnostics.md)
 
-- :material-download: **Inbound**  
-  Enable receiving, storage, and secure PDF access.  
-  [Guide](../inbound.md)
+- :material-download: **Intake**\
+  Manage received documents and email delivery.\
+  [Guide](intake.md)
 
 - :material-script-text: **Run Scripts & Tests**  
   E2E and helpers for quick validation.  

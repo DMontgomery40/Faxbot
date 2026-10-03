@@ -3,16 +3,18 @@ from fastapi.testclient import TestClient  # type: ignore
 from api.app.main import app
 
 
-def test_scope_enforcement_send_requires_scope(monkeypatch, tmp_path):
+def test_scope_enforcement_send_requires_scope(isolated_installation, monkeypatch, tmp_path):
     # Enforce auth
     monkeypatch.setenv("REQUIRE_API_KEY", "true")
+    monkeypatch.setenv("PUBLIC_API_URL", "https://testserver")
+    monkeypatch.setenv("FAXBOT_CONSOLE_ORIGINS", "https://testserver")
     monkeypatch.setenv("FAX_DISABLED", "true")
     monkeypatch.setenv("FAX_BACKEND", "phaxio")
     monkeypatch.setenv("FAX_DATA_DIR", str(tmp_path / "faxdata_test_scopes"))
     # Use bootstrap for admin
     monkeypatch.setenv("API_KEY", "bootstrap_admin_only")
 
-    with TestClient(app) as client:
+    with TestClient(app, base_url="https://testserver", headers={"Origin": "https://testserver"}) as client:
         # Create a key with only fax:read
         r = client.post(
             "/admin/api-keys",
@@ -27,14 +29,16 @@ def test_scope_enforcement_send_requires_scope(monkeypatch, tmp_path):
         assert r2.status_code == 403
 
 
-def test_scope_enforcement_read_requires_scope(monkeypatch, tmp_path):
+def test_scope_enforcement_read_requires_scope(isolated_installation, monkeypatch, tmp_path):
     monkeypatch.setenv("REQUIRE_API_KEY", "true")
+    monkeypatch.setenv("PUBLIC_API_URL", "https://testserver")
+    monkeypatch.setenv("FAXBOT_CONSOLE_ORIGINS", "https://testserver")
     monkeypatch.setenv("FAX_DISABLED", "true")
     monkeypatch.setenv("FAX_BACKEND", "phaxio")
     monkeypatch.setenv("FAX_DATA_DIR", str(tmp_path / "faxdata_test_scopes2"))
     monkeypatch.setenv("API_KEY", "bootstrap_admin_only")
 
-    with TestClient(app) as client:
+    with TestClient(app, base_url="https://testserver", headers={"Origin": "https://testserver"}) as client:
         # Create a send-capable key and queue a job
         r = client.post(
             "/admin/api-keys",
@@ -51,15 +55,16 @@ def test_scope_enforcement_read_requires_scope(monkeypatch, tmp_path):
         r3 = client.post(
             "/admin/api-keys",
             headers={"X-API-Key": "bootstrap_admin_only"},
-            json={"name": "read-only2", "owner": "tester", "scopes": ["fax:read"]},
+            # Spec "Persisted schema and migration": owner is free text and grants nothing.
+            json={"name": "read-only2", "owner": "someone-else", "scopes": ["fax:read"]},
         )
         read_token = r3.json()["token"]
 
-        # Using send-only token to read should fail with 403
+        # Using send-only token to read should fail; it cannot see the fax at all.
         r4 = client.get(f"/fax/{job_id}", headers={"X-API-Key": send_token})
-        assert r4.status_code == 403
+        # Spec "Resource and role model": an invisible individual resource returns 404.
+        assert r4.status_code == 404
 
-        # Using read-only token to read should succeed
+        # Read-only token succeeds through its installation-wide fax:read assignment
         r5 = client.get(f"/fax/{job_id}", headers={"X-API-Key": read_token})
         assert r5.status_code == 200
-

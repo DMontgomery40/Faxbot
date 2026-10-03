@@ -1,11 +1,9 @@
-import asyncio
 from typing import Optional, Dict, Any
 import httpx
-import logging
 
 from .config import settings, reload_settings
-
-logger = logging.getLogger(__name__)
+from .routing.numbers import canonical_number
+from .callback_locator import callback_url_with_locators
 
 
 class SignalWireFaxService:
@@ -34,15 +32,12 @@ class SignalWireFaxService:
     def _compat_base(self) -> str:
         return f"https://{self.space_url}/api/laml/2010-04-01"
 
-    async def send_fax(self, to_number: str, media_url: str, job_id: str) -> Dict[str, Any]:
+    async def send_fax(self, to_number: str, media_url: str, job_id: str, *, attempt_id: Optional[str] = None) -> Dict[str, Any]:
         if not self.is_configured():
             raise ValueError("SignalWire is not properly configured")
 
-        # Normalize number to E.164 if possible
-        if not to_number.startswith('+'):
-            digits = ''.join(c for c in to_number if c.isdigit())
-            if len(digits) >= 10:
-                to_number = f"+{digits}"
+        # SignalWire takes E.164, which is the accepted job's canonical form.
+        to_number = canonical_number(to_number)
 
         auth = (self.project_id, self.api_token)  # HTTP Basic
 
@@ -53,60 +48,52 @@ class SignalWireFaxService:
         if self.from_number:
             data['From'] = self.from_number
         if self.status_callback_url:
-            data['StatusCallback'] = f"{self.status_callback_url}?job_id={job_id}"
+            data['StatusCallback'] = callback_url_with_locators(self.status_callback_url, job_id, attempt_id)
 
         url = f"{self._compat_base()}/Accounts/{self.project_id}/Faxes.json"
 
-        # Simple retry with backoff
-        attempts = 3
-        delay = 1.0
-        last_err: Optional[Exception] = None
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            for _ in range(attempts):
-                try:
-                    resp = await client.post(url, data=data, auth=auth)
-                    if resp.status_code >= 400:
-                        try:
-                            j = resp.json()
-                            msg = j.get('message') or str(j)
-                        except Exception:
-                            msg = resp.text
-                        raise Exception(f"SignalWire API error {resp.status_code}: {msg}")
-                    j = resp.json()
-                    # Expected Twilio-like shape `{ sid, status, ... }`
-                    sid = str(j.get('sid') or j.get('faxSid') or '')
-                    status = str(j.get('status') or j.get('faxStatus') or 'queued').lower()
-                    return {
-                        'provider_sid': sid,
-                        'status': self._map_status_str(status),
-                    }
-                except Exception as e:
-                    last_err = e
-                    await asyncio.sleep(delay)
-                    delay = min(8.0, delay * 2)
-        assert last_err is not None
-        raise last_err
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                resp = await client.post(url, data=data, auth=auth)
+        except (httpx.HTTPError, httpx.InvalidURL):
+            raise RuntimeError('SignalWire create request failed.') from None
+        j = self._response(resp)
+        sid = j.get('sid') or j.get('faxSid') or ''
+        status = j.get('status') or j.get('faxStatus') or 'queued'
+        if not isinstance(sid, str) or not isinstance(status, str):
+            raise RuntimeError('Unexpected SignalWire create response.') from None
+        return {'provider_sid': sid, 'status': self._map_status_str(status)}
+
+    @staticmethod
+    def _response(resp: httpx.Response) -> Dict[str, Any]:
+        if not 200 <= resp.status_code < 300:
+            raise RuntimeError(f'SignalWire request failed (HTTP {resp.status_code}).') from None
+        try:
+            payload = resp.json()
+            if not isinstance(payload, dict):
+                raise ValueError
+            return payload
+        except (TypeError, ValueError):
+            raise RuntimeError('Unexpected SignalWire response.') from None
 
     async def get_fax_status(self, provider_sid: str) -> Dict[str, Any]:
         if not self.is_configured():
             raise ValueError("SignalWire is not properly configured")
         auth = (self.project_id, self.api_token)
         url = f"{self._compat_base()}/Accounts/{self.project_id}/Faxes/{provider_sid}.json"
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.get(url, auth=auth)
-            if resp.status_code >= 400:
-                try:
-                    msg = resp.json().get('message')
-                except Exception:
-                    msg = resp.text
-                raise Exception(f"SignalWire API error {resp.status_code}: {msg}")
-            j = resp.json()
-            status = str(j.get('status') or j.get('faxStatus') or 'queued').lower()
-            return {
-                'provider_sid': str(j.get('sid') or provider_sid),
-                'status': self._map_status_str(status),
-                'provider_status': status,
-            }
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                resp = await client.get(url, auth=auth)
+        except (httpx.HTTPError, httpx.InvalidURL):
+            raise RuntimeError('SignalWire status request failed.') from None
+        j = self._response(resp)
+        sid = j.get('sid') or provider_sid
+        status = j.get('status', j.get('faxStatus'))
+        if not isinstance(sid, str) or not isinstance(status, str) or not status.strip():
+            raise RuntimeError('Unexpected SignalWire status response.') from None
+        status = status.lower()
+        return {'provider_sid': sid,
+                'status': self._map_status_str(status), 'provider_status': status}
 
     async def handle_status_callback(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         sid = payload.get('FaxSid') or payload.get('sid') or payload.get('MessageSid')
@@ -129,7 +116,8 @@ class SignalWireFaxService:
             'success': 'SUCCESS',
             'failed': 'FAILED',
             'error': 'FAILED',
-            'canceled': 'FAILED',
+            'canceled': 'cancelled',
+            'cancelled': 'cancelled',
         }
         return mapping.get(s, s or 'queued')
 
@@ -152,4 +140,3 @@ def get_signalwire_service() -> Optional[SignalWireFaxService]:
             status_callback_url=settings.signalwire_status_callback_url or None,
         )
     return _svc
-

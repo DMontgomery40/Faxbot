@@ -1,70 +1,66 @@
-# Authentication (API Keys)
+# Authentication
 
-Faxbot authenticates requests using an `X-API-Key` header. There are two key types:
+Every request to the Faxbot API needs a credential: an API key in the `X-API-Key` header, or a signed-in admin console session. `REQUIRE_API_KEY=false` does not turn this off. The only routes that work without a credential are the ones that cannot carry one:
 
-- DB‑backed keys (recommended): tokens of the form `fbk_live_<keyId>_<secret>` created via admin endpoints.
-- Bootstrap env key (legacy): the literal `API_KEY` value set on the server; use only to bootstrap DB keys.
+- health checks such as `GET /health`
+- the console sign-in routes `POST /auth/login` and `POST /auth/key-login`
+- provider callbacks and provider document downloads, which carry their own signature or single-job link
+- `POST /mobile/pair`, which needs a current pairing code instead
 
-## Quick Start — Get a DB‑Backed Key
+Who can do what after signing in is covered in [Access Control](access-control.md). The exact request and response formats for the sign-in routes are in the [Access and Sign-in API](../reference/access-api.md) reference.
 
-1) Set a temporary bootstrap admin key in the server environment (for example in `.env`):
+## Sign in to the admin console
+
+The sign-in screen offers two ways in.
+
+**Username and password.** People get a username from an Owner or Administrator on the **Users** screen, together with a temporary password. The first sign-in asks for a new password before anything else works. Passwords need at least 12 characters. Changing a password ends every other session for that person.
+
+**API key.** Select **Sign in with API key** and paste a Faxbot API key. The console then works with exactly the permissions that key has. The session ends when the key expires or is revoked, even if the session's own time has not run out.
+
+The installation key in `API_KEY` can also sign in this way. Use it to create the first owner and to recover owner access, then sign in with a named account for daily work. See [first owner](access-control.md#create-the-first-owner) and [owner recovery](access-control.md#recover-owner-access).
+
+## Sessions
+
+A console session lasts at most 12 hours. It also ends after 30 minutes without activity. Signing out, changing your password, or an administrator disabling your account or revoking the session ends it immediately.
+
+Everyone can see and end their own sessions on **Settings → Sessions**. Seeing other people's sessions needs the `sessions:read` permission, and ending them needs `sessions:revoke`.
+
+Faxbot keeps the session in a browser cookie that scripts cannot read. Over HTTPS the cookie is also marked secure, so the browser only sends it over HTTPS. API keys and session tokens never belong in URLs or in browser storage.
+
+## Browser protections
+
+Sign-in requests, and any change made with a session cookie, must come from a page Faxbot trusts. Faxbot compares the browser's `Origin` header with this list:
+
+- `FAXBOT_CONSOLE_ORIGINS`, a comma-separated list of origins such as `https://fax.internal.example,https://fax.example:8443` (scheme, host and optional port, no paths)
+- if that is not set, the origin of `PUBLIC_API_URL`
+
+Set `FAXBOT_CONSOLE_ORIGINS` when people open the console at a different address than the one providers use for callbacks.
+
+Changes made with a session cookie must also send the `X-CSRF-Token` header. The value comes from `GET /auth/me`, and the admin console sends it automatically. Requests that send `X-API-Key` do not use the cookie at all, even when the key is wrong.
+
+## HTTPS and plain HTTP
+
+Console sessions need HTTPS. There are two exceptions:
+
+- **Local development.** `scripts/run-uvicorn-dev.sh`, or `python -m api.app.server --loopback --port 8080` from the repository root, listens only on `127.0.0.1` and allows sessions over plain HTTP from `http://localhost` and `http://127.0.0.1` on that port.
+- **Private networks.** Setting `FAXBOT_ALLOW_INSECURE_HTTP_SESSIONS=true` in the deployment environment allows sessions over plain HTTP. Use it only on a private network or VPN that you control, such as a WireGuard or Tailscale network. On any other network the session cookie can be read in transit. This is a deployment setting; it is not available on the Settings screen.
+
+API keys work over any transport, HTTP or HTTPS, and from any client, including the desktop app. Outside a network you trust, use HTTPS or a VPN anyway: on plain HTTP the key travels unencrypted.
+
+## API keys
+
+API keys look like `fbk_live_<id>_<secret>`. The full key is shown once, when it is created or rotated. Every key belongs to a user or an integration and can never do more than its owner is allowed to do. A key can also carry a narrower permission list. See [Keys](access-control.md#keys) for creating, rotating and revoking keys, and for the keys that the iPhone app receives when it pairs.
+
+Send the key in the `X-API-Key` header:
+
+```sh
+curl -H "X-API-Key: $FAXBOT_API_KEY" https://fax.example.com/fax/$JOB_ID
 ```
-API_KEY=bootstrap_admin_only
-REQUIRE_API_KEY=true
-```
-2) Create a per‑user/service key via the admin endpoint (authenticate with the bootstrap `API_KEY`):
-```
-curl -s -X POST http://localhost:8080/admin/api-keys \
-  -H "X-API-Key: $API_KEY" \
-  -H 'Content-Type: application/json' \
-  -d '{"name":"dev","owner":"you@example.com","scopes":["fax:send","fax:read"]}'
-```
-3) Save the returned `token` securely. It is shown once.
-4) Use that token on all client requests:
-```
-curl -H "X-API-Key: fbk_live_<keyId>_<secret>" http://localhost:8080/health
-```
 
-## Scopes
+`MAX_REQUESTS_PER_MINUTE` limits how often one credential can send faxes or read fax status. Repeated failed sign-ins are slowed down. Both return HTTP 429 with a `Retry-After` header.
 
-Scopes limit what a key can do:
-- `fax:send` — required for `POST /fax`
-- `fax:read` — required for `GET /fax/{id}`
-- `inbound:list` and `inbound:read` — required for inbound listing/metadata/download
-- `keys:manage` — required for admin key management endpoints
+## What a refused request looks like
 
-If `REQUIRE_API_KEY=false` and no `API_KEY` is set, unauthenticated requests are allowed in development, and scopes are not enforced.
-
-## Key Lifecycle
-
-- Rotate — `POST /admin/api-keys/{keyId}/rotate` returns a new plaintext token once; the old secret is immediately invalid.
-- Revoke — `DELETE /admin/api-keys/{keyId}` sets `revoked_at`, permanently disabling the token.
-- Expire — when creating a key, set `expires_at` (ISO8601) to enforce automatic expiry.
-- List metadata — `GET /admin/api-keys` returns non‑secret fields: `scopes`, timestamps, `owner`, `name`, `revoked_at`.
-
-## Admin Endpoints (Summary)
-
-- Create: `POST /admin/api-keys` → returns `{ key_id, token, ... }` (token shown once)
-- List: `GET /admin/api-keys` → returns array of metadata (no secrets)
-- Revoke: `DELETE /admin/api-keys/{keyId}` → `{ status: "ok" }`
-- Rotate: `POST /admin/api-keys/{keyId}/rotate` → `{ key_id, token }` (new token shown once)
-
-Admin auth: use either the bootstrap env `API_KEY`, or a DB key that has the `keys:manage` scope.
-
-## Enforcement & Errors
-
-- `REQUIRE_API_KEY=true` (recommended for HIPAA/production) enforces authentication even if `API_KEY` is blank.
-- 401 Unauthorized — missing/invalid, revoked, or expired token; or no admin auth for admin endpoints.
-- 403 Forbidden — valid token but insufficient scopes.
-- 429 Too Many Requests — per‑key rate limit exceeded.
-
-## Rate Limiting (Optional)
-
-- Global per‑key: `MAX_REQUESTS_PER_MINUTE` (default 0 disables)
-- Inbound per‑route: `INBOUND_LIST_RPM`, `INBOUND_GET_RPM` (token downloads are not rate‑limited)
-
-## Security Tips
-
-- Prefer DB‑backed keys per user/service; avoid sharing a single env key.
-- Rotate regularly and remove unused keys.
-- For public deployments, place the API behind TLS and a reverse proxy/WAF with additional rate limits and IP allowlists.
+- **401**: the credential is missing, wrong, expired, revoked, or belongs to a disabled account.
+- **403**: the credential is valid but lacks the permission, or the request came from an origin Faxbot does not trust.
+- **404**: the fax or other item does not exist, or you are not allowed to know it exists.

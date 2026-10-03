@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { 
   Box, 
   Grid, 
@@ -33,11 +33,20 @@ import {
   ExpandMore as ExpandMoreIcon,
   ExpandLess as ExpandLessIcon,
 } from '@mui/icons-material';
-import AdminAPIClient from '../api/client';
+import AdminAPIClient, { configurationWriteRejected } from '../api/client';
+import { curatedDocsLink } from '../docsLinks';
+import type { AdminConfig, ConfigurationWriteResult, PluginConfiguration, PluginConfigurationPatch, Settings } from '../api/types';
+import type { AdminDestination } from '../navigation';
 import PluginConfigDialog from './PluginConfigDialog';
-import { ResponsiveFormSection, ResponsiveTextField } from './common/ResponsiveFormFields';
+import { ResponsiveFormSection } from './common/ResponsiveFormFields';
 
-type Props = { client: AdminAPIClient };
+type Props = {
+  client: AdminAPIClient;
+  config: AdminConfig | null;
+  configLoading: boolean;
+  configError: string | null;
+  onNavigate: (destination: AdminDestination) => void;
+};
 
 type PluginItem = {
   id: string;
@@ -49,6 +58,7 @@ type PluginItem = {
   configurable?: boolean;
   description?: string;
   learn_more?: string;
+  source?: string;
 };
 
 const iconFor = (cat: string) => {
@@ -80,7 +90,8 @@ const EXAMPLE_MANIFEST = `{
 
 const BULK_IMPORT_PLACEHOLDER = `[ { "id": "provider1", ... }, { ... } ] or markdown with json code blocks`;
 
-export default function Plugins({ client }: Props) {
+export default function Plugins({ client, config, configLoading: activeConfigLoading, configError: activeConfigError, onNavigate }: Props) {
+  const docsBase = config?.branding?.docs_base;
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>('');
   const [items, setItems] = useState<PluginItem[]>([]);
@@ -89,11 +100,19 @@ export default function Plugins({ client }: Props) {
   const [note, setNote] = useState<string>('');
   const [configOpen, setConfigOpen] = useState(false);
   const [configPlugin, setConfigPlugin] = useState<PluginItem | null>(null);
-  const [configData, setConfigData] = useState<{ enabled?: boolean; settings?: any } | null>(null);
+  const [configData, setConfigData] = useState<PluginConfiguration | null>(null);
+  const [configLoading, setConfigLoading] = useState(false);
+  const [configError, setConfigError] = useState('');
+  const configLoadId = useRef(0);
+  const configWritable = useRef(false);
+  const actionFence = useRef(false);
+  const listLoadId = useRef(0);
+  const clientEpoch = useRef(0);
+  const [saveResult, setSaveResult] = useState<ConfigurationWriteResult | null>(null);
+  const [settings, setSettings] = useState<Settings | null>(null);
+  const [activeProviders, setActiveProviders] = useState<{ outbound: string; storage: string } | null>(null);
   const [query, setQuery] = useState('');
   const [manifestJson, setManifestJson] = useState<string>('');
-  const [manifestTo, setManifestTo] = useState<string>('+15551234567');
-  const [manifestFileUrl, setManifestFileUrl] = useState<string>('');
   const [manifestResult, setManifestResult] = useState<any | null>(null);
   const [bulkText, setBulkText] = useState<string>('');
   const [bulkImportRes, setBulkImportRes] = useState<any | null>(null);
@@ -104,96 +123,221 @@ export default function Plugins({ client }: Props) {
   const isSmallMobile = useMediaQuery(theme.breakpoints.down('sm'));
 
   const load = async () => {
+    const loadId = ++listLoadId.current;
     try {
       setLoading(true);
       setError('');
-      const [listRes, regRes] = await Promise.all([
-        client.listPlugins().catch(() => ({ items: [] })),
-        client.getPluginRegistry().catch(() => ({ items: [] })),
+      setSettings(null);
+      setActiveProviders(null);
+      const before = await client.getSettings();
+      if (!before._meta?.desired_revision_id) {
+        throw new Error('Plugin settings could not be loaded. Refresh to try again.');
+      }
+      const [listRes, regRes, active] = await Promise.all([
+        client.listPlugins(),
+        client.getPluginRegistry(),
+        client.getConfig(),
       ]);
+      const after = await client.getSettings();
+      if (loadId !== listLoadId.current) return false;
+      if (before._meta.desired_revision_id !== after._meta?.desired_revision_id
+          || before._meta.active_revision_id !== after._meta?.active_revision_id
+          || before._meta.generation !== after._meta?.generation) {
+        throw new Error('Settings changed while plugins were loading. Refresh to see the current values.');
+      }
       setItems(listRes.items || []);
       setRegistry(regRes.items || []);
+      setSettings(after);
+      setActiveProviders({
+        outbound: active.hybrid?.outbound ?? active.backend,
+        storage: active.storage?.backend,
+      });
+      return true;
     } catch (e: any) {
-      setError(e?.message || 'Failed to load plugins');
+      if (loadId === listLoadId.current) setError(e?.message || 'Failed to load plugins');
+      return false;
     } finally {
-      setLoading(false);
+      if (loadId === listLoadId.current) setLoading(false);
     }
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    clientEpoch.current += 1;
+    actionFence.current = false;
+    configWritable.current = false;
+    setSaving(null);
+    setNote('');
+    setSaveResult(null);
+    setConfigOpen(false);
+    setConfigPlugin(null);
+    setConfigData(null);
+    setConfigError('');
+    setConfigLoading(false);
+    void load();
+    return () => {
+      clientEpoch.current += 1;
+      listLoadId.current += 1;
+      configLoadId.current += 1;
+      configWritable.current = false;
+    };
+  }, [client]);
 
   const handleConfigure = async (plugin: PluginItem) => {
+    const loadId = ++configLoadId.current;
+    configWritable.current = false;
+    setConfigPlugin(plugin);
+    setConfigData(null);
+    setConfigError('');
+    setConfigLoading(true);
+    setConfigOpen(true);
     try {
-      setError('');
-      setConfigPlugin(plugin);
-      try {
-        const cfg = await client.getPluginConfig(plugin.id);
-        setConfigData(cfg || { enabled: true, settings: {} });
-      } catch {
-        setConfigData({ enabled: true, settings: {} });
+      const role = plugin.categories.includes('storage') ? 'storage' : 'outbound';
+      const cfg = await client.getPluginConfig(plugin.id, role);
+      if (!cfg._meta?.desired_revision_id) {
+        throw new Error('Plugin settings could not be loaded. Reload to try again.');
       }
-      setConfigOpen(true);
+      if (loadId === configLoadId.current) {
+        setConfigData(cfg);
+        configWritable.current = true;
+      }
     } catch (e: any) {
-      setError(e?.message || 'Failed to load plugin config');
+      if (loadId === configLoadId.current) setConfigError(e?.message || 'Failed to load plugin config');
+    } finally {
+      if (loadId === configLoadId.current) setConfigLoading(false);
     }
   };
 
-  const handleSaveConfig = async (payload: { enabled?: boolean; settings?: any }) => {
-    if (!configPlugin) return;
+  const saveMessage = (data: ConfigurationWriteResult) => data._meta.apply_state === 'pending_restart'
+    ? `${data.changed ? 'Settings saved.' : 'Nothing changed.'} Restart Faxbot to apply pending changes.`
+    : data.changed ? 'Settings saved.' : 'Nothing changed.';
+
+  const mutationError = (e: any, conflict: string) => (e?.message || '').includes('409')
+    ? conflict
+    : configurationWriteRejected(e)
+      ? `Settings were not saved (error ${e.status}). Reload to try again.`
+      : 'Faxbot could not confirm the save. Reload to check the current values.';
+
+  const handleSaveConfig = async (payload: PluginConfigurationPatch) => {
+    if (!configPlugin || !configWritable.current || actionFence.current) throw new Error('Reload settings before saving.');
+    const pluginId = configPlugin.id;
+    const epoch = clientEpoch.current;
+    actionFence.current = true;
+    let writeResult: ConfigurationWriteResult;
     try {
-      setSaving(configPlugin.id);
-      await client.updatePluginConfig(configPlugin.id, payload);
-      setNote('Plugin configuration saved to config file');
-      await load();
+      setSaving(pluginId);
+      setError('');
+      setNote('');
+      setSaveResult(null);
+      writeResult = await client.updatePluginConfig(pluginId, payload);
+      if (epoch !== clientEpoch.current) return;
     } catch (e: any) {
-      setError(e?.message || 'Failed to save plugin config');
-    } finally {
+      if (epoch !== clientEpoch.current) return;
+      configWritable.current = false;
+      setSettings(null);
+      const message = mutationError(e, 'Someone else changed these settings. Your edits are kept here; reload to see the current values.');
+      setError(message);
+      setConfigError(message);
+      actionFence.current = false;
       setSaving(null);
+      throw new Error(message);
+    }
+    // The save succeeded. Later read errors must not reject onSave, which
+    // would leave the dialog reporting a failed save.
+    configWritable.current = false;
+    const loadId = ++configLoadId.current;
+    setConfigData(null);
+    setConfigLoading(true);
+    setConfigError('');
+    setSettings(null);
+    setActiveProviders(null);
+    setSaveResult(writeResult);
+    const saved = saveMessage(writeResult);
+    setNote(saved);
+    try {
+      try {
+        const desired = await client.getPluginConfig(pluginId, payload.role);
+        if (!desired._meta?.desired_revision_id) throw new Error('Plugin settings could not be loaded.');
+        if (loadId === configLoadId.current) {
+          setConfigData(desired);
+          configWritable.current = true;
+        }
+      } catch {
+        if (epoch !== clientEpoch.current) return;
+        if (loadId === configLoadId.current) setConfigError('Settings saved, but they could not be reloaded. Reload to keep editing.');
+        setNote(saved);
+      }
+      if (epoch !== clientEpoch.current) return;
+      if (!await load()) {
+        if (epoch === clientEpoch.current) setNote(saved);
+      }
+    } finally {
+      if (epoch === clientEpoch.current) {
+        if (loadId === configLoadId.current) setConfigLoading(false);
+        actionFence.current = false;
+        setSaving(null);
+      }
     }
   };
 
   const handleMakeActiveOutbound = async (pluginId: string) => {
+    const desiredRevision = settings?._meta?.desired_revision_id;
+    if (actionFence.current || !desiredRevision) return;
+    const epoch = clientEpoch.current;
+    actionFence.current = true;
+    let writeResult: ConfigurationWriteResult;
     try {
       setSaving(pluginId);
-      await client.updatePluginConfig(pluginId, { enabled: true });
-      setNote('Saved to config file. Apply changes by restarting with the desired env or adding an explicit apply step later.');
-      await load();
+      setError('');
+      setNote('');
+      setSaveResult(null);
+      writeResult = await client.updatePluginConfig(pluginId, {
+        enabled: true, role: 'outbound', expected_revision_id: desiredRevision,
+      });
+      if (epoch !== clientEpoch.current) return;
     } catch (e: any) {
-      setError(e?.message || 'Failed to save plugin config');
-    } finally {
+      if (epoch !== clientEpoch.current) return;
+      setSettings(null);
+      setError(mutationError(e, 'Someone else changed these settings. Refresh to see the current values.'));
+      actionFence.current = false;
       setSaving(null);
+      return;
+    }
+    configWritable.current = false;
+    configLoadId.current += 1;
+    setConfigData(null);
+    setSettings(null);
+    setActiveProviders(null);
+    setSaveResult(writeResult);
+    const saved = saveMessage(writeResult);
+    setNote(saved);
+    try {
+      if (!await load() && epoch === clientEpoch.current) setNote(saved);
+    } finally {
+      if (epoch === clientEpoch.current) {
+        actionFence.current = false;
+        setSaving(null);
+      }
     }
   };
 
   const matches = (p: PluginItem) => {
     if (!query) return true;
     const q = query.toLowerCase();
-    const inReg = (registry || []).find(r => r.id === p.id);
-    const hay = `${p.id} ${p.name} ${inReg?.description || ''}`.toLowerCase();
+    const inReg = p.source === 'manifest' ? undefined : (registry || []).find(r => r.id === p.id);
+    const hay = `${p.id} ${p.name} ${p.description || inReg?.description || ''}`.toLowerCase();
     return hay.includes(q);
   };
   
   const byCategory = (cat: string) => (items || []).filter(p => (p.categories || []).includes(cat)).filter(matches);
   
-  const ensureDocumo = (arr: PluginItem[]) => {
-    const has = arr.some(p => p.id === 'documo');
-    if (!has) {
-      arr = arr.concat([{ 
-        id: 'documo', 
-        name: 'Documo mFax', 
-        version: '1.0.0', 
-        categories: ['outbound'], 
-        capabilities: ['send','get_status'], 
-        description: 'Direct upload (preview)' 
-      } as any]);
-    }
-    return arr;
-  };
-  
   const registryOnly = () => {
     const installed = new Set((items || []).map(i => i.id));
     return (registry || []).filter(r => !installed.has(r.id) && matches(r as any));
   };
+  const renderedClientEpoch = clientEpoch.current;
+  const pendingCount = settings?._meta?.pending_fields?.length ?? 0;
+  const showRestartNotice = settings?._meta?.apply_state === 'pending_restart'
+    && !(note && saveResult?._meta.apply_state === 'pending_restart');
 
   return (
     <Box sx={{ p: { xs: 2, sm: 0 } }}>
@@ -202,8 +346,13 @@ export default function Plugins({ client }: Props) {
           Plugins
         </Typography>
         <Typography variant="body2" color="text.secondary">
-          Manage provider plugins. This preview lists installed providers; updates persist to the config file only. No live apply yet.
+          Choose fax and storage providers and manage their settings.
         </Typography>
+        {activeProviders && (
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+            In use: {activeProviders.outbound} for outbound faxes, {activeProviders.storage} for storage.
+          </Typography>
+        )}
       </Box>
 
       <Stack spacing={3}>
@@ -211,6 +360,7 @@ export default function Plugins({ client }: Props) {
           <TextField 
             size="medium" 
             fullWidth 
+            label="Search plugins"
             placeholder="Search curated plugins…" 
             value={query} 
             onChange={(e) => setQuery(e.target.value)}
@@ -225,13 +375,19 @@ export default function Plugins({ client }: Props) {
           />
         </Paper>
 
-        <Alert severity="info" sx={{ borderRadius: 2 }}>
-          Plugin changes are feature‑gated and safe to explore. Outbound provider remains controlled by env (<code>FAX_BACKEND</code>) until an explicit apply flow is added.
-        </Alert>
+        {showRestartNotice && (
+          <Alert severity="warning" sx={{ borderRadius: 2 }}>
+            {pendingCount > 0
+              ? `Restart Faxbot to apply ${pendingCount} pending ${pendingCount === 1 ? 'change' : 'changes'}.`
+              : 'Restart Faxbot to apply pending changes.'}
+          </Alert>
+        )}
+
+        <Box><Button onClick={load} disabled={loading || saving !== null}>Refresh plugins</Button></Box>
         
         {note && (
           <Fade in>
-            <Alert severity="success" onClose={() => setNote('')} sx={{ borderRadius: 2 }}>
+            <Alert severity={saveResult?._meta.apply_state === 'pending_restart' ? 'warning' : 'success'} onClose={() => setNote('')} sx={{ borderRadius: 2 }}>
               {note}
             </Alert>
           </Fade>
@@ -254,11 +410,14 @@ export default function Plugins({ client }: Props) {
           <>
             <Section 
               title="Outbound Providers" 
-              items={ensureDocumo(byCategory('outbound'))} 
+              items={byCategory('outbound')}
               saving={saving} 
+              disabled={!settings?._meta?.desired_revision_id || saving !== null}
+              activeProvider={activeProviders?.outbound}
               onActivate={handleMakeActiveOutbound} 
               onConfigure={handleConfigure} 
               registry={registry} 
+              docsBase={docsBase}
               icon={<Phone />}
             />
             
@@ -266,22 +425,26 @@ export default function Plugins({ client }: Props) {
               title="Storage Providers" 
               items={byCategory('storage')} 
               saving={saving} 
+              disabled={!settings?._meta?.desired_revision_id || saving !== null}
+              activeProvider={activeProviders?.storage}
               onActivate={undefined} 
               onConfigure={handleConfigure} 
               registry={registry} 
+              docsBase={docsBase}
               icon={<StorageIcon />}
             />
             
             <Discover 
               title="Discover (Curated Registry)" 
               items={registryOnly()} 
+              docsBase={docsBase}
               icon={<CloudDownloadIcon />}
             />
             
             {/* HTTP Manifest Tester */}
             <ResponsiveFormSection
               title="HTTP Manifest Tester (Preview)"
-              subtitle="Paste a manifest JSON and validate or dry‑run a send. Installing saves to the providers directory."
+              subtitle="Check a provider manifest without sending; installing adds the provider but does not select it."
               icon={<ScienceIcon />}
             >
               <Box>
@@ -312,21 +475,6 @@ export default function Plugins({ client }: Props) {
                       }}
                     />
                     
-                    <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
-                      <ResponsiveTextField
-                        label="To Number" 
-                        value={manifestTo} 
-                        onChange={setManifestTo}
-                        icon={<Phone />}
-                      />
-                      <ResponsiveTextField
-                        label="File URL (tokenized)" 
-                        value={manifestFileUrl} 
-                        onChange={setManifestFileUrl}
-                        placeholder="https://.../file.pdf?token=..."
-                      />
-                    </Stack>
-                    
                     <Stack direction="row" spacing={1} flexWrap="wrap">
                       <Button 
                         size="medium" 
@@ -347,28 +495,6 @@ export default function Plugins({ client }: Props) {
                       </Button>
                       <Button 
                         size="medium" 
-                        variant="outlined" 
-                        onClick={async () => {
-                          try {
-                            setError(''); setNote(''); setManifestResult(null);
-                            const parsed = JSON.parse(manifestJson || '{}');
-                            const r = await client.validateHttpManifest({ 
-                              manifest: parsed, 
-                              to: manifestTo, 
-                              file_url: manifestFileUrl, 
-                              render_only: false 
-                            });
-                            setManifestResult(r);
-                          } catch (e: any) {
-                            setError(e?.message || 'Dry‑run failed');
-                          }
-                        }}
-                        sx={{ borderRadius: 2 }}
-                      >
-                        Dry‑run Send
-                      </Button>
-                      <Button 
-                        size="medium" 
                         variant="contained" 
                         onClick={async () => {
                           try {
@@ -385,7 +511,25 @@ export default function Plugins({ client }: Props) {
                       >
                         Install
                       </Button>
+                      <Button
+                        size="medium"
+                        variant="outlined"
+                        onClick={() => onNavigate('send')}
+                        sx={{ borderRadius: 2 }}
+                      >
+                        Open Send
+                      </Button>
                     </Stack>
+
+                    <Alert severity="info">
+                      To send a test fax, install the provider, select it for outbound faxes, then open Send.{' '}
+                      {activeConfigLoading ? 'Checking whether sending is on…'
+                        : activeConfigError || !config || typeof config.fax_disabled !== 'boolean'
+                          ? 'Sending status is unavailable; open Send to check it.'
+                          : config.fax_disabled
+                            ? 'Sending is off, so test faxes are held and never transmitted.'
+                            : 'Sending is on, so faxes go out through the selected provider.'}
+                    </Alert>
                     
                     {manifestResult && (
                       <Paper sx={{ p: 2, borderRadius: 2, bgcolor: 'background.paper' }}>
@@ -410,7 +554,7 @@ export default function Plugins({ client }: Props) {
             {/* Bulk Import Providers */}
             <ResponsiveFormSection
               title="Bulk Import Providers (Preview)"
-              subtitle="Paste either a JSON array of manifests or scraped Markdown containing JSON code blocks. We'll import valid manifests and ignore the rest."
+              subtitle="Paste a JSON array of manifests or Markdown with JSON code blocks; invalid entries are skipped."
               icon={<UploadIcon />}
             >
               <Box>
@@ -458,7 +602,6 @@ export default function Plugins({ client }: Props) {
                             }
                             const res = await client.importHttpManifests(payload);
                             setBulkImportRes(res);
-                            setNote(`Imported ${res.imported?.length || 0} provider(s)`);
                             await load();
                           } catch (e: any) {
                             setError(e?.message || 'Import failed');
@@ -474,9 +617,8 @@ export default function Plugins({ client }: Props) {
                         onClick={async () => {
                           try {
                             setError(''); setNote(''); setBulkImportRes(null);
-                            const res = await client.importHttpManifests({ source: 'repo_scrape' } as any);
+                            const res = await client.importHttpManifests({ source: 'repo_scrape' });
                             setBulkImportRes(res);
-                            setNote(`Imported ${res.imported?.length || 0} provider(s) from repo scrape`);
                             await load();
                           } catch (e: any) {
                             setError(e?.message || 'Import from repo failed');
@@ -490,6 +632,11 @@ export default function Plugins({ client }: Props) {
                     
                     {bulkImportRes && (
                       <Paper sx={{ p: 2, borderRadius: 2, bgcolor: 'background.paper' }}>
+                        <Alert severity={(bulkImportRes.imported?.length || 0) === 0
+                          ? (bulkImportRes.errors?.length || 0) > 0 ? 'error' : 'warning'
+                          : (bulkImportRes.errors?.length || 0) > 0 ? 'warning' : 'success'} sx={{ mb: 2 }}>
+                          Imported {bulkImportRes.imported?.length || 0} provider(s). {bulkImportRes.errors?.length || 0} failed.
+                        </Alert>
                         <Typography variant="subtitle2" fontWeight={600} gutterBottom>
                           Import Summary
                         </Typography>
@@ -512,9 +659,19 @@ export default function Plugins({ client }: Props) {
               open={configOpen}
               plugin={configPlugin}
               initialConfig={configData}
-              onClose={() => setConfigOpen(false)}
+              loading={configLoading}
+              loadError={configError}
+              onClose={() => {
+                if (renderedClientEpoch !== clientEpoch.current) return;
+                configLoadId.current += 1;
+                configWritable.current = false;
+                setConfigOpen(false);
+                setConfigLoading(false);
+              }}
+              onReload={() => { if (configPlugin) handleConfigure(configPlugin); }}
               onSave={handleSaveConfig}
             />
+
           </>
         )}
       </Stack>
@@ -526,17 +683,23 @@ function Section({
   title, 
   items, 
   saving, 
+  disabled,
+  activeProvider,
   onActivate, 
   onConfigure, 
   registry,
+  docsBase,
   icon 
 }: { 
   title: string; 
   items: PluginItem[]; 
   saving: string | null; 
+  disabled: boolean;
+  activeProvider?: string;
   onActivate?: (id: string) => void; 
   onConfigure?: (p: PluginItem) => void; 
   registry: PluginItem[];
+  docsBase?: string;
   icon?: React.ReactNode;
 }) {
   const joinCaps = (caps: string[]) => caps.join(', ');
@@ -551,9 +714,11 @@ function Section({
     >
       <Grid container spacing={2}>
         {(items || []).map(p => {
-          const reg = regIndex.get(p.id);
+          const reg = p.source === 'manifest' ? undefined : regIndex.get(p.id);
           const desc = p.description || reg?.description;
-          const learn = (reg as any)?.learn_more as string | undefined;
+          const learn = p.source === 'manifest'
+            ? p.learn_more
+            : curatedDocsLink(p.learn_more || reg?.learn_more, docsBase);
           
           return (
             <Grid item xs={12} sm={6} lg={4} key={p.id}>
@@ -583,11 +748,13 @@ function Section({
                     </Box>
                     <Chip 
                       size="small" 
-                      label={p.enabled ? 'Enabled' : 'Disabled'} 
+                      label={p.enabled ? 'Selected' : 'Not selected'}
                       color={p.enabled ? 'success' : 'default'}
                       sx={{ borderRadius: 1 }}
                     />
                   </Box>
+
+                  {activeProvider === p.id && <Chip size="small" label="In use" variant="outlined" sx={{ mb: 1 }} />}
                   
                   <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
                     {desc || 'No description available.'}
@@ -622,9 +789,10 @@ function Section({
                 <CardActions sx={{ p: 2, pt: 0 }}>
                   <Stack direction="row" spacing={1} width="100%">
                     {onConfigure && (
-                      <Tooltip title="Edit non‑secret settings for this plugin">
+                      <Tooltip title="Edit settings for this plugin">
                         <Button 
                           size="small" 
+                          disabled={disabled}
                           onClick={() => onConfigure(p)}
                           sx={{ borderRadius: 1 }}
                         >
@@ -633,17 +801,17 @@ function Section({
                       </Tooltip>
                     )}
                     {onActivate ? (
-                      <Tooltip title="Mark this provider active in the config file (no live apply)">
+                      <Tooltip title="Use this provider for outbound faxes">
                         <span style={{ marginLeft: 'auto' }}>
                           <Button 
                             size="small" 
                             variant="contained" 
-                            disabled={saving === p.id} 
+                            disabled={disabled}
                             onClick={() => onActivate(p.id)}
                             startIcon={saving === p.id ? <CircularProgress size={16} /> : undefined}
                             sx={{ borderRadius: 1 }}
                           >
-                            {saving === p.id ? 'Saving…' : 'Set Active'}
+                            {saving === p.id ? 'Saving…' : 'Select outbound'}
                           </Button>
                         </span>
                       </Tooltip>
@@ -674,7 +842,7 @@ function Section({
   );
 }
 
-function Discover({ title, items, icon }: { title: string; items: any[]; icon?: React.ReactNode }) {
+function Discover({ title, items, icon, docsBase }: { title: string; items: any[]; icon?: React.ReactNode; docsBase?: string }) {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
   
@@ -738,7 +906,7 @@ function Discover({ title, items, icon }: { title: string; items: any[]; icon?: 
                 
                 <CardActions sx={{ p: 2, pt: 0 }}>
                   {r.learn_more ? (
-                    <MLink href={r.learn_more} target="_blank" rel="noreferrer" sx={{ fontSize: '0.875rem' }}>
+                    <MLink href={curatedDocsLink(r.learn_more, docsBase)} target="_blank" rel="noreferrer" sx={{ fontSize: '0.875rem' }}>
                       Learn more
                     </MLink>
                   ) : (

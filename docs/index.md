@@ -6,7 +6,7 @@ Open‑source, self‑hostable fax API with modular backends, a mobile‑ready A
 [:material-rocket-launch: Get Started](getting-started.md){ .md-button .md-button--primary }
 [:material-monitor-dashboard: Admin Console](admin-console.md){ .md-button }
 [:material-shield-lock: Security](security/index.md){ .md-button }
-[:material-play: Admin Demo](admin-demo.md){ .md-button }
+[:material-play: Admin Demo](admin-console.md#demo-simulated){ .md-button }
 
 <br/>
 
@@ -44,20 +44,20 @@ Open‑source, self‑hostable fax API with modular backends, a mobile‑ready A
 <div class="grid cards" markdown>
 
 - :material-fax: **Provider Playbooks**  
-  Go‑Live overview and backend specifics.  
-  [Overview](go-live/index.md) · [Phaxio](go-live/phaxio.md) · [Sinch](go-live/sinch.md) · [SIP/Asterisk](go-live/sip-asterisk.md)
+  Setup overview and backend specifics.\
+  [Overview](setup/index.md) · [Phaxio](setup/phaxio.md) · [Sinch](setup/sinch.md) · [SIP/Asterisk](setup/sip-asterisk.md)
 
-- :material-inbox-arrow-down: **Inbound & Storage**  
-  Enable inbound, choose storage, token TTLs.  
-  [Inbound](inbound.md)
+- :material-inbox-arrow-down: **Intake**\
+  Manage received documents and email delivery.\
+  [Guide](operations/intake.md)
 
-- :material-image: **Images & PDFs**  
-  File types, limits, and conversion tips.  
-  [Guide](guides/images-and-pdfs.md)
+- :material-image: **Document Submission**\
+  File types, upload limits, and delivery outcomes.\
+  [Guide](api.md#submit-a-document)
 
 - :material-lan: **Networking & Tunnels**  
   Options for public access during evaluation.  
-  [Guide](networking/tunnels.md)
+  [Guide](setup/public-access.md)
 
 - :material-stethoscope: **Troubleshooting**  
   Common errors and quick fixes.  
@@ -65,18 +65,21 @@ Open‑source, self‑hostable fax API with modular backends, a mobile‑ready A
 
 - :material-monitor-account: **Admin Demo**  
   Hosted, simulated console (no providers).  
-  [Try it](admin-demo.md)
+  [Try it](admin-console.md#demo-simulated)
 
 </div>
 
 ## Build & Integrate
 
-- REST API reference: https://faxbot.net/api/v1/ and Swagger Explorer at https://faxbot.net/api/v1/swagger
+Faxbot's API runs on your self-hosted installation. The `faxbot.net` website, simulated demo and static API-reference pages are separate from your server.
+
+- REST API reference: [Generated source reference](generated/index.md) and [API guide](api.md)
+- Swagger UI: open `/docs` on your installation, for example `http://localhost:8080/docs` in local development
 - SDK docs: [Overview](sdks/index.md), [Node](sdks/node.md), [Python](sdks/python.md)
 - AI workflows: [MCP integration](mcp/index.md) with Node and Python servers
 
 ## Need Help?
 
-- Use the hosted [Admin Demo](admin-demo.md) for a guided tour
+- Use the hosted [Admin Demo](admin-console.md#demo-simulated) for a guided tour
 - Check [Security](security/index.md) for HIPAA and OAuth requirements
 - Open an issue and mention your active backend so we can target guidance quickly

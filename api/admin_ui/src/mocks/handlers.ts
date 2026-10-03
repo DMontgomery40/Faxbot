@@ -136,6 +136,14 @@ export const handlers = [
     if (typeof body.s3_prefix === 'string') (demoSettings as any).storage.s3_prefix = body.s3_prefix;
     if (typeof body.s3_endpoint_url === 'string') (demoSettings as any).storage.s3_endpoint_url = body.s3_endpoint_url;
     if (typeof body.s3_kms_key_id === 'string') (demoSettings as any).storage.s3_kms_enabled = !!body.s3_kms_key_id;
+    if (typeof body.fax_default_country === 'string' && demoSettings.numbers) {
+      const examples: Record<string, { national: string; international: string }> = {
+        US: { national: '(201) 555-0123', international: '+1 201-555-0123' },
+        GB: { national: '0121 234 5678', international: '+44 121 234 5678' },
+      };
+      demoSettings.numbers.default_country = body.fax_default_country;
+      demoSettings.numbers.example = examples[body.fax_default_country] ?? { national: '', international: '' };
+    }
     // MCP toggles
     // return meta to suggest restart sometimes
     const restart = !!(body.backend || body.storage_backend);
@@ -159,7 +167,7 @@ export const handlers = [
     const rec = { id, fr: body?.fr || '+1 (555) 777-8888', to: body?.to || '+1 (555) 222-3333', status: body?.status || 'received', backend: body?.backend || 'phaxio', pages: body?.pages || 1, received_at: new Date().toISOString() };
     inbound = [rec, ...inbound];
     logsRing.push({ ts: new Date().toISOString(), event: 'inbound_received', id });
-    return HttpResponse.json({ id, status: 'queued' });
+    return HttpResponse.json({ id, status: 'queued', to: '+12015550123' });
   }),
   http.get('/inbound/:id/pdf', () => {
     const minimalPdf = '%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF';

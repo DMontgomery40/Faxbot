@@ -1,9 +1,12 @@
 import pytest
 from unittest.mock import AsyncMock, patch, Mock
 from fastapi.testclient import TestClient
+from pypdf import PdfWriter
 
 from app.phaxio_service import PhaxioFaxService
 from app.main import app
+from api.tests.test_outbound_store import installation, accept
+from api.tests.test_schema import database
 
 
 def test_phaxio_service_initialization():
@@ -76,7 +79,7 @@ def test_backend_selection_from_env(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_phaxio_integration_end_to_end(monkeypatch, tmp_path):
+async def test_phaxio_integration_end_to_end(isolated_installation, monkeypatch, tmp_path):
     """Test complete Phaxio integration flow."""
     # Setup test environment
     monkeypatch.setenv("FAX_BACKEND", "phaxio")
@@ -84,12 +87,20 @@ async def test_phaxio_integration_end_to_end(monkeypatch, tmp_path):
     monkeypatch.setenv("PHAXIO_API_SECRET", "test_secret")
     monkeypatch.setenv("FAX_DISABLED", "true")  # Don't actually send
     monkeypatch.setenv("FAX_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("API_KEY", "synthetic-phaxio-test-key")
+    monkeypatch.setenv("REQUIRE_API_KEY", "true")
+    monkeypatch.setenv("PUBLIC_API_URL", "https://testserver")
+    monkeypatch.setenv("FAXBOT_CONSOLE_ORIGINS", "https://testserver")
     
     # Create test PDF file
     test_pdf_path = tmp_path / "test.pdf"
-    test_pdf_path.write_bytes(b"%PDF-1.4\n1 0 obj\n<<\n/Type /Catalog\n>>\nendobj\nxref\n0 1\n0000000000 65535 f \ntrailer\n<<\n/Size 1\n/Root 1 0 R\n>>\nstartxref\n9\n%%EOF")
+    document = PdfWriter()
+    document.add_blank_page(width=612, height=792)
+    document.write(test_pdf_path)
     
-    with TestClient(app) as client:
+    with TestClient(app, base_url="https://testserver", headers={
+        "X-API-Key": "synthetic-phaxio-test-key", "Origin": "https://testserver",
+    }) as client:
         # Test fax submission with Phaxio backend
         files = {
             "to": (None, "+15551234567"),
@@ -113,12 +124,29 @@ async def test_phaxio_integration_end_to_end(monkeypatch, tmp_path):
             assert data["status"] in ["queued", "disabled"]
 
 
-def test_phaxio_callback_handling(monkeypatch):
-    """Test Phaxio webhook callback processing."""
-    # Disable signature verification for this unit test (default is now true)
+@pytest.mark.parametrize("unknown_job", [False, True])
+def test_phaxio_unsigned_unbound_callback_is_refused_without_mutation(
+    isolated_installation, monkeypatch, unknown_job,
+):
+    """A disabled signature flag never authorizes an unowned callback."""
+    monkeypatch.setenv("FAX_BACKEND", "phaxio")
     monkeypatch.setenv("PHAXIO_VERIFY_SIGNATURE", "false")
-    with TestClient(app) as client:
-        # Mock callback data from Phaxio
+    monkeypatch.setenv("API_KEY", "synthetic-phaxio-callback-test-key")
+    monkeypatch.setenv("REQUIRE_API_KEY", "true")
+    monkeypatch.setenv("PUBLIC_API_URL", "https://testserver")
+    monkeypatch.setenv("FAXBOT_CONSOLE_ORIGINS", "https://testserver")
+    with TestClient(app, base_url="https://testserver", headers={
+        "X-API-Key": "synthetic-phaxio-callback-test-key", "Origin": "https://testserver",
+    }) as client:
+        from app.outbound_store import OutboundStore
+        response = client.post("/fax", data={"to": "+12025550123"},
+            files={"file": ("synthetic.txt", b"Held callback document", "text/plain")})
+        assert response.status_code == 202
+        job_id = response.json()["id"]
+        assert response.json()["delivery_state"] == "held"
+        store = OutboundStore(app.state.configuration_runtime.manager.store)
+        before, history = store.get(job_id), store.history(job_id)
+        before_job = client.get(f"/fax/{job_id}").json()
         callback_data = {
             "fax[id]": "phaxio_123",
             "fax[status]": "success",
@@ -126,14 +154,49 @@ def test_phaxio_callback_handling(monkeypatch):
             "fax[to]": "+15551234567"
         }
         
-        # Test callback endpoint
+        locator = "f" * 32 if unknown_job else job_id
         response = client.post(
-            "/phaxio-callback?job_id=test_job_123",
-            data=callback_data
+            "/phaxio-callback?job_id=" + locator,
+            data=callback_data, headers={"X-Phaxio-Signature": "invalid-signature"},
         )
-        
-        # Should return 200 even if job not found (graceful handling)
-        assert response.status_code == 200
+        assert response.status_code == 401
+        assert response.json() == {"detail": "Callback could not be authenticated for this attempt."}
+        assert client.get(f"/fax/{job_id}").json() == before_job
+        assert store.get(job_id) == before and store.history(job_id) == history
+        assert before["attempt_id"] is None and before["dispatch_mode"] == "held"
+        import sqlalchemy as sa
+        configuration = store.configuration
+        with configuration.engine.connect() as connection:
+            assert connection.scalar(sa.select(sa.func.count()).select_from(configuration.jobs)) == 1
+
+
+def test_disabled_phaxio_callbacks_refuse_even_valid_captured_signature(installation):
+    """Internal account/attempt seam: disabling verification disables callbacks."""
+    import hashlib
+    import hmac
+    from api.app.config_profiles import ProviderConfiguration
+    from api.app.outbound_callbacks import CapturedCallbacks, CallbackRejected
+    from api.app.provider_signatures import verify_phaxio_signature
+    configuration, store, snapshot = installation
+    token = "synthetic-callback-token"
+    callback = "https://synthetic.invalid/phaxio-callback"
+    snapshot = configuration.apply(snapshot, snapshot.active.values, actor="test",
+        restart_required=False, providers={"outbound": ProviderConfiguration("phaxio",
+            credentials={"callback_token": token},
+            settings={"callback_url": callback, "verify_signature": False})})
+    job_id = accept((configuration, store, snapshot))
+    claim = store.claim("synthetic-worker")
+    assert store.begin_submission(claim)
+    fields = [("id", "remote-one"), ("status", "success")]
+    url = callback + "?job_id=" + job_id + "&attempt_id=" + claim.attempt_id
+    message = url + "".join(name + value for name, value in sorted(fields))
+    signature = hmac.new(token.encode(), message.encode(), hashlib.sha1).hexdigest()
+    assert verify_phaxio_signature(token, url, fields, [], signature)
+    before, history = store.get(job_id), store.history(job_id)
+    with pytest.raises(CallbackRejected):
+        CapturedCallbacks(store).receive("phaxio", job_id, claim.attempt_id,
+            fields=fields, files=[], signature=signature)
+    assert store.get(job_id) == before and store.history(job_id) == history
 
 
 def test_phone_number_normalization():
@@ -170,7 +233,7 @@ def test_status_mapping():
         ("success", "SUCCESS"),
         ("failure", "FAILED"),
         ("error", "FAILED"),
-        ("cancelled", "FAILED"),
+        ("cancelled", "cancelled"),
         ("in_progress", "in_progress"),
         ("sending", "in_progress"),
         ("unknown_status", "unknown_status"),  # Fallback
@@ -181,7 +244,7 @@ def test_status_mapping():
         assert result == expected_internal
 
 
-def test_pdf_endpoint_security(monkeypatch, tmp_path):
+def test_pdf_endpoint_security(isolated_installation, monkeypatch, tmp_path):
     """Test PDF serving endpoint security."""
     monkeypatch.setenv("FAX_DATA_DIR", str(tmp_path))
     monkeypatch.setenv("FAX_DISABLED", "true")
@@ -219,9 +282,11 @@ async def test_phaxio_error_handling():
     async def fake_error_post(url, data=None, auth=None):
         return ErrorResp()
     
-    with patch("httpx.AsyncClient.post", new=AsyncMock(side_effect=fake_error_post)):
-        with pytest.raises(Exception, match="Phaxio API error 400"):
+    with patch("httpx.AsyncClient.post", new=AsyncMock(side_effect=fake_error_post)) as post:
+        with pytest.raises(RuntimeError, match=r"Phaxio request failed \(HTTP 400\)\.") as error:
             await service.send_fax("+12223334444", "https://example.com/test.pdf", "job123")
+        assert 'Invalid phone number' not in str(error.value)
+        assert post.await_count == 1
 
 
 def test_phaxio_configuration_validation():

@@ -12,6 +12,7 @@ import {
   Checkbox,
   FormControlLabel,
 } from '@mui/material';
+import type { PluginConfiguration, PluginConfigurationPatch } from '../api/types';
 
 type PluginItem = {
   id: string;
@@ -23,23 +24,33 @@ type PluginItem = {
 interface Props {
   open: boolean;
   plugin: PluginItem | null;
-  initialConfig?: { enabled?: boolean; settings?: any } | null;
+  initialConfig: PluginConfiguration | null;
+  loading: boolean;
+  loadError: string;
   onClose: () => void;
-  onSave: (config: { enabled?: boolean; settings?: any }) => Promise<void>;
+  onReload: () => void;
+  onSave: (config: PluginConfigurationPatch) => Promise<void>;
 }
 
-export default function PluginConfigDialog({ open, plugin, initialConfig, onClose, onSave }: Props) {
-  const [config, setConfig] = useState<Record<string, any>>({});
-  const [enabled, setEnabled] = useState<boolean>(true);
+export default function PluginConfigDialog({ open, plugin, initialConfig, loading, loadError, onClose, onReload, onSave }: Props) {
+  const [config, setConfig] = useState<Record<string, unknown>>({});
+  const [enabled, setEnabled] = useState(false);
   const [saving, setSaving] = useState<boolean>(false);
   const [error, setError] = useState<string>('');
 
   useEffect(() => {
     setError('');
     setSaving(false);
-    setEnabled(initialConfig?.enabled ?? true);
+    setEnabled(initialConfig?.enabled ?? false);
     setConfig({ ...(initialConfig?.settings || {}) });
   }, [initialConfig, plugin]);
+
+  const ready = !loading && !loadError && !!initialConfig?._meta?.desired_revision_id;
+  const retainedDraft = initialConfig !== null && !ready;
+  const changedSettings = Object.fromEntries(Object.entries(config)
+    .filter(([key, value]) => !Object.is(value, initialConfig?.settings[key])));
+  const enabledChanged = initialConfig !== null && enabled !== initialConfig.enabled;
+  const changed = enabledChanged || Object.keys(changedSettings).length > 0;
 
   const help = (text: string) => (
     <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>{text}</Typography>
@@ -53,21 +64,32 @@ export default function PluginConfigDialog({ open, plugin, initialConfig, onClos
       return (
         <Box>
           <Alert severity="info" sx={{ mb: 2 }}>
-            Secrets (API key/secret) are configured in Settings → Backend: Phaxio. This form stores only non‑secret values in the plugin config.
+            Set your Phaxio API key and secret in Settings → Backend: Phaxio.
           </Alert>
           <TextField
-            label="Callback URL"
+            label="Outbound Callback URL Override"
             fullWidth
             size="small"
             value={config.callback_url || ''}
             onChange={(e) => setConfig({ ...config, callback_url: e.target.value })}
             margin="normal"
           />
-          {help('Example: https://yourdomain.com/phaxio-callback')}
+          {help('Leave empty to use /phaxio-callback on your public API URL.')}
+          <TextField
+            label="Callback Token"
+            type="password"
+            fullWidth
+            size="small"
+            value={config.callback_token || ''}
+            onChange={(e) => setConfig({ ...config, callback_token: e.target.value })}
+            margin="normal"
+            helperText="Find this in the Phaxio console; it is required for authenticated callbacks."
+          />
           <FormControlLabel
             control={<Checkbox checked={!!config.verify_signature} onChange={(e) => setConfig({ ...config, verify_signature: e.target.checked })} />}
-            label="Verify inbound signatures"
+            label="Enable authenticated outbound callbacks"
           />
+          {help('When off, Faxbot ignores Phaxio callbacks and checks fax status by polling instead.')}
         </Box>
       );
     }
@@ -76,7 +98,7 @@ export default function PluginConfigDialog({ open, plugin, initialConfig, onClos
       return (
         <Box>
           <Alert severity="info" sx={{ mb: 2 }}>
-            Secrets (API key/secret) are configured in Settings → Backend: Sinch. This form stores only non‑secret values in the plugin config.
+            Set your Sinch API credentials in Settings → Backend: Sinch.
           </Alert>
           <TextField
             label="Project ID"
@@ -94,7 +116,7 @@ export default function PluginConfigDialog({ open, plugin, initialConfig, onClos
       return (
         <Box>
           <Alert severity="info">
-            Configure AMI host/port/credentials and Station ID in Settings → Backend: SIP/Asterisk. No additional non‑secret plugin settings are required here.
+            Set the Asterisk connection and Station ID in Settings → Backend: SIP/Asterisk.
           </Alert>
         </Box>
       );
@@ -143,7 +165,7 @@ export default function PluginConfigDialog({ open, plugin, initialConfig, onClos
             onChange={(e) => setConfig({ ...config, kms_key_id: e.target.value })}
             margin="normal"
           />
-          {help('Secrets/credentials are configured via your runtime environment or role, not here.')}
+          {help('Changing these settings keeps your saved storage credentials.')}
         </Box>
       );
     }
@@ -156,10 +178,22 @@ export default function PluginConfigDialog({ open, plugin, initialConfig, onClos
   };
 
   const handleSave = async () => {
+    if (!ready || !initialConfig) {
+      setError('Reload settings before saving.');
+      return;
+    }
     try {
       setSaving(true);
       setError('');
-      await onSave({ enabled, settings: config });
+      const patch: PluginConfigurationPatch = {
+        expected_revision_id: initialConfig._meta.desired_revision_id,
+        role: initialConfig.role,
+      };
+      if (enabledChanged) patch.enabled = enabled;
+      // Empty settings resets built-ins. Omission preserves untouched values,
+      // including opaque secret masks and fields absent from this form.
+      if (Object.keys(changedSettings).length > 0) patch.settings = changedSettings;
+      await onSave(patch);
       onClose();
     } catch (e: any) {
       setError(e?.message || 'Failed to save configuration');
@@ -169,25 +203,34 @@ export default function PluginConfigDialog({ open, plugin, initialConfig, onClos
   };
 
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
+    <Dialog open={open} onClose={() => { if (!saving) onClose(); }} maxWidth="sm" fullWidth>
       <DialogTitle>Configure {plugin?.name}</DialogTitle>
       <DialogContent>
-        {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
-        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-          Settings are saved to the Faxbot plugin config file.
-        </Typography>
-        <Box sx={{ mb: 2 }}>
-          <FormControlLabel control={<Checkbox checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />} label="Enable plugin" />
-        </Box>
-        {renderFields()}
+        {error && error !== loadError && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
+        {loadError && <Alert severity="error" sx={{ mb: 2 }}>{loadError}</Alert>}
+        {loading && <Alert severity="info" sx={{ mb: 2 }}>Loading settings…</Alert>}
+        {initialConfig && !loading && !loadError && (retainedDraft || initialConfig._meta.apply_state === 'pending_restart') && (
+          <Alert severity="warning" sx={{ mb: 2 }}>
+            {retainedDraft
+              ? 'Your edits are kept here; reload to see the current values.'
+              : 'Restart Faxbot to apply pending changes.'}
+          </Alert>
+        )}
+        {initialConfig && <Box component="fieldset" disabled={saving || !ready} sx={{ border: 0, p: 0, m: 0 }}>
+          <Box sx={{ mb: 2 }}>
+            <FormControlLabel control={<Checkbox checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />} label={`Use this provider for ${initialConfig?.role}`} />
+            {help('Selecting this replaces the current provider for this role; clearing it turns the role off.')}
+          </Box>
+          {renderFields()}
+        </Box>}
       </DialogContent>
       <DialogActions>
-        <Button onClick={onClose}>Cancel</Button>
-        <Button variant="contained" onClick={handleSave} disabled={saving}>
+        <Button onClick={onClose} disabled={saving}>Cancel</Button>
+        <Button onClick={onReload} disabled={loading || saving}>Reload settings</Button>
+        <Button variant="contained" onClick={handleSave} disabled={saving || !ready || !changed}>
           {saving ? 'Saving…' : 'Save'}
         </Button>
       </DialogActions>
     </Dialog>
   );
 }
-

@@ -1,60 +1,54 @@
 name: Docs Autopilot (LLM)
 
 on:
+  push:
+    branches: [ main, feat/faxbot-refresh ]
   workflow_dispatch:
     inputs:
       base_ref:
-        description: 'Base ref to diff against'
-        required: false
-        default: 'origin/development'
+        description: 'Previous source commit SHA to compare (not the current branch tip)'
+        required: true
       provider:
-        description: 'LLM provider (openai or anthropic)'
-        required: false
-        default: 'openai'
+        description: 'Optional LLM proposal provider'
+        type: choice
+        options: [ openai, anthropic ]
+        default: openai
       apply:
-        description: 'Attempt to apply returned patch and open PR to mkdocs'
-        required: false
-        default: 'false'
-  push:
-    branches: [ development ]
-    paths:
-      - 'api/**'
-      - 'config/**'
-      - 'sdks/**'
-      - 'api/admin_ui/**'
+        description: 'Open a reviewed instructional-docs PR; never publish directly'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
 
 jobs:
   propose-docs:
-    runs-on: ubuntu-latest
     if: github.event_name == 'push'
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+          persist-credentials: false
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-
-      - name: Install deps
+      - name: Generate instructional update plan from actual previous source SHA
+        env:
+          DOCS_BASE_SHA: ${{ github.event.before }}
         run: |
-          python -m pip install --upgrade pip
-          pip install requests
-
-      - name: Generate plan (no LLM)
-        run: |
-          python scripts/docs_ai/generate_docs_from_diff.py --base origin/development
-
-      - name: Upload plan artifact
-        uses: actions/upload-artifact@v4
+          if [ "$DOCS_BASE_SHA" != "0000000000000000000000000000000000000000" ]; then
+            git cat-file -e "$DOCS_BASE_SHA^{commit}" || git fetch --no-tags origin "$DOCS_BASE_SHA"
+          fi
+          python scripts/docs_ai/generate_docs_from_diff.py
+      - uses: actions/upload-artifact@v4
         with:
-          name: mkdocs-docs-plan
+          name: docs-autopilot-plan-${{ github.sha }}
           path: mkdocs-docs-plan.md
-
+          if-no-files-found: error
   apply-llm:
+    if: github.event_name == 'workflow_dispatch' && inputs.apply
     runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch' && inputs.apply == 'true'
     permissions:
       contents: write
       pull-requests: write
@@ -62,35 +56,29 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-
-      - name: Install deps
-        run: |
-          python -m pip install --upgrade pip
-          pip install requests
-
-      - name: Run LLM to produce patch
+      - run: |
+          python -m pip install -r api/requirements.txt requests
+          python scripts/docs_ai/generate_reference.py
+      - name: Produce optional instructional proposal
         env:
+          BASE_REF: ${{ inputs.base_ref }}
+          PROVIDER: ${{ inputs.provider }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
-          python scripts/docs_ai/generate_docs_from_diff.py --base ${{ inputs.base_ref }} --llm ${{ inputs.provider }}
-
-      - name: Apply patch to mkdocs branch
-        run: |
-          git checkout mkdocs
-          git apply --index mkdocs-docs-llm.patch || echo "No patch applied"
-          git commit -m "docs(ai): apply LLM-suggested updates" || echo "Nothing to commit"
-
-      - name: Create PR to mkdocs
+          python scripts/docs_ai/generate_docs_from_diff.py --base "$BASE_REF" --llm "$PROVIDER"
+          python scripts/docs_ai/validate_doc_patch.py mkdocs-docs-llm.patch
+          git apply --index mkdocs-docs-llm.patch
+          python scripts/docs_ai/validate_doc_patch.py --staged
+      - name: Create reviewed proposal against main
         uses: peter-evans/create-pull-request@v6
         with:
           branch: docs/ai-update-${{ github.run_id }}
-          base: mkdocs
-          title: "docs(ai): proposed updates from LLM"
-          body: "Automated proposal from Docs Autopilot. Review carefully."
-
+          base: main
+          add-paths: docs/**
+          commit-message: 'docs: propose instructional updates @codex review'
+          title: 'docs: proposed instructional updates'
+          body: 'Optional Docs Autopilot proposal. Generated source references remain deterministic; review this prose before merging.'

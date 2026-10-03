@@ -27,34 +27,51 @@ import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import '@xterm/xterm/css/xterm.css';
+import { AdminAPIError, isNotAvailable } from '../api/client';
+import type AdminAPIClient from '../api/client';
 
 interface TerminalProps {
-  apiKey: string;
+  client: AdminAPIClient;
 }
 
-const Terminal: React.FC<TerminalProps> = ({ apiKey }) => {
+type AccessState = 'checking' | 'enabled' | 'disabled' | 'error';
+type ConnectionState = 'connecting' | 'connected' | 'disconnected' | 'forbidden' | 'error';
+
+const terminalTheme = (mode: string) => ({
+  background: mode === 'dark' ? '#0B0F14' : '#1e1e1e',
+  foreground: mode === 'dark' ? '#C9D1D9' : '#d4d4d4',
+  cursor: '#58A6FF',
+  black: '#0D1117', red: '#FF7B72', green: '#7EE83F', yellow: '#FFA657',
+  blue: '#79C0FF', magenta: '#D2A8FF', cyan: '#A5D6FF', white: '#C9D1D9',
+  brightBlack: '#6E7681', brightRed: '#FFA198', brightGreen: '#56D364',
+  brightYellow: '#FFB454', brightBlue: '#79C0FF', brightMagenta: '#D2A8FF',
+  brightCyan: '#56D4DD', brightWhite: '#FFFFFF', selectionBackground: '#3392FF44',
+});
+
+const Terminal: React.FC<TerminalProps> = ({ client }) => {
   const terminalRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<XTerm | null>(null);
-  const [terminal, setTerminal] = useState<XTerm | null>(null);
-  const [websocket, setWebsocket] = useState<WebSocket | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
-  const [connected, setConnected] = useState(false);
+  // The socket that has already sent its ticket; input waits for it.
+  const authenticatedRef = useRef<WebSocket | null>(null);
+  const connectAttemptRef = useRef(0);
+  const [access, setAccess] = useState<AccessState>('checking');
+  const [availabilityAttempt, setAvailabilityAttempt] = useState(0);
+  const [connection, setConnection] = useState<ConnectionState>('connecting');
   const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
   const [fullscreen, setFullscreen] = useState(false);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const pingIntervalRef = useRef<number | null>(null);
+  const connectionTimeoutRef = useRef<number | null>(null);
+  const fitTimeoutRef = useRef<number | null>(null);
+  const connected = connection === 'connected';
+  const loading = access === 'checking' || (access === 'enabled' && connection === 'connecting');
 
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
   const isSmallMobile = useMediaQuery(theme.breakpoints.down('sm'));
-
-  // Adjust terminal font size based on screen size
-  const getFontSize = () => {
-    if (isSmallMobile) return 12;
-    if (isMobile) return 13;
-    return 14;
-  };
+  const displayRef = useRef({ mode: theme.palette.mode, isMobile, isSmallMobile });
+  displayRef.current = { mode: theme.palette.mode, isMobile, isSmallMobile };
 
   // Initialize terminal
   const initTerminal = useCallback(() => {
@@ -64,35 +81,15 @@ const Terminal: React.FC<TerminalProps> = ({ apiKey }) => {
     if (termRef.current) {
       termRef.current.dispose();
     }
+    const { mode, isMobile, isSmallMobile } = displayRef.current;
 
     // Create new terminal instance with responsive settings
     const term = new XTerm({
       cursorBlink: true,
       cursorStyle: 'block',
-      fontSize: getFontSize(),
+      fontSize: isSmallMobile ? 12 : isMobile ? 13 : 14,
       fontFamily: '"Cascadia Code", "JetBrains Mono", "Fira Code", Consolas, "Courier New", monospace',
-      theme: {
-        background: theme.palette.mode === 'dark' ? '#0B0F14' : '#1e1e1e',
-        foreground: theme.palette.mode === 'dark' ? '#C9D1D9' : '#d4d4d4',
-        cursor: '#58A6FF',
-        black: '#0D1117',
-        red: '#FF7B72',
-        green: '#7EE83F',
-        yellow: '#FFA657',
-        blue: '#79C0FF',
-        magenta: '#D2A8FF',
-        cyan: '#A5D6FF',
-        white: '#C9D1D9',
-        brightBlack: '#6E7681',
-        brightRed: '#FFA198',
-        brightGreen: '#56D364',
-        brightYellow: '#FFB454',
-        brightBlue: '#79C0FF',
-        brightMagenta: '#D2A8FF',
-        brightCyan: '#56D4DD',
-        brightWhite: '#FFFFFF',
-        selectionBackground: '#3392FF44',
-      },
+      theme: terminalTheme(mode),
       allowTransparency: false,
       scrollback: isMobile ? 5000 : 10000, // Reduce scrollback on mobile
       convertEol: true,
@@ -117,60 +114,115 @@ const Terminal: React.FC<TerminalProps> = ({ apiKey }) => {
       term.attachCustomKeyEventHandler(() => true);
     } catch {}
     
-    try {
-      // Focus on click just in case
-      terminalRef.current?.addEventListener('click', () => {
-        try { term.focus(); } catch {}
-      });
-    } catch {}
-    
     // Initial fit
-    setTimeout(() => {
-      fitAddon.fit();
+    fitTimeoutRef.current = window.setTimeout(() => {
+      try { fitAddon.fit(); } catch {}
     }, 0);
 
     termRef.current = term;
-    setTerminal(term);
     return term;
-  }, [theme.palette.mode, isSmallMobile, isMobile]);
+  }, []);
 
-  // Connect to WebSocket
-  const connectWebSocket = useCallback(() => {
-    if (websocket?.readyState === WebSocket.OPEN) return;
+  const clearConnectionTimers = useCallback(() => {
+    if (pingIntervalRef.current !== null) window.clearInterval(pingIntervalRef.current);
+    if (connectionTimeoutRef.current !== null) window.clearTimeout(connectionTimeoutRef.current);
+    pingIntervalRef.current = null;
+    connectionTimeoutRef.current = null;
+  }, []);
 
-    setLoading(true);
+  const closeSocket = useCallback(() => {
+    clearConnectionTimers();
+    connectAttemptRef.current += 1;
+    const ws = wsRef.current;
+    wsRef.current = null;
+    authenticatedRef.current = null;
+    if (ws) {
+      ws.onopen = ws.onmessage = ws.onerror = ws.onclose = null;
+      ws.close();
+    }
+  }, [clearConnectionTimers]);
+
+  // This read-only endpoint reports whether administrative execution is enabled.
+  // Do not initialize a shell socket until the server grants that capability.
+  useEffect(() => {
+    let current = true;
+    setAccess('checking');
+    setError(null);
+    const timeout = window.setTimeout(() => {
+      if (!current) return;
+      current = false;
+      setAccess('error');
+    }, 10000);
+    void client.listActions().then((result) => {
+      if (!current) return;
+      window.clearTimeout(timeout);
+      setAccess(result.enabled === true ? 'enabled' : 'disabled');
+    }).catch((failure: unknown) => {
+      if (!current) return;
+      window.clearTimeout(timeout);
+      // The actions list has its own permission; when it is refused, let the
+      // terminal ticket request decide whether this account may connect.
+      const refused = failure instanceof AdminAPIError && (failure.status === 401 || failure.status === 403);
+      setAccess(refused ? 'enabled' : 'error');
+    });
+    return () => { current = false; window.clearTimeout(timeout); };
+  }, [client, availabilityAttempt]);
+
+  // Connect: mint a fresh single-use ticket, open the socket without any
+  // credential in the URL, and send the ticket as the very first message.
+  const connectWebSocket = useCallback(async () => {
+    closeSocket();
+    const attempt = ++connectAttemptRef.current;
+    setConnection('connecting');
     setError(null);
 
-    // Build WebSocket URL with API key in query params
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    
-    // Determine the API host - in development, the API runs on 8080
-    // In production, it's the same host as the UI
-    let apiHost = window.location.host;
-    
-    // Check if we're in development mode (common dev ports)
-    const devPorts = ['3000', '3001', '5173', '5174', '4200'];
-    const currentPort = window.location.port;
-    if (devPorts.includes(currentPort)) {
-      // In development, API runs on localhost:8080
-      apiHost = `localhost:8080`;
+    let ticket: string;
+    try {
+      ticket = (await client.createTerminalTicket()).ticket;
+    } catch (failure) {
+      if (attempt !== connectAttemptRef.current) return;
+      if (failure instanceof AdminAPIError && (failure.status === 401 || failure.status === 403)) {
+        setConnection('forbidden');
+        setError('This account is not allowed to use the terminal.');
+      } else if (isNotAvailable(failure)) {
+        setConnection('error');
+        setError('The terminal is not available on this server yet.');
+      } else {
+        setConnection('error');
+        setError('Could not start a terminal session. Try again.');
+      }
+      return;
     }
-    
-    const wsUrl = `${protocol}//${apiHost}/admin/terminal?api_key=${encodeURIComponent(apiKey)}`;
-    
-    console.log('Terminal WebSocket connecting to:', wsUrl);
-    const ws = new WebSocket(wsUrl);
+    if (attempt !== connectAttemptRef.current) return;
+
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${protocol}//${window.location.host}/admin/terminal`;
+
+    let ws: WebSocket;
+    try {
+      ws = new WebSocket(wsUrl);
+    } catch {
+      setConnection('error');
+      setError('Could not open the terminal connection. Check the connection and try again.');
+      return;
+    }
+    wsRef.current = ws;
+    connectionTimeoutRef.current = window.setTimeout(() => {
+      if (wsRef.current !== ws) return;
+      closeSocket();
+      setConnection('error');
+      setError('The terminal connection timed out. Check the service and try again.');
+    }, 10000);
 
     ws.onopen = () => {
-      console.log('Terminal WebSocket connected');
-      setConnected(true);
-      setLoading(false);
+      if (wsRef.current !== ws) return;
+      // Nothing may precede the ticket, including a resize from fit().
+      ws.send(JSON.stringify({ type: 'auth', ticket }));
+      authenticatedRef.current = ws;
+      clearConnectionTimers();
+      setConnection('connected');
       setError(null);
-      wsRef.current = ws;
-      // Nudge the shell to print a prompt
-      try { ws.send(JSON.stringify({ type: 'input', data: '\r' })); } catch {}
-      // Ensure xterm has focus once the socket is open
-      setTimeout(() => { try { termRef.current?.focus(); } catch {} }, 0);
+      try { fitAddonRef.current?.fit(); termRef.current?.focus(); } catch {}
 
       // Start ping interval
       pingIntervalRef.current = window.setInterval(() => {
@@ -181,71 +233,67 @@ const Terminal: React.FC<TerminalProps> = ({ apiKey }) => {
     };
 
     ws.onmessage = (event) => {
+      if (wsRef.current !== ws) return;
       try {
         const data = JSON.parse(event.data);
         
         if (data.type === 'output' && termRef.current) {
           termRef.current.write(data.data);
         } else if (data.type === 'error') {
-          setError(data.message);
+          setError(typeof data.message === 'string' ? data.message : 'The terminal session failed.');
+          setConnection('error');
+          closeSocket();
         } else if (data.type === 'exit') {
           termRef.current?.write('\r\n\x1b[1;31mTerminal session ended.\x1b[0m\r\n');
-          setConnected(false);
+          setConnection('disconnected');
+          closeSocket();
         }
-      } catch (e) {
-        console.error('Error parsing WebSocket message:', e);
+      } catch {
+        setError('The terminal returned an invalid response. Reconnect to try again.');
+        setConnection('error');
+        closeSocket();
       }
     };
 
-    ws.onerror = (event) => {
-      console.error('Terminal WebSocket error:', event);
-      setError('WebSocket connection error');
-      setLoading(false);
+    ws.onerror = () => {
+      if (wsRef.current !== ws) return;
+      setError('Could not connect to the terminal. Check service availability and administrator access.');
+      setConnection('error');
+      closeSocket();
     };
 
     ws.onclose = (ev) => {
-      console.log('Terminal WebSocket disconnected');
-      setConnected(false);
-      setLoading(false);
+      if (wsRef.current !== ws) return;
+      clearConnectionTimers();
       wsRef.current = null;
-      // Provide a more helpful message on auth failure
-      if (ev?.code === 1008) {
-        setError(ev.reason || 'Unauthorized (admin scope required)');
-      } else if (ev?.reason) {
-        setError(ev.reason);
-      }
-      
-      // Clear ping interval
-      if (pingIntervalRef.current) {
-        window.clearInterval(pingIntervalRef.current);
-        pingIntervalRef.current = null;
+      authenticatedRef.current = null;
+      if (ev.code === 1008) {
+        setConnection('forbidden');
+        setError('Terminal closed: access revoked');
+      } else {
+        setConnection('disconnected');
+        setError(ev.code === 1000
+          ? 'The terminal session ended.'
+          : 'The terminal connection closed. Reconnect to start a new session.');
       }
     };
-
-    setWebsocket(ws);
-    return ws;
-  }, [websocket, apiKey]);
-
-  // Initialize terminal on mount
-  useEffect(() => {
-    const term = initTerminal();
-    if (term) {
-      // Terminal input and resize handlers will be set up separately
-    }
-  }, [theme.palette.mode, isSmallMobile, isMobile]); // Only re-init on theme/size changes
+  }, [client, closeSocket, clearConnectionTimers]);
 
   // Set up WebSocket and terminal handlers
   useEffect(() => {
-    if (!terminal) return;
-
-    const ws = connectWebSocket();
-    if (!ws) return;
+    if (access !== 'enabled') return;
+    const terminal = initTerminal();
+    if (!terminal) {
+      setConnection('error');
+      setError('The terminal display could not initialize. Reload availability to try again.');
+      return;
+    }
+    void connectWebSocket();
 
     // Handle terminal input
     const disposable = terminal.onData((data) => {
-      try { console.debug('[terminal] onData', JSON.stringify(data)); } catch {}
       const current = wsRef.current;
-      if (current && current.readyState === WebSocket.OPEN) {
+      if (current && current === authenticatedRef.current && current.readyState === WebSocket.OPEN) {
         current.send(JSON.stringify({
           type: 'input',
           data: data
@@ -256,7 +304,7 @@ const Terminal: React.FC<TerminalProps> = ({ apiKey }) => {
     // Handle terminal resize
     const resizeDisposable = terminal.onResize((size) => {
       const current = wsRef.current;
-      if (current && current.readyState === WebSocket.OPEN) {
+      if (current && current === authenticatedRef.current && current.readyState === WebSocket.OPEN) {
         current.send(JSON.stringify({
           type: 'resize',
           cols: size.cols,
@@ -268,56 +316,49 @@ const Terminal: React.FC<TerminalProps> = ({ apiKey }) => {
     return () => {
       disposable.dispose();
       resizeDisposable.dispose();
+      closeSocket();
+      if (fitTimeoutRef.current !== null) window.clearTimeout(fitTimeoutRef.current);
+      terminal.dispose();
+      termRef.current = null;
+      fitAddonRef.current = null;
     };
-  }, [terminal, apiKey]); // Connect when terminal is ready and apiKey changes
+  }, [access, initTerminal, connectWebSocket, closeSocket]);
+
+  // Display preferences update the current terminal without replacing its
+  // socket or shell session.
+  useEffect(() => {
+    const terminal = termRef.current;
+    if (!terminal) return;
+    terminal.options.theme = terminalTheme(theme.palette.mode);
+    terminal.options.fontSize = isSmallMobile ? 12 : isMobile ? 13 : 14;
+    terminal.options.scrollback = isMobile ? 5000 : 10000;
+    try { fitAddonRef.current?.fit(); } catch {}
+  }, [access, theme.palette.mode, isSmallMobile, isMobile]);
 
   // Handle window resize
   useEffect(() => {
     const handleResize = () => {
-      if (fitAddonRef.current && terminal) {
-        fitAddonRef.current.fit();
-      }
+      try { fitAddonRef.current?.fit(); } catch {}
     };
 
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
-  }, [terminal]);
-
-  // Cleanup on unmount
-  useEffect(() => {
-    return () => {
-      if (pingIntervalRef.current) {
-        window.clearInterval(pingIntervalRef.current);
-      }
-      if (websocket) {
-        websocket.close();
-      }
-      if (terminal) {
-        terminal.dispose();
-      }
-    };
   }, []);
 
   // Reconnect function
   const handleReconnect = () => {
-    if (websocket) {
-      websocket.close();
-    }
-    if (terminal) {
-      terminal.clear();
-    }
-    connectWebSocket();
+    // Recheck permission before every new session, including after failures.
+    setAvailabilityAttempt((attempt) => attempt + 1);
   };
 
   // Clear terminal
   const handleClear = () => {
-    if (terminal) {
-      terminal.clear();
-    }
+    termRef.current?.clear();
   };
 
   // Copy all terminal content
   const handleCopyAll = () => {
+    const terminal = termRef.current;
     if (terminal) {
       const selection = terminal.getSelection();
       if (selection) {
@@ -368,25 +409,29 @@ const Terminal: React.FC<TerminalProps> = ({ apiKey }) => {
             Terminal
           </Typography>
           <Typography variant="body2" color="text.secondary">
-            Direct shell access to the Faxbot container
+            Administrative shell access to this Faxbot installation
           </Typography>
         </Box>
         
         <Box>
-          {isSmallMobile ? (
+          {access !== 'enabled' ? (
+            <Button onClick={handleReconnect} disabled={access === 'checking'} startIcon={<RefreshIcon />}>
+              Reload availability
+            </Button>
+          ) : isSmallMobile ? (
             <Stack direction="row" spacing={1}>
               {!connected && (
-                <IconButton onClick={handleReconnect} color="primary" sx={{ borderRadius: 2 }}>
+                <IconButton aria-label="Reconnect terminal" disabled={loading} onClick={handleReconnect} color="primary" sx={{ borderRadius: 2 }}>
                   <RefreshIcon />
                 </IconButton>
               )}
-              <IconButton onClick={handleClear} sx={{ borderRadius: 2 }}>
+              <IconButton aria-label="Clear terminal" onClick={handleClear} sx={{ borderRadius: 2 }}>
                 <ClearIcon />
               </IconButton>
-              <IconButton onClick={handleCopyAll} sx={{ borderRadius: 2 }}>
+              <IconButton aria-label="Copy terminal content" onClick={handleCopyAll} sx={{ borderRadius: 2 }}>
                 <ContentCopyIcon />
               </IconButton>
-              <IconButton onClick={handleFullscreen} sx={{ borderRadius: 2 }}>
+              <IconButton aria-label={fullscreen ? 'Exit fullscreen' : 'Fullscreen terminal'} onClick={handleFullscreen} sx={{ borderRadius: 2 }}>
                 {fullscreen ? <FullscreenExitIcon /> : <FullscreenIcon />}
               </IconButton>
             </Stack>
@@ -394,7 +439,7 @@ const Terminal: React.FC<TerminalProps> = ({ apiKey }) => {
             <ButtonGroup variant="outlined" size={isMobile ? "small" : "medium"}>
               {!connected && (
                 <Tooltip title="Reconnect">
-                  <Button onClick={handleReconnect} startIcon={<RefreshIcon />}>
+                  <Button disabled={loading} onClick={handleReconnect} startIcon={<RefreshIcon />}>
                     Reconnect
                   </Button>
                 </Tooltip>
@@ -419,6 +464,14 @@ const Terminal: React.FC<TerminalProps> = ({ apiKey }) => {
         </Box>
       </Box>
 
+      {access === 'disabled' && <Alert severity="info" sx={{ mb: 2, borderRadius: 2 }}>
+        The terminal is turned off for this installation.
+      </Alert>}
+
+      {access === 'error' && <Alert severity="warning" sx={{ mb: 2, borderRadius: 2 }}>
+        Could not check terminal availability. Try again.
+      </Alert>}
+
       {error && (
         <Fade in>
           <Alert 
@@ -431,7 +484,7 @@ const Terminal: React.FC<TerminalProps> = ({ apiKey }) => {
         </Fade>
       )}
 
-      {loading && (
+      {access === 'checking' && (
         <Paper sx={{ 
           display: 'flex', 
           justifyContent: 'center', 
@@ -444,13 +497,13 @@ const Terminal: React.FC<TerminalProps> = ({ apiKey }) => {
           <Stack alignItems="center" spacing={2}>
             <CircularProgress />
             <Typography color="text.secondary">
-              Connecting to terminal...
+              Checking terminal availability…
             </Typography>
           </Stack>
         </Paper>
       )}
 
-      {!loading && (
+      {access === 'enabled' && (
         <Paper 
           elevation={0}
           sx={{ 
@@ -514,7 +567,7 @@ const Terminal: React.FC<TerminalProps> = ({ apiKey }) => {
             onClick={() => { try { termRef.current?.focus(); } catch {} }}
           />
           
-          {!connected && !loading && (
+          {!connected && (
             <Fade in>
               <Box sx={{ 
                 position: 'absolute', 
@@ -526,11 +579,11 @@ const Terminal: React.FC<TerminalProps> = ({ apiKey }) => {
                 borderRadius: 2,
                 bgcolor: theme.palette.mode === 'dark' ? 'rgba(0,0,0,0.5)' : 'rgba(255,255,255,0.9)',
               }}>
-                <DisconnectedIcon sx={{ fontSize: 48, color: 'text.secondary', mb: 2 }} />
+                {loading ? <CircularProgress sx={{ mb: 2 }} /> : <DisconnectedIcon sx={{ fontSize: 48, color: 'text.secondary', mb: 2 }} />}
                 <Typography variant="h6" sx={{ color: 'text.primary', mb: 2 }}>
-                  Terminal Disconnected
+                  {loading ? 'Connecting to terminal…' : connection === 'forbidden' ? 'Terminal closed' : connection === 'error' ? 'Terminal unavailable' : 'Terminal disconnected'}
                 </Typography>
-                <Button
+                {!loading && <Button
                   variant="contained"
                   onClick={handleReconnect}
                   startIcon={<RefreshIcon />}
@@ -538,7 +591,7 @@ const Terminal: React.FC<TerminalProps> = ({ apiKey }) => {
                   sx={{ borderRadius: 2 }}
                 >
                   Reconnect
-                </Button>
+                </Button>}
               </Box>
             </Fade>
           )}

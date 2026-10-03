@@ -44,7 +44,7 @@ Implement the following as minimum controls:
 - Public API must be served over HTTPS. Use TLS certs from a reputable CA.
 - For Phaxio backend:
   - `PUBLIC_API_URL` must be HTTPS in production.
-  - Enable callback signature verification (default on): `PHAXIO_VERIFY_SIGNATURE=true`. Server verifies `X-Phaxio-Signature` (HMAC‑SHA256 over raw body with `PHAXIO_API_SECRET`).
+  - For outbound status callbacks, set the distinct account `PHAXIO_CALLBACK_TOKEN` and keep `PHAXIO_VERIFY_SIGNATURE=true`. `X-Phaxio-Signature` uses lowercase hexadecimal HMAC-SHA1 over the exact captured URL/query, stably name-sorted form fields and file-part SHA1 digests; see [the outbound contract](setup/webhooks.md#outbound-status-phaxio). The send API secret is not a callback token. A job captured with verification disabled rejects callback updates; captured-account status polling continues when a provider fax ID is known.
 - For SIP backend:
   - SIP signaling should use TLS if supported by your provider; media (T.38 over UDPTL) is typically not encrypted. Mitigate with a site‑to‑site VPN/private interconnect to your SIP provider and strict firewalling.
   - Never expose AMI (5038/tcp) to the public internet.
@@ -91,6 +91,7 @@ Implement the following as minimum controls:
   - BAA with Phaxio before sending PHI.
   - HTTPS `PUBLIC_API_URL`, valid certificate.
   - `PHAXIO_VERIFY_SIGNATURE=true`.
+  - Account Callback Token captured as `PHAXIO_CALLBACK_TOKEN` for outbound callbacks.
   - Strong `API_KEY` and reverse proxy restrictions.
 - Recommended:
   - Keep `PDF_TOKEN_TTL_MINUTES` small (e.g., 15–60 minutes).
@@ -129,7 +130,7 @@ Implement the following as minimum controls:
 - [ ] TLS everywhere (HTTPS for public endpoints; VPN/private link for SIP media).
 - [ ] API auth enabled (`API_KEY` set). Reverse proxy with IP allowlist + rate limiting.
 - [ ] MCP auth enforced (OAuth2 Bearer required for HTTP/SSE MCP).
-- [ ] Callback signature verification enabled (`PHAXIO_VERIFY_SIGNATURE=true`).
+- [ ] Outbound callback token configured (`PHAXIO_CALLBACK_TOKEN`) and verification enabled (`PHAXIO_VERIFY_SIGNATURE=true`).
 - [ ] Tokenized PDF access enabled with short TTL (`PDF_TOKEN_TTL_MINUTES`).
 - [ ] Logs do not contain PHI; tokens redacted; job IDs only.
 - [ ] Encrypted storage for DB and artifacts; backups configured.
@@ -137,41 +138,9 @@ Implement the following as minimum controls:
 - [ ] Asterisk AMI not exposed; strong credentials; fail2ban.
 - [ ] Risk analysis, policies, and training documented.
 
-## Current Implementation Status (2025‑Q3)
-- Implemented:
-  - API key support, reverse proxy guidance.
-  - Tokenized PDF access with equality check and TTL expiry.
-  - Phaxio callback signature verification (HMAC‑SHA256).
-  - AMI concurrency/backoff improvements; SIP dialplan emits granular results.
-  - Docs for HTTPS, rate limiting, NAT/port‑forwarding.
-- Gaps (operator‑dependent):
-  - Encryption at rest (volume or DB) is operator‑managed.
-  - Automated retention cleanup (cron/job) recommended (see below).
-  - Centralized audit logging & alerting recommended.
+## Current implementation and operation
 
-## Remediation Plan & Roadmap
-1) Automate artifact retention
-- Add `ARTIFACT_TTL_DAYS` env with a daily cleanup job to purge PDFs/TIFFs older than TTL when job status is final.
-
-2) Configurable audit logging
-- Structured logs with job lifecycle events; optional sink to SIEM.
-
-3) Optional hard fail on plain HTTP
-- Reject `PUBLIC_API_URL` with `http://` in non‑local environments unless `ALLOW_INSECURE_PUBLIC_URL=true`.
-
-4) Secrets management
-- Guidance and examples for loading secrets from a vault (AWS/GCP/Azure) instead of env files.
-
-5) Provider‑specific SIP hardening
-- Example configs for TLS signaling and site‑to‑site VPN topologies.
-
-## Example: Retention Cleanup (Operator)
-- Create a cron or systemd timer to delete artifacts after N days:
-```
-# delete PDFs/TIFFs older than 7 days
-find /path/to/faxdata -type f \( -name '*.pdf' -o -name '*.tiff' \) -mtime +7 -delete
-```
-- Ensure backups honor retention and secure destruction policies.
+Use the maintained guides for [authentication](security/authentication.md), [access control](security/access-control.md), [settings and retention](admin-console/settings.md), [provider callbacks](setup/webhooks.md), and [MCP transport security](mcp/transports.md). The historical implementation assessment and remediation plan have been archived; they do not describe the current release.
 
 ## Legal Notice
 - This document does not constitute legal advice. HIPAA compliance depends on your specific implementation, vendor agreements, and organizational controls. Engage qualified counsel and security professionals.

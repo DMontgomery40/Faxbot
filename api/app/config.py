@@ -1,188 +1,104 @@
+"""Stable compatibility facade over immutable operation configuration.
+
+An ASGI request or owned background operation binds one complete revision.
+Bootstrap loading never writes process environment; managed reloads read the
+canonical installation store and cannot replace an already captured operation.
+"""
 import os
 import json
+from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import Any, Dict, Optional
-from pydantic import BaseModel, Field
+from .config_values import ConfigurationValues
+from .config_paths import (
+    InvalidProviderPath, faxbot_config_path, provider_manifest_path,
+    provider_traits_path, providers_dir,
+)
+
+_BOUND_VALUES = ContextVar('faxbot_configuration_values', default=None)
+_BOUND_PROFILES = ContextVar('faxbot_configuration_profiles', default=None)
+_source = None
+_bootstrap_values = None
 
 
-# Optional: load persisted settings from a file before constructing Settings
-# Controlled by ENABLE_PERSISTED_SETTINGS=true and optional PERSISTED_ENV_PATH
-def _load_persisted_env_if_enabled() -> None:
+def bootstrap_locations(environment):
+    return ConfigurationValues.from_environment({key: environment[key] for key in
+        ('DATABASE_URL', 'FAX_DATA_DIR', 'FAXBOT_PROVIDERS_DIR', 'PLUGIN_REGISTRY_PATH',
+         'FAXBOT_CONFIG_PATH') if key in environment})
+
+
+def Settings():
+    """Explicit deployment-value parsing for compatibility with embedding clients."""
+    return ConfigurationValues.from_environment(os.environ)
+
+
+def configuration_values():
+    captured = _BOUND_VALUES.get()
+    if captured is not None:
+        return captured
+    if _source is not None:
+        return _source.read().active.values
+    global _bootstrap_values
+    if _bootstrap_values is None:
+        # Module import needs only datastore/resource locations. Ordinary values
+        # are validated at first import, after checking for canonical state.
+        _bootstrap_values = bootstrap_locations(os.environ)
+    return _bootstrap_values
+
+
+def managed_configuration_values():
+    """Resource paths follow the operation/canonical values after activation."""
+    if _BOUND_VALUES.get() is not None or _source is not None:
+        return configuration_values()
+    return None
+
+
+class _SettingsFacade:
+    __slots__ = ()
+
+    def __getattr__(self, name):
+        return getattr(configuration_values(), name)
+
+
+settings = _SettingsFacade()
+
+
+@contextmanager
+def use_configuration(values, profiles=None):
+    """Pin values and selected profiles for the full operation, including awaits."""
+    if not isinstance(values, ConfigurationValues):
+        raise TypeError('Operation configuration must be validated immutable values.')
+    token = _BOUND_VALUES.set(values)
+    profile_token = _BOUND_PROFILES.set(profiles)
     try:
-        enabled = os.getenv("ENABLE_PERSISTED_SETTINGS", "false").lower() in {"1", "true", "yes"}
-        if not enabled:
-            return
-        path = os.getenv("PERSISTED_ENV_PATH", "/faxdata/faxbot.env")
-        if not os.path.exists(path):
-            return
-        with open(path, "r") as f:
-            for raw in f.readlines():
-                line = raw.strip()
-                if not line or line.startswith("#"):
-                    continue
-                if "=" not in line:
-                    continue
-                key, val = line.split("=", 1)
-                key = key.strip()
-                # Strip optional surrounding quotes
-                v = val.strip()
-                if (v.startswith("\"") and v.endswith("\"")) or (v.startswith("'") and v.endswith("'")):
-                    v = v[1:-1]
-                # Persisted file overrides process env when enabled
-                os.environ[key] = v
-    except Exception:
-        # Fail open: if persisted load fails, continue with process env
-        pass
+        yield
+    finally:
+        _BOUND_PROFILES.reset(profile_token)
+        _BOUND_VALUES.reset(token)
 
 
-_load_persisted_env_if_enabled()
+def install_configuration_source(store):
+    global _source
+    if _source is not None and _source is not store:
+        raise RuntimeError('Configuration runtime is already installed.')
+    _source = store
 
 
-class Settings(BaseModel):
-    # App
-    fax_data_dir: str = Field(default_factory=lambda: os.getenv("FAX_DATA_DIR", "./faxdata"))
-    max_file_size_mb: int = Field(default_factory=lambda: int(os.getenv("MAX_FILE_SIZE_MB", "10")))
-    fax_disabled: bool = Field(default_factory=lambda: os.getenv("FAX_DISABLED", "false").lower() in {"1", "true", "yes"})
-    api_key: str = Field(default_factory=lambda: os.getenv("API_KEY", ""))
-    # Require API key on requests regardless of env API_KEY. Useful for HIPAA prod.
-    require_api_key: bool = Field(default_factory=lambda: os.getenv("REQUIRE_API_KEY", "false").lower() in {"1", "true", "yes"})
-
-    # Fax Backend Selection
-    # Legacy single-backend env (fallback for both outbound/inbound when dual is unset)
-    fax_backend: str = Field(default_factory=lambda: os.getenv("FAX_BACKEND", "phaxio").lower())  # default to cloud; require explicit 'sip' for telephony
-    # Dual-backend (hybrid) envs — when set, override legacy for each direction
-    outbound_backend: str = Field(default_factory=lambda: (os.getenv("FAX_OUTBOUND_BACKEND", "") or os.getenv("FAX_BACKEND", "phaxio")).lower())
-    inbound_backend: str = Field(default_factory=lambda: (os.getenv("FAX_INBOUND_BACKEND", "") or os.getenv("FAX_BACKEND", "phaxio")).lower())
-
-    # Asterisk AMI (for SIP backend)
-    ami_host: str = Field(default_factory=lambda: os.getenv("ASTERISK_AMI_HOST", "asterisk"))
-    ami_port: int = Field(default_factory=lambda: int(os.getenv("ASTERISK_AMI_PORT", "5038")))
-    ami_username: str = Field(default_factory=lambda: os.getenv("ASTERISK_AMI_USERNAME", "api"))
-    ami_password: str = Field(default_factory=lambda: os.getenv("ASTERISK_AMI_PASSWORD", "changeme"))
-
-    # FreeSWITCH ESL (preview)
-    fs_esl_host: str = Field(default_factory=lambda: os.getenv("FREESWITCH_ESL_HOST", "127.0.0.1"))
-    fs_esl_port: int = Field(default_factory=lambda: int(os.getenv("FREESWITCH_ESL_PORT", "8021")))
-    fs_esl_password: str = Field(default_factory=lambda: os.getenv("FREESWITCH_ESL_PASSWORD", "ClueCon"))
-    fs_gateway_name: str = Field(default_factory=lambda: os.getenv("FREESWITCH_GATEWAY_NAME", "gw_signalwire"))
-    fs_caller_id_number: str = Field(default_factory=lambda: os.getenv("FREESWITCH_CALLER_ID_NUMBER", "3035551234"))
-    fs_t38_enable: bool = Field(default_factory=lambda: os.getenv("FREESWITCH_T38_ENABLE", "true").lower() in {"1","true","yes"})
-
-    # Phaxio Configuration (for cloud backend)
-    phaxio_api_key: str = Field(default_factory=lambda: os.getenv("PHAXIO_API_KEY", ""))
-    phaxio_api_secret: str = Field(default_factory=lambda: os.getenv("PHAXIO_API_SECRET", ""))
-    # Support both PHAXIO_STATUS_CALLBACK_URL and PHAXIO_CALLBACK_URL per AGENTS.md
-    phaxio_status_callback_url: str = Field(
-        default_factory=lambda: os.getenv("PHAXIO_STATUS_CALLBACK_URL", os.getenv("PHAXIO_CALLBACK_URL", ""))
-    )
-    # Verify Phaxio webhook signatures (HMAC-SHA256) — default on; allow explicit dev opt-out
-    phaxio_verify_signature: bool = Field(default_factory=lambda: os.getenv("PHAXIO_VERIFY_SIGNATURE", "true").lower() in {"1", "true", "yes"})
-
-    # Public API URL (needed for cloud backend to fetch PDFs, e.g., Phaxio)
-    public_api_url: str = Field(default_factory=lambda: os.getenv("PUBLIC_API_URL", "http://localhost:8080"))
-
-    # Sinch Fax (Phaxio by Sinch) — direct upload flow
-    sinch_project_id: str = Field(default_factory=lambda: os.getenv("SINCH_PROJECT_ID", ""))
-    sinch_api_key: str = Field(default_factory=lambda: os.getenv("SINCH_API_KEY", os.getenv("PHAXIO_API_KEY", "")))
-    sinch_api_secret: str = Field(default_factory=lambda: os.getenv("SINCH_API_SECRET", os.getenv("PHAXIO_API_SECRET", "")))
-
-    # SignalWire (Compatibility Fax API)
-    signalwire_space_url: str = Field(default_factory=lambda: os.getenv("SIGNALWIRE_SPACE_URL", ""))
-    signalwire_project_id: str = Field(default_factory=lambda: os.getenv("SIGNALWIRE_PROJECT_ID", ""))
-    signalwire_api_token: str = Field(default_factory=lambda: os.getenv("SIGNALWIRE_API_TOKEN", ""))
-    signalwire_fax_from_e164: str = Field(default_factory=lambda: os.getenv("SIGNALWIRE_FAX_FROM_E164", ""))
-    signalwire_sms_from_e164: str = Field(default_factory=lambda: os.getenv("SIGNALWIRE_SMS_FROM_E164", ""))
-    signalwire_status_callback_url: str = Field(default_factory=lambda: os.getenv("SIGNALWIRE_STATUS_CALLBACK_URL", os.getenv("SIGNALWIRE_CALLBACK_URL", "")))
-    signalwire_webhook_signing_key: str = Field(default_factory=lambda: os.getenv("SIGNALWIRE_WEBHOOK_SIGNING_KEY", ""))
-    signalwire_status_poll_seconds: int = Field(default_factory=lambda: int(os.getenv("SIGNALWIRE_STATUS_POLL_SECONDS", "0")))
-
-    # Documo (mFax) — direct upload flow (preview)
-    documo_api_key: str = Field(default_factory=lambda: os.getenv("DOCUMO_API_KEY", ""))
-    documo_base_url: str = Field(default_factory=lambda: os.getenv("DOCUMO_BASE_URL", "https://api.documo.com"))
-    documo_use_sandbox: bool = Field(default_factory=lambda: os.getenv("DOCUMO_SANDBOX", "false").lower() in {"1", "true", "yes"})
-
-    # Fax presentation
-    fax_header: str = Field(default_factory=lambda: os.getenv("FAX_HEADER", "Faxbot"))
-    fax_station_id: str = Field(default_factory=lambda: os.getenv("FAX_LOCAL_STATION_ID", "+10000000000"))
-
-    # DB
-    database_url: str = Field(default_factory=lambda: os.getenv("DATABASE_URL", "sqlite:///./faxbot.db"))
-
-    # Security
-    pdf_token_ttl_minutes: int = Field(default_factory=lambda: int(os.getenv("PDF_TOKEN_TTL_MINUTES", "60")))
-    enforce_public_https: bool = Field(default_factory=lambda: os.getenv("ENFORCE_PUBLIC_HTTPS", "true").lower() in {"1", "true", "yes"})
-
-    # Retention / cleanup
-    artifact_ttl_days: int = Field(default_factory=lambda: int(os.getenv("ARTIFACT_TTL_DAYS", "0")))  # 0=disabled
-    cleanup_interval_minutes: int = Field(default_factory=lambda: int(os.getenv("CLEANUP_INTERVAL_MINUTES", "1440")))
-
-    # Rate limiting (per key) — disabled by default; implemented in Phase 2
-    max_requests_per_minute: int = Field(default_factory=lambda: int(os.getenv("MAX_REQUESTS_PER_MINUTE", "0")))
-
-    # Audit logging
-    audit_log_enabled: bool = Field(default_factory=lambda: os.getenv("AUDIT_LOG_ENABLED", "false").lower() in {"1", "true", "yes"})
-    audit_log_format: str = Field(default_factory=lambda: os.getenv("AUDIT_LOG_FORMAT", "json"))
-    audit_log_file: str = Field(default_factory=lambda: os.getenv("AUDIT_LOG_FILE", ""))
-    audit_log_syslog: bool = Field(default_factory=lambda: os.getenv("AUDIT_LOG_SYSLOG", "false").lower() in {"1", "true", "yes"})
-    audit_log_syslog_address: str = Field(default_factory=lambda: os.getenv("AUDIT_LOG_SYSLOG_ADDRESS", "/dev/log"))
-
-    # Inbound receiving (Phase Receive)
-    inbound_enabled: bool = Field(default_factory=lambda: os.getenv("INBOUND_ENABLED", "false").lower() in {"1", "true", "yes"})
-    inbound_retention_days: int = Field(default_factory=lambda: int(os.getenv("INBOUND_RETENTION_DAYS", "30")))
-    inbound_token_ttl_minutes: int = Field(default_factory=lambda: int(os.getenv("INBOUND_TOKEN_TTL_MINUTES", "60")))
-    asterisk_inbound_secret: str = Field(default_factory=lambda: os.getenv("ASTERISK_INBOUND_SECRET", ""))
-    phaxio_inbound_verify_signature: bool = Field(default_factory=lambda: os.getenv("PHAXIO_INBOUND_VERIFY_SIGNATURE", "true").lower() in {"1", "true", "yes"})
-    sinch_inbound_verify_signature: bool = Field(default_factory=lambda: os.getenv("SINCH_INBOUND_VERIFY_SIGNATURE", "true").lower() in {"1", "true", "yes"})
-    sinch_inbound_basic_user: str = Field(default_factory=lambda: os.getenv("SINCH_INBOUND_BASIC_USER", ""))
-    sinch_inbound_basic_pass: str = Field(default_factory=lambda: os.getenv("SINCH_INBOUND_BASIC_PASS", ""))
-    sinch_inbound_hmac_secret: str = Field(default_factory=lambda: os.getenv("SINCH_INBOUND_HMAC_SECRET", ""))
-
-    # Storage backend for inbound artifacts
-    storage_backend: str = Field(default_factory=lambda: os.getenv("STORAGE_BACKEND", "local"))  # local | s3
-    s3_bucket: str = Field(default_factory=lambda: os.getenv("S3_BUCKET", ""))
-    s3_prefix: str = Field(default_factory=lambda: os.getenv("S3_PREFIX", "inbound/"))
-    s3_region: str = Field(default_factory=lambda: os.getenv("S3_REGION", ""))
-    s3_endpoint_url: str = Field(default_factory=lambda: os.getenv("S3_ENDPOINT_URL", ""))  # allow S3-compatible (MinIO)
-    s3_kms_key_id: str = Field(default_factory=lambda: os.getenv("S3_KMS_KEY_ID", ""))
-
-    # Inbound rate limits (per key)
-    inbound_list_rpm: int = Field(default_factory=lambda: int(os.getenv("INBOUND_LIST_RPM", "30")))
-    inbound_get_rpm: int = Field(default_factory=lambda: int(os.getenv("INBOUND_GET_RPM", "60")))
-
-    # Admin console options
-    admin_allow_restart: bool = Field(default_factory=lambda: os.getenv("ADMIN_ALLOW_RESTART", "false").lower() in {"1","true","yes"})
-
-    # MCP (embedded) settings
-    enable_mcp_sse: bool = Field(default_factory=lambda: os.getenv("ENABLE_MCP_SSE", "false").lower() in {"1","true","yes"})
-    mcp_sse_path: str = Field(default_factory=lambda: os.getenv("MCP_SSE_PATH", "/mcp/sse"))
-    require_mcp_oauth: bool = Field(default_factory=lambda: os.getenv("REQUIRE_MCP_OAUTH", "false").lower() in {"1","true","yes"})
-    oauth_issuer: str = Field(default_factory=lambda: os.getenv("OAUTH_ISSUER", ""))
-    oauth_audience: str = Field(default_factory=lambda: os.getenv("OAUTH_AUDIENCE", ""))
-    oauth_jwks_url: str = Field(default_factory=lambda: os.getenv("OAUTH_JWKS_URL", ""))
-    # MCP HTTP transport
-    enable_mcp_http: bool = Field(default_factory=lambda: os.getenv("ENABLE_MCP_HTTP", "false").lower() in {"1","true","yes"})
-    mcp_http_path: str = Field(default_factory=lambda: os.getenv("MCP_HTTP_PATH", "/mcp/http"))
-
-    # v3 Plugins (feature-gated)
-    feature_v3_plugins: bool = Field(default_factory=lambda: os.getenv("FEATURE_V3_PLUGINS", "false").lower() in {"1","true","yes"})
-    faxbot_config_path: str = Field(default_factory=lambda: os.getenv("FAXBOT_CONFIG_PATH", "config/faxbot.config.json"))
-    feature_plugin_install: bool = Field(default_factory=lambda: os.getenv("FEATURE_PLUGIN_INSTALL", "false").lower() in {"1","true","yes"})
+def release_configuration_source(store):
+    global _source
+    if _source is store:
+        _source = None
 
 
-settings = Settings()
-
-
-def reload_settings() -> None:
-    """Reload settings from current environment into the existing instance.
-    Keeps references stable across modules that imported `settings`.
-    """
-    new = Settings()
-    for name in new.model_fields.keys():  # type: ignore[attr-defined]
-        setattr(settings, name, getattr(new, name))
-    # Rebuild traits cache on settings reload
-    try:
+def reload_settings():
+    """Refresh canonical state without promoting pending settings or changing a frame."""
+    if _source is not None:
+        return _source.read()
+    if _BOUND_VALUES.get() is None:
+        global _bootstrap_values
+        _bootstrap_values = Settings()
         _refresh_traits_cache()
-    except Exception:
-        pass
+    return None
 
 # ===== Provider traits registry (declarative) =====
 _TRAITS_CACHE: Dict[str, Any] = {"registry": {}, "loaded_mtime": 0.0, "schema_issues": {}}
@@ -200,12 +116,11 @@ CANONICAL_TRAIT_KEYS: set[str] = {
 
 
 def _traits_file_path() -> str:
-    # Project-relative config folder (cwd); acceptable for prod, but tests may run from different roots.
-    return os.path.join(os.getcwd(), "config", "provider_traits.json")
+    return str(provider_traits_path())
 
 
 def _providers_dir() -> str:
-    return os.path.join(os.getcwd(), "config", "providers")
+    return str(providers_dir())
 
 
 def _read_json(path: str) -> Any:
@@ -264,7 +179,11 @@ def _scan_manifest_traits() -> Dict[str, Dict[str, Any]]:
     if not os.path.isdir(pdir):
         return results
     for pid in os.listdir(pdir):
-        mpath = os.path.join(pdir, pid, "manifest.json")
+        try:
+            mpath = provider_manifest_path(pid)
+        except InvalidProviderPath:
+            # Unsafe entries are not installed providers and must never be read.
+            continue
         if not os.path.exists(mpath):
             continue
         data = _read_json(mpath)
@@ -338,7 +257,7 @@ def valid_backends() -> set[str]:
     keys.discard("_schema")
     if not keys:
         # Fallback to known providers to avoid treating everything as legacy
-        return {"phaxio", "sinch", "sip", "signalwire", "documo", "freeswitch"}
+        return {"phaxio", "sinch", "sip", "signalwire", "documo", "humblefax", "freeswitch"}
     return keys
 
 
@@ -350,16 +269,14 @@ def active_outbound() -> str:
     """Return the effective outbound backend, normalizing and validating.
     Falls back to legacy fax_backend when dual env is not set or invalid.
     """
-    ob = (settings.outbound_backend or settings.fax_backend or "").strip().lower()
-    return ob if ob in valid_backends() else settings.fax_backend
+    return settings.effective_outbound
 
 
 def active_inbound() -> str:
     """Return the effective inbound backend, normalizing and validating.
     Falls back to legacy fax_backend when dual env is not set or invalid.
     """
-    ib = (settings.inbound_backend or settings.fax_backend or "").strip().lower()
-    return ib if ib in valid_backends() else settings.fax_backend
+    return settings.effective_inbound
 
 
 def providerHasTrait(direction: str, trait_name: str) -> bool:
@@ -367,9 +284,14 @@ def providerHasTrait(direction: str, trait_name: str) -> bool:
         pid = active_outbound() if direction == "outbound" else active_inbound()
         if direction == "any":
             return providerHasTrait("outbound", trait_name) or providerHasTrait("inbound", trait_name)
-        tr = (get_provider_traits(pid).get("traits") or {})
+        profiles = _BOUND_PROFILES.get()
+        if profiles is not None:
+            profile = profiles.get(direction)
+            tr = profile.configuration.traits if profile is not None else {}
+        else:
+            tr = (get_provider_traits(pid).get("traits") or {})
         val = tr.get(trait_name)
-        return bool(val)
+        return val is True
     except Exception:
         return False
 
@@ -381,7 +303,12 @@ def providerTraitValue(direction: str, trait_name: str):
             # Prefer outbound's value, else inbound
             v = providerTraitValue("outbound", trait_name)
             return v if v is not None else providerTraitValue("inbound", trait_name)
-        tr = (get_provider_traits(pid).get("traits") or {})
+        profiles = _BOUND_PROFILES.get()
+        if profiles is not None:
+            profile = profiles.get(direction)
+            tr = profile.configuration.traits if profile is not None else {}
+        else:
+            tr = (get_provider_traits(pid).get("traits") or {})
         return tr.get(trait_name)
     except Exception:
         return None

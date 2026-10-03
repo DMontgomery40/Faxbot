@@ -21,9 +21,47 @@ build:
 test:
 	docker compose run --rm api pytest -q
 
+# Local equivalents of the CI jobs (see CONTRIBUTING.md).
+# VENV can point at an existing venv, e.g. make test-local VENV=/path/to/.venv
+VENV ?= .venv
+PYTEST_ARGS ?=
+
+.PHONY: venv test-local ui-build
+
+venv:
+	uv venv --python 3.11 $(VENV) && uv pip install --python $(VENV)/bin/python -r api/requirements.txt -r python_mcp/requirements.txt
+
+# Same command and env as the test-api CI job; set FAXBOT_SCHEMA_TEST_POSTGRES_URL to include the PostgreSQL schema tests.
+test-local:
+	cd api && mkdir -p faxdata && FAX_DISABLED=true FAX_DATA_DIR=./faxdata DATABASE_URL='sqlite:///./test_faxbot_ci.db' FAXBOT_SCHEMA_TEST_POSTGRES_URL="$${FAXBOT_SCHEMA_TEST_POSTGRES_URL:-}" $(abspath $(VENV))/bin/python -m pytest -q $(PYTEST_ARGS)
+
+ui-build:
+	cd api/admin_ui && npm ci --no-audit --no-fund && npm run build
+
+# T.38 loopback proof: two Faxbot Asterisk containers exchange a two-page fax.
+# Needs Docker; DOCKER_CONTEXT defaults to colima-faxbot-refresh.
+DOCKER_CONTEXT ?= colima-faxbot-refresh
+.PHONY: native-proof
+native-proof:
+	cd api && mkdir -p faxdata && FAXBOT_NATIVE_PROOF=1 FAXBOT_DOCKER_CONTEXT=$(DOCKER_CONTEXT) FAX_DISABLED=true FAX_DATA_DIR=./faxdata DATABASE_URL='sqlite:///./test_faxbot_ci.db' $(abspath $(VENV))/bin/python -m pytest -q -s -p no:cacheprovider -m native tests/test_t38_loopback.py
+
+# The faxbot command line from this checkout, for example: make cli ARGS="health"
+# Paths in ARGS stay relative to where make runs. See docs/operations/cli.md.
+.PHONY: cli cli-docs
+cli:
+	PYTHONPATH=$(CURDIR)/api $(abspath $(VENV))/bin/python -m app.cli $(ARGS)
+
+# Regenerate docs/reference/cli.md from the command definitions (checked by api/tests/test_cli.py).
+cli-docs:
+	cd api && $(abspath $(VENV))/bin/python -m app.cli.reference > ../docs/reference/cli.md
+
 # Alembic helpers (run locally)
 alembic-upgrade:
 	DATABASE_URL=$${DATABASE_URL:-sqlite:///./faxbot.db} alembic -c api/alembic.ini upgrade head
+
+test-schema:
+	@test -n "$$FAXBOT_SCHEMA_TEST_POSTGRES_URL" || (echo "Set FAXBOT_SCHEMA_TEST_POSTGRES_URL to a dedicated disposable PostgreSQL test database"; exit 1)
+	python -m pytest api/tests/test_schema.py -q
 
 alembic-downgrade:
 	DATABASE_URL=$${DATABASE_URL:-sqlite:///./faxbot.db} alembic -c api/alembic.ini downgrade -1

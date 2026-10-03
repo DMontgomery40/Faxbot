@@ -18,7 +18,7 @@ function SecretInput({ onChange, ...props }: SecretInputProps) {
   const [showPassword, setShowPassword] = useState(false);
 
   const handleToggleVisibility = () => {
-    setShowPassword(!showPassword);
+    setShowPassword((previous) => !previous);
   };
 
   return (
@@ -31,7 +31,9 @@ function SecretInput({ onChange, ...props }: SecretInputProps) {
         endAdornment: (
           <InputAdornment position="end">
             <IconButton
-              aria-label="toggle password visibility"
+              type="button"
+              aria-label={`${showPassword ? 'Hide' : 'Show'} ${typeof props.label === 'string' ? props.label : 'secret'}`}
+              aria-pressed={showPassword}
               onClick={handleToggleVisibility}
               edge="end"
             >

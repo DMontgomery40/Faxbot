@@ -19,9 +19,9 @@
   Mint, rotate, revoke; scopes and rate limits.  
   [Open](admin-console/api-keys.md)
 
-- :material-puzzle-outline: **Plugin Builder**  
-  Generate outbound provider scaffolds.  
-  [Open](admin-console/plugin-builder.md)
+- :material-puzzle-outline: **Plugin Registry**\
+  Discover providers and configure installed plugins.\
+  [Open](plugins/registry.md)
 
 </div>
 
@@ -34,46 +34,29 @@ The Admin Console lets you manage keys, jobs, inbound inbox, diagnostics, and se
 ## Usage
 
 - Access at `http://localhost:8080/admin/ui/` when the API is running
-- If you see 404, set `ENABLE_LOCAL_ADMIN=true` (or set `ADMIN_UI_DIR=/app/admin_ui_dist`) and restart
+- If the UI is unavailable, set the deployment gate `ENABLE_LOCAL_ADMIN=true` and install the built UI at `/app/admin_ui/dist` in the container or `api/admin_ui/dist` locally, then restart the serving API. These mount/gate inputs remain deployment environment settings; canonical runtime edits use [Settings](admin-console/settings.md).
 - Explore tabs for Dashboard, Send, Jobs, Inbound, Keys, Settings, Diagnostics
 
 ### Plugins (preview)
-- When enabled by the server, a Plugins tab appears to help operators view installed providers and persist an outbound selection to the server’s config file. This does not change the running backend immediately; apply changes during maintenance windows.
-- Enable by setting `FEATURE_V3_PLUGINS=true` on the API. The tab uses `/plugins` and related endpoints with admin authentication.
+- Enable v3 plugins through canonical Settings on an existing installation and inspect the apply state. The tab appears when the active feature is enabled.
+- Plugins edits desired provider settings and direction selection with a loaded revision guard. Its result identifies active or pending changes; it does not write a separate authoritative runtime JSON file.
 
 ## Demo (Simulated)
 
 - Hosted demo with simulated data: https://faxbot.net/admin-demo/
 - No external calls; intended for showcasing the workflow
 
-## Live Apply & Export
+## Desired settings, activation and recovery
 
-- Setup Wizard: choose a backend (Phaxio/Sinch/SIP), enter credentials, pick security defaults (require API key, enforce HTTPS, audit logging), then click “Apply & Reload”.
-  - Changes apply in‑process immediately.
-  - Click “Generate .env” to export a snippet for persistence across restarts.
-- Settings: quick edits for backend/security and selected provider fields.
-  - Click “Apply & Reload” to take effect immediately.
-  - Backend/storage changes may require a restart to initialize provider clients (e.g., Asterisk AMI) or swap storage drivers safely.
+Setup Wizard and Settings load canonical desired values and the revision they edit. Apply saves only changed fields with that revision; conflicts retain the draft for explicit reload/review. The response distinguishes active values from desired changes pending restart. For pending changes, stop every API worker and restart the installation, then verify the active/desired identity. A readonly reload does not activate pending configuration, and restarting one process while other workers remain running is insufficient.
 
-## Persisted Settings (v2)
+A redacted export is a desired template, not persistence or a complete backup. Settings can write a private recovery environment file; it does not promote pending settings. Preserve the database, installation encryption key and document artifacts for recovery. Environment and legacy JSON inputs bootstrap an installation without canonical state; subsequent `.env` edits do not override its saved revision. See [Settings](admin-console/settings.md) and [Setup](admin-console/setup-wizard.md).
 
-- Enable loading of a server-side .env on startup: toggle “Load persisted .env at startup” in Settings (sets ENABLE_PERSISTED_SETTINGS=true).
-- Save the current configuration to a persisted file by clicking “Save .env to server”.
-  - Default path: /faxdata/faxbot.env (lives on the `faxdata` volume).
-  - You can still export and download the .env if you prefer manual review.
-- Notes
-  - When enabled, the API loads values from the persisted file before constructing settings, overriding process environment.
-  - Keep this feature local-only and behind the Admin Console gate.
-
-## Restart (Optional)
-
-- If `ADMIN_ALLOW_RESTART=true`, the Diagnostics page shows a “Restart API” button.
-  - This triggers a controlled process exit so your container manager (e.g., Docker) restarts the API.
-  - If the flag is not set, the button returns “Restart not allowed”.
+The optional Diagnostics **Restart API** action exits one process when allowed. Arrange an installation-wide stop/start through the process manager for pending activation; do not treat that button alone as a coordinated restart.
 
 ## Storage (S3)
 
-- To use S3 for inbound artifacts, set `STORAGE_BACKEND=s3` and S3 values (`S3_BUCKET`, `S3_REGION`, optional `S3_PREFIX`, `S3_ENDPOINT_URL`, `S3_KMS_KEY_ID`).
+- In Settings, select S3 for artifact storage and edit its values (`S3_BUCKET`, `S3_REGION`, optional `S3_PREFIX`, `S3_ENDPOINT_URL`, `S3_KMS_KEY_ID`).
 - IAM credentials must come from the runtime (environment or role). The Admin Console does not store or display secrets.
 - Validate S3:
   - Enable `ENABLE_S3_DIAGNOSTICS=true` on the API to allow Diagnostics to `HeadBucket` and surface `checks.storage.accessible`.
@@ -82,17 +65,19 @@ The Admin Console lets you manage keys, jobs, inbound inbox, diagnostics, and se
 
 ## Dashboard & Diagnostics
 
-- Dashboard shows the live backend (phaxio/sinch/sip) and simple queue stats. After applying settings, it reflects the new backend.
+- Dashboard describes the active outbound configuration and durable delivery counts. Desired pending settings can differ from the running provider.
 - Diagnostics runs a comprehensive check (backend credentials/config, storage, inbound flags, security posture) and shows recommendations.
 
 ### Under the Hood
 - The console reads settings from `GET /admin/settings` and health from `GET /admin/health-status`
-- “Apply & Reload” calls `PUT /admin/settings` then `POST /admin/settings/reload`
-- Persisted settings writes a server‑side `.env` via `POST /admin/settings/persist` (when enabled)
+- Apply calls `PUT /admin/settings` with changed fields and the loaded desired revision; `_meta` reports active/pending state
+- `POST /admin/settings/reload` only reads durable state
+- `POST /admin/settings/persist` writes a recovery file; it does not become the authoritative settings store
 - Jobs table uses admin‑scoped endpoints (`/admin/fax-jobs*`) with masked phone numbers
 
 ## Inbound Controls (v2)
 
+- The Inbox shows each received fax with its email delivery status and a **Retry delivery** action; email delivery is set up in Settings. See [Intake](operations/intake.md).
 - Toggle inbound receiving on/off and configure retention/token TTL in Settings.
 - Backend-specific auth:
   - SIP/Asterisk: set `ASTERISK_INBOUND_SECRET` for the private `/_internal/asterisk/inbound` route.
@@ -111,4 +96,4 @@ The Admin Console lets you manage keys, jobs, inbound inbox, diagnostics, and se
 - Notes
   - For HIPAA, enable OAuth/JWT and configure issuer/audience/JWKS.
   - When disabled, SSE runs without auth for local development only.
-  - Changing MCP flags requires an API restart (use Restart in UI).
+  - Pending MCP/OAuth changes require every API worker to stop and the installation restart; verify active/desired identity afterward.

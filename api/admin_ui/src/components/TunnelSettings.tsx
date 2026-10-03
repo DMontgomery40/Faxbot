@@ -1,7 +1,9 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Box, Button, Chip, Dialog, DialogActions, DialogContent, DialogTitle, Link, Paper, Stack, Typography } from '@mui/material';
+import { useEffect, useState } from 'react';
+import { Box, Button, Chip, Link, Paper, Stack, Typography } from '@mui/material';
 import { Cloud, Security, VpnKey, VpnLock } from '@mui/icons-material';
 import AdminAPIClient from '../api/client';
+import PairPhoneDialog from './access/PairPhoneDialog';
+import { docsLink } from '../docsLinks';
 import type { TunnelStatus } from '../api/types';
 import { ResponsiveFormSection, ResponsiveSelect, ResponsiveTextField } from './common/ResponsiveFormFields';
 import { SmoothLoader, InlineLoader } from './common/SmoothLoader';
@@ -13,7 +15,7 @@ export default function TunnelSettings({ client, docsBase, hipaaMode }: Props) {
   const [loading, setLoading] = useState<boolean>(false);
   const [saving, setSaving] = useState<boolean>(false);
   const [testing, setTesting] = useState<boolean>(false);
-  const [pairDialog, setPairDialog] = useState<{ open: boolean; code?: string; expires_at?: string }>({ open: false });
+  const [pairing, setPairing] = useState(false);
   const [logsLoading, setLogsLoading] = useState<boolean>(false);
   const [logs, setLogs] = useState<string[]>([]);
 
@@ -21,7 +23,7 @@ export default function TunnelSettings({ client, docsBase, hipaaMode }: Props) {
   const [wg, setWg] = useState<{ endpoint?: string; server_key?: string; client_ip?: string; dns?: string }>({});
   const [ts, setTs] = useState<{ auth_key?: string; hostname?: string }>({});
 
-  const learnMoreUrl = useMemo(() => `${docsBase || ''}/networking/tunnels`, [docsBase]);
+  const learnMoreUrl = docsLink('tunnels', docsBase);
 
   const fetchStatus = async () => {
     setLoading(true);
@@ -73,15 +75,6 @@ export default function TunnelSettings({ client, docsBase, hipaaMode }: Props) {
       alert(e?.message || 'Test failed');
     } finally {
       setTesting(false);
-    }
-  };
-
-  const pairIOS = async () => {
-    try {
-      const res = await client.createTunnelPairing();
-      setPairDialog({ open: true, code: res.code, expires_at: res.expires_at });
-    } catch (e: any) {
-      alert(e?.message || 'Could not create pairing code');
     }
   };
 
@@ -208,8 +201,8 @@ export default function TunnelSettings({ client, docsBase, hipaaMode }: Props) {
               Test Connectivity
               <InlineLoader loading={testing} />
             </Button>
-            <Button variant="outlined" onClick={pairIOS} sx={{ borderRadius: 2 }}>
-              Generate iOS Pairing Code
+            <Button variant="outlined" onClick={() => setPairing(true)} sx={{ borderRadius: 2 }}>
+              Pair a phone
             </Button>
             <Button variant="text" onClick={fetchLogs} disabled={logsLoading} sx={{ borderRadius: 2 }}>
               View Cloudflared Logs (tail)
@@ -231,26 +224,7 @@ export default function TunnelSettings({ client, docsBase, hipaaMode }: Props) {
         </Paper>
       )}
 
-      {/* Pairing dialog */}
-      <Dialog open={pairDialog.open} onClose={() => setPairDialog({ open: false })}>
-        <DialogTitle>iOS Pairing</DialogTitle>
-        <DialogContent>
-          <Typography variant="body2" sx={{ mb: 1 }}>
-            Enter this short code in the Faxbot iOS app. Codes expire quickly and contain no secrets.
-          </Typography>
-          <Typography variant="h4" sx={{ textAlign: 'center', letterSpacing: 4, my: 2 }}>
-            {pairDialog.code}
-          </Typography>
-          {pairDialog.expires_at && (
-            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', textAlign: 'center' }}>
-              Expires at {new Date(pairDialog.expires_at).toLocaleTimeString()}
-            </Typography>
-          )}
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setPairDialog({ open: false })}>Close</Button>
-        </DialogActions>
-      </Dialog>
+      <PairPhoneDialog client={client} open={pairing} onClose={() => setPairing(false)} />
     </Box>
   );
 }

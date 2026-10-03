@@ -1,26 +1,16 @@
-import { useState } from 'react';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import {
-  Box,
-  Card,
-  CardContent,
-  Typography,
-  Stepper,
-  Step,
-  StepLabel,
-  Button,
-  TextField,
-  FormControl,
-  InputLabel,
-  Select,
-  MenuItem,
-  Alert,
-  CircularProgress,
-  Grid,
-  Paper,
+  Box, Card, CardContent, Typography, Stepper, Step, StepLabel, Button,
+  TextField, FormControl, InputLabel, Select, MenuItem, Alert,
+  CircularProgress, Grid, Paper, Chip, Switch, FormControlLabel,
 } from '@mui/material';
-import { Chip } from '@mui/material';
-import AdminAPIClient from '../api/client';
+import AdminAPIClient, { configurationWriteRejected, plainRefusal } from '../api/client';
+import { DeliveryWizardFields, deliveryEditorValues } from './delivery/DeliverySettings';
+import { docsLink } from '../docsLinks';
+import type { ConfigurationWriteResult, Settings, SettingsPatch, ValidationResult } from '../api/types';
 import SecretInput from './common/SecretInput';
+import SipTrunkSettings from './SipTrunkSettings';
+import { COUNTRY_HELP, CountryField } from './common/numbers';
 
 interface SetupWizardProps {
   client: AdminAPIClient;
@@ -28,751 +18,619 @@ interface SetupWizardProps {
   docsBase?: string;
 }
 
-interface WizardConfig {
-  backend: string; // legacy fallback (both directions if dual unset)
-  outbound_backend?: string;
-  inbound_backend?: string;
-  phaxio_api_key?: string;
-  phaxio_api_secret?: string;
-  public_api_url?: string;
-  sinch_project_id?: string;
-  sinch_api_key?: string;
-  sinch_api_secret?: string;
-  documo_api_key?: string;
-  documo_use_sandbox?: boolean;
-  ami_host?: string;
-  ami_port?: number;
-  ami_username?: string;
-  ami_password?: string;
-  fax_station_id?: string;
-  require_api_key?: boolean;
-  enforce_public_https?: boolean;
-  audit_log_enabled?: boolean;
-  pdf_token_ttl_minutes?: number;
+type FormValue = string | number | boolean;
+type WizardConfig = Record<string, FormValue>;
+type Notice = { severity: 'success' | 'info' | 'warning' | 'error'; text: string };
+type Provider = { id: string; name: string; source?: string; categories?: string[] };
+type InboundCallbacks = { backend: string; callbacks: Array<{ name: string; url: string }> };
+type CredentialField = { key: string; label: string; secret?: boolean; number?: boolean; helper?: string };
+
+const builtins: Provider[] = [
+  { id: 'phaxio', name: 'Phaxio Cloud Fax' },
+  { id: 'sinch', name: 'Sinch Fax API v3' },
+  { id: 'signalwire', name: 'SignalWire (Compatibility Fax API)' },
+  { id: 'documo', name: 'Documo (mFax)' },
+  { id: 'humblefax', name: 'HumbleFax' },
+  { id: 'sip', name: 'SIP/Asterisk' },
+  { id: 'freeswitch', name: 'FreeSWITCH' },
+];
+const credentialFields: Record<string, CredentialField[]> = {
+  phaxio: [
+    { key: 'phaxio_api_key', label: 'API Key', secret: true },
+    { key: 'phaxio_api_secret', label: 'API Secret', secret: true },
+    { key: 'phaxio_callback_token', label: 'Callback Token', secret: true, helper: 'Separate Phaxio status callback token; this is not the API Secret.' },
+    { key: 'phaxio_status_callback_url', label: 'Status Callback URL', helper: 'Leave empty to derive the callback URL from the Public API URL.' },
+  ],
+  sinch: [
+    { key: 'sinch_project_id', label: 'Project ID' },
+    { key: 'sinch_api_key', label: 'API Key', secret: true },
+    { key: 'sinch_api_secret', label: 'API Secret', secret: true },
+  ],
+  signalwire: [
+    { key: 'signalwire_space_url', label: 'Space URL' },
+    { key: 'signalwire_project_id', label: 'Project ID' },
+    { key: 'signalwire_api_token', label: 'API Token', secret: true },
+    { key: 'signalwire_fax_from_e164', label: 'From (fax)' },
+  ],
+  documo: [{ key: 'documo_api_key', label: 'API Key', secret: true }],
+  humblefax: [
+    { key: 'humblefax_access_key', label: 'Access Key', secret: true },
+    { key: 'humblefax_secret_key', label: 'Secret Key', secret: true },
+    { key: 'humblefax_from_number', label: 'From Number (optional)', helper: 'Leave empty to use the account default number.' },
+  ],
+  freeswitch: [
+    { key: 'fs_gateway_name', label: 'Gateway Name' },
+    { key: 'fs_caller_id_number', label: 'Caller ID Number' },
+  ],
+  sip: [
+    { key: 'ami_host', label: 'AMI Host' },
+    { key: 'ami_port', label: 'AMI Port', number: true },
+    { key: 'ami_username', label: 'AMI Username' },
+    { key: 'ami_password', label: 'AMI Password', secret: true },
+    { key: 'fax_station_id', label: 'Station ID / DID' },
+  ],
+};
+// Providers that only send faxes; they never appear as an inbound choice.
+const outboundOnly = new Set(['humblefax']);
+const isMask = (value: FormValue) => typeof value === 'string' && /^\*+$/.test(value);
+const errorText = (error: unknown, fallback: string) => error instanceof Error ? error.message : fallback;
+
+// These are the settings patch names, copied from the loaded settings.
+// The baseline includes masks so unrelated edits never submit stored secrets.
+function editorValues(data: Settings): WizardConfig {
+  return {
+    backend: data.backend.type,
+    outbound_backend: data.hybrid?.outbound_override ?? '',
+    inbound_backend: data.hybrid?.inbound_override ?? '',
+    inbound_enabled: data.inbound.enabled,
+    enforce_public_https: data.security.enforce_https,
+    audit_log_enabled: data.security.audit_enabled,
+    public_api_url: data.security.public_api_url,
+    pdf_token_ttl_minutes: data.limits.pdf_token_ttl_minutes,
+    phaxio_api_key: data.phaxio.api_key,
+    phaxio_api_secret: data.phaxio.api_secret,
+    phaxio_callback_token: data.phaxio.callback_token,
+    phaxio_status_callback_url: data.phaxio.callback_url,
+    phaxio_verify_signature: data.phaxio.verify_signature,
+    sinch_project_id: data.sinch.project_id,
+    sinch_api_key: data.sinch.api_key,
+    sinch_api_secret: data.sinch.api_secret,
+    signalwire_space_url: data.signalwire?.space_url ?? '',
+    signalwire_project_id: data.signalwire?.project_id ?? '',
+    signalwire_api_token: data.signalwire?.api_token ?? '',
+    signalwire_fax_from_e164: data.signalwire?.from_fax ?? '',
+    documo_api_key: data.documo?.api_key ?? '',
+    documo_use_sandbox: data.documo?.sandbox ?? false,
+    humblefax_access_key: data.humblefax?.access_key ?? '',
+    humblefax_secret_key: data.humblefax?.secret_key ?? '',
+    humblefax_from_number: data.humblefax?.from_number ?? '',
+    ami_host: data.sip.ami_host,
+    ami_port: data.sip.ami_port,
+    ami_username: data.sip.ami_username,
+    ami_password: data.sip.ami_password,
+    fax_station_id: data.sip.station_id,
+    fs_gateway_name: data.fs?.gateway_name ?? '',
+    fs_caller_id_number: data.fs?.caller_id_number ?? '',
+    ...(data.numbers ? { fax_default_country: data.numbers.default_country } : {}),
+    ...deliveryEditorValues(data),
+  };
 }
 
 function SetupWizard({ client, onDone, docsBase }: SetupWizardProps) {
+  const fieldId = useId();
   const [activeStep, setActiveStep] = useState(0);
-  const [config, setConfig] = useState<WizardConfig>({
-    backend: 'phaxio',
-    require_api_key: true,
-    enforce_public_https: true,
-    audit_log_enabled: false,
-    pdf_token_ttl_minutes: 60,
-  });
-  const [validating, setValidating] = useState(false);
-  const [validationResults, setValidationResults] = useState<any>(null);
+  const [settings, setSettings] = useState<Settings | null>(null);
+  const [config, setConfig] = useState<WizardConfig>({});
+  const [baseline, setBaseline] = useState<WizardConfig>({});
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [needsReload, setNeedsReload] = useState(false);
+  const [providers, setProviders] = useState<Provider[]>([]);
+  const [catalogReady, setCatalogReady] = useState(false);
+  const [catalogNotice, setCatalogNotice] = useState<string | null>(null);
+  const [notice, setNotice] = useState<Notice | null>(null);
+  const [applyResult, setApplyResult] = useState<Notice | null>(null);
+  const [saveResult, setSaveResult] = useState<ConfigurationWriteResult | null>(null);
+  const [validationResults, setValidationResults] = useState<ValidationResult | null>(null);
+  const [validationNote, setValidationNote] = useState<string | null>(null);
   const [envContent, setEnvContent] = useState('');
-  const [snack, setSnack] = useState<string | null>(null);
+  const [callbacks, setCallbacks] = useState<InboundCallbacks | null>(null);
   const [verifyingInbound, setVerifyingInbound] = useState(false);
-  const [verifyFound, setVerifyFound] = useState<any | null>(null);
-  const [callbacks, setCallbacks] = useState<any | null>(null);
-  const ob = config.outbound_backend || config.backend;
-  // const ib = config.inbound_backend; // unused
+  const [inboundObservation, setInboundObservation] = useState<string | null>(null);
+  const requestEpoch = useRef(0);
+  const actionFence = useRef(false);
+  const watcherEpoch = useRef(0);
+  const watcherTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const downloadTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+  const steps = ['Choose Providers', 'Configure Credentials', 'Security Settings', 'Delivery Options', 'Apply & Export'];
+  const desiredRevision = needsReload ? undefined : settings?._meta?.desired_revision_id;
+  const changedFields = Object.keys(config).filter(field => config[field] !== baseline[field]);
+  const ob = String(config.outbound_backend || config.backend || '');
+  const ib = String(config.inbound_backend || config.backend || '');
+  const canEdit = !!settings && !!desiredRevision && !loading && !busy && !needsReload;
+  const manifestSelected = providers.some(provider => provider.id === ob && provider.source === 'manifest');
+  const builtinSelected = !!credentialFields[ob] && !manifestSelected &&
+    (!settings?.features?.v3_plugins || catalogReady);
+  const docsURL = docsLink('home', docsBase);
+  // Loaded settings are authoritative; after a save that could not be reloaded, fall back to the save result.
+  const pendingRestart = needsReload ? saveResult?._meta.apply_state === 'pending_restart' : settings?._meta?.apply_state === 'pending_restart';
+  const pendingCount = needsReload ? 0 : settings?._meta?.pending_fields?.length ?? 0;
+  const restartMessage = pendingCount ?
+    `Restart Faxbot to apply ${pendingCount} pending ${pendingCount === 1 ? 'change' : 'changes'}.` :
+    'Restart Faxbot to apply pending changes.';
+  const showPaused = needsReload && !!settings && !loading && !busy && !loadError &&
+    notice?.severity !== 'error' && notice?.severity !== 'warning';
 
-  const steps = ['Choose Providers', 'Configure Credentials', 'Security Settings', 'Apply & Export'];
+  const stopWatching = useCallback(() => {
+    watcherEpoch.current += 1;
+    if (watcherTimer.current) clearTimeout(watcherTimer.current);
+    watcherTimer.current = null;
+    setVerifyingInbound(false);
+  }, []);
 
-  const handleNext = () => {
-    setActiveStep((prevActiveStep) => prevActiveStep + 1);
+  const hydrate = (data: Settings) => {
+    const values = editorValues(data);
+    setSettings(data);
+    setConfig(values);
+    setBaseline(values);
+    setNeedsReload(false);
+    setCallbacks(null);
+    setInboundObservation(null);
+    setValidationResults(null);
+    setValidationNote(null);
+    setEnvContent('');
   };
 
-  const handleBack = () => {
-    setActiveStep((prevActiveStep) => prevActiveStep - 1);
+  const loadSettings = useCallback(async () => {
+    const epoch = ++requestEpoch.current;
+    stopWatching();
+    setLoading(true);
+    actionFence.current = false;
+    setBusy(false);
+    setLoadError(null);
+    setNotice(null);
+    setNeedsReload(true);
+    const [desired, catalog] = await Promise.allSettled([client.getSettings(), client.listPlugins()]);
+    if (epoch !== requestEpoch.current) return;
+    if (catalog.status === 'fulfilled') {
+      setProviders((Array.isArray(catalog.value.items) ? catalog.value.items : []).filter((item: Provider) =>
+        typeof item.id === 'string' && item.categories?.includes('outbound')));
+      setCatalogReady(true);
+      setCatalogNotice(null);
+    } else {
+      setProviders([]);
+      setCatalogReady(false);
+      setCatalogNotice('Installed provider plugins could not be listed; your current provider choice is kept.');
+    }
+    if (desired.status === 'fulfilled' && desired.value._meta?.desired_revision_id) {
+      hydrate(desired.value);
+    } else {
+      setNeedsReload(true);
+      setLoadError(desired.status === 'rejected' ? errorText(desired.reason, 'Settings could not be loaded.') :
+        'Settings could not be loaded. Reload to try again.');
+    }
+    setLoading(false);
+  }, [client, stopWatching]);
+
+  useEffect(() => {
+    void loadSettings();
+    return () => {
+      requestEpoch.current += 1;
+      watcherEpoch.current += 1;
+      if (watcherTimer.current) clearTimeout(watcherTimer.current);
+      for (const [url, timer] of downloadTimers.current) {
+        clearTimeout(timer);
+        URL.revokeObjectURL(url);
+      }
+      downloadTimers.current.clear();
+    };
+  }, [loadSettings]);
+
+  const providerOptions = new Map(builtins.map(provider => [provider.id, provider]));
+  for (const provider of providers) providerOptions.set(provider.id, provider);
+  for (const id of [config.backend, config.outbound_backend, config.inbound_backend,
+    baseline.backend, baseline.outbound_backend, baseline.inbound_backend]) {
+    if (typeof id === 'string' && id && !providerOptions.has(id)) {
+      providerOptions.set(id, { id, name: `${id} (current provider)` });
+    }
+  }
+
+  // Ref fencing takes effect synchronously, before React renders busy controls.
+  const beginAction = () => {
+    if (!canEdit || actionFence.current) return false;
+    actionFence.current = true;
+    setBusy(true);
+    return true;
   };
 
-  const handleConfigChange = (field: string, value: any) => {
-    setConfig(prev => ({ ...prev, [field]: value }));
+  const finishAction = (epoch: number) => {
+    if (epoch !== requestEpoch.current) return;
+    actionFence.current = false;
+    setBusy(false);
+  };
+
+  const handleConfigChange = (field: string, value: FormValue) => {
+    if (!canEdit || actionFence.current) return;
+    stopWatching();
+    setConfig(previous => ({ ...previous, [field]: value }));
+    setValidationResults(null);
+    setValidationNote(null);
+    setApplyResult(null);
+    setSaveResult(null);
+    setNotice(null);
+    setEnvContent('');
   };
 
   const handleValidate = async () => {
-    setValidating(true);
+    if (!canEdit || actionFence.current) return;
+    setValidationResults(null);
+    setValidationNote(null);
+    setNotice(null);
+    if (!builtinSelected || !['phaxio', 'sinch', 'sip'].includes(ob)) {
+      setValidationNote('Setup can’t check credentials for this provider; configure it in Tools → Plugins and run Diagnostics.');
+      return;
+    }
+    const fields = ob === 'phaxio' ? ['phaxio_api_key', 'phaxio_api_secret'] :
+      ob === 'sinch' ? ['sinch_project_id', 'sinch_api_key', 'sinch_api_secret'] :
+        ['ami_host', 'ami_port', 'ami_username', 'ami_password'];
+    if (fields.some(field => config[field] === '' || isMask(config[field]))) {
+      setValidationNote('Enter the credentials again to check them here, or run Diagnostics to check the saved ones.');
+      return;
+    }
+    if (ob === 'sip' && (!Number.isSafeInteger(config.ami_port) || Number(config.ami_port) < 1 || Number(config.ami_port) > 65535)) {
+      setNotice({ severity: 'error', text: 'AMI Port must be a whole number from 1 to 65535.' });
+      return;
+    }
+    const payload: SettingsPatch = { backend: ob };
+    for (const field of fields) payload[field] = config[field];
+    if (!beginAction()) return;
+    const epoch = requestEpoch.current;
     try {
-      const results = await client.validateSettings(config);
-      setValidationResults(results);
-    } catch (e) {
-      setValidationResults({ error: e instanceof Error ? e.message : 'Validation failed' });
+      const result = await client.validateSettings(payload);
+      if (epoch !== requestEpoch.current) return;
+      setValidationResults(result);
+      setValidationNote(ob === 'sinch' ?
+        'For Sinch, this only checks that the credentials are filled in; it doesn’t sign in to Sinch.' :
+        'These checks test the credentials only; no fax was sent.');
+    } catch (error) {
+      if (epoch === requestEpoch.current) setNotice({ severity: 'error', text: errorText(error, 'Validation failed.') });
     } finally {
-      setValidating(false);
+      finishAction(epoch);
+    }
+  };
+
+  const applySettings = async () => {
+    if (!canEdit || actionFence.current || !desiredRevision) return;
+    if (!changedFields.length) {
+      setApplyResult({ severity: 'info', text: 'No changes to save.' });
+      return;
+    }
+    const payload: SettingsPatch = { expected_revision_id: desiredRevision };
+    for (const field of changedFields) {
+      const value = config[field];
+      if (isMask(value)) {
+        setNotice({ severity: 'error', text: 'A secret field contains only asterisks; enter a new value or clear it.' });
+        return;
+      }
+      if (['ami_port', 'pdf_token_ttl_minutes', 'intake_smtp_port'].includes(field) &&
+          (value === '' || !Number.isSafeInteger(value) || Number(value) < 1 ||
+            (field !== 'pdf_token_ttl_minutes' && Number(value) > 65535))) {
+        const name = field === 'ami_port' ? 'AMI Port' : field === 'intake_smtp_port' ? 'Email server port' : 'PDF Token TTL';
+        setNotice({ severity: 'error', text: `${name} must be a positive whole number${field !== 'pdf_token_ttl_minutes' ? ' no greater than 65535' : ''}.` });
+        return;
+      }
+      payload[field] = value;
+    }
+    if (!beginAction()) return;
+    stopWatching();
+    setNotice(null);
+    setApplyResult(null);
+    setSaveResult(null);
+    const epoch = requestEpoch.current;
+    try {
+      const result = await client.updateSettings(payload);
+      if (epoch !== requestEpoch.current) return;
+      setSaveResult(result);
+      setNeedsReload(true);
+      setEnvContent('');
+      setApplyResult(result._meta.apply_state === 'pending_restart' ?
+        { severity: 'warning', text: result.changed ? 'Settings saved.' : 'Nothing changed.' } :
+        { severity: 'success', text: result.changed ? 'Settings saved.' : 'Nothing changed.' });
+      try {
+        const desired = await client.getSettings();
+        if (epoch !== requestEpoch.current) return;
+        if (!desired._meta?.desired_revision_id) throw new Error('Settings could not be loaded.');
+        hydrate(desired);
+      } catch {
+        if (epoch !== requestEpoch.current) return;
+        setNotice({ severity: 'warning', text: 'The page could not refresh. Reload before making more changes.' });
+      }
+    } catch (error) {
+      if (epoch !== requestEpoch.current) return;
+      const message = errorText(error, 'Save failed.');
+      if (/\b409\b/.test(message)) {
+        setNeedsReload(true);
+        setNotice({ severity: 'error', text: 'Someone else changed these settings. Your edits are kept here; reload to see the current values.' });
+      } else {
+        setNeedsReload(true);
+        setNotice({ severity: 'error', text: plainRefusal(error) ?
+          `${plainRefusal(error)} Your edits are kept here; reload before trying again.` : configurationWriteRejected(error) ?
+          `Settings were not saved (${message}). Your edits are kept here; reload before trying again.` :
+          'The save could not be confirmed. Reload to check whether your changes were saved.' });
+      }
+    } finally {
+      finishAction(epoch);
+    }
+  };
+
+  const exportSettings = async () => {
+    if (changedFields.length || !beginAction()) return;
+    setNotice(null);
+    const epoch = requestEpoch.current;
+    try {
+      const result = await client.exportSettings();
+      if (epoch === requestEpoch.current) setEnvContent(result.env);
+    } catch (error) {
+      if (epoch === requestEpoch.current) setNotice({ severity: 'error', text: errorText(error, 'Export failed.') });
+    } finally {
+      finishAction(epoch);
+    }
+  };
+
+  const copyToClipboard = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setNotice({ severity: 'success', text: 'Copied.' });
+    } catch (error) {
+      setNotice({ severity: 'error', text: errorText(error, 'Copy failed. Select and copy the displayed text instead.') });
+    }
+  };
+
+  const downloadEnv = () => {
+    let url: string | undefined;
+    const anchor = document.createElement('a');
+    try {
+      url = URL.createObjectURL(new Blob([envContent], { type: 'text/plain' }));
+      anchor.href = url;
+      anchor.download = 'faxbot-redacted.env';
+      document.body.appendChild(anchor);
+      anchor.click();
+      const downloadURL = url;
+      downloadTimers.current.set(downloadURL, setTimeout(() => {
+        URL.revokeObjectURL(downloadURL);
+        downloadTimers.current.delete(downloadURL);
+      }, 60000));
+      setNotice({ severity: 'info', text: 'Download requested. Check your browser downloads or Save dialog.' });
+    } catch (error) {
+      if (url) URL.revokeObjectURL(url);
+      setNotice({ severity: 'error', text: errorText(error, 'Download could not be started.') });
+    } finally {
+      anchor.remove();
     }
   };
 
   const loadCallbacks = async () => {
-    try { setCallbacks(await client.getInboundCallbacks()); } catch { setCallbacks(null); }
+    if (!beginAction()) return;
+    setNotice(null);
+    const epoch = requestEpoch.current;
+    try {
+      const result = await client.getInboundCallbacks();
+      if (epoch === requestEpoch.current) setCallbacks(result);
+    } catch (error) {
+      if (epoch === requestEpoch.current) setNotice({ severity: 'error', text: errorText(error, 'Callback details could not be loaded.') });
+    } finally {
+      finishAction(epoch);
+    }
   };
 
-  const startVerifyInbound = async () => {
-    setVerifyFound(null);
-    setVerifyingInbound(true);
+  const simulateInbound = async () => {
+    if (!callbacks || !beginAction()) return;
+    setNotice(null);
+    const epoch = requestEpoch.current;
+    try {
+      const result = await client.simulateInbound({ backend: callbacks.backend });
+      if (epoch === requestEpoch.current) setNotice({ severity: 'info', text: `Test inbound fax created (${result.id}).` });
+    } catch (error) {
+      if (epoch === requestEpoch.current) setNotice({ severity: 'error', text: errorText(error, 'Inbound simulation failed.') });
+    } finally {
+      finishAction(epoch);
+    }
+  };
+
+  const startWatching = () => {
+    if (!canEdit || actionFence.current) return;
+    stopWatching();
+    const epoch = watcherEpoch.current;
     const since = new Date().toISOString();
-    // Poll logs for inbound_received events since now
-    let attempts = 0;
+    let polls = 0;
+    setInboundObservation(null);
+    setVerifyingInbound(true);
     const poll = async () => {
-      if (!verifyingInbound || attempts++ > 30) { setVerifyingInbound(false); return; }
+      if (epoch !== watcherEpoch.current) return;
       try {
-        const res = await client.getLogs({ event: 'inbound_received', since });
-        if (res.items && res.items.length > 0) {
-          setVerifyFound(res.items[0]);
-          setVerifyingInbound(false);
-          setSnack('Inbound verified (event received)');
+        const result = await client.getLogs({ event: 'inbound_received', since });
+        if (epoch !== watcherEpoch.current) return;
+        if (result.items?.length) {
+          setInboundObservation(`Inbound fax activity detected (${String(result.items[0].backend || 'unknown provider')}).`);
+          stopWatching();
           return;
         }
-      } catch {}
-      setTimeout(poll, 2000);
+      } catch (error) {
+        if (epoch !== watcherEpoch.current) return;
+        setNotice({ severity: 'error', text: errorText(error, 'Inbound logs could not be read.') });
+        stopWatching();
+        return;
+      }
+      if (++polls >= 30) {
+        setInboundObservation('No inbound fax activity in the last minute.');
+        stopWatching();
+      } else {
+        watcherTimer.current = setTimeout(() => { void poll(); }, 2000);
+      }
     };
-    poll();
+    void poll();
   };
 
-  const generateEnvContent = () => {
-    const lines = [];
-    
-    const ob = config.outbound_backend || config.backend;
-    lines.push(`FAX_BACKEND=${config.backend}`);
-    lines.push(`FAX_OUTBOUND_BACKEND=${ob}`);
-    if (config.inbound_backend) {
-      lines.push(`FAX_INBOUND_BACKEND=${config.inbound_backend}`);
-      lines.push(`INBOUND_ENABLED=true`);
-    }
-    lines.push(`REQUIRE_API_KEY=${config.require_api_key}`);
-    lines.push(`ENFORCE_PUBLIC_HTTPS=${config.enforce_public_https}`);
-    lines.push(`AUDIT_LOG_ENABLED=${config.audit_log_enabled}`);
-    lines.push(`PDF_TOKEN_TTL_MINUTES=${config.pdf_token_ttl_minutes}`);
-    lines.push('');
-    lines.push('# Backend-specific configuration');
-
-    if (ob === 'phaxio') {
-      lines.push('# Phaxio Configuration');
-      lines.push(`PHAXIO_API_KEY=${config.phaxio_api_key || 'your_api_key_here'}`);
-      lines.push(`PHAXIO_API_SECRET=${config.phaxio_api_secret || 'your_api_secret_here'}`);
-      if (config.public_api_url) {
-        lines.push(`PUBLIC_API_URL=${config.public_api_url}`);
-        lines.push(`PHAXIO_STATUS_CALLBACK_URL=${config.public_api_url}/phaxio-callback`);
-      }
-      lines.push('PHAXIO_VERIFY_SIGNATURE=true');
-    } else if (ob === 'sinch') {
-      lines.push('# Sinch Fax API v3 Configuration');
-      lines.push(`SINCH_PROJECT_ID=${config.sinch_project_id || 'your_project_id_here'}`);
-      lines.push(`SINCH_API_KEY=${config.sinch_api_key || 'your_api_key_here'}`);
-      lines.push(`SINCH_API_SECRET=${config.sinch_api_secret || 'your_api_secret_here'}`);
-    } else if (ob === 'signalwire') {
-      lines.push('# SignalWire Compatibility Fax API');
-      lines.push(`SIGNALWIRE_SPACE_URL=${(config as any).signalwire_space_url || 'example.signalwire.com'}`);
-      lines.push(`SIGNALWIRE_PROJECT_ID=${(config as any).signalwire_project_id || 'your_project_id_here'}`);
-      lines.push(`SIGNALWIRE_API_TOKEN=${(config as any).signalwire_api_token || 'your_api_token_here'}`);
-      lines.push(`SIGNALWIRE_FAX_FROM_E164=${(config as any).signalwire_fax_from_e164 || '+15551234567'}`);
-      if (config.public_api_url) {
-        lines.push(`PUBLIC_API_URL=${config.public_api_url}`);
-        lines.push(`SIGNALWIRE_STATUS_CALLBACK_URL=${config.public_api_url}/signalwire-callback`);
-      }
-    } else if (ob === 'sip') {
-      lines.push('# SIP/Asterisk Configuration');
-      lines.push(`ASTERISK_AMI_HOST=${config.ami_host || 'asterisk'}`);
-      lines.push(`ASTERISK_AMI_PORT=${config.ami_port || 5038}`);
-      lines.push(`ASTERISK_AMI_USERNAME=${config.ami_username || 'api'}`);
-      lines.push(`ASTERISK_AMI_PASSWORD=${config.ami_password || 'change_me'}`);
-      lines.push(`FAX_LOCAL_STATION_ID=${config.fax_station_id || '+15551234567'}`);
-    } else if (ob === 'freeswitch') {
-      lines.push('# FreeSWITCH Configuration');
-      lines.push(`FREESWITCH_GATEWAY_NAME=${(config as any).fs_gateway_name || 'gw_signalwire'}`);
-      lines.push(`FREESWITCH_CALLER_ID_NUMBER=${(config as any).fs_caller_id_number || '3035551234'}`);
-      lines.push('FREESWITCH_T38_ENABLE=true');
-    } else if (ob === 'documo') {
-      lines.push('# Documo (mFax) Configuration');
-      lines.push(`DOCUMO_API_KEY=${config.documo_api_key || 'your_api_key_here'}`);
-      lines.push(`DOCUMO_SANDBOX=${config.documo_use_sandbox ? 'true' : 'false'}`);
-    }
-
-    lines.push('');
-    lines.push('# Required for admin console');
-    lines.push('ENABLE_LOCAL_ADMIN=true');
-
-    const content = lines.join('\n');
-    setEnvContent(content);
-    return content;
-  };
-
-  const applyAndReload = async () => {
-    setValidating(true);
-    setEnvContent('');
-    setValidationResults(null);
-    try {
-      const payload: any = {
-        backend: config.backend,
-        outbound_backend: config.outbound_backend || config.backend,
-        require_api_key: config.require_api_key,
-        enforce_public_https: config.enforce_public_https,
-        pdf_token_ttl_minutes: config.pdf_token_ttl_minutes,
-      };
-      if (config.inbound_backend) {
-        payload.inbound_backend = config.inbound_backend;
-        payload.inbound_enabled = true;
-      }
-      if (ob === 'phaxio') {
-        payload.phaxio_api_key = config.phaxio_api_key;
-        payload.phaxio_api_secret = config.phaxio_api_secret;
-        if (config.public_api_url) payload.public_api_url = config.public_api_url;
-      } else if (ob === 'sinch') {
-        payload.sinch_project_id = config.sinch_project_id;
-        payload.sinch_api_key = config.sinch_api_key;
-        payload.sinch_api_secret = config.sinch_api_secret;
-      } else if (ob === 'signalwire') {
-        (payload as any).signalwire_space_url = (config as any).signalwire_space_url;
-        (payload as any).signalwire_project_id = (config as any).signalwire_project_id;
-        (payload as any).signalwire_api_token = (config as any).signalwire_api_token;
-        (payload as any).signalwire_fax_from_e164 = (config as any).signalwire_fax_from_e164;
-      } else if (ob === 'documo') {
-        payload.documo_api_key = config.documo_api_key;
-        payload.documo_use_sandbox = config.documo_use_sandbox;
-      } else if (ob === 'sip') {
-        payload.ami_host = config.ami_host;
-        payload.ami_port = config.ami_port;
-        payload.ami_username = config.ami_username;
-        payload.ami_password = config.ami_password;
-        payload.fax_station_id = config.fax_station_id;
-      } else if (ob === 'freeswitch') {
-        (payload as any).fs_gateway_name = (config as any).fs_gateway_name;
-        (payload as any).fs_caller_id_number = (config as any).fs_caller_id_number;
-      }
-      await client.updateSettings(payload);
-      await client.reloadSettings();
-      const results = await client.validateSettings(config);
-      setValidationResults(results);
-      setSnack('Configuration applied and reloaded');
-      // Optionally return to Dashboard
-      try { sessionStorage.setItem('fb_admin_applied','1'); } catch {}
-      setTimeout(() => onDone?.(), 500);
-    } catch (e) {
-      setValidationResults({ error: e instanceof Error ? e.message : 'Apply failed' });
-    } finally {
-      setValidating(false);
-    }
-  };
-
-  const copyToClipboard = (text: string) => {
-    navigator.clipboard.writeText(text);
-  };
-
-  const downloadEnv = (text: string) => {
-    const blob = new Blob([text], { type: 'text/plain' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'faxbot.env';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  };
-
-  const renderStepContent = (step: number) => {
-    switch (step) {
-      case 0:
-        return (
-          <Box>
-            <Typography variant="h6" gutterBottom>Choose Outbound and Inbound Providers</Typography>
-            
-            <FormControl fullWidth sx={{ mt: 2 }}>
-              <InputLabel>Outbound Provider</InputLabel>
-              <Select value={config.outbound_backend || config.backend} onChange={(e)=> handleConfigChange('outbound_backend', e.target.value)} label="Outbound Provider">
-                <MenuItem value="phaxio">Phaxio (Cloud - Recommended)</MenuItem>
-                <MenuItem value="sinch">Sinch Fax API v3 (Cloud)</MenuItem>
-                <MenuItem value="signalwire">SignalWire (Compatibility API)</MenuItem>
-                <MenuItem value="documo">Documo (mFax)</MenuItem>
-                <MenuItem value="sip">SIP/Asterisk (Self-hosted)</MenuItem>
-                <MenuItem value="freeswitch">FreeSWITCH (Self-hosted)</MenuItem>
-              </Select>
-            </FormControl>
-
-            <FormControl fullWidth sx={{ mt: 2 }}>
-              <InputLabel>Inbound Provider</InputLabel>
-              <Select value={config.inbound_backend ?? ''} onChange={(e)=> handleConfigChange('inbound_backend', e.target.value)} label="Inbound Provider">
-                <MenuItem value="">Same as outbound (recommended)</MenuItem>
-                <MenuItem value="phaxio">Phaxio (Webhook)</MenuItem>
-                <MenuItem value="sinch">Sinch (Webhook)</MenuItem>
-                <MenuItem value="sip">SIP/Asterisk (Internal)</MenuItem>
-              </Select>
-            </FormControl>
-            
-            {ob === 'phaxio' && (
-              <Alert severity="success" sx={{ mt: 2 }}>
-                Best for healthcare: 5-minute setup, automatic HIPAA compliance with BAA
-              </Alert>
-            )}
-            
-            {ob === 'sip' && (
-              <Alert severity="warning" sx={{ mt: 2 }}>
-                Requires technical expertise: T.38 support, port forwarding, NAT configuration
-              </Alert>
-            )}
-            {ob === 'freeswitch' && (
-              <Alert severity="warning" sx={{ mt: 2 }}>
-                Requires FreeSWITCH with mod_spandsp and gateway; configure result hook to post back status
-              </Alert>
-            )}
-            {(config.inbound_backend||config.backend) === 'phaxio' && (
-              <Alert severity="info" sx={{ mt: 2 }}>
-                Inbound webhook will be <code>/phaxio-inbound</code>. Enable HMAC verification in provider.
-              </Alert>
-            )}
-            {(config.inbound_backend||config.backend) === 'sinch' && (
-              <Alert severity="info" sx={{ mt: 2 }}>
-                Inbound webhook will be <code>/sinch-inbound</code>. Basic and/or HMAC optional.
-              </Alert>
-            )}
-            {(config.inbound_backend||config.backend) === 'sip' && (
-              <Alert severity="info" sx={{ mt: 2 }}>
-                Inbound internal endpoint: <code>/_internal/asterisk/inbound</code> (private network only).
-              </Alert>
-            )}
+  const renderValidation = () => (validationNote || validationResults) && (
+    <Box sx={{ mt: 2 }}>
+      {validationNote && <Alert severity="info">{validationNote}</Alert>}
+      {validationResults && <Paper sx={{ p: 2, mt: 1 }}>
+        <Typography variant="subtitle1">Checks for {validationResults.backend}</Typography>
+        {Object.entries(validationResults.checks || {}).map(([key, value]) => (
+          <Box key={key} display="flex" justifyContent="space-between" alignItems="center" sx={{ mt: 1, gap: 2 }}>
+            <Typography>{key.replace(/_/g, ' ')}</Typography>
+            {typeof value === 'boolean' ?
+              <Chip size="small" color={value ? 'success' : 'error'} label={value ? 'Pass' : 'Fail'} /> :
+              <Chip size="small" color="warning" label="Review Diagnostics" />}
           </Box>
-        );
-
-      case 1:
-        return (
-          <Box>
-            <Typography variant="h6" gutterBottom>
-              Configure {(config.outbound_backend || config.backend).toUpperCase()} Credentials
-            </Typography>
-            <Box sx={{ display: 'flex', gap: 1, mb: 2 }}>
-              <Button variant="outlined" onClick={handleValidate} disabled={validating}>
-                {validating ? <CircularProgress size={18} /> : 'Validate Provider'}
-              </Button>
-              {validationResults && !validationResults.error && (
-                <Chip color={(validationResults.checks && Object.values(validationResults.checks).every(Boolean)) ? 'success' : 'warning'} label={(validationResults.checks && Object.values(validationResults.checks).every(Boolean)) ? 'All checks passed' : 'Review checks'} />
-              )}
-            </Box>
-            
-            {ob === 'phaxio' && (
-              <Grid container spacing={{ xs: 2, md: 3 }}>
-                <Grid item xs={12}>
-                  <SecretInput
-                    label="API Key"
-                    value={config.phaxio_api_key || ''}
-                    onChange={(value) => handleConfigChange('phaxio_api_key', value)}
-                    fullWidth
-                    size="small"
-                  />
-                </Grid>
-                <Grid item xs={12}>
-                  <SecretInput
-                    label="API Secret"
-                    value={config.phaxio_api_secret || ''}
-                    onChange={(value) => handleConfigChange('phaxio_api_secret', value)}
-                    fullWidth
-                    size="small"
-                  />
-                </Grid>
-                <Grid item xs={12}>
-                  <TextField
-                    label="Public API URL"
-                    value={config.public_api_url || ''}
-                    onChange={(e) => handleConfigChange('public_api_url', e.target.value)}
-                    fullWidth
-                    size="small"
-                    placeholder="https://your-domain.com"
-                    helperText="Must be HTTPS and publicly accessible for Phaxio to fetch PDFs"
-                  />
-                </Grid>
-                <Grid item xs={12}>
-                  <Alert severity="info">
-                    Callback URL will be: {config.public_api_url || 'https://your-domain.com'}/phaxio-callback
-                  </Alert>
-                </Grid>
-              </Grid>
-            )}
-
-            {ob === 'sinch' && (
-              <Grid container spacing={2}>
-                <Grid item xs={12}>
-                  <TextField
-                    label="Project ID"
-                    value={config.sinch_project_id || ''}
-                    onChange={(e) => handleConfigChange('sinch_project_id', e.target.value)}
-                    fullWidth
-                  />
-                </Grid>
-                <Grid item xs={12}>
-                  <SecretInput
-                    label="API Key"
-                    value={config.sinch_api_key || ''}
-                    onChange={(value) => handleConfigChange('sinch_api_key', value)}
-                    fullWidth
-                  />
-                </Grid>
-                <Grid item xs={12}>
-                  <SecretInput
-                    label="API Secret"
-                    value={config.sinch_api_secret || ''}
-                    onChange={(value) => handleConfigChange('sinch_api_secret', value)}
-                    fullWidth
-                  />
-                </Grid>
-              </Grid>
-            )}
-
-            {ob === 'signalwire' && (
-              <Grid container spacing={2}>
-                <Grid item xs={12}>
-                  <TextField
-                    label="Space URL"
-                    value={(config as any).signalwire_space_url || ''}
-                    onChange={(e) => handleConfigChange('signalwire_space_url', e.target.value)}
-                    fullWidth
-                  />
-                </Grid>
-                <Grid item xs={12}>
-                  <TextField
-                    label="Project ID"
-                    value={(config as any).signalwire_project_id || ''}
-                    onChange={(e) => handleConfigChange('signalwire_project_id', e.target.value)}
-                    fullWidth
-                  />
-                </Grid>
-                <Grid item xs={12}>
-                  <SecretInput
-                    label="API Token"
-                    value={(config as any).signalwire_api_token || ''}
-                    onChange={(value) => handleConfigChange('signalwire_api_token', value)}
-                    fullWidth
-                  />
-                </Grid>
-                <Grid item xs={12}>
-                  <TextField
-                    label="From (fax)"
-                    value={(config as any).signalwire_fax_from_e164 || ''}
-                    onChange={(e) => handleConfigChange('signalwire_fax_from_e164', e.target.value)}
-                    fullWidth
-                  />
-                </Grid>
-                <Grid item xs={12}>
-                  <Alert severity="info">
-                    Set PUBLIC_API_URL to an HTTPS URL so SignalWire can fetch MediaUrl tokens; callbacks hit /signalwire-callback.
-                  </Alert>
-                </Grid>
-              </Grid>
-            )}
-
-            {ob === 'freeswitch' && (
-              <Grid container spacing={2}>
-                <Grid item xs={12}>
-                  <Alert severity="info" sx={{ mb: 2 }}>
-                    FreeSWITCH uses originate &amp;txfax; add an api_hangup_hook to post results back to Faxbot after call ends.
-                  </Alert>
-                </Grid>
-                <Grid item xs={12}>
-                  <TextField label="Gateway Name" value={(config as any).fs_gateway_name || ''} onChange={(e)=>handleConfigChange('fs_gateway_name', e.target.value)} fullWidth />
-                </Grid>
-                <Grid item xs={12}>
-                  <TextField label="Caller ID Number" value={(config as any).fs_caller_id_number || ''} onChange={(e)=>handleConfigChange('fs_caller_id_number', e.target.value)} fullWidth />
-                </Grid>
-              </Grid>
-            )}
-
-            
-
-            {ob === 'sip' && (
-              <Grid container spacing={2}>
-                <Grid item xs={12}>
-                  <Alert severity="error" sx={{ mb: 2 }}>
-                    AMI must NEVER be exposed to the internet. Keep port 5038 internal only.
-                  </Alert>
-                </Grid>
-                <Grid item xs={6}>
-                  <TextField
-                    label="AMI Host"
-                    value={config.ami_host || ''}
-                    onChange={(e) => handleConfigChange('ami_host', e.target.value)}
-                    fullWidth
-                    placeholder="asterisk"
-                  />
-                </Grid>
-                <Grid item xs={6}>
-                  <TextField
-                    label="AMI Port"
-                    type="number"
-                    value={config.ami_port || 5038}
-                    onChange={(e) => handleConfigChange('ami_port', parseInt(e.target.value))}
-                    fullWidth
-                  />
-                </Grid>
-                <Grid item xs={6}>
-                  <TextField
-                    label="AMI Username"
-                    value={config.ami_username || ''}
-                    onChange={(e) => handleConfigChange('ami_username', e.target.value)}
-                    fullWidth
-                    placeholder="api"
-                  />
-                </Grid>
-                <Grid item xs={6}>
-                  <SecretInput
-                    label="AMI Password"
-                    value={config.ami_password || ''}
-                    onChange={(value) => handleConfigChange('ami_password', value)}
-                    fullWidth
-                    error={config.ami_password === 'changeme'}
-                    helperText={config.ami_password === 'changeme' ? 'Must change default password!' : ''}
-                  />
-                </Grid>
-                <Grid item xs={12}>
-                  <TextField
-                    label="Station ID / DID"
-                    value={config.fax_station_id || ''}
-                    onChange={(e) => handleConfigChange('fax_station_id', e.target.value)}
-                    fullWidth
-                    placeholder="+15551234567"
-                    helperText="Your fax number in E.164 format"
-                  />
-                </Grid>
-              </Grid>
-            )}
-
-            {/* Provider Connect */}
-            {(ob === 'phaxio' || ob === 'sinch') && (
-              <Box sx={{ mt: 3 }}>
-                <Typography variant="subtitle1" gutterBottom>Connect {config.backend.toUpperCase()} Inbound</Typography>
-                <Button variant="outlined" onClick={loadCallbacks} sx={{ mr: 1 }}>Show Callback URL</Button>
-                {callbacks && callbacks.callbacks && callbacks.callbacks[0] && (
-                  <Paper sx={{ p: 2, mt: 2 }}>
-                    <Typography variant="body2" sx={{ mb: 1 }}>Callback URL:</Typography>
-                    <Box component="pre" sx={{ p: 1, bgcolor: 'background.default', borderRadius: 1, overflow: 'auto' }}>{callbacks.callbacks[0].url}</Box>
-                <Box sx={{ mt: 1, display: 'flex', gap: 1 }}>
-                  <Button variant="outlined" onClick={() => navigator.clipboard.writeText(callbacks.callbacks[0].url)}>Copy</Button>
-                  <Button variant="outlined" onClick={async () => { try { await client.simulateInbound({ backend: config.backend }); setSnack('Simulated inbound received'); } catch(e:any){ setSnack(e?.message||'Simulation failed'); } }}>Simulate Inbound</Button>
-                </Box>
-                <Box sx={{ mt: 2, display: 'flex', gap: 1, alignItems: 'center', flexWrap: 'wrap' }}>
-                  <Button variant="contained" onClick={startVerifyInbound} disabled={verifyingInbound}>
-                    {verifyingInbound ? 'Waiting for inbound…' : 'Start Verify Inbound'}
-                  </Button>
-                  {verifyFound && (
-                    <Typography variant="body2" color="success.main">Verified: inbound event received ({String(verifyFound.backend || 'unknown')})</Typography>
-                  )}
-                  {!verifyFound && verifyingInbound && (
-                    <Typography variant="body2" color="text.secondary">Waiting for callback…</Typography>
-                  )}
-                </Box>
-                    <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
-                      Paste this URL into your {config.backend.toUpperCase()} console for inbound fax delivery.
-                      {"  •  "}
-                      <a href={`${docsBase || 'https://dmontgomery40.github.io/Faxbot'}/backends/phaxio-setup.html`} target="_blank" rel="noreferrer">Faxbot: Phaxio Setup</a>
-                      {"  •  "}
-                      <a href="https://developers.sinch.com/docs/fax/api-reference/" target="_blank" rel="noreferrer">Sinch Fax API Docs</a>
-                      {"  •  "}
-                      <a href={`${docsBase || 'https://dmontgomery40.github.io/Faxbot'}/`} target="_blank" rel="noreferrer">Faxbot Docs</a>
-                    </Typography>
-                  </Paper>
-                )}
-              </Box>
-            )}
-          </Box>
-        );
-
-      case 2:
-        return (
-          <Box>
-            <Typography variant="h6" gutterBottom>
-              Security Settings
-            </Typography>
-            
-            <Alert severity="info" sx={{ mb: 2 }}>
-              These settings are critical for HIPAA compliance
-            </Alert>
-            
-            <Grid container spacing={{ xs: 2, md: 3 }}>
-              <Grid item xs={12} sm={6}>
-                <FormControl fullWidth size="small">
-                  <InputLabel>Require API Key</InputLabel>
-                  <Select
-                    value={config.require_api_key ? 'true' : 'false'}
-                    onChange={(e) => handleConfigChange('require_api_key', e.target.value === 'true')}
-                    label="Require API Key"
-                  >
-                    <MenuItem value="true">Yes (Required for HIPAA)</MenuItem>
-                    <MenuItem value="false">No (Dev only)</MenuItem>
-                  </Select>
-                </FormControl>
-              </Grid>
-              <Grid item xs={12} sm={6}>
-                <FormControl fullWidth size="small">
-                  <InputLabel>Enforce HTTPS</InputLabel>
-                  <Select
-                    value={config.enforce_public_https ? 'true' : 'false'}
-                    onChange={(e) => handleConfigChange('enforce_public_https', e.target.value === 'true')}
-                    label="Enforce HTTPS"
-                  >
-                    <MenuItem value="true">Yes (Required for PHI)</MenuItem>
-                    <MenuItem value="false">No (Dev only)</MenuItem>
-                  </Select>
-                </FormControl>
-              </Grid>
-              <Grid item xs={12} sm={6}>
-                <FormControl fullWidth size="small">
-                  <InputLabel>Enable Audit Logging</InputLabel>
-                  <Select
-                    value={config.audit_log_enabled ? 'true' : 'false'}
-                    onChange={(e) => handleConfigChange('audit_log_enabled', e.target.value === 'true')}
-                    label="Enable Audit Logging"
-                  >
-                    <MenuItem value="true">Yes (HIPAA requirement)</MenuItem>
-                    <MenuItem value="false">No</MenuItem>
-                  </Select>
-                </FormControl>
-              </Grid>
-              <Grid item xs={12} sm={6}>
-                <TextField
-                  label="PDF Token TTL (minutes)"
-                  type="number"
-                  value={config.pdf_token_ttl_minutes || 60}
-                  onChange={(e) => handleConfigChange('pdf_token_ttl_minutes', parseInt(e.target.value))}
-                  fullWidth
-                  size="small"
-                  helperText="How long tokenized PDF URLs remain valid"
-                />
-              </Grid>
-            </Grid>
-          </Box>
-        );
-
-      case 3:
-        return (
-          <Box>
-            <Typography variant="h6" gutterBottom>
-              Apply & Export
-            </Typography>
-            
-            <Box sx={{ mb: 2 }}>
-              <Button
-                variant="outlined"
-                onClick={handleValidate}
-                disabled={validating}
-                sx={{ mr: 1 }}
-              >
-                {validating ? <CircularProgress size={20} /> : 'Validate Configuration'}
-              </Button>
-              <Button
-                variant="contained"
-                color="primary"
-                onClick={applyAndReload}
-                disabled={validating}
-                sx={{ mr: 1 }}
-              >
-                {validating ? <CircularProgress size={20} /> : 'Apply & Reload'}
-              </Button>
-              <Button
-                variant="contained"
-                onClick={() => generateEnvContent()}
-              >
-                Generate .env
-              </Button>
-            </Box>
-
-            {validationResults && (
-              <Paper sx={{ p: 2, mb: 2 }}>
-                <Typography variant="subtitle1" gutterBottom>
-                  Validation Results
-                </Typography>
-                {validationResults.error ? (
-                  <Alert severity="error">{validationResults.error}</Alert>
-                ) : (
-                  <Box>
-                    {Object.entries(validationResults.checks || {}).map(([key, value]) => (
-                      <Box key={key} display="flex" justifyContent="space-between" mb={1} alignItems="center">
-                        <Box>
-                          <Typography>{key.replace(/_/g,' ')}:</Typography>
-                          <Typography variant="caption" color="text.secondary">
-                            {ob === 'phaxio' && key.includes('auth') ? 'Set PHAXIO_API_KEY/PHAXIO_API_SECRET in Phaxio console.' : ''}
-                            {ob === 'sinch' && key.includes('auth') ? 'Set SINCH project, key and secret in Sinch Fax API.' : ''}
-                          </Typography>
-                        </Box>
-                        <Chip size="small" color={value ? 'success' : 'error'} label={value ? 'Pass' : 'Fail'} />
-                      </Box>
-                    ))}
-                    <Typography variant="caption" color="text.secondary">
-                      Help: <a href={`${docsBase || 'https://dmontgomery40.github.io/Faxbot'}/backends/phaxio-setup.html`} target="_blank" rel="noreferrer">Faxbot: Phaxio</a> • <a href={`${docsBase || 'https://dmontgomery40.github.io/Faxbot'}/backends/signalwire-setup.html`} target="_blank" rel="noreferrer">Faxbot: SignalWire</a> • <a href={`${docsBase || 'https://dmontgomery40.github.io/Faxbot'}/backends/freeswitch-setup.html`} target="_blank" rel="noreferrer">Faxbot: FreeSWITCH</a> • <a href="https://developers.sinch.com/docs/fax/api-reference/" target="_blank" rel="noreferrer">Sinch Fax API</a>
-                    </Typography>
-                  </Box>
-                )}
-              </Paper>
-            )}
-
-            {envContent && (
-              <Box>
-                <Box display="flex" gap={1} mb={2}>
-                  <Button
-                    variant="outlined"
-                    onClick={() => copyToClipboard(envContent)}
-                  >
-                    Copy
-                  </Button>
-                  <Button
-                    variant="outlined"
-                    onClick={() => downloadEnv(envContent)}
-                  >
-                    Download
-                  </Button>
-                </Box>
-                
-                <Paper sx={{ p: 2, bgcolor: 'background.default' }}>
-                  <pre style={{ margin: 0, fontSize: '0.875rem', overflow: 'auto' }}>
-                    {envContent}
-                  </pre>
-                </Paper>
-                
-                <Alert severity="info" sx={{ mt: 2 }}>
-                  Changes were applied in-process. For persistence across restarts, click Generate .env, update your environment file, and restart the API.
-                </Alert>
-              </Box>
-            )}
-          </Box>
-        );
-
-      default:
-        return null;
-    }
-  };
-
-  return (
-    <Box>
-      <Typography variant="h4" component="h1" gutterBottom>
-        Setup Wizard
-      </Typography>
-      
-      <Stepper activeStep={activeStep} sx={{ mb: 4 }}>
-        {steps.map((label) => (
-          <Step key={label}>
-            <StepLabel>{label}</StepLabel>
-          </Step>
         ))}
-      </Stepper>
-      
-      <Card>
-        <CardContent>
-          {renderStepContent(activeStep)}
-        </CardContent>
-      </Card>
-      
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', mt: 3 }}>
-        <Button
-          disabled={activeStep === 0}
-          onClick={handleBack}
-        >
-          Back
-        </Button>
-        
-        <Button
-          variant="contained"
-          onClick={handleNext}
-          disabled={activeStep === steps.length - 1}
-        >
-          {activeStep === steps.length - 1 ? 'Finish' : 'Next'}
-        </Button>
-      </Box>
-      {snack && (
-        <Alert severity="success" sx={{ mt: 2 }} onClose={() => setSnack(null)}>
-          {snack}
-        </Alert>
-      )}
+      </Paper>}
     </Box>
   );
+
+  const providerControl = (field: string, label: string, override = false, inbound = false) => (
+    <FormControl fullWidth sx={{ mt: 2 }}>
+      <InputLabel id={`${fieldId}-${field}-label`} shrink>{label}</InputLabel>
+      <Select id={`${fieldId}-${field}`} labelId={`${fieldId}-${field}-label`} displayEmpty
+        value={config[field] ?? ''} disabled={!canEdit} label={label} onChange={event => handleConfigChange(field, event.target.value)}>
+        {override && <MenuItem value="">Use default provider ({String(config.backend)})</MenuItem>}
+        {Array.from(providerOptions.values())
+          .filter(provider => !inbound || !outboundOnly.has(provider.id) || provider.id === config[field])
+          .map(provider => <MenuItem key={provider.id} value={provider.id}>{provider.name}</MenuItem>)}
+      </Select>
+    </FormControl>
+  );
+
+  const renderStepContent = () => {
+    if (activeStep === 0) return <Box>
+      <Typography variant="h6">Choose Providers</Typography>
+      {providerControl('backend', 'Default Provider')}
+      {providerControl('outbound_backend', 'Outbound Override', true)}
+      {providerControl('inbound_backend', 'Inbound Override', true, true)}
+      <Typography sx={{ mt: 2 }}>Outbound: {ob} · Inbound: {ib}</Typography>
+      <FormControlLabel control={<Switch disabled={!canEdit} checked={!!config.inbound_enabled} onChange={event => handleConfigChange('inbound_enabled', event.target.checked)} />} label="Enable inbound handling" />
+      <Alert severity="info" sx={{ mt: 1 }}>Leave an override empty to use the default provider; inbound handling is turned on separately.</Alert>
+      {settings?.numbers && <Box sx={{ mt: 3 }}>
+        <CountryField label="Installation country" helperText={COUNTRY_HELP} disabled={!canEdit}
+          value={String(config.fax_default_country ?? settings.numbers.default_country)}
+          countries={settings.numbers.supported_countries}
+          onChange={code => handleConfigChange('fax_default_country', code)} />
+      </Box>}
+    </Box>;
+
+    if (activeStep === 1) return <Box>
+      <Typography variant="h6" gutterBottom>Configure {providerOptions.get(ob)?.name || ob} Credentials</Typography>
+      <Alert severity="info" sx={{ mb: 2 }}>Saved secrets are hidden; leave them unchanged to keep them.</Alert>
+      <Button variant="outlined" onClick={handleValidate}>Check Supplied Outbound Credentials</Button>
+      {renderValidation()}
+      {!builtinSelected ? <Alert severity="info" sx={{ mt: 2 }}>Configure this provider in Tools → Plugins.</Alert> : <>
+        {ob === 'sip' && <Alert severity="warning" sx={{ mt: 2 }}>Keep AMI on your private network; never expose its port to the internet.</Alert>}
+        {ob === 'freeswitch' && <Alert severity="info" sx={{ mt: 2 }}>FreeSWITCH also needs mod_spandsp, a gateway and the Faxbot result hook.</Alert>}
+        <Grid container spacing={2} sx={{ mt: 0 }}>
+          {credentialFields[ob].map(field => <Grid item xs={12} key={field.key}>
+            {field.secret ? <SecretInput fullWidth disabled={!canEdit} label={field.label} value={config[field.key] ?? ''}
+              onChange={value => handleConfigChange(field.key, value)} helperText={field.helper} /> :
+              <TextField fullWidth disabled={!canEdit} label={field.label} value={config[field.key] ?? ''} type={field.number ? 'number' : 'text'}
+                onChange={event => handleConfigChange(field.key, field.number && event.target.value !== '' ? Number(event.target.value) : event.target.value)} helperText={field.helper} />}
+          </Grid>)}
+          {ob === 'phaxio' && <Grid item xs={12}>
+            <FormControlLabel control={<Switch disabled={!canEdit} checked={!!config.phaxio_verify_signature} onChange={event => handleConfigChange('phaxio_verify_signature', event.target.checked)} />} label="Verify outbound status signatures" />
+            <Alert severity="info">When off, Phaxio status callbacks are rejected and Faxbot checks status by polling instead.</Alert>
+          </Grid>}
+          {ob === 'documo' && <Grid item xs={12}><FormControlLabel control={<Switch disabled={!canEdit} checked={!!config.documo_use_sandbox} onChange={event => handleConfigChange('documo_use_sandbox', event.target.checked)} />} label="Use Documo sandbox" /></Grid>}
+          {ob === 'sip' && settings?.sip.ami_password_is_default && config.ami_password === baseline.ami_password &&
+            <Grid item xs={12}><Alert severity="warning">The stored AMI password is still the default. Enter a replacement before enabling remote AMI access.</Alert></Grid>}
+        </Grid>
+        {ob === 'sip' && <Box sx={{ mt: 3 }}><SipTrunkSettings client={client} showCalls={false} /></Box>}
+      </>}
+      <TextField fullWidth disabled={!canEdit} label="Public API URL" value={config.public_api_url ?? ''} sx={{ mt: 2 }}
+        onChange={event => handleConfigChange('public_api_url', event.target.value)} helperText="Public address of this server, used by cloud providers to fetch documents and send callbacks." />
+      <Box sx={{ mt: 3 }}>
+        <Typography variant="subtitle1">Active Inbound Callback Details</Typography>
+        <Typography variant="body2" sx={{ mb: 1 }}>Callback URLs for the inbound provider Faxbot is using now.</Typography>
+        <Button variant="outlined" onClick={loadCallbacks}>Show Active Callback Details</Button>
+        {callbacks && <Paper sx={{ p: 2, mt: 2 }}>
+          <Typography>Inbound provider: {callbacks.backend}</Typography>
+          {!callbacks.callbacks?.length && <Alert severity="info" sx={{ mt: 1 }}>This provider has no callback URL to configure.</Alert>}
+          {callbacks.callbacks?.map(callback => <Box key={callback.name} sx={{ mt: 1 }}>
+            <Typography>{callback.name}</Typography>
+            <Box component="pre" sx={{ overflow: 'auto', overflowWrap: 'anywhere', whiteSpace: 'pre-wrap' }}>{callback.url}</Box>
+            <Button onClick={() => { void copyToClipboard(callback.url); }}>Copy URL</Button>
+          </Box>)}
+          <Box sx={{ mt: 2, display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+            <Button variant="outlined" onClick={simulateInbound}>Simulate Inbound Record</Button>
+            <Button variant="outlined" onClick={startWatching} disabled={verifyingInbound}>{verifyingInbound ? 'Watching inbound logs…' : 'Watch New Inbound Log Events'}</Button>
+            {verifyingInbound && <Button onClick={stopWatching}>Stop Watching</Button>}
+          </Box>
+          {inboundObservation && <Alert severity="info" sx={{ mt: 1 }}>{inboundObservation}</Alert>}
+          <Typography variant="caption" sx={{ display: 'block', mt: 2 }}><a href={docsURL} target="_blank" rel="noreferrer">Faxbot Docs</a> · <a href="https://developers.sinch.com/docs/fax/api-reference/" target="_blank" rel="noreferrer">Sinch Fax API Docs</a></Typography>
+        </Paper>}
+      </Box>
+    </Box>;
+
+    if (activeStep === 2) return <Box>
+      <Typography variant="h6" gutterBottom>Security Settings</Typography>
+      <Alert severity="info" sx={{ mb: 2 }}>Authentication: required. Every request needs a signed-in person or an API key; manage them in Keys and Users.</Alert>
+      <Grid container spacing={2}>
+        {[
+          ['enforce_public_https', 'Enforce Public HTTPS'],
+          ['audit_log_enabled', 'Enable Audit Logging'],
+        ].map(([field, label]) => <Grid item xs={12} sm={6} key={field}><FormControlLabel control={<Switch disabled={!canEdit} checked={!!config[field]} onChange={event => handleConfigChange(field, event.target.checked)} />} label={label} /></Grid>)}
+        <Grid item xs={12} sm={6}><TextField fullWidth disabled={!canEdit} label="PDF Token TTL (minutes)" type="number" value={config.pdf_token_ttl_minutes ?? ''}
+          onChange={event => handleConfigChange('pdf_token_ttl_minutes', event.target.value === '' ? '' : Number(event.target.value))} helperText="How long tokenized PDF URLs remain valid" /></Grid>
+      </Grid>
+    </Box>;
+
+    if (activeStep === 3) return <Box>
+      <Typography variant="h6" gutterBottom>Delivery Options</Typography>
+      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>Optional. You can change these later in Settings.</Typography>
+      {settings && <DeliveryWizardFields settings={settings} config={config} baseline={baseline} onChange={handleConfigChange}
+        outbound={ob} disabled={!canEdit} />}
+    </Box>;
+
+    return <Box>
+      <Typography variant="h6" gutterBottom>Apply & Export</Typography>
+      <Typography sx={{ mb: 2 }}>{changedFields.length ? `${changedFields.length} unsaved ${changedFields.length === 1 ? 'change' : 'changes'}.` : 'No unsaved changes.'}</Typography>
+      <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+        <Button variant="outlined" onClick={handleValidate}>Check Supplied Outbound Credentials</Button>
+        <Button variant="contained" onClick={applySettings}>Apply Changes</Button>
+        <Button variant="outlined" onClick={exportSettings} disabled={changedFields.length > 0}>Export .env Template</Button>
+      </Box>
+      {changedFields.length > 0 && <Alert severity="info" sx={{ mt: 2 }}>Apply or discard your changes before exporting.</Alert>}
+      {renderValidation()}
+      {envContent && <Box sx={{ mt: 2 }}>
+        <Alert severity="info">Secrets are masked; this file is not a full backup.</Alert>
+        <Box sx={{ display: 'flex', gap: 1, my: 2 }}><Button variant="outlined" onClick={() => { void copyToClipboard(envContent); }}>Copy</Button><Button variant="outlined" onClick={downloadEnv}>Download</Button></Box>
+        <Paper sx={{ p: 2 }}><Box component="pre" sx={{ m: 0, fontSize: '0.875rem', overflow: 'auto' }}>{envContent}</Box></Paper>
+      </Box>}
+    </Box>;
+  };
+
+  return <Box>
+    <Typography variant="h4" component="h1" gutterBottom>Setup Wizard</Typography>
+    <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2 }}>
+      <Typography>Choose providers, enter credentials and review security.</Typography>
+      <Button variant="outlined" onClick={() => { if (!actionFence.current) void loadSettings(); }} disabled={loading || busy}>Reload{changedFields.length ? ' (discard draft)' : ''}</Button>
+    </Box>
+    {loading && <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}><CircularProgress size={24} /><Typography>Loading settings…</Typography></Box>}
+    {loadError && <Alert severity="error" sx={{ mb: 2 }}>{loadError}</Alert>}
+    {pendingRestart && !(applyResult && saveResult) && <Alert severity="warning" sx={{ mb: 2 }}>{restartMessage}</Alert>}
+    {catalogNotice && <Alert severity="info" sx={{ mb: 2 }}>{catalogNotice}</Alert>}
+    {notice && <Alert severity={notice.severity} sx={{ mb: 2 }} onClose={() => setNotice(null)}>{notice.text}</Alert>}
+    {applyResult && <Alert severity={applyResult.severity} sx={{ mb: 2 }}>{applyResult.text}{saveResult && pendingRestart ? ` ${restartMessage}` : ''}</Alert>}
+    {showPaused && <Alert severity="warning" sx={{ mb: 2 }}>Editing is paused. Reload to continue.</Alert>}
+    {settings && <>
+      <Stepper activeStep={activeStep} sx={{ mb: 4 }}>{steps.map(label => <Step key={label}><StepLabel>{label}</StepLabel></Step>)}</Stepper>
+      <Card><CardContent><Box component="fieldset" disabled={!canEdit} sx={{ m: 0, p: 0, border: 0, minWidth: 0 }}>{renderStepContent()}</Box></CardContent></Card>
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', mt: 3 }}>
+        <Button disabled={activeStep === 0 || loading || busy} onClick={() => { stopWatching(); setActiveStep(step => step - 1); }}>Back</Button>
+        {activeStep === steps.length - 1 ? <Button variant="contained" onClick={() => { if (!actionFence.current) onDone?.(); }} disabled={loading || busy || !onDone}>{changedFields.length ? 'Done (discard draft)' : 'Done'}</Button> :
+          <Button variant="contained" disabled={loading || busy} onClick={() => { stopWatching(); setActiveStep(step => step + 1); }}>Next</Button>}
+      </Box>
+    </>}
+    {busy && <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mt: 2 }}><CircularProgress size={20} /><Typography>Working…</Typography></Box>}
+  </Box>;
 }
 
 export default SetupWizard;

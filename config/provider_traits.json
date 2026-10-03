@@ -64,6 +64,19 @@
       "outbound_status_only": false
     }
   },
+  "humblefax": {
+    "id": "humblefax",
+    "kind": "cloud",
+    "traits": {
+      "requires_ghostscript": true,
+      "requires_ami": false,
+      "requires_tiff": false,
+      "supports_inbound": false,
+      "inbound_verification": "none",
+      "needs_storage": false,
+      "outbound_status_only": false
+    }
+  },
   "sip": {
     "id": "sip",
     "kind": "self_hosted",

@@ -1,16 +1,15 @@
-FROM node:18-alpine
+FROM node:24-alpine
 
 WORKDIR /app
 
 COPY package*.json ./
-RUN npm install --production
+RUN npm ci --omit=dev --no-audit --no-fund
 
 COPY src ./src
 
 ENV FAX_API_URL=http://api:8080
-ENV API_KEY=
 
-EXPOSE 3001 3002 3004
+EXPOSE 3001
 
-# Default to HTTP (streamable) transport; override CMD to run SSE instead.
+# Streamable HTTP. Each MCP client sends its own Faxbot API key; API_KEY is not used.
 CMD ["node", "src/servers/http.js"]

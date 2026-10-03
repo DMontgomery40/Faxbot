@@ -1,10 +1,14 @@
-from sqlalchemy import create_engine, Column, String, DateTime, Integer, Text, UniqueConstraint  # type: ignore
+from sqlalchemy import Column, String, DateTime, Integer, Text, UniqueConstraint  # type: ignore
 from sqlalchemy.orm import declarative_base, sessionmaker  # type: ignore
 from datetime import datetime
 from .config import settings
+from .schema import create_database_engine, upgrade_schema
+from sqlalchemy.engine import make_url
+from threading import RLock
 
 
-engine = create_engine(settings.database_url, future=True)
+engine = create_database_engine(settings.database_url)
+_binding_lock = RLock()
 SessionLocal = sessionmaker(
     bind=engine,
     autoflush=False,
@@ -24,8 +28,8 @@ class FaxJob(Base):  # type: ignore
     status = Column(String(32), index=True, nullable=False, default="queued")
     error = Column(Text, nullable=True)
     pages = Column(Integer, nullable=True)
-    backend = Column(String(20), nullable=False, default="sip")  # "sip" or cloud provider key
-    outbound_backend = Column(String(20), nullable=True)  # effective outbound backend (hybrid)
+    backend = Column(String(255).with_variant(String(20), "sqlite"), nullable=False, default="sip")  # "sip" or cloud provider key
+    outbound_backend = Column(String(255).with_variant(String(20), "sqlite"), nullable=True)  # effective outbound backend (hybrid)
     provider_sid = Column(String(100), nullable=True)  # Cloud provider fax ID
     pdf_url = Column(String(512), nullable=True)  # Public URL for PDF (for cloud backend)
     pdf_token = Column(String(128), nullable=True)  # Secure token for PDF fetch
@@ -55,8 +59,8 @@ class InboundFax(Base):  # type: ignore
     from_number = Column(String(64), index=True, nullable=True)
     to_number = Column(String(64), index=True, nullable=True)
     status = Column(String(32), index=True, nullable=False, default="received")
-    backend = Column(String(20), nullable=False)
-    inbound_backend = Column(String(20), nullable=True)  # effective inbound backend (hybrid)
+    backend = Column(String(255).with_variant(String(20), "sqlite"), nullable=False)
+    inbound_backend = Column(String(255).with_variant(String(20), "sqlite"), nullable=True)  # effective inbound backend (hybrid)
     provider_sid = Column(String(100), nullable=True)
     pages = Column(Integer, nullable=True)
     size_bytes = Column(Integer, nullable=True)
@@ -100,74 +104,21 @@ class InboundEvent(Base):  # type: ignore
     __table_args__ = (UniqueConstraint('provider_sid', 'event_type', name='uix_inbound_events_sid_type'),)
 
 
-def _rebind_engine_if_needed() -> None:
-    global engine, SessionLocal
-    target_url = settings.database_url
-    current_url = str(engine.url)
-    if current_url != target_url:
-        engine = create_engine(target_url, future=True)
-        SessionLocal.configure(bind=engine)
-
-
 def init_db():
-    _rebind_engine_if_needed()
-    Base.metadata.create_all(engine)
-    _ensure_optional_columns()
-
-
-def _ensure_optional_columns() -> None:
-    """Ad‑hoc migration to add new optional columns when missing.
-    - SQLite: use PRAGMA to inspect and ALTER TABLE without IF NOT EXISTS.
-    - Postgres/MySQL: use ALTER TABLE ... ADD COLUMN IF NOT EXISTS (best effort).
-    Idempotent and transactional where supported.
-    """
-    try:
-        with engine.begin() as conn:
-            dialect = engine.dialect.name
-            if dialect == 'sqlite':
-                cols = set()
-                for row in conn.exec_driver_sql("PRAGMA table_info('fax_jobs')"):
-                    cols.add(row[1])
-                if "pdf_token" not in cols:
-                    conn.exec_driver_sql("ALTER TABLE fax_jobs ADD COLUMN pdf_token VARCHAR(128)")
-                if "pdf_token_expires_at" not in cols:
-                    conn.exec_driver_sql("ALTER TABLE fax_jobs ADD COLUMN pdf_token_expires_at DATETIME")
-                if "outbound_backend" not in cols:
-                    conn.exec_driver_sql("ALTER TABLE fax_jobs ADD COLUMN outbound_backend VARCHAR(20)")
-                    conn.exec_driver_sql("UPDATE fax_jobs SET outbound_backend = backend WHERE outbound_backend IS NULL")
-
-                inb_cols = set()
-                for row in conn.exec_driver_sql("PRAGMA table_info('inbound_faxes')"):
-                    inb_cols.add(row[1])
-                if "inbound_backend" not in inb_cols:
-                    conn.exec_driver_sql("ALTER TABLE inbound_faxes ADD COLUMN inbound_backend VARCHAR(20)")
-                    conn.exec_driver_sql("UPDATE inbound_faxes SET inbound_backend = backend WHERE inbound_backend IS NULL")
-            else:
-                # Postgres/MySQL: best-effort IF NOT EXISTS
-                try:
-                    conn.exec_driver_sql("ALTER TABLE fax_jobs ADD COLUMN IF NOT EXISTS pdf_token VARCHAR(128)")
-                except Exception:
-                    pass
-                try:
-                    conn.exec_driver_sql("ALTER TABLE fax_jobs ADD COLUMN IF NOT EXISTS pdf_token_expires_at TIMESTAMP")
-                except Exception:
-                    pass
-                try:
-                    conn.exec_driver_sql("ALTER TABLE fax_jobs ADD COLUMN IF NOT EXISTS outbound_backend VARCHAR(20)")
-                except Exception:
-                    pass
-                try:
-                    conn.exec_driver_sql("UPDATE fax_jobs SET outbound_backend = backend WHERE outbound_backend IS NULL")
-                except Exception:
-                    pass
-                try:
-                    conn.exec_driver_sql("ALTER TABLE inbound_faxes ADD COLUMN IF NOT EXISTS inbound_backend VARCHAR(20)")
-                except Exception:
-                    pass
-                try:
-                    conn.exec_driver_sql("UPDATE inbound_faxes SET inbound_backend = backend WHERE inbound_backend IS NULL")
-                except Exception:
-                    pass
-    except Exception:
-        # Do not block startup on migration best-effort failures
-        pass
+    """Publish a new session binding only after its versioned upgrade succeeds."""
+    global engine
+    with _binding_lock:
+        target = make_url(settings.database_url)
+        if engine.url == target:
+            upgrade_schema(engine)
+            return
+        candidate = create_database_engine(target)
+        try:
+            upgrade_schema(candidate)
+        except BaseException:
+            candidate.dispose()
+            raise
+        previous = engine
+        SessionLocal.configure(bind=candidate)
+        engine = candidate
+        previous.dispose()

@@ -4,12 +4,14 @@ import re
 import uuid
 import asyncio
 import secrets
-from datetime import datetime, timedelta
+from contextlib import AsyncExitStack, asynccontextmanager
+from datetime import datetime, timedelta, timezone
 import tempfile
-from typing import Optional, Any, List, Dict, cast
+from typing import Optional, Any, List, Dict, Literal, cast
 import subprocess
 import time
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks, Header, Depends, Query, Request, Response, WebSocket
+import sqlalchemy as sa
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Header, Depends, Query, Request, Response, WebSocket
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from .config import (
@@ -17,14 +19,16 @@ from .config import (
     reload_settings,
     active_outbound,
     active_inbound,
-    VALID_BACKENDS,
     providerHasTrait,
     providerTraitValue,
 )
 from .db import init_db, SessionLocal, FaxJob
 from .models import FaxJobOut
-from .conversion import ensure_dir, txt_to_pdf, pdf_to_tiff
+from .conversion import ensure_dir
+from .documents import prepare_upload, UploadPreparationError
 from .ami import ami_client
+from . import sip_calls
+from .sip_http import router as sip_router
 from .phaxio_service import get_phaxio_service
 from .sinch_service import get_sinch_service
 from .signalwire_service import get_signalwire_service
@@ -34,20 +38,106 @@ import hashlib
 from urllib.parse import urlparse
 from fastapi.responses import StreamingResponse
 import json
-from .audit import init_audit_logger, audit_event
+from .audit import init_audit_logger, close_audit_logger, audit_event
 from .audit import query_recent_logs
-from .storage import get_storage, reset_storage
-from .auth import verify_db_key, create_api_key, list_api_keys, revoke_api_key, rotate_api_key
+from .storage import get_storage
 from .plugins.http_provider import HttpManifest, HttpProviderRuntime
+from .config_paths import (
+    InvalidProviderPath, plugin_examples_path,
+    provider_manifest_path, providers_dir,
+)
 from .signalwire_service import get_signalwire_service
 
-# v3 plugins (feature-gated)
-try:
-    from .plugins.config_store import read_config as _read_cfg, write_config as _write_cfg  # type: ignore
-except Exception:  # pragma: no cover - optional
-    _read_cfg = None  # type: ignore
-    _write_cfg = None  # type: ignore
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, create_model
+from .config_values import ConfigurationValues, ConfigurationValueError
+from .config_views import project_admin_settings
+from .config_activation import ConfigurationActivationError
+from .config_store import ConfigurationConflict, ConfigurationStoreError, ConfigurationCommitUncertain, UnboundProviderProfile
+from .provider_execution import service_from_profile, ProviderExecutionError
+from .config_file import ConfigurationFileError, format_environment, parse_environment, write_environment
+from .config_secrets import ConfigurationSecretError
+from .provider_catalog import ProviderCatalogError, validate_http_provider_document
+from pathlib import Path
+from .config_runtime import ConfigurationRuntime, ConfigurationMiddleware, run_lifecycle_step
+from .outbound_store import OutboundStore, DeliveryConflict, TERMINAL
+from .outbound_worker import OutboundWorker
+from .outbound_polling import OutboundPoller
+from .provider_execution import UnsupportedProviderExecutionError
+from .outbound_transport import CapturedTransport, normalize_status
+from .outbound_callbacks import CapturedCallbacks, CallbackRejected
+from .request_identity import (RequestIdentity, IdempotentReplay, IdempotencyConflict, digest_upload,
+                               request_fingerprints)
+from .routing.numbers import InvalidNumber, normalize_number
+from .access.runtime import AccessRuntime
+from .access.transport import CredentialTransport
+from .access.catalog import KEY_SCOPES
+from .access.mutation_types import IntegrationKeyValues, MutationDeniedError, MutationReason, VersionedEntity
+from .access.types import AccessError, AccessUnavailableError, ResourceRef
+from .access.http import router as authentication_router, PrivateAuthMiddleware, access_error_response
+from .access.management_http import router as management_router
+from .access.http import require_identity, runtime as access_runtime, private_operation
+from .access.http import PRIVATE_HEADERS, private_response_path, utcnow as access_utcnow
+from .access.configuration_access import configuration_write_receipt
+from .access.fax_resources import FaxAccessError
+from .routing.http import router as routing_router
+from .intake.http import router as intake_router
+from .direct.http import router as direct_router
+from .cases.http import router as cases_router
+from .routing.transport import RoutedTransport
+
+
+@asynccontextmanager
+async def lifespan(application: FastAPI):
+    """Own API tasks and explicitly enter lifespans of enabled MCP mounts."""
+    if getattr(application.state, "runtime_active", False):
+        raise RuntimeError("Faxbot API lifespan is already running")
+    application.state.runtime_active = True
+    tasks: list[asyncio.Task] = []
+    mounts = []
+    owns_ami = False
+    runtime = ConfigurationRuntime(os.environ)
+    try:
+        await run_lifecycle_step(runtime.prepare)
+        application.state.configuration_runtime = runtime
+        application.state.credential_transport = CredentialTransport(os.environ)
+        application.state.access_runtime = await run_lifecycle_step(lambda: AccessRuntime(
+            runtime.manager.store, docs_base=os.getenv('DOCS_BASE_URL', 'https://docs.faxbot.net/latest/')))
+        # Inbound faxes stored without an access resource are placed in the unassigned inbox.
+        await run_lifecycle_step(application.state.access_runtime.inbound.backfill)
+        with runtime.frame(runtime.candidate):
+            try:
+                owns_ami = await _initialize_runtime(tasks)
+                if owns_ami:
+                    ami_client.on_fax_result(_handle_fax_result)
+                    ami_client.on_originate_response(_handle_originate_response)
+                    sip_calls.attach(ami_client, runtime.manager.store.engine)
+                    tasks.append(asyncio.create_task(ami_client.connect(), name="faxbot-ami-connect"))
+                    await asyncio.wait_for(ami_client._connected.wait(), timeout=10)
+                async with AsyncExitStack() as stack:
+                    _mount_enabled_mcp(application, mounts)
+                    for mount in mounts:
+                        await stack.enter_async_context(mount.app.router.lifespan_context(mount.app))
+                    await run_lifecycle_step(runtime.publish_ready)
+                    delivery = OutboundStore(runtime.manager.store)
+                    worker = OutboundWorker(delivery, RoutedTransport(CapturedTransport(delivery, runtime, ami=ami_client)))
+                    tasks.append(asyncio.create_task(worker.run(), name='faxbot-outbound-worker'))
+                    tasks.append(asyncio.create_task(OutboundPoller(delivery).run(), name='faxbot-outbound-poller'))
+                    yield
+            finally:
+                for task in tasks:
+                    task.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
+                if owns_ami:
+                    await ami_client.close()
+                for mount in mounts:
+                    application.router.routes.remove(mount)
+                close_audit_logger()
+    finally:
+        runtime.close()
+        application.state.configuration_runtime = None
+        application.state.access_runtime = None
+        application.state.credential_transport = None
+        application.state.runtime_active = False
 
 
 app = FastAPI(
@@ -63,13 +153,56 @@ app = FastAPI(
         "name": "MIT",
         "url": "https://github.com/dmontgomery40/faxbot/blob/main/LICENSE",
     },
+    lifespan=lifespan,
 )
+app.add_middleware(ConfigurationMiddleware)
+app.add_middleware(PrivateAuthMiddleware)
+app.add_exception_handler(AccessError, access_error_response)
+app.include_router(authentication_router)
+app.include_router(management_router)
+app.include_router(routing_router)
+app.include_router(intake_router)
+app.include_router(direct_router)
+app.include_router(cases_router)
+
+
+async def _configuration_error_handler(request, exc):
+    if isinstance(exc, ConfigurationConflict):
+        status = 409
+    elif isinstance(exc, (ConfigurationStoreError, ConfigurationSecretError)):
+        status = 503
+    else:
+        status = 400
+    return JSONResponse({'detail': str(exc)}, status_code=status)
+
+
+for _error_class in (ConfigurationValueError, ConfigurationActivationError, ConfigurationConflict,
+                     ConfigurationStoreError, ConfigurationFileError, ConfigurationSecretError, ProviderCatalogError):
+    app.add_exception_handler(_error_class, _configuration_error_handler)
+
+
+from fastapi.exceptions import RequestValidationError
+from fastapi.exception_handlers import request_validation_exception_handler
+
+
+@app.exception_handler(RequestValidationError)
+async def _request_validation_error(request, exc):
+    if request.url.path.startswith('/auth/') or request.url.path.startswith('/access/'):
+        return JSONResponse({'detail':'Invalid access request.'}, status_code=422)
+    if request.url.path.startswith('/admin/fax-jobs/') and request.url.path.endswith('/reconcile'):
+        # Pydantic errors include raw rejected values and arbitrary extra keys.
+        return JSONResponse({'detail': 'Invalid provider identity reconciliation input.'}, status_code=422)
+    if request.url.path.startswith('/admin/settings') or request.url.path.startswith('/plugins/'):
+        return JSONResponse({'detail': [
+            {'loc': error['loc'], 'type': error['type'], 'msg': 'Invalid configuration input.'}
+            for error in exc.errors()]}, status_code=422)
+    return await request_validation_exception_handler(request, exc)
+
 # Expose phaxio_service module for tests that reference app.phaxio_service
 from . import phaxio_service as _phaxio_module  # noqa: E402
 app.phaxio_service = _phaxio_module  # type: ignore[attr-defined]
 
 
-PHONE_RE = re.compile(r"^[+]?\d{6,20}$")
 ALLOWED_CT = {"application/pdf", "text/plain"}
 
 
@@ -77,13 +210,11 @@ ALLOWED_CT = {"application/pdf", "text/plain"}
 _rate_buckets: dict[str, dict[str, int]] = {}
 
 
-def _enforce_rate_limit(info: Optional[dict], path: str, limit: Optional[int] = None):
+def _enforce_rate_limit(info: dict, path: str, limit: Optional[int] = None):
+    # Callers pass the authenticated caller's stable replay scope as key_id.
     # Choose provided per-route limit, else global
-    limit = int(limit or settings.max_requests_per_minute)
+    limit = settings.max_requests_per_minute if limit is None else int(limit)
     if not limit or limit <= 0:
-        return
-    if info is None:
-        # Do not rate limit unauthenticated dev requests
         return
     key_id = info.get("key_id") or "unknown"
     now_min = int(time.time() // 60)
@@ -140,38 +271,31 @@ for _ap in _assets_candidates:
     except Exception:
         pass
 
-# ===== Embedded MCP mounts (optional) =====
-try:
-    if os.getenv("ENABLE_MCP_SSE", "false").lower() in {"1","true","yes"}:
-        # Set environment for python_mcp before import
-        os.environ.setdefault("FAX_API_URL", "http://localhost:8080")
-        if settings.api_key:
-            os.environ.setdefault("API_KEY", settings.api_key)
-        # Configure OAuth variables for the embedded server
-        if settings.require_mcp_oauth:
-            if settings.oauth_issuer:
-                os.environ["OAUTH_ISSUER"] = settings.oauth_issuer
-            if settings.oauth_audience:
-                os.environ["OAUTH_AUDIENCE"] = settings.oauth_audience
-            if settings.oauth_jwks_url:
-                os.environ["OAUTH_JWKS_URL"] = settings.oauth_jwks_url
-        from python_mcp import server as _mcp_server  # type: ignore
-        mount_app = _mcp_server.app if settings.require_mcp_oauth else getattr(_mcp_server, "inner_app")
-        app.mount(settings.mcp_sse_path, mount_app)
-except Exception as _mcp_err:
-    # Do not break API if MCP mount fails; surface in diagnostics
-    print(f"[warn] MCP SSE mount failed: {_mcp_err}")
-
-try:
-    if os.getenv("ENABLE_MCP_HTTP", "false").lower() in {"1","true","yes"}:
-        # Prepare environment
-        os.environ.setdefault("FAX_API_URL", "http://localhost:8080")
-        if settings.api_key:
-            os.environ.setdefault("API_KEY", settings.api_key)
-        from python_mcp import http_server as _mcp_http  # type: ignore
-        app.mount(settings.mcp_http_path, _mcp_http.app)
-except Exception as _mcp_http_err:
-    print(f"[warn] MCP HTTP mount failed: {_mcp_http_err}")
+# ===== Embedded MCP mounts (optional, startup failures are fatal when enabled) =====
+def _mount_enabled_mcp(application: FastAPI, mounts: list):
+    if not (settings.enable_mcp_sse or settings.enable_mcp_http):
+        return
+    from python_mcp.transport_config import APIConfiguration
+    runtime = application.state.configuration_runtime
+    # Local API transport location is a deployment input, not PUBLIC_API_URL
+    # (which belongs to provider document retrieval and may point through a tunnel).
+    api_base_url = runtime.environment.get('FAX_API_URL', 'http://localhost:8080')
+    def api_configuration():
+        # An SSE connection may outlive many active revisions. Sample once per
+        # tool invocation rather than inheriting its connection's old frame.
+        return APIConfiguration(api_base_url, runtime.manager.store.read().active.values.api_key)
+    options = dict(api_base_url=api_base_url, api_key=settings.api_key,
+        api_config_provider=api_configuration, require_oauth=settings.require_mcp_oauth,
+        oauth_issuer=settings.oauth_issuer, oauth_audience=settings.oauth_audience,
+        oauth_jwks_url=settings.oauth_jwks_url)
+    if settings.enable_mcp_sse:
+        from python_mcp import server as _mcp_server
+        application.mount(settings.mcp_sse_path, _mcp_server.create_app(**options))
+        mounts.append(application.router.routes[-1])
+    if settings.enable_mcp_http:
+        from python_mcp import http_server as _mcp_http
+        application.mount(settings.mcp_http_path, _mcp_http.create_app(**options))
+        mounts.append(application.router.routes[-1])
 
 
 # ===== Admin security middleware (loopback + flag) =====
@@ -245,11 +369,7 @@ def sanitize_error(text: Optional[str]) -> Optional[str]:
     return sanitized[:80]
 
 
-@app.on_event("startup")
-async def on_startup():
-    # Re-read environment into settings for testability and dynamic config
-    reload_settings()
-    init_db()
+async def _initialize_runtime(tasks: list[asyncio.Task]) -> bool:
     # Ensure data dir
     ensure_dir(settings.fax_data_dir)
     # Validate Ghostscript availability — required for all configurations
@@ -260,23 +380,20 @@ async def on_startup():
         else:
             raise RuntimeError("Ghostscript (gs) not found. Install 'ghostscript' — it is required for fax file processing.")
     # Security posture warnings
-    if not settings.require_api_key and not settings.api_key and not settings.fax_disabled:
-        print("[warn] API auth is not enforced (REQUIRE_API_KEY=false and API_KEY unset); /fax requests are unauthenticated. Set API_KEY or REQUIRE_API_KEY for production.")
-    try:
-        pu = urlparse(settings.public_api_url)
-        insecure = pu.scheme == "http" and pu.hostname not in {"localhost", "127.0.0.1"}
-        if insecure:
-            msg = "PUBLIC_API_URL is not HTTPS; cloud providers will fetch PDFs over HTTP. Use HTTPS in production."
-            if settings.enforce_public_https and active_outbound() == "phaxio":
-                raise RuntimeError(msg)
-            else:
-                print(f"[warn] {msg}")
-    except Exception:
-        pass
+    if not settings.api_key:
+        print("[info] No installation key (API_KEY) is saved. Every API request still needs an API key or a signed-in "
+              "console session. An Owner can save an installation key through the settings API for owner recovery.")
+    pu = urlparse(settings.public_api_url)
+    insecure = pu.scheme == "http" and pu.hostname not in {"localhost", "127.0.0.1", "::1"}
+    if insecure:
+        msg = "PUBLIC_API_URL must use HTTPS for provider document retrieval."
+        if settings.enforce_public_https and active_outbound() == "phaxio":
+            raise RuntimeError(msg)
+        print(f"[warn] {msg}")
 
     # Start periodic cleanup task for artifacts
     if settings.artifact_ttl_days > 0:
-        asyncio.create_task(_artifact_cleanup_loop())
+        tasks.append(asyncio.create_task(_artifact_cleanup_loop(), name="faxbot-artifact-cleanup"))
     # Init audit logger
     init_audit_logger(
         enabled=settings.audit_log_enabled,
@@ -286,32 +403,56 @@ async def on_startup():
         syslog_address=(settings.audit_log_syslog_address or None),
     )
     # Start AMI when required by traits (either direction)
-    if not settings.fax_disabled and providerHasTrait("any", "requires_ami"):
-        asyncio.create_task(ami_client.connect())
-        ami_client.on_fax_result(_handle_fax_result)
+    return not settings.fax_disabled and providerHasTrait("any", "requires_ami")
+
+
+def _deliveries():
+    return OutboundStore(_configuration_manager().store)
+
+
+def _observe_native(job_id, attempt_id, status, provider, *, event_key, secret=None):
+    if (not isinstance(job_id, str) or re.fullmatch('[a-f0-9]{32}', job_id) is None
+            or not isinstance(attempt_id, str) or re.fullmatch('[a-f0-9]{32}', attempt_id) is None):
+        raise DeliveryConflict('Native result has no verified attempt identity.')
+    delivery = _deliveries()
+    revision, profile = delivery.attempt_context(job_id, attempt_id)
+    if profile.configuration.provider_id != provider or profile.configuration.manifest is not None:
+        raise DeliveryConflict('Native result does not match the original provider.')
+    if provider == 'freeswitch':
+        expected = revision.values.asterisk_inbound_secret
+        if not expected or not isinstance(secret, str) or not hmac.compare_digest(expected.encode(), secret.encode()):
+            raise HTTPException(401, detail='Invalid internal callback secret.')
+    # FreeSWITCH's channel UUID and bgapi Job-UUID are different namespaces.
+    # The authenticated job/attempt locator binds this event; never overwrite
+    # the create acknowledgement's SID with a channel UUID.
+    return delivery.observe(job_id, attempt_id=attempt_id, profile_id=profile.id,
+        provider_sid=job_id if provider == 'sip' else None, status=normalize_status(status), event_key=attempt_id + ':' + event_key)
 
 
 def _handle_fax_result(event):
-    job_id = event.get("JobID") or event.get("jobid")
-    status = event.get("Status") or event.get("status")
-    error = event.get("Error") or event.get("error")
-    pages = event.get("Pages") or event.get("pages")
-    with SessionLocal() as db:
-        job = db.get(FaxJob, job_id)
-        if job:
-            j = cast(Any, job)
-            j.status = status or j.status
-            j.error = error
-            if pages:
-                try:
-                    job.pages = int(pages)
-                except Exception:
-                    pass
-            j.updated_at = datetime.utcnow()
-            db.add(j)
-            db.commit()
-    if job_id and status:
-        audit_event("job_updated", job_id=job_id, status=status, provider="asterisk")
+    fields = {str(key).lower(): value for key, value in event.items()}
+    job_id, attempt = fields.get('jobid'), fields.get('attemptid')
+    try:
+        status = fields.get('status', '')
+        _observe_native(job_id, attempt, status, 'sip', event_key='ami-result:' + str(status))
+    except Exception:
+        audit_event('native_result_requires_reconciliation', provider='sip')
+
+
+def _handle_originate_response(event):
+    fields = {str(key).lower(): value for key, value in event.items()}
+    if str(fields.get('response', '')).lower() != 'failure':
+        return
+    parts = str(fields.get('actionid', '')).split(':')
+    if len(parts) != 3 or parts[0] != 'faxbot':
+        return
+    try:
+        _observe_native(parts[1], parts[2], 'failed', 'sip', event_key='ami-originate-failure')
+    except Exception:
+        audit_event('native_result_requires_reconciliation', provider='sip')
+
+
+app.include_router(sip_router)
 
 
 @app.get("/health")
@@ -319,10 +460,31 @@ def health():
     return {"status": "ok"}
 
 
-@app.get("/health/ready")
-def health_ready():
-    """Readiness probe. Returns 200 when core dependencies are ready.
-    Checks: DB connectivity; backend configuration; storage configuration when inbound is enabled.
+def _outbound_profile_ready(revision):
+    """Inspect the active captured adapter without contacting a fax provider."""
+    identity = revision.profile_id('outbound')
+    if identity is None:
+        return False
+    try:
+        profile = _configuration_manager().store.read_profile(identity)
+        configuration = profile.configuration
+        if configuration.manifest is not None or configuration.provider_id not in {'sip', 'freeswitch'}:
+            return service_from_profile(profile).is_configured()
+        if configuration.provider_id == 'sip':
+            return bool(configuration.settings.get('ami_host')
+                        and configuration.settings.get('ami_username')
+                        and configuration.credentials.get('ami_password'))
+        return bool(fs_cli_available() and configuration.settings.get('gateway_name')
+                    and configuration.settings.get('caller_id_number'))
+    except (ProviderExecutionError, ConfigurationStoreError, ConfigurationSecretError, ValueError):
+        return False
+
+
+def _readiness_status(request: Request):
+    """Shared local readiness snapshot; does not prove provider delivery.
+
+    Inspect active configuration, DB and native dependencies, plus inbound
+    storage when required. Never contact a cloud fax provider from this probe.
     """
     # DB check
     db_ok = False
@@ -338,8 +500,9 @@ def health_ready():
     ob = active_outbound()
     ib = active_inbound()
     backend_warnings: List[str] = []
-    outbound_ok = ob in VALID_BACKENDS
-    inbound_ok = ib in VALID_BACKENDS
+    revision = request.scope["faxbot.configuration"].active
+    outbound_ok = _outbound_profile_ready(revision)
+    inbound_ok = not settings.inbound_enabled or revision.profile_id("inbound") is not None
 
     # Storage check (only if inbound enabled)
     storage_ok = True
@@ -351,9 +514,9 @@ def health_ready():
             if settings.storage_backend == "s3" and not settings.s3_bucket:
                 storage_ok = False
                 storage_error = "S3_BUCKET not set"
-        except Exception as e:
+        except Exception:
             storage_ok = False
-            storage_error = str(e)
+            storage_error = "Configured inbound storage is unavailable."
 
     # System dependency check (Ghostscript — required)
     gs_installed = shutil.which("gs") is not None
@@ -376,10 +539,7 @@ def health_ready():
         (not ami_required or ami_connected) and
         (not storage_required or storage_ok)
     )
-    status_code = 200 if ready else 503
-    from fastapi.responses import JSONResponse as _JR
-    return _JR(
-        content={
+    return {
             "status": "ready" if ready else "not_ready",
             "backend": ob,
             "checks": {
@@ -400,88 +560,18 @@ def health_ready():
             },
             "warnings": backend_warnings,
             "storage_error": storage_error,
-        },
-        status_code=status_code,
-    )
+        }
 
 
-def require_api_key(request: Request, x_api_key: Optional[str] = Header(default=None)):
-    """Authenticate request using either env API_KEY or DB-backed key.
-    Behavior:
-      - If header matches env API_KEY → allow
-      - Else, if header is a valid DB key → allow
-      - Else, if REQUIRE_API_KEY=true → 401
-      - Else (dev mode) → allow
-    """
-    # Env bootstrap key
-    if settings.api_key and x_api_key == settings.api_key:
-        # Optionally audit usage without logging secrets
-        audit_event("api_key_used", key_id="env", path=request.url.path if request else None)
-        # Treat env key as full-access for compatibility
-        return {"key_id": "env", "scopes": ["*"]}
-    # Try DB-backed key
-    info = verify_db_key(x_api_key)
-    if info:
-        audit_event("api_key_used", key_id=info.get("key_id"), path=request.url.path if request else None)
-        return info
-    # If API key is required, reject
-    if settings.require_api_key or settings.api_key:
-        raise HTTPException(401, detail="Invalid or missing API key")
-    # Dev mode: allow unauthenticated
-    return None
+@app.get("/health/ready")
+def health_ready(request: Request):
+    status = _readiness_status(request)
+    return JSONResponse(status, status_code=200 if status['status'] == 'ready' else 503)
 
 
-def require_admin(x_api_key: Optional[str] = Header(default=None)):
-    # Allow env key as admin for bootstrap
-    if settings.api_key and x_api_key == settings.api_key:
-        return {"admin": True, "key_id": "env"}
-    info = verify_db_key(x_api_key)
-    if not info or ("keys:manage" not in (info.get("scopes") or [])):
-        raise HTTPException(401, detail="Admin authentication failed")
-    return info
-
-
-def _has_scope(info: Optional[dict], required: str) -> bool:
-    if info is None:
-        return False
-    scopes = info.get("scopes") or []
-    return "*" in scopes or required in scopes
-
-
-def require_scopes(required: List[str], path: Optional[str] = None, rpm: Optional[int] = None):
-    """Factory to build a dependency enforcing scopes and per-route RPM.
-    Allows unauthenticated access only when not enforcing API keys in dev.
-    """
-    def _dep(info = Depends(require_api_key)):
-        if info is None and not settings.require_api_key and not settings.api_key:
-            return
-        missing = [s for s in required if not _has_scope(info, s)]
-        if missing:
-            audit_event("api_key_denied_scope", key_id=(info or {}).get("key_id"), required=",".join(missing))
-            raise HTTPException(403, detail=f"Insufficient scope: {','.join(required)} required")
-        if rpm and path:
-            _enforce_rate_limit(info, path, rpm)
-    return _dep
-
-
-def require_fax_send(info = Depends(require_api_key)):
-    # If not enforcing API key (dev mode) and unauthenticated, allow
-    if info is None and not settings.require_api_key and not settings.api_key:
-        return
-    if not _has_scope(info, "fax:send"):
-        audit_event("api_key_denied_scope", key_id=(info or {}).get("key_id"), required="fax:send")
-        raise HTTPException(403, detail="Insufficient scope: fax:send required")
-    # Rate limit per key if configured
-    _enforce_rate_limit(info, "/fax")
-
-
-def require_fax_read(info = Depends(require_api_key)):
-    if info is None and not settings.require_api_key and not settings.api_key:
-        return
-    if not _has_scope(info, "fax:read"):
-        audit_event("api_key_denied_scope", key_id=(info or {}).get("key_id"), required="fax:read")
-        raise HTTPException(403, detail="Insufficient scope: fax:read required")
-    _enforce_rate_limit(info, "/fax/{id}")
+# Every protected route either declares its permission with require_permission
+# or authenticates with require_identity and checks permission on the resource.
+from .access.route_policy import authorize as authorize_operation, request_audit, require_permission  # noqa: E402
 
 
 class CreateAPIKeyIn(BaseModel):
@@ -513,183 +603,141 @@ class APIKeyMeta(BaseModel):
     note: Optional[str] = None
 
 
-@app.get("/admin/config", dependencies=[Depends(require_admin)])
-def get_admin_config():
+class PublicDetailErrorResponse(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    detail: str
+
+
+class ConfigurationInputError(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    loc: list[str | int]
+    type: str
+    msg: Literal['Invalid configuration input.']
+
+
+class ConfigurationValidationErrorResponse(BaseModel):
+    model_config = ConfigDict(extra='forbid', json_schema_extra={'examples': [
+        {'detail': [{'loc': ['body', 'max_file_size_mb'], 'type': 'int_parsing',
+                     'msg': 'Invalid configuration input.'}]},
+    ]})
+    detail: list[ConfigurationInputError]
+
+
+_PUBLIC_DETAIL_RESPONSES = {status: {'model': PublicDetailErrorResponse, 'description': description}
+    for status, description in (
+        (400, 'Configuration or provider metadata could not be validated.'),
+        (401, 'Authentication required or credentials no longer valid.'),
+        (403, 'Transport, browser request verification or operation is not permitted.'),
+        (404, 'The v3 plugins feature is disabled.'),
+        (409, 'Configuration changed. Reload before applying edits.'),
+        (429, 'Too many authentication attempts. Try again later.'),
+        (503, 'Configuration, authentication or access service is unavailable.'),
+    )}
+_CONFIGURATION_VALIDATION_RESPONSES = {422: {'model': ConfigurationValidationErrorResponse,
+    'description': 'Invalid configuration input; raw input and error context are omitted.'}}
+_CONFIGURATION_READ_RESPONSES = {status: _PUBLIC_DETAIL_RESPONSES[status] for status in (401, 403, 429, 503)}
+_PROVIDER_READ_RESPONSES = {status: _PUBLIC_DETAIL_RESPONSES[status] for status in (400, 401, 403, 404, 429, 503)}
+
+
+@app.get("/admin/config", responses=_CONFIGURATION_READ_RESPONSES)
+def get_admin_config(request: Request, identity=Depends(require_identity)):
     """Return sanitized effective configuration for operators.
-    Does not include secrets. Requires admin auth (bootstrap env key or keys:manage).
+    Requires current settings:read and uses one authorized active snapshot.
     """
-    backend = settings.fax_backend
-    ob = active_outbound()
-    ib = active_inbound()
+    access = access_runtime(request)
+    snapshot = access.configuration_access.settings(identity.actor)
+    values = snapshot.active.values
+    backend = values.fax_backend
+    ob = values.effective_outbound
+    ib = values.effective_inbound
     # Configured flags
     cfg = {
         "backend": backend,
+        "fax_disabled": values.fax_disabled,
+        "max_file_size_mb": values.max_file_size_mb,
         "hybrid": {
             "outbound": ob,
             "inbound": ib,
-            "outbound_explicit": bool(os.getenv("FAX_OUTBOUND_BACKEND")),
-            "inbound_explicit": bool(os.getenv("FAX_INBOUND_BACKEND")),
+            "outbound_explicit": bool(values.outbound_backend),
+            "inbound_explicit": bool(values.inbound_backend),
         },
-        "allow_restart": settings.admin_allow_restart,
-        "require_api_key": settings.require_api_key,
-        "enforce_public_https": settings.enforce_public_https,
-        "phaxio_verify_signature": settings.phaxio_verify_signature,
-        "persisted_settings_enabled": (os.getenv("ENABLE_PERSISTED_SETTINGS", "false").lower() in {"1","true","yes"}),
+        "allow_restart": values.admin_allow_restart,
+        "require_api_key": values.require_api_key,
+        "enforce_public_https": values.enforce_public_https,
+        "phaxio_verify_signature": values.phaxio_verify_signature,
+        "persisted_settings_enabled": values.enable_persisted_settings,
         "branding": {
-            "docs_base": os.getenv("DOCS_BASE_URL", "https://dmontgomery40.github.io/Faxbot"),
+            "docs_base": access.context.docs_base,
             "logo_path": "/admin/ui/faxbot_full_logo.png",
         },
         "mcp": {
-            "sse_enabled": (os.getenv("ENABLE_MCP_SSE", "false").lower() in {"1","true","yes"}),
-            "sse_path": settings.mcp_sse_path,
-            "require_oauth": settings.require_mcp_oauth,
+            "sse_enabled": values.enable_mcp_sse,
+            "sse_path": values.mcp_sse_path,
+            "require_oauth": values.require_mcp_oauth,
             "oauth": {
-                "issuer": settings.oauth_issuer,
-                "audience": settings.oauth_audience,
-                "jwks_url": settings.oauth_jwks_url,
+                "issuer": values.oauth_issuer,
+                "audience": values.oauth_audience,
+                "jwks_url": values.oauth_jwks_url,
             },
-            "http_enabled": (os.getenv("ENABLE_MCP_HTTP", "false").lower() in {"1","true","yes"}),
-            "http_path": settings.mcp_http_path,
+            "http_enabled": values.enable_mcp_http,
+            "http_path": values.mcp_http_path,
         },
-        "audit_log_enabled": settings.audit_log_enabled,
+        "audit_log_enabled": values.audit_log_enabled,
         "rate_limits": {
-            "global_rpm": settings.max_requests_per_minute,
-            "inbound_list_rpm": settings.inbound_list_rpm,
-            "inbound_get_rpm": settings.inbound_get_rpm,
+            "global_rpm": values.max_requests_per_minute,
+            "inbound_list_rpm": values.inbound_list_rpm,
+            "inbound_get_rpm": values.inbound_get_rpm,
         },
         "inbound": {
-            "enabled": settings.inbound_enabled,
-            "retention_days": settings.inbound_retention_days,
-            "token_ttl_minutes": settings.inbound_token_ttl_minutes,
+            "enabled": values.inbound_enabled,
+            "retention_days": values.inbound_retention_days,
+            "token_ttl_minutes": values.inbound_token_ttl_minutes,
         },
         "storage": {
-            "backend": settings.storage_backend,
-            "s3_bucket": (settings.s3_bucket[:4] + "…" if settings.s3_bucket else ""),
-            "s3_region": settings.s3_region,
-            "s3_prefix": settings.s3_prefix,
-            "s3_endpoint_url": settings.s3_endpoint_url,
-            "s3_kms_key_id": (settings.s3_kms_key_id[:8] + "…" if settings.s3_kms_key_id else ""),
+            "backend": values.storage_backend,
+            "s3_bucket": (values.s3_bucket[:4] + "…" if values.s3_bucket else ""),
+            "s3_region": values.s3_region,
+            "s3_prefix": values.s3_prefix,
+            "s3_endpoint_url": values.s3_endpoint_url,
+            "s3_kms_key_id": (values.s3_kms_key_id[:8] + "…" if values.s3_kms_key_id else ""),
         },
         "backend_configured": {
-            "phaxio": bool(settings.phaxio_api_key and settings.phaxio_api_secret),
-            "sinch": bool(settings.sinch_project_id and settings.sinch_api_key and settings.sinch_api_secret),
-            "signalwire": bool(settings.signalwire_space_url and settings.signalwire_project_id and settings.signalwire_api_token),
-            "documo": bool(settings.documo_api_key),
-            "sip_ami_configured": bool(settings.ami_username and settings.ami_password),
-            "sip_ami_password_default": (settings.ami_password == "changeme"),
+            "phaxio": bool(values.phaxio_api_key and values.phaxio_api_secret),
+            "sinch": bool(values.sinch_project_id and values.sinch_api_key and values.sinch_api_secret),
+            "signalwire": bool(values.signalwire_space_url and values.signalwire_project_id and values.signalwire_api_token),
+            "documo": bool(values.documo_api_key),
+            "humblefax": bool(values.humblefax_access_key and values.humblefax_secret_key),
+            "sip_ami_configured": bool(values.ami_username and values.ami_password),
+            "sip_ami_password_default": (values.ami_password == "changeme"),
         },
-        "public_api_url": settings.public_api_url,
+        "public_api_url": values.public_api_url,
     }
     # v3 plugins status (feature-gated)
-    if settings.feature_v3_plugins:
+    if values.feature_v3_plugins:
         cfg["v3_plugins"] = {
             "enabled": True,
             "active_outbound": ob,
-            "config_path": settings.faxbot_config_path,
-            "plugin_install_enabled": settings.feature_plugin_install,
+            "config_path": values.faxbot_config_path,
+            "plugin_install_enabled": values.feature_plugin_install,
         }
     return cfg
 
 
-@app.get("/admin/settings", dependencies=[Depends(require_admin)])
-def get_admin_settings():
-    """Return effective settings with sensitive values masked."""
-    ob = active_outbound()
-    ib = active_inbound()
-    return {
-        "backend": {
-            "type": settings.fax_backend,
-            "disabled": settings.fax_disabled,
-        },
-        "hybrid": {
-            "outbound_backend": ob,
-            "inbound_backend": ib,
-            "outbound_explicit": bool(os.getenv("FAX_OUTBOUND_BACKEND")),
-            "inbound_explicit": bool(os.getenv("FAX_INBOUND_BACKEND")),
-        },
-        "phaxio": {
-            "api_key": mask_secret(settings.phaxio_api_key),
-            "api_secret": mask_secret(settings.phaxio_api_secret),
-            "callback_url": settings.phaxio_status_callback_url,
-            "verify_signature": settings.phaxio_verify_signature,
-            "configured": bool(settings.phaxio_api_key and settings.phaxio_api_secret),
-        },
-        "documo": {
-            "api_key": mask_secret(settings.documo_api_key),
-            "base_url": settings.documo_base_url,
-            "sandbox": settings.documo_use_sandbox,
-            "configured": bool(settings.documo_api_key),
-        },
-        "sinch": {
-            "project_id": settings.sinch_project_id,
-            "api_key": mask_secret(settings.sinch_api_key),
-            "api_secret": mask_secret(settings.sinch_api_secret),
-            "configured": bool(settings.sinch_project_id and settings.sinch_api_key and settings.sinch_api_secret),
-        },
-        "signalwire": {
-            "space_url": settings.signalwire_space_url,
-            "project_id": settings.signalwire_project_id,
-            "api_token": mask_secret(settings.signalwire_api_token),
-            "from_fax": mask_phone(settings.signalwire_fax_from_e164),
-            "callback_url": settings.signalwire_status_callback_url,
-            "configured": bool(settings.signalwire_space_url and settings.signalwire_project_id and settings.signalwire_api_token),
-        },
-        "fs": {
-            "esl_host": settings.fs_esl_host,
-            "esl_port": settings.fs_esl_port,
-            "gateway_name": settings.fs_gateway_name,
-            "caller_id_number": settings.fs_caller_id_number,
-            "t38_enable": settings.fs_t38_enable,
-        },
-        "sip": {
-            "ami_host": settings.ami_host,
-            "ami_port": settings.ami_port,
-            "ami_username": settings.ami_username,
-            "ami_password": mask_secret(settings.ami_password),
-            "ami_password_is_default": settings.ami_password == "changeme",
-            "station_id": mask_phone(settings.fax_station_id),
-            "configured": bool(settings.ami_username and settings.ami_password),
-        },
-        "security": {
-            "require_api_key": settings.require_api_key,
-            "enforce_https": settings.enforce_public_https,
-            "audit_enabled": settings.audit_log_enabled,
-            "public_api_url": settings.public_api_url,
-        },
-        "storage": {
-            "backend": settings.storage_backend,
-            "s3_bucket": (settings.s3_bucket[:4] + "…" if settings.s3_bucket else ""),
-            "s3_kms_enabled": bool(settings.s3_kms_key_id),
-        },
-        "database": {
-            "url": settings.database_url,
-            "persistent": settings.database_url.startswith("sqlite:////faxdata/") if isinstance(settings.database_url, str) else False,
-        },
-        "inbound": {
-            "enabled": settings.inbound_enabled,
-            "retention_days": settings.inbound_retention_days,
-            "token_ttl_minutes": settings.inbound_token_ttl_minutes,
-            "sip": {
-                "asterisk_secret": mask_secret(settings.asterisk_inbound_secret),
-                "configured": bool(settings.asterisk_inbound_secret),
-            },
-            "phaxio": {
-                "verify_signature": settings.phaxio_inbound_verify_signature,
-            },
-            "sinch": {
-                "verify_signature": settings.sinch_inbound_verify_signature,
-                "basic_auth_configured": bool(settings.sinch_inbound_basic_user),
-                "hmac_configured": bool(settings.sinch_inbound_hmac_secret),
-            },
-        },
-        "limits": {
-            "max_file_size_mb": settings.max_file_size_mb,
-            "pdf_token_ttl_minutes": settings.pdf_token_ttl_minutes,
-            "rate_limit_rpm": settings.max_requests_per_minute,
-            "inbound_list_rpm": settings.inbound_list_rpm,
-            "inbound_get_rpm": settings.inbound_get_rpm,
-        },
-    }
+def _configuration_manager():
+    runtime = getattr(app.state, 'configuration_runtime', None)
+    if runtime is None or not runtime.serving:
+        raise HTTPException(503, detail="Installation configuration is not ready.")
+    return runtime.manager
+
+
+def _settings_view(snapshot):
+    return project_admin_settings(snapshot, _configuration_manager().pending_fields(snapshot))
+
+
+@app.get("/admin/settings", responses={**_CONFIGURATION_READ_RESPONSES, **_CONFIGURATION_VALIDATION_RESPONSES})
+def get_admin_settings(request: Request, identity=Depends(require_identity)):
+    """Read the desired editor revision; credentials remain opaque."""
+    return _settings_view(access_runtime(request).configuration_access.settings(identity.actor))
 
 
 class ValidateSettingsRequest(BaseModel):
@@ -705,7 +753,11 @@ class ValidateSettingsRequest(BaseModel):
     ami_password: Optional[str] = None
 
 
-@app.post("/admin/settings/validate", dependencies=[Depends(require_admin)])
+_PERMISSION_RESPONSES = {status: _PUBLIC_DETAIL_RESPONSES[status] for status in (401, 403, 429, 503)}
+
+
+@app.post("/admin/settings/validate", dependencies=[Depends(require_permission('providers:write'))],
+          responses={**_PERMISSION_RESPONSES, **_CONFIGURATION_VALIDATION_RESPONSES})
 async def validate_settings(payload: ValidateSettingsRequest):
     """Validate connectivity/non-destructive checks for the selected backend."""
     results: dict[str, Any] = {"backend": payload.backend, "checks": {}, "test_fax": None}
@@ -763,241 +815,84 @@ async def validate_settings(payload: ValidateSettingsRequest):
     return results
 
 
-class UpdateSettingsRequest(BaseModel):
-    # Core
-    backend: Optional[str] = None  # 'phaxio' | 'sinch' | 'sip'
-    outbound_backend: Optional[str] = None  # hybrid outbound
-    inbound_backend: Optional[str] = None   # hybrid inbound
-    require_api_key: Optional[bool] = None
-    enforce_public_https: Optional[bool] = None
-    public_api_url: Optional[str] = None
-    fax_disabled: Optional[bool] = None
-    max_file_size_mb: Optional[int] = None
-    enable_persisted_settings: Optional[bool] = None
-    database_url: Optional[str] = None
-    # Feature flags
-    feature_v3_plugins: Optional[bool] = None
-    feature_plugin_install: Optional[bool] = None
-    # MCP embedded SSE
-    enable_mcp_sse: Optional[bool] = None
-    require_mcp_oauth: Optional[bool] = None
-    oauth_issuer: Optional[str] = None
-    oauth_audience: Optional[str] = None
-    oauth_jwks_url: Optional[str] = None
-    enable_mcp_http: Optional[bool] = None
-
-    # Phaxio
-    phaxio_api_key: Optional[str] = None
-    phaxio_api_secret: Optional[str] = None
-    phaxio_status_callback_url: Optional[str] = None
-    phaxio_verify_signature: Optional[bool] = None
-
-    # Sinch
-    sinch_project_id: Optional[str] = None
-    sinch_api_key: Optional[str] = None
-    sinch_api_secret: Optional[str] = None
-
-    # SignalWire
-    signalwire_space_url: Optional[str] = None
-    signalwire_project_id: Optional[str] = None
-    signalwire_api_token: Optional[str] = None
-    signalwire_fax_from_e164: Optional[str] = None
-
-    # Documo
-    documo_api_key: Optional[str] = None
-    documo_base_url: Optional[str] = None
-    documo_use_sandbox: Optional[bool] = None
-
-    # SIP/Asterisk
-    ami_host: Optional[str] = None
-    ami_port: Optional[int] = None
-    ami_username: Optional[str] = None
-    ami_password: Optional[str] = None
-    fax_station_id: Optional[str] = None
-
-    # Inbound
-    inbound_enabled: Optional[bool] = None
-    inbound_retention_days: Optional[int] = None
-    inbound_token_ttl_minutes: Optional[int] = None
-    asterisk_inbound_secret: Optional[str] = None
-    phaxio_inbound_verify_signature: Optional[bool] = None
-    sinch_inbound_verify_signature: Optional[bool] = None
-    sinch_inbound_basic_user: Optional[str] = None
-    sinch_inbound_basic_pass: Optional[str] = None
-    sinch_inbound_hmac_secret: Optional[str] = None
-
-    # Audit / rate limiting
-    audit_log_enabled: Optional[bool] = None
-    max_requests_per_minute: Optional[int] = None
-    # Storage
-    storage_backend: Optional[str] = None
-    s3_bucket: Optional[str] = None
-    s3_prefix: Optional[str] = None
-    s3_region: Optional[str] = None
-    s3_endpoint_url: Optional[str] = None
-    s3_kms_key_id: Optional[str] = None
-    # Inbound rate limits
-    inbound_list_rpm: Optional[int] = None
-    inbound_get_rpm: Optional[int] = None
+# Keep the flat legacy patch names, generated from the canonical value model.
+# Whole-candidate validation owns constraints and sanitized error reporting.
+UpdateSettingsRequest = create_model(
+    'UpdateSettingsRequest',
+    __config__=ConfigDict(extra='forbid', hide_input_in_errors=True, json_schema_extra={
+        'description': 'Submit only changed fields and the loaded expected_revision_id. An empty object submits no field edits.',
+        'examples': [{}],
+    }),
+    expected_revision_id=(str | None, None),
+    **{(field.json_schema_extra or {}).get('patch_name', name): (field.annotation | None, None)
+       for name, field in ConfigurationValues.model_fields.items()},
+)
 
 
-def _set_env_bool(key: str, value: Optional[bool]):
-    if value is None:
-        return
-    os.environ[key] = "true" if value else "false"
+class ConfigurationWriteMeta(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    active_revision_id: str = Field(min_length=1, max_length=40, pattern=r'^[ -~]+$')
+    desired_revision_id: str = Field(min_length=1, max_length=40, pattern=r'^[ -~]+$')
+    generation: int = Field(ge=1)
+    apply_state: Literal['applied', 'pending_restart']
+    restart_recommended: bool
 
 
-def _set_env_opt(key: str, value):
-    if value is None:
-        return
-    os.environ[key] = str(value)
+_CONFIGURATION_WRITE_EXAMPLES = {
+    'applied': {'summary': 'Confirmed applied configuration', 'value': {
+        'ok': True, 'changed': True, '_meta': {
+            'active_revision_id': '00000000-0000-4000-8000-000000000001',
+            'desired_revision_id': '00000000-0000-4000-8000-000000000001',
+            'generation': 2, 'apply_state': 'applied', 'restart_recommended': False,
+        },
+    }},
+    'pending_restart': {'summary': 'Confirmed desired configuration pending restart', 'value': {
+        'ok': True, 'changed': True, '_meta': {
+            'active_revision_id': '00000000-0000-4000-8000-000000000001',
+            'desired_revision_id': '00000000-0000-4000-8000-000000000002',
+            'generation': 3, 'apply_state': 'pending_restart', 'restart_recommended': True,
+        },
+    }},
+}
 
 
-@app.put("/admin/settings", dependencies=[Depends(require_admin)])
-def update_admin_settings(payload: UpdateSettingsRequest):
-    """Apply configuration updates in-process by setting environment variables and reloading settings.
-    Note: For persistence across restarts, write these to your .env and restart the API.
-    """
-    # Core
-    if payload.backend:
-        _set_env_opt("FAX_BACKEND", payload.backend)
-    # Hybrid overrides when provided
-    if payload.outbound_backend:
-        _set_env_opt("FAX_OUTBOUND_BACKEND", payload.outbound_backend)
-    if payload.inbound_backend:
-        _set_env_opt("FAX_INBOUND_BACKEND", payload.inbound_backend)
-    _set_env_bool("REQUIRE_API_KEY", payload.require_api_key)
-    _set_env_bool("ENFORCE_PUBLIC_HTTPS", payload.enforce_public_https)
-    _set_env_opt("PUBLIC_API_URL", payload.public_api_url)
-    _set_env_bool("FAX_DISABLED", payload.fax_disabled)
-    _set_env_bool("ENABLE_PERSISTED_SETTINGS", payload.enable_persisted_settings)
-    _set_env_opt("DATABASE_URL", payload.database_url)
-    # Feature flags
-    _set_env_bool("FEATURE_V3_PLUGINS", payload.feature_v3_plugins)
-    _set_env_bool("FEATURE_PLUGIN_INSTALL", payload.feature_plugin_install)
-    # MCP SSE
-    _set_env_bool("ENABLE_MCP_SSE", payload.enable_mcp_sse)
-    _set_env_bool("REQUIRE_MCP_OAUTH", payload.require_mcp_oauth)
-    _set_env_opt("OAUTH_ISSUER", payload.oauth_issuer)
-    _set_env_opt("OAUTH_AUDIENCE", payload.oauth_audience)
-    _set_env_opt("OAUTH_JWKS_URL", payload.oauth_jwks_url)
-    _set_env_bool("ENABLE_MCP_HTTP", payload.enable_mcp_http)
-    _set_env_opt("MAX_FILE_SIZE_MB", payload.max_file_size_mb)
-
-    # Phaxio
-    _set_env_opt("PHAXIO_API_KEY", payload.phaxio_api_key)
-    _set_env_opt("PHAXIO_API_SECRET", payload.phaxio_api_secret)
-    if payload.phaxio_status_callback_url is not None:
-        _set_env_opt("PHAXIO_STATUS_CALLBACK_URL", payload.phaxio_status_callback_url)
-        # also set alias for compatibility
-        _set_env_opt("PHAXIO_CALLBACK_URL", payload.phaxio_status_callback_url)
-    _set_env_bool("PHAXIO_VERIFY_SIGNATURE", payload.phaxio_verify_signature)
-
-    # Sinch
-    _set_env_opt("SINCH_PROJECT_ID", payload.sinch_project_id)
-    _set_env_opt("SINCH_API_KEY", payload.sinch_api_key)
-    _set_env_opt("SINCH_API_SECRET", payload.sinch_api_secret)
-
-    # SignalWire
-    _set_env_opt("SIGNALWIRE_SPACE_URL", payload.signalwire_space_url)
-    _set_env_opt("SIGNALWIRE_PROJECT_ID", payload.signalwire_project_id)
-    _set_env_opt("SIGNALWIRE_API_TOKEN", payload.signalwire_api_token)
-    _set_env_opt("SIGNALWIRE_FAX_FROM_E164", payload.signalwire_fax_from_e164)
-
-    # Documo (preview)
-    _set_env_opt("DOCUMO_API_KEY", payload.documo_api_key)
-    _set_env_opt("DOCUMO_BASE_URL", payload.documo_base_url)
-    _set_env_bool("DOCUMO_SANDBOX", payload.documo_use_sandbox)
-
-    # SIP
-    _set_env_opt("ASTERISK_AMI_HOST", payload.ami_host)
-    _set_env_opt("ASTERISK_AMI_PORT", payload.ami_port)
-    _set_env_opt("ASTERISK_AMI_USERNAME", payload.ami_username)
-    _set_env_opt("ASTERISK_AMI_PASSWORD", payload.ami_password)
-    _set_env_opt("FAX_LOCAL_STATION_ID", payload.fax_station_id)
-
-    # Inbound
-    _set_env_bool("INBOUND_ENABLED", payload.inbound_enabled)
-    _set_env_opt("INBOUND_RETENTION_DAYS", payload.inbound_retention_days)
-    _set_env_opt("INBOUND_TOKEN_TTL_MINUTES", payload.inbound_token_ttl_minutes)
-    _set_env_opt("ASTERISK_INBOUND_SECRET", payload.asterisk_inbound_secret)
-    _set_env_bool("PHAXIO_INBOUND_VERIFY_SIGNATURE", payload.phaxio_inbound_verify_signature)
-    _set_env_bool("SINCH_INBOUND_VERIFY_SIGNATURE", payload.sinch_inbound_verify_signature)
-    _set_env_opt("SINCH_INBOUND_BASIC_USER", payload.sinch_inbound_basic_user)
-    _set_env_opt("SINCH_INBOUND_BASIC_PASS", payload.sinch_inbound_basic_pass)
-    _set_env_opt("SINCH_INBOUND_HMAC_SECRET", payload.sinch_inbound_hmac_secret)
-
-    # Audit / rate limiting
-    _set_env_bool("AUDIT_LOG_ENABLED", payload.audit_log_enabled)
-    _set_env_opt("MAX_REQUESTS_PER_MINUTE", payload.max_requests_per_minute)
-    # Storage (note: credentials are handled by AWS SDK env/role, not here)
-    storage_fields = [
-        payload.storage_backend,
-        payload.s3_bucket,
-        payload.s3_prefix,
-        payload.s3_region,
-        payload.s3_endpoint_url,
-        payload.s3_kms_key_id,
-    ]
-    _set_env_opt("STORAGE_BACKEND", payload.storage_backend)
-    _set_env_opt("S3_BUCKET", payload.s3_bucket)
-    _set_env_opt("S3_PREFIX", payload.s3_prefix)
-    _set_env_opt("S3_REGION", payload.s3_region)
-    _set_env_opt("S3_ENDPOINT_URL", payload.s3_endpoint_url)
-    _set_env_opt("S3_KMS_KEY_ID", payload.s3_kms_key_id)
-    # Inbound rate limits
-    _set_env_opt("INBOUND_LIST_RPM", payload.inbound_list_rpm)
-    _set_env_opt("INBOUND_GET_RPM", payload.inbound_get_rpm)
-
-    # Apply live
-    # Detect backend/storage changes for guidance
-    old_backend = settings.fax_backend
-    old_ob = active_outbound()
-    old_ib = active_inbound()
-    old_storage = (settings.storage_backend or "local").lower()
-    reload_settings()
-    new_backend = settings.fax_backend
-    new_ob = active_outbound()
-    new_ib = active_inbound()
-    new_storage = (settings.storage_backend or "local").lower()
-    backend_changed = (old_backend != new_backend)
-    outbound_changed = (old_ob != new_ob)
-    inbound_changed = (old_ib != new_ib)
-    storage_changed = (old_storage != new_storage) or any(storage_fields)
-    # Changing MCP flags typically requires restart to remount
-    mcp_changed = any([
-        payload.enable_mcp_sse is not None,
-        payload.require_mcp_oauth is not None,
-        payload.oauth_issuer is not None,
-        payload.oauth_audience is not None,
-        payload.oauth_jwks_url is not None,
-        payload.enable_mcp_http is not None,
-    ])
-    if storage_changed:
-        # Recreate storage client with new settings on next access
-        try:
-            reset_storage()
-        except Exception:
-            pass
-    # Return current effective masked view + hints
-    out = get_admin_settings()
-    out["_meta"] = {
-        "backend_changed": backend_changed,
-        "outbound_changed": outbound_changed,
-        "inbound_changed": inbound_changed,
-        "storage_changed": storage_changed,
-        "restart_recommended": backend_changed or new_ob == "sip" or storage_changed or mcp_changed,
-    }
-    return out
+class ConfigurationWriteResponse(BaseModel):
+    model_config = ConfigDict(extra='forbid', json_schema_extra={
+        'examples': [example['value'] for example in _CONFIGURATION_WRITE_EXAMPLES.values()],
+    })
+    ok: Literal[True]
+    changed: bool
+    metadata: ConfigurationWriteMeta = Field(alias='_meta')
 
 
-@app.post("/admin/settings/reload", dependencies=[Depends(require_admin)])
-def admin_reload_settings():
-    reload_settings()
-    return get_admin_settings()
+_CONFIGURATION_WRITE_RESPONSES = {
+    **{status: _PUBLIC_DETAIL_RESPONSES[status] for status in (400, 401, 403, 409, 429, 503)},
+    **_CONFIGURATION_VALIDATION_RESPONSES,
+    200: {'description': 'Confirmed canonical write receipt; read configuration values separately.',
+          'content': {'application/json': {'examples': _CONFIGURATION_WRITE_EXAMPLES}}},
+}
 
 
-@app.post("/admin/restart", dependencies=[Depends(require_admin)])
+@app.put("/admin/settings", response_model=ConfigurationWriteResponse, responses=_CONFIGURATION_WRITE_RESPONSES)
+def update_admin_settings(payload: UpdateSettingsRequest, request: Request, identity=Depends(require_identity)):
+    """Validate and durably apply one candidate, or stage it for coordinated restart."""
+    manager = _configuration_manager()
+    expected = request.scope['faxbot.configuration']
+    access = access_runtime(request)
+    access.configuration_access.prepare_settings_write(identity.actor, expected, payload.expected_revision_id)
+    changes = payload.model_dump(exclude_unset=True, exclude={'expected_revision_id'})
+    snapshot = manager.patch_authorized(expected, changes, principal=identity.actor, control=access.control)
+    return configuration_write_receipt(expected, snapshot)
+
+
+@app.post("/admin/settings/reload", responses={**_CONFIGURATION_READ_RESPONSES, **_CONFIGURATION_VALIDATION_RESPONSES})
+def admin_reload_settings(request: Request, identity=Depends(require_identity)):
+    """Read durable active/desired state without importing environment or promoting it."""
+    return _settings_view(access_runtime(request).configuration_access.settings(identity.actor))
+
+
+@app.post("/admin/restart", dependencies=[Depends(require_permission('host:restart', audit=True))],
+          responses=_PERMISSION_RESPONSES)
 async def admin_restart():
     """Optional: restart the API process (for containerized deployments). Controlled by ADMIN_ALLOW_RESTART."""
     if not settings.admin_allow_restart:
@@ -1009,48 +904,51 @@ async def admin_restart():
     return {"ok": True, "note": "Process will exit; container manager should restart it."}
 
 
-@app.get("/admin/health-status", dependencies=[Depends(require_admin)])
-async def get_health_status():
-    # Basic dashboard counters and posture
-    with SessionLocal() as db:
-        queued = db.query(FaxJob).filter(FaxJob.status == "queued").count()
-        in_prog = db.query(FaxJob).filter(FaxJob.status == "in_progress").count()
-        recent_fail = db.query(FaxJob).filter(
-            FaxJob.status == "failed", FaxJob.updated_at > datetime.utcnow() - timedelta(hours=1)
-        ).count()
-    # Lightweight health signals (avoid duplicating full readiness logic)
-    # DB check
-    db_ok = True
-    try:
-        from sqlalchemy import text  # type: ignore
+@app.get("/admin/health-status", dependencies=[Depends(require_permission('diagnostics:read'))],
+         responses=_PERMISSION_RESPONSES)
+async def get_health_status(request: Request):
+    def inspect():
+        from sqlalchemy import or_
+        from .db import APIKey
+        from .outbound_summary import dashboard_counts
+        store = _configuration_manager().store
+        now = datetime.utcnow()
+        with store.engine.connect() as connection:
+            jobs = dashboard_counts(connection, store.delivery_tables['outbound_deliveries'], now=now)
+        readiness = _readiness_status(request)
         with SessionLocal() as db:
-            db.execute(text("SELECT 1"))
-    except Exception:
-        db_ok = False
-    # Ghostscript
-    gs_ok = shutil.which("gs") is not None
-    # Backend configured
-    backend = settings.fax_backend
-    backend_ok = True
-    if backend == "phaxio":
-        backend_ok = bool(settings.phaxio_api_key and settings.phaxio_api_secret)
-    elif backend == "sinch":
-        backend_ok = bool(settings.sinch_project_id and settings.sinch_api_key and settings.sinch_api_secret)
-    # backend_ok remains True for sip; AMI connectivity is handled asynchronously
-    backend_healthy = bool(db_ok and gs_ok and backend_ok)
-    return {
-        "timestamp": datetime.utcnow().isoformat(),
-        "backend": backend,
-        "backend_healthy": backend_healthy,
-        "jobs": {"queued": queued, "in_progress": in_prog, "recent_failures": recent_fail},
-        "inbound_enabled": settings.inbound_enabled,
-        "api_keys_configured": bool(settings.api_key),
-        "require_auth": settings.require_api_key,
-    }
+            db_key_present = db.query(APIKey.id).filter(APIKey.revoked_at.is_(None),
+                or_(APIKey.expires_at.is_(None), APIKey.expires_at > now)).first() is not None
+        return {
+            "timestamp": now.isoformat() + 'Z',
+            "backend": readiness['backend'],
+            "backend_healthy": readiness['status'] == 'ready',
+            "jobs": jobs,
+            "inbound_enabled": settings.inbound_enabled,
+            "api_keys_configured": bool(settings.api_key) or db_key_present,
+            # Every API route needs an API key or a signed-in session.
+            "require_auth": True,
+        }
+    return await run_lifecycle_step(inspect)
 
 
-@app.get("/admin/db-status", dependencies=[Depends(require_admin)])
-def admin_db_status():
+@private_operation
+def _visible_counts(service, actor):
+    """Count only rows this actor could list; the key total requires keys:manage."""
+    with service.store.transaction() as connection:
+        now = access_utcnow()
+        def visible(permission, kind):
+            ids = service.control.visible_resource_ids_on(connection, actor, permission, kind, now=now)
+            return connection.execute(sa.select(sa.func.count()).select_from(ids.subquery())).scalar_one()
+        keys = None
+        if service.control.authorize_on(connection, actor, 'keys:manage', ResourceRef('installation'), now=now).allowed:
+            keys = connection.execute(sa.select(sa.func.count()).select_from(service.store.tables['api_keys'])).scalar_one()
+        return {"fax_jobs": visible('fax:read', 'outbound'), "api_keys": keys,
+                "inbound_fax": visible('inbound:list', 'inbound')}
+
+
+@app.get("/admin/db-status", responses=_PERMISSION_RESPONSES)
+def admin_db_status(request: Request, identity=Depends(require_permission('diagnostics:read'))):
     from sqlalchemy import text  # type: ignore
     url = settings.database_url
     engine = "unknown"
@@ -1071,29 +969,14 @@ def admin_db_status():
 
     connected = False
     err = None
-    counts = {}
     try:
         with SessionLocal() as db:
             db.execute(text("SELECT 1"))
             connected = True
-            # Try lightweight counts
-            try:
-                counts["fax_jobs"] = db.query(FaxJob).count()
-            except Exception:  # pragma: no cover
-                counts["fax_jobs"] = None
-            try:
-                from .auth import APIKey  # type: ignore
-                counts["api_keys"] = db.query(APIKey).count()
-            except Exception:
-                counts["api_keys"] = None
-            try:
-                from .db import InboundFax  # type: ignore
-                counts["inbound_fax"] = db.query(InboundFax).count()
-            except Exception:
-                counts["inbound_fax"] = None
     except Exception as e:  # pragma: no cover
         connected = False
         err = str(e)
+    counts = _visible_counts(access_runtime(request), identity.actor) if connected else {}
 
     sqlite_info = None
     if sqlite_file:
@@ -1121,21 +1004,36 @@ def admin_db_status():
 # ====== Manifest Providers (HTTP) — install/validate (admin-only) ======
 
 def _providers_dir() -> str:
-    return os.getenv("FAXBOT_PROVIDERS_DIR", os.path.join(os.getcwd(), "config", "providers"))
+    return str(providers_dir())
+
+
+def _manifest_path(provider_id: str) -> str:
+    try:
+        return str(provider_manifest_path(provider_id))
+    except InvalidProviderPath as error:
+        raise HTTPException(400, detail=str(error)) from None
 
 
 class ManifestIn(BaseModel):
     manifest: dict
 
 
-@app.post("/admin/plugins/http/install", dependencies=[Depends(require_admin)])
-def install_http_manifest(payload: ManifestIn):
-    man = HttpManifest.from_dict(payload.manifest or {})
-    if not man.id:
+@app.post("/admin/plugins/http/install", dependencies=[Depends(require_permission('providers:install', audit=True))],
+          responses={**_PERMISSION_RESPONSES, 404: _PUBLIC_DETAIL_RESPONSES[404]})
+def install_http_manifest(payload: ManifestIn, request: Request):
+    if not request.scope["faxbot.configuration"].active.values.feature_v3_plugins:
+        return _plugins_disabled_response()
+    document = payload.manifest or {}
+    if not document.get("id"):
         raise HTTPException(400, detail="Manifest id is required")
-    dest_dir = os.path.join(_providers_dir(), man.id)
+    path = _manifest_path(document["id"])
+    try:
+        validate_http_provider_document(document)
+    except ProviderCatalogError as error:
+        raise HTTPException(400, detail=str(error)) from None
+    man = HttpManifest.from_dict(document)
+    dest_dir = os.path.dirname(path)
     os.makedirs(dest_dir, exist_ok=True)
-    path = os.path.join(dest_dir, "manifest.json")
     try:
         with open(path, "w", encoding="utf-8") as f:
             json.dump(payload.manifest, f, indent=2)
@@ -1154,11 +1052,28 @@ class ManifestValidateIn(BaseModel):
     render_only: bool | None = True
 
 
-@app.post("/admin/plugins/http/validate", dependencies=[Depends(require_admin)])
+@app.post("/admin/plugins/http/validate", dependencies=[Depends(require_permission('providers:write'))],
+          responses=_PERMISSION_RESPONSES)
 async def validate_http_manifest(payload: ManifestValidateIn):
-    man = HttpManifest.from_dict(payload.manifest or {})
-    if not man.id:
+    """Validate a draft without issuing a provider request.
+
+    Provider transmission belongs to a captured, durable outbound attempt.
+    Keep the legacy flag for a clear refusal to older administrative clients.
+    """
+    if not payload.render_only:
+        raise HTTPException(
+            409,
+            detail="Manifest validation cannot send a fax. Install and configure the provider, select it for outbound, then use Send to create a tracked job.",
+        )
+    document = payload.manifest or {}
+    if not document.get("id"):
         raise HTTPException(400, detail="Manifest id required")
+    _manifest_path(document["id"])
+    try:
+        validate_http_provider_document(document)
+    except ProviderCatalogError as error:
+        raise HTTPException(400, detail=str(error)) from None
+    man = HttpManifest.from_dict(document)
     info = {
         "id": man.id,
         "name": man.name,
@@ -1180,20 +1095,13 @@ async def validate_http_manifest(payload: ManifestValidateIn):
                 info["warnings"] = [f"Action(s) {', '.join(insecure)} use HTTP. HTTPS is required when ENFORCE_PUBLIC_HTTPS=true."]
     except Exception:
         pass
-    if not payload.render_only:
-        try:
-            rt = HttpProviderRuntime(man, payload.credentials or {}, payload.settings or {})
-            res = await rt.send_fax(to=payload.to or "+15551234567", file_url=payload.file_url, from_number=payload.from_number)
-            info["normalized"] = res
-        except Exception as e:
-            info["error"] = str(e)
     return info
 
 
 class ImportManifestsIn(BaseModel):
     items: Optional[List[dict]] = None
     markdown: Optional[str] = None
-    source: Optional[str] = None  # 'repo_scrape' reads api_plugins_list.md from CWD
+    source: Optional[str] = None  # 'repo_scrape' reads bundled API examples
 
 
 def _extract_json_blocks(md: str) -> List[dict]:
@@ -1220,15 +1128,19 @@ def _extract_json_blocks(md: str) -> List[dict]:
     return blocks
 
 
-@app.post("/admin/plugins/http/import-manifests", dependencies=[Depends(require_admin)])
-def import_http_manifests(payload: ImportManifestsIn):
+@app.post("/admin/plugins/http/import-manifests",
+          dependencies=[Depends(require_permission('providers:install', audit=True))],
+          responses={**_PERMISSION_RESPONSES, 404: _PUBLIC_DETAIL_RESPONSES[404]})
+def import_http_manifests(payload: ImportManifestsIn, request: Request):
     """Bulk import provider manifests from JSON list or scraped markdown.
     For markdown, extracts JSON code fences and imports objects that look like manifests.
     """
+    if not request.scope["faxbot.configuration"].active.values.feature_v3_plugins:
+        return _plugins_disabled_response()
     candidates: List[dict] = []
     if (payload.source or "").lower() == "repo_scrape" and not payload.items and not payload.markdown:
         try:
-            scrape_path = os.path.join(os.getcwd(), "api_plugins_list.md")
+            scrape_path = plugin_examples_path()
             with open(scrape_path, "r", encoding="utf-8") as f:
                 payload.markdown = f.read()
         except Exception as e:
@@ -1245,12 +1157,13 @@ def import_http_manifests(payload: ImportManifestsIn):
     errors: List[dict] = []
     for data in candidates:
         try:
-            man = HttpManifest.from_dict(data)
-            if not man.id:
+            if not data.get("id"):
                 raise ValueError("manifest.id missing")
-            dest_dir = os.path.join(_providers_dir(), man.id)
+            path = str(provider_manifest_path(data["id"]))
+            validate_http_provider_document(data)
+            man = HttpManifest.from_dict(data)
+            dest_dir = os.path.dirname(path)
             os.makedirs(dest_dir, exist_ok=True)
-            path = os.path.join(dest_dir, "manifest.json")
             with open(path, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2)
             imported.append({"id": man.id, "name": man.name, "path": path})
@@ -1266,7 +1179,7 @@ class LogsQuery(BaseModel):
     limit: Optional[int] = 200
 
 
-@app.get("/admin/logs", dependencies=[Depends(require_admin)])
+@app.get("/admin/logs", dependencies=[Depends(require_permission('logs:read'))], responses=_PERMISSION_RESPONSES)
 def admin_logs(q: Optional[str] = None, event: Optional[str] = None, since: Optional[str] = None, limit: int = 200):
     """Return recent audit logs from in-process ring buffer with simple filtering.
     For persistent logs, configure AUDIT_LOG_FILE and use external tooling; this endpoint focuses on interactive UI needs.
@@ -1278,7 +1191,7 @@ def admin_logs(q: Optional[str] = None, event: Optional[str] = None, since: Opti
     return {"items": rows, "count": len(rows)}
 
 
-@app.get("/admin/logs/tail", dependencies=[Depends(require_admin)])
+@app.get("/admin/logs/tail", dependencies=[Depends(require_permission('logs:read'))], responses=_PERMISSION_RESPONSES)
 def admin_logs_tail(q: Optional[str] = None, event: Optional[str] = None, lines: int = 2000):
     """Tail the audit log file when AUDIT_LOG_FILE is configured.
     Returns last N lines (default 2000), filtered by substring and/or event name when logs are JSON.
@@ -1408,7 +1321,8 @@ def _admin_exec_enabled() -> bool:
     return os.getenv("ENABLE_LOCAL_ADMIN", "false").lower() in {"1","true","yes"}
 
 
-@app.get("/admin/actions", dependencies=[Depends(require_admin)])
+@app.get("/admin/actions", dependencies=[Depends(require_permission('host:actions', audit=True))],
+         responses=_PERMISSION_RESPONSES)
 def admin_actions_list():
     if not _admin_exec_enabled():
         return {"enabled": False, "items": []}
@@ -1425,8 +1339,9 @@ class RunActionIn(BaseModel):
     id: str
 
 
-@app.post("/admin/actions/run", dependencies=[Depends(require_admin)])
-def admin_actions_run(payload: RunActionIn):
+@app.post("/admin/actions/run", responses=_PERMISSION_RESPONSES)
+def admin_actions_run(payload: RunActionIn, request: Request,
+                      identity=Depends(require_permission('host:actions', audit=True))):
     if not _admin_exec_enabled():
         raise HTTPException(403, detail="Admin exec is disabled. Set ENABLE_ADMIN_EXEC=true for local-only use.")
     meta = _ACTIONS_REGISTRY.get(payload.id)
@@ -1436,6 +1351,9 @@ def admin_actions_run(payload: RunActionIn):
     backs = meta.get("backend") or ["*"]
     if "*" not in backs and settings.fax_backend not in backs:
         raise HTTPException(400, detail="Action not applicable for current backend")
+    # Recheck immediately before execution and record which action ran.
+    authorize_operation(access_runtime(request), identity.actor, 'host:actions',
+                        audit=request_audit(request, action=payload.id))
     try:
         if meta.get("kind") == "python":
             res = meta.get("runner")()
@@ -1499,8 +1417,6 @@ _TUNNEL_STATE: Dict[str, Any] = {
     "error": None,
 }
 
-_PAIR_CODES: Dict[str, Dict[str, Any]] = {}
-
 
 def _hipaa_posture_enabled() -> bool:
     try:
@@ -1509,7 +1425,8 @@ def _hipaa_posture_enabled() -> bool:
         return False
 
 
-@app.get("/admin/tunnel/status", dependencies=[Depends(require_admin)])
+@app.get("/admin/tunnel/status", dependencies=[Depends(require_permission('tunnels:read'))],
+         responses=_PERMISSION_RESPONSES)
 def admin_tunnel_status() -> TunnelStatusOut:
     # Compose a conservative status view; do not leak secrets
     enabled = bool(_TUNNEL_STATE.get("enabled"))
@@ -1549,7 +1466,8 @@ def admin_tunnel_status() -> TunnelStatusOut:
     )
 
 
-@app.post("/admin/tunnel/config", dependencies=[Depends(require_admin)])
+@app.post("/admin/tunnel/config", dependencies=[Depends(require_permission('tunnels:manage'))],
+          responses=_PERMISSION_RESPONSES)
 def admin_tunnel_config(payload: TunnelConfigIn) -> TunnelStatusOut:
     # Validate provider
     provider = (payload.provider or "none").lower()
@@ -1579,7 +1497,8 @@ def admin_tunnel_config(payload: TunnelConfigIn) -> TunnelStatusOut:
     return admin_tunnel_status()
 
 
-@app.post("/admin/tunnel/test", dependencies=[Depends(require_admin)])
+@app.post("/admin/tunnel/test", dependencies=[Depends(require_permission('tunnels:read'))],
+          responses=_PERMISSION_RESPONSES)
 def admin_tunnel_test() -> TunnelTestOut:
     # Perform a bounded local probe; do not reach out to public endpoints from here
     try:
@@ -1599,21 +1518,151 @@ def admin_tunnel_test() -> TunnelTestOut:
         return TunnelTestOut(ok=False, message=str(e)[:120])
 
 
+# Mobile pairing. The console mints a six-digit, single-use code bound to its
+# issuer; the phone exchanges it at /mobile/pair for its own device key: a new
+# integration identity holding exactly _DEVICE_SCOPES at installation, listed
+# and revocable under /access/keys like any other key.
+from .access.mutation_types import StaleVersionError  # noqa: E402
+from .access.types import ScopedPermission  # noqa: E402
+
+_DEVICE_SCOPES = frozenset({"fax:send", "fax:read", "fax:document", "inbound:list", "inbound:read", "inbound:document"})
+_PAIR_TTL = timedelta(minutes=5)
+_PAIR_WINDOW_SECONDS = 60.0
+_PAIR_ATTEMPTS_PER_IP = 5
+# Across all addresses, so a six-digit code cannot be guessed from many clients at once.
+_PAIR_ATTEMPTS_TOTAL = 30
+_PAIR_ATTEMPTS: Dict[str, List[float]] = {}
+_PAIR_REFUSED = "This pairing code did not work. Create a new code in the console and try again."
+
+
 class PairOut(BaseModel):
     code: str
     expires_at: datetime
 
 
-@app.post("/admin/tunnel/pair", dependencies=[Depends(require_admin)])
-def admin_tunnel_pair() -> PairOut:
-    # Generate a short-lived numeric code; do not include secrets in the QR/content
-    code = str(secrets.randbelow(899999) + 100000)
-    expires = datetime.utcnow() + timedelta(minutes=5)
-    _PAIR_CODES[code] = {"expires_at": expires, "created_at": datetime.utcnow()}
-    return PairOut(code=code, expires_at=expires)
+class MobilePairOut(BaseModel):
+    base_urls: Dict[str, Optional[str]]
+    token: str
 
 
-@app.get("/admin/inbound/callbacks", dependencies=[Depends(require_admin)])
+@private_operation
+def _mint_pairing_code(service, actor):
+    # A code is only useful if its issuer may also issue the device key it turns into.
+    with service.store.transaction() as connection:
+        now = access_utcnow()
+        decisions = (
+            service.control.authorize_on(connection, actor, 'keys:manage', ResourceRef('installation'), now=now),
+            service.control.can_grant_on(connection, actor, tuple(ScopedPermission(permission, ResourceRef('installation'))
+                                                                 for permission in sorted(_DEVICE_SCOPES)), now=now))
+    if not all(decision.allowed for decision in decisions):
+        reset = any(decision.reason.value == 'reset_required' for decision in decisions)
+        raise MutationDeniedError(MutationReason.RESET_REQUIRED if reset else MutationReason.FORBIDDEN)
+    return service.capabilities.mint('pairing', actor, _PAIR_TTL, permission='tunnels:pair')
+
+
+@app.post("/admin/tunnel/pair", response_model=PairOut, responses=_PERMISSION_RESPONSES)
+async def admin_tunnel_pair(request: Request, identity=Depends(require_permission('tunnels:pair'))):
+    """A six-digit code, valid once for five minutes, that pairs one phone as a device of this installation."""
+    issued = await run_lifecycle_step(lambda: _mint_pairing_code(access_runtime(request), identity.actor))
+    return PairOut(code=issued.secret, expires_at=issued.expires_at)
+
+
+def _pair_attempt_allowed(client_ip: str) -> bool:
+    now = time.monotonic()
+    for address in list(_PAIR_ATTEMPTS):
+        recent = [at for at in _PAIR_ATTEMPTS[address] if now - at < _PAIR_WINDOW_SECONDS]
+        if recent:
+            _PAIR_ATTEMPTS[address] = recent
+        else:
+            del _PAIR_ATTEMPTS[address]
+    attempts = _PAIR_ATTEMPTS.get(client_ip, [])
+    if len(attempts) >= _PAIR_ATTEMPTS_PER_IP or sum(map(len, _PAIR_ATTEMPTS.values())) >= _PAIR_ATTEMPTS_TOTAL:
+        return False
+    _PAIR_ATTEMPTS[client_ip] = attempts + [now]
+    return True
+
+
+def _device_name(value) -> str:
+    text = "".join(c for c in value if c.isprintable()).strip() if isinstance(value, str) else ""
+    return text[:60].strip() or "Mobile device"
+
+
+@private_operation
+def _issue_device_key(service, actor, device_name):
+    values = IntegrationKeyValues(display_name=f"Device: {device_name}", owner=None, name=device_name,
+                                  note="Paired from the mobile app.", expires_at=None, permissions=_DEVICE_SCOPES)
+    for attempt in range(2):
+        prepared = service.credential_codec.prepare_new_key()
+        try:
+            receipt = service.mutations.issue_integration_key(actor, values, prepared,
+                expected_policy_version=_policy_version(service), now=access_utcnow())
+        except StaleVersionError:
+            # Another change landed between reading and issuing; nothing was written.
+            if attempt:
+                raise
+            continue
+        return receipt, prepared
+
+
+def _mobile_base_urls() -> Dict[str, Optional[str]]:
+    tunnel = None
+    if (_TUNNEL_STATE.get("enabled") and str(_TUNNEL_STATE.get("provider") or "").lower() == "cloudflare"
+            and not _hipaa_posture_enabled()):
+        tunnel = _TUNNEL_STATE.get("public_url") or None
+    return {"local": os.getenv("MOBILE_LOCAL_BASE") or None, "tunnel": tunnel,
+            "public": settings.public_api_url or None}
+
+
+async def _pair_payload(request: Request) -> dict:
+    """The JSON object body, at most 4 KiB; anything else is an empty payload."""
+    raw = bytearray()
+    async for chunk in request.stream():
+        raw.extend(chunk)
+        if len(raw) > 4096:
+            return {}
+    try:
+        payload = json.loads(bytes(raw))
+    except ValueError:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+@app.post("/mobile/pair", response_model=MobilePairOut,
+          responses={403: {"model": PublicDetailErrorResponse, "description": "Pairing failed."}},
+          openapi_extra={"requestBody": {"required": True, "content": {"application/json": {"schema": {
+              "type": "object", "required": ["code"], "properties": {
+                  "code": {"type": "string", "pattern": "^[0-9]{6}$"}, "device_name": {"type": "string"}}}}}}})
+async def mobile_pair(request: Request):
+    """Exchange a pairing code from the console for this device's own API key. Any failure is 403."""
+    def refused(message=_PAIR_REFUSED, reason="invalid_code"):
+        audit_event("mobile_pair_refused", reason=reason)
+        return JSONResponse({"detail": message}, status_code=403, headers=PRIVATE_HEADERS)
+
+    if not _pair_attempt_allowed(request.client.host if request.client else "unknown"):
+        return refused("Too many pairing attempts. Wait a minute and try again.", "rate_limited")
+    payload = await _pair_payload(request)
+    code = payload.get("code").strip() if isinstance(payload.get("code"), str) else ""
+    if re.fullmatch(r"[0-9]{6}", code) is None:
+        return refused()
+    try:
+        service = access_runtime(request)
+        record = await run_lifecycle_step(lambda: service.capabilities.consume("pairing", code))
+    except AccessError:
+        return refused()
+    device_name = _device_name(payload.get("device_name"))
+    try:
+        receipt, prepared = await service.work.run(lambda: _issue_device_key(service, record.actor, device_name))
+    except AccessError:
+        return refused("Pairing could not finish. Create a new code in the console and try again.", "issue_failed")
+    audit_event("mobile_paired", key_id=receipt.public_key_id, principal_id=receipt.principal_id,
+                issued_by=record.principal_id)
+    # The token is disclosed once, only after the device key committed.
+    return JSONResponse({"base_urls": _mobile_base_urls(), "token": prepared._token_for_committed_adapter()},
+                        headers=PRIVATE_HEADERS)
+
+
+@app.get("/admin/inbound/callbacks", dependencies=[Depends(require_permission('providers:read'))],
+         responses=_PERMISSION_RESPONSES)
 def admin_inbound_callbacks():
     base = settings.public_api_url.rstrip("/")
     backend = active_inbound()
@@ -1665,7 +1714,8 @@ class SimulateInboundIn(BaseModel):
     status: Optional[str] = "received"
 
 
-@app.post("/admin/inbound/simulate", dependencies=[Depends(require_admin)])
+@app.post("/admin/inbound/simulate", dependencies=[Depends(require_permission('providers:write'))],
+          responses=_PERMISSION_RESPONSES)
 def admin_inbound_simulate(payload: SimulateInboundIn):
     if not settings.inbound_enabled:
         raise HTTPException(400, detail="Inbound not enabled")
@@ -1690,94 +1740,98 @@ def admin_inbound_simulate(payload: SimulateInboundIn):
     expires_at = datetime.utcnow() + timedelta(minutes=max(1, settings.inbound_token_ttl_minutes))
     retention_until = datetime.utcnow() + timedelta(days=settings.inbound_retention_days) if settings.inbound_retention_days > 0 else None
 
-    with SessionLocal() as db:
-        fx = InboundFax(
-            id=job_id,
-            from_number=payload.fr,
-            to_number=payload.to,
-            status=payload.status or "received",
-            backend=backend,
-            inbound_backend=active_inbound(),
-            provider_sid=None,
-            pages=payload.pages,
-            size_bytes=size_bytes,
-            sha256=sha256_hex,
-            pdf_path=stored_uri,
-            tiff_path=None,
-            mailbox_label=None,
-            retention_until=retention_until,
-            pdf_token=pdf_token,
-            pdf_token_expires_at=expires_at,
-            created_at=datetime.utcnow(),
-            received_at=datetime.utcnow(),
-            updated_at=datetime.utcnow(),
-        )
-        db.add(fx)
-        db.commit()
+    now = datetime.utcnow()
+    _accept_inbound(dict(
+        id=job_id,
+        from_number=payload.fr,
+        to_number=payload.to,
+        status=payload.status or "received",
+        backend=backend,
+        inbound_backend=active_inbound(),
+        provider_sid=None,
+        pages=payload.pages,
+        size_bytes=size_bytes,
+        sha256=sha256_hex,
+        pdf_path=stored_uri,
+        tiff_path=None,
+        retention_until=retention_until,
+        pdf_token=pdf_token,
+        pdf_token_expires_at=expires_at,
+        created_at=now,
+        received_at=now,
+        updated_at=now,
+    ))
     audit_event("inbound_received", job_id=job_id, backend=backend)
     return {"id": job_id, "status": "ok"}
 
 
-@app.get("/admin/fax-jobs", dependencies=[Depends(require_admin)])
+@app.get("/admin/fax-jobs")
 async def list_admin_jobs(
+    request: Request,
     status: Optional[str] = None,
     backend: Optional[str] = None,
-    limit: int = Query(default=50, le=100),
+    limit: int = Query(default=50, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
+    identity=Depends(require_identity),
 ):
-    with SessionLocal() as db:
-        q = db.query(FaxJob)
-        if status:
-            q = q.filter(FaxJob.status == status)
-        if backend:
-            q = q.filter(FaxJob.backend == backend)
-        total = q.count()
-        rows = q.order_by(FaxJob.created_at.desc()).offset(offset).limit(limit).all()
-        return {
-            "total": total,
-            "jobs": [
-                {
-                    "id": r.id,
-                    "to_number": mask_phone(getattr(r, "to_number", None)),
-                    "status": r.status,
-                    "backend": r.backend,
-                    "pages": r.pages,
-                    "error": sanitize_error(getattr(r, "error", None)),
-                    "created_at": r.created_at,
-                    "updated_at": r.updated_at,
-                }
-                for r in rows
-            ],
-        }
+    page = await run_lifecycle_step(private_operation(lambda: access_runtime(request).queries.page(
+        identity.actor, status=status, backend=backend, limit=limit, offset=offset)))
+    return {'total': page['total'], 'jobs': [_admin_fax_view(row) for row in page['jobs']]}
 
 
-@app.get("/admin/fax-jobs/{job_id}", dependencies=[Depends(require_admin)])
-async def get_admin_job(job_id: str):
-    with SessionLocal() as db:
-        job = db.get(FaxJob, job_id)
-        if not job:
-            raise HTTPException(404, detail="Job not found")
-        return {
-            "id": job.id,
-            "to_number": mask_phone(getattr(job, "to_number", None)),
-            "status": job.status,
-            "backend": job.backend,
-            "pages": job.pages,
-            "error": sanitize_error(getattr(job, "error", None)),
-            "provider_sid": job.provider_sid,
-            "created_at": job.created_at,
-            "updated_at": job.updated_at,
-            "file_name": job.file_name,
-        }
+@app.get("/admin/fax-jobs/{job_id}")
+async def get_admin_job(job_id: str, request: Request, identity=Depends(require_identity)):
+    row = await run_lifecycle_step(private_operation(lambda: access_runtime(request).queries.job(identity.actor, job_id)))
+    return {**_admin_fax_view(row), 'provider_sid': row['provider_sid'], 'file_name': row['file_name']}
 
 
-@app.get("/admin/fax-jobs/{job_id}/pdf", dependencies=[Depends(require_admin)])
-def admin_get_job_pdf(job_id: str):
-    """Admin-only: download the outbound fax PDF for a job if present.
-    Works for all backends; the API generates/keeps a PDF per job prior to sending.
-    """
-    pdf_path = os.path.join(settings.fax_data_dir, f"{job_id}.pdf")
-    if not os.path.exists(pdf_path):
+def _admin_fax_view(row):
+    fields = ('id', 'status', 'backend', 'pages', 'created_at', 'updated_at',
+              'delivery_state', 'dispatch_mode', 'delivery_version', 'reconciliation_reason')
+    return {**{name: row[name] for name in fields},
+            'to_number': mask_phone(row['to_number']), 'error': sanitize_error(row['error'])}
+
+
+class ProviderIdentityConfirmation(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    expected_version: int = Field(strict=True, gt=0)
+    provider_sid: str = Field(strict=True, pattern=r'^[A-Za-z0-9_-]{1,100}$')
+    confirm_original_account: StrictBool
+
+
+@app.get('/admin/fax-jobs/{job_id}/delivery')
+async def admin_delivery_history(job_id: str, request: Request, identity=Depends(require_identity)):
+    """Bounded evidence from the accepted account, excluding captured secrets."""
+    return await run_lifecycle_step(private_operation(lambda: access_runtime(request).queries.history(identity.actor, job_id)))
+
+
+@app.post('/admin/fax-jobs/{job_id}/reconcile')
+async def admin_bind_provider_identity(job_id: str, confirmation: ProviderIdentityConfirmation,
+                                       request: Request, identity=Depends(require_identity)):
+    """Attach an operator-confirmed receipt; this never authorizes transmission."""
+    if confirmation.confirm_original_account is not True:
+        raise HTTPException(400, detail='Confirm that this fax ID matches the fax in its original provider account.')
+
+    def bind():
+        try:
+            return access_runtime(request).queries.reconcile(identity.actor, job_id,
+                expected_version=confirmation.expected_version,
+                provider_sid=confirmation.provider_sid)
+        except DeliveryConflict as exc:
+            # Store conflicts are fixed messages and contain no provider payloads.
+            raise HTTPException(409, detail=str(exc)) from None
+        except ValueError:
+            raise HTTPException(400, detail='Invalid provider identity reconciliation input.') from None
+
+    return await run_lifecycle_step(bind)
+
+
+@app.get("/admin/fax-jobs/{job_id}/pdf")
+def admin_get_job_pdf(job_id: str, request: Request, identity=Depends(require_identity)):
+    """Download the retained PDF with independent current document permission."""
+    private_operation(access_runtime(request).queries.document)(identity.actor, job_id)
+    pdf_path = _outbound_document_path(job_id, '.pdf')
+    if pdf_path.is_symlink() or not pdf_path.is_file():
         raise HTTPException(404, detail="PDF file not found")
     audit_event("admin_pdf_download", job_id=job_id)
     return FileResponse(
@@ -1792,221 +1846,126 @@ def admin_get_job_pdf(job_id: str):
     )
 
 
-@app.post("/admin/fax-jobs/{job_id}/refresh", dependencies=[Depends(require_admin)])
-async def admin_refresh_job(job_id: str):
-    """Refresh job status via provider when supported (manifest providers preview).
-    For manifest-based outbound providers that define get_status, polls provider and updates DB.
-    """
-    # Load job
-    with SessionLocal() as db:
-        job = db.get(FaxJob, job_id)
-        if not job:
-            raise HTTPException(404, detail="Job not found")
-        backend = (job.backend or settings.fax_backend).lower()
-    # Only handle manifest-backed backends for now
-    mpath = os.path.join(os.getcwd(), "config", "providers", backend, "manifest.json")
-    if not (settings.feature_v3_plugins and os.path.exists(mpath)):
-        raise HTTPException(400, detail="Refresh not supported for this backend")
+@app.post("/admin/fax-jobs/{job_id}/refresh")
+async def admin_refresh_job(job_id: str, request: Request, identity=Depends(require_identity)):
+    """Read status from the accepted account without authorizing another send."""
     try:
-        with open(mpath, "r", encoding="utf-8") as f:
-            man = HttpManifest.from_dict(json.load(f))
-        p_settings: Dict[str, Any] = {}
-        try:
-            if _read_cfg is not None:
-                cfg = _read_cfg(settings.faxbot_config_path)
-                if getattr(cfg, "ok", False) and getattr(cfg, "data", None):
-                    ob = ((cfg.data.get("providers") or {}).get("outbound") or {})
-                    if (ob.get("plugin") or "").lower() == backend:
-                        p_settings = ob.get("settings") or {}
-        except Exception:
-            pass
-        rt = HttpProviderRuntime(man, {}, p_settings)
-        res = await rt.get_status(job_id=job_id, provider_sid=(job.provider_sid or None))
-        status = str(res.get("status") or job.status)
-        prov_sid = str(res.get("job_id") or job.provider_sid or "")
-        with SessionLocal() as db:
-            j = db.get(FaxJob, job_id)
-            if j:
-                j.status = status
-                if prov_sid:
-                    j.provider_sid = prov_sid
-                j.updated_at = datetime.utcnow()
-                db.add(j)
-                db.commit()
-        with SessionLocal() as db:
-            j2 = db.get(FaxJob, job_id)
-            if j2:
-                return _serialize_job(j2)
-        raise HTTPException(500, detail="Failed to load updated job")
-    except HTTPException:
+        target = await run_lifecycle_step(lambda: access_runtime(request).queries.poll_target(identity.actor, job_id))
+        await OutboundPoller(_deliveries()).refresh_target(job_id, target)
+    except AccessError:
         raise
-    except Exception as e:
-        raise HTTPException(500, detail=str(e))
+    except UnsupportedProviderExecutionError:
+        raise HTTPException(400, detail="This provider reports status through callbacks; refresh is unsupported.") from None
+    except (DeliveryConflict, UnboundProviderProfile):
+        raise HTTPException(409, detail="This fax requires reconciliation with its original provider account before refresh.") from None
+    except Exception:
+        raise HTTPException(502, detail="Provider status is temporarily unavailable. This fax has not been resubmitted.") from None
+    return await run_lifecycle_step(private_operation(lambda: _accepted_job_response(access_runtime(request), identity.actor, job_id)))
 
 
-@app.post("/admin/diagnostics/run", dependencies=[Depends(require_admin)])
-async def run_diagnostics():
-    """Run bounded, non-destructive diagnostics for v1."""
-    ob = active_outbound()
-    ib = active_inbound()
+@app.post("/admin/diagnostics/run", dependencies=[Depends(require_permission('diagnostics:read'))],
+          responses=_PERMISSION_RESPONSES)
+def run_diagnostics(request: Request):
+    """Inspect the active installation without submitting a fax.
+
+    Readiness shares the dashboard's captured-profile check. Individual values
+    remain available to older clients; explicit outcomes prevent feature flags
+    and metadata from being mistaken for failed tests.
+    """
+    snapshot = request.scope["faxbot.configuration"]
+    readiness = _readiness_status(request)
+    ob, ib = active_outbound(), active_inbound()
     diag: dict[str, Any] = {
         "timestamp": datetime.utcnow().isoformat(),
-        "backend": settings.fax_backend,
+        "backend": ob,
+        "default_backend": settings.fax_backend,
         "outbound_backend": ob,
         "inbound_backend": ib,
+        "configuration": {
+            "active_revision_id": snapshot.active.id,
+            "desired_revision_id": snapshot.desired.id,
+            "generation": snapshot.generation,
+            "pending_restart": snapshot.pending is not None,
+        },
         "checks": {},
+        "check_outcomes": {},
     }
-    # Legacy single-backend flags (kept for compatibility in UI until hybrid UI lands)
-    if settings.fax_backend == "phaxio":
-        diag["checks"]["phaxio"] = {
-            "api_key_set": bool(settings.phaxio_api_key),
-            "api_secret_set": bool(settings.phaxio_api_secret),
-            "callback_url_set": bool(settings.phaxio_status_callback_url),
-            "signature_verification": settings.phaxio_verify_signature,
-            "public_url_https": settings.public_api_url.startswith("https://"),
-        }
-    elif settings.fax_backend == "sinch":
-        diag["checks"]["sinch"] = {
-            "project_id_set": bool(settings.sinch_project_id),
-            "api_key_set": bool(settings.sinch_api_key),
-            "api_secret_set": bool(settings.sinch_api_secret),
-        }
-    elif settings.fax_backend == "sip":
-        sip_checks: dict[str, Any] = {
-            "ami_host": settings.ami_host,
-            "ami_port": settings.ami_port,
-            "ami_password_not_default": settings.ami_password != "changeme",
-            "station_id_set": bool(settings.fax_station_id),
-        }
-        # Probe AMI reachability best-effort
-        try:
-            from .ami import test_ami_connection
-            sip_checks["ami_reachable"] = await test_ami_connection(
-                settings.ami_host, settings.ami_port, settings.ami_username, settings.ami_password
-            )
-        except Exception as e:
-            sip_checks["ami_reachable"] = False
-            sip_checks["ami_error"] = str(e)
-        diag["checks"]["sip"] = sip_checks
-
-    # Hybrid per-direction checks (trait-driven)
-    # Outbound
-    out: dict[str, Any] = {"backend": ob, "requires_ami": providerHasTrait("outbound", "requires_ami")}
-    if ob == "phaxio":
-        out["auth_configured"] = bool(settings.phaxio_api_key and settings.phaxio_api_secret)
-        out["public_url_https"] = settings.public_api_url.startswith("https://")
-    elif ob == "sinch":
-        out["auth_configured"] = bool(settings.sinch_project_id and settings.sinch_api_key and settings.sinch_api_secret)
-    elif ob == "signalwire":
-        out["auth_configured"] = bool(settings.signalwire_space_url and settings.signalwire_project_id and settings.signalwire_api_token)
-    elif ob == "documo":
-        out["auth_configured"] = bool(settings.documo_api_key)
-    if providerHasTrait("outbound", "requires_ami"):
-        out["ami_password_not_default"] = settings.ami_password != "changeme"
-        try:
-            from .ami import test_ami_connection
-            out["ami_reachable"] = await test_ami_connection(settings.ami_host, settings.ami_port, settings.ami_username, settings.ami_password)
-        except Exception as e:
-            out["ami_reachable"] = False
-            out["ami_error"] = str(e)
-    diag["checks"]["outbound"] = out
-
-    # Inbound
-    inbound: dict[str, Any] = {
-        "backend": ib,
-        "enabled": settings.inbound_enabled,
+    checks = diag["checks"]
+    checks["outbound"] = {
+        **readiness["checks"]["outbound"],
+        "requires_ami": providerHasTrait("outbound", "requires_ami"),
+        "sending_disabled": settings.fax_disabled,
+    }
+    checks["inbound"] = {
+        **readiness["checks"]["inbound"],
         "requires_ami": providerHasTrait("inbound", "requires_ami"),
         "needs_storage": providerHasTrait("inbound", "needs_storage"),
         "inbound_verification": providerTraitValue("inbound", "inbound_verification"),
+        "retention_days": settings.inbound_retention_days,
     }
-    if settings.inbound_enabled:
-        # Derive verification posture from provider traits
-        # Map to concrete flags when applicable
-        if providerHasTrait("inbound", "requires_ami"):
-            inbound["asterisk_secret_set"] = bool(settings.asterisk_inbound_secret)
-        if ib == "phaxio":
-            inbound["signature_verification"] = settings.phaxio_inbound_verify_signature
-        if ib == "sinch":
-            inbound["basic_auth_configured"] = bool(settings.sinch_inbound_basic_user)
-            inbound["hmac_configured"] = bool(settings.sinch_inbound_hmac_secret)
-    diag["checks"]["inbound"] = inbound
-
-    # System checks
-    sys: dict[str, Any] = {
-        "ghostscript": shutil.which("gs") is not None,
-        "fax_data_dir": os.path.exists(settings.fax_data_dir),
+    # Native SIP requirements apply to the captured adapter, never merely to
+    # a same-named manifest override or an unused default provider.
+    for direction in ("outbound", "inbound"):
+        if direction == "inbound" and not settings.inbound_enabled:
+            continue
+        profile_id = snapshot.active.profile_id(direction)
+        if profile_id is None:
+            continue
+        try:
+            profile = _configuration_manager().store.read_profile(profile_id).configuration
+        except (ConfigurationStoreError, ConfigurationSecretError, ValueError):
+            checks[direction]["backend_config"] = False
+            continue
+        if profile.provider_id == "sip" and profile.manifest is None:
+            checks[direction]["ami_password_not_default"] = bool(
+                profile.credentials.get("ami_password") and profile.credentials.get("ami_password") != "changeme")
+            if direction == "inbound":
+                checks[direction]["asterisk_secret_set"] = bool(profile.credentials.get("inbound_secret"))
+    system = {
+        "ghostscript": readiness["checks"]["ghostscript"],
+        "fax_data_dir": os.path.isdir(settings.fax_data_dir),
         "fax_data_writable": False,
-        "database_connected": False,
+        "database_connected": readiness["checks"]["db"],
         "temp_dir_writable": False,
     }
-    # Test fax_data_dir write
+    # These probes create and remove only their own temporary files.
     try:
-        os.makedirs(settings.fax_data_dir, exist_ok=True)
-        test_path = os.path.join(settings.fax_data_dir, f"diag_{uuid.uuid4().hex}")
-        with open(test_path, "w") as f:
-            f.write("ok")
-        os.remove(test_path)
-        sys["fax_data_writable"] = True
-    except Exception:
+        with tempfile.NamedTemporaryFile(dir=settings.fax_data_dir, prefix="faxbot-diagnostic-", delete=True) as probe:
+            probe.write(b"ok")
+            probe.flush()
+        system["fax_data_writable"] = True
+    except OSError:
         pass
-    # DB
     try:
-        from sqlalchemy import text  # type: ignore
-        with SessionLocal() as db:
-            db.execute(text("SELECT 1"))
-            sys["database_connected"] = True
-    except Exception:
+        with tempfile.NamedTemporaryFile(delete=True) as probe:
+            probe.write(b"ok")
+            probe.flush()
+        system["temp_dir_writable"] = True
+    except OSError:
         pass
-    # Temp dir
-    try:
-        with tempfile.NamedTemporaryFile(delete=True) as tmp:
-            tmp.write(b"ok")
-            sys["temp_dir_writable"] = True
-    except Exception:
-        pass
-    diag["checks"]["system"] = sys
-
-    # Storage diagnostics only when required by inbound provider traits
-    if providerHasTrait("inbound", "needs_storage"):
-        if settings.storage_backend.lower() == "s3":
-            st = {
-                "type": "s3",
-                "bucket_set": bool(settings.s3_bucket),
-                "region_set": bool(settings.s3_region),
-                "kms_enabled": bool(settings.s3_kms_key_id),
-            }
-            if settings.s3_bucket and os.getenv("ENABLE_S3_DIAGNOSTICS", "false").lower() == "true":
-                try:
-                    import boto3  # type: ignore
-                    from botocore.config import Config  # type: ignore
-                    s3 = boto3.client(
-                        "s3",
-                        region_name=(settings.s3_region or None),
-                        endpoint_url=(settings.s3_endpoint_url or None),
-                        config=Config(signature_version="s3v4"),
-                    )
-                    s3.head_bucket(Bucket=settings.s3_bucket)
-                    st["accessible"] = True
-                except Exception as e:
-                    st["accessible"] = False
-                    st["error"] = str(e)[:100]
-            diag["checks"]["storage"] = st
-        else:
-            diag["checks"]["storage"] = {"type": "local", "warning": "Local storage only suitable for development"}
-
-    # Inbound flags
-    if settings.inbound_enabled:
-        inbound = {"enabled": True, "retention_days": settings.inbound_retention_days}
-        if settings.fax_backend == "phaxio":
-            inbound["signature_verification"] = settings.phaxio_inbound_verify_signature
-        elif settings.fax_backend == "sinch":
-            inbound["auth_configured"] = bool(settings.sinch_inbound_basic_user or settings.sinch_inbound_hmac_secret)
-        elif settings.fax_backend == "sip":
-            inbound["asterisk_secret_set"] = bool(settings.asterisk_inbound_secret)
-        diag["checks"]["inbound"] = inbound
-
-    # Security summary
-    diag["checks"]["security"] = {
+    checks["system"] = system
+    storage_required = settings.inbound_enabled and providerHasTrait("inbound", "needs_storage")
+    checks["storage"] = {
+        "type": settings.storage_backend,
+        "required_for_active_inbound": storage_required,
+        "configuration_ready": readiness["checks"]["storage"],
+    }
+    if settings.storage_backend.lower() == "s3":
+        checks["storage"].update(bucket_set=bool(settings.s3_bucket),
+            region_set=bool(settings.s3_region), kms_enabled=bool(settings.s3_kms_key_id))
+        if storage_required and settings.s3_bucket and os.getenv("ENABLE_S3_DIAGNOSTICS", "false").lower() == "true":
+            try:
+                import boto3
+                from botocore.config import Config
+                client = boto3.client("s3", region_name=settings.s3_region or None,
+                    endpoint_url=settings.s3_endpoint_url or None,
+                    config=Config(signature_version="s3v4", connect_timeout=3, read_timeout=3,
+                                  retries={"max_attempts": 0}))
+                client.head_bucket(Bucket=settings.s3_bucket)
+                checks["storage"]["accessible"] = True
+            except Exception:
+                checks["storage"]["accessible"] = False
+    checks["security"] = {
         "enforce_https": settings.enforce_public_https,
         "audit_logging": settings.audit_log_enabled,
         "rate_limiting": settings.max_requests_per_minute > 0,
@@ -2027,10 +1986,10 @@ async def run_diagnostics():
             prov_dir = _providers_dir()
             if os.path.isdir(prov_dir):
                 for pid in os.listdir(prov_dir):
-                    mpath = os.path.join(prov_dir, pid, "manifest.json")
-                    if not os.path.exists(mpath):
-                        continue
                     try:
+                        mpath = provider_manifest_path(pid)
+                        if not os.path.exists(mpath):
+                            continue
                         with open(mpath, "r", encoding="utf-8") as f:
                             mdata = json.load(f)
                         man = HttpManifest.from_dict(mdata)
@@ -2058,13 +2017,12 @@ async def run_diagnostics():
                             "issues": issues,
                         })
                         issues_total += len(issues)
-                    except Exception as e:
-                        plugins_info.setdefault("errors", []).append({"id": pid, "error": str(e)})
+                    except Exception:
+                        plugins_info.setdefault("errors", []).append({"id": pid, "error": "Manifest cannot be inspected."})
             plugins_info["installed"] = len(plugins_info["manifests"])  # type: ignore[index]
         diag["checks"]["plugins"] = plugins_info
     except Exception:
-        # Don't break diagnostics on plugin scan errors
-        pass
+        diag["checks"]["plugins"] = {"inspection_error": "Plugin metadata cannot be inspected."}
 
     # Traits schema issues (expose unknown trait keys for CI visibility)
     try:
@@ -2076,404 +2034,345 @@ async def run_diagnostics():
     except Exception:
         pass
 
-    # Summary
     critical: list[str] = []
     warnings: list[str] = []
-    if ob == "phaxio":
-        p = diag["checks"].get("outbound", {})
-        if not p.get("auth_configured"):
-            critical.append("Phaxio API key not set")
-        if not p.get("public_url_https"):
-            warnings.append("PUBLIC_API_URL should be HTTPS")
-    if ob == "sip":
-        s = diag["checks"].get("outbound", {})
-        if not s.get("ami_password_not_default"):
-            critical.append("AMI password is default 'changeme'")
-        if not s.get("ami_reachable"):
-            warnings.append("AMI not reachable")
-    if settings.inbound_enabled and ib == "sip":
-        inbound = diag["checks"].get("inbound", {})
-        if not inbound.get("asterisk_secret_set"):
-            critical.append("ASTERISK_INBOUND_SECRET not set for inbound SIP")
-    # Ghostscript is required for all backends
-    if not sys.get("ghostscript"):
-        critical.append("Ghostscript (gs) not installed — required for fax file processing")
-    if not sys.get("fax_data_writable"):
-        critical.append("Cannot write to fax data dir")
-    if not sys.get("database_connected"):
-        critical.append("Database connection failed")
-    # Plugin warnings
-    try:
-        p = diag["checks"].get("plugins", {})
-        if p.get("v3_enabled") and p.get("installed", 0) > 0:
-            for m in p.get("manifests", []):
-                for issue in (m.get("issues") or []):
-                    warnings.append(f"Plugin {m.get('id')}: {issue}")
-    except Exception:
-        pass
-    diag["summary"] = {"healthy": len(critical) == 0, "critical_issues": critical, "warnings": warnings}
+    outcomes = diag["check_outcomes"]
+    for section, values in checks.items():
+        outcomes[section] = {key: "info" for key in values}
+
+    def required(section, key, message, *, applicable=True):
+        value = checks[section].get(key)
+        if not applicable or value is None:
+            outcomes[section][key] = "not_applicable"
+        else:
+            outcomes[section][key] = "pass" if value is True else "fail"
+            if value is not True:
+                critical.append(message)
+
+    required("outbound", "backend_config", "Active outbound provider is not locally configured. Review the active provider in Settings.")
+    required("outbound", "ami_connected", "Active outbound provider requires an Asterisk AMI connection.")
+    required("inbound", "backend_config", "Active receiving provider is not locally configured. Review inbound settings.", applicable=settings.inbound_enabled)
+    required("inbound", "ami_connected", "Active receiving provider requires an Asterisk AMI connection.", applicable=settings.inbound_enabled)
+    for direction in ("outbound", "inbound"):
+        if "ami_password_not_default" in checks[direction]:
+            required(direction, "ami_password_not_default",
+                     f"Active {direction} Asterisk provider requires a non-default AMI password. Review provider settings.")
+    if "asterisk_secret_set" in checks["inbound"]:
+        required("inbound", "asterisk_secret_set", "Active Asterisk receiving requires an inbound secret. Review provider settings.")
+    required("storage", "configuration_ready", "Active inbound storage is unavailable.", applicable=storage_required)
+    if "accessible" in checks["storage"]:
+        required("storage", "accessible", "Configured inbound S3 bucket could not be accessed.")
+    for key, message in {
+        "ghostscript": "Ghostscript is unavailable for document processing.",
+        "fax_data_dir": "The configured fax data directory is unavailable.",
+        "fax_data_writable": "The configured fax data directory is not writable.",
+        "database_connected": "The installation database is unavailable.",
+        "temp_dir_writable": "The temporary document directory is not writable.",
+    }.items():
+        required("system", key, message)
+    for key, message in {
+        "enforce_https": "Public HTTPS enforcement is disabled; review the installation's network configuration.",
+        "audit_logging": "Audit logging is disabled.",
+        "rate_limiting": "Application request rate limiting is disabled.",
+    }.items():
+        outcomes["security"][key] = "pass" if checks["security"][key] else "warning"
+        if not checks["security"][key]:
+            warnings.append(message)
+    plugins = checks.get("plugins", {})
+    for manifest in plugins.get("manifests", []):
+        for issue in manifest.get("issues", []):
+            warnings.append(f"Installed plugin {manifest['id']}: {issue}")
+    if plugins.get("errors") or plugins.get("inspection_error"):
+        warnings.append("Some installed plugin metadata could not be inspected.")
+        outcomes["plugins"]["errors" if plugins.get("errors") else "inspection_error"] = "warning"
+    if checks.get("traits_schema", {}).get("issues"):
+        outcomes["traits_schema"]["issues"] = "warning"
+        warnings.append("Provider trait metadata has schema issues.")
+    if snapshot.pending is not None:
+        warnings.append("Desired settings are pending a full installation restart; diagnostics describe the active revision.")
+    diag["summary"] = {
+        "healthy": readiness["status"] == "ready" and not critical,
+        "critical_issues": critical,
+        "warnings": warnings,
+    }
     return diag
 
 
-@app.get("/admin/settings/export", dependencies=[Depends(require_admin)])
-def export_settings_env():
-    """Generate a .env snippet for current settings (secrets redacted)."""
-    lines: List[str] = []
-    ob = active_outbound()
-    ib = active_inbound()
-    lines.append(f"FAX_BACKEND={settings.fax_backend}")
-    # Include dual-backend envs only when explicitly set
-    if os.getenv("FAX_OUTBOUND_BACKEND"):
-        lines.append(f"FAX_OUTBOUND_BACKEND={ob}")
-    if os.getenv("FAX_INBOUND_BACKEND"):
-        lines.append(f"FAX_INBOUND_BACKEND={ib}")
-    lines.append(f"REQUIRE_API_KEY={str(settings.require_api_key).lower()}")
-    lines.append(f"ENFORCE_PUBLIC_HTTPS={str(settings.enforce_public_https).lower()}")
-    lines.append("# NOTE: Secrets are redacted below. Fill in actual values before use.")
-    if settings.fax_backend == "phaxio":
-        lines.append("# Phaxio configuration")
-        lines.append(
-            f"PHAXIO_API_KEY={(settings.phaxio_api_key[:8] + '…') if settings.phaxio_api_key else ''}"
-        )
-        lines.append(
-            f"PHAXIO_API_SECRET={(settings.phaxio_api_secret[:8] + '…') if settings.phaxio_api_secret else ''}"
-        )
-        lines.append(f"PUBLIC_API_URL={settings.public_api_url}")
-        lines.append(f"PHAXIO_STATUS_CALLBACK_URL={settings.phaxio_status_callback_url}")
-        lines.append("# Also supports PHAXIO_CALLBACK_URL as an alias")
-        lines.append(f"PHAXIO_VERIFY_SIGNATURE={str(settings.phaxio_verify_signature).lower()}")
-    elif settings.fax_backend == "sip":
-        lines.append("# SIP/Asterisk configuration")
-        lines.append(f"ASTERISK_AMI_HOST={settings.ami_host}")
-        lines.append(f"ASTERISK_AMI_PORT={settings.ami_port}")
-        lines.append(f"ASTERISK_AMI_USERNAME={settings.ami_username}")
-        lines.append("ASTERISK_AMI_PASSWORD=***REDACTED***")
-    elif settings.fax_backend == "sinch":
-        lines.append("# Sinch configuration")
-        lines.append(f"SINCH_PROJECT_ID={settings.sinch_project_id}")
-        lines.append(
-            f"SINCH_API_KEY={(settings.sinch_api_key[:8] + '…') if settings.sinch_api_key else ''}"
-        )
-        lines.append(
-            f"SINCH_API_SECRET={(settings.sinch_api_secret[:8] + '…') if settings.sinch_api_secret else ''}"
-        )
-    return {
-        "env_content": "\n".join(lines),
-        "requires_restart": True,
-        "note": "v1 is read-only. Copy to .env and restart the API to apply.",
-    }
+@app.get("/admin/settings/export", responses={**_CONFIGURATION_READ_RESPONSES, **_CONFIGURATION_VALIDATION_RESPONSES})
+def export_settings_env(request: Request, identity=Depends(require_identity)):
+    """Display the complete desired configuration with opaque secret placeholders."""
+    values = access_runtime(request).configuration_access.settings(identity.actor).desired.values
+    content = format_environment(values.to_environment(redact_secrets=True))
+    return {"env": content, "env_content": content}
 
 
 def _export_settings_full_env() -> str:
-    """Generate a full .env content string with unmasked values for persistence.
-    Admin-only usage. Includes core, backend, inbound, storage and security settings.
-    """
-    kv: dict[str, str] = {}
-    # Core
-    kv["FAX_BACKEND"] = settings.fax_backend
-    # Hybrid backends (include only when explicitly set)
-    if os.getenv("FAX_OUTBOUND_BACKEND"):
-        kv["FAX_OUTBOUND_BACKEND"] = active_outbound()
-    if os.getenv("FAX_INBOUND_BACKEND"):
-        kv["FAX_INBOUND_BACKEND"] = active_inbound()
-    kv["REQUIRE_API_KEY"] = "true" if settings.require_api_key else "false"
-    kv["ENFORCE_PUBLIC_HTTPS"] = "true" if settings.enforce_public_https else "false"
-    kv["FAX_DISABLED"] = "true" if settings.fax_disabled else "false"
-    kv["PUBLIC_API_URL"] = settings.public_api_url
-    kv["MAX_FILE_SIZE_MB"] = str(settings.max_file_size_mb)
-    # Security / audit
-    kv["AUDIT_LOG_ENABLED"] = "true" if settings.audit_log_enabled else "false"
-    if settings.audit_log_file:
-        kv["AUDIT_LOG_FILE"] = settings.audit_log_file
-    kv["PDF_TOKEN_TTL_MINUTES"] = str(settings.pdf_token_ttl_minutes)
-    if settings.max_requests_per_minute is not None:
-        kv["MAX_REQUESTS_PER_MINUTE"] = str(settings.max_requests_per_minute)
-    # Backend: Phaxio
-    if settings.fax_backend == "phaxio":
-        kv["PHAXIO_API_KEY"] = settings.phaxio_api_key or ""
-        kv["PHAXIO_API_SECRET"] = settings.phaxio_api_secret or ""
-        if settings.phaxio_status_callback_url:
-            kv["PHAXIO_STATUS_CALLBACK_URL"] = settings.phaxio_status_callback_url
-        kv["PHAXIO_VERIFY_SIGNATURE"] = "true" if settings.phaxio_verify_signature else "false"
-    # Backend: Sinch
-    if settings.fax_backend == "sinch":
-        kv["SINCH_PROJECT_ID"] = settings.sinch_project_id or ""
-        kv["SINCH_API_KEY"] = settings.sinch_api_key or ""
-        kv["SINCH_API_SECRET"] = settings.sinch_api_secret or ""
-    # Backend: SIP/Asterisk
-    if settings.fax_backend == "sip":
-        kv["ASTERISK_AMI_HOST"] = settings.ami_host
-        kv["ASTERISK_AMI_PORT"] = str(settings.ami_port)
-        kv["ASTERISK_AMI_USERNAME"] = settings.ami_username
-        kv["ASTERISK_AMI_PASSWORD"] = settings.ami_password
-        if settings.fax_station_id:
-            kv["FAX_LOCAL_STATION_ID"] = settings.fax_station_id
-    # Inbound
-    kv["INBOUND_ENABLED"] = "true" if settings.inbound_enabled else "false"
-    kv["INBOUND_RETENTION_DAYS"] = str(settings.inbound_retention_days)
-    kv["INBOUND_TOKEN_TTL_MINUTES"] = str(settings.inbound_token_ttl_minutes)
-    if settings.asterisk_inbound_secret:
-        kv["ASTERISK_INBOUND_SECRET"] = settings.asterisk_inbound_secret
-    kv["PHAXIO_INBOUND_VERIFY_SIGNATURE"] = "true" if settings.phaxio_inbound_verify_signature else "false"
-    kv["SINCH_INBOUND_VERIFY_SIGNATURE"] = "true" if settings.sinch_inbound_verify_signature else "false"
-    if settings.sinch_inbound_basic_user:
-        kv["SINCH_INBOUND_BASIC_USER"] = settings.sinch_inbound_basic_user
-        kv["SINCH_INBOUND_BASIC_PASS"] = settings.sinch_inbound_basic_pass or ""
-    if settings.sinch_inbound_hmac_secret:
-        kv["SINCH_INBOUND_HMAC_SECRET"] = settings.sinch_inbound_hmac_secret
-    kv["INBOUND_LIST_RPM"] = str(settings.inbound_list_rpm)
-    kv["INBOUND_GET_RPM"] = str(settings.inbound_get_rpm)
-    # Storage
-    kv["STORAGE_BACKEND"] = (settings.storage_backend or "local")
-    if (settings.storage_backend or "").lower() == "s3":
-        if settings.s3_bucket:
-            kv["S3_BUCKET"] = settings.s3_bucket
-        if settings.s3_prefix:
-            kv["S3_PREFIX"] = settings.s3_prefix
-        if settings.s3_region:
-            kv["S3_REGION"] = settings.s3_region
-        if settings.s3_endpoint_url:
-            kv["S3_ENDPOINT_URL"] = settings.s3_endpoint_url
-        if settings.s3_kms_key_id:
-            kv["S3_KMS_KEY_ID"] = settings.s3_kms_key_id
-    # Admin console toggles
-    kv["ENABLE_LOCAL_ADMIN"] = os.getenv("ENABLE_LOCAL_ADMIN", "true").lower()
-    kv["ADMIN_ALLOW_RESTART"] = os.getenv("ADMIN_ALLOW_RESTART", "false").lower()
-    # Persisted settings loader toggle
-    kv["ENABLE_PERSISTED_SETTINGS"] = os.getenv("ENABLE_PERSISTED_SETTINGS", "false").lower()
-    if os.getenv("PERSISTED_ENV_PATH"):
-        kv["PERSISTED_ENV_PATH"] = os.getenv("PERSISTED_ENV_PATH", "") or ""
-    # MCP SSE
-    kv["ENABLE_MCP_SSE"] = os.getenv("ENABLE_MCP_SSE", "false").lower()
-    kv["REQUIRE_MCP_OAUTH"] = os.getenv("REQUIRE_MCP_OAUTH", "false").lower()
-    if settings.oauth_issuer:
-        kv["OAUTH_ISSUER"] = settings.oauth_issuer
-    if settings.oauth_audience:
-        kv["OAUTH_AUDIENCE"] = settings.oauth_audience
-    if settings.oauth_jwks_url:
-        kv["OAUTH_JWKS_URL"] = settings.oauth_jwks_url
-    # MCP HTTP
-    kv["ENABLE_MCP_HTTP"] = os.getenv("ENABLE_MCP_HTTP", "false").lower()
-
-    lines: list[str] = []
-    for k, v in kv.items():
-        if v is None:
-            continue
-        s = str(v)
-        if any(ch in s for ch in [" ", "#"]):
-            s = f'"{s}"'
-        lines.append(f"{k}={s}")
-    return "\n".join(lines) + "\n"
+    return format_environment(_configuration_manager().store.read().desired.values.to_environment())
 
 
 class PersistSettingsIn(BaseModel):
+    model_config = ConfigDict(extra='forbid', hide_input_in_errors=True)
     content: str | None = None
     path: str | None = None
 
 
-@app.post("/admin/settings/persist", dependencies=[Depends(require_admin)])
+@app.post("/admin/settings/persist",
+          dependencies=[Depends(require_permission('owner:recover', audit=True, complete_owner=True))],
+          responses={**_PERMISSION_RESPONSES, **_CONFIGURATION_VALIDATION_RESPONSES})
 def persist_settings(payload: PersistSettingsIn):
-    """Write a .env file to a persisted location (default: /faxdata/faxbot.env).
-    If content is not provided, the server will render a full export from current settings.
+    """Atomically export desired settings to the installation's private recovery file.
+
+    Restoring historical jobs also requires the database and original installation
+    key. This export does not activate settings or change the canonical store.
     """
-    target = payload.path or os.getenv("PERSISTED_ENV_PATH", "/faxdata/faxbot.env")
-    content = payload.content or _export_settings_full_env()
+    values = _configuration_manager().store.read().desired.values
+    target = Path(values.persisted_env_path).absolute()
+    if payload.path is not None and Path(payload.path).absolute() != target:
+        raise HTTPException(403, detail="Recovery exports must use the configured persistence path.")
+    environment = values.to_environment()
+    if payload.content is not None:
+        supplied = parse_environment(payload.content, allowed_keys=ConfigurationValues.environment_keys())
+        if supplied != environment:
+            raise HTTPException(400, detail="Recovery content must match the complete desired revision; use an explicit configuration import to change it.")
     try:
-        os.makedirs(os.path.dirname(target), exist_ok=True)
-        with open(target, "w") as f:
-            f.write(content)
-    except Exception as e:
-        raise HTTPException(500, detail=f"Failed to write settings: {e}")
-    return {"ok": True, "path": target}
+        target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        write_environment(target, environment, allowed_keys=ConfigurationValues.environment_keys())
+    except OSError:
+        raise HTTPException(500, detail="Cannot write the configured recovery artifact.") from None
+    return {"ok": True, "path": str(target)}
 
-@app.post("/fax", response_model=FaxJobOut, status_code=202, dependencies=[Depends(require_fax_send)])
-async def send_fax(background: BackgroundTasks, to: str = Form(...), file: UploadFile = File(...)):
-    ob = active_outbound()
-    # Preserve legacy behavior in disabled/test mode to avoid cross-test env leakage
-    if settings.fax_disabled:
-        ob = settings.fax_backend
-    # Validate destination
-    if not PHONE_RE.match(to):
-        raise HTTPException(400, detail="'to' must be E.164 or digits only")
-    # Stream upload to disk with magic sniff and size enforcement
-    max_bytes = settings.max_file_size_mb * 1024 * 1024
+@app.post("/fax", response_model=FaxJobOut, status_code=202)
+async def send_fax(request: Request, to: str = Form(...), file: UploadFile = File(...),
+                   queue_only: bool = Form(False),
+                   idempotency_key: Optional[str] = Header(default=None, alias='Idempotency-Key',
+                       description='Optional key for replaying the same fax request; 1 to 128 printable ASCII characters without spaces.'),
+                   identity=Depends(require_identity)):
+    manager = _configuration_manager()
+    access = access_runtime(request)
+    await run_lifecycle_step(private_operation(lambda: access.outbound.check_send(identity.actor)))
+    _enforce_rate_limit({'key_id': identity.actor.replay_scope}, '/fax')
+    revision = request.scope['faxbot.configuration'].active
+
+    def resolve(country):
+        try:
+            return normalize_number(to, country=country), None
+        except InvalidNumber as error:
+            return None, error
+
+    # One canonical destination, resolved before fingerprinting, provider
+    # selection and acceptance; the job stores it so settings cannot redirect it.
+    destination, destination_error = resolve(revision.values.fax_default_country)
+    request_identity = None
+    keys = request.headers.getlist('idempotency-key')
+    if keys:
+        if len(keys) != 1:
+            raise HTTPException(400, detail='Supply one Idempotency-Key header.')
+        try:
+            scope = identity.actor.replay_scope
+            validated = RequestIdentity.from_key(idempotency_key, principal_scope=scope, fingerprint='0' * 64)
+            accepted = await run_lifecycle_step(lambda: access.outbound.replay_values(identity.actor, validated))
+            max_bytes = (accepted.max_file_size_mb if accepted is not None else settings.max_file_size_mb) * 1024 * 1024
+            document_sha256 = await digest_upload(file, max_bytes=max_bytes)
+            # A replay is the same request when it resolves to the same number
+            # under the country its original was accepted with.
+            original = destination if accepted is None else resolve(accepted.fax_default_country)[0]
+            fingerprint, legacy = request_fingerprints(entered=to, destination=original,
+                queue_only=queue_only, document_sha256=document_sha256)
+            replay_identity = RequestIdentity(scope, validated.idempotency_digest, fingerprint, legacy)
+            existing = await run_lifecycle_step(lambda: access.outbound.find_replay(identity.actor, replay_identity))
+            if destination is not None:
+                fingerprint, legacy = request_fingerprints(entered=to, destination=destination,
+                    queue_only=queue_only, document_sha256=document_sha256)
+                request_identity = RequestIdentity(scope, validated.idempotency_digest, fingerprint, legacy)
+        except UploadPreparationError as error:
+            raise HTTPException(error.status_code, detail=str(error)) from None
+        except IdempotencyConflict as error:
+            raise HTTPException(409, detail=str(error)) from None
+        except ValueError as error:
+            raise HTTPException(400, detail=str(error)) from None
+        if existing is not None:
+            return await run_lifecycle_step(private_operation(lambda: _accepted_job_response(access, identity.actor, existing)))
+    if destination is None:
+        raise HTTPException(400, detail=str(destination_error))
+    if queue_only and not settings.fax_disabled:
+        raise HTTPException(409, detail="Queue-only request refused because outbound sending is now enabled. Refresh Send before submitting again.")
+    profile_id = revision.profile_id('outbound')
+    if profile_id is None:
+        raise HTTPException(409, detail="Outbound fax delivery is disabled in this configuration.")
+    profile = manager.store.read_profile(profile_id)
+    ob = profile.configuration.provider_id
+    use_manifest = profile.configuration.manifest is not None
+    if use_manifest or ob not in {'sip', 'freeswitch'}:
+        try:
+            service_from_profile(profile)
+        except ProviderExecutionError:
+            raise HTTPException(400, detail="Selected provider has no supported outbound adapter.") from None
     job_id = uuid.uuid4().hex
-    orig_path = os.path.join(settings.fax_data_dir, f"{job_id}-{file.filename}")
-    pdf_path = os.path.join(settings.fax_data_dir, f"{job_id}.pdf")
-    tiff_path = os.path.join(settings.fax_data_dir, f"{job_id}.tiff")
-
-    total = 0
-    first_chunk = b""
-    CHUNK = 64 * 1024
+    requires_tiff = ((not use_manifest and ob in {'sip', 'freeswitch'})
+                     or profile.configuration.traits.get('requires_tiff', False) is True)
     try:
-        with open(orig_path, "wb") as out:
-            # Read first chunk for magic sniff
-            first_chunk = await file.read(CHUNK)
-            total += len(first_chunk)
-            if total > max_bytes:
-                raise HTTPException(413, detail=f"File exceeds {settings.max_file_size_mb} MB limit")
-            out.write(first_chunk)
-            # Stream the rest
-            while True:
-                chunk = await file.read(CHUNK)
-                if not chunk:
-                    break
-                total += len(chunk)
-                if total > max_bytes:
-                    raise HTTPException(413, detail=f"File exceeds {settings.max_file_size_mb} MB limit")
-                out.write(chunk)
-    except HTTPException:
-        try:
-            if os.path.exists(orig_path):
-                os.remove(orig_path)
-        finally:
-            raise
-
-    # Magic sniff: PDF if starts with %PDF, else treat as text if UTF-8 clean
-    is_pdf = first_chunk.startswith(b"%PDF")
-    is_text = False
-    if not is_pdf:
-        try:
-            first_chunk.decode("utf-8")
-            is_text = True
-        except Exception:
-            is_text = False
-    if not (is_pdf or is_text):
-        # Unsupported type
-        try:
-            os.remove(orig_path)
-        except Exception:
-            pass
-        raise HTTPException(415, detail="Only PDF and TXT are allowed")
-
-    # Convert to PDF if needed
-    if is_text or (file.filename and file.filename.lower().endswith(".txt")):
-        if settings.fax_disabled:
-            # Test mode - skip conversion
-            with open(pdf_path, "wb") as f:
-                f.write(b"%PDF-1.4\ntest\n%%EOF")
-        else:
-            txt_to_pdf(orig_path, pdf_path)
-    else:
-        # Copy the PDF directly
-        shutil.copyfile(orig_path, pdf_path)
-
-    # Backend-specific file preparation (trait-driven)
-    pages = None
-    manifest_path = os.path.join(os.getcwd(), "config", "providers", ob, "manifest.json")
-    requires_tiff = False
-    try:
-        from .config import providerHasTrait
-        requires_tiff = bool(providerHasTrait("outbound", "requires_tiff"))
-    except Exception:
-        requires_tiff = (ob in {"sip", "freeswitch"})
-    if settings.feature_v3_plugins and os.path.exists(manifest_path):
-        pages = None
-    elif requires_tiff:
-        if settings.fax_disabled:
-            pages = 1
-            with open(tiff_path, "wb") as f:
-                f.write(b"TIFF_PLACEHOLDER")
-        else:
-            pages, _ = pdf_to_tiff(pdf_path, tiff_path)
-    else:
-        pages = None
-
-    # Create job in DB with backend info
-    with SessionLocal() as db:
-        job = FaxJob(
-            id=job_id,
-            to_number=to,
-            file_name=file.filename,
-            tiff_path=tiff_path,
-            status="queued",
-            pages=pages,
-            backend=ob,
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow(),
+        prepared = await prepare_upload(
+            file, job_id=job_id, data_dir=settings.fax_data_dir,
+            max_bytes=settings.max_file_size_mb * 1024 * 1024,
+            requires_tiff=requires_tiff,
         )
-        db.add(job)
-        db.commit()
-    audit_event("job_created", job_id=job_id, backend=ob)
+    except UploadPreparationError as error:
+        raise HTTPException(error.status_code, detail=str(error)) from None
+    pdf_path = prepared.pdf_path
+    tiff_path = prepared.tiff_path or ""
 
-    # Kick off fax sending based on backend
-    if not settings.fax_disabled:
-        if ob == "phaxio":
-            background.add_task(_send_via_phaxio, job_id, to, pdf_path)
-        elif ob == "sinch":
-            background.add_task(_send_via_sinch, job_id, to, pdf_path)
-        elif ob == "signalwire":
-            background.add_task(_send_via_signalwire, job_id, to, pdf_path)
-        elif ob == "freeswitch":
-            background.add_task(_send_via_freeswitch, job_id, to, tiff_path)
-        elif settings.feature_v3_plugins and os.path.exists(manifest_path):
-            background.add_task(_send_via_manifest, job_id, to, pdf_path)
-        else:
-            # Default to SIP/Asterisk
-            background.add_task(_originate_job, job_id, to, tiff_path)
-
-    return _serialize_job(job)
-
-
-async def _originate_job(job_id: str, to: str, tiff_path: str):
+    # One transaction accepts the row and its immutable account/profile binding.
     try:
-        audit_event("job_dispatch", job_id=job_id, method="sip")
-        await ami_client.originate_sendfax(job_id, to, tiff_path)
-        # Mark as started
-        with SessionLocal() as db:
-            job = db.get(FaxJob, job_id)
-            if job:
-                j = cast(Any, job)
-                j.status = "in_progress"
-                j.updated_at = datetime.utcnow()
-                db.add(j)
-                db.commit()
-    except Exception as e:
-        with SessionLocal() as db:
-            job = db.get(FaxJob, job_id)
-            if job:
-                j = cast(Any, job)
-                j.status = "failed"
-                j.error = str(e)
-                j.updated_at = datetime.utcnow()
-                db.add(j)
-                db.commit()
-        audit_event("job_failed", job_id=job_id, error=str(e))
+        accepted_at = datetime.utcnow()
+        result = FaxJobOut(id=job_id, to=destination, status='queued', pages=prepared.pages,
+                          backend=ob, created_at=accepted_at, updated_at=accepted_at,
+                          delivery_state='held' if revision.values.fax_disabled else 'ready',
+                          dispatch_mode='held' if revision.values.fax_disabled else 'normal',
+                          delivery_version=1)
+        await run_lifecycle_step(lambda: access.outbound.accept(identity.actor, revision, {
+            'id': job_id, 'to_number': destination, 'file_name': prepared.original_name,
+            'tiff_path': tiff_path, 'status': 'queued', 'pages': prepared.pages,
+            'created_at': accepted_at, 'updated_at': accepted_at,
+        }, request_identity=request_identity))
+    except IdempotentReplay as replay:
+        prepared.cleanup()
+        return await run_lifecycle_step(private_operation(lambda: _accepted_job_response(access, identity.actor, replay.job_id)))
+    except IdempotencyConflict as error:
+        prepared.cleanup()
+        raise HTTPException(409, detail=str(error)) from None
+    except ConfigurationCommitUncertain:
+        # COMMIT can succeed after the acknowledgement is lost. Keep the document
+        # and never automatically resubmit an uncertain accepted fax.
+        raise HTTPException(503, detail=f"Fax acceptance is uncertain. Retain job {job_id} for reconciliation.") from None
+    except Exception:
+        prepared.cleanup()
+        raise
+    # Serialize before COMMIT; a second database read must not turn confirmed
+    # acceptance into an unidentifiable error and invite duplicate submission.
+    audit_event("job_created", job_id=job_id, backend=ob)
+    return result
 
 
-@app.get("/fax/{job_id}", response_model=FaxJobOut, dependencies=[Depends(require_fax_read)])
-def get_fax(job_id: str):
-    with SessionLocal() as db:
-        job = db.get(FaxJob, job_id)
-        if not job:
-            raise HTTPException(404, detail="Job not found")
-    return _serialize_job(job)
+def _accepted_job_response(access, actor, job_id):
+    row = access.queries.job(actor, job_id)
+    fields = ('id', 'status', 'pages', 'backend', 'provider_sid', 'created_at', 'updated_at',
+              'delivery_state', 'dispatch_mode', 'delivery_version', 'reconciliation_reason')
+    return FaxJobOut(**{name: row[name] for name in fields}, to=row['to_number'], error=sanitize_error(row['error']))
+
+
+@app.get("/fax/{job_id}", response_model=FaxJobOut)
+def get_fax(job_id: str, request: Request, identity=Depends(require_identity)):
+    _enforce_rate_limit({'key_id': identity.actor.replay_scope}, '/fax/{id}')
+    return private_operation(lambda: _accepted_job_response(access_runtime(request), identity.actor, job_id))()
 
 
 # Admin API key management
-@app.post("/admin/api-keys", response_model=CreateAPIKeyOut, dependencies=[Depends(require_admin)])
-def admin_create_api_key(payload: CreateAPIKeyIn):
-    result = create_api_key(
-        name=payload.name,
-        owner=payload.owner,
-        scopes=payload.scopes,
-        expires_at=payload.expires_at,
-        note=payload.note,
-    )
-    return CreateAPIKeyOut(**result)  # type: ignore[arg-type]
+def _key_display_name(name, owner, key_id):
+    parts = [value.strip() for value in (name, owner) if value and value.strip()]
+    display = f"{parts[0]} ({parts[1]})" if len(parts) == 2 else parts[0] if parts else f"API key {key_id}"
+    return display[:200]
 
 
-@app.get("/admin/api-keys", response_model=List[APIKeyMeta], dependencies=[Depends(require_admin)])
-def admin_list_api_keys():
-    rows = list_api_keys()
-    return [APIKeyMeta(**r) for r in rows]
+def _naive_utc(value):
+    if value is None or value.tzinfo is None:
+        return value
+    return value.astimezone(timezone.utc).replace(tzinfo=None)
 
 
-@app.delete("/admin/api-keys/{key_id}", dependencies=[Depends(require_admin)])
-def admin_revoke_api_key(key_id: str):
-    ok = revoke_api_key(key_id)
-    if not ok:
-        raise HTTPException(404, detail="Key not found")
+def _policy_version(service):
+    with service.store.transaction() as connection:
+        return service.store.require_lock_on(connection)
+
+
+def _may_manage_keys(service, connection, actor):
+    return service.control.authorize_on(connection, actor, 'keys:manage',
+        ResourceRef('installation'), now=access_utcnow()).allowed
+
+
+@private_operation
+def _list_keys(service, actor):
+    """The /access/keys projection in the legacy shape; a revoked key keeps its revoked_at."""
+    items, cursor = [], None
+    while True:
+        page = service.reads.keys(actor, cursor=cursor, limit=200)
+        items.extend(page['items'])
+        cursor = page['next_cursor']
+        if cursor is None:
+            break
+    owners: Dict[str, Optional[str]] = {}
+    if items:
+        keys = service.store.tables['api_keys']
+        with service.store.transaction() as connection:
+            owners = dict(connection.execute(sa.select(keys.c.key_id, keys.c.owner)
+                .where(keys.c.key_id.in_([item['id'] for item in items]))).all())
+    return [APIKeyMeta(key_id=item['id'], name=item['name'], owner=owners.get(item['id']),
+                       scopes=[grant['permission'] for grant in item['ceiling'] if grant['resource_id'] == 'installation'],
+                       created_at=item['created_at'], last_used_at=item['last_used_at'], expires_at=item['expires_at'],
+                       revoked_at=item['revoked_at'], note=item['note']) for item in items]
+
+
+@private_operation
+def _key_target(service, actor, key_id):
+    """Resolve a public key id; existence is disclosed only to key managers."""
+    with service.store.transaction() as connection:
+        version = service.store.require_lock_on(connection)
+        allowed = _may_manage_keys(service, connection, actor)
+        keys, bindings = service.store.tables['api_keys'], service.store.tables['access_key_bindings']
+        row = connection.execute(sa.select(bindings.c.id, bindings.c.version)
+            .select_from(bindings.join(keys, keys.c.id == bindings.c.id)).where(keys.c.key_id == key_id)).first()
+    if row is None:
+        return allowed, None, version
+    return allowed, VersionedEntity(row.id, row.version), version
+
+
+def _require_key_target(service, actor, key_id):
+    allowed, target, version = _key_target(service, actor, key_id)
+    if target is None:
+        if allowed:
+            raise HTTPException(404, detail="Key not found")
+        raise MutationDeniedError(MutationReason.FORBIDDEN)
+    return target, version
+
+
+@app.post("/admin/api-keys", response_model=CreateAPIKeyOut)
+def admin_create_api_key(payload: CreateAPIKeyIn, request: Request, identity=Depends(require_identity)):
+    """Issue a key for a new integration identity holding exactly the requested scopes."""
+    scopes = list(dict.fromkeys(payload.scopes or []))
+    unknown = [scope for scope in scopes if scope not in KEY_SCOPES]
+    if unknown:
+        raise HTTPException(400, detail=f"Unknown scope: {', '.join(unknown)}. "
+                                        f"Allowed scopes: {', '.join(sorted(KEY_SCOPES))}.")
+    service = access_runtime(request)
+
+    @private_operation
+    def issue():
+        prepared = service.credential_codec.prepare_new_key()
+        values = IntegrationKeyValues(
+            display_name=_key_display_name(payload.name, payload.owner, prepared.public_key_id),
+            owner=payload.owner, name=payload.name, note=payload.note,
+            expires_at=_naive_utc(payload.expires_at), permissions=frozenset(scopes))
+        receipt = service.mutations.issue_integration_key(identity.actor, values, prepared,
+            expected_policy_version=_policy_version(service), now=access_utcnow())
+        return receipt, prepared
+
+    receipt, prepared = issue()
+    # Disclosed once, only after the issuing transaction committed.
+    return CreateAPIKeyOut(key_id=receipt.public_key_id, token=prepared._token_for_committed_adapter(),
+                           name=payload.name, owner=payload.owner,
+                           scopes=[grant.permission for grant in receipt.ceiling], expires_at=payload.expires_at)
+
+
+@app.get("/admin/api-keys", response_model=List[APIKeyMeta])
+def admin_list_api_keys(request: Request, identity=Depends(require_identity)):
+    return _list_keys(access_runtime(request), identity.actor)
+
+
+@app.delete("/admin/api-keys/{key_id}")
+def admin_revoke_api_key(key_id: str, request: Request, identity=Depends(require_identity)):
+    service = access_runtime(request)
+    target, version = _require_key_target(service, identity.actor, key_id)
+    private_operation(service.mutations.revoke_key)(identity.actor, target,
+        expected_policy_version=version, now=access_utcnow())
     return {"status": "ok"}
 
 
@@ -2482,12 +2381,21 @@ class RotateAPIKeyOut(BaseModel):
     token: str
 
 
-@app.post("/admin/api-keys/{key_id}/rotate", response_model=RotateAPIKeyOut, dependencies=[Depends(require_admin)])
-def admin_rotate_api_key(key_id: str):
-    res = rotate_api_key(key_id)
-    if not res:
-        raise HTTPException(404, detail="Key not found")
-    return RotateAPIKeyOut(**res)  # type: ignore[arg-type]
+@app.post("/admin/api-keys/{key_id}/rotate", response_model=RotateAPIKeyOut)
+def admin_rotate_api_key(key_id: str, request: Request, identity=Depends(require_identity)):
+    """Replace the secret; the key id, identity and scopes stay the same."""
+    service = access_runtime(request)
+    target, version = _require_key_target(service, identity.actor, key_id)
+
+    @private_operation
+    def rotate():
+        prepared = service.credential_codec.prepare_key_rotation(key_id)
+        receipt = service.mutations.rotate_key(identity.actor, target, prepared,
+            expected_policy_version=version, now=access_utcnow())
+        return receipt, prepared
+
+    receipt, prepared = rotate()
+    return RotateAPIKeyOut(key_id=receipt.public_key_id, token=prepared._token_for_committed_adapter())
 
 
 async def _artifact_cleanup_loop():
@@ -2498,42 +2406,44 @@ async def _artifact_cleanup_loop():
             await _cleanup_once()
         except Exception as e:
             import logging
-            logging.getLogger(__name__).error(f"Artifact cleanup error: {e}")
+            logging.getLogger(__name__).error("Artifact cleanup requires operator attention.")
         await asyncio.sleep(interval * 60)
+
+
+def _outbound_document_path(job_id, suffix):
+    if not isinstance(job_id, str) or re.fullmatch('[a-f0-9]{32}', job_id) is None:
+        raise HTTPException(404, detail='Document not found.')
+    try:
+        revision, _ = _configuration_manager().store.outbound_context(job_id)
+        root = revision.values.fax_data_dir
+    except UnboundProviderProfile:
+        # Pre-migration files remain in the installation data directory; no
+        # provider/account association is inferred for their transmission.
+        root = settings.fax_data_dir
+    return Path(root) / (job_id + suffix)
+
+
+def _cleanup_outbound_documents(cutoff):
+    import sqlalchemy as sa
+    delivery = _deliveries()
+    with delivery.configuration.engine.connect() as connection:
+        identities = connection.execute(sa.select(delivery.deliveries.c.id).where(
+            delivery.deliveries.c.state.in_(tuple(TERMINAL)),
+            delivery.deliveries.c.updated_at < cutoff)).scalars().all()
+    for identity in identities:
+        for suffix in ('.pdf', '.tiff'):
+            try:
+                path = _outbound_document_path(identity, suffix)
+                if not path.is_symlink():
+                    path.unlink(missing_ok=True)
+            except (OSError, HTTPException, ConfigurationStoreError):
+                audit_event('outbound_retention_requires_attention', job_id=identity)
 
 
 async def _cleanup_once():
     cutoff = datetime.utcnow() - timedelta(days=max(1, settings.artifact_ttl_days))
-    final_statuses = {"SUCCESS", "FAILED", "failed", "disabled"}
-    data_dir = settings.fax_data_dir
-    import glob
+    await run_lifecycle_step(lambda: _cleanup_outbound_documents(cutoff))
     with SessionLocal() as db:
-        # naive scan: iterate all jobs updated before cutoff
-        # SQLAlchemy 2.0 Core select is imported? Simpler: fetch all and filter.
-        # For small SQLite this is fine. For larger stores, switch to SQL query with filters.
-        jobs = db.query(FaxJob).all()  # type: ignore[attr-defined]
-        for job in jobs:
-            try:
-                if job.updated_at and job.updated_at < cutoff and (job.status in final_statuses):
-                    # Delete PDF
-                    pdf_path = os.path.join(data_dir, f"{job.id}.pdf")
-                    if os.path.exists(pdf_path):
-                        os.remove(pdf_path)
-                    # Delete TIFF
-                    if job.tiff_path and os.path.exists(job.tiff_path):
-                        try:
-                            os.remove(job.tiff_path)
-                        except FileNotFoundError:
-                            pass
-                    # Delete original upload(s)
-                    for p in glob.glob(os.path.join(data_dir, f"{job.id}-*")):
-                        try:
-                            os.remove(p)
-                        except FileNotFoundError:
-                            pass
-            except Exception:
-                continue
-
         # Inbound retention cleanup
         try:
             from .db import InboundFax  # type: ignore
@@ -2594,15 +2504,15 @@ async def get_fax_pdf(job_id: str, token: str = Query(...)):
         if not expected_token:  # type: ignore[truthy-bool]
             raise HTTPException(404, detail="PDF not available")
         # Validate token equality
-        if token != expected_token:
+        if not isinstance(token, str) or not hmac.compare_digest(token.encode(), str(expected_token).encode()):
             raise HTTPException(403, detail="Invalid token")
         # Validate expiry if set
         if job.pdf_token_expires_at and datetime.utcnow() > job.pdf_token_expires_at:  # type: ignore[operator]
             raise HTTPException(403, detail="Token expired")
 
         # Get the PDF path
-        pdf_path = os.path.join(settings.fax_data_dir, f"{job_id}.pdf")
-        if not os.path.exists(pdf_path):
+        pdf_path = _outbound_document_path(job_id, '.pdf')
+        if pdf_path.is_symlink() or not pdf_path.is_file():
             raise HTTPException(404, detail="PDF file not found")
 
         # Log access for security monitoring
@@ -2623,306 +2533,26 @@ async def get_fax_pdf(job_id: str, token: str = Query(...)):
         )
 
 
-@app.post("/phaxio-callback")
+async def _receive_outbound_callback(request, provider):
+    from .callback_forms import read_callback_form, CallbackFormError
+    try:
+        fields, files = await read_callback_form(request)
+        result = await run_lifecycle_step(lambda: CapturedCallbacks(_deliveries()).receive(
+            provider, request.query_params.get('job_id'), request.query_params.get('attempt_id'),
+            fields=fields, files=files, signature=request.headers.get(
+                'X-Phaxio-Signature' if provider == 'phaxio' else 'X-SignalWire-Signature', '')))
+    except CallbackFormError as error:
+        raise HTTPException(error.status_code, detail=str(error)) from None
+    except CallbackRejected:
+        raise HTTPException(401, detail='Callback could not be authenticated for this attempt.') from None
+    except DeliveryConflict:
+        raise HTTPException(409, detail='Callback does not match the current delivery attempt.') from None
+    return {'ok': True, 'applied': result}
+
+
+@app.post('/phaxio-callback')
 async def phaxio_callback(request: Request):
-    """Handle Phaxio status callbacks."""
-    # Verify signature if enabled
-    raw_body = await request.body()
-    if settings.phaxio_verify_signature:
-        provided = request.headers.get("X-Phaxio-Signature") or request.headers.get("X-Phaxio-Signature-SHA256")
-        if not provided:
-            raise HTTPException(401, detail="Missing Phaxio signature")
-        secret = (settings.phaxio_api_secret or "").encode()
-        if not secret:
-            raise HTTPException(401, detail="Phaxio secret not configured")
-        digest = hmac.new(secret, raw_body, hashlib.sha256).hexdigest()
-        if not hmac.compare_digest(digest, provided.strip().lower()):
-            raise HTTPException(401, detail="Invalid Phaxio signature")
-
-    form_data = await request.form()
-    callback_data = dict(form_data)
-    
-    # Get job ID from query params
-    job_id = request.query_params.get("job_id")
-    if not job_id:
-        return {"status": "no job_id provided"}
-    
-    phaxio_service = get_phaxio_service()
-    if not phaxio_service:
-        return {"status": "phaxio not configured"}
-    
-    # Process the callback
-    status_info = await phaxio_service.handle_status_callback(callback_data)
-    
-    # Update job status
-    with SessionLocal() as db:
-        job = db.get(FaxJob, job_id)
-        if job:
-            job.status = status_info['status']
-            if status_info.get('error_message'):
-                job.error = status_info['error_message']
-            if status_info.get('pages'):
-                job.pages = status_info['pages']
-            job.updated_at = datetime.utcnow()  # type: ignore[assignment]
-            db.add(job)  # type: ignore[arg-type]
-            db.commit()
-    audit_event("job_updated", job_id=job_id, status=status_info.get('status'), provider="phaxio")
-    
-    return {"status": "ok"}
-
-
-async def _send_via_phaxio(job_id: str, to: str, pdf_path: str):
-    """Send fax via Phaxio API."""
-    try:
-        phaxio_service = get_phaxio_service()
-        if not phaxio_service or not phaxio_service.is_configured():
-            raise Exception("Phaxio is not properly configured")
-        
-        # Generate a secure token for PDF access with expiry
-        pdf_token = secrets.token_urlsafe(32)
-        ttl = max(1, int(settings.pdf_token_ttl_minutes))
-        expires_at = datetime.utcnow() + timedelta(minutes=ttl)
-
-        # Create public URL for PDF (tokenized)
-        pdf_url = f"{settings.public_api_url}/fax/{job_id}/pdf?token={pdf_token}"
-
-        # Update job with PDF URL/token and mark as in_progress
-        with SessionLocal() as db:
-            job = db.get(FaxJob, job_id)
-            if job:
-                j = cast(Any, job)
-                j.pdf_url = pdf_url
-                j.pdf_token = pdf_token
-                j.pdf_token_expires_at = expires_at
-                j.status = "in_progress"
-                j.updated_at = datetime.utcnow()
-                db.add(j)
-                db.commit()
-        
-        # Send via Phaxio
-        audit_event("job_dispatch", job_id=job_id, method="phaxio")
-        result = await phaxio_service.send_fax(to, pdf_url, job_id)
-        
-        # Update job with provider SID
-        with SessionLocal() as db:
-            job = db.get(FaxJob, job_id)
-            if job:
-                j = cast(Any, job)
-                j.provider_sid = result['provider_sid']
-                j.status = result['status']
-                j.updated_at = datetime.utcnow()
-                db.add(j)
-                db.commit()
-                
-    except Exception as e:
-        with SessionLocal() as db:
-            job = db.get(FaxJob, job_id)
-            if job:
-                j = cast(Any, job)
-                j.status = "failed"
-                j.error = str(e)
-                j.updated_at = datetime.utcnow()
-                db.add(j)
-                db.commit()
-        audit_event("job_failed", job_id=job_id, error=str(e))
-
-
-async def _send_via_sinch(job_id: str, to: str, pdf_path: str):
-    """Send fax via Sinch Fax API v3 (Phaxio by Sinch)."""
-    try:
-        sinch = get_sinch_service()
-        if not sinch or not sinch.is_configured():
-            raise Exception("Sinch Fax is not properly configured")
-
-        audit_event("job_dispatch", job_id=job_id, method="sinch")
-
-        # Create fax by uploading the PDF directly (multipart/form-data)
-        resp = await sinch.send_fax_file(to, pdf_path)
-
-        fax_id = str(resp.get("id") or resp.get("data", {}).get("id") or "")
-        status = (resp.get("status") or resp.get("data", {}).get("status") or "in_progress").upper()
-        if status == "IN_PROGRESS":
-            internal_status = "in_progress"
-        elif status in {"SUCCESS", "COMPLETED", "COMPLETED_OK"}:
-            internal_status = "SUCCESS"
-        elif status in {"FAILED", "FAILURE", "ERROR"}:
-            internal_status = "FAILED"
-        else:
-            internal_status = "queued"
-
-        with SessionLocal() as db:
-            job = db.get(FaxJob, job_id)
-            if job:
-                j = cast(Any, job)
-                j.provider_sid = fax_id
-                j.status = internal_status
-                j.updated_at = datetime.utcnow()
-                db.add(j)
-                db.commit()
-    except Exception as e:
-        with SessionLocal() as db:
-            job = db.get(FaxJob, job_id)
-            if job:
-                j = cast(Any, job)
-                j.status = "failed"
-                j.error = str(e)
-                j.updated_at = datetime.utcnow()
-                db.add(j)
-                db.commit()
-        audit_event("job_failed", job_id=job_id, error=str(e))
-
-
-async def _send_via_signalwire(job_id: str, to: str, pdf_path: str):
-    try:
-        svc = get_signalwire_service()
-        if not svc:
-            raise RuntimeError("SignalWire not configured")
-        # Tokenized PDF URL
-        pdf_token = secrets.token_urlsafe(32)
-        ttl = max(1, int(settings.pdf_token_ttl_minutes))
-        expires_at = datetime.utcnow() + timedelta(minutes=ttl)
-        media_url = f"{settings.public_api_url}/fax/{job_id}/pdf?token={pdf_token}"
-
-        with SessionLocal() as db:
-            job = db.get(FaxJob, job_id)
-            if job:
-                job.pdf_url = media_url
-                job.pdf_token = pdf_token
-                job.pdf_token_expires_at = expires_at
-                job.status = "in_progress"
-                job.updated_at = datetime.utcnow()
-                db.add(job)
-                db.commit()
-
-        audit_event("job_dispatch", job_id=job_id, method="signalwire")
-        res = await svc.send_fax(to, media_url, job_id)
-        prov_sid = str(res.get("provider_sid") or "")
-        status = str(res.get("status") or "queued")
-        with SessionLocal() as db:
-            job = db.get(FaxJob, job_id)
-            if job:
-                job.provider_sid = prov_sid
-                job.status = status
-                job.updated_at = datetime.utcnow()
-                db.add(job)
-                db.commit()
-    except Exception as e:
-        with SessionLocal() as db:
-            job = db.get(FaxJob, job_id)
-            if job:
-                job.status = "failed"
-                job.error = str(e)
-                job.updated_at = datetime.utcnow()
-                db.add(job)
-                db.commit()
-        audit_event("job_failed", job_id=job_id, error=str(e))
-
-
-async def _send_via_freeswitch(job_id: str, to: str, tiff_path: str):
-    try:
-        audit_event("job_dispatch", job_id=job_id, method="freeswitch")
-        if not fs_cli_available() and not settings.fax_disabled:
-            raise RuntimeError("fs_cli not available on API host; install FreeSWITCH client or configure ESL integration")
-        # Fire and forget
-        if not settings.fax_disabled:
-            res = originate_txfax(to, tiff_path, job_id)
-        else:
-            res = "disabled"
-        with SessionLocal() as db:
-            job = db.get(FaxJob, job_id)
-            if job:
-                j = cast(Any, job)
-                j.status = "in_progress"
-                j.provider_sid = (res or "").strip()
-                j.updated_at = datetime.utcnow()
-                db.add(j)
-                db.commit()
-    except Exception as e:
-        with SessionLocal() as db:
-            job = db.get(FaxJob, job_id)
-            if job:
-                j = cast(Any, job)
-                j.status = "failed"
-                j.error = str(e)
-                j.updated_at = datetime.utcnow()
-                db.add(j)
-                db.commit()
-        audit_event("job_failed", job_id=job_id, error=str(e))
-
-async def _send_via_manifest(job_id: str, to: str, pdf_path: str):
-    try:
-        pid = settings.fax_backend
-        mpath = os.path.join(os.getcwd(), "config", "providers", pid, "manifest.json")
-        with open(mpath, "r", encoding="utf-8") as f:
-            man = HttpManifest.from_dict(json.load(f))
-
-        # Generate tokenized PDF URL with expiry
-        pdf_token = secrets.token_urlsafe(32)
-        ttl = max(1, int(settings.pdf_token_ttl_minutes))
-        expires_at = datetime.utcnow() + timedelta(minutes=ttl)
-        pdf_url = f"{settings.public_api_url}/fax/{job_id}/pdf?token={pdf_token}"
-
-        with SessionLocal() as db:
-            job = db.get(FaxJob, job_id)
-            if job:
-                job.pdf_url = pdf_url
-                job.pdf_token = pdf_token
-                job.pdf_token_expires_at = expires_at
-                job.status = "in_progress"
-                job.updated_at = datetime.utcnow()
-                db.add(job)
-                db.commit()
-
-        # Load provider settings from config store if present
-        p_settings: Dict[str, Any] = {}
-        try:
-            if _read_cfg is not None:
-                cfg = _read_cfg(settings.faxbot_config_path)
-                if getattr(cfg, "ok", False) and getattr(cfg, "data", None):
-                    ob = ((cfg.data.get("providers") or {}).get("outbound") or {})
-                    if (ob.get("plugin") or "").lower() == pid.lower():
-                        p_settings = ob.get("settings") or {}
-        except Exception:
-            pass
-
-        audit_event("job_dispatch", job_id=job_id, method=f"manifest:{pid}")
-        rt = HttpProviderRuntime(man, {}, p_settings)
-        res = await rt.send_fax(to=to, file_url=pdf_url)
-        prov_sid = str(res.get("job_id") or "")
-        status = str(res.get("status") or "queued")
-        with SessionLocal() as db:
-            job = db.get(FaxJob, job_id)
-            if job:
-                job.provider_sid = prov_sid
-                job.status = status
-                job.updated_at = datetime.utcnow()
-                db.add(job)
-                db.commit()
-    except Exception as e:
-        with SessionLocal() as db:
-            job = db.get(FaxJob, job_id)
-            if job:
-                job.status = "failed"
-                job.error = str(e)
-                job.updated_at = datetime.utcnow()
-                db.add(job)
-                db.commit()
-        audit_event("job_failed", job_id=job_id, error=str(e))
-
-
-def _serialize_job(job: FaxJob) -> FaxJobOut:
-    j = cast(Any, job)
-    return FaxJobOut(
-        id=j.id,
-        to=j.to_number,
-        status=j.status,
-        error=j.error,
-        pages=j.pages,
-        backend=j.backend,
-        provider_sid=j.provider_sid,
-        created_at=j.created_at,
-        updated_at=j.updated_at,
-    )
+    return await _receive_outbound_callback(request, 'phaxio')
 
 
 # ===== Inbound receiving (MVP scaffolding) =====
@@ -2944,115 +2574,91 @@ class InboundFaxOut(BaseModel):
     mailbox: Optional[str] = None
 
 
-def _serialize_inbound(fx: InboundFax) -> InboundFaxOut:
-    f = cast(Any, fx)
-    return InboundFaxOut(
-        id=f.id,
-        fr=f.from_number,
-        to=f.to_number,
-        status=f.status,
-        backend=f.backend,
-        pages=f.pages,
-        size_bytes=f.size_bytes,
-        created_at=f.created_at,
-        received_at=f.received_at,
-        updated_at=f.updated_at,
-        mailbox=f.mailbox_label,
-    )
+def _accept_inbound(values: dict) -> None:
+    """Store one received fax with its access resource and audit in one transaction.
+
+    It lands in the mailbox its number routes to, else the unassigned inbox.
+    """
+    service = getattr(app.state, "access_runtime", None)
+    if service is None:
+        raise AccessUnavailableError()
+    private_operation(service.inbound.accept)(values, country=settings.fax_default_country)
 
 
-def require_inbound_list(info = Depends(require_api_key)):
-    if info is None and not settings.require_api_key and not settings.api_key:
-        return
-    if not _has_scope(info, "inbound:list"):
-        audit_event("api_key_denied_scope", key_id=(info or {}).get("key_id"), required="inbound:list")
-        raise HTTPException(403, detail="Insufficient scope: inbound:list required")
-    if settings.inbound_list_rpm:
-        _enforce_rate_limit(info, "/inbound")
+def _forget_inbound_event(event_id: str) -> None:
+    """Let the provider retry a fax whose storage failed after its dedupe event."""
+    try:
+        from .db import InboundEvent  # type: ignore
+        with SessionLocal() as db:
+            db.query(InboundEvent).filter(InboundEvent.id == event_id).delete()
+            db.commit()
+    except Exception:
+        pass
 
 
-def require_inbound_read(info = Depends(require_api_key)):
-    if info is None and not settings.require_api_key and not settings.api_key:
-        return
-    if not _has_scope(info, "inbound:read"):
-        audit_event("api_key_denied_scope", key_id=(info or {}).get("key_id"), required="inbound:read")
-        raise HTTPException(403, detail="Insufficient scope: inbound:read required")
-    if settings.inbound_get_rpm:
-        _enforce_rate_limit(info, "/inbound/{id}")
+def _inbound_pdf_response(inbound_id: str, pdf_path: Optional[str], method: str):
+    pdf_path = str(pdf_path or "")
+    if not pdf_path:
+        raise HTTPException(404, detail="PDF file not found")
+    no_store = {"Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache", "Expires": "0"}
+    if pdf_path.startswith("s3://"):
+        stream, name = get_storage().get_pdf_stream(pdf_path)
+        audit_event("inbound_pdf_served", job_id=inbound_id, method=method)
+        return StreamingResponse(stream, media_type="application/pdf", headers={
+            "Content-Disposition": f"attachment; filename={name}", **no_store})
+    if not os.path.exists(pdf_path):
+        raise HTTPException(404, detail="PDF file not found")
+    audit_event("inbound_pdf_served", job_id=inbound_id, method=method)
+    return FileResponse(pdf_path, media_type="application/pdf", filename=f"inbound_{inbound_id}.pdf", headers=no_store)
 
 
-@app.get("/inbound", response_model=List[InboundFaxOut], dependencies=[Depends(require_scopes(["inbound:list"], path="/inbound", rpm=settings.inbound_list_rpm))])
-def list_inbound(
+@app.get("/inbound", response_model=List[InboundFaxOut])
+async def list_inbound(
+    request: Request,
     to_number: Optional[str] = Query(default=None),
     status: Optional[str] = Query(default=None),
     mailbox: Optional[str] = Query(default=None),
+    identity=Depends(require_identity),
 ):
     if not settings.inbound_enabled:
         raise HTTPException(404, detail="Inbound not enabled")
-    with SessionLocal() as db:
-        q = db.query(InboundFax)  # type: ignore[attr-defined]
-        if to_number:
-            q = q.filter(InboundFax.to_number == to_number)  # type: ignore[attr-defined]
-        if status:
-            q = q.filter(InboundFax.status == status)  # type: ignore[attr-defined]
-        if mailbox:
-            q = q.filter(InboundFax.mailbox_label == mailbox)  # type: ignore[attr-defined]
-        rows = q.order_by(InboundFax.received_at.desc()).limit(100).all()  # type: ignore[attr-defined]
-        return [_serialize_inbound(r) for r in rows]
+    rows = await run_lifecycle_step(private_operation(lambda: access_runtime(request).inbound_queries.page(
+        identity.actor, to_number=to_number, status=status, mailbox=mailbox,
+        country=settings.fax_default_country)))
+    _enforce_rate_limit({'key_id': identity.actor.replay_scope}, "/inbound", settings.inbound_list_rpm)
+    return [InboundFaxOut(**row) for row in rows]
 
 
-@app.get("/inbound/{inbound_id}", response_model=InboundFaxOut, dependencies=[Depends(require_scopes(["inbound:read"], path="/inbound/{id}", rpm=settings.inbound_get_rpm))])
-def get_inbound(inbound_id: str):
+@app.get("/inbound/{inbound_id}", response_model=InboundFaxOut)
+async def get_inbound(inbound_id: str, request: Request, identity=Depends(require_identity)):
     if not settings.inbound_enabled:
         raise HTTPException(404, detail="Inbound not enabled")
-    with SessionLocal() as db:
-        fx = db.get(InboundFax, inbound_id)
-        if not fx:
-            raise HTTPException(404, detail="Inbound fax not found")
-        return _serialize_inbound(fx)
+    row = await run_lifecycle_step(private_operation(lambda: access_runtime(request).inbound_queries.item(
+        identity.actor, inbound_id)))
+    _enforce_rate_limit({'key_id': identity.actor.replay_scope}, "/inbound/{id}", settings.inbound_get_rpm)
+    return InboundFaxOut(**row)
 
 
 @app.get("/inbound/{inbound_id}/pdf")
-def get_inbound_pdf(inbound_id: str, token: Optional[str] = Query(default=None), info = Depends(require_api_key)):
+async def get_inbound_pdf(inbound_id: str, request: Request, token: Optional[str] = Query(default=None)):
+    """Document bytes need inbound:document, or the fax's unexpired download token."""
     if not settings.inbound_enabled:
         raise HTTPException(404, detail="Inbound not enabled")
-    with SessionLocal() as db:
-        fx = db.get(InboundFax, inbound_id)
-        if not fx:
-            raise HTTPException(404, detail="Inbound fax not found")
-        allowed = False
-        if token and fx.pdf_token and token == fx.pdf_token:
-            if fx.pdf_token_expires_at and datetime.utcnow() > fx.pdf_token_expires_at:
-                raise HTTPException(403, detail="Token expired")
-            allowed = True
-        elif info is not None and _has_scope(info, "inbound:read"):
-            if settings.inbound_get_rpm:
-                _enforce_rate_limit(info, "/inbound/{id}/pdf", settings.inbound_get_rpm)
-            allowed = True
-        if not allowed:
-            raise HTTPException(403, detail="Forbidden")
-        pdf_path = str(fx.pdf_path or "")
-        if not pdf_path:
-            raise HTTPException(404, detail="PDF file not found")
-        storage = get_storage()
-        if pdf_path.startswith("s3://"):
-            stream, name = storage.get_pdf_stream(pdf_path)
-            audit_event("inbound_pdf_served", job_id=inbound_id, method=("token" if token else "api_key"))
-            return StreamingResponse(stream, media_type="application/pdf", headers={
-                "Content-Disposition": f"attachment; filename={name}",
-                "Cache-Control": "no-cache, no-store, must-revalidate",
-                "Pragma": "no-cache",
-                "Expires": "0",
-            })
-        if not os.path.exists(pdf_path):
-            raise HTTPException(404, detail="PDF file not found")
-        audit_event("inbound_pdf_served", job_id=inbound_id, method=("token" if token else "api_key"))
-        return FileResponse(
-            pdf_path,
-            media_type="application/pdf",
-            filename=f"inbound_{inbound_id}.pdf",
-            headers={"Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache", "Expires": "0"},
-        )
+    service = access_runtime(request)
+    if token:
+        try:
+            shared = await run_lifecycle_step(private_operation(
+                lambda: service.inbound_queries.shared_document(inbound_id, token)))
+        except FaxAccessError:
+            shared = None
+        if shared is not None:
+            return _inbound_pdf_response(inbound_id, shared["pdf_path"], "token")
+    identity = await require_identity(request)
+    document = await run_lifecycle_step(private_operation(lambda: service.inbound_queries.document(
+        identity.actor, inbound_id)))
+    if settings.inbound_get_rpm:
+        _enforce_rate_limit({'key_id': identity.actor.replay_scope}, "/inbound/{id}/pdf", settings.inbound_get_rpm)
+    return _inbound_pdf_response(inbound_id, document["pdf_path"], "api_key" if identity.source == "key" else "session")
 
 
 @app.post("/_internal/asterisk/inbound")
@@ -3111,30 +2717,30 @@ def asterisk_inbound(payload: dict, x_internal_secret: Optional[str] = Header(de
     if settings.inbound_retention_days and settings.inbound_retention_days > 0:
         retention_until = datetime.utcnow() + timedelta(days=settings.inbound_retention_days)
 
-    with SessionLocal() as db:
-        fx = InboundFax(
-            id=job_id,
-            from_number=from_number,
-            to_number=to_number,
-            status=faxstatus or "received",
-            backend="sip",
-            inbound_backend=active_inbound(),
-            provider_sid=uniqueid or None,
-            pages=int(faxpages) if faxpages else pages,
-            size_bytes=size_bytes,
-            sha256=sha256,
-            pdf_path=stored_uri,
-            tiff_path=tiff_path,
-            mailbox_label=None,
-            retention_until=retention_until,
-            pdf_token=pdf_token,
-            pdf_token_expires_at=expires_at,
-            created_at=datetime.utcnow(),
-            received_at=datetime.utcnow(),
-            updated_at=datetime.utcnow(),
-        )
-        db.add(fx)
-        db.commit()
+    now = datetime.utcnow()
+    _accept_inbound(dict(
+        id=job_id,
+        from_number=from_number,
+        to_number=to_number,
+        status=faxstatus or "received",
+        backend="sip",
+        inbound_backend=active_inbound(),
+        provider_sid=uniqueid or None,
+        pages=int(faxpages) if faxpages else pages,
+        size_bytes=size_bytes,
+        sha256=sha256,
+        pdf_path=stored_uri,
+        tiff_path=tiff_path,
+        retention_until=retention_until,
+        pdf_token=pdf_token,
+        pdf_token_expires_at=expires_at,
+        created_at=now,
+        received_at=now,
+        updated_at=now,
+    ))
+    if isinstance(payload.get("call"), dict):  # optional trunk call details from the inbound dialplan
+        sip_calls.record_inbound_call(_configuration_manager().store.engine, payload["call"], call_id=uniqueid or job_id,
+                                      inbound_fax_id=job_id, preset=settings.sip_trunk_preset, fax_status=faxstatus)
     audit_event("inbound_received", job_id=job_id, backend="sip")
     return {"id": job_id, "status": "ok"}
 
@@ -3243,30 +2849,31 @@ async def phaxio_inbound(request: Request):
     expires_at = datetime.utcnow() + timedelta(minutes=max(1, settings.inbound_token_ttl_minutes))
     retention_until = datetime.utcnow() + timedelta(days=settings.inbound_retention_days) if settings.inbound_retention_days > 0 else None
 
-    with SessionLocal() as db:
-        from .db import InboundFax  # type: ignore
-        fx = InboundFax(
-            id=job_id,
-            from_number=(str(from_number) if from_number else None),
-            to_number=(str(to_number) if to_number else None),
-            status=str(status),
-            backend="phaxio",
-            provider_sid=str(provider_sid),
-            pages=int(pages) if pages else pages_int,
-            size_bytes=size_bytes,
-            sha256=sha256_hex,
-            pdf_path=stored_uri,
-            tiff_path=None,
-            mailbox_label=None,
-            retention_until=retention_until,
-            pdf_token=pdf_token,
-            pdf_token_expires_at=expires_at,
-            created_at=datetime.utcnow(),
-            received_at=datetime.utcnow(),
-            updated_at=datetime.utcnow(),
-        )
-        db.add(fx)
-        db.commit()
+    now = datetime.utcnow()
+    values = dict(
+        id=job_id,
+        from_number=(str(from_number) if from_number else None),
+        to_number=(str(to_number) if to_number else None),
+        status=str(status),
+        backend="phaxio",
+        provider_sid=str(provider_sid),
+        pages=int(pages) if pages else pages_int,
+        size_bytes=size_bytes,
+        sha256=sha256_hex,
+        pdf_path=stored_uri,
+        tiff_path=None,
+        retention_until=retention_until,
+        pdf_token=pdf_token,
+        pdf_token_expires_at=expires_at,
+        created_at=now,
+        received_at=now,
+        updated_at=now,
+    )
+    try:
+        await run_lifecycle_step(lambda: _accept_inbound(values))
+    except Exception:
+        _forget_inbound_event(evt.id)
+        raise
     audit_event("inbound_received", job_id=job_id, backend="phaxio")
     return {"status": "ok"}
 
@@ -3361,31 +2968,32 @@ async def sinch_inbound(request: Request):
     expires_at = datetime.utcnow() + timedelta(minutes=max(1, settings.inbound_token_ttl_minutes))
     retention_until = datetime.utcnow() + timedelta(days=settings.inbound_retention_days) if settings.inbound_retention_days > 0 else None
 
-    with SessionLocal() as db:
-        from .db import InboundFax  # type: ignore
-        fx = InboundFax(
-            id=job_id,
-            from_number=(str(from_number) if from_number else None),
-            to_number=(str(to_number) if to_number else None),
-            status=str(status),
-            backend="sinch",
-            inbound_backend=active_inbound(),
-            provider_sid=str(provider_sid),
-            pages=int(pages) if pages else pages_int,
-            size_bytes=size_bytes,
-            sha256=sha256_hex,
-            pdf_path=stored_uri,
-            tiff_path=None,
-            mailbox_label=None,
-            retention_until=retention_until,
-            pdf_token=pdf_token,
-            pdf_token_expires_at=expires_at,
-            created_at=datetime.utcnow(),
-            received_at=datetime.utcnow(),
-            updated_at=datetime.utcnow(),
-        )
-        db.add(fx)
-        db.commit()
+    now = datetime.utcnow()
+    values = dict(
+        id=job_id,
+        from_number=(str(from_number) if from_number else None),
+        to_number=(str(to_number) if to_number else None),
+        status=str(status),
+        backend="sinch",
+        inbound_backend=active_inbound(),
+        provider_sid=str(provider_sid),
+        pages=int(pages) if pages else pages_int,
+        size_bytes=size_bytes,
+        sha256=sha256_hex,
+        pdf_path=stored_uri,
+        tiff_path=None,
+        retention_until=retention_until,
+        pdf_token=pdf_token,
+        pdf_token_expires_at=expires_at,
+        created_at=now,
+        received_at=now,
+        updated_at=now,
+    )
+    try:
+        await run_lifecycle_step(lambda: _accept_inbound(values))
+    except Exception:
+        _forget_inbound_event(evt.id)
+        raise
     audit_event("inbound_received", job_id=job_id, backend="sinch")
     return {"status": "ok"}
 # ===== Global error logging =====
@@ -3395,11 +3003,18 @@ async def _handle_http_exc(request: Request, exc: HTTPException):
         audit_event("api_error", path=request.url.path, status=exc.status_code, detail=str(exc.detail))
     except Exception:
         pass
-    return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
+    headers = {**(exc.headers or {})}
+    if private_response_path(request.url.path):
+        headers.update(PRIVATE_HEADERS)
+    return JSONResponse({"detail": exc.detail}, status_code=exc.status_code, headers=headers)
 
 
 @app.exception_handler(Exception)
 async def _handle_any_exc(request: Request, exc: Exception):
+    if private_response_path(request.url.path):
+        # ServerErrorMiddleware is outside the privacy middleware. Its fallback
+        # response must carry the same fixed unavailable body and private headers.
+        return await access_error_response(request, AccessUnavailableError())
     try:
         audit_event("api_error", path=request.url.path, status=500, detail="internal_error")
     except Exception:
@@ -3413,13 +3028,11 @@ def _plugins_disabled_response():
     return JSONResponse({"detail": "v3 plugins feature disabled"}, status_code=404)
 
 
-def _installed_plugins() -> list[dict[str, Any]]:
-    """Return built-in provider manifests as plugin-like entries.
-
-    This is a minimal discovery surface to unblock Admin UI while
-    the full plugin system is developed.
-    """
-    current = settings.fax_backend
+def _installed_plugins(snapshot=None) -> list[dict[str, Any]]:
+    """Describe one installed definition per provider identity, with manifest precedence."""
+    manager = _configuration_manager()
+    snapshot = snapshot or manager.store.read()
+    current = snapshot.desired.values.effective_outbound
     items = []
     # Outbound providers
     items.append({
@@ -3459,6 +3072,15 @@ def _installed_plugins() -> list[dict[str, Any]]:
         "configurable": True,
     })
     items.append({
+        "id": "humblefax",
+        "name": "HumbleFax",
+        "version": "1.0.0",
+        "categories": ["outbound"],
+        "capabilities": ["send", "get_status"],
+        "enabled": (current == "humblefax"),
+        "configurable": True,
+    })
+    items.append({
         "id": "sip",
         "name": "SIP/Asterisk (Self-hosted)",
         "version": "1.0.0",
@@ -3483,7 +3105,7 @@ def _installed_plugins() -> list[dict[str, Any]]:
         "version": "1.0.0",
         "categories": ["storage"],
         "capabilities": ["store", "retrieve", "delete"],
-        "enabled": (settings.storage_backend == "local"),
+        "enabled": (snapshot.desired.values.storage_backend == "local"),
         "configurable": False,
     })
     items.append({
@@ -3492,232 +3114,145 @@ def _installed_plugins() -> list[dict[str, Any]]:
         "version": "1.0.0",
         "categories": ["storage"],
         "capabilities": ["store", "retrieve", "delete"],
-        "enabled": (settings.storage_backend == "s3"),
+        "enabled": (snapshot.desired.values.storage_backend == "s3"),
         "configurable": True,
     })
-    # Manifest providers: scan providers dir
-    try:
-        prov_dir = _providers_dir()
-        if os.path.isdir(prov_dir):
-            for pid in os.listdir(prov_dir):
-                mpath = os.path.join(prov_dir, pid, "manifest.json")
-                if os.path.exists(mpath):
-                    try:
-                        with open(mpath, "r", encoding="utf-8") as f:
-                            data = json.load(f)
-                        pid2 = str(data.get("id") or pid)
-                        name = str(data.get("name") or pid2)
-                        items.append({
-                            "id": pid2,
-                            "name": name,
-                            "version": "1.0.0",
-                            "categories": ["outbound"],
-                            "capabilities": ["send", "get_status"],
-                            "enabled": (current == pid2),
-                            "configurable": True,
-                        })
-                    except Exception:
-                        pass
-    except Exception:
-        pass
-    return items
+    # Use the same validated catalog as activation. Installed overrides replace
+    # the built-in card instead of exposing two contradictory definitions.
+    by_id = {item['id']: {**item, 'source': 'builtin'} for item in items}
+    catalog = manager.catalog_loader(snapshot.desired.values)
+    for identity in sorted(catalog.provider_ids):
+        definition = catalog.get(identity)
+        if definition.manifest is None:
+            continue
+        manifest = definition.manifest.as_dict()
+        actions = manifest['actions']
+        by_id[identity] = {
+            'id': identity,
+            'name': str(manifest.get('name') or identity),
+            'version': str(manifest.get('version') or '1.0.0'),
+            'source': 'manifest',
+            'description': str(manifest.get('description') or 'Installed HTTP provider manifest.'),
+            'categories': ['outbound'],
+            'capabilities': [capability for action, capability in
+                             (('send_fax', 'send'), ('get_status', 'get_status')) if action in actions],
+            'enabled': current == identity,
+            'configurable': True,
+        }
+    return list(by_id.values())
 
 
-@app.get("/plugins", dependencies=[Depends(require_admin)])
-def list_plugins():
-    if not settings.feature_v3_plugins:
+@app.get("/plugins", responses=_PROVIDER_READ_RESPONSES)
+def list_plugins(request: Request, identity=Depends(require_identity)):
+    snapshot = access_runtime(request).configuration_access.providers(identity.actor)
+    if not snapshot.active.values.feature_v3_plugins:
         return _plugins_disabled_response()
-    return {"items": _installed_plugins()}
+    items = _installed_plugins(snapshot)
+    for item in items:
+        item['enabled'] = _plugin_view(snapshot, item['id'])['enabled']
+    return {"items": items}
 
 
-@app.get("/plugins/{plugin_id}/config", dependencies=[Depends(require_admin)])
-def get_plugin_config(plugin_id: str):
-    if not settings.feature_v3_plugins:
+def _plugin_view(snapshot, plugin_id, role=None):
+    from .config_plugin_fields import PLUGIN_FIELDS
+    from .config_views import mask_secret as opaque_secret
+    values = snapshot.desired.values
+    role = role or ('storage' if plugin_id in {'local', 's3'} else 'outbound')
+    if role not in {'outbound', 'inbound', 'storage'}:
+        raise HTTPException(400, detail='Invalid plugin role.')
+    state = snapshot.desired.plugins.as_dict()
+    selected = values.storage_backend if role == 'storage' else getattr(values, 'effective_' + role)
+    enabled = selected == plugin_id and state['roles'][role]['enabled']
+    if plugin_id in PLUGIN_FIELDS:
+        configuration = {}
+        for key, name in PLUGIN_FIELDS[plugin_id].items():
+            value = getattr(values, name)
+            configuration[key] = opaque_secret(value) if (ConfigurationValues.model_fields[name].json_schema_extra or {}).get('secret') else value
+    else:
+        _configuration_manager().catalog_loader(values).get(plugin_id)
+        # Arbitrary manifest schemas can designate nested fields as credentials.
+        # Do not expose private values from unrecognized schema paths. Clients
+        # merge only fields they intentionally replace; omission preserves them.
+        def private_view(value):
+            if isinstance(value, dict):
+                return {key: private_view(item) for key, item in value.items()}
+            if isinstance(value, list):
+                return [private_view(item) for item in value]
+            return '' if value == '' or value is None else '***'
+        configuration = private_view(state['settings'].get(plugin_id, {}))
+    return {'enabled': enabled, 'settings': configuration, 'role': role,
+            '_meta': configuration_write_receipt(snapshot, snapshot)['_meta']}
+
+
+@app.get("/plugins/{plugin_id}/config", responses={**_PROVIDER_READ_RESPONSES, **_CONFIGURATION_VALIDATION_RESPONSES})
+def get_plugin_config(plugin_id: str, request: Request, role: str | None = None, identity=Depends(require_identity)):
+    snapshot = access_runtime(request).configuration_access.providers(identity.actor)
+    if not snapshot.active.values.feature_v3_plugins:
         return _plugins_disabled_response()
-    pid = plugin_id.lower()
-    # Effective config from current settings (sanitized)
-    if pid == "phaxio":
-        return {
-            "enabled": settings.fax_backend == "phaxio",
-            "settings": {
-                "callback_url": settings.phaxio_status_callback_url,
-                "verify_signature": settings.phaxio_verify_signature,
-                "configured": bool(settings.phaxio_api_key and settings.phaxio_api_secret),
-            },
-        }
-    if pid == "sinch":
-        return {
-            "enabled": settings.fax_backend == "sinch",
-            "settings": {
-                "project_id": settings.sinch_project_id,
-                "configured": bool(settings.sinch_project_id and settings.sinch_api_key and settings.sinch_api_secret),
-            },
-        }
-    if pid == "signalwire":
-        return {
-            "enabled": settings.fax_backend == "signalwire",
-            "settings": {
-                "space_url": settings.signalwire_space_url,
-                "project_id": settings.signalwire_project_id,
-                "configured": bool(settings.signalwire_space_url and settings.signalwire_project_id and settings.signalwire_api_token),
-            },
-        }
-    if pid == "documo":
-        return {
-            "enabled": settings.fax_backend == "documo",
-            "settings": {
-                "api_key": "***" if settings.documo_api_key else "",
-                "base_url": settings.documo_base_url,
-                "sandbox": settings.documo_use_sandbox,
-                "configured": bool(settings.documo_api_key),
-            },
-        }
-    if pid == "sip":
-        return {
-            "enabled": settings.fax_backend == "sip",
-            "settings": {
-                "ami_host": settings.ami_host,
-                "ami_port": settings.ami_port,
-                "ami_username": settings.ami_username,
-                "ami_password_default": settings.ami_password == "changeme",
-            },
-        }
-    if pid == "freeswitch":
-        return {
-            "enabled": settings.fax_backend == "freeswitch",
-            "settings": {
-                "esl_host": settings.fs_esl_host,
-                "esl_port": settings.fs_esl_port,
-                "gateway_name": settings.fs_gateway_name,
-            },
-        }
-    if pid == "s3":
-        return {
-            "enabled": settings.storage_backend == "s3",
-            "settings": {
-                "bucket": settings.s3_bucket,
-                "region": settings.s3_region,
-                "prefix": settings.s3_prefix,
-                "endpoint_url": settings.s3_endpoint_url,
-                "kms_key_id": settings.s3_kms_key_id,
-            },
-        }
-    if pid == "local":
-        return {"enabled": settings.storage_backend == "local", "settings": {}}
-    # Manifest providers: return minimal config presence
-    mpath = os.path.join(_providers_dir(), pid, "manifest.json")
-    if os.path.exists(mpath):
-        return {
-            "enabled": settings.fax_backend == pid,
-            "settings": {},
-        }
-    raise HTTPException(404, detail="Plugin not found")
+    return _plugin_view(snapshot, plugin_id.lower(), role)
 
 
 class UpdatePluginConfigIn(BaseModel):
+    model_config = ConfigDict(extra='forbid', hide_input_in_errors=True, json_schema_extra={
+        'description': 'Submit only changed provider fields and the loaded expected_revision_id. An empty object submits no field edits.',
+        'examples': [{}],
+    })
     enabled: Optional[bool] = None
     settings: Optional[dict[str, Any]] = None
+    role: str | None = None
+    expected_revision_id: str | None = None
 
 
-@app.put("/plugins/{plugin_id}/config", dependencies=[Depends(require_admin)])
-def update_plugin_config(plugin_id: str, payload: UpdatePluginConfigIn):
-    if not settings.feature_v3_plugins:
+@app.put("/plugins/{plugin_id}/config", response_model=ConfigurationWriteResponse, responses=_CONFIGURATION_WRITE_RESPONSES)
+def update_plugin_config(plugin_id: str, payload: UpdatePluginConfigIn, request: Request,
+                         identity=Depends(require_identity)):
+    expected = request.scope['faxbot.configuration']
+    access = access_runtime(request)
+    access.configuration_access.prepare_provider_write(identity.actor, expected, payload.expected_revision_id)
+    snapshot = _configuration_manager().patch_plugin_authorized(expected, plugin_id.lower(),
+        settings=payload.settings, enabled=payload.enabled, role=payload.role,
+        principal=identity.actor, control=access.control)
+    return configuration_write_receipt(expected, snapshot)
+
+
+@app.get("/plugin-registry", responses=_PROVIDER_READ_RESPONSES)
+def plugin_registry(request: Request, identity=Depends(require_identity)):
+    snapshot = access_runtime(request).configuration_access.providers(identity.actor)
+    if not snapshot.active.values.feature_v3_plugins:
         return _plugins_disabled_response()
-    if _read_cfg is None or _write_cfg is None:
-        raise HTTPException(500, detail="Config store unavailable")
-    cfg_res = _read_cfg(settings.faxbot_config_path)
-    if not cfg_res.ok or cfg_res.data is None:
-        raise HTTPException(500, detail=cfg_res.error or "Failed to read config")
-    data = cfg_res.data
-    pid = plugin_id.lower()
-    # Minimal mapping for outbound/storage
-    if pid in {"phaxio", "sinch", "sip", "signalwire", "freeswitch"}:
-        data.setdefault("providers", {}).setdefault("outbound", {})
-        data["providers"]["outbound"]["plugin"] = pid
-        data["providers"]["outbound"]["enabled"] = bool(payload.enabled) if payload.enabled is not None else True
-        data["providers"]["outbound"]["settings"] = payload.settings or data["providers"]["outbound"].get("settings", {})
-    elif pid in {"local", "s3"}:
-        data.setdefault("providers", {}).setdefault("storage", {})
-        data["providers"]["storage"]["plugin"] = pid
-        data["providers"]["storage"]["enabled"] = bool(payload.enabled) if payload.enabled is not None else True
-        data["providers"]["storage"]["settings"] = payload.settings or data["providers"]["storage"].get("settings", {})
-    else:
-        # Accept unknown outbound plugin ids if a manifest exists
-        mpath = os.path.join(_providers_dir(), pid, "manifest.json")
-        if not os.path.exists(mpath):
-            raise HTTPException(404, detail="Plugin not found")
-        data.setdefault("providers", {}).setdefault("outbound", {})
-        data["providers"]["outbound"]["plugin"] = pid
-        data["providers"]["outbound"]["enabled"] = bool(payload.enabled) if payload.enabled is not None else True
-        data["providers"]["outbound"]["settings"] = payload.settings or data["providers"]["outbound"].get("settings", {})
-    wr = _write_cfg(settings.faxbot_config_path, data)
-    if not wr.ok:
-        raise HTTPException(500, detail=wr.error or "Failed to write config")
-    # Note: applying new config at runtime is future work; for now we persist only.
-    return {"ok": True, "path": wr.path}
-
-
-@app.get("/plugin-registry")
-def plugin_registry():
-    if not settings.feature_v3_plugins:
-        return _plugins_disabled_response()
-    # Try to load curated registry file; fallback to built-in list
+    # This operator-configured file and its installed-provider fallback are
+    # installation data. Only return display metadata, never arbitrary fields.
     try:
-        reg_path = os.getenv("PLUGIN_REGISTRY_PATH", os.path.join(os.getcwd(), "config", "plugin_registry.json"))
-        if os.path.exists(reg_path):
-            import json as _json
-            with open(reg_path, "r", encoding="utf-8") as f:
-                return _json.load(f)
-    except Exception:
+        with open(snapshot.active.values.plugin_registry_path, "r", encoding="utf-8") as f:
+            registry = json.load(f)
+        if not isinstance(registry, dict) or not isinstance(registry.get('items'), list):
+            raise ValueError('Invalid provider registry.')
+        items = []
+        for entry in registry['items']:
+            if not isinstance(entry, dict) or not isinstance(entry.get('id'), str):
+                raise ValueError('Invalid provider registry item.')
+            item = {key: entry[key] for key in
+                    ('id', 'name', 'version', 'description', 'learn_more')
+                    if isinstance(entry.get(key), str)}
+            item.setdefault('name', item['id'])
+            item.setdefault('version', '')
+            for key in ('categories', 'capabilities'):
+                values = entry.get(key, [])
+                if not isinstance(values, list) or any(not isinstance(value, str) for value in values):
+                    raise ValueError('Invalid provider registry metadata.')
+                item[key] = values
+            items.append(item)
+        return {'items': items}
+    except (OSError, ValueError):
         pass
-    return {"items": _installed_plugins(), "note": "default registry"}
-@app.post("/signalwire-callback")
-async def signalwire_callback(request: Request, job_id: Optional[str] = Query(default=None)):
-    """SignalWire Compatibility Fax Status callback handler.
-    Verifies optional HMAC when configured and updates job status.
-    """
-    raw = await request.body()
-    # Optional HMAC verification; header name may vary by configuration
-    key = (settings.signalwire_webhook_signing_key or '').encode()
-    if key:
-        provided = request.headers.get('X-SignalWire-Signature') or ''
-        try:
-            digest = hmac.new(key, raw, hashlib.sha256).hexdigest()
-            if not hmac.compare_digest(digest, provided.strip().lower()):
-                raise HTTPException(401, detail="Invalid signature")
-        except Exception:
-            raise HTTPException(401, detail="Invalid signature")
-    # Parse form or JSON
-    payload: dict[str, Any]
-    try:
-        form = await request.form()
-        payload = dict(form)
-    except Exception:
-        try:
-            payload = await request.json()
-        except Exception:
-            payload = {}
-    svc = get_signalwire_service()
-    if not svc:
-        return {"ok": True}
-    res = await svc.handle_status_callback(payload)
-    prov_sid = str(res.get('provider_sid') or '')
-    status = str(res.get('status') or '')
-    # Update job by job_id if present, else by provider_sid best-effort
-    with SessionLocal() as db:
-        job = None
-        if job_id:
-            job = db.get(FaxJob, str(job_id))
-        if not job and prov_sid:
-            job = db.query(FaxJob).filter(FaxJob.provider_sid == prov_sid).first()
-        if job:
-            job.status = status or job.status
-            job.updated_at = datetime.utcnow()
-            db.add(job)
-            db.commit()
-            audit_event("job_updated", job_id=job.id, status=job.status, provider="signalwire")
-    return {"ok": True}
+    return {"items": _installed_plugins(snapshot), "note": "default registry"}
+@app.post('/signalwire-callback')
+async def signalwire_callback(request: Request):
+    return await _receive_outbound_callback(request, 'signalwire')
+
+
 class FSOutboundResultIn(BaseModel):
+    attempt_id: Optional[str] = None
     job_id: Optional[str] = None
     fax_status: Optional[str] = None
     fax_result_text: Optional[str] = None
@@ -3728,80 +3263,113 @@ class FSOutboundResultIn(BaseModel):
 
 @app.post("/_internal/freeswitch/outbound_result")
 def freeswitch_outbound_result(payload: FSOutboundResultIn, x_internal_secret: Optional[str] = Header(default=None)):
-    # Reuse Asterisk secret for simplicity; can introduce a dedicated FS secret later
-    secret = settings.asterisk_inbound_secret
-    if not secret:
-        raise HTTPException(401, detail="Internal secret not configured")
-    if x_internal_secret != secret:
-        raise HTTPException(401, detail="Invalid internal secret")
-    if not payload.job_id:
-        raise HTTPException(400, detail="Missing job_id")
-    status_map = {
-        'SUCCESS': 'SUCCESS',
-        'OK': 'SUCCESS',
-        'FAILED': 'FAILED',
-        'ERROR': 'FAILED',
-        'FAIL': 'FAILED',
-    }
-    status = (payload.fax_status or payload.fax_result_text or '').upper()
-    internal = status_map.get(status, 'FAILED' if 'FAIL' in status else 'in_progress')
-    with SessionLocal() as db:
-        job = db.get(FaxJob, str(payload.job_id))
-        if not job:
-            raise HTTPException(404, detail="Job not found")
-        job.status = internal
-        if payload.fax_document_transferred_pages:
-            job.pages = payload.fax_document_transferred_pages
-        if payload.fax_result_text:
-            job.error = None if internal == 'SUCCESS' else payload.fax_result_text
-        job.updated_at = datetime.utcnow()
-        db.add(job)
-        db.commit()
-    audit_event("job_updated", job_id=str(payload.job_id), status=internal, provider="freeswitch")                                                              
-    return {"ok": True}
+    status = str(payload.fax_status or '').lower()
+    status = {'true': 'success', 'false': 'failed', 'ok': 'success', 'fail': 'failed'}.get(status, status)
+    try:
+        applied = _observe_native(payload.job_id, payload.attempt_id, status, 'freeswitch',
+            event_key='fs-result:' + status, secret=x_internal_secret)
+    except (DeliveryConflict, ValueError):
+        raise HTTPException(409, detail='Native result does not match a verified delivery attempt.') from None
+    return {'ok': True, 'applied': applied}
 
 
-# Terminal WebSocket endpoint for Admin Console
+# Host terminal for the console. POST /admin/terminal/ticket mints a single-use
+# ticket for the caller (host:terminal and the exec gate). The WebSocket takes no
+# credential in its URL: its first message must be {"type": "auth", "ticket": ...}
+# within _TERMINAL_AUTH_SECONDS. A socket that arrives with a browser session
+# cookie, or whose ticket a browser session minted, also needs an exact allowed
+# Origin. terminal.py keeps rechecking host:terminal for the minting credential.
+from .access.transport import SESSION_COOKIES, TransportError, credential_source  # noqa: E402
+
+_TERMINAL_TICKET_TTL = timedelta(seconds=60)
+_TERMINAL_AUTH_SECONDS = 5.0
+_TERMINAL_UNAVAILABLE = "The terminal is not available on this server."
+
+
+class TerminalTicketOut(BaseModel):
+    ticket: str
+    expires_at: datetime
+
+
+def _terminal_available() -> bool:
+    from . import terminal as terminal_module
+    return _admin_exec_enabled() and not terminal_module.check_terminal_requirements()
+
+
+@app.post("/admin/terminal/ticket", response_model=TerminalTicketOut, responses=_PERMISSION_RESPONSES)
+async def admin_terminal_ticket(request: Request, identity=Depends(require_permission('host:terminal', audit=True))):
+    """A ticket, valid once for 60 seconds, that opens one terminal WebSocket as the caller."""
+    if not _terminal_available():
+        raise HTTPException(404, detail=_TERMINAL_UNAVAILABLE)
+    service = access_runtime(request)
+    issued = await run_lifecycle_step(private_operation(lambda: service.capabilities.mint(
+        'terminal', identity.actor, _TERMINAL_TICKET_TTL, permission='host:terminal')))
+    return TerminalTicketOut(ticket=issued.secret, expires_at=issued.expires_at)
+
+
+def _browser_socket(scope) -> bool:
+    try:
+        return any(credential_source(scope, name)[0] == 'session' for name in SESSION_COOKIES)
+    except TransportError:
+        # Duplicate or malformed credentials: hold the socket to the browser rules, which refuse it.
+        return True
+
+
+async def _close_terminal(websocket: WebSocket, code: int):
+    try:
+        await websocket.close(code=code)
+    except Exception:
+        pass
+
+
+async def _terminal_ticket(websocket: WebSocket) -> Optional[str]:
+    """The ticket from the first message, or None when it is late or malformed."""
+    try:
+        message = await asyncio.wait_for(websocket.receive_text(), _TERMINAL_AUTH_SECONDS)
+        data = json.loads(message)
+    except Exception:
+        return None
+    ticket = data.get('ticket') if isinstance(data, dict) and data.get('type') == 'auth' else None
+    return ticket if isinstance(ticket, str) and 0 < len(ticket) <= 256 else None
+
+
 @app.websocket("/admin/terminal")
-async def admin_terminal_websocket(
-    websocket: WebSocket,
-    api_key: Optional[str] = Header(None, alias="X-API-Key")
-):
-    """WebSocket terminal for Admin Console - requires admin authentication."""
-    # Check admin authentication
-    if not api_key or api_key != settings.api_key:
-        # Try to get API key from query params for WebSocket auth
-        import urllib.parse
-        # Starlette's websocket.url.query is a string; older versions may return bytes
-        _q = websocket.url.query
-        try:
-            query_str = _q.decode()  # type: ignore[attr-defined]
-        except AttributeError:
-            query_str = str(_q or "")
-        query_params = urllib.parse.parse_qs(query_str)
-        ws_api_key = query_params.get('api_key', [None])[0]
-        
-        if not ws_api_key or ws_api_key != settings.api_key:
-            # Check if they have a valid DB-backed key with admin privileges
-            from .auth import verify_db_key
-            key_data = verify_db_key(ws_api_key or api_key or "")
-            if not key_data or 'keys:manage' not in key_data.get('scopes', []):
-                await websocket.close(code=1008, reason="Unauthorized")
-                return
-    
-    # Import terminal handler
-    from .terminal import handle_terminal_websocket, check_terminal_requirements
-    
-    # Check requirements
-    issues = check_terminal_requirements()
-    if issues:
-        await websocket.accept()
-        await websocket.send_text(json.dumps({
-            'type': 'error',
-            'message': f'Terminal not available: {", ".join(issues)}'
-        }))
-        await websocket.close()
+async def admin_terminal_websocket(websocket: WebSocket):
+    """Host terminal WebSocket; authenticated only by a ticket in the first message."""
+    from . import terminal as terminal_module
+    service = getattr(websocket.app.state, 'access_runtime', None)
+    transport = getattr(websocket.app.state, 'credential_transport', None)
+    # Credentials never travel in the URL, so any query string is refused outright.
+    if websocket.url.query or service is None or transport is None or not _terminal_available():
+        await _close_terminal(websocket, 1008)
         return
-    
-    # Handle terminal session
-    await handle_terminal_websocket(websocket)
+    await websocket.accept()
+    ticket = await _terminal_ticket(websocket)
+    if ticket is None:
+        await _close_terminal(websocket, 1008)
+        return
+    try:
+        record = await run_lifecycle_step(lambda: service.capabilities.consume('terminal', ticket))
+    except Exception:
+        await _close_terminal(websocket, 1008)
+        return
+    if record.session_id is not None or _browser_socket(websocket.scope):
+        try:
+            transport.validate(websocket.scope, public_url=settings.public_api_url, require_origin=True)
+        except AccessError:
+            await _close_terminal(websocket, 1008)
+            return
+
+    def still_authorized() -> bool:
+        try:
+            return _terminal_available() and service.control.authorize(
+                record.actor, 'host:terminal', ResourceRef('installation'), now=access_utcnow()).allowed
+        except Exception:
+            return False
+
+    audit_event("terminal_opened", principal_id=record.principal_id)
+    try:
+        await terminal_module.handle_terminal_websocket(websocket,
+            authorized=lambda: run_lifecycle_step(still_authorized))
+    finally:
+        audit_event("terminal_closed", principal_id=record.principal_id)

@@ -55,18 +55,42 @@ Describe your use case and why the feature would be valuable. Consider which bac
 
 ## Testing
 
-Faxbot supports multiple backends and configurations. When contributing code:
+These commands run the same checks as CI (`.github/workflows/ci.yml`). You need [uv](https://docs.astral.sh/uv/), Node 24, and Ghostscript (CI installs `ghostscript` with apt).
 
-- **Test Mode**: Use `FAX_DISABLED=true` for development—no actual faxes are sent
-- **Backend-Specific**: If your change affects a specific backend, test with that backend
-- **MCP Changes**: Test the relevant MCP transport (stdio/HTTP/SSE)
-- **SDK Changes**: Test both Node.js and Python SDKs if applicable
+| Command | What it does |
+| --- | --- |
+| `make venv` | Creates `.venv` with Python 3.11 and installs `api/requirements.txt` and `python_mcp/requirements.txt` |
+| `make test-local` | Runs the backend tests from `api/` with the same command and environment as the `test-api` job |
+| `make ui-build` | Runs `npm ci` and `npm run build` (typecheck and build) in `api/admin_ui` |
+| `npm ci --prefix node_mcp && npm --prefix node_mcp run check` | Checks that every Node MCP module parses and imports |
+
+`make test-local` sets the CI environment:
+
+- `FAX_DISABLED=true` (no faxes are sent)
+- `FAX_DATA_DIR=./faxdata`
+- `DATABASE_URL=sqlite:///./test_faxbot_ci.db`
+
+Options:
+
+- `PYTEST_ARGS` passes extra pytest arguments, for example `make test-local PYTEST_ARGS="tests/test_api.py -x"`.
+- `FAXBOT_SCHEMA_TEST_POSTGRES_URL`, if set in your environment, points the PostgreSQL schema tests at a disposable database. Without it they are skipped.
+- `VENV` uses a virtualenv other than `.venv`, for example `make test-local VENV=/path/to/Faxbot/.venv` from a git worktree.
+
+If your change affects a specific fax backend or MCP transport, also test it against that backend or transport.
+
+### Enterprise testing boundary
+
+Enterprise features are verified with synthetic fixtures, unit tests, mocked connector contracts and local integration tests, including local end-to-end flows where useful. These checks must still pass. We do not have real customer organizations, enterprise identity tenants, case systems or regulatory portals available for live acceptance testing.
+
+Missing live enterprise validation, credentials, customer access or production data must **never block CI, merge, release or completion of an otherwise implemented generic capability**. Mark that capability implemented when its software checks pass; separately label external integrations or templates that have not been validated. Customer configuration and activation requirements apply to that deployment, not repository build gates.
+
+Any future live customer acceptance is separate, explicitly requested work and opt-in only. Never add it to required checks, automatically run it because credentials happen to exist, or fail ordinary tests because those credentials are absent. Record “not live-validated” honestly without treating it as a failing software test. This rule overrides broader live-verification language in older plans for enterprise work.
 
 ## Code Style
 
 - **Python**: Follow PEP 8, use `black` for formatting
 - **JavaScript/Node.js**: Use ESLint configuration in the project
-- **Documentation**: Update relevant docs in `docs/` directory
+- **Documentation**: Whenever a capability is added, changed, or removed, update `README.md`, its bottom-of-file roadmap, and the relevant docs in the same implementation change. Do not defer this to a later release. Mark roadmap items implemented only when usable and verified; keep experiments and partial work unfinished. Agents should also read [AGENTS.md](AGENTS.md).
 
 ## Security Considerations
 

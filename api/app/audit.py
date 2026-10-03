@@ -6,6 +6,20 @@ from collections import deque
 from datetime import datetime
 
 
+_owned_handler: logging.Handler | None = None
+
+
+def close_audit_logger() -> None:
+    """Release only the sink created by this application lifespan."""
+    global _owned_handler
+    handler, _owned_handler = _owned_handler, None
+    logger = logging.getLogger('audit')
+    if handler is not None:
+        logger.removeHandler(handler)
+        handler.close()
+    logger.disabled = True
+
+
 def init_audit_logger(
     enabled: bool,
     fmt: str = "json",
@@ -13,14 +27,15 @@ def init_audit_logger(
     use_syslog: bool = False,
     syslog_address: Optional[str] = None,
 ) -> None:
+    global _owned_handler
+    close_audit_logger()
     logger = logging.getLogger("audit")
     if not enabled:
         logger.disabled = True
         return
     logger.setLevel(logging.INFO)
-    # Avoid duplicate handlers on reload
-    if logger.handlers:
-        return
+    logger.disabled = False
+    logger.propagate = False
     handler: logging.Handler
     if filepath:
         handler = logging.FileHandler(filepath)
@@ -36,6 +51,7 @@ def init_audit_logger(
     else:
         handler.setFormatter(logging.Formatter("%(message)s"))
     logger.addHandler(handler)
+    _owned_handler = handler
 
 
 def audit_event(event: str, **fields: Any) -> None:

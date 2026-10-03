@@ -1,63 +1,49 @@
+"""CLI and application migrations share the guarded connection path."""
+import importlib
 import os
+from pathlib import Path
 import sys
-from logging.config import fileConfig
 
-from sqlalchemy import engine_from_config, pool
 from alembic import context
+from sqlalchemy.exc import SQLAlchemyError
 
-# Ensure project root is on sys.path so we can import api.app.db
-ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../"))
-if ROOT not in sys.path:
-    sys.path.insert(0, ROOT)
-
-from api.app.db import Base  # type: ignore
-
-# this is the Alembic Config object, which provides
-# access to the values within the .ini file in use.
+API_DIRECTORY = Path(__file__).resolve().parents[1]
+ROOT = API_DIRECTORY.parent
+sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(API_DIRECTORY))
+package = "api.app" if API_DIRECTORY.name == "api" else "app"
+schema = importlib.import_module(package + ".schema")
+legacy = importlib.import_module(package + ".schema_legacy")
 config = context.config
-
-# Interpret the config file for Python logging.
-if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
-
-# set the target metadata for 'autogenerate'
-target_metadata = Base.metadata
-
-# If DATABASE_URL env is present, override sqlalchemy.url
-db_url = os.getenv("DATABASE_URL")
-if db_url:
-    config.set_main_option("sqlalchemy.url", db_url)
+config.attributes["schema_legacy"] = legacy
+config.attributes["schema_configuration"] = importlib.import_module(package + ".schema_configuration")
+config.attributes["schema_outbound"] = importlib.import_module(package + ".schema_outbound")
+config.attributes["schema_access"] = importlib.import_module(package + ".schema_access")
+config.attributes["schema_authentication"] = importlib.import_module(package + ".schema_authentication")
+config.attributes["schema_capabilities"] = importlib.import_module(package + ".schema_capabilities")
+config.attributes["schema_delivery"] = importlib.import_module(package + ".schema_delivery")
+config.attributes["schema_sip"] = importlib.import_module(package + ".schema_sip")
 
 
-def run_migrations_offline() -> None:
-    url = config.get_main_option("sqlalchemy.url")
-    context.configure(
-        url=url,
-        target_metadata=target_metadata,
-        literal_binds=True,
-        dialect_opts={"paramstyle": "named"},
-    )
-
-    with context.begin_transaction():
-        context.run_migrations()
-
-
-def run_migrations_online() -> None:
-    connectable = engine_from_config(
-        config.get_section(config.config_ini_section),
-        prefix="sqlalchemy.",
-        poolclass=pool.NullPool,
-    )
-
-    with connectable.connect() as connection:
-        context.configure(connection=connection, target_metadata=target_metadata)
-
+def migrate(connection):
+    with schema.guarded_migration(connection, lock_timeout=config.attributes.get("lock_timeout", schema.LOCK_TIMEOUT_SECONDS)):
+        context.configure(connection=connection, target_metadata=legacy.frozen_metadata(),
+                          transactional_ddl=True, compare_type=True)
         with context.begin_transaction():
             context.run_migrations()
 
 
 if context.is_offline_mode():
-    run_migrations_offline()
+    raise schema.SchemaUpgradeError("Faxbot upgrades require a live connection for locked schema validation; offline SQL is unsupported.")
+elif config.attributes.get("connection") is not None:
+    migrate(config.attributes["connection"])
 else:
-    run_migrations_online()
-
+    url = os.environ.get("DATABASE_URL") or config.get_main_option("sqlalchemy.url")
+    engine = schema.create_database_engine(url)
+    try:
+        with engine.connect() as connection:
+            migrate(connection)
+    except SQLAlchemyError:
+        raise schema.SchemaUpgradeError("Database upgrade could not connect; check database access and retry.") from None
+    finally:
+        engine.dispose()

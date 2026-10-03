@@ -61,7 +61,7 @@ npm run electron-build
 - **Auto-updater ready** (when configured)
 
 ### 🔒 **Security & Integration**
-- **Secure API communication** to localhost:8080
+- **Loads the console from the Faxbot server** at `http://127.0.0.1:8080/admin/ui/` (set `FAXBOT_URL` to use another address), so sign-in works the same as in a browser
 - **Native OS security** (code signing, permissions)
 - **Sandboxed execution** where supported
 - **HIPAA-compliant** data handling

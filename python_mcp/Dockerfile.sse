@@ -3,8 +3,8 @@ FROM python:3.11-slim
 WORKDIR /app
 
 # Copy and install deps
-COPY requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
+COPY requirements.txt runtime-constraints.txt ./
+RUN pip install --no-cache-dir -r requirements.txt && python -m pip check
 
 # Copy app
 COPY . ./
@@ -12,7 +12,6 @@ COPY . ./
 EXPOSE 3003
 
 ENV FAX_API_URL=http://api:8080
-ENV API_KEY=
 ENV OAUTH_ISSUER=
 ENV OAUTH_AUDIENCE=
 ENV OAUTH_JWKS_URL=

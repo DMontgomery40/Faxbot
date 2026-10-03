@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
   Box,
   Typography,
@@ -39,19 +39,43 @@ import {
   Info as InfoIcon,
 } from '@mui/icons-material';
 import AdminAPIClient from '../api/client';
+import { docsLink } from '../docsLinks';
 import type { InboundFax } from '../api/types';
+import type { IntakeItem } from '../api/deliveryTypes';
+import { parseServerTime } from '../api/time';
+import { DeliveryStatusLine, DirectDeliveries, isNewFax } from './delivery/InboxDelivery';
+import { DeliveryError, Notice } from './delivery/shared';
+import type { AdminDestination } from '../navigation';
 import { ResponsiveFormSection } from './common/ResponsiveFormFields';
 
 interface InboundProps {
   client: AdminAPIClient;
   docsBase?: string;
+  inboundEnabled?: boolean;
+  onNavigate?: (destination: AdminDestination) => void;
+  // Installation permissions from /auth/me. Provider setup and test faxes are
+  // shown only to people allowed to use them; the server checks again.
+  permissions?: ReadonlySet<string>;
 }
 
-function Inbound({ client, docsBase }: InboundProps) {
+function Inbound({ client, docsBase, inboundEnabled, onNavigate, permissions }: InboundProps) {
+  const canReadProviders = !!permissions?.has('providers:read');
+  const canAddTestFax = !!permissions?.has('providers:write');
+  // Email delivery status comes from the installation's intake queue; accounts
+  // that cannot read it see the Inbox without it.
+  const canReadDelivery = !!permissions?.has('mailboxes:read');
+  const canRetryDelivery = !!permissions?.has('settings:write');
+  const canOpenEmailSettings = !!permissions?.has('settings:read') && !!onNavigate;
+  const [deliveries, setDeliveries] = useState<IntakeItem[] | null>(null);
+  const [retrying, setRetrying] = useState(false);
+  const [deliveryError, setDeliveryError] = useState<unknown>(null);
+  const [deliveryNotice, setDeliveryNotice] = useState<string | null>(null);
   const [faxes, setFaxes] = useState<InboundFax[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [hasLoaded, setHasLoaded] = useState(false);
   const [callbacks, setCallbacks] = useState<any | null>(null);
+  const [callbacksError, setCallbacksError] = useState<string | null>(null);
   const [simulating, setSimulating] = useState(false);
   const [copySnackbar, setCopySnackbar] = useState<string>('');
   
@@ -59,18 +83,71 @@ function Inbound({ client, docsBase }: InboundProps) {
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
   const isSmallMobile = useMediaQuery(theme.breakpoints.down('sm'));
 
-  const fetchInbound = async () => {
+  const fetchInbound = useCallback(async () => {
+    if (inboundEnabled === false) {
+      setFaxes([]);
+      setError(null);
+      setHasLoaded(false);
+      setLoading(false);
+      return;
+    }
     try {
       setError(null);
       setLoading(true);
       const data = await client.listInbound();
       setFaxes(data);
+      setHasLoaded(true);
     } catch (err) {
+      setHasLoaded(false);
       setError(err instanceof Error ? err.message : 'Failed to fetch inbound faxes');
     } finally {
       setLoading(false);
     }
+  }, [client, inboundEnabled]);
+
+  const fetchDeliveries = useCallback(async () => {
+    if (inboundEnabled === false || !canReadDelivery) {
+      setDeliveries(null);
+      return;
+    }
+    try {
+      setDeliveries((await client.listIntakeItems({ limit: 500 })).items);
+    } catch {
+      setDeliveries(null);
+    }
+  }, [client, inboundEnabled, canReadDelivery]);
+
+  const retryDelivery = async (item: IntakeItem) => {
+    setRetrying(true);
+    setDeliveryError(null);
+    setDeliveryNotice(null);
+    try {
+      await client.retryIntakeItem(item.id);
+      setDeliveryNotice('Faxbot will deliver it shortly.');
+      await fetchDeliveries();
+    } catch (failure) {
+      setDeliveryError(failure);
+    } finally {
+      setRetrying(false);
+    }
   };
+
+  const deliveryFor = new Map((deliveries ?? []).filter((item) => item.inbound_fax_id).map((item) => [item.inbound_fax_id as string, item]));
+  const directItems = (deliveries ?? []).filter((item) => item.source === 'direct');
+
+  const fetchCallbacks = useCallback(async () => {
+    setCallbacksError(null);
+    if (inboundEnabled === false || !canReadProviders) {
+      setCallbacks(null);
+      return;
+    }
+    try {
+      setCallbacks(await client.getInboundCallbacks());
+    } catch {
+      setCallbacks(null);
+      setCallbacksError("Callback details couldn't be loaded. Select Refresh to try again.");
+    }
+  }, [client, inboundEnabled, canReadProviders]);
 
   const downloadPdf = async (id: string) => {
     try {
@@ -89,17 +166,17 @@ function Inbound({ client, docsBase }: InboundProps) {
   };
 
   useEffect(() => {
-    fetchInbound();
-    (async () => {
-      try { setCallbacks(await client.getInboundCallbacks()); } catch {}
-    })();
-  }, [client]);
+    void fetchInbound();
+    void fetchCallbacks();
+    void fetchDeliveries();
+  }, [fetchInbound, fetchCallbacks, fetchDeliveries]);
 
   useEffect(() => {
-    // Auto-refresh inbound faxes every 15 seconds
-    const interval = setInterval(fetchInbound, 15000);
+    if (inboundEnabled === false) return;
+    // Auto-refresh inbound faxes and their delivery every 15 seconds
+    const interval = setInterval(() => { void fetchInbound(); void fetchDeliveries(); }, 15000);
     return () => clearInterval(interval);
-  }, [client]);
+  }, [fetchInbound, fetchDeliveries, inboundEnabled]);
 
   const getStatusIcon = (status: string) => {
     switch (status.toLowerCase()) {
@@ -136,7 +213,8 @@ function Inbound({ client, docsBase }: InboundProps) {
   const formatDate = (dateString?: string) => {
     if (!dateString) return '-';
     try {
-      const date = new Date(dateString);
+      const date = parseServerTime(dateString);
+      if (!date) return dateString;
       if (isSmallMobile) {
         return date.toLocaleDateString();
       }
@@ -230,6 +308,14 @@ function Inbound({ client, docsBase }: InboundProps) {
               )}
             </Stack>
 
+            {deliveries !== null && (
+              <Box>
+                <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 0.5 }}>Email delivery</Typography>
+                <DeliveryStatusLine item={deliveryFor.get(fax.id)} canRetry={canRetryDelivery} busy={retrying} isNew={isNewFax(fax.received_at)}
+                  onRetry={(item) => void retryDelivery(item)} label={`the fax from ${maskPhoneNumber(fax.fr)}`} />
+              </Box>
+            )}
+
             {/* Actions */}
             <Button
               variant="contained"
@@ -256,15 +342,26 @@ function Inbound({ client, docsBase }: InboundProps) {
         gap={2}
         mb={3}
       >
-        <Typography variant="h4" component="h1">
-          Inbound Faxes
-        </Typography>
+        <Box>
+          <Typography variant="h4" component="h1">
+            Inbound Faxes
+          </Typography>
+          {canOpenEmailSettings && (
+            <Button variant="text" size="small" onClick={() => onNavigate?.('email')} sx={{ px: 0, minWidth: 0 }}>
+              Email delivery settings
+            </Button>
+          )}
+        </Box>
         <Box display="flex" gap={1}>
           <Button
             variant="outlined"
             startIcon={<RefreshIcon />}
-            onClick={fetchInbound}
-            disabled={loading}
+            onClick={() => {
+              void fetchInbound();
+              void fetchCallbacks();
+              void fetchDeliveries();
+            }}
+            disabled={loading || inboundEnabled === false}
             size={isSmallMobile ? 'medium' : 'large'}
             sx={{ 
               borderRadius: 2,
@@ -273,21 +370,22 @@ function Inbound({ client, docsBase }: InboundProps) {
           >
             Refresh
           </Button>
-          <Button
+          {canAddTestFax && <Button
             variant="outlined"
             startIcon={<TestIcon />}
             onClick={async () => { 
+              if (inboundEnabled === false) return;
               try { 
                 setSimulating(true); 
                 await client.simulateInbound(); 
                 await fetchInbound(); 
-              } catch(e:any){ 
-                setError(e?.message||'Test add failed'); 
+              } catch {
+                setError("The test fax couldn't be added. Try again."); 
               } finally { 
                 setSimulating(false);
               } 
             }}
-            disabled={simulating}
+            disabled={simulating || loading || inboundEnabled === false}
             size={isSmallMobile ? 'medium' : 'large'}
             sx={{ 
               borderRadius: 2,
@@ -295,9 +393,19 @@ function Inbound({ client, docsBase }: InboundProps) {
             }}
           >
             {isSmallMobile ? 'Test' : 'Add Test Fax'}
-          </Button>
+          </Button>}
         </Box>
       </Box>
+
+      {inboundEnabled === false && (
+        <Alert
+          severity="info"
+          sx={{ mb: 3, borderRadius: 2 }}
+          action={onNavigate && <Button color="inherit" onClick={() => onNavigate('settings')}>Go to Settings</Button>}
+        >
+          Receiving faxes is disabled. Configure your receiving provider, then enable Inbound in Settings.
+        </Alert>
+      )}
 
       {error && (
         <Fade in>
@@ -311,13 +419,17 @@ function Inbound({ client, docsBase }: InboundProps) {
         </Fade>
       )}
 
+      <Notice message={deliveryNotice} onClose={() => setDeliveryNotice(null)} />
+      <DeliveryError error={deliveryError} onClose={() => setDeliveryError(null)} />
+
       {/* Configuration Info */}
-      <ResponsiveFormSection
+      {canReadProviders && <ResponsiveFormSection
         title="Inbound Fax Configuration"
         subtitle="Setup and requirements for receiving faxes"
         icon={<InboxIcon />}
       >
         <Stack spacing={2}>
+          {callbacksError && <Alert severity="warning">{callbacksError}</Alert>}
           <Alert 
             severity="info" 
             sx={{ 
@@ -329,13 +441,13 @@ function Inbound({ client, docsBase }: InboundProps) {
               Requirements:
             </Typography>
             <Typography variant="body2" sx={{ mt: 0.5 }}>
-              • Requires <code>inbound:list</code> and <code>inbound:read</code> scopes or bootstrap key<br />
-              • Phone numbers are masked for HIPAA compliance<br />
-              • "Add Test Fax" creates local test entries only
+              • You see the mailboxes you have been given access to<br />
+              • Phone numbers are masked for HIPAA compliance
+              {canAddTestFax && <><br />• "Add Test Fax" creates local test entries only</>}
             </Typography>
           </Alert>
 
-          {callbacks && callbacks.callbacks && callbacks.callbacks.length > 0 && (
+          {inboundEnabled !== false && callbacks && callbacks.callbacks && callbacks.callbacks.length > 0 && (
             <Box>
               <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 1 }}>
                 Provider Callback URLs
@@ -396,7 +508,7 @@ function Inbound({ client, docsBase }: InboundProps) {
             </Box>
           )}
 
-          {callbacks && callbacks.backend === 'sip' && (
+          {inboundEnabled !== false && callbacks && callbacks.backend === 'sip' && (
             <Box>
               <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 1 }}>
                 Asterisk Inbound Configuration
@@ -466,7 +578,7 @@ same => n,System(curl -s -X POST -H "Content-Type: application/json" -H "X-Inter
                   </Button>
                   <Button 
                     size="small" 
-                    href={`${docsBase || 'https://dmontgomery40.github.io/Faxbot'}/backends/sip-setup.html#inbound-receiving-quickstart-wip`} 
+                    href={docsLink('inbound', docsBase)}
                     target="_blank" 
                     rel="noreferrer"
                     fullWidth={isSmallMobile}
@@ -482,9 +594,10 @@ same => n,System(curl -s -X POST -H "Content-Type: application/json" -H "X-Inter
             </Box>
           )}
         </Stack>
-      </ResponsiveFormSection>
+      </ResponsiveFormSection>}
 
       {/* Faxes List */}
+      {inboundEnabled !== false && (
       <Box sx={{ mt: 3 }}>
         {loading && faxes.length === 0 ? (
           <Paper sx={{ p: 4, textAlign: 'center', borderRadius: 2 }}>
@@ -495,10 +608,10 @@ same => n,System(curl -s -X POST -H "Content-Type: application/json" -H "X-Inter
             <Paper sx={{ p: 4, textAlign: 'center', borderRadius: 2 }}>
               <InboxIcon sx={{ fontSize: 48, color: 'text.secondary', mb: 2 }} />
               <Typography variant="h6" gutterBottom>
-                No Inbound Faxes
+                {hasLoaded ? 'No Inbound Faxes' : 'Unable to Load Inbound Faxes'}
               </Typography>
               <Typography variant="body2" color="text.secondary">
-                {error ? 'Check your API key permissions' : 'Inbound faxes will appear here when received'}
+                {hasLoaded ? 'Inbound faxes will appear here when received' : 'Use Refresh to retry. See the error above for details.'}
               </Typography>
             </Paper>
           </Fade>
@@ -524,6 +637,7 @@ same => n,System(curl -s -X POST -H "Content-Type: application/json" -H "X-Inter
                       <TableCell>Backend</TableCell>
                       <TableCell>Pages</TableCell>
                       <TableCell>Received</TableCell>
+                      {deliveries !== null && <TableCell>Email delivery</TableCell>}
                       <TableCell align="right">Actions</TableCell>
                     </TableRow>
                   </TableHead>
@@ -570,6 +684,12 @@ same => n,System(curl -s -X POST -H "Content-Type: application/json" -H "X-Inter
                             {formatDate(fax.received_at)}
                           </Typography>
                         </TableCell>
+                        {deliveries !== null && (
+                          <TableCell>
+                            <DeliveryStatusLine item={deliveryFor.get(fax.id)} canRetry={canRetryDelivery} busy={retrying} isNew={isNewFax(fax.received_at)}
+                              onRetry={(item) => void retryDelivery(item)} label={`the fax from ${maskPhoneNumber(fax.fr)}`} />
+                          </TableCell>
+                        )}
                         <TableCell align="right">
                           <Tooltip title="Download PDF">
                             <IconButton
@@ -598,6 +718,11 @@ same => n,System(curl -s -X POST -H "Content-Type: application/json" -H "X-Inter
           </Fade>
         )}
       </Box>
+      )}
+
+      {inboundEnabled !== false && (
+        <DirectDeliveries items={directItems} canRetry={canRetryDelivery} busy={retrying} onRetry={(item) => void retryDelivery(item)} />
+      )}
 
       {/* Copy Snackbar */}
       <Snackbar
