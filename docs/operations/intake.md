@@ -2,22 +2,28 @@
 
 Every document Faxbot receives, by fax or by [direct delivery](direct-delivery.md), goes into one intake queue. Faxbot then delivers each one to where your staff already look. Today that is an email inbox, with the original PDF attached.
 
-Open **Tools → Intake** in the Admin Console.
+In the Admin Console, the **Inbox** shows each received fax with its email delivery, and **Settings** holds the email delivery setup. Select **Email delivery settings** at the top of the Inbox to go there.
 
-## The queue
+## Delivery status in the Inbox
 
-Each received document appears once, with a status:
+Each received fax shows one of these in its **Email delivery** column (a line on each card on phones):
 
 | Status | Meaning |
 | --- | --- |
-| Waiting | Faxbot will deliver it, or it is waiting for you to send it. |
-| Sending | Faxbot is delivering it now. |
-| Delivered | The email server accepted it. |
-| Not delivered | Faxbot could not deliver it. The status line says why. |
+| Delivered to (addresses) | The email server accepted it, at the time shown. |
+| Waiting for email delivery | Faxbot will deliver it shortly, or it is waiting for you to send it. |
+| Not delivered | Faxbot could not deliver it. The line below says why. |
+| No email delivery set up for this number | No email delivery covers the number the fax was sent to. |
 
-A document is delivered at most once on its own. **Send now** delivers a waiting or undelivered document again; use it after fixing the problem the status describes.
+Documents received by direct delivery have no fax record; the Inbox lists them under **Received by direct delivery**.
+
+A document is delivered at most once on its own. **Retry delivery** sends a waiting or undelivered document again; use it after fixing the problem the status describes. It needs permission to change settings.
+
+People who cannot read the installation's deliveries (`mailboxes:read`) see the Inbox without the delivery column.
 
 ## Set up email delivery
+
+In **Settings**, under **Email delivery**:
 
 1. Select **Add email delivery**.
 2. Enter a name, the recipient addresses, and your email server, port, security and sign-in details.
@@ -31,11 +37,11 @@ When a fax number has its own email delivery, Faxbot uses it. Otherwise it uses 
 
 Passwords are encrypted with the installation's configuration key and are never shown again.
 
-Email delivery handles faxes that arrive after it is set up. Faxes received earlier stay in the queue as **Waiting**. Send them with **Send now** when you are ready.
+Email delivery handles faxes that arrive after it is set up. Faxes received earlier show **Waiting for email delivery**. Send them with **Retry delivery** when you are ready.
 
-## Settings
+## Intake defaults
 
-You can define one email delivery in the installation settings instead of the console. Faxbot keeps it in step with the settings and shows it as read-only:
+One email delivery can be defined by the installation settings, in **Settings → Intake defaults** (or the environment when a new installation starts). Faxbot keeps it in step with the settings within a few minutes, and shows it under **Email delivery** as set by Intake defaults:
 
 ```env
 INTAKE_EMAIL_ENABLED=true
@@ -62,7 +68,7 @@ These routes need `mailboxes:read`, or `settings:write` for changes:
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| GET | `/intake/items` | The queue, with counts by status |
+| GET | `/intake/items` | The queue, with counts by status; each item names its inbound fax (`inbound_fax_id`) and, once delivered, the addresses it went to (`delivered_to`) |
 | POST | `/intake/items/{id}/retry` | Send one document now |
 | GET, POST | `/intake/connectors` | List or add email delivery |
 | PUT, DELETE | `/intake/connectors/{id}` | Change or remove email delivery |

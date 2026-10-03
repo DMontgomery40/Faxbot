@@ -22,6 +22,7 @@ import { ResponsiveFormSection } from '../common/ResponsiveFormFields';
 import { ResponsiveSettingItem } from '../common/ResponsiveSettingItem';
 import SecretInput from '../common/SecretInput';
 import DirectCardDialog from './DirectCardDialog';
+import EmailDelivery from './EmailDelivery';
 import { DeliveryError } from './shared';
 
 type FormValue = string | number | boolean;
@@ -177,10 +178,14 @@ interface SectionsProps {
   onChange: (field: string, value: FormValue) => void;
   showCurrentValue: boolean;
   outbound: string;
+  canWrite: boolean;
 }
 
-// The Delivery routes, Direct delivery and Intake defaults sections of Settings.
-export function DeliverySettingsSections({ client, settings, form, loaded, onChange, showCurrentValue, outbound }: SectionsProps) {
+// The anchor the Inbox's "Email delivery settings" link opens.
+export const EMAIL_DELIVERY_SECTION = 'email-delivery';
+
+// The Delivery routes, Direct delivery, Intake defaults and Email delivery sections of Settings.
+export function DeliverySettingsSections({ client, settings, form, loaded, onChange, showCurrentValue, outbound, canWrite }: SectionsProps) {
   const [card, setCard] = useState<string | null>(null);
   const [cardError, setCardError] = useState<unknown>(null);
   const [cardBusy, setCardBusy] = useState(false);
@@ -241,9 +246,10 @@ export function DeliverySettingsSections({ client, settings, form, loaded, onCha
         </ResponsiveFormSection>
       )}
 
+      <Box id={EMAIL_DELIVERY_SECTION} sx={{ scrollMarginTop: 80 }}>
       {settings.intake && (
         <ResponsiveFormSection title="Intake defaults"
-          subtitle="The email delivery set here appears in Tools, Intake, and is changed only here. Changes reach Intake within a few minutes."
+          subtitle="Email delivery for received faxes, set for the whole installation. It appears under Email delivery below and is changed only here; changes take effect within a few minutes."
           icon={<MoveToInboxIcon />}>
           <SwitchField label="Email received faxes" checked={Boolean(form.intake_email_enabled)}
             onChange={(checked) => onChange('intake_email_enabled', checked)}
@@ -264,6 +270,8 @@ export function DeliverySettingsSections({ client, settings, form, loaded, onCha
           {text('Subject', 'intake_email_subject', SUBJECT_HELP)}
         </ResponsiveFormSection>
       )}
+      <EmailDelivery client={client} canWrite={canWrite} />
+      </Box>
 
       <DirectCardDialog card={card} onClose={() => setCard(null)} onCopied={() => { setCard(null); setNotice('Card copied.'); }} />
     </>

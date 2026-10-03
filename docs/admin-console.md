@@ -77,6 +77,7 @@ The optional Diagnostics **Restart API** action exits one process when allowed. 
 
 ## Inbound Controls (v2)
 
+- The Inbox shows each received fax with its email delivery status and a **Retry delivery** action; email delivery is set up in Settings. See [Intake](operations/intake.md).
 - Toggle inbound receiving on/off and configure retention/token TTL in Settings.
 - Backend-specific auth:
   - SIP/Asterisk: set `ASTERISK_INBOUND_SECRET` for the private `/_internal/asterisk/inbound` route.

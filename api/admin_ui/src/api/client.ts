@@ -808,8 +808,8 @@ export class AdminAPIClient {
     return this.json('/routing/rate-cards', { method: 'PUT', body: JSON.stringify({ cards: body }) });
   }
 
-  async listIntakeItems(): Promise<{ items: IntakeItem[]; counts: IntakeCounts }> {
-    return this.json('/intake/items');
+  async listIntakeItems(params: { limit?: number } = {}): Promise<{ items: IntakeItem[]; counts: IntakeCounts }> {
+    return this.json(`/intake/items${query(params)}`);
   }
 
   async retryIntakeItem(itemId: string): Promise<IntakeItem> {

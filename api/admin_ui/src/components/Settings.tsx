@@ -32,10 +32,15 @@ import type { ConfigurationWriteResult, Settings as SettingsType, SettingsPatch 
 import { ResponsiveSettingItem, ResponsiveSettingSection } from './common/ResponsiveSettingItem';
 import { ResponsiveTextField, ResponsiveFormSection } from './common/ResponsiveFormFields';
 import TunnelSettings from './TunnelSettings';
-import { DeliverySettingsSections, deliveryEditorValues } from './delivery/DeliverySettings';
+import { DeliverySettingsSections, EMAIL_DELIVERY_SECTION, deliveryEditorValues } from './delivery/DeliverySettings';
 
 interface SettingsProps {
   client: AdminAPIClient;
+  // May this account change settings (email delivery actions are shown only then).
+  canWrite?: boolean;
+  // A section to scroll to once settings load, such as the email delivery settings.
+  focus?: string | null;
+  onFocused?: () => void;
 }
 
 type FormValue = string | number | boolean;
@@ -128,7 +133,7 @@ function editorValues(data: SettingsType): SettingsForm {
   };
 }
 
-function Settings({ client }: SettingsProps) {
+function Settings({ client, canWrite = false, focus, onFocused }: SettingsProps) {
   const [settings, setSettings] = useState<SettingsType | null>(null);
   const [envContent, setEnvContent] = useState<string>('');
   const [loading, setLoading] = useState(false);
@@ -294,6 +299,12 @@ function Settings({ client }: SettingsProps) {
     void fetchSettings();
     return () => { requestEpoch.current += 1; };
   }, [client]);
+
+  useEffect(() => {
+    if (!settings || !focus) return;
+    if (focus === 'email') document.getElementById(EMAIL_DELIVERY_SECTION)?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
+    onFocused?.();
+  }, [settings, focus, onFocused]);
 
   const exportEnv = async () => {
     try {
@@ -988,7 +999,7 @@ function Settings({ client }: SettingsProps) {
           </ResponsiveFormSection>
 
           <DeliverySettingsSections client={client} settings={settings} form={form} loaded={loadedForm}
-            onChange={handleForm} showCurrentValue={!pendingRestart} outbound={String(effectiveOutbound)} />
+            onChange={handleForm} showCurrentValue={!pendingRestart} outbound={String(effectiveOutbound)} canWrite={canWrite} />
 
           {/* SignalWire (cloud) */}
           {providerSelected('signalwire') && (

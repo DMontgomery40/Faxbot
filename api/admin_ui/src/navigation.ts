@@ -1,8 +1,9 @@
-export type AdminDestination = 'send' | 'jobs' | 'inbox' | 'settings' | 'keys' | 'diagnostics';
+// 'email' opens Settings at the email delivery settings; 'routes' opens Tools, Delivery routes.
+export type AdminDestination = 'send' | 'jobs' | 'inbox' | 'settings' | 'keys' | 'diagnostics' | 'routes' | 'email';
 
 export type TopTab = 'dashboard' | 'send' | 'jobs' | 'inbox' | 'settings' | 'tools';
 export type SettingsTab = 'setup' | 'settings' | 'keys' | 'users' | 'groups' | 'roles' | 'access' | 'sessions' | 'mcp';
-export type ToolTab = 'routes' | 'intake' | 'terminal' | 'diagnostics' | 'logs' | 'plugins' | 'scripts';
+export type ToolTab = 'routes' | 'terminal' | 'diagnostics' | 'logs' | 'plugins' | 'scripts';
 
 // Each entry is visible when the signed-in identity holds any listed
 // permission at the installation. These are display hints only; the server
@@ -22,7 +23,6 @@ const SETTINGS_REQUIREMENTS: Array<{ value: SettingsTab; label: string; anyOf: s
 
 const TOOL_REQUIREMENTS: Array<{ value: ToolTab; label: string; anyOf: string[] }> = [
   { value: 'routes', label: 'Delivery routes', anyOf: ['settings:read'] },
-  { value: 'intake', label: 'Intake', anyOf: ['mailboxes:read'] },
   { value: 'terminal', label: 'Terminal', anyOf: ['host:terminal'] },
   { value: 'diagnostics', label: 'Diagnostics', anyOf: ['diagnostics:read'] },
   { value: 'logs', label: 'Logs', anyOf: ['logs:read'] },

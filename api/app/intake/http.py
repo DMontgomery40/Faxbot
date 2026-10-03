@@ -68,14 +68,18 @@ STATE_TEXT = {
 }
 
 
-def _item_view(item, names):
+def _item_view(item, connectors):
     waiting = item['state'] == 'received' and item['next_attempt_at'] is None
-    return {'id': item['id'], 'source': item['source'], 'received_at': item['received_at'],
+    connector = connectors.get(item['connector_id'])
+    delivered = connector is not None and item['state'] == 'delivered'
+    return {'id': item['id'], 'source': item['source'], 'inbound_fax_id': item['inbound_fax_id'],
+            'received_at': item['received_at'],
             'pages': item['pages'], 'from_number': item['from_number'], 'to_number': item['to_number'],
             'state': item['state'], 'status': item['last_error'] or STATE_TEXT[item['state']],
             'needs_action': item['state'] == 'failed' or waiting, 'attempts': item['attempts'],
             'next_attempt_at': item['next_attempt_at'], 'delivered_at': item['delivered_at'],
-            'connector': names.get(item['connector_id'])}
+            'connector': connector.name if connector is not None else None,
+            'delivered_to': list(connector.settings.recipients) if delivered else []}
 
 
 def _connector_view(connector):
@@ -94,8 +98,8 @@ async def list_items(request: Request, state: str | None = Query(default=None, p
     store = _store(request)
 
     def read():
-        names = {connector.id: connector.name for connector in store.list_connectors()}
-        return [_item_view(item, names) for item in store.list_items(state=state, limit=limit)], store.counts()
+        connectors = {connector.id: connector for connector in store.list_connectors()}
+        return [_item_view(item, connectors) for item in store.list_items(state=state, limit=limit)], store.counts()
     items, counts = await _call(read)
     return {'items': items, 'counts': {name: counts.get(name, 0) for name in STATE_TEXT}}
 

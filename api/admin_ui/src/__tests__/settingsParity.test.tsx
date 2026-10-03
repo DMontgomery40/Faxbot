@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import AdminAPIClient from '../api/client';
@@ -228,5 +228,84 @@ describe('Setup Wizard delivery options', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Apply Changes' }));
     await screen.findByText('Settings saved.');
     expect(writes[0]).toEqual({ expected_revision_id: 'rev-a', direct_fax_number: '+12025550199', intake_email_enabled: true, intake_smtp_port: 465 });
+  });
+});
+
+describe('Settings email delivery', () => {
+  function connectorHandlers(calls: Json[]) {
+    server.use(
+      http.get('/intake/connectors', () => HttpResponse.json({ connectors: [
+        { id: 'c-1', kind: 'email', name: 'Front desk', enabled: true, match_number: null, host: 'smtp.example.org',
+          port: 587, security: 'starttls', username: 'fax', has_password: true, from_address: 'fax@example.org',
+          recipients: ['frontdesk@example.org'], subject_template: 'Fax from {from_number}', managed: false, version: 2 },
+        { id: 'c-2', kind: 'email', name: 'Email from installation settings', enabled: true, match_number: null,
+          host: 'smtp.example.org', port: 587, security: 'starttls', username: 'fax', has_password: true,
+          from_address: 'fax@example.org', recipients: ['desk@example.org'], subject_template: 'Fax from {from_number}',
+          managed: true, version: 1 },
+      ] })),
+      http.post('/intake/connectors', async ({ request }) => {
+        calls.push(await request.json() as Json);
+        return HttpResponse.json({}, { status: 201 });
+      }),
+      http.post('/intake/connectors/:id/test', () => HttpResponse.json({ ok: false, detail: 'Faxbot could not reach the email server.' })),
+    );
+  }
+
+  it('lists email deliveries, reports a failed test in a plain sentence and adds one', async () => {
+    const calls: Json[] = [];
+    settingsHandlers(settingsFixture());
+    connectorHandlers(calls);
+    render(<Settings client={client()} canWrite />);
+    const delivery = await section('Email delivery');
+    expect(await within(delivery).findByText('Front desk')).toBeTruthy();
+    expect(within(delivery).getByText(/Set in Intake defaults above\./)).toBeTruthy();
+    fireEvent.click(within(delivery).getAllByRole('button', { name: 'Send test email' })[0]);
+    expect(await screen.findByText('Faxbot could not reach the email server.')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Add email delivery' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Add email delivery' });
+    fireEvent.change(within(dialog).getByLabelText('Name'), { target: { value: 'Billing' } });
+    fireEvent.change(within(dialog).getByLabelText('Recipients'), { target: { value: 'a@example.org, b@example.org' } });
+    fireEvent.change(within(dialog).getByLabelText('Email server'), { target: { value: 'smtp.example.org' } });
+    fireEvent.change(within(dialog).getByLabelText('Sent from'), { target: { value: 'fax@example.org' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+    expect(await screen.findByText('Email delivery saved.')).toBeTruthy();
+    expect(calls[0]).toMatchObject({
+      name: 'Billing', recipients: ['a@example.org', 'b@example.org'], host: 'smtp.example.org', port: 587,
+      security: 'starttls', from_address: 'fax@example.org', match_number: null,
+    });
+  });
+
+  it('shows email deliveries read-only to people who cannot change settings', async () => {
+    settingsHandlers(settingsFixture());
+    connectorHandlers([]);
+    render(<Settings client={client()} />);
+    expect(await screen.findByText('Front desk')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Add email delivery' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Send test email' })).toBeNull();
+  });
+
+  it('leaves the section out when the account cannot read email deliveries', async () => {
+    settingsHandlers(settingsFixture());
+    server.use(http.get('/intake/connectors', () => HttpResponse.json({ detail: 'Forbidden' }, { status: 403 })));
+    render(<Settings client={client()} canWrite />);
+    await section('Intake defaults');
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(screen.queryByText('Email delivery')).toBeNull();
+    expect(screen.queryByText(/Forbidden/)).toBeNull();
+  });
+
+  it('opens at the email delivery settings when asked', async () => {
+    settingsHandlers(settingsFixture());
+    const scrolled = vi.fn();
+    const original = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = function (this: Element) { scrolled(this.id); } as typeof original;
+    const focused = vi.fn();
+    try {
+      render(<Settings client={client()} focus="email" onFocused={focused} />);
+      await waitFor(() => expect(focused).toHaveBeenCalled());
+      expect(scrolled).toHaveBeenCalledWith('email-delivery');
+    } finally {
+      Element.prototype.scrollIntoView = original;
+    }
   });
 });

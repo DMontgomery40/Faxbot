@@ -75,6 +75,33 @@ def test_queue_lists_items_with_plain_status_and_retry(client):
     assert client.post('/intake/items/missing/retry', headers=ADMIN).status_code == 409
 
 
+def test_queue_items_name_their_inbound_fax_and_where_they_were_delivered(client):
+    """The Inbox joins each received fax to its delivery by the inbound fax id."""
+    from app.intake.store import IntakeStore
+    from app.intake.worker import ConnectorSecrets
+    runtime = main.app.state.configuration_runtime
+    store = IntakeStore(runtime.manager.store.engine, ConnectorSecrets(runtime.manager.store))
+    now = datetime.utcnow() - timedelta(days=1)
+    identity = uuid4().hex
+    with store.engine.begin() as connection:
+        connection.execute(store.inbound.insert().values(id=identity, from_number='+15550109999',
+            to_number='+15550100001', status='received', backend='sip', pages=2, pdf_path='/nonexistent.pdf',
+            created_at=now, received_at=now, updated_at=now))
+    store.feed_inbound()
+    (item,) = client.get('/intake/items', headers=ADMIN).json()['items']
+    assert item['inbound_fax_id'] == identity and item['delivered_to'] == [] and item['connector'] is None
+
+    created = client.post('/intake/connectors', headers=ADMIN, json=connector(25))
+    assert created.status_code == 201, created.text
+    with store.engine.begin() as connection:
+        connection.execute(store.items.update().where(store.items.c.id == item['id']).values(
+            state='delivered', connector_id=created.json()['id'], delivered_at=now, last_error=None))
+    (delivered,) = client.get('/intake/items', headers=ADMIN).json()['items']
+    assert delivered['inbound_fax_id'] == identity
+    assert delivered['connector'] == 'Front desk'
+    assert delivered['delivered_to'] == ['frontdesk@clinic.example']
+
+
 def test_intake_permissions(client):
     sender = scoped_key(client, ['fax:send', 'inbound:list'])
     for method, path, body in [('GET', '/intake/items', None), ('GET', '/intake/connectors', None),

@@ -3,7 +3,6 @@ import { fireEvent, render, screen, within } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import AdminAPIClient from '../api/client';
 import DeliveryRoutes from '../components/DeliveryRoutes';
-import Intake from '../components/Intake';
 import { server } from '../test/server';
 
 type Recorded = { method: string; path: string; body: unknown };
@@ -119,63 +118,5 @@ describe('delivery routes', () => {
     expect(await screen.findByText('Telnyx SIP trunk')).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Add rate card' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Add partner' })).toBeNull();
-  });
-});
-
-describe('intake', () => {
-  function intakeHandlers(record: (request: Request) => Promise<void>) {
-    server.use(
-      http.get('/intake/items', () => HttpResponse.json({
-        items: [
-          { id: 'item-1', source: 'fax', received_at: '2026-10-03T12:00:00', pages: 3, from_number: '+15550109999',
-            to_number: '+15550100001', state: 'received', status: 'This fax arrived before email delivery was set up; send it when you are ready.',
-            needs_action: true, attempts: 0, next_attempt_at: null, delivered_at: null, connector: null },
-          { id: 'item-2', source: 'direct', received_at: '2026-10-03T13:00:00', pages: 1, from_number: '+15550100002',
-            to_number: '+15550100001', state: 'delivered', status: 'Delivered.', needs_action: false, attempts: 1,
-            next_attempt_at: null, delivered_at: '2026-10-03T13:00:05', connector: 'Front desk' },
-        ],
-        counts: { received: 1, sending: 0, delivered: 1, failed: 0 },
-      })),
-      http.post('/intake/items/:id/retry', async ({ request }) => { await record(request); return HttpResponse.json({}); }),
-      http.get('/intake/connectors', () => HttpResponse.json({ connectors: [
-        { id: 'c-1', kind: 'email', name: 'Front desk', enabled: true, match_number: null, host: 'smtp.example.org',
-          port: 587, security: 'starttls', username: 'fax', has_password: true, from_address: 'fax@example.org',
-          recipients: ['frontdesk@example.org'], subject_template: 'Fax from {from_number}', managed: false, version: 2 },
-      ] })),
-      http.post('/intake/connectors', async ({ request }) => { await record(request); return HttpResponse.json({}, { status: 201 }); }),
-      http.post('/intake/connectors/:id/test', () => HttpResponse.json({ ok: false, detail: 'Faxbot could not reach the email server.' })),
-    );
-  }
-
-  it('lists received documents with plain status and sends a waiting fax now', async () => {
-    const { calls, record } = recorder();
-    intakeHandlers(record);
-    render(<Intake client={client()} canWrite />);
-    expect(await screen.findByText('Fax from +15550109999, 3 pages')).toBeTruthy();
-    expect(screen.getByText('Direct delivery from +15550100002, 1 page')).toBeTruthy();
-    expect(screen.getByText('1 waiting')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Send Fax from +15550109999, 3 pages now' }));
-    expect(await screen.findByText('Faxbot will deliver it shortly.')).toBeTruthy();
-    expect(calls.map((call) => call.path)).toContain('/intake/items/item-1/retry');
-  });
-
-  it('adds email delivery and reports a failed test in a plain sentence', async () => {
-    const { calls, record } = recorder();
-    intakeHandlers(record);
-    render(<Intake client={client()} canWrite />);
-    fireEvent.click(await screen.findByRole('button', { name: 'Send test email' }));
-    expect(await screen.findByText('Faxbot could not reach the email server.')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Add email delivery' }));
-    const dialog = await screen.findByRole('dialog', { name: 'Add email delivery' });
-    fireEvent.change(within(dialog).getByLabelText('Name'), { target: { value: 'Billing' } });
-    fireEvent.change(within(dialog).getByLabelText('Recipients'), { target: { value: 'a@example.org, b@example.org' } });
-    fireEvent.change(within(dialog).getByLabelText('Email server'), { target: { value: 'smtp.example.org' } });
-    fireEvent.change(within(dialog).getByLabelText('Sent from'), { target: { value: 'fax@example.org' } });
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
-    expect(await screen.findByText('Email delivery saved.')).toBeTruthy();
-    expect(calls.find((call) => call.path === '/intake/connectors')?.body).toMatchObject({
-      name: 'Billing', recipients: ['a@example.org', 'b@example.org'], host: 'smtp.example.org', port: 587,
-      security: 'starttls', from_address: 'fax@example.org', match_number: null,
-    });
   });
 });
