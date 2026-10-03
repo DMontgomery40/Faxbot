@@ -61,10 +61,15 @@ ok "STORAGE_BACKEND=${STORAGE}"
 
 title "Base settings"
 require MAX_FILE_SIZE_MB "Max upload size in MB (default 10)"
-if istrue "${REQUIRE_API_KEY:-false}"; then
-  ok "REQUIRE_API_KEY=true (recommended)"
+# Every API request needs an API key or a signed-in console session.
+# API_KEY is the installation key used to create the first owner and to recover owner access.
+if [[ -n "${API_KEY:-}" ]]; then
+  ok "API_KEY present (installation key for first-owner setup and owner recovery)"
 else
-  warn "REQUIRE_API_KEY=false (dev convenience; not recommended for production)"
+  warn "API_KEY is not set; set it to create the first owner or recover owner access"
+fi
+if [[ -n "${REQUIRE_API_KEY:-}" ]] && ! istrue "${REQUIRE_API_KEY}"; then
+  warn "REQUIRE_API_KEY=false has no effect; requests always need an API key or a console session"
 fi
 
 case "$(printf '%s' "${BACKEND}" | tr '[:upper:]' '[:lower:]')" in
