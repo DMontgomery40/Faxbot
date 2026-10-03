@@ -57,7 +57,7 @@ function MCP({ client }: MCPProps) {
     setActiveMcp(active.mcp);
     setNeedsReload(false);
     setHealth(null);
-    const transport = active.mcp.sse_enabled ? 'SSE' : active.mcp.http_enabled ? 'HTTP' : null;
+    const transport = active.mcp.http_enabled ? 'HTTP' : active.mcp.sse_enabled ? 'SSE' : null;
     if (transport) {
       const path = transport === 'SSE' ? active.mcp.sse_path : active.mcp.http_path;
       try {
@@ -153,29 +153,27 @@ function MCP({ client }: MCPProps) {
   const sseUrl = () => `${window.location.origin}${activeMcp?.sse_path || '/mcp/sse'}`;
   const httpUrl = () => `${window.location.origin}${activeMcp?.http_path || '/mcp/http'}`;
 
-  const generateClaudeConfig = () => {
-    const cfg: any = {
-      mcpServers: {
-        faxbot: {
-          transport: 'sse',
-          url: sseUrl(),
-        }
-      }
-    };
-    if (!activeMcp?.require_oauth) {
-      cfg.mcpServers.faxbot.headers = { };
-    } else {
-      cfg.mcpServers.faxbot.headers = { 'authorization': 'Bearer <YOUR_JWT>' };
-    }
-    return JSON.stringify(cfg, null, 2);
-  };
+  // Remote MCP clients prefer Streamable HTTP; SSE remains for older clients.
+  // Each client presents its own Faxbot API key, which the server forwards.
+  const preferHttp = Boolean(activeMcp?.http_enabled || !activeMcp?.sse_enabled);
+  const generateClientConfig = () => JSON.stringify({
+    mcpServers: {
+      faxbot: {
+        type: preferHttp ? 'http' : 'sse',
+        url: preferHttp ? httpUrl() : sseUrl(),
+        headers: activeMcp?.require_oauth
+          ? { Authorization: 'Bearer <YOUR_JWT>' }
+          : { 'X-API-Key': '<this client\'s Faxbot API key>' },
+      },
+    },
+  }, null, 2);
 
   return (
     <Box>
       <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
         <Typography variant="h4" component="h1">MCP Integration</Typography>
         {health ? (
-          <Chip label={`${health} transport healthy`} color="success" variant="outlined" />
+          <Chip label="MCP server responding" color="success" variant="outlined" />
         ) : (
           <Chip label={activeMcp && !activeMcp.sse_enabled && !activeMcp.http_enabled ? 'MCP disabled' : 'Health not confirmed'} color="warning" variant="outlined" />
         )}
@@ -202,11 +200,11 @@ function MCP({ client }: MCPProps) {
               </Typography>
               <Box component="fieldset" disabled={!canEdit} sx={{ border: 0, m: 0, p: 0, minWidth: 0 }}>
               <Box sx={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap' }}>
-                <FormControlLabel control={<Switch checked={sseEnabled} onChange={(e) => setSseEnabled(e.target.checked)} />} label="SSE transport" />
+                <FormControlLabel control={<Switch checked={sseEnabled} onChange={(e) => setSseEnabled(e.target.checked)} />} label="SSE (older clients)" />
                 {settings?.mcp?.sse_path && <Typography variant="caption" color="text.secondary" sx={{ fontFamily: 'monospace' }}>{settings.mcp.sse_path}</Typography>}
               </Box>
               <Box sx={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap' }}>
-                <FormControlLabel control={<Switch checked={httpEnabled} onChange={(e) => setHttpEnabled(e.target.checked)} />} label="HTTP transport" />
+                <FormControlLabel control={<Switch checked={httpEnabled} onChange={(e) => setHttpEnabled(e.target.checked)} />} label="Streamable HTTP (recommended)" />
                 {settings?.mcp?.http_path && <Typography variant="caption" color="text.secondary" sx={{ fontFamily: 'monospace' }}>{settings.mcp.http_path}</Typography>}
               </Box>
               <FormControlLabel control={<Switch checked={requireOAuth} onChange={(e) => setRequireOAuth(e.target.checked)} />} label="Require OAuth (JWT)" />
@@ -229,28 +227,25 @@ function MCP({ client }: MCPProps) {
         <Grid item xs={12}>
           <Card>
             <CardContent>
-              <Typography variant="h6" gutterBottom>Claude Desktop Config</Typography>
+              <Typography variant="h6" gutterBottom>Client configuration</Typography>
               {!activeMcp ? <Alert severity="info">The client configuration appears once MCP settings load.</Alert> : <>
-              {!activeMcp.sse_enabled && <Alert severity="warning" sx={{ mb: 2 }}>The SSE transport is off, so this configuration won't connect yet.</Alert>}
+              {!activeMcp.sse_enabled && !activeMcp.http_enabled && <Alert severity="warning" sx={{ mb: 2 }}>Turn on a transport above so clients can connect.</Alert>}
               <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-                Add to your Claude Desktop MCP config. SSE URL: {sseUrl()}
+                Give each AI client its own API key from Keys, then add this to its MCP configuration.
               </Typography>
               <Paper sx={{ position: 'relative', p: 2, bgcolor: 'background.default', borderRadius: 1, overflow: 'auto' }}>
-                <Box component="pre" sx={{ m: 0 }}>{generateClaudeConfig()}</Box>
+                <Box component="pre" sx={{ m: 0 }}>{generateClientConfig()}</Box>
                 <Tooltip title="Copy config">
-                  <IconButton size="small" sx={{ position: 'absolute', right: 8, top: 8 }} onClick={() => navigator.clipboard.writeText(generateClaudeConfig())}>
+                  <IconButton size="small" sx={{ position: 'absolute', right: 8, top: 8 }} onClick={() => navigator.clipboard.writeText(generateClientConfig())}>
                     <ContentCopy fontSize="small" />
                   </IconButton>
                 </Tooltip>
               </Paper>
-              {activeMcp.http_enabled && (
-                <>
-                  <Typography variant="h6" gutterBottom sx={{ mt: 2 }}>HTTP Transport (experimental)</Typography>
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    <Typography variant="body2" color="text.secondary">HTTP URL: {httpUrl()}</Typography>
-                    <Tooltip title="Copy HTTP URL"><IconButton size="small" onClick={() => navigator.clipboard.writeText(httpUrl())}><ContentCopy fontSize="small" /></IconButton></Tooltip>
-                  </Box>
-                </>
+              {activeMcp.http_enabled && activeMcp.sse_enabled && (
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 2 }}>
+                  <Typography variant="body2" color="text.secondary">Older clients that need SSE: {sseUrl()}</Typography>
+                  <Tooltip title="Copy SSE URL"><IconButton size="small" onClick={() => navigator.clipboard.writeText(sseUrl())}><ContentCopy fontSize="small" /></IconButton></Tooltip>
+                </Box>
               )}
               </>}
             </CardContent>
