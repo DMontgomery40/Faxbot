@@ -5,11 +5,12 @@ import uuid
 import asyncio
 import secrets
 from contextlib import AsyncExitStack, asynccontextmanager
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import tempfile
 from typing import Optional, Any, List, Dict, Literal, cast
 import subprocess
 import time
+import sqlalchemy as sa
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Header, Depends, Query, Request, Response, WebSocket
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -38,7 +39,7 @@ import json
 from .audit import init_audit_logger, close_audit_logger, audit_event
 from .audit import query_recent_logs
 from .storage import get_storage
-from .auth import verify_db_key, create_api_key, list_api_keys, revoke_api_key, rotate_api_key
+from .auth import verify_db_key
 from .plugins.http_provider import HttpManifest, HttpProviderRuntime
 from .config_paths import (
     InvalidProviderPath, plugin_examples_path,
@@ -66,10 +67,12 @@ from .outbound_callbacks import CapturedCallbacks, CallbackRejected
 from .request_identity import RequestIdentity, IdempotentReplay, IdempotencyConflict, fingerprint_upload
 from .access.runtime import AccessRuntime
 from .access.transport import CredentialTransport
-from .access.types import AccessError, AccessUnavailableError
+from .access.catalog import KEY_SCOPES
+from .access.mutation_types import IntegrationKeyValues, MutationDeniedError, MutationReason, VersionedEntity
+from .access.types import AccessError, AccessUnavailableError, ResourceRef
 from .access.http import router as authentication_router, PrivateAuthMiddleware, access_error_response
 from .access.http import require_identity, runtime as access_runtime, private_operation
-from .access.http import PRIVATE_HEADERS, private_response_path
+from .access.http import PRIVATE_HEADERS, private_response_path, utcnow as access_utcnow
 from .access.configuration_access import configuration_write_receipt
 
 
@@ -2132,29 +2135,106 @@ def get_fax(job_id: str, request: Request, identity=Depends(require_identity)):
 
 
 # Admin API key management
-@app.post("/admin/api-keys", response_model=CreateAPIKeyOut, dependencies=[Depends(require_admin)])
-def admin_create_api_key(payload: CreateAPIKeyIn):
-    result = create_api_key(
-        name=payload.name,
-        owner=payload.owner,
-        scopes=payload.scopes,
-        expires_at=payload.expires_at,
-        note=payload.note,
-    )
-    return CreateAPIKeyOut(**result)  # type: ignore[arg-type]
+def _key_display_name(name, owner, key_id):
+    parts = [value.strip() for value in (name, owner) if value and value.strip()]
+    display = f"{parts[0]} ({parts[1]})" if len(parts) == 2 else parts[0] if parts else f"API key {key_id}"
+    return display[:200]
 
 
-@app.get("/admin/api-keys", response_model=List[APIKeyMeta], dependencies=[Depends(require_admin)])
-def admin_list_api_keys():
-    rows = list_api_keys()
-    return [APIKeyMeta(**r) for r in rows]
+def _naive_utc(value):
+    if value is None or value.tzinfo is None:
+        return value
+    return value.astimezone(timezone.utc).replace(tzinfo=None)
 
 
-@app.delete("/admin/api-keys/{key_id}", dependencies=[Depends(require_admin)])
-def admin_revoke_api_key(key_id: str):
-    ok = revoke_api_key(key_id)
-    if not ok:
-        raise HTTPException(404, detail="Key not found")
+def _policy_version(service):
+    with service.store.transaction() as connection:
+        return service.store.require_lock_on(connection)
+
+
+def _may_manage_keys(service, connection, actor):
+    return service.control.authorize_on(connection, actor, 'keys:manage',
+        ResourceRef('installation'), now=access_utcnow()).allowed
+
+
+@private_operation
+def _list_keys(service, actor):
+    with service.store.transaction() as connection:
+        if not _may_manage_keys(service, connection, actor):
+            raise MutationDeniedError(MutationReason.FORBIDDEN)
+        keys, grants = service.store.tables['api_keys'], service.store.tables['access_key_grants']
+        ceilings: Dict[str, List[str]] = {}
+        for binding_id, permission in connection.execute(sa.select(grants.c.key_binding_id, grants.c.permission_id)
+                .where(grants.c.resource_id == 'installation').order_by(grants.c.permission_id)):
+            ceilings.setdefault(binding_id, []).append(permission)
+        rows = connection.execute(sa.select(keys).order_by(keys.c.created_at, keys.c.key_id)).mappings().all()
+    return [APIKeyMeta(key_id=row['key_id'], name=row['name'], owner=row['owner'], scopes=ceilings.get(row['id'], []),
+                       created_at=row['created_at'], last_used_at=row['last_used_at'], expires_at=row['expires_at'],
+                       revoked_at=row['revoked_at'], note=row['note']) for row in rows]
+
+
+@private_operation
+def _key_target(service, actor, key_id):
+    """Resolve a public key id; existence is disclosed only to key managers."""
+    with service.store.transaction() as connection:
+        version = service.store.require_lock_on(connection)
+        allowed = _may_manage_keys(service, connection, actor)
+        keys, bindings = service.store.tables['api_keys'], service.store.tables['access_key_bindings']
+        row = connection.execute(sa.select(bindings.c.id, bindings.c.version)
+            .select_from(bindings.join(keys, keys.c.id == bindings.c.id)).where(keys.c.key_id == key_id)).first()
+    if row is None:
+        return allowed, None, version
+    return allowed, VersionedEntity(row.id, row.version), version
+
+
+def _require_key_target(service, actor, key_id):
+    allowed, target, version = _key_target(service, actor, key_id)
+    if target is None:
+        if allowed:
+            raise HTTPException(404, detail="Key not found")
+        raise MutationDeniedError(MutationReason.FORBIDDEN)
+    return target, version
+
+
+@app.post("/admin/api-keys", response_model=CreateAPIKeyOut)
+def admin_create_api_key(payload: CreateAPIKeyIn, request: Request, identity=Depends(require_identity)):
+    """Issue a key for a new integration identity holding exactly the requested scopes."""
+    scopes = list(dict.fromkeys(payload.scopes or []))
+    unknown = [scope for scope in scopes if scope not in KEY_SCOPES]
+    if unknown:
+        raise HTTPException(400, detail=f"Unknown scope: {', '.join(unknown)}. "
+                                        f"Allowed scopes: {', '.join(sorted(KEY_SCOPES))}.")
+    service = access_runtime(request)
+
+    @private_operation
+    def issue():
+        prepared = service.credential_codec.prepare_new_key()
+        values = IntegrationKeyValues(
+            display_name=_key_display_name(payload.name, payload.owner, prepared.public_key_id),
+            owner=payload.owner, name=payload.name, note=payload.note,
+            expires_at=_naive_utc(payload.expires_at), permissions=frozenset(scopes))
+        receipt = service.mutations.issue_integration_key(identity.actor, values, prepared,
+            expected_policy_version=_policy_version(service), now=access_utcnow())
+        return receipt, prepared
+
+    receipt, prepared = issue()
+    # Disclosed once, only after the issuing transaction committed.
+    return CreateAPIKeyOut(key_id=receipt.public_key_id, token=prepared._token_for_committed_adapter(),
+                           name=payload.name, owner=payload.owner,
+                           scopes=[grant.permission for grant in receipt.ceiling], expires_at=payload.expires_at)
+
+
+@app.get("/admin/api-keys", response_model=List[APIKeyMeta])
+def admin_list_api_keys(request: Request, identity=Depends(require_identity)):
+    return _list_keys(access_runtime(request), identity.actor)
+
+
+@app.delete("/admin/api-keys/{key_id}")
+def admin_revoke_api_key(key_id: str, request: Request, identity=Depends(require_identity)):
+    service = access_runtime(request)
+    target, version = _require_key_target(service, identity.actor, key_id)
+    private_operation(service.mutations.revoke_key)(identity.actor, target,
+        expected_policy_version=version, now=access_utcnow())
     return {"status": "ok"}
 
 
@@ -2163,12 +2243,21 @@ class RotateAPIKeyOut(BaseModel):
     token: str
 
 
-@app.post("/admin/api-keys/{key_id}/rotate", response_model=RotateAPIKeyOut, dependencies=[Depends(require_admin)])
-def admin_rotate_api_key(key_id: str):
-    res = rotate_api_key(key_id)
-    if not res:
-        raise HTTPException(404, detail="Key not found")
-    return RotateAPIKeyOut(**res)  # type: ignore[arg-type]
+@app.post("/admin/api-keys/{key_id}/rotate", response_model=RotateAPIKeyOut)
+def admin_rotate_api_key(key_id: str, request: Request, identity=Depends(require_identity)):
+    """Replace the secret; the key id, identity and scopes stay the same."""
+    service = access_runtime(request)
+    target, version = _require_key_target(service, identity.actor, key_id)
+
+    @private_operation
+    def rotate():
+        prepared = service.credential_codec.prepare_key_rotation(key_id)
+        receipt = service.mutations.rotate_key(identity.actor, target, prepared,
+            expected_policy_version=version, now=access_utcnow())
+        return receipt, prepared
+
+    receipt, prepared = rotate()
+    return RotateAPIKeyOut(key_id=receipt.public_key_id, token=prepared._token_for_committed_adapter())
 
 
 async def _artifact_cleanup_loop():

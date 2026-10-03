@@ -706,7 +706,7 @@ def test_all_connection_first_operations_require_lock_before_any_input_or_write(
         'enroll_owner', 'reset_password', 'create_group', 'update_group',
         'add_membership', 'remove_membership', 'create_custom_role', 'update_custom_role',
         'create_assignment', 'remove_assignment', 'issue_key', 'update_key_metadata',
-        'rotate_key', 'revoke_key', 'approve_pending_key',
+        'rotate_key', 'revoke_key', 'approve_pending_key', 'issue_integration_key',
     }
     assert {n[:-3] for n in vars(M.AccessMutations) if n.endswith('_on')} == names
     before = w.policy(), len(w.rows('access_audit'))
@@ -721,6 +721,31 @@ def test_all_connection_first_operations_require_lock_before_any_input_or_write(
             with pytest.raises(InvalidTransactionError):
                 method(c, w.actor, *args, expected_policy_version=1, now=NOW)
     assert (w.policy(), len(w.rows('access_audit'))) == before
+
+
+def test_integration_key_enrolls_own_principal_fixed_role_and_matching_ceiling(mworld):
+    w = mworld
+    values = T.IntegrationKeyValues('Front desk iPhone', 'front desk', 'iPhone', None, None,
+                                    frozenset({'fax:send', 'inbound:list'}))
+    receipt = w.call('issue_integration_key', values, w.codec.prepare_new_key())
+    principal = w.row('access_principals', receipt.principal_id)
+    assert (principal['kind'], principal['display_name'], principal['enabled']) == ('integration', 'Front desk iPhone', 1)
+    assert receipt.ceiling == tuple(ScopedPermission(p, ResourceRef('installation')) for p in ('fax:send', 'inbound:list'))
+    [assignment] = [r for r in w.rows('access_assignments') if r['principal_id'] == receipt.principal_id]
+    role = w.row('access_roles', assignment['role_id'])
+    assert (assignment['resource_id'], role['kind'], role['name']) == ('installation', 'legacy', 'API key ' + receipt.public_key_id)
+    assert {r['permission_id'] for r in w.rows('access_role_permissions') if r['role_id'] == role['id']} == {'fax:send', 'inbound:list'}
+    key = w.row('api_keys', receipt.target.id)
+    assert (key['owner'], key['scopes'], key['name']) == ('front desk', 'fax:send,inbound:list', 'iPhone')
+    assert [r['kind'] for r in w.rows('access_resources') if r['principal_id'] == receipt.principal_id] == ['personal']
+    # Only ordinary key scopes, and never beyond what the issuing actor can grant.
+    denied(w, T.MutationReason.INVALID_INPUT, 'issue_integration_key',
+           replace(values, permissions=frozenset({'users:manage'})), w.codec.prepare_new_key())
+    manager = w.restricted('bob', {'keys:manage', 'fax:read'})
+    denied(w, T.MutationReason.FORBIDDEN, 'issue_integration_key', values, w.codec.prepare_new_key(), actor=manager)
+    narrowed = w.call('issue_integration_key', replace(values, permissions=frozenset({'fax:read'})),
+                      w.codec.prepare_new_key(), actor=manager)
+    assert narrowed.ceiling == (ScopedPermission('fax:read', ResourceRef('installation')),)
 
 
 def test_large_key_note_is_bounded_and_absent_from_audit_and_receipt(mworld):

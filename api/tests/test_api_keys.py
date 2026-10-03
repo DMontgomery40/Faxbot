@@ -63,3 +63,62 @@ def test_admin_create_and_use_api_key(isolated_installation, monkeypatch, tmp_pa
         # Try to use revoked key
         r6 = client.get(f"/fax/{job_id}", headers={"X-API-Key": token})
         assert r6.status_code == 401
+
+
+def _key_client(monkeypatch):
+    for name, value in {"API_KEY": "bootstrap_admin_only", "REQUIRE_API_KEY": "true",
+                        "PUBLIC_API_URL": "https://testserver", "FAX_DISABLED": "true",
+                        "FAX_BACKEND": "phaxio"}.items():
+        monkeypatch.setenv(name, value)
+    return TestClient(app, base_url="https://testserver")
+
+
+def _issue(client, admin, scopes, **fields):
+    return client.post("/admin/api-keys", headers={"X-API-Key": admin}, json={"scopes": scopes, **fields})
+
+
+def test_unknown_scopes_are_rejected_by_name_without_issuing(isolated_installation, monkeypatch):
+    with _key_client(monkeypatch) as client:
+        r = _issue(client, "bootstrap_admin_only", ["fax:send", "fax:admin", "*"], name="bad")
+        assert r.status_code == 400
+        assert "fax:admin" in r.json()["detail"] and "*" in r.json()["detail"]
+        listed = client.get("/admin/api-keys", headers={"X-API-Key": "bootstrap_admin_only"})
+        assert listed.status_code == 200 and listed.json() == []
+
+
+def test_rotation_keeps_key_id_and_scopes_and_retires_the_old_secret(isolated_installation, monkeypatch):
+    with _key_client(monkeypatch) as client:
+        created = _issue(client, "bootstrap_admin_only", ["fax:send", "fax:read"], name="ios", owner="front desk")
+        assert created.status_code == 200, created.text
+        key = created.json()
+        assert key["scopes"] == ["fax:read", "fax:send"] and key["owner"] == "front desk"
+        sent = client.post("/fax", headers={"X-API-Key": key["token"]}, data={"to": "+15551234567"},
+                           files={"file": ("a.txt", b"1", "text/plain")})
+        assert sent.status_code == 202, sent.text
+        rotated = client.post(f"/admin/api-keys/{key['key_id']}/rotate", headers={"X-API-Key": "bootstrap_admin_only"})
+        assert rotated.status_code == 200, rotated.text
+        assert rotated.json()["key_id"] == key["key_id"] and rotated.json()["token"] != key["token"]
+        job = f"/fax/{sent.json()['id']}"
+        assert client.get(job, headers={"X-API-Key": key["token"]}).status_code == 401
+        assert client.get(job, headers={"X-API-Key": rotated.json()["token"]}).status_code == 200
+        listed = client.get("/admin/api-keys", headers={"X-API-Key": "bootstrap_admin_only"}).json()
+        assert [(k["key_id"], k["scopes"], k["name"], k["owner"]) for k in listed] == [
+            (key["key_id"], ["fax:read", "fax:send"], "ios", "front desk")]
+        missing = client.post("/admin/api-keys/000000000000/rotate", headers={"X-API-Key": "bootstrap_admin_only"})
+        assert missing.status_code == 404
+
+
+def test_key_manager_issues_only_within_its_own_scopes(isolated_installation, monkeypatch):
+    with _key_client(monkeypatch) as client:
+        manager = _issue(client, "bootstrap_admin_only", ["keys:manage", "fax:read"], name="manager").json()["token"]
+        plain = _issue(client, "bootstrap_admin_only", ["fax:read"], name="plain").json()
+        assert _issue(client, manager, ["fax:read"], name="delegated").status_code == 200
+        # Delegation cannot exceed the manager's own authority.
+        assert _issue(client, manager, ["fax:send"], name="escalated").status_code == 403
+        assert client.get("/admin/api-keys", headers={"X-API-Key": manager}).status_code == 200
+        # A key without keys:manage cannot list, revoke or probe for keys.
+        assert client.get("/admin/api-keys", headers={"X-API-Key": plain["token"]}).status_code == 403
+        assert client.delete(f"/admin/api-keys/{plain['key_id']}", headers={"X-API-Key": plain["token"]}).status_code == 403
+        assert client.delete("/admin/api-keys/000000000000", headers={"X-API-Key": plain["token"]}).status_code == 403
+        assert client.delete("/admin/api-keys/000000000000", headers={"X-API-Key": manager}).status_code == 404
+        assert client.get("/admin/api-keys", headers={"X-API-Key": "fbk_live_000000000000_wrong"}).status_code == 401

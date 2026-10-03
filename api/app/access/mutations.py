@@ -22,11 +22,11 @@ import uuid
 import sqlalchemy as sa
 from sqlalchemy.engine import Connection
 
-from .catalog import PERMISSIONS
+from .catalog import KEY_SCOPES, PERMISSIONS
 from .credentials import (CredentialCodec, InvalidCredentialInputError,
     PreparedTemporaryPassword, PreparedNewKey, PreparedKeyRotation, normalize_login)
 from .mutation_types import (AssignmentValues, CustomRoleValues, GroupSubject,
-    GroupValues, IntegrationValues, KeyMetadata, KeyMutationReceipt, KeyValues,
+    GroupValues, IntegrationKeyValues, IntegrationValues, KeyMetadata, KeyMutationReceipt, KeyValues,
     MutationDeniedError, MutationOutcome, MutationReason, MutationReceipt,
     OwnerEnrollment, PrincipalSubject, StaleVersionError, UserValues, VersionedEntity)
 from .types import (AccessUnavailableError, AuthenticationError, InvalidScopeError,
@@ -735,6 +735,59 @@ class AccessMutations:
 
     def issue_key(self, actor: PrincipalContext, values: KeyValues, key: PreparedNewKey, *, expected_policy_version: int, now: datetime) -> KeyMutationReceipt:
         return self._standalone(self.issue_key_on, actor, values, key, expected_policy_version=expected_policy_version, now=now)
+
+    def issue_integration_key_on(self, connection: Connection, actor: PrincipalContext, values: IntegrationKeyValues, key: PreparedNewKey, *, expected_policy_version: int, now: datetime) -> MutationOutcome[KeyMutationReceipt]:
+        """Enroll a new key exactly as revision0005 enrolled an existing one.
+
+        A distinct integration principal holds an immutable per-key role at
+        installation with exactly the requested ordinary scopes, and the key's
+        ceiling matches it. The actor must be able to grant every scope.
+        """
+        def planner(a):
+            self._key_metadata(values, IntegrationKeyValues)
+            _text(values.display_name, 200)
+            if not values.display_name.strip(): _deny()
+            _text(values.owner, 100, nullable=True)
+            if (type(key) is not PreparedNewKey or not _id(key.row_id)
+                    or re.fullmatch('[0-9a-f]{12}', key.public_key_id) is None
+                    or not self.codec.supports_hash(key._key_hash_for_storage())): _deny()
+            permissions = _permissions(values.permissions)
+            if not permissions <= KEY_SCOPES: _deny()
+            ceiling = self._ceiling(a, tuple(ScopedPermission(p, ResourceRef('installation')) for p in sorted(permissions)))
+            self._unique(a, 'api_keys', 'id', key.row_id)
+            self._unique(a, 'api_keys', 'key_id', key.public_key_id)
+            role_name = 'API key ' + key.public_key_id
+            if permissions:
+                self._unique(a, 'access_roles', 'normalized_name', role_name.lower())
+            principal_id, resource_id, role_id = uuid.uuid4().hex, uuid.uuid4().hex, uuid.uuid4().hex
+            def writes():
+                timestamps = dict(created_at=a.now, updated_at=a.now)
+                self._insert(a.connection, 'access_principals', id=principal_id, kind='integration',
+                    display_name=values.display_name, enabled=1, security_version=1, version=1, **timestamps)
+                self._insert(a.connection, 'access_resources', id=resource_id, kind='personal',
+                    parent_id='installation', parent_kind='installation', principal_id=principal_id,
+                    mailbox_id=None, fax_job_id=None, inbound_fax_id=None, enabled=1, version=1, **timestamps)
+                if permissions:
+                    self._insert(a.connection, 'access_roles', id=role_id, name=role_name,
+                        normalized_name=role_name.lower(), description='Fixed permissions for one API key',
+                        kind='legacy', enabled=1, version=1, **timestamps)
+                    self._role_members(a, role_id, permissions)
+                    self._insert(a.connection, 'access_assignments', id=uuid.uuid4().hex, principal_id=principal_id,
+                        group_id=None, role_id=role_id, resource_id='installation', version=1, **timestamps)
+                # Scopes mirror the ceiling for header routes that still read this column.
+                self._insert(a.connection, 'api_keys', id=key.row_id, key_id=key.public_key_id,
+                    key_hash=key._key_hash_for_storage(), name=values.name, owner=values.owner,
+                    scopes=','.join(sorted(permissions)), created_at=a.now, last_used_at=None,
+                    expires_at=values.expires_at, revoked_at=None, note=values.note)
+                self._insert(a.connection, 'access_key_bindings', id=key.row_id, principal_id=principal_id,
+                    state='active', version=1, security_version=1, revoked_at=None, **timestamps)
+                self._write_ceiling(a, key.row_id, ceiling)
+            return self._plan(a, key.row_id, 1, True, writes,
+                key=dict(public_key_id=key.public_key_id, principal_id=principal_id, ceiling=ceiling))
+        return self._run(connection, actor, 'issue_integration_key', 'binding', 'keys:manage', planner, expected_policy_version=expected_policy_version, now=now)
+
+    def issue_integration_key(self, actor: PrincipalContext, values: IntegrationKeyValues, key: PreparedNewKey, *, expected_policy_version: int, now: datetime) -> KeyMutationReceipt:
+        return self._standalone(self.issue_integration_key_on, actor, values, key, expected_policy_version=expected_policy_version, now=now)
 
     def update_key_metadata_on(self, connection: Connection, actor: PrincipalContext, target: VersionedEntity, values: KeyMetadata, *, expected_policy_version: int, now: datetime) -> MutationOutcome[KeyMutationReceipt]:
         def planner(a):
