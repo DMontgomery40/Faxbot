@@ -12,12 +12,13 @@ Usage:
 
 Notes:
   - Never includes secrets/PHI in prompts; context is limited to public files (AGENTS.md, OpenAPI, .env.example, provider_traits.json).
-  - When --apply is used and LLM returns a unified diff, the tool attempts to apply it with `git apply`.
+  - --apply validates the complete patch against the maintained-docs boundary before applying it.
 """
 import os
 import subprocess
 import json
 import shlex
+import sys
 from pathlib import Path
 from typing import List, Optional
 
@@ -178,10 +179,15 @@ Constraints:
     print(f"LLM patch saved: {out_raw}")
     if args.apply:
         try:
+            # Use the CI validator's throwaway index before changing real files
+            # or staging. Mixed allowed/protected patches must fail as a whole.
+            subprocess.run([sys.executable, str(Path(__file__).with_name('validate_doc_patch.py')),
+                            str(out_raw)], cwd=ROOT, check=True)
             run(f"git apply --index {shlex.quote(str(out_raw))}")
             print("Patch applied to index. Review with git diff and commit.")
         except Exception as e:
             print(f"Failed to apply patch: {e}")
+            raise SystemExit(1) from None
 
 
 if __name__ == "__main__":

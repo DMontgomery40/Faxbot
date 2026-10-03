@@ -51,7 +51,7 @@ Pick your backend and environment, then deploy.
 - Storage and retention (inbound)
 
 ## Guides
-- Backends (Go‑Live): [go-live/index.md](../go-live/index.md)
+- [Controlled Phaxio delivery check](../tools/phaxio-e2e-test.md)
 - Phaxio (Cloud): [phaxio.md](phaxio.md)
 - Sinch (Cloud v3): [sinch.md](sinch.md)
 - SignalWire (Cloud): [signalwire.md](signalwire.md)

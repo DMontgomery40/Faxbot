@@ -121,3 +121,9 @@ An unrelated visual rebrand, inventing unrelated billing/CRM features, adding a 
 ## Execution and continuity
 
 Main is the intended integration target. PR review/CI/merge and deployment must be tracked separately from local tests. Respect existing user authorization, and ask only for material product decisions or truly missing external prerequisites. Design approval is not implementation completion.
+
+### Future enterprise direction — October 3 documentation addition
+
+The [enterprise correspondence design](../../planning/enterprise-correspondence.md) extends this modular architecture with shared intake, accountable ownership, deadlines, approvals, verified recipients, evidence exports, retention/holds, corporate identity and controlled processing. Optional templates contain jurisdiction/industry rules; guided setup explains effective organization, mailbox and workflow settings and missing requirements. Keep the core company-neutral and preserve independent inbound/outbound providers and existing access/delivery infrastructure.
+
+That document maps current foundations and gaps to code and sequences a small import/ownership/evidence foundation before broader integrations. It is a future architecture proposal, not a new completion gate for this refresh, an expansion of Phase 1 or the four-fix batch, or a claim of implemented enterprise/compliance behavior. The [README roadmap](../../README.md#roadmap) remains the shared status source.

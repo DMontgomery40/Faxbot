@@ -138,41 +138,9 @@ Implement the following as minimum controls:
 - [ ] Asterisk AMI not exposed; strong credentials; fail2ban.
 - [ ] Risk analysis, policies, and training documented.
 
-## Current Implementation Status (2025‑Q3)
-- Implemented:
-  - API key support, reverse proxy guidance.
-  - Tokenized PDF access with equality check and TTL expiry.
-  - Phaxio outbound callback signature verification now uses the separate captured Callback Token and URL/form/file HMAC-SHA1 contract; see [outbound verification](setup/webhooks.md#outbound-status-phaxio). This does not establish inbound verification readiness.
-  - AMI concurrency/backoff improvements; SIP dialplan emits granular results.
-  - Docs for HTTPS, rate limiting, NAT/port‑forwarding.
-- Gaps (operator‑dependent):
-  - Encryption at rest (volume or DB) is operator‑managed.
-  - Automated retention cleanup (cron/job) recommended (see below).
-  - Centralized audit logging & alerting recommended.
+## Current implementation and operation
 
-## Remediation Plan & Roadmap
-1) Automate artifact retention
-- Add `ARTIFACT_TTL_DAYS` env with a daily cleanup job to purge PDFs/TIFFs older than TTL when job status is final.
-
-2) Configurable audit logging
-- Structured logs with job lifecycle events; optional sink to SIEM.
-
-3) Optional hard fail on plain HTTP
-- Reject `PUBLIC_API_URL` with `http://` in non‑local environments unless `ALLOW_INSECURE_PUBLIC_URL=true`.
-
-4) Secrets management
-- Guidance and examples for loading secrets from a vault (AWS/GCP/Azure) instead of env files.
-
-5) Provider‑specific SIP hardening
-- Example configs for TLS signaling and site‑to‑site VPN topologies.
-
-## Example: Retention Cleanup (Operator)
-- Create a cron or systemd timer to delete artifacts after N days:
-```
-# delete PDFs/TIFFs older than 7 days
-find /path/to/faxdata -type f \( -name '*.pdf' -o -name '*.tiff' \) -mtime +7 -delete
-```
-- Ensure backups honor retention and secure destruction policies.
+Use the maintained guides for [authentication](security/authentication.md), [access control](security/access-control.md), [settings and retention](admin-console/settings.md), [provider callbacks](setup/webhooks.md), and [MCP transport security](mcp/transports.md). The historical implementation assessment and remediation plan have been archived; they do not describe the current release.
 
 ## Legal Notice
 - This document does not constitute legal advice. HIPAA compliance depends on your specific implementation, vendor agreements, and organizational controls. Engage qualified counsel and security professionals.

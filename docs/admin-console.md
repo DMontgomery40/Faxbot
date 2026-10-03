@@ -19,9 +19,9 @@
   Mint, rotate, revoke; scopes and rate limits.  
   [Open](admin-console/api-keys.md)
 
-- :material-puzzle-outline: **Plugin Builder**  
-  Generate outbound provider scaffolds.  
-  [Open](admin-console/plugin-builder.md)
+- :material-puzzle-outline: **Plugin Registry**\
+  Discover providers and configure installed plugins.\
+  [Open](plugins/registry.md)
 
 </div>
 

@@ -69,6 +69,6 @@ A key can never do more than the user or integration it belongs to. See [Access 
 - **401 Unauthorized** → The key is missing, mistyped, expired or revoked, or its owner is disabled.
 - **403 Forbidden** → The key is valid but lacks the permission. Create a key with the permission you need; its owner must also have it.
 - **429 Too Many Requests** → The per-key limit was reached; adjust `MAX_REQUESTS_PER_MINUTE` in **Settings**.
-- **413 / 415** → File too large or wrong type; review [Images & PDFs](../guides/images-and-pdfs.md).
+- **413 / 415** → File too large or wrong type; review [document submission](../api.md#submit-a-document).
 
 For automation examples, see the [Node SDK](../sdks/node.md) and [Python SDK](../sdks/python.md).

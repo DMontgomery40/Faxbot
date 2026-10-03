@@ -3,10 +3,10 @@
 
 The Plugins tab uses these discovery endpoints when `FEATURE_V3_PLUGINS=true`.
 
-[:material-puzzle-outline: Plugins Overview](index.md){ .md-button }
-[:material-http: HTTP Manifest Docs](manifest-http.md){ .md-button }
+[:material-puzzle-outline: Provider Setup](../setup/index.md){ .md-button }
+[:material-http: Manifest Installation](#manifest-installation){ .md-button }
 [:material-file-cog: Plugin Config File](config-file.md){ .md-button }
-[:material-puzzle: Plugin Builder](../admin-console/plugin-builder.md){ .md-button }
+[:material-cog: Settings](../admin-console/settings.md){ .md-button }
 
 ---
 

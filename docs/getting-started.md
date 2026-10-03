@@ -58,4 +58,4 @@ Faxbot is an open-source, self-hostable fax API that combines:
 
 ## Need Help?
 
-See our [Contributing guide](getting-started/contributing.md) for support options. Mention which backend you’re using so we can point you to the right playbook.
+See our [Contributing guide](https://github.com/DMontgomery40/Faxbot/blob/main/CONTRIBUTING.md) for support options. Mention which backend you’re using so we can point you to the right playbook.

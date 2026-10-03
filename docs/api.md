@@ -6,7 +6,7 @@ The [generated source reference](generated/index.md) supplies the current OpenAP
 
 Use your installation's API URL; the local default is `http://localhost:8080`. Every request needs a credential: send a Faxbot API key as `X-API-Key`. What the key may do depends on its owner's roles and the key's own permission list. Editing the `.env` file does not change keys on an existing installation. See [Authentication](security/authentication.md) and [Access Control](security/access-control.md).
 
-Open `/docs` on that server for its Swagger UI (`http://localhost:8080/docs` in local development); `/openapi.json` provides its schema. Remote clients, including iOS, connect to your installation through its configured secure tunnel or VPN. See [Networking & Tunnels](networking/tunnels.md).
+Open `/docs` on that server for its Swagger UI (`http://localhost:8080/docs` in local development); `/openapi.json` provides its schema. Remote clients, including iOS, connect to your installation through its configured secure tunnel or VPN. See [Public Access & Tunnels](setup/public-access.md).
 
 ## Submit a document
 

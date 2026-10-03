@@ -28,4 +28,4 @@ Once initialized, canonical desired/active revisions in the database are authori
 
 The compatibility `path` returned by a plugin write identifies the configured legacy path; it does not mean that file is the authoritative runtime store. A backup of that JSON alone cannot recover the database, encrypted provider profiles, original installation key or document artifacts.
 
-Installed manifest JSON remains a provider definition. It is captured with accepted work; changing a file does not rewrite an already accepted job's provider frame. See [HTTP manifests](manifest-http.md) and [Settings](../admin-console/settings.md).
+Installed manifest JSON remains a provider definition. It is captured with accepted work; changing a file does not rewrite an already accepted job's provider frame. See [manifest installation](registry.md#manifest-installation) and [Settings](../admin-console/settings.md).

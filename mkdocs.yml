@@ -49,7 +49,7 @@ plugins:
         # Note: avoid index.md -> same-route redirects; they cause loops
         backends/documo-setup.md: setup/documo.md
         backends/freeswitch-setup.md: setup/freeswitch.md
-        backends/images-and-pdfs.md: guides/images-and-pdfs.md
+        backends/images-and-pdfs.md: api.md
         backends/phaxio-setup.md: setup/phaxio.md
         backends/public-access.md: setup/public-access.md
         backends/signalwire-setup.md: setup/signalwire.md
@@ -62,7 +62,37 @@ plugins:
         development/python-sdk.md: sdks/python.md
         development/scripts-and-tests.md: tools/scripts-and-tests.md
         development/troubleshooting.md: troubleshooting.md
-        # Removed index.md redirects (loop risk): getting-started/, admin-console/, deployment/, security/authentication/, third-party/, troubleshooting/
+        # Historical 2025 pages now live in the local, ignored .archived/ tree.
+        # Redirect directly to maintained pages, never another removed page.
+        admin-console/plugin-builder.md: plugins/registry.md
+        admin-demo.md: admin-console.md
+        api/canonical-events.md: api.md
+        apps/electron.md: admin-console.md
+        apps/index.md: admin-console.md
+        archive/ai-node-mcp-legacy.md: mcp/node.md
+        archive/backends-overview.md: setup/index.md
+        archive/development-index-legacy.md: reference/index.md
+        archive/mcp-integration-legacy.md: mcp/index.md
+        developers/agents-audit.md: reference/index.md
+        developers/changelog.md: reference/index.md
+        developers/developers-backend.md: reference/index.md
+        developers/v3-phase-status.md: reference/index.md
+        getting-started/contributing.md: https://github.com/DMontgomery40/Faxbot/blob/main/CONTRIBUTING.md
+        go-live/index.md: setup/index.md
+        go-live/phaxio-onepager.md: setup/phaxio.md
+        go-live/phaxio.md: setup/phaxio.md
+        go-live/sinch-onepager.md: setup/sinch.md
+        go-live/sinch.md: setup/sinch.md
+        go-live/sip-asterisk-onepager.md: setup/sip-asterisk.md
+        go-live/sip-asterisk.md: setup/sip-asterisk.md
+        guides/images-and-pdfs.md: api.md
+        inbound.md: operations/intake.md
+        networking/tunnels.md: setup/public-access.md
+        plugins/homeassistant.md: reference/index.md
+        plugins/index.md: plugins/registry.md
+        plugins/manifest-http.md: plugins/registry.md
+        plugins/sip-provider-plugins.md: setup/sip-asterisk.md
+        third-party.md: reference/index.md
 
   - exclude:
       glob:
@@ -106,7 +136,7 @@ nav:
   - Home: index.md
   - Getting started:
     - Overview: getting-started.md
-    - Contributing: getting-started/contributing.md
+    - Contributing: https://github.com/DMontgomery40/Faxbot/blob/main/CONTRIBUTING.md
   - Setup:
     - Overview: setup/index.md
     - Phaxio (Cloud): setup/phaxio.md
@@ -130,13 +160,9 @@ nav:
     - HIPAA Requirements: HIPAA_REQUIREMENTS.md
   - Operations:
     - Overview: operations/index.md
-    - Inbound Receiving: inbound.md
     - Delivery routes: operations/delivery-routes.md
     - Intake: operations/intake.md
     - Direct delivery: operations/direct-delivery.md
-    - Guides:
-      - Images & PDFs: guides/images-and-pdfs.md
-      - Networking & Tunnels: networking/tunnels.md
     - Tools:
       - Terminal: terminal.md
       - Scripts & Tests: tools/scripts-and-tests.md
@@ -144,7 +170,6 @@ nav:
       - API Tests: tools/api-tests.md
       - Phaxio E2E Test: tools/phaxio-e2e-test.md
     - Troubleshooting: troubleshooting.md
-    - Admin Demo: admin-demo.md
   - Reference:
     - Overview: reference/index.md
     - Generated source:
@@ -154,7 +179,6 @@ nav:
     - API:
       - Reference: api.md
       - Access and Sign-in: reference/access-api.md
-      - Canonical Events: api/canonical-events.md
     - SDKs: sdks/index.md
     - MCP:
       - Overview: mcp/index.md
@@ -162,12 +186,8 @@ nav:
       - Python: mcp/python.md
       - Transports: mcp/transports.md
   - Plugins (v3):
-    - Overview: plugins/index.md
-    - SIP Provider Plugins: plugins/sip-provider-plugins.md
-    - HTTP Manifest Providers: plugins/manifest-http.md
     - Curated Registry: plugins/registry.md
     - Plugin Config File: plugins/config-file.md
-    - Home Assistant Sample: plugins/homeassistant.md
   - Admin Console:
     - Overview: admin-console.md
     - Setup Wizard: admin-console/setup-wizard.md
@@ -175,17 +195,7 @@ nav:
     - Diagnostics: admin-console/diagnostics.md
     - Diagnostics Matrix: admin-console/diagnostics-matrix.md
     - API Keys: admin-console/api-keys.md
-    - Plugin Builder: admin-console/plugin-builder.md
-  - Third-Party: third-party.md
   - Apps:
-    - Overview: apps/index.md
     - iOS: apps/ios.md
-    - Desktop (Electron): apps/electron.md
-  - Developers:
-    - AGENTS.md Audit: developers/agents-audit.md
-    - v3 Phase Status: developers/v3-phase-status.md
-  - Archive:
-    - MCP Integration (Legacy): archive/mcp-integration-legacy.md
-    - Backends (Overview): archive/backends-overview.md
 extra_css:
   - overrides/extra.css

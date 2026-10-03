@@ -4,6 +4,7 @@ venv/
 **/.venv/
 **/venv/
 .superpowers/
+.archived/
 node_modules/
 api/node_modules/
 node_mcp/node_modules/

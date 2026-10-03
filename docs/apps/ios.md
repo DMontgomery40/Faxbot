@@ -36,8 +36,8 @@ Creating a pairing code needs the `tunnels:pair` permission and the right to iss
 
 ## Learn more
 
-- Tunnels guide: [../networking/tunnels.md](../networking/tunnels.md)
-- Admin Console demo: [../admin-demo.md](../admin-demo.md)
+- [Public Access & Tunnels](../setup/public-access.md)
+- [Admin Console demo](../admin-console.md#demo-simulated)
 
 ## Screens (sneak peek)
 

@@ -40,4 +40,4 @@ There are two legitimate ways to use a mobile number for fax.
 
 ## Set up Asterisk
 
-Follow [SIP/Asterisk](sip-asterisk.md) to connect your carrier trunk, then enable inbound faxing in [Inbound Receiving](../inbound.md).
+Follow [SIP/Asterisk](sip-asterisk.md) to connect your carrier trunk, then review the [SIP/Asterisk inbound webhook](webhooks.md#inbound-sipasterisk-selfhosted) and [intake queue](../operations/intake.md).

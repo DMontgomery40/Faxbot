@@ -47,4 +47,4 @@ Faxbot durably accepts ready or held jobs and prepares real TIFF artifacts when 
 - **Jobs in progress or reconciliation required** → Check the original FreeSWITCH attempt, hook job/attempt IDs, secret and endpoint. Do not originate another call solely because the result is missing.
 - **TIFF missing** → Check Faxbot API logs for Ghostscript conversion output.
 
-More FreeSWITCH context lives in [Faxbot third-party references](../third-party.md).
+More integration context lives in [Faxbot reference guides](../reference/index.md).

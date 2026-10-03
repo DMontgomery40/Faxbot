@@ -1,0 +1,56 @@
+# Faxbot agent guide
+
+Faxbot is one self-hosted fax product: a FastAPI backend, React Admin Console, provider adapters, SIP fax engines, SDKs, and MCP servers. The current work makes delivery cheaper and more reliable while keeping the sender's normal fax-number workflow.
+
+The future enterprise direction adds accountable correspondence: reusable intake, ownership, deadlines, approvals, recipient policy, evidence and retention, with optional templates and guided administration. This is documented future work; preserve the current Phase 1 and four-fix implementation scope.
+
+## Start here
+
+- [Planning sources](planning/README.md) are maintained outside the generated documentation tree. Keep enterprise requirements in `planning/enterprise-correspondence.md`; the old `docs/architecture/` page is a pointer. Do not use legacy migration/mirror scripts for routine updates or target planning with generated patches.
+- Read [README.md](README.md) for current capabilities and its [roadmap](README.md#roadmap) for planned work. Verify against the current checkout before treating a capability as complete.
+- Read [CONTRIBUTING.md](CONTRIBUTING.md) for setup and checks. Preserve unrelated changes and coordinate when another agent owns the same files.
+- Historical Markdown from 2025 is kept locally under `.archived/`, preserving its original paths. That folder is excluded from Git and Docker builds. Use current docs for instructions; do not restore archived pages to navigation or treat their old plans as active work.
+- The cost-reduction work now includes routing and billing observations, an intake queue with SMTP delivery, verified direct partners, and recipient-approved case packets. The next focused batch covers number normalization, TXT pagination, client idempotency, and one-bit PDF images.
+- Read the [enterprise architecture](planning/enterprise-correspondence.md) for the current-code status matrix, proposed interfaces, E0–E4 dependencies, acceptance criteria and deferred integration questions. The smallest future foundation is trustworthy acquisition plus one generic import, owned queue, acknowledgement target and evidence export.
+- When present locally, `MAJOR-IMPROVEMENT-AGENT-PROMPT.md` contains the research implementation brief and the four-fix follow-up. `MAJOR-IMPROVEMENT.md` and `research/faxbot-cost-research-2026-10-03/` contain supporting research. Start with the package's `README.md`, `context/IMPLEMENTATION_HANDOFF.md`, `context/CLAIMS_AND_UNCERTAINTIES.md`, and `ADDENDUM_2026-10-03.md`. These local research files are intentionally excluded from Git; do not commit them. Their dated code snapshots and conversation instructions are context, not proof of current behavior or authorization for unrelated work.
+
+## Important code and documentation
+
+| Area | Code | Read first |
+| --- | --- | --- |
+| Outbound delivery and provider identity | `api/app/outbound_store.py`, `outbound_worker.py`, `outbound_transport.py`, `provider_execution.py` | [Durable outbound design](docs/architecture/2026-10-02-faxbot-durable-outbound.md) |
+| Route selection, cost estimates, and charge reconciliation | `api/app/routing/` | [Delivery routes and case packets](docs/operations/delivery-routes.md) |
+| Intake and email delivery | `api/app/intake/` | [Intake](docs/operations/intake.md) |
+| Encrypted delivery and peer verification | `api/app/direct/` | [Direct delivery](docs/operations/direct-delivery.md) |
+| Accepted case documents and packet preparation | `api/app/cases/` | [Case packets](docs/operations/delivery-routes.md#case-packets) |
+| Document conversion and request identity | `api/app/conversion.py`, `api/app/request_identity.py` | [Conversion implementation](api/app/conversion.py), [held test jobs](docs/setup/test-mode.md) |
+| Permissions and saved configuration | `api/app/access/`, `config_values.py`, `config_store.py`, `config_activation.py` | [Access control](docs/security/access-control.md), [configuration design](docs/architecture/2026-10-02-faxbot-configuration-activation.md) |
+| Console and clients | `api/admin_ui/`, `sdks/`, `node_mcp/`, `python_mcp/` | [Console](docs/admin-console.md), [SDKs](docs/sdks/index.md), [MCP](docs/mcp/index.md) |
+| Schema and provider capabilities | `api/app/schema*.py`, `api/alembic/versions/`, `config/provider_traits.json`, `config/plugin_registry.json` | [Schema design](docs/architecture/2026-10-02-faxbot-schema-foundation.md), [plugin registry](docs/plugins/registry.md) |
+| Future enterprise workflows, templates and setup | Extend existing access, intake, delivery and configuration boundaries; proposed modules are not current APIs | [Enterprise architecture and acceptance criteria](planning/enterprise-correspondence.md) |
+
+## Enterprise planning boundaries
+
+- Keep product defaults, documentation and core models company-neutral. Do not assume a customer's provider, telephony stack, legal duties or case system. Record integration questions for the selected future pilot.
+- Preserve independent inbound and outbound providers. The supported trust model remains a dedicated installation per organization; policy scopes do not establish multi-tenant isolation.
+- Keep document acquisition, transport success, owner acknowledgement, internal approval and business completion distinct. Existing SMTP acceptance and case-ledger fax success cannot stand in for human or external-system acknowledgement.
+- Put industry forms, fields, terminology and rules in optional templates/integrations. Templates need authoritative sources, applicability, immutable versions, required settings, evidence requirements and explicit coverage/manual responsibilities. UK/AU/US healthcare is a research priority, not an already validated compliance mode.
+- Resolve settings at organization, mailbox and workflow scope with per-setting inheritance rules and provenance. Unknown or conflicting required settings remain visible and block the affected operation; setup must not invent legal defaults or ask staff to reinterpret regulations on every send.
+- Required identity, approval, retention/hold and processing controls precede real workflows that depend on them. A synthetic foundation pilot need not implement every integration. Research and this architecture authorize no expansion of an unrelated implementation batch.
+
+## Keep documentation current as capabilities land
+
+- Adding, changing, or removing a capability includes updating `README.md` and its bottom-of-file roadmap immediately, in the same change as the implementation. Do not defer this to a later release or documentation pass.
+- Describe the behavior users can actually use, including material setup requirements and limits. Move a roadmap item to implemented only when its usable implementation and relevant checks are complete. Keep partial work and experiments explicitly unfinished.
+- Update affected operator/API/client documentation and links alongside the README. Add new documentation pages to `mkdocs.yml` when appropriate. Update this guide when the project direction or important entry points change.
+- Keep the roadmap in the README as the shared status source; do not create a competing roadmap. Research ideas, synthetic benchmark results, and advertised prices must not become claims of shipped behavior or measured financial savings.
+- Before reporting completion, check that capability descriptions, roadmap status, examples, and links agree with the code. Summarize relevant validation and any remaining limitations.
+
+## Engineering boundaries
+
+- Preserve the public fax API, authorization checks, immutable attempt/provider bindings, and original document content. Make schema changes through additive migrations following the existing frozen-schema pattern.
+- Never blindly retransmit after an uncertain provider or direct-delivery outcome. Client idempotency and transport reconciliation are different responsibilities; retain both.
+- Unknown cost is not zero cost. Keep estimated, provider-reported, and settlement observations separate, and apply billing increments per attempt.
+- Direct delivery requires verified peers; case-document reuse requires recipient approval. Keep capability and fallback limits visible in the relevant documentation.
+- Use plain language in the product and operator docs. Keep implementation details in developer documentation, and use provider capabilities rather than scattered backend-name checks.
+- Use synthetic documents and mocked/local providers for automated checks. Keep credentials, document contents, and personal data out of committed fixtures and reports. Run checks appropriate to the change using the contributor guide; document-only edits need link/content validation rather than fax transmissions.

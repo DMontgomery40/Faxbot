@@ -82,7 +82,7 @@ If your change affects a specific fax backend or MCP transport, also test it aga
 
 - **Python**: Follow PEP 8, use `black` for formatting
 - **JavaScript/Node.js**: Use ESLint configuration in the project
-- **Documentation**: Update relevant docs in `docs/` directory
+- **Documentation**: Whenever a capability is added, changed, or removed, update `README.md`, its bottom-of-file roadmap, and the relevant docs in the same implementation change. Do not defer this to a later release. Mark roadmap items implemented only when usable and verified; keep experiments and partial work unfinished. Agents should also read [AGENTS.md](AGENTS.md).
 
 ## Security Considerations
 
