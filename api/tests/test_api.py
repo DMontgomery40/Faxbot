@@ -176,3 +176,79 @@ def test_replay_requires_the_original_principal_and_current_credentials(isolated
         assert client.delete(f"/admin/api-keys/{created.json()['key_id']}").status_code == 200
         assert send(client, "303 555 0123", key="shared-key", headers=sender).status_code == 401
         assert len(stored_jobs()) == 2
+
+
+# -- client recovery against the real server ----------------------------------------------------------
+
+class LoseFirstAnswer:
+    """A requests transport into the app that loses the first fax answer after the server has it."""
+
+    def __init__(self, client):
+        self.client, self.posts, self.lost = client, 0, 0
+
+    def send(self, request, **kwargs):
+        import requests
+        response = self.client.request(request.method, request.path_url, headers=dict(request.headers),
+                                       content=request.body)
+        if request.method == "POST" and request.path_url == "/fax":
+            self.posts += 1
+            if self.lost == 0:
+                self.lost += 1
+                raise requests.exceptions.ConnectionError("answer lost after the server accepted the fax")
+        reply = requests.Response()
+        reply.status_code, reply._content, reply.url, reply.request = (
+            response.status_code, response.content, request.url, request)
+        reply.headers = requests.structures.CaseInsensitiveDict(response.headers)
+        reply.reason = response.reason_phrase
+        return reply
+
+    def close(self):
+        pass
+
+
+def test_sdk_recovers_a_lost_answer_as_one_job_and_one_provider_submission(isolated_installation, monkeypatch, tmp_path):
+    import sys
+    import time
+    from pathlib import Path
+    import requests
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "sdks" / "python"))
+    from faxbot import FaxbotClient, FaxOperationConflict
+    for name, value in {"FAX_DISABLED": "false", "FAX_BACKEND": "phaxio", "PHAXIO_API_KEY": "synthetic-key",
+                        "PHAXIO_API_SECRET": "synthetic-secret"}.items():
+        monkeypatch.setenv(name, value)
+    submitted = []
+
+    class Provider:
+        status_callback_url = None
+        def is_configured(self):
+            return True
+        async def send_fax(self, to, url, job_id, *, attempt_id):
+            submitted.append((job_id, to))
+            return {"provider_sid": f"PX-{len(submitted)}", "status": "queued"}
+
+    monkeypatch.setattr("app.outbound_transport.service_from_profile", lambda profile: Provider())
+    document = tmp_path / "letter.txt"
+    document.write_bytes(DOCUMENT)
+    with installation_client(monkeypatch, "GB") as client:
+        transport = LoseFirstAnswer(client)
+        session = requests.Session()
+        session.mount("https://testserver", transport)
+        sdk = FaxbotClient("https://testserver", BOOTSTRAP, session=session, retries=2, retry_backoff=0)
+        operation = FaxbotClient.new_operation_id()
+        job = sdk.send_fax("01782 684953", str(document), operation_id=operation)
+        assert (transport.posts, transport.lost) == (2, 1)  # accepted, answer lost, recovered
+        assert job["to"] == "+441782684953"
+        deadline = time.monotonic() + 15
+        while not submitted and time.monotonic() < deadline:
+            time.sleep(0.1)
+        time.sleep(2.5)  # further worker passes submit nothing more
+        assert submitted == [(job["id"], "+441782684953")]
+        assert [row.id for row in stored_jobs()] == [job["id"]]
+        # The same operation with a different number is a conflict, never a second fax.
+        with pytest.raises(FaxOperationConflict):
+            sdk.send_fax("01782 684954", str(document), operation_id=operation)
+        # Resuming the same operation returns the same job.
+        assert sdk.resume_fax(operation, "+44 1782 684953", str(document))["id"] == job["id"]
+        # A deliberate second send of the same document is a separate fax.
+        second = sdk.send_fax("01782 684953", str(document))
+        assert second["id"] != job["id"] and len(stored_jobs()) == 2
