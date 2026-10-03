@@ -32,7 +32,7 @@ import {
   FormControlLabel,
 } from '@mui/material';
 import { Refresh as RefreshIcon } from '@mui/icons-material';
-import AdminAPIClient, { reconciliationNotice } from '../api/client';
+import AdminAPIClient from '../api/client';
 import type { FaxJob, OperatorDelivery, DeliveryHistoryEvent } from '../api/types';
 
 interface JobsListProps {
@@ -46,7 +46,7 @@ const statusOptions = [
   { value: 'preparing', label: 'Preparing' },
   { value: 'submitting', label: 'Submitting' },
   { value: 'in_progress', label: 'In Progress' },
-  { value: 'reconciliation_required', label: 'Reconciliation Required' },
+  { value: 'reconciliation_required', label: 'Needs review' },
   { value: 'success', label: 'Success' },
   { value: 'failed', label: 'Failed' },
   { value: 'cancelled', label: 'Cancelled' },
@@ -63,41 +63,43 @@ function statusLabel(state: string): string {
 
 function deliveryNotice(job: FaxJob): string | null {
   if (deliveryState(job) === 'held' || job.dispatch_mode === 'held') {
-    return 'This test fax will never be automatically transmitted, even after outbound sending is enabled.';
+    return 'This test fax is held and will not be sent.';
   }
   if (deliveryState(job) === 'reconciliation_required') {
-    return reconciliationNotice(job.reconciliation_reason);
+    return job.dispatch_mode === 'legacy'
+      ? 'Imported fax with no delivery record; check your provider account for the outcome.'
+      : "Delivery couldn't be confirmed; check your provider account before resending.";
   }
   return null;
 }
 
 const eventLabels: Record<string, string> = {
   accepted: 'Fax accepted',
-  legacy_migrated: 'Historical fax imported',
-  binding_unavailable: 'Original account binding unavailable',
-  held_acceptance_restored: 'Held test acceptance restored',
-  claimed: 'Preparation claimed by worker',
-  dispatch_paused: 'Sending paused before submission',
-  submission_authorized: 'External submission authorized',
-  submission_uncertain: 'Submission outcome uncertain',
-  preparation_failed: 'Preparation failed before submission',
-  preparation_expired: 'Preparation ownership expired',
-  provider_observation_refused: 'Provider update refused',
-  terminal_conflict: 'Conflicting final update recorded without changing outcome',
-  late_observation: 'Late provider update recorded',
-  provider_observed: 'Provider status recorded',
-  operator_identity_bound: 'Provider fax ID attached by operator',
+  legacy_migrated: 'Imported from an earlier version',
+  binding_unavailable: 'Original provider account unavailable',
+  held_acceptance_restored: 'Held test fax restored',
+  claimed: 'Preparing to send',
+  dispatch_paused: 'Sending paused',
+  submission_authorized: 'Sending to provider',
+  submission_uncertain: 'Provider response unclear',
+  preparation_failed: 'Could not prepare fax',
+  preparation_expired: 'Preparation timed out',
+  provider_observation_refused: 'Provider update ignored',
+  terminal_conflict: 'Conflicting provider update ignored',
+  late_observation: 'Late provider update',
+  provider_observed: 'Provider status update',
+  operator_identity_bound: 'Provider fax ID added',
 };
 
 const categoryLabels: Record<string, string> = {
-  transport_ambiguous: 'Provider response did not confirm acceptance',
-  response_unusable: 'Provider reply could not be used',
-  submission_cancelled: 'Submission was interrupted',
-  worker_lost: 'Worker ownership expired',
+  transport_ambiguous: 'Provider did not confirm the fax was accepted',
+  response_unusable: 'Provider reply could not be read',
+  submission_cancelled: 'Sending was interrupted',
+  worker_lost: 'Sending stopped unexpectedly',
   artifact_unavailable: 'Document unavailable',
-  provider_unavailable: 'Captured provider unavailable',
-  preparation_failed: 'Preparation failed',
-  profile_mismatch: 'Original account did not match',
+  provider_unavailable: 'Original provider unavailable',
+  preparation_failed: 'Could not prepare fax',
+  profile_mismatch: 'Provider account did not match',
   sid_mismatch: 'Provider fax ID did not match',
 };
 
@@ -106,10 +108,10 @@ function eventDetails(event: DeliveryHistoryEvent): string {
   return [
     details.category && categoryLabels[details.category],
     details.status && `Status: ${statusLabel(details.status)}`,
-    details.dispatch_mode && `Dispatch: ${statusLabel(details.dispatch_mode)}`,
+    details.dispatch_mode && `Sending mode: ${statusLabel(details.dispatch_mode)}`,
     details.actor && `Operator: ${details.actor}`,
     details.provider_sid && `Provider fax ID: ${details.provider_sid}`,
-    details.legacy_status && `Historical status: ${details.legacy_status}`,
+    details.legacy_status && `Earlier status: ${details.legacy_status}`,
   ].filter(Boolean).join(' • ');
 }
 
@@ -233,12 +235,12 @@ function JobsList({ client }: JobsListProps) {
     ]);
     if (detailSelectionRef.current !== selection) return false;
     if (jobResult.status === 'fulfilled') setSelectedJob(jobResult.value);
-    else setJobActionError(jobResult.reason instanceof Error ? jobResult.reason.message : 'Job details could not be loaded. Reload delivery to try again.');
+    else setJobActionError(jobResult.reason instanceof Error ? jobResult.reason.message : "Couldn't load job details. Select Reload Delivery to try again.");
     if (deliveryResult.status === 'fulfilled') setDelivery(deliveryResult.value);
-    else setDeliveryError(deliveryResult.reason instanceof Error ? deliveryResult.reason.message : 'Delivery history could not be loaded. Reload delivery to try again.');
+    else setDeliveryError(deliveryResult.reason instanceof Error ? deliveryResult.reason.message : "Couldn't load delivery history. Select Reload Delivery to try again.");
     const newerJob = jobResult.status === 'fulfilled' && deliveryResult.status === 'fulfilled'
       && (jobResult.value.delivery_version ?? 0) > deliveryResult.value.version;
-    if (newerJob) setDeliveryError('Delivery changed while loading. Reload delivery and review the updated history before continuing.');
+    if (newerJob) setDeliveryError('This fax changed while loading. Select Reload Delivery to see the latest.');
     const complete = jobResult.status === 'fulfilled' && deliveryResult.status === 'fulfilled' && !newerJob;
     setReviewRequired(!complete);
     return complete;
@@ -296,10 +298,10 @@ function JobsList({ client }: JobsListProps) {
       await client.refreshJob(selection.jobId);
       if (detailSelectionRef.current !== selection) return;
       const complete = await loadDetail(selection);
-      if (complete) setJobActionMessage('Status refresh completed. Job details and delivery history were reloaded.');
+      if (complete) setJobActionMessage('Status updated.');
     } catch (err) {
       if (detailSelectionRef.current === selection) {
-        setJobActionError(err instanceof Error ? err.message : 'Status refresh failed. Reload delivery before continuing.');
+        setJobActionError(err instanceof Error ? err.message : "Couldn't refresh the status. Try again.");
       }
     } finally { finishDetailAction(selection, action); }
   };
@@ -327,16 +329,16 @@ function JobsList({ client }: JobsListProps) {
       setDelivery(updated);
       setDeliveryError(null);
       setProviderIdDraft('');
-      setJobActionMessage('Provider fax ID attached. This did not resend the fax or mark it delivered. Refresh Status queries the original account.');
+      setJobActionMessage('Provider fax ID added. Use Refresh Status to check delivery.');
       const complete = await loadDetail(selection);
       if (detailSelectionRef.current === selection && !complete) {
-        setJobActionError('Provider fax ID was attached, but current details or history could not be reloaded. Reload delivery to review the current record.');
+        setJobActionError("Provider fax ID added, but the details couldn't be reloaded. Select Reload Delivery.");
       }
     } catch (err) {
       if (detailSelectionRef.current === selection) {
         setJobActionError(attached
-          ? 'Provider fax ID was attached, but job details could not be reloaded. Reload delivery to review the current record.'
-          : err instanceof Error ? err.message : 'Provider identity attachment was not confirmed. Reload delivery before continuing.');
+          ? "Provider fax ID added, but the details couldn't be reloaded. Select Reload Delivery."
+          : err instanceof Error ? err.message : "Couldn't confirm the fax ID was added. Select Reload Delivery to check.");
       }
     } finally { finishDetailAction(selection, action); }
   };
@@ -361,7 +363,7 @@ function JobsList({ client }: JobsListProps) {
       }
     } catch (err) {
       if (detailSelectionRef.current === selection) {
-        setJobActionError(err instanceof Error ? err.message : 'Failed to download PDF');
+        setJobActionError(err instanceof Error ? err.message : "Couldn't download the PDF.");
       }
     } finally { finishDetailAction(selection, action); }
   };
@@ -540,7 +542,7 @@ function JobsList({ client }: JobsListProps) {
         <DialogContent>
           {detailBusy && <Box display="flex" alignItems="center" gap={1} sx={{ mb: 2 }} role="status">
             <CircularProgress size={20} aria-label="Job action in progress" />
-            <Typography variant="body2">Job action in progress…</Typography>
+            <Typography variant="body2">Working…</Typography>
           </Box>}
           {jobActionError && <Alert severity="error" sx={{ mb: 2 }}>{jobActionError}</Alert>}
           {jobActionMessage && <Alert severity="info" sx={{ mb: 2 }}>{jobActionMessage}</Alert>}
@@ -578,11 +580,7 @@ function JobsList({ client }: JobsListProps) {
               </ListItem>
               {detailJob.dispatch_mode && <>
                 <Divider />
-                <ListItem><ListItemText primary="Dispatch Mode" secondary={statusLabel(detailJob.dispatch_mode)} /></ListItem>
-              </>}
-              {detailJob.delivery_version != null && <>
-                <Divider />
-                <ListItem><ListItemText primary="Delivery Version" secondary={detailJob.delivery_version} /></ListItem>
+                <ListItem><ListItemText primary="Sending Mode" secondary={statusLabel(detailJob.dispatch_mode)} /></ListItem>
               </>}
               {detailJob.provider_sid && <>
                 <Divider />
@@ -643,41 +641,33 @@ function JobsList({ client }: JobsListProps) {
             </List>
           )}
           <Divider sx={{ my: 2 }} />
-          <Typography variant="h6" component="h2" gutterBottom>Original Account and Delivery History</Typography>
-          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-            These identifiers belong to the account captured when this fax was accepted, even if current Settings have changed.
-            Times use your browser's local timezone.
-          </Typography>
+          <Typography variant="h6" component="h2" gutterBottom>Delivery History</Typography>
           {deliveryError && <Alert severity="error" sx={{ mb: 2 }}>{deliveryError}</Alert>}
-          {reviewRequired && !detailBusy && <Alert severity="warning" sx={{ mb: 2 }}>
-            Reload delivery, review the current account, attempt and history, then confirm again before attaching a fax ID.
-            Your entered fax ID is retained until you close this job.
+          {reviewRequired && !detailBusy && !deliveryError && !jobActionError && <Alert severity="warning" sx={{ mb: 2 }}>
+            Select Reload Delivery to see the latest details before adding a fax ID.
           </Alert>}
           {delivery && <>
             <List dense>
               <ListItem><ListItemText primary="Original Provider" secondary={delivery.provider_id ?? 'Unavailable'} /></ListItem>
-              <ListItem><ListItemText primary="Original Account Profile" secondary={delivery.profile_id ?? 'Unavailable'} /></ListItem>
-              <ListItem><ListItemText primary="Accepted Configuration Revision" secondary={delivery.revision_id ?? 'Unavailable'} /></ListItem>
+              <ListItem><ListItemText primary="Original Provider Account" secondary={delivery.profile_id ?? 'Unavailable'} /></ListItem>
             </List>
-            <Typography variant="subtitle1" component="h3" sx={{ mt: 2 }}>Current Attempt</Typography>
+            <Typography variant="subtitle1" component="h3" sx={{ mt: 2 }}>Latest Attempt</Typography>
             {delivery.attempt ? <List dense>
-              <ListItem><ListItemText primary="Attempt ID" secondary={delivery.attempt.id} /></ListItem>
-              <ListItem><ListItemText primary="Attempt Phase" secondary={statusLabel(delivery.attempt.phase)} /></ListItem>
-              <ListItem><ListItemText primary="Provider Fax ID (Attempt)" secondary={delivery.attempt.provider_sid ?? 'No displayable provider identity recorded'} /></ListItem>
-              <ListItem><ListItemText primary="Submitted" secondary={delivery.attempt.submitted_at ? formatDate(delivery.attempt.submitted_at) : 'No submission recorded'} /></ListItem>
-              <ListItem><ListItemText primary="Completed" secondary={delivery.attempt.completed_at ? formatDate(delivery.attempt.completed_at) : 'No completion recorded'} /></ListItem>
-            </List> : <Typography variant="body2" color="text.secondary" sx={{ my: 1 }}>No attempt is recorded.</Typography>}
-            {!delivery.can_bind_provider_identity && delivery.bind_refusal_reason && <Alert
-              severity={delivery.state === 'reconciliation_required' ? 'warning' : 'info'} sx={{ my: 2 }}>
-              Identity attachment unavailable: {delivery.bind_refusal_reason}
-            </Alert>}
+              <ListItem><ListItemText primary="Stage" secondary={statusLabel(delivery.attempt.phase)} /></ListItem>
+              <ListItem><ListItemText primary="Provider Fax ID" secondary={delivery.attempt.provider_sid ?? 'None yet'} /></ListItem>
+              <ListItem><ListItemText primary="Submitted" secondary={delivery.attempt.submitted_at ? formatDate(delivery.attempt.submitted_at) : 'Not yet'} /></ListItem>
+              <ListItem><ListItemText primary="Completed" secondary={delivery.attempt.completed_at ? formatDate(delivery.attempt.completed_at) : 'Not yet'} /></ListItem>
+            </List> : <Typography variant="body2" color="text.secondary" sx={{ my: 1 }}>No send attempts yet.</Typography>}
+            {!delivery.can_bind_provider_identity && delivery.state === 'reconciliation_required' && <Typography
+              variant="body2" color="text.secondary" sx={{ my: 2 }}>
+              A provider fax ID can't be added to this fax from here.
+            </Typography>}
             {delivery.can_bind_provider_identity && selectedJob && <Box component="form"
               onSubmit={(event) => { event.preventDefault(); void handleAttachProviderIdentity(); }} sx={{ my: 2 }}>
               <Typography variant="subtitle1" component="h3" gutterBottom>Attach Confirmed Provider Fax ID</Typography>
-              <Alert severity="warning" sx={{ mb: 2 }}>
-                Attaching an ID records matched evidence. It does not resend the fax or assert delivery.
-                Status can then be recovered by polling the original account.
-              </Alert>
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                Adding the ID doesn't resend the fax; it lets Refresh Status check delivery with your provider.
+              </Typography>
               <TextField fullWidth label="Confirmed provider fax ID" value={providerIdDraft}
                 onChange={(event) => {
                   if (detailActionRef.current) return;
@@ -686,7 +676,7 @@ function JobsList({ client }: JobsListProps) {
                 }}
                 disabled={detailBusy}
                 error={providerIdDraft.length > 0 && !validProviderId}
-                helperText="Use 1–100 ASCII letters, digits, hyphens or underscores."
+                helperText="Up to 100 letters, numbers, hyphens or underscores."
               />
               <FormControlLabel sx={{ my: 1 }} control={<Checkbox
                 checked={originalAccountConfirmed}
@@ -701,17 +691,16 @@ function JobsList({ client }: JobsListProps) {
               </Button>
             </Box>}
             <Typography variant="subtitle1" component="h3" sx={{ mt: 2 }}>Delivery Events</Typography>
-            {delivery.events_truncated && <Alert severity="info" sx={{ my: 1 }}>
-              Showing the newest 100 events in chronological order; earlier events are omitted.
-            </Alert>}
+            {delivery.events_truncated && <Typography variant="caption" color="text.secondary" display="block" sx={{ my: 1 }}>
+              Showing the latest 100 events.
+            </Typography>}
             {delivery.events.length === 0 ? <Typography variant="body2" color="text.secondary" sx={{ my: 1 }}>
-              No delivery events are recorded.
+              No delivery events yet.
             </Typography> : <List dense>
               {delivery.events.map((event) => <ListItem key={event.id} alignItems="flex-start">
-                <ListItemText primary={eventLabels[event.kind] ?? 'Recorded delivery event'}
+                <ListItemText primary={eventLabels[event.kind] ?? 'Delivery update'}
                   secondaryTypographyProps={{ component: 'div' }} secondary={<>
                     <Typography variant="body2" color="text.secondary">{formatDate(event.created_at)}</Typography>
-                    {event.attempt_id && <Typography variant="caption" display="block">Attempt: {event.attempt_id}</Typography>}
                     {eventDetails(event) && <Typography variant="body2">{eventDetails(event)}</Typography>}
                   </>} />
               </ListItem>)}
