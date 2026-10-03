@@ -28,6 +28,7 @@ print(json.dumps({{
     'sip': {{'kind': catalog.get('sip').kind, 'traits': catalog.get('sip').traits.as_dict()}},
     'documo': {{'kind': catalog.get('documo').kind, 'traits': catalog.get('documo').traits.as_dict()}},
     'config_path': str(faxbot_config_path()),
+    'registry_path': str(plugin_registry_path()),
     'registry': json.loads(plugin_registry_path().read_text(encoding='utf-8')),
 }}))
 """
@@ -53,7 +54,8 @@ def test_bundled_traits_config_and_registry_ignore_source_cwd(tmp_path, package,
     assert data["documo"]["kind"] == "cloud"
     assert data["documo"]["traits"]["requires_tiff"] is False
     assert Path(data["config_path"]) == ROOT / "config" / "faxbot.config.json"
-    assert data["registry"]["items"][0]["description"] == "Recommended for most users; HIPAA-ready with BAA."
+    assert Path(data["registry_path"]) == ROOT / "config" / "plugin_registry.json"
+    assert data["registry"] == json.loads((ROOT / "config" / "plugin_registry.json").read_text(encoding="utf-8"))
 
 
 def test_flattened_image_layout_loads_bundled_resources_from_unrelated_cwd(tmp_path):
@@ -66,7 +68,8 @@ def test_flattened_image_layout_loads_bundled_resources_from_unrelated_cwd(tmp_p
     assert data["sip"]["traits"]["requires_ami"] is True
     assert data["documo"]["kind"] == "cloud"
     assert Path(data["config_path"]) == runtime / "config" / "faxbot.config.json"
-    assert data["registry"]["items"][0]["description"] == "Recommended for most users; HIPAA-ready with BAA."
+    assert Path(data["registry_path"]) == runtime / "config" / "plugin_registry.json"
+    assert data["registry"] == json.loads((ROOT / "config" / "plugin_registry.json").read_text(encoding="utf-8"))
 
 
 def test_old_api_provider_directory_cannot_shadow_bundled_source_resources(tmp_path):
@@ -79,7 +82,8 @@ def test_old_api_provider_directory_cannot_shadow_bundled_source_resources(tmp_p
     assert data["sip"]["traits"]["requires_ami"] is True
     assert data["documo"]["kind"] == "cloud"
     assert Path(data["config_path"]) == runtime / "config" / "faxbot.config.json"
-    assert data["registry"]["items"][0]["description"] == "Recommended for most users; HIPAA-ready with BAA."
+    assert Path(data["registry_path"]) == runtime / "config" / "plugin_registry.json"
+    assert data["registry"] == json.loads((ROOT / "config" / "plugin_registry.json").read_text(encoding="utf-8"))
 
 
 def manifest(provider_id="synthetic-provider.v1"):
