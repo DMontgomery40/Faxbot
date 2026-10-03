@@ -43,3 +43,16 @@ Real GUI inspection found a hardcoded 10 MB limit after the active limit had bee
 Independent review caught a concurrent-mode-change risk before commit. The UI now sends an explicit `queue_only` multipart condition, enforced by the server before preparation. The primary retained a queue-only form while a second real browser changed the setting and a full fixture restart activated sending. Clicking the stale Queue button displayed the refusal; Jobs still contained exactly the same two jobs. No fax was dispatched. The second browser restored disabled sending and another restart activated revision `f393b49a-417b-4223-8da9-8a94b9229164`, generation 13. Both browsers verified the restored mode and 13 MB limit. The corrected bundle is `index-DQatsOd9.js`.
 
 Future durable dispatch must also honor the immutable acceptance revision's `fax_disabled=true`: these queued test acceptances must never become normal deliveries merely because the installation later enables sending.
+
+
+## Clean canonical-runtime CI and docs checkpoint
+
+At `f50fb62d80ab870b58f3b9d37373cebb480a69d6`, hosted CI run `37088340367` passed **741 tests with 14 dialect skips**, plus the Admin UI build. The preceding failures were repaired by migrating legacy test setup to isolated canonical installations and immutable configuration frames. Document durability tests now inject faults at the actual acceptance transaction and reconcile durable rows/bindings independently; their failure assertions were retained. No failing check was waived.
+
+Docs Autopilot `37088337673`, push MkDocs `37088337745`, and PR MkDocs `37088340651` all succeeded. The downloaded push artifact identifies the exact commit and `source_tree_dirty=false`. Primary Browser clicks from the generated overview to Typed configuration verified the matching source revision and field reference. This is a verified branch artifact; main and faxbot.net publication remain release work.
+
+## Provider override and shell navigation acceptance
+
+Primary Browser keyboard entry, Validate and Install created a synthetic HTTP manifest overriding the built-in `freeswitch` identity. With sending disabled, selecting that provider and queuing the original synthetic document produced job `e34b8fff199549a39e0f890d9c653814`. The Jobs screen displayed three pages and queued status. Supplemental read-only storage inspection confirmed no unnecessary TIFF and an immutable accepted revision/profile binding. This verifies document acceptance, not external delivery.
+
+The same interaction exposed duplicate provider cards and inherited native-provider descriptions; those findings are tracked as GUI014 for correction and replay. A separate App-only correction, `09f57f84dfcf25cc6914959b55cbdb594c509139`, passed real browser checks for feature changes: Plugins appeared/disappeared on entering Tools without reload, Scripts selection survived its appearance, and disabling a selected Plugins tab returned to Terminal. Inbox and queue-only Send remained truthful. The synthetic installation was restored to enabled plugins, Phaxio, disabled sending and a 13 MB upload limit.

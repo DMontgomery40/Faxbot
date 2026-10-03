@@ -54,7 +54,7 @@ from .config_store import ConfigurationConflict, ConfigurationStoreError, Config
 from .provider_execution import service_from_profile, ProviderExecutionError
 from .config_file import ConfigurationFileError, format_environment, parse_environment, write_environment
 from .config_secrets import ConfigurationSecretError
-from .provider_catalog import ProviderCatalogError
+from .provider_catalog import ProviderCatalogError, validate_http_provider_document
 from pathlib import Path
 from .config_runtime import ConfigurationRuntime, ConfigurationMiddleware, run_lifecycle_step
 
@@ -925,10 +925,15 @@ class ManifestIn(BaseModel):
 
 @app.post("/admin/plugins/http/install", dependencies=[Depends(require_admin)])
 def install_http_manifest(payload: ManifestIn):
-    man = HttpManifest.from_dict(payload.manifest or {})
-    if not man.id:
+    document = payload.manifest or {}
+    if not document.get("id"):
         raise HTTPException(400, detail="Manifest id is required")
-    path = _manifest_path(man.id)
+    path = _manifest_path(document["id"])
+    try:
+        validate_http_provider_document(document)
+    except ProviderCatalogError as error:
+        raise HTTPException(400, detail=str(error)) from None
+    man = HttpManifest.from_dict(document)
     dest_dir = os.path.dirname(path)
     os.makedirs(dest_dir, exist_ok=True)
     try:
@@ -951,9 +956,15 @@ class ManifestValidateIn(BaseModel):
 
 @app.post("/admin/plugins/http/validate", dependencies=[Depends(require_admin)])
 async def validate_http_manifest(payload: ManifestValidateIn):
-    man = HttpManifest.from_dict(payload.manifest or {})
-    if not man.id:
+    document = payload.manifest or {}
+    if not document.get("id"):
         raise HTTPException(400, detail="Manifest id required")
+    _manifest_path(document["id"])
+    try:
+        validate_http_provider_document(document)
+    except ProviderCatalogError as error:
+        raise HTTPException(400, detail=str(error)) from None
+    man = HttpManifest.from_dict(document)
     info = {
         "id": man.id,
         "name": man.name,
@@ -1040,10 +1051,11 @@ def import_http_manifests(payload: ImportManifestsIn):
     errors: List[dict] = []
     for data in candidates:
         try:
-            man = HttpManifest.from_dict(data)
-            if not man.id:
+            if not data.get("id"):
                 raise ValueError("manifest.id missing")
-            path = str(provider_manifest_path(man.id))
+            path = str(provider_manifest_path(data["id"]))
+            validate_http_provider_document(data)
+            man = HttpManifest.from_dict(data)
             dest_dir = os.path.dirname(path)
             os.makedirs(dest_dir, exist_ok=True)
             with open(path, "w", encoding="utf-8") as f:
@@ -1961,7 +1973,8 @@ async def send_fax(request: Request, background: BackgroundTasks, to: str = Form
     if not PHONE_RE.match(to):
         raise HTTPException(400, detail="'to' must be E.164 or digits only")
     job_id = uuid.uuid4().hex
-    requires_tiff = profile.configuration.traits.get('requires_tiff', False) is True
+    requires_tiff = ((not use_manifest and ob in {'sip', 'freeswitch'})
+                     or profile.configuration.traits.get('requires_tiff', False) is True)
     try:
         prepared = await prepare_upload(
             file, job_id=job_id, data_dir=settings.fax_data_dir,
@@ -3008,13 +3021,11 @@ def _plugins_disabled_response():
     return JSONResponse({"detail": "v3 plugins feature disabled"}, status_code=404)
 
 
-def _installed_plugins() -> list[dict[str, Any]]:
-    """Return built-in provider manifests as plugin-like entries.
-
-    This is a minimal discovery surface to unblock Admin UI while
-    the full plugin system is developed.
-    """
-    current = active_outbound()
+def _installed_plugins(snapshot=None) -> list[dict[str, Any]]:
+    """Describe one installed definition per provider identity, with manifest precedence."""
+    manager = _configuration_manager()
+    snapshot = snapshot or manager.store.read()
+    current = snapshot.desired.values.effective_outbound
     items = []
     # Outbound providers
     items.append({
@@ -3090,35 +3101,29 @@ def _installed_plugins() -> list[dict[str, Any]]:
         "enabled": (settings.storage_backend == "s3"),
         "configurable": True,
     })
-    # Manifest providers: scan providers dir
-    try:
-        prov_dir = _providers_dir()
-        if os.path.isdir(prov_dir):
-            for pid in os.listdir(prov_dir):
-                try:
-                    mpath = provider_manifest_path(pid)
-                except InvalidProviderPath:
-                    continue
-                if os.path.exists(mpath):
-                    try:
-                        with open(mpath, "r", encoding="utf-8") as f:
-                            data = json.load(f)
-                        pid2 = str(data.get("id") or pid)
-                        name = str(data.get("name") or pid2)
-                        items.append({
-                            "id": pid2,
-                            "name": name,
-                            "version": "1.0.0",
-                            "categories": ["outbound"],
-                            "capabilities": ["send", "get_status"],
-                            "enabled": (current == pid2),
-                            "configurable": True,
-                        })
-                    except Exception:
-                        pass
-    except Exception:
-        pass
-    return items
+    # Use the same validated catalog as activation. Installed overrides replace
+    # the built-in card instead of exposing two contradictory definitions.
+    by_id = {item['id']: {**item, 'source': 'builtin'} for item in items}
+    catalog = manager.catalog_loader(snapshot.desired.values)
+    for identity in sorted(catalog.provider_ids):
+        definition = catalog.get(identity)
+        if definition.manifest is None:
+            continue
+        manifest = definition.manifest.as_dict()
+        actions = manifest['actions']
+        by_id[identity] = {
+            'id': identity,
+            'name': str(manifest.get('name') or identity),
+            'version': str(manifest.get('version') or '1.0.0'),
+            'source': 'manifest',
+            'description': str(manifest.get('description') or 'Installed HTTP provider manifest.'),
+            'categories': ['outbound'],
+            'capabilities': [capability for action, capability in
+                             (('send_fax', 'send'), ('get_status', 'get_status')) if action in actions],
+            'enabled': current == identity,
+            'configurable': True,
+        }
+    return list(by_id.values())
 
 
 @app.get("/plugins", dependencies=[Depends(require_admin)])
@@ -3126,7 +3131,7 @@ def list_plugins():
     if not settings.feature_v3_plugins:
         return _plugins_disabled_response()
     snapshot = _configuration_manager().store.read()
-    items = _installed_plugins()
+    items = _installed_plugins(snapshot)
     for item in items:
         item['enabled'] = _plugin_view(snapshot, item['id'])['enabled']
     return {"items": items}

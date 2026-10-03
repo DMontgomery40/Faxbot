@@ -141,3 +141,10 @@ Wayfinder is available for unresolved large decisions; do not make a planning-on
 ## Canonical runtime integration checkpoint
 
 The actual API now uses the durable configuration store for startup, request frames, settings/plugin edits and accepted outbound profile binding. The Settings editor uses desired revisions, durable Apply and stale-editor refusal; real Browser acceptance verified hot-value persistence, coordinated pending promotion after full fixture restart, explicit clears and concurrent-editor protection. See [evidence](evidence/2026-10-02-canonical-runtime.md). Combined internal configuration checks passed 123 tests. Remaining full-product gates in the evidence record are still active; this checkpoint does not mark the refresh complete.
+
+
+## Canonical runtime: clean hosted checkpoint and GUI integration
+
+At `f50fb62d`, hosted CI passes 741 tests with 14 dialect skips and the Admin UI build. Docs Autopilot and both MkDocs runs pass; the exact clean-source artifact was downloaded and its generated configuration reference checked through real Browser navigation. This supersedes the failed earlier runtime checkpoint, with legacy tests migrated to the canonical installation model and real acceptance fault injection retained.
+
+Real GUI checks additionally cover active upload limits, queue-only acceptance, rejection when a stale queue-only form encounters enabled sending, installed manifest override acceptance, and feature-sensitive Tools navigation. Plugin editor revision safety and provider inventory corrections are the current bounded integration work. See the [canonical runtime evidence](evidence/2026-10-02-canonical-runtime.md). Durable dispatch/callbacks, complete RBAC, retained mobile/tunnel workflows, transfer/restore and real controlled delivery remain mandatory parts of the active whole-product goal.
