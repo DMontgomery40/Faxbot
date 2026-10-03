@@ -539,16 +539,16 @@ def test_mailboxes_and_inbound_rules(client):
     rule = client.post('/access/inbound-rules', headers=B, json={'to_number': '+15551230001',
         'mailbox_id': mailbox['id'], 'expected_policy_version': policy_version(client)})
     assert rule.status_code == 200, rule.text
-    assert {k: rule.json()['inbound_rule'][k] for k in ('to_number', 'mailbox_id', 'mailbox_label', 'version')} == {
+    assert {k: rule.json()['rule'][k] for k in ('to_number', 'mailbox_id', 'mailbox_label', 'version')} == {
         'to_number': '+15551230001', 'mailbox_id': mailbox['id'], 'mailbox_label': 'Reception', 'version': 1}
-    rule_id = rule.json()['inbound_rule']['id']
+    rule_id = rule.json()['rule']['id']
     assert client.post('/access/inbound-rules', headers=B, json={'to_number': 'call me', 'mailbox_id': mailbox['id'],
         'expected_policy_version': policy_version(client)}).status_code == 400
     assert client.post('/access/inbound-rules', headers=B, json={'to_number': '+15551230002',
         'mailbox_id': 'no-such-mailbox', 'expected_policy_version': policy_version(client)}).status_code == 404
     changed = client.patch(f'/access/inbound-rules/{rule_id}', headers=B, json={'to_number': '+15551230009',
         'version': 1, 'expected_policy_version': policy_version(client)})
-    assert changed.status_code == 200 and changed.json()['inbound_rule']['to_number'] == '+15551230009'
+    assert changed.status_code == 200 and changed.json()['rule']['to_number'] == '+15551230009'
     assert client.get('/access/mailboxes', headers=B).json()['items'][0]['rule_count'] == 1
     assert [item['id'] for item in client.get('/access/inbound-rules', headers=B).json()['items']] == [rule_id]
     resources = client.get('/access/resources', headers=B, params={'kind': 'mailbox'}).json()['items']

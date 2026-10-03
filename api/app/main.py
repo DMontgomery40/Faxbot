@@ -2191,18 +2191,24 @@ def _may_manage_keys(service, connection, actor):
 
 @private_operation
 def _list_keys(service, actor):
-    with service.store.transaction() as connection:
-        if not _may_manage_keys(service, connection, actor):
-            raise MutationDeniedError(MutationReason.FORBIDDEN)
-        keys, grants = service.store.tables['api_keys'], service.store.tables['access_key_grants']
-        ceilings: Dict[str, List[str]] = {}
-        for binding_id, permission in connection.execute(sa.select(grants.c.key_binding_id, grants.c.permission_id)
-                .where(grants.c.resource_id == 'installation').order_by(grants.c.permission_id)):
-            ceilings.setdefault(binding_id, []).append(permission)
-        rows = connection.execute(sa.select(keys).order_by(keys.c.created_at, keys.c.key_id)).mappings().all()
-    return [APIKeyMeta(key_id=row['key_id'], name=row['name'], owner=row['owner'], scopes=ceilings.get(row['id'], []),
-                       created_at=row['created_at'], last_used_at=row['last_used_at'], expires_at=row['expires_at'],
-                       revoked_at=row['revoked_at'], note=row['note']) for row in rows]
+    """The /access/keys projection in the legacy shape; a revoked key keeps its revoked_at."""
+    items, cursor = [], None
+    while True:
+        page = service.reads.keys(actor, cursor=cursor, limit=200)
+        items.extend(page['items'])
+        cursor = page['next_cursor']
+        if cursor is None:
+            break
+    owners: Dict[str, Optional[str]] = {}
+    if items:
+        keys = service.store.tables['api_keys']
+        with service.store.transaction() as connection:
+            owners = dict(connection.execute(sa.select(keys.c.key_id, keys.c.owner)
+                .where(keys.c.key_id.in_([item['id'] for item in items]))).all())
+    return [APIKeyMeta(key_id=item['id'], name=item['name'], owner=owners.get(item['id']),
+                       scopes=[grant['permission'] for grant in item['ceiling'] if grant['resource_id'] == 'installation'],
+                       created_at=item['created_at'], last_used_at=item['last_used_at'], expires_at=item['expires_at'],
+                       revoked_at=item['revoked_at'], note=item['note']) for item in items]
 
 
 @private_operation

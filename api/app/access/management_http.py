@@ -592,7 +592,7 @@ async def create_inbound_rule(body: RuleCreate, request: Request, identity=Depen
     return await _mutate(lambda: service.mutations.create_inbound_rule(actor,
         InboundRuleValues(body.to_number, body.mailbox_id),
         expected_policy_version=body.expected_policy_version, now=utcnow()),
-        lambda receipt: service.reads.inbound_rule(actor, receipt.target.id), 'inbound_rule')
+        lambda receipt: service.reads.inbound_rule(actor, receipt.target.id), 'rule')
 
 
 @router.patch('/inbound-rules/{rule_id}', summary='Change an inbound routing rule')
@@ -604,7 +604,7 @@ async def update_inbound_rule(rule_id: str, body: RulePatch, request: Request, i
                                    body.mailbox_id if body.mailbox_id is not None else current['mailbox_id'])
         return service.mutations.update_inbound_rule(actor, VersionedEntity(rule_id, body.version), values,
             expected_policy_version=body.expected_policy_version, now=utcnow())
-    return await _mutate(mutate, lambda receipt: service.reads.inbound_rule(actor, receipt.target.id), 'inbound_rule')
+    return await _mutate(mutate, lambda receipt: service.reads.inbound_rule(actor, receipt.target.id), 'rule')
 
 
 # -- audit --------------------------------------------------------------------------------------------
