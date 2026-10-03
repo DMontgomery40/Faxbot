@@ -134,6 +134,25 @@ class ConfigurationValues(BaseModel):
     providers_dir: str = Field(default_factory=lambda: str(bundled_config_dir() / 'providers'), validation_alias='FAXBOT_PROVIDERS_DIR')
     plugin_registry_path: str = Field(default_factory=lambda: str(bundled_config_dir() / 'plugin_registry.json'), validation_alias='PLUGIN_REGISTRY_PATH')
 
+    # Delivery routes: extra outbound providers a fax may use, and the success
+    # rate a route needs at a number before it stops being chosen first.
+    outbound_routes: str = Field('', validation_alias='FAX_OUTBOUND_ROUTES', pattern=r'^[a-z0-9_.,\s-]*$')
+    route_min_success_percent: int = Field(80, validation_alias='FAX_ROUTE_MIN_SUCCESS_PERCENT', ge=0, le=100)
+    # Default intake email connector; more connectors are managed in the console.
+    intake_email_enabled: bool = Field(False, validation_alias='INTAKE_EMAIL_ENABLED')
+    intake_smtp_host: str = Field('', validation_alias='INTAKE_SMTP_HOST')
+    intake_smtp_port: int = Field(587, validation_alias='INTAKE_SMTP_PORT', ge=1, le=65535)
+    intake_smtp_security: str = Field('starttls', validation_alias='INTAKE_SMTP_SECURITY', pattern=r'^(starttls|tls|none)$')
+    intake_smtp_username: str = Field('', validation_alias='INTAKE_SMTP_USERNAME')
+    intake_smtp_password: str = Field('', validation_alias='INTAKE_SMTP_PASSWORD', repr=False, json_schema_extra={'secret': True})
+    intake_email_from: str = Field('', validation_alias='INTAKE_EMAIL_FROM')
+    intake_email_to: str = Field('', validation_alias='INTAKE_EMAIL_TO')
+    intake_email_subject: str = Field('Fax from {from_number}', validation_alias='INTAKE_EMAIL_SUBJECT')
+    # Direct delivery between Faxbot installations.
+    direct_delivery_enabled: bool = Field(False, validation_alias='DIRECT_DELIVERY_ENABLED')
+    direct_organization: str = Field('', validation_alias='DIRECT_ORGANIZATION')
+    direct_fax_number: str = Field('', validation_alias='DIRECT_FAX_NUMBER')
+
     _explicit_keys: frozenset[str] = PrivateAttr(default_factory=frozenset)
 
     @field_validator("fax_backend", "outbound_backend", "inbound_backend", "storage_backend", mode="before")
@@ -224,6 +243,16 @@ class ConfigurationValues(BaseModel):
                 issues.append({"field": key, "reason": "unknown_provider"})
         if issues:
             raise ConfigurationValueError(issues)
+
+    @property
+    def outbound_route_providers(self) -> tuple[str, ...]:
+        """Extra outbound providers listed in FAX_OUTBOUND_ROUTES, in order, without the default one."""
+        result = []
+        for part in self.outbound_routes.split(','):
+            identity = part.strip().lower()
+            if identity and identity != self.effective_outbound and identity not in result:
+                result.append(identity)
+        return tuple(result)
 
     @property
     def effective_outbound(self) -> str:

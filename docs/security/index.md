@@ -3,9 +3,13 @@
 
 <div class="grid cards" markdown>
 
-- :material-shield-key: **Authentication (API Keys)**  
-  X‑API‑Key, scopes, rotation, and rate limits.  
+- :material-shield-key: **Authentication**  
+  Console sign-in, sessions, API keys and HTTPS.  
   [Open](authentication.md)
+
+- :material-account-key: **Access Control**  
+  Users, groups, roles, mailboxes and keys.  
+  [Open](access-control.md)
 
 - :material-lock: **OAuth/OIDC Setup**  
   OAuth2/JWT for MCP SSE transports.  
@@ -25,7 +29,8 @@ Faxbot is designed to handle sensitive healthcare data and can be configured for
 
 ## Security Features
 
-- **API Authentication**: X-API-Key header protection
+- **Authentication**: every request needs an API key or a signed-in session
+- **Access control**: roles, mailboxes and per-key permissions
 - **HTTPS Enforcement**: TLS 1.2+ for all communications
 - **Webhook Verification**: HMAC signature validation
 - **OAuth2/JWT Support**: Enterprise-grade authentication for MCP
@@ -42,7 +47,6 @@ Faxbot is designed to handle sensitive healthcare data and can be configured for
 
 ### Non-Healthcare Users
 - Relaxed security settings available for convenience
-- Optional authentication
 - Reduced logging overhead
 - HTTP allowed in development
 

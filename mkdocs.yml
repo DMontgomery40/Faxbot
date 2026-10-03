@@ -117,6 +117,7 @@ nav:
     - HumbleFax: setup/humblefax.md
     - SignalWire: setup/signalwire.md
     - FreeSWITCH: setup/freeswitch.md
+    - Fax numbers on SIP: setup/sip-numbers.md
     - Test Mode: setup/test-mode.md
     - Public Access & Tunnels: setup/public-access.md
     - Webhooks: setup/webhooks.md
@@ -124,12 +125,16 @@ nav:
   - Security:
     - Overview: security/index.md
     - Authentication: security/authentication.md
+    - Access Control: security/access-control.md
     - OAuth/OIDC Setup: security/oauth-setup.md
     - Network & Transports: security/network.md
     - HIPAA Requirements: HIPAA_REQUIREMENTS.md
   - Operations:
     - Overview: operations/index.md
     - Inbound Receiving: inbound.md
+    - Delivery routes: operations/delivery-routes.md
+    - Intake: operations/intake.md
+    - Direct delivery: operations/direct-delivery.md
     - Guides:
       - Images & PDFs: guides/images-and-pdfs.md
       - Networking & Tunnels: networking/tunnels.md
@@ -149,6 +154,7 @@ nav:
       - Providers: generated/providers.md
     - API:
       - Reference: api.md
+      - Access and Sign-in: reference/access-api.md
       - Canonical Events: api/canonical-events.md
     - SDKs: sdks/index.md
     - MCP:

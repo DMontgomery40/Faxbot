@@ -137,6 +137,12 @@ export interface Settings {
     sandbox?: boolean;
     configured: boolean;
   };
+  humblefax?: {
+    access_key: string;
+    secret_key: string;
+    from_number: string;
+    configured: boolean;
+  };
   sinch: {
     project_id: string;
     base_url?: string;

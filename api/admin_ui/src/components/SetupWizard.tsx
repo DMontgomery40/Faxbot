@@ -28,6 +28,7 @@ const builtins: Provider[] = [
   { id: 'sinch', name: 'Sinch Fax API v3' },
   { id: 'signalwire', name: 'SignalWire (Compatibility Fax API)' },
   { id: 'documo', name: 'Documo (mFax)' },
+  { id: 'humblefax', name: 'HumbleFax' },
   { id: 'sip', name: 'SIP/Asterisk' },
   { id: 'freeswitch', name: 'FreeSWITCH' },
 ];
@@ -50,6 +51,11 @@ const credentialFields: Record<string, CredentialField[]> = {
     { key: 'signalwire_fax_from_e164', label: 'From (fax)' },
   ],
   documo: [{ key: 'documo_api_key', label: 'API Key', secret: true }],
+  humblefax: [
+    { key: 'humblefax_access_key', label: 'Access Key', secret: true },
+    { key: 'humblefax_secret_key', label: 'Secret Key', secret: true },
+    { key: 'humblefax_from_number', label: 'From Number (optional)', helper: 'Leave empty to use the account default number.' },
+  ],
   freeswitch: [
     { key: 'fs_gateway_name', label: 'Gateway Name' },
     { key: 'fs_caller_id_number', label: 'Caller ID Number' },
@@ -62,6 +68,8 @@ const credentialFields: Record<string, CredentialField[]> = {
     { key: 'fax_station_id', label: 'Station ID / DID' },
   ],
 };
+// Providers that only send faxes; they never appear as an inbound choice.
+const outboundOnly = new Set(['humblefax']);
 const isMask = (value: FormValue) => typeof value === 'string' && /^\*+$/.test(value);
 const errorText = (error: unknown, fallback: string) => error instanceof Error ? error.message : fallback;
 
@@ -92,6 +100,9 @@ function editorValues(data: Settings): WizardConfig {
     signalwire_fax_from_e164: data.signalwire?.from_fax ?? '',
     documo_api_key: data.documo?.api_key ?? '',
     documo_use_sandbox: data.documo?.sandbox ?? false,
+    humblefax_access_key: data.humblefax?.access_key ?? '',
+    humblefax_secret_key: data.humblefax?.secret_key ?? '',
+    humblefax_from_number: data.humblefax?.from_number ?? '',
     ami_host: data.sip.ami_host,
     ami_port: data.sip.ami_port,
     ami_username: data.sip.ami_username,
@@ -473,13 +484,15 @@ function SetupWizard({ client, onDone, docsBase }: SetupWizardProps) {
     </Box>
   );
 
-  const providerControl = (field: string, label: string, override = false) => (
+  const providerControl = (field: string, label: string, override = false, inbound = false) => (
     <FormControl fullWidth sx={{ mt: 2 }}>
       <InputLabel id={`${fieldId}-${field}-label`} shrink>{label}</InputLabel>
       <Select id={`${fieldId}-${field}`} labelId={`${fieldId}-${field}-label`} displayEmpty
         value={config[field] ?? ''} disabled={!canEdit} label={label} onChange={event => handleConfigChange(field, event.target.value)}>
         {override && <MenuItem value="">Use default provider ({String(config.backend)})</MenuItem>}
-        {Array.from(providerOptions.values()).map(provider => <MenuItem key={provider.id} value={provider.id}>{provider.name}</MenuItem>)}
+        {Array.from(providerOptions.values())
+          .filter(provider => !inbound || !outboundOnly.has(provider.id) || provider.id === config[field])
+          .map(provider => <MenuItem key={provider.id} value={provider.id}>{provider.name}</MenuItem>)}
       </Select>
     </FormControl>
   );
@@ -489,7 +502,7 @@ function SetupWizard({ client, onDone, docsBase }: SetupWizardProps) {
       <Typography variant="h6">Choose Providers</Typography>
       {providerControl('backend', 'Default Provider')}
       {providerControl('outbound_backend', 'Outbound Override', true)}
-      {providerControl('inbound_backend', 'Inbound Override', true)}
+      {providerControl('inbound_backend', 'Inbound Override', true, true)}
       <Typography sx={{ mt: 2 }}>Outbound: {ob} · Inbound: {ib}</Typography>
       <FormControlLabel control={<Switch disabled={!canEdit} checked={!!config.inbound_enabled} onChange={event => handleConfigChange('inbound_enabled', event.target.checked)} />} label="Enable inbound handling" />
       <Alert severity="info" sx={{ mt: 1 }}>Leave an override empty to use the default provider; inbound handling is turned on separately.</Alert>

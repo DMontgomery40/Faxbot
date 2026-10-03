@@ -119,8 +119,8 @@ TOKEN=$(curl -s https://$AUTH0_DOMAIN/oauth/token \
   -H 'content-type: application/json' \
   -d '{"grant_type":"client_credentials","client_id":"'"$AUTH0_CLIENT_ID"'","client_secret":"'"$AUTH0_CLIENT_SECRET"'","audience":"'"$AUDIENCE"'"}' | jq -r .access_token)
 
-# 2) Connect to SSE (replace 3002 or 3003 depending on Node/Python container)
-curl -H "Authorization: Bearer $TOKEN" -H "Accept: text/event-stream" http://localhost:3002/sse
+# 2) Connect to the Python SSE server (port 3003)
+curl -H "Authorization: Bearer $TOKEN" -H "Accept: text/event-stream" http://localhost:3003/sse
 ```
 
 === "Generic"
@@ -129,7 +129,7 @@ curl -H "Authorization: Bearer $TOKEN" -H "Accept: text/event-stream" http://loc
 # Replace the token request with your IdP's client credentials endpoint,
 # then supply the resulting access token when connecting to SSE
 TOKEN="<your_access_token>"
-curl -H "Authorization: Bearer $TOKEN" -H "Accept: text/event-stream" http://localhost:3002/sse
+curl -H "Authorization: Bearer $TOKEN" -H "Accept: text/event-stream" http://localhost:3003/sse
 ```
 
 Notes

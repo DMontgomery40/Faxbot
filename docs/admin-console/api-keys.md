@@ -1,17 +1,16 @@
 
 # API Keys
 
-Manage and test REST API credentials without leaving the Admin Console.
+API keys let apps, scanners and phones use Faxbot. Every API request needs a key or a signed-in console session; there is no anonymous access. Managing keys needs the `keys:manage` permission.
 
-## Create & rotate keys
+## Create, replace and revoke keys
 
-1. Open **Admin Console → API Keys**
-2. Click **Create Key** and choose scopes (fax:send, inbound:list, admin, etc.)
-3. Copy the generated token (`fbk_live_<id>_<secret>`) — it is only shown once
-4. Rotate or revoke from the same screen; Faxbot records the change in audit logs when enabled
+1. Open **Settings → Keys**.
+2. Create a key, choose the user or integration it belongs to, and pick only the permissions the app needs, for example `fax:send` and `fax:read`.
+3. Copy the key (`fbk_live_<id>_<secret>`). It is shown only once.
+4. Use **Replace key** to issue a new secret, or **Revoke** to stop the key for good. Faxbot records both in the security audit.
 
-!!! note
-    For production, set `REQUIRE_API_KEY=true` in the Setup Wizard or Security tab so unauthenticated requests are rejected.
+A key can never do more than the user or integration it belongs to. See [Access Control](../security/access-control.md#keys) for expiry, keys that need review, and the keys the iPhone app receives.
 
 ## Smoke test from the console
 
@@ -23,10 +22,10 @@ Manage and test REST API credentials without leaving the Admin Console.
 
 === "Console"
 
-    1. Open Admin Console → API Keys  
-    2. Create a key with the scopes you need (e.g., `fax:send`, `fax:read`)  
-    3. Open Send Fax and queue a test while the key is selected  
-    4. Check Jobs for status updates
+    1. Open **Settings → Keys**  
+    2. Create a key with the permissions you need (for example `fax:send` and `fax:read`)  
+    3. Sign in with that key (**Sign in with API key**) and queue a test on **Send**  
+    4. Check **Jobs** for status updates
 
 === "curl"
 
@@ -67,8 +66,9 @@ Manage and test REST API credentials without leaving the Admin Console.
 
 ## Troubleshooting
 
-- **401 Unauthorized** → Scope missing or wrong key. Reissue the key with `fax:send`/`fax:read` scopes.
-- **Rate limited** → Global limit hit; adjust `MAX_REQUESTS_PER_MINUTE` in **Settings → Security**.
+- **401 Unauthorized** → The key is missing, mistyped, expired or revoked, or its owner is disabled.
+- **403 Forbidden** → The key is valid but lacks the permission. Create a key with the permission you need; its owner must also have it.
+- **429 Too Many Requests** → The per-key limit was reached; adjust `MAX_REQUESTS_PER_MINUTE` in **Settings**.
 - **413 / 415** → File too large or wrong type; review [Images & PDFs](../guides/images-and-pdfs.md).
 
 For automation examples, see the [Node SDK](../sdks/node.md) and [Python SDK](../sdks/python.md).

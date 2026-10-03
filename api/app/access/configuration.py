@@ -33,6 +33,7 @@ _PROVIDER_FIELDS = frozenset({
     'signalwire_status_callback_url', 'signalwire_webhook_signing_key',
     'signalwire_status_poll_seconds',
     'documo_api_key', 'documo_base_url', 'documo_use_sandbox',
+    'humblefax_access_key', 'humblefax_secret_key', 'humblefax_from_number',
     'inbound_enabled', 'asterisk_inbound_secret', 'sinch_inbound_basic_user',
     'sinch_inbound_basic_pass', 'sinch_inbound_hmac_secret',
     'storage_backend', 's3_bucket', 's3_prefix', 's3_region', 's3_endpoint_url',

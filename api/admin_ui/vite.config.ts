@@ -31,6 +31,7 @@ export default defineConfig({
       '/plugins': api,
       '/plugin-registry': api,
       '/health': api,
+      '/mcp': api,
       '/mobile': api
     }
   },

@@ -4,13 +4,13 @@ The builtin Documo adapter uploads prepared PDFs directly and polls the original
 
 ## Configure the installation
 
-1. Open **Settings** or **Setup Wizard** and load the current desired revision.
+1. Open **Settings** or **Setup Wizard**.
 2. Select **Documo (mFax)** for outbound and enter the API key for the intended account. Leave unchanged secret masks alone.
 3. Choose production or sandbox. In Settings, review **Documo Base URL** using the rules below.
-4. Apply the changed fields with the loaded revision. If pending, stop every API worker and restart the installation; confirm that the desired revision is active.
+4. Apply the changes. If Faxbot asks for a restart, stop every API process and start the installation again, then confirm that no restart is pending.
 5. Use **Send** with a synthetic document and a controlled destination. Disabled sending creates permanently held jobs; real transmission requires sending to be enabled. Inspect **Jobs** and the original provider account for the result and document fidelity.
 
-Setup does not authenticate a Documo key. Readiness checks local configuration, not account access or delivery. The key must permit both sending and reading fax information; a create-only key cannot support status polling. For first bootstrap, the corresponding environment names are `FAX_OUTBOUND_BACKEND=documo`, `DOCUMO_API_KEY`, `DOCUMO_BASE_URL` and `DOCUMO_SANDBOX`. Existing installations use canonical Settings, not later `.env` edits.
+Setup does not authenticate a Documo key. Readiness checks local configuration, not account access or delivery. The key must permit both sending and reading fax information; a create-only key cannot support status polling. When a new installation starts for the first time, it can read `FAX_OUTBOUND_BACKEND=documo`, `DOCUMO_API_KEY`, `DOCUMO_BASE_URL` and `DOCUMO_SANDBOX` from the environment. After that, change them in Settings; later `.env` edits are not imported.
 
 ## Endpoint and sandbox rules
 
@@ -31,7 +31,7 @@ Documo cancellation and callback mutation are not implemented by this adapter. D
 
 ## Configuration and troubleshooting
 
-- Credentials are captured in encrypted canonical configuration; a redacted template is not a recovery backup.
+- Faxbot stores the credentials encrypted in its database. The exported `.env` template hides them and is not a backup.
 - Provider document retention and caller ID defaults are account settings, not controls enforced by this panel.
 - An authentication or polling failure requires checking the original account's key permissions. Editing current credentials does not replace an accepted attempt's captured account.
 - A rejected endpoint requires an HTTPS origin without `/v1` or another path; a sandbox override must follow the rules above.

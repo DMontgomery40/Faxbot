@@ -59,7 +59,8 @@ class CapturedCallbacks:
             raise CallbackRejected() from None
         if row['attempt_id'] != attempt_id:
             raise CallbackRejected()
-        revision, profile = self.store.configuration.outbound_context(job_id)
+        # Authenticate against the account this attempt used, never the fax's default.
+        revision, profile = self.store.attempt_context(job_id, attempt_id)
         configuration = profile.configuration
         if configuration.provider_id != provider or configuration.manifest is not None:
             raise CallbackRejected()

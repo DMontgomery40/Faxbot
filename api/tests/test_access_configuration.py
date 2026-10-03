@@ -82,6 +82,26 @@ def test_raw_patch_cannot_be_mistaken_for_normalized_configuration():
         configuration_requirements(ConfigurationValues(), {'API_KEY': 'synthetic'})
 
 
+@pytest.mark.parametrize('change', [
+    {'DOCUMO_API_KEY': 'synthetic-documo-key'},
+    {'DOCUMO_SANDBOX': 'true'},
+    {'HUMBLEFAX_ACCESS_KEY': 'synthetic-humblefax-access'},
+    {'HUMBLEFAX_SECRET_KEY': 'synthetic-humblefax-secret'},
+    {'HUMBLEFAX_FROM_NUMBER': '13035550199'},
+    {'HUMBLEFAX_ACCESS_KEY': 'synthetic-humblefax-access', 'HUMBLEFAX_SECRET_KEY': 'synthetic-humblefax-secret'},
+])
+def test_cloud_provider_credentials_need_provider_permission_not_owner(change):
+    before = ConfigurationValues.from_environment({'API_KEY': 'synthetic-bootstrap'})
+    after = ConfigurationValues.from_environment({'API_KEY': 'synthetic-bootstrap', **change})
+
+    result = configuration_requirements(before, after)
+
+    assert result.changed_fields
+    assert result.permissions == frozenset({'providers:write'})
+    assert result.requires_complete_owner is False
+    assert 'synthetic-humblefax' not in repr(result) and 'synthetic-documo' not in repr(result)
+
+
 @pytest.mark.parametrize(('field', 'environment'), [
     ('sinch_api_key', {}),
     ('sinch_api_key', {'PHAXIO_API_KEY': 'synthetic-inherited'}),

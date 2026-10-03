@@ -49,9 +49,14 @@ interface InboundProps {
   docsBase?: string;
   inboundEnabled?: boolean;
   onNavigate?: (destination: AdminDestination) => void;
+  // Installation permissions from /auth/me. Provider setup and test faxes are
+  // shown only to people allowed to use them; the server checks again.
+  permissions?: ReadonlySet<string>;
 }
 
-function Inbound({ client, docsBase, inboundEnabled, onNavigate }: InboundProps) {
+function Inbound({ client, docsBase, inboundEnabled, onNavigate, permissions }: InboundProps) {
+  const canReadProviders = !!permissions?.has('providers:read');
+  const canAddTestFax = !!permissions?.has('providers:write');
   const [faxes, setFaxes] = useState<InboundFax[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -89,17 +94,17 @@ function Inbound({ client, docsBase, inboundEnabled, onNavigate }: InboundProps)
 
   const fetchCallbacks = useCallback(async () => {
     setCallbacksError(null);
-    if (inboundEnabled === false) {
+    if (inboundEnabled === false || !canReadProviders) {
       setCallbacks(null);
       return;
     }
     try {
       setCallbacks(await client.getInboundCallbacks());
-    } catch (err) {
+    } catch {
       setCallbacks(null);
-      setCallbacksError(err instanceof Error ? err.message : 'Failed to fetch callback configuration');
+      setCallbacksError("Callback details couldn't be loaded. Select Refresh to try again.");
     }
-  }, [client, inboundEnabled]);
+  }, [client, inboundEnabled, canReadProviders]);
 
   const downloadPdf = async (id: string) => {
     try {
@@ -304,7 +309,7 @@ function Inbound({ client, docsBase, inboundEnabled, onNavigate }: InboundProps)
           >
             Refresh
           </Button>
-          <Button
+          {canAddTestFax && <Button
             variant="outlined"
             startIcon={<TestIcon />}
             onClick={async () => { 
@@ -313,8 +318,8 @@ function Inbound({ client, docsBase, inboundEnabled, onNavigate }: InboundProps)
                 setSimulating(true); 
                 await client.simulateInbound(); 
                 await fetchInbound(); 
-              } catch(e:any){ 
-                setError(e?.message||'Test add failed'); 
+              } catch {
+                setError("The test fax couldn't be added. Try again."); 
               } finally { 
                 setSimulating(false);
               } 
@@ -327,7 +332,7 @@ function Inbound({ client, docsBase, inboundEnabled, onNavigate }: InboundProps)
             }}
           >
             {isSmallMobile ? 'Test' : 'Add Test Fax'}
-          </Button>
+          </Button>}
         </Box>
       </Box>
 
@@ -354,13 +359,13 @@ function Inbound({ client, docsBase, inboundEnabled, onNavigate }: InboundProps)
       )}
 
       {/* Configuration Info */}
-      <ResponsiveFormSection
+      {canReadProviders && <ResponsiveFormSection
         title="Inbound Fax Configuration"
         subtitle="Setup and requirements for receiving faxes"
         icon={<InboxIcon />}
       >
         <Stack spacing={2}>
-          {callbacksError && <Alert severity="error">Unable to load callback configuration: {callbacksError}</Alert>}
+          {callbacksError && <Alert severity="warning">{callbacksError}</Alert>}
           <Alert 
             severity="info" 
             sx={{ 
@@ -373,8 +378,8 @@ function Inbound({ client, docsBase, inboundEnabled, onNavigate }: InboundProps)
             </Typography>
             <Typography variant="body2" sx={{ mt: 0.5 }}>
               • You see the mailboxes you have been given access to<br />
-              • Phone numbers are masked for HIPAA compliance<br />
-              • "Add Test Fax" creates local test entries only
+              • Phone numbers are masked for HIPAA compliance
+              {canAddTestFax && <><br />• "Add Test Fax" creates local test entries only</>}
             </Typography>
           </Alert>
 
@@ -525,7 +530,7 @@ same => n,System(curl -s -X POST -H "Content-Type: application/json" -H "X-Inter
             </Box>
           )}
         </Stack>
-      </ResponsiveFormSection>
+      </ResponsiveFormSection>}
 
       {/* Faxes List */}
       {inboundEnabled !== false && (

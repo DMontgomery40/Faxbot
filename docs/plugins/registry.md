@@ -13,32 +13,32 @@ The Plugins tab uses these discovery endpoints when `FEATURE_V3_PLUGINS=true`.
 ## Discovery and configuration endpoints
 
 :material-puzzle: `GET /plugins`
-: List installed provider metadata under `items`, with desired selection and manifest precedence. Read a provider’s config separately for editor revision/settings.
+: List installed providers under `items`, including which one is selected. An installed manifest replaces the built-in entry with the same name.
 
 :material-cog: `GET /plugins/{id}/config`
-: Return sanitized desired `enabled`, `settings`, `role` and `_meta` active/desired identity.
+: Return the provider's saved `enabled`, `settings` and `role`, with secrets hidden, plus a `_meta` block to send back when saving.
 
 :material-content-save-cog: `PUT /plugins/{id}/config`
-: Validate and save intended changes with the loaded `expected_revision_id` into canonical desired state. Inspect returned `_meta.apply_state` and pending fields.
+: Save only the fields you changed, with the `expected_revision_id` from the last read. `_meta.apply_state` in the reply says whether the change is already in use or waits for a restart.
 
 :material-database-search: `GET /plugin-registry`
 : Serve the curated registry JSON for UI search
 
 ---
 
-## Canonical configuration and permissions
+## Configuration and permissions
 
-Environment and `FAXBOT_CONFIG_PATH` JSON are first-bootstrap inputs. Existing installations use the canonical database revisions; subsequent file edits and restart do not import provider changes. See [the bootstrap format](config-file.md).
+Environment variables and the `FAXBOT_CONFIG_PATH` JSON file are read once, when a new installation starts for the first time. After that, Faxbot keeps provider settings in its database, and later edits to those files are not imported. See [the first-start file format](config-file.md).
 
-Configuration endpoints require admin authentication; database keys need the permissions accepted by `require_admin` (including `keys:manage`). The curated `/plugin-registry` catalog is discovery data, not a credential or runtime settings store.
+Reading provider configuration and the curated `/plugin-registry` catalog needs `providers:read`. Saving provider configuration needs `providers:write`, and installing or importing manifests needs `providers:install`. See [Access Control](../security/access-control.md). The registry catalog is discovery data, not a credential or settings store.
 
-Load a provider configuration before editing, omit unchanged masks and carry its desired revision into the write. A 409 requires explicit reload/review. Applied changes become active; pending changes require every API worker to stop and the installation restart. Accepted fax attempts keep their original provider frame.
+Read a provider's configuration before editing it, and leave hidden secrets unchanged unless you are replacing them. A 409 reply means someone else saved first; read again and review before retrying. Some changes take effect only after Faxbot restarts; stop every API process and start the installation again. Faxes that were already accepted keep using the provider settings they were accepted with.
 
 ---
 
 ## Manifest installation
 
-Install/import adds provider definitions; configuration selection and credentials remain canonical desired edits. Existing accepted work keeps its captured definition. Validate a proposed manifest before installing it, and inspect the server's actual permissions and validation response; a discovery catalog or declared feature flag is not an installation sandbox.
+Installing or importing adds provider definitions; choosing a provider and entering its credentials are separate settings changes. Faxes already accepted keep the definition they were accepted with. Validate a proposed manifest before installing it, and inspect the server's actual permissions and validation response; a discovery catalog or declared feature flag is not an installation sandbox.
 
 ---
 
@@ -61,8 +61,9 @@ Install/import adds provider definitions; configuration selection and credential
 
 ## Troubleshooting
 
-- `/plugins` returns 404 → enable v3 plugins in canonical Settings, inspect active/pending status and complete any required coordinated restart.
-- Configuration conflicts → reload the desired revision explicitly before reviewing/retrying the edit; file permissions on a legacy JSON path are not a substitute for canonical write validation.
+- `/plugins` returns 404 → turn on v3 plugins in Settings and restart if Faxbot asks for it.
+- `/plugins` returns 403 → your account needs `providers:read`; see [Access Control](../security/access-control.md).
+- A save is refused with 409 → someone else saved first. Read the configuration again and review it before retrying.
 
 ---
 

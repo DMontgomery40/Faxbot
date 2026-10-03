@@ -1,55 +1,47 @@
 # Settings
 
-Settings edits the installation's canonical **desired** configuration. The page shows the loaded desired revision, active revision, generation and pending fields. A displayed desired value can differ from the value currently used by requests.
+Settings shows and changes the installation's saved configuration. Some changes take effect at once; others wait until Faxbot restarts. While a change is waiting, the screen says **Restart Faxbot to apply** followed by the number of pending changes, and the value shown can differ from the one Faxbot is using.
 
 ## Edit and apply
 
-1. Click **Load Settings** and review the loaded revision.
-2. Change only the fields you intend to update. Leave stored secret masks unchanged to preserve them; enter a replacement or clear the field explicitly to change a secret.
-3. Click **Apply settings (save durably)**. The editor sends changed fields with its loaded desired revision. A conflict retains your draft; explicitly load settings again and review before retrying.
-4. Read the result. Applied changes are active and saved in the database. Pending changes are saved but do not take effect until every API worker stops and the installation restarts successfully.
-5. After a coordinated restart, load settings again and confirm the desired revision is active. Restarting one worker while others remain running does not promote pending settings; the readonly Reload endpoint does not promote them either.
+1. Click **Load Settings**.
+2. Change only the fields you mean to update. Hidden secrets stay as they are unless you type a replacement or clear the field.
+3. Click **Apply settings**. Only the fields you changed are sent.
+4. Read the result. The message says whether the change is already in use or waits for a restart.
+5. If it waits for a restart, stop every Faxbot API process and start the installation again, then click **Load Settings** to confirm the restart message is gone. Restarting one process while others keep running is not enough.
 
-A confirmed save and the following editor reload are separate operations. If the
-reload fails, the save remains confirmed; reload or sign in again before editing
-further. If the save itself cannot be confirmed, inspect the current revision
-before resubmitting. The console does not automatically retry configuration writes.
+If someone else saved settings after you loaded them, Faxbot refuses your save and keeps your edits on the screen. Click **Load Settings**, review the current values, and apply again. If the console cannot confirm whether a save went through, load settings before trying again; the console never retries a save on its own.
 
-The process/container `.env` and legacy plugin JSON are bootstrap inputs for an installation without canonical state. Editing them and restarting does not override an existing canonical revision. Use the Settings editor for existing installations; keep deployment-only container/trunk settings in the deployment configuration.
+The `.env` file and the legacy plugin JSON file are read once, when a new installation starts for the first time. After that, use this screen; later edits to those files are not imported. Container ports, mounts and telephone trunk settings stay in the deployment configuration.
 
 ## Provider directions and disabled sending
 
-Default provider, outbound override and inbound override are independent. An empty direction override inherits the default provider. Choosing an inbound provider does not turn inbound handling on; use its separate enable control. Installed manifest providers can be configured in **Tools → Plugins** without resetting the default provider.
+The default provider, the outbound override and the inbound override are separate choices. An empty override uses the default provider. Choosing an inbound provider does not turn receiving on; use its own switch. Providers installed from a manifest are configured in **Tools → Plugins**.
 
-**Disable outbound fax sending** accepts new uploads as held jobs. Re-enabling sending never automatically transmits those held jobs. Pausing ready work cannot recall an attempt already issued. Review [Fax Disabled](../setup/test-mode.md) before testing.
+**Disable outbound fax sending** keeps accepting new faxes but holds them instead of sending. Turning sending back on never sends held faxes automatically, and pausing cannot recall a fax that is already being sent. Read [Test Mode](../setup/test-mode.md) before testing.
 
 ## Available controls
 
-- Provider credentials and URLs, including Phaxio's separate Callback Token and outbound signature flag.
-- REST authentication, HTTPS enforcement, audit settings and request/upload limits.
-- Installation-local or S3-compatible artifact storage, inbound enablement, retention and token settings.
-- Embedded Python MCP HTTP/SSE and OAuth settings. Standalone Node/Python MCP processes have their own launch configuration.
+- Provider credentials and addresses, including Phaxio's separate callback token and outbound signature check.
+- HTTPS enforcement, audit logging, and request and upload limits.
+- Local or S3-compatible document storage, receiving, retention and download link settings.
+- The MCP server built into the API, and its OAuth settings. Standalone MCP servers have their own launch settings.
 
-A database target or installation path change is maintenance work, not a live datastore move. The database URL is displayed opaquely and is read-only; preserve the database, installation key and artifacts during maintenance.
+Moving the database or changing installation paths is maintenance work that this screen does not do. The database address is shown hidden and cannot be changed here; keep the database, the installation key file and stored documents safe during maintenance.
 
 ## Export and recovery
 
-**Export .env** returns a redacted template of desired settings. It masks secrets and does not activate configuration or restore the installation by itself. **Write recovery .env**, when enabled, writes the private desired recovery file on the server; it does not promote pending settings. A complete recovery backup also requires the database, original installation encryption key and artifacts.
+**Export .env** returns a template of the saved settings with secrets hidden. It does not change anything on the server and is not a backup by itself. **Write recovery .env**, when turned on, writes a private recovery file on the server; it does not apply pending changes. A complete backup also needs the database, the installation key file and stored documents.
 
-## API contract
+## API
 
-- `GET /admin/settings`: sanitized desired values plus `_meta` active/desired identity and apply state.
-- `PUT /admin/settings`: changed canonical fields plus the loaded `expected_revision_id`; returns a confirmed receipt containing `ok`, `changed`, and `_meta` active/desired revision IDs, generation, apply state and restart requirement. Read the settings endpoint separately for values and pending fields.
-- `POST /admin/settings/reload`: reads durable state; it does not import environment or activate pending changes.
-- `GET /admin/settings/export`: redacted desired template.
-- `POST /admin/settings/persist`: writes a recovery environment file; it does not become the authoritative runtime store.
-- `POST /admin/settings/validate`: checks explicitly supplied credentials for supported builtins. Stored masks and a green presence check are not delivery proof.
+- `GET /admin/settings`: saved values with secrets hidden, plus `_meta`, which says whether changes are waiting for a restart and lists them in `pending_fields`.
+- `PUT /admin/settings`: the changed fields plus the `expected_revision_id` from the last read. The reply says whether anything changed and whether a restart is needed. Read the settings again for the new values.
+- `POST /admin/settings/reload`: reads the saved settings again. It does not import the `.env` file or apply pending changes.
+- `GET /admin/settings/export`: the `.env` template with secrets hidden.
+- `POST /admin/settings/persist`: writes the recovery file.
+- `POST /admin/settings/validate`: checks credentials you supply for the built-in providers that support it. It does not send a fax.
 
-Settings reads and redacted export require `settings:read`. A settings write
-requires `settings:write`, with additional provider or complete-Owner authority
-determined from the normalized changes. Provider configuration reads require
-`providers:read`; writes require `providers:write` and the same change-sensitive
-checks. Provider writes return the same bounded receipt. Write permissions alone
-do not grant access to settings values, provider configuration or server paths.
+Reading settings and exporting the template need `settings:read`; saving needs `settings:write`. Provider fields need `providers:read` to see and `providers:write` to change, and some fields can only be changed by an Owner. Permission to save does not include permission to read. See [Access Control](../security/access-control.md).
 
-See the [Setup Wizard](setup-wizard.md) for a guided edit and [provider guides](../setup/index.md) for deployment prerequisites.
+See the [Setup Wizard](setup-wizard.md) for a guided edit and the [provider guides](../setup/index.md) for what each provider needs.
