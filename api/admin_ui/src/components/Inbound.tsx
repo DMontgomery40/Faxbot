@@ -372,7 +372,7 @@ function Inbound({ client, docsBase, inboundEnabled, onNavigate }: InboundProps)
               Requirements:
             </Typography>
             <Typography variant="body2" sx={{ mt: 0.5 }}>
-              • Requires <code>inbound:list</code> and <code>inbound:read</code> scopes or bootstrap key<br />
+              • You see the mailboxes you have been given access to<br />
               • Phone numbers are masked for HIPAA compliance<br />
               • "Add Test Fax" creates local test entries only
             </Typography>

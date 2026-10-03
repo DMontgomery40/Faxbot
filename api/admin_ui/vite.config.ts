@@ -1,5 +1,8 @@
+/// <reference types="vitest" />
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+
+const api = 'http://localhost:8080'
 
 export default defineConfig({
   plugins: [react()],
@@ -16,10 +19,25 @@ export default defineConfig({
   },
   server: {
     port: 3000,
+    strictPort: true,
     proxy: {
-      '/admin': 'http://localhost:8080',
-      '/fax': 'http://localhost:8080',
-      '/inbound': 'http://localhost:8080'
+      // Everything under /admin except the dev server's own /admin/ui/ pages,
+      // including the terminal WebSocket.
+      '^/admin/(?!ui(?:/|$))': { target: api, ws: true },
+      '/auth': api,
+      '/access': api,
+      '/fax': api,
+      '/inbound': api,
+      '/plugins': api,
+      '/plugin-registry': api,
+      '/health': api,
+      '/mobile': api
     }
+  },
+  test: {
+    environment: 'jsdom',
+    setupFiles: ['./src/test/setup.ts'],
+    include: ['src/**/*.test.{ts,tsx}'],
+    testTimeout: 20000
   }
 })

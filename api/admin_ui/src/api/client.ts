@@ -4,16 +4,32 @@ import type {
   FaxSendResult,
   OperatorDelivery,
   ProviderIdentityConfirmation,
-  ApiKey,
   Settings,
   SettingsPatch,
   PluginConfiguration,
   PluginConfigurationPatch,
-  ConfigurationWriteReceipt,
+  ConfigurationWriteResult,
   PluginRole,
   DiagnosticsResult,
   ValidationResult,
-  InboundFax
+  InboundFax,
+  AuthMe,
+  ConsoleContext,
+  Page,
+  PermissionInfo,
+  AccessRole,
+  AccessUser,
+  AccessUserDetail,
+  AccessGroup,
+  AccessGroupDetail,
+  AccessResource,
+  AccessAssignment,
+  AccessKey,
+  AccessSession,
+  AccessMailbox,
+  InboundRule,
+  KeyCeiling,
+  ResourceKind,
 } from './types';
 
 // These manifest validation messages contain no paths, credentials, or provider
@@ -35,18 +51,20 @@ const safeRefreshDetails = new Set([
   'Provider status is temporarily unavailable. This fax has not been resubmitted.',
 ]);
 
-const safeReconciliationDetails = new Set([
-  'Delivery record is unavailable.',
-  'Delivery changed; reload before attaching a provider identity.',
-  'Only an unresolved submitted delivery can receive a confirmed provider identity.',
-  'Historical delivery requires deliberate maintenance reconciliation of its original account.',
-  'Held or unsupported dispatch mode requires deliberate maintenance reconciliation.',
-  'No verified submitted attempt is available; deliberate maintenance reconciliation is required.',
-  'The attempt is not an unresolved submission; deliberate maintenance reconciliation is required.',
-  'The original provider account could not be authenticated; deliberate maintenance reconciliation is required.',
-  'A provider identity is already attached; refresh the original account instead.',
-  'This captured provider cannot refresh status; deliberate maintenance reconciliation is required.',
-  'This provider identity already belongs to another delivery from the original account.',
+// Fixed server sentences shown as-is, except where the server wording is not
+// product copy; those map to a plain equivalent.
+const safeReconciliationDetails = new Map<string, string>([
+  ['Delivery record is unavailable.', 'Delivery record is unavailable.'],
+  ['Delivery changed; reload before attaching a provider identity.', 'Delivery changed; reload before attaching a provider identity.'],
+  ['Only an unresolved submitted delivery can receive a confirmed provider identity.', 'Only an unresolved submitted delivery can receive a confirmed provider identity.'],
+  ['Historical delivery requires deliberate maintenance reconciliation of its original account.', 'Historical delivery requires deliberate maintenance reconciliation of its original account.'],
+  ['Held or unsupported dispatch mode requires deliberate maintenance reconciliation.', 'Held or unsupported dispatch mode requires deliberate maintenance reconciliation.'],
+  ['No verified submitted attempt is available; deliberate maintenance reconciliation is required.', 'No verified submitted attempt is available; deliberate maintenance reconciliation is required.'],
+  ['The attempt is not an unresolved submission; deliberate maintenance reconciliation is required.', 'The attempt is not an unresolved submission; deliberate maintenance reconciliation is required.'],
+  ['The original provider account could not be authenticated; deliberate maintenance reconciliation is required.', 'The original provider account could not be authenticated; deliberate maintenance reconciliation is required.'],
+  ['A provider identity is already attached; refresh the original account instead.', 'A provider identity is already attached; refresh the original account instead.'],
+  ['This captured provider cannot refresh status; deliberate maintenance reconciliation is required.', 'This provider cannot refresh status; deliberate maintenance reconciliation is required.'],
+  ['This provider identity already belongs to another delivery from the original account.', 'This provider identity already belongs to another delivery from the original account.'],
 ]);
 
 const safeReconciliationInputDetails = new Set([
@@ -54,23 +72,17 @@ const safeReconciliationInputDetails = new Set([
   'Invalid provider identity reconciliation input.',
 ]);
 
+const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
+const CSRF_FAILURE = 'Browser request verification failed';
+export const TRANSPORT_REFUSED = 'Credential transport or browser origin is not allowed.';
+export const POLICY_CHANGED = 'Access policy changed. Reload and try again.';
+
 export function normalizeFaxDestination(number: string): string {
   return number.replace(/[\s\-\(\)]/g, '');
 }
 
-export function reconciliationNotice(reason?: string | null): string {
-  let notice = reason?.trim() || 'Transmission outcome is uncertain.';
-  if (!/check (?:the )?original provider\b/i.test(notice)) {
-    notice += ' Check the original provider before taking action.';
-  }
-  if (!/do not retry transmission blindly\b/i.test(notice)) {
-    notice += ' Do not retry transmission blindly.';
-  }
-  return notice;
-}
-
 export class AdminAPIError extends Error {
-  constructor(readonly status: number, statusText: string) {
+  constructor(readonly status: number, statusText: string, readonly detail: string | null = null) {
     super(`API Error: ${status} ${statusText}`);
   }
 }
@@ -79,14 +91,45 @@ export function configurationWriteRejected(error: unknown): boolean {
   return error instanceof AdminAPIError && [400, 401, 403, 404, 409, 413, 422].includes(error.status);
 }
 
-function configurationReceipt(value: unknown): ConfigurationWriteReceipt {
-  const receipt = value as Partial<ConfigurationWriteReceipt> | null;
-  const meta = receipt?._meta;
+export function isNotAvailable(error: unknown): boolean {
+  return error instanceof AdminAPIError && (error.status === 404 || error.status === 405);
+}
+
+export function isForbidden(error: unknown): boolean {
+  return error instanceof AdminAPIError && error.status === 403;
+}
+
+export function isConflict(error: unknown): boolean {
+  return error instanceof AdminAPIError && error.status === 409;
+}
+
+// One plain sentence for an access-management failure.
+export function accessErrorMessage(error: unknown): string {
+  if (error instanceof AdminAPIError) {
+    switch (error.status) {
+      case 400:
+      case 422: return 'Check the entered values and try again.';
+      case 401: return 'Your session has ended. Sign in again.';
+      case 403: return 'You do not have permission to do this.';
+      case 404: return 'This item no longer exists. Reload and try again.';
+      case 409: return POLICY_CHANGED;
+      case 429: return 'Too many attempts. Try again later.';
+      case 503: return 'The server is busy. Try again in a moment.';
+      default: return 'The request failed. Try again.';
+    }
+  }
+  if (error instanceof TypeError) return 'Could not reach the server. Check the connection and try again.';
+  return error instanceof Error && error.message ? error.message : 'The request failed. Try again.';
+}
+
+function configurationResult(value: unknown): ConfigurationWriteResult {
+  const result = value as Partial<ConfigurationWriteResult> | null;
+  const meta = result?._meta;
   const hasExactKeys = (candidate: object, keys: string[]) =>
     Object.keys(candidate).length === keys.length && keys.every(key => Object.prototype.hasOwnProperty.call(candidate, key));
-  if (!receipt || typeof receipt !== 'object'
-      || !hasExactKeys(receipt, ['ok', 'changed', '_meta'])
-      || receipt.ok !== true || typeof receipt.changed !== 'boolean'
+  if (!result || typeof result !== 'object'
+      || !hasExactKeys(result, ['ok', 'changed', '_meta'])
+      || result.ok !== true || typeof result.changed !== 'boolean'
       || !meta || typeof meta !== 'object'
       || !hasExactKeys(meta, ['active_revision_id', 'desired_revision_id', 'generation', 'apply_state', 'restart_recommended'])
       || typeof meta.active_revision_id !== 'string' || !meta.active_revision_id
@@ -95,118 +138,381 @@ function configurationReceipt(value: unknown): ConfigurationWriteReceipt {
       || !['applied', 'pending_restart'].includes(meta.apply_state)
       || typeof meta.restart_recommended !== 'boolean'
       || meta.restart_recommended !== (meta.apply_state === 'pending_restart')) {
-    throw new Error('The server did not return a valid configuration write receipt.');
+    throw new Error('The server returned an unexpected reply. Reload and try again.');
   }
-  return receipt as ConfigurationWriteReceipt;
+  return result as ConfigurationWriteResult;
 }
+
+async function readDetail(res: Response): Promise<string | null> {
+  const body = await res.clone().json().catch(() => null);
+  return typeof body?.detail === 'string' ? body.detail : null;
+}
+
+function query(params: Record<string, string | number | undefined | null>): string {
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== null && String(value).length > 0) search.append(key, String(value));
+  }
+  const text = search.toString();
+  return text ? `?${text}` : '';
+}
+
+const id = (value: string) => encodeURIComponent(value);
+
+// A browser session (cookie + CSRF header) or an explicit API key kept in
+// memory. The console never sends an empty X-API-Key: an explicit header is
+// the only credential the server considers for that request.
+export type ClientCredential =
+  | { kind: 'session'; csrf: string | null }
+  | { kind: 'key'; key: string };
+
+export interface ClientOptions {
+  onUnauthorized?: () => void;
+}
+
+type RequestOptions = { method?: string; body?: string | FormData; headers?: Record<string, string> };
+type RequestExtras = { manifestValidation?: boolean; quiet401?: boolean };
+type PolicyResult = { policy_version: number };
 
 export class AdminAPIClient {
   private baseURL: string;
-  private apiKey: string;
+  private credential: ClientCredential;
+  private onUnauthorized?: () => void;
+  // Last access policy version seen from /auth/me or a management reply.
+  policyVersion: number | null = null;
 
-  constructor(apiKey: string) {
-    // Always localhost since we're local-only
+  constructor(credential: ClientCredential = { kind: 'session', csrf: null }, options: ClientOptions = {}) {
     this.baseURL = window.location.origin;
-    this.apiKey = apiKey;
+    this.credential = credential;
+    this.onUnauthorized = options.onUnauthorized;
   }
 
-  private async fetch(path: string, options: RequestInit = {}, manifestValidation = false): Promise<Response> {
-    const response = await fetch(`${this.baseURL}${path}`, {
-      ...options,
-      headers: {
-        'X-API-Key': this.apiKey,
-        'Content-Type': 'application/json',
-        ...options.headers,
-      },
+  get credentialKind(): ClientCredential['kind'] {
+    return this.credential.kind;
+  }
+
+  private authHeaders(method: string): Record<string, string> {
+    if (this.credential.kind === 'key') {
+      return this.credential.key ? { 'X-API-Key': this.credential.key } : {};
+    }
+    return !SAFE_METHODS.has(method) && this.credential.csrf ? { 'X-CSRF-Token': this.credential.csrf } : {};
+  }
+
+  // Every request goes through here: credential headers, one CSRF refresh
+  // and retry, and the client-wide unauthorized callback.
+  private async send(path: string, init: RequestOptions = {}, extras: RequestExtras = {}): Promise<Response> {
+    const method = (init.method || 'GET').toUpperCase();
+    const attempt = () => fetch(`${this.baseURL}${path}`, {
+      method,
+      body: init.body,
+      credentials: 'same-origin',
+      headers: { ...this.authHeaders(method), ...init.headers },
     });
+    let res = await attempt();
+    if (res.status === 403 && this.credential.kind === 'session' && !SAFE_METHODS.has(method)) {
+      const detail = await readDetail(res);
+      if (detail?.startsWith(CSRF_FAILURE) && await this.refreshCsrf()) res = await attempt();
+    }
+    if (res.status === 401 && !extras.quiet401 && await this.credentialRejected(path)) this.onUnauthorized?.();
+    return res;
+  }
+
+  // A 401 from a single route may only mean that route does not accept this
+  // kind of credential; the session has ended only if /auth/me agrees.
+  private async credentialRejected(path: string): Promise<boolean> {
+    if (path.startsWith('/auth/')) return true;
+    const probe = await fetch(`${this.baseURL}/auth/me`, {
+      credentials: 'same-origin',
+      headers: this.authHeaders('GET'),
+    }).catch(() => null);
+    return probe?.status === 401;
+  }
+
+  private async refreshCsrf(): Promise<boolean> {
+    const res = await fetch(`${this.baseURL}/auth/me`, { credentials: 'same-origin' }).catch(() => null);
+    if (!res?.ok) return false;
+    const me = await res.json().catch(() => null);
+    if (typeof me?.csrf_token !== 'string' || !me.csrf_token) return false;
+    this.credential = { kind: 'session', csrf: me.csrf_token };
+    if (Number.isSafeInteger(me.policy_version)) this.policyVersion = me.policy_version;
+    return true;
+  }
+
+  private async fetch(path: string, options: RequestOptions = {}, extras: RequestExtras = {}): Promise<Response> {
+    const isForm = options.body instanceof FormData;
+    const response = await this.send(path, {
+      ...options,
+      headers: { ...(isForm ? {} : { 'Content-Type': 'application/json' }), ...options.headers },
+    }, extras);
 
     if (!response.ok) {
       if (path === '/admin/restart' && response.status === 403) {
-        const body = await response.json().catch(() => null);
         // Decode only this fixed refusal; arbitrary error details stay opaque.
-        if (body?.detail === 'Restart not allowed') {
+        if (await readDetail(response) === 'Restart not allowed') {
           throw new Error("API process restart from this console is disabled for this installation. Use the installation's deployment manager to restart the service.");
         }
       }
-      if (manifestValidation && (response.status === 400 || response.status === 409)) {
-        const body = await response.json().catch(() => null);
-        if (typeof body?.detail === 'string' && safeManifestDetails.has(body.detail)) {
-          throw new Error(body.detail);
-        }
+      if (extras.manifestValidation && (response.status === 400 || response.status === 409)) {
+        const detail = await readDetail(response);
+        if (detail && safeManifestDetails.has(detail)) throw new Error(detail);
       }
-      throw new AdminAPIError(response.status, response.statusText);
+      throw new AdminAPIError(response.status, response.statusText, await readDetail(response));
     }
 
     return response;
   }
 
+  private async json<T>(path: string, options: RequestOptions = {}, extras: RequestExtras = {}): Promise<T> {
+    const res = await this.fetch(path, options, extras);
+    return res.json();
+  }
+
+  // Management mutations carry the last seen policy version and record the
+  // new one from the reply.
+  private async accessWrite<T extends object>(path: string, body: object, method: 'POST' | 'PATCH' = 'POST'): Promise<T & PolicyResult> {
+    const result = await this.json<T & PolicyResult>(path, {
+      method,
+      body: JSON.stringify({ ...body, expected_policy_version: this.policyVersion ?? 0 }),
+    });
+    if (Number.isSafeInteger(result?.policy_version)) this.policyVersion = result.policy_version;
+    return result;
+  }
+
+  // Authentication
+  static async login(login: string, password: string): Promise<{ ok: true; password_change_required: boolean }> {
+    return new AdminAPIClient().json('/auth/login', { method: 'POST', body: JSON.stringify({ login, password }) }, { quiet401: true });
+  }
+
+  static async keyLogin(apiKey: string): Promise<{ ok: true; password_change_required: boolean }> {
+    return new AdminAPIClient().json('/auth/key-login', { method: 'POST', body: JSON.stringify({ api_key: apiKey }) }, { quiet401: true });
+  }
+
+  async me(extras: { quiet401?: boolean } = {}): Promise<AuthMe> {
+    const me = await this.json<AuthMe>('/auth/me', {}, extras);
+    if (this.credential.kind === 'session') {
+      this.credential = { kind: 'session', csrf: typeof me.csrf_token === 'string' ? me.csrf_token : null };
+    }
+    if (Number.isSafeInteger(me.policy_version)) this.policyVersion = me.policy_version;
+    return me;
+  }
+
+  async context(): Promise<ConsoleContext> {
+    return this.json('/auth/context');
+  }
+
+  async logout(): Promise<void> {
+    if (this.credential.kind !== 'session') return;
+    await this.fetch('/auth/logout', { method: 'POST', body: '{}' }, { quiet401: true });
+  }
+
+  async changePassword(currentPassword: string, password: string): Promise<{ ok: true; password_change_required: boolean }> {
+    return this.json('/auth/password', {
+      method: 'POST',
+      body: JSON.stringify({ current_password: currentPassword, password }),
+    }, { quiet401: true });
+  }
+
+  async enrollOwner(data: { login: string; display_name: string }): Promise<{ temporary_password: string; user: AccessUser } & PolicyResult> {
+    return this.accessWrite('/auth/owner/enroll', data);
+  }
+
+  async listOwnSessions(): Promise<{ items: Array<Omit<AccessSession, 'principal'>> }> {
+    return this.json('/auth/sessions?limit=100');
+  }
+
+  async revokeOwnSession(sessionId: string): Promise<{ session_id: string; changed: boolean } & PolicyResult> {
+    return this.accessWrite(`/auth/sessions/${id(sessionId)}/revoke`, {});
+  }
+
+  // Access management (/access/*)
+  async listPermissions(): Promise<{ items: PermissionInfo[] }> {
+    return this.json('/access/permissions');
+  }
+
+  async listRoles(): Promise<Page<AccessRole>> {
+    return this.json('/access/roles?limit=200');
+  }
+
+  async createRole(data: { name: string; description: string; permissions: string[]; enabled: boolean }) {
+    return this.accessWrite<{ role?: AccessRole }>('/access/roles', data);
+  }
+
+  async updateRole(roleId: string, data: { name?: string; description?: string; permissions?: string[]; enabled?: boolean; version: number }) {
+    return this.accessWrite<{ role?: AccessRole }>(`/access/roles/${id(roleId)}`, data, 'PATCH');
+  }
+
+  async listUsers(params: { kind?: 'user' | 'integration' | 'all'; q?: string; cursor?: string | null; limit?: number } = {}): Promise<Page<AccessUser>> {
+    return this.json(`/access/users${query({ kind: params.kind, q: params.q, cursor: params.cursor, limit: params.limit ?? 50 })}`);
+  }
+
+  async getUser(userId: string): Promise<AccessUserDetail> {
+    return this.json(`/access/users/${id(userId)}`);
+  }
+
+  async createUser(data: { login: string; display_name: string; enabled: boolean }) {
+    return this.accessWrite<{ user: AccessUser; temporary_password: string }>('/access/users', data);
+  }
+
+  async createIntegration(data: { display_name: string; enabled: boolean }) {
+    return this.accessWrite<{ integration: AccessUser }>('/access/integrations', data);
+  }
+
+  async updateUser(userId: string, data: { display_name?: string; enabled?: boolean; login?: string; version: number }) {
+    return this.accessWrite<{ user?: AccessUser }>(`/access/users/${id(userId)}`, data, 'PATCH');
+  }
+
+  async resetPassword(userId: string, version: number) {
+    return this.accessWrite<{ user: AccessUser; temporary_password: string }>(`/access/users/${id(userId)}/reset-password`, { version });
+  }
+
+  async listGroups(): Promise<Page<AccessGroup>> {
+    return this.json('/access/groups?limit=200');
+  }
+
+  async getGroup(groupId: string): Promise<AccessGroupDetail> {
+    return this.json(`/access/groups/${id(groupId)}`);
+  }
+
+  async createGroup(data: { name: string; description: string; enabled: boolean }) {
+    return this.accessWrite<{ group?: AccessGroup }>('/access/groups', data);
+  }
+
+  async updateGroup(groupId: string, data: { name?: string; description?: string; enabled?: boolean; version: number }) {
+    return this.accessWrite<{ group?: AccessGroup }>(`/access/groups/${id(groupId)}`, data, 'PATCH');
+  }
+
+  async addGroupMember(groupId: string, data: { principal_id: string; principal_version: number; group_version: number }) {
+    return this.accessWrite<{ membership_id: string }>(`/access/groups/${id(groupId)}/members`, data);
+  }
+
+  async removeGroupMember(groupId: string, membershipId: string, data: { membership_version: number; group_version: number }) {
+    return this.accessWrite<object>(`/access/groups/${id(groupId)}/members/${id(membershipId)}/remove`, data);
+  }
+
+  async listResources(kind?: ResourceKind): Promise<Page<AccessResource>> {
+    return this.json(`/access/resources${query({ kind, limit: 200 })}`);
+  }
+
+  async listAssignments(params: { subject_id?: string; resource_id?: string } = {}): Promise<Page<AccessAssignment>> {
+    return this.json(`/access/assignments${query({ ...params, limit: 200 })}`);
+  }
+
+  async createAssignment(data: { subject: { kind: 'principal' | 'group'; id: string; version: number }; role: { id: string; version: number }; resource_id: string }) {
+    return this.accessWrite<{ assignment?: AccessAssignment }>('/access/assignments', data);
+  }
+
+  async removeAssignment(assignmentId: string, version: number) {
+    return this.accessWrite<object>(`/access/assignments/${id(assignmentId)}/remove`, { version });
+  }
+
+  async listKeys(params: { principal_id?: string } = {}): Promise<Page<AccessKey>> {
+    return this.json(`/access/keys${query({ ...params, limit: 200 })}`);
+  }
+
+  async createKey(data: { principal: { id: string; version: number }; name: string; note: string; expires_at: string | null; ceiling: KeyCeiling[] }) {
+    return this.accessWrite<{ key: AccessKey; token: string }>('/access/keys', data);
+  }
+
+  async updateKey(keyId: string, data: { name?: string; note?: string; expires_at?: string | null; version: number }) {
+    return this.accessWrite<{ key?: AccessKey }>(`/access/keys/${id(keyId)}`, data, 'PATCH');
+  }
+
+  async rotateKey(keyId: string, version: number) {
+    return this.accessWrite<{ key: AccessKey; token: string }>(`/access/keys/${id(keyId)}/rotate`, { version });
+  }
+
+  async revokeKey(keyId: string, version: number) {
+    return this.accessWrite<{ key?: AccessKey }>(`/access/keys/${id(keyId)}/revoke`, { version });
+  }
+
+  async approveKey(keyId: string, data: { principal: { id: string; version: number }; ceiling: KeyCeiling[]; version: number }) {
+    return this.accessWrite<{ key?: AccessKey }>(`/access/keys/${id(keyId)}/approve`, data);
+  }
+
+  async listSessions(params: { principal_id?: string; cursor?: string | null; limit?: number } = {}): Promise<Page<AccessSession>> {
+    return this.json(`/access/sessions${query({ principal_id: params.principal_id, cursor: params.cursor, limit: params.limit ?? 50 })}`);
+  }
+
+  async revokeSession(sessionId: string) {
+    return this.accessWrite<object>(`/access/sessions/${id(sessionId)}/revoke`, {});
+  }
+
+  async listMailboxes(): Promise<Page<AccessMailbox>> {
+    return this.json('/access/mailboxes?limit=200');
+  }
+
+  async createMailbox(data: { label: string; enabled: boolean }) {
+    return this.accessWrite<{ mailbox?: AccessMailbox }>('/access/mailboxes', data);
+  }
+
+  async updateMailbox(mailboxId: string, data: { label?: string; enabled?: boolean; version: number }) {
+    return this.accessWrite<{ mailbox?: AccessMailbox }>(`/access/mailboxes/${id(mailboxId)}`, data, 'PATCH');
+  }
+
+  async listInboundRules(): Promise<Page<InboundRule>> {
+    return this.json('/access/inbound-rules?limit=200');
+  }
+
+  async createInboundRule(data: { to_number: string; mailbox_id: string }) {
+    return this.accessWrite<{ rule?: InboundRule }>('/access/inbound-rules', data);
+  }
+
+  async updateInboundRule(ruleId: string, data: { to_number?: string; mailbox_id?: string; version: number }) {
+    return this.accessWrite<{ rule?: InboundRule }>(`/access/inbound-rules/${id(ruleId)}`, data, 'PATCH');
+  }
+
+  // Terminal handshake: a short-lived, single-use ticket sent as the first
+  // WebSocket message, never in the URL.
+  async createTerminalTicket(): Promise<{ ticket: string; expires_at: string }> {
+    return this.json('/admin/terminal/ticket', { method: 'POST', body: '{}' });
+  }
+
   // Configuration
   async getConfig(): Promise<any> {
-    const res = await this.fetch('/admin/config');
-    return res.json();
+    return this.json('/admin/config');
   }
 
   async getSettings(): Promise<Settings> {
-    const res = await this.fetch('/admin/settings');
-    return res.json();
+    return this.json('/admin/settings');
   }
 
   async validateSettings(settings: any): Promise<ValidationResult> {
-    const res = await this.fetch('/admin/settings/validate', {
-      method: 'POST',
-      body: JSON.stringify(settings),
-    });
-    return res.json();
+    return this.json('/admin/settings/validate', { method: 'POST', body: JSON.stringify(settings) });
   }
 
   async exportSettings(): Promise<{ env: string }> {
-    const res = await this.fetch('/admin/settings/export');
-    return res.json();
+    return this.json('/admin/settings/export');
   }
 
   async persistSettings(content?: string, path?: string): Promise<{ ok: boolean; path: string }> {
-    const res = await this.fetch('/admin/settings/persist', {
-      method: 'POST',
-      body: JSON.stringify({ content, path }),
-    });
-    return res.json();
+    return this.json('/admin/settings/persist', { method: 'POST', body: JSON.stringify({ content, path }) });
   }
 
-  async updateSettings(settings: SettingsPatch): Promise<ConfigurationWriteReceipt> {
-    const res = await this.fetch('/admin/settings', {
-      method: 'PUT',
-      body: JSON.stringify(settings),
-    });
-    return configurationReceipt(await res.json());
+  async updateSettings(settings: SettingsPatch): Promise<ConfigurationWriteResult> {
+    const res = await this.fetch('/admin/settings', { method: 'PUT', body: JSON.stringify(settings) });
+    return configurationResult(await res.json());
   }
 
   async reloadSettings(): Promise<Settings> {
-    const res = await this.fetch('/admin/settings/reload', { method: 'POST' });
-    return res.json();
+    return this.json('/admin/settings/reload', { method: 'POST' });
   }
 
   async restart(): Promise<any> {
-    const res = await this.fetch('/admin/restart', { method: 'POST' });
-    return res.json();
+    return this.json('/admin/restart', { method: 'POST' });
   }
 
   // Diagnostics
   async runDiagnostics(): Promise<DiagnosticsResult> {
-    const res = await this.fetch('/admin/diagnostics/run', {
-      method: 'POST',
-    });
-    return res.json();
+    return this.json('/admin/diagnostics/run', { method: 'POST' });
   }
 
   async getHealthStatus(): Promise<HealthStatus> {
-    const res = await this.fetch('/admin/health-status');
-    return res.json();
+    return this.json('/admin/health-status');
   }
 
   // MCP
   async getMcpConfig(): Promise<any> {
-    const res = await this.fetch('/admin/config');
-    return res.json();
+    return this.json('/admin/config');
   }
 
   async getMcpHealth(path: string = '/mcp/sse/health'): Promise<any> {
@@ -216,188 +522,104 @@ export class AdminAPIClient {
   }
 
   // Logs
-  async getLogs(params: { q?: string; event?: string; since?: string; limit?: number } = {}): Promise<{ items: any[]; count: number }>{
-    const search = new URLSearchParams();
-    for (const [k,v] of Object.entries(params)) {
-      if (v !== undefined && v !== null && String(v).length > 0) search.append(k, String(v));
-    }
-    const res = await this.fetch(`/admin/logs?${search.toString()}`);
-    return res.json();
+  async getLogs(params: { q?: string; event?: string; since?: string; limit?: number } = {}): Promise<{ items: any[]; count: number }> {
+    return this.json(`/admin/logs${query(params)}`);
   }
 
-  async tailLogs(params: { q?: string; event?: string; lines?: number } = {}): Promise<{ items: any[]; count: number; source?: string }>{
-    const search = new URLSearchParams();
-    for (const [k,v] of Object.entries(params)) {
-      if (v !== undefined && v !== null && String(v).length > 0) search.append(k, String(v));
-    }
-    const res = await this.fetch(`/admin/logs/tail?${search.toString()}`);
-    return res.json();
+  async tailLogs(params: { q?: string; event?: string; lines?: number } = {}): Promise<{ items: any[]; count: number; source?: string }> {
+    return this.json(`/admin/logs/tail${query(params)}`);
   }
 
   // Jobs
-  async listJobs(params: { 
-    status?: string; 
-    backend?: string; 
-    limit?: number; 
-    offset?: number 
-  } = {}): Promise<{ total: number; jobs: FaxJob[] }> {
-    const query = new URLSearchParams();
-    Object.entries(params).forEach(([key, value]) => {
-      if (value !== undefined) {
-        query.append(key, String(value));
-      }
-    });
-    const res = await this.fetch(`/admin/fax-jobs?${query}`);
-    return res.json();
+  async listJobs(params: { status?: string; backend?: string; limit?: number; offset?: number } = {}): Promise<{ total: number; jobs: FaxJob[] }> {
+    return this.json(`/admin/fax-jobs${query(params)}`);
   }
 
-  async getJob(id: string): Promise<FaxJob> {
-    const res = await this.fetch(`/admin/fax-jobs/${id}`);
-    return res.json();
+  async getJob(jobId: string): Promise<FaxJob> {
+    return this.json(`/admin/fax-jobs/${id(jobId)}`);
   }
 
-  private async deliveryRequest(id: string, confirmation?: ProviderIdentityConfirmation): Promise<OperatorDelivery> {
+  private async deliveryRequest(jobId: string, confirmation?: ProviderIdentityConfirmation): Promise<OperatorDelivery> {
     const attaching = confirmation !== undefined;
-    const res = await fetch(`${this.baseURL}/admin/fax-jobs/${encodeURIComponent(id)}/${attaching ? 'reconcile' : 'delivery'}`, {
+    const res = await this.send(`/admin/fax-jobs/${id(jobId)}/${attaching ? 'reconcile' : 'delivery'}`, {
       method: attaching ? 'POST' : 'GET',
-      headers: { 'X-API-Key': this.apiKey, 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json' },
       ...(attaching ? { body: JSON.stringify(confirmation) } : {}),
     });
     if (!res.ok) {
       if (res.status === 400 || res.status === 409) {
-        const body = await res.json().catch(() => null);
-        const detail = body?.detail;
-        const safe = typeof detail === 'string' && (attaching
-          ? (res.status === 409 ? safeReconciliationDetails : safeReconciliationInputDetails).has(detail)
-          : res.status === 409 && detail === 'Delivery history is unavailable; reload the job before continuing.');
-        if (safe) throw new Error(detail);
+        const detail = await readDetail(res);
+        if (detail && attaching && res.status === 409 && safeReconciliationDetails.has(detail)) {
+          throw new Error(safeReconciliationDetails.get(detail));
+        }
+        if (detail && attaching && res.status === 400 && safeReconciliationInputDetails.has(detail)) throw new Error(detail);
+        if (!attaching && res.status === 409 && detail === 'Delivery history is unavailable; reload the job before continuing.') {
+          throw new Error(detail);
+        }
       }
       throw new Error(`${attaching ? 'Provider identity attachment' : 'Delivery history request'} failed (HTTP ${res.status}). Reload delivery before continuing.`);
     }
     return res.json();
   }
 
-  async getDelivery(id: string): Promise<OperatorDelivery> {
-    return this.deliveryRequest(id);
+  async getDelivery(jobId: string): Promise<OperatorDelivery> {
+    return this.deliveryRequest(jobId);
   }
 
-  async attachProviderIdentity(id: string, confirmation: ProviderIdentityConfirmation): Promise<OperatorDelivery> {
-    return this.deliveryRequest(id, confirmation);
+  async attachProviderIdentity(jobId: string, confirmation: ProviderIdentityConfirmation): Promise<OperatorDelivery> {
+    return this.deliveryRequest(jobId, confirmation);
   }
 
-  async downloadJobPdf(id: string): Promise<Blob> {
-    const res = await fetch(`${this.baseURL}/admin/fax-jobs/${encodeURIComponent(id)}/pdf`, {
-      headers: {
-        'X-API-Key': this.apiKey,
-      },
-    });
-    if (!res.ok) {
-      throw new Error(`Download failed: ${res.status}`);
-    }
+  async downloadJobPdf(jobId: string): Promise<Blob> {
+    const res = await this.send(`/admin/fax-jobs/${id(jobId)}/pdf`);
+    if (!res.ok) throw new Error(`Download failed: ${res.status}`);
     return res.blob();
-  }
-
-  // API Keys
-  async createApiKey(data: { 
-    name?: string; 
-    owner?: string; 
-    scopes?: string[] 
-  }): Promise<{ key_id: string; token: string }> {
-    const res = await this.fetch('/admin/api-keys', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    });
-    return res.json();
-  }
-
-  async listApiKeys(): Promise<ApiKey[]> {
-    const res = await this.fetch('/admin/api-keys');
-    return res.json();
-  }
-
-  async revokeApiKey(keyId: string): Promise<void> {
-    await this.fetch(`/admin/api-keys/${keyId}`, {
-      method: 'DELETE',
-    });
-  }
-
-  async rotateApiKey(keyId: string): Promise<{ token: string }> {
-    const res = await this.fetch(`/admin/api-keys/${keyId}/rotate`, {
-      method: 'POST',
-    });
-    return res.json();
   }
 
   // Inbound
   async listInbound(): Promise<InboundFax[]> {
-    const res = await this.fetch('/inbound');
-    return res.json();
+    return this.json('/inbound');
   }
 
-  async downloadInboundPdf(id: string): Promise<Blob> {
-    const res = await fetch(`${this.baseURL}/inbound/${encodeURIComponent(id)}/pdf`, {
-      headers: {
-        'X-API-Key': this.apiKey,
-      },
-    });
-    
-    if (!res.ok) {
-      throw new Error(`Download failed: ${res.status}`);
-    }
-    
+  async downloadInboundPdf(inboundId: string): Promise<Blob> {
+    const res = await this.send(`/inbound/${id(inboundId)}/pdf`);
+    if (!res.ok) throw new Error(`Download failed: ${res.status}`);
     return res.blob();
   }
 
   // Inbound helpers
   async getInboundCallbacks(): Promise<any> {
-    const res = await this.fetch('/admin/inbound/callbacks');
-    return res.json();
+    return this.json('/admin/inbound/callbacks');
   }
 
   async simulateInbound(opts: { backend?: string; fr?: string; to?: string; pages?: number; status?: string } = {}): Promise<{ id: string; status: string }> {
-    const res = await this.fetch('/admin/inbound/simulate', {
-      method: 'POST',
-      body: JSON.stringify(opts),
-    });
-    return res.json();
+    return this.json('/admin/inbound/simulate', { method: 'POST', body: JSON.stringify(opts) });
   }
 
   // Admin actions (container exec — allowlisted)
   async listActions(): Promise<{ enabled: boolean; items: Array<{ id: string; label: string; backend?: string[] }> }> {
-    const res = await this.fetch('/admin/actions');
-    return res.json();
+    return this.json('/admin/actions');
   }
 
-  async runAction(id: string): Promise<{ ok: boolean; id: string; code?: number; stdout?: string; stderr?: string }> {
-    const res = await this.fetch('/admin/actions/run', {
-      method: 'POST',
-      body: JSON.stringify({ id }),
-    });
-    return res.json();
+  async runAction(actionId: string): Promise<{ ok: boolean; id: string; code?: number; stdout?: string; stderr?: string }> {
+    return this.json('/admin/actions/run', { method: 'POST', body: JSON.stringify({ id: actionId }) });
   }
 
-  // Tunnel (admin-only)
+  // Tunnel
   async getTunnelStatus(): Promise<any> {
-    const res = await this.fetch('/admin/tunnel/status');
-    return res.json();
+    return this.json('/admin/tunnel/status');
   }
 
   async setTunnelConfig(payload: any): Promise<any> {
-    const res = await this.fetch('/admin/tunnel/config', {
-      method: 'POST',
-      body: JSON.stringify(payload || {}),
-    });
-    return res.json();
+    return this.json('/admin/tunnel/config', { method: 'POST', body: JSON.stringify(payload || {}) });
   }
 
   async testTunnel(): Promise<{ ok: boolean; message?: string; target?: string }> {
-    const res = await this.fetch('/admin/tunnel/test', { method: 'POST' });
-    return res.json();
+    return this.json('/admin/tunnel/test', { method: 'POST' });
   }
 
   async createTunnelPairing(): Promise<{ code: string; expires_at: string }> {
-    const res = await this.fetch('/admin/tunnel/pair', { method: 'POST' });
-    return res.json();
+    return this.json('/admin/tunnel/pair', { method: 'POST', body: '{}' });
   }
 
   async sendFax(to: string, file: File, options: { queueOnly?: boolean; idempotencyKey?: string } = {}): Promise<FaxSendResult> {
@@ -406,18 +628,14 @@ export class AdminAPIClient {
     formData.append('file', file);
     if (options.queueOnly) formData.append('queue_only', 'true');
 
-    const res = await fetch(`${this.baseURL}/fax`, {
+    const res = await this.send('/fax', {
       method: 'POST',
-      headers: {
-        'X-API-Key': this.apiKey,
-        ...(options.idempotencyKey ? { 'Idempotency-Key': options.idempotencyKey } : {}),
-      },
+      headers: options.idempotencyKey ? { 'Idempotency-Key': options.idempotencyKey } : {},
       body: formData,
     });
 
     if (!res.ok) {
-      const body = await res.json().catch(() => null);
-      const detail = body?.detail;
+      const detail = await readDetail(res);
       if (res.status === 409) {
         if (detail === 'Queue-only request refused because outbound sending is now enabled. Refresh Send before submitting again.') {
           throw new Error('Queue-only submission was refused because active settings changed. Leave and reopen Send to review the current delivery mode before trying again.');
@@ -441,70 +659,49 @@ export class AdminAPIClient {
 
   // v3 Plugins (feature-gated)
   async listPlugins(): Promise<{ items: any[] }> {
-    const res = await this.fetch('/plugins');
-    return res.json();
+    return this.json('/plugins');
   }
 
   async getPluginConfig(pluginId: string, role?: PluginRole): Promise<PluginConfiguration> {
-    const query = role ? `?role=${encodeURIComponent(role)}` : '';
-    const res = await this.fetch(`/plugins/${encodeURIComponent(pluginId)}/config${query}`);
-    return res.json();
+    return this.json(`/plugins/${id(pluginId)}/config${query({ role })}`);
   }
 
-  async updatePluginConfig(pluginId: string, payload: PluginConfigurationPatch): Promise<ConfigurationWriteReceipt> {
-    const res = await this.fetch(`/plugins/${encodeURIComponent(pluginId)}/config`, {
-      method: 'PUT',
-      body: JSON.stringify(payload || {}),
-    });
-    return configurationReceipt(await res.json());
+  async updatePluginConfig(pluginId: string, payload: PluginConfigurationPatch): Promise<ConfigurationWriteResult> {
+    const res = await this.fetch(`/plugins/${id(pluginId)}/config`, { method: 'PUT', body: JSON.stringify(payload || {}) });
+    return configurationResult(await res.json());
   }
 
   async getPluginRegistry(): Promise<{ items: any[] }> {
-    const res = await this.fetch('/plugin-registry');
-    return res.json();
+    return this.json('/plugin-registry');
   }
 
-  // Manifest providers (admin-only)
+  // Manifest providers
   async validateHttpManifest(payload: { manifest: any; credentials?: any; settings?: any; to?: string; file_url?: string; from_number?: string; render_only?: boolean }): Promise<any> {
-    const res = await this.fetch('/admin/plugins/http/validate', {
-      method: 'POST',
-      body: JSON.stringify(payload || {}),
-    }, true);
-    return res.json();
+    return this.json('/admin/plugins/http/validate', { method: 'POST', body: JSON.stringify(payload || {}) }, { manifestValidation: true });
   }
 
   async installHttpManifest(payload: { manifest: any }): Promise<{ ok: boolean; id: string; path: string }> {
-    const res = await this.fetch('/admin/plugins/http/install', {
-      method: 'POST',
-      body: JSON.stringify(payload || {}),
-    }, true);
-    return res.json();
+    return this.json('/admin/plugins/http/install', { method: 'POST', body: JSON.stringify(payload || {}) }, { manifestValidation: true });
   }
 
   // Jobs admin helpers
   async refreshJob(jobId: string): Promise<FaxSendResult> {
-    const res = await fetch(`${this.baseURL}/admin/fax-jobs/${encodeURIComponent(jobId)}/refresh`, {
+    const res = await this.send(`/admin/fax-jobs/${id(jobId)}/refresh`, {
       method: 'POST',
-      headers: { 'X-API-Key': this.apiKey, 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json' },
     });
     if (!res.ok) {
       if ([400, 409, 502].includes(res.status)) {
-        const body = await res.json().catch(() => null);
-        if (typeof body?.detail === 'string' && safeRefreshDetails.has(body.detail)) {
-          throw new Error(body.detail);
-        }
+        const detail = await readDetail(res);
+        if (detail && safeRefreshDetails.has(detail)) throw new Error(detail);
       }
       throw new Error(`API Error: ${res.status} ${res.statusText}`);
     }
     return res.json();
   }
 
-  async importHttpManifests(payload: { items?: any[]; markdown?: string; source?: 'repo_scrape' }): Promise<{ ok: boolean; imported: any[]; errors: Array<{ error: string }> }>{
-    const res = await this.fetch('/admin/plugins/http/import-manifests', {
-      method: 'POST',
-      body: JSON.stringify(payload || {}),
-    }, true);
-    const result = await res.json();
+  async importHttpManifests(payload: { items?: any[]; markdown?: string; source?: 'repo_scrape' }): Promise<{ ok: boolean; imported: any[]; errors: Array<{ error: string }> }> {
+    const result = await this.json<any>('/admin/plugins/http/import-manifests', { method: 'POST', body: JSON.stringify(payload || {}) }, { manifestValidation: true });
     return {
       ...result,
       errors: (Array.isArray(result.errors) ? result.errors : []).map((failure: any) => ({
@@ -513,27 +710,31 @@ export class AdminAPIClient {
     };
   }
 
-  // Polling helper
+  // Polling helper. Stops for good once the server says the credential is
+  // gone or the operation is not permitted.
   startPolling(onUpdate: (data: HealthStatus) => void, intervalMs: number = 5000): () => void {
     let running = true;
-    
+    let timer: number | undefined;
+
     const poll = async () => {
       if (!running) return;
       try {
-        const data = await this.getHealthStatus();
-        onUpdate(data);
+        onUpdate(await this.getHealthStatus());
       } catch (e) {
+        if (e instanceof AdminAPIError && (e.status === 401 || e.status === 403)) {
+          running = false;
+          return;
+        }
         console.error('Polling error:', e);
       }
-      if (running) {
-        setTimeout(poll, intervalMs);
-      }
+      if (running) timer = window.setTimeout(poll, intervalMs);
     };
-    
-    poll(); // Start immediately
-    
-    // Return cleanup function
-    return () => { running = false; };
+
+    void poll();
+    return () => {
+      running = false;
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
   }
 }
 
