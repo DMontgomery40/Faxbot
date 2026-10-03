@@ -122,3 +122,39 @@ def test_key_manager_issues_only_within_its_own_scopes(isolated_installation, mo
         assert client.delete("/admin/api-keys/000000000000", headers={"X-API-Key": plain["token"]}).status_code == 403
         assert client.delete("/admin/api-keys/000000000000", headers={"X-API-Key": manager}).status_code == 404
         assert client.get("/admin/api-keys", headers={"X-API-Key": "fbk_live_000000000000_wrong"}).status_code == 401
+
+
+def _last_used(client, admin, key_id):
+    listed = client.get("/admin/api-keys", headers={"X-API-Key": admin})
+    assert listed.status_code == 200, listed.text
+    return next(k["last_used_at"] for k in listed.json() if k["key_id"] == key_id)
+
+
+def test_header_key_use_records_last_used_at_most_once_a_minute(isolated_installation, monkeypatch):
+    from datetime import datetime, timedelta
+    with _key_client(monkeypatch) as client:
+        key = _issue(client, "bootstrap_admin_only", ["fax:read"], name="scanner").json()
+        assert _last_used(client, "bootstrap_admin_only", key["key_id"]) is None
+
+        # A wrong secret for the same key is not a use.
+        wrong = "fbk_live_" + key["key_id"] + "_not-the-secret"
+        assert client.get("/auth/me", headers={"X-API-Key": wrong}).status_code == 401
+        assert _last_used(client, "bootstrap_admin_only", key["key_id"]) is None
+
+        assert client.get("/auth/me", headers={"X-API-Key": key["token"]}).status_code == 200
+        first = _last_used(client, "bootstrap_admin_only", key["key_id"])
+        assert first is not None
+
+        # Within a minute, further requests leave the recorded time alone.
+        assert client.get("/auth/me", headers={"X-API-Key": key["token"]}).status_code == 200
+        assert _last_used(client, "bootstrap_admin_only", key["key_id"]) == first
+
+        # Once the recorded use is more than a minute old, the next request records it again.
+        service = app.state.access_runtime
+        keys = service.store.tables["api_keys"]
+        earlier = datetime.utcnow() - timedelta(minutes=5)
+        with service.store.engine.begin() as connection:
+            connection.execute(keys.update().where(keys.c.key_id == key["key_id"]).values(last_used_at=earlier))
+        assert client.get("/auth/me", headers={"X-API-Key": key["token"]}).status_code == 200
+        moved = datetime.fromisoformat(_last_used(client, "bootstrap_admin_only", key["key_id"]))
+        assert moved > earlier + timedelta(minutes=4)
