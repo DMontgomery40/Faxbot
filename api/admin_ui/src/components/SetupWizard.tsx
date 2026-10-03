@@ -6,7 +6,7 @@ import {
 } from '@mui/material';
 import AdminAPIClient, { configurationWriteRejected } from '../api/client';
 import { docsLink } from '../docsLinks';
-import type { ConfigurationWriteReceipt, Settings, SettingsPatch, ValidationResult } from '../api/types';
+import type { ConfigurationWriteResult, Settings, SettingsPatch, ValidationResult } from '../api/types';
 import SecretInput from './common/SecretInput';
 
 interface SetupWizardProps {
@@ -116,7 +116,7 @@ function SetupWizard({ client, onDone, docsBase }: SetupWizardProps) {
   const [catalogNotice, setCatalogNotice] = useState<string | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [applyResult, setApplyResult] = useState<Notice | null>(null);
-  const [saveReceipt, setSaveReceipt] = useState<ConfigurationWriteReceipt | null>(null);
+  const [saveResult, setSaveResult] = useState<ConfigurationWriteResult | null>(null);
   const [validationResults, setValidationResults] = useState<ValidationResult | null>(null);
   const [validationNote, setValidationNote] = useState<string | null>(null);
   const [envContent, setEnvContent] = useState('');
@@ -139,7 +139,7 @@ function SetupWizard({ client, onDone, docsBase }: SetupWizardProps) {
     (!settings?.features?.v3_plugins || catalogReady);
   const docsURL = docsLink('home', docsBase);
   // Loaded settings are authoritative; after a save that could not be reloaded, fall back to the save result.
-  const pendingRestart = needsReload ? saveReceipt?._meta.apply_state === 'pending_restart' : settings?._meta?.apply_state === 'pending_restart';
+  const pendingRestart = needsReload ? saveResult?._meta.apply_state === 'pending_restart' : settings?._meta?.apply_state === 'pending_restart';
   const pendingCount = needsReload ? 0 : settings?._meta?.pending_fields?.length ?? 0;
   const restartMessage = pendingCount ?
     `Restart Faxbot to apply ${pendingCount} pending ${pendingCount === 1 ? 'change' : 'changes'}.` :
@@ -242,7 +242,7 @@ function SetupWizard({ client, onDone, docsBase }: SetupWizardProps) {
     setValidationResults(null);
     setValidationNote(null);
     setApplyResult(null);
-    setSaveReceipt(null);
+    setSaveResult(null);
     setNotice(null);
     setEnvContent('');
   };
@@ -310,12 +310,12 @@ function SetupWizard({ client, onDone, docsBase }: SetupWizardProps) {
     stopWatching();
     setNotice(null);
     setApplyResult(null);
-    setSaveReceipt(null);
+    setSaveResult(null);
     const epoch = requestEpoch.current;
     try {
       const result = await client.updateSettings(payload);
       if (epoch !== requestEpoch.current) return;
-      setSaveReceipt(result);
+      setSaveResult(result);
       setNeedsReload(true);
       setEnvContent('');
       setApplyResult(result._meta.apply_state === 'pending_restart' ?
@@ -582,10 +582,10 @@ function SetupWizard({ client, onDone, docsBase }: SetupWizardProps) {
     </Box>
     {loading && <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}><CircularProgress size={24} /><Typography>Loading settings…</Typography></Box>}
     {loadError && <Alert severity="error" sx={{ mb: 2 }}>{loadError}</Alert>}
-    {pendingRestart && !(applyResult && saveReceipt) && <Alert severity="warning" sx={{ mb: 2 }}>{restartMessage}</Alert>}
+    {pendingRestart && !(applyResult && saveResult) && <Alert severity="warning" sx={{ mb: 2 }}>{restartMessage}</Alert>}
     {catalogNotice && <Alert severity="info" sx={{ mb: 2 }}>{catalogNotice}</Alert>}
     {notice && <Alert severity={notice.severity} sx={{ mb: 2 }} onClose={() => setNotice(null)}>{notice.text}</Alert>}
-    {applyResult && <Alert severity={applyResult.severity} sx={{ mb: 2 }}>{applyResult.text}{saveReceipt && pendingRestart ? ` ${restartMessage}` : ''}</Alert>}
+    {applyResult && <Alert severity={applyResult.severity} sx={{ mb: 2 }}>{applyResult.text}{saveResult && pendingRestart ? ` ${restartMessage}` : ''}</Alert>}
     {showPaused && <Alert severity="warning" sx={{ mb: 2 }}>Editing is paused. Reload to continue.</Alert>}
     {settings && <>
       <Stepper activeStep={activeStep} sx={{ mb: 4 }}>{steps.map(label => <Step key={label}><StepLabel>{label}</StepLabel></Step>)}</Stepper>

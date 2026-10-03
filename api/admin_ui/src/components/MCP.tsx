@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Box, Card, CardContent, Typography, Button, Alert, Grid, TextField, Switch, FormControlLabel, Chip, Tooltip, IconButton, Paper } from '@mui/material';
 import { ContentCopy } from '@mui/icons-material';
 import AdminAPIClient, { configurationWriteRejected } from '../api/client';
-import type { ConfigurationWriteReceipt, Settings, SettingsPatch } from '../api/types';
+import type { ConfigurationWriteResult, Settings, SettingsPatch } from '../api/types';
 
 interface MCPProps { client: AdminAPIClient; }
 type MCPConfiguration = NonNullable<Settings['mcp']>;
@@ -31,12 +31,12 @@ function MCP({ client }: MCPProps) {
   const [baseline, setBaseline] = useState<SettingsPatch>({});
   const [activeMcp, setActiveMcp] = useState<MCPConfiguration | null>(null);
   const [needsReload, setNeedsReload] = useState(true);
-  const [saveReceipt, setSaveReceipt] = useState<ConfigurationWriteReceipt | null>(null);
+  const [saveResult, setSaveResult] = useState<ConfigurationWriteResult | null>(null);
   const actionFence = useRef(false);
   const requestEpoch = useRef(0);
   const desiredRevision = needsReload ? undefined : settings?._meta?.desired_revision_id;
   const canEdit = !!desiredRevision && !loading && !needsReload;
-  const revisionMeta = needsReload && saveReceipt ? saveReceipt._meta : settings?._meta;
+  const revisionMeta = needsReload && saveResult ? saveResult._meta : settings?._meta;
   const pendingCount = needsReload ? 0 : settings?._meta?.pending_fields?.length ?? 0;
 
   const readSnapshot = async (epoch: number) => {
@@ -88,7 +88,7 @@ function MCP({ client }: MCPProps) {
     setBaseline({});
     setActiveMcp(null);
     setHealth(null);
-    setSaveReceipt(null);
+    setSaveResult(null);
     setSnack(null);
     setSseEnabled(false);
     setHttpEnabled(false);
@@ -118,17 +118,17 @@ function MCP({ client }: MCPProps) {
     actionFence.current = true;
     const epoch = requestEpoch.current;
     setLoading(true); setError(null); setSnack(null);
-    setSaveReceipt(null);
+    setSaveResult(null);
     try {
-      const receipt = await client.updateSettings({ expected_revision_id: desiredRevision, ...Object.fromEntries(changed) });
+      const writeResult = await client.updateSettings({ expected_revision_id: desiredRevision, ...Object.fromEntries(changed) });
       if (epoch !== requestEpoch.current) return;
-      setSaveReceipt(receipt);
+      setSaveResult(writeResult);
       setNeedsReload(true);
       setHealth(null);
       setActiveMcp(null);
-      setSnack(receipt._meta.apply_state === 'pending_restart'
-        ? `${receipt.changed ? 'Settings saved.' : 'Nothing changed.'} Restart Faxbot to apply pending changes.`
-        : receipt.changed ? 'Settings saved.' : 'Nothing changed.');
+      setSnack(writeResult._meta.apply_state === 'pending_restart'
+        ? `${writeResult.changed ? 'Settings saved.' : 'Nothing changed.'} Restart Faxbot to apply pending changes.`
+        : writeResult.changed ? 'Settings saved.' : 'Nothing changed.');
       try {
         await readSnapshot(epoch);
       } catch {
@@ -182,8 +182,8 @@ function MCP({ client }: MCPProps) {
       </Box>
 
       {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
-      {snack && <Alert severity={saveReceipt?._meta.apply_state === 'pending_restart' ? 'warning' : 'success'} sx={{ mb: 2 }} onClose={() => setSnack(null)}>{snack}</Alert>}
-      {revisionMeta?.apply_state === 'pending_restart' && !(snack && saveReceipt?._meta.apply_state === 'pending_restart') && (
+      {snack && <Alert severity={saveResult?._meta.apply_state === 'pending_restart' ? 'warning' : 'success'} sx={{ mb: 2 }} onClose={() => setSnack(null)}>{snack}</Alert>}
+      {revisionMeta?.apply_state === 'pending_restart' && !(snack && saveResult?._meta.apply_state === 'pending_restart') && (
         <Alert severity="warning" sx={{ mb: 2 }}>
           {pendingCount > 0
             ? `Restart Faxbot to apply ${pendingCount} pending ${pendingCount === 1 ? 'change' : 'changes'}.`

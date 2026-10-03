@@ -28,7 +28,7 @@ import {
 } from '@mui/icons-material';
 import AdminAPIClient, { configurationWriteRejected } from '../api/client';
 import { DEFAULT_DOCS_BASE, docsLink } from '../docsLinks';
-import type { ConfigurationWriteReceipt, Settings as SettingsType, SettingsPatch } from '../api/types';
+import type { ConfigurationWriteResult, Settings as SettingsType, SettingsPatch } from '../api/types';
 import { ResponsiveSettingItem, ResponsiveSettingSection } from './common/ResponsiveSettingItem';
 import { ResponsiveTextField, ResponsiveFormSection } from './common/ResponsiveFormFields';
 import TunnelSettings from './TunnelSettings';
@@ -135,7 +135,7 @@ function Settings({ client }: SettingsProps) {
   const [docsBase, setDocsBase] = useState<string>(DEFAULT_DOCS_BASE);
   const [lastGeneratedSecret, setLastGeneratedSecret] = useState<string>('');
   const [needsReload, setNeedsReload] = useState(false);
-  const [saveReceipt, setSaveReceipt] = useState<ConfigurationWriteReceipt | null>(null);
+  const [saveResult, setSaveResult] = useState<ConfigurationWriteResult | null>(null);
   const actionFence = useRef(false);
   const requestEpoch = useRef(0);
   const desiredRevision = needsReload ? undefined : settings?._meta?.desired_revision_id;
@@ -144,7 +144,7 @@ function Settings({ client }: SettingsProps) {
     if (!canEdit || actionFence.current) return;
     setForm((prev) => ({ ...prev, [field]: value }));
   };
-  const revisionMeta = needsReload && saveReceipt ? saveReceipt._meta : settings?._meta;
+  const revisionMeta = needsReload && saveResult ? saveResult._meta : settings?._meta;
   const pendingRestart = revisionMeta?.apply_state === 'pending_restart';
   const pendingCount = settings?._meta?.pending_fields?.length ?? 0;
   const restartMessage = pendingCount
@@ -187,16 +187,16 @@ function Settings({ client }: SettingsProps) {
         }
         patch[field] = typeof loadedForm[field] === 'number' ? Number(value) : value;
       }
-      setSaveReceipt(null);
+      setSaveResult(null);
       writeStarted = true;
-      const receipt = await client.updateSettings(patch);
+      const writeResult = await client.updateSettings(patch);
       if (epoch !== requestEpoch.current) return;
-      setSaveReceipt(receipt);
+      setSaveResult(writeResult);
       setNeedsReload(true);
       setEnvContent('');
-      setSnack(receipt._meta.apply_state === 'pending_restart'
-        ? `${receipt.changed ? 'Settings saved.' : 'Nothing changed.'} Restart Faxbot to apply pending changes.`
-        : receipt.changed ? 'Settings saved.' : 'Nothing changed.');
+      setSnack(writeResult._meta.apply_state === 'pending_restart'
+        ? `${writeResult.changed ? 'Settings saved.' : 'Nothing changed.'} Restart Faxbot to apply pending changes.`
+        : writeResult.changed ? 'Settings saved.' : 'Nothing changed.');
       try {
         const data = await client.getSettings();
         if (epoch !== requestEpoch.current) return;
@@ -281,7 +281,7 @@ function Settings({ client }: SettingsProps) {
     setSettings(null);
     setForm({});
     setLoadedForm({});
-    setSaveReceipt(null);
+    setSaveResult(null);
     setSnack(null);
     setEnvContent('');
     setLastGeneratedSecret('');
@@ -1309,7 +1309,7 @@ function Settings({ client }: SettingsProps) {
         </Card>
       )}
       {snack && (
-        <Alert severity={saveReceipt?._meta.apply_state === 'pending_restart' ? 'warning' : 'success'} sx={{ mt: 2 }} onClose={() => setSnack(null)}>
+        <Alert severity={saveResult?._meta.apply_state === 'pending_restart' ? 'warning' : 'success'} sx={{ mt: 2 }} onClose={() => setSnack(null)}>
           {snack}
         </Alert>
       )}

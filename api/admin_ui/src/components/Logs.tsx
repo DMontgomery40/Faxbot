@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Box, Card, CardContent, Typography, TextField, Button, CircularProgress, Table, TableHead, TableRow, TableCell, TableBody, TableContainer, Alert, Dialog, DialogTitle, DialogContent, DialogActions, FormControlLabel, Switch, MenuItem, Select, InputLabel, FormControl } from '@mui/material';
 import AdminAPIClient, { configurationWriteRejected } from '../api/client';
-import type { ConfigurationWriteReceipt, Settings } from '../api/types';
+import type { ConfigurationWriteResult, Settings } from '../api/types';
 
 interface LogsProps { client: AdminAPIClient; }
 type AuditSettingsSnapshot = {
@@ -49,7 +49,7 @@ function Logs({ client }: LogsProps) {
   const [enableNeedsReload, setEnableNeedsReload] = useState(false);
   const [enableError, setEnableError] = useState<string | null>(null);
   const [enableNotice, setEnableNotice] = useState<string | null>(null);
-  const [enableReceipt, setEnableReceipt] = useState<ConfigurationWriteReceipt | null>(null);
+  const [enableResult, setEnableResult] = useState<ConfigurationWriteResult | null>(null);
   const [enableOutcome, setEnableOutcome] = useState<'none' | 'unconfirmed' | 'rejected' | 'confirmed'>('none');
   const [auditSnapshot, setAuditSnapshot] = useState<AuditSettingsSnapshot | null>(null);
   const enableFence = useRef(false);
@@ -105,7 +105,7 @@ function Logs({ client }: LogsProps) {
     setEnableNeedsReload(false);
     setEnableError(null);
     setEnableNotice(null);
-    setEnableReceipt(null);
+    setEnableResult(null);
     setEnableOutcome('none');
     setAuditSnapshot(null);
     return () => { configurationEpoch.current += 1; };
@@ -163,7 +163,7 @@ function Logs({ client }: LogsProps) {
     setEnableBusy(true);
     setEnableError(null);
     setEnableNotice(null);
-    setEnableReceipt(null);
+    setEnableResult(null);
     setEnableOutcome('none');
     setAuditSnapshot(null);
     let writeStarted = false;
@@ -173,14 +173,14 @@ function Logs({ client }: LogsProps) {
       if (!desired._meta?.desired_revision_id) throw new Error('Settings could not be read.');
       writeStarted = true;
       setEnableOutcome('unconfirmed');
-      const receipt = await client.updateSettings({ audit_log_enabled: true, expected_revision_id: desired._meta.desired_revision_id });
+      const writeResult = await client.updateSettings({ audit_log_enabled: true, expected_revision_id: desired._meta.desired_revision_id });
       if (epoch !== configurationEpoch.current) return;
-      setEnableReceipt(receipt);
+      setEnableResult(writeResult);
       setEnableOutcome('confirmed');
       setEnableNeedsReload(true);
-      setEnableNotice(receipt._meta.apply_state === 'pending_restart'
-        ? `${receipt.changed ? 'Audit logging saved.' : 'Nothing changed.'} Restart Faxbot to apply pending changes.`
-        : receipt.changed ? 'Audit logging is on.' : 'Audit logging is already on.');
+      setEnableNotice(writeResult._meta.apply_state === 'pending_restart'
+        ? `${writeResult.changed ? 'Audit logging saved.' : 'Nothing changed.'} Restart Faxbot to apply pending changes.`
+        : writeResult.changed ? 'Audit logging is on.' : 'Audit logging is already on.');
       try {
         const current = await readAuditSettings(epoch);
         if (epoch !== configurationEpoch.current) return;
@@ -216,7 +216,7 @@ function Logs({ client }: LogsProps) {
   const auditPending = auditSnapshot !== null && auditSnapshot.desiredEnabled !== auditSnapshot.activeEnabled;
   const auditStatus: { severity: 'success' | 'info' | 'warning'; text: string } | null =
     enableError ? { severity: 'warning', text: enableError }
-    : enableNotice ? { severity: enableReceipt?._meta.apply_state === 'pending_restart' ? 'warning' : 'success', text: enableNotice }
+    : enableNotice ? { severity: enableResult?._meta.apply_state === 'pending_restart' ? 'warning' : 'success', text: enableNotice }
     : enableBusy ? { severity: 'info', text: enableNeedsReload ? 'Checking audit logging…' : 'Turning on audit logging…' }
     : auditSnapshot ? (auditPending
       ? { severity: 'warning', text: auditSnapshot.desiredEnabled ? 'Audit logging turns on when Faxbot restarts.' : 'Audit logging turns off when Faxbot restarts.' }

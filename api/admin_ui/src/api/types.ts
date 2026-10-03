@@ -1,7 +1,7 @@
 // TypeScript types for the admin API
 
-// These are the active operator fields consumed by App, unlike Settings,
-// which edits the desired revision.
+// Active operator fields consumed by Send and Plugins. The shell builds this
+// from /auth/context; Settings edits the stored configuration separately.
 export interface AdminConfig {
   fax_disabled: boolean;
   max_file_size_mb: number;
@@ -256,9 +256,9 @@ export type SettingsPatch = Record<string, string | number | boolean | null | un
 
 export type PluginRole = 'outbound' | 'inbound' | 'storage';
 
-// A confirmed durable write is not a read projection. Editors must obtain a
+// A confirmed write is not a read projection. Editors must obtain a
 // separately authorized snapshot before allowing another mutation.
-export interface ConfigurationWriteReceipt {
+export interface ConfigurationWriteResult {
   ok: true;
   changed: boolean;
   _meta: {
@@ -274,7 +274,7 @@ export interface PluginConfiguration {
   enabled: boolean;
   settings: Record<string, unknown>;
   role: PluginRole;
-  _meta: ConfigurationWriteReceipt['_meta'];
+  _meta: ConfigurationWriteResult['_meta'];
 }
 
 export interface PluginConfigurationPatch {
@@ -337,4 +337,161 @@ export interface TunnelStatus {
   local_ip?: string;
   last_checked?: string;
   error_message?: string;
+}
+
+// Authentication and access management (/auth/*, /access/*). Datetimes are
+// naive UTC ISO strings; format them with src/api/time.ts.
+
+export type PrincipalKind = 'user' | 'integration' | 'bootstrap';
+
+export interface AuthPrincipal {
+  id: string;
+  kind: PrincipalKind;
+  display_name: string;
+  version: number;
+}
+
+export interface AuthMe {
+  principal: AuthPrincipal;
+  source: 'key' | 'session';
+  password_change_required: boolean;
+  policy_version: number;
+  permissions: string[];
+  session: { id: string; source_kind: 'password' | 'key' | 'bootstrap'; expires_at: string } | null;
+  can_enroll_owner: boolean;
+  csrf_token?: string | null;
+  is_owner?: boolean;
+  grantable?: { installation: string[] };
+}
+
+export interface ConsoleContext {
+  policy_version: number;
+  permissions: string[];
+  navigation: { jobs: boolean; inbox: boolean; send: boolean };
+  send: { fax_disabled: boolean; max_file_size_mb: number } | null;
+  inbound_enabled: boolean | null;
+  branding: { docs_base: string; logo_path: string };
+  provider_view: { plugins_enabled: boolean; install_enabled: boolean; active_outbound: string; active_inbound: string } | null;
+}
+
+export interface Page<T> {
+  items: T[];
+  next_cursor: string | null;
+}
+
+export type PermissionGroup = 'fax' | 'inbound' | 'identity' | 'config' | 'host' | 'mailbox' | 'audit';
+
+export interface PermissionInfo {
+  permission: string;
+  group: PermissionGroup;
+  description: string;
+}
+
+export interface AccessRole {
+  id: string;
+  name: string;
+  description: string;
+  builtin: boolean;
+  enabled: boolean;
+  permissions: string[];
+  version: number;
+}
+
+export interface AccessUser {
+  id: string;
+  kind: PrincipalKind;
+  login: string | null;
+  display_name: string;
+  enabled: boolean;
+  password_change_required: boolean | null;
+  created_at: string;
+  last_login_at: string | null;
+  version: number;
+}
+
+export type ResourceKind = 'installation' | 'mailbox' | 'personal' | 'legacy';
+
+export interface AccessAssignment {
+  id: string;
+  subject: { kind: 'principal' | 'group'; id: string; name: string };
+  role: { id: string; name: string; builtin: boolean };
+  resource: { id: string; kind: ResourceKind; name: string };
+  version: number;
+}
+
+export interface KeyCeiling {
+  permission: string;
+  resource_id: string;
+}
+
+export interface AccessKey {
+  id: string;
+  principal: { id: string; display_name: string; kind: PrincipalKind };
+  name: string;
+  note: string;
+  expires_at: string | null;
+  created_at: string;
+  last_used_at: string | null;
+  revoked_at: string | null;
+  pending_review: boolean;
+  ceiling: KeyCeiling[];
+  version: number;
+}
+
+export interface AccessUserDetail extends AccessUser {
+  memberships: Array<{ membership_id: string; group_id: string; group_name: string; version: number }>;
+  assignments: AccessAssignment[];
+  keys: AccessKey[];
+  effective: { installation: string[]; personal: string[] };
+}
+
+export interface AccessGroup {
+  id: string;
+  name: string;
+  description: string;
+  enabled: boolean;
+  member_count: number;
+  version: number;
+}
+
+export interface AccessGroupDetail extends AccessGroup {
+  members: Array<{ membership_id: string; principal_id: string; display_name: string; kind: PrincipalKind; version: number }>;
+  assignments: AccessAssignment[];
+}
+
+export interface AccessResource {
+  id: string;
+  kind: ResourceKind;
+  name: string;
+  parent_id: string | null;
+  mailbox_id: string | null;
+  principal_id: string | null;
+}
+
+export interface AccessSession {
+  session_id: string;
+  principal: { id: string; display_name: string };
+  source_kind: 'password' | 'key' | 'bootstrap';
+  created_at: string;
+  last_used_at: string;
+  expires_at: string;
+  revoked_at: string | null;
+  current: boolean;
+}
+
+export interface AccessMailbox {
+  id: string;
+  label: string;
+  enabled: boolean;
+  resource_id: string;
+  rule_count: number;
+  version: number;
+}
+
+export interface InboundRule {
+  id: string;
+  to_number: string;
+  mailbox_id: string;
+  mailbox_label: string;
+  version: number;
 }

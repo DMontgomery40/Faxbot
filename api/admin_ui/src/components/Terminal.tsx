@@ -27,10 +27,10 @@ import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import '@xterm/xterm/css/xterm.css';
+import { AdminAPIError, isNotAvailable } from '../api/client';
 import type AdminAPIClient from '../api/client';
 
 interface TerminalProps {
-  apiKey: string;
   client: AdminAPIClient;
 }
 
@@ -48,10 +48,13 @@ const terminalTheme = (mode: string) => ({
   brightCyan: '#56D4DD', brightWhite: '#FFFFFF', selectionBackground: '#3392FF44',
 });
 
-const Terminal: React.FC<TerminalProps> = ({ apiKey, client }) => {
+const Terminal: React.FC<TerminalProps> = ({ client }) => {
   const terminalRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<XTerm | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
+  // The socket that has already sent its ticket; input waits for it.
+  const authenticatedRef = useRef<WebSocket | null>(null);
+  const connectAttemptRef = useRef(0);
   const [access, setAccess] = useState<AccessState>('checking');
   const [availabilityAttempt, setAvailabilityAttempt] = useState(0);
   const [connection, setConnection] = useState<ConnectionState>('connecting');
@@ -129,8 +132,10 @@ const Terminal: React.FC<TerminalProps> = ({ apiKey, client }) => {
 
   const closeSocket = useCallback(() => {
     clearConnectionTimers();
+    connectAttemptRef.current += 1;
     const ws = wsRef.current;
     wsRef.current = null;
+    authenticatedRef.current = null;
     if (ws) {
       ws.onopen = ws.onmessage = ws.onerror = ws.onclose = null;
       ws.close();
@@ -147,7 +152,6 @@ const Terminal: React.FC<TerminalProps> = ({ apiKey, client }) => {
       if (!current) return;
       current = false;
       setAccess('error');
-      setError('Could not check terminal availability. The request timed out.');
     }, 10000);
     void client.listActions().then((result) => {
       if (!current) return;
@@ -156,38 +160,42 @@ const Terminal: React.FC<TerminalProps> = ({ apiKey, client }) => {
     }).catch((failure: unknown) => {
       if (!current) return;
       window.clearTimeout(timeout);
-      const forbidden = failure instanceof Error && /API Error: (401|403)\b/.test(failure.message);
+      const forbidden = failure instanceof AdminAPIError && (failure.status === 401 || failure.status === 403);
       setAccess(forbidden ? 'forbidden' : 'error');
-      setError(forbidden
-        ? 'Terminal access is forbidden. An authorized administrator session is required.'
-        : 'Could not check terminal availability. Check the connection and try again.');
     });
     return () => { current = false; window.clearTimeout(timeout); };
   }, [client, availabilityAttempt]);
 
-  // Connect to WebSocket
-  const connectWebSocket = useCallback(() => {
+  // Connect: mint a fresh single-use ticket, open the socket without any
+  // credential in the URL, and send the ticket as the very first message.
+  const connectWebSocket = useCallback(async () => {
     closeSocket();
+    const attempt = ++connectAttemptRef.current;
     setConnection('connecting');
     setError(null);
 
-    // Build WebSocket URL with API key in query params
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    
-    // Determine the API host - in development, the API runs on 8080
-    // In production, it's the same host as the UI
-    let apiHost = window.location.host;
-    
-    // Check if we're in development mode (common dev ports)
-    const devPorts = ['3000', '3001', '5173', '5174', '4200'];
-    const currentPort = window.location.port;
-    if (devPorts.includes(currentPort)) {
-      // In development, API runs on localhost:8080
-      apiHost = `localhost:8080`;
+    let ticket: string;
+    try {
+      ticket = (await client.createTerminalTicket()).ticket;
+    } catch (failure) {
+      if (attempt !== connectAttemptRef.current) return;
+      if (failure instanceof AdminAPIError && (failure.status === 401 || failure.status === 403)) {
+        setConnection('forbidden');
+        setError('This account is not allowed to use the terminal.');
+      } else if (isNotAvailable(failure)) {
+        setConnection('error');
+        setError('The terminal is not available on this server yet.');
+      } else {
+        setConnection('error');
+        setError('Could not start a terminal session. Try again.');
+      }
+      return;
     }
-    
-    const wsUrl = `${protocol}//${apiHost}/admin/terminal?api_key=${encodeURIComponent(apiKey)}`;
-    
+    if (attempt !== connectAttemptRef.current) return;
+
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${protocol}//${window.location.host}/admin/terminal`;
+
     let ws: WebSocket;
     try {
       ws = new WebSocket(wsUrl);
@@ -206,6 +214,9 @@ const Terminal: React.FC<TerminalProps> = ({ apiKey, client }) => {
 
     ws.onopen = () => {
       if (wsRef.current !== ws) return;
+      // Nothing may precede the ticket, including a resize from fit().
+      ws.send(JSON.stringify({ type: 'auth', ticket }));
+      authenticatedRef.current = ws;
       clearConnectionTimers();
       setConnection('connected');
       setError(null);
@@ -253,17 +264,18 @@ const Terminal: React.FC<TerminalProps> = ({ apiKey, client }) => {
       if (wsRef.current !== ws) return;
       clearConnectionTimers();
       wsRef.current = null;
+      authenticatedRef.current = null;
       if (ev.code === 1008) {
         setConnection('forbidden');
-        setError(ev.reason || 'Terminal access is forbidden. An authorized administrator session is required.');
+        setError('Terminal closed: access revoked');
       } else {
         setConnection('disconnected');
-        setError(ev.reason || (ev.code === 1000
+        setError(ev.code === 1000
           ? 'The terminal session ended.'
-          : 'The terminal connection closed. Check service availability and administrator access.'));
+          : 'The terminal connection closed. Reconnect to start a new session.');
       }
     };
-  }, [apiKey, closeSocket, clearConnectionTimers]);
+  }, [client, closeSocket, clearConnectionTimers]);
 
   // Set up WebSocket and terminal handlers
   useEffect(() => {
@@ -274,12 +286,12 @@ const Terminal: React.FC<TerminalProps> = ({ apiKey, client }) => {
       setError('The terminal display could not initialize. Reload availability to try again.');
       return;
     }
-    connectWebSocket();
+    void connectWebSocket();
 
     // Handle terminal input
     const disposable = terminal.onData((data) => {
       const current = wsRef.current;
-      if (current && current.readyState === WebSocket.OPEN) {
+      if (current && current === authenticatedRef.current && current.readyState === WebSocket.OPEN) {
         current.send(JSON.stringify({
           type: 'input',
           data: data
@@ -290,7 +302,7 @@ const Terminal: React.FC<TerminalProps> = ({ apiKey, client }) => {
     // Handle terminal resize
     const resizeDisposable = terminal.onResize((size) => {
       const current = wsRef.current;
-      if (current && current.readyState === WebSocket.OPEN) {
+      if (current && current === authenticatedRef.current && current.readyState === WebSocket.OPEN) {
         current.send(JSON.stringify({
           type: 'resize',
           cols: size.cols,
@@ -451,18 +463,15 @@ const Terminal: React.FC<TerminalProps> = ({ apiKey, client }) => {
       </Box>
 
       {access === 'disabled' && <Alert severity="info" sx={{ mb: 2, borderRadius: 2 }}>
-        <Typography fontWeight={600}>Terminal disabled</Typography>
-        Administrative execution is disabled for this installation. No terminal session was opened.
+        The terminal is turned off for this installation.
       </Alert>}
 
       {access === 'forbidden' && <Alert severity="warning" sx={{ mb: 2, borderRadius: 2 }}>
-        <Typography fontWeight={600}>Terminal access forbidden</Typography>
-        No terminal session was opened. Reload availability after administrator access is restored.
+        This account is not allowed to use the terminal.
       </Alert>}
 
       {access === 'error' && <Alert severity="warning" sx={{ mb: 2, borderRadius: 2 }}>
-        <Typography fontWeight={600}>Terminal unavailable</Typography>
-        Availability could not be checked. No terminal session was opened.
+        Could not check terminal availability. Try again.
       </Alert>}
 
       {error && (
@@ -574,7 +583,7 @@ const Terminal: React.FC<TerminalProps> = ({ apiKey, client }) => {
               }}>
                 {loading ? <CircularProgress sx={{ mb: 2 }} /> : <DisconnectedIcon sx={{ fontSize: 48, color: 'text.secondary', mb: 2 }} />}
                 <Typography variant="h6" sx={{ color: 'text.primary', mb: 2 }}>
-                  {loading ? 'Connecting to terminal…' : connection === 'forbidden' ? 'Terminal access forbidden' : connection === 'error' ? 'Terminal unavailable' : 'Terminal disconnected'}
+                  {loading ? 'Connecting to terminal…' : connection === 'forbidden' ? 'Terminal closed' : connection === 'error' ? 'Terminal unavailable' : 'Terminal disconnected'}
                 </Typography>
                 {!loading && <Button
                   variant="contained"

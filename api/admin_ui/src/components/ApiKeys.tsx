@@ -41,7 +41,7 @@ import {
   CheckCircle as SuccessIcon,
 } from '@mui/icons-material';
 import AdminAPIClient from '../api/client';
-import type { ApiKey } from '../api/types';
+import type { ApiKey, AuthMe } from '../api/types';
 import {
   ResponsiveTextField,
   ResponsiveFormSection,
@@ -49,6 +49,7 @@ import {
 
 interface ApiKeysProps {
   client: AdminAPIClient;
+  me?: AuthMe;
 }
 
 function ApiKeys({ client }: ApiKeysProps) {
