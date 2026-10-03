@@ -7,9 +7,12 @@ from (the environment for stdio, the caller's own request for HTTP and SSE).
 """
 from __future__ import annotations
 
+import asyncio
 import base64
 import os
 import pathlib
+import re
+import uuid
 from collections.abc import Callable
 from typing import Annotated, Any, Literal, Optional
 
@@ -18,7 +21,7 @@ from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import (BlobResourceContents, CallToolResult, EmbeddedResource, ResourceLink, TextContent,
                        ToolAnnotations)
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 if __package__:
     from .transport_config import APIConfiguration
@@ -29,7 +32,19 @@ SERVER_NAME = 'Faxbot MCP (Python)'
 SERVER_VERSION = '3.0.0'
 INBOUND_PDF_URI = 'faxbot://inbound/{inbound_id}/pdf'
 
+# One send_fax call sends the same fax again, with the same operation id, at most this many more times
+# after a transport failure or HTTP 502/503/504. Read at call time so tests can shorten the waits.
+SEND_RETRIES = 2
+SEND_RETRY_BACKOFF = 0.5  # seconds before the first retry; each later retry waits twice as long
+_RETRYABLE_STATUSES = frozenset({502, 503, 504})
+# The request may or may not have reached Faxbot.
+_TRANSPORT_ERRORS = (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError)
+_OPERATION_ID = re.compile(r'[\x21-\x7e]{1,128}')
+
 Resolver = Callable[[Context], APIConfiguration]
+OperationId = Annotated[Optional[str], Field(description=(
+    'Leave empty for a new fax. To finish a send_fax call that failed without a confirmation, pass the '
+    'operationId from its error with the same number and document.'))]
 
 
 class FaxJob(BaseModel):
@@ -41,6 +56,10 @@ class FaxJob(BaseModel):
     backend: Optional[str] = None
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
+
+
+class SentFax(FaxJob):
+    operationId: str  # noqa: N815 - the id that finishes this same fax if a later call repeats it
 
 
 class InboundFax(BaseModel):
@@ -82,21 +101,55 @@ def inbound_items(data: Any) -> list[dict[str, Any]]:
     return [item for item in items if isinstance(item, dict)]
 
 
+def _api_error(response: httpx.Response) -> str:
+    try:
+        detail = response.json().get('detail')
+    except Exception:
+        detail = response.text
+    return f'Fax API error {response.status_code}: {detail or response.reason_phrase}'
+
+
 async def _call(configuration: APIConfiguration, method: str, path: str, *, expect: int,
                 timeout: float = 15.0, **kwargs) -> httpx.Response:
     headers = {'X-API-Key': configuration.api_key} if configuration.api_key else {}
     async with httpx.AsyncClient(timeout=timeout) as client:
         response = await client.request(method, f'{configuration.api_base_url}{path}', headers=headers, **kwargs)
     if response.status_code != expect:
-        try:
-            detail = response.json().get('detail')
-        except Exception:
-            detail = response.text
-        raise ToolError(f'Fax API error {response.status_code}: {detail or response.reason_phrase}')
+        raise ToolError(_api_error(response))
     return response
 
 
-async def _submit(configuration: APIConfiguration, to: str, name: str, data: bytes, file_type: Optional[str]):
+def _unconfirmed(operation_id: str) -> ToolError:
+    return ToolError(f'Faxbot did not confirm this fax (operationId {operation_id}). Call send_fax again with '
+                     f'operationId={operation_id} and the same number and document to finish this same fax '
+                     'without sending it twice.')
+
+
+async def _post_fax(configuration: APIConfiguration, operation_id: str, files: dict) -> httpx.Response:
+    """POST /fax with the operation id, sending the same request again after an unconfirmed attempt."""
+    headers = {'Idempotency-Key': operation_id}
+    if configuration.api_key:
+        headers['X-API-Key'] = configuration.api_key
+    retries = max(0, int(SEND_RETRIES))
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        for attempt in range(retries + 1):
+            if attempt:
+                await asyncio.sleep(SEND_RETRY_BACKOFF * 2 ** (attempt - 1))
+            try:
+                response = await client.post(f'{configuration.api_base_url}/fax', headers=headers, files=files)
+            except _TRANSPORT_ERRORS:
+                if attempt == retries:
+                    raise _unconfirmed(operation_id) from None
+                continue
+            if response.status_code not in _RETRYABLE_STATUSES:
+                return response
+            if attempt == retries:
+                raise _unconfirmed(operation_id)
+    raise AssertionError('unreachable')
+
+
+async def _submit(configuration: APIConfiguration, to: str, name: str, data: bytes, file_type: Optional[str],
+                  operation_id: Optional[str] = None):
     if not to:
         raise ToolError('Missing required parameter: to')
     file_type = file_type or {'pdf': 'pdf', 'txt': 'txt'}.get(name.rsplit('.', 1)[-1].lower())
@@ -104,13 +157,24 @@ async def _submit(configuration: APIConfiguration, to: str, name: str, data: byt
         raise ToolError("fileType must be 'pdf' or 'txt'")
     if not data:
         raise ToolError('File content is empty')
+    # A call without an operation id is a new fax; its id exists before the upload so an unconfirmed
+    # send can be finished with it.
+    if operation_id is None or operation_id == '':
+        operation_id = str(uuid.uuid4())
+    if not _OPERATION_ID.fullmatch(operation_id):
+        raise ToolError('operationId must be 1 to 128 printable ASCII characters without spaces')
     content_type = 'application/pdf' if file_type == 'pdf' else 'text/plain'
-    response = await _call(configuration, 'POST', '/fax', expect=202, timeout=60.0,
-                           files={'to': (None, to), 'file': (name, data, content_type)})
+    response = await _post_fax(configuration, operation_id,
+                               {'to': (None, to), 'file': (name, data, content_type)})
+    if response.status_code == 409:
+        raise ToolError(f'{_api_error(response)} operationId {operation_id} belongs to a different number or '
+                        'document; omit operationId to send a new fax.')
+    if response.status_code != 202:
+        raise ToolError(_api_error(response))
     job = response.json()
     text = f"Fax queued. Job ID: {job['id']}. Status: {job['status']}. Use get_fax_status to check progress."
     return CallToolResult(content=[TextContent(type='text', text=text)],
-                          structured_content={'id': job['id'], 'status': job['status']})
+                          structured_content={'id': job['id'], 'status': job['status'], 'operationId': operation_id})
 
 
 def _decode(file_content: str) -> bytes:
@@ -132,22 +196,28 @@ def register_tools(server: MCPServer, resolve: Resolver, *, local_files: bool) -
     read = ToolAnnotations(read_only_hint=True, open_world_hint=True)
     send_description = ('Send a fax to a phone number. Provide a PDF or TXT document as base64 fileContent '
                         'with fileName.')
+    once = (' Each call without operationId sends a new fax. If a call fails without confirming the fax, '
+            'its error gives an operationId; call send_fax again with it and the same number and document '
+            'to finish that same fax without sending it twice.')
 
     if local_files:
         @server.tool(name='send_fax', title='Send fax', annotations=write,
-                     description=send_description + ' Prefer filePath (a local PDF or TXT) or fileUrl.')
+                     description=send_description + ' Prefer filePath (a local PDF or TXT) or fileUrl.' + once)
         async def send_fax_local(ctx: Context, to: str, filePath: Optional[str] = None,  # noqa: N803
                                  fileUrl: Optional[str] = None, fileContent: Optional[str] = None,
                                  fileName: Optional[str] = None,
-                                 fileType: Optional[Literal['pdf', 'txt']] = None) -> Annotated[CallToolResult, FaxJob]:
+                                 fileType: Optional[Literal['pdf', 'txt']] = None,
+                                 operationId: OperationId = None) -> Annotated[CallToolResult, SentFax]:
             configuration = resolve(ctx)
+            # Every source is read once, before any upload, so a retry sends the same document.
             if filePath:
                 path = pathlib.Path(filePath).expanduser().resolve()
                 if not path.is_file():
                     raise ToolError(f'File not found: {path}')
                 if path.suffix.lower() not in {'.pdf', '.txt'}:
                     raise ToolError('filePath must point to a PDF or TXT file')
-                return await _submit(configuration, to, path.name, path.read_bytes(), path.suffix[1:].lower())
+                return await _submit(configuration, to, path.name, path.read_bytes(), path.suffix[1:].lower(),
+                                     operationId)
             if fileUrl:
                 async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
                     response = await client.get(fileUrl)
@@ -158,15 +228,16 @@ def register_tools(server: MCPServer, resolve: Resolver, *, local_files: bool) -
                     'txt' if 'text/plain' in content_type or name.lower().endswith('.txt') else None)
                 if kind is None:
                     raise ToolError('fileUrl must return a PDF or plain text document')
-                return await _submit(configuration, to, name, response.content, kind)
+                return await _submit(configuration, to, name, response.content, kind, operationId)
             if not (fileContent and fileName):
                 raise ToolError('Provide filePath, fileUrl, or fileContent with fileName')
-            return await _submit(configuration, to, fileName, _decode(fileContent), fileType)
+            return await _submit(configuration, to, fileName, _decode(fileContent), fileType, operationId)
     else:
-        @server.tool(name='send_fax', title='Send fax', annotations=write, description=send_description)
+        @server.tool(name='send_fax', title='Send fax', annotations=write, description=send_description + once)
         async def send_fax(ctx: Context, to: str, fileContent: str, fileName: str,  # noqa: N803
-                           fileType: Optional[Literal['pdf', 'txt']] = None) -> Annotated[CallToolResult, FaxJob]:
-            return await _submit(resolve(ctx), to, fileName, _decode(fileContent), fileType)
+                           fileType: Optional[Literal['pdf', 'txt']] = None,
+                           operationId: OperationId = None) -> Annotated[CallToolResult, SentFax]:
+            return await _submit(resolve(ctx), to, fileName, _decode(fileContent), fileType, operationId)
 
     @server.tool(title='Fax status', annotations=read, description='Check the status of a fax sent with send_fax.')
     async def get_fax_status(ctx: Context, jobId: str) -> Annotated[CallToolResult, FaxJob]:  # noqa: N803
