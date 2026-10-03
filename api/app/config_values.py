@@ -91,6 +91,9 @@ class ConfigurationValues(BaseModel):
     humblefax_from_number: str = Field('', validation_alias='HUMBLEFAX_FROM_NUMBER', pattern=r'^(?:\+1[2-9][0-9]{9}|1?[2-9][0-9]{9})?$')
     fax_header: str = Field('Faxbot', validation_alias='FAX_HEADER')
     fax_station_id: str = Field('+10000000000', validation_alias='FAX_LOCAL_STATION_ID')
+    # Installation country (ISO 3166 alpha-2, such as US or GB) for fax numbers
+    # entered without a country code; every stored number is E.164.
+    fax_default_country: str = Field('US', validation_alias='FAX_DEFAULT_COUNTRY')
     database_url: str = Field('sqlite:///./faxbot.db', validation_alias='DATABASE_URL', repr=False, json_schema_extra={'secret': True})
     pdf_token_ttl_minutes: int = Field(60, validation_alias='PDF_TOKEN_TTL_MINUTES', ge=1)
     enforce_public_https: bool = Field(True, validation_alias='ENFORCE_PUBLIC_HTTPS')
@@ -162,6 +165,16 @@ class ConfigurationValues(BaseModel):
     @classmethod
     def normalize_selector(cls, value):
         return value.strip().lower() if isinstance(value, str) else value
+
+    @field_validator("fax_default_country", mode="before")
+    @classmethod
+    def normalize_country(cls, value):
+        from .routing.numbers import SUPPORTED_COUNTRIES
+        if isinstance(value, str):
+            value = value.strip().upper()
+            if value not in SUPPORTED_COUNTRIES:
+                raise ValueError("unsupported country")
+        return value
 
     @classmethod
     def environment_keys(cls) -> frozenset[str]:

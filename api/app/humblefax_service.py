@@ -49,6 +49,18 @@ def humblefax_number(value: object) -> int:
     return int(digits if len(digits) == 11 else '1' + digits)
 
 
+def humblefax_destination(value: object) -> int:
+    """HumbleFax's eleven-digit integer for a canonical +1 destination; nothing else."""
+    from .routing.numbers import InvalidNumber, canonical_number
+    try:
+        number = canonical_number(value)
+    except InvalidNumber:
+        raise ValueError('HumbleFax fax number is invalid.') from None
+    if not number.startswith('+1'):
+        raise ValueError('HumbleFax fax number is invalid.')
+    return humblefax_number(number)
+
+
 def _identity(value: object) -> str:
     if isinstance(value, int) and not isinstance(value, bool) and value > 0:
         value = str(value)
@@ -129,7 +141,7 @@ class HumbleFaxFaxService:
         """Submit a prepared PDF once; an unusable reply cannot prove noncreation."""
         if not self.is_configured():
             raise ValueError('HumbleFax is not configured.')
-        recipient = humblefax_number(to_number)
+        recipient = humblefax_destination(to_number)
         if uuid is not None and (not isinstance(uuid, str) or _SUBMISSION.fullmatch(uuid) is None):
             raise ValueError('HumbleFax submission identifier is invalid.')
         # The documented coversheet default is on; Faxbot sends only the document.

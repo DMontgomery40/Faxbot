@@ -2,6 +2,7 @@ from typing import Optional, Dict, Any
 import httpx
 
 from .config import settings, reload_settings
+from .routing.numbers import canonical_number
 from .callback_locator import callback_url_with_locators
 
 
@@ -41,13 +42,8 @@ class PhaxioFaxService:
         if not self.is_configured():
             raise ValueError("Phaxio is not properly configured")
 
-        # Normalize phone number to E.164 format
-        if not to_number.startswith('+'):
-            # Remove all non-digit characters
-            clean_number = ''.join(c for c in to_number if c.isdigit())
-            # Add + if it looks like it has a country code (10+ digits)
-            if len(clean_number) >= 10:
-                to_number = f"+{clean_number}"
+        # Phaxio takes E.164, which is the accepted job's canonical form.
+        to_number = canonical_number(to_number)
         
         # Captured locators are also used to reconstruct the signed public URL.
         callback_url = None

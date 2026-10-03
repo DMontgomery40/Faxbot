@@ -10,6 +10,7 @@ from urllib.parse import urlsplit
 import sqlalchemy as sa
 
 from ..config_store import ConfigurationNotInitialized, ConfigurationStoreError
+from ..routing.numbers import number_example
 from .types import InvalidTransactionError, ResourceRef
 
 
@@ -96,7 +97,10 @@ class ConsoleContext:
                 'permissions': sorted(permissions),
                 'navigation': {'jobs': jobs, 'inbox': inbox, 'send': send},
                 'send': {'fax_disabled': values.fax_disabled,
-                         'max_file_size_mb': values.max_file_size_mb} if send else None,
+                         'max_file_size_mb': values.max_file_size_mb,
+                         'default_country': values.fax_default_country,
+                         'number_example': number_example(values.fax_default_country)['national'],
+                         } if send else None,
                 'inbound_enabled': values.inbound_enabled if inbox else None,
                 'branding': {'docs_base': self.docs_base, 'logo_path': '/admin/ui/faxbot_full_logo.png'},
                 'provider_view': {

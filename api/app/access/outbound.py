@@ -57,12 +57,25 @@ class AuthorizedOutbound:
             revision, _ = self.configuration._outbound_context(connection, row["id"])
             return revision.values.max_file_size_mb * 1024 * 1024
 
+    def replay_values(self, actor, identity):
+        """The configuration this scoped key's accepted request was resolved under.
+
+        Same authorization and visibility as ``replay_max_bytes``; None when the
+        key has no accepted request.
+        """
+        with self._transaction(actor) as (connection, now):
+            row = self._candidate(connection, actor, identity, now)
+            if row is None:
+                return None
+            revision, _ = self.configuration._outbound_context(connection, row["id"])
+            return revision.values
+
     def find_replay(self, actor, identity):
         with self._transaction(actor) as (connection, now):
             row = self._candidate(connection, actor, identity, now)
             if row is None:
                 return None
-            if row["request_fingerprint"] != identity.request_fingerprint:
+            if not identity.matches(row["request_fingerprint"]):
                 raise IdempotencyConflict()
             return row["id"]
 
@@ -71,7 +84,7 @@ class AuthorizedOutbound:
             if request_identity is not None:
                 row = self._candidate(connection, actor, request_identity, now)
                 if row is not None:
-                    if row["request_fingerprint"] != request_identity.request_fingerprint:
+                    if not request_identity.matches(row["request_fingerprint"]):
                         raise IdempotencyConflict()
                     raise IdempotentReplay(row["id"])
             profile = self.configuration._accept_outbound_on(

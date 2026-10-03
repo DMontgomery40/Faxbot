@@ -100,6 +100,13 @@ class CapturedTransport:
         tiff = root / (claim.job_id + '.tiff') if configuration.traits.get('requires_tiff') is True else None
         if any(path.is_symlink() or not path.is_file() for path in (pdf, tiff) if path is not None):
             raise PreparationFailure('artifact_unavailable')
+        from .routing.numbers import InvalidNumber, accepted_destination
+        try:
+            # Every adapter below receives this canonical number and only formats it.
+            job = {**job, 'to_number': accepted_destination(job['to_number'],
+                                                            country=values.fax_default_country)}
+        except InvalidNumber:
+            raise PreparationFailure('preparation_failed') from None
         service = None
         manifest = configuration.manifest
         if manifest is not None or pid not in {'sip', 'freeswitch'}:
@@ -136,9 +143,9 @@ class CapturedTransport:
             except ValueError:
                 raise PreparationFailure('preparation_failed') from None
         if manifest is None and pid == 'humblefax':
-            from .humblefax_service import humblefax_number
+            from .humblefax_service import humblefax_destination
             try:
-                humblefax_number(job['to_number'])
+                humblefax_destination(job['to_number'])
             except ValueError:
                 # HumbleFax sends only to US/Canadian numbers; refuse before submission.
                 raise PreparationFailure('preparation_failed') from None

@@ -2,6 +2,7 @@ from typing import Optional, Dict, Any
 import httpx
 
 from .config import settings, reload_settings
+from .routing.numbers import canonical_number
 from .callback_locator import callback_url_with_locators
 
 
@@ -35,11 +36,8 @@ class SignalWireFaxService:
         if not self.is_configured():
             raise ValueError("SignalWire is not properly configured")
 
-        # Normalize number to E.164 if possible
-        if not to_number.startswith('+'):
-            digits = ''.join(c for c in to_number if c.isdigit())
-            if len(digits) >= 10:
-                to_number = f"+{digits}"
+        # SignalWire takes E.164, which is the accepted job's canonical form.
+        to_number = canonical_number(to_number)
 
         auth = (self.project_id, self.api_token)  # HTTP Basic
 

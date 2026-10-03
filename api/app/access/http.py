@@ -267,6 +267,8 @@ class ConsoleNavigationResponse(AuthOutput):
 class ConsoleSendResponse(AuthOutput):
     fax_disabled: bool
     max_file_size_mb: int
+    default_country: str
+    number_example: str
 
 
 class ConsoleBrandingResponse(AuthOutput):
