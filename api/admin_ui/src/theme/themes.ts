@@ -124,6 +124,11 @@ const getComponentOverrides = (isDark: boolean): ThemeOptions['components'] => (
       style: ({ theme }) => ({
         color: darken(theme.palette.success.light, 0.6)
       })
+    }, {
+      props: { variant: 'outlined', color: 'warning' },
+      style: ({ theme }) => ({
+        color: darken(theme.palette.warning.light, 0.6)
+      })
     }]
   },
   MuiAlert: {

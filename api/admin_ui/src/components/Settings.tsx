@@ -361,7 +361,7 @@ function Settings({ client }: SettingsProps) {
               showCurrentValue={!pendingRestart}
             />
             <ResponsiveSettingItem
-              icon={getStatusIcon(!settings.backend.disabled)}
+              icon={<CloudIcon />}
               label="Outbound Provider"
               value={loadedOutbound.toUpperCase()}
               editValue={form.outbound_backend ?? ''}
@@ -1145,7 +1145,7 @@ function Settings({ client }: SettingsProps) {
                   value={String(form.max_file_size_mb ?? settings.limits?.max_file_size_mb ?? 10)}
                   onChange={(value) => handleForm('max_file_size_mb', value === '' ? '' : Number(value))}
                   placeholder="10"
-                  helperText="Default 10 MB aligns with provider limits. Increase only if your environment and provider allow it."
+                  helperText="Installation limit for raw document uploads in MB. Provider upload limits are separate."
                   type="number"
                   icon={<CloudIcon />}
                 />
