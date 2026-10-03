@@ -63,6 +63,7 @@ from .outbound_polling import OutboundPoller
 from .provider_execution import UnsupportedProviderExecutionError
 from .outbound_transport import CapturedTransport, normalize_status
 from .outbound_callbacks import CapturedCallbacks, CallbackRejected
+from .request_identity import RequestIdentity, IdempotentReplay, IdempotencyConflict, fingerprint_upload
 
 
 @asynccontextmanager
@@ -1985,10 +1986,37 @@ def persist_settings(payload: PersistSettingsIn):
     return {"ok": True, "path": str(target)}
 
 @app.post("/fax", response_model=FaxJobOut, status_code=202, dependencies=[Depends(require_fax_send)])
-async def send_fax(request: Request, to: str = Form(...), file: UploadFile = File(...), queue_only: bool = Form(False)):
+async def send_fax(request: Request, to: str = Form(...), file: UploadFile = File(...),
+                   queue_only: bool = Form(False),
+                   idempotency_key: Optional[str] = Header(default=None, alias='Idempotency-Key',
+                       description='Optional key for replaying the same fax request; 1 to 128 printable ASCII characters without spaces.'),
+                   principal=Depends(require_api_key)):
+    manager = _configuration_manager()
+    request_identity = None
+    keys = request.headers.getlist('idempotency-key')
+    if keys:
+        if len(keys) != 1:
+            raise HTTPException(400, detail='Supply one Idempotency-Key header.')
+        try:
+            scope = 'key:' + str(principal['key_id']) if principal is not None else 'development'
+            validated = RequestIdentity.from_key(idempotency_key, principal_scope=scope, fingerprint='0' * 64)
+            max_bytes = await run_lifecycle_step(lambda: manager.store.outbound_replay_max_bytes(validated))
+            if max_bytes is None:
+                max_bytes = settings.max_file_size_mb * 1024 * 1024
+            fingerprint = await fingerprint_upload(file, to=to, queue_only=queue_only,
+                max_bytes=max_bytes)
+            request_identity = RequestIdentity(scope, validated.idempotency_digest, fingerprint)
+            existing = await run_lifecycle_step(lambda: manager.store.find_outbound_replay(request_identity))
+        except UploadPreparationError as error:
+            raise HTTPException(error.status_code, detail=str(error)) from None
+        except IdempotencyConflict as error:
+            raise HTTPException(409, detail=str(error)) from None
+        except ValueError as error:
+            raise HTTPException(400, detail=str(error)) from None
+        if existing is not None:
+            return await run_lifecycle_step(lambda: _accepted_job_response(existing))
     if queue_only and not settings.fax_disabled:
         raise HTTPException(409, detail="Queue-only request refused because outbound sending is now enabled. Refresh Send before submitting again.")
-    manager = _configuration_manager()
     revision = request.scope['faxbot.configuration'].active
     identity = revision.profile_id('outbound')
     if identity is None:
@@ -2025,11 +2053,17 @@ async def send_fax(request: Request, to: str = Form(...), file: UploadFile = Fil
                           delivery_state='held' if revision.values.fax_disabled else 'ready',
                           dispatch_mode='held' if revision.values.fax_disabled else 'normal',
                           delivery_version=1)
-        manager.store.accept_outbound(revision, {
+        await run_lifecycle_step(lambda: manager.store.accept_outbound(revision, {
             'id': job_id, 'to_number': to, 'file_name': prepared.original_name,
             'tiff_path': tiff_path, 'status': 'queued', 'pages': prepared.pages,
             'created_at': accepted_at, 'updated_at': accepted_at,
-        })
+        }, request_identity=request_identity))
+    except IdempotentReplay as replay:
+        prepared.cleanup()
+        return await run_lifecycle_step(lambda: _accepted_job_response(replay.job_id))
+    except IdempotencyConflict as error:
+        prepared.cleanup()
+        raise HTTPException(409, detail=str(error)) from None
     except ConfigurationCommitUncertain:
         # COMMIT can succeed after the acknowledgement is lost. Keep the document
         # and never automatically resubmit an uncertain accepted fax.
@@ -2041,6 +2075,14 @@ async def send_fax(request: Request, to: str = Form(...), file: UploadFile = Fil
     # acceptance into an unidentifiable error and invite duplicate submission.
     audit_event("job_created", job_id=job_id, backend=ob)
     return result
+
+
+def _accepted_job_response(job_id):
+    with SessionLocal() as db:
+        job = db.get(FaxJob, job_id)
+        if job is None:
+            raise HTTPException(409, detail='Accepted fax record is unavailable; reconcile before submitting another request.')
+        return _serialize_job(job)
 
 
 @app.get("/fax/{job_id}", response_model=FaxJobOut, dependencies=[Depends(require_fax_read)])

@@ -223,7 +223,25 @@ class ConfigurationStore:
         except sa.exc.SQLAlchemyError:
             raise ConfigurationStoreError('Cannot read provider profile.') from None
 
-    def accept_outbound(self, prepared_revision: ConfigurationRevision, job: dict):
+    def find_outbound_replay(self, request_identity):
+        from .request_identity import find_replay
+        with self.engine.connect() as connection:
+            return find_replay(connection, self.delivery_tables['outbound_deliveries'], request_identity)
+
+    def outbound_replay_max_bytes(self, request_identity):
+        """Use only this scoped key's authenticated accepted upload constraint."""
+        from .request_identity import find_scoped_request
+        try:
+            with self.engine.connect() as connection:
+                row = find_scoped_request(connection, self.delivery_tables['outbound_deliveries'], request_identity)
+                if row is None:
+                    return None
+                revision, _ = self._outbound_context(connection, row['id'])
+                return revision.values.max_file_size_mb * 1024 * 1024
+        except sa.exc.SQLAlchemyError:
+            raise ConfigurationStoreError('Cannot read accepted fax upload limit.') from None
+
+    def accept_outbound(self, prepared_revision: ConfigurationRevision, job: dict, *, request_identity=None):
         """Commit a prepared job and exact provider binding under the Apply lock.
 
         Preparation and validation occur before entry. A new active revision
@@ -236,6 +254,13 @@ class ConfigurationStore:
             raise ConfigurationStoreError('Invalid prepared fax job.')
         data = dict(job)
         with self._locked() as connection:
+            if request_identity is not None:
+                from .request_identity import find_replay, IdempotentReplay
+                existing = find_replay(connection, self.delivery_tables['outbound_deliveries'], request_identity)
+                if existing is not None:
+                    # Replay wins before current configuration/provider preflight.
+                    # No new job, artifact binding or history entry is created.
+                    raise IdempotentReplay(existing)
             head = self._head(connection)
             if head is None or head['active_revision_id'] != prepared_revision.id:
                 raise ConfigurationConflict('Configuration changed during fax preparation; prepare again before acceptance.')
@@ -253,6 +278,12 @@ class ConfigurationStore:
             from .outbound_store import record_acceptance
             record_acceptance(connection, self.delivery_tables, data['id'], held=active.values.fax_disabled,
                               now=data.get('created_at') or datetime.utcnow())
+            if request_identity is not None:
+                deliveries = self.delivery_tables['outbound_deliveries']
+                connection.execute(deliveries.update().where(deliveries.c.id == data['id']).values(
+                    principal_scope=request_identity.principal_scope,
+                    idempotency_digest=request_identity.idempotency_digest,
+                    request_fingerprint=request_identity.request_fingerprint))
             return profile
 
     def _outbound_context(self, connection, job_id):
