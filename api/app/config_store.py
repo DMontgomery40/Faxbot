@@ -16,6 +16,8 @@ from .config_secrets import ConfigurationCipher, ConfigurationSecretError, load_
 from .config_values import ConfigurationValues
 from .config_profiles import ConfigurationDocument, ProviderConfiguration, ProviderProfile
 from .config_lifecycle import InstallationLifecycle
+from .access.store import AccessStore
+from .access.types import AccessError
 
 
 _LOCK_ID = 0x464158434F4E46
@@ -85,6 +87,12 @@ class ConfigurationStore:
         self.job_bindings = metadata.tables['fax_job_bindings']
         self.delivery_tables = {name: metadata.tables[name] for name in
                                 ('outbound_deliveries', 'outbound_attempts', 'outbound_events')}
+        # Every canonical writer owns this invariant, including stopped startup
+        # promotion. Runtime-only optional callbacks could revive A->B->A sessions.
+        try:
+            self.access_store = AccessStore(engine)
+        except AccessError:
+            raise ConfigurationStoreError('Cannot open installation access storage.') from None
 
     @contextmanager
     def _locked(self):
@@ -130,6 +138,40 @@ class ConfigurationStore:
                         if committed:
                             raise ConfigurationCommitUncertain('Configuration connection cleanup failed after commit; reload before retrying.') from None
                         raise ConfigurationStoreError('Configuration connection cleanup failed.') from None
+
+    def _activate_bootstrap_on(self, connection, previous_key, active_key, now):
+        try:
+            version = self.access_store.lock_on(connection)
+            tables = self.access_store.tables
+            principals = tables['access_principals']
+            principal = connection.execute(sa.select(principals).where(
+                principals.c.id == 'bootstrap')).mappings().one_or_none()
+            if (principal is None or principal['kind'] != 'bootstrap'
+                    or principal['enabled'] not in (0, 1)
+                    or type(principal['version']) is not int or principal['version'] < 1
+                    or type(principal['security_version']) is not int or principal['security_version'] < 1):
+                raise ConfigurationStoreError('Invalid installation bootstrap state.')
+            if previous_key == active_key:
+                return
+            connection.execute(principals.update().where(principals.c.id == 'bootstrap').values(
+                version=principal['version'] + 1, security_version=principal['security_version'] + 1,
+                updated_at=now))
+            sessions = tables['access_sessions']
+            connection.execute(sessions.update().where(sessions.c.principal_id == 'bootstrap',
+                sessions.c.revoked_at.is_(None)).values(revoked_at=now))
+            state = tables['access_state']
+            connection.execute(state.update().where(state.c.id == 'state').values(
+                policy_version=version + 1, updated_at=now))
+            # The existing free-form configuration actor label is not verified
+            # access identity. This event records the system activation itself.
+            connection.execute(tables['access_audit'].insert().values(
+                id=uuid4().hex, actor_principal_id=None, actor_key_binding_id=None,
+                actor_session_id=None, operation='configuration.bootstrap.activate',
+                target_kind='principal', target_id='bootstrap', policy_version_before=version,
+                policy_version_after=version + 1, outcome='allowed',
+                details='{"source":"canonical_configuration"}', created_at=now))
+        except AccessError:
+            raise ConfigurationStoreError('Cannot activate installation bootstrap state.') from None
 
     def _head(self, connection):
         rows = connection.execute(sa.select(self.state)).mappings().all()
@@ -324,10 +366,12 @@ class ConfigurationStore:
             cipher = self._cipher(allow_create=True)
             installation = str(uuid4())
             profiles = self._select_profiles(connection, cipher, installation, candidates)
+            now = datetime.utcnow()
+            self._activate_bootstrap_on(connection, '', values.api_key, now)
             identity = self._insert(connection, cipher, installation, values, parent=None, actor=actor,
                                     profiles=profiles, plugins=plugin_document)
             connection.execute(self.state.insert().values(id=_STATE_ID, installation_id=installation,
-                generation=1, active_revision_id=identity, pending_revision_id=None, updated_at=datetime.utcnow()))
+                generation=1, active_revision_id=identity, pending_revision_id=None, updated_at=now))
             return self._snapshot(connection, cipher, self._head(connection))
 
     def read(self):
@@ -357,12 +401,15 @@ class ConfigurationStore:
             if (values.to_environment() == current.desired.values.to_environment()
                     and profiles == current.desired.profiles and plugin_document == current.desired.plugins):
                 return current
+            now = datetime.utcnow()
+            self._activate_bootstrap_on(connection, current.active.values.api_key,
+                current.active.values.api_key if restart_required else values.api_key, now)
             identity = self._insert(connection, cipher, current.installation_id, values,
                                     parent=current.desired.id, actor=actor, profiles=profiles, plugins=plugin_document)
             connection.execute(self.state.update().where(self.state.c.id == _STATE_ID).values(
                 generation=current.generation + 1,
                 active_revision_id=current.active.id if restart_required else identity,
-                pending_revision_id=identity if restart_required else None, updated_at=datetime.utcnow()))
+                pending_revision_id=identity if restart_required else None, updated_at=now))
             return self._snapshot(connection, cipher, self._head(connection))
 
     def promote_pending(self, expected: ConfigurationSnapshot, *, lifecycle: InstallationLifecycle):
@@ -383,7 +430,9 @@ class ConfigurationStore:
             current = self._snapshot(connection, cipher, head)
             if current.pending is None:
                 return current
+            now = datetime.utcnow()
+            self._activate_bootstrap_on(connection, current.active.values.api_key, current.pending.values.api_key, now)
             connection.execute(self.state.update().where(self.state.c.id == _STATE_ID).values(
                 active_revision_id=current.pending.id, pending_revision_id=None,
-                generation=current.generation + 1, updated_at=datetime.utcnow()))
+                generation=current.generation + 1, updated_at=now))
             return self._snapshot(connection, cipher, self._head(connection))
