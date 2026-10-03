@@ -119,14 +119,13 @@ Checked items are implemented in the current source checkout. Unchecked items ar
 - [x] Recipient-approved case packets, accepted-document history, and preview through the API.
 - [x] Carrier SIP trunk presets with T.38, per-call records, and native faxes priced by the trunk carrier (proven in a loopback; live carrier call pending).
 - [x] `faxbot` command line covering the product, with stopped-server owner recovery, backup, restore, and database upgrades.
+- [x] One E.164 destination per fax, read for the installation country (UK and US), stored on the job, with versioned idempotent replays.
+- [x] No blank TXT page from a final line break; one-bit TIFF pages stay one-bit in generated PDFs.
+- [x] Stable send-operation ids in both SDKs, both MCP servers and the console, with an explicit resume path and no automatic resend.
 - [x] Source-derived reference documentation and scoped AI prose proposals, with maintained planning outside the generated tree.
 
 ### Next
 
-- [ ] Normalize destinations consistently before acceptance, fingerprinting, and routing, while preserving existing idempotent replays.
-- [ ] Remove the spurious blank TXT page caused by an ordinary terminal newline at a pagination boundary.
-- [ ] Carry stable send-operation identities through SDK, MCP, and browser retry/recovery flows.
-- [ ] Preserve one-bit TIFF images in generated PDFs and verify pixel fidelity and output size.
 
 ### Proposed enterprise foundation
 

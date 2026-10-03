@@ -21,7 +21,7 @@ Setup does not authenticate HumbleFax keys. Readiness checks local configuration
 
 ## Destinations
 
-HumbleFax sends to US and Canadian fax numbers. Faxbot accepts a North American number written as `+1` followed by 10 digits, 11 digits starting with `1`, or 10 digits. Any other destination fails before submission and HumbleFax is not contacted.
+HumbleFax sends only to US and Canadian fax numbers. Faxbot resolves every destination to E.164 first (a national number is read for the installation country), and a destination outside North America fails before submission, so HumbleFax is not contacted.
 
 ## Delivery and recovery
 

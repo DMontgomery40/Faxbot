@@ -9,6 +9,8 @@ An idle fax number can cost cents a month when it is hosted on a SIP carrier and
 
 Everyone who faxes you keeps dialing the same number. Moving a number to a new carrier uses the carrier's normal number port process.
 
+Fax numbers entered in the console are saved in E.164 for the installation country (`FAX_DEFAULT_COUNTRY`), and received faxes are stored with E.164 numbers when they can be read.
+
 ## What numbers cost
 
 These prices were advertised on 2026-10-03. Check the carrier's page and your account before you rely on them:

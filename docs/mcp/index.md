@@ -41,3 +41,5 @@ Limits and file handling
 - stdio: use `filePath` to avoid base64 limits
 - Streamable HTTP and SSE: base64 `fileContent` only; request bodies up to 16 MB. The REST API's raw file limit is 10 MB
 - Allowed types: PDF, TXT
+
+`send_fax` takes an optional `operationId` and returns it. To finish an unconfirmed send, call `send_fax` again with the same number, document and `operationId`; the server treats it as the same fax.

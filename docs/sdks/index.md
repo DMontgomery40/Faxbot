@@ -56,6 +56,10 @@ const client = new FaxbotClient('http://localhost:8080', 'YOUR_API_KEY');
   - If `API_KEY` is enabled, `X-API-Key` header is added automatically.
   - Optional: `checkHealth()` calls `/health`.
 
+## Finishing an unconfirmed send
+
+Each send has an operation id. Save it before sending; if Faxbot does not confirm the fax, call `resume_fax` (Python) or `resumeFax` (Node) with that id to finish the same fax without sending it twice. Clients never resend on their own unless you set `retries`.
+
 ## Errors
 - The SDKs raise/throw on non-2xx responses. Common cases:
   - 400: invalid phone number or parameters

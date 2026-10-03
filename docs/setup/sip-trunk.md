@@ -45,7 +45,7 @@ Faxbot has settings ready for these carriers. Each preset uses the carrier's own
 | Sinch | Username and password | Your trunk domain, such as `example.pstn.sinch.com` | T.38 is not documented by the carrier; confirm it with Sinch support and send test faxes first. Sinch asks every outgoing call for the trunk username and password; to receive, add a registered SIP endpoint with the same username and password. Sinch does not publish the addresses it sends calls from, so Faxbot does not offer IP sign-in for Sinch. |
 | AnveoDirect | Server IP address only | Your server's public IP address in the AnveoDirect portal | AnveoDirect does not support registration. T.38 is not documented on its connection page; confirm it with AnveoDirect first. |
 | Flowroute | Username and password, or server IP address | Credentials, or your eight-digit tech prefix for IP sign-in | Flowroute expects North American numbers as 1 plus ten digits; Faxbot formats them for you. |
-| Another carrier | Either | The server, port and credentials your carrier gave you | Faxbot sends numbers exactly as they were entered. |
+| Another carrier | Either | The server, port and credentials your carrier gave you | Faxbot dials numbers in E.164 with a plus sign. |
 
 Carrier pages used for the presets:
 
