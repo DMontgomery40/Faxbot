@@ -16,6 +16,8 @@ import pytest
 from app import main
 from app.ami import AMIClient
 from app import ami
+from app.config import use_configuration
+from app.config_values import ConfigurationValues
 
 
 @pytest.mark.asyncio
@@ -72,13 +74,16 @@ async def test_ami_login_reconnect_and_shutdown_use_owned_connections(monkeypatc
             peers.discard(asyncio.current_task())
 
     server = await asyncio.start_server(peer, "127.0.0.1", 0)
-    monkeypatch.setattr(main.settings, "ami_host", "127.0.0.1")
-    monkeypatch.setattr(main.settings, "ami_port", server.sockets[0].getsockname()[1])
-    monkeypatch.setattr(main.settings, "ami_username", "synthetic-runtime")
-    monkeypatch.setattr(main.settings, "ami_password", "synthetic-password")
+    values = ConfigurationValues.from_environment({
+        "ASTERISK_AMI_HOST": "127.0.0.1",
+        "ASTERISK_AMI_PORT": str(server.sockets[0].getsockname()[1]),
+        "ASTERISK_AMI_USERNAME": "synthetic-runtime",
+        "ASTERISK_AMI_PASSWORD": "synthetic-password",
+    })
     client = AMIClient()
     before = asyncio.all_tasks()
-    connecting = asyncio.create_task(client.connect())
+    with use_configuration(values):
+        connecting = asyncio.create_task(client.connect())
     try:
         try:
             await asyncio.wait_for(asyncio.shield(connecting), 2)
@@ -169,10 +174,13 @@ async def test_ami_cancel_during_connection_retry_leaves_no_task(monkeypatch):
     """Shutdown must stop retries even when no AMI peer is available."""
     with socket.socket() as unavailable:
         unavailable.bind(("127.0.0.1", 0))
-        monkeypatch.setattr(main.settings, "ami_host", "127.0.0.1")
-        monkeypatch.setattr(main.settings, "ami_port", unavailable.getsockname()[1])
+        values = ConfigurationValues.from_environment({
+            "ASTERISK_AMI_HOST": "127.0.0.1",
+            "ASTERISK_AMI_PORT": str(unavailable.getsockname()[1]),
+        })
         client = AMIClient()
-        connecting = asyncio.create_task(client.connect())
+        with use_configuration(values):
+            connecting = asyncio.create_task(client.connect())
         await asyncio.sleep(0.05)
         try:
             assert hasattr(client, "close"), "AMI has no shutdown lifecycle"
