@@ -131,7 +131,7 @@ export default function Plugins({ client, config, configLoading: activeConfigLoa
       setActiveProviders(null);
       const before = await client.getSettings();
       if (!before._meta?.desired_revision_id) {
-        throw new Error('Plugin selection is unavailable until a canonical revision loads.');
+        throw new Error('Plugin settings could not be loaded. Refresh to try again.');
       }
       const [listRes, regRes, active] = await Promise.all([
         client.listPlugins(),
@@ -143,7 +143,7 @@ export default function Plugins({ client, config, configLoading: activeConfigLoa
       if (before._meta.desired_revision_id !== after._meta?.desired_revision_id
           || before._meta.active_revision_id !== after._meta?.active_revision_id
           || before._meta.generation !== after._meta?.generation) {
-        throw new Error('Settings changed while plugins loaded. Refresh plugins to review the current selection.');
+        throw new Error('Settings changed while plugins were loading. Refresh to see the current values.');
       }
       setItems(listRes.items || []);
       setRegistry(regRes.items || []);
@@ -194,7 +194,7 @@ export default function Plugins({ client, config, configLoading: activeConfigLoa
       const role = plugin.categories.includes('storage') ? 'storage' : 'outbound';
       const cfg = await client.getPluginConfig(plugin.id, role);
       if (!cfg._meta?.desired_revision_id) {
-        throw new Error('The server did not supply a configuration revision. Reload before editing.');
+        throw new Error('Plugin settings could not be loaded. Reload to try again.');
       }
       if (loadId === configLoadId.current) {
         setConfigData(cfg);
@@ -208,15 +208,17 @@ export default function Plugins({ client, config, configLoading: activeConfigLoa
   };
 
   const saveMessage = (data: ConfigurationWriteReceipt) => data._meta.apply_state === 'pending_restart'
-    ? `${data.changed ? 'Desired plugin settings saved durably.' : 'Desired plugin settings are unchanged.'} Pending changes require every API worker to stop and the installation to restart; active settings remain in effect for those fields.`
-    : data.changed ? 'Plugin settings saved durably and active.' : 'Plugin settings are unchanged and active.';
+    ? `${data.changed ? 'Settings saved.' : 'Nothing changed.'} Restart Faxbot to apply pending changes.`
+    : data.changed ? 'Settings saved.' : 'Nothing changed.';
 
-  const mutationError = (e: any, fallback: string) => (e?.message || '').includes('409')
-    ? 'Plugin settings changed since this revision loaded. Your draft is retained. Reload explicitly to review the current desired revision before saving again.'
-    : `${configurationWriteRejected(e) ? 'Save was rejected. Your draft is retained.' : 'Save was not confirmed.'} ${e?.message || fallback} Reload to check the current configuration before saving again.`;
+  const mutationError = (e: any, conflict: string) => (e?.message || '').includes('409')
+    ? conflict
+    : configurationWriteRejected(e)
+      ? `Settings were not saved (error ${e.status}). Reload to try again.`
+      : 'Faxbot could not confirm the save. Reload to check the current values.';
 
   const handleSaveConfig = async (payload: PluginConfigurationPatch) => {
-    if (!configPlugin || !configWritable.current || actionFence.current) throw new Error('Reload a plugin before saving. Your draft is retained until Reload.');
+    if (!configPlugin || !configWritable.current || actionFence.current) throw new Error('Reload settings before saving.');
     const pluginId = configPlugin.id;
     const epoch = clientEpoch.current;
     actionFence.current = true;
@@ -232,15 +234,15 @@ export default function Plugins({ client, config, configLoading: activeConfigLoa
       if (epoch !== clientEpoch.current) return;
       configWritable.current = false;
       setSettings(null);
-      const message = mutationError(e, 'Failed to save plugin config');
+      const message = mutationError(e, 'Someone else changed these settings. Your edits are kept here; reload to see the current values.');
       setError(message);
       setConfigError(message);
       actionFence.current = false;
       setSaving(null);
       throw new Error(message);
     }
-    // The receipt confirms the mutation. Subsequent read errors must not reject
-    // onSave, which would leave the dialog reporting a failed save.
+    // The save succeeded. Later read errors must not reject onSave, which
+    // would leave the dialog reporting a failed save.
     configWritable.current = false;
     const loadId = ++configLoadId.current;
     setConfigData(null);
@@ -254,19 +256,19 @@ export default function Plugins({ client, config, configLoading: activeConfigLoa
     try {
       try {
         const desired = await client.getPluginConfig(pluginId, payload.role);
-        if (!desired._meta?.desired_revision_id) throw new Error('No canonical desired revision was returned.');
+        if (!desired._meta?.desired_revision_id) throw new Error('Plugin settings could not be loaded.');
         if (loadId === configLoadId.current) {
           setConfigData(desired);
           configWritable.current = true;
         }
       } catch {
         if (epoch !== clientEpoch.current) return;
-        if (loadId === configLoadId.current) setConfigError('Save confirmed; the plugin settings view could not be reloaded. Reload explicitly, or sign in again, before another save.');
-        setNote(`${saved} Save confirmed; the plugin settings view could not be reloaded. Reload explicitly, or sign in again, before another save.`);
+        if (loadId === configLoadId.current) setConfigError('Settings saved, but they could not be reloaded. Reload to keep editing.');
+        setNote(saved);
       }
       if (epoch !== clientEpoch.current) return;
       if (!await load()) {
-        if (epoch === clientEpoch.current) setNote(`${saved} Save confirmed; the provider list could not be reloaded. Refresh plugins explicitly, or sign in again, before another selection.`);
+        if (epoch === clientEpoch.current) setNote(saved);
       }
     } finally {
       if (epoch === clientEpoch.current) {
@@ -295,7 +297,7 @@ export default function Plugins({ client, config, configLoading: activeConfigLoa
     } catch (e: any) {
       if (epoch !== clientEpoch.current) return;
       setSettings(null);
-      setError(mutationError(e, 'Failed to save plugin config'));
+      setError(mutationError(e, 'Someone else changed these settings. Refresh to see the current values.'));
       actionFence.current = false;
       setSaving(null);
       return;
@@ -309,7 +311,7 @@ export default function Plugins({ client, config, configLoading: activeConfigLoa
     const saved = saveMessage(receipt);
     setNote(saved);
     try {
-      if (!await load() && epoch === clientEpoch.current) setNote(`${saved} Save confirmed; the provider list could not be reloaded. Refresh plugins explicitly, or sign in again, before another selection.`);
+      if (!await load() && epoch === clientEpoch.current) setNote(saved);
     } finally {
       if (epoch === clientEpoch.current) {
         actionFence.current = false;
@@ -333,6 +335,9 @@ export default function Plugins({ client, config, configLoading: activeConfigLoa
     return (registry || []).filter(r => !installed.has(r.id) && matches(r as any));
   };
   const renderedClientEpoch = clientEpoch.current;
+  const pendingCount = settings?._meta?.pending_fields?.length ?? 0;
+  const showRestartNotice = settings?._meta?.apply_state === 'pending_restart'
+    && !(note && saveReceipt?._meta.apply_state === 'pending_restart');
 
   return (
     <Box sx={{ p: { xs: 2, sm: 0 } }}>
@@ -341,8 +346,13 @@ export default function Plugins({ client, config, configLoading: activeConfigLoa
           Plugins
         </Typography>
         <Typography variant="body2" color="text.secondary">
-          Manage the desired provider selection and settings. Changes save durably in the installation configuration database.
+          Choose fax and storage providers and manage their settings.
         </Typography>
+        {activeProviders && (
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+            In use: {activeProviders.outbound} for outbound faxes, {activeProviders.storage} for storage.
+          </Typography>
+        )}
       </Box>
 
       <Stack spacing={3}>
@@ -365,17 +375,13 @@ export default function Plugins({ client, config, configLoading: activeConfigLoa
           />
         </Paper>
 
-        <Alert severity={settings?._meta?.apply_state === 'pending_restart' ? 'warning' : 'info'} sx={{ borderRadius: 2 }}>
-          {settings?._meta?.apply_state === 'pending_restart'
-            ? 'A desired revision is pending restart. Active behavior continues until every worker stops and the installation starts again.'
-            : 'Hot changes activate immediately. Changes that replace runtime resources remain pending until a full installation restart.'}
-          {activeProviders && <Typography variant="body2" sx={{ mt: 1 }}>
-            Active outbound setting: {activeProviders.outbound}. Active storage setting: {activeProviders.storage}.
-          </Typography>}
-          {settings?._meta && <Typography variant="caption" display="block" sx={{ mt: 1 }}>
-            Desired revision: {settings._meta.desired_revision_id}. Active revision: {settings._meta.active_revision_id}.
-          </Typography>}
-        </Alert>
+        {showRestartNotice && (
+          <Alert severity="warning" sx={{ borderRadius: 2 }}>
+            {pendingCount > 0
+              ? `Restart Faxbot to apply ${pendingCount} pending ${pendingCount === 1 ? 'change' : 'changes'}.`
+              : 'Restart Faxbot to apply pending changes.'}
+          </Alert>
+        )}
 
         <Box><Button onClick={load} disabled={loading || saving !== null}>Refresh plugins</Button></Box>
         
@@ -383,9 +389,6 @@ export default function Plugins({ client, config, configLoading: activeConfigLoa
           <Fade in>
             <Alert severity={saveReceipt?._meta.apply_state === 'pending_restart' ? 'warning' : 'success'} onClose={() => setNote('')} sx={{ borderRadius: 2 }}>
               {note}
-              {saveReceipt && <Typography variant="caption" display="block" sx={{ mt: 1 }}>
-                Confirmed desired revision: {saveReceipt._meta.desired_revision_id}. Active revision: {saveReceipt._meta.active_revision_id}. Generation: {saveReceipt._meta.generation}.
-              </Typography>}
             </Alert>
           </Fade>
         )}
@@ -441,7 +444,7 @@ export default function Plugins({ client, config, configLoading: activeConfigLoa
             {/* HTTP Manifest Tester */}
             <ResponsiveFormSection
               title="HTTP Manifest Tester (Preview)"
-              subtitle="Validate the draft without sending. Installing saves the provider manifest and does not activate it."
+              subtitle="Check a provider manifest without sending; installing adds the provider but does not select it."
               icon={<ScienceIcon />}
             >
               <Box>
@@ -519,17 +522,13 @@ export default function Plugins({ client, config, configLoading: activeConfigLoa
                     </Stack>
 
                     <Alert severity="info">
-                      To test a fax, install and configure the provider, select it as active outbound in Settings,
-                      then open Send to upload a document and create a tracked fax. Send uses the active provider,
-                      not this draft preview.
-                      <Typography variant="body2" sx={{ mt: 1 }}>
-                        {activeConfigLoading ? 'Checking the active delivery mode…'
-                          : activeConfigError || !config || typeof config.fax_disabled !== 'boolean'
-                            ? 'Active delivery mode could not be loaded. Open Send to refresh it; submission stays unavailable until active settings load.'
-                            : config.fax_disabled
-                              ? 'Current active mode permanently holds new test faxes without transmission. Enabling sending later does not release held jobs.'
-                              : 'Current active mode permits real fax transmission through the selected active outbound provider.'}
-                      </Typography>
+                      To send a test fax, install the provider, select it for outbound faxes, then open Send.{' '}
+                      {activeConfigLoading ? 'Checking whether sending is on…'
+                        : activeConfigError || !config || typeof config.fax_disabled !== 'boolean'
+                          ? 'Sending status is unavailable; open Send to check it.'
+                          : config.fax_disabled
+                            ? 'Sending is off, so test faxes are held and never transmitted.'
+                            : 'Sending is on, so faxes go out through the selected provider.'}
                     </Alert>
                     
                     {manifestResult && (
@@ -555,7 +554,7 @@ export default function Plugins({ client, config, configLoading: activeConfigLoa
             {/* Bulk Import Providers */}
             <ResponsiveFormSection
               title="Bulk Import Providers (Preview)"
-              subtitle="Paste either a JSON array of manifests or scraped Markdown containing JSON code blocks. We'll import valid manifests and ignore the rest."
+              subtitle="Paste a JSON array of manifests or Markdown with JSON code blocks; invalid entries are skipped."
               icon={<UploadIcon />}
             >
               <Box>
@@ -749,13 +748,13 @@ function Section({
                     </Box>
                     <Chip 
                       size="small" 
-                      label={p.enabled ? 'Desired selection' : 'Not selected'}
+                      label={p.enabled ? 'Selected' : 'Not selected'}
                       color={p.enabled ? 'success' : 'default'}
                       sx={{ borderRadius: 1 }}
                     />
                   </Box>
 
-                  {activeProvider === p.id && <Chip size="small" label="Active configuration" variant="outlined" sx={{ mb: 1 }} />}
+                  {activeProvider === p.id && <Chip size="small" label="In use" variant="outlined" sx={{ mb: 1 }} />}
                   
                   <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
                     {desc || 'No description available.'}
@@ -790,7 +789,7 @@ function Section({
                 <CardActions sx={{ p: 2, pt: 0 }}>
                   <Stack direction="row" spacing={1} width="100%">
                     {onConfigure && (
-                      <Tooltip title="Edit desired settings for this plugin">
+                      <Tooltip title="Edit settings for this plugin">
                         <Button 
                           size="small" 
                           disabled={disabled}
@@ -802,7 +801,7 @@ function Section({
                       </Tooltip>
                     )}
                     {onActivate ? (
-                      <Tooltip title="Select this outbound provider in the desired revision">
+                      <Tooltip title="Use this provider for outbound faxes">
                         <span style={{ marginLeft: 'auto' }}>
                           <Button 
                             size="small" 

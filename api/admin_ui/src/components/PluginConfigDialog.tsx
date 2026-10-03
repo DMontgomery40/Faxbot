@@ -64,7 +64,7 @@ export default function PluginConfigDialog({ open, plugin, initialConfig, loadin
       return (
         <Box>
           <Alert severity="info" sx={{ mb: 2 }}>
-            Configure API credentials in Settings → Backend: Phaxio. This form updates the same desired revision and preserves fields you leave unchanged.
+            Set your Phaxio API key and secret in Settings → Backend: Phaxio.
           </Alert>
           <TextField
             label="Outbound Callback URL Override"
@@ -74,7 +74,7 @@ export default function PluginConfigDialog({ open, plugin, initialConfig, loadin
             onChange={(e) => setConfig({ ...config, callback_url: e.target.value })}
             margin="normal"
           />
-          {help('Leave empty to use /phaxio-callback under the Public API URL captured when a fax is accepted. A value overrides that URL for newly accepted faxes.')}
+          {help('Leave empty to use /phaxio-callback on your public API URL.')}
           <TextField
             label="Callback Token"
             type="password"
@@ -83,13 +83,13 @@ export default function PluginConfigDialog({ open, plugin, initialConfig, loadin
             value={config.callback_token || ''}
             onChange={(e) => setConfig({ ...config, callback_token: e.target.value })}
             margin="normal"
-            helperText="Separate Callback Token from the Phaxio console, required for authenticated outbound callbacks. Leave unchanged to preserve it."
+            helperText="Find this in the Phaxio console; it is required for authenticated callbacks."
           />
           <FormControlLabel
             control={<Checkbox checked={!!config.verify_signature} onChange={(e) => setConfig({ ...config, verify_signature: e.target.checked })} />}
             label="Enable authenticated outbound callbacks"
           />
-          {help('For newly accepted faxes, disabling this rejects callback updates. Faxbot continues polling status with each fax’s original account.')}
+          {help('When off, Faxbot ignores Phaxio callbacks and checks fax status by polling instead.')}
         </Box>
       );
     }
@@ -98,7 +98,7 @@ export default function PluginConfigDialog({ open, plugin, initialConfig, loadin
       return (
         <Box>
           <Alert severity="info" sx={{ mb: 2 }}>
-            Configure API credentials in Settings → Backend: Sinch. This form updates the same desired revision and preserves fields you leave unchanged.
+            Set your Sinch API credentials in Settings → Backend: Sinch.
           </Alert>
           <TextField
             label="Project ID"
@@ -116,7 +116,7 @@ export default function PluginConfigDialog({ open, plugin, initialConfig, loadin
       return (
         <Box>
           <Alert severity="info">
-            Configure AMI host/port/credentials and Station ID in Settings → Backend: SIP/Asterisk. No additional non‑secret plugin settings are required here.
+            Set the Asterisk connection and Station ID in Settings → Backend: SIP/Asterisk.
           </Alert>
         </Box>
       );
@@ -165,7 +165,7 @@ export default function PluginConfigDialog({ open, plugin, initialConfig, loadin
             onChange={(e) => setConfig({ ...config, kms_key_id: e.target.value })}
             margin="normal"
           />
-          {help('Existing credentials are preserved when you change these storage settings.')}
+          {help('Changing these settings keeps your saved storage credentials.')}
         </Box>
       );
     }
@@ -179,7 +179,7 @@ export default function PluginConfigDialog({ open, plugin, initialConfig, loadin
 
   const handleSave = async () => {
     if (!ready || !initialConfig) {
-      setError('Reload a canonical plugin revision before saving.');
+      setError('Reload settings before saving.');
       return;
     }
     try {
@@ -208,25 +208,18 @@ export default function PluginConfigDialog({ open, plugin, initialConfig, loadin
       <DialogContent>
         {error && error !== loadError && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
         {loadError && <Alert severity="error" sx={{ mb: 2 }}>{loadError}</Alert>}
-        {loading && <Alert severity="info" sx={{ mb: 2 }}>Loading desired plugin settings…</Alert>}
-        {initialConfig && <Alert severity={retainedDraft || initialConfig._meta.apply_state === 'pending_restart' ? 'warning' : 'info'} sx={{ mb: 2 }}>
-          {retainedDraft
-            ? 'Your draft is retained from a previous revision. Reload settings to check the current configuration before editing or saving again.'
-            : initialConfig._meta.apply_state === 'pending_restart'
-            ? 'Editing the desired revision. Active behavior continues until a full installation restart.'
-            : 'Editing the applied revision. Changes save durably; hot changes activate immediately.'}
-          <Typography variant="caption" display="block" sx={{ mt: 1 }}>
-            {retainedDraft ? 'Previous desired revision:' : 'Desired revision:'} {initialConfig._meta.desired_revision_id}.{' '}
-            {retainedDraft ? 'Previous active revision:' : 'Active revision:'} {initialConfig._meta.active_revision_id}.
-          </Typography>
-        </Alert>}
-        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-          Saving updates the desired installation configuration. Unchanged fields preserve their existing values.
-        </Typography>
+        {loading && <Alert severity="info" sx={{ mb: 2 }}>Loading settings…</Alert>}
+        {initialConfig && !loading && !loadError && (retainedDraft || initialConfig._meta.apply_state === 'pending_restart') && (
+          <Alert severity="warning" sx={{ mb: 2 }}>
+            {retainedDraft
+              ? 'Your edits are kept here; reload to see the current values.'
+              : 'Restart Faxbot to apply pending changes.'}
+          </Alert>
+        )}
         {initialConfig && <Box component="fieldset" disabled={saving || !ready} sx={{ border: 0, p: 0, m: 0 }}>
           <Box sx={{ mb: 2 }}>
             <FormControlLabel control={<Checkbox checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />} label={`Use this provider for ${initialConfig?.role}`} />
-            {help('Selecting this provider replaces the desired selection for this role. Unchecking the selected provider disables the role.')}
+            {help('Selecting this replaces the current provider for this role; clearing it turns the role off.')}
           </Box>
           {renderFields()}
         </Box>}
