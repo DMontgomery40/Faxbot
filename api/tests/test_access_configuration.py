@@ -134,3 +134,12 @@ def test_same_value_explicit_override_still_changes_provider_inheritance(field, 
     assert result.permissions == frozenset({'providers:write'})
     assert result.requires_complete_owner is False
     assert configuration_requirements(after, before).changed_fields == (field,)
+
+
+def test_installation_country_is_an_ordinary_setting():
+    before = ConfigurationValues.from_environment({})
+    after = ConfigurationValues.from_environment({'FAX_DEFAULT_COUNTRY': 'GB'})
+    result = configuration_requirements(before, after)
+    assert result.changed_fields == ('fax_default_country',)
+    assert result.permissions == frozenset({'settings:write'})
+    assert result.requires_complete_owner is False

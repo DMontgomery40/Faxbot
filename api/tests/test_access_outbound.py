@@ -13,7 +13,7 @@ from api.app.access.types import StaleCredentialError
 from api.app.config_store import ConfigurationStore, ConfigurationConflict
 from api.app.config_values import ConfigurationValues
 from api.app.config_profiles import ProviderConfiguration
-from api.app.request_identity import RequestIdentity, IdempotentReplay
+from api.app.request_identity import RequestIdentity, IdempotentReplay, IdempotencyConflict
 
 try:
     O = importlib.import_module("api.app.access.outbound")
@@ -79,9 +79,27 @@ def test_acceptance_commits_job_capture_resource_and_audit_once(aw):
     assert replay.value.job_id == "new"
     assert w.outbound.find_replay(w.actor, w.identity) == "new"
     assert w.outbound.replay_max_bytes(w.actor, w.identity) == 10 * 1024 * 1024
+    assert w.outbound.replay_values(w.actor, w.identity) == w.snapshot.active.values
 
 
-@pytest.mark.parametrize("operation", ["find_replay", "replay_max_bytes", "accept"])
+def test_replay_matches_an_earlier_fingerprint_version_but_never_stores_it(aw):
+    w = aw
+    w.outbound.accept(w.actor, w.snapshot.active, w.job, request_identity=w.identity)
+    newer = RequestIdentity(w.identity.principal_scope, w.identity.idempotency_digest, "c" * 64,
+                            (w.identity.request_fingerprint,))
+    assert w.outbound.find_replay(w.actor, newer) == "new"
+    with pytest.raises(IdempotentReplay):
+        w.outbound.accept(w.actor, w.snapshot.active, {**w.job, "id": "unused"}, request_identity=newer)
+    unrelated = RequestIdentity(w.identity.principal_scope, w.identity.idempotency_digest, "c" * 64,
+                                ("d" * 64,))
+    with pytest.raises(IdempotencyConflict):
+        w.outbound.find_replay(w.actor, unrelated)
+    with w.engine.connect() as c:
+        assert c.scalar(sa.text("SELECT request_fingerprint FROM outbound_deliveries")) == \
+            w.identity.request_fingerprint
+
+
+@pytest.mark.parametrize("operation", ["find_replay", "replay_max_bytes", "replay_values", "accept"])
 def test_replay_and_acceptance_refuse_rotated_source(aw, operation):
     w = aw
     w.outbound.accept(w.actor, w.snapshot.active, w.job, request_identity=w.identity)
@@ -109,7 +127,7 @@ def test_replay_checks_visibility_before_disclosing_fingerprint_conflict(aw):
     w.role("send-only", ["fax:send"])
     w.assignment("alice", "send-only", "personal-alice")
     wrong = RequestIdentity(w.identity.principal_scope, w.identity.idempotency_digest, "b" * 64)
-    for operation in ["find_replay", "replay_max_bytes"]:
+    for operation in ["find_replay", "replay_max_bytes", "replay_values"]:
         with pytest.raises(FaxAccessError) as error:
             getattr(w.outbound, operation)(w.actor, wrong)
         assert error.value.code == "not_found"

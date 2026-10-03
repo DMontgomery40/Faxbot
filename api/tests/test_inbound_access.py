@@ -158,3 +158,34 @@ def test_download_token_is_exact_and_expires(iw):
     iw.update('inbound_faxes', 'fax', pdf_token_expires_at=NOW - timedelta(seconds=1))
     with pytest.raises(FaxAccessError):
         iw.queries.shared_document('fax', 'token-fax')
+
+
+def test_uk_numbers_route_in_e164_including_rules_saved_before_e164(iw):
+    # A rule row saved before numbers were stored in E.164 kept the national text.
+    iw.mailbox('stoke', 'Stoke office', '01782684953')
+    def uk_fax(identity, to_number):
+        moment = NOW - timedelta(minutes=5)
+        return iw.inbound.accept(dict(id=identity, from_number='01632 960001', to_number=to_number,
+            status='received', backend='sip', pages=1, size_bytes=10, pdf_path='/synthetic/x.pdf',
+            created_at=moment, received_at=moment, updated_at=moment), now=NOW, country='GB')
+    uk_fax('e164', '+441782684953')
+    uk_fax('national', '01782 684953')
+    uk_fax('unreadable', '12')
+    assert iw.resource_of('e164')['parent_id'] == iw.resource_of('national')['parent_id'] == 'mailbox-stoke'
+    assert iw.resource_of('unreadable')['parent_id'] == 'legacy'
+    with iw.engine.connect() as c:
+        stored = dict(c.execute(sa.text("SELECT id, to_number FROM inbound_faxes WHERE id IN "
+                                        "('e164', 'national', 'unreadable')")).all())
+        senders = set(c.execute(sa.text("SELECT from_number FROM inbound_faxes WHERE id IN "
+                                        "('e164', 'national')")).scalars())
+    # Readable numbers are stored in E.164; anything else is kept exactly as received.
+    assert stored == {'e164': '+441782684953', 'national': '+441782684953', 'unreadable': '12'}
+    assert senders == {'+441632960001'}
+
+
+def test_us_rules_still_route_and_digit_matching_remains_for_older_rows(iw):
+    # The default US installation keeps routing the numbers it routed before.
+    iw.fax('plain', '5550100001')
+    iw.fax('formatted', '+1 (555) 010-0002')
+    assert iw.resource_of('plain')['parent_id'] == 'mailbox-front'
+    assert iw.resource_of('formatted')['parent_id'] == 'mailbox-billing'

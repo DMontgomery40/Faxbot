@@ -20,6 +20,11 @@ class ConfigurationValueError(ValueError):
         super().__init__("Invalid configuration fields: " + fields)
 
 
+# Fax numbers in settings are saved in E.164; national input uses the country.
+_NUMBER_FIELDS = frozenset({"direct_fax_number", "sip_trunk_caller_id", "sip_trunk_dids",
+                            "signalwire_fax_from_e164"})
+
+
 class ConfigurationValues(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid", hide_input_in_errors=True, validate_default=True)
 
@@ -245,8 +250,26 @@ class ConfigurationValues(BaseModel):
                 raise ConfigurationValueError([{"field": key, "reason": "masked_secret"}])
             if not isinstance(value, (str, int, bool)):
                 raise ConfigurationValueError([{"field": key, "reason": "invalid_type"}])
+            if isinstance(value, str) and name in _NUMBER_FIELDS:
+                value = self._saved_number(name, value, changes)
             environment[key] = ("true" if value else "false") if isinstance(value, bool) else str(value)
         return type(self).from_environment(environment)
+
+    def _saved_number(self, name, value, changes):
+        """Save numbers entered nationally for the installation country in E.164.
+
+        Unreadable input is kept as typed so the field's own validation refuses
+        it with its usual message.
+        """
+        from .routing.numbers import SUPPORTED_COUNTRIES, stored_number
+        country = changes.get("fax_default_country") or self.fax_default_country
+        country = country.strip().upper() if isinstance(country, str) else ""
+        if country not in SUPPORTED_COUNTRIES:
+            return value
+        if name == "sip_trunk_dids":
+            parts = [part.strip() for part in value.split(",") if part.strip()]
+            return ",".join(stored_number(part, country=country) for part in parts)
+        return stored_number(value, country=country) if value.strip() else value
 
     def validate_provider_selection(self, registry: Mapping[str, object]) -> None:
         """Require explicit selections in the caller's validated provider registry."""

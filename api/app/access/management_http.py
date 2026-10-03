@@ -12,7 +12,7 @@ by one standalone mutation and disclosed once in that response.
 from datetime import datetime, timezone
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, Query, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import Field
@@ -586,11 +586,22 @@ async def list_inbound_rules(request: Request, cursor: Cursor = None, limit: Lim
     return await _read(lambda: service.reads.inbound_rules(identity.actor, cursor=cursor, limit=limit))
 
 
+def _fax_number(value, request):
+    """A rule's number in E.164; national input is read for the installation country."""
+    from ..routing.numbers import InvalidNumber, normalize_number
+    country = request.scope['faxbot.configuration'].active.values.fax_default_country
+    try:
+        return normalize_number(value, country=country)
+    except InvalidNumber as error:
+        raise HTTPException(400, detail=str(error)) from None
+
+
 @router.post('/inbound-rules', summary='Route a fax number to a mailbox')
 async def create_inbound_rule(body: RuleCreate, request: Request, identity=Depends(require_identity)):
     service, actor = runtime(request), identity.actor
+    number = _fax_number(body.to_number, request)
     return await _mutate(lambda: service.mutations.create_inbound_rule(actor,
-        InboundRuleValues(body.to_number, body.mailbox_id),
+        InboundRuleValues(number, body.mailbox_id),
         expected_policy_version=body.expected_policy_version, now=utcnow()),
         lambda receipt: service.reads.inbound_rule(actor, receipt.target.id), 'rule')
 
@@ -598,9 +609,10 @@ async def create_inbound_rule(body: RuleCreate, request: Request, identity=Depen
 @router.patch('/inbound-rules/{rule_id}', summary='Change an inbound routing rule')
 async def update_inbound_rule(rule_id: str, body: RulePatch, request: Request, identity=Depends(require_identity)):
     service, actor = runtime(request), identity.actor
+    number = None if body.to_number is None else _fax_number(body.to_number, request)
     def mutate():
         current = service.reads.inbound_rule(actor, rule_id)
-        values = InboundRuleValues(body.to_number if body.to_number is not None else current['to_number'],
+        values = InboundRuleValues(number if number is not None else current['to_number'],
                                    body.mailbox_id if body.mailbox_id is not None else current['mailbox_id'])
         return service.mutations.update_inbound_rule(actor, VersionedEntity(rule_id, body.version), values,
             expected_policy_version=body.expected_policy_version, now=utcnow())

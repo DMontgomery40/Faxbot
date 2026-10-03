@@ -21,7 +21,6 @@ USER_AGENT = ('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
               '(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 Faxbot')
 _CREATE_TIMEOUT = httpx.Timeout(60.0, connect=10.0)
 _STATUS_TIMEOUT = httpx.Timeout(15.0, connect=10.0)
-_NANP = re.compile(r'1?[2-9][0-9]{9}', re.ASCII)
 _IDENTITY = re.compile(r'[A-Za-z0-9_-]{1,45}', re.ASCII)
 _SUBMISSION = re.compile(r'[A-Za-z0-9_-]{1,100}', re.ASCII)
 # GetSentFax documents these summary values. Partial delivery is not success.
@@ -40,17 +39,26 @@ class HumbleFaxCredentialsError(RuntimeError):
 
 
 def humblefax_number(value: object) -> int:
-    """Return the 11-digit integer HumbleFax accepts for a US or Canadian number."""
+    """The integer HumbleFax uses for a US or Canadian number, such as 16462254444.
+
+    HumbleFax serves only US and Canadian (+1) numbers, and its API examples send
+    them as 1 plus ten digits. A saved account number without a country code is
+    read as a +1 number for that reason; any other country is refused.
+    """
+    from .routing.numbers import InvalidNumber, normalize_number
     if not isinstance(value, str):
         raise ValueError('HumbleFax fax number is invalid.')
-    digits = value[1:] if value.startswith('+') else value
-    if _NANP.fullmatch(digits) is None or (value.startswith('+') and len(digits) != 11):
+    try:
+        canonical = normalize_number(value, country='US')
+    except InvalidNumber:
+        raise ValueError('HumbleFax fax number is invalid.') from None
+    if not canonical.startswith('+1'):
         raise ValueError('HumbleFax fax number is invalid.')
-    return int(digits if len(digits) == 11 else '1' + digits)
+    return int(canonical[1:])
 
 
 def humblefax_destination(value: object) -> int:
-    """HumbleFax's eleven-digit integer for a canonical +1 destination; nothing else."""
+    """HumbleFax's integer for a canonical +1 destination; other countries are refused."""
     from .routing.numbers import InvalidNumber, canonical_number
     try:
         number = canonical_number(value)

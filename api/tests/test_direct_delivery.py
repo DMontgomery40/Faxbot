@@ -331,3 +331,23 @@ def test_direct_administration_requires_settings_permissions(pair):
                                ('POST', '/direct/peers/x/confirm', {'code': '12345678'}),
                                ('POST', '/direct/peers/x/revoke', None)]:
         assert client.request(method, path, json=body, headers=sender).status_code == 403, (method, path)
+
+
+def test_uk_installation_card_and_partner_lookup_use_e164(b_client, tmp_path):
+    # The UK installation entered its fax number nationally; its card carries E.164.
+    from api.app.schema import create_database_engine
+    engine = create_database_engine('sqlite:///' + str(tmp_path / 'uk.db'))
+    upgrade_schema(engine)
+    values = ConfigurationValues.from_environment({
+        'FAX_DEFAULT_COUNTRY': 'GB', 'PUBLIC_API_URL': 'https://uk.example', 'DIRECT_DELIVERY_ENABLED': 'true',
+        'DIRECT_ORGANIZATION': 'Stoke Clinic'}).with_patch({'direct_fax_number': '01782 684953'})
+    assert values.direct_fax_number == '+441782684953'
+    uk = DirectService(engine, values=lambda: values, environment={'FAXBOT_DIRECT_KEY_PATH': str(tmp_path / 'uk.key')})
+    uk_card = uk.own_card()
+    assert uk_card['fax_number'] == '+441782684953'
+    # The partner installation enrolls that card and finds it by the canonical number.
+    enrolled = b_client.post('/direct/peers', headers=ADMIN, json={'card': uk_card})
+    assert enrolled.status_code == 201, enrolled.text
+    view = b_client.get('/routing/destinations/+44 1782 684953', headers=ADMIN)
+    assert view.status_code == 200, view.text
+    assert view.json()['number'] == '+441782684953'

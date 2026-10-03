@@ -20,7 +20,7 @@ _CANONICAL = re.compile(r'\+[1-9][0-9]{1,14}', re.ASCII)
 
 
 class InvalidNumber(ValueError):
-    def __init__(self, message='Enter a fax number with its country code, such as +1 555 010 0001.'):
+    def __init__(self, message='Enter a complete fax number, or one starting with + and its country code.'):
         super().__init__(message)
 
 

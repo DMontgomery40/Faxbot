@@ -33,9 +33,10 @@ def _ledger(request):
         raise HTTPException(503, detail='Case records are unavailable.') from None
 
 
-def _inputs(case_id, to):
+def _inputs(case_id, to, request):
+    country = request.scope['faxbot.configuration'].active.values.fax_default_country
     try:
-        return check_case_id(case_id), normalize_number(to)
+        return check_case_id(case_id), normalize_number(to, country=country)
     except (CaseInputError, InvalidNumber) as error:
         raise HTTPException(400, detail=str(error)) from None
 
@@ -48,7 +49,7 @@ def _entry_view(entry):
 
 @router.get('/{case_id}/documents', dependencies=[Depends(require_permission('settings:read'))])
 async def case_documents(case_id: str, request: Request, to: str = Query(...)):
-    case_id, recipient = _inputs(case_id, to)
+    case_id, recipient = _inputs(case_id, to, request)
     ledger = _ledger(request)
     try:
         entries = await run_lifecycle_step(lambda: ledger.entries(case_id, recipient))
@@ -84,7 +85,7 @@ async def send_case_packet(case_id: str, request: Request, to: str = Form(...),
                            documents: list[UploadFile] = File(...), titles: list[str] = Form(default=[]),
                            preview: bool = Form(False), identity=Depends(require_permission('fax:send', resource='personal'))):
     from ..access.http import runtime as access_runtime
-    case_id, recipient = _inputs(case_id, to)
+    case_id, recipient = _inputs(case_id, to, request)
     if not 0 < len(documents) <= MAX_DOCUMENTS:
         raise HTTPException(400, detail=f'Send between 1 and {MAX_DOCUMENTS} documents.')
     revision = request.scope['faxbot.configuration'].active

@@ -12,7 +12,7 @@ import sqlalchemy as sa
 
 from .costs import RateCard, attempt_cost, billed_seconds, estimate_cost
 from .database import DeliveryStoreError, read_connection, reflect, utcnow, write_transaction
-from .numbers import InvalidNumber, normalize_number
+from .numbers import DEFAULT_COUNTRY, InvalidNumber, normalize_number
 from .policy import REASONS, RouteStats
 
 
@@ -29,10 +29,10 @@ class RoutingInputError(ValueError):
     """Plain-sentence validation failure for an operator."""
 
 
-def destination_key(value):
+def destination_key(value, country=DEFAULT_COUNTRY):
     """Normalized E.164 where possible; otherwise a bounded literal key."""
     try:
-        return normalize_number(value)
+        return normalize_number(value, country=country)
     except InvalidNumber:
         text = (value or '').strip() if isinstance(value, str) else ''
         return text[:32] or 'unknown'

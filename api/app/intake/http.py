@@ -23,8 +23,9 @@ def _background(app):
     engine, runtime = installation_engine(app)
     if engine is None:
         return []
-    store = IntakeStore(engine, ConnectorSecrets(runtime.manager.store))
     values = _active_values(runtime)
+    store = IntakeStore(engine, ConnectorSecrets(runtime.manager.store),
+                        country=lambda: values().fax_default_country)
     worker = IntakeWorker(store, values=values)
 
     def sync_settings():
@@ -44,7 +45,9 @@ def _store(request):
     if engine is None:
         raise HTTPException(503, detail='Installation configuration is not ready.')
     try:
-        return IntakeStore(engine, ConnectorSecrets(runtime.manager.store))
+        values = _active_values(runtime)
+        return IntakeStore(engine, ConnectorSecrets(runtime.manager.store),
+                           country=lambda: values().fax_default_country)
     except DeliveryStoreError:
         raise HTTPException(503, detail='Intake storage is unavailable.') from None
 

@@ -2582,7 +2582,7 @@ def _accept_inbound(values: dict) -> None:
     service = getattr(app.state, "access_runtime", None)
     if service is None:
         raise AccessUnavailableError()
-    private_operation(service.inbound.accept)(values)
+    private_operation(service.inbound.accept)(values, country=settings.fax_default_country)
 
 
 def _forget_inbound_event(event_id: str) -> None:
@@ -2623,7 +2623,8 @@ async def list_inbound(
     if not settings.inbound_enabled:
         raise HTTPException(404, detail="Inbound not enabled")
     rows = await run_lifecycle_step(private_operation(lambda: access_runtime(request).inbound_queries.page(
-        identity.actor, to_number=to_number, status=status, mailbox=mailbox)))
+        identity.actor, to_number=to_number, status=status, mailbox=mailbox,
+        country=settings.fax_default_country)))
     _enforce_rate_limit({'key_id': identity.actor.replay_scope}, "/inbound", settings.inbound_list_rpm)
     return [InboundFaxOut(**row) for row in rows]
 
