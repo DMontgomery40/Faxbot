@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import {
   Box,
   Card,
@@ -52,6 +52,7 @@ interface WizardConfig {
 }
 
 function SetupWizard({ client, onDone, docsBase }: SetupWizardProps) {
+  const fieldId = useId();
   const [activeStep, setActiveStep] = useState(0);
   const [config, setConfig] = useState<WizardConfig>({
     backend: 'phaxio',
@@ -271,8 +272,8 @@ function SetupWizard({ client, onDone, docsBase }: SetupWizardProps) {
             <Typography variant="h6" gutterBottom>Choose Outbound and Inbound Providers</Typography>
             
             <FormControl fullWidth sx={{ mt: 2 }}>
-              <InputLabel>Outbound Provider</InputLabel>
-              <Select value={config.outbound_backend || config.backend} onChange={(e)=> handleConfigChange('outbound_backend', e.target.value)} label="Outbound Provider">
+              <InputLabel id={`${fieldId}-outbound-label`}>Outbound Provider</InputLabel>
+              <Select id={`${fieldId}-outbound`} labelId={`${fieldId}-outbound-label`} value={config.outbound_backend || config.backend} onChange={(e)=> handleConfigChange('outbound_backend', e.target.value)} label="Outbound Provider">
                 <MenuItem value="phaxio">Phaxio (Cloud - Recommended)</MenuItem>
                 <MenuItem value="sinch">Sinch Fax API v3 (Cloud)</MenuItem>
                 <MenuItem value="signalwire">SignalWire (Compatibility API)</MenuItem>
@@ -283,8 +284,8 @@ function SetupWizard({ client, onDone, docsBase }: SetupWizardProps) {
             </FormControl>
 
             <FormControl fullWidth sx={{ mt: 2 }}>
-              <InputLabel>Inbound Provider</InputLabel>
-              <Select value={config.inbound_backend ?? ''} onChange={(e)=> handleConfigChange('inbound_backend', e.target.value)} label="Inbound Provider">
+              <InputLabel id={`${fieldId}-inbound-label`} shrink>Inbound Provider</InputLabel>
+              <Select id={`${fieldId}-inbound`} labelId={`${fieldId}-inbound-label`} displayEmpty value={config.inbound_backend ?? ''} onChange={(e)=> handleConfigChange('inbound_backend', e.target.value)} label="Inbound Provider">
                 <MenuItem value="">Same as outbound (recommended)</MenuItem>
                 <MenuItem value="phaxio">Phaxio (Webhook)</MenuItem>
                 <MenuItem value="sinch">Sinch (Webhook)</MenuItem>
@@ -580,8 +581,10 @@ function SetupWizard({ client, onDone, docsBase }: SetupWizardProps) {
             <Grid container spacing={{ xs: 2, md: 3 }}>
               <Grid item xs={12} sm={6}>
                 <FormControl fullWidth size="small">
-                  <InputLabel>Require API Key</InputLabel>
+                  <InputLabel id={`${fieldId}-require-key-label`}>Require API Key</InputLabel>
                   <Select
+                    id={`${fieldId}-require-key`}
+                    labelId={`${fieldId}-require-key-label`}
                     value={config.require_api_key ? 'true' : 'false'}
                     onChange={(e) => handleConfigChange('require_api_key', e.target.value === 'true')}
                     label="Require API Key"
@@ -593,8 +596,10 @@ function SetupWizard({ client, onDone, docsBase }: SetupWizardProps) {
               </Grid>
               <Grid item xs={12} sm={6}>
                 <FormControl fullWidth size="small">
-                  <InputLabel>Enforce HTTPS</InputLabel>
+                  <InputLabel id={`${fieldId}-https-label`}>Enforce HTTPS</InputLabel>
                   <Select
+                    id={`${fieldId}-https`}
+                    labelId={`${fieldId}-https-label`}
                     value={config.enforce_public_https ? 'true' : 'false'}
                     onChange={(e) => handleConfigChange('enforce_public_https', e.target.value === 'true')}
                     label="Enforce HTTPS"
@@ -606,8 +611,10 @@ function SetupWizard({ client, onDone, docsBase }: SetupWizardProps) {
               </Grid>
               <Grid item xs={12} sm={6}>
                 <FormControl fullWidth size="small">
-                  <InputLabel>Enable Audit Logging</InputLabel>
+                  <InputLabel id={`${fieldId}-audit-label`}>Enable Audit Logging</InputLabel>
                   <Select
+                    id={`${fieldId}-audit`}
+                    labelId={`${fieldId}-audit-label`}
                     value={config.audit_log_enabled ? 'true' : 'false'}
                     onChange={(e) => handleConfigChange('audit_log_enabled', e.target.value === 'true')}
                     label="Enable Audit Logging"

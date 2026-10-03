@@ -338,16 +338,11 @@ function Settings({ client }: SettingsProps) {
           </ResponsiveFormSection>
 
           {/* VPN Tunnel (iOS connectivity) */}
-          <ResponsiveSettingSection
-            title="VPN Tunnel"
-            subtitle="Configure a secure tunnel for Admin Console and iOS app connectivity."
-          >
-            <TunnelSettings
-              client={client}
-              docsBase={docsBase}
-              hipaaMode={Boolean(settings.security?.enforce_https && settings.security?.require_api_key)}
-            />
-          </ResponsiveSettingSection>
+          <TunnelSettings
+            client={client}
+            docsBase={docsBase}
+            hipaaMode={Boolean(settings.security?.enforce_https && settings.security?.require_api_key)}
+          />
 
           {/* Backend-Specific Configuration */}
           {settings.backend.type === 'phaxio' && (
