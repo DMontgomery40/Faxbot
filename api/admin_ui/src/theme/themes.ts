@@ -1,4 +1,4 @@
-import { createTheme, ThemeOptions } from '@mui/material/styles';
+import { createTheme, darken, ThemeOptions } from '@mui/material/styles';
 
 // Shared typography and shape configuration
 const sharedTypography = {
@@ -118,7 +118,13 @@ const getComponentOverrides = (isDark: boolean): ThemeOptions['components'] => (
         fontWeight: 500,
         transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)'
       }
-    }
+    },
+    variants: isDark ? [] : [{
+      props: { variant: 'outlined', color: 'success' },
+      style: ({ theme }) => ({
+        color: darken(theme.palette.success.light, 0.6)
+      })
+    }]
   },
   MuiAlert: {
     styleOverrides: {
