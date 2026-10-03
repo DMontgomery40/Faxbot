@@ -52,8 +52,10 @@
 
 - [x] Preparatory canonical configuration classifier implemented and independently reviewed:18 pure internal cases. Classifies scalar plus inheritance/presence changes, secret-safe results, protected/future fields require complete Owner authority. Runtime mutation integration remains pending.
 
-- [ ] Pin catalogue/builtin role membership and resource tree rules as deterministic fixtures; fail tests for no assignment, disabled subjects, credential ceiling, mixed group/direct assignments, invisible resources and malformed ancestry.
-- [ ] Implement authoritative current-policy reads, common visibility predicate and key/principal binding without exposing password/token hashes.
+- [x] Pin catalogue/builtin role membership and resource tree rules as deterministic fixtures; fail tests for no assignment, disabled subjects, credential ceiling, mixed group/direct assignments, invisible resources and malformed ancestry.
+- [x] Implement authoritative current-policy reads, common visibility predicate and key/principal binding without exposing password/token hashes.
+- Task 2A policy/store foundation independently reviewed, including PostgreSQL ABORT transaction-boundary correction; 137 internal SQLite/PostgreSQL cases passed. Authentication proof issuance, mutations and runtime enforcement remain pending.
+
 - [ ] Implement versioned user/group/role/assignment/key mutations with explicit typed methods; define each exact signature in the worker brief before dispatch, not a generic unvalidated command dictionary.
 - [ ] Prove delegation across affected role/group assignments, revoked key rotation refusal, atomic audit and two-store last-Owner/stale-editor races on both databases.
 - [ ] Independent review and commit; primary integrates an explicit operation/resource matrix, never a generic admin fallback.
