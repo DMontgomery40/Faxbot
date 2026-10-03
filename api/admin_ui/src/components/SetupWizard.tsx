@@ -5,6 +5,7 @@ import {
   CircularProgress, Grid, Paper, Chip, Switch, FormControlLabel,
 } from '@mui/material';
 import AdminAPIClient, { configurationWriteRejected } from '../api/client';
+import { DeliveryWizardFields, deliveryEditorValues } from './delivery/DeliverySettings';
 import { docsLink } from '../docsLinks';
 import type { ConfigurationWriteResult, Settings, SettingsPatch, ValidationResult } from '../api/types';
 import SecretInput from './common/SecretInput';
@@ -80,7 +81,6 @@ function editorValues(data: Settings): WizardConfig {
     outbound_backend: data.hybrid?.outbound_override ?? '',
     inbound_backend: data.hybrid?.inbound_override ?? '',
     inbound_enabled: data.inbound.enabled,
-    require_api_key: data.security.require_api_key,
     enforce_public_https: data.security.enforce_https,
     audit_log_enabled: data.security.audit_enabled,
     public_api_url: data.security.public_api_url,
@@ -109,6 +109,7 @@ function editorValues(data: Settings): WizardConfig {
     fax_station_id: data.sip.station_id,
     fs_gateway_name: data.fs?.gateway_name ?? '',
     fs_caller_id_number: data.fs?.caller_id_number ?? '',
+    ...deliveryEditorValues(data),
   };
 }
 
@@ -139,7 +140,7 @@ function SetupWizard({ client, onDone, docsBase }: SetupWizardProps) {
   const watcherEpoch = useRef(0);
   const watcherTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const downloadTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
-  const steps = ['Choose Providers', 'Configure Credentials', 'Security Settings', 'Apply & Export'];
+  const steps = ['Choose Providers', 'Configure Credentials', 'Security Settings', 'Delivery Options', 'Apply & Export'];
   const desiredRevision = needsReload ? undefined : settings?._meta?.desired_revision_id;
   const changedFields = Object.keys(config).filter(field => config[field] !== baseline[field]);
   const ob = String(config.outbound_backend || config.backend || '');
@@ -309,10 +310,11 @@ function SetupWizard({ client, onDone, docsBase }: SetupWizardProps) {
         setNotice({ severity: 'error', text: 'A secret field contains only asterisks; enter a new value or clear it.' });
         return;
       }
-      if (['ami_port', 'pdf_token_ttl_minutes'].includes(field) &&
+      if (['ami_port', 'pdf_token_ttl_minutes', 'intake_smtp_port'].includes(field) &&
           (value === '' || !Number.isSafeInteger(value) || Number(value) < 1 ||
-            (field === 'ami_port' && Number(value) > 65535))) {
-        setNotice({ severity: 'error', text: `${field === 'ami_port' ? 'AMI Port' : 'PDF Token TTL'} must be a positive whole number${field === 'ami_port' ? ' no greater than 65535' : ''}.` });
+            (field !== 'pdf_token_ttl_minutes' && Number(value) > 65535))) {
+        const name = field === 'ami_port' ? 'AMI Port' : field === 'intake_smtp_port' ? 'Email server port' : 'PDF Token TTL';
+        setNotice({ severity: 'error', text: `${name} must be a positive whole number${field !== 'pdf_token_ttl_minutes' ? ' no greater than 65535' : ''}.` });
         return;
       }
       payload[field] = value;
@@ -558,15 +560,22 @@ function SetupWizard({ client, onDone, docsBase }: SetupWizardProps) {
 
     if (activeStep === 2) return <Box>
       <Typography variant="h6" gutterBottom>Security Settings</Typography>
+      <Alert severity="info" sx={{ mb: 2 }}>Authentication: required. Every request needs a signed-in person or an API key; manage them in Keys and Users.</Alert>
       <Grid container spacing={2}>
         {[
-          ['require_api_key', 'Require API Key'],
           ['enforce_public_https', 'Enforce Public HTTPS'],
           ['audit_log_enabled', 'Enable Audit Logging'],
         ].map(([field, label]) => <Grid item xs={12} sm={6} key={field}><FormControlLabel control={<Switch disabled={!canEdit} checked={!!config[field]} onChange={event => handleConfigChange(field, event.target.checked)} />} label={label} /></Grid>)}
         <Grid item xs={12} sm={6}><TextField fullWidth disabled={!canEdit} label="PDF Token TTL (minutes)" type="number" value={config.pdf_token_ttl_minutes ?? ''}
           onChange={event => handleConfigChange('pdf_token_ttl_minutes', event.target.value === '' ? '' : Number(event.target.value))} helperText="How long tokenized PDF URLs remain valid" /></Grid>
       </Grid>
+    </Box>;
+
+    if (activeStep === 3) return <Box>
+      <Typography variant="h6" gutterBottom>Delivery Options</Typography>
+      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>Optional. You can change these later in Settings.</Typography>
+      {settings && <DeliveryWizardFields settings={settings} config={config} baseline={baseline} onChange={handleConfigChange}
+        outbound={ob} disabled={!canEdit} />}
     </Box>;
 
     return <Box>

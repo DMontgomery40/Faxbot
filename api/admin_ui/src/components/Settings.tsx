@@ -26,12 +26,13 @@ import {
   Error as ErrorIcon,
   Settings as SettingsIcon,
 } from '@mui/icons-material';
-import AdminAPIClient, { configurationWriteRejected } from '../api/client';
+import AdminAPIClient, { configurationWriteRejected, isForbidden } from '../api/client';
 import { DEFAULT_DOCS_BASE, docsLink } from '../docsLinks';
 import type { ConfigurationWriteResult, Settings as SettingsType, SettingsPatch } from '../api/types';
 import { ResponsiveSettingItem, ResponsiveSettingSection } from './common/ResponsiveSettingItem';
 import { ResponsiveTextField, ResponsiveFormSection } from './common/ResponsiveFormFields';
 import TunnelSettings from './TunnelSettings';
+import { DeliverySettingsSections, deliveryEditorValues } from './delivery/DeliverySettings';
 
 interface SettingsProps {
   client: AdminAPIClient;
@@ -48,7 +49,6 @@ function editorValues(data: SettingsType): SettingsForm {
     backend: data.backend.type,
     outbound_backend: data.hybrid?.outbound_override ?? '',
     inbound_backend: data.hybrid?.inbound_override ?? '',
-    require_api_key: data.security.require_api_key,
     enforce_public_https: data.security.enforce_https,
     public_api_url: data.security.public_api_url,
     audit_log_enabled: data.security.audit_enabled,
@@ -124,6 +124,7 @@ function editorValues(data: SettingsType): SettingsForm {
     oauth_issuer: data.mcp?.oauth.issuer ?? '',
     oauth_audience: data.mcp?.oauth.audience ?? '',
     oauth_jwks_url: data.mcp?.oauth.jwks_url ?? '',
+    ...deliveryEditorValues(data),
   };
 }
 
@@ -219,6 +220,8 @@ function Settings({ client }: SettingsProps) {
       setNeedsReload(true);
       setError(message.includes('409')
         ? 'Someone else changed these settings. Your edits are kept here; reload to see the current values.'
+        : isForbidden(err)
+          ? 'You do not have permission to change some of these settings. Your edits are kept here; reload before trying again.'
         : configurationWriteRejected(err)
           ? `Settings were not saved (${message}). Your edits are kept here; reload before trying again.`
           : 'The save could not be confirmed. Reload to check whether your changes were saved.');
@@ -479,18 +482,11 @@ function Settings({ client }: SettingsProps) {
             icon={<SecurityIcon />}
           >
             <ResponsiveSettingItem
-              icon={settings.security.require_api_key ? <CheckCircleIcon color="success" /> : <WarningIcon color="warning" />}
-              label="API Key Required"
-              value={settings.security.require_api_key ? 'Yes' : 'No'}
-              editValue={form.require_api_key ?? settings.security.require_api_key}
-              helperText="Require clients to send an API key, created in the Keys tab, in the X-API-Key header."
-              onChange={(value) => handleForm('require_api_key', value === 'true')}
-              type="select"
-              options={[
-                { value: 'true', label: 'Yes (Required)' },
-                { value: 'false', label: 'No' }
-              ]}
-              showCurrentValue={!pendingRestart}
+              icon={<CheckCircleIcon color="success" />}
+              label="Authentication"
+              editValue="Required"
+              helperText="Every request needs a signed-in person or an API key; manage them in Keys and Users."
+              showCurrentValue={false}
             />
             
             <ResponsiveSettingItem
@@ -829,7 +825,12 @@ function Settings({ client }: SettingsProps) {
               ]}
               showCurrentValue={!pendingRestart}
             />
-            
+            {effectiveInbound === 'humblefax' && Boolean(form.inbound_enabled) && (
+              <Alert severity="warning">
+                HumbleFax cannot receive faxes, so Faxbot will not save receiving with it; choose another inbound provider or turn receiving off.
+              </Alert>
+            )}
+
             <ResponsiveSettingItem
               icon={<SettingsIcon />}
               label="Retention Days"
@@ -985,6 +986,9 @@ function Settings({ client }: SettingsProps) {
               </Box>
             )}
           </ResponsiveFormSection>
+
+          <DeliverySettingsSections client={client} settings={settings} form={form} loaded={loadedForm}
+            onChange={handleForm} showCurrentValue={!pendingRestart} outbound={String(effectiveOutbound)} />
 
           {/* SignalWire (cloud) */}
           {providerSelected('signalwire') && (

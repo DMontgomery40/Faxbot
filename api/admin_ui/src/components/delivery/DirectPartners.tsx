@@ -9,6 +9,7 @@ import HandshakeIcon from '@mui/icons-material/Handshake';
 import AdminAPIClient from '../../api/client';
 import type { DirectPartner } from '../../api/deliveryTypes';
 import { ConfirmDialog, EmptyState, FormDialog, StatusChip, useSmallScreens } from '../access/AccessViews';
+import DirectCardDialog from './DirectCardDialog';
 import { DeliveryError, Notice } from './shared';
 
 const TONE: Record<DirectPartner['state'], 'success' | 'warning' | 'default'> = {
@@ -143,12 +144,7 @@ export default function DirectPartners({ client, partners, canWrite, onChanged }
         </TableContainer>
       )}
 
-      <FormDialog open={card !== null} title="Our direct delivery card" submitLabel="Copy" canSubmit
-        onSubmit={() => { void navigator.clipboard?.writeText(card ?? ''); setCard(null); setNotice('Card copied.'); }}
-        onClose={() => setCard(null)}>
-        <Typography variant="body2" sx={{ mb: 1 }}>Send this card to a partner. It contains no secrets.</Typography>
-        <TextField fullWidth multiline minRows={8} value={card ?? ''} InputProps={{ readOnly: true, sx: { fontFamily: 'monospace', fontSize: 12 } }} />
-      </FormDialog>
+      <DirectCardDialog card={card} onClose={() => setCard(null)} onCopied={() => { setCard(null); setNotice('Card copied.'); }} />
 
       <FormDialog open={adding} title="Add partner" submitLabel="Add partner" busy={busy} error={null}
         canSubmit={pasted.trim().length > 0} onSubmit={() => void add()} onClose={() => setAdding(false)}>

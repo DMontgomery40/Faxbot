@@ -1,0 +1,232 @@
+import { describe, expect, it } from 'vitest';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { http, HttpResponse } from 'msw';
+import AdminAPIClient from '../api/client';
+import Settings from '../components/Settings';
+import SetupWizard from '../components/SetupWizard';
+import { server } from '../test/server';
+
+type Json = Record<string, any>;
+
+const client = () => new AdminAPIClient({ kind: 'key', key: 'synthetic-key' });
+
+function settingsFixture(overrides: (data: Json) => void = () => undefined): Json {
+  const data: Json = {
+    backend: { type: 'phaxio', disabled: false },
+    hybrid: { outbound_backend: 'phaxio', inbound_backend: 'phaxio', outbound_override: '', inbound_override: '' },
+    phaxio: { api_key: '***', api_secret: '***', callback_token: '', callback_url: '', verify_signature: true, configured: true },
+    documo: { api_key: '', base_url: 'https://api.documo.com', sandbox: false, configured: false },
+    humblefax: { access_key: '***', secret_key: '***', from_number: '', configured: true },
+    sinch: { project_id: '', base_url: '', api_key: '', api_secret: '', configured: false },
+    signalwire: { space_url: '', project_id: '', api_token: '', from_fax: '', from_sms: '', callback_url: '',
+      webhook_signing_key: '', status_poll_seconds: 0, configured: false },
+    fs: { esl_host: '127.0.0.1', esl_port: 8021, esl_password: '***', gateway_name: 'gw', caller_id_number: '', t38_enable: true },
+    sip: { ami_host: 'asterisk', ami_port: 5038, ami_username: 'api', ami_password: '***', ami_password_is_default: false,
+      station_id: '***', configured: true },
+    security: { api_key: '', require_api_key: false, enforce_https: true, audit_enabled: false, public_api_url: 'https://fax.example' },
+    audit: { enabled: false, format: 'json', file: '', syslog: false, syslog_address: '/dev/log' },
+    mcp: { sse_enabled: false, sse_path: '/mcp/sse', http_enabled: false, http_path: '/mcp/http', require_oauth: false,
+      oauth: { issuer: '', audience: '', jwks_url: '' } },
+    persisted: { enabled: false, path: '/faxdata/faxbot.env' },
+    features: { v3_plugins: false, fax_disabled: false, inbound_enabled: false, plugin_install: false },
+    storage: { backend: 'local', s3_bucket: '', s3_prefix: '', s3_region: '', s3_endpoint_url: '', s3_kms_key_id: '', s3_kms_enabled: false },
+    database: { url: '***', scheme: 'sqlite', persistent: true, editable: false, maintenance_required: true },
+    routing: { outbound_routes: 'sip, humblefax', min_success_percent: 80 },
+    intake: { email_enabled: true, smtp_host: 'smtp.example.org', smtp_port: 587, smtp_security: 'starttls', smtp_username: 'fax',
+      smtp_password: '***', email_from: 'fax@example.org', email_to: 'desk@example.org', email_subject: 'Fax from {from_number}' },
+    direct: { enabled: false, organization: 'County Clinic', fax_number: '+12025550123' },
+    inbound: { enabled: false, retention_days: 30, token_ttl_minutes: 60, sip: { asterisk_secret: '', configured: false },
+      phaxio: { verify_signature: true }, sinch: { verify_signature: true, basic_auth_configured: false, hmac_configured: false } },
+    limits: { max_file_size_mb: 10, pdf_token_ttl_minutes: 60, rate_limit_rpm: 0, inbound_list_rpm: 30, inbound_get_rpm: 60,
+      artifact_ttl_days: 0, cleanup_interval_minutes: 1440 },
+    _meta: { active_revision_id: 'rev-a', desired_revision_id: 'rev-a', generation: 4, apply_state: 'applied', pending_fields: [] },
+  };
+  overrides(data);
+  return data;
+}
+
+const receipt = { ok: true, changed: true, _meta: {
+  active_revision_id: 'rev-b', desired_revision_id: 'rev-b', generation: 5, apply_state: 'applied', restart_recommended: false,
+} };
+
+function settingsHandlers(data: Json, put: (body: Json) => Response | null = () => null) {
+  const writes: Json[] = [];
+  server.use(
+    http.get('/admin/settings', () => HttpResponse.json(data)),
+    http.get('/admin/tunnel/status', () => HttpResponse.json({ enabled: false, provider: 'none', status: 'disabled' })),
+    http.put('/admin/settings', async ({ request }) => {
+      const body = await request.json() as Json;
+      writes.push(body);
+      return put(body) ?? HttpResponse.json(receipt);
+    }),
+    http.get('/direct/card', () => HttpResponse.json({ card: {
+      faxbot_direct: 1, organization: 'County Clinic', fax_number: '+12025550123', endpoint: 'https://fax.example',
+      signing_key: 'public-signing', exchange_key: 'public-exchange', signature: 'signed',
+    } })),
+  );
+  return writes;
+}
+
+const apply = () => fireEvent.click(screen.getByRole('button', { name: 'Apply settings' }));
+const section = async (title: string) => (await screen.findByText(title)).closest('.MuiPaper-root') as HTMLElement;
+
+describe('Settings delivery routes', () => {
+  it('shows the saved routes in order and does not count loading as a change', async () => {
+    settingsHandlers(settingsFixture());
+    render(<Settings client={client()} />);
+    const routes = within(await section('Delivery routes')).getByRole('list', { name: 'Extra outbound routes' });
+    expect(within(routes).getAllByRole('listitem').map((item) => item.textContent)).toEqual([
+      expect.stringContaining('1. Your SIP trunk (Asterisk)'), expect.stringContaining('2. HumbleFax'),
+    ]);
+    expect((screen.getByRole('button', { name: 'Apply settings' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('reorders, adds and removes routes and saves the list with the minimum delivery rate', async () => {
+    const writes = settingsHandlers(settingsFixture());
+    render(<Settings client={client()} />);
+    const routes = await section('Delivery routes');
+    fireEvent.click(within(routes).getByRole('button', { name: 'Move HumbleFax up' }));
+    fireEvent.click(within(routes).getByRole('button', { name: 'Remove Your SIP trunk (Asterisk)' }));
+    // The outbound provider itself and unconfigured providers are not offered.
+    const add = within(routes).getByLabelText('Add a route');
+    expect([...add.querySelectorAll('option')].map((option) => option.textContent)).toEqual(['Choose a provider…', 'Your SIP trunk (Asterisk)']);
+    fireEvent.change(add, { target: { value: 'sip' } });
+    fireEvent.change(within(routes).getByLabelText('Minimum delivery rate (%)'), { target: { value: '90' } });
+    apply();
+    expect(await screen.findByText('Settings saved.')).toBeTruthy();
+    expect(writes[0]).toEqual({ expected_revision_id: 'rev-a', outbound_routes: 'humblefax,sip', route_min_success_percent: 90 });
+  });
+});
+
+describe('Settings direct delivery', () => {
+  it('saves the direct delivery identity and shows our card', async () => {
+    const writes = settingsHandlers(settingsFixture());
+    render(<Settings client={client()} />);
+    const direct = await section('Direct delivery');
+    expect(within(direct).getByText(/Kept on this server in a private file in the fax data folder/)).toBeTruthy();
+    fireEvent.click(within(direct).getByRole('button', { name: 'Show our card' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Our direct delivery card' });
+    expect((within(dialog).getByRole('textbox') as HTMLTextAreaElement).value).toContain('"organization": "County Clinic"');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+
+    fireEvent.click(within(direct).getByRole('checkbox', { name: 'Use direct delivery' }));
+    fireEvent.change(within(direct).getByLabelText('Organization name'), { target: { value: 'County Clinic East' } });
+    expect((within(direct).getByRole('button', { name: 'Show our card' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(within(direct).getByText('Apply your changes to see them on the card.')).toBeTruthy();
+    apply();
+    await screen.findByText('Settings saved.');
+    expect(writes[0]).toEqual({ expected_revision_id: 'rev-a', direct_delivery_enabled: true, direct_organization: 'County Clinic East' });
+  });
+
+  it('shows the plain reason when the card cannot be made yet', async () => {
+    settingsHandlers(settingsFixture());
+    server.use(http.get('/direct/card', () => HttpResponse.json(
+      { detail: 'Add your organization name for direct delivery to the installation settings first.' }, { status: 409 })));
+    render(<Settings client={client()} />);
+    fireEvent.click(within(await section('Direct delivery')).getByRole('button', { name: 'Show our card' }));
+    expect(await screen.findByText('Add your organization name for direct delivery to the installation settings first.')).toBeTruthy();
+  });
+});
+
+describe('Settings intake defaults', () => {
+  it('keeps the saved password unless it is replaced, and saves connector fields', async () => {
+    const writes = settingsHandlers(settingsFixture());
+    render(<Settings client={client()} />);
+    const intake = await section('Intake defaults');
+    expect(within(intake).getByRole('button', { name: 'Show Email password' })).toBeTruthy();
+    expect(within(intake).getByText('Leave unchanged to keep the saved password.')).toBeTruthy();
+    fireEvent.change(within(intake).getByLabelText('Email server'), { target: { value: 'mail.example.org' } });
+    apply();
+    await screen.findByText('Settings saved.');
+    expect(writes[0]).toEqual({ expected_revision_id: 'rev-a', intake_smtp_host: 'mail.example.org' });
+  });
+
+  it('sends a replaced password', async () => {
+    const writes = settingsHandlers(settingsFixture());
+    render(<Settings client={client()} />);
+    const intake = await section('Intake defaults');
+    fireEvent.change(within(intake).getByLabelText('Email password'), { target: { value: 'new-mail-secret' } });
+    apply();
+    await screen.findByText('Settings saved.');
+    expect(writes[0]).toEqual({ expected_revision_id: 'rev-a', intake_smtp_password: 'new-mail-secret' });
+  });
+});
+
+describe('Settings save status', () => {
+  it('keeps edits and says someone else changed the settings on a conflict', async () => {
+    settingsHandlers(settingsFixture(), () => HttpResponse.json({ detail: 'Configuration changed.' }, { status: 409 }));
+    render(<Settings client={client()} />);
+    fireEvent.change(within(await section('Delivery routes')).getByLabelText('Minimum delivery rate (%)'), { target: { value: '70' } });
+    apply();
+    expect(await screen.findByText('Someone else changed these settings. Your edits are kept here; reload to see the current values.')).toBeTruthy();
+  });
+
+  it('says so in one sentence when the account may not change these settings', async () => {
+    settingsHandlers(settingsFixture(), () => HttpResponse.json({ detail: 'This operation is not permitted.' }, { status: 403 }));
+    render(<Settings client={client()} />);
+    fireEvent.change(within(await section('Intake defaults')).getByLabelText('Email server'), { target: { value: 'x.example.org' } });
+    apply();
+    expect(await screen.findByText('You do not have permission to change some of these settings. Your edits are kept here; reload before trying again.')).toBeTruthy();
+  });
+});
+
+describe('Settings authentication and receiving', () => {
+  it('states that authentication is required and never offers to turn it off', async () => {
+    settingsHandlers(settingsFixture());
+    render(<Settings client={client()} />);
+    expect(await screen.findByText('Every request needs a signed-in person or an API key; manage them in Keys and Users.')).toBeTruthy();
+    expect(screen.queryByText('API Key Required')).toBeNull();
+    expect(screen.queryByText(/Yes \(Required\)/)).toBeNull();
+  });
+
+  it('warns that HumbleFax cannot receive when it would handle receiving', async () => {
+    settingsHandlers(settingsFixture((data) => {
+      data.backend.type = 'humblefax';
+      data.hybrid = { outbound_backend: 'humblefax', inbound_backend: 'humblefax', outbound_override: '', inbound_override: '' };
+      data.inbound.enabled = true;
+    }));
+    render(<Settings client={client()} />);
+    const warning = /HumbleFax cannot receive faxes/;
+    expect(await screen.findByText(warning)).toBeTruthy();
+    const inbound = await section('Inbound Receiving');
+    fireEvent.change(within(inbound).getByLabelText('Enable Inbound'), { target: { value: 'false' } });
+    await waitFor(() => expect(screen.queryByText(warning)).toBeNull());
+  });
+
+  it('does not warn when another provider receives', async () => {
+    settingsHandlers(settingsFixture((data) => {
+      data.backend.type = 'humblefax';
+      data.hybrid = { outbound_backend: 'humblefax', inbound_backend: 'sip', outbound_override: '', inbound_override: 'sip' };
+      data.inbound.enabled = true;
+    }));
+    render(<Settings client={client()} />);
+    await section('Delivery routes');
+    expect(screen.queryByText(/HumbleFax cannot receive faxes/)).toBeNull();
+  });
+});
+
+describe('Setup Wizard delivery options', () => {
+  const next = () => fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+
+  it('states authentication is required and saves direct delivery and intake email from the delivery step', async () => {
+    const writes = settingsHandlers(settingsFixture((data) => { data.intake.email_enabled = false; }));
+    server.use(http.get('/plugins', () => HttpResponse.json({ items: [] })));
+    render(<SetupWizard client={client()} />);
+    await screen.findByText('Choose Providers', { selector: 'h6' });
+    next();
+    next();
+    expect(await screen.findByText(/Authentication: required\./)).toBeTruthy();
+    expect(screen.queryByLabelText('Require API Key')).toBeNull();
+    next();
+    expect(await screen.findByText('Delivery Options', { selector: 'h6' })).toBeTruthy();
+    expect(screen.getByRole('list', { name: 'Extra outbound routes' })).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('Our fax number'), { target: { value: '+12025550199' } });
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Email each received fax' }));
+    fireEvent.change(screen.getByLabelText('Port'), { target: { value: '465' } });
+    next();
+    fireEvent.click(screen.getByRole('button', { name: 'Apply Changes' }));
+    await screen.findByText('Settings saved.');
+    expect(writes[0]).toEqual({ expected_revision_id: 'rev-a', direct_fax_number: '+12025550199', intake_email_enabled: true, intake_smtp_port: 465 });
+  });
+});

@@ -201,6 +201,26 @@ export interface Settings {
     editable?: boolean;
     maintenance_required?: boolean;
   };
+  routing?: {
+    outbound_routes: string;
+    min_success_percent: number;
+  };
+  intake?: {
+    email_enabled: boolean;
+    smtp_host: string;
+    smtp_port: number;
+    smtp_security: 'starttls' | 'tls' | 'none';
+    smtp_username: string;
+    smtp_password: string;
+    email_from: string;
+    email_to: string;
+    email_subject: string;
+  };
+  direct?: {
+    enabled: boolean;
+    organization: string;
+    fax_number: string;
+  };
   audit?: {
     enabled: boolean;
     format: string;
