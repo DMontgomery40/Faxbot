@@ -1012,6 +1012,16 @@ class ManifestValidateIn(BaseModel):
 
 @app.post("/admin/plugins/http/validate", dependencies=[Depends(require_admin)])
 async def validate_http_manifest(payload: ManifestValidateIn):
+    """Validate a draft without issuing a provider request.
+
+    Provider transmission belongs to a captured, durable outbound attempt.
+    Keep the legacy flag for a clear refusal to older administrative clients.
+    """
+    if not payload.render_only:
+        raise HTTPException(
+            409,
+            detail="Manifest validation cannot send a fax. Install and configure the provider, select it for outbound, then use Send to create a tracked job.",
+        )
     document = payload.manifest or {}
     if not document.get("id"):
         raise HTTPException(400, detail="Manifest id required")
@@ -1042,15 +1052,6 @@ async def validate_http_manifest(payload: ManifestValidateIn):
                 info["warnings"] = [f"Action(s) {', '.join(insecure)} use HTTP. HTTPS is required when ENFORCE_PUBLIC_HTTPS=true."]
     except Exception:
         pass
-    if not payload.render_only:
-        if settings.fax_disabled:
-            raise HTTPException(409, detail="Fax sending is disabled. Validate the manifest without sending, or use Send to queue a test document.")
-        try:
-            rt = HttpProviderRuntime(man, payload.credentials or {}, payload.settings or {})
-            res = await rt.send_fax(to=payload.to or "+15551234567", file_url=payload.file_url, from_number=payload.from_number)
-            info["normalized"] = res
-        except Exception as e:
-            info["error"] = str(e)
     return info
 
 
