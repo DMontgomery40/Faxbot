@@ -197,6 +197,27 @@ export type SettingsPatch = Record<string, string | number | boolean | null | un
   expected_revision_id?: string;
 };
 
+export type PluginRole = 'outbound' | 'inbound' | 'storage';
+
+export interface PluginConfiguration {
+  enabled: boolean;
+  settings: Record<string, unknown>;
+  role: PluginRole;
+  _meta: NonNullable<Settings['_meta']>;
+}
+
+export interface PluginConfigurationPatch {
+  expected_revision_id: string;
+  role: PluginRole;
+  enabled?: boolean;
+  settings?: Record<string, unknown>;
+}
+
+export interface PluginConfigurationResult extends PluginConfiguration {
+  ok: boolean;
+  path: string;
+}
+
 export interface DiagnosticsResult {
   timestamp: string;
   backend: string;

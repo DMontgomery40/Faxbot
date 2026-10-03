@@ -4,6 +4,10 @@ import type {
   ApiKey,
   Settings,
   SettingsPatch,
+  PluginConfiguration,
+  PluginConfigurationPatch,
+  PluginConfigurationResult,
+  PluginRole,
   DiagnosticsResult,
   ValidationResult,
   InboundFax
@@ -297,12 +301,13 @@ export class AdminAPIClient {
     return res.json();
   }
 
-  async getPluginConfig(pluginId: string): Promise<{ enabled: boolean; settings: any }> {
-    const res = await this.fetch(`/plugins/${encodeURIComponent(pluginId)}/config`);
+  async getPluginConfig(pluginId: string, role?: PluginRole): Promise<PluginConfiguration> {
+    const query = role ? `?role=${encodeURIComponent(role)}` : '';
+    const res = await this.fetch(`/plugins/${encodeURIComponent(pluginId)}/config${query}`);
     return res.json();
   }
 
-  async updatePluginConfig(pluginId: string, payload: { enabled?: boolean; settings?: Record<string, any> }): Promise<{ ok: boolean; path: string }> {
+  async updatePluginConfig(pluginId: string, payload: PluginConfigurationPatch): Promise<PluginConfigurationResult> {
     const res = await this.fetch(`/plugins/${encodeURIComponent(pluginId)}/config`, {
       method: 'PUT',
       body: JSON.stringify(payload || {}),

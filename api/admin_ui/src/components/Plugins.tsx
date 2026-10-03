@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { 
   Box, 
   Grid, 
@@ -34,6 +34,7 @@ import {
   ExpandLess as ExpandLessIcon,
 } from '@mui/icons-material';
 import AdminAPIClient from '../api/client';
+import type { PluginConfiguration, PluginConfigurationPatch, Settings } from '../api/types';
 import PluginConfigDialog from './PluginConfigDialog';
 import { ResponsiveFormSection, ResponsiveTextField } from './common/ResponsiveFormFields';
 
@@ -49,6 +50,7 @@ type PluginItem = {
   configurable?: boolean;
   description?: string;
   learn_more?: string;
+  source?: string;
 };
 
 const iconFor = (cat: string) => {
@@ -89,7 +91,12 @@ export default function Plugins({ client }: Props) {
   const [note, setNote] = useState<string>('');
   const [configOpen, setConfigOpen] = useState(false);
   const [configPlugin, setConfigPlugin] = useState<PluginItem | null>(null);
-  const [configData, setConfigData] = useState<{ enabled?: boolean; settings?: any } | null>(null);
+  const [configData, setConfigData] = useState<PluginConfiguration | null>(null);
+  const [configLoading, setConfigLoading] = useState(false);
+  const [configError, setConfigError] = useState('');
+  const configLoadId = useRef(0);
+  const [settings, setSettings] = useState<Settings | null>(null);
+  const [activeProviders, setActiveProviders] = useState<{ outbound: string; storage: string } | null>(null);
   const [query, setQuery] = useState('');
   const [manifestJson, setManifestJson] = useState<string>('');
   const [manifestTo, setManifestTo] = useState<string>('+15551234567');
@@ -107,12 +114,30 @@ export default function Plugins({ client }: Props) {
     try {
       setLoading(true);
       setError('');
-      const [listRes, regRes] = await Promise.all([
-        client.listPlugins().catch(() => ({ items: [] })),
-        client.getPluginRegistry().catch(() => ({ items: [] })),
+      setSettings(null);
+      setActiveProviders(null);
+      const before = await client.getSettings();
+      if (!before._meta?.desired_revision_id) {
+        throw new Error('Plugin selection is unavailable until a canonical revision loads.');
+      }
+      const [listRes, regRes, active] = await Promise.all([
+        client.listPlugins(),
+        client.getPluginRegistry(),
+        client.getConfig(),
       ]);
+      const after = await client.getSettings();
+      if (before._meta.desired_revision_id !== after._meta?.desired_revision_id
+          || before._meta.active_revision_id !== after._meta?.active_revision_id
+          || before._meta.generation !== after._meta?.generation) {
+        throw new Error('Settings changed while plugins loaded. Refresh plugins to review the current selection.');
+      }
       setItems(listRes.items || []);
       setRegistry(regRes.items || []);
+      setSettings(after);
+      setActiveProviders({
+        outbound: active.hybrid?.outbound ?? active.backend,
+        storage: active.storage?.backend,
+      });
     } catch (e: any) {
       setError(e?.message || 'Failed to load plugins');
     } finally {
@@ -120,33 +145,51 @@ export default function Plugins({ client }: Props) {
     }
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [client]);
 
   const handleConfigure = async (plugin: PluginItem) => {
+    const loadId = ++configLoadId.current;
+    setConfigPlugin(plugin);
+    setConfigData(null);
+    setConfigError('');
+    setConfigLoading(true);
+    setConfigOpen(true);
     try {
-      setError('');
-      setConfigPlugin(plugin);
-      try {
-        const cfg = await client.getPluginConfig(plugin.id);
-        setConfigData(cfg || { enabled: true, settings: {} });
-      } catch {
-        setConfigData({ enabled: true, settings: {} });
+      const role = plugin.categories.includes('storage') ? 'storage' : 'outbound';
+      const cfg = await client.getPluginConfig(plugin.id, role);
+      if (!cfg._meta?.desired_revision_id) {
+        throw new Error('The server did not supply a configuration revision. Reload before editing.');
       }
-      setConfigOpen(true);
+      if (loadId === configLoadId.current) setConfigData(cfg);
     } catch (e: any) {
-      setError(e?.message || 'Failed to load plugin config');
+      if (loadId === configLoadId.current) setConfigError(e?.message || 'Failed to load plugin config');
+    } finally {
+      if (loadId === configLoadId.current) setConfigLoading(false);
     }
   };
 
-  const handleSaveConfig = async (payload: { enabled?: boolean; settings?: any }) => {
-    if (!configPlugin) return;
+  const saveMessage = (data: PluginConfiguration) => data._meta.apply_state === 'pending_restart'
+    ? 'Desired plugin settings saved durably. The active configuration stays unchanged until a full installation restart.'
+    : 'Plugin settings saved durably and active.';
+
+  const mutationError = (e: any, fallback: string) => (e?.message || '').includes('409')
+    ? 'Plugin settings changed since this revision loaded. Reload, review the latest desired values, and apply your edits again.'
+    : e?.message || fallback;
+
+  const handleSaveConfig = async (payload: PluginConfigurationPatch) => {
+    if (!configPlugin) throw new Error('Reload a plugin before saving.');
     try {
       setSaving(configPlugin.id);
-      await client.updatePluginConfig(configPlugin.id, payload);
-      setNote('Plugin configuration saved to config file');
+      setError('');
+      setNote('');
+      const result = await client.updatePluginConfig(configPlugin.id, payload);
+      setConfigData(result);
+      setNote(saveMessage(result));
       await load();
     } catch (e: any) {
-      setError(e?.message || 'Failed to save plugin config');
+      const message = mutationError(e, 'Failed to save plugin config');
+      setError(message);
+      throw new Error(message);
     } finally {
       setSaving(null);
     }
@@ -155,11 +198,17 @@ export default function Plugins({ client }: Props) {
   const handleMakeActiveOutbound = async (pluginId: string) => {
     try {
       setSaving(pluginId);
-      await client.updatePluginConfig(pluginId, { enabled: true });
-      setNote('Saved to config file. Apply changes by restarting with the desired env or adding an explicit apply step later.');
+      setError('');
+      setNote('');
+      const desiredRevision = settings?._meta?.desired_revision_id;
+      if (!desiredRevision) throw new Error('Refresh plugins before selecting a provider.');
+      const result = await client.updatePluginConfig(pluginId, {
+        enabled: true, role: 'outbound', expected_revision_id: desiredRevision,
+      });
+      setNote(saveMessage(result));
       await load();
     } catch (e: any) {
-      setError(e?.message || 'Failed to save plugin config');
+      setError(mutationError(e, 'Failed to save plugin config'));
     } finally {
       setSaving(null);
     }
@@ -168,27 +217,12 @@ export default function Plugins({ client }: Props) {
   const matches = (p: PluginItem) => {
     if (!query) return true;
     const q = query.toLowerCase();
-    const inReg = (registry || []).find(r => r.id === p.id);
-    const hay = `${p.id} ${p.name} ${inReg?.description || ''}`.toLowerCase();
+    const inReg = p.source === 'manifest' ? undefined : (registry || []).find(r => r.id === p.id);
+    const hay = `${p.id} ${p.name} ${p.description || inReg?.description || ''}`.toLowerCase();
     return hay.includes(q);
   };
   
   const byCategory = (cat: string) => (items || []).filter(p => (p.categories || []).includes(cat)).filter(matches);
-  
-  const ensureDocumo = (arr: PluginItem[]) => {
-    const has = arr.some(p => p.id === 'documo');
-    if (!has) {
-      arr = arr.concat([{ 
-        id: 'documo', 
-        name: 'Documo mFax', 
-        version: '1.0.0', 
-        categories: ['outbound'], 
-        capabilities: ['send','get_status'], 
-        description: 'Direct upload (preview)' 
-      } as any]);
-    }
-    return arr;
-  };
   
   const registryOnly = () => {
     const installed = new Set((items || []).map(i => i.id));
@@ -202,7 +236,7 @@ export default function Plugins({ client }: Props) {
           Plugins
         </Typography>
         <Typography variant="body2" color="text.secondary">
-          Manage provider plugins. This preview lists installed providers; updates persist to the config file only. No live apply yet.
+          Manage the desired provider selection and settings. Changes save durably in the installation configuration database.
         </Typography>
       </Box>
 
@@ -211,6 +245,7 @@ export default function Plugins({ client }: Props) {
           <TextField 
             size="medium" 
             fullWidth 
+            label="Search plugins"
             placeholder="Search curated plugins…" 
             value={query} 
             onChange={(e) => setQuery(e.target.value)}
@@ -225,9 +260,19 @@ export default function Plugins({ client }: Props) {
           />
         </Paper>
 
-        <Alert severity="info" sx={{ borderRadius: 2 }}>
-          Plugin changes are feature‑gated and safe to explore. Outbound provider remains controlled by env (<code>FAX_BACKEND</code>) until an explicit apply flow is added.
+        <Alert severity={settings?._meta?.apply_state === 'pending_restart' ? 'warning' : 'info'} sx={{ borderRadius: 2 }}>
+          {settings?._meta?.apply_state === 'pending_restart'
+            ? 'A desired revision is pending restart. Active behavior continues until every worker stops and the installation starts again.'
+            : 'Hot changes activate immediately. Changes that replace runtime resources remain pending until a full installation restart.'}
+          {activeProviders && <Typography variant="body2" sx={{ mt: 1 }}>
+            Active outbound setting: {activeProviders.outbound}. Active storage setting: {activeProviders.storage}.
+          </Typography>}
+          {settings?._meta && <Typography variant="caption" display="block" sx={{ mt: 1 }}>
+            Desired revision: {settings._meta.desired_revision_id}. Active revision: {settings._meta.active_revision_id}.
+          </Typography>}
         </Alert>
+
+        <Box><Button onClick={load} disabled={loading || saving !== null}>Refresh plugins</Button></Box>
         
         {note && (
           <Fade in>
@@ -254,8 +299,10 @@ export default function Plugins({ client }: Props) {
           <>
             <Section 
               title="Outbound Providers" 
-              items={ensureDocumo(byCategory('outbound'))} 
+              items={byCategory('outbound')}
               saving={saving} 
+              disabled={!settings?._meta?.desired_revision_id || saving !== null}
+              activeProvider={activeProviders?.outbound}
               onActivate={handleMakeActiveOutbound} 
               onConfigure={handleConfigure} 
               registry={registry} 
@@ -266,6 +313,8 @@ export default function Plugins({ client }: Props) {
               title="Storage Providers" 
               items={byCategory('storage')} 
               saving={saving} 
+              disabled={!settings?._meta?.desired_revision_id || saving !== null}
+              activeProvider={activeProviders?.storage}
               onActivate={undefined} 
               onConfigure={handleConfigure} 
               registry={registry} 
@@ -512,7 +561,14 @@ export default function Plugins({ client }: Props) {
               open={configOpen}
               plugin={configPlugin}
               initialConfig={configData}
-              onClose={() => setConfigOpen(false)}
+              loading={configLoading}
+              loadError={configError}
+              onClose={() => {
+                configLoadId.current += 1;
+                setConfigOpen(false);
+                setConfigLoading(false);
+              }}
+              onReload={() => { if (configPlugin) handleConfigure(configPlugin); }}
               onSave={handleSaveConfig}
             />
           </>
@@ -526,6 +582,8 @@ function Section({
   title, 
   items, 
   saving, 
+  disabled,
+  activeProvider,
   onActivate, 
   onConfigure, 
   registry,
@@ -534,6 +592,8 @@ function Section({
   title: string; 
   items: PluginItem[]; 
   saving: string | null; 
+  disabled: boolean;
+  activeProvider?: string;
   onActivate?: (id: string) => void; 
   onConfigure?: (p: PluginItem) => void; 
   registry: PluginItem[];
@@ -551,9 +611,9 @@ function Section({
     >
       <Grid container spacing={2}>
         {(items || []).map(p => {
-          const reg = regIndex.get(p.id);
+          const reg = p.source === 'manifest' ? undefined : regIndex.get(p.id);
           const desc = p.description || reg?.description;
-          const learn = (reg as any)?.learn_more as string | undefined;
+          const learn = p.learn_more || reg?.learn_more;
           
           return (
             <Grid item xs={12} sm={6} lg={4} key={p.id}>
@@ -583,11 +643,13 @@ function Section({
                     </Box>
                     <Chip 
                       size="small" 
-                      label={p.enabled ? 'Enabled' : 'Disabled'} 
+                      label={p.enabled ? 'Desired selection' : 'Not selected'}
                       color={p.enabled ? 'success' : 'default'}
                       sx={{ borderRadius: 1 }}
                     />
                   </Box>
+
+                  {activeProvider === p.id && <Chip size="small" label="Active configuration" variant="outlined" sx={{ mb: 1 }} />}
                   
                   <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
                     {desc || 'No description available.'}
@@ -622,9 +684,10 @@ function Section({
                 <CardActions sx={{ p: 2, pt: 0 }}>
                   <Stack direction="row" spacing={1} width="100%">
                     {onConfigure && (
-                      <Tooltip title="Edit non‑secret settings for this plugin">
+                      <Tooltip title="Edit desired settings for this plugin">
                         <Button 
                           size="small" 
+                          disabled={disabled}
                           onClick={() => onConfigure(p)}
                           sx={{ borderRadius: 1 }}
                         >
@@ -633,17 +696,17 @@ function Section({
                       </Tooltip>
                     )}
                     {onActivate ? (
-                      <Tooltip title="Mark this provider active in the config file (no live apply)">
+                      <Tooltip title="Select this outbound provider in the desired revision">
                         <span style={{ marginLeft: 'auto' }}>
                           <Button 
                             size="small" 
                             variant="contained" 
-                            disabled={saving === p.id} 
+                            disabled={disabled}
                             onClick={() => onActivate(p.id)}
                             startIcon={saving === p.id ? <CircularProgress size={16} /> : undefined}
                             sx={{ borderRadius: 1 }}
                           >
-                            {saving === p.id ? 'Saving…' : 'Set Active'}
+                            {saving === p.id ? 'Saving…' : 'Select outbound'}
                           </Button>
                         </span>
                       </Tooltip>
