@@ -76,7 +76,7 @@ def intercept_http(monkeypatch, handler):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('identity', ['custom', 'phaxio'])
+@pytest.mark.parametrize('identity', ['custom', 'phaxio', 'sip', 'freeswitch'])
 async def test_manifest_runtime_keeps_original_endpoint_credentials_and_settings(monkeypatch, identity):
     from api.app.plugins.http_provider import HttpProviderRuntime
     original_manifest = manifest(identity, 'https://provider.invalid/original')
@@ -107,7 +107,6 @@ async def test_manifest_runtime_keeps_original_endpoint_credentials_and_settings
 
 @pytest.mark.parametrize('identity, captured_manifest', [
     ('sip', None), ('freeswitch', None), ('unknown', None), ('documo', None),
-    ('sip', manifest('sip', 'https://provider.invalid/fax')),
 ])
 def test_unsupported_profiles_fail_explicitly_without_telephony_fallback(identity, captured_manifest):
     from api.app.provider_execution import UnsupportedProviderExecutionError

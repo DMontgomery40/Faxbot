@@ -31,16 +31,13 @@ def service_from_profile(profile: ProviderProfile) -> (
         PhaxioFaxService | SinchFaxService | SignalWireFaxService | HttpProviderRuntime):
     """Return a new adapter; never resolve current credentials or installed files.
 
-    A captured HTTP manifest takes precedence over a built-in HTTP adapter.
-    Telephony resources remain owned by their worker/lifespan implementation.
+    A captured HTTP manifest takes precedence for every provider identity.
+    Native telephony resources remain owned by their worker/lifespan implementation.
     """
     if not isinstance(profile, ProviderProfile) or not isinstance(profile.configuration, ProviderConfiguration):
         raise ProviderExecutionError('Invalid stored provider profile.')
     configuration = profile.configuration
     identity = configuration.provider_id
-    if identity in {'sip', 'freeswitch'}:
-        raise UnsupportedProviderExecutionError('Provider requires a telephony execution owner.')
-
     credentials = configuration.credentials
     settings = configuration.settings
     manifest = configuration.manifest
@@ -48,6 +45,8 @@ def service_from_profile(profile: ProviderProfile) -> (
         if manifest is not None:
             from .plugins.http_provider import HttpManifest, HttpProviderRuntime
             return HttpProviderRuntime(HttpManifest.from_dict(manifest), credentials, settings)
+        if identity in {'sip', 'freeswitch'}:
+            raise UnsupportedProviderExecutionError('Provider requires a telephony execution owner.')
         if identity == 'phaxio':
             from .phaxio_service import PhaxioFaxService
             return PhaxioFaxService(api_key=_string(credentials, 'api_key'),
