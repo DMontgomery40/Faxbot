@@ -795,6 +795,9 @@ else:
 
     result = subprocess.run(
         [sys.executable, "-c", child, str(artifact), "replace" if replace_before_open else "fifo"],
+        env={**os.environ, "PYTHONPATH": os.pathsep.join(filter(None, (
+            str(Path(__file__).resolve().parents[2]), os.environ.get("PYTHONPATH")
+        )))},
         capture_output=True,
         text=True,
         timeout=2,

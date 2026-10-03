@@ -4,6 +4,7 @@ import fcntl
 import errno
 import json
 import os
+from pathlib import Path
 import select
 import stat
 import subprocess
@@ -85,6 +86,9 @@ def worker():
         process = subprocess.Popen(
             [sys.executable, "-u", "-c", _WORKER, str(directory), str(timeout)]
             + (["interrupt"] if interrupt else []),
+            env={**os.environ, "PYTHONPATH": os.pathsep.join(filter(None, (
+                str(Path(__file__).resolve().parents[2]), os.environ.get("PYTHONPATH")
+            )))},
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             bufsize=0,
         )
