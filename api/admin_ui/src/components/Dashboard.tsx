@@ -154,12 +154,15 @@ function Dashboard({ client, onNavigate }: DashboardProps) {
                   </Typography>
                 </Box>
                 <Chip
-                  label={health.backend_healthy ? 'Healthy' : 'Unhealthy'}
+                  label={health.backend_healthy ? 'Ready' : 'Needs attention'}
                   color={getStatusColor(health.backend_healthy)}
                   variant="outlined"
                 />
                 <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
                   Backend: {health.backend}
+                </Typography>
+                <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 1 }}>
+                  Checks local configuration and dependencies. Delivery is verified for each fax.
                 </Typography>
               </CardContent>
               </Card>
