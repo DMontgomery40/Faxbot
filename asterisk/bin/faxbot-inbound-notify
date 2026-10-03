@@ -1,0 +1,61 @@
+#!/bin/sh
+# Tell Faxbot about one received fax. Called from the faxbot-inbound-done
+# dialplan with key=value words that the dialplan already reduced to safe
+# characters; each value is checked again here before it enters the JSON body.
+# The shared secret and API address come from the environment and are never
+# printed. A request is repeated only when the API could not be reached at all.
+set -u
+
+file='' did='' caller='' status='' pages='' mode='' started='' answered='' ended='' uniqueid='' station64=''
+for word in "$@"; do
+  key=${word%%=*}
+  value=${word#*=}
+  case $key in
+    file) case $value in /faxdata/inbound/*.tiff) file=$value ;; esac ;;
+    did) did=$(printf '%s' "$value" | tr -cd '0123456789+') ;;
+    caller) caller=$(printf '%s' "$value" | tr -cd '0123456789+') ;;
+    status) status=$(printf '%s' "$value" | tr -cd 'A-Z_') ;;
+    pages) pages=$(printf '%s' "$value" | tr -cd '0-9') ;;
+    mode) mode=$(printf '%s' "$value" | tr -cd 'T38audio') ;;
+    started) started=$(printf '%s' "$value" | tr -cd '0-9') ;;
+    answered) answered=$(printf '%s' "$value" | tr -cd '0-9') ;;
+    ended) ended=$(printf '%s' "$value" | tr -cd '0-9') ;;
+    uniqueid) uniqueid=$(printf '%s' "$value" | tr -cd '0-9.') ;;
+    station64) station64=$(printf '%s' "$value" | tr -cd 'A-Za-z0-9+/=') ;;
+  esac
+done
+case $file in
+  /faxdata/inbound/*.tiff) ;;
+  *) exit 0 ;;
+esac
+case $file in
+  *[!A-Za-z0-9/._-]*) exit 0 ;;
+esac
+[ -f "$file" ] || exit 0
+[ -n "${ASTERISK_INBOUND_SECRET:-}" ] || exit 0
+
+number() { if [ -n "$1" ]; then printf '%s' "$1"; else printf 'null'; fi; }
+text() { if [ -n "$1" ]; then printf '"%s"' "$1"; else printf 'null'; fi; }
+case $mode in
+  T38) t38=true ;;
+  audio) t38=false ;;
+  *) t38=null ;;
+esac
+
+body=$(printf '{"tiff_path":"%s","to_number":%s,"from_number":%s,"faxstatus":%s,"faxpages":%s,"uniqueid":%s,"call":{"did":%s,"caller":%s,"started_at":%s,"answered_at":%s,"ended_at":%s,"pages":%s,"t38":%s,"remote_station_id_b64":%s}}' \
+  "$file" "$(text "$did")" "$(text "$caller")" "$(text "$status")" "$(number "$pages")" "$(text "$uniqueid")" \
+  "$(text "$did")" "$(text "$caller")" "$(number "$started")" "$(number "$answered")" "$(number "$ended")" \
+  "$(number "$pages")" "$t38" "$(text "$station64")")
+
+url="${FAXBOT_API_URL:-http://api:8080}/_internal/asterisk/inbound"
+attempt=0
+while [ "$attempt" -lt 5 ]; do
+  attempt=$((attempt + 1))
+  printf 'X-Internal-Secret: %s\n' "$ASTERISK_INBOUND_SECRET" | curl -sS -o /dev/null --connect-timeout 5 --max-time 60 \
+    -H @- -H 'Content-Type: application/json' --data-binary "$body" "$url" 2>/dev/null
+  result=$?
+  # 7: could not connect, so Faxbot cannot have received this fax yet.
+  [ "$result" -eq 7 ] || exit 0
+  sleep 3
+done
+exit 0

@@ -735,3 +735,160 @@ def test_freeswitch_configuration_cannot_inject_native_command(
             freeswitch_service.originate_txfax("15555550123", "/fax/a.tif", JOB)
     assert value not in str(error.value)
     assert not fs_boundary
+
+
+def _asterisk_variable_assignments(header_value):
+    """Port of Asterisk 22 AMI Variable parsing (AST_STANDARD_APP_ARGS, then name=value)."""
+    args, current, depth, quoted, index = [], [], 0, False, 0
+    while index < len(header_value):
+        char = header_value[index]
+        if char == "\\":
+            index += 1
+            if index < len(header_value):
+                current.append(header_value[index])
+        elif char == '"':
+            quoted = not quoted
+        elif char == "(":
+            depth += 1
+            current.append(char)
+        elif char == ")":
+            depth = max(depth - 1, 0)
+            current.append(char)
+        elif char == "," and not depth and not quoted:
+            args.append("".join(current))
+            current = []
+        else:
+            current.append(char)
+        index += 1
+    args.append("".join(current))
+    return dict(item.split("=", 1) for item in args if "=" in item)
+
+
+def _trunk(**extra):
+    return ConfigurationValues.from_environment({
+        "SIP_TRUNK_PRESET": "telnyx", "SIP_TRUNK_AUTH": "ip", "SIP_TRUNK_CALLER_ID": "+15555550100",
+        "FAX_LOCAL_STATION_ID": "+15555550111", "FAX_HEADER": "Clinic", **extra})
+
+
+def test_trunk_call_uses_carrier_caller_id_number_format_and_separate_station_id():
+    fields = ami.originate_fields_for(_trunk(), JOB, "5555550123", "/fax/a.tif", attempt_id=ATTEMPT)
+    assert fields["Channel"] == "PJSIP/+15555550123@trunk-endpoint"
+    assert fields["CallerID"] == "+15555550100"
+    variables = _asterisk_variable_assignments(fields["Variable"])
+    assert base64.b64decode(variables["FAXSTATION64"]).decode() == "+15555550111"
+    assert "PJSIP_HEADER(add,Accept-Contact)" not in variables
+    flowroute = ami.originate_fields_for(
+        _trunk(SIP_TRUNK_PRESET="flowroute", SIP_TRUNK_USERNAME="12345678"), JOB, "+15555550123",
+        "/fax/a.tif", attempt_id=ATTEMPT)
+    assert flowroute["Channel"] == "PJSIP/12345678*15555550123@trunk-endpoint"
+    legacy = ami.originate_fields_for(
+        ConfigurationValues.from_environment({"FAX_LOCAL_STATION_ID": "+15555550111"}),
+        JOB, "5555550123", "/fax/a.tif", attempt_id=ATTEMPT)
+    assert legacy["Channel"] == "PJSIP/5555550123@trunk-endpoint"
+    assert legacy["CallerID"] == "+15555550111"
+
+
+def test_fax_preference_reaches_asterisk_as_the_exact_rfc6913_header_value():
+    fields = ami.originate_fields_for(_trunk(SIP_FAX_PREFERENCE_HEADER="true"), JOB, "+15555550123",
+                                      "/fax/a.tif", attempt_id=ATTEMPT)
+    variables = _asterisk_variable_assignments(fields["Variable"])
+    assert variables["PJSIP_HEADER(add,Accept-Contact)"] == '*;+sip.fax="t38"'
+    assert variables["JOBID"] == JOB and variables["FAXATTEMPT"] == ATTEMPT
+    assert fields["ActionID"] == f"faxbot:{JOB}:{ATTEMPT}"
+
+
+def test_trunk_without_authorized_caller_id_is_refused_before_preparation_or_write():
+    with pytest.raises(ValueError) as error:
+        ami.originate_fields_for(_trunk(SIP_TRUNK_CALLER_ID=""), JOB, "+15555550123", "/fax/a.tif")
+    assert "sip_trunk_caller_id" in str(error.value)
+
+
+@pytest.mark.asyncio
+async def test_trunk_without_caller_id_never_writes_and_emits_no_submission(monkeypatch):
+    async with connected_stream(monkeypatch) as (client, writer):
+        submissions = []
+        client.on_submission(submissions.append)
+        with use_configuration(_trunk(SIP_TRUNK_CALLER_ID="")):
+            with pytest.raises(ValueError):
+                await client.originate_sendfax(JOB, "+15555550123", "/fax/a.tif", attempt_id=ATTEMPT)
+        assert not writer.writes and not submissions
+
+
+@pytest.mark.asyncio
+async def test_every_listener_hears_each_event_and_a_failing_one_cannot_stop_the_rest(monkeypatch):
+    async with connected_stream(monkeypatch) as (client, writer):
+        delivery, records = [], []
+
+        def broken(event):
+            raise RuntimeError("synthetic listener failure")
+
+        client.on_fax_result(delivery.append)
+        client.on_fax_result(broken)
+        client.on_fax_result(records.append)
+        client.on_fax_result(delivery.append)  # registering twice does not double-deliver
+        client.reader.feed_data(
+            b"Event: UserEvent\r\nUserEvent: FaxResult\r\nJobID: synthetic-job\r\n\r\n")
+        client.reader.feed_data(b"Event: OriginateResponse\r\nResponse: Failure\r\nActionID: x\r\n\r\n")
+        await asyncio.sleep(0.01)
+        assert [event["JobID"] for event in delivery] == ["synthetic-job"]
+        assert [event["JobID"] for event in records] == ["synthetic-job"]
+        assert client._connected.is_set()
+
+
+@pytest.mark.asyncio
+async def test_submission_is_announced_before_the_wire_even_when_never_acknowledged(monkeypatch):
+    async with connected_stream(monkeypatch) as (client, writer):
+        submissions = []
+        client.on_submission(lambda event: submissions.append((event, len(writer.writes))))
+        with use_configuration(_trunk(SIP_FAX_PREFERENCE_HEADER="true")):
+            with pytest.raises((TimeoutError, ConnectionError)):
+                await client.originate_sendfax(JOB, "+15555550123", "/fax/a.tif", attempt_id=ATTEMPT)
+        assert len(submissions) == 1
+        event, writes_before = submissions[0]
+        assert writes_before == 0 and len(writer.writes) == 1
+        assert event == {"JobID": JOB, "AttemptID": ATTEMPT, "Called": "+15555550123",
+                         "CallerID": "+15555550100", "Preset": "telnyx", "FaxPreference": "yes"}
+
+
+def _context_lines(name):
+    text = (Path(__file__).resolve().parents[2] / "asterisk/etc/asterisk/extensions.conf").read_text()
+    lines, current = {}, None
+    for raw in text.splitlines():
+        line = raw.strip()
+        if line.startswith("["):
+            current = line[1:-1]
+            lines[current] = []
+        elif current and line and not line.startswith(";"):
+            lines[current].append(line)
+    return lines[name]
+
+
+def test_outbound_result_reports_answer_end_media_and_remote_station_without_new_applications():
+    send, terminal = _context_lines("faxbot-send"), _context_lines("faxbot-result")
+    assert send[1] == "same => n,Set(FAXBOT_ANSWERED=${EPOCH})"
+    event = next(line for line in terminal if "UserEvent(FaxResult," in line)
+    for field in ("Mode:${FAXMODE}", "Station64:${BASE64_ENCODE(${REMOTESTATIONID})}",
+                  "Answered:${FAXBOT_ANSWERED}", "Ended:${EPOCH}", "Cause:${HANGUPCAUSE}"):
+        assert field in event
+
+
+def test_inbound_dialplan_only_passes_filtered_or_encoded_caller_values_to_the_shell():
+    entry = _context_lines("faxbot-inbound")
+    receive = _context_lines("faxbot-inbound-receive")
+    done = _context_lines("faxbot-inbound-done")
+    assert all("FILTER(0123456789+," in line for line in entry if "FAXBOT_DID=$" in line)
+    assert any("FAXBOT_CALLER=${FILTER(0123456789+,${CALLERID(num)})}" in line for line in receive)
+    assert any("hangup_handler_push)=faxbot-inbound-done" in line for line in receive)
+    assert sum("ReceiveFAX(" in line for line in receive) == 1
+    system = [line for line in done if "System(" in line]
+    assert len(system) == 1
+    command = system[0]
+    assert "ENV(" not in "\n".join(entry + receive + done)
+    assert "CALLERID" not in command and "REMOTESTATIONID" not in command and "EXTEN" not in command
+    for variable in re.findall(r"\$\{([A-Z0-9_]+)\}", command):
+        assert variable in {"FAXBOT_FILE", "FAXBOT_DID", "FAXBOT_CALLER", "FAXBOT_STARTED", "FAXBOT_ANSWERED",
+                            "FAXBOT_ENDED", "FAXBOT_STATION64", "FAXSTATUS", "FAXPAGES", "FAXMODE",
+                            "UNIQUEID"}, variable
+    for raw in ("${FAXSTATUS}", "${FAXPAGES}", "${FAXMODE}", "${UNIQUEID}", "${FAXBOT_STATION64}"):
+        assert command.count(raw) == command.count("," + raw + ")"), raw
+    assert done[-1].endswith("Return()")

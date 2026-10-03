@@ -3,7 +3,7 @@ import base64
 import contextlib
 import logging
 import re
-from typing import Dict, Optional, Callable
+from typing import Dict, List, Optional, Callable
 from uuid import uuid4
 from .config import settings
 
@@ -29,6 +29,12 @@ def _validate_headers(fields: Dict[str, str]):
             raise ValueError("AMI header exceeds the supported wire limit")
 
 
+# RFC 6913 fax preference for the initial INVITE. Asterisk's AMI Variable
+# parser removes bare double quotes and keeps backslash-escaped ones, so the
+# escaped form arrives as the literal header value *;+sip.fax="t38".
+FAX_PREFERENCE_VARIABLE = 'PJSIP_HEADER(add,Accept-Contact)=*;+sip.fax=\\"t38\\"'
+
+
 def prepare_originate_fields(
     job_id: str,
     dest: str,
@@ -37,12 +43,23 @@ def prepare_originate_fields(
     caller_id: str,
     header: str = "",
     attempt_id: Optional[str] = None,
+    station_id: Optional[str] = None,
+    dial: Optional[str] = None,
+    fax_preference: bool = False,
 ) -> Dict[str, str]:
     """Prepare one direct PJSIP call before a durable marker or any I/O.
 
     Spaces are literal path characters. Dialplan/variable separators and
     expansion/quoting syntax in paths are refused. Captured UTF-8 metadata is
     base64 encoded so commas and expansion syntax remain literal data.
+
+    ``dial`` is the carrier-formatted Request-URI user (defaults to ``dest``);
+    ``station_id`` is the fax station identifier (defaults to ``caller_id``).
+    ``fax_preference`` adds the RFC 6913 Accept-Contact header to this call's
+    initial INVITE: a property of the route, never a reason to call again.
+    Async Originate ignores PreDialGoSub in Asterisk 22, so the header is set
+    as an Originate variable, which Asterisk applies to the new channel before
+    the INVITE is sent.
     """
     for identity in (job_id,) if attempt_id is None else (job_id, attempt_id):
         if not isinstance(identity, str) or not re.fullmatch(
@@ -51,13 +68,21 @@ def prepare_originate_fields(
             raise ValueError("Unsupported AMI submission identity")
     if not isinstance(dest, str) or not re.fullmatch(r"\+?[0-9]+", dest):
         raise ValueError("Unsupported AMI destination")
+    if dial is None:
+        dial = dest
+    elif not isinstance(dial, str) or not re.fullmatch(r"(?:[0-9]{4,16}\*)?\+?[0-9]{3,20}", dial):
+        raise ValueError("Unsupported AMI destination")
+    if station_id is None:
+        station_id = caller_id
+    if not isinstance(fax_preference, bool):
+        raise ValueError("Unsupported AMI fax preference")
     if not isinstance(tiff_path, str) or not re.fullmatch(
         r"[A-Za-z0-9_./ -]+", tiff_path
     ):
         raise ValueError("Unsupported AMI artifact path syntax")
     _validate_headers({"CallerID": caller_id})
     metadata = {}
-    for key, value in (("FAXHEADER64", header), ("FAXSTATION64", caller_id)):
+    for key, value in (("FAXHEADER64", header), ("FAXSTATION64", station_id)):
         if not isinstance(value, str) or "\x00" in value:
             raise ValueError("Unsupported AMI fax metadata")
         try:
@@ -67,21 +92,43 @@ def prepare_originate_fields(
     variables = {"JOBID": job_id, "FAXFILE": tiff_path, **metadata}
     if attempt_id is not None:
         variables["FAXATTEMPT"] = attempt_id
+    assignments = [f"{key}={value}" for key, value in variables.items()]
+    if fax_preference:
+        assignments.append(FAX_PREFERENCE_VARIABLE)
     fields = {
         "Action": "Originate",
         "ActionID": (
             f"faxbot:{job_id}:{attempt_id}" if attempt_id is not None else str(uuid4())
         ),
-        "Channel": f"PJSIP/{dest}@trunk-endpoint",
+        "Channel": f"PJSIP/{dial}@trunk-endpoint",
         "Context": "faxbot-send",
         "Exten": "s",
         "Priority": "1",
         "Async": "true",
-        "Variable": ",".join(f"{key}={value}" for key, value in variables.items()),
+        "Variable": ",".join(assignments),
         "CallerID": caller_id,
     }
     _validate_headers(fields)
     return fields
+
+
+def originate_fields_for(values, job_id, dest, tiff_path, *, attempt_id=None):
+    """The exact Originate fields for these settings; preflight and submission share it.
+
+    With a configured SIP trunk the call carries the carrier-authorized caller
+    ID, the carrier's number format and the optional fax preference; refused
+    (ValueError naming fields only) when the trunk cannot place calls. Without
+    one, the original station-ID behavior is unchanged.
+    """
+    from . import sip_trunk
+    if not sip_trunk.configured(values):
+        return prepare_originate_fields(job_id, dest, tiff_path, caller_id=values.fax_station_id,
+                                        header=values.fax_header, attempt_id=attempt_id)
+    trunk = sip_trunk.effective_trunk(values, for_calls=True)
+    return prepare_originate_fields(
+        job_id, dest, tiff_path, caller_id=trunk.caller_id, header=values.fax_header,
+        attempt_id=attempt_id, station_id=values.fax_station_id,
+        dial=sip_trunk.dial_number(trunk, dest), fax_preference=trunk.fax_preference)
 
 
 async def _login(
@@ -125,7 +172,9 @@ class AMIClient:
         self.reader: Optional[asyncio.StreamReader] = None
         self.writer: Optional[asyncio.StreamWriter] = None
         self._connected = asyncio.Event()
-        self._listeners: Dict[str, Callable[[Dict[str, str]], None]] = {}
+        # Several owners observe the same events (delivery state and call
+        # records); each listener runs independently of the others.
+        self._listeners: Dict[str, List[Callable[[Dict[str, str]], None]]] = {}
         self._conn_lock = asyncio.Lock()
         self._connection_task: Optional[asyncio.Task] = None
         self._pending_actions: Dict[str, asyncio.Future] = {}
@@ -234,15 +283,23 @@ class AMIClient:
             return
         event = fields.get("event", "").lower()
         if event == "originateresponse":
-            cb = self._listeners.get("OriginateResponse")
-            if cb:
-                cb(msg)
+            self._emit("OriginateResponse", msg)
         elif (
             event == "userevent" and fields.get("userevent", "").lower() == "faxresult"
         ):
-            cb = self._listeners.get("FaxResult")
-            if cb:
+            self._emit("FaxResult", msg)
+
+    def _emit(self, name: str, msg: Dict[str, str]):
+        for cb in list(self._listeners.get(name, ())):
+            try:
                 cb(msg)
+            except Exception:
+                logging.getLogger(__name__).warning("AMI event listener failed")
+
+    def _listen(self, name: str, cb: Callable[[Dict[str, str]], None]):
+        listeners = self._listeners.setdefault(name, [])
+        if cb not in listeners:
+            listeners.append(cb)
 
     async def _send_action(self, fields: Dict[str, str]):
         _validate_headers(fields)
@@ -288,22 +345,27 @@ class AMIClient:
         *,
         attempt_id: Optional[str] = None,
     ):
-        """Await acceptance of one Originate action; acceptance is not delivery."""
-        fields = prepare_originate_fields(
-            job_id,
-            dest,
-            tiff_path,
-            caller_id=settings.fax_station_id,
-            header=settings.fax_header,
-            attempt_id=attempt_id,
-        )
+        """Await acceptance of one Originate action; acceptance is not delivery.
+
+        Submission listeners hear about the call after validation and before
+        the action is written, so an unacknowledged call still leaves a record.
+        """
+        fields = originate_fields_for(settings, job_id, dest, tiff_path, attempt_id=attempt_id)
+        self._emit("Submission", {
+            "JobID": job_id, "AttemptID": attempt_id or "", "Called": dest,
+            "CallerID": fields["CallerID"], "Preset": settings.sip_trunk_preset or "",
+            "FaxPreference": "yes" if FAX_PREFERENCE_VARIABLE in fields["Variable"] else "no",
+        })
         await self._send_action(fields)
 
     def on_originate_response(self, cb: Callable[[Dict[str, str]], None]):
-        self._listeners["OriginateResponse"] = cb
+        self._listen("OriginateResponse", cb)
 
     def on_fax_result(self, cb: Callable[[Dict[str, str]], None]):
-        self._listeners["FaxResult"] = cb
+        self._listen("FaxResult", cb)
+
+    def on_submission(self, cb: Callable[[Dict[str, str]], None]):
+        self._listen("Submission", cb)
 
 
 ami_client = AMIClient()

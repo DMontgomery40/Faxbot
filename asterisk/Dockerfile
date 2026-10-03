@@ -69,7 +69,8 @@ WORKDIR /etc/asterisk
 
 COPY etc/asterisk/ /etc/asterisk/
 COPY start.sh /start.sh
-RUN chmod +x /start.sh \
+COPY bin/faxbot-inbound-notify /usr/local/bin/faxbot-inbound-notify
+RUN chmod +x /start.sh /usr/local/bin/faxbot-inbound-notify \
     && mkdir -p /var/run/asterisk /var/log/asterisk /var/lib/asterisk /var/spool/asterisk /faxdata \
     && test -x /usr/bin/envsubst
 
