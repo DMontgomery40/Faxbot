@@ -46,6 +46,8 @@ jobs:
         run: |
           python scripts/docs_ai/generate_reference.py --source-sha "$SOURCE_SHA" --source-ref "$SOURCE_REF" --require-clean
       - name: Build Redocly API reference and strict MkDocs site
+        env:
+          MIKE_DOCS_VERSION: ${{ inputs.source_sha }}
         run: |
           python scripts/docs_ai/build_api.py
           mkdocs build --strict --site-dir site

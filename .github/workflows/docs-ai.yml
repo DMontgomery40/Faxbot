@@ -72,6 +72,7 @@ jobs:
           python scripts/docs_ai/generate_docs_from_diff.py --base "$BASE_REF" --llm "$PROVIDER"
           python scripts/docs_ai/validate_doc_patch.py mkdocs-docs-llm.patch
           git apply --index mkdocs-docs-llm.patch
+          python scripts/docs_ai/validate_doc_patch.py --staged
       - name: Create reviewed proposal against main
         uses: peter-evans/create-pull-request@v6
         with:

@@ -127,3 +127,27 @@ def test_fresh_clone_publication_preserves_remote_history_and_exact_artifact(tmp
     assert {entry["version"] for entry in versions} == {"old-version", revision, newer_revision}
     assert next(entry for entry in versions if "latest" in entry["aliases"])["version"] == newer_revision
     assert run(checkout, "git", "show", f"origin/gh-pages:{newer_revision}/index.html") == "newer verified artifact"
+
+
+def test_authoritative_artifact_build_uses_source_version_for_canonical_urls(tmp_path):
+    mkdocs = shutil.which('mkdocs')
+    if not mkdocs:
+        pytest.skip('Install docs/requirements.txt for the real canonical URL build')
+    configuration = yaml.load((ROOT / '.github/workflows/api-docs.yml').read_text(), Loader=yaml.BaseLoader)
+    step = next(step for step in configuration['jobs']['build']['steps']
+                if step.get('name') == 'Build Redocly API reference and strict MkDocs site')
+    version = 'a' * 40
+    environment = {key: value for key, value in os.environ.items()
+                   if key not in {'MIKE_DOCS_VERSION', 'FAXBOT_DOCS_BUILT_SITE'}}
+    for name, value in step.get('env', {}).items():
+        environment[name] = value.replace('${{ inputs.source_sha }}', version)
+    (tmp_path / 'docs/generated').mkdir(parents=True)
+    (tmp_path / 'docs/generated/index.md').write_text('# Generated source\n')
+    (tmp_path / 'mkdocs.yml').write_text(
+        'site_name: Source docs\nsite_url: https://docs.example.invalid/\nplugins: [mike]\n')
+    run(tmp_path, mkdocs, 'build', '--strict', env=environment)
+    html = (tmp_path / 'site/generated/index.html').read_text()
+    sitemap = (tmp_path / 'site/sitemap.xml').read_text()
+    expected = f'https://docs.example.invalid/{version}/generated/'
+    assert f'href="{expected}"' in html
+    assert f'<loc>{expected}</loc>' in sitemap
