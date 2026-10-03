@@ -170,7 +170,7 @@ class FaxbotClient {
         if (!retryable) throw sendFailure(error, id);
         if (attempt < this.retries) continue;
         throw new FaxSendError(
-          `Faxbot did not confirm this fax, so call sendFax again with operationId '${id}' to finish the same fax without sending it twice.`,
+          `Faxbot did not confirm this fax, so call sendFax again with operationId=${id} to finish the same fax without sending it twice.`,
           { operationId: id, status: error.response?.status ?? null, uncertain: true, cause: error });
       } finally {
         fileStream.destroy();

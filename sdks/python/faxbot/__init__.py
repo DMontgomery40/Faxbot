@@ -54,7 +54,7 @@ class FaxSubmissionUncertain(Exception):
         self.operation_id = operation_id
         self.status = status
         super().__init__(
-            f"Faxbot did not confirm this fax, so call send_fax again with operation_id='{operation_id}' "
+            f"Faxbot did not confirm this fax, so call send_fax again with operation_id={operation_id} "
             "to finish the same fax without sending it twice."
         )
 

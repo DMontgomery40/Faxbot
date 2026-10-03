@@ -120,7 +120,7 @@ test('an unconfirmed fax is finished with its operation id', () => withFake(asyn
   assert.equal(error.status, 503);
   assert.ok(error instanceof FaxbotClient.FaxSendError);
   assert.deepEqual(fake.posts().map((post) => post.operation), [error.operationId, error.operationId, error.operationId]);
-  assert.equal(error.message, `Faxbot did not confirm this fax, so call sendFax again with operationId '${error.operationId}' to finish the same fax without sending it twice.`);
+  assert.equal(error.message, `Faxbot did not confirm this fax, so call sendFax again with operationId=${error.operationId} to finish the same fax without sending it twice.`);
   assert.equal(fake.state.jobs.length, 1);
   assert.deepEqual(await client.resumeFax(error.operationId, '+15551234567', document), fake.state.jobs[0]);
   assert.equal(fake.state.jobs.length, 1);

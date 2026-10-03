@@ -163,7 +163,7 @@ def test_an_unconfirmed_fax_is_finished_with_its_operation_id(fake, document):
     assert [post['operation'] for post in fake['posts']()] == [error.operation_id] * 3
     assert error.status == 503
     assert str(error) == (f"Faxbot did not confirm this fax, so call send_fax again with "
-                          f"operation_id='{error.operation_id}' to finish the same fax without sending it twice.")
+                          f"operation_id={error.operation_id} to finish the same fax without sending it twice.")
     assert len(fake['jobs']) == 1
     assert client.resume_fax(error.operation_id, '+15551234567', str(document)) == fake['jobs'][0]
     assert len(fake['jobs']) == 1
