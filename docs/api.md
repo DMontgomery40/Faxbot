@@ -4,7 +4,7 @@ The [generated source reference](generated/index.md) supplies the current OpenAP
 
 ## Base URL and authentication
 
-Use your installation's API URL; the local default is `http://localhost:8080`. Send the current client key as `X-API-Key`. Canonical API-key enforcement and database-issued scoped keys determine access; editing process `.env` does not rotate an initialized installation's key. See [Authentication](security/authentication.md) and [Settings](admin-console/settings.md).
+Use your installation's API URL; the local default is `http://localhost:8080`. Every request needs a credential: send a Faxbot API key as `X-API-Key`. What the key may do depends on its owner's roles and the key's own permission list. Editing the `.env` file does not change keys on an existing installation. See [Authentication](security/authentication.md) and [Access Control](security/access-control.md).
 
 Open `/docs` on that server for its Swagger UI (`http://localhost:8080/docs` in local development); `/openapi.json` provides its schema. Remote clients, including iOS, connect to your installation through its configured secure tunnel or VPN. See [Networking & Tunnels](networking/tunnels.md).
 
@@ -48,6 +48,6 @@ Missing/invalid authentication or captured `PHAXIO_VERIFY_SIGNATURE=false` rejec
 
 ## Configuration, retention and logs
 
-Edit existing server settings through [canonical Settings](admin-console/settings.md), using the loaded desired revision and the response's active/pending state. Environment files are bootstrap inputs, not ordinary runtime imports. Pending changes require every API worker to stop and the installation restart.
+Change server settings on the [Settings](admin-console/settings.md) screen or its API. Environment files only apply when a new installation starts for the first time. When a change waits for a restart, stop every API process and start the installation again.
 
-PDF URL TTL and artifact cleanup settings are canonical fields. Keep artifacts needed for reconciliation and recovery; changing cleanup configuration is distinct from proving provider delivery. Audit logs can record events such as `job_created` and `pdf_served`; a PDF fetch or log event is not terminal fax delivery. Inspect durable job/attempt state and the original provider result.
+PDF link lifetime and document cleanup are ordinary settings. Keep artifacts needed for reconciliation and recovery; changing cleanup configuration is distinct from proving provider delivery. Audit logs can record events such as `job_created` and `pdf_served`; a PDF fetch or log event is not terminal fax delivery. Inspect durable job/attempt state and the original provider result.

@@ -1,15 +1,15 @@
 # Fax Disabled: Held Test Jobs
 
-Use **Disable fax sending (queue only)** to check upload preparation and operator workflows without issuing new fax attempts.
+Use **Disable outbound fax sending** to check document preparation and the Jobs screens without sending anything.
 
 ## Configure an existing installation
 
-1. Open **Settings**, load the desired revision and turn on **Disable fax sending (queue only)**.
-2. Apply the changed field. If it is pending, stop every API worker and restart the installation.
-3. Load Settings again and confirm the desired revision is active and sending is disabled.
+1. Open **Settings**, click **Load Settings** and turn on **Disable outbound fax sending**.
+2. Click **Apply settings**. If Faxbot asks for a restart, stop every API process and start the installation again.
+3. Click **Load Settings** again and confirm that sending is off and no restart is pending.
 4. In **Send**, attach a synthetic document and use **Queue**. The server refuses a stale queue-only form if another operator has enabled sending; refresh Send before proceeding.
 
-For an installation without canonical state, `FAX_DISABLED=true` is a bootstrap environment value. Changing that environment variable on an existing installation does not replace its canonical revision.
+`FAX_DISABLED=true` in the environment only applies when a new installation starts for the first time. Changing it later does not change an existing installation; use Settings instead.
 
 ## What happens
 
@@ -21,6 +21,6 @@ For an installation without canonical state, `FAX_DISABLED=true` is a bootstrap 
 
 ## Enable real sending
 
-Load Settings, turn the disabled control off, apply and complete any required coordinated restart. Confirm the active state before creating a new request for a controlled destination. Previously held jobs remain held. Review uncertain or historical jobs against the original provider before taking action; never blindly resubmit them.
+Open Settings, turn **Disable outbound fax sending** off, apply, and restart if Faxbot asks for it. Confirm the active state before creating a new request for a controlled destination. Previously held jobs remain held. Review uncertain or historical jobs against the original provider before taking action; never blindly resubmit them.
 
-See [API Tests](../tools/api-tests.md) for isolated internal checks and [Settings](../admin-console/settings.md) for revisions and recovery.
+See [API Tests](../tools/api-tests.md) for isolated internal checks and [Settings](../admin-console/settings.md) for saving, restarts and recovery.

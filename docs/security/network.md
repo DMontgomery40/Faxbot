@@ -5,15 +5,16 @@ Guidance for securing MCP transports and webhooks when running Faxbot in product
 
 ## MCP Transports
 
-- HTTP (Node MCP)
-  - Port: 3001 (default)
-  - Protect with `MCP_HTTP_API_KEY`; set strict `MCP_HTTP_CORS_ORIGIN` (no `*` when credentials).
-  - Run behind TLS via reverse proxy; add IP allowlists and rate limits where appropriate.
+- Streamable HTTP (Node and Python MCP)
+  - Ports: 3001 (Node), 3004 (Python), or built into the API at `/mcp/http/mcp` with `ENABLE_MCP_HTTP=true`.
+  - Each client sends its own Faxbot API key as `Authorization: Bearer <key>` or `X-API-Key`, and the server uses it for that client's requests. Give each client its own key with only the permissions it needs. Requests without a key are refused.
+  - For OAuth, set `OAUTH_ISSUER`, `OAUTH_AUDIENCE`, optionally `OAUTH_JWKS_URL`, and map token subjects to Faxbot keys in `MCP_OAUTH_SUBJECT_KEYS_FILE`.
+  - Set `MCP_ALLOWED_HOSTS` to your public host names. Browser origins are refused unless listed in `MCP_ALLOWED_ORIGINS`.
+  - Run behind TLS via a reverse proxy; add IP allowlists and rate limits where appropriate.
 
-- SSE (Node/Python MCP)
-  - Ports: 3002 (Node), 3003 (Python)
-  - Require OAuth2/JWT in production. Configure `OAUTH_ISSUER`, `OAUTH_AUDIENCE`, and (optionally) `OAUTH_JWKS_URL`.
-  - Run behind TLS; validate tokens against your IdP; set short TTLs.
+- SSE (Python MCP only, for older clients)
+  - Port: 3003, or built into the API at `/mcp/sse/sse` with `ENABLE_MCP_SSE=true`.
+  - Same per-client keys and OAuth options as Streamable HTTP. Prefer Streamable HTTP for new clients.
 
 - WebSocket (Node MCP)
   - Port: 3004 (default)

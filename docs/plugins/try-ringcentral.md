@@ -6,7 +6,7 @@ This walkthrough adds a RingCentral manifest and uses Faxbot's tracked Send flow
 
 Use a RingCentral account and OAuth access token with fax permission for the selected extension. RingCentral uses the extension's configured outbound fax number.
 
-On an existing installation, load Settings, enable v3 plugins and apply with the loaded desired revision. Inspect active/pending status and complete an installation-wide stop/start when pending. `FEATURE_V3_PLUGINS=true` is a first-bootstrap environment input, not an import into an initialized canonical store.
+On an existing installation, open Settings, turn on v3 plugins and apply. If Settings asks for a restart, stop every Faxbot API process and start the installation again. `FEATURE_V3_PLUGINS=true` in the environment only applies when a new installation starts for the first time.
 
 ## 1) Create the manifest file
 
@@ -66,22 +66,22 @@ The manifest is a provider definition, not a secret/runtime settings store. Crea
 
 The multipart template supplies separate `to` and `faxResolution` form fields and a PDF `attachment`; the HTTP client creates the multipart boundary. RingCentral's documented fax states are [Queued, Sent and SendingFailed](https://developers.ringcentral.com/guide/messaging/message-store/messaging). Unknown responses remain uncertain and require reconciliation.
 
-Keep the token in canonical plugin credentials through Admin Console. Bearer authentication accepts the `token` or `api_key` setting. This manifest does not obtain or refresh OAuth tokens.
+Store the token in the plugin's credentials through the admin console. Bearer authentication accepts the `token` or `api_key` setting. This manifest does not obtain or refresh OAuth tokens.
 
 ## 2) Enable + configure in Admin Console
 
 1. Open Admin Console → Plugins.
 2. Select `ringcentral` and enable its outbound role.
-3. Set plugin credentials with `{"token":"YOUR_RINGCENTRAL_OAUTH_ACCESS_TOKEN"}`. Omit unchanged masked credentials.
-4. Save with the loaded desired revision, inspect active/pending status and confirm the active outbound provider. Disabled sending accepts held jobs that never automatically dispatch.
+3. Set plugin credentials with `{"token":"YOUR_RINGCENTRAL_OAUTH_ACCESS_TOKEN"}`. Leave hidden credentials unchanged unless you are replacing them.
+4. Save, restart if Faxbot asks for it, and confirm RingCentral is the outbound provider. While sending is disabled, new faxes are held and never sent automatically.
 
-Alternatively, first read `/plugins/ringcentral/config` and retain `_meta.desired_revision_id`; include it in the write. A conflict requires explicit reload/review, not a silent fresh revision just before mutation:
+Or use the API: read `/plugins/ringcentral/config` first and send its `_meta.desired_revision_id` back as `expected_revision_id`. A 409 reply means someone else saved first; read again and review before retrying:
 
 ```bash
 BASE="http://localhost:8080"; API_KEY="your_admin_api_key"
 curl -sS -X PUT "$BASE/plugins/ringcentral/config" \
   -H "X-API-Key: $API_KEY" -H 'content-type: application/json' \
-  -d '{"expected_revision_id":"LOADED_DESIRED_REVISION","enabled":true,"role":"outbound","settings":{"token":"YOUR_RINGCENTRAL_OAUTH_ACCESS_TOKEN"}}'
+  -d '{"expected_revision_id":"VALUE_FROM_THE_READ","enabled":true,"role":"outbound","settings":{"token":"YOUR_RINGCENTRAL_OAUTH_ACCESS_TOKEN"}}'
 ```
 
 ## 3) Send a controlled test

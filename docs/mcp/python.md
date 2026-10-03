@@ -26,9 +26,11 @@ Both network servers read `FAX_API_URL`, optional `MCP_ALLOWED_HOSTS` and `MCP_A
 
 Embedded in the API
 
-- `ENABLE_MCP_HTTP=true` serves Streamable HTTP at `/mcp/http/mcp`
-- `ENABLE_MCP_SSE=true` serves SSE at `/mcp/sse/sse`
+- `ENABLE_MCP_HTTP=true` serves Streamable HTTP at `/mcp/http/mcp`, with a health check at `/mcp/http/health`
+- `ENABLE_MCP_SSE=true` serves SSE at `/mcp/sse/sse`, with a health check at `/mcp/sse/health`
 - `REQUIRE_MCP_OAUTH=true` switches both to OAuth bearer tokens
+
+The health checks need no credential and return `{"status": "ok", "server": "faxbot-mcp", ...}`. The admin console's **MCP** screen uses them to show whether the built-in server is responding.
 
 Tools
 

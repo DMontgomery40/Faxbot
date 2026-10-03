@@ -39,11 +39,13 @@
 ### Transport Selection Issues
 If you're unsure which MCP transport to use:
 
-| Transport | File | Port | Auth | Use Case |
-|-----------|------|------|------|----------|
-| **stdio** | node_mcp/src/servers/stdio.js (recommended) or api/mcp_server.js (legacy) | N/A | API key | Desktop AI |
-| **HTTP** | api/mcp_http_server.js or node_mcp/src/servers/http.js | 3001 | API key | Web apps, cloud AI |
-| **SSE+OAuth** | api/mcp_sse_server.js or node_mcp/src/servers/sse.js | 3002 | JWT/Bearer | Enterprise, HIPAA |
+| Transport | Server | Port | Auth | Use Case |
+|-----------|--------|------|------|----------|
+| **stdio** | `node_mcp/src/servers/stdio.js` or `python_mcp/stdio_server.py` | N/A | `API_KEY` | Desktop AI |
+| **Streamable HTTP** | `node_mcp/src/servers/http.js`, `python_mcp/http_server.py`, or built into the API at `/mcp/http/mcp` | 3001 (Node), 3004 (Python) | Each client's own Faxbot key, or OAuth | Web apps, cloud AI |
+| **SSE (older clients)** | `python_mcp/server.py`, or built into the API at `/mcp/sse/sse` | 3003 | Each client's own Faxbot key, or OAuth | Clients without Streamable HTTP |
+
+See [MCP Transports](mcp/transports.md) for details.
 
 ### Common MCP Problems
 
@@ -53,19 +55,19 @@ If you're unsure which MCP transport to use:
 
 #### Connection & Authentication
 - **MCP server not found**: Ensure you’re starting from the correct path:
-  - Legacy servers: `api/scripts/start-mcp*.sh`
-  - New servers (recommended): `node_mcp/scripts/start-*.sh`
+  - Node servers: `node_mcp/scripts/start-stdio.sh` and `node_mcp/scripts/start-http.sh`
   - Python servers: `python_mcp/` (`stdio_server.py`, `http_server.py`, `server.py`)
 
 ### Environment
-- `FAX_API_URL`, `API_KEY`: Required for authentication.
+- `FAX_API_URL` points the MCP server at Faxbot. Only the stdio servers use `API_KEY`; network servers use each client's own key.
 - **Authentication failures**: 
-  - stdio: Check `API_KEY` environment variable matches Faxbot API setting
-  - HTTP: Verify `X-API-Key` header is being passed correctly
-  - SSE+OAuth: Confirm JWT token has correct `iss`, `aud`, and hasn't expired
+  - stdio: Check that `API_KEY` is a valid Faxbot API key with the permissions the tools need
+  - Streamable HTTP and SSE: Check that the client sends its own Faxbot key as `Authorization: Bearer <key>` or `X-API-Key`
+  - OAuth: Confirm the token has the right `iss` and `aud`, has not expired, and that its subject is listed in `MCP_OAUTH_SUBJECT_KEYS_FILE`
 - **Connection refused**: 
   - Ensure main Faxbot API is running on `FAX_API_URL` (default: http://localhost:8080)
-  - For HTTP/SSE transports, check port availability (3001/3002)
+  - For network transports, check that the port is free (3001 for Node, 3004 for Python Streamable HTTP, 3003 for Python SSE)
+  - Check the server with `GET /health` on its port, or `/mcp/http/health` and `/mcp/sse/health` when built into the API
 - **"No tools available"**: MCP server started successfully but tools not loading - check MCP server logs for initialization errors
 
 #### Filesystem Access Required
