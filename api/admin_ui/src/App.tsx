@@ -23,7 +23,8 @@ import {
   Fade,
   Slide,
   Zoom,
-  Chip
+  Chip,
+  CircularProgress
 } from '@mui/material';
 import MenuIcon from '@mui/icons-material/Menu';
 import SettingsIcon from '@mui/icons-material/Settings';
@@ -96,6 +97,7 @@ function AppContent() {
     return localStorage.getItem('faxbot_admin_key') || '';
   });
   const [apiKey, setApiKey] = useState(initialStoredKey);
+  const [restoringAuth, setRestoringAuth] = useState(Boolean(initialStoredKey));
   const restoredStoredKey = useRef(false);
   const [client, setClient] = useState<AdminAPIClient | null>(null);
   const [adminConfig, setAdminConfig] = useState<AdminConfig | null>(null);
@@ -181,7 +183,7 @@ function AppContent() {
   useEffect(() => {
     if (restoredStoredKey.current) return;
     restoredStoredKey.current = true;
-    if (initialStoredKey) void handleLogin(initialStoredKey);
+    if (initialStoredKey) void handleLogin(initialStoredKey).finally(() => setRestoringAuth(false));
   }, [initialStoredKey, handleLogin]);
 
   // Config-dependent sections refresh active values on entry, including return
@@ -238,6 +240,18 @@ function AppContent() {
     { value: 'scripts', label: 'Scripts & Tests', icon: <ScienceIcon /> },
   ];
   const selectedToolsTab = toolsTab === 'plugins' && !adminConfig?.v3_plugins?.enabled ? 'terminal' : toolsTab;
+
+  if (restoringAuth) {
+    return (
+      <Box role="status" aria-live="polite" sx={{
+        minHeight: '100vh', display: 'flex', flexDirection: 'column',
+        alignItems: 'center', justifyContent: 'center', gap: 2,
+      }}>
+        <CircularProgress aria-label="Checking saved admin access" />
+        <Typography variant="body1">Checking saved admin access…</Typography>
+      </Box>
+    );
+  }
 
   if (!authenticated) {
     return (
