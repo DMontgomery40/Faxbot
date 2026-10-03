@@ -27,7 +27,7 @@ def validate_staged(*, environment=None):
                 or candidate.suffix != '.md' or candidate.parts[0:1] != ('docs',)
                 or candidate.name.casefold() in {'agents.md', 'claude.md', 'skill.md'}
                 or '..' in candidate.parts or candidate.is_absolute()
-                or candidate.parts[1:2] in [('generated',), ('superpowers',), ('modernization',)]):
+                or candidate.parts[1:2] in [('generated',), ('architecture',)]):
             raise ValueError('Documentation proposal exceeds maintained Markdown scope.')
 
 

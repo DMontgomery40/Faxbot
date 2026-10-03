@@ -1,7 +1,5 @@
 # Faxbot configuration and provider activation
 
-Status: selected primary implementation design, independently challenged and clarified, under the approved whole-product refresh. The client contracts were inspected at dcd4c442. The bounded path repair is independently approved and image-verified at48c9ff96. This document records the selected design; it is not a claim that these changes are implemented.
-
 ## Outcome
 
 An operator can edit, validate, apply, save, reload and restart configuration without losing credentials, partially changing the process, selecting a different provider by accident, or redirecting historical fax operations to another account. Settings, plugin configuration, diagnostics, dispatch and callback verification share the same validated source. Existing web, SDK, MCP and iOS request shapes remain supported.
@@ -30,7 +28,7 @@ Changing DATABASE_URL is a datastore transfer, not live configuration. Preserve 
 
 ## Value model and compatibility
 
-A single immutable typed model owns environment aliases, defaults, secret metadata, validation and serialization. The detailed implementation sequence is `../plans/2026-10-02-faxbot-configuration-values.md`.
+A single immutable typed model owns environment aliases, defaults, secret metadata, validation and serialization. The detailed implementation sequence is under [Implementation order and completion evidence](#implementation-order-and-completion-evidence).
 
 Retain GET /admin/settings's nested masked representation and PUT's flat patch. Omitted/null fields preserve values; explicit empty strings clear strings/secrets and reset directional overrides to inherited selection. Preserve false and zero where valid. Reject unknown inputs, invalid ranges, unknown providers and mask placeholders. The entire candidate is validated before mutation. GET /admin/config remains usable by the current login flow and reports actual active runtime selection.
 

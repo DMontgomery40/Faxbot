@@ -1,16 +1,10 @@
 # Faxbot finished-product refresh
 
-> **Status update, October 3, 2026:** This document records the approved requirements/design, not completed implementation. Work is paused for agent handoff at application commit `a14a23e1`; full product/RBAC/client/delivery completion is absent. The current factual review is [architecture-review.md](../../modernization/architecture-review.md). The user's latest requirement is to remove developer/log/chat-style text introduced into the product UI. Older sequencing below is historical and is not a new recommendation from the handoff.
-
-Status: approved by the user on October 2 with complete RBAC, permitted UI improvements, and existing TestFlight compatibility. The user explicitly authorized execution with the agreed primary/agent split. Document integrity is implemented and independently approved at 6a0afbba. Runtime dependencies/container startup are independently approved at c17e10c9 with actual image proof. Versioned database upgrades are the next foundation repair.
-
 ## Outcome and constraints
 
 Deliver a completed, verified Faxbot product for the October 7, 2026, 10:00 AM America/Denver handoff meeting. Retain the familiar Admin Console design as a starting point; the user explicitly permits UI upgrades where useful. Replace backend internals as necessary to make the existing product dependable and transferable. A demo, passing unit tests, or a backlog of known required repairs does not constitute delivery. Do not remove an existing feature or silently downgrade it to satisfy the deadline.
 
 The existing product is self-hostable fax automation. The recommended deployment contract remains a dedicated installation per operating organization, with complete role-based access control (RBAC) for users and integrations, including scoped document access. Supporting independent companies in one shared installation would require an explicit tenant model and is a separate product decision; do not claim that existing global scopes provide tenant isolation.
-
-The user requested GPT-6.1 Sol xhigh subagents for bounded work, with the primary agent retaining architecture, integration, and decisions requiring accumulated context. Subagents receive complete task briefs, relevant decisions, expected interfaces, test instructions, and evidence pointers. Use independent review after each complete slice. Never treat a subagent's completion claim as integration or release proof.
 
 ## Problem statement
 
@@ -125,7 +119,5 @@ Use one failing behavior test followed by its implementation, with independent r
 An unrelated visual rebrand, inventing unrelated billing/CRM features, adding a new multi-tenant SaaS business model without a user decision, public outreach to prospects, legal/compliance certification claims, or replacing the language/framework solely for fashion. These exclusions do not exclude repairs needed for the existing product to function.
 
 ## Execution and continuity
-
-The full refresh is one goal with staged subsystem specifications and complete vertical tasks. Keep a durable acceptance matrix, decision record, task graph and evidence ledger in the integration branch. Use GPT-6.1 Sol at xhigh for bounded implementation and independent review. The primary agent owns cross-module concurrency design, ambiguous provider behavior, branch reconciliation and integration decisions, as requested.
 
 Main is the intended integration target. PR review/CI/merge and deployment must be tracked separately from local tests. Respect existing user authorization, and ask only for material product decisions or truly missing external prerequisites. Design approval is not implementation completion.

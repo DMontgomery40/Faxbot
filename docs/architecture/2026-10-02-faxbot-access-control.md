@@ -1,6 +1,6 @@
 # Faxbot access control
 
-Implements the user-approved complete RBAC requirement in `2026-10-02-faxbot-refresh-design.md`. Technical decomposition under existing execution authorization; it does not reduce the full product goal. Baseline: `9d7c600e`. Primary owns policy, compatibility and integration decisions; Sol6.1 xhigh workers implement bounded, reviewed tasks. User-facing acceptance uses real Browser/Computer input, never a route test as a substitute.
+Implements the user-approved complete RBAC requirement in `2026-10-02-faxbot-refresh-design.md`. Technical decomposition under existing execution authorization; it does not reduce the full product goal. Baseline: `9d7c600e`. User-facing acceptance uses real Browser/Computer input, never a route test as a substitute.
 
 ## Product outcome
 
