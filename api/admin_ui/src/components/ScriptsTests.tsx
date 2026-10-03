@@ -18,22 +18,22 @@ import {
 import {
   PlayArrow as RunIcon,
   Clear as ClearIcon,
-  Code as CodeIcon,
   VpnKey as KeyIcon,
   CallReceived as InboundIcon,
   Settings as SettingsIcon,
+  Send as SendIcon,
   ContentCopy as CopyIcon,
-  Security as SecurityIcon,
   Terminal as TerminalIcon,
-  CheckCircle as CheckIcon,
   Info as InfoIcon,
 } from '@mui/icons-material';
 import AdminAPIClient from '../api/client';
 import { docsLink } from '../docsLinks';
+import type { AdminDestination } from '../navigation';
 import { ResponsiveFormSection, ResponsiveTextField } from './common/ResponsiveFormFields';
 
 interface Props {
   client: AdminAPIClient;
+  onNavigate: (destination: AdminDestination) => void;
   docsBase?: string;
 }
 
@@ -140,19 +140,15 @@ const ConsoleBox: React.FC<{ lines: string[]; loading?: boolean; title?: string 
   );
 };
 
-const ScriptsTests: React.FC<Props> = ({ client, docsBase }) => {
+const ScriptsTests: React.FC<Props> = ({ client, onNavigate, docsBase }) => {
   const [error, setError] = useState<string>('');
-  const [busyAuth, setBusyAuth] = useState<boolean>(false);
   const [busyInbound, setBusyInbound] = useState<boolean>(false);
   const [busyInfo, setBusyInfo] = useState<boolean>(false);
-  const [authLines, setAuthLines] = useState<string[]>([]);
   const [inboundLines, setInboundLines] = useState<string[]>([]);
   const [infoLines, setInfoLines] = useState<string[]>([]);
   const [toNumber, setToNumber] = useState<string>('+15551234567');
   const [backend, setBackend] = useState<string>('');
   const [inboundEnabled, setInboundEnabled] = useState<boolean>(false);
-  const [publicApiUrl, setPublicApiUrl] = useState<string>('');
-  const [sipSecret, setSipSecret] = useState<string>('');
   const [actions, setActions] = useState<Array<{ id: string; label: string }>>([]);
   const [actionOutput, setActionOutput] = useState<Record<string, string>>({});
   const [activeActionTab, setActiveActionTab] = useState<string>('');
@@ -161,8 +157,6 @@ const ScriptsTests: React.FC<Props> = ({ client, docsBase }) => {
 
   const docsUrl = docsLink('scripts', docsBase);
 
-  const pushAuth = (line: string) => setAuthLines((prev) => [...prev, line]);
-  const clearAuth = () => setAuthLines([]);
   const pushInbound = (line: string) => setInboundLines((prev) => [...prev, line]);
   const clearInbound = () => setInboundLines([]);
   const pushInfo = (line: string) => setInfoLines((prev) => [...prev, line]);
@@ -175,7 +169,6 @@ const ScriptsTests: React.FC<Props> = ({ client, docsBase }) => {
         const b = (s as any)?.backend?.type || '';
         setBackend(b);
         setInboundEnabled(Boolean((s as any)?.inbound?.enabled));
-        setPublicApiUrl(((s as any)?.security?.public_api_url) || '');
         // Load container actions
         try {
           const al = await (client as any).listActions?.();
@@ -192,31 +185,6 @@ const ScriptsTests: React.FC<Props> = ({ client, docsBase }) => {
       }
     })();
   }, [client]);
-
-  const runAuthSmoke = async () => {
-    setError(''); clearAuth(); setBusyAuth(true);
-    try {
-      pushAuth('[i] Creating send+read API key');
-      const { token } = await client.createApiKey({ name: 'gui-smoke', owner: 'admin', scopes: ['fax:send','fax:read'] });
-      pushAuth(`[i] Key minted (ends with …${(token||'').slice(-6)})`);
-      pushAuth('[i] Sending test TXT');
-      const blob = new Blob([`hello from Faxbot Admin Console — ${new Date().toISOString()}`], { type: 'text/plain' });
-      const file = new File([blob], 'gui-smoke.txt', { type: 'text/plain' });
-      const send = await client.sendFax(toNumber, file);
-      pushAuth(`[✓] Queued: ${send.id} status=${send.status}`);
-      pushAuth('[i] Fetching status…');
-      try {
-        const job = await (client as any).getJob(send.id);
-        pushAuth(JSON.stringify(job, null, 2));
-      } catch (e) {
-        pushAuth('[!] Could not fetch admin job detail; showing basic result only');
-      }
-    } catch (e: any) {
-      setError(e?.message || 'Auth smoke failed');
-    } finally {
-      setBusyAuth(false);
-    }
-  };
 
   const runInboundSim = async () => {
     setError(''); clearInbound(); setBusyInbound(true);
@@ -248,43 +216,6 @@ const ScriptsTests: React.FC<Props> = ({ client, docsBase }) => {
     } finally { setBusyInfo(false); }
   };
 
-  const generateSecret = () => {
-    try {
-      if (window.crypto && (window.crypto as any).getRandomValues) {
-        const arr = new Uint8Array(24);
-        window.crypto.getRandomValues(arr);
-        return Array.from(arr).map(b => b.toString(16).padStart(2, '0')).join('');
-      }
-    } catch {}
-    return Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
-  };
-
-  const saveSipInboundSecret = async () => {
-    setError(''); pushInfo('[i] Saving Asterisk inbound secret and enabling inbound…'); setBusyInfo(true);
-    try {
-      const secret = sipSecret || generateSecret();
-      setSipSecret(secret);
-      await (client as any).updateSettings?.({ inbound_enabled: true, asterisk_inbound_secret: secret });
-      const s = await client.getSettings();
-      setInboundEnabled(Boolean((s as any)?.inbound?.enabled));
-      pushInfo('[✓] Saved. Inbound is enabled. Update your dialplan to post with X-Internal-Secret.');
-    } catch (e:any) {
-      setError(e?.message || 'Failed to save inbound secret');
-    } finally { setBusyInfo(false); }
-  };
-
-  const savePhaxioCallback = async () => {
-    if (!publicApiUrl) { setError('PUBLIC_API_URL is not set. Configure it in Settings.'); return; }
-    setError(''); pushInfo('[i] Saving PHAXIO_CALLBACK_URL from PUBLIC_API_URL…'); setBusyInfo(true);
-    try {
-      const url = `${publicApiUrl.replace(/\/$/, '')}/phaxio-callback`;
-      await (client as any).updateSettings?.({ phaxio_status_callback_url: url });
-      pushInfo(`[✓] Set callback URL to ${url}`);
-    } catch (e:any) {
-      setError(e?.message || 'Failed to save callback URL');
-    } finally { setBusyInfo(false); }
-  };
-
   return (
     <Box sx={{ p: { xs: 2, sm: 0 } }}>
       <Box 
@@ -302,7 +233,7 @@ const ScriptsTests: React.FC<Props> = ({ client, docsBase }) => {
             Scripts & Tests
           </Typography>
           <Typography variant="body2" color="text.secondary">
-            Run fax tests and backend-specific scripts
+            Open fax and configuration workflows or run inbound and container helpers
           </Typography>
         </Box>
       </Box>
@@ -314,7 +245,7 @@ const ScriptsTests: React.FC<Props> = ({ client, docsBase }) => {
       >
         <Stack spacing={0.5}>
           <Typography variant="body2">
-            These buttons run the same flows as our helper scripts directly from your browser — no terminal needed.
+            Manage API keys, review outbound faxes, and configure providers in the established workflows. Inbound and container helpers remain available below.
           </Typography>
           <Typography variant="body2">
             Learn more in the docs: <a href={docsUrl} target="_blank" rel="noreferrer">Scripts & Tests</a>.
@@ -331,44 +262,37 @@ const ScriptsTests: React.FC<Props> = ({ client, docsBase }) => {
       )}
 
       <Grid container spacing={3}>
-        {/* Auth Smoke Test */}
+        {/* Established key and outbound workflows */}
         <Grid item xs={12} lg={6}>
           <ResponsiveFormSection
-            title="Auth Smoke Test"
-            subtitle="Create key → send test → check status"
+            title="Keys and Send Fax"
+            subtitle="Manage keys and review a fax before submitting"
             icon={<KeyIcon />}
           >
             <Stack spacing={2}>
-              <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
-                <ResponsiveTextField
-                  label="Test to number" 
-                  value={toNumber} 
-                  onChange={setToNumber}
-                  placeholder="+15551234567"
-                  icon={<CodeIcon />}
-                />
-                <Stack direction="row" spacing={1}>
-                  <Button 
-                    variant="contained" 
-                    onClick={runAuthSmoke} 
-                    disabled={busyAuth || busyInbound || busyInfo}
-                    startIcon={busyAuth ? <CircularProgress size={16} /> : <RunIcon />}
-                    sx={{ borderRadius: 2, minWidth: 80 }}
-                  >
-                    {busyAuth ? 'Running' : 'Run'}
-                  </Button>
-                  <Button 
-                    variant="outlined"
-                    onClick={clearAuth} 
-                    disabled={busyAuth || busyInbound || busyInfo}
-                    startIcon={<ClearIcon />}
-                    sx={{ borderRadius: 2 }}
-                  >
-                    Clear
-                  </Button>
-                </Stack>
+              <Typography variant="body2" color="text.secondary">
+                Manage API keys in Keys. Use Send Fax to choose your document and destination and review whether the active send setting holds the job or allows real transmission.
+              </Typography>
+              <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
+                <Button
+                  variant="outlined"
+                  onClick={() => onNavigate('keys')}
+                  disabled={busyInbound || busyInfo}
+                  startIcon={<KeyIcon />}
+                  sx={{ borderRadius: 2 }}
+                >
+                  Open Keys
+                </Button>
+                <Button
+                  variant="contained"
+                  onClick={() => onNavigate('send')}
+                  disabled={busyInbound || busyInfo}
+                  startIcon={<SendIcon />}
+                  sx={{ borderRadius: 2 }}
+                >
+                  Open Send Fax
+                </Button>
               </Stack>
-              <ConsoleBox lines={authLines} loading={busyAuth} />
             </Stack>
           </ResponsiveFormSection>
         </Grid>
@@ -393,7 +317,7 @@ const ScriptsTests: React.FC<Props> = ({ client, docsBase }) => {
                     <Button 
                       variant="contained" 
                       onClick={runInboundSim} 
-                      disabled={busyInbound || busyAuth || busyInfo}
+                      disabled={busyInbound || busyInfo}
                       startIcon={busyInbound ? <CircularProgress size={16} /> : <RunIcon />}
                       sx={{ borderRadius: 2, minWidth: 80 }}
                     >
@@ -402,7 +326,7 @@ const ScriptsTests: React.FC<Props> = ({ client, docsBase }) => {
                     <Button 
                       variant="outlined"
                       onClick={clearInbound} 
-                      disabled={busyInbound || busyAuth || busyInfo}
+                      disabled={busyInbound || busyInfo}
                       startIcon={<ClearIcon />}
                       sx={{ borderRadius: 2 }}
                     >
@@ -416,86 +340,38 @@ const ScriptsTests: React.FC<Props> = ({ client, docsBase }) => {
           </Grid>
         )}
 
-        {/* Backend-specific helpers */}
-        {backend === 'sip' && (
-          <Grid item xs={12} lg={6}>
-            <ResponsiveFormSection
-              title="SIP/Asterisk: Inbound Secret"
-              subtitle="Set a strong secret for dialplan authentication"
-              icon={<SecurityIcon />}
-            >
-              <Stack spacing={2}>
-                <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
-                  <ResponsiveTextField
-                    label="ASTERISK_INBOUND_SECRET" 
-                    value={sipSecret} 
-                    onChange={setSipSecret}
-                    type="password"
-                  />
-                  <Stack direction="row" spacing={1}>
-                    <Button 
-                      variant="outlined"
-                      onClick={() => setSipSecret(generateSecret())} 
-                      disabled={busyAuth || busyInbound || busyInfo}
-                      sx={{ borderRadius: 2 }}
-                    >
-                      Generate
-                    </Button>
-                    <Button 
-                      variant="contained" 
-                      onClick={saveSipInboundSecret} 
-                      disabled={busyInfo || busyAuth || busyInbound}
-                      startIcon={busyInfo ? <CircularProgress size={16} /> : <CheckIcon />}
-                      sx={{ borderRadius: 2 }}
-                    >
-                      {busyInfo ? 'Saving' : 'Enable & Save'}
-                    </Button>
-                  </Stack>
-                </Stack>
-                <Alert severity="info" sx={{ borderRadius: 2 }}>
-                  <Typography variant="caption">
-                    Dialplan should POST to /_internal/asterisk/inbound with header X-Internal-Secret.
-                  </Typography>
-                </Alert>
+        {/* Established revision-aware configuration workflow */}
+        <Grid item xs={12} lg={6}>
+          <ResponsiveFormSection
+            title="Provider and Callback Settings"
+            subtitle="Review credentials, URLs, and saved revisions"
+            icon={<SettingsIcon />}
+          >
+            <Stack spacing={2}>
+              <Typography variant="body2" color="text.secondary">
+                Configure provider credentials, receiving secrets, and callback URLs in Settings. Review the saved revision and whether changes are active or pending restart there.
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                SIP/Asterisk internal posting uses the configured inbound secret with the X-Internal-Secret header. Phaxio outbound callbacks require a separate callback token. Use the configured provider's required callback signature verification.
+              </Typography>
+              <Box>
+                <Button
+                  variant="contained"
+                  onClick={() => onNavigate('settings')}
+                  disabled={busyInbound || busyInfo}
+                  startIcon={<SettingsIcon />}
+                  sx={{ borderRadius: 2 }}
+                >
+                  Open Settings
+                </Button>
+              </Box>
+              <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
+                <a href={docsLink('sip', docsBase)} target="_blank" rel="noreferrer">SIP/Asterisk setup guide</a>
+                <a href={docsLink('phaxio', docsBase)} target="_blank" rel="noreferrer">Phaxio setup guide</a>
               </Stack>
-            </ResponsiveFormSection>
-          </Grid>
-        )}
-
-        {backend === 'phaxio' && (
-          <Grid item xs={12} lg={6}>
-            <ResponsiveFormSection
-              title="Phaxio: Set Callback URL"
-              subtitle="Configure webhook endpoint for status updates"
-              icon={<SettingsIcon />}
-            >
-              <Stack spacing={2}>
-                <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
-                  <ResponsiveTextField
-                    label="PUBLIC_API_URL" 
-                    value={publicApiUrl} 
-                    onChange={setPublicApiUrl}
-                    placeholder="https://api.example.com"
-                  />
-                  <Button 
-                    variant="contained" 
-                    onClick={savePhaxioCallback} 
-                    disabled={busyInfo || busyAuth || busyInbound}
-                    startIcon={busyInfo ? <CircularProgress size={16} /> : <CheckIcon />}
-                    sx={{ borderRadius: 2, minWidth: 100 }}
-                  >
-                    {busyInfo ? 'Saving' : 'Save'}
-                  </Button>
-                </Stack>
-                <Alert severity="warning" sx={{ borderRadius: 2 }}>
-                  <Typography variant="caption">
-                    Ensure this is HTTPS and publicly reachable. Configure signature verification in Settings if required.
-                  </Typography>
-                </Alert>
-              </Stack>
-            </ResponsiveFormSection>
-          </Grid>
-        )}
+            </Stack>
+          </ResponsiveFormSection>
+        </Grid>
 
         {/* Inbound Callbacks Info */}
         <Grid item xs={12}>
@@ -511,7 +387,7 @@ const ScriptsTests: React.FC<Props> = ({ client, docsBase }) => {
                 <Button 
                   variant="contained" 
                   onClick={runCallbacksInfo} 
-                  disabled={busyInfo || busyAuth || busyInbound}
+                  disabled={busyInfo || busyInbound}
                   startIcon={busyInfo ? <CircularProgress size={16} /> : <InfoIcon />}
                   sx={{ borderRadius: 2 }}
                 >
@@ -520,7 +396,7 @@ const ScriptsTests: React.FC<Props> = ({ client, docsBase }) => {
                 <Button 
                   variant="outlined"
                   onClick={clearInfo} 
-                  disabled={busyInfo || busyAuth || busyInbound}
+                  disabled={busyInfo || busyInbound}
                   startIcon={<ClearIcon />}
                   sx={{ borderRadius: 2 }}
                 >
@@ -570,7 +446,7 @@ const ScriptsTests: React.FC<Props> = ({ client, docsBase }) => {
                           backgroundColor: theme.palette.action.hover,
                         }
                       }}
-                      disabled={busyAuth || busyInbound || busyInfo}
+                      disabled={busyInbound || busyInfo}
                     />
                   ))}
                 </Box>
@@ -594,8 +470,8 @@ const ScriptsTests: React.FC<Props> = ({ client, docsBase }) => {
         sx={{ mt: 3, borderRadius: 2 }}
       >
         <Typography variant="caption" color="text.secondary">
-          <strong>Tip:</strong> For cloud providers, set PUBLIC_API_URL and enable HTTPS when exposing the API. 
-          The GUI tests respect current server settings (e.g., FAX_DISABLED for simulation).
+          <strong>Tip:</strong> Review public callback URLs and HTTPS requirements in Settings.
+          Disabled sending holds outbound jobs; it does not simulate provider delivery. Held jobs are not automatically transmitted when sending is enabled.
         </Typography>
       </Alert>
     </Box>

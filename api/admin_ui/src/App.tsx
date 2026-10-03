@@ -727,7 +727,7 @@ function AppContent() {
               {selectedToolsTab === 'diagnostics' && <Diagnostics client={client!} onNavigate={handleNavigate} docsBase={adminConfig?.branding?.docs_base} />}
               {selectedToolsTab === 'logs' && <Logs client={client!} />}
               {selectedToolsTab === 'plugins' && adminConfig?.v3_plugins?.enabled && <Plugins client={client!} config={adminConfig} configLoading={activeConfigLoading} configError={activeConfigError} onNavigate={handleNavigate} />}
-              {selectedToolsTab === 'scripts' && <ScriptsTests client={client!} docsBase={adminConfig?.branding?.docs_base} />}
+              {selectedToolsTab === 'scripts' && <ScriptsTests client={client!} onNavigate={handleNavigate} docsBase={adminConfig?.branding?.docs_base} />}
             </Box>
           </Paper>}
         </TabPanel>

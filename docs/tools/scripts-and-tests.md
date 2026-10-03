@@ -3,6 +3,14 @@
 
 A practical catalog of helper scripts and core API tests so you can validate Faxbot quickly. Where noted, helpers read client/bootstrap values from `.env`. On an initialized installation, server configuration changes go through [Settings](../admin-console/settings.md); editing `.env` does not replace canonical desired settings.
 
+## Admin Console workflows
+
+In **Tools → Scripts & Tests**, **Open Keys**, **Open Send Fax**, and **Open Settings** navigate to their existing console workflows. Opening these pages does not create a credential, submit a fax, or save configuration. Review the destination, document and active send mode in Send Fax; inspect active versus pending revisions in Settings.
+
+**Show Config** reads configured inbound callback information. It does not prove provider reachability or fax receipt. The separate inbound helper creates a persisted synthetic record; it is not a provider-delivery check. Container actions can affect the host, including tunnels, and remain subject to the installation execution gate.
+
+Disabled sending holds outbound jobs without a provider attempt. It does not simulate delivery, and enabling sending does not automatically transmit held jobs.
+
 ## Auth and API basics
 
 - `scripts/run-uvicorn-dev.sh`
