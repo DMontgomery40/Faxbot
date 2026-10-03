@@ -7,6 +7,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import httpx2
 import pytest
@@ -20,6 +21,7 @@ from python_mcp import faxbot_tools, http_server, server, stdio_server
 TOOLS = {'send_fax', 'get_fax_status', 'get_fax', 'list_inbound', 'get_inbound_pdf'}
 STDIO = str(Path(__file__).resolve().parents[1] / 'stdio_server.py')
 PDF_B64 = base64.b64encode(b'%PDF-1.4 outbound').decode()
+PDF_B64 = PDF_B64[:8] + '\n' + PDF_B64[8:]  # line-wrapped base64 is accepted
 
 
 def _http_client(headers):
@@ -210,10 +212,13 @@ async def test_oauth_subject_maps_to_its_stored_faxbot_key(fake_faxbot, serve, t
             unmapped = await raw.post(running.url + '/mcp', json={},
                                       headers={'Authorization': f'Bearer {token("mallory@example.test")}'})
             challenge = await raw.post(running.url + '/mcp', json={})
-            metadata = await raw.get(running.url + '/.well-known/oauth-protected-resource')
+            advertised = challenge.headers['WWW-Authenticate'].split('resource_metadata="')[1].rstrip('"')
+            # A client follows the advertised URL; serve it at that path behind this origin.
+            metadata = await raw.get(running.url + urlsplit(advertised).path)
     assert unmapped.status_code == 403
     assert challenge.headers['WWW-Authenticate'] == (
         'Bearer resource_metadata="https://mcp.example.test/mcp/.well-known/oauth-protected-resource"')
+    assert metadata.status_code == 200
     assert metadata.json()['authorization_servers'] == [fake_faxbot.url]
     assert fake_faxbot.keys() == ['alice-faxbot-key']
 

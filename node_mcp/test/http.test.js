@@ -10,7 +10,7 @@ import { createHttpServer } from '../src/servers/http.js';
 import { startFakeFaxbot } from './fake-faxbot.js';
 
 const TOOLS = ['get_fax', 'get_fax_status', 'get_inbound_pdf', 'list_inbound', 'send_fax'];
-const PDF_B64 = Buffer.from('%PDF-1.4 outbound').toString('base64');
+const PDF_B64 = Buffer.from('%PDF-1.4 outbound').toString('base64').replace(/^(.{8})/, '$1\n'); // line-wrapped base64 is accepted
 
 async function listen(options) {
   const server = createHttpServer({ allowedHosts: [], allowedOrigins: [], oauthIssuer: '', ...options });
@@ -110,8 +110,11 @@ test('OAuth subjects map to their stored Faxbot key; unmapped subjects are refus
     const anonymous = await fetch(`${mcp.url}/mcp`, { method: 'POST', headers: { 'X-API-Key': 'raw-key' }, body: '{}' });
     assert.equal(anonymous.status, 401);
     assert.match(anonymous.headers.get('www-authenticate'), /resource_metadata="https:\/\/mcp\.example\.test\/mcp\/\.well-known\/oauth-protected-resource"/);
-    const metadata = await (await fetch(`${mcp.url}/.well-known/oauth-protected-resource`)).json();
-    assert.deepEqual(metadata.authorization_servers, [fake.url]);
+    // A client follows the advertised URL; serve it at that path behind this origin.
+    const advertised = anonymous.headers.get('www-authenticate').match(/resource_metadata="([^"]+)"/)[1];
+    const metadata = await fetch(`${mcp.url}${new URL(advertised).pathname}`);
+    assert.equal(metadata.status, 200);
+    assert.deepEqual((await metadata.json()).authorization_servers, [fake.url]);
   } finally {
     await mcp.close();
     await fake.close();

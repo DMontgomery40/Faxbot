@@ -147,7 +147,7 @@ class CallerCredentialMiddleware:
         if relative == '/health':
             await self.app(scope, receive, send)
             return
-        if relative == '/.well-known/oauth-protected-resource' and self.metadata_url:
+        if self.metadata_url and relative.endswith('/.well-known/oauth-protected-resource'):
             await JSONResponse({'resource': self.resource_url, 'authorization_servers': [self.authorization_server],
                                 'bearer_methods_supported': ['header']})(scope, receive, send)
             return

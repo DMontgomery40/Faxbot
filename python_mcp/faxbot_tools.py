@@ -115,7 +115,7 @@ async def _submit(configuration: APIConfiguration, to: str, name: str, data: byt
 
 def _decode(file_content: str) -> bytes:
     try:
-        return base64.b64decode(file_content, validate=True)
+        return base64.b64decode(''.join(file_content.split()), validate=True)  # allow line-wrapped base64
     except Exception:
         raise ToolError('fileContent must be base64 encoded') from None
 

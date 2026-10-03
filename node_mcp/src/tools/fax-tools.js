@@ -65,8 +65,9 @@ async function submit(client, to, name, buffer, type) {
 }
 
 function decode(fileContent) {
-  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(fileContent)) throw new Error('fileContent must be base64 encoded');
-  return Buffer.from(fileContent, 'base64');
+  const clean = fileContent.replace(/\s+/g, ''); // allow line-wrapped base64
+  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(clean)) throw new Error('fileContent must be base64 encoded');
+  return Buffer.from(clean, 'base64');
 }
 
 // Local file and URL reads are offered only where the caller owns the host (stdio).

@@ -92,7 +92,7 @@ export function createHttpServer({
     try {
       const { pathname } = new URL(req.url || '/', 'http://localhost');
       if (pathname === '/health') return sendJson(res, 200, { status: 'ok', transport: 'streamable-http', server: SERVER_INFO.name, version: SERVER_INFO.version });
-      if (metadataUrl && pathname === '/.well-known/oauth-protected-resource') {
+      if (metadataUrl && pathname.endsWith('/.well-known/oauth-protected-resource')) {
         return sendJson(res, 200, { resource: resourceUrl, authorization_servers: [oauthIssuer], bearer_methods_supported: ['header'] });
       }
       if (pathname !== '/mcp') return sendJson(res, 404, { error: 'Not found' });
