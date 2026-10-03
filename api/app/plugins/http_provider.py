@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import httpx
+import h11
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, List
 from urllib.parse import urlparse
@@ -107,6 +108,130 @@ class HttpProviderRuntime:
         self.m = manifest
         self.creds = credentials or {}
         self.settings = settings or {}
+
+    def is_configured(self) -> bool:
+        """Check captured send configuration without testing provider reachability.
+
+        Job placeholders use representative values only for URL syntax. Missing
+        optional body/header settings keep their normal empty rendering; captured
+        credentials and endpoint settings must be usable before dispatch.
+        """
+        try:
+            if not isinstance(self.creds, dict) or not isinstance(self.settings, dict):
+                return False
+            action = self.m.actions.get('send_fax')
+            if not isinstance(action, HttpAction) or not isinstance(self.m.auth, dict):
+                return False
+            if (not isinstance(action.method, str) or action.method.upper() not in
+                    {'GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS', 'TRACE', 'CONNECT'}):
+                return False
+            if any(name in self.m.auth and (not isinstance(self.m.auth[name], str)
+                   or not self.m.auth[name].strip()) for name in ('header_name', 'query_name')):
+                return False
+            scheme = self.m.auth.get('scheme', 'none')
+            if not isinstance(scheme, str):
+                return False
+            scheme = scheme.lower()
+            if scheme not in {'none', 'basic', 'bearer', 'api_key_header', 'api_key_query'}:
+                return False
+
+            def credential(value):
+                return isinstance(value, str) and bool(value.strip())
+
+            # Match _apply_auth's fallback semantics, including an explicitly
+            # empty basic api_key taking precedence over a password.
+            if scheme == 'basic':
+                if not credential(self.creds.get('username')) or not credential(
+                        self.creds.get('api_key', self.creds.get('password', ''))):
+                    return False
+            elif scheme == 'bearer':
+                if not credential(self.creds.get('api_key') or self.creds.get('token')):
+                    return False
+            elif scheme in {'api_key_header', 'api_key_query'}:
+                if not credential(self.creds.get('api_key')):
+                    return False
+
+            context = {
+                'creds': self.creds, 'settings': self.settings,
+                'to': '+15550000001', 'from': '+15550000002',
+                'file_url': 'https://document.invalid/fax.pdf', 'file_path': '/document.pdf',
+                'job_id': 'job', 'attempt_id': 'attempt',
+            }
+            if action.body_kind == 'multipart':
+                # The attachment marker is consumed by multipart, not _lookup.
+                context['file'] = 'document'
+
+            def reference(key, *, endpoint):
+                parts = key.split('.')
+                if any(not part for part in parts):
+                    return False
+                root = parts[0]
+                if root in {'creds', 'settings'}:
+                    if len(parts) < 2:
+                        return False
+                    value = _lookup(context, key)
+                    if root == 'creds':
+                        return credential(value)
+                    if value is None:
+                        return not endpoint
+                    if type(value) not in (str, int, float, bool):
+                        return False
+                    return not endpoint or not isinstance(value, str) or bool(value.strip())
+                return len(parts) == 1 and root in context
+
+            def template(value, *, endpoint=False, body=False):
+                if not isinstance(value, str):
+                    return False
+                if any(not reference(match.group(1), endpoint=endpoint)
+                       for match in _TPL_RE.finditer(value)):
+                    return False
+                remaining = _TPL_RE.sub('', value)
+                # Nested JSON may legitimately end with two closing braces.
+                return '{{' not in remaining and (body or '}}' not in remaining)
+
+            if not template(action.url, endpoint=True) or not template(action.body_template, body=True):
+                return False
+            if action.body_kind not in {'none', 'json', 'form', 'multipart'}:
+                return False
+            if not isinstance(action.headers, dict) or not isinstance(action.path_params, list):
+                return False
+            if any(not isinstance(name, str) or not template(value)
+                   for name, value in action.headers.items()):
+                return False
+            url = _render(action.url, context)
+            for parameter in action.path_params:
+                if not isinstance(parameter, dict):
+                    return False
+                name = parameter.get('name')
+                source = parameter.get('source', name)
+                if (not isinstance(name, str) or not name.strip()
+                        or not isinstance(source, str) or not reference(source, endpoint=True)):
+                    return False
+                url = url.replace('{' + name + '}', str(_lookup(context, source) or ''))
+            if any(ord(char) <= 32 or ord(char) == 127 or char in '{}' for char in url):
+                return False
+            parsed = urlparse(url)
+            if parsed.scheme not in {'http', 'https'} or not parsed.hostname:
+                return False
+            parsed.port
+            httpx.URL(url)
+            if (not isinstance(self.m.allowed_domains, list)
+                    or any(not isinstance(domain, str) or not domain.strip()
+                           for domain in self.m.allowed_domains)):
+                return False
+            self._check_domain(url)
+
+            headers = {name: _render(value, context) for name, value in action.headers.items()}
+            parameters = {}
+            self._apply_auth(headers, parameters)
+            # Use the same literal header grammar as the manifest validator,
+            # now with captured substitutions and auth applied.
+            wire_headers = httpx.Headers(headers).raw
+            h11.Response(status_code=200, headers=wire_headers)
+            return True
+        except (TypeError, ValueError, AttributeError, RuntimeError,
+                UnicodeError, httpx.InvalidURL, h11.LocalProtocolError):
+            return False
 
     def _apply_auth(self, headers: Dict[str, str], params: Dict[str, str]) -> None:
         scheme = (self.m.auth.get("scheme") or "none").lower()
