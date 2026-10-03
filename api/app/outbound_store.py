@@ -18,7 +18,7 @@ import sqlalchemy as sa
 TERMINAL = frozenset({'success', 'failed', 'cancelled'})
 OBSERVED = TERMINAL | {'in_progress'}
 _PROVIDER_SID = re.compile(r'[A-Za-z0-9_-]{1,100}', re.ASCII)
-_ACTOR = re.compile(r'key:[A-Za-z0-9][A-Za-z0-9_.-]{0,95}', re.ASCII)
+_ACTOR = re.compile(r'(?:key|principal):[A-Za-z0-9][A-Za-z0-9_.-]{0,95}', re.ASCII)
 _EVENT_KINDS = frozenset({'accepted', 'legacy_migrated', 'binding_unavailable',
     'held_acceptance_restored', 'claimed', 'dispatch_paused', 'submission_authorized',
     'submission_uncertain', 'preparation_failed', 'preparation_expired',
@@ -165,83 +165,91 @@ class OutboundStore:
         return None
 
     def bind_provider_identity(self, job_id, *, expected_version, provider_sid, actor):
+        with self.configuration._locked() as connection:
+            return self._bind_provider_identity_on(connection, job_id, expected_version=expected_version, provider_sid=provider_sid, actor=actor)
+
+    def _bind_provider_identity_on(self, connection, job_id, *, expected_version, provider_sid, actor):
         """Attach external evidence to one issued attempt, without resend authority."""
+        self.configuration._require_lock_on(connection)
         if (type(expected_version) is not int or expected_version <= 0
                 or not isinstance(provider_sid, str) or _PROVIDER_SID.fullmatch(provider_sid) is None
                 or not _valid_actor(actor)):
             raise ValueError('Invalid provider identity reconciliation input.')
-        with self.configuration._locked() as connection:
-            row = self._row(connection, job_id)
-            if row is None:
-                raise DeliveryConflict('Delivery record is unavailable.')
-            if row['version'] != expected_version:
-                raise DeliveryConflict('Delivery changed; reload before attaching a provider identity.')
-            attempt, _, profile = self._operator_context(connection, row)
-            reason = self._bind_refusal(connection, row, attempt, profile)
-            if reason is not None:
-                raise DeliveryConflict(reason)
-            documo_uuid = (profile.configuration.manifest is None
-                           and profile.configuration.provider_id == 'documo')
-            if documo_uuid:
-                if re.fullmatch(r'[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}', provider_sid) is None:
-                    raise ValueError('Invalid provider identity reconciliation input.')
-                provider_sid = provider_sid.lower()
-            attempt_sid = self.attempts.c.provider_sid
-            if documo_uuid:
-                attempt_sid = sa.func.lower(attempt_sid)
-            owned_attempt = connection.execute(sa.select(self.attempts.c.id).where(
-                    self.attempts.c.profile_id == profile.id,
-                    attempt_sid == provider_sid,
-                    self.attempts.c.job_id != job_id).limit(1)).first()
-            # Captured pre-upgrade jobs can retain a SID and verified binding
-            # without a fabricated outbound attempt. That identity is owned too.
-            jobs, bindings = self.configuration.jobs, self.configuration.job_bindings
-            job_sid_column = sa.func.lower(jobs.c.provider_sid) if documo_uuid else jobs.c.provider_sid
-            owned_job = connection.execute(sa.select(jobs.c.id).join(bindings, bindings.c.id == jobs.c.id).where(
-                bindings.c.profile_id == profile.id, job_sid_column == provider_sid,
-                jobs.c.id != job_id).limit(1)).first()
-            if owned_attempt or owned_job:
-                raise DeliveryConflict('This provider identity already belongs to another delivery from the original account.')
-            now = datetime.utcnow()
-            connection.execute(self.attempts.update().where(self.attempts.c.id == attempt['id']).values(
-                provider_sid=provider_sid))
-            connection.execute(self.configuration.jobs.update().where(
-                self.configuration.jobs.c.id == job_id).values(provider_sid=provider_sid, updated_at=now))
-            self._update(connection, row, now, next_poll_at=None)
-            _event(connection, self.events, job_id, 'operator_identity_bound', now,
-                attempt_id=attempt['id'], details={'actor': actor, 'provider_sid': provider_sid})
-            version = row['version'] + 1
+        row = self._row(connection, job_id)
+        if row is None:
+            raise DeliveryConflict('Delivery record is unavailable.')
+        if row['version'] != expected_version:
+            raise DeliveryConflict('Delivery changed; reload before attaching a provider identity.')
+        attempt, _, profile = self._operator_context(connection, row)
+        reason = self._bind_refusal(connection, row, attempt, profile)
+        if reason is not None:
+            raise DeliveryConflict(reason)
+        documo_uuid = (profile.configuration.manifest is None
+                       and profile.configuration.provider_id == 'documo')
+        if documo_uuid:
+            if re.fullmatch(r'[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}', provider_sid) is None:
+                raise ValueError('Invalid provider identity reconciliation input.')
+            provider_sid = provider_sid.lower()
+        attempt_sid = self.attempts.c.provider_sid
+        if documo_uuid:
+            attempt_sid = sa.func.lower(attempt_sid)
+        owned_attempt = connection.execute(sa.select(self.attempts.c.id).where(
+                self.attempts.c.profile_id == profile.id,
+                attempt_sid == provider_sid,
+                self.attempts.c.job_id != job_id).limit(1)).first()
+        # Captured pre-upgrade jobs can retain a SID and verified binding
+        # without a fabricated outbound attempt. That identity is owned too.
+        jobs, bindings = self.configuration.jobs, self.configuration.job_bindings
+        job_sid_column = sa.func.lower(jobs.c.provider_sid) if documo_uuid else jobs.c.provider_sid
+        owned_job = connection.execute(sa.select(jobs.c.id).join(bindings, bindings.c.id == jobs.c.id).where(
+            bindings.c.profile_id == profile.id, job_sid_column == provider_sid,
+            jobs.c.id != job_id).limit(1)).first()
+        if owned_attempt or owned_job:
+            raise DeliveryConflict('This provider identity already belongs to another delivery from the original account.')
+        now = datetime.utcnow()
+        connection.execute(self.attempts.update().where(self.attempts.c.id == attempt['id']).values(
+            provider_sid=provider_sid))
+        connection.execute(self.configuration.jobs.update().where(
+            self.configuration.jobs.c.id == job_id).values(provider_sid=provider_sid, updated_at=now))
+        self._update(connection, row, now, next_poll_at=None)
+        _event(connection, self.events, job_id, 'operator_identity_bound', now,
+            attempt_id=attempt['id'], details={'actor': actor, 'provider_sid': provider_sid})
+        version = row['version'] + 1
         return version
 
     def operator_view(self, job_id):
-        """Read a consistent bounded operator projection of the original account."""
         with self.configuration._locked() as connection:
-            row = self._row(connection, job_id)
-            if row is None:
-                raise DeliveryConflict('Delivery record is unavailable.')
-            attempt, revision, profile = self._operator_context(connection, row)
-            reason = self._bind_refusal(connection, row, attempt, profile)
-            count = connection.scalar(sa.select(sa.func.count()).select_from(self.events).where(
-                self.events.c.job_id == job_id))
-            events = connection.execute(sa.select(self.events).where(self.events.c.job_id == job_id)
-                .order_by(self.events.c.created_at.desc(), self.events.c.id.desc()).limit(100)).mappings().all()
-            phases = OBSERVED | {'preparing', 'submitting', 'uncertain', 'abandoned'}
-            safe_attempt = None if attempt is None else {
-                'id': attempt['id'], 'phase': attempt['phase'] if attempt['phase'] in phases else 'unknown',
-                'provider_sid': attempt['provider_sid'] if isinstance(attempt['provider_sid'], str)
-                    and _PROVIDER_SID.fullmatch(attempt['provider_sid']) else None,
-                'submitted_at': attempt['submitted_at'], 'completed_at': attempt['completed_at'],
-            }
-            return {'version': row['version'], 'state': row['state'], 'dispatch_mode': row['dispatch_mode'],
-                'provider_id': profile.configuration.provider_id if profile is not None else None,
-                'profile_id': profile.id if profile is not None else None,
-                'revision_id': revision.id if revision is not None else None,
-                'attempt': safe_attempt, 'can_bind_provider_identity': reason is None, 'bind_refusal_reason': reason,
-                'events_truncated': count > 100,
-                'events': [{'id': event['id'], 'attempt_id': event['attempt_id'],
-                    'kind': event['kind'] if event['kind'] in _EVENT_KINDS else 'unknown',
-                    'created_at': event['created_at'], 'details': _safe_event_details(event['details'])}
-                    for event in reversed(events)]}
+            return self._operator_view_on(connection, job_id)
+
+    def _operator_view_on(self, connection, job_id):
+        """Read a consistent bounded operator projection of the original account."""
+        self.configuration._require_lock_on(connection)
+        row = self._row(connection, job_id)
+        if row is None:
+            raise DeliveryConflict('Delivery record is unavailable.')
+        attempt, revision, profile = self._operator_context(connection, row)
+        reason = self._bind_refusal(connection, row, attempt, profile)
+        count = connection.scalar(sa.select(sa.func.count()).select_from(self.events).where(
+            self.events.c.job_id == job_id))
+        events = connection.execute(sa.select(self.events).where(self.events.c.job_id == job_id)
+            .order_by(self.events.c.created_at.desc(), self.events.c.id.desc()).limit(100)).mappings().all()
+        phases = OBSERVED | {'preparing', 'submitting', 'uncertain', 'abandoned'}
+        safe_attempt = None if attempt is None else {
+            'id': attempt['id'], 'phase': attempt['phase'] if attempt['phase'] in phases else 'unknown',
+            'provider_sid': attempt['provider_sid'] if isinstance(attempt['provider_sid'], str)
+                and _PROVIDER_SID.fullmatch(attempt['provider_sid']) else None,
+            'submitted_at': attempt['submitted_at'], 'completed_at': attempt['completed_at'],
+        }
+        return {'version': row['version'], 'state': row['state'], 'dispatch_mode': row['dispatch_mode'],
+            'provider_id': profile.configuration.provider_id if profile is not None else None,
+            'profile_id': profile.id if profile is not None else None,
+            'revision_id': revision.id if revision is not None else None,
+            'attempt': safe_attempt, 'can_bind_provider_identity': reason is None, 'bind_refusal_reason': reason,
+            'events_truncated': count > 100,
+            'events': [{'id': event['id'], 'attempt_id': event['attempt_id'],
+                'kind': event['kind'] if event['kind'] in _EVENT_KINDS else 'unknown',
+                'created_at': event['created_at'], 'details': _safe_event_details(event['details'])}
+                for event in reversed(events)]}
 
     def reserve_poll(self, *, now=None, interval_seconds=30):
         """Reserve a status read, never a submission or replacement attempt."""
@@ -277,25 +285,29 @@ class OutboundStore:
             return row['id']
 
     def poll_target(self, job_id, *, automatic=False):
-        """Authenticate original account and attempt before a read-only lookup."""
         with self.configuration._locked() as connection:
-            row = self._row(connection, job_id)
-            if row is None:
-                raise DeliveryConflict('Delivery record is unavailable.')
-            if row['state'] in TERMINAL or row['state'] == 'held':
-                return None
-            attempt = connection.execute(sa.select(self.attempts).where(
-                self.attempts.c.id == row['attempt_id'])).mappings().one_or_none()
-            if (row['state'] not in {'in_progress', 'reconciliation_required'} or attempt is None
-                    or attempt['job_id'] != job_id or not attempt['provider_sid']
-                    or attempt['submitted_at'] is None):
-                raise DeliveryConflict('No acknowledged provider identity is available for refresh.')
-            _, profile = self.configuration._outbound_context(connection, job_id)
-            if profile.id != attempt['profile_id']:
-                raise DeliveryConflict('Delivery account does not match its accepted attempt.')
-            if automatic and _automatic_poll_interval(profile.configuration, 30) == 0:
-                return None
-            return profile, attempt['id'], attempt['provider_sid']
+            return self._poll_target_on(connection, job_id, automatic=automatic)
+
+    def _poll_target_on(self, connection, job_id, *, automatic=False):
+        """Authenticate original account and attempt before a read-only lookup."""
+        self.configuration._require_lock_on(connection)
+        row = self._row(connection, job_id)
+        if row is None:
+            raise DeliveryConflict('Delivery record is unavailable.')
+        if row['state'] in TERMINAL or row['state'] == 'held':
+            return None
+        attempt = connection.execute(sa.select(self.attempts).where(
+            self.attempts.c.id == row['attempt_id'])).mappings().one_or_none()
+        if (row['state'] not in {'in_progress', 'reconciliation_required'} or attempt is None
+                or attempt['job_id'] != job_id or not attempt['provider_sid']
+                or attempt['submitted_at'] is None):
+            raise DeliveryConflict('No acknowledged provider identity is available for refresh.')
+        _, profile = self.configuration._outbound_context(connection, job_id)
+        if profile.id != attempt['profile_id']:
+            raise DeliveryConflict('Delivery account does not match its accepted attempt.')
+        if automatic and _automatic_poll_interval(profile.configuration, 30) == 0:
+            return None
+        return profile, attempt['id'], attempt['provider_sid']
 
     def _preparing(self, connection, claim, now):
         row = self._row(connection, claim.job_id)

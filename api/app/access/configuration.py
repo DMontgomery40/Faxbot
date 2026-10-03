@@ -6,10 +6,12 @@ permission even for a no-op. This result adds field-sensitive requirements; it
 does not authenticate or grant authority itself.
 """
 from dataclasses import dataclass
+import json
 
 from pydantic import AliasChoices
 
 from ..config_values import ConfigurationValues
+from ..config_profiles import ConfigurationDocument
 
 
 # Everything not explicitly ordinary is Owner-protected, including future fields.
@@ -43,6 +45,8 @@ class ConfigurationRequirements:
     changed_fields: tuple[str, ...]
     permissions: frozenset[str]
     requires_complete_owner: bool
+    plugin_categories: tuple[str, ...] = ()
+    profile_drift: bool = False
 
 
 def _policy_values(values: ConfigurationValues) -> dict:
@@ -73,3 +77,49 @@ def configuration_requirements(
         for name in changed
     )
     return ConfigurationRequirements(changed, permissions, 'owner:recover' in permissions)
+
+
+def configuration_candidate_requirements(before, after, before_plugins, after_plugins, *, profile_drift):
+    """Union canonical scalar, document and captured-declaration requirements.
+
+    Provider settings are private arbitrary JSON. Results expose only closed
+    categories, never their keys, values or value-derived fingerprints.
+    """
+    if (type(before_plugins) is not ConfigurationDocument or type(after_plugins) is not ConfigurationDocument
+            or type(profile_drift) is not bool):
+        raise ValueError('Configuration policy requires validated configuration documents.')
+    scalar = configuration_requirements(before, after)
+    old, new = before_plugins.as_dict(), after_plugins.as_dict()
+    categories, permissions = set(), set(scalar.permissions)
+    for name in old.keys() | new.keys():
+        if _same_json_member(old, new, name):
+            continue
+        if name == 'settings' and isinstance(old.get(name), dict) and isinstance(new.get(name), dict):
+            categories.add('providers')
+            permissions.add('providers:write')
+        elif name == 'roles' and isinstance(old.get(name), dict) and isinstance(new.get(name), dict):
+            previous, candidate = old[name], new[name]
+            for role in previous.keys() | candidate.keys():
+                if _same_json_member(previous, candidate, role):
+                    continue
+                if role in {'outbound', 'inbound', 'storage'}:
+                    categories.add('providers')
+                    permissions.add('providers:write')
+                else:
+                    categories.add('authentication' if role == 'auth' else 'installation')
+                    permissions.add('owner:recover')
+        else:
+            categories.add('installation')
+            permissions.add('owner:recover')
+    if profile_drift:
+        permissions.add('providers:write')
+    return ConfigurationRequirements(scalar.changed_fields, frozenset(permissions),
+        'owner:recover' in permissions, tuple(sorted(categories)), profile_drift)
+
+
+def _same_json_member(before, after, name):
+    # Python equates True with 1 and False with 0, including inside dictionaries.
+    # Canonical persisted JSON retains those types, so policy must retain them.
+    return name in before and name in after and json.dumps(before[name], sort_keys=True,
+        ensure_ascii=False, allow_nan=False, separators=(',', ':')) == json.dumps(after[name],
+        sort_keys=True, ensure_ascii=False, allow_nan=False, separators=(',', ':'))

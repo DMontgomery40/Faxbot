@@ -174,10 +174,16 @@ class ConfigurationManager:
             fields.append('plugins')
         return tuple(sorted(fields))
 
-    def _apply(self, expected, values, state, actor):
+    def _validate_maintenance(self, expected, values):
         if any(getattr(values, name) != getattr(expected.active.values, name) for name in _MAINTENANCE_FIELDS):
             raise ConfigurationActivationError('Changing installation storage or resource paths requires the maintenance transfer workflow.')
-        catalog = self.catalog_loader(values)
+
+    def _catalog_for(self, expected, values):
+        self._validate_maintenance(expected, values)
+        return self.catalog_loader(values)
+
+    def _prepare_apply(self, expected, values, state, catalog):
+        self._validate_maintenance(expected, values)
         profiles = compile_profiles(values, catalog, state)
         restart = any(getattr(values, name) != getattr(expected.active.values, name) for name in _RESTART_FIELDS)
         old_ami = any(self.store.read_profile(identity).configuration.traits.get('requires_ami', False)
@@ -185,21 +191,41 @@ class ConfigurationManager:
         new_ami = any(profile.traits.get('requires_ami', False) for profile in profiles.values())
         restart = restart or old_ami != new_ami or ((old_ami or new_ami)
             and any(getattr(values, name) != getattr(expected.active.values, name) for name in _AMI_FIELDS))
+        return profiles, restart
+
+    def _apply(self, expected, values, state, actor, *, catalog):
+        profiles, restart = self._prepare_apply(expected, values, state, catalog)
         return self.store.apply(expected, values, restart_required=restart, actor=actor, providers=profiles, plugins=state)
 
-    def patch(self, expected, changes, *, actor):
+    def _apply_authorized(self, expected, values, state, *, principal, control, operation, catalog):
+        profiles, restart = self._prepare_apply(expected, values, state, catalog)
+        baseline = compile_profiles(expected.desired.values, catalog, expected.desired.plugins.as_dict())
+        return self.store.apply_authorized(expected, values, principal=principal, control=control,
+            operation=operation, restart_required=restart, providers=profiles, plugins=state,
+            baseline_providers=baseline)
+
+    def _patch_values(self, expected, changes):
         values = expected.desired.values.with_patch(changes)
         state = expected.desired.plugins.as_dict()
         if changes.get('inbound_enabled') is not None:
             state['roles']['inbound']['enabled'] = values.inbound_enabled
-        return self._apply(expected, values, state, actor)
+        return values, state
 
-    def patch_plugin(self, expected, provider_id, *, settings=None, enabled=None, role=None, actor):
+    def patch(self, expected, changes, *, actor):
+        """Trusted internal edit; human adapters use patch_authorized."""
+        values, state = self._patch_values(expected, changes)
+        return self._apply(expected, values, state, actor, catalog=self._catalog_for(expected, values))
+
+    def patch_authorized(self, expected, changes, *, principal, control):
+        values, state = self._patch_values(expected, changes)
+        return self._apply_authorized(expected, values, state, principal=principal, control=control,
+            operation='settings.update', catalog=self._catalog_for(expected, values))
+
+    def _patch_plugin_values(self, expected, provider_id, *, settings, enabled, role, catalog):
         values = expected.desired.values
         state = expected.desired.plugins.as_dict()
         if role is None:
             role = 'storage' if provider_id in {'local', 's3'} else 'outbound'
-        catalog = self.catalog_loader(values)
         if provider_id not in set(catalog.provider_ids) | {'local', 's3'}:
             raise ConfigurationActivationError('Unknown plugin.')
         if role not in {'outbound', 'inbound', 'storage'} or (enabled is not None and type(enabled) is not bool):
@@ -237,4 +263,19 @@ class ConfigurationManager:
                 state['roles'][role]['enabled'] = False
                 if role == 'inbound':
                     values = values.with_patch({'inbound_enabled': False})
-        return self._apply(expected, values, state, actor)
+        return values, state
+
+    def patch_plugin(self, expected, provider_id, *, settings=None, enabled=None, role=None, actor):
+        """Trusted internal edit; human adapters use patch_plugin_authorized."""
+        catalog = self.catalog_loader(expected.desired.values)
+        values, state = self._patch_plugin_values(expected, provider_id, settings=settings,
+            enabled=enabled, role=role, catalog=catalog)
+        return self._apply(expected, values, state, actor, catalog=catalog)
+
+    def patch_plugin_authorized(self, expected, provider_id, *, principal, control,
+                                settings=None, enabled=None, role=None):
+        catalog = self.catalog_loader(expected.desired.values)
+        values, state = self._patch_plugin_values(expected, provider_id, settings=settings,
+            enabled=enabled, role=role, catalog=catalog)
+        return self._apply_authorized(expected, values, state, principal=principal, control=control,
+            operation='providers.configure', catalog=catalog)

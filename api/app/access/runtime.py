@@ -18,6 +18,7 @@ from .credentials import CredentialCodec
 from .fax_resources import FaxResources
 from .mutations import AccessMutations
 from .outbound import AuthorizedOutbound
+from .queries import AuthorizedFaxQueries
 from .policy import AccessControl
 from .proofs import CredentialProofs
 from .session_codec import SessionCodec
@@ -49,15 +50,16 @@ def _prepare(configuration):
     authentication = AuthenticationService(sessions, admission)
     fax_resources = FaxResources(control)
     outbound = AuthorizedOutbound(configuration, fax_resources)
+    queries = AuthorizedFaxQueries(configuration, fax_resources)
     work = AuthenticationWork()
     return (store, credential_codec, session_codec, bootstrap, control, proofs,
-            mutations, sessions, admission, authentication, fax_resources, outbound, work)
+            mutations, sessions, admission, authentication, fax_resources, outbound, queries, work)
 
 
 class AccessRuntime:
     __slots__ = ('configuration', 'store', 'credential_codec', 'session_codec',
                  'bootstrap', 'control', 'proofs', 'mutations', 'sessions',
-                 'admission', 'authentication', 'fax_resources', 'outbound', 'work')
+                 'admission', 'authentication', 'fax_resources', 'outbound', 'queries', 'work')
 
     def __init__(self, configuration: ConfigurationStore):
         services = None
@@ -72,7 +74,7 @@ class AccessRuntime:
         self.configuration = configuration
         (self.store, self.credential_codec, self.session_codec, self.bootstrap,
          self.control, self.proofs, self.mutations, self.sessions, self.admission,
-         self.authentication, self.fax_resources, self.outbound, self.work) = services
+         self.authentication, self.fax_resources, self.outbound, self.queries, self.work) = services
 
     def __repr__(self):
         return 'AccessRuntime()'

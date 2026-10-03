@@ -16,6 +16,10 @@ class OutboundPoller:
 
     async def refresh(self, job_id, *, automatic=False):
         target = await run_lifecycle_step(lambda: self.store.poll_target(job_id, automatic=automatic))
+        return await self.refresh_target(job_id, target)
+
+    async def refresh_target(self, job_id, target):
+        """Consume a captured lookup; completion is background delivery evidence."""
         if target is None:
             return False
         profile, attempt_id, sid = target

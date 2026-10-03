@@ -4,7 +4,7 @@ from datetime import timedelta
 import sqlalchemy as sa
 
 
-def dashboard_counts(connection, deliveries, *, now):
+def dashboard_counts(connection, deliveries, *, now, job_ids=None):
     """Read one consistent aggregate; legacy FaxJob status never authorizes a queue."""
     state = deliveries.c.state
     conditions = {
@@ -19,4 +19,6 @@ def dashboard_counts(connection, deliveries, *, now):
     statement = sa.select(*(sa.func.coalesce(sa.func.sum(
         sa.case((condition, 1), else_=0)), 0).label(name)
         for name, condition in conditions.items())).select_from(deliveries)
+    if job_ids is not None:
+        statement = statement.where(deliveries.c.id.in_(job_ids))
     return {name: int(count) for name, count in connection.execute(statement).mappings().one().items()}

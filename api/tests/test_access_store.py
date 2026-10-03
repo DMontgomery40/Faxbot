@@ -151,3 +151,21 @@ def test_postgresql_abort_chain_requires_a_fresh_access_lock(database):
         with pytest.raises(InvalidTransactionError):
             store.require_lock_on(connection)
         connection.rollback()
+
+
+@pytest.mark.parametrize('database', ['postgresql'], indirect=True)
+@pytest.mark.parametrize('statement', ['ROLLBACK;BEGIN', 'SELECT 1;ROLLBACK;BEGIN',
+                                      'SELECT 1;/* boundary */ABORT;BEGIN',
+                                      'ROLLBACK/*boundary*/;BEGIN/*boundary*/'])
+def test_batched_control_sql_cannot_reuse_access_lock_marker(database, statement):
+    upgrade_schema(database)
+    store = AccessStore(database)
+    with database.connect() as connection:
+        connection.begin()
+        store.lock_on(connection)
+        original = connection.exec_driver_sql('SELECT txid_current()').scalar_one()
+        connection.exec_driver_sql(statement)
+        assert connection.exec_driver_sql('SELECT txid_current()').scalar_one() != original
+        with pytest.raises(InvalidTransactionError):
+            store.require_lock_on(connection)
+        connection.rollback()

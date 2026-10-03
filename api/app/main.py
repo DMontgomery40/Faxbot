@@ -68,6 +68,8 @@ from .access.runtime import AccessRuntime
 from .access.transport import CredentialTransport
 from .access.types import AccessError, AccessUnavailableError
 from .access.http import router as authentication_router, PrivateAuthMiddleware, access_error_response
+from .access.http import require_identity, runtime as access_runtime, private_operation
+from .access.http import PRIVATE_HEADERS, private_response_path
 
 
 @asynccontextmanager
@@ -387,16 +389,6 @@ def _deliveries():
     return OutboundStore(_configuration_manager().store)
 
 
-def _delivery_fields(job_id):
-    row = _deliveries().get(job_id)
-    reason = None
-    if row['state'] == 'reconciliation_required':
-        reason = ('Historical delivery has no verified transmission record.' if row['dispatch_mode'] == 'legacy'
-                  else 'Transmission outcome is uncertain. Check the original provider before taking action.')
-    return {'delivery_state': row['state'], 'dispatch_mode': row['dispatch_mode'],
-            'delivery_version': row['version'], 'reconciliation_reason': reason}
-
-
 def _observe_native(job_id, attempt_id, status, provider, *, event_key, secret=None):
     if (not isinstance(job_id, str) or re.fullmatch('[a-f0-9]{32}', job_id) is None
             or not isinstance(attempt_id, str) or re.fullmatch('[a-f0-9]{32}', attempt_id) is None):
@@ -611,26 +603,6 @@ def require_scopes(required: List[str], path: Optional[str] = None, rpm: int | s
             limit = getattr(settings, rpm) if isinstance(rpm, str) else rpm
             _enforce_rate_limit(info, path, limit)
     return _dep
-
-
-def require_fax_send(info = Depends(require_api_key)):
-    # If not enforcing API key (dev mode) and unauthenticated, allow
-    if info is None and not settings.require_api_key and not settings.api_key:
-        return
-    if not _has_scope(info, "fax:send"):
-        audit_event("api_key_denied_scope", key_id=(info or {}).get("key_id"), required="fax:send")
-        raise HTTPException(403, detail="Insufficient scope: fax:send required")
-    # Rate limit per key if configured
-    _enforce_rate_limit(info, "/fax")
-
-
-def require_fax_read(info = Depends(require_api_key)):
-    if info is None and not settings.require_api_key and not settings.api_key:
-        return
-    if not _has_scope(info, "fax:read"):
-        audit_event("api_key_denied_scope", key_id=(info or {}).get("key_id"), required="fax:read")
-        raise HTTPException(403, detail="Insufficient scope: fax:read required")
-    _enforce_rate_limit(info, "/fax/{id}")
 
 
 class CreateAPIKeyIn(BaseModel):
@@ -1597,60 +1569,31 @@ def admin_inbound_simulate(payload: SimulateInboundIn):
     return {"id": job_id, "status": "ok"}
 
 
-@app.get("/admin/fax-jobs", dependencies=[Depends(require_admin)])
+@app.get("/admin/fax-jobs")
 async def list_admin_jobs(
+    request: Request,
     status: Optional[str] = None,
     backend: Optional[str] = None,
-    limit: int = Query(default=50, le=100),
+    limit: int = Query(default=50, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
+    identity=Depends(require_identity),
 ):
-    with SessionLocal() as db:
-        q = db.query(FaxJob)
-        if status:
-            delivery = _deliveries().deliveries
-            q = q.join(delivery, FaxJob.id == delivery.c.id).filter(delivery.c.state == status)
-        if backend:
-            q = q.filter(FaxJob.backend == backend)
-        total = q.count()
-        rows = q.order_by(FaxJob.created_at.desc()).offset(offset).limit(limit).all()
-        return {
-            "total": total,
-            "jobs": [
-                {
-                    "id": r.id,
-                    **_delivery_fields(r.id),
-                    "to_number": mask_phone(getattr(r, "to_number", None)),
-                    "status": r.status,
-                    "backend": r.backend,
-                    "pages": r.pages,
-                    "error": sanitize_error(getattr(r, "error", None)),
-                    "created_at": r.created_at,
-                    "updated_at": r.updated_at,
-                }
-                for r in rows
-            ],
-        }
+    page = await run_lifecycle_step(private_operation(lambda: access_runtime(request).queries.page(
+        identity.actor, status=status, backend=backend, limit=limit, offset=offset)))
+    return {'total': page['total'], 'jobs': [_admin_fax_view(row) for row in page['jobs']]}
 
 
-@app.get("/admin/fax-jobs/{job_id}", dependencies=[Depends(require_admin)])
-async def get_admin_job(job_id: str):
-    with SessionLocal() as db:
-        job = db.get(FaxJob, job_id)
-        if not job:
-            raise HTTPException(404, detail="Job not found")
-        return {
-            "id": job.id,
-            **_delivery_fields(job.id),
-            "to_number": mask_phone(getattr(job, "to_number", None)),
-            "status": job.status,
-            "backend": job.backend,
-            "pages": job.pages,
-            "error": sanitize_error(getattr(job, "error", None)),
-            "provider_sid": job.provider_sid,
-            "created_at": job.created_at,
-            "updated_at": job.updated_at,
-            "file_name": job.file_name,
-        }
+@app.get("/admin/fax-jobs/{job_id}")
+async def get_admin_job(job_id: str, request: Request, identity=Depends(require_identity)):
+    row = await run_lifecycle_step(private_operation(lambda: access_runtime(request).queries.job(identity.actor, job_id)))
+    return {**_admin_fax_view(row), 'provider_sid': row['provider_sid'], 'file_name': row['file_name']}
+
+
+def _admin_fax_view(row):
+    fields = ('id', 'status', 'backend', 'pages', 'created_at', 'updated_at',
+              'delivery_state', 'dispatch_mode', 'delivery_version', 'reconciliation_reason')
+    return {**{name: row[name] for name in fields},
+            'to_number': mask_phone(row['to_number']), 'error': sanitize_error(row['error'])}
 
 
 class ProviderIdentityConfirmation(BaseModel):
@@ -1660,57 +1603,37 @@ class ProviderIdentityConfirmation(BaseModel):
     confirm_original_account: StrictBool
 
 
-def _operator_delivery(job_id: str):
-    with SessionLocal() as db:
-        if db.get(FaxJob, job_id) is None:
-            raise HTTPException(404, detail='Job not found')
-    try:
-        return _deliveries().operator_view(job_id)
-    except DeliveryConflict:
-        raise HTTPException(409, detail='Delivery history is unavailable; reload the job before continuing.') from None
-
-
-@app.get('/admin/fax-jobs/{job_id}/delivery', dependencies=[Depends(require_admin)])
-async def admin_delivery_history(job_id: str):
+@app.get('/admin/fax-jobs/{job_id}/delivery')
+async def admin_delivery_history(job_id: str, request: Request, identity=Depends(require_identity)):
     """Bounded evidence from the accepted account, excluding captured secrets."""
-    return await run_lifecycle_step(lambda: _operator_delivery(job_id))
+    return await run_lifecycle_step(private_operation(lambda: access_runtime(request).queries.history(identity.actor, job_id)))
 
 
 @app.post('/admin/fax-jobs/{job_id}/reconcile')
 async def admin_bind_provider_identity(job_id: str, confirmation: ProviderIdentityConfirmation,
-                                       principal=Depends(require_admin)):
+                                       request: Request, identity=Depends(require_identity)):
     """Attach an operator-confirmed receipt; this never authorizes transmission."""
     if confirmation.confirm_original_account is not True:
         raise HTTPException(400, detail='Confirm that this fax ID matches the fax in its original provider account.')
 
     def bind():
-        with SessionLocal() as db:
-            if db.get(FaxJob, job_id) is None:
-                raise HTTPException(404, detail='Job not found')
-        delivery = _deliveries()
         try:
-            delivery.bind_provider_identity(job_id,
+            return access_runtime(request).queries.reconcile(identity.actor, job_id,
                 expected_version=confirmation.expected_version,
-                provider_sid=confirmation.provider_sid,
-                actor='key:' + principal['key_id'])
+                provider_sid=confirmation.provider_sid)
         except DeliveryConflict as exc:
             # Store conflicts are fixed messages and contain no provider payloads.
             raise HTTPException(409, detail=str(exc)) from None
         except ValueError:
             raise HTTPException(400, detail='Invalid provider identity reconciliation input.') from None
-        return delivery.operator_view(job_id)
 
     return await run_lifecycle_step(bind)
 
 
-@app.get("/admin/fax-jobs/{job_id}/pdf", dependencies=[Depends(require_admin)])
-def admin_get_job_pdf(job_id: str):
-    """Admin-only: download the outbound fax PDF for a job if present.
-    Works for all backends; the API generates/keeps a PDF per job prior to sending.
-    """
-    with SessionLocal() as db:
-        if db.get(FaxJob, job_id) is None:
-            raise HTTPException(404, detail='Job not found')
+@app.get("/admin/fax-jobs/{job_id}/pdf")
+def admin_get_job_pdf(job_id: str, request: Request, identity=Depends(require_identity)):
+    """Download the retained PDF with independent current document permission."""
+    private_operation(access_runtime(request).queries.document)(identity.actor, job_id)
     pdf_path = _outbound_document_path(job_id, '.pdf')
     if pdf_path.is_symlink() or not pdf_path.is_file():
         raise HTTPException(404, detail="PDF file not found")
@@ -1727,25 +1650,21 @@ def admin_get_job_pdf(job_id: str):
     )
 
 
-@app.post("/admin/fax-jobs/{job_id}/refresh", dependencies=[Depends(require_admin)])
-async def admin_refresh_job(job_id: str):
+@app.post("/admin/fax-jobs/{job_id}/refresh")
+async def admin_refresh_job(job_id: str, request: Request, identity=Depends(require_identity)):
     """Read status from the accepted account without authorizing another send."""
-    with SessionLocal() as db:
-        if db.get(FaxJob, job_id) is None:
-            raise HTTPException(404, detail="Job not found")
     try:
-        await OutboundPoller(_deliveries()).refresh(job_id)
+        target = await run_lifecycle_step(lambda: access_runtime(request).queries.poll_target(identity.actor, job_id))
+        await OutboundPoller(_deliveries()).refresh_target(job_id, target)
+    except AccessError:
+        raise
     except UnsupportedProviderExecutionError:
         raise HTTPException(400, detail="This provider reports status through callbacks; refresh is unsupported.") from None
     except (DeliveryConflict, UnboundProviderProfile):
         raise HTTPException(409, detail="This fax requires reconciliation with its original provider account before refresh.") from None
     except Exception:
         raise HTTPException(502, detail="Provider status is temporarily unavailable. This fax has not been resubmitted.") from None
-    with SessionLocal() as db:
-        job = db.get(FaxJob, job_id)
-        if job is None:
-            raise HTTPException(404, detail="Job not found")
-        return _serialize_job(job)
+    return await run_lifecycle_step(private_operation(lambda: _accepted_job_response(access_runtime(request), identity.actor, job_id)))
 
 
 @app.post("/admin/diagnostics/run", dependencies=[Depends(require_admin)])
@@ -2023,28 +1942,31 @@ def persist_settings(payload: PersistSettingsIn):
         raise HTTPException(500, detail="Cannot write the configured recovery artifact.") from None
     return {"ok": True, "path": str(target)}
 
-@app.post("/fax", response_model=FaxJobOut, status_code=202, dependencies=[Depends(require_fax_send)])
+@app.post("/fax", response_model=FaxJobOut, status_code=202)
 async def send_fax(request: Request, to: str = Form(...), file: UploadFile = File(...),
                    queue_only: bool = Form(False),
                    idempotency_key: Optional[str] = Header(default=None, alias='Idempotency-Key',
                        description='Optional key for replaying the same fax request; 1 to 128 printable ASCII characters without spaces.'),
-                   principal=Depends(require_api_key)):
+                   identity=Depends(require_identity)):
     manager = _configuration_manager()
+    access = access_runtime(request)
+    await run_lifecycle_step(private_operation(lambda: access.outbound.check_send(identity.actor)))
+    _enforce_rate_limit({'key_id': identity.actor.replay_scope}, '/fax')
     request_identity = None
     keys = request.headers.getlist('idempotency-key')
     if keys:
         if len(keys) != 1:
             raise HTTPException(400, detail='Supply one Idempotency-Key header.')
         try:
-            scope = 'key:' + str(principal['key_id']) if principal is not None else 'development'
+            scope = identity.actor.replay_scope
             validated = RequestIdentity.from_key(idempotency_key, principal_scope=scope, fingerprint='0' * 64)
-            max_bytes = await run_lifecycle_step(lambda: manager.store.outbound_replay_max_bytes(validated))
+            max_bytes = await run_lifecycle_step(lambda: access.outbound.replay_max_bytes(identity.actor, validated))
             if max_bytes is None:
                 max_bytes = settings.max_file_size_mb * 1024 * 1024
             fingerprint = await fingerprint_upload(file, to=to, queue_only=queue_only,
                 max_bytes=max_bytes)
             request_identity = RequestIdentity(scope, validated.idempotency_digest, fingerprint)
-            existing = await run_lifecycle_step(lambda: manager.store.find_outbound_replay(request_identity))
+            existing = await run_lifecycle_step(lambda: access.outbound.find_replay(identity.actor, request_identity))
         except UploadPreparationError as error:
             raise HTTPException(error.status_code, detail=str(error)) from None
         except IdempotencyConflict as error:
@@ -2052,14 +1974,14 @@ async def send_fax(request: Request, to: str = Form(...), file: UploadFile = Fil
         except ValueError as error:
             raise HTTPException(400, detail=str(error)) from None
         if existing is not None:
-            return await run_lifecycle_step(lambda: _accepted_job_response(existing))
+            return await run_lifecycle_step(private_operation(lambda: _accepted_job_response(access, identity.actor, existing)))
     if queue_only and not settings.fax_disabled:
         raise HTTPException(409, detail="Queue-only request refused because outbound sending is now enabled. Refresh Send before submitting again.")
     revision = request.scope['faxbot.configuration'].active
-    identity = revision.profile_id('outbound')
-    if identity is None:
+    profile_id = revision.profile_id('outbound')
+    if profile_id is None:
         raise HTTPException(409, detail="Outbound fax delivery is disabled in this configuration.")
-    profile = manager.store.read_profile(identity)
+    profile = manager.store.read_profile(profile_id)
     ob = profile.configuration.provider_id
     use_manifest = profile.configuration.manifest is not None
     if use_manifest or ob not in {'sip', 'freeswitch'}:
@@ -2091,14 +2013,14 @@ async def send_fax(request: Request, to: str = Form(...), file: UploadFile = Fil
                           delivery_state='held' if revision.values.fax_disabled else 'ready',
                           dispatch_mode='held' if revision.values.fax_disabled else 'normal',
                           delivery_version=1)
-        await run_lifecycle_step(lambda: manager.store.accept_outbound(revision, {
+        await run_lifecycle_step(lambda: access.outbound.accept(identity.actor, revision, {
             'id': job_id, 'to_number': to, 'file_name': prepared.original_name,
             'tiff_path': tiff_path, 'status': 'queued', 'pages': prepared.pages,
             'created_at': accepted_at, 'updated_at': accepted_at,
         }, request_identity=request_identity))
     except IdempotentReplay as replay:
         prepared.cleanup()
-        return await run_lifecycle_step(lambda: _accepted_job_response(replay.job_id))
+        return await run_lifecycle_step(private_operation(lambda: _accepted_job_response(access, identity.actor, replay.job_id)))
     except IdempotencyConflict as error:
         prepared.cleanup()
         raise HTTPException(409, detail=str(error)) from None
@@ -2115,21 +2037,17 @@ async def send_fax(request: Request, to: str = Form(...), file: UploadFile = Fil
     return result
 
 
-def _accepted_job_response(job_id):
-    with SessionLocal() as db:
-        job = db.get(FaxJob, job_id)
-        if job is None:
-            raise HTTPException(409, detail='Accepted fax record is unavailable; reconcile before submitting another request.')
-        return _serialize_job(job)
+def _accepted_job_response(access, actor, job_id):
+    row = access.queries.job(actor, job_id)
+    fields = ('id', 'status', 'pages', 'backend', 'provider_sid', 'created_at', 'updated_at',
+              'delivery_state', 'dispatch_mode', 'delivery_version', 'reconciliation_reason')
+    return FaxJobOut(**{name: row[name] for name in fields}, to=row['to_number'], error=sanitize_error(row['error']))
 
 
-@app.get("/fax/{job_id}", response_model=FaxJobOut, dependencies=[Depends(require_fax_read)])
-def get_fax(job_id: str):
-    with SessionLocal() as db:
-        job = db.get(FaxJob, job_id)
-        if not job:
-            raise HTTPException(404, detail="Job not found")
-    return _serialize_job(job)
+@app.get("/fax/{job_id}", response_model=FaxJobOut)
+def get_fax(job_id: str, request: Request, identity=Depends(require_identity)):
+    _enforce_rate_limit({'key_id': identity.actor.replay_scope}, '/fax/{id}')
+    return private_operation(lambda: _accepted_job_response(access_runtime(request), identity.actor, job_id))()
 
 
 # Admin API key management
@@ -2327,22 +2245,6 @@ async def _receive_outbound_callback(request, provider):
 @app.post('/phaxio-callback')
 async def phaxio_callback(request: Request):
     return await _receive_outbound_callback(request, 'phaxio')
-
-
-def _serialize_job(job: FaxJob) -> FaxJobOut:
-    j = cast(Any, job)
-    return FaxJobOut(
-        id=j.id,
-        **_delivery_fields(j.id),
-        to=j.to_number,
-        status=j.status,
-        error=j.error,
-        pages=j.pages,
-        backend=j.backend,
-        provider_sid=j.provider_sid,
-        created_at=j.created_at,
-        updated_at=j.updated_at,
-    )
 
 
 # ===== Inbound receiving (MVP scaffolding) =====
@@ -2815,12 +2717,15 @@ async def _handle_http_exc(request: Request, exc: HTTPException):
         audit_event("api_error", path=request.url.path, status=exc.status_code, detail=str(exc.detail))
     except Exception:
         pass
-    return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
+    headers = {**(exc.headers or {})}
+    if private_response_path(request.url.path):
+        headers.update(PRIVATE_HEADERS)
+    return JSONResponse({"detail": exc.detail}, status_code=exc.status_code, headers=headers)
 
 
 @app.exception_handler(Exception)
 async def _handle_any_exc(request: Request, exc: Exception):
-    if request.url.path.startswith('/auth/') or request.url.path.startswith('/access/'):
+    if private_response_path(request.url.path):
         # ServerErrorMiddleware is outside the privacy middleware. Its fallback
         # response must carry the same fixed unavailable body and private headers.
         return await access_error_response(request, AccessUnavailableError())

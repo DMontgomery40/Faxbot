@@ -2,9 +2,9 @@
 
 ## Refresh implementation status
 
-This branch includes persistent authentication endpoints under `/auth`. The existing
-console and business routes still use the legacy key guards described below; their
-conversion is tracked in the [repository access-control plan](https://github.com/DMontgomery40/Faxbot/blob/feat/faxbot-refresh/docs/superpowers/plans/2026-10-02-faxbot-access-control.md).
+This branch includes persistent authentication endpoints under `/auth` and current
+permission checks for outbound submission and operator fax views. The console and
+remaining installation, inbound and client adapters are tracked in the [repository access-control plan](https://github.com/DMontgomery40/Faxbot/blob/feat/faxbot-refresh/docs/superpowers/plans/2026-10-02-faxbot-access-control.md).
 The new session endpoints alone do not establish complete RBAC for the installation.
 
 The authentication API provides password login, key-to-session login, current
@@ -15,7 +15,7 @@ Revoked, disabled or changed sources are checked against current installation st
 
 ### Browser and client transport
 
-The new authentication endpoints require HTTPS for remote clients, including
+Authentication and the converted outbound endpoints require HTTPS for remote clients, including
 header-only API-key clients. Browser requests must use a trusted console origin.
 Set deployment `FAXBOT_CONSOLE_ORIGINS` to a comma-separated list of origins, such
 as `https://fax.internal.example,https://fax.example:8443`. Entries contain a scheme,
@@ -43,73 +43,39 @@ Explicit `X-API-Key` takes precedence over a cookie, including when the supplied
 key is invalid. API keys and session tokens do not belong in URLs or browser
 persistent storage. Authentication responses are marked `no-store`.
 
-### Legacy key routes awaiting conversion
+### Outbound permissions
 
-Faxbot authenticates requests using an `X-API-Key` header. There are two key types:
+Submission requires current `fax:send` access to the authenticated principal's own
+personal container. Acceptance records that resource with the fax and its captured
+provider account in one transaction. Rotating or revoking a human credential does
+not requeue or cancel an already accepted provider attempt.
 
-- DB‑backed keys (recommended): tokens of the form `fbk_live_<keyId>_<secret>` created via admin endpoints.
-- Bootstrap env key (legacy): the literal `API_KEY` value set on the server; use only to bootstrap DB keys.
+Job lists, filtered totals, detail and delivery history require `fax:read` on the
+individual resources. Visibility is applied before counting and pagination. A
+retained document requires the independent `fax:document` permission; document
+access does not grant metadata access. Refresh additionally requires `fax:refresh`,
+and receipt reconciliation requires `fax:reconcile` plus metadata access.
 
-## Quick Start — Get a DB‑Backed Key
+Request replay preserves the credential's stable namespace. A replay still needs
+current send permission and permission to read the original fax; knowing an old
+idempotency key is not authority. A revoked or disabled source returns401. Hidden
+and missing resources return404; a visible resource with a denied action returns403.
 
-1) Set a temporary bootstrap admin key in the server environment (for example in `.env`):
-```
-API_KEY=<your-private-random-bootstrap-key>
-REQUIRE_API_KEY=true
-```
-2) Create a per‑user/service key via the admin endpoint (authenticate with the bootstrap `API_KEY`):
-```
-curl -s -X POST http://localhost:8080/admin/api-keys \
-  -H "X-API-Key: $API_KEY" \
-  -H 'Content-Type: application/json' \
-  -d '{"name":"dev","owner":"you@example.com","scopes":["fax:send","fax:read"]}'
-```
-3) Save the returned `token` securely. It is shown once.
-4) Use that token on all client requests:
-```
-curl -H "X-API-Key: fbk_live_<keyId>_<secret>" http://localhost:8080/health
-```
+`MAX_REQUESTS_PER_MINUTE` retains the optional send/status request limit. Password
+and database-key verification also use the installation's bounded authentication
+admission service. Throttled responses provide `Retry-After`.
 
-## Scopes
+### Integration boundaries
 
-Scopes limit what a key can do:
-- `fax:send` — required for `POST /fax`
-- `fax:read` — required for `GET /fax/{id}`
-- `inbound:list` and `inbound:read` — required for inbound listing/metadata/download
-- `keys:manage` — required for admin key management endpoints
+The remaining legacy key-management routes are not the completed named-user and
+scoped-key management contract. Their free-text owner labels and historical scopes
+must not be interpreted as new role assignments or unrestricted console authority.
+The console login migration, inbound permissions, provider-fetch capabilities,
+terminal access and retained client integration remain release requirements in the
+repository plan. The converted endpoints do not permit unauthenticated access
+merely because legacy `REQUIRE_API_KEY` is false.
 
-If `REQUIRE_API_KEY=false` and no `API_KEY` is set, unauthenticated requests are allowed in development, and scopes are not enforced.
-
-## Key Lifecycle
-
-- Rotate — `POST /admin/api-keys/{keyId}/rotate` returns a new plaintext token once; the old secret is immediately invalid.
-- Revoke — `DELETE /admin/api-keys/{keyId}` sets `revoked_at`, permanently disabling the token.
-- Expire — when creating a key, set `expires_at` (ISO8601) to enforce automatic expiry.
-- List metadata — `GET /admin/api-keys` returns non‑secret fields: `scopes`, timestamps, `owner`, `name`, `revoked_at`.
-
-## Admin Endpoints (Summary)
-
-- Create: `POST /admin/api-keys` → returns `{ key_id, token, ... }` (token shown once)
-- List: `GET /admin/api-keys` → returns array of metadata (no secrets)
-- Revoke: `DELETE /admin/api-keys/{keyId}` → `{ status: "ok" }`
-- Rotate: `POST /admin/api-keys/{keyId}/rotate` → `{ key_id, token }` (new token shown once)
-
-Admin auth: use either the bootstrap env `API_KEY`, or a DB key that has the `keys:manage` scope.
-
-## Enforcement & Errors
-
-- `REQUIRE_API_KEY=true` (recommended for HIPAA/production) enforces authentication even if `API_KEY` is blank.
-- 401 Unauthorized — missing/invalid, revoked, or expired token; or no admin auth for admin endpoints.
-- 403 Forbidden — valid token but insufficient scopes.
-- 429 Too Many Requests — per‑key rate limit exceeded.
-
-## Rate Limiting (Optional)
-
-- Global per‑key: `MAX_REQUESTS_PER_MINUTE` (default 0 disables)
-- Inbound per‑route: `INBOUND_LIST_RPM`, `INBOUND_GET_RPM` (token downloads are not rate‑limited)
-
-## Security Tips
-
-- Prefer DB‑backed keys per user/service; avoid sharing a single env key.
-- Rotate regularly and remove unused keys.
-- For public deployments, place the API behind TLS and a reverse proxy/WAF with additional rate limits and IP allowlists.
+The generated reference describes the actual registered request and response
+models. Complete RBAC and production readiness require the remaining route and
+client integration plus real browser and delivery verification; successful
+authentication alone does not establish those results.

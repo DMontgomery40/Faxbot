@@ -6,8 +6,11 @@ validate candidates before entering its short database transactions.
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
+import json
 from pathlib import Path
+import re
 import sys
+from threading import Lock
 from uuid import uuid4
 
 import sqlalchemy as sa
@@ -18,10 +21,36 @@ from .config_profiles import ConfigurationDocument, ProviderConfiguration, Provi
 from .config_lifecycle import InstallationLifecycle
 from .access.store import AccessStore
 from .access.types import AccessError
+from .access.types import (AuthenticationError, InvalidTransactionError, ResourceRef,
+                           StaleCredentialError)
+from .access.mutation_types import MutationDeniedError, MutationReason
+from .access.configuration import configuration_candidate_requirements
 
 
 _LOCK_ID = 0x464158434F4E46
 _STATE_ID = 'installation'
+_AUTHORIZED_OPERATIONS = {'settings.update': 'settings:write', 'providers.configure': 'providers:write'}
+_CONFIGURATION_MARKERS = object()
+_LISTENER_LOCK = Lock()
+
+
+def _utc_now():
+    return datetime.utcnow()
+
+
+def _invalidate_configuration_locks(connection):
+    connection.info.pop(_CONFIGURATION_MARKERS, None)
+
+
+def _invalidate_configuration_boundary(connection, cursor, statement, parameters, context, executemany):
+    # PostgreSQL accepts batched raw control SQL without whitespace between
+    # commands. Conservative splitting can invalidate harmless quoted content;
+    # it must never preserve evidence across a replaced physical transaction.
+    for part in statement.split(';'):
+        command = re.match(r'\A(?:\s|--[^\n]*(?:\n|$)|/\*.*?\*/)*([A-Za-z]+)', part, flags=re.S)
+        if command and command[1].upper() in {'BEGIN', 'COMMIT', 'ROLLBACK', 'ABORT', 'END'}:
+            _invalidate_configuration_locks(connection)
+            return
 
 
 class ConfigurationStoreError(RuntimeError):
@@ -71,6 +100,14 @@ class ConfigurationStore:
     def __init__(self, engine, key_path: str | Path):
         self.engine = engine
         self.key_path = Path(key_path)
+        self._lock_marker = object()
+        with _LISTENER_LOCK:
+            for event, listener in (('begin', _invalidate_configuration_locks),
+                                    ('commit', _invalidate_configuration_locks),
+                                    ('rollback', _invalidate_configuration_locks),
+                                    ('before_cursor_execute', _invalidate_configuration_boundary)):
+                if not sa.event.contains(engine, event, listener):
+                    sa.event.listen(engine, event, listener)
         # Startup migration validates the schema. Runtime reflection avoids
         # coupling live queries to historical migration implementation code.
         metadata = sa.MetaData()
@@ -109,7 +146,13 @@ class ConfigurationStore:
                     connection.execute(sa.text('SELECT pg_advisory_xact_lock(:key)'), {'key': _LOCK_ID})
                 else:
                     raise ConfigurationStoreError('Unsupported configuration database.')
-                yield connection
+                transaction = self.access_store._transaction_on(connection)
+                markers = connection.info.setdefault(_CONFIGURATION_MARKERS, {})
+                markers[self._lock_marker] = transaction
+                try:
+                    yield connection
+                finally:
+                    markers.pop(self._lock_marker, None)
                 try:
                     connection.commit()
                     committed = True
@@ -138,6 +181,13 @@ class ConfigurationStore:
                         if committed:
                             raise ConfigurationCommitUncertain('Configuration connection cleanup failed after commit; reload before retrying.') from None
                         raise ConfigurationStoreError('Configuration connection cleanup failed.') from None
+
+    def _require_lock_on(self, connection):
+        """Require this store's existing configuration lock, never acquire one."""
+        transaction = self.access_store._transaction_on(connection)
+        if connection.info.get(_CONFIGURATION_MARKERS, {}).get(self._lock_marker) is not transaction:
+            raise InvalidTransactionError()
+        self.access_store._physical_transaction_on(connection)
 
     def _activate_bootstrap_on(self, connection, previous_key, active_key, now):
         try:
@@ -398,31 +448,135 @@ class ConfigurationStore:
 
     def apply(self, expected: ConfigurationSnapshot, values: ConfigurationValues, *, restart_required: bool, actor: str,
               providers=None, plugins=None):
+        """Trusted internal write; human adapters must use apply_authorized."""
         candidates = self._provider_candidates(providers)
         plugin_document = ConfigurationDocument(plugins) if plugins is not None else None
         with self._locked() as connection:
-            head = self._head(connection)
-            if (head is None or head['installation_id'] != expected.installation_id
-                    or head['generation'] != expected.generation
-                    or (head['pending_revision_id'] or head['active_revision_id']) != expected.desired.id):
-                raise ConfigurationConflict('Configuration changed; reload before applying edits.')
-            cipher = self._cipher()
-            current = self._snapshot(connection, cipher, head)
-            profiles = self._select_profiles(connection, cipher, current.installation_id, candidates, current.desired.profiles)
-            plugin_document = plugin_document if plugin_document is not None else current.desired.plugins
-            if (values.to_environment() == current.desired.values.to_environment()
-                    and profiles == current.desired.profiles and plugin_document == current.desired.plugins):
-                return current
-            now = datetime.utcnow()
-            self._activate_bootstrap_on(connection, current.active.values.api_key,
-                current.active.values.api_key if restart_required else values.api_key, now)
-            identity = self._insert(connection, cipher, current.installation_id, values,
-                                    parent=current.desired.id, actor=actor, profiles=profiles, plugins=plugin_document)
-            connection.execute(self.state.update().where(self.state.c.id == _STATE_ID).values(
-                generation=current.generation + 1,
-                active_revision_id=current.active.id if restart_required else identity,
-                pending_revision_id=identity if restart_required else None, updated_at=now))
-            return self._snapshot(connection, cipher, self._head(connection))
+            current, cipher = self._checked_current_on(connection, expected)
+            return self._write_candidate_on(connection, current, cipher, values, restart_required=restart_required,
+                actor=actor, candidates=candidates, plugin_document=plugin_document or current.desired.plugins,
+                now=_utc_now())
+
+    def _checked_current_on(self, connection, expected):
+        self._require_lock_on(connection)
+        head = self._head(connection)
+        if (head is None or head['installation_id'] != expected.installation_id
+                or head['generation'] != expected.generation
+                or (head['pending_revision_id'] or head['active_revision_id']) != expected.desired.id):
+            raise ConfigurationConflict('Configuration changed; reload before applying edits.')
+        cipher = self._cipher()
+        return self._snapshot(connection, cipher, head), cipher
+
+    def _write_candidate_on(self, connection, current, cipher, values, *, restart_required,
+                            actor, candidates, plugin_document, now):
+        self._require_lock_on(connection)
+        profiles = self._select_profiles(connection, cipher, current.installation_id, candidates, current.desired.profiles)
+        if (values.to_environment() == current.desired.values.to_environment()
+                and profiles == current.desired.profiles and plugin_document == current.desired.plugins):
+            return current
+        self._activate_bootstrap_on(connection, current.active.values.api_key,
+            current.active.values.api_key if restart_required else values.api_key, now)
+        identity = self._insert(connection, cipher, current.installation_id, values,
+                                parent=current.desired.id, actor=actor, profiles=profiles, plugins=plugin_document)
+        connection.execute(self.state.update().where(self.state.c.id == _STATE_ID).values(
+            generation=current.generation + 1,
+            active_revision_id=current.active.id if restart_required else identity,
+            pending_revision_id=identity if restart_required else None, updated_at=now))
+        return self._snapshot(connection, cipher, self._head(connection))
+
+    def apply_authorized(self, expected, values, *, principal, control, operation,
+                         restart_required, providers, plugins, baseline_providers):
+        """Commit one closed human operation and its audit before returning.
+
+        Prepared candidates carry no authority. Config then access locks share
+        one Connection; every current permission/source check uses a fresh clock.
+        Routine denial commits audit and is raised only outside the transaction.
+        """
+        if getattr(control, 'store', None) is not self.access_store:
+            raise InvalidTransactionError()
+        if (type(operation) is not str or operation not in _AUTHORIZED_OPERATIONS
+                or type(expected) is not ConfigurationSnapshot or not isinstance(values, ConfigurationValues)
+                or type(restart_required) is not bool or providers is None or baseline_providers is None):
+            raise ConfigurationStoreError('Invalid authorized configuration operation.')
+        candidates = self._provider_candidates(providers)
+        baseline = self._provider_candidates(baseline_providers)
+        document = plugins if type(plugins) is ConfigurationDocument else ConfigurationDocument(plugins)
+        with self._locked() as connection:
+            self.access_store.lock_on(connection)
+            result, error = self._apply_authorized_on(connection, expected, values, principal=principal,
+                control=control, operation=operation, restart_required=restart_required,
+                providers=candidates, plugins=document, baseline_providers=baseline)
+        if error is not None:
+            raise error
+        return result
+
+    def _apply_authorized_on(self, connection, expected, values, *, principal, control, operation,
+                             restart_required, providers, plugins, baseline_providers):
+        self._require_lock_on(connection)
+        before = self.access_store.require_lock_on(connection)
+        if getattr(control, 'store', None) is not self.access_store:
+            raise InvalidTransactionError()
+        if type(operation) is not str or operation not in _AUTHORIZED_OPERATIONS:
+            raise ConfigurationStoreError('Invalid authorized configuration operation.')
+        now = _utc_now()
+        attribution, current, requirements, result, error, reason = (None, None, None), None, None, None, None, None
+        try:
+            decision = control.authorize_on(connection, principal, _AUTHORIZED_OPERATIONS[operation],
+                ResourceRef('installation'), now=now)
+            attribution = (principal.principal_id, getattr(principal.credential, 'binding_id', None),
+                getattr(principal.credential, 'session_id', None))
+            if not decision.allowed:
+                reason = MutationReason.RESET_REQUIRED if decision.reason.value == 'reset_required' else MutationReason.FORBIDDEN
+                error = MutationDeniedError(reason)
+            else:
+                current, cipher = self._checked_current_on(connection, expected)
+                captured = {role: self._profile(connection, cipher, current.installation_id, identity).configuration
+                    for role, identity in current.desired.profiles}
+                requirements = configuration_candidate_requirements(current.desired.values, values,
+                    current.desired.plugins, plugins, profile_drift=captured != baseline_providers)
+                for permission in sorted(requirements.permissions):
+                    decision = control.authorize_on(connection, principal, permission, ResourceRef('installation'), now=now)
+                    if not decision.allowed:
+                        reason, error = MutationReason.FORBIDDEN, MutationDeniedError(MutationReason.FORBIDDEN)
+                        break
+                if error is None and requirements.requires_complete_owner and not control.is_complete_owner_on(
+                        connection, principal, now=now):
+                    reason, error = MutationReason.OWNER_REQUIRED, MutationDeniedError(MutationReason.OWNER_REQUIRED)
+        except AuthenticationError:
+            attribution, reason, error = (None, None, None), 'credential_stale', StaleCredentialError()
+        except ConfigurationConflict as conflict:
+            reason, error = 'configuration_conflict', conflict
+        # Routine denials above are candidate-before-write. A later business
+        # failure must escape and roll back, even if it uses a denial class.
+        if error is None:
+            result = self._write_candidate_on(connection, current, cipher, values,
+                restart_required=restart_required, actor='principal:' + principal.principal_id,
+                candidates=providers, plugin_document=plugins, now=now)
+        after = self.access_store.require_lock_on(connection)
+        details = {'reason': reason.value if isinstance(reason, MutationReason) else reason} if error else {
+            'changed': result.generation != current.generation,
+            'configuration_generation_before': current.generation,
+            'configuration_generation_after': result.generation,
+            'fields': list(requirements.changed_fields[:32]),
+            'field_count': len(requirements.changed_fields),
+            'plugin_categories': list(requirements.plugin_categories),
+            'profile_drift': requirements.profile_drift,
+        }
+        self._audit_configuration_on(connection, attribution, operation, before, after, error is not None, details, now)
+        return result, error
+
+    def _audit_configuration_on(self, connection, attribution, operation, before, after, denied, details, now):
+        self._require_lock_on(connection)
+        self.access_store.require_lock_on(connection)
+        encoded = json.dumps(details, ensure_ascii=True, separators=(',', ':'), sort_keys=True)
+        if len(encoded.encode('utf-8')) > 2048:
+            raise ConfigurationStoreError('Configuration audit exceeds its safe bound.')
+        principal, key, session = attribution
+        connection.execute(self.access_store.tables['access_audit'].insert().values(
+            id=uuid4().hex, actor_principal_id=principal, actor_key_binding_id=key, actor_session_id=session,
+            operation=operation, target_kind='installation', target_id='installation',
+            policy_version_before=before, policy_version_after=after, outcome='denied' if denied else 'allowed',
+            details=encoded, created_at=now))
 
     def promote_pending(self, expected: ConfigurationSnapshot, *, lifecycle: InstallationLifecycle):
         """Publish the exact candidate whose resources the stopped starter prepared.

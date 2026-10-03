@@ -44,6 +44,11 @@ class AuthorizedOutbound:
             self.resources.require_outbound_on(connection, actor, row["id"], "fax:read", now=now)
         return row
 
+    def check_send(self, actor):
+        """Reject before conversion work; acceptance still rechecks on its lock."""
+        with self._transaction(actor):
+            pass
+
     def replay_max_bytes(self, actor, identity):
         with self._transaction(actor) as (connection, now):
             row = self._candidate(connection, actor, identity, now)

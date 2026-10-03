@@ -15,6 +15,7 @@ from ..config_runtime import run_lifecycle_step
 from .auth_work import AuthenticationBusyError
 from .authentication import AuthenticationThrottledError
 from .credentials import InvalidCredentialInputError
+from .fax_resources import FaxAccessError
 from .mutation_types import MutationDeniedError, StaleVersionError
 from .mutations import _Graph
 from .sessions import SessionCursor, SessionDeniedError
@@ -23,6 +24,10 @@ from .types import AccessError, AccessUnavailableError, AuthenticationError, Res
 
 
 PRIVATE_HEADERS = {'Cache-Control':'no-store', 'X-Content-Type-Options':'nosniff', 'X-Frame-Options':'DENY'}
+
+
+def private_response_path(path):
+    return path in {'/fax', '/inbound'} or path.startswith(('/auth/', '/access/', '/admin/', '/fax/', '/inbound/'))
 
 
 class BrowserRequestVerificationError(AccessError):
@@ -63,6 +68,10 @@ async def access_error_response(request, error):
         status, message = 403, 'Browser request verification failed. Refresh your session and try again.'
     elif isinstance(error, TransportError):
         status, message = 403, 'Credential transport or browser origin is not allowed.'
+    elif isinstance(error, FaxAccessError):
+        status = {'not_found':404, 'invalid_target':404, 'invalid_input':400}.get(error.code, 403)
+        message = {400:'Invalid fax request.', 403:'This operation is not permitted.',
+                   404:'Fax not found.'}[status]
     elif isinstance(error, (SessionDeniedError, MutationDeniedError)):
         code = error.code
         status = {'invalid_input':400, 'invalid_target':404, 'stale_version':409}.get(code, 403)
@@ -99,8 +108,7 @@ class PrivateAuthMiddleware:
         self.app = app
 
     async def __call__(self, scope, receive, send):
-        if scope['type'] != 'http' or not (scope.get('path', '').startswith('/auth/')
-                or scope.get('path', '').startswith('/access/')):
+        if scope['type'] != 'http' or not private_response_path(scope.get('path', '')):
             return await self.app(scope, receive, send)
         async def private_send(message):
             if message['type'] == 'http.response.start':

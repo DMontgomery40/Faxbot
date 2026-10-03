@@ -21,9 +21,14 @@ def _invalidate_markers(connection):
 def _invalidate_sql_boundary(connection, cursor, statement, parameters, context, executemany):
     # Raw SQL transaction control does not update RootTransaction. Shared
     # callbacks capture no store and occur once per engine, even across stores.
-    command = re.sub(r'\A(?:\s|--[^\n]*(?:\n|$)|/\*.*?\*/)*', '', statement, flags=re.S).split(None, 1)
-    if command and command[0].upper().rstrip(';') in {'BEGIN', 'COMMIT', 'ROLLBACK', 'ABORT', 'END'}:
-        _invalidate_markers(connection)
+    # PostgreSQL accepts multiple control statements in one driver call. Inspect
+    # every segment conservatively; a false positive only requires a fresh lock.
+    for segment in statement.split(';'):
+        prefix = re.sub(r'\A(?:\s|--[^\n]*(?:\n|$)|/\*.*?\*/)*', '', segment, flags=re.S)
+        command = re.match(r'[A-Za-z]+', prefix)
+        if command and command.group().upper() in {'BEGIN', 'COMMIT', 'ROLLBACK', 'ABORT', 'END'}:
+            _invalidate_markers(connection)
+            break
 
 
 class AccessStore:
