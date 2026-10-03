@@ -26,6 +26,11 @@ OWN_AUTHENTICATION = {
     ("POST", "/_internal/freeswitch/outbound_result"): "internal shared secret",
     ("POST", "/mobile/pair"): "single-use pairing code minted by a principal with tunnels:pair",
     ("WS", "/admin/terminal"): "single-use ticket from POST /admin/terminal/ticket; host:terminal rechecked while open",
+    # Direct delivery partners carry no API key: each request is verified against
+    # an enrolled partner's Ed25519 key, and the routes answer 404 while disabled.
+    ("POST", "/direct/deliveries"): "signed partner manifest",
+    ("GET", "/direct/deliveries/{message_id}"): "signed partner status request",
+    ("POST", "/direct/verifications"): "signed partner code confirmation",
     ("GET", "/openapi.json"): "API description",
     ("GET", "/docs"): "API description",
     ("GET", "/docs/oauth2-redirect"): "API description",

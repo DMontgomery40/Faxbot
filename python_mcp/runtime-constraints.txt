@@ -3,11 +3,13 @@
 # Regeneration and combined install: see README.md.
 aiofiles==23.2.1
 aiohttp==3.9.1
+aiosmtpd==1.4.6
 aiosignal==1.4.0
 alembic==1.13.2
 annotated-doc==0.0.5
 annotated-types==0.8.0
 anyio==4.15.1
+atpublic==8.0.1
 attrs==26.1.0
 boto3==1.34.162
 botocore==1.34.162

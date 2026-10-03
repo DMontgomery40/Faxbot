@@ -75,6 +75,11 @@ from .access.http import require_identity, runtime as access_runtime, private_op
 from .access.http import PRIVATE_HEADERS, private_response_path, utcnow as access_utcnow
 from .access.configuration_access import configuration_write_receipt
 from .access.fax_resources import FaxAccessError
+from .routing.http import router as routing_router
+from .intake.http import router as intake_router
+from .direct.http import router as direct_router
+from .cases.http import router as cases_router
+from .routing.transport import RoutedTransport
 
 
 @asynccontextmanager
@@ -109,7 +114,7 @@ async def lifespan(application: FastAPI):
                         await stack.enter_async_context(mount.app.router.lifespan_context(mount.app))
                     await run_lifecycle_step(runtime.publish_ready)
                     delivery = OutboundStore(runtime.manager.store)
-                    worker = OutboundWorker(delivery, CapturedTransport(delivery, runtime, ami=ami_client))
+                    worker = OutboundWorker(delivery, RoutedTransport(CapturedTransport(delivery, runtime, ami=ami_client)))
                     tasks.append(asyncio.create_task(worker.run(), name='faxbot-outbound-worker'))
                     tasks.append(asyncio.create_task(OutboundPoller(delivery).run(), name='faxbot-outbound-poller'))
                     yield
@@ -150,6 +155,10 @@ app.add_middleware(PrivateAuthMiddleware)
 app.add_exception_handler(AccessError, access_error_response)
 app.include_router(authentication_router)
 app.include_router(management_router)
+app.include_router(routing_router)
+app.include_router(intake_router)
+app.include_router(direct_router)
+app.include_router(cases_router)
 
 
 async def _configuration_error_handler(request, exc):
@@ -402,7 +411,7 @@ def _observe_native(job_id, attempt_id, status, provider, *, event_key, secret=N
             or not isinstance(attempt_id, str) or re.fullmatch('[a-f0-9]{32}', attempt_id) is None):
         raise DeliveryConflict('Native result has no verified attempt identity.')
     delivery = _deliveries()
-    revision, profile = delivery.configuration.outbound_context(job_id)
+    revision, profile = delivery.attempt_context(job_id, attempt_id)
     if profile.configuration.provider_id != provider or profile.configuration.manifest is not None:
         raise DeliveryConflict('Native result does not match the original provider.')
     if provider == 'freeswitch':

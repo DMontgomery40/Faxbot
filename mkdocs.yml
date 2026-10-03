@@ -116,6 +116,7 @@ nav:
     - HumbleFax: setup/humblefax.md
     - SignalWire: setup/signalwire.md
     - FreeSWITCH: setup/freeswitch.md
+    - Fax numbers on SIP: setup/sip-numbers.md
     - Test Mode: setup/test-mode.md
     - Public Access & Tunnels: setup/public-access.md
     - Webhooks: setup/webhooks.md
@@ -130,6 +131,9 @@ nav:
   - Operations:
     - Overview: operations/index.md
     - Inbound Receiving: inbound.md
+    - Delivery routes: operations/delivery-routes.md
+    - Intake: operations/intake.md
+    - Direct delivery: operations/direct-delivery.md
     - Guides:
       - Images & PDFs: guides/images-and-pdfs.md
       - Networking & Tunnels: networking/tunnels.md
