@@ -192,12 +192,12 @@ function MCP({ client }: MCPProps) {
             <CardContent>
               <Typography variant="h6" gutterBottom>Server Settings</Typography>
               <Alert severity="info" sx={{ mb: 2 }}>
-                Embedded Python MCP servers are mounted by the Faxbot API at /mcp/* when enabled. No external Node process is required for SSE/HTTP.
+                Embedded Python MCP servers use the transport paths configured in installation settings when enabled. No external Node process is required for SSE/HTTP.
               </Alert>
               <Box component="fieldset" disabled={!canEdit} sx={{ border: 0, m: 0, p: 0, minWidth: 0 }}>
               <Typography variant="body2" sx={{ mb: 2 }}>These controls edit desired MCP settings. Client examples and health below use separately loaded active settings.</Typography>
-              <FormControlLabel control={<Switch checked={sseEnabled} onChange={(e) => setSseEnabled(e.target.checked)} />} label="Enable SSE (/mcp/sse)" />
-              <FormControlLabel control={<Switch checked={httpEnabled} onChange={(e) => setHttpEnabled(e.target.checked)} />} label="Enable Streamable HTTP (/mcp/http)" />
+              <FormControlLabel control={<Switch checked={sseEnabled} onChange={(e) => setSseEnabled(e.target.checked)} />} label="Enable SSE" />
+              <FormControlLabel control={<Switch checked={httpEnabled} onChange={(e) => setHttpEnabled(e.target.checked)} />} label="Enable Streamable HTTP" />
               <FormControlLabel control={<Switch checked={requireOAuth} onChange={(e) => setRequireOAuth(e.target.checked)} />} label="Require OAuth (JWT)" />
               {requireOAuth && (
                 <Box sx={{ display: 'grid', gridTemplateColumns: '1fr', gap: 2, mt: 2 }}>

@@ -46,6 +46,7 @@ export default function PluginConfigDialog({ open, plugin, initialConfig, loadin
   }, [initialConfig, plugin]);
 
   const ready = !loading && !loadError && !!initialConfig?._meta?.desired_revision_id;
+  const retainedDraft = initialConfig !== null && !ready;
   const changedSettings = Object.fromEntries(Object.entries(config)
     .filter(([key, value]) => !Object.is(value, initialConfig?.settings[key])));
   const enabledChanged = initialConfig !== null && enabled !== initialConfig.enabled;
@@ -205,21 +206,24 @@ export default function PluginConfigDialog({ open, plugin, initialConfig, loadin
     <Dialog open={open} onClose={() => { if (!saving) onClose(); }} maxWidth="sm" fullWidth>
       <DialogTitle>Configure {plugin?.name}</DialogTitle>
       <DialogContent>
-        {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
+        {error && error !== loadError && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
         {loadError && <Alert severity="error" sx={{ mb: 2 }}>{loadError}</Alert>}
         {loading && <Alert severity="info" sx={{ mb: 2 }}>Loading desired plugin settings…</Alert>}
-        {initialConfig && <Alert severity={initialConfig._meta.apply_state === 'pending_restart' ? 'warning' : 'info'} sx={{ mb: 2 }}>
-          {initialConfig._meta.apply_state === 'pending_restart'
+        {initialConfig && <Alert severity={retainedDraft || initialConfig._meta.apply_state === 'pending_restart' ? 'warning' : 'info'} sx={{ mb: 2 }}>
+          {retainedDraft
+            ? 'Your draft is retained from a previous revision. Reload settings to check the current configuration before editing or saving again.'
+            : initialConfig._meta.apply_state === 'pending_restart'
             ? 'Editing the desired revision. Active behavior continues until a full installation restart.'
             : 'Editing the applied revision. Changes save durably; hot changes activate immediately.'}
           <Typography variant="caption" display="block" sx={{ mt: 1 }}>
-            Desired revision: {initialConfig._meta.desired_revision_id}. Active revision: {initialConfig._meta.active_revision_id}.
+            {retainedDraft ? 'Previous desired revision:' : 'Desired revision:'} {initialConfig._meta.desired_revision_id}.{' '}
+            {retainedDraft ? 'Previous active revision:' : 'Active revision:'} {initialConfig._meta.active_revision_id}.
           </Typography>
         </Alert>}
         <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
           Saving updates the desired installation configuration. Unchanged fields preserve their existing values.
         </Typography>
-        {ready && <Box component="fieldset" disabled={saving} sx={{ border: 0, p: 0, m: 0 }}>
+        {initialConfig && <Box component="fieldset" disabled={saving || !ready} sx={{ border: 0, p: 0, m: 0 }}>
           <Box sx={{ mb: 2 }}>
             <FormControlLabel control={<Checkbox checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />} label={`Use this provider for ${initialConfig?.role}`} />
             {help('Selecting this provider replaces the desired selection for this role. Unchecking the selected provider disables the role.')}

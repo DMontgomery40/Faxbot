@@ -213,13 +213,22 @@ function Logs({ client }: LogsProps) {
 
       <Card sx={{ mb: 2 }}>
         <CardContent>
-          <Box display="grid" gridTemplateColumns="1fr 180px 200px 120px" gap={2}>
+          <Box sx={{
+            display: 'grid',
+            gridTemplateColumns: { xs: 'minmax(0, 1fr)', sm: 'repeat(2, minmax(0, 1fr))', lg: 'minmax(0, 1fr) 160px minmax(380px, 1.4fr) 100px' },
+            gap: 2,
+          }}>
             <TextField label="Search (supports key:value)" value={query} onChange={(e)=>setQuery(e.target.value)} size="small" />
             <TextField label="Event" value={eventFilter} onChange={(e)=>setEventFilter(e.target.value)} size="small" placeholder="e.g., job_created" />
-            <Box display="flex" gap={1}>
-              <FormControl size="small" sx={{ minWidth: 120 }}>
-                <InputLabel>Since</InputLabel>
-                <Select label="Since" value={sincePreset} onChange={(e)=>setSincePreset(e.target.value as string)}>
+            <Box sx={{
+              display: 'grid',
+              gridTemplateColumns: { xs: 'minmax(0, 1fr)', md: '140px minmax(220px, 1fr)' },
+              gridColumn: { sm: '1 / -1', lg: 'auto' },
+              gap: 1,
+            }}>
+              <FormControl size="small">
+                <InputLabel id="logs-since-label">Since</InputLabel>
+                <Select id="logs-since" labelId="logs-since-label" label="Since" value={sincePreset} onChange={(e)=>setSincePreset(e.target.value as string)}>
                   <MenuItem value="">Custom</MenuItem>
                   <MenuItem value="5m">Last 5m</MenuItem>
                   <MenuItem value="15m">Last 15m</MenuItem>
@@ -260,7 +269,9 @@ function Logs({ client }: LogsProps) {
       {enableNeedsReload && <Button variant="outlined" onClick={reloadAuditSettings} disabled={enableBusy} sx={{ mb: 2 }}>Reload audit settings</Button>}
       {(!error && items.length === 0) && (
         <Alert severity="info" sx={{ mb: 2 }}>
-          No logs yet. Enable audit logging in Settings → Security (AUDIT_LOG_ENABLED), then use the app and refresh.
+          <Typography variant="body2">No matching logs. Adjust search, event, or time filters, then refresh.</Typography>
+          {!auditSnapshot && <Typography variant="body2">Audit logging state has not been loaded here. Check Settings → Security to review it.</Typography>}
+          {auditSnapshot && !auditSnapshot.desiredEnabled && !auditSnapshot.activeEnabled && <Typography variant="body2">Loaded desired and active audit logging are disabled. Enabling audit logging records future events.</Typography>}
           <Button size="small" variant="outlined" sx={{ ml: 2 }} onClick={enableAuditLogging} disabled={enableBusy || enableNeedsReload || auditSnapshot?.desiredEnabled}>Enable Now</Button>
         </Alert>
       )}

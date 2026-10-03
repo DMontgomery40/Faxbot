@@ -21,7 +21,7 @@ The process/container `.env` and legacy plugin JSON are bootstrap inputs for an 
 
 Default provider, outbound override and inbound override are independent. An empty direction override inherits the default provider. Choosing an inbound provider does not turn inbound handling on; use its separate enable control. Installed manifest providers can be configured in **Tools → Plugins** without resetting the default provider.
 
-**Disable fax sending (queue only)** accepts new uploads as held jobs. Re-enabling sending never automatically transmits those held jobs. Pausing ready work cannot recall an attempt already issued. Review [Fax Disabled](../setup/test-mode.md) before testing.
+**Disable outbound fax sending** accepts new uploads as held jobs. Re-enabling sending never automatically transmits those held jobs. Pausing ready work cannot recall an attempt already issued. Review [Fax Disabled](../setup/test-mode.md) before testing.
 
 ## Available controls
 

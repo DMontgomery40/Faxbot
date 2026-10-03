@@ -636,7 +636,43 @@ class APIKeyMeta(BaseModel):
     note: Optional[str] = None
 
 
-@app.get("/admin/config")
+class PublicDetailErrorResponse(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    detail: str
+
+
+class ConfigurationInputError(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    loc: list[str | int]
+    type: str
+    msg: Literal['Invalid configuration input.']
+
+
+class ConfigurationValidationErrorResponse(BaseModel):
+    model_config = ConfigDict(extra='forbid', json_schema_extra={'examples': [
+        {'detail': [{'loc': ['body', 'max_file_size_mb'], 'type': 'int_parsing',
+                     'msg': 'Invalid configuration input.'}]},
+    ]})
+    detail: list[ConfigurationInputError]
+
+
+_PUBLIC_DETAIL_RESPONSES = {status: {'model': PublicDetailErrorResponse, 'description': description}
+    for status, description in (
+        (400, 'Configuration or provider metadata could not be validated.'),
+        (401, 'Authentication required or credentials no longer valid.'),
+        (403, 'Transport, browser request verification or operation is not permitted.'),
+        (404, 'The v3 plugins feature is disabled.'),
+        (409, 'Configuration changed. Reload before applying edits.'),
+        (429, 'Too many authentication attempts. Try again later.'),
+        (503, 'Configuration, authentication or access service is unavailable.'),
+    )}
+_CONFIGURATION_VALIDATION_RESPONSES = {422: {'model': ConfigurationValidationErrorResponse,
+    'description': 'Invalid configuration input; raw input and error context are omitted.'}}
+_CONFIGURATION_READ_RESPONSES = {status: _PUBLIC_DETAIL_RESPONSES[status] for status in (401, 403, 429, 503)}
+_PROVIDER_READ_RESPONSES = {status: _PUBLIC_DETAIL_RESPONSES[status] for status in (400, 401, 403, 404, 429, 503)}
+
+
+@app.get("/admin/config", responses=_CONFIGURATION_READ_RESPONSES)
 def get_admin_config(request: Request, identity=Depends(require_identity)):
     """Return sanitized effective configuration for operators.
     Requires current settings:read and uses one authorized active snapshot.
@@ -730,7 +766,7 @@ def _settings_view(snapshot):
     return project_admin_settings(snapshot, _configuration_manager().pending_fields(snapshot))
 
 
-@app.get("/admin/settings")
+@app.get("/admin/settings", responses={**_CONFIGURATION_READ_RESPONSES, **_CONFIGURATION_VALIDATION_RESPONSES})
 def get_admin_settings(request: Request, identity=Depends(require_identity)):
     """Read the desired editor revision; credentials remain opaque."""
     return _settings_view(access_runtime(request).configuration_access.settings(identity.actor))
@@ -749,7 +785,8 @@ class ValidateSettingsRequest(BaseModel):
     ami_password: Optional[str] = None
 
 
-@app.post("/admin/settings/validate", dependencies=[Depends(require_admin)])
+@app.post("/admin/settings/validate", dependencies=[Depends(require_admin)],
+          responses=_CONFIGURATION_VALIDATION_RESPONSES)
 async def validate_settings(payload: ValidateSettingsRequest):
     """Validate connectivity/non-destructive checks for the selected backend."""
     results: dict[str, Any] = {"backend": payload.backend, "checks": {}, "test_fax": None}
@@ -811,7 +848,10 @@ async def validate_settings(payload: ValidateSettingsRequest):
 # Whole-candidate validation owns constraints and sanitized error reporting.
 UpdateSettingsRequest = create_model(
     'UpdateSettingsRequest',
-    __config__=ConfigDict(extra='forbid', hide_input_in_errors=True),
+    __config__=ConfigDict(extra='forbid', hide_input_in_errors=True, json_schema_extra={
+        'description': 'Submit only changed fields and the loaded expected_revision_id. An empty object submits no field edits.',
+        'examples': [{}],
+    }),
     expected_revision_id=(str | None, None),
     **{(field.json_schema_extra or {}).get('patch_name', name): (field.annotation | None, None)
        for name, field in ConfigurationValues.model_fields.items()},
@@ -820,21 +860,49 @@ UpdateSettingsRequest = create_model(
 
 class ConfigurationWriteMeta(BaseModel):
     model_config = ConfigDict(extra='forbid')
-    active_revision_id: str
-    desired_revision_id: str
-    generation: int
+    active_revision_id: str = Field(min_length=1, max_length=40, pattern=r'^[ -~]+$')
+    desired_revision_id: str = Field(min_length=1, max_length=40, pattern=r'^[ -~]+$')
+    generation: int = Field(ge=1)
     apply_state: Literal['applied', 'pending_restart']
     restart_recommended: bool
 
 
+_CONFIGURATION_WRITE_EXAMPLES = {
+    'applied': {'summary': 'Confirmed applied configuration', 'value': {
+        'ok': True, 'changed': True, '_meta': {
+            'active_revision_id': '00000000-0000-4000-8000-000000000001',
+            'desired_revision_id': '00000000-0000-4000-8000-000000000001',
+            'generation': 2, 'apply_state': 'applied', 'restart_recommended': False,
+        },
+    }},
+    'pending_restart': {'summary': 'Confirmed desired configuration pending restart', 'value': {
+        'ok': True, 'changed': True, '_meta': {
+            'active_revision_id': '00000000-0000-4000-8000-000000000001',
+            'desired_revision_id': '00000000-0000-4000-8000-000000000002',
+            'generation': 3, 'apply_state': 'pending_restart', 'restart_recommended': True,
+        },
+    }},
+}
+
+
 class ConfigurationWriteResponse(BaseModel):
-    model_config = ConfigDict(extra='forbid')
+    model_config = ConfigDict(extra='forbid', json_schema_extra={
+        'examples': [example['value'] for example in _CONFIGURATION_WRITE_EXAMPLES.values()],
+    })
     ok: Literal[True]
     changed: bool
     metadata: ConfigurationWriteMeta = Field(alias='_meta')
 
 
-@app.put("/admin/settings", response_model=ConfigurationWriteResponse)
+_CONFIGURATION_WRITE_RESPONSES = {
+    **{status: _PUBLIC_DETAIL_RESPONSES[status] for status in (400, 401, 403, 409, 429, 503)},
+    **_CONFIGURATION_VALIDATION_RESPONSES,
+    200: {'description': 'Confirmed canonical write receipt; read configuration values separately.',
+          'content': {'application/json': {'examples': _CONFIGURATION_WRITE_EXAMPLES}}},
+}
+
+
+@app.put("/admin/settings", response_model=ConfigurationWriteResponse, responses=_CONFIGURATION_WRITE_RESPONSES)
 def update_admin_settings(payload: UpdateSettingsRequest, request: Request, identity=Depends(require_identity)):
     """Validate and durably apply one candidate, or stage it for coordinated restart."""
     manager = _configuration_manager()
@@ -846,7 +914,7 @@ def update_admin_settings(payload: UpdateSettingsRequest, request: Request, iden
     return configuration_write_receipt(expected, snapshot)
 
 
-@app.post("/admin/settings/reload")
+@app.post("/admin/settings/reload", responses={**_CONFIGURATION_READ_RESPONSES, **_CONFIGURATION_VALIDATION_RESPONSES})
 def admin_reload_settings(request: Request, identity=Depends(require_identity)):
     """Read durable active/desired state without importing environment or promoting it."""
     return _settings_view(access_runtime(request).configuration_access.settings(identity.actor))
@@ -1913,7 +1981,7 @@ def run_diagnostics(request: Request):
     return diag
 
 
-@app.get("/admin/settings/export")
+@app.get("/admin/settings/export", responses={**_CONFIGURATION_READ_RESPONSES, **_CONFIGURATION_VALIDATION_RESPONSES})
 def export_settings_env(request: Request, identity=Depends(require_identity)):
     """Display the complete desired configuration with opaque secret placeholders."""
     values = access_runtime(request).configuration_access.settings(identity.actor).desired.values
@@ -1931,7 +1999,8 @@ class PersistSettingsIn(BaseModel):
     path: str | None = None
 
 
-@app.post("/admin/settings/persist", dependencies=[Depends(require_admin)])
+@app.post("/admin/settings/persist", dependencies=[Depends(require_admin)],
+          responses=_CONFIGURATION_VALIDATION_RESPONSES)
 def persist_settings(payload: PersistSettingsIn):
     """Atomically export desired settings to the installation's private recovery file.
 
@@ -2859,7 +2928,7 @@ def _installed_plugins(snapshot=None) -> list[dict[str, Any]]:
     return list(by_id.values())
 
 
-@app.get("/plugins")
+@app.get("/plugins", responses=_PROVIDER_READ_RESPONSES)
 def list_plugins(request: Request, identity=Depends(require_identity)):
     snapshot = access_runtime(request).configuration_access.providers(identity.actor)
     if not snapshot.active.values.feature_v3_plugins:
@@ -2901,7 +2970,7 @@ def _plugin_view(snapshot, plugin_id, role=None):
             '_meta': configuration_write_receipt(snapshot, snapshot)['_meta']}
 
 
-@app.get("/plugins/{plugin_id}/config")
+@app.get("/plugins/{plugin_id}/config", responses={**_PROVIDER_READ_RESPONSES, **_CONFIGURATION_VALIDATION_RESPONSES})
 def get_plugin_config(plugin_id: str, request: Request, role: str | None = None, identity=Depends(require_identity)):
     snapshot = access_runtime(request).configuration_access.providers(identity.actor)
     if not snapshot.active.values.feature_v3_plugins:
@@ -2910,14 +2979,17 @@ def get_plugin_config(plugin_id: str, request: Request, role: str | None = None,
 
 
 class UpdatePluginConfigIn(BaseModel):
-    model_config = ConfigDict(extra='forbid', hide_input_in_errors=True)
+    model_config = ConfigDict(extra='forbid', hide_input_in_errors=True, json_schema_extra={
+        'description': 'Submit only changed provider fields and the loaded expected_revision_id. An empty object submits no field edits.',
+        'examples': [{}],
+    })
     enabled: Optional[bool] = None
     settings: Optional[dict[str, Any]] = None
     role: str | None = None
     expected_revision_id: str | None = None
 
 
-@app.put("/plugins/{plugin_id}/config", response_model=ConfigurationWriteResponse)
+@app.put("/plugins/{plugin_id}/config", response_model=ConfigurationWriteResponse, responses=_CONFIGURATION_WRITE_RESPONSES)
 def update_plugin_config(plugin_id: str, payload: UpdatePluginConfigIn, request: Request,
                          identity=Depends(require_identity)):
     expected = request.scope['faxbot.configuration']
@@ -2929,7 +3001,7 @@ def update_plugin_config(plugin_id: str, payload: UpdatePluginConfigIn, request:
     return configuration_write_receipt(expected, snapshot)
 
 
-@app.get("/plugin-registry")
+@app.get("/plugin-registry", responses=_PROVIDER_READ_RESPONSES)
 def plugin_registry(request: Request, identity=Depends(require_identity)):
     snapshot = access_runtime(request).configuration_access.providers(identity.actor)
     if not snapshot.active.values.feature_v3_plugins:
