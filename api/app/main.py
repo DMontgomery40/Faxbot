@@ -1461,8 +1461,6 @@ _TUNNEL_STATE: Dict[str, Any] = {
     "error": None,
 }
 
-_PAIR_CODES: Dict[str, Dict[str, Any]] = {}
-
 
 def _hipaa_posture_enabled() -> bool:
     try:
@@ -1564,18 +1562,147 @@ def admin_tunnel_test() -> TunnelTestOut:
         return TunnelTestOut(ok=False, message=str(e)[:120])
 
 
+# Mobile pairing. The console mints a six-digit, single-use code bound to its
+# issuer; the phone exchanges it at /mobile/pair for its own device key: a new
+# integration identity holding exactly _DEVICE_SCOPES at installation, listed
+# and revocable under /access/keys like any other key.
+from .access.mutation_types import StaleVersionError  # noqa: E402
+from .access.types import ScopedPermission  # noqa: E402
+
+_DEVICE_SCOPES = frozenset({"fax:send", "fax:read", "fax:document", "inbound:list", "inbound:read", "inbound:document"})
+_PAIR_TTL = timedelta(minutes=5)
+_PAIR_WINDOW_SECONDS = 60.0
+_PAIR_ATTEMPTS_PER_IP = 5
+# Across all addresses, so a six-digit code cannot be guessed from many clients at once.
+_PAIR_ATTEMPTS_TOTAL = 30
+_PAIR_ATTEMPTS: Dict[str, List[float]] = {}
+_PAIR_REFUSED = "This pairing code did not work. Create a new code in the console and try again."
+
+
 class PairOut(BaseModel):
     code: str
     expires_at: datetime
 
 
-@app.post("/admin/tunnel/pair", dependencies=[Depends(require_admin)])
-def admin_tunnel_pair() -> PairOut:
-    # Generate a short-lived numeric code; do not include secrets in the QR/content
-    code = str(secrets.randbelow(899999) + 100000)
-    expires = datetime.utcnow() + timedelta(minutes=5)
-    _PAIR_CODES[code] = {"expires_at": expires, "created_at": datetime.utcnow()}
-    return PairOut(code=code, expires_at=expires)
+class MobilePairOut(BaseModel):
+    base_urls: Dict[str, Optional[str]]
+    token: str
+
+
+@private_operation
+def _mint_pairing_code(service, actor):
+    # A code is only useful if its issuer may also issue the device key it turns into.
+    with service.store.transaction() as connection:
+        now = access_utcnow()
+        decisions = (
+            service.control.authorize_on(connection, actor, 'keys:manage', ResourceRef('installation'), now=now),
+            service.control.can_grant_on(connection, actor, tuple(ScopedPermission(permission, ResourceRef('installation'))
+                                                                 for permission in sorted(_DEVICE_SCOPES)), now=now))
+    if not all(decision.allowed for decision in decisions):
+        reset = any(decision.reason.value == 'reset_required' for decision in decisions)
+        raise MutationDeniedError(MutationReason.RESET_REQUIRED if reset else MutationReason.FORBIDDEN)
+    return service.capabilities.mint('pairing', actor, _PAIR_TTL, permission='tunnels:pair')
+
+
+@app.post("/admin/tunnel/pair", response_model=PairOut, responses=_PERMISSION_RESPONSES)
+async def admin_tunnel_pair(request: Request, identity=Depends(require_permission('tunnels:pair'))):
+    """A six-digit code, valid once for five minutes, that pairs one phone as a device of this installation."""
+    issued = await run_lifecycle_step(lambda: _mint_pairing_code(access_runtime(request), identity.actor))
+    return PairOut(code=issued.secret, expires_at=issued.expires_at)
+
+
+def _pair_attempt_allowed(client_ip: str) -> bool:
+    now = time.monotonic()
+    for address in list(_PAIR_ATTEMPTS):
+        recent = [at for at in _PAIR_ATTEMPTS[address] if now - at < _PAIR_WINDOW_SECONDS]
+        if recent:
+            _PAIR_ATTEMPTS[address] = recent
+        else:
+            del _PAIR_ATTEMPTS[address]
+    attempts = _PAIR_ATTEMPTS.get(client_ip, [])
+    if len(attempts) >= _PAIR_ATTEMPTS_PER_IP or sum(map(len, _PAIR_ATTEMPTS.values())) >= _PAIR_ATTEMPTS_TOTAL:
+        return False
+    _PAIR_ATTEMPTS[client_ip] = attempts + [now]
+    return True
+
+
+def _device_name(value) -> str:
+    text = "".join(c for c in value if c.isprintable()).strip() if isinstance(value, str) else ""
+    return text[:60].strip() or "Mobile device"
+
+
+@private_operation
+def _issue_device_key(service, actor, device_name):
+    values = IntegrationKeyValues(display_name=f"Device: {device_name}", owner=None, name=device_name,
+                                  note="Paired from the mobile app.", expires_at=None, permissions=_DEVICE_SCOPES)
+    for attempt in range(2):
+        prepared = service.credential_codec.prepare_new_key()
+        try:
+            receipt = service.mutations.issue_integration_key(actor, values, prepared,
+                expected_policy_version=_policy_version(service), now=access_utcnow())
+        except StaleVersionError:
+            # Another change landed between reading and issuing; nothing was written.
+            if attempt:
+                raise
+            continue
+        return receipt, prepared
+
+
+def _mobile_base_urls() -> Dict[str, Optional[str]]:
+    tunnel = None
+    if (_TUNNEL_STATE.get("enabled") and str(_TUNNEL_STATE.get("provider") or "").lower() == "cloudflare"
+            and not _hipaa_posture_enabled()):
+        tunnel = _TUNNEL_STATE.get("public_url") or None
+    return {"local": os.getenv("MOBILE_LOCAL_BASE") or None, "tunnel": tunnel,
+            "public": settings.public_api_url or None}
+
+
+async def _pair_payload(request: Request) -> dict:
+    """The JSON object body, at most 4 KiB; anything else is an empty payload."""
+    raw = bytearray()
+    async for chunk in request.stream():
+        raw.extend(chunk)
+        if len(raw) > 4096:
+            return {}
+    try:
+        payload = json.loads(bytes(raw))
+    except ValueError:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+@app.post("/mobile/pair", response_model=MobilePairOut,
+          responses={403: {"model": PublicDetailErrorResponse, "description": "Pairing failed."}},
+          openapi_extra={"requestBody": {"required": True, "content": {"application/json": {"schema": {
+              "type": "object", "required": ["code"], "properties": {
+                  "code": {"type": "string", "pattern": "^[0-9]{6}$"}, "device_name": {"type": "string"}}}}}}})
+async def mobile_pair(request: Request):
+    """Exchange a pairing code from the console for this device's own API key. Any failure is 403."""
+    def refused(message=_PAIR_REFUSED, reason="invalid_code"):
+        audit_event("mobile_pair_refused", reason=reason)
+        return JSONResponse({"detail": message}, status_code=403, headers=PRIVATE_HEADERS)
+
+    if not _pair_attempt_allowed(request.client.host if request.client else "unknown"):
+        return refused("Too many pairing attempts. Wait a minute and try again.", "rate_limited")
+    payload = await _pair_payload(request)
+    code = payload.get("code").strip() if isinstance(payload.get("code"), str) else ""
+    if re.fullmatch(r"[0-9]{6}", code) is None:
+        return refused()
+    try:
+        service = access_runtime(request)
+        record = await run_lifecycle_step(lambda: service.capabilities.consume("pairing", code))
+    except AccessError:
+        return refused()
+    device_name = _device_name(payload.get("device_name"))
+    try:
+        receipt, prepared = await service.work.run(lambda: _issue_device_key(service, record.actor, device_name))
+    except AccessError:
+        return refused("Pairing could not finish. Create a new code in the console and try again.", "issue_failed")
+    audit_event("mobile_paired", key_id=receipt.public_key_id, principal_id=receipt.principal_id,
+                issued_by=record.principal_id)
+    # The token is disclosed once, only after the device key committed.
+    return JSONResponse({"base_urls": _mobile_base_urls(), "token": prepared._token_for_committed_adapter()},
+                        headers=PRIVATE_HEADERS)
 
 
 @app.get("/admin/inbound/callbacks", dependencies=[Depends(require_permission('providers:read'))],

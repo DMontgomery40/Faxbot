@@ -24,6 +24,7 @@ OWN_AUTHENTICATION = {
     ("POST", "/sinch-inbound"): "verified provider ingest",
     ("POST", "/_internal/asterisk/inbound"): "internal shared secret",
     ("POST", "/_internal/freeswitch/outbound_result"): "internal shared secret",
+    ("POST", "/mobile/pair"): "single-use pairing code minted by a principal with tunnels:pair",
     ("GET", "/openapi.json"): "API description",
     ("GET", "/docs"): "API description",
     ("GET", "/docs/oauth2-redirect"): "API description",
@@ -35,7 +36,6 @@ STATIC_MOUNTS = {"/admin/ui", "/assets"}
 # entry when its route declares policy; the pending test below fails until then.
 PENDING = {
     ("WS", "/admin/terminal"): "converted by the terminal handshake owner",
-    ("POST", "/admin/tunnel/pair"): "converted by the pairing owner",
 }
 PRIVILEGED = {"host:restart", "host:actions", "host:terminal", "providers:install", "owner:recover"}
 # Routes converted from require_admin: (permission, audited).
@@ -54,6 +54,7 @@ CONVERTED = {
     ("GET", "/admin/tunnel/status"): ("tunnels:read", False),
     ("POST", "/admin/tunnel/config"): ("tunnels:manage", False),
     ("POST", "/admin/tunnel/test"): ("tunnels:read", False),
+    ("POST", "/admin/tunnel/pair"): ("tunnels:pair", False),
     ("GET", "/admin/inbound/callbacks"): ("providers:read", False),
     ("POST", "/admin/inbound/simulate"): ("providers:write", False),
     ("POST", "/admin/diagnostics/run"): ("diagnostics:read", False),
