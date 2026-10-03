@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import AdminAPIClient from '../api/client';
 import ResourceAccess, { INSTALLATION_WARNING } from '../components/ResourceAccess';
-import { backend } from '../test/server';
+import { NUMBER_DETAIL, backend } from '../test/server';
 
 async function signedInClient() {
   await AdminAPIClient.login('admin', 'correct horse');
@@ -55,5 +55,56 @@ describe('resource access', () => {
       resource_id: 'res_installation',
       expected_policy_version: 7,
     });
+  });
+});
+
+describe('fax numbers follow the installation country', () => {
+  const ukInstallation = () => {
+    backend.state.country = 'GB';
+    backend.state.numberExample = '0121 234 5678';
+    backend.state.resolveNumber = (value) => (value.replace(/\s/g, '') === '01782684953' ? '+441782684953' : null);
+  };
+
+  async function openAddNumber() {
+    const { client, me } = await signedInClient();
+    render(<ResourceAccess client={client} me={me} />);
+    fireEvent.click(await screen.findByRole('tab', { name: 'Fax numbers' }));
+    const add = await screen.findByRole('button', { name: 'Add number' });
+    await waitFor(() => expect((add as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(add);
+    return screen.findByRole('dialog', { name: 'Add fax number' });
+  }
+
+  it('sends a UK number as typed and shows the number the server saved', async () => {
+    ukInstallation();
+    const dialog = await openAddNumber();
+    expect(await within(dialog).findByText(
+      'The number faxes are sent to, for example 0121 234 5678, or a number starting with + and its country code.')).toBeTruthy();
+    expect(within(dialog).getByPlaceholderText('0121 234 5678')).toBeTruthy();
+    fireEvent.change(within(dialog).getByLabelText('Fax number'), { target: { value: '01782 684953' } });
+    fireEvent.change(within(dialog).getByLabelText('Mailbox'), { target: { value: 'mbx_main' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Add number' }));
+
+    expect(await screen.findByText('Faxes to +441782684953 now go to Main line.')).toBeTruthy();
+    expect(await screen.findByRole('cell', { name: '+441782684953' })).toBeTruthy();
+    expect(backend.requestsTo('POST', '/access/inbound-rules')[0].body).toEqual({
+      to_number: '01782 684953', mailbox_id: 'mbx_main', expected_policy_version: 7,
+    });
+  });
+
+  it('shows the server sentence when it cannot read the number and keeps the draft', async () => {
+    ukInstallation();
+    const dialog = await openAddNumber();
+    fireEvent.change(within(dialog).getByLabelText('Fax number'), { target: { value: '684953' } });
+    fireEvent.change(within(dialog).getByLabelText('Mailbox'), { target: { value: 'mbx_main' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Add number' }));
+    expect(await within(dialog).findByText(NUMBER_DETAIL)).toBeTruthy();
+    expect((within(dialog).getByLabelText('Fax number') as HTMLInputElement).value).toBe('684953');
+  });
+
+  it('still shows the US example for a US installation', async () => {
+    const dialog = await openAddNumber();
+    expect(await within(dialog).findByText(
+      'The number faxes are sent to, for example (201) 555-0123, or a number starting with + and its country code.')).toBeTruthy();
   });
 });

@@ -92,9 +92,10 @@ def _money(micros_by_currency):
             for currency, micros in sorted(micros_by_currency.items())]
 
 
-def _number(value):
+def _number(value, request):
+    country = request.scope['faxbot.configuration'].active.values.fax_default_country
     try:
-        return normalize_number(value)
+        return normalize_number(value, country=country)
     except InvalidNumber as error:
         raise HTTPException(400, detail=str(error)) from None
 
@@ -158,7 +159,7 @@ def _recommendation(store, number, revision, bound):
 
 @router.get('/destinations/{number}', dependencies=[Depends(require_permission('settings:read'))])
 async def get_destination(number: str, request: Request):
-    number = _number(number)
+    number = _number(number, request)
     store = _store(request)
     revision, bound = await run_lifecycle_step(lambda: _active(request))
 
@@ -187,7 +188,7 @@ class DestinationPatch(BaseModel):
 
 @router.patch('/destinations/{number}', dependencies=[Depends(require_permission('settings:write'))])
 async def patch_destination(number: str, payload: DestinationPatch, request: Request):
-    number = _number(number)
+    number = _number(number, request)
     store = _store(request)
     changes = payload.model_dump(exclude_unset=True)
     version = changes.pop('version', None)

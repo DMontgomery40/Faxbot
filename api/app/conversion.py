@@ -1,21 +1,24 @@
+import io
 import subprocess
 import shutil
 import tempfile
 import math
+import zlib
 import unicodedata
 import warnings
 from contextlib import contextmanager
 from functools import lru_cache
 from pathlib import Path
 from typing import Tuple, Optional
-from PIL import Image  # type: ignore
+from PIL import Image, features  # type: ignore
 from pypdf import PdfReader, apply_configuration
 from pypdf.generic import ArrayObject, ContentStream, DictionaryObject, NullObject, StreamObject
 import reportlab  # type: ignore
 from reportlab.lib.pagesizes import letter  # type: ignore
-from reportlab.pdfbase import pdfmetrics  # type: ignore
+from reportlab.pdfbase import pdfdoc, pdfmetrics  # type: ignore
 from reportlab.pdfbase.ttfonts import TTFont  # type: ignore
 from reportlab.pdfgen import canvas  # type: ignore
+from reportlab.pdfgen.canvas import _digester  # type: ignore
 from reportlab.lib.utils import ImageReader  # type: ignore
 import os
 
@@ -88,10 +91,12 @@ def ensure_dir(path: str) -> None:
 def txt_to_pdf(txt_path: str, pdf_path: str) -> None:
     """Render strict UTF-8 using embedded Vera glyphs, wrapping without data loss.
 
-    CRLF/CR/LF are line breaks; tabs expand to eight-column stops. Other control
-    characters and characters missing from Vera's cmap are rejected. Text is
-    rendered left to right without complex-script shaping. Limits apply to
-    source bytes, output bytes and pages independently of transmission settings.
+    CRLF/CR/LF are line breaks; one final line break ends the last line rather
+    than starting an empty one, so it never adds a page. Tabs expand to
+    eight-column stops. Other control characters and characters missing from
+    Vera's cmap are rejected. Text is rendered left to right without
+    complex-script shaping. Limits apply to source bytes, output bytes and pages
+    independently of transmission settings.
     """
     _check_file_size(txt_path)
     try:
@@ -103,6 +108,9 @@ def txt_to_pdf(txt_path: str, pdf_path: str) -> None:
     except (OSError, UnicodeError):
         raise DocumentConversionError("Text document must contain valid UTF-8.") from None
     text = text.replace("\r\n", "\n").replace("\r", "\n")
+    if text.endswith("\n"):
+        # A terminated last line is ordinary text-file form, not an extra line.
+        text = text[:-1]
     font = _text_font()
     if not text.strip():
         raise DocumentConversionError("Text document is empty.")
@@ -263,10 +271,101 @@ def _tiff_frames(image):
         yield image
 
 
+_INVERT_BITS = bytes(255 - value for value in range(256))
+
+
+def _bilevel_candidates(frame):
+    """Yield ``(data, filter, parameters)`` lossless one-bit encodings of a frame.
+
+    Flate over the packed rows is always available; CCITT Group 4 is added when
+    Pillow has libtiff. Every encoding decodes to exactly the pixels read.
+    """
+    # Pillow packs mode "1" rows MSB first with 1 for white, which is exactly
+    # one-bit DeviceGray.
+    yield zlib.compress(frame.tobytes(), 9), "FlateDecode", None
+    if not features.check("libtiff"):
+        return
+    width, height = frame.size
+    # libtiff codes stored 0 bits as white runs. Pillow stores mode "1" with
+    # 1 for white, so encode the inverted picture: the paper is then coded as
+    # CCITT white runs, which decode to white with BlackIs1 false.
+    inverted = Image.frombytes("1", frame.size, frame.tobytes().translate(_INVERT_BITS))
+    encoded = io.BytesIO()
+    # One strip holds the whole page, so the strip is one complete G4 image.
+    inverted.save(encoded, "TIFF", compression="group4", strip_size=math.ceil(width / 8) * height)
+    encoded.seek(0)
+    with Image.open(encoded) as written:
+        tags = written.tag_v2
+        offsets, counts = tags.get(273), tags.get(279)
+        photometric, compression = tags.get(262), tags.get(259)
+    data = encoded.getvalue()
+    if (compression == 4 and photometric == 1 and offsets is not None and counts is not None
+            and len(offsets) == len(counts) == 1 and offsets[0] + counts[0] <= len(data)):
+        yield data[offsets[0]:offsets[0] + counts[0]], "CCITTFaxDecode", {
+            "K": -1, "Columns": width, "Rows": height, "BlackIs1": b"false"}
+
+
+def _bilevel_stream(frame):
+    """The smaller lossless encoding of this page (G4 suits line art, Flate dense scans)."""
+    return min(_bilevel_candidates(frame), key=lambda candidate: len(candidate[0]))
+
+
+class _BilevelImage(pdfdoc.PDFImageXObject):
+    """A one-bit DeviceGray image XObject; reportlab would expand it to RGB."""
+
+    def __init__(self, name, frame):
+        super().__init__(name)
+        self.width, self.height = frame.size
+        self.bitsPerComponent = 1
+        self.colorSpace = "DeviceGray"
+        self.streamContent, self._filter, self._parameters = _bilevel_stream(frame)
+
+    def format(self, document):
+        stream = pdfdoc.PDFStream(content=self.streamContent)
+        entries = stream.dictionary
+        entries["Type"] = pdfdoc.PDFName("XObject")
+        entries["Subtype"] = pdfdoc.PDFName("Image")
+        entries["Width"] = self.width
+        entries["Height"] = self.height
+        entries["BitsPerComponent"] = 1
+        entries["ColorSpace"] = pdfdoc.PDFName("DeviceGray")
+        entries["Filter"] = pdfdoc.PDFArray([pdfdoc.PDFName(self._filter)])
+        if self._parameters is not None:
+            entries["DecodeParms"] = pdfdoc.PDFArray([pdfdoc.PDFDictionary(dict(self._parameters))])
+        return stream.format(document)
+
+
+class _RegisteredImage:
+    """A drawImage source whose XObject is already registered under its name."""
+
+    def __init__(self, key):
+        self.key = key
+
+    def __str__(self):
+        return self.key
+
+
+def _draw_bilevel(document, frame, page_number, width, height):
+    """Place a mode "1" frame on the page as a one-bit image.
+
+    drawImage names a non-ImageReader source by digesting ``str(source)`` and
+    the mask, then reuses an XObject already registered under that name; the
+    image is registered first so drawImage only positions it.
+    """
+    source = _RegisteredImage(f"faxbot-bilevel-page-{page_number}")
+    name = _digester(f"{source}{None}".encode("utf-8"))
+    image = _BilevelImage(name, frame)
+    registered = document._doc.getXObjectName(name)
+    document._doc.Reference(image, registered)
+    document._doc.addForm(name, image)
+    document.drawImage(source, 0, 0, width, height)
+
+
 def tiff_to_pdf(tiff_path: str, pdf_path: str) -> Tuple[int, str]:
     """Preserve supported one/eight-bit TIFF frames in lossless PDF streams.
 
-    Accept 1, L, LA, RGB, RGBA, CMYK and eight-bit indexed P. Palettes are
+    Accept 1, L, LA, RGB, RGBA, CMYK and eight-bit indexed P. One-bit frames
+    stay one-bit, in the smaller of CCITT Group 4 and Flate. Palettes are
     explicitly expanded to RGB/RGBA; high-depth and other modes are rejected.
     """
     _check_file_size(tiff_path)
@@ -291,7 +390,10 @@ def tiff_to_pdf(tiff_path: str, pdf_path: str) -> Tuple[int, str]:
                         )
                         frame = frame.convert("RGBA" if has_alpha else "RGB")
                     document.setPageSize((width, height))
-                    document.drawImage(ImageReader(frame), 0, 0, width, height, mask="auto")
+                    if frame.mode == "1":
+                        _draw_bilevel(document, frame, pages, width, height)
+                    else:
+                        document.drawImage(ImageReader(frame), 0, 0, width, height, mask="auto")
                     document.showPage()
                     pages += 1
                 if pages == 0:

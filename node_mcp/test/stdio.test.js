@@ -27,10 +27,13 @@ test('stdio lists the documented tools and uses its single configured key', asyn
     assert.deepEqual(tools.map((tool) => tool.name).sort(), TOOLS);
     const send = tools.find((tool) => tool.name === 'send_fax');
     assert.ok(send.inputSchema.properties.filePath && send.inputSchema.properties.fileUrl);
-    assert.deepEqual(send.outputSchema.required, ['id', 'status']);
+    assert.deepEqual(send.outputSchema.required, ['id', 'status', 'operationId']);
+    assert.match(send.inputSchema.properties.operationId.description, /same number and document/);
+    assert.deepEqual(send.inputSchema.required, ['to']);
+    assert.equal(send.annotations.idempotentHint, false);
 
     const sent = await client.callTool({ name: 'send_fax', arguments: { to: '+15551234567', filePath: document } });
-    assert.deepEqual(sent.structuredContent, { id: 'job-for-stdio-integration-key', status: 'queued' });
+    assert.deepEqual(sent.structuredContent, { id: 'job-1-for-stdio-integration-key', status: 'queued', operationId: fake.posts()[0].operation });
     const bare = await client.callTool({ name: 'list_inbound', arguments: {} });
     fake.state.inboundEnvelope = true;
     const wrapped = await client.callTool({ name: 'list_inbound', arguments: {} });

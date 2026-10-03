@@ -155,7 +155,7 @@ const ScriptsTests: React.FC<Props> = ({ client, onNavigate, docsBase }) => {
   const [busyInfo, setBusyInfo] = useState<boolean>(false);
   const [inboundLines, setInboundLines] = useState<string[]>([]);
   const [infoLines, setInfoLines] = useState<string[]>([]);
-  const [toNumber, setToNumber] = useState<string>('+15551234567');
+  const [toNumber, setToNumber] = useState<string>('');
   const [backend, setBackend] = useState<string>('');
   const [inboundEnabled, setInboundEnabled] = useState<boolean>(false);
   const [actions, setActions] = useState<Array<{ id: string; label: string }>>([]);
@@ -199,7 +199,7 @@ const ScriptsTests: React.FC<Props> = ({ client, onNavigate, docsBase }) => {
     setError(''); clearInbound(); setBusyInbound(true);
     try {
       pushInbound('[i] Simulating inbound (admin)');
-      const res = await client.simulateInbound({ to: toNumber, pages: 1, status: 'received' });
+      const res = await client.simulateInbound({ ...(toNumber.trim() ? { to: toNumber.trim() } : {}), pages: 1, status: 'received' });
       pushInbound(`[✓] Inbound created: ${res.id}`);
       pushInbound('[i] Listing inbound…');
       const list = await client.listInbound();
@@ -315,7 +315,6 @@ const ScriptsTests: React.FC<Props> = ({ client, onNavigate, docsBase }) => {
                     label="To number (optional)" 
                     value={toNumber} 
                     onChange={setToNumber}
-                    placeholder="+15551234567"
                   />
                   <Stack direction="row" spacing={1}>
                     <Button 

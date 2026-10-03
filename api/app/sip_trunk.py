@@ -49,8 +49,8 @@ class TrunkPreset:
     auth_modes: tuple[str, ...]
     codecs: tuple[str, ...]
     # 'e164' sends +<country><number>; 'digits' sends the same digits without
-    # the plus (Flowroute documents 1NPANXXXXXX); 'entered' leaves the number
-    # exactly as the sender typed it.
+    # the plus (Flowroute documents 1NPANXXXXXX); 'entered' sends the number
+    # the sender entered, which Faxbot has resolved to E.164 at acceptance.
     dial_format: str
     # Carrier signaling addresses for the identify section. Empty means the
     # carrier publishes none we could verify, so Faxbot matches the host name.
@@ -211,26 +211,21 @@ def effective_trunk(values, *, for_calls=False) -> Trunk:
 
 
 def dial_number(trunk: Trunk, number: str) -> str:
-    """The Request-URI user part for one destination, in the carrier's format.
+    """The Request-URI user part for one canonical E.164 destination, in the carrier's format.
 
-    Ten-digit numbers are treated as US or Canadian numbers when a carrier needs
-    the country code. Raises ValueError for anything but digits with an optional
-    leading plus, before any call is placed.
+    Destinations reach this point already resolved for the installation country,
+    so nothing here guesses a country. Raises ValueError for anything but a
+    canonical number, before any call is placed.
     """
-    if not isinstance(number, str) or _DIGITS.fullmatch(number) is None:
-        raise ValueError('Unsupported destination number')
-    fmt = trunk.preset.dial_format
-    if fmt == 'entered':
-        return number
-    digits = number.lstrip('+')
-    if not number.startswith('+') and len(digits) == 10:
-        digits = '1' + digits
-    if fmt == 'digits':
-        result = digits
-        if trunk.auth == 'ip' and trunk.preset.ip_dial_prefix:
-            result = trunk.username + '*' + digits
-        return result
-    return '+' + digits
+    from .routing.numbers import canonical_number
+    canonical = canonical_number(number)
+    if trunk.preset.dial_format != 'digits':
+        # 'e164' and 'entered' both send the canonical number with its plus sign.
+        return canonical
+    digits = canonical[1:]
+    if trunk.auth == 'ip' and trunk.preset.ip_dial_prefix:
+        return trunk.username + '*' + digits
+    return digits
 
 
 def _transport_section(trunk: Trunk):

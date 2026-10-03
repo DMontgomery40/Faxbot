@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Alert,
   Box,
+  Fade,
   Button,
   Checkbox,
   FormControlLabel,
@@ -26,7 +27,7 @@ import CheckIcon from '@mui/icons-material/CheckCircleOutline';
 import LockOpenIcon from '@mui/icons-material/LockOpen';
 import MailIcon from '@mui/icons-material/MarkunreadMailbox';
 import PhoneIcon from '@mui/icons-material/Phone';
-import AdminAPIClient from '../api/client';
+import AdminAPIClient, { plainRefusal } from '../api/client';
 import type {
   AccessAssignment,
   AccessGroup,
@@ -51,6 +52,7 @@ import {
   type LoadState,
 } from './access/AccessViews';
 import { resourceLabel } from './access/permissions';
+import { numberHint, numberPlaceholder, useNumberFormat } from './common/numbers';
 
 type Section = 'assignments' | 'mailboxes' | 'numbers';
 
@@ -324,26 +326,32 @@ function NumbersSection({ client, canManage }: { client: AdminAPIClient; canMana
   const [draft, setDraft] = useState<{ ruleId: string | null; toNumber: string; mailboxId: string } | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
+  const [saved, setSaved] = useState<string | null>(null);
+  const numberFormat = useNumberFormat(client);
 
   const save = async () => {
     if (!draft || !data) return;
     setBusy(true);
     setError(null);
+    setSaved(null);
     try {
       const rule = draft.ruleId ? data.rules.find((r) => r.id === draft.ruleId) : undefined;
-      if (rule) {
-        await client.updateInboundRule(rule.id, {
+      // The number is sent as typed; the server saves it in international form.
+      const result = rule
+        ? await client.updateInboundRule(rule.id, {
           ...(draft.toNumber.trim() !== rule.to_number ? { to_number: draft.toNumber.trim() } : {}),
           ...(draft.mailboxId !== rule.mailbox_id ? { mailbox_id: draft.mailboxId } : {}),
           version: rule.version,
-        });
-      } else {
-        await client.createInboundRule({ to_number: draft.toNumber.trim(), mailbox_id: draft.mailboxId });
-      }
+        })
+        : await client.createInboundRule({ to_number: draft.toNumber.trim(), mailbox_id: draft.mailboxId });
+      const mailbox = data.mailboxes.find((m) => m.id === draft.mailboxId)?.label;
+      const number = result?.rule?.to_number;
       setDraft(null);
+      if (number) setSaved(mailbox ? `Faxes to ${number} now go to ${mailbox}.` : `Saved ${number}.`);
       await load();
     } catch (failure) {
-      setError(failure);
+      const sentence = plainRefusal(failure);
+      setError(sentence ? new Error(sentence) : failure);
     } finally {
       setBusy(false);
     }
@@ -357,12 +365,17 @@ function NumbersSection({ client, canManage }: { client: AdminAPIClient; canMana
         onRefresh={() => void reloadAll()} busy={state === 'loading'}>
         {canManage && (
           <Button variant="contained" startIcon={<AddIcon />} disabled={state !== 'ready' || !data?.mailboxes.length}
-            onClick={() => { setError(null); setDraft({ ruleId: null, toNumber: '', mailboxId: '' }); }}>
+            onClick={() => { setError(null); setSaved(null); setDraft({ ruleId: null, toNumber: '', mailboxId: '' }); }}>
             Add number
           </Button>
         )}
       </ScreenHeader>
       {!draft && <ErrorBanner error={error} onReload={() => void reloadAll()} onClose={() => setError(null)} />}
+      {saved && (
+        <Fade in>
+          <Alert severity="success" sx={{ mb: 3, borderRadius: 2 }} onClose={() => setSaved(null)}>{saved}</Alert>
+        </Fade>
+      )}
       {state !== 'ready' || !data ? <LoadStateView state={state} onRetry={() => void load()} />
         : data.rules.length === 0 ? <EmptyState icon={<PhoneIcon />} title="No fax numbers routed"
             text={data.mailboxes.length ? 'Add a number to send its faxes to a mailbox.' : 'Add a mailbox first, then route numbers to it.'} />
@@ -385,7 +398,7 @@ function NumbersSection({ client, canManage }: { client: AdminAPIClient; canMana
                       <TableCell align="right">
                         <Tooltip title="Edit">
                           <IconButton aria-label={`Edit ${r.to_number}`} size="small"
-                            onClick={() => { setError(null); setDraft({ ruleId: r.id, toNumber: r.to_number, mailboxId: r.mailbox_id }); }}>
+                            onClick={() => { setError(null); setSaved(null); setDraft({ ruleId: r.id, toNumber: r.to_number, mailboxId: r.mailbox_id }); }}>
                             <EditIcon />
                           </IconButton>
                         </Tooltip>
@@ -404,7 +417,7 @@ function NumbersSection({ client, canManage }: { client: AdminAPIClient; canMana
         {draft && data && (
           <>
             <Field label="Fax number" value={draft.toNumber} onChange={(toNumber) => setDraft({ ...draft, toNumber })} autoFocus
-              helperText="The number faxes are sent to, for example +15551234567." />
+              type="tel" placeholder={numberPlaceholder(numberFormat)} helperText={numberHint(numberFormat, 'The number faxes are sent to')} />
             <SelectField label="Mailbox" value={draft.mailboxId} onChange={(mailboxId) => setDraft({ ...draft, mailboxId })}
               options={data.mailboxes.map((m) => ({ value: m.id, label: m.label }))} />
           </>

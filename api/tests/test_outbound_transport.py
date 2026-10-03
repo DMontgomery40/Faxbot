@@ -131,3 +131,66 @@ def test_dispatch_inputs_and_grant_reject_forged_profile(installation, tmp_path)
     with pytest.raises(DeliveryConflict):
         store.grant_pdf(claim, url='http://localhost/fax.pdf', token='synthetic',
             expires_at=datetime.utcnow() + timedelta(minutes=1))
+
+
+class DestinationService:
+    """A provider double that records the destination each adapter call receives."""
+    def __init__(self, calls):
+        self.calls = calls
+    def is_configured(self):
+        return True
+    async def send_fax(self, to, url, job_id, *, attempt_id):
+        self.calls.append(to)
+        return {'provider_sid': 'remote-one', 'status': 'queued'}
+    async def send_fax_file(self, to, path, *, uuid=None):
+        self.calls.append(to)
+        return {'provider_sid': 'remote-one', 'id': 'remote-one', 'status': 'queued'}
+
+
+def accepted_with(installation, tmp_path, provider, to_number, country):
+    from datetime import datetime
+    from uuid import uuid4
+    configuration, store, snapshot = installation
+    snapshot = configuration.apply(snapshot, snapshot.active.values.with_patch(
+        {'fax_data_dir': str(tmp_path), 'fax_default_country': country}), actor='test', restart_required=False,
+        providers={'outbound': ProviderConfiguration(provider, credentials={'api_key': 'synthetic'})})
+    job, now = uuid4().hex, datetime.utcnow()
+    configuration.accept_outbound(snapshot.active, {'id': job, 'to_number': to_number, 'file_name': 'a.pdf',
+        'tiff_path': '', 'status': 'queued', 'pages': 1, 'created_at': now, 'updated_at': now})
+    (tmp_path / (job + '.pdf')).write_bytes(b'%PDF-synthetic-internal-seam')
+    # A later country change must not redirect the accepted fax.
+    later = configuration.apply(snapshot, snapshot.active.values.with_patch(
+        {'fax_default_country': 'US' if country != 'US' else 'GB'}), actor='test', restart_required=False)
+    return job, later
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('provider', ['phaxio', 'signalwire', 'sinch', 'documo', 'humblefax'])
+@pytest.mark.parametrize('stored, country, expected', [
+    ('+441782684953', 'GB', '+441782684953'),   # accepted after this change: already canonical
+    ('01782684953', 'GB', '+441782684953'),     # accepted before it: the entered text, read once for GB
+    ('3035550123', 'US', '+13035550123'),
+])
+async def test_every_adapter_receives_the_one_accepted_destination(
+        installation, tmp_path, monkeypatch, provider, stored, country, expected):
+    _, store, _ = installation
+    job, _ = accepted_with(installation, tmp_path, provider, stored, country)
+    calls = []
+    monkeypatch.setattr('api.app.outbound_transport.service_from_profile', lambda profile: DestinationService(calls))
+    await OutboundWorker(store, CapturedTransport(store, Runtime())).step()
+    if provider == 'humblefax' and expected.startswith('+44'):
+        # HumbleFax sends only to US and Canadian numbers: refused before submission.
+        assert calls == [] and store.get(job)['state'] == 'failed'
+        return
+    assert calls == [expected]
+    assert store.get(job)['state'] == 'in_progress'
+
+
+@pytest.mark.asyncio
+async def test_unreadable_pre_change_destination_fails_before_any_provider_call(installation, tmp_path, monkeypatch):
+    _, store, _ = installation
+    job, _ = accepted_with(installation, tmp_path, 'phaxio', '123456', 'US')
+    calls = []
+    monkeypatch.setattr('api.app.outbound_transport.service_from_profile', lambda profile: DestinationService(calls))
+    await OutboundWorker(store, CapturedTransport(store, Runtime())).step()
+    assert calls == [] and store.get(job)['state'] == 'failed'

@@ -13,7 +13,7 @@ from uuid import uuid4
 import sqlalchemy as sa
 
 from ..routing.database import DeliveryStoreError, read_connection, reflect, utcnow, write_transaction
-from ..routing.numbers import InvalidNumber, normalize_number
+from ..routing.numbers import DEFAULT_COUNTRY, InvalidNumber, normalize_number
 
 
 LEASE = timedelta(minutes=2)
@@ -34,9 +34,9 @@ class IntakeConflict(RuntimeError):
     """The record changed or is in a state that does not allow this action."""
 
 
-def number_key(value):
+def number_key(value, country=DEFAULT_COUNTRY):
     try:
-        return normalize_number(value)
+        return normalize_number(value, country=country)
     except InvalidNumber:
         return None
 
@@ -104,10 +104,15 @@ class Connector:
 class IntakeStore:
     TABLES = ('intake_items', 'intake_connectors', 'inbound_faxes', 'direct_deliveries')
 
-    def __init__(self, engine, secrets):
-        """``secrets`` seals and opens connector passwords bound to their record."""
+    def __init__(self, engine, secrets, *, country=None):
+        """``secrets`` seals and opens connector passwords bound to their record.
+
+        ``country`` returns the installation country for numbers entered without
+        a country code.
+        """
         self.engine = engine
         self.secrets = secrets
+        self.country = country or (lambda: DEFAULT_COUNTRY)
         tables = reflect(engine, self.TABLES)
         self.items = tables['intake_items']
         self.connectors = tables['intake_connectors']
@@ -147,11 +152,10 @@ class IntakeStore:
             raise IntakeInputError('Give the connector a name of up to 100 characters.')
         return name
 
-    @staticmethod
-    def _match(value):
+    def _match(self, value):
         if value in (None, ''):
             return None
-        key = number_key(value)
+        key = number_key(value, self.country())
         if key is None:
             raise IntakeInputError('Enter the fax number this connector handles, with its country code.')
         return key
@@ -229,7 +233,7 @@ class IntakeStore:
 
     def connector_for(self, to_number, connection=None):
         """The enabled connector for a fax number: an exact number match, else a catch-all."""
-        key = number_key(to_number) if to_number else None
+        key = number_key(to_number, self.country()) if to_number else None
         enabled = [c for c in self.list_connectors(connection) if c.enabled]
         exact = [c for c in enabled if key is not None and c.match_number == key]
         return (exact or [c for c in enabled if c.match_number is None] or [None])[0]

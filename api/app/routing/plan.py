@@ -64,7 +64,7 @@ class RoutePlanner:
                 attempts.c.submitted_at.is_not(None))).scalars())
 
     def plan(self, *, to_number, bound, values, pages, alternates=False, exclude=(), card_for=None):
-        destination = destination_key(to_number)
+        destination = destination_key(to_number, getattr(values, 'fax_default_country', 'US'))
         card_for = card_for or self.store.card_for
         candidates = [RouteCandidate(bound, 'provider', bound, card_for(bound), bound=True)]
         if alternates:

@@ -600,3 +600,31 @@ def test_audit_lists_allowed_and_denied_operations(client):
     denied = client.get('/access/audit', headers=B, params={'actor_id': principal['id'], 'operation': 'create_group'}).json()['items']
     assert [(item['outcome'], item['credential_kind']) for item in denied] == [('denied', 'session')]
     assert plain.get('/access/audit').status_code == 403
+
+
+def test_uk_rule_entered_nationally_routes_received_faxes_in_e164(monkeypatch, tmp_path):
+    _environment(monkeypatch, tmp_path)
+    monkeypatch.setenv('FAX_DEFAULT_COUNTRY', 'GB')
+    monkeypatch.setenv('INBOUND_ENABLED', 'true')
+    with TestClient(app, base_url=ORIGIN, headers={'Origin': ORIGIN}) as client:
+        mailbox = client.post('/access/mailboxes', headers=B, json={'label': 'Front desk', 'enabled': True,
+            'expected_policy_version': policy_version(client)}).json()['mailbox']
+        rule = client.post('/access/inbound-rules', headers=B, json={'to_number': '01782 684953',
+            'mailbox_id': mailbox['id'], 'expected_policy_version': policy_version(client)})
+        assert rule.status_code == 200, rule.text
+        assert rule.json()['rule']['to_number'] == '+441782684953'
+        again = client.post('/access/inbound-rules', headers=B, json={'to_number': '+44 1782 684953',
+            'mailbox_id': mailbox['id'], 'expected_policy_version': policy_version(client)})
+        assert again.status_code in (400, 409)  # the same number, however it is written
+        incomplete = client.post('/access/inbound-rules', headers=B, json={'to_number': '684953',
+            'mailbox_id': mailbox['id'], 'expected_policy_version': policy_version(client)})
+        assert incomplete.status_code == 400 and 'area code' in incomplete.json()['detail']
+        # Providers deliver the called number in E.164 or national form; both land in the mailbox.
+        for called in ('+441782684953', '01782 684953'):
+            simulated = client.post('/admin/inbound/simulate', headers=B, json={'to': called, 'fr': '01632 960001'})
+            assert simulated.status_code == 200, simulated.text
+        listed = client.get('/inbound', headers=B, params={'to_number': '01782 684953'})
+        assert listed.status_code == 200, listed.text
+        items = listed.json() if isinstance(listed.json(), list) else listed.json()['items']
+        assert [(item['to'], item['fr'], item['mailbox']) for item in items] == [
+            ('+441782684953', '+441632960001', 'Front desk')] * 2

@@ -1,4 +1,5 @@
 """A local fake Faxbot API and a threaded uvicorn runner for MCP transport tests."""
+import hashlib
 import json
 import os
 import re
@@ -6,6 +7,8 @@ import socket
 import sys
 import threading
 import time
+from email.parser import BytesParser
+from email.policy import HTTP
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -16,14 +19,31 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 PDF_BYTES = b'%PDF-1.4\n% synthetic inbound fax\n'
+CONFLICT = 'Idempotency-Key already belongs to a different fax request.'
+
+
+def _form(content_type, body):
+    message = BytesParser(policy=HTTP).parsebytes(b'Content-Type: ' + content_type.encode() + b'\r\n\r\n' + body)
+    return {part.get_param('name', header='content-disposition'): part.get_payload(decode=True)
+            for part in message.iter_parts()}
 
 
 class FakeFaxbot:
-    """Records every request with the X-API-Key it carried (None when absent)."""
+    """Records every request with the X-API-Key it carried (None when absent).
+
+    POST /fax honors Idempotency-Key per API key like the server contract; each accepted job is one
+    provider submission in ``jobs``. ``plan`` scripts the next POST /fax replies: 'accept' (default),
+    'drop' (accept, then close without answering), 'uncertain' (accept, then answer 503) or an HTTP
+    status (answer it without accepting).
+    """
     def __init__(self):
         self.requests = []
         self.inbound_envelope = False
         self.jwks = {'keys': []}
+        self.plan = []
+        self.jobs = []
+        self.ledger = {}
+        lock = threading.Lock()
         fake = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -42,16 +62,39 @@ class FakeFaxbot:
                 length = int(self.headers.get('Content-Length') or 0)
                 body = self.rfile.read(length) if length else b''
                 key = self.headers.get('X-API-Key')
-                fake.requests.append({'method': self.command, 'path': self.path, 'key': key, 'body': body})
+                fake.requests.append({'method': self.command, 'path': self.path, 'key': key, 'body': body,
+                                      'operation': self.headers.get('Idempotency-Key')})
                 return key, body
 
             def do_POST(self):  # noqa: N802
                 key, body = self._record()
                 if self.path != '/fax':
                     return self._reply(404, {'detail': 'Not Found'})
-                to = re.search(rb'name="to"\r\n\r\n([^\r]*)', body)
-                self._reply(202, {'id': f'job-for-{key}', 'status': 'queued',
-                                  'to': to.group(1).decode() if to else None})
+                with lock:
+                    action = fake.plan.pop(0) if fake.plan else 'accept'
+                if isinstance(action, int):
+                    return self._reply(action, {'detail': f'synthetic {action}'})
+                fields = _form(self.headers['Content-Type'], body)
+                to = fields['to'].decode()
+                request = (to, hashlib.sha256(fields['file']).hexdigest(), fields.get('queue_only'))
+                operation = self.headers.get('Idempotency-Key')
+                with lock:
+                    entry = fake.ledger.get((key, operation)) if operation is not None else None
+                    if entry and entry['request'] != request:
+                        return self._reply(409, {'detail': CONFLICT})
+                    if entry is None:
+                        number = 1 + sum(1 for job in fake.jobs if job['id'].endswith(f'-for-{key}'))
+                        entry = {'request': request, 'job': {'id': f'job-{number}-for-{key}', 'status': 'queued',
+                                                             'to': to}}
+                        fake.jobs.append(entry['job'])  # one provider submission
+                        if operation is not None:
+                            fake.ledger[(key, operation)] = entry
+                if action == 'drop':
+                    self.close_connection = True  # the job exists but its response is lost
+                    return None
+                if action == 'uncertain':
+                    return self._reply(503, {'detail': 'Fax acceptance is uncertain; retry with the same key.'})
+                self._reply(202, entry['job'])
 
             def do_GET(self):  # noqa: N802
                 if self.path == '/.well-known/jwks.json':
@@ -79,10 +122,13 @@ class FakeFaxbot:
 
         self.server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
         self.url = f'http://127.0.0.1:{self.server.server_address[1]}'
-        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread = threading.Thread(target=self.server.serve_forever, kwargs={'poll_interval': 0.05}, daemon=True)
 
     def keys(self):
         return [request['key'] for request in self.requests]
+
+    def posts(self):
+        return [request for request in self.requests if request['path'] == '/fax']
 
 
 @pytest.fixture

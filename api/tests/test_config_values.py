@@ -160,3 +160,37 @@ def test_masks_returned_for_short_or_newline_ending_secrets_cannot_be_saved_as_c
         with pytest.raises(ConfigurationValueError):
             current.with_patch({'phaxio_api_secret': mask})
     assert current.phaxio_api_secret == 'synthetic-original'
+
+
+def test_installation_country_defaults_to_us_and_takes_iso_codes():
+    import pytest
+    from app.config_values import ConfigurationValueError
+    assert ConfigurationValues.from_environment({}).fax_default_country == 'US'
+    assert ConfigurationValues.from_environment({'FAX_DEFAULT_COUNTRY': ' gb '}).fax_default_country == 'GB'
+    for invalid in ('', 'XX', 'UK', 'GBR'):
+        with pytest.raises(ConfigurationValueError) as error:
+            ConfigurationValues.from_environment({'FAX_DEFAULT_COUNTRY': invalid})
+        assert error.value.issues == ({'field': 'FAX_DEFAULT_COUNTRY', 'reason': 'value_error'},)
+
+
+def test_fax_numbers_in_settings_are_saved_in_e164_for_the_installation_country():
+    import pytest
+    from app.config_values import ConfigurationValueError
+    uk = ConfigurationValues.from_environment({'FAX_DEFAULT_COUNTRY': 'GB'})
+    saved = uk.with_patch({'direct_fax_number': '01782 684953', 'sip_trunk_caller_id': '01782 684953',
+                           'sip_trunk_dids': '01782 684953, +1 303 555 0123',
+                           'signalwire_fax_from_e164': '01782 684954'})
+    assert (saved.direct_fax_number, saved.sip_trunk_caller_id, saved.signalwire_fax_from_e164) == (
+        '+441782684953', '+441782684953', '+441782684954')
+    assert saved.sip_trunk_did_list == ('+441782684953', '+13035550123')
+    # A change of country in the same save applies to the numbers in it.
+    switched = ConfigurationValues.from_environment({}).with_patch(
+        {'fax_default_country': 'gb', 'direct_fax_number': '01782 684953'})
+    assert switched.direct_fax_number == '+441782684953'
+    assert ConfigurationValues.from_environment({}).with_patch(
+        {'direct_fax_number': '303 555 0123'}).direct_fax_number == '+13035550123'
+    with pytest.raises(ConfigurationValueError) as error:
+        uk.with_patch({'sip_trunk_caller_id': 'front desk'})
+    assert error.value.issues == ({'field': 'SIP_TRUNK_CALLER_ID', 'reason': 'string_pattern_mismatch'},)
+    # Saved revisions load unchanged; only new saves are rewritten.
+    assert ConfigurationValues.from_environment({'DIRECT_FAX_NUMBER': '3035550123'}).direct_fax_number == '3035550123'

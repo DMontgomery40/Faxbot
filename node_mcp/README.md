@@ -27,7 +27,7 @@ Other settings: `FAX_API_URL` (default `http://localhost:8080`), `MCP_ALLOWED_HO
 
 ## Tools
 
-- `send_fax(to, fileContent, fileName, fileType?)`. On stdio, `filePath` or `fileUrl` can replace `fileContent`. Returns `{id, status}`.
+- `send_fax(to, fileContent, fileName, fileType?, operationId?)`. On stdio, `filePath` or `fileUrl` can replace `fileContent`. Returns `{id, status, operationId}`.
 - `get_fax_status(jobId)`. Returns the job's `id`, `status`, `to`, `pages`, `error`, `created_at` and `updated_at`.
 - `get_fax(id)`: a sent fax job or a received fax.
 - `list_inbound(limit?)`. Returns `{items: [...]}`.
@@ -35,9 +35,21 @@ Other settings: `FAX_API_URL` (default `http://localhost:8080`), `MCP_ALLOWED_HO
 
 Resource template: `faxbot://inbound/{inbound_id}/pdf`, which returns the received fax PDF.
 
+### Sending a fax once
+
+Each `send_fax` call is one fax with an operation id. The server sends the id to Faxbot as the `Idempotency-Key` header and returns it as `operationId`. A call without `operationId` is a new fax, even for a document sent before. The document is read once per call. The call never sends a fax again on its own. When the connection drops, times out, or Faxbot answers 502, 503 or 504, the tool error names the operation id; Faxbot answers a resend with that id with the original job instead of sending the fax twice. A 4xx answer is final.
+
+If no attempt is confirmed, the tool error names the operation id. To finish that same fax, call `send_fax` again with the same number and document plus that id:
+
+```json
+{"to": "+15551234567", "fileContent": "<same base64>", "fileName": "letter.pdf", "operationId": "<id from the error>"}
+```
+
+The same id with a different number or document fails with HTTP 409. The MCP server keeps no ids or documents; the caller keeps the id. Faxbot servers released before Idempotency-Key support ignore the header, so on those servers resending after a lost response can send the fax twice; check the job list there instead.
+
 ## Checks
 
 ```
 npm run check   # every file parses and every module imports
-npm test        # tools, forwarded keys, stdio stdout, ws auth (local fake Faxbot API)
+npm test        # tools, forwarded keys, send-once retries, stdio stdout, ws auth (local fake Faxbot API)
 ```

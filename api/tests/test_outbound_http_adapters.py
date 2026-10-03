@@ -298,3 +298,70 @@ def test_sinch_direct_create_returns_response_without_status_normalization(monke
         '+15550000002', str(path)))
     assert result == response
     assert len(calls) == 1
+
+
+_WIRE = []
+
+
+def _wire(request):
+    _WIRE.append(request)
+    return httpx.Response(200, json={'success': True, 'data': {'id': 42, 'status': 'queued'},
+                                     'sid': 'remote-42', 'id': 'remote-42', 'status': 'queued'})
+
+
+def _destination_adapter(identity, tmp_path):
+    """One create call per adapter and how its destination appears on the wire."""
+    from api.app.documo_service import DocumoFaxService
+    from api.app.humblefax_service import HumbleFaxFaxService
+    path = tmp_path / 'synthetic.pdf'
+    path.write_bytes(b'%PDF-synthetic')
+    sinch = SinchFaxService('project', 'key', 'secret', 'https://sinch.invalid/v3')
+    form = lambda request, name: parse_qs(request.content.decode())[name][0]
+    part = lambda request, name: request.content.split(f'name="{name}"\r\n\r\n'.encode())[1].split(b'\r\n')[0].decode()
+    return {
+        'phaxio': (lambda to: builtin('phaxio').send_fax(to, 'https://document.invalid/a', 'job-1'),
+                   lambda request: form(request, 'to')),
+        'signalwire': (lambda to: builtin('signalwire').send_fax(to, 'https://document.invalid/a', 'job-1'),
+                       lambda request: form(request, 'To')),
+        'sinch': (lambda to: sinch.send_fax_file(to, str(path)), lambda request: part(request, 'to')),
+        'sinch-file-id': (lambda to: sinch.send_fax(to, 42), lambda request: json.loads(request.content)['to']),
+        'documo': (lambda to: DocumoFaxService('synthetic-key', 'https://api.documo.com', False,
+                                               transport=httpx.MockTransport(_wire)).send_fax_file(to, str(path)),
+                   lambda request: part(request, 'faxNumber')),
+        'humblefax': (lambda to: HumbleFaxFaxService('access', 'secret', transport=httpx.MockTransport(_wire))
+                      .send_fax_file(to, str(path)),
+                      lambda request: json.loads(part(request, 'jsonData'))['recipients']),
+    }[identity]
+
+
+@pytest.mark.parametrize('identity, number, expected', [
+    ('phaxio', '+441782684953', '+441782684953'), ('phaxio', '+13035550123', '+13035550123'),
+    ('signalwire', '+441782684953', '+441782684953'), ('sinch', '+441782684953', '+441782684953'),
+    ('sinch-file-id', '+441782684953', '+441782684953'), ('documo', '+441782684953', '+441782684953'),
+    ('documo', '+13035550123', '+13035550123'), ('humblefax', '+13035550123', [13035550123]),
+])
+def test_adapters_format_the_canonical_destination_without_reinterpreting_it(
+        monkeypatch, tmp_path, identity, number, expected):
+    if identity not in ('documo', 'humblefax'):
+        intercept(monkeypatch, _wire)
+    create, destination = _destination_adapter(identity, tmp_path)
+    _WIRE.clear()
+    try:
+        asyncio.run(create(number))
+    except RuntimeError:
+        pass  # this test does not shape every provider reply; one request was still made
+    assert len(_WIRE) == 1 and destination(_WIRE[0]) == expected
+    # Anything that is not already canonical is refused before a request, never guessed at.
+    for entered in ('3035550123', '13035550123', '01782 684953', '441782684953', '+44 1782 684953'):
+        _WIRE.clear()
+        with pytest.raises(ValueError):
+            asyncio.run(create(entered))
+        assert _WIRE == []
+
+
+def test_humblefax_refuses_numbers_outside_the_us_and_canada_before_any_request(tmp_path):
+    create, _ = _destination_adapter('humblefax', tmp_path)
+    _WIRE.clear()
+    with pytest.raises(ValueError, match='HumbleFax fax number is invalid'):
+        asyncio.run(create('+441782684953'))
+    assert _WIRE == []

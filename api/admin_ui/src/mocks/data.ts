@@ -36,6 +36,11 @@ export const demoSettings: Settings = {
   inbound: { enabled: true, retention_days: 30, token_ttl_minutes: 60, phaxio: { verify_signature: true }, sinch: { verify_signature: true, basic_auth_configured: false, hmac_configured: false } },
   features: { v3_plugins: true, fax_disabled: false, inbound_enabled: true, plugin_install: false },
   limits: { max_file_size_mb: 10, pdf_token_ttl_minutes: 60, rate_limit_rpm: 120, inbound_list_rpm: 30, inbound_get_rpm: 60 },
+  numbers: {
+    default_country: 'US',
+    example: { national: '(201) 555-0123', international: '+1 201-555-0123' },
+    supported_countries: ['AU', 'CA', 'DE', 'FR', 'GB', 'IE', 'NL', 'NZ', 'US'],
+  },
 };
 
 export const demoValidation: ValidationResult = {

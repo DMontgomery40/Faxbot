@@ -143,3 +143,60 @@ def test_numbers_normalize_to_e164(raw, expected):
 def test_unusable_numbers_are_rejected(raw):
     with pytest.raises(InvalidNumber):
         normalize_number(raw)
+
+
+UK = '+441782684953'
+
+
+@pytest.mark.parametrize('country, raw, expected', [
+    # A US installation: every way of writing one number gives one E.164 identity.
+    ('US', '303 555 0123', '+13035550123'), ('US', '(303) 555-0123', '+13035550123'),
+    ('US', '1-303-555-0123', '+13035550123'), ('US', '13035550123', '+13035550123'),
+    ('US', '+1 303 555 0123', '+13035550123'), ('US', '011 44 1782 684953', UK), ('US', '+44 1782 684953', UK),
+    # A UK installation reads national numbers with the trunk 0 the way people dial them.
+    ('GB', '01782 684953', UK), ('GB', '01782684953', UK), ('GB', '(01782) 684 953', UK),
+    ('GB', '+44 1782 684953', UK), ('GB', '0044 1782 684953', UK), ('GB', UK, UK),
+    ('GB', '+1 303 555 0123', '+13035550123'), ('GB', '00 1 303 555 0123', '+13035550123'),
+    ('AU', '02 9876 5432', '+61298765432'), ('AU', '0011 44 1782 684953', UK),
+])
+def test_numbers_resolve_for_the_installation_country(country, raw, expected):
+    assert normalize_number(raw, country=country) == expected
+
+
+@pytest.mark.parametrize('country, raw', [
+    ('US', '555 0100'), ('GB', '684953'),          # no area code: only dialable locally
+    ('US', '442079460000'),                         # a UK number without its +: refused, not guessed
+    ('US', '+3035550123'),                          # +30 is Greece; this is not a complete number there
+    ('US', '0123456789'), ('US', '+1 555 0100'),    # no North American area code starts with 0; +1 needs ten digits
+    ('GB', '01782 684953 1234'), ('US', '303-555-0123 ext 4'), ('US', '1-800-FLOWERS'),
+])
+def test_incomplete_or_ambiguous_numbers_are_refused_with_one_sentence(country, raw):
+    with pytest.raises(InvalidNumber) as error:
+        normalize_number(raw, country=country)
+    message = str(error.value)
+    assert message.endswith('.') and raw not in message
+
+
+def test_only_the_local_number_is_reported_as_missing_its_area_code():
+    from api.app.routing.numbers import AmbiguousNumber
+    with pytest.raises(AmbiguousNumber, match='area code'):
+        normalize_number('555 0100', country='US')
+
+
+def test_canonical_numbers_are_kept_and_anything_else_is_never_reinterpreted():
+    from api.app.routing.numbers import accepted_destination, canonical_number, is_canonical
+    assert canonical_number(UK) == UK and is_canonical('+13035550123')
+    for value in ('01782684953', '+44 1782 684953', '441782684953', '3035550123', '+3035550123', 3035550123):
+        assert not is_canonical(value)
+    # Accepted jobs keep their number under any later country; older jobs that
+    # stored the entered text resolve once with the country captured for them.
+    assert accepted_destination(UK, country='US') == UK
+    assert accepted_destination('3035550123', country='US') == '+13035550123'
+    assert accepted_destination('01782 684953', country='GB') == UK
+    with pytest.raises(InvalidNumber):
+        accepted_destination('01782 684953', country='US')
+
+
+def test_installation_country_must_be_a_known_region():
+    with pytest.raises(ValueError, match='country'):
+        normalize_number('303 555 0123', country='XX')

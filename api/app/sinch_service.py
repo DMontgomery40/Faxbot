@@ -3,6 +3,7 @@ import httpx
 import os
 
 from .config import settings, reload_settings
+from .routing.numbers import canonical_number
 
 
 class SinchFaxService:
@@ -58,12 +59,8 @@ class SinchFaxService:
     async def send_fax(self, to_number: str, file_id: int) -> Dict[str, Any]:
         if not self.is_configured():
             raise ValueError('Sinch is not properly configured')
-        # Normalize number to E.164 if possible
-        to = to_number
-        if not to.startswith('+'):
-            digits = ''.join(c for c in to if c.isdigit())
-            if len(digits) >= 10:
-                to = f"+{digits}"
+        # Sinch takes E.164, which is the accepted job's canonical form.
+        to = canonical_number(to_number)
         url = f"{self.base_url}/projects/{self.project_id}/faxes"
         payload = {"to": to, "file": file_id}
         try:
@@ -103,11 +100,7 @@ class SinchFaxService:
         """
         if not self.is_configured():
             raise ValueError('Sinch is not properly configured')
-        to = to_number
-        if not to.startswith('+'):
-            digits = ''.join(c for c in to if c.isdigit())
-            if len(digits) >= 10:
-                to = f"+{digits}"
+        to = canonical_number(to_number)
         url = f"{self.base_url}/projects/{self.project_id}/faxes"
         try:
             async with httpx.AsyncClient(timeout=60.0) as client:

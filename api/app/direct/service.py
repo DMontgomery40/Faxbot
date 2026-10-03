@@ -91,7 +91,7 @@ class DirectService:
         if not values.direct_organization.strip():
             raise DirectConflict('Add your organization name for direct delivery to the installation settings first.')
         try:
-            number = normalize_number(values.direct_fax_number)
+            number = normalize_number(values.direct_fax_number, country=values.fax_default_country)
         except InvalidNumber:
             raise DirectConflict('Add the fax number partners send to for direct delivery to the installation settings first.') from None
         return card(self.identity(create=True), organization=values.direct_organization.strip(), fax_number=number,
@@ -146,7 +146,7 @@ class DirectService:
             return 403, self._refusal(identity, message_id, error.reason, str(error))
         from ..routing.numbers import InvalidNumber, normalize_number
         try:
-            own_number = normalize_number(values.direct_fax_number)
+            own_number = normalize_number(values.direct_fax_number, country=values.fax_default_country)
         except InvalidNumber:
             own_number = None
         if manifest['recipient']['signing_key'] != identity.signing_key or manifest['recipient']['fax_number'] != own_number:
@@ -310,7 +310,7 @@ class DirectRoute:
         from ..routing.numbers import normalize_number
         sender_number = None
         try:
-            sender_number = normalize_number(values.direct_fax_number)
+            sender_number = normalize_number(values.direct_fax_number, country=values.fax_default_country)
         except ValueError:
             sender_number = None
         message_id = claim.attempt_id

@@ -102,20 +102,25 @@ def test_trunk_representation_and_catalog_never_contain_the_password():
 
 @pytest.mark.parametrize('case,number,expected', [
     ('telnyx-ip', '+15555550123', '+15555550123'),
-    ('telnyx-ip', '15555550123', '+15555550123'),
-    ('telnyx-ip', '5555550123', '+15555550123'),
     ('telnyx-ip', '+442071838750', '+442071838750'),
+    ('telnyx-ip', '+441782684953', '+441782684953'),
+    ('sinch-registration', '+441782684953', '+441782684953'),
+    ('signalwire-registration', '+441782684953', '+441782684953'),
+    ('anveo-ip', '+441782684953', '+441782684953'),
     ('flowroute-registration', '+15555550123', '15555550123'),
-    ('flowroute-registration', '5555550123', '15555550123'),
+    ('flowroute-registration', '+441782684953', '441782684953'),
     ('flowroute-ip', '+15555550123', '12345678*15555550123'),
-    ('custom-ip', '5555550123', '5555550123'),
     ('custom-ip', '+15555550123', '+15555550123'),
+    ('custom-ip', '+441782684953', '+441782684953'),
 ])
 def test_dialed_number_uses_the_carrier_format(case, number, expected):
     assert sip_trunk.dial_number(sip_trunk.effective_trunk(values(CASES[case])), number) == expected
 
 
-@pytest.mark.parametrize('number', ['', '12', '1555&x', '+1 555', '1555\r\nAction: Command', None])
+# National or unprefixed digits never reach a carrier: they are resolved to E.164
+# for the installation country when the fax is accepted, not guessed here.
+@pytest.mark.parametrize('number', ['', '12', '1555&x', '+1 555', '1555\r\nAction: Command', None,
+                                    '5555550123', '15555550123', '01782 684953', '441782684953'])
 def test_unusable_destination_is_refused_before_dialing(number):
     trunk = sip_trunk.effective_trunk(values(CASES['telnyx-ip']))
     with pytest.raises(ValueError):

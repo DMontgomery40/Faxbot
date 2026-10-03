@@ -43,6 +43,7 @@ multidict==6.9.1
 opentelemetry-api==1.45.0
 packaging==26.3
 pexpect==4.9.0
+phonenumbers==9.0.40
 pillow==12.3.0
 pluggy==1.6.0
 propcache==0.5.4

@@ -65,7 +65,9 @@ from .outbound_polling import OutboundPoller
 from .provider_execution import UnsupportedProviderExecutionError
 from .outbound_transport import CapturedTransport, normalize_status
 from .outbound_callbacks import CapturedCallbacks, CallbackRejected
-from .request_identity import RequestIdentity, IdempotentReplay, IdempotencyConflict, fingerprint_upload
+from .request_identity import (RequestIdentity, IdempotentReplay, IdempotencyConflict, digest_upload,
+                               request_fingerprints)
+from .routing.numbers import InvalidNumber, normalize_number
 from .access.runtime import AccessRuntime
 from .access.transport import CredentialTransport
 from .access.catalog import KEY_SCOPES
@@ -201,7 +203,6 @@ from . import phaxio_service as _phaxio_module  # noqa: E402
 app.phaxio_service = _phaxio_module  # type: ignore[attr-defined]
 
 
-PHONE_RE = re.compile(r"^[+]?\d{6,20}$")
 ALLOWED_CT = {"application/pdf", "text/plain"}
 
 
@@ -2150,6 +2151,17 @@ async def send_fax(request: Request, to: str = Form(...), file: UploadFile = Fil
     access = access_runtime(request)
     await run_lifecycle_step(private_operation(lambda: access.outbound.check_send(identity.actor)))
     _enforce_rate_limit({'key_id': identity.actor.replay_scope}, '/fax')
+    revision = request.scope['faxbot.configuration'].active
+
+    def resolve(country):
+        try:
+            return normalize_number(to, country=country), None
+        except InvalidNumber as error:
+            return None, error
+
+    # One canonical destination, resolved before fingerprinting, provider
+    # selection and acceptance; the job stores it so settings cannot redirect it.
+    destination, destination_error = resolve(revision.values.fax_default_country)
     request_identity = None
     keys = request.headers.getlist('idempotency-key')
     if keys:
@@ -2158,13 +2170,20 @@ async def send_fax(request: Request, to: str = Form(...), file: UploadFile = Fil
         try:
             scope = identity.actor.replay_scope
             validated = RequestIdentity.from_key(idempotency_key, principal_scope=scope, fingerprint='0' * 64)
-            max_bytes = await run_lifecycle_step(lambda: access.outbound.replay_max_bytes(identity.actor, validated))
-            if max_bytes is None:
-                max_bytes = settings.max_file_size_mb * 1024 * 1024
-            fingerprint = await fingerprint_upload(file, to=to, queue_only=queue_only,
-                max_bytes=max_bytes)
-            request_identity = RequestIdentity(scope, validated.idempotency_digest, fingerprint)
-            existing = await run_lifecycle_step(lambda: access.outbound.find_replay(identity.actor, request_identity))
+            accepted = await run_lifecycle_step(lambda: access.outbound.replay_values(identity.actor, validated))
+            max_bytes = (accepted.max_file_size_mb if accepted is not None else settings.max_file_size_mb) * 1024 * 1024
+            document_sha256 = await digest_upload(file, max_bytes=max_bytes)
+            # A replay is the same request when it resolves to the same number
+            # under the country its original was accepted with.
+            original = destination if accepted is None else resolve(accepted.fax_default_country)[0]
+            fingerprint, legacy = request_fingerprints(entered=to, destination=original,
+                queue_only=queue_only, document_sha256=document_sha256)
+            replay_identity = RequestIdentity(scope, validated.idempotency_digest, fingerprint, legacy)
+            existing = await run_lifecycle_step(lambda: access.outbound.find_replay(identity.actor, replay_identity))
+            if destination is not None:
+                fingerprint, legacy = request_fingerprints(entered=to, destination=destination,
+                    queue_only=queue_only, document_sha256=document_sha256)
+                request_identity = RequestIdentity(scope, validated.idempotency_digest, fingerprint, legacy)
         except UploadPreparationError as error:
             raise HTTPException(error.status_code, detail=str(error)) from None
         except IdempotencyConflict as error:
@@ -2173,9 +2192,10 @@ async def send_fax(request: Request, to: str = Form(...), file: UploadFile = Fil
             raise HTTPException(400, detail=str(error)) from None
         if existing is not None:
             return await run_lifecycle_step(private_operation(lambda: _accepted_job_response(access, identity.actor, existing)))
+    if destination is None:
+        raise HTTPException(400, detail=str(destination_error))
     if queue_only and not settings.fax_disabled:
         raise HTTPException(409, detail="Queue-only request refused because outbound sending is now enabled. Refresh Send before submitting again.")
-    revision = request.scope['faxbot.configuration'].active
     profile_id = revision.profile_id('outbound')
     if profile_id is None:
         raise HTTPException(409, detail="Outbound fax delivery is disabled in this configuration.")
@@ -2187,8 +2207,6 @@ async def send_fax(request: Request, to: str = Form(...), file: UploadFile = Fil
             service_from_profile(profile)
         except ProviderExecutionError:
             raise HTTPException(400, detail="Selected provider has no supported outbound adapter.") from None
-    if not PHONE_RE.match(to):
-        raise HTTPException(400, detail="'to' must be E.164 or digits only")
     job_id = uuid.uuid4().hex
     requires_tiff = ((not use_manifest and ob in {'sip', 'freeswitch'})
                      or profile.configuration.traits.get('requires_tiff', False) is True)
@@ -2206,13 +2224,13 @@ async def send_fax(request: Request, to: str = Form(...), file: UploadFile = Fil
     # One transaction accepts the row and its immutable account/profile binding.
     try:
         accepted_at = datetime.utcnow()
-        result = FaxJobOut(id=job_id, to=to, status='queued', pages=prepared.pages,
+        result = FaxJobOut(id=job_id, to=destination, status='queued', pages=prepared.pages,
                           backend=ob, created_at=accepted_at, updated_at=accepted_at,
                           delivery_state='held' if revision.values.fax_disabled else 'ready',
                           dispatch_mode='held' if revision.values.fax_disabled else 'normal',
                           delivery_version=1)
         await run_lifecycle_step(lambda: access.outbound.accept(identity.actor, revision, {
-            'id': job_id, 'to_number': to, 'file_name': prepared.original_name,
+            'id': job_id, 'to_number': destination, 'file_name': prepared.original_name,
             'tiff_path': tiff_path, 'status': 'queued', 'pages': prepared.pages,
             'created_at': accepted_at, 'updated_at': accepted_at,
         }, request_identity=request_identity))
@@ -2564,7 +2582,7 @@ def _accept_inbound(values: dict) -> None:
     service = getattr(app.state, "access_runtime", None)
     if service is None:
         raise AccessUnavailableError()
-    private_operation(service.inbound.accept)(values)
+    private_operation(service.inbound.accept)(values, country=settings.fax_default_country)
 
 
 def _forget_inbound_event(event_id: str) -> None:
@@ -2605,7 +2623,8 @@ async def list_inbound(
     if not settings.inbound_enabled:
         raise HTTPException(404, detail="Inbound not enabled")
     rows = await run_lifecycle_step(private_operation(lambda: access_runtime(request).inbound_queries.page(
-        identity.actor, to_number=to_number, status=status, mailbox=mailbox)))
+        identity.actor, to_number=to_number, status=status, mailbox=mailbox,
+        country=settings.fax_default_country)))
     _enforce_rate_limit({'key_id': identity.actor.replay_scope}, "/inbound", settings.inbound_list_rpm)
     return [InboundFaxOut(**row) for row in rows]
 

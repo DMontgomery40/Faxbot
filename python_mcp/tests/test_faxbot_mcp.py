@@ -3,6 +3,8 @@ import asyncio
 import base64
 import json
 import os
+import re
+import socket
 import subprocess
 import sys
 import time
@@ -14,6 +16,7 @@ import pytest
 from mcp import Client, StdioServerParameters
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamable_http_client
+from mcp.server.mcpserver import MCPServer
 from mcp.types.version import LATEST_HANDSHAKE_VERSION, LATEST_PROTOCOL_VERSION
 
 from python_mcp import faxbot_tools, http_server, server, stdio_server
@@ -39,7 +42,10 @@ async def test_every_transport_lists_the_same_tool_names(module):
     assert send.input_schema['required'] == ['to', 'fileContent', 'fileName']
     # Network transports never read files or URLs on the MCP host.
     assert not {'filePath', 'fileUrl'} & set(send.input_schema['properties'])
-    assert send.output_schema['properties'].keys() >= {'id', 'status'}
+    assert send.output_schema['properties'].keys() >= {'id', 'status', 'operationId'}
+    assert 'operationId' not in tools['get_fax_status'].output_schema['properties']
+    assert 'same number and document' in send.input_schema['properties']['operationId']['description']
+    assert send.annotations.idempotent_hint is False
     assert tools['list_inbound'].output_schema['properties'].keys() == {'items'}
 
 
@@ -56,6 +62,7 @@ async def test_stdio_tools_offer_local_files_and_an_inbound_pdf_resource():
     assert set(tools) == TOOLS
     assert {'filePath', 'fileUrl'} <= set(tools['send_fax'].input_schema['properties'])
     assert tools['send_fax'].input_schema['required'] == ['to']
+    assert 'operationId' in tools['send_fax'].input_schema['properties']
     templates = await stdio_server.mcp.list_resource_templates()
     assert [template.uri_template for template in templates] == ['faxbot://inbound/{inbound_id}/pdf']
 
@@ -106,7 +113,8 @@ async def test_each_caller_key_is_forwarded_and_the_environment_key_never_is(
                                           ('bob', 'bob-key', LATEST_HANDSHAKE_VERSION, bob)):
         version, sent, status, details, inbound, pdf, link, resource = result
         assert version == expected
-        assert sent.structured_content == {'id': f'job-for-{key}', 'status': 'queued'}
+        operation = next(post['operation'] for post in fake_faxbot.posts() if post['key'] == key)
+        assert sent.structured_content == {'id': f'job-1-for-{key}', 'status': 'queued', 'operationId': operation}
         assert status.structured_content['id'] == f'status-{caller}'
         assert details.structured_content['direction'] == 'inbound'  # /fax/a1b2c3 is 404, so /inbound is used
         assert inbound.structured_content['items'][0]['id'] == 'a1b2c3'
@@ -244,7 +252,8 @@ async def test_stdio_uses_its_single_configured_key_and_negotiates_the_current_p
     async with Client(params, cache=None) as client:
         assert client.protocol_version == LATEST_PROTOCOL_VERSION
         sent = await client.call_tool('send_fax', {'to': '+15551234567', 'filePath': str(document)})
-    assert sent.structured_content == {'id': 'job-for-stdio-integration-key', 'status': 'queued'}
+    assert sent.structured_content == {'id': 'job-1-for-stdio-integration-key', 'status': 'queued',
+                                       'operationId': fake_faxbot.requests[0]['operation']}
     assert fake_faxbot.keys() == ['stdio-integration-key']
     assert b'hello fax' in fake_faxbot.requests[0]['body']
 
@@ -281,3 +290,115 @@ def test_stdio_stdout_carries_only_json_rpc(stdio_env):
     assert replies[2]['result']['isError'] is True
     for line in remainder.splitlines():
         assert json.loads(line)['jsonrpc'] == '2.0'
+
+
+def _send_once_client(url, key='mcp-key'):
+    """The stdio tool set in process, so the retry settings can be shortened."""
+    server = MCPServer('send-once-test', version='0')
+    return Client(faxbot_tools.register_tools(
+        server, lambda _ctx: faxbot_tools.APIConfiguration(url, key), local_files=True), cache=None)
+
+
+CONFLICT = 'Idempotency-Key already belongs to a different fax request.'
+SEND = {'to': '+15551234567', 'fileContent': base64.b64encode(b'%PDF-1.4 once').decode(), 'fileName': 'once.pdf'}
+OTHER_DOCUMENT = base64.b64encode(b'%PDF-1.4 a different document').decode()
+
+
+@pytest.fixture
+def quick_retries(monkeypatch):
+    monkeypatch.setattr(faxbot_tools, 'SEND_RETRIES', 2)
+    monkeypatch.setattr(faxbot_tools, 'SEND_RETRY_BACKOFF', 0)
+
+
+@pytest.mark.asyncio
+async def test_a_lost_response_is_recovered_with_the_same_operation_id(fake_faxbot, quick_retries):
+    fake_faxbot.plan = ['drop']
+    async with _send_once_client(fake_faxbot.url) as client:
+        sent = await client.call_tool('send_fax', SEND)
+    posts = fake_faxbot.posts()
+    assert not sent.is_error
+    assert [post['operation'] for post in posts] == [sent.structured_content['operationId']] * 2
+    assert b'%PDF-1.4 once' in posts[1]['body']
+    assert [job['id'] for job in fake_faxbot.jobs] == [sent.structured_content['id']]
+
+
+@pytest.mark.asyncio
+async def test_an_unconfirmed_fax_is_finished_with_its_operation_id(fake_faxbot, quick_retries):
+    fake_faxbot.plan = ['uncertain'] * 3
+    async with _send_once_client(fake_faxbot.url) as client:
+        failed = await client.call_tool('send_fax', SEND)
+        operation = fake_faxbot.posts()[0]['operation']
+        assert failed.is_error
+        assert [post['operation'] for post in fake_faxbot.posts()] == [operation] * 3
+        assert failed.content[0].text.endswith(
+            f'Faxbot did not confirm this fax (operationId {operation}). Call send_fax again with '
+            f'operationId={operation} and the same number and document to finish this same fax '
+            'without sending it twice.')
+        assert len(fake_faxbot.jobs) == 1
+        finished = await client.call_tool('send_fax', {**SEND, 'operationId': operation})
+    assert finished.structured_content == {'id': fake_faxbot.jobs[0]['id'], 'status': 'queued',
+                                           'operationId': operation}
+    assert len(fake_faxbot.jobs) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_send_that_never_reached_faxbot_is_finished_later(fake_faxbot, quick_retries):
+    with socket.socket() as probe:
+        probe.bind(('127.0.0.1', 0))
+        closed = f'http://127.0.0.1:{probe.getsockname()[1]}'
+    async with _send_once_client(closed) as client:
+        failed = await client.call_tool('send_fax', SEND)
+    assert failed.is_error
+    operation = re.search(r'operationId=(\S+) ', failed.content[0].text).group(1)
+    async with _send_once_client(fake_faxbot.url) as client:
+        first = await client.call_tool('send_fax', {**SEND, 'operationId': operation})
+        again = await client.call_tool('send_fax', {**SEND, 'operationId': operation})
+    assert first.structured_content == again.structured_content
+    assert first.structured_content['operationId'] == operation
+    assert len(fake_faxbot.jobs) == 1
+
+
+@pytest.mark.asyncio
+async def test_an_operation_id_belongs_to_one_fax(fake_faxbot, quick_retries):
+    async with _send_once_client(fake_faxbot.url) as client:
+        operation = (await client.call_tool('send_fax', SEND)).structured_content['operationId']
+        changed = [await client.call_tool('send_fax', {**SEND, **change, 'operationId': operation})
+                   for change in ({'fileContent': OTHER_DOCUMENT}, {'to': '+15559876543'})]
+    for result in changed:
+        assert result.is_error
+        assert f'Fax API error 409: {CONFLICT}' in result.content[0].text
+        assert f'operationId {operation} belongs to a different number or document' in result.content[0].text
+    assert len(fake_faxbot.posts()) == 3, 'a conflict is never retried'
+    assert len(fake_faxbot.jobs) == 1
+
+
+@pytest.mark.asyncio
+async def test_each_send_without_an_operation_id_is_a_new_fax(fake_faxbot, quick_retries):
+    async with _send_once_client(fake_faxbot.url) as client:
+        first = await client.call_tool('send_fax', SEND)
+        second = await client.call_tool('send_fax', SEND)
+    assert first.structured_content['id'] != second.structured_content['id']
+    assert first.structured_content['operationId'] != second.structured_content['operationId']
+    assert len(fake_faxbot.jobs) == 2
+
+
+@pytest.mark.parametrize('status', [400, 401, 404, 409, 413, 429, 500])
+@pytest.mark.asyncio
+async def test_only_unconfirmed_answers_are_retried(fake_faxbot, quick_retries, status):
+    fake_faxbot.plan = [status]
+    async with _send_once_client(fake_faxbot.url) as client:
+        result = await client.call_tool('send_fax', SEND)
+    assert result.is_error and f'Fax API error {status}: synthetic {status}' in result.content[0].text
+    assert len(fake_faxbot.posts()) == 1
+
+
+@pytest.mark.asyncio
+async def test_gateway_failures_are_retried_with_the_same_operation_id(fake_faxbot, quick_retries, tmp_path):
+    document = tmp_path / 'letter.pdf'
+    document.write_bytes(b'%PDF-1.4 local')
+    fake_faxbot.plan = [502, 504]
+    async with _send_once_client(fake_faxbot.url) as client:
+        sent = await client.call_tool('send_fax', {'to': '+15551234567', 'filePath': str(document)})
+    assert [post['operation'] for post in fake_faxbot.posts()] == [sent.structured_content['operationId']] * 3
+    assert all(b'%PDF-1.4 local' in post['body'] for post in fake_faxbot.posts())
+    assert len(fake_faxbot.jobs) == 1

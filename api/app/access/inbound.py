@@ -13,6 +13,7 @@ import uuid
 
 import sqlalchemy as sa
 
+from ..routing.numbers import DEFAULT_COUNTRY, is_canonical, stored_number
 from .catalog import INBOUND_PERMISSIONS
 from .fax_resources import FaxAccessError
 from .types import AccessUnavailableError, ResourceRef
@@ -45,15 +46,19 @@ class InboundResources:
         if type(permission) is not str or permission not in INBOUND_PERMISSIONS:
             raise FaxAccessError('invalid_input')
 
-    def _route_on(self, connection, to_number):
+    def _route_on(self, connection, to_number, country=DEFAULT_COUNTRY):
         """The oldest rule for this number whose bound mailbox is enabled, else None.
 
-        Numbers match on their digits, so "+1 (555) 010-0001" routes "+15550100001".
+        Rules and received numbers match in E.164, reading numbers without a
+        country code for the installation country, so a rule saved as
+        "01782 684953" in the UK routes "+441782684953". Rows saved before
+        numbers were stored in E.164 also match on their digits.
         """
         number = _number(to_number)
         if number is None:
             return None
-        wanted = _digits(number) or number
+        canonical = stored_number(number, country=country)
+        digits = _digits(number) or number
         rules, routes = self.tables['inbound_rules'], self.tables['access_mailbox_routes']
         resources, mailboxes = self.tables['access_resources'], self.tables['mailboxes']
         rows = connection.execute(sa.select(rules.c.to_number, resources.c.id, mailboxes.c.label)
@@ -61,8 +66,13 @@ class InboundResources:
                 .join(mailboxes, mailboxes.c.id == routes.c.mailbox_id)
                 .join(resources, sa.and_(resources.c.kind == 'mailbox', resources.c.mailbox_id == mailboxes.c.id)))
             .where(resources.c.enabled == 1)
-            .order_by(rules.c.created_at, rules.c.id))
-        return next((row for row in rows if (_digits(row.to_number) or row.to_number.strip()) == wanted), None)
+            .order_by(rules.c.created_at, rules.c.id)).all()
+        if is_canonical(canonical):
+            match = next((row for row in rows
+                          if stored_number(row.to_number.strip(), country=country) == canonical), None)
+            if match is not None:
+                return match
+        return next((row for row in rows if (_digits(row.to_number) or row.to_number.strip()) == digits), None)
 
     def _audit_on(self, connection, operation, target_kind, target_id, details, now):
         version = self.store.require_lock_on(connection)
@@ -73,7 +83,7 @@ class InboundResources:
             details=json.dumps(details, ensure_ascii=True, separators=(',', ':'), sort_keys=True),
             created_at=now))
 
-    def record_inbound_on(self, connection, inbound_id, to_number, now):
+    def record_inbound_on(self, connection, inbound_id, to_number, now, *, country=DEFAULT_COUNTRY):
         """Place a just-inserted inbound row; the caller owns and rolls back the transaction."""
         self.store.require_lock_on(connection)
         if not _identity(inbound_id) or type(now) is not datetime or now.tzinfo is not None:
@@ -82,7 +92,7 @@ class InboundResources:
         if (connection.execute(sa.select(faxes.c.id).where(faxes.c.id == inbound_id)).first() is None
                 or connection.execute(sa.select(resources.c.id).where(resources.c.inbound_fax_id == inbound_id)).first() is not None):
             raise FaxAccessError('invalid_target')
-        route = self._route_on(connection, to_number)
+        route = self._route_on(connection, to_number, country)
         parent_id, parent_kind = (route.id, 'mailbox') if route is not None else ('legacy', 'legacy')
         if route is not None:
             connection.execute(faxes.update().where(faxes.c.id == inbound_id).values(mailbox_label=route.label))
@@ -94,15 +104,24 @@ class InboundResources:
             {'source': 'provider', 'placement': 'mailbox' if route is not None else 'unassigned'}, now)
         return ResourceRef(identity)
 
-    def accept(self, values, *, now=None):
-        """Insert one provider inbound row with its resource and audit, atomically."""
+    def accept(self, values, *, now=None, country=DEFAULT_COUNTRY):
+        """Insert one provider inbound row with its resource and audit, atomically.
+
+        Received numbers are stored in E.164 when they can be read for the
+        installation country, and as received otherwise; no fax is dropped.
+        """
         faxes = self.tables['inbound_faxes']
         if type(values) is not dict or not set(values) <= set(faxes.c.keys()) or not _identity(values.get('id')):
             raise FaxAccessError('invalid_input')
+        values = dict(values)
+        for field in ('to_number', 'from_number'):
+            if isinstance(values.get(field), str) and values[field].strip():
+                values[field] = stored_number(values[field].strip(), country=country)
         with self.store.transaction() as connection:
             moment = now or _utcnow()
             connection.execute(faxes.insert().values(**values))
-            return self.record_inbound_on(connection, values['id'], values.get('to_number'), moment)
+            return self.record_inbound_on(connection, values['id'], values.get('to_number'), moment,
+                                          country=country)
 
     def backfill_on(self, connection, now):
         """Place every resource-less inbound row under legacy; repeated runs change nothing."""
@@ -170,7 +189,7 @@ class AuthorizedInboundQueries:
                 .outerjoin(mailboxes, mailboxes.c.id == parent.c.mailbox_id))
         return query, parent
 
-    def page(self, actor, *, to_number=None, status=None, mailbox=None, limit=100):
+    def page(self, actor, *, to_number=None, status=None, mailbox=None, limit=100, country=None):
         if (type(limit) is not int or not 1 <= limit <= 100
                 or any(value is not None and (type(value) is not str or len(value) > 100)
                        for value in (to_number, status, mailbox))):
@@ -185,7 +204,11 @@ class AuthorizedInboundQueries:
             query, parent = self._selection()
             query = query.where(faxes.c.id.in_(visible))
             if to_number:
-                query = query.where(faxes.c.to_number == to_number)
+                # Find a number however it is typed; older rows keep the text received.
+                wanted = {to_number}
+                if country is not None:
+                    wanted.add(stored_number(to_number.strip(), country=country))
+                query = query.where(faxes.c.to_number.in_(sorted(wanted)))
             if status:
                 query = query.where(faxes.c.status == status)
             if mailbox:

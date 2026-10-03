@@ -6,7 +6,8 @@
  * Usage example:
  *   const FaxbotClient = require('faxbot');
  *   const client = new FaxbotClient('http://localhost:8080', 'YOUR_API_KEY');
- *   client.sendFax('+15551234567', '/path/to/document.pdf')
+ *   const operationId = FaxbotClient.newOperationId(); // save this before sending
+ *   client.sendFax('+15551234567', '/path/to/document.pdf', { operationId })
  *     .then(job => {
  *         console.log(`Fax queued with ID: ${job.id}, initial status: ${job.status}`);
  *         return client.getStatus(job.id);
@@ -15,25 +16,78 @@
  *         console.log(`Fax status: ${statusInfo.status}`);
  *     })
  *     .catch(err => {
+ *         // err.uncertain: Faxbot may or may not have the fax; resumeFax(err.operationId, ...) finishes it.
  *         console.error('Fax operation failed:', err.message);
  *     });
  */
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const axios = require('axios');
 const FormData = require('form-data');
 const PluginManager = require('./plugins');
 
+// Faxbot answers these when it could not confirm the fax; the same operation id is safe to send again.
+const RETRYABLE_STATUSES = new Set([502, 503, 504]);
+const OPERATION_ID = /^[\x21-\x7E]{1,128}$/;
+
+/** An error from sendFax. `uncertain` is true when no attempt was confirmed and the fax can be finished. */
+class FaxSendError extends Error {
+  constructor(message, { operationId, status = null, uncertain = false, cause } = {}) {
+    super(message, cause ? { cause } : undefined);
+    this.name = 'FaxSendError';
+    this.operationId = operationId;
+    this.status = status;
+    this.uncertain = uncertain;
+  }
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function sendFailure(error, operationId) {
+  const fail = (message) => new FaxSendError(message, { operationId, status: error.response?.status ?? null, cause: error });
+  if (!error.response) return fail(`Fax send error: ${error.message}`);
+  const status = error.response.status;
+  let errMsg = '';
+  if (error.response.data) {
+    if (typeof error.response.data === 'object' && error.response.data.detail) {
+      errMsg = error.response.data.detail;
+    } else if (typeof error.response.data === 'string') {
+      errMsg = error.response.data;
+    }
+  }
+  if (status === 400) return fail(`Bad Request (400): ${errMsg || 'Invalid fax parameters or phone number.'}`);
+  if (status === 401) return fail('Unauthorized (401): API key is invalid or missing.');
+  if (status === 409) return fail(`Conflict (409): ${errMsg || 'Idempotency-Key already belongs to a different fax request.'}`);
+  if (status === 415) return fail(`Unsupported Media Type (415): ${errMsg || 'File type not allowed. Only PDF or TXT can be sent.'}`);
+  if (status === 413) return fail(`Payload Too Large (413): ${errMsg || 'File size exceeds the allowed limit.'}`);
+  if (status === 404) return fail(`Not Found (404): ${errMsg || 'The Faxbot API endpoint was not found (check baseUrl).'}`);
+  return fail(`Fax send failed (HTTP ${status}): ${errMsg || error.response.statusText}`);
+}
+
 class FaxbotClient {
   /**
    * Create a new FaxbotClient.
    * @param {string} [baseUrl="http://localhost:8080"] - Base URL of the Faxbot API.
    * @param {string|null} [apiKey=null] - API key for authentication (optional).
+   * @param {Object} [options]
+   * @param {number} [options.retries=0] - How many more times sendFax sends the same fax, with the same
+   *   operation id, after a connection error, a timeout or HTTP 502/503/504. The default 0 never sends
+   *   again on its own: an unconfirmed send throws with `uncertain` and `operationId`, and the caller
+   *   finishes it with resumeFax. Raise it only for Faxbot servers that support Idempotency-Key; older
+   *   servers would send the fax twice.
+   * @param {number} [options.retryBackoffMs=500] - Wait before the first retry; each later retry waits twice as long.
    */
-  constructor(baseUrl = 'http://localhost:8080', apiKey = null) {
+  constructor(baseUrl = 'http://localhost:8080', apiKey = null, { retries = 0, retryBackoffMs = 500 } = {}) {
+    if (!Number.isInteger(retries) || retries < 0) throw new Error('retries must be a whole number, 0 or more');
+    if (typeof retryBackoffMs !== 'number' || !(retryBackoffMs >= 0)) throw new Error('retryBackoffMs must be 0 or more');
     // Remove trailing slash from baseUrl if present for consistency
     this.baseUrl = baseUrl.replace(/\/+$/, "");
     this.apiKey = apiKey;
+    this.retries = retries;
+    this.retryBackoffMs = retryBackoffMs;
     // Preconfigure an Axios instance for convenience
     this._axios = axios.create({
       baseURL: this.baseUrl,
@@ -44,13 +98,30 @@ class FaxbotClient {
   }
 
   /**
+   * A new operation id for one fax. Save it before sending so an unconfirmed send can be finished.
+   * @returns {string}
+   */
+  static newOperationId() {
+    return crypto.randomUUID();
+  }
+
+  /**
    * Send a fax via the Faxbot API.
+   *
+   * Every call is one fax operation, identified by `operationId` and sent as the Idempotency-Key
+   * header. Without an `operationId` the call is a new fax and gets a new id, even for a document sent
+   * before. After a connection error, a timeout or HTTP 502/503/504 the client sends the same fax again
+   * with the same id, up to `retries` more times; Faxbot returns the original job instead of sending it twice.
+   *
    * @param {string} to - The destination fax number (E.164 format like "+15551234567" is recommended).
    * @param {string} filePath - Path to the PDF or text file to send as fax.
-   * @returns {Promise<Object>} - Resolves to the fax job info object (with id, status, etc.).
-   * @throws {Error} - If inputs are invalid or the API call fails.
+   * @param {Object} [options]
+   * @param {string} [options.operationId] - The id of an earlier send to finish (see resumeFax). Omit it for a new fax.
+   * @returns {Promise<Object>} - Resolves to the server's fax job object, unchanged.
+   * @throws {FaxSendError} - With `operationId`, `status` (HTTP status or null) and `uncertain`
+   *   (true when no attempt was confirmed; send again with that operationId to finish the same fax).
    */
-  async sendFax(to, filePath) {
+  async sendFax(to, filePath, { operationId } = {}) {
     if (!to) {
       throw new Error("Destination fax number 'to' is required");
     }
@@ -72,54 +143,58 @@ class FaxbotClient {
       throw new Error(`Unsupported file type '${ext}'. Only .pdf or .txt files are allowed.`);
     }
 
-    // Prepare form data
-    const form = new FormData();
-    form.append('to', to);
-    const fileStream = fs.createReadStream(filePath);
-    form.append('file', fileStream, {
-      filename: path.basename(filePath),
-      contentType: contentType,
-    });
-
-    // Headers
-    let headers = form.getHeaders();
-    if (this.apiKey) {
-      headers['X-API-Key'] = this.apiKey;
+    // The id exists before any upload, so an unconfirmed send can always be finished with it.
+    const id = operationId ?? FaxbotClient.newOperationId();
+    if (typeof id !== 'string' || !OPERATION_ID.test(id)) {
+      throw new Error('operationId must be 1 to 128 printable ASCII characters without spaces');
     }
 
-    try {
-      const response = await this._axios.post('/fax', form, { headers });
-      return response.data;
-    } catch (error) {
-      if (error.response) {
-        const status = error.response.status;
-        let errMsg = '';
-        if (error.response.data) {
-          if (typeof error.response.data === 'object' && error.response.data.detail) {
-            errMsg = error.response.data.detail;
-          } else if (typeof error.response.data === 'string') {
-            errMsg = error.response.data;
-          }
-        }
-        if (status === 400) {
-          throw new Error(`Bad Request (400): ${errMsg || 'Invalid fax parameters or phone number.'}`);
-        } else if (status === 401) {
-          throw new Error(`Unauthorized (401): API key is invalid or missing.`);
-        } else if (status === 415) {
-          throw new Error(`Unsupported Media Type (415): ${errMsg || 'File type not allowed. Only PDF or TXT can be sent.'}`);
-        } else if (status === 413) {
-          throw new Error(`Payload Too Large (413): ${errMsg || 'File size exceeds the allowed limit.'}`);
-        } else if (status === 404) {
-          throw new Error(`Not Found (404): ${errMsg || 'The Faxbot API endpoint was not found (check baseUrl).'}`);
-        } else {
-          throw new Error(`Fax send failed (HTTP ${status}): ${errMsg || error.response.statusText}`);
-        }
-      } else if (error.request) {
-        throw new Error('Fax send failed: No response from server. Please check the server URL and network connection.');
-      } else {
-        throw new Error(`Fax send error: ${error.message}`);
+    for (let attempt = 0; ; attempt += 1) {
+      if (attempt) await sleep(this.retryBackoffMs * 2 ** (attempt - 1));
+      // Rebuild the form and reopen the file every attempt: a consumed stream would upload an empty body.
+      const form = new FormData();
+      form.append('to', to);
+      const fileStream = fs.createReadStream(filePath);
+      form.append('file', fileStream, {
+        filename: path.basename(filePath),
+        contentType: contentType,
+      });
+      const headers = { ...form.getHeaders(), 'Idempotency-Key': id };
+      if (this.apiKey) {
+        headers['X-API-Key'] = this.apiKey;
+      }
+      try {
+        const response = await this._axios.post('/fax', form, { headers });
+        return response.data;
+      } catch (error) {
+        // No response means the request may or may not have reached Faxbot.
+        const retryable = error.response ? RETRYABLE_STATUSES.has(error.response.status) : Boolean(error.request);
+        if (!retryable) throw sendFailure(error, id);
+        if (attempt < this.retries) continue;
+        throw new FaxSendError(
+          `Faxbot did not confirm this fax, so call sendFax again with operationId=${id} to finish the same fax without sending it twice.`,
+          { operationId: id, status: error.response?.status ?? null, uncertain: true, cause: error });
+      } finally {
+        fileStream.destroy();
       }
     }
+  }
+
+  /**
+   * Finish a fax whose send was not confirmed, without sending it twice.
+   * Pass the operationId from the error (or the one you saved before sending) with the same number
+   * and document. Faxbot returns the original job if it already accepted the fax, or accepts it now.
+   * A different number or document fails with status 409.
+   * @param {string} operationId
+   * @param {string} to
+   * @param {string} filePath
+   * @returns {Promise<Object>}
+   */
+  async resumeFax(operationId, to, filePath) {
+    if (!operationId) {
+      throw new Error('operationId is required to resume a fax');
+    }
+    return this.sendFax(to, filePath, { operationId });
   }
 
   /**
@@ -185,3 +260,4 @@ class FaxbotClient {
 
 // Export the FaxbotClient class as the module's default export
 module.exports = FaxbotClient;
+module.exports.FaxSendError = FaxSendError;

@@ -18,7 +18,7 @@ import {
   CheckCircle as SuccessIcon,
   Error as ErrorIcon,
 } from '@mui/icons-material';
-import AdminAPIClient, { normalizeFaxDestination } from '../api/client';
+import AdminAPIClient, { FaxRefusedError, normalizeFaxDestination } from '../api/client';
 import type { AdminConfig, FaxSendResult } from '../api/types';
 import {
   ResponsiveTextField,
@@ -26,6 +26,7 @@ import {
   ResponsiveFormSection,
 } from './common/ResponsiveFormFields';
 import { clearPendingSend, loadPendingSend, savePendingSend, sendFingerprint } from './sendIntent';
+import { countryName, numberHint, numberPlaceholder } from './common/numbers';
 
 interface SendFaxProps {
   client: AdminAPIClient;
@@ -92,7 +93,7 @@ function SendFax({ client, config, configLoading, configError }: SendFaxProps) {
   const [file, setFile] = useState<File | null>(null);
   const [uploadPickerVersion, setUploadPickerVersion] = useState(0);
   const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<{ type: 'success' | 'error' | 'warning' | 'info'; message: string; jobId?: string } | null>(null);
+  const [result, setResult] = useState<{ type: 'success' | 'error' | 'warning' | 'info'; message: string; jobId?: string; to?: string } | null>(null);
   const intentRef = useRef<SubmissionIntent | null>(null);
   const [resuming, setResuming] = useState(false);
   const submittingRef = useRef(false);
@@ -105,17 +106,13 @@ function SendFax({ client, config, configLoading, configError }: SendFaxProps) {
   const faxDisabled = configReady && config?.fax_disabled === true;
   const maxFileSizeMb = configReady ? config!.max_file_size_mb : null;
   const maxFileSizeBytes = maxFileSizeMb === null ? null : maxFileSizeMb * 1024 * 1024;
+  const numberFormat = config?.number_format ?? null;
+  const country = numberFormat ? countryName(numberFormat.country) : null;
+  const localExample = numberFormat?.national.trim();
 
-  const validatePhone = (number: string): boolean => {
-    // Basic validation - allow digits, spaces, dashes, parentheses, and +
-    const cleanNumber = normalizeFaxDestination(number);
-    if (!cleanNumber) return false;
-    if (!/^\+?\d+$/.test(cleanNumber)) return false;
-    if (cleanNumber.startsWith('+')) {
-      return cleanNumber.length >= 11 && cleanNumber.length <= 15;
-    }
-    return cleanNumber.length >= 10 && cleanNumber.length <= 15;
-  };
+  // The server reads the number for the installation country and says when it
+  // cannot; here a number only needs a digit.
+  const validatePhone = (number: string): boolean => /\d/.test(number);
 
   const handleSend = async () => {
     if (submittingRef.current || !configReady) return;
@@ -179,6 +176,7 @@ function SendFax({ client, config, configLoading, configError }: SendFaxProps) {
           : state === 'success' || state === 'completed' ? 'success' : 'info',
         message: acceptanceMessage(response),
         jobId: response.id,
+        to: typeof response.to === 'string' && response.to ? response.to : undefined,
       });
       
       // Clear form on success; a new send gets a new key, even for the same document and number.
@@ -190,6 +188,14 @@ function SendFax({ client, config, configLoading, configError }: SendFaxProps) {
       setUploadPickerVersion(version => version + 1);
       
     } catch (err) {
+      if (err instanceof FaxRefusedError) {
+        // Refused before acceptance: nothing was sent, so there is no send to resume.
+        intentRef.current = null;
+        clearPendingSend();
+        setResuming(false);
+        setResult({ type: 'error', message: err.message });
+        return;
+      }
       setResult({
         type: 'error',
         message: `${err instanceof TypeError ? "Couldn't reach the server, so the fax may or may not have been submitted."
@@ -243,13 +249,13 @@ function SendFax({ client, config, configLoading, configError }: SendFaxProps) {
                     setToNumber(value);
                     if (toNumberError) setToNumberError(false);
                   }}
-                  placeholder="+15551234567"
-                  helperText="Enter in E.164 format (+1XXXXXXXXXX) or 10-digit US number"
+                  placeholder={numberPlaceholder(numberFormat)}
+                  helperText={numberHint(numberFormat)}
                   type="tel"
                   disabled={!configReady || loading}
                   required
                   error={toNumberError}
-                  errorMessage="Please enter a valid phone number"
+                  errorMessage="Enter the fax number to send to."
                   icon={<PhoneIcon />}
                 />
 
@@ -354,6 +360,11 @@ function SendFax({ client, config, configLoading, configError }: SendFaxProps) {
                 <Typography variant="body1" fontWeight={500}>
                   {result.message}
                 </Typography>
+                {result.to && (
+                  <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                    Fax number: <strong>{result.to}</strong>
+                  </Typography>
+                )}
                 {result.jobId && (
                   <Box sx={{ mt: 1 }}>
                     <Typography variant="body2" color="text.secondary">
@@ -379,12 +390,14 @@ function SendFax({ client, config, configLoading, configError }: SendFaxProps) {
               <Stack spacing={2}>
                 <Box>
                   <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 0.5 }}>
-                    Phone Number Format
+                    Fax Number Format
                   </Typography>
                   <Typography variant="body2" color="text.secondary">
-                    • Use E.164 format for international: +1 555 123 4567<br />
-                    • US numbers can be entered as: (555) 123-4567 or 5551234567<br />
-                    • Avoid extensions or special characters
+                    {country && localExample
+                      ? <>• Numbers without a country code are read as {country} numbers, for example {localExample}<br /></>
+                      : <>• Type local numbers the way you dial them<br /></>}
+                    • For another country, start with + and its country code<br />
+                    • Leave out extensions
                   </Typography>
                 </Box>
 

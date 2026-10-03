@@ -771,8 +771,12 @@ def _trunk(**extra):
 
 
 def test_trunk_call_uses_carrier_caller_id_number_format_and_separate_station_id():
-    fields = ami.originate_fields_for(_trunk(), JOB, "5555550123", "/fax/a.tif", attempt_id=ATTEMPT)
+    fields = ami.originate_fields_for(_trunk(), JOB, "+15555550123", "/fax/a.tif", attempt_id=ATTEMPT)
     assert fields["Channel"] == "PJSIP/+15555550123@trunk-endpoint"
+    uk = ami.originate_fields_for(_trunk(), JOB, "+441782684953", "/fax/a.tif", attempt_id=ATTEMPT)
+    assert uk["Channel"] == "PJSIP/+441782684953@trunk-endpoint"
+    with pytest.raises(ValueError):  # national digits are resolved at acceptance, never here
+        ami.originate_fields_for(_trunk(), JOB, "5555550123", "/fax/a.tif", attempt_id=ATTEMPT)
     assert fields["CallerID"] == "+15555550100"
     variables = _asterisk_variable_assignments(fields["Variable"])
     assert base64.b64decode(variables["FAXSTATION64"]).decode() == "+15555550111"
@@ -783,8 +787,8 @@ def test_trunk_call_uses_carrier_caller_id_number_format_and_separate_station_id
     assert flowroute["Channel"] == "PJSIP/12345678*15555550123@trunk-endpoint"
     legacy = ami.originate_fields_for(
         ConfigurationValues.from_environment({"FAX_LOCAL_STATION_ID": "+15555550111"}),
-        JOB, "5555550123", "/fax/a.tif", attempt_id=ATTEMPT)
-    assert legacy["Channel"] == "PJSIP/5555550123@trunk-endpoint"
+        JOB, "+441782684953", "/fax/a.tif", attempt_id=ATTEMPT)
+    assert legacy["Channel"] == "PJSIP/+441782684953@trunk-endpoint"
     assert legacy["CallerID"] == "+15555550111"
 
 

@@ -157,7 +157,8 @@ def test_send_is_current_own_personal_authority_and_exposes_only_active_limits(w
     result = world.snapshot()
     assert result['permissions'] == ['fax:send']
     assert result['navigation'] == {'jobs': False, 'inbox': False, 'send': True}
-    assert result['send'] == {'fax_disabled': True, 'max_file_size_mb': 23}
+    assert result['send'] == {'fax_disabled': True, 'max_file_size_mb': 23,
+                              'default_country': 'US', 'number_example': '(201) 555-0123'}
     bob = world.user('bob')
     world.assignment('bob', 'send', 'personal-alice')
     assert world.snapshot(bob)['send'] is None
@@ -245,7 +246,8 @@ def test_pending_configuration_does_not_supply_active_context(world):
     result = world.snapshot()
     assert result['active_revision_id'] == world.initial.active.id
     assert result['generation'] == pending.generation == 2
-    assert result['send'] == {'fax_disabled': True, 'max_file_size_mb': 23}
+    assert result['send'] == {'fax_disabled': True, 'max_file_size_mb': 23,
+                              'default_country': 'US', 'number_example': '(201) 555-0123'}
     assert result['inbound_enabled'] is True
     assert result['provider_view'] == {'plugins_enabled': True, 'install_enabled': False,
         'active_outbound': 'phaxio', 'active_inbound': 'sinch'}
@@ -264,7 +266,8 @@ def test_ordinary_active_configuration_edit_is_reflected_without_cached_authorit
     assert result['policy_version'] == 2
     assert result['active_revision_id'] == current.active.id != first['active_revision_id']
     assert result['generation'] == 2
-    assert result['send'] == {'fax_disabled': False, 'max_file_size_mb': 17}
+    assert result['send'] == {'fax_disabled': False, 'max_file_size_mb': 17,
+                              'default_country': 'US', 'number_example': '(201) 555-0123'}
 
 
 def test_clock_and_active_reads_share_both_existing_locks_on_one_connection(world, monkeypatch):
@@ -401,4 +404,5 @@ def test_legitimate_default_active_values_supply_the_send_policy(world):
         restart_required=False, actor='synthetic-internal-fixture')
     result = world.snapshot()
     assert result['active_revision_id'] == current.active.id
-    assert result['send'] == {'fax_disabled': False, 'max_file_size_mb': 10}
+    assert result['send'] == {'fax_disabled': False, 'max_file_size_mb': 10,
+                              'default_country': 'US', 'number_example': '(201) 555-0123'}

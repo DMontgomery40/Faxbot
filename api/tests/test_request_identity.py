@@ -50,3 +50,48 @@ def test_openapi_declares_the_optional_idempotency_header():
     assert len(headers) == 1
     assert headers[0]['required'] is False
     assert headers[0].get('description')
+
+
+@pytest.mark.asyncio
+async def test_version_one_fingerprint_is_exactly_the_pre_change_identity():
+    # Records stored before canonical destinations must still compare equal.
+    import json
+    data = b'synthetic-original'
+    stored = hashlib.sha256(json.dumps({'version': 1, 'to': '3035550123', 'queue_only': False,
+                                        'document_sha256': hashlib.sha256(data).hexdigest()},
+                                       sort_keys=True, separators=(',', ':'), ensure_ascii=True).encode()).hexdigest()
+    upload = UploadFile(io.BytesIO(data), filename='a.txt')
+    assert await fingerprint_upload(upload, to='3035550123', queue_only=False, max_bytes=100) == stored
+
+
+def test_version_two_binds_the_canonical_destination_and_keeps_the_exact_old_form_for_replay():
+    from api.app.request_identity import intent_fingerprint, request_fingerprints
+    from api.app.routing.numbers import normalize_number
+    document = 'a' * 64
+    forms = ['01782 684953', '+44 1782 684953', '0044 1782 684953']
+    identities = [request_fingerprints(entered=form, destination=normalize_number(form, country='GB'),
+                                       queue_only=False, document_sha256=document) for form in forms]
+    assert len({fingerprint for fingerprint, _ in identities}) == 1  # one canonical request
+    assert [legacy for _, legacy in identities] == [
+        (intent_fingerprint(version=1, to=form, queue_only=False, document_sha256=document),) for form in forms]
+    assert identities[0][0] == intent_fingerprint(version=2, to='+441782684953', queue_only=False,
+                                                  document_sha256=document)
+    other = request_fingerprints(entered='01782 684954', destination='+441782684954', queue_only=False,
+                                 document_sha256=document)
+    assert other[0] != identities[0][0] and other[1] != identities[0][1]
+    queued = request_fingerprints(entered=forms[0], destination='+441782684953', queue_only=True,
+                                  document_sha256=document)
+    assert queued[0] != identities[0][0]
+    # An unresolvable number can only match its exact pre-change record.
+    assert request_fingerprints(entered='123456', destination=None, queue_only=False,
+                                document_sha256=document) == (
+        intent_fingerprint(version=1, to='123456', queue_only=False, document_sha256=document), ())
+
+
+def test_identity_matches_its_fingerprint_or_an_earlier_version_only():
+    identity = RequestIdentity.from_key('k', principal_scope='key:abc', fingerprint='a' * 64,
+                                        legacy_fingerprints=['b' * 64])
+    assert identity.matches('a' * 64) and identity.matches('b' * 64) and not identity.matches('c' * 64)
+    assert identity.legacy_fingerprints == ('b' * 64,)
+    with pytest.raises(ValueError):
+        RequestIdentity('key:abc', 'a' * 64, 'a' * 64, ('not-a-digest',))

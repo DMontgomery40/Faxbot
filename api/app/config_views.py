@@ -8,6 +8,8 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any
 
+from .routing.numbers import SUPPORTED_COUNTRIES, number_example
+
 if TYPE_CHECKING:
     from .config_store import ConfigurationSnapshot
 
@@ -159,6 +161,11 @@ def project_admin_settings(snapshot: ConfigurationSnapshot, pending_fields: Iter
             's3_kms_enabled': bool(values.s3_kms_key_id),
         },
         'database': _database_view(values.database_url),
+        'numbers': {
+            'default_country': values.fax_default_country,
+            'example': number_example(values.fax_default_country),
+            'supported_countries': list(SUPPORTED_COUNTRIES),
+        },
         'routing': {
             'outbound_routes': values.outbound_routes,
             'min_success_percent': values.route_min_success_percent,

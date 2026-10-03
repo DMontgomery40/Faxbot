@@ -13,6 +13,8 @@ from urllib.parse import urlsplit
 
 import httpx
 
+from .routing.numbers import canonical_number
+
 
 _PRODUCTION_ORIGIN = 'https://api.documo.com'
 _SANDBOX_ORIGIN = 'https://api.sandbox.documo.com'
@@ -94,8 +96,10 @@ class DocumoFaxService:
         """Submit a prepared PDF once; an unusable reply cannot prove noncreation."""
         if not self.is_configured():
             raise ValueError('Documo is not configured.')
-        if not isinstance(to_number, str) or not to_number:
-            raise ValueError('Documo destination is invalid.')
+        try:
+            to_number = canonical_number(to_number)  # Documo takes the E.164 form unchanged
+        except ValueError:
+            raise ValueError('Documo destination is invalid.') from None
         try:
             async with httpx.AsyncClient(timeout=60.0, transport=self.transport,
                     follow_redirects=False, trust_env=False) as client:
