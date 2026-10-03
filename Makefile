@@ -21,6 +21,23 @@ build:
 test:
 	docker compose run --rm api pytest -q
 
+# Local equivalents of the CI jobs (see CONTRIBUTING.md).
+# VENV can point at an existing venv, e.g. make test-local VENV=/path/to/.venv
+VENV ?= .venv
+PYTEST_ARGS ?=
+
+.PHONY: venv test-local ui-build
+
+venv:
+	uv venv --python 3.11 $(VENV) && uv pip install --python $(VENV)/bin/python -r api/requirements.txt -r python_mcp/requirements.txt
+
+# Same command and env as the test-api CI job; set FAXBOT_SCHEMA_TEST_POSTGRES_URL to include the PostgreSQL schema tests.
+test-local:
+	cd api && mkdir -p faxdata && FAX_DISABLED=true FAX_DATA_DIR=./faxdata DATABASE_URL='sqlite:///./test_faxbot_ci.db' FAXBOT_SCHEMA_TEST_POSTGRES_URL="$${FAXBOT_SCHEMA_TEST_POSTGRES_URL:-}" $(abspath $(VENV))/bin/python -m pytest -q $(PYTEST_ARGS)
+
+ui-build:
+	cd api/admin_ui && npm ci --no-audit --no-fund && npm run build
+
 # Alembic helpers (run locally)
 alembic-upgrade:
 	DATABASE_URL=$${DATABASE_URL:-sqlite:///./faxbot.db} alembic -c api/alembic.ini upgrade head

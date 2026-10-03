@@ -246,5 +246,3 @@ export async function handleGetInboundPdfTool(args) {
 }
 
 export default { faxTools, handleSendFaxTool, handleGetFaxStatusTool, handleGetFaxTool, handleListInboundTool, handleGetInboundPdfTool };
-
-export default { faxTools, handleSendFaxTool, handleGetFaxStatusTool };
