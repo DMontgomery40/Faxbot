@@ -13,7 +13,7 @@ import uuid
 from fastapi import Depends, Request
 
 from ..config_runtime import run_lifecycle_step
-from .catalog import PERMISSIONS
+from .catalog import GLOBAL_PERMISSIONS
 from .fax_resources import FaxAccessError
 from .http import RequestIdentity, private_operation, require_identity, runtime, utcnow
 from .mutation_types import MutationDeniedError, MutationReason
@@ -87,11 +87,12 @@ def request_audit(request, **details):
 def require_permission(permission, *, resource='installation', audit=False, complete_owner=False):
     """Dependency factory: authenticate, then require ``permission`` at its resource.
 
-    ``fax:send`` is checked at the caller's personal container; every other
-    permission at the installation. Returns the ``RequestIdentity``.
+    ``fax:send`` is checked at the caller's personal container and every
+    installation-wide permission at the installation. Fax and inbound record
+    permissions belong to their resource services. Returns the ``RequestIdentity``.
     """
-    expected = 'personal' if permission == 'fax:send' else 'installation'
-    if permission not in PERMISSIONS or resource != expected or (resource != 'installation' and (audit or complete_owner)):
+    if not ((resource == 'installation' and permission in GLOBAL_PERMISSIONS)
+            or (resource == 'personal' and permission == 'fax:send' and not audit and not complete_owner)):
         raise ValueError(f'Unsupported route permission: {permission} at {resource}')
 
     async def permission_dependency(request: Request,
