@@ -11,6 +11,7 @@ from .billing import BillingReconciler
 from .capture import CostRecorder
 from .charges import SignalWireCharges
 from .fallback import FallbackScheduler
+from .seed import load_cards
 from .costs import InvalidRateCard, RateCard, format_amount, parse_amount
 from .database import DeliveryStoreError, utcnow
 from .numbers import InvalidNumber, normalize_number
@@ -25,15 +26,29 @@ def _background(app):
     from ..ami import ami_client
     from ..outbound_store import OutboundStore
     routes, delivery = RouteStore(engine), OutboundStore(runtime.manager.store)
+    # A SIP call-record source can be passed as observed_seconds=; see docs/operations/delivery-routes.md.
     recorder = CostRecorder(routes)
+
+    def seed():
+        routes.seed_cards(load_cards())
+        return False
     billing = BillingReconciler(routes, {'signalwire': SignalWireCharges(delivery)})
     fallback = FallbackScheduler(delivery, routes, ami=ami_client)
-    return [('faxbot-route-costs', repeat(recorder.step, interval=15.0, initial_delay=5.0,
+    return [('faxbot-route-seed', _once(seed)),
+            ('faxbot-route-costs', repeat(recorder.step, interval=15.0, initial_delay=5.0,
                                           warning='Fax cost estimates are temporarily unavailable.')),
             ('faxbot-route-billing', repeat(billing.step, interval=60.0, initial_delay=30.0,
                                             warning='Provider charges are temporarily unavailable.')),
             ('faxbot-route-fallback', repeat(fallback.step, interval=3.0, initial_delay=3.0,
                                              warning='Fax route fallback is temporarily unavailable.'))]
+
+
+async def _once(step):
+    try:
+        await run_lifecycle_step(step)
+    except Exception:
+        import logging
+        logging.getLogger(__name__).warning('Starting rate cards could not be loaded.')
 
 
 router = APIRouter(prefix='/routing', tags=['Delivery routes'], lifespan=lifespan_tasks(_background))

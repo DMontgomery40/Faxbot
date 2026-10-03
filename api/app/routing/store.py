@@ -120,6 +120,17 @@ class RouteStore:
                 connection.execute(self.cards.update().where(self.cards.c.id.in_(retired)).values(superseded_at=now))
             return self.current_cards(connection)
 
+    def seed_cards(self, cards):
+        """Load starting rate cards once, only into an empty table; the table stays authoritative."""
+        with read_connection(self.engine) as connection:
+            if connection.scalar(sa.select(sa.func.count()).select_from(self.cards)):
+                return False
+        unique = {}
+        for card in cards:
+            unique.setdefault((card.provider_id, card.direction), card)
+        self.replace_cards(list(unique.values()))
+        return bool(unique)
+
     # Destinations ---------------------------------------------------------
     def get_destination(self, number, connection=None):
         def read(conn):
@@ -230,17 +241,20 @@ class RouteStore:
                               row['submitted_at'], row['completed_at'], row['decision'] is not None)
                 for row in rows]
 
-    def capture(self, target, *, now=None):
+    def capture(self, target, *, observed_seconds=None, now=None):
         """Estimate one finished attempt from the provider's current rate card.
 
-        Rounding applies to this call alone under the card's rule, never to an
-        average. Provider-reported and settled amounts are separate observations.
+        ``observed_seconds`` is a measured connected duration (for example a SIP
+        call record) and is preferred over Faxbot's submit-to-finish time, which
+        includes queueing and ringing. Rounding applies to this call alone under
+        the card's rule, never to an average. Provider-reported and settled
+        amounts are separate observations.
         """
         now = now or utcnow()
         outcome = OUTCOMES[target.phase]
         card = self.card_for(target.provider_id)
-        seconds = None
-        if target.completed_at is not None and target.submitted_at is not None:
+        seconds = observed_seconds
+        if seconds is None and target.completed_at is not None and target.submitted_at is not None:
             seconds = max(0, int((target.completed_at - target.submitted_at).total_seconds()))
         cost = basis = billed = None
         if card is not None:
@@ -250,7 +264,7 @@ class RouteStore:
             else:
                 billed = billed_seconds(card, seconds)
                 cost = attempt_cost(card, seconds=seconds, pages=target.pages, delivered=outcome == 'success')
-                basis = 'estimated'
+                basis = 'measured' if observed_seconds is not None else 'estimated'
         values = dict(provider_sid=target.provider_sid, rate_card_id=card.id if card is not None else None,
                       started_at=target.submitted_at, ended_at=target.completed_at,
                       billed_seconds=billed, billed_pages=target.pages if outcome == 'success' else 0,

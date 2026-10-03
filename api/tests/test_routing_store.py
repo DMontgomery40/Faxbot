@@ -326,3 +326,41 @@ def test_whole_minute_rounding_is_per_call_never_on_averages(installation, route
     assert billed == [60, 120]
     totals = routes.cost_totals(start - timedelta(days=1))[0]
     assert totals['billed_seconds'] == 180 and totals['cost_micros'] == {'USD': 30_000}
+
+
+def test_shipped_rate_cards_seed_only_an_empty_table(routes, tmp_path):
+    import json
+    from api.app.routing.seed import load_cards
+    path = tmp_path / 'rate_cards.json'
+    path.write_text(json.dumps({'carriers': {
+        'sip': {'label': 'Telnyx Elastic SIP', 'per_minute': '0.005', 'rounding': 'whole_minute',
+                'source_url': 'https://telnyx.com/pricing/elastic-sip', 'advertised_on': '2026-10-03'},
+        'flowroute': {'label': 'Flowroute SIP', 'per_minute': '0.00833', 'rounding': '6_second',
+                      'advertised_on': '2026-10-03'},
+        'broken': {'per_minute': 'cheap'},
+    }}))
+    cards = load_cards(path)
+    assert [(card.provider_id, card.billing_increment_seconds) for card in cards] == [('sip', 60), ('flowroute', 6)]
+    assert load_cards(tmp_path / 'missing.json') == []
+    assert routes.seed_cards(cards) is True
+    assert {card.provider_id for card in routes.current_cards()} == {'sip', 'flowroute'}
+    routes.replace_cards([phaxio_card()])
+    assert routes.seed_cards(cards) is False  # Operator edits stay authoritative.
+    assert [card.provider_id for card in routes.current_cards()] == ['phaxio']
+
+
+@pytest.mark.asyncio
+async def test_measured_call_seconds_are_preferred_over_faxbot_timing(installation, routes):
+    _, delivery, _ = installation
+    routes.replace_cards([phaxio_card(per_page_micros=0, per_minute_micros=parse_amount('0.01'))])
+    job = accept(installation)
+    await OutboundWorker(delivery, RoutedTransport(Inner(delivery))).step()
+    seen = []
+
+    def observed(target):
+        seen.append(target.attempt_id)
+        return 125
+    CostRecorder(routes, observed_seconds=observed).step()
+    priced = routes.decision(delivery.get(job)['attempt_id'])
+    assert seen == [delivery.get(job)['attempt_id']]
+    assert (priced['billed_seconds'], priced['estimated_cost_micros'], priced['cost_basis']) == (180, 30_000, 'measured')
