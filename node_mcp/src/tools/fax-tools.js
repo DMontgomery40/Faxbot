@@ -5,12 +5,17 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import * as z from 'zod/v4';
 import { McpServer, ResourceTemplate } from '@modelcontextprotocol/server';
-import { createFaxClient } from '../shared/fax-client.js';
+import { checkOperationId, createFaxClient, newOperationId } from '../shared/fax-client.js';
 
 export const SERVER_INFO = { name: 'faxbot-mcp', version: '3.0.0' };
 export const INBOUND_PDF_URI = 'faxbot://inbound/{inbound_id}/pdf';
 
 const fileType = z.enum(['pdf', 'txt']).optional().describe('Override the type detected from fileName');
+const operationId = z.string().optional().describe('Leave empty for a new fax. To finish a send_fax call that failed '
+  + 'without a confirmation, pass the operationId from its error with the same number and document.');
+const SEND_ONCE = ' Each call without operationId sends a new fax. If a call fails without confirming the fax, its error '
+  + 'gives an operationId; call send_fax again with it and the same number and document to finish that same fax '
+  + 'without sending it twice.';
 const FaxJob = z.object({
   id: z.string(),
   status: z.string(),
@@ -21,6 +26,8 @@ const FaxJob = z.object({
   created_at: z.string().optional(),
   updated_at: z.string().optional(),
 });
+// send_fax adds the id that finishes this same fax if a later call repeats it.
+const SentFax = FaxJob.extend({ operationId: z.string() });
 const InboundFax = z.object({
   id: z.string(),
   status: z.string().optional(),
@@ -57,11 +64,15 @@ function detectType(name, override) {
   return type;
 }
 
-async function submit(client, to, name, buffer, type) {
+// The document is already read once, so every retry of this call sends the same bytes.
+async function submit(client, to, name, buffer, type, requestedId) {
   if (!buffer?.length) throw new Error('File content is empty');
-  const job = await client.sendFax(to, buffer, name, detectType(name, type));
+  const kind = detectType(name, type);
+  // A call without an operation id is a new fax; its id exists before the upload.
+  const id = checkOperationId(requestedId || newOperationId());
+  const job = await client.sendFax(to, buffer, name, kind, { operationId: id });
   return result(`Fax queued. Job ID: ${job.id}. Status: ${job.status}. Use get_fax_status to check progress.`,
-    { id: job.id, status: job.status });
+    { id: job.id, status: job.status, operationId: id });
 }
 
 function decode(fileContent) {
@@ -77,7 +88,7 @@ export function faxToolDefinitions(client, { localFiles }) {
     ? {
         config: {
           title: 'Send fax',
-          description: `${sendDescription} Prefer filePath (a local PDF or TXT) or fileUrl.`,
+          description: `${sendDescription} Prefer filePath (a local PDF or TXT) or fileUrl.${SEND_ONCE}`,
           inputSchema: z.object({
             to: z.string().min(1).describe('Destination fax number, for example +15551234567'),
             filePath: z.string().optional().describe('Path to a local PDF or TXT file'),
@@ -85,14 +96,15 @@ export function faxToolDefinitions(client, { localFiles }) {
             fileContent: z.string().optional().describe('Base64 encoded PDF or TXT content'),
             fileName: z.string().optional().describe('File name, for example letter.pdf'),
             fileType,
+            operationId,
           }),
         },
-        async handler({ to, filePath, fileUrl, fileContent, fileName, fileType: type }) {
+        async handler({ to, filePath, fileUrl, fileContent, fileName, fileType: type, operationId: id }) {
           if (filePath) {
             const resolved = path.resolve(filePath);
             const extension = path.extname(resolved).slice(1).toLowerCase();
             if (!['pdf', 'txt'].includes(extension)) throw new Error('filePath must point to a PDF or TXT file');
-            return submit(client, to, path.basename(resolved), await fs.readFile(resolved), extension);
+            return submit(client, to, path.basename(resolved), await fs.readFile(resolved), extension, id);
           }
           if (fileUrl) {
             const response = await fetch(fileUrl, { signal: AbortSignal.timeout(30000) });
@@ -102,28 +114,30 @@ export function faxToolDefinitions(client, { localFiles }) {
             const kind = contentType.includes('pdf') || name.toLowerCase().endsWith('.pdf') ? 'pdf'
               : contentType.includes('text/plain') || name.toLowerCase().endsWith('.txt') ? 'txt' : null;
             if (!kind) throw new Error('fileUrl must return a PDF or plain text document');
-            return submit(client, to, name, Buffer.from(await response.arrayBuffer()), kind);
+            return submit(client, to, name, Buffer.from(await response.arrayBuffer()), kind, id);
           }
           if (!fileContent || !fileName) throw new Error('Provide filePath, fileUrl, or fileContent with fileName');
-          return submit(client, to, fileName, decode(fileContent), type);
+          return submit(client, to, fileName, decode(fileContent), type, id);
         },
       }
     : {
         config: {
           title: 'Send fax',
-          description: sendDescription,
+          description: sendDescription + SEND_ONCE,
           inputSchema: z.object({
             to: z.string().min(1).describe('Destination fax number, for example +15551234567'),
             fileContent: z.string().min(1).describe('Base64 encoded PDF or TXT content'),
             fileName: z.string().min(1).describe('File name, for example letter.pdf'),
             fileType,
+            operationId,
           }),
         },
-        handler: ({ to, fileContent, fileName, fileType: type }) => submit(client, to, fileName, decode(fileContent), type),
+        handler: ({ to, fileContent, fileName, fileType: type, operationId: id }) =>
+          submit(client, to, fileName, decode(fileContent), type, id),
       };
 
   return [
-    { name: 'send_fax', config: { ...send.config, outputSchema: FaxJob, annotations: write }, handler: send.handler },
+    { name: 'send_fax', config: { ...send.config, outputSchema: SentFax, annotations: write }, handler: send.handler },
     {
       name: 'get_fax_status',
       config: {
