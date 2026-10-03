@@ -159,7 +159,7 @@ function Dashboard({ client, onNavigate }: DashboardProps) {
                   variant="outlined"
                 />
                 <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-                  Backend: {health.backend}
+                  Active outbound provider: {health.backend}
                 </Typography>
                 <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 1 }}>
                   Checks local configuration and dependencies. Delivery is verified for each fax.
@@ -311,8 +311,8 @@ function Dashboard({ client, onNavigate }: DashboardProps) {
               <CardContent>
                 <Typography variant="h6" gutterBottom>Config Overview</Typography>
                 <Grid container spacing={1}>
-                  <Grid item xs={6}><Typography variant="body2" color="text.secondary">Backend</Typography></Grid>
-                  <Grid item xs={6}><Chip size="small" label={cfg?.backend || health.backend} /></Grid>
+                  <Grid item xs={6}><Typography variant="body2" color="text.secondary">Default provider</Typography></Grid>
+                  <Grid item xs={6}><Chip size="small" label={cfg?.backend ?? 'Unavailable'} /></Grid>
                   <Grid item xs={6}><Typography variant="body2" color="text.secondary">Storage</Typography></Grid>
                   <Grid item xs={6}><Chip size="small" label={cfg?.storage?.backend || 'local'} /></Grid>
                   <Grid item xs={6}><Typography variant="body2" color="text.secondary">Require API Key</Typography></Grid>
