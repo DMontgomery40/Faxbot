@@ -4,7 +4,7 @@
 
 This branch includes persistent authentication endpoints under `/auth`. The existing
 console and business routes still use the legacy key guards described below; their
-conversion is tracked in the [access-control plan](../superpowers/plans/2026-10-02-faxbot-access-control.md).
+conversion is tracked in the [repository access-control plan](https://github.com/DMontgomery40/Faxbot/blob/feat/faxbot-refresh/docs/superpowers/plans/2026-10-02-faxbot-access-control.md).
 The new session endpoints alone do not establish complete RBAC for the installation.
 
 The authentication API provides password login, key-to-session login, current

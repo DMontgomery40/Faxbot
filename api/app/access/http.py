@@ -2,6 +2,7 @@
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from functools import wraps
+from typing import Literal
 
 import sqlalchemy as sa
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
@@ -22,6 +23,10 @@ from .types import AccessError, AccessUnavailableError, AuthenticationError, Res
 
 
 PRIVATE_HEADERS = {'Cache-Control':'no-store', 'X-Content-Type-Options':'nosniff', 'X-Frame-Options':'DENY'}
+
+
+class BrowserRequestVerificationError(AccessError):
+    code = 'browser_request_verification_failed'
 
 
 def utcnow():
@@ -54,6 +59,8 @@ async def access_error_response(request, error):
         status, message = 401, 'Authentication required or credentials no longer valid.'
     elif isinstance(error, StaleVersionError):
         status, message = 409, 'Access policy changed. Reload and try again.'
+    elif isinstance(error, BrowserRequestVerificationError):
+        status, message = 403, 'Browser request verification failed. Refresh your session and try again.'
     elif isinstance(error, TransportError):
         status, message = 403, 'Credential transport or browser origin is not allowed.'
     elif isinstance(error, (SessionDeniedError, MutationDeniedError)):
@@ -133,7 +140,7 @@ def _cookie_identity(service, token, csrf, unsafe):
         if unsafe:
             stored = connection.execute(sa.select(table.c.csrf_hash).where(table.c.id == session_id)).scalar_one()
             if not service.session_codec.verify_csrf(token, csrf, stored):
-                raise TransportError()
+                raise BrowserRequestVerificationError()
         # Origin/CSRF are validated before the first write; absolute expiry stays fixed.
         connection.execute(table.update().where(table.c.id == session_id).values(last_used_at=now))
     return actor
@@ -186,7 +193,90 @@ class SessionRevoke(StrictInput):
     expected_policy_version: int = Field(ge=1)
 
 
-router = APIRouter(prefix='/auth', tags=['Authentication'], route_class=PrivateAuthRoute)
+class AuthOutput(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+
+
+class AuthErrorResponse(AuthOutput):
+    detail: str = Field(description='Fixed public error message.')
+
+
+class AuthSessionResponse(AuthOutput):
+    ok: Literal[True]
+    password_change_required: bool
+
+
+class AuthLogoutResponse(AuthOutput):
+    ok: Literal[True]
+
+
+class AuthPrincipalResponse(AuthOutput):
+    id: str
+    kind: Literal['user', 'integration', 'bootstrap']
+    display_name: str
+    version: int
+
+
+class AuthCurrentSessionResponse(AuthOutput):
+    id: str
+    source_kind: Literal['password', 'key', 'bootstrap']
+    expires_at: datetime
+
+
+class AuthMeResponse(AuthOutput):
+    principal: AuthPrincipalResponse
+    source: Literal['key', 'session']
+    password_change_required: bool
+    policy_version: int
+    permissions: list[str]
+    session: AuthCurrentSessionResponse | None
+    can_enroll_owner: bool
+    csrf_token: str | None = Field(default=None, repr=False,
+        description='Present only for an authenticated browser cookie session.')
+
+
+class AuthSessionSummaryResponse(AuthOutput):
+    session_id: str
+    source_kind: Literal['password', 'key', 'bootstrap']
+    created_at: datetime
+    last_used_at: datetime
+    expires_at: datetime
+    revoked_at: datetime | None
+    current: bool
+
+
+class AuthSessionCursorResponse(AuthOutput):
+    created_at: datetime
+    session_id: str
+
+
+class AuthSessionPageResponse(AuthOutput):
+    items: list[AuthSessionSummaryResponse]
+    next_cursor: AuthSessionCursorResponse | None
+
+
+class AuthSessionRevokeResponse(AuthOutput):
+    session_id: str
+    changed: bool
+    policy_version: int
+
+
+AUTH_ERROR_RESPONSES = {status: {'model': AuthErrorResponse, 'description': description}
+    for status, description in (
+        (400, 'Invalid credential or session request.'),
+        (401, 'Authentication required or credentials no longer valid.'),
+        (403, 'Transport, browser request verification or operation is not permitted.'),
+        (404, 'Access target not found.'),
+        (409, 'Access policy changed. Reload and try again.'),
+        (413, 'Authentication request is too large.'),
+        (422, 'Invalid access request.'),
+        (429, 'Too many authentication attempts. Try again later.'),
+        (503, 'Authentication or access service is temporarily unavailable.'),
+    )}
+
+
+router = APIRouter(prefix='/auth', tags=['Authentication'], route_class=PrivateAuthRoute,
+    responses={status: AUTH_ERROR_RESPONSES[status] for status in (401, 403, 413, 422, 429, 503)})
 
 
 def _publish_session(response, selected, result):
@@ -198,7 +288,7 @@ def _publish_session(response, selected, result):
     return {'ok':True, 'password_change_required':receipt.password_change_required}
 
 
-@router.post('/login')
+@router.post('/login', response_model=AuthSessionResponse)
 async def password_login(body: PasswordLogin, request: Request, response: Response):
     selected = transport(request, require_origin=True)
     service = runtime(request)
@@ -206,7 +296,7 @@ async def password_login(body: PasswordLogin, request: Request, response: Respon
     return _publish_session(response, selected, result)
 
 
-@router.post('/key-login')
+@router.post('/key-login', response_model=AuthSessionResponse)
 async def key_login(body: KeyLogin, request: Request, response: Response):
     selected = transport(request, require_origin=True)
     service = runtime(request)
@@ -244,12 +334,12 @@ def _me(service, identity):
     return result
 
 
-@router.get('/me')
+@router.get('/me', response_model=AuthMeResponse, response_model_exclude_unset=True)
 async def me(request: Request, identity=Depends(require_identity)):
     return await run_lifecycle_step(lambda: _me(runtime(request), identity))
 
 
-@router.post('/logout')
+@router.post('/logout', response_model=AuthLogoutResponse)
 async def logout(request: Request, response: Response, identity=Depends(require_identity)):
     selected = transport(request)
     service = runtime(request)
@@ -262,7 +352,8 @@ async def logout(request: Request, response: Response, identity=Depends(require_
     return {'ok':True}
 
 
-@router.post('/password')
+@router.post('/password', response_model=AuthSessionResponse,
+    responses={400: AUTH_ERROR_RESPONSES[400]})
 async def change_password(body: PasswordChange, request: Request, response: Response, identity=Depends(require_identity)):
     selected = transport(request)
     service = runtime(request)
@@ -271,7 +362,8 @@ async def change_password(body: PasswordChange, request: Request, response: Resp
     return _publish_session(response, selected, result)
 
 
-@router.get('/sessions')
+@router.get('/sessions', response_model=AuthSessionPageResponse,
+    responses={400: AUTH_ERROR_RESPONSES[400]})
 async def sessions(request: Request, limit: int = Query(default=50, ge=1, le=100),
         cursor_time: datetime | None = None, cursor_id: str | None = Query(default=None, max_length=40),
         identity=Depends(require_identity)):
@@ -287,7 +379,8 @@ async def sessions(request: Request, limit: int = Query(default=50, ge=1, le=100
     return await run_lifecycle_step(read)
 
 
-@router.post('/sessions/{session_id}/revoke')
+@router.post('/sessions/{session_id}/revoke', response_model=AuthSessionRevokeResponse,
+    responses={status: AUTH_ERROR_RESPONSES[status] for status in (400, 404, 409)})
 async def revoke_session(session_id: str, body: SessionRevoke, request: Request,
         response: Response, identity=Depends(require_identity)):
     service = runtime(request)
