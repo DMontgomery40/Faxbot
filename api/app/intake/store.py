@@ -316,9 +316,17 @@ class IntakeStore:
                 state='received', next_attempt_at=now, last_error=None, version=row['version'] + 1, updated_at=now))
             return self.get_item(identity, connection)
 
+    def _due(self, now):
+        return sa.select(self.items.c.id).where(
+            self.items.c.state == 'received', self.items.c.next_attempt_at.is_not(None),
+            self.items.c.next_attempt_at <= now).limit(1)
+
     def claim(self, *, now=None):
         """Lease the oldest item due for delivery; a delivered item is never claimed."""
         now = now or utcnow()
+        with read_connection(self.engine) as connection:
+            if connection.execute(self._due(now)).first() is None:
+                return None  # Nothing due; avoid taking the write lock.
         with write_transaction(self.engine) as connection:
             row = connection.execute(sa.select(self.items).where(
                 self.items.c.state == 'received', self.items.c.next_attempt_at.is_not(None),
@@ -363,6 +371,11 @@ class IntakeStore:
     def recover_expired(self, *, now=None):
         """A worker stopped mid-send; the email may have gone out, so a person decides."""
         now = now or utcnow()
+        expired = sa.select(self.items.c.id).where(self.items.c.state == 'sending',
+                                                   self.items.c.claim_expires_at <= now).limit(1)
+        with read_connection(self.engine) as connection:
+            if connection.execute(expired).first() is None:
+                return 0
         with write_transaction(self.engine) as connection:
             result = connection.execute(self.items.update().where(
                 self.items.c.state == 'sending', self.items.c.claim_expires_at <= now).values(

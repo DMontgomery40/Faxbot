@@ -122,6 +122,8 @@ class RouteStore:
 
     def seed_cards(self, cards):
         """Load starting rate cards once, only into an empty table; the table stays authoritative."""
+        if not cards:
+            return False
         with read_connection(self.engine) as connection:
             if connection.scalar(sa.select(sa.func.count()).select_from(self.cards)):
                 return False

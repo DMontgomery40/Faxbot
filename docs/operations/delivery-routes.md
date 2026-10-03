@@ -37,7 +37,7 @@ FAX_OUTBOUND_ROUTES=signalwire,phaxio
 
 Each listed provider needs its own settings filled in, as if it were the outbound provider. Faxbot uses the settings that were active when each fax was accepted.
 
-A provider that is not ready is skipped. For example, an Asterisk route needs a connected Asterisk, and a cloud provider needs its credentials. When a SIP route needs a fax image that the fax does not have yet, Faxbot makes one from the original PDF before sending.
+A provider that is not ready is skipped. A cloud provider needs its credentials. An Asterisk route needs a connected Asterisk, and Faxbot connects to Asterisk only when Asterisk is your outbound or inbound provider. A common setup receives on your own Asterisk, sends through a cloud provider, and lists `sip` as an extra route. When a SIP route needs a fax image that the fax does not have yet, Faxbot makes one from the original PDF before sending.
 
 ## When a route fails
 
