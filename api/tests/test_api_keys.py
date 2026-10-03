@@ -9,12 +9,14 @@ def test_admin_create_and_use_api_key(isolated_installation, monkeypatch, tmp_pa
     # Isolate environment for this test
     monkeypatch.setenv("API_KEY", "bootstrap_admin_only")
     monkeypatch.setenv("REQUIRE_API_KEY", "true")
+    monkeypatch.setenv("PUBLIC_API_URL", "https://testserver")
+    monkeypatch.setenv("FAXBOT_CONSOLE_ORIGINS", "https://testserver")
     monkeypatch.setenv("FAX_DISABLED", "true")
     monkeypatch.setenv("FAX_BACKEND", "phaxio")
     monkeypatch.setenv("FAX_DATA_DIR", str(tmp_path / "faxdata_test_keys"))
     monkeypatch.setenv("DATABASE_URL", "sqlite:///" + str(tmp_path / "api-keys.db"))
 
-    with TestClient(app) as client:
+    with TestClient(app, base_url="https://testserver", headers={"Origin": "https://testserver"}) as client:
         # Sanity check: bootstrap key loaded after startup
         from api.app.config import settings as live_settings  # re-import reference
         assert live_settings.api_key == "bootstrap_admin_only"

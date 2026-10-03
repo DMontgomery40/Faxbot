@@ -45,12 +45,16 @@ def document_client(monkeypatch, tmp_path, request):
         "INBOUND_ENABLED": "false",
         "REQUIRE_API_KEY": "true",
         "API_KEY": "synthetic-document-test-key",
+        "PUBLIC_API_URL": "https://testserver",
         "MAX_REQUESTS_PER_MINUTE": "0",
         "MAX_FILE_SIZE_MB": "1",
         "ENABLE_PERSISTED_SETTINGS": "false",
     }.items():
         monkeypatch.setenv(name, value)
-    with TestClient(app, headers={"X-API-Key": "synthetic-document-test-key"}) as client:
+    monkeypatch.setenv("FAXBOT_CONSOLE_ORIGINS", "https://testserver")
+    with TestClient(app, base_url="https://testserver", headers={
+        "X-API-Key": "synthetic-document-test-key", "Origin": "https://testserver",
+    }) as client:
         assert_artifacts(data_dir)
         lock_bytes = {name: (data_dir / name).read_bytes() for name in LIFECYCLE_LOCKS}
         try:
@@ -180,7 +184,8 @@ def acceptance_fault(monkeypatch, data_dir, *, committed=False,
                      fail_before_commit=False, forbid_post_commit_reads=False):
     """Fail the real acceptance transaction, leaving startup and request reads intact."""
     store = app.state.configuration_runtime.manager.store
-    accept = store.accept_outbound
+    outbound = app.state.access_runtime.outbound
+    accept = outbound.accept
     commit = sa.engine.Connection.commit
     execute = sa.engine.Connection.execute
     connect = store.engine.connect
@@ -189,14 +194,14 @@ def acceptance_fault(monkeypatch, data_dir, *, committed=False,
         "accepting": False, "commit_attempted": False,
     }
 
-    def accepting(revision, job, **kwargs):
+    def accepting(actor, revision, job, **kwargs):
         state["accept"] += 1
         state["revision"] = revision
         state["job_id"] = job["id"]
         assert (data_dir / f"{job['id']}.pdf").is_file(), "fault preceded preparation"
         state["accepting"] = True
         try:
-            return accept(revision, job, **kwargs)
+            return accept(actor, revision, job, **kwargs)
         finally:
             state["accepting"] = False
 
@@ -230,7 +235,7 @@ def acceptance_fault(monkeypatch, data_dir, *, committed=False,
         return connect(*args, **kwargs)
 
     with monkeypatch.context() as patch:
-        patch.setattr(store, "accept_outbound", accepting)
+        patch.setattr(outbound, "accept", accepting)
         patch.setattr(sa.engine.Connection, "execute", faulting_execute)
         patch.setattr(sa.engine.Connection, "commit", faulting_commit)
         patch.setattr(store.engine, "connect", guarded_connect)

@@ -4,9 +4,9 @@ import {
   TextField, FormControl, InputLabel, Select, MenuItem, Alert,
   CircularProgress, Grid, Paper, Chip, Switch, FormControlLabel,
 } from '@mui/material';
-import AdminAPIClient from '../api/client';
+import AdminAPIClient, { configurationWriteRejected } from '../api/client';
 import { docsLink } from '../docsLinks';
-import type { Settings, SettingsPatch, ValidationResult } from '../api/types';
+import type { ConfigurationWriteReceipt, Settings, SettingsPatch, ValidationResult } from '../api/types';
 import SecretInput from './common/SecretInput';
 
 interface SetupWizardProps {
@@ -116,6 +116,7 @@ function SetupWizard({ client, onDone, docsBase }: SetupWizardProps) {
   const [catalogNotice, setCatalogNotice] = useState<string | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [applyResult, setApplyResult] = useState<Notice | null>(null);
+  const [saveReceipt, setSaveReceipt] = useState<ConfigurationWriteReceipt | null>(null);
   const [validationResults, setValidationResults] = useState<ValidationResult | null>(null);
   const [validationNote, setValidationNote] = useState<string | null>(null);
   const [envContent, setEnvContent] = useState('');
@@ -128,7 +129,7 @@ function SetupWizard({ client, onDone, docsBase }: SetupWizardProps) {
   const watcherTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const downloadTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
   const steps = ['Choose Providers', 'Configure Credentials', 'Security Settings', 'Apply & Export'];
-  const desiredRevision = settings?._meta?.desired_revision_id;
+  const desiredRevision = needsReload ? undefined : settings?._meta?.desired_revision_id;
   const changedFields = Object.keys(config).filter(field => config[field] !== baseline[field]);
   const ob = String(config.outbound_backend || config.backend || '');
   const ib = String(config.inbound_backend || config.backend || '');
@@ -165,8 +166,8 @@ function SetupWizard({ client, onDone, docsBase }: SetupWizardProps) {
     actionFence.current = false;
     setBusy(false);
     setLoadError(null);
-    setApplyResult(null);
     setNotice(null);
+    setNeedsReload(true);
     const [desired, catalog] = await Promise.allSettled([client.getSettings(), client.listPlugins()]);
     if (epoch !== requestEpoch.current) return;
     if (catalog.status === 'fulfilled') {
@@ -233,6 +234,7 @@ function SetupWizard({ client, onDone, docsBase }: SetupWizardProps) {
     setValidationResults(null);
     setValidationNote(null);
     setApplyResult(null);
+    setSaveReceipt(null);
     setNotice(null);
     setEnvContent('');
   };
@@ -300,19 +302,26 @@ function SetupWizard({ client, onDone, docsBase }: SetupWizardProps) {
     stopWatching();
     setNotice(null);
     setApplyResult(null);
+    setSaveReceipt(null);
     const epoch = requestEpoch.current;
     try {
       const result = await client.updateSettings(payload);
       if (epoch !== requestEpoch.current) return;
-      if (!result._meta?.desired_revision_id) {
-        setNeedsReload(true);
-        setNotice({ severity: 'warning', text: 'The server returned no revision after saving. The outcome must be checked with Reload before another save.' });
-        return;
-      }
-      hydrate(result);
+      setSaveReceipt(result);
+      setNeedsReload(true);
+      setEnvContent('');
       setApplyResult(result._meta.apply_state === 'pending_restart' ?
-        { severity: 'warning', text: 'Desired configuration saved durably. Every API worker must stop and the installation restart for the pending changes; active settings remain in effect for those fields.' } :
-        { severity: 'success', text: 'Configuration saved durably and active. Existing fax attempts retain their captured settings.' });
+        { severity: 'warning', text: `${result.changed ? 'Desired configuration saved durably.' : 'Desired configuration is unchanged.'} Every API worker must stop and the installation restart for the pending changes; active settings remain in effect for those fields.` } :
+        { severity: 'success', text: `${result.changed ? 'Configuration saved durably and active.' : 'Configuration is unchanged and active.'} Existing fax attempts retain their captured settings.` });
+      try {
+        const desired = await client.getSettings();
+        if (epoch !== requestEpoch.current) return;
+        if (!desired._meta?.desired_revision_id) throw new Error('No canonical desired revision was returned.');
+        hydrate(desired);
+      } catch {
+        if (epoch !== requestEpoch.current) return;
+        setNotice({ severity: 'warning', text: 'Save confirmed; the settings view could not be reloaded. Editing is paused. Reload explicitly, or sign in again, before another save.' });
+      }
     } catch (error) {
       if (epoch !== requestEpoch.current) return;
       const message = errorText(error, 'Save failed.');
@@ -320,7 +329,8 @@ function SetupWizard({ client, onDone, docsBase }: SetupWizardProps) {
         setNeedsReload(true);
         setNotice({ severity: 'error', text: 'Settings changed after this editor loaded. Your draft is retained. Reload explicitly to review the current revision before saving again.' });
       } else {
-        setNotice({ severity: 'error', text: message });
+        setNeedsReload(true);
+        setNotice({ severity: 'error', text: `${configurationWriteRejected(error) ? 'Save was rejected. Your draft is retained.' : 'Save was not confirmed.'} ${message} Reload to check the current configuration before saving again.` });
       }
     } finally {
       finishAction(epoch);
@@ -564,7 +574,10 @@ function SetupWizard({ client, onDone, docsBase }: SetupWizardProps) {
     </Box>
     {loading && <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}><CircularProgress size={24} /><Typography>Loading desired settings…</Typography></Box>}
     {loadError && <Alert severity="error" sx={{ mb: 2 }}>{loadError}</Alert>}
-    {settings?._meta && <Paper sx={{ p: 2, mb: 2, overflowWrap: 'anywhere' }}>
+    {needsReload && saveReceipt ? <Paper sx={{ p: 2, mb: 2, overflowWrap: 'anywhere' }}>
+      <Typography variant="body2">Confirmed saved desired revision: {saveReceipt._meta.desired_revision_id}</Typography>
+      <Typography variant="body2">Active revision: {saveReceipt._meta.active_revision_id} · Generation: {saveReceipt._meta.generation}</Typography>
+    </Paper> : settings?._meta && <Paper sx={{ p: 2, mb: 2, overflowWrap: 'anywhere' }}>
       <Typography variant="body2">Active revision: {settings._meta.active_revision_id} · Generation: {settings._meta.generation}</Typography>
       <Typography variant="body2">Loaded desired revision: {settings._meta.desired_revision_id}</Typography>
       {settings._meta.apply_state === 'pending_restart' ? <Alert severity="warning" sx={{ mt: 1 }}>Every API worker must stop and the installation restart to activate these pending desired fields: {settings._meta.pending_fields.join(', ')}.</Alert> : <Typography variant="body2">Loaded desired revision is active.</Typography>}

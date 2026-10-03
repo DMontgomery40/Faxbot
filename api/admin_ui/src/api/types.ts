@@ -256,11 +256,25 @@ export type SettingsPatch = Record<string, string | number | boolean | null | un
 
 export type PluginRole = 'outbound' | 'inbound' | 'storage';
 
+// A confirmed durable write is not a read projection. Editors must obtain a
+// separately authorized snapshot before allowing another mutation.
+export interface ConfigurationWriteReceipt {
+  ok: true;
+  changed: boolean;
+  _meta: {
+    active_revision_id: string;
+    desired_revision_id: string;
+    generation: number;
+    apply_state: 'applied' | 'pending_restart';
+    restart_recommended: boolean;
+  };
+}
+
 export interface PluginConfiguration {
   enabled: boolean;
   settings: Record<string, unknown>;
   role: PluginRole;
-  _meta: NonNullable<Settings['_meta']>;
+  _meta: ConfigurationWriteReceipt['_meta'];
 }
 
 export interface PluginConfigurationPatch {
@@ -268,11 +282,6 @@ export interface PluginConfigurationPatch {
   role: PluginRole;
   enabled?: boolean;
   settings?: Record<string, unknown>;
-}
-
-export interface PluginConfigurationResult extends PluginConfiguration {
-  ok: boolean;
-  path: string;
 }
 
 export type DiagnosticsValue = string | number | boolean | null | DiagnosticsValue[] | { [key: string]: DiagnosticsValue };

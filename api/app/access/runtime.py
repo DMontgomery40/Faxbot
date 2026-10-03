@@ -16,6 +16,7 @@ from .auth_work import AuthenticationWork
 from .bootstrap import BootstrapCredentials
 from .credentials import CredentialCodec
 from .context import ConsoleContext
+from .configuration_access import AuthorizedConfiguration
 from .fax_resources import FaxResources
 from .mutations import AccessMutations
 from .outbound import AuthorizedOutbound
@@ -53,15 +54,16 @@ def _prepare(configuration, docs_base):
     outbound = AuthorizedOutbound(configuration, fax_resources)
     queries = AuthorizedFaxQueries(configuration, fax_resources)
     context = ConsoleContext(configuration, control, docs_base=docs_base)
+    configuration_access = AuthorizedConfiguration(configuration, control)
     work = AuthenticationWork()
     return (store, credential_codec, session_codec, bootstrap, control, proofs,
-            mutations, sessions, admission, authentication, fax_resources, outbound, queries, context, work)
+            mutations, sessions, admission, authentication, fax_resources, outbound, queries, context, configuration_access, work)
 
 
 class AccessRuntime:
     __slots__ = ('configuration', 'store', 'credential_codec', 'session_codec',
                  'bootstrap', 'control', 'proofs', 'mutations', 'sessions',
-                 'admission', 'authentication', 'fax_resources', 'outbound', 'queries', 'context', 'work')
+                 'admission', 'authentication', 'fax_resources', 'outbound', 'queries', 'context', 'configuration_access', 'work')
 
     def __init__(self, configuration: ConfigurationStore, *, docs_base='https://docs.faxbot.net/latest/'):
         services = None
@@ -76,7 +78,8 @@ class AccessRuntime:
         self.configuration = configuration
         (self.store, self.credential_codec, self.session_codec, self.bootstrap,
          self.control, self.proofs, self.mutations, self.sessions, self.admission,
-         self.authentication, self.fax_resources, self.outbound, self.queries, self.context, self.work) = services
+         self.authentication, self.fax_resources, self.outbound, self.queries, self.context,
+         self.configuration_access, self.work) = services
 
     def __repr__(self):
         return 'AccessRuntime()'

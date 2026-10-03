@@ -111,12 +111,16 @@ def provider_client(isolated_installation, monkeypatch, tmp_path):
         "FAX_BACKEND": "phaxio", "FAX_OUTBOUND_BACKEND": "phaxio",
         "FAX_INBOUND_BACKEND": "phaxio", "INBOUND_ENABLED": "false",
         "REQUIRE_API_KEY": "true", "API_KEY": "synthetic-paths-key",
+        "PUBLIC_API_URL": "https://testserver",
         "ENABLE_PERSISTED_SETTINGS": "false", "FEATURE_V3_PLUGINS": "true",
-        "MAX_REQUESTS_PER_MINUTE": "0", "ENFORCE_PUBLIC_HTTPS": "false",
+        "MAX_REQUESTS_PER_MINUTE": "0", "ENFORCE_PUBLIC_HTTPS": "true",
     }.items():
         monkeypatch.setenv(name, value)
+    monkeypatch.setenv("FAXBOT_CONSOLE_ORIGINS", "https://testserver")
     monkeypatch.chdir(tmp_path)
-    with TestClient(main.app, headers={"X-API-Key": "synthetic-paths-key"}) as client:
+    with TestClient(main.app, base_url="https://testserver", headers={
+        "X-API-Key": "synthetic-paths-key", "Origin": "https://testserver",
+    }) as client:
         yield client, providers
     # Client lifespan loads a provider cache; don't leave a removed test root cached.
     config._TRAITS_CACHE["registry"] = {}
@@ -126,11 +130,36 @@ def install(client, provider_id="synthetic-provider.v1"):
     return client.post("/admin/plugins/http/install", json={"manifest": manifest(provider_id)})
 
 
+def assert_write_receipt(response, snapshot):
+    """A confirmed configuration write acknowledges revisions without a read view."""
+    assert response.status_code == 200, response.text
+    assert response.json() == {
+        "ok": True, "changed": True,
+        "_meta": {
+            "active_revision_id": snapshot.active.id,
+            "desired_revision_id": snapshot.desired.id,
+            "generation": snapshot.generation,
+            "apply_state": "pending_restart" if snapshot.pending is not None else "applied",
+            "restart_recommended": snapshot.pending is not None,
+        },
+    }
+
+
 def activate(client, provider_id="synthetic-provider.v1"):
+    from app import main
+    editor = client.get("/admin/settings")
+    assert editor.status_code == 200
     response = client.put("/admin/settings", json={
         "backend": provider_id, "outbound_backend": provider_id,
+        "expected_revision_id": editor.json()["_meta"]["desired_revision_id"],
     })
-    assert response.status_code == 200, response.text
+    assert_write_receipt(response, main.app.state.configuration_runtime.manager.store.read())
+    # Reload is a separately authorized read after the confirmed receipt.
+    reloaded = client.get("/admin/settings")
+    assert reloaded.status_code == 200
+    assert reloaded.json()["backend"]["type"] == provider_id
+    assert reloaded.json()["hybrid"]["outbound_backend"] == provider_id
+    assert reloaded.json()["_meta"]["desired_revision_id"] == response.json()["_meta"]["desired_revision_id"]
     return response
 
 
@@ -159,13 +188,20 @@ def test_explicit_root_install_is_visible_to_traits_discovery_config_and_diagnos
     diagnostics = client.post("/admin/diagnostics/run").json()["checks"]["plugins"]
     assert diagnostics["installed"] == 1
     assert diagnostics["manifests"][0]["name"] == "Synthetic resource marker"
-    update = client.put("/plugins/synthetic-provider.v1/config", json={"settings": {"resource_marker": "operator-config"}})
-    assert update.status_code == 200
-    desired = runtime.manager.store.read().desired
+    update = client.put("/plugins/synthetic-provider.v1/config", json={
+        "settings": {"resource_marker": "operator-config"},
+        "expected_revision_id": view["_meta"]["desired_revision_id"],
+    })
+    snapshot = runtime.manager.store.read()
+    assert_write_receipt(update, snapshot)
+    desired = snapshot.desired
     assert desired.plugins.as_dict()["settings"]["synthetic-provider.v1"] == {"resource_marker": "operator-config"}
-    assert Path(update.json()["path"]) == Path(desired.values.faxbot_config_path)
-    assert not Path(update.json()["path"]).exists()  # Recovery export is explicit.
-    assert update.json()["settings"] == {"resource_marker": "***"}
+    assert Path(desired.values.faxbot_config_path) == providers.parent / "operator-config.json"
+    assert not Path(desired.values.faxbot_config_path).exists()  # Recovery export is explicit.
+    reloaded = client.get("/plugins/synthetic-provider.v1/config")
+    assert reloaded.status_code == 200
+    assert reloaded.json()["settings"] == {"resource_marker": "***"}
+    assert reloaded.json()["_meta"] == update.json()["_meta"]
 
 
 def test_custom_manifest_send_preparation_uses_captured_traits(provider_client):

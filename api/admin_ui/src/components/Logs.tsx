@@ -1,8 +1,14 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Box, Card, CardContent, Typography, TextField, Button, CircularProgress, Table, TableHead, TableRow, TableCell, TableBody, TableContainer, Alert, Dialog, DialogTitle, DialogContent, DialogActions, FormControlLabel, Switch, MenuItem, Select, InputLabel, FormControl } from '@mui/material';
-import AdminAPIClient from '../api/client';
+import AdminAPIClient, { configurationWriteRejected } from '../api/client';
+import type { ConfigurationWriteReceipt, Settings } from '../api/types';
 
 interface LogsProps { client: AdminAPIClient; }
+type AuditSettingsSnapshot = {
+  desiredEnabled: boolean;
+  activeEnabled: boolean;
+  meta: NonNullable<Settings['_meta']>;
+};
 
 function parseQueryTokens(input: string): { q: string; filters: Record<string,string> } {
   const parts = input.split(/\s+/).filter(Boolean);
@@ -31,6 +37,15 @@ function Logs({ client }: LogsProps) {
   const [wrap, setWrap] = useState<boolean>(false);
   const [sincePreset, setSincePreset] = useState<string>('');
   const [follow, setFollow] = useState<boolean>(false);
+  const [enableBusy, setEnableBusy] = useState(false);
+  const [enableNeedsReload, setEnableNeedsReload] = useState(false);
+  const [enableError, setEnableError] = useState<string | null>(null);
+  const [enableNotice, setEnableNotice] = useState<string | null>(null);
+  const [enableReceipt, setEnableReceipt] = useState<ConfigurationWriteReceipt | null>(null);
+  const [enableOutcome, setEnableOutcome] = useState<'none' | 'unconfirmed' | 'rejected' | 'confirmed'>('none');
+  const [auditSnapshot, setAuditSnapshot] = useState<AuditSettingsSnapshot | null>(null);
+  const enableFence = useRef(false);
+  const configurationEpoch = useRef(0);
 
   const run = async () => {
     try {
@@ -57,8 +72,10 @@ function Logs({ client }: LogsProps) {
       // Apply key:value filters client-side too
       rows = rows.filter((r: any) => Object.entries(filters).every(([k,v]) => String((r[k] ?? '')).toLowerCase().includes(v.toLowerCase())));
       setItems(rows);
+      return true;
     } catch (e: any) {
       setError(e?.message || 'Failed to load logs');
+      return false;
     } finally {
       setLoading(false);
     }
@@ -72,6 +89,118 @@ function Logs({ client }: LogsProps) {
   }, [follow, query, eventFilter, sincePreset, since, limit, source, fileLines]);
 
   const columns = useMemo(() => ['ts','event','job_id','key_id','backend','status','error','to','from','path'], []);
+
+  useEffect(() => {
+    configurationEpoch.current += 1;
+    enableFence.current = false;
+    setEnableBusy(false);
+    setEnableNeedsReload(false);
+    setEnableError(null);
+    setEnableNotice(null);
+    setEnableReceipt(null);
+    setEnableOutcome('none');
+    setAuditSnapshot(null);
+    return () => { configurationEpoch.current += 1; };
+  }, [client]);
+
+  const readAuditSettings = async (epoch: number): Promise<AuditSettingsSnapshot | null> => {
+    // Bracket the separately authorized active read with canonical identities,
+    // so a changed configuration cannot be presented as one coherent snapshot.
+    const before = await client.getSettings();
+    if (epoch !== configurationEpoch.current) return null;
+    if (!before._meta?.desired_revision_id) throw new Error('No canonical desired revision was returned.');
+    const active = await client.getConfig();
+    if (epoch !== configurationEpoch.current) return null;
+    const desired = await client.getSettings();
+    if (epoch !== configurationEpoch.current) return null;
+    if (!desired._meta?.desired_revision_id) throw new Error('No canonical desired revision was returned.');
+    if (before._meta.desired_revision_id !== desired._meta?.desired_revision_id
+        || before._meta.active_revision_id !== desired._meta?.active_revision_id
+        || before._meta.generation !== desired._meta?.generation) {
+      throw new Error('Settings changed during the audit read. Reload explicitly to review the current revision.');
+    }
+    if (typeof desired.security.audit_enabled !== 'boolean' || typeof active.audit_log_enabled !== 'boolean') {
+      throw new Error('Desired and active audit logging values were not available.');
+    }
+    return { desiredEnabled: desired.security.audit_enabled, activeEnabled: active.audit_log_enabled, meta: desired._meta };
+  };
+
+  const reloadAuditSettings = async () => {
+    if (enableFence.current) return;
+    const epoch = configurationEpoch.current;
+    enableFence.current = true;
+    setEnableBusy(true);
+    setEnableError(null);
+    setAuditSnapshot(null);
+    try {
+      const current = await readAuditSettings(epoch);
+      if (epoch !== configurationEpoch.current) return;
+      if (!current) return;
+      setAuditSnapshot(current);
+      setEnableNeedsReload(false);
+    } catch (e: any) {
+      if (epoch === configurationEpoch.current) setEnableError(`Audit settings could not be reloaded. ${e?.message || ''} Reload explicitly, or sign in again, before another change.`);
+    } finally {
+      if (epoch === configurationEpoch.current) {
+        enableFence.current = false;
+        setEnableBusy(false);
+      }
+    }
+  };
+
+  const enableAuditLogging = async () => {
+    if (enableFence.current || enableNeedsReload) return;
+    const epoch = configurationEpoch.current;
+    enableFence.current = true;
+    setEnableBusy(true);
+    setEnableError(null);
+    setEnableNotice(null);
+    setEnableReceipt(null);
+    setEnableOutcome('none');
+    setAuditSnapshot(null);
+    let writeStarted = false;
+    try {
+      const desired = await client.getSettings();
+      if (epoch !== configurationEpoch.current) return;
+      if (!desired._meta?.desired_revision_id) throw new Error('No canonical desired revision was returned.');
+      writeStarted = true;
+      setEnableOutcome('unconfirmed');
+      const receipt = await client.updateSettings({ audit_log_enabled: true, expected_revision_id: desired._meta.desired_revision_id });
+      if (epoch !== configurationEpoch.current) return;
+      setEnableReceipt(receipt);
+      setEnableOutcome('confirmed');
+      setEnableNeedsReload(true);
+      setEnableNotice(receipt._meta.apply_state === 'pending_restart'
+        ? `${receipt.changed ? 'Desired audit settings saved durably.' : 'Desired audit settings are unchanged.'} Pending changes require every worker to stop and the installation to restart. Confirm active logging in Settings afterward.`
+        : receipt.changed ? 'Audit logging settings saved durably and active.' : 'Audit logging settings are unchanged and active.');
+      try {
+        const current = await readAuditSettings(epoch);
+        if (epoch !== configurationEpoch.current) return;
+        if (!current) return;
+        setAuditSnapshot(current);
+        setEnableNeedsReload(false);
+        if (!await run() && epoch === configurationEpoch.current) setEnableError('Save confirmed; logs could not be reloaded. Refresh logs explicitly, or sign in again.');
+      } catch {
+        if (epoch === configurationEpoch.current) setEnableError('Save confirmed; audit settings could not be reloaded. Reload settings explicitly, or sign in again, before another change.');
+      }
+    } catch (e: any) {
+      if (epoch !== configurationEpoch.current) return;
+      if (writeStarted) {
+        setEnableOutcome(configurationWriteRejected(e) ? 'rejected' : 'unconfirmed');
+        setEnableNeedsReload(true);
+        setEnableError((e?.message || '').includes('409')
+          ? 'Settings changed after the desired revision loaded. Audit logging was not changed by this request. Reload settings explicitly before trying again.'
+          : `${configurationWriteRejected(e) ? 'Save was rejected.' : 'Save was not confirmed.'} ${e?.message || ''} Reload settings to check the current configuration before another change.`);
+      } else {
+        setEnableError(`Audit settings could not be loaded; no save was attempted. ${e?.message || ''}`);
+      }
+    } finally {
+      if (epoch === configurationEpoch.current) {
+        enableFence.current = false;
+        setEnableBusy(false);
+      }
+    }
+  };
 
   return (
     <Box>
@@ -115,10 +244,24 @@ function Logs({ client }: LogsProps) {
       </Card>
 
       {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
+      {enableNotice && <Alert severity={enableReceipt?._meta.apply_state === 'pending_restart' ? 'warning' : 'success'} sx={{ mb: 2 }}>{enableNotice}</Alert>}
+      {enableOutcome === 'unconfirmed' && <Alert severity="warning" sx={{ mb: 2 }}>
+        The earlier save remains unconfirmed. {auditSnapshot
+          ? 'The desired and active values below describe the currently loaded configuration; they do not establish whether that earlier request committed. Review them before making another change.'
+          : 'Reload audit settings explicitly to inspect desired and active logging before making another change.'}
+      </Alert>}
+      {auditSnapshot && <Alert severity={auditSnapshot.meta.apply_state === 'pending_restart' ? 'warning' : 'info'} sx={{ mb: 2 }}>
+        <Typography variant="body2">Loaded desired audit logging: {auditSnapshot.desiredEnabled ? 'enabled' : 'disabled'}. Loaded active audit logging: {auditSnapshot.activeEnabled ? 'enabled' : 'disabled'}.</Typography>
+        <Typography variant="body2">Desired revision: {auditSnapshot.meta.desired_revision_id}. Active revision: {auditSnapshot.meta.active_revision_id}. Generation: {auditSnapshot.meta.generation}.</Typography>
+        {auditSnapshot.meta.apply_state === 'pending_restart' && <Typography variant="body2">The loaded configuration has pending changes. Active values continue serving until every worker stops and the installation restarts.</Typography>}
+        {auditSnapshot.desiredEnabled && <Typography variant="body2">Desired audit logging is already enabled; no further enable write is needed.</Typography>}
+      </Alert>}
+      {enableError && <Alert severity="warning" sx={{ mb: 2 }}>{enableError}</Alert>}
+      {enableNeedsReload && <Button variant="outlined" onClick={reloadAuditSettings} disabled={enableBusy} sx={{ mb: 2 }}>Reload audit settings</Button>}
       {(!error && items.length === 0) && (
         <Alert severity="info" sx={{ mb: 2 }}>
           No logs yet. Enable audit logging in Settings → Security (AUDIT_LOG_ENABLED), then use the app and refresh.
-          <Button size="small" variant="outlined" sx={{ ml: 2 }} onClick={async ()=>{ try { await (client as any).updateSettings?.({ audit_log_enabled: true }); await (client as any).reloadSettings?.(); await run(); } catch {} }}>Enable Now</Button>
+          <Button size="small" variant="outlined" sx={{ ml: 2 }} onClick={enableAuditLogging} disabled={enableBusy || enableNeedsReload || auditSnapshot?.desiredEnabled}>Enable Now</Button>
         </Alert>
       )}
 

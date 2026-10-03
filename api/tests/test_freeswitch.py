@@ -16,8 +16,14 @@ def test_held_freeswitch_job_refuses_unowned_result_without_mutation(
     monkeypatch.setenv("FAX_DISABLED", "true")
     monkeypatch.setenv("FAX_DATA_DIR", str(tmp_path))
     monkeypatch.setenv("ASTERISK_INBOUND_SECRET", "sekret")
+    monkeypatch.setenv("API_KEY", "synthetic-freeswitch-test-key")
+    monkeypatch.setenv("REQUIRE_API_KEY", "true")
+    monkeypatch.setenv("PUBLIC_API_URL", "https://testserver")
+    monkeypatch.setenv("FAXBOT_CONSOLE_ORIGINS", "https://testserver")
 
-    with TestClient(app) as c:
+    with TestClient(app, base_url="https://testserver", headers={
+        "X-API-Key": "synthetic-freeswitch-test-key", "Origin": "https://testserver",
+    }) as c:
         # The actual upload conversion and durable held acceptance remain real.
         files = {
             "to": (None, "+15551230001"),

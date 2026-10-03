@@ -10,6 +10,11 @@ Settings edits the installation's canonical **desired** configuration. The page 
 4. Read the result. Applied changes are active and saved in the database. Pending changes are saved but do not take effect until every API worker stops and the installation restarts successfully.
 5. After a coordinated restart, load settings again and confirm the desired revision is active. Restarting one worker while others remain running does not promote pending settings; the readonly Reload endpoint does not promote them either.
 
+A confirmed save and the following editor reload are separate operations. If the
+reload fails, the save remains confirmed; reload or sign in again before editing
+further. If the save itself cannot be confirmed, inspect the current revision
+before resubmitting. The console does not automatically retry configuration writes.
+
 The process/container `.env` and legacy plugin JSON are bootstrap inputs for an installation without canonical state. Editing them and restarting does not override an existing canonical revision. Use the Settings editor for existing installations; keep deployment-only container/trunk settings in the deployment configuration.
 
 ## Provider directions and disabled sending
@@ -34,10 +39,17 @@ A database target or installation path change is maintenance work, not a live da
 ## API contract
 
 - `GET /admin/settings`: sanitized desired values plus `_meta` active/desired identity and apply state.
-- `PUT /admin/settings`: changed canonical fields plus the loaded `expected_revision_id`; inspect the returned `_meta.apply_state` and `pending_fields`.
+- `PUT /admin/settings`: changed canonical fields plus the loaded `expected_revision_id`; returns a confirmed receipt containing `ok`, `changed`, and `_meta` active/desired revision IDs, generation, apply state and restart requirement. Read the settings endpoint separately for values and pending fields.
 - `POST /admin/settings/reload`: reads durable state; it does not import environment or activate pending changes.
 - `GET /admin/settings/export`: redacted desired template.
 - `POST /admin/settings/persist`: writes a recovery environment file; it does not become the authoritative runtime store.
 - `POST /admin/settings/validate`: checks explicitly supplied credentials for supported builtins. Stored masks and a green presence check are not delivery proof.
+
+Settings reads and redacted export require `settings:read`. A settings write
+requires `settings:write`, with additional provider or complete-Owner authority
+determined from the normalized changes. Provider configuration reads require
+`providers:read`; writes require `providers:write` and the same change-sensitive
+checks. Provider writes return the same bounded receipt. Write permissions alone
+do not grant access to settings values, provider configuration or server paths.
 
 See the [Setup Wizard](setup-wizard.md) for a guided edit and [provider guides](../setup/index.md) for deployment prerequisites.

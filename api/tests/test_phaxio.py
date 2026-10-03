@@ -87,6 +87,10 @@ async def test_phaxio_integration_end_to_end(isolated_installation, monkeypatch,
     monkeypatch.setenv("PHAXIO_API_SECRET", "test_secret")
     monkeypatch.setenv("FAX_DISABLED", "true")  # Don't actually send
     monkeypatch.setenv("FAX_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("API_KEY", "synthetic-phaxio-test-key")
+    monkeypatch.setenv("REQUIRE_API_KEY", "true")
+    monkeypatch.setenv("PUBLIC_API_URL", "https://testserver")
+    monkeypatch.setenv("FAXBOT_CONSOLE_ORIGINS", "https://testserver")
     
     # Create test PDF file
     test_pdf_path = tmp_path / "test.pdf"
@@ -94,7 +98,9 @@ async def test_phaxio_integration_end_to_end(isolated_installation, monkeypatch,
     document.add_blank_page(width=612, height=792)
     document.write(test_pdf_path)
     
-    with TestClient(app) as client:
+    with TestClient(app, base_url="https://testserver", headers={
+        "X-API-Key": "synthetic-phaxio-test-key", "Origin": "https://testserver",
+    }) as client:
         # Test fax submission with Phaxio backend
         files = {
             "to": (None, "+15551234567"),
@@ -125,7 +131,13 @@ def test_phaxio_unsigned_unbound_callback_is_refused_without_mutation(
     """A disabled signature flag never authorizes an unowned callback."""
     monkeypatch.setenv("FAX_BACKEND", "phaxio")
     monkeypatch.setenv("PHAXIO_VERIFY_SIGNATURE", "false")
-    with TestClient(app) as client:
+    monkeypatch.setenv("API_KEY", "synthetic-phaxio-callback-test-key")
+    monkeypatch.setenv("REQUIRE_API_KEY", "true")
+    monkeypatch.setenv("PUBLIC_API_URL", "https://testserver")
+    monkeypatch.setenv("FAXBOT_CONSOLE_ORIGINS", "https://testserver")
+    with TestClient(app, base_url="https://testserver", headers={
+        "X-API-Key": "synthetic-phaxio-callback-test-key", "Origin": "https://testserver",
+    }) as client:
         from app.outbound_store import OutboundStore
         response = client.post("/fax", data={"to": "+12025550123"},
             files={"file": ("synthetic.txt", b"Held callback document", "text/plain")})

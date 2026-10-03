@@ -49,7 +49,7 @@ async def test_access_preparation_failure_releases_installation_for_restart(isol
     """Internal lifecycle ownership only; no request or user-flow acceptance."""
     from app.access.types import AccessUnavailableError
     original = main.AccessRuntime
-    def fail(configuration):
+    def fail(configuration, *, docs_base):
         raise AccessUnavailableError()
     monkeypatch.setattr(main, 'AccessRuntime', fail)
     with pytest.raises(AccessUnavailableError):

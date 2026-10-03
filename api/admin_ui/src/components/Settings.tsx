@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Box,
   Card,
@@ -26,9 +26,9 @@ import {
   Error as ErrorIcon,
   Settings as SettingsIcon,
 } from '@mui/icons-material';
-import AdminAPIClient from '../api/client';
+import AdminAPIClient, { configurationWriteRejected } from '../api/client';
 import { DEFAULT_DOCS_BASE, docsLink } from '../docsLinks';
-import type { Settings as SettingsType, SettingsPatch } from '../api/types';
+import type { ConfigurationWriteReceipt, Settings as SettingsType, SettingsPatch } from '../api/types';
 import { ResponsiveSettingItem, ResponsiveSettingSection } from './common/ResponsiveSettingItem';
 import { ResponsiveTextField, ResponsiveFormSection } from './common/ResponsiveFormFields';
 import TunnelSettings from './TunnelSettings';
@@ -134,9 +134,18 @@ function Settings({ client }: SettingsProps) {
   const [loadedForm, setLoadedForm] = useState<SettingsForm>({});
   const [docsBase, setDocsBase] = useState<string>(DEFAULT_DOCS_BASE);
   const [lastGeneratedSecret, setLastGeneratedSecret] = useState<string>('');
-  const handleForm = (field: string, value: FormValue) => setForm((prev) => ({ ...prev, [field]: value }));
-  const pendingRestart = settings?._meta?.apply_state === 'pending_restart';
-  const desiredRevision = settings?._meta?.desired_revision_id;
+  const [needsReload, setNeedsReload] = useState(false);
+  const [saveReceipt, setSaveReceipt] = useState<ConfigurationWriteReceipt | null>(null);
+  const actionFence = useRef(false);
+  const requestEpoch = useRef(0);
+  const desiredRevision = needsReload ? undefined : settings?._meta?.desired_revision_id;
+  const canEdit = !!desiredRevision && !loading && !needsReload;
+  const handleForm = (field: string, value: FormValue) => {
+    if (!canEdit || actionFence.current) return;
+    setForm((prev) => ({ ...prev, [field]: value }));
+  };
+  const revisionMeta = needsReload && saveReceipt ? saveReceipt._meta : settings?._meta;
+  const pendingRestart = revisionMeta?.apply_state === 'pending_restart';
   const loadedOutbound = settings?.hybrid?.outbound_backend ?? settings?.backend.type ?? '';
   const loadedInbound = settings?.hybrid?.inbound_backend ?? settings?.backend.type ?? '';
   const effectiveOutbound = form.outbound_backend || form.backend || loadedOutbound;
@@ -150,13 +159,18 @@ function Settings({ client }: SettingsProps) {
     setForm(values);
     setLoadedForm(values);
     setLastGeneratedSecret('');
+    setNeedsReload(false);
   };
 
   const applySettings = async () => {
+    if (actionFence.current || loading) return;
     if (!desiredRevision) {
       setError('Load a canonical settings revision before applying changes.');
       return;
     }
+    actionFence.current = true;
+    const epoch = requestEpoch.current;
+    let writeStarted = false;
     try {
       setLoading(true);
       setError(null);
@@ -169,18 +183,41 @@ function Settings({ client }: SettingsProps) {
         }
         patch[field] = typeof loadedForm[field] === 'number' ? Number(value) : value;
       }
-      const data = await client.updateSettings(patch);
-      hydrate(data);
-      setSnack(data._meta?.apply_state === 'pending_restart'
-        ? 'Desired settings saved durably. A full installation restart is required to activate this revision.'
-        : 'Settings saved durably and active.');
+      setSaveReceipt(null);
+      writeStarted = true;
+      const receipt = await client.updateSettings(patch);
+      if (epoch !== requestEpoch.current) return;
+      setSaveReceipt(receipt);
+      setNeedsReload(true);
+      setEnvContent('');
+      setSnack(receipt._meta.apply_state === 'pending_restart'
+        ? `${receipt.changed ? 'Desired settings saved durably.' : 'Desired settings are unchanged.'} A full installation restart is required to activate the pending revision.`
+        : receipt.changed ? 'Settings saved durably and active.' : 'Settings are unchanged and active.');
+      try {
+        const data = await client.getSettings();
+        if (epoch !== requestEpoch.current) return;
+        if (!data._meta?.desired_revision_id) throw new Error('No canonical desired revision was returned.');
+        hydrate(data);
+      } catch {
+        if (epoch !== requestEpoch.current) return;
+        setError('Save confirmed; the settings view could not be reloaded. Editing is paused. Load Settings explicitly, or sign in again, before another save.');
+      }
     } catch (err) {
+      if (epoch !== requestEpoch.current) return;
       const message = err instanceof Error ? err.message : 'Failed to apply settings';
+      if (!writeStarted) {
+        setError(message);
+        return;
+      }
+      setNeedsReload(true);
       setError(message.includes('409')
-        ? 'Settings changed since this revision was loaded. Refresh, review the latest desired values, and apply your edits again.'
-        : message);
+        ? 'Settings changed since this revision was loaded. Your draft is retained. Load Settings explicitly to discard it and review the current revision before saving again.'
+        : `${configurationWriteRejected(err) ? 'Save was rejected. Your draft is retained.' : 'Save was not confirmed.'} ${message} Load Settings to check the current configuration before saving again.`);
     } finally {
-      setLoading(false);
+      if (epoch === requestEpoch.current) {
+        actionFence.current = false;
+        setLoading(false);
+      }
     }
   };
 
@@ -211,26 +248,40 @@ function Settings({ client }: SettingsProps) {
   );
 
   const fetchSettings = async () => {
+    if (actionFence.current) return;
+    const epoch = ++requestEpoch.current;
+    setNeedsReload(true);
     try {
       setError(null);
       setLoading(true);
       const data = await client.getSettings();
+      if (epoch !== requestEpoch.current) return;
+      if (!data._meta?.desired_revision_id) throw new Error('The server did not return a canonical desired revision. Load Settings before editing.');
+      hydrate(data);
       try {
         const cfg = await client.getConfig();
-        setDocsBase(cfg?.branding?.docs_base || DEFAULT_DOCS_BASE);
+        if (epoch === requestEpoch.current) setDocsBase(cfg?.branding?.docs_base || DEFAULT_DOCS_BASE);
       } catch { /* Settings remain usable when branding is unavailable. */ }
-      hydrate(data);
-      setSnack(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to fetch settings');
+      if (epoch === requestEpoch.current) setError(err instanceof Error ? err.message : 'Failed to fetch settings');
     } finally {
-      setLoading(false);
+      if (epoch === requestEpoch.current) setLoading(false);
     }
   };
 
   useEffect(() => {
+    actionFence.current = false;
+    setLoading(false);
+    setSettings(null);
+    setForm({});
+    setLoadedForm({});
+    setSaveReceipt(null);
+    setSnack(null);
+    setEnvContent('');
+    setLastGeneratedSecret('');
     void fetchSettings();
-  }, []);
+    return () => { requestEpoch.current += 1; };
+  }, [client]);
 
   const exportEnv = async () => {
     try {
@@ -312,6 +363,9 @@ function Settings({ client }: SettingsProps) {
           {error}
         </Alert>
       )}
+      {needsReload && settings && <Alert severity="warning" sx={{ mb: 3 }}>
+        Editing and saving are paused. The previous editor values remain visible. Load Settings explicitly to discard them and load the current desired revision.
+      </Alert>}
 
       <Alert severity="info" sx={{ mb: 3 }}>
         <Typography variant="body2">Apply saves the desired revision durably in the configuration database. Hot changes activate immediately; restart-required changes stay pending until every worker stops and the installation starts again. Secret masks preserve existing values; clear a field explicitly to remove its value.</Typography>
@@ -325,16 +379,17 @@ function Settings({ client }: SettingsProps) {
         <Box>
         <Alert severity={pendingRestart ? 'warning' : 'info'} sx={{ mb: 3 }}>
           <Typography variant="subtitle1">
-            {pendingRestart ? 'Pending restart — editing desired settings' : 'Editing applied settings'}
+            {needsReload ? 'Reload required before editing' : pendingRestart ? 'Pending restart — editing desired settings' : 'Editing applied settings'}
           </Typography>
           <Typography variant="body2" sx={{ overflowWrap: 'anywhere' }}>
-            Desired revision: {desiredRevision ?? 'unavailable'}. Active revision: {settings._meta?.active_revision_id ?? 'unavailable'}. Generation: {settings._meta?.generation ?? 'unavailable'}.
+            {needsReload && saveReceipt ? 'Confirmed saved' : 'Loaded'} desired revision: {revisionMeta?.desired_revision_id ?? 'unavailable'}. Active revision: {revisionMeta?.active_revision_id ?? 'unavailable'}. Generation: {revisionMeta?.generation ?? 'unavailable'}.
           </Typography>
-          {pendingRestart && <Typography variant="body2">
+          {pendingRestart && !needsReload && <Typography variant="body2">
             These controls show the saved desired values. The active revision continues serving until a full installation restart. Pending fields: {settings._meta?.pending_fields.join(', ') || 'restart-required configuration'}.
           </Typography>}
           {!desiredRevision && <Typography variant="body2">Apply is disabled until the server supplies a desired revision.</Typography>}
         </Alert>
+        <Box component="fieldset" disabled={!canEdit} sx={{ border: 0, m: 0, p: 0, minWidth: 0 }}>
         <Stack spacing={3}>
           {/* Backend Configuration */}
           <ResponsiveFormSection
@@ -1198,8 +1253,9 @@ function Settings({ client }: SettingsProps) {
               </Stack>
             </ResponsiveFormSection>
         </Stack>
+        </Box>
         <Box sx={{ display: 'flex', gap: 1, mt: 2 }}>
-          <Button variant="contained" onClick={applySettings} disabled={loading || !desiredRevision || changedFields.length === 0}>
+          <Button variant="contained" onClick={applySettings} disabled={!canEdit || changedFields.length === 0}>
             Apply settings (save durably)
           </Button>
           <Button variant="outlined" startIcon={<RefreshIcon />} onClick={fetchSettings} disabled={loading}>
@@ -1258,7 +1314,7 @@ function Settings({ client }: SettingsProps) {
         </Card>
       )}
       {snack && (
-        <Alert severity="success" sx={{ mt: 2 }} onClose={() => setSnack(null)}>
+        <Alert severity={saveReceipt?._meta.apply_state === 'pending_restart' ? 'warning' : 'success'} sx={{ mt: 2 }} onClose={() => setSnack(null)}>
           {snack}
         </Alert>
       )}

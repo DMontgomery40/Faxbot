@@ -7,7 +7,7 @@ import secrets
 from contextlib import AsyncExitStack, asynccontextmanager
 from datetime import datetime, timedelta
 import tempfile
-from typing import Optional, Any, List, Dict, cast
+from typing import Optional, Any, List, Dict, Literal, cast
 import subprocess
 import time
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Header, Depends, Query, Request, Response, WebSocket
@@ -41,7 +41,7 @@ from .storage import get_storage
 from .auth import verify_db_key, create_api_key, list_api_keys, revoke_api_key, rotate_api_key
 from .plugins.http_provider import HttpManifest, HttpProviderRuntime
 from .config_paths import (
-    InvalidProviderPath, plugin_examples_path, plugin_registry_path,
+    InvalidProviderPath, plugin_examples_path,
     provider_manifest_path, providers_dir,
 )
 from .signalwire_service import get_signalwire_service
@@ -70,6 +70,7 @@ from .access.types import AccessError, AccessUnavailableError
 from .access.http import router as authentication_router, PrivateAuthMiddleware, access_error_response
 from .access.http import require_identity, runtime as access_runtime, private_operation
 from .access.http import PRIVATE_HEADERS, private_response_path
+from .access.configuration_access import configuration_write_receipt
 
 
 @asynccontextmanager
@@ -635,82 +636,85 @@ class APIKeyMeta(BaseModel):
     note: Optional[str] = None
 
 
-@app.get("/admin/config", dependencies=[Depends(require_admin)])
-def get_admin_config():
+@app.get("/admin/config")
+def get_admin_config(request: Request, identity=Depends(require_identity)):
     """Return sanitized effective configuration for operators.
-    Does not include secrets. Requires admin auth (bootstrap env key or keys:manage).
+    Requires current settings:read and uses one authorized active snapshot.
     """
-    backend = settings.fax_backend
-    ob = active_outbound()
-    ib = active_inbound()
+    access = access_runtime(request)
+    snapshot = access.configuration_access.settings(identity.actor)
+    values = snapshot.active.values
+    backend = values.fax_backend
+    ob = values.effective_outbound
+    ib = values.effective_inbound
     # Configured flags
     cfg = {
         "backend": backend,
-        "fax_disabled": settings.fax_disabled,
-        "max_file_size_mb": settings.max_file_size_mb,
+        "fax_disabled": values.fax_disabled,
+        "max_file_size_mb": values.max_file_size_mb,
         "hybrid": {
             "outbound": ob,
             "inbound": ib,
-            "outbound_explicit": bool(settings.outbound_backend),
-            "inbound_explicit": bool(settings.inbound_backend),
+            "outbound_explicit": bool(values.outbound_backend),
+            "inbound_explicit": bool(values.inbound_backend),
         },
-        "allow_restart": settings.admin_allow_restart,
-        "require_api_key": settings.require_api_key,
-        "enforce_public_https": settings.enforce_public_https,
-        "phaxio_verify_signature": settings.phaxio_verify_signature,
-        "persisted_settings_enabled": settings.enable_persisted_settings,
+        "allow_restart": values.admin_allow_restart,
+        "require_api_key": values.require_api_key,
+        "enforce_public_https": values.enforce_public_https,
+        "phaxio_verify_signature": values.phaxio_verify_signature,
+        "persisted_settings_enabled": values.enable_persisted_settings,
         "branding": {
-            "docs_base": os.getenv("DOCS_BASE_URL", "https://docs.faxbot.net/latest/"),
+            "docs_base": access.context.docs_base,
             "logo_path": "/admin/ui/faxbot_full_logo.png",
         },
         "mcp": {
-            "sse_enabled": settings.enable_mcp_sse,
-            "sse_path": settings.mcp_sse_path,
-            "require_oauth": settings.require_mcp_oauth,
+            "sse_enabled": values.enable_mcp_sse,
+            "sse_path": values.mcp_sse_path,
+            "require_oauth": values.require_mcp_oauth,
             "oauth": {
-                "issuer": settings.oauth_issuer,
-                "audience": settings.oauth_audience,
-                "jwks_url": settings.oauth_jwks_url,
+                "issuer": values.oauth_issuer,
+                "audience": values.oauth_audience,
+                "jwks_url": values.oauth_jwks_url,
             },
-            "http_enabled": settings.enable_mcp_http,
-            "http_path": settings.mcp_http_path,
+            "http_enabled": values.enable_mcp_http,
+            "http_path": values.mcp_http_path,
         },
-        "audit_log_enabled": settings.audit_log_enabled,
+        "audit_log_enabled": values.audit_log_enabled,
         "rate_limits": {
-            "global_rpm": settings.max_requests_per_minute,
-            "inbound_list_rpm": settings.inbound_list_rpm,
-            "inbound_get_rpm": settings.inbound_get_rpm,
+            "global_rpm": values.max_requests_per_minute,
+            "inbound_list_rpm": values.inbound_list_rpm,
+            "inbound_get_rpm": values.inbound_get_rpm,
         },
         "inbound": {
-            "enabled": settings.inbound_enabled,
-            "retention_days": settings.inbound_retention_days,
-            "token_ttl_minutes": settings.inbound_token_ttl_minutes,
+            "enabled": values.inbound_enabled,
+            "retention_days": values.inbound_retention_days,
+            "token_ttl_minutes": values.inbound_token_ttl_minutes,
         },
         "storage": {
-            "backend": settings.storage_backend,
-            "s3_bucket": (settings.s3_bucket[:4] + "…" if settings.s3_bucket else ""),
-            "s3_region": settings.s3_region,
-            "s3_prefix": settings.s3_prefix,
-            "s3_endpoint_url": settings.s3_endpoint_url,
-            "s3_kms_key_id": (settings.s3_kms_key_id[:8] + "…" if settings.s3_kms_key_id else ""),
+            "backend": values.storage_backend,
+            "s3_bucket": (values.s3_bucket[:4] + "…" if values.s3_bucket else ""),
+            "s3_region": values.s3_region,
+            "s3_prefix": values.s3_prefix,
+            "s3_endpoint_url": values.s3_endpoint_url,
+            "s3_kms_key_id": (values.s3_kms_key_id[:8] + "…" if values.s3_kms_key_id else ""),
         },
         "backend_configured": {
-            "phaxio": bool(settings.phaxio_api_key and settings.phaxio_api_secret),
-            "sinch": bool(settings.sinch_project_id and settings.sinch_api_key and settings.sinch_api_secret),
-            "signalwire": bool(settings.signalwire_space_url and settings.signalwire_project_id and settings.signalwire_api_token),
-            "documo": bool(settings.documo_api_key),
-            "sip_ami_configured": bool(settings.ami_username and settings.ami_password),
-            "sip_ami_password_default": (settings.ami_password == "changeme"),
+            "phaxio": bool(values.phaxio_api_key and values.phaxio_api_secret),
+            "sinch": bool(values.sinch_project_id and values.sinch_api_key and values.sinch_api_secret),
+            "signalwire": bool(values.signalwire_space_url and values.signalwire_project_id and values.signalwire_api_token),
+            "documo": bool(values.documo_api_key),
+            "sip_ami_configured": bool(values.ami_username and values.ami_password),
+            "sip_ami_password_default": (values.ami_password == "changeme"),
         },
-        "public_api_url": settings.public_api_url,
+        "public_api_url": values.public_api_url,
     }
     # v3 plugins status (feature-gated)
-    if settings.feature_v3_plugins:
+    if values.feature_v3_plugins:
         cfg["v3_plugins"] = {
             "enabled": True,
             "active_outbound": ob,
-            "config_path": settings.faxbot_config_path,
-            "plugin_install_enabled": settings.feature_plugin_install,
+            "config_path": values.faxbot_config_path,
+            "plugin_install_enabled": values.feature_plugin_install,
         }
     return cfg
 
@@ -726,10 +730,10 @@ def _settings_view(snapshot):
     return project_admin_settings(snapshot, _configuration_manager().pending_fields(snapshot))
 
 
-@app.get("/admin/settings", dependencies=[Depends(require_admin)])
-def get_admin_settings():
+@app.get("/admin/settings")
+def get_admin_settings(request: Request, identity=Depends(require_identity)):
     """Read the desired editor revision; credentials remain opaque."""
-    return _settings_view(_configuration_manager().store.read())
+    return _settings_view(access_runtime(request).configuration_access.settings(identity.actor))
 
 
 class ValidateSettingsRequest(BaseModel):
@@ -814,31 +818,38 @@ UpdateSettingsRequest = create_model(
 )
 
 
-@app.put("/admin/settings", dependencies=[Depends(require_admin)])
-def update_admin_settings(payload: UpdateSettingsRequest, request: Request):
+class ConfigurationWriteMeta(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    active_revision_id: str
+    desired_revision_id: str
+    generation: int
+    apply_state: Literal['applied', 'pending_restart']
+    restart_recommended: bool
+
+
+class ConfigurationWriteResponse(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    ok: Literal[True]
+    changed: bool
+    metadata: ConfigurationWriteMeta = Field(alias='_meta')
+
+
+@app.put("/admin/settings", response_model=ConfigurationWriteResponse)
+def update_admin_settings(payload: UpdateSettingsRequest, request: Request, identity=Depends(require_identity)):
     """Validate and durably apply one candidate, or stage it for coordinated restart."""
     manager = _configuration_manager()
     expected = request.scope['faxbot.configuration']
-    if payload.expected_revision_id is not None and payload.expected_revision_id != expected.desired.id:
-        raise HTTPException(409, detail="Settings changed since this editor loaded; reload before applying.")
+    access = access_runtime(request)
+    access.configuration_access.prepare_settings_write(identity.actor, expected, payload.expected_revision_id)
     changes = payload.model_dump(exclude_unset=True, exclude={'expected_revision_id'})
-    snapshot = manager.patch(expected, changes, actor='admin')
-    out = _settings_view(snapshot)
-    old, new = expected.active.values, snapshot.active.values
-    out['_meta'].update(
-        backend_changed=old.fax_backend != new.fax_backend,
-        outbound_changed=old.effective_outbound != new.effective_outbound,
-        inbound_changed=old.effective_inbound != new.effective_inbound,
-        storage_changed=old.storage_backend != new.storage_backend,
-        restart_recommended=snapshot.pending is not None,
-    )
-    return out
+    snapshot = manager.patch_authorized(expected, changes, principal=identity.actor, control=access.control)
+    return configuration_write_receipt(expected, snapshot)
 
 
-@app.post("/admin/settings/reload", dependencies=[Depends(require_admin)])
-def admin_reload_settings():
+@app.post("/admin/settings/reload")
+def admin_reload_settings(request: Request, identity=Depends(require_identity)):
     """Read durable active/desired state without importing environment or promoting it."""
-    return get_admin_settings()
+    return _settings_view(access_runtime(request).configuration_access.settings(identity.actor))
 
 
 @app.post("/admin/restart", dependencies=[Depends(require_admin)])
@@ -1902,10 +1913,10 @@ def run_diagnostics(request: Request):
     return diag
 
 
-@app.get("/admin/settings/export", dependencies=[Depends(require_admin)])
-def export_settings_env():
+@app.get("/admin/settings/export")
+def export_settings_env(request: Request, identity=Depends(require_identity)):
     """Display the complete desired configuration with opaque secret placeholders."""
-    values = _configuration_manager().store.read().desired.values
+    values = access_runtime(request).configuration_access.settings(identity.actor).desired.values
     content = format_environment(values.to_environment(redact_secrets=True))
     return {"env": content, "env_content": content}
 
@@ -2811,7 +2822,7 @@ def _installed_plugins(snapshot=None) -> list[dict[str, Any]]:
         "version": "1.0.0",
         "categories": ["storage"],
         "capabilities": ["store", "retrieve", "delete"],
-        "enabled": (settings.storage_backend == "local"),
+        "enabled": (snapshot.desired.values.storage_backend == "local"),
         "configurable": False,
     })
     items.append({
@@ -2820,7 +2831,7 @@ def _installed_plugins(snapshot=None) -> list[dict[str, Any]]:
         "version": "1.0.0",
         "categories": ["storage"],
         "capabilities": ["store", "retrieve", "delete"],
-        "enabled": (settings.storage_backend == "s3"),
+        "enabled": (snapshot.desired.values.storage_backend == "s3"),
         "configurable": True,
     })
     # Use the same validated catalog as activation. Installed overrides replace
@@ -2848,11 +2859,11 @@ def _installed_plugins(snapshot=None) -> list[dict[str, Any]]:
     return list(by_id.values())
 
 
-@app.get("/plugins", dependencies=[Depends(require_admin)])
-def list_plugins():
-    if not settings.feature_v3_plugins:
+@app.get("/plugins")
+def list_plugins(request: Request, identity=Depends(require_identity)):
+    snapshot = access_runtime(request).configuration_access.providers(identity.actor)
+    if not snapshot.active.values.feature_v3_plugins:
         return _plugins_disabled_response()
-    snapshot = _configuration_manager().store.read()
     items = _installed_plugins(snapshot)
     for item in items:
         item['enabled'] = _plugin_view(snapshot, item['id'])['enabled']
@@ -2887,14 +2898,15 @@ def _plugin_view(snapshot, plugin_id, role=None):
             return '' if value == '' or value is None else '***'
         configuration = private_view(state['settings'].get(plugin_id, {}))
     return {'enabled': enabled, 'settings': configuration, 'role': role,
-            '_meta': _settings_view(snapshot)['_meta']}
+            '_meta': configuration_write_receipt(snapshot, snapshot)['_meta']}
 
 
-@app.get("/plugins/{plugin_id}/config", dependencies=[Depends(require_admin)])
-def get_plugin_config(plugin_id: str, role: str | None = None):
-    if not settings.feature_v3_plugins:
+@app.get("/plugins/{plugin_id}/config")
+def get_plugin_config(plugin_id: str, request: Request, role: str | None = None, identity=Depends(require_identity)):
+    snapshot = access_runtime(request).configuration_access.providers(identity.actor)
+    if not snapshot.active.values.feature_v3_plugins:
         return _plugins_disabled_response()
-    return _plugin_view(_configuration_manager().store.read(), plugin_id.lower(), role)
+    return _plugin_view(snapshot, plugin_id.lower(), role)
 
 
 class UpdatePluginConfigIn(BaseModel):
@@ -2905,33 +2917,49 @@ class UpdatePluginConfigIn(BaseModel):
     expected_revision_id: str | None = None
 
 
-@app.put("/plugins/{plugin_id}/config", dependencies=[Depends(require_admin)])
-def update_plugin_config(plugin_id: str, payload: UpdatePluginConfigIn, request: Request):
-    if not settings.feature_v3_plugins:
-        return _plugins_disabled_response()
+@app.put("/plugins/{plugin_id}/config", response_model=ConfigurationWriteResponse)
+def update_plugin_config(plugin_id: str, payload: UpdatePluginConfigIn, request: Request,
+                         identity=Depends(require_identity)):
     expected = request.scope['faxbot.configuration']
-    if payload.expected_revision_id is not None and payload.expected_revision_id != expected.desired.id:
-        raise HTTPException(409, detail='Plugin settings changed; reload before applying.')
-    snapshot = _configuration_manager().patch_plugin(expected, plugin_id.lower(),
-        settings=payload.settings, enabled=payload.enabled, role=payload.role, actor='admin')
-    return {'ok': True, 'path': snapshot.desired.values.faxbot_config_path,
-            **_plugin_view(snapshot, plugin_id.lower(), payload.role)}
+    access = access_runtime(request)
+    access.configuration_access.prepare_provider_write(identity.actor, expected, payload.expected_revision_id)
+    snapshot = _configuration_manager().patch_plugin_authorized(expected, plugin_id.lower(),
+        settings=payload.settings, enabled=payload.enabled, role=payload.role,
+        principal=identity.actor, control=access.control)
+    return configuration_write_receipt(expected, snapshot)
 
 
 @app.get("/plugin-registry")
-def plugin_registry():
-    if not settings.feature_v3_plugins:
+def plugin_registry(request: Request, identity=Depends(require_identity)):
+    snapshot = access_runtime(request).configuration_access.providers(identity.actor)
+    if not snapshot.active.values.feature_v3_plugins:
         return _plugins_disabled_response()
-    # Try to load curated registry file; fallback to built-in list
+    # This operator-configured file and its installed-provider fallback are
+    # installation data. Only return display metadata, never arbitrary fields.
     try:
-        reg_path = plugin_registry_path()
-        if os.path.exists(reg_path):
-            import json as _json
-            with open(reg_path, "r", encoding="utf-8") as f:
-                return _json.load(f)
-    except Exception:
+        with open(snapshot.active.values.plugin_registry_path, "r", encoding="utf-8") as f:
+            registry = json.load(f)
+        if not isinstance(registry, dict) or not isinstance(registry.get('items'), list):
+            raise ValueError('Invalid provider registry.')
+        items = []
+        for entry in registry['items']:
+            if not isinstance(entry, dict) or not isinstance(entry.get('id'), str):
+                raise ValueError('Invalid provider registry item.')
+            item = {key: entry[key] for key in
+                    ('id', 'name', 'version', 'description', 'learn_more')
+                    if isinstance(entry.get(key), str)}
+            item.setdefault('name', item['id'])
+            item.setdefault('version', '')
+            for key in ('categories', 'capabilities'):
+                values = entry.get(key, [])
+                if not isinstance(values, list) or any(not isinstance(value, str) for value in values):
+                    raise ValueError('Invalid provider registry metadata.')
+                item[key] = values
+            items.append(item)
+        return {'items': items}
+    except (OSError, ValueError):
         pass
-    return {"items": _installed_plugins(), "note": "default registry"}
+    return {"items": _installed_plugins(snapshot), "note": "default registry"}
 @app.post('/signalwire-callback')
 async def signalwire_callback(request: Request):
     return await _receive_outbound_callback(request, 'signalwire')

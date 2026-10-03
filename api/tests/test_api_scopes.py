@@ -6,13 +6,15 @@ from api.app.main import app
 def test_scope_enforcement_send_requires_scope(isolated_installation, monkeypatch, tmp_path):
     # Enforce auth
     monkeypatch.setenv("REQUIRE_API_KEY", "true")
+    monkeypatch.setenv("PUBLIC_API_URL", "https://testserver")
+    monkeypatch.setenv("FAXBOT_CONSOLE_ORIGINS", "https://testserver")
     monkeypatch.setenv("FAX_DISABLED", "true")
     monkeypatch.setenv("FAX_BACKEND", "phaxio")
     monkeypatch.setenv("FAX_DATA_DIR", str(tmp_path / "faxdata_test_scopes"))
     # Use bootstrap for admin
     monkeypatch.setenv("API_KEY", "bootstrap_admin_only")
 
-    with TestClient(app) as client:
+    with TestClient(app, base_url="https://testserver", headers={"Origin": "https://testserver"}) as client:
         # Create a key with only fax:read
         r = client.post(
             "/admin/api-keys",
@@ -29,12 +31,14 @@ def test_scope_enforcement_send_requires_scope(isolated_installation, monkeypatc
 
 def test_scope_enforcement_read_requires_scope(isolated_installation, monkeypatch, tmp_path):
     monkeypatch.setenv("REQUIRE_API_KEY", "true")
+    monkeypatch.setenv("PUBLIC_API_URL", "https://testserver")
+    monkeypatch.setenv("FAXBOT_CONSOLE_ORIGINS", "https://testserver")
     monkeypatch.setenv("FAX_DISABLED", "true")
     monkeypatch.setenv("FAX_BACKEND", "phaxio")
     monkeypatch.setenv("FAX_DATA_DIR", str(tmp_path / "faxdata_test_scopes2"))
     monkeypatch.setenv("API_KEY", "bootstrap_admin_only")
 
-    with TestClient(app) as client:
+    with TestClient(app, base_url="https://testserver", headers={"Origin": "https://testserver"}) as client:
         # Create a send-capable key and queue a job
         r = client.post(
             "/admin/api-keys",
@@ -62,4 +66,3 @@ def test_scope_enforcement_read_requires_scope(isolated_installation, monkeypatc
         # Using read-only token to read should succeed
         r5 = client.get(f"/fax/{job_id}", headers={"X-API-Key": read_token})
         assert r5.status_code == 200
-

@@ -82,6 +82,17 @@ admission service. Throttled responses provide `Retry-After`.
 
 ### Integration boundaries
 
+The settings read, edit, reload and redacted-export adapters and provider list,
+registry, configuration read and configuration edit adapters use current installation
+permissions. Writes return a durable receipt independently of permission to read
+the resulting configuration. Field-sensitive changes can require additional
+provider authority or a complete Owner. These adapters do not complete provider
+installation, credential probes, recovery-file publication or other host actions.
+
+The provider registry requires `providers:read`: its configured file and fallback
+can describe this installation. Registry responses include only display metadata;
+they do not return arbitrary fields from the configured JSON file.
+
 The remaining legacy key-management routes are not the completed named-user and
 scoped-key management contract. Their free-text owner labels and historical scopes
 must not be interpreted as new role assignments or unrestricted console authority.

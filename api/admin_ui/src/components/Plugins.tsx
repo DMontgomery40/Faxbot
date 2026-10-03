@@ -33,9 +33,9 @@ import {
   ExpandMore as ExpandMoreIcon,
   ExpandLess as ExpandLessIcon,
 } from '@mui/icons-material';
-import AdminAPIClient from '../api/client';
+import AdminAPIClient, { configurationWriteRejected } from '../api/client';
 import { curatedDocsLink } from '../docsLinks';
-import type { AdminConfig, PluginConfiguration, PluginConfigurationPatch, Settings } from '../api/types';
+import type { AdminConfig, ConfigurationWriteReceipt, PluginConfiguration, PluginConfigurationPatch, Settings } from '../api/types';
 import type { AdminDestination } from '../navigation';
 import PluginConfigDialog from './PluginConfigDialog';
 import { ResponsiveFormSection } from './common/ResponsiveFormFields';
@@ -104,6 +104,11 @@ export default function Plugins({ client, config, configLoading: activeConfigLoa
   const [configLoading, setConfigLoading] = useState(false);
   const [configError, setConfigError] = useState('');
   const configLoadId = useRef(0);
+  const configWritable = useRef(false);
+  const actionFence = useRef(false);
+  const listLoadId = useRef(0);
+  const clientEpoch = useRef(0);
+  const [saveReceipt, setSaveReceipt] = useState<ConfigurationWriteReceipt | null>(null);
   const [settings, setSettings] = useState<Settings | null>(null);
   const [activeProviders, setActiveProviders] = useState<{ outbound: string; storage: string } | null>(null);
   const [query, setQuery] = useState('');
@@ -118,6 +123,7 @@ export default function Plugins({ client, config, configLoading: activeConfigLoa
   const isSmallMobile = useMediaQuery(theme.breakpoints.down('sm'));
 
   const load = async () => {
+    const loadId = ++listLoadId.current;
     try {
       setLoading(true);
       setError('');
@@ -133,6 +139,7 @@ export default function Plugins({ client, config, configLoading: activeConfigLoa
         client.getConfig(),
       ]);
       const after = await client.getSettings();
+      if (loadId !== listLoadId.current) return false;
       if (before._meta.desired_revision_id !== after._meta?.desired_revision_id
           || before._meta.active_revision_id !== after._meta?.active_revision_id
           || before._meta.generation !== after._meta?.generation) {
@@ -145,17 +152,39 @@ export default function Plugins({ client, config, configLoading: activeConfigLoa
         outbound: active.hybrid?.outbound ?? active.backend,
         storage: active.storage?.backend,
       });
+      return true;
     } catch (e: any) {
-      setError(e?.message || 'Failed to load plugins');
+      if (loadId === listLoadId.current) setError(e?.message || 'Failed to load plugins');
+      return false;
     } finally {
-      setLoading(false);
+      if (loadId === listLoadId.current) setLoading(false);
     }
   };
 
-  useEffect(() => { load(); }, [client]);
+  useEffect(() => {
+    clientEpoch.current += 1;
+    actionFence.current = false;
+    configWritable.current = false;
+    setSaving(null);
+    setNote('');
+    setSaveReceipt(null);
+    setConfigOpen(false);
+    setConfigPlugin(null);
+    setConfigData(null);
+    setConfigError('');
+    setConfigLoading(false);
+    void load();
+    return () => {
+      clientEpoch.current += 1;
+      listLoadId.current += 1;
+      configLoadId.current += 1;
+      configWritable.current = false;
+    };
+  }, [client]);
 
   const handleConfigure = async (plugin: PluginItem) => {
     const loadId = ++configLoadId.current;
+    configWritable.current = false;
     setConfigPlugin(plugin);
     setConfigData(null);
     setConfigError('');
@@ -167,7 +196,10 @@ export default function Plugins({ client, config, configLoading: activeConfigLoa
       if (!cfg._meta?.desired_revision_id) {
         throw new Error('The server did not supply a configuration revision. Reload before editing.');
       }
-      if (loadId === configLoadId.current) setConfigData(cfg);
+      if (loadId === configLoadId.current) {
+        setConfigData(cfg);
+        configWritable.current = true;
+      }
     } catch (e: any) {
       if (loadId === configLoadId.current) setConfigError(e?.message || 'Failed to load plugin config');
     } finally {
@@ -175,49 +207,114 @@ export default function Plugins({ client, config, configLoading: activeConfigLoa
     }
   };
 
-  const saveMessage = (data: PluginConfiguration) => data._meta.apply_state === 'pending_restart'
-    ? 'Desired plugin settings saved durably. The active configuration stays unchanged until a full installation restart.'
-    : 'Plugin settings saved durably and active.';
+  const saveMessage = (data: ConfigurationWriteReceipt) => data._meta.apply_state === 'pending_restart'
+    ? `${data.changed ? 'Desired plugin settings saved durably.' : 'Desired plugin settings are unchanged.'} Pending changes require every API worker to stop and the installation to restart; active settings remain in effect for those fields.`
+    : data.changed ? 'Plugin settings saved durably and active.' : 'Plugin settings are unchanged and active.';
 
   const mutationError = (e: any, fallback: string) => (e?.message || '').includes('409')
-    ? 'Plugin settings changed since this revision loaded. Reload, review the latest desired values, and apply your edits again.'
-    : e?.message || fallback;
+    ? 'Plugin settings changed since this revision loaded. Your draft is retained. Reload explicitly to review the current desired revision before saving again.'
+    : `${configurationWriteRejected(e) ? 'Save was rejected. Your draft is retained.' : 'Save was not confirmed.'} ${e?.message || fallback} Reload to check the current configuration before saving again.`;
 
   const handleSaveConfig = async (payload: PluginConfigurationPatch) => {
-    if (!configPlugin) throw new Error('Reload a plugin before saving.');
-    try {
-      setSaving(configPlugin.id);
-      setError('');
-      setNote('');
-      const result = await client.updatePluginConfig(configPlugin.id, payload);
-      setConfigData(result);
-      setNote(saveMessage(result));
-      await load();
-    } catch (e: any) {
-      const message = mutationError(e, 'Failed to save plugin config');
-      setError(message);
-      throw new Error(message);
-    } finally {
-      setSaving(null);
-    }
-  };
-
-  const handleMakeActiveOutbound = async (pluginId: string) => {
+    if (!configPlugin || !configWritable.current || actionFence.current) throw new Error('Reload a plugin before saving. Your draft is retained until Reload.');
+    const pluginId = configPlugin.id;
+    const epoch = clientEpoch.current;
+    actionFence.current = true;
+    let receipt: ConfigurationWriteReceipt;
     try {
       setSaving(pluginId);
       setError('');
       setNote('');
-      const desiredRevision = settings?._meta?.desired_revision_id;
-      if (!desiredRevision) throw new Error('Refresh plugins before selecting a provider.');
-      const result = await client.updatePluginConfig(pluginId, {
+      setSaveReceipt(null);
+      receipt = await client.updatePluginConfig(pluginId, payload);
+      if (epoch !== clientEpoch.current) return;
+    } catch (e: any) {
+      if (epoch !== clientEpoch.current) return;
+      configWritable.current = false;
+      setSettings(null);
+      const message = mutationError(e, 'Failed to save plugin config');
+      setError(message);
+      setConfigError(message);
+      actionFence.current = false;
+      setSaving(null);
+      throw new Error(message);
+    }
+    // The receipt confirms the mutation. Subsequent read errors must not reject
+    // onSave, which would leave the dialog reporting a failed save.
+    configWritable.current = false;
+    const loadId = ++configLoadId.current;
+    setConfigData(null);
+    setConfigLoading(true);
+    setConfigError('');
+    setSettings(null);
+    setActiveProviders(null);
+    setSaveReceipt(receipt);
+    const saved = saveMessage(receipt);
+    setNote(saved);
+    try {
+      try {
+        const desired = await client.getPluginConfig(pluginId, payload.role);
+        if (!desired._meta?.desired_revision_id) throw new Error('No canonical desired revision was returned.');
+        if (loadId === configLoadId.current) {
+          setConfigData(desired);
+          configWritable.current = true;
+        }
+      } catch {
+        if (epoch !== clientEpoch.current) return;
+        if (loadId === configLoadId.current) setConfigError('Save confirmed; the plugin settings view could not be reloaded. Reload explicitly, or sign in again, before another save.');
+        setNote(`${saved} Save confirmed; the plugin settings view could not be reloaded. Reload explicitly, or sign in again, before another save.`);
+      }
+      if (epoch !== clientEpoch.current) return;
+      if (!await load()) {
+        if (epoch === clientEpoch.current) setNote(`${saved} Save confirmed; the provider list could not be reloaded. Refresh plugins explicitly, or sign in again, before another selection.`);
+      }
+    } finally {
+      if (epoch === clientEpoch.current) {
+        if (loadId === configLoadId.current) setConfigLoading(false);
+        actionFence.current = false;
+        setSaving(null);
+      }
+    }
+  };
+
+  const handleMakeActiveOutbound = async (pluginId: string) => {
+    const desiredRevision = settings?._meta?.desired_revision_id;
+    if (actionFence.current || !desiredRevision) return;
+    const epoch = clientEpoch.current;
+    actionFence.current = true;
+    let receipt: ConfigurationWriteReceipt;
+    try {
+      setSaving(pluginId);
+      setError('');
+      setNote('');
+      setSaveReceipt(null);
+      receipt = await client.updatePluginConfig(pluginId, {
         enabled: true, role: 'outbound', expected_revision_id: desiredRevision,
       });
-      setNote(saveMessage(result));
-      await load();
+      if (epoch !== clientEpoch.current) return;
     } catch (e: any) {
+      if (epoch !== clientEpoch.current) return;
+      setSettings(null);
       setError(mutationError(e, 'Failed to save plugin config'));
-    } finally {
+      actionFence.current = false;
       setSaving(null);
+      return;
+    }
+    configWritable.current = false;
+    configLoadId.current += 1;
+    setConfigData(null);
+    setSettings(null);
+    setActiveProviders(null);
+    setSaveReceipt(receipt);
+    const saved = saveMessage(receipt);
+    setNote(saved);
+    try {
+      if (!await load() && epoch === clientEpoch.current) setNote(`${saved} Save confirmed; the provider list could not be reloaded. Refresh plugins explicitly, or sign in again, before another selection.`);
+    } finally {
+      if (epoch === clientEpoch.current) {
+        actionFence.current = false;
+        setSaving(null);
+      }
     }
   };
 
@@ -235,6 +332,7 @@ export default function Plugins({ client, config, configLoading: activeConfigLoa
     const installed = new Set((items || []).map(i => i.id));
     return (registry || []).filter(r => !installed.has(r.id) && matches(r as any));
   };
+  const renderedClientEpoch = clientEpoch.current;
 
   return (
     <Box sx={{ p: { xs: 2, sm: 0 } }}>
@@ -283,8 +381,11 @@ export default function Plugins({ client, config, configLoading: activeConfigLoa
         
         {note && (
           <Fade in>
-            <Alert severity="success" onClose={() => setNote('')} sx={{ borderRadius: 2 }}>
+            <Alert severity={saveReceipt?._meta.apply_state === 'pending_restart' ? 'warning' : 'success'} onClose={() => setNote('')} sx={{ borderRadius: 2 }}>
               {note}
+              {saveReceipt && <Typography variant="caption" display="block" sx={{ mt: 1 }}>
+                Confirmed desired revision: {saveReceipt._meta.desired_revision_id}. Active revision: {saveReceipt._meta.active_revision_id}. Generation: {saveReceipt._meta.generation}.
+              </Typography>}
             </Alert>
           </Fade>
         )}
@@ -562,7 +663,9 @@ export default function Plugins({ client, config, configLoading: activeConfigLoa
               loading={configLoading}
               loadError={configError}
               onClose={() => {
+                if (renderedClientEpoch !== clientEpoch.current) return;
                 configLoadId.current += 1;
+                configWritable.current = false;
                 setConfigOpen(false);
                 setConfigLoading(false);
               }}

@@ -27,7 +27,8 @@ PRIVATE_HEADERS = {'Cache-Control':'no-store', 'X-Content-Type-Options':'nosniff
 
 
 def private_response_path(path):
-    return path in {'/fax', '/inbound'} or path.startswith(('/auth/', '/access/', '/admin/', '/fax/', '/inbound/'))
+    return path in {'/fax', '/inbound', '/plugins', '/plugin-registry'} or path.startswith(
+        ('/auth/', '/access/', '/admin/', '/fax/', '/inbound/', '/plugins/'))
 
 
 class BrowserRequestVerificationError(AccessError):

@@ -9,7 +9,7 @@ import type {
   SettingsPatch,
   PluginConfiguration,
   PluginConfigurationPatch,
-  PluginConfigurationResult,
+  ConfigurationWriteReceipt,
   PluginRole,
   DiagnosticsResult,
   ValidationResult,
@@ -69,6 +69,37 @@ export function reconciliationNotice(reason?: string | null): string {
   return notice;
 }
 
+export class AdminAPIError extends Error {
+  constructor(readonly status: number, statusText: string) {
+    super(`API Error: ${status} ${statusText}`);
+  }
+}
+
+export function configurationWriteRejected(error: unknown): boolean {
+  return error instanceof AdminAPIError && [400, 401, 403, 404, 409, 413, 422].includes(error.status);
+}
+
+function configurationReceipt(value: unknown): ConfigurationWriteReceipt {
+  const receipt = value as Partial<ConfigurationWriteReceipt> | null;
+  const meta = receipt?._meta;
+  const hasExactKeys = (candidate: object, keys: string[]) =>
+    Object.keys(candidate).length === keys.length && keys.every(key => Object.prototype.hasOwnProperty.call(candidate, key));
+  if (!receipt || typeof receipt !== 'object'
+      || !hasExactKeys(receipt, ['ok', 'changed', '_meta'])
+      || receipt.ok !== true || typeof receipt.changed !== 'boolean'
+      || !meta || typeof meta !== 'object'
+      || !hasExactKeys(meta, ['active_revision_id', 'desired_revision_id', 'generation', 'apply_state', 'restart_recommended'])
+      || typeof meta.active_revision_id !== 'string' || !meta.active_revision_id
+      || typeof meta.desired_revision_id !== 'string' || !meta.desired_revision_id
+      || !Number.isSafeInteger(meta.generation) || meta.generation < 1
+      || !['applied', 'pending_restart'].includes(meta.apply_state)
+      || typeof meta.restart_recommended !== 'boolean'
+      || meta.restart_recommended !== (meta.apply_state === 'pending_restart')) {
+    throw new Error('The server did not return a valid configuration write receipt.');
+  }
+  return receipt as ConfigurationWriteReceipt;
+}
+
 export class AdminAPIClient {
   private baseURL: string;
   private apiKey: string;
@@ -103,7 +134,7 @@ export class AdminAPIClient {
           throw new Error(body.detail);
         }
       }
-      throw new Error(`API Error: ${response.status} ${response.statusText}`);
+      throw new AdminAPIError(response.status, response.statusText);
     }
 
     return response;
@@ -141,12 +172,12 @@ export class AdminAPIClient {
     return res.json();
   }
 
-  async updateSettings(settings: SettingsPatch): Promise<Settings> {
+  async updateSettings(settings: SettingsPatch): Promise<ConfigurationWriteReceipt> {
     const res = await this.fetch('/admin/settings', {
       method: 'PUT',
       body: JSON.stringify(settings),
     });
-    return res.json();
+    return configurationReceipt(await res.json());
   }
 
   async reloadSettings(): Promise<Settings> {
@@ -420,12 +451,12 @@ export class AdminAPIClient {
     return res.json();
   }
 
-  async updatePluginConfig(pluginId: string, payload: PluginConfigurationPatch): Promise<PluginConfigurationResult> {
+  async updatePluginConfig(pluginId: string, payload: PluginConfigurationPatch): Promise<ConfigurationWriteReceipt> {
     const res = await this.fetch(`/plugins/${encodeURIComponent(pluginId)}/config`, {
       method: 'PUT',
       body: JSON.stringify(payload || {}),
     });
-    return res.json();
+    return configurationReceipt(await res.json());
   }
 
   async getPluginRegistry(): Promise<{ items: any[] }> {
