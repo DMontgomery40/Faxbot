@@ -2,7 +2,7 @@ from fastapi.testclient import TestClient  # type: ignore
 from api.app.main import app
 
 
-def test_rate_limit_enforced(monkeypatch, tmp_path):
+def test_rate_limit_enforced(isolated_installation, monkeypatch, tmp_path):
     monkeypatch.setenv("REQUIRE_API_KEY", "true")
     monkeypatch.setenv("FAX_DISABLED", "true")
     monkeypatch.setenv("FAX_BACKEND", "phaxio")
@@ -27,4 +27,3 @@ def test_rate_limit_enforced(monkeypatch, tmp_path):
         # Third within same minute should hit 429
         r3 = client.post("/fax", headers={"X-API-Key": token}, data={"to": "+15551234567"}, files=files)
         assert r3.status_code == 429
-

@@ -2,14 +2,14 @@ from fastapi.testclient import TestClient
 from app.main import app
 
 
-def test_health():
-    client = TestClient(app)
-    r = client.get("/health")
-    assert r.status_code == 200
-    assert r.json()["status"] == "ok"
+def test_health(isolated_installation):
+    with TestClient(app) as client:
+        r = client.get("/health")
+        assert r.status_code == 200
+        assert r.json()["status"] == "ok"
 
 
-def test_send_validation_bad_number():
+def test_send_validation_bad_number(isolated_installation):
     """Test validation with bad phone number."""
     with TestClient(app) as c:
         files = {
@@ -20,7 +20,7 @@ def test_send_validation_bad_number():
         assert r.status_code == 400
 
 
-def test_send_txt():
+def test_send_txt(isolated_installation):
     """Submit real text while the test environment disables fax transmission."""
     with TestClient(app) as c:
         files = {

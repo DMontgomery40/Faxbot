@@ -21,7 +21,7 @@ from app.config_values import ConfigurationValues
 
 
 @pytest.mark.asyncio
-async def test_api_lifespan_stops_cleanup_before_reentering(monkeypatch):
+async def test_api_lifespan_stops_cleanup_before_reentering(isolated_installation, monkeypatch):
     """An unowned cleanup loop must not survive shutdown or double on restart."""
     monkeypatch.setenv("ARTIFACT_TTL_DAYS", "1")
     before = asyncio.all_tasks()
@@ -124,7 +124,7 @@ async def test_ami_login_reconnect_and_shutdown_use_owned_connections(monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_api_lifespan_closes_ami_and_does_not_duplicate_callbacks(monkeypatch):
+async def test_api_lifespan_closes_ami_and_does_not_duplicate_callbacks(isolated_installation, monkeypatch):
     """The API must close its real AMI supervisor when sequential lifespans end."""
     results = asyncio.Queue()
     peers = set()
@@ -278,10 +278,10 @@ async def test_standalone_http_repeated_lifespans_release_sessions():
 
 
 @pytest.mark.asyncio
-async def test_failed_enabled_mcp_startup_cleans_up_api_tasks(monkeypatch):
+async def test_failed_enabled_mcp_startup_cleans_up_api_tasks(isolated_installation, monkeypatch):
     from python_mcp import http_server
 
-    def unavailable():
+    def unavailable(**configuration):
         raise RuntimeError("synthetic MCP startup failure")
 
     monkeypatch.setattr(http_server, "create_app", unavailable)

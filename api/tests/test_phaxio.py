@@ -77,7 +77,7 @@ def test_backend_selection_from_env(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_phaxio_integration_end_to_end(monkeypatch, tmp_path):
+async def test_phaxio_integration_end_to_end(isolated_installation, monkeypatch, tmp_path):
     """Test complete Phaxio integration flow."""
     # Setup test environment
     monkeypatch.setenv("FAX_BACKEND", "phaxio")
@@ -116,7 +116,7 @@ async def test_phaxio_integration_end_to_end(monkeypatch, tmp_path):
             assert data["status"] in ["queued", "disabled"]
 
 
-def test_phaxio_callback_handling(monkeypatch):
+def test_phaxio_callback_handling(isolated_installation, monkeypatch):
     """Test Phaxio webhook callback processing."""
     # Disable signature verification for this unit test (default is now true)
     monkeypatch.setenv("PHAXIO_VERIFY_SIGNATURE", "false")
@@ -184,7 +184,7 @@ def test_status_mapping():
         assert result == expected_internal
 
 
-def test_pdf_endpoint_security(monkeypatch, tmp_path):
+def test_pdf_endpoint_security(isolated_installation, monkeypatch, tmp_path):
     """Test PDF serving endpoint security."""
     monkeypatch.setenv("FAX_DATA_DIR", str(tmp_path))
     monkeypatch.setenv("FAX_DISABLED", "true")

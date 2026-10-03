@@ -5,6 +5,7 @@ from contextlib import contextmanager
 import unicodedata
 
 import pytest
+import sqlalchemy as sa
 from fastapi.testclient import TestClient
 from fastapi import UploadFile
 from PIL import Image
@@ -13,16 +14,32 @@ from reportlab.pdfgen import canvas
 
 from app.main import app
 from app import main
+from app.config_values import ConfigurationValues
 from app.documents import prepare_upload, UploadPreparationError
+
+
+LIFECYCLE_LOCKS = frozenset({".faxbot-startup.lock", ".faxbot-serving.lock"})
+
+
+def assert_artifacts(data_dir, *names):
+    """Account for exact runtime control files without hiding unexpected artifacts."""
+    assert {path.name for path in data_dir.iterdir()} == LIFECYCLE_LOCKS | set(names)
+    for name in LIFECYCLE_LOCKS:
+        path = data_dir / name
+        assert path.is_file() and not path.is_symlink()
+        assert path.read_bytes() == b""
 
 
 @pytest.fixture
 def document_client(monkeypatch, tmp_path, request):
     data_dir = tmp_path / "artifacts"
     backend = getattr(request, "param", "phaxio")
+    for name in ConfigurationValues.environment_keys():
+        monkeypatch.delenv(name, raising=False)
     for name, value in {
         "DATABASE_URL": f"sqlite:///{tmp_path / 'documents.db'}",
         "FAX_DATA_DIR": str(data_dir),
+        "FAXBOT_INSTALLATION_KEY_PATH": str(tmp_path / ".configuration.key"),
         "FAX_DISABLED": "true",
         "FAX_BACKEND": backend,
         "FAX_OUTBOUND_BACKEND": backend,
@@ -35,7 +52,14 @@ def document_client(monkeypatch, tmp_path, request):
     }.items():
         monkeypatch.setenv(name, value)
     with TestClient(app, headers={"X-API-Key": "synthetic-document-test-key"}) as client:
-        yield client, data_dir
+        assert_artifacts(data_dir)
+        lock_bytes = {name: (data_dir / name).read_bytes() for name in LIFECYCLE_LOCKS}
+        try:
+            yield client, data_dir
+        finally:
+            assert {
+                name: (data_dir / name).read_bytes() for name in LIFECYCLE_LOCKS
+            } == lock_bytes
 
 
 def submit(client, content, filename="contest.txt", content_type="text/plain"):
@@ -81,7 +105,7 @@ def test_pdf_bytes_survive_misleading_metadata(document_client, filename, conten
     download = client.get(f"/admin/fax-jobs/{job['id']}/pdf")
     assert download.content == source
     assert job["pages"] == 2
-    assert {p.name for p in data_dir.iterdir()} == {f"{job['id']}.pdf"}
+    assert_artifacts(data_dir, f"{job['id']}.pdf")
 
 
 @pytest.mark.parametrize("content,status", [
@@ -96,7 +120,7 @@ def test_invalid_upload_creates_no_job_or_artifacts(document_client, content, st
     assert set(response.json()) == {"detail"}
     assert "private-source" not in response.json()["detail"]
     assert client.get("/admin/fax-jobs").json()["total"] == 0
-    assert list(data_dir.iterdir()) == []
+    assert_artifacts(data_dir)
 
 
 @pytest.mark.parametrize("filename", [
@@ -111,7 +135,7 @@ def test_uploaded_name_is_display_only(document_client, filename, tmp_path):
     display_name = client.get(f"/admin/fax-jobs/{job_id}").json()["file_name"]
     assert 0 < len(display_name) <= 200
     assert "/" not in display_name and "\\" not in display_name
-    assert {p.name for p in data_dir.iterdir()} == {f"{job_id}.pdf"}
+    assert_artifacts(data_dir, f"{job_id}.pdf")
     assert not (tmp_path / "escaped.txt").exists()
     assert not (tmp_path.parent / "escaped.txt").exists()
 
@@ -121,7 +145,7 @@ def test_oversized_upload_creates_no_job_or_artifacts(document_client):
     response = submit(client, b"x" * (1024 * 1024 + 1))
     assert response.status_code == 413
     assert client.get("/admin/fax-jobs").json()["total"] == 0
-    assert list(data_dir.iterdir()) == []
+    assert_artifacts(data_dir)
 
 
 @pytest.mark.parametrize("document_client", ["freeswitch"], indirect=True)
@@ -149,7 +173,94 @@ def test_missing_rasterizer_fails_without_accepting_job(document_client, monkeyp
     assert response.status_code == 503
     assert response.json() == {"detail": "PDF rasterization is unavailable."}
     assert client.get("/admin/fax-jobs").json()["total"] == 0
-    assert list(data_dir.iterdir()) == []
+    assert_artifacts(data_dir)
+
+
+@contextmanager
+def acceptance_fault(monkeypatch, data_dir, *, committed=False,
+                     fail_before_commit=False, forbid_post_commit_reads=False):
+    """Fail the real acceptance transaction, leaving startup and request reads intact."""
+    store = app.state.configuration_runtime.manager.store
+    accept = store.accept_outbound
+    commit = sa.engine.Connection.commit
+    execute = sa.engine.Connection.execute
+    connect = store.engine.connect
+    state = {
+        "accept": 0, "insert": 0, "commit": 0, "post_commit_reads": 0,
+        "dispatch": 0, "accepting": False, "commit_attempted": False,
+    }
+
+    def accepting(revision, job):
+        state["accept"] += 1
+        state["revision"] = revision
+        state["job_id"] = job["id"]
+        assert (data_dir / f"{job['id']}.pdf").is_file(), "fault preceded preparation"
+        state["accepting"] = True
+        try:
+            return accept(revision, job)
+        finally:
+            state["accepting"] = False
+
+    def faulting_execute(connection, statement, *args, **kwargs):
+        if (state["accepting"] and getattr(statement, "is_insert", False)
+                and statement.table is store.jobs):
+            state["insert"] += 1
+            if fail_before_commit:
+                raise sa.exc.OperationalError(
+                    "INSERT", {}, OSError("/private/database-host-details"),
+                )
+        return execute(connection, statement, *args, **kwargs)
+
+    def faulting_commit(connection):
+        if not state["accepting"]:
+            return commit(connection)
+        state["commit"] += 1
+        state["commit_attempted"] = True
+        if committed:
+            commit(connection)
+        raise sa.exc.OperationalError(
+            "COMMIT", {}, OSError("/private/database-connection-details"),
+        )
+
+    def guarded_connect(*args, **kwargs):
+        if forbid_post_commit_reads and state["commit_attempted"]:
+            state["post_commit_reads"] += 1
+            raise sa.exc.OperationalError(
+                "SELECT", {}, OSError("/private/database-host-details"),
+            )
+        return connect(*args, **kwargs)
+
+    async def unexpected_dispatch(*args, **kwargs):
+        state["dispatch"] += 1
+        raise AssertionError("Uncertain fax was dispatched")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(store, "accept_outbound", accepting)
+        patch.setattr(sa.engine.Connection, "execute", faulting_execute)
+        patch.setattr(sa.engine.Connection, "commit", faulting_commit)
+        patch.setattr(store.engine, "connect", guarded_connect)
+        patch.setattr(main, "_dispatch_accepted_job", unexpected_dispatch)
+        yield state
+
+
+def assert_durable_acceptance(state, *, committed):
+    """Reconcile through a fresh connection after the fault guards are removed."""
+    store = app.state.configuration_runtime.manager.store
+    with store.engine.connect() as connection:
+        jobs = connection.execute(sa.select(store.jobs)).mappings().all()
+        bindings = connection.execute(sa.select(store.job_bindings)).mappings().all()
+    assert len(jobs) == len(bindings) == int(committed)
+    if committed:
+        job_id = state["job_id"]
+        revision = state["revision"]
+        assert jobs[0]["id"] == job_id
+        assert jobs[0]["status"] == "queued"
+        assert bindings[0]["id"] == job_id
+        assert bindings[0]["revision_id"] == revision.id
+        assert bindings[0]["profile_id"] == revision.profile_id("outbound")
+        profile = store.outbound_profile(job_id)
+        assert profile.id == bindings[0]["profile_id"]
+        assert jobs[0]["backend"] == profile.configuration.provider_id
 
 
 @pytest.mark.parametrize("committed", [False, True])
@@ -157,82 +268,53 @@ def test_commit_error_resolves_acceptance_before_cleaning_files(
     document_client, monkeypatch, committed,
 ):
     client, data_dir = document_client
-    session_factory = main.SessionLocal
-
-    @contextmanager
-    def uncertain_session():
-        with session_factory() as db:
-            commit = db.commit
-
-            def fail_commit():
-                if committed:
-                    commit()
-                raise OSError("/private/database-connection-details")
-
-            db.commit = fail_commit
-            yield db
-
-    with monkeypatch.context() as patch:
-        patch.setattr(main, "SessionLocal", uncertain_session)
+    with acceptance_fault(monkeypatch, data_dir, committed=committed) as state:
         response = submit(client, b"Persisted document marker")
+    assert state["accept"] == state["insert"] == state["commit"] == 1
+    assert state["dispatch"] == 0
+    assert response.status_code == 503
     assert "private" not in response.text
-    jobs = client.get("/admin/fax-jobs").json()
-    if committed:
-        assert response.status_code == 202
-        assert jobs["total"] == 1
-        job_id = response.json()["id"]
-        pdf = client.get(f"/admin/fax-jobs/{job_id}/pdf")
-        assert "Persisted document marker" in PdfReader(BytesIO(pdf.content)).pages[0].extract_text()
-    else:
-        assert response.status_code == 503
-        assert jobs["total"] == 0
-        # A currently missing row does not rule out a delayed COMMIT.
-        assert "uncertain" in response.json()["detail"]
-        assert len(list(data_dir.glob("*.pdf"))) == 1
+    # Neither a missing row nor a successful recovery read changes lost acknowledgment.
+    assert "uncertain" in response.json()["detail"]
+    job_id = state["job_id"]
+    assert job_id in response.json()["detail"]
+    assert_artifacts(data_dir, f"{job_id}.pdf")
+    text = PdfReader(data_dir / f"{job_id}.pdf").pages[0].extract_text()
+    assert "Persisted document marker" in text
+    assert_durable_acceptance(state, committed=committed)
 
 
 def test_unknown_database_outcome_retains_document_and_reports_uncertainty(
     document_client, monkeypatch,
 ):
     client, data_dir = document_client
-    session_factory = main.SessionLocal
-    calls = 0
-
-    @contextmanager
-    def unavailable_session():
-        nonlocal calls
-        calls += 1
-        if calls > 1:
-            raise OSError("/private/database-host-details")
-        with session_factory() as db:
-            def failed_commit():
-                raise OSError("/private/database-host-details")
-            db.commit = failed_commit
-            yield db
-
-    with monkeypatch.context() as patch:
-        patch.setattr(main, "SessionLocal", unavailable_session)
+    with acceptance_fault(monkeypatch, data_dir, committed=True,
+                          forbid_post_commit_reads=True) as state:
         response = submit(client, b"Retain until acceptance is known")
+    assert state["accept"] == state["insert"] == state["commit"] == 1
+    assert state["post_commit_reads"] == state["dispatch"] == 0
     assert response.status_code == 503
     assert "uncertain" in response.json()["detail"]
     assert "private" not in response.text
-    artifacts = list(data_dir.iterdir())
-    assert len(artifacts) == 1 and artifacts[0].suffix == ".pdf"
-    assert artifacts[0].stem in response.json()["detail"]
+    job_id = state["job_id"]
+    assert_artifacts(data_dir, f"{job_id}.pdf")
+    assert job_id in response.json()["detail"]
+    text = PdfReader(data_dir / f"{job_id}.pdf").pages[0].extract_text()
+    assert "Retain until acceptance is known" in text
+    assert_durable_acceptance(state, committed=True)
 
 
 def test_failure_before_any_commit_attempt_cleans_prepared_files(document_client, monkeypatch):
     client, data_dir = document_client
 
-    def unavailable_session():
-        raise OSError("/private/database-host-details")
-
-    with monkeypatch.context() as patch:
-        patch.setattr(main, "SessionLocal", unavailable_session)
-        response = submit(client, b"No database transaction was started")
+    with acceptance_fault(monkeypatch, data_dir, fail_before_commit=True) as state:
+        response = submit(client, b"Acceptance failed before commit")
+    assert state["accept"] == state["insert"] == 1
+    assert state["commit"] == state["dispatch"] == 0
     assert response.status_code == 503
     assert "private" not in response.text
-    assert list(data_dir.iterdir()) == []
+    assert_artifacts(data_dir)
+    assert_durable_acceptance(state, committed=False)
 
 
 @pytest.mark.asyncio

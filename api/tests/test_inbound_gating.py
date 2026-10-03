@@ -2,7 +2,7 @@ from fastapi.testclient import TestClient
 from app.main import app
 
 
-def test_inbound_route_gating_with_explicit_backend(monkeypatch, tmp_path):
+def test_inbound_route_gating_with_explicit_backend(isolated_installation, monkeypatch, tmp_path):
     # Explicitly set inbound backend to phaxio; internal asterisk route should 404
     monkeypatch.setenv("INBOUND_ENABLED", "true")
     monkeypatch.setenv("FAX_INBOUND_BACKEND", "phaxio")

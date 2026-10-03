@@ -3,7 +3,7 @@ from PIL import Image
 from api.app.main import app
 
 
-def test_internal_asterisk_inbound_flow(monkeypatch, tmp_path):
+def test_internal_asterisk_inbound_flow(isolated_installation, monkeypatch, tmp_path):
     # Enable inbound and set secret
     monkeypatch.setenv("INBOUND_ENABLED", "true")
     monkeypatch.setenv("ASTERISK_INBOUND_SECRET", "sekret")

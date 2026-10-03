@@ -3,7 +3,7 @@ from fastapi.testclient import TestClient  # type: ignore
 from api.app.main import app
 
 
-def test_scope_enforcement_send_requires_scope(monkeypatch, tmp_path):
+def test_scope_enforcement_send_requires_scope(isolated_installation, monkeypatch, tmp_path):
     # Enforce auth
     monkeypatch.setenv("REQUIRE_API_KEY", "true")
     monkeypatch.setenv("FAX_DISABLED", "true")
@@ -27,7 +27,7 @@ def test_scope_enforcement_send_requires_scope(monkeypatch, tmp_path):
         assert r2.status_code == 403
 
 
-def test_scope_enforcement_read_requires_scope(monkeypatch, tmp_path):
+def test_scope_enforcement_read_requires_scope(isolated_installation, monkeypatch, tmp_path):
     monkeypatch.setenv("REQUIRE_API_KEY", "true")
     monkeypatch.setenv("FAX_DISABLED", "true")
     monkeypatch.setenv("FAX_BACKEND", "phaxio")

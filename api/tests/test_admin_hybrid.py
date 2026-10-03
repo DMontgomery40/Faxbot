@@ -1,12 +1,14 @@
 from fastapi.testclient import TestClient
 from app.main import app
+from app.config_file import parse_environment
+from app.config_values import ConfigurationValues
 
 
 def _admin_headers():
     return {"X-API-Key": "bootstrap_admin_only"}
 
 
-def test_admin_config_hybrid_fields(monkeypatch):
+def test_admin_config_hybrid_fields(isolated_installation, monkeypatch):
     monkeypatch.setenv("API_KEY", "bootstrap_admin_only")
     monkeypatch.setenv("REQUIRE_API_KEY", "true")
     monkeypatch.setenv("FAX_BACKEND", "phaxio")
@@ -21,7 +23,7 @@ def test_admin_config_hybrid_fields(monkeypatch):
         assert data["hybrid"]["inbound_explicit"] is True
 
 
-def test_admin_settings_update_hybrid(monkeypatch):
+def test_admin_settings_update_hybrid(isolated_installation, monkeypatch):
     monkeypatch.setenv("API_KEY", "bootstrap_admin_only")
     monkeypatch.setenv("REQUIRE_API_KEY", "true")
     monkeypatch.setenv("FAX_BACKEND", "phaxio")
@@ -31,8 +33,13 @@ def test_admin_settings_update_hybrid(monkeypatch):
         payload = {"outbound_backend": "sinch", "inbound_backend": "sip", "inbound_enabled": True}
         r = client.put("/admin/settings", headers=_admin_headers(), json=payload)
         assert r.status_code == 200
-        # Reload and verify
-        client.post("/admin/settings/reload", headers=_admin_headers())
+        # Reload reads desired state without promoting resource changes.
+        reloaded = client.post("/admin/settings/reload", headers=_admin_headers())
+        assert reloaded.status_code == 200
+        still_active = client.get("/admin/config", headers=_admin_headers()).json()
+        assert still_active["hybrid"]["outbound"] == "phaxio"
+    # A stopped installation prepares and promotes the complete pending revision.
+    with TestClient(app) as client:
         r2 = client.get("/admin/config", headers=_admin_headers())
         assert r2.status_code == 200
         cfg = r2.json()
@@ -40,7 +47,7 @@ def test_admin_settings_update_hybrid(monkeypatch):
         assert cfg["hybrid"]["inbound"] == "sip"
 
 
-def test_admin_inbound_callbacks_reflect_inbound_backend(monkeypatch):
+def test_admin_inbound_callbacks_reflect_inbound_backend(isolated_installation, monkeypatch):
     monkeypatch.setenv("API_KEY", "bootstrap_admin_only")
     monkeypatch.setenv("REQUIRE_API_KEY", "true")
     monkeypatch.setenv("FAX_BACKEND", "phaxio")
@@ -56,13 +63,14 @@ def test_admin_inbound_callbacks_reflect_inbound_backend(monkeypatch):
         # Explicit SIP inbound should switch callbacks
         client.put("/admin/settings", headers=_admin_headers(), json={"inbound_backend": "sip", "inbound_enabled": True})
         client.post("/admin/settings/reload", headers=_admin_headers())
+    with TestClient(app) as client:
         r2 = client.get("/admin/inbound/callbacks", headers=_admin_headers())
         assert r2.status_code == 200
         data2 = r2.json()
     assert data2["backend"] == "sip"
 
 
-def test_export_env_includes_dual_only_when_explicit(monkeypatch):
+def test_export_env_preserves_explicit_and_inherited_directional_values(isolated_installation, monkeypatch):
     monkeypatch.setenv("API_KEY", "bootstrap_admin_only")
     monkeypatch.setenv("REQUIRE_API_KEY", "true")
     # Single-provider mode (no explicit dual env)
@@ -73,21 +81,22 @@ def test_export_env_includes_dual_only_when_explicit(monkeypatch):
     with TestClient(app) as client:
         r = client.get("/admin/settings/export", headers={"X-API-Key": "bootstrap_admin_only"})
         assert r.status_code == 200
-        content = r.json().get("env_content") or ""
-        assert "FAX_BACKEND=phaxio" in content
-        assert "FAX_OUTBOUND_BACKEND=" not in content
-        assert "FAX_INBOUND_BACKEND=" not in content
+        assert r.json()["env"] == r.json()["env_content"]
+        content = parse_environment(r.json()["env_content"], allowed_keys=ConfigurationValues.environment_keys())
+        assert content["FAX_BACKEND"] == "phaxio"
+        assert "FAX_OUTBOUND_BACKEND" not in content
+        assert "FAX_INBOUND_BACKEND" not in content
 
         # Explicit outbound only
         client.put("/admin/settings", headers={"X-API-Key": "bootstrap_admin_only"}, json={"outbound_backend": "sinch"})
         r2 = client.get("/admin/settings/export", headers={"X-API-Key": "bootstrap_admin_only"})
-        content2 = r2.json().get("env_content") or ""
-        assert "FAX_OUTBOUND_BACKEND=sinch" in content2
-        assert "FAX_INBOUND_BACKEND=" not in content2
+        content2 = parse_environment(r2.json()["env_content"], allowed_keys=ConfigurationValues.environment_keys())
+        assert content2["FAX_OUTBOUND_BACKEND"] == "sinch"
+        assert "FAX_INBOUND_BACKEND" not in content2
 
         # Explicit inbound
         client.put("/admin/settings", headers={"X-API-Key": "bootstrap_admin_only"}, json={"inbound_backend": "sip", "inbound_enabled": True})
         r3 = client.get("/admin/settings/export", headers={"X-API-Key": "bootstrap_admin_only"})
-        content3 = r3.json().get("env_content") or ""
-        assert "FAX_OUTBOUND_BACKEND=sinch" in content3
-        assert "FAX_INBOUND_BACKEND=sip" in content3
+        content3 = parse_environment(r3.json()["env_content"], allowed_keys=ConfigurationValues.environment_keys())
+        assert content3["FAX_OUTBOUND_BACKEND"] == "sinch"
+        assert content3["FAX_INBOUND_BACKEND"] == "sip"

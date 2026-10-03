@@ -2,7 +2,7 @@ from fastapi.testclient import TestClient
 from app.main import app
 
 
-def test_freeswitch_send_and_result(monkeypatch, tmp_path):
+def test_freeswitch_send_and_result(isolated_installation, monkeypatch, tmp_path):
     # Configure environment for FreeSWITCH backend in disabled mode
     monkeypatch.setenv("FAX_BACKEND", "freeswitch")
     monkeypatch.setenv("FAX_DISABLED", "true")
