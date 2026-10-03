@@ -222,9 +222,11 @@ async def test_phaxio_error_handling():
     async def fake_error_post(url, data=None, auth=None):
         return ErrorResp()
     
-    with patch("httpx.AsyncClient.post", new=AsyncMock(side_effect=fake_error_post)):
-        with pytest.raises(Exception, match="Phaxio API error 400"):
+    with patch("httpx.AsyncClient.post", new=AsyncMock(side_effect=fake_error_post)) as post:
+        with pytest.raises(RuntimeError, match=r"Phaxio request failed \(HTTP 400\)\.") as error:
             await service.send_fax("+12223334444", "https://example.com/test.pdf", "job123")
+        assert 'Invalid phone number' not in str(error.value)
+        assert post.await_count == 1
 
 
 def test_phaxio_configuration_validation():

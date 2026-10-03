@@ -122,7 +122,8 @@ class CapturedTransport:
                 if pid == 'sip':
                     from .ami import prepare_originate_fields
                     prepare_originate_fields(claim.job_id, job['to_number'], str(tiff) if tiff else None,
-                        caller_id=values.fax_station_id, attempt_id=claim.attempt_id)
+                        caller_id=values.fax_station_id, header=values.fax_header,
+                        attempt_id=claim.attempt_id)
                 else:
                     from .freeswitch_service import build_originate_command
                     build_originate_command(job['to_number'], str(tiff) if tiff else None, claim.job_id,

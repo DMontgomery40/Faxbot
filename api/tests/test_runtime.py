@@ -33,8 +33,11 @@ async def test_api_lifespan_stops_cleanup_before_reentering(isolated_installatio
                 current = asyncio.all_tasks() - before
                 cleanup = {t for t in current if t.get_coro().__name__ == "_artifact_cleanup_loop"}
                 assert len(cleanup) == 1
-                owned.update(cleanup)
-            assert all(task.done() for task in owned), "cleanup task survived API shutdown"
+                delivery = {t for t in current if t.get_name() in {
+                    'faxbot-outbound-worker', 'faxbot-outbound-poller'}}
+                assert len(delivery) == 2
+                owned.update(cleanup | delivery)
+            assert all(task.done() for task in owned), "owned task survived API shutdown"
     finally:
         for task in owned:
             task.cancel()

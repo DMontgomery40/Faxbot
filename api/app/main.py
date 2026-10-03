@@ -10,7 +10,7 @@ import tempfile
 from typing import Optional, Any, List, Dict, cast
 import subprocess
 import time
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks, Header, Depends, Query, Request, Response, WebSocket
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Header, Depends, Query, Request, Response, WebSocket
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from .config import (
@@ -57,6 +57,12 @@ from .config_secrets import ConfigurationSecretError
 from .provider_catalog import ProviderCatalogError, validate_http_provider_document
 from pathlib import Path
 from .config_runtime import ConfigurationRuntime, ConfigurationMiddleware, run_lifecycle_step
+from .outbound_store import OutboundStore, DeliveryConflict, TERMINAL
+from .outbound_worker import OutboundWorker
+from .outbound_polling import OutboundPoller
+from .provider_execution import UnsupportedProviderExecutionError
+from .outbound_transport import CapturedTransport, normalize_status
+from .outbound_callbacks import CapturedCallbacks, CallbackRejected
 
 
 @asynccontextmanager
@@ -77,6 +83,7 @@ async def lifespan(application: FastAPI):
                 owns_ami = await _initialize_runtime(tasks)
                 if owns_ami:
                     ami_client.on_fax_result(_handle_fax_result)
+                    ami_client.on_originate_response(_handle_originate_response)
                     tasks.append(asyncio.create_task(ami_client.connect(), name="faxbot-ami-connect"))
                     await asyncio.wait_for(ami_client._connected.wait(), timeout=10)
                 async with AsyncExitStack() as stack:
@@ -84,6 +91,10 @@ async def lifespan(application: FastAPI):
                     for mount in mounts:
                         await stack.enter_async_context(mount.app.router.lifespan_context(mount.app))
                     await run_lifecycle_step(runtime.publish_ready)
+                    delivery = OutboundStore(runtime.manager.store)
+                    worker = OutboundWorker(delivery, CapturedTransport(delivery, runtime, ami=ami_client))
+                    tasks.append(asyncio.create_task(worker.run(), name='faxbot-outbound-worker'))
+                    tasks.append(asyncio.create_task(OutboundPoller(delivery).run(), name='faxbot-outbound-poller'))
                     yield
             finally:
                 for task in tasks:
@@ -355,27 +366,60 @@ async def _initialize_runtime(tasks: list[asyncio.Task]) -> bool:
     return not settings.fax_disabled and providerHasTrait("any", "requires_ami")
 
 
+def _deliveries():
+    return OutboundStore(_configuration_manager().store)
+
+
+def _delivery_fields(job_id):
+    row = _deliveries().get(job_id)
+    reason = None
+    if row['state'] == 'reconciliation_required':
+        reason = ('Historical delivery has no verified transmission record.' if row['dispatch_mode'] == 'legacy'
+                  else 'Transmission outcome is uncertain. Check the original provider before taking action.')
+    return {'delivery_state': row['state'], 'dispatch_mode': row['dispatch_mode'],
+            'delivery_version': row['version'], 'reconciliation_reason': reason}
+
+
+def _observe_native(job_id, attempt_id, status, provider, *, event_key, secret=None):
+    if (not isinstance(job_id, str) or re.fullmatch('[a-f0-9]{32}', job_id) is None
+            or not isinstance(attempt_id, str) or re.fullmatch('[a-f0-9]{32}', attempt_id) is None):
+        raise DeliveryConflict('Native result has no verified attempt identity.')
+    delivery = _deliveries()
+    revision, profile = delivery.configuration.outbound_context(job_id)
+    if profile.configuration.provider_id != provider or profile.configuration.manifest is not None:
+        raise DeliveryConflict('Native result does not match the original provider.')
+    if provider == 'freeswitch':
+        expected = revision.values.asterisk_inbound_secret
+        if not expected or not isinstance(secret, str) or not hmac.compare_digest(expected.encode(), secret.encode()):
+            raise HTTPException(401, detail='Invalid internal callback secret.')
+    # FreeSWITCH's channel UUID and bgapi Job-UUID are different namespaces.
+    # The authenticated job/attempt locator binds this event; never overwrite
+    # the create acknowledgement's SID with a channel UUID.
+    return delivery.observe(job_id, attempt_id=attempt_id, profile_id=profile.id,
+        provider_sid=job_id if provider == 'sip' else None, status=normalize_status(status), event_key=attempt_id + ':' + event_key)
+
+
 def _handle_fax_result(event):
-    job_id = event.get("JobID") or event.get("jobid")
-    status = event.get("Status") or event.get("status")
-    error = event.get("Error") or event.get("error")
-    pages = event.get("Pages") or event.get("pages")
-    with SessionLocal() as db:
-        job = db.get(FaxJob, job_id)
-        if job:
-            j = cast(Any, job)
-            j.status = status or j.status
-            j.error = error
-            if pages:
-                try:
-                    job.pages = int(pages)
-                except Exception:
-                    pass
-            j.updated_at = datetime.utcnow()
-            db.add(j)
-            db.commit()
-    if job_id and status:
-        audit_event("job_updated", job_id=job_id, status=status, provider="asterisk")
+    fields = {str(key).lower(): value for key, value in event.items()}
+    job_id, attempt = fields.get('jobid'), fields.get('attemptid')
+    try:
+        status = fields.get('status', '')
+        _observe_native(job_id, attempt, status, 'sip', event_key='ami-result:' + str(status))
+    except Exception:
+        audit_event('native_result_requires_reconciliation', provider='sip')
+
+
+def _handle_originate_response(event):
+    fields = {str(key).lower(): value for key, value in event.items()}
+    if str(fields.get('response', '')).lower() != 'failure':
+        return
+    parts = str(fields.get('actionid', '')).split(':')
+    if len(parts) != 3 or parts[0] != 'faxbot':
+        return
+    try:
+        _observe_native(parts[1], parts[2], 'failed', 'sip', event_key='ami-originate-failure')
+    except Exception:
+        audit_event('native_result_requires_reconciliation', provider='sip')
 
 
 @app.get("/health")
@@ -1537,7 +1581,8 @@ async def list_admin_jobs(
     with SessionLocal() as db:
         q = db.query(FaxJob)
         if status:
-            q = q.filter(FaxJob.status == status)
+            delivery = _deliveries().deliveries
+            q = q.join(delivery, FaxJob.id == delivery.c.id).filter(delivery.c.state == status)
         if backend:
             q = q.filter(FaxJob.backend == backend)
         total = q.count()
@@ -1547,6 +1592,7 @@ async def list_admin_jobs(
             "jobs": [
                 {
                     "id": r.id,
+                    **_delivery_fields(r.id),
                     "to_number": mask_phone(getattr(r, "to_number", None)),
                     "status": r.status,
                     "backend": r.backend,
@@ -1568,6 +1614,7 @@ async def get_admin_job(job_id: str):
             raise HTTPException(404, detail="Job not found")
         return {
             "id": job.id,
+            **_delivery_fields(job.id),
             "to_number": mask_phone(getattr(job, "to_number", None)),
             "status": job.status,
             "backend": job.backend,
@@ -1585,8 +1632,11 @@ def admin_get_job_pdf(job_id: str):
     """Admin-only: download the outbound fax PDF for a job if present.
     Works for all backends; the API generates/keeps a PDF per job prior to sending.
     """
-    pdf_path = os.path.join(settings.fax_data_dir, f"{job_id}.pdf")
-    if not os.path.exists(pdf_path):
+    with SessionLocal() as db:
+        if db.get(FaxJob, job_id) is None:
+            raise HTTPException(404, detail='Job not found')
+    pdf_path = _outbound_document_path(job_id, '.pdf')
+    if pdf_path.is_symlink() or not pdf_path.is_file():
         raise HTTPException(404, detail="PDF file not found")
     audit_event("admin_pdf_download", job_id=job_id)
     return FileResponse(
@@ -1603,44 +1653,23 @@ def admin_get_job_pdf(job_id: str):
 
 @app.post("/admin/fax-jobs/{job_id}/refresh", dependencies=[Depends(require_admin)])
 async def admin_refresh_job(job_id: str):
-    """Refresh job status via provider when supported (manifest providers preview).
-    For manifest-based outbound providers that define get_status, polls provider and updates DB.
-    """
+    """Read status from the accepted account without authorizing another send."""
+    with SessionLocal() as db:
+        if db.get(FaxJob, job_id) is None:
+            raise HTTPException(404, detail="Job not found")
+    try:
+        await OutboundPoller(_deliveries()).refresh(job_id)
+    except UnsupportedProviderExecutionError:
+        raise HTTPException(400, detail="This provider reports status through callbacks; refresh is unsupported.") from None
+    except (DeliveryConflict, UnboundProviderProfile):
+        raise HTTPException(409, detail="This fax requires reconciliation with its original provider account before refresh.") from None
+    except Exception:
+        raise HTTPException(502, detail="Provider status is temporarily unavailable. This fax has not been resubmitted.") from None
     with SessionLocal() as db:
         job = db.get(FaxJob, job_id)
-        if not job:
+        if job is None:
             raise HTTPException(404, detail="Job not found")
-        if str(job.status).lower() in {'success', 'completed', 'failed', 'disabled', 'cancelled'}:
-            return _serialize_job(job)
-    try:
-        profile = _configuration_manager().store.outbound_profile(job_id)
-    except UnboundProviderProfile:
-        raise HTTPException(409, detail="This legacy fax requires reconciliation with its original provider account before refresh.") from None
-    if profile.configuration.manifest is None:
-        raise HTTPException(400, detail="Refresh is not supported for this provider adapter.")
-    try:
-        rt = service_from_profile(profile)
-        res = await rt.get_status(job_id=job_id, provider_sid=(job.provider_sid or None))
-        status = str(res.get("status") or job.status)
-        prov_sid = str(res.get("job_id") or job.provider_sid or "")
-        with SessionLocal() as db:
-            j = db.get(FaxJob, job_id)
-            if j:
-                j.status = status
-                if prov_sid:
-                    j.provider_sid = prov_sid
-                j.updated_at = datetime.utcnow()
-                db.add(j)
-                db.commit()
-        with SessionLocal() as db:
-            j2 = db.get(FaxJob, job_id)
-            if j2:
-                return _serialize_job(j2)
-        raise HTTPException(500, detail="Failed to load updated job")
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(502, detail="Provider refresh failed; reconcile the original provider account before retrying.") from None
+        return _serialize_job(job)
 
 
 @app.post("/admin/diagnostics/run", dependencies=[Depends(require_admin)])
@@ -1956,7 +1985,7 @@ def persist_settings(payload: PersistSettingsIn):
     return {"ok": True, "path": str(target)}
 
 @app.post("/fax", response_model=FaxJobOut, status_code=202, dependencies=[Depends(require_fax_send)])
-async def send_fax(request: Request, background: BackgroundTasks, to: str = Form(...), file: UploadFile = File(...), queue_only: bool = Form(False)):
+async def send_fax(request: Request, to: str = Form(...), file: UploadFile = File(...), queue_only: bool = Form(False)):
     if queue_only and not settings.fax_disabled:
         raise HTTPException(409, detail="Queue-only request refused because outbound sending is now enabled. Refresh Send before submitting again.")
     manager = _configuration_manager()
@@ -1992,7 +2021,10 @@ async def send_fax(request: Request, background: BackgroundTasks, to: str = Form
     try:
         accepted_at = datetime.utcnow()
         result = FaxJobOut(id=job_id, to=to, status='queued', pages=prepared.pages,
-                          backend=ob, created_at=accepted_at, updated_at=accepted_at)
+                          backend=ob, created_at=accepted_at, updated_at=accepted_at,
+                          delivery_state='held' if revision.values.fax_disabled else 'ready',
+                          dispatch_mode='held' if revision.values.fax_disabled else 'normal',
+                          delivery_version=1)
         manager.store.accept_outbound(revision, {
             'id': job_id, 'to_number': to, 'file_name': prepared.original_name,
             'tiff_path': tiff_path, 'status': 'queued', 'pages': prepared.pages,
@@ -2008,62 +2040,7 @@ async def send_fax(request: Request, background: BackgroundTasks, to: str = Form
     # Serialize before COMMIT; a second database read must not turn confirmed
     # acceptance into an unidentifiable error and invite duplicate submission.
     audit_event("job_created", job_id=job_id, backend=ob)
-    if not settings.fax_disabled:
-        background.add_task(_dispatch_accepted_job, revision, job_id, to, pdf_path, tiff_path)
     return result
-
-
-async def _dispatch_accepted_job(revision, job_id, to, pdf_path, tiff_path):
-    runtime = app.state.configuration_runtime
-    profile = runtime.manager.store.outbound_profile(job_id)
-    if revision.profile_id('outbound') != profile.id:
-        raise ConfigurationConflict('Accepted job profile does not match the dispatch revision.')
-    with runtime.frame(revision):
-        pid = profile.configuration.provider_id
-        if profile.configuration.manifest is not None:
-            await _send_via_manifest(job_id, to, pdf_path)
-        elif pid == 'sip':
-            await _originate_job(job_id, to, tiff_path)
-        elif pid == 'freeswitch':
-            await _send_via_freeswitch(job_id, to, tiff_path)
-        elif pid == 'phaxio':
-            await _send_via_phaxio(job_id, to, pdf_path)
-        elif pid == 'sinch':
-            await _send_via_sinch(job_id, to, pdf_path)
-        elif pid == 'signalwire':
-            await _send_via_signalwire(job_id, to, pdf_path)
-        else:
-            raise ProviderExecutionError('Accepted profile has no supported outbound adapter.')
-
-
-def _accepted_service(job_id):
-    return service_from_profile(_configuration_manager().store.outbound_profile(job_id))
-
-
-async def _originate_job(job_id: str, to: str, tiff_path: str):
-    try:
-        audit_event("job_dispatch", job_id=job_id, method="sip")
-        await ami_client.originate_sendfax(job_id, to, tiff_path)
-        # Mark as started
-        with SessionLocal() as db:
-            job = db.get(FaxJob, job_id)
-            if job:
-                j = cast(Any, job)
-                j.status = "in_progress"
-                j.updated_at = datetime.utcnow()
-                db.add(j)
-                db.commit()
-    except Exception as e:
-        with SessionLocal() as db:
-            job = db.get(FaxJob, job_id)
-            if job:
-                j = cast(Any, job)
-                j.status = "failed"
-                j.error = "Provider operation failed; reconcile delivery before retrying."
-                j.updated_at = datetime.utcnow()
-                db.add(j)
-                db.commit()
-        audit_event("job_failed", job_id=job_id, error="Provider operation failed; reconcile delivery before retrying.")
 
 
 @app.get("/fax/{job_id}", response_model=FaxJobOut, dependencies=[Depends(require_fax_read)])
@@ -2123,42 +2100,44 @@ async def _artifact_cleanup_loop():
             await _cleanup_once()
         except Exception as e:
             import logging
-            logging.getLogger(__name__).error(f"Artifact cleanup error: {e}")
+            logging.getLogger(__name__).error("Artifact cleanup requires operator attention.")
         await asyncio.sleep(interval * 60)
+
+
+def _outbound_document_path(job_id, suffix):
+    if not isinstance(job_id, str) or re.fullmatch('[a-f0-9]{32}', job_id) is None:
+        raise HTTPException(404, detail='Document not found.')
+    try:
+        revision, _ = _configuration_manager().store.outbound_context(job_id)
+        root = revision.values.fax_data_dir
+    except UnboundProviderProfile:
+        # Pre-migration files remain in the installation data directory; no
+        # provider/account association is inferred for their transmission.
+        root = settings.fax_data_dir
+    return Path(root) / (job_id + suffix)
+
+
+def _cleanup_outbound_documents(cutoff):
+    import sqlalchemy as sa
+    delivery = _deliveries()
+    with delivery.configuration.engine.connect() as connection:
+        identities = connection.execute(sa.select(delivery.deliveries.c.id).where(
+            delivery.deliveries.c.state.in_(tuple(TERMINAL)),
+            delivery.deliveries.c.updated_at < cutoff)).scalars().all()
+    for identity in identities:
+        for suffix in ('.pdf', '.tiff'):
+            try:
+                path = _outbound_document_path(identity, suffix)
+                if not path.is_symlink():
+                    path.unlink(missing_ok=True)
+            except (OSError, HTTPException, ConfigurationStoreError):
+                audit_event('outbound_retention_requires_attention', job_id=identity)
 
 
 async def _cleanup_once():
     cutoff = datetime.utcnow() - timedelta(days=max(1, settings.artifact_ttl_days))
-    final_statuses = {"SUCCESS", "FAILED", "failed", "disabled"}
-    data_dir = settings.fax_data_dir
-    import glob
+    await run_lifecycle_step(lambda: _cleanup_outbound_documents(cutoff))
     with SessionLocal() as db:
-        # naive scan: iterate all jobs updated before cutoff
-        # SQLAlchemy 2.0 Core select is imported? Simpler: fetch all and filter.
-        # For small SQLite this is fine. For larger stores, switch to SQL query with filters.
-        jobs = db.query(FaxJob).all()  # type: ignore[attr-defined]
-        for job in jobs:
-            try:
-                if job.updated_at and job.updated_at < cutoff and (job.status in final_statuses):
-                    # Delete PDF
-                    pdf_path = os.path.join(data_dir, f"{job.id}.pdf")
-                    if os.path.exists(pdf_path):
-                        os.remove(pdf_path)
-                    # Delete TIFF
-                    if job.tiff_path and os.path.exists(job.tiff_path):
-                        try:
-                            os.remove(job.tiff_path)
-                        except FileNotFoundError:
-                            pass
-                    # Delete original upload(s)
-                    for p in glob.glob(os.path.join(data_dir, f"{job.id}-*")):
-                        try:
-                            os.remove(p)
-                        except FileNotFoundError:
-                            pass
-            except Exception:
-                continue
-
         # Inbound retention cleanup
         try:
             from .db import InboundFax  # type: ignore
@@ -2219,15 +2198,15 @@ async def get_fax_pdf(job_id: str, token: str = Query(...)):
         if not expected_token:  # type: ignore[truthy-bool]
             raise HTTPException(404, detail="PDF not available")
         # Validate token equality
-        if token != expected_token:
+        if not isinstance(token, str) or not hmac.compare_digest(token.encode(), str(expected_token).encode()):
             raise HTTPException(403, detail="Invalid token")
         # Validate expiry if set
         if job.pdf_token_expires_at and datetime.utcnow() > job.pdf_token_expires_at:  # type: ignore[operator]
             raise HTTPException(403, detail="Token expired")
 
         # Get the PDF path
-        pdf_path = os.path.join(settings.fax_data_dir, f"{job_id}.pdf")
-        if not os.path.exists(pdf_path):
+        pdf_path = _outbound_document_path(job_id, '.pdf')
+        if pdf_path.is_symlink() or not pdf_path.is_file():
             raise HTTPException(404, detail="PDF file not found")
 
         # Log access for security monitoring
@@ -2248,282 +2227,33 @@ async def get_fax_pdf(job_id: str, token: str = Query(...)):
         )
 
 
-@app.post("/phaxio-callback")
+async def _receive_outbound_callback(request, provider):
+    from .callback_forms import read_callback_form, CallbackFormError
+    try:
+        fields, files = await read_callback_form(request)
+        result = await run_lifecycle_step(lambda: CapturedCallbacks(_deliveries()).receive(
+            provider, request.query_params.get('job_id'), request.query_params.get('attempt_id'),
+            fields=fields, files=files, signature=request.headers.get(
+                'X-Phaxio-Signature' if provider == 'phaxio' else 'X-SignalWire-Signature', '')))
+    except CallbackFormError as error:
+        raise HTTPException(error.status_code, detail=str(error)) from None
+    except CallbackRejected:
+        raise HTTPException(401, detail='Callback could not be authenticated for this attempt.') from None
+    except DeliveryConflict:
+        raise HTTPException(409, detail='Callback does not match the current delivery attempt.') from None
+    return {'ok': True, 'applied': result}
+
+
+@app.post('/phaxio-callback')
 async def phaxio_callback(request: Request):
-    """Handle Phaxio status callbacks."""
-    # Verify signature if enabled
-    raw_body = await request.body()
-    if settings.phaxio_verify_signature:
-        provided = request.headers.get("X-Phaxio-Signature") or request.headers.get("X-Phaxio-Signature-SHA256")
-        if not provided:
-            raise HTTPException(401, detail="Missing Phaxio signature")
-        secret = (settings.phaxio_api_secret or "").encode()
-        if not secret:
-            raise HTTPException(401, detail="Phaxio secret not configured")
-        digest = hmac.new(secret, raw_body, hashlib.sha256).hexdigest()
-        if not hmac.compare_digest(digest, provided.strip().lower()):
-            raise HTTPException(401, detail="Invalid Phaxio signature")
-
-    form_data = await request.form()
-    callback_data = dict(form_data)
-    
-    # Get job ID from query params
-    job_id = request.query_params.get("job_id")
-    if not job_id:
-        return {"status": "no job_id provided"}
-    
-    phaxio_service = get_phaxio_service()
-    if not phaxio_service:
-        return {"status": "phaxio not configured"}
-    
-    # Process the callback
-    status_info = await phaxio_service.handle_status_callback(callback_data)
-    
-    # Update job status
-    with SessionLocal() as db:
-        job = db.get(FaxJob, job_id)
-        if job:
-            job.status = status_info['status']
-            if status_info.get('error_message'):
-                job.error = status_info['error_message']
-            if status_info.get('pages'):
-                job.pages = status_info['pages']
-            job.updated_at = datetime.utcnow()  # type: ignore[assignment]
-            db.add(job)  # type: ignore[arg-type]
-            db.commit()
-    audit_event("job_updated", job_id=job_id, status=status_info.get('status'), provider="phaxio")
-    
-    return {"status": "ok"}
-
-
-async def _send_via_phaxio(job_id: str, to: str, pdf_path: str):
-    """Send fax via Phaxio API."""
-    try:
-        phaxio_service = _accepted_service(job_id)
-        if not phaxio_service or not phaxio_service.is_configured():
-            raise Exception("Phaxio is not properly configured")
-        
-        # Generate a secure token for PDF access with expiry
-        pdf_token = secrets.token_urlsafe(32)
-        ttl = max(1, int(settings.pdf_token_ttl_minutes))
-        expires_at = datetime.utcnow() + timedelta(minutes=ttl)
-
-        # Create public URL for PDF (tokenized)
-        pdf_url = f"{settings.public_api_url}/fax/{job_id}/pdf?token={pdf_token}"
-
-        # Update job with PDF URL/token and mark as in_progress
-        with SessionLocal() as db:
-            job = db.get(FaxJob, job_id)
-            if job:
-                j = cast(Any, job)
-                j.pdf_url = pdf_url
-                j.pdf_token = pdf_token
-                j.pdf_token_expires_at = expires_at
-                j.status = "in_progress"
-                j.updated_at = datetime.utcnow()
-                db.add(j)
-                db.commit()
-        
-        # Send via Phaxio
-        audit_event("job_dispatch", job_id=job_id, method="phaxio")
-        result = await phaxio_service.send_fax(to, pdf_url, job_id)
-        
-        # Update job with provider SID
-        with SessionLocal() as db:
-            job = db.get(FaxJob, job_id)
-            if job:
-                j = cast(Any, job)
-                j.provider_sid = result['provider_sid']
-                j.status = result['status']
-                j.updated_at = datetime.utcnow()
-                db.add(j)
-                db.commit()
-                
-    except Exception as e:
-        with SessionLocal() as db:
-            job = db.get(FaxJob, job_id)
-            if job:
-                j = cast(Any, job)
-                j.status = "failed"
-                j.error = "Provider operation failed; reconcile delivery before retrying."
-                j.updated_at = datetime.utcnow()
-                db.add(j)
-                db.commit()
-        audit_event("job_failed", job_id=job_id, error="Provider operation failed; reconcile delivery before retrying.")
-
-
-async def _send_via_sinch(job_id: str, to: str, pdf_path: str):
-    """Send fax via Sinch Fax API v3 (Phaxio by Sinch)."""
-    try:
-        sinch = _accepted_service(job_id)
-        if not sinch or not sinch.is_configured():
-            raise Exception("Sinch Fax is not properly configured")
-
-        audit_event("job_dispatch", job_id=job_id, method="sinch")
-
-        # Create fax by uploading the PDF directly (multipart/form-data)
-        resp = await sinch.send_fax_file(to, pdf_path)
-
-        fax_id = str(resp.get("id") or resp.get("data", {}).get("id") or "")
-        status = (resp.get("status") or resp.get("data", {}).get("status") or "in_progress").upper()
-        if status == "IN_PROGRESS":
-            internal_status = "in_progress"
-        elif status in {"SUCCESS", "COMPLETED", "COMPLETED_OK"}:
-            internal_status = "SUCCESS"
-        elif status in {"FAILED", "FAILURE", "ERROR"}:
-            internal_status = "FAILED"
-        else:
-            internal_status = "queued"
-
-        with SessionLocal() as db:
-            job = db.get(FaxJob, job_id)
-            if job:
-                j = cast(Any, job)
-                j.provider_sid = fax_id
-                j.status = internal_status
-                j.updated_at = datetime.utcnow()
-                db.add(j)
-                db.commit()
-    except Exception as e:
-        with SessionLocal() as db:
-            job = db.get(FaxJob, job_id)
-            if job:
-                j = cast(Any, job)
-                j.status = "failed"
-                j.error = "Provider operation failed; reconcile delivery before retrying."
-                j.updated_at = datetime.utcnow()
-                db.add(j)
-                db.commit()
-        audit_event("job_failed", job_id=job_id, error="Provider operation failed; reconcile delivery before retrying.")
-
-
-async def _send_via_signalwire(job_id: str, to: str, pdf_path: str):
-    try:
-        svc = _accepted_service(job_id)
-        if not svc:
-            raise RuntimeError("SignalWire not configured")
-        # Tokenized PDF URL
-        pdf_token = secrets.token_urlsafe(32)
-        ttl = max(1, int(settings.pdf_token_ttl_minutes))
-        expires_at = datetime.utcnow() + timedelta(minutes=ttl)
-        media_url = f"{settings.public_api_url}/fax/{job_id}/pdf?token={pdf_token}"
-
-        with SessionLocal() as db:
-            job = db.get(FaxJob, job_id)
-            if job:
-                job.pdf_url = media_url
-                job.pdf_token = pdf_token
-                job.pdf_token_expires_at = expires_at
-                job.status = "in_progress"
-                job.updated_at = datetime.utcnow()
-                db.add(job)
-                db.commit()
-
-        audit_event("job_dispatch", job_id=job_id, method="signalwire")
-        res = await svc.send_fax(to, media_url, job_id)
-        prov_sid = str(res.get("provider_sid") or "")
-        status = str(res.get("status") or "queued")
-        with SessionLocal() as db:
-            job = db.get(FaxJob, job_id)
-            if job:
-                job.provider_sid = prov_sid
-                job.status = status
-                job.updated_at = datetime.utcnow()
-                db.add(job)
-                db.commit()
-    except Exception as e:
-        with SessionLocal() as db:
-            job = db.get(FaxJob, job_id)
-            if job:
-                job.status = "failed"
-                job.error = "Provider operation failed; reconcile delivery before retrying."
-                job.updated_at = datetime.utcnow()
-                db.add(job)
-                db.commit()
-        audit_event("job_failed", job_id=job_id, error="Provider operation failed; reconcile delivery before retrying.")
-
-
-async def _send_via_freeswitch(job_id: str, to: str, tiff_path: str):
-    try:
-        audit_event("job_dispatch", job_id=job_id, method="freeswitch")
-        if not fs_cli_available() and not settings.fax_disabled:
-            raise RuntimeError("fs_cli not available on API host; install FreeSWITCH client or configure ESL integration")
-        # Fire and forget
-        if not settings.fax_disabled:
-            res = originate_txfax(to, tiff_path, job_id)
-        else:
-            res = "disabled"
-        with SessionLocal() as db:
-            job = db.get(FaxJob, job_id)
-            if job:
-                j = cast(Any, job)
-                j.status = "in_progress"
-                j.provider_sid = (res or "").strip()
-                j.updated_at = datetime.utcnow()
-                db.add(j)
-                db.commit()
-    except Exception as e:
-        with SessionLocal() as db:
-            job = db.get(FaxJob, job_id)
-            if job:
-                j = cast(Any, job)
-                j.status = "failed"
-                j.error = "Provider operation failed; reconcile delivery before retrying."
-                j.updated_at = datetime.utcnow()
-                db.add(j)
-                db.commit()
-        audit_event("job_failed", job_id=job_id, error="Provider operation failed; reconcile delivery before retrying.")
-
-async def _send_via_manifest(job_id: str, to: str, pdf_path: str):
-    try:
-        profile = _configuration_manager().store.outbound_profile(job_id)
-        pid = profile.configuration.provider_id
-        rt = service_from_profile(profile)
-        # Generate tokenized PDF URL with expiry
-        pdf_token = secrets.token_urlsafe(32)
-        ttl = max(1, int(settings.pdf_token_ttl_minutes))
-        expires_at = datetime.utcnow() + timedelta(minutes=ttl)
-        pdf_url = f"{settings.public_api_url}/fax/{job_id}/pdf?token={pdf_token}"
-
-        with SessionLocal() as db:
-            job = db.get(FaxJob, job_id)
-            if job:
-                job.pdf_url = pdf_url
-                job.pdf_token = pdf_token
-                job.pdf_token_expires_at = expires_at
-                job.status = "in_progress"
-                job.updated_at = datetime.utcnow()
-                db.add(job)
-                db.commit()
-
-        audit_event("job_dispatch", job_id=job_id, method=f"manifest:{pid}")
-        res = await rt.send_fax(to=to, file_url=pdf_url)
-        prov_sid = str(res.get("job_id") or "")
-        status = str(res.get("status") or "queued")
-        with SessionLocal() as db:
-            job = db.get(FaxJob, job_id)
-            if job:
-                job.provider_sid = prov_sid
-                job.status = status
-                job.updated_at = datetime.utcnow()
-                db.add(job)
-                db.commit()
-    except Exception as e:
-        with SessionLocal() as db:
-            job = db.get(FaxJob, job_id)
-            if job:
-                job.status = "failed"
-                job.error = "Provider operation failed; reconcile delivery before retrying."
-                job.updated_at = datetime.utcnow()
-                db.add(job)
-                db.commit()
-        audit_event("job_failed", job_id=job_id, error="Provider operation failed; reconcile delivery before retrying.")
+    return await _receive_outbound_callback(request, 'phaxio')
 
 
 def _serialize_job(job: FaxJob) -> FaxJobOut:
     j = cast(Any, job)
     return FaxJobOut(
         id=j.id,
+        **_delivery_fields(j.id),
         to=j.to_number,
         status=j.status,
         error=j.error,
@@ -3212,53 +2942,13 @@ def plugin_registry():
     except Exception:
         pass
     return {"items": _installed_plugins(), "note": "default registry"}
-@app.post("/signalwire-callback")
-async def signalwire_callback(request: Request, job_id: Optional[str] = Query(default=None)):
-    """SignalWire Compatibility Fax Status callback handler.
-    Verifies optional HMAC when configured and updates job status.
-    """
-    raw = await request.body()
-    # Optional HMAC verification; header name may vary by configuration
-    key = (settings.signalwire_webhook_signing_key or '').encode()
-    if key:
-        provided = request.headers.get('X-SignalWire-Signature') or ''
-        try:
-            digest = hmac.new(key, raw, hashlib.sha256).hexdigest()
-            if not hmac.compare_digest(digest, provided.strip().lower()):
-                raise HTTPException(401, detail="Invalid signature")
-        except Exception:
-            raise HTTPException(401, detail="Invalid signature")
-    # Parse form or JSON
-    payload: dict[str, Any]
-    try:
-        form = await request.form()
-        payload = dict(form)
-    except Exception:
-        try:
-            payload = await request.json()
-        except Exception:
-            payload = {}
-    svc = get_signalwire_service()
-    if not svc:
-        return {"ok": True}
-    res = await svc.handle_status_callback(payload)
-    prov_sid = str(res.get('provider_sid') or '')
-    status = str(res.get('status') or '')
-    # Update job by job_id if present, else by provider_sid best-effort
-    with SessionLocal() as db:
-        job = None
-        if job_id:
-            job = db.get(FaxJob, str(job_id))
-        if not job and prov_sid:
-            job = db.query(FaxJob).filter(FaxJob.provider_sid == prov_sid).first()
-        if job:
-            job.status = status or job.status
-            job.updated_at = datetime.utcnow()
-            db.add(job)
-            db.commit()
-            audit_event("job_updated", job_id=job.id, status=job.status, provider="signalwire")
-    return {"ok": True}
+@app.post('/signalwire-callback')
+async def signalwire_callback(request: Request):
+    return await _receive_outbound_callback(request, 'signalwire')
+
+
 class FSOutboundResultIn(BaseModel):
+    attempt_id: Optional[str] = None
     job_id: Optional[str] = None
     fax_status: Optional[str] = None
     fax_result_text: Optional[str] = None
@@ -3269,37 +2959,14 @@ class FSOutboundResultIn(BaseModel):
 
 @app.post("/_internal/freeswitch/outbound_result")
 def freeswitch_outbound_result(payload: FSOutboundResultIn, x_internal_secret: Optional[str] = Header(default=None)):
-    # Reuse Asterisk secret for simplicity; can introduce a dedicated FS secret later
-    secret = settings.asterisk_inbound_secret
-    if not secret:
-        raise HTTPException(401, detail="Internal secret not configured")
-    if x_internal_secret != secret:
-        raise HTTPException(401, detail="Invalid internal secret")
-    if not payload.job_id:
-        raise HTTPException(400, detail="Missing job_id")
-    status_map = {
-        'SUCCESS': 'SUCCESS',
-        'OK': 'SUCCESS',
-        'FAILED': 'FAILED',
-        'ERROR': 'FAILED',
-        'FAIL': 'FAILED',
-    }
-    status = (payload.fax_status or payload.fax_result_text or '').upper()
-    internal = status_map.get(status, 'FAILED' if 'FAIL' in status else 'in_progress')
-    with SessionLocal() as db:
-        job = db.get(FaxJob, str(payload.job_id))
-        if not job:
-            raise HTTPException(404, detail="Job not found")
-        job.status = internal
-        if payload.fax_document_transferred_pages:
-            job.pages = payload.fax_document_transferred_pages
-        if payload.fax_result_text:
-            job.error = None if internal == 'SUCCESS' else payload.fax_result_text
-        job.updated_at = datetime.utcnow()
-        db.add(job)
-        db.commit()
-    audit_event("job_updated", job_id=str(payload.job_id), status=internal, provider="freeswitch")                                                              
-    return {"ok": True}
+    status = str(payload.fax_status or '').lower()
+    status = {'true': 'success', 'false': 'failed', 'ok': 'success', 'fail': 'failed'}.get(status, status)
+    try:
+        applied = _observe_native(payload.job_id, payload.attempt_id, status, 'freeswitch',
+            event_key='fs-result:' + status, secret=x_internal_secret)
+    except (DeliveryConflict, ValueError):
+        raise HTTPException(409, detail='Native result does not match a verified delivery attempt.') from None
+    return {'ok': True, 'applied': applied}
 
 
 # Terminal WebSocket endpoint for Admin Console
