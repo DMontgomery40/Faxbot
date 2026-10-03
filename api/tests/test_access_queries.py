@@ -143,3 +143,13 @@ def test_reconciliation_audit_failure_rolls_back_provider_identity(aw, queries):
     assert result['attempt']['provider_sid'] is None
     assert result['version'] == version
     assert all(event['kind'] != 'operator_identity_bound' for event in result['events'])
+
+
+@pytest.mark.parametrize('mode, expected', [
+    ('legacy', 'Faxbot has no delivery record for this older fax; check its status in your provider account.'),
+    ('normal', 'Faxbot could not confirm delivery; check your provider account before sending this fax again.'),
+])
+def test_unconfirmed_delivery_reason_is_one_plain_operator_sentence(mode, expected):
+    row = {'delivery_state': 'reconciliation_required', 'dispatch_mode': mode, 'delivery_version': 3}
+    assert Q.delivery_fields(row)['reconciliation_reason'] == expected
+    assert Q.delivery_fields(dict(row, delivery_state='delivered'))['reconciliation_reason'] is None

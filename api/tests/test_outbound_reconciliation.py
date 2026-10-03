@@ -273,7 +273,8 @@ def test_unbound_legacy_view_refuses_binding_without_inventing_an_account(instal
     view = store.operator_view(job_id)
     assert view["attempt"] is None and view["provider_id"] is None
     assert view["profile_id"] is None and view["revision_id"] is None
-    assert view["can_bind_provider_identity"] is False and "maintenance" in view["bind_refusal_reason"]
+    assert view["can_bind_provider_identity"] is False
+    assert view["bind_refusal_reason"] == "This fax was sent by an older Faxbot version; check its status in your provider account."
     with pytest.raises(DeliveryConflict):
         store.bind_provider_identity(job_id, expected_version=1, provider_sid="remote-one", actor="admin")
     assert store.get(job_id) == before and store.history(job_id) == history
