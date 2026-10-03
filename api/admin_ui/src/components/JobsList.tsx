@@ -29,7 +29,7 @@ import {
   Divider,
 } from '@mui/material';
 import { Refresh as RefreshIcon } from '@mui/icons-material';
-import AdminAPIClient from '../api/client';
+import AdminAPIClient, { reconciliationNotice } from '../api/client';
 import type { FaxJob } from '../api/types';
 
 interface JobsListProps {
@@ -38,11 +38,35 @@ interface JobsListProps {
 
 const statusOptions = [
   { value: '', label: 'All Statuses' },
-  { value: 'queued', label: 'Queued' },
+  { value: 'held', label: 'Held (test)' },
+  { value: 'ready', label: 'Ready' },
+  { value: 'preparing', label: 'Preparing' },
+  { value: 'submitting', label: 'Submitting' },
   { value: 'in_progress', label: 'In Progress' },
-  { value: 'SUCCESS', label: 'Success' },
-  { value: 'FAILED', label: 'Failed' },
+  { value: 'reconciliation_required', label: 'Reconciliation Required' },
+  { value: 'success', label: 'Success' },
+  { value: 'failed', label: 'Failed' },
+  { value: 'cancelled', label: 'Cancelled' },
 ];
+
+function deliveryState(job: FaxJob): string {
+  return (job.delivery_state || job.status).toLowerCase();
+}
+
+function statusLabel(state: string): string {
+  return statusOptions.find(option => option.value === state)?.label
+    ?? state.replace(/_/g, ' ').replace(/^./, character => character.toUpperCase());
+}
+
+function deliveryNotice(job: FaxJob): string | null {
+  if (deliveryState(job) === 'held' || job.dispatch_mode === 'held') {
+    return 'This test fax will never be automatically transmitted, even after outbound sending is enabled.';
+  }
+  if (deliveryState(job) === 'reconciliation_required') {
+    return reconciliationNotice(job.reconciliation_reason);
+  }
+  return null;
+}
 
 function JobsList({ client }: JobsListProps) {
   const [jobs, setJobs] = useState<FaxJob[]>([]);
@@ -88,7 +112,12 @@ function JobsList({ client }: JobsListProps) {
       case 'error':
         return 'error';
       case 'queued':
+      case 'held':
+      case 'ready':
+      case 'preparing':
         return 'info';
+      case 'submitting':
+      case 'reconciliation_required':
       case 'in_progress':
       case 'sending':
         return 'warning';
@@ -99,7 +128,13 @@ function JobsList({ client }: JobsListProps) {
 
   const formatDate = (dateString: string) => {
     try {
-      return new Date(dateString).toLocaleString();
+      const naiveUTC = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?$/.test(dateString);
+      const date = new Date(naiveUTC ? `${dateString}Z` : dateString);
+      if (Number.isNaN(date.getTime())
+          || (naiveUTC && date.toISOString().slice(0, 19) !== dateString.slice(0, 19))) {
+        return dateString;
+      }
+      return date.toLocaleString();
     } catch {
       return dateString;
     }
@@ -217,12 +252,15 @@ function JobsList({ client }: JobsListProps) {
                       </TableCell>
                       <TableCell>
                         <Chip
-                          label={job.status}
-                          color={getStatusColor(job.status)}
+                          label={statusLabel(deliveryState(job))}
+                          color={getStatusColor(deliveryState(job))}
                           size="small"
                           variant="outlined"
                           sx={{ fontSize: { xs: '0.6rem', sm: '0.75rem' } }}
                         />
+                        {deliveryNotice(job) && <Typography variant="caption" display="block" sx={{ mt: 0.5 }}>
+                          {deliveryNotice(job)}
+                        </Typography>}
                       </TableCell>
                       <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }}>
                         <Typography variant="body2" sx={{ fontSize: { xs: '0.7rem', sm: '0.875rem' } }}>
@@ -254,12 +292,12 @@ function JobsList({ client }: JobsListProps) {
                       </TableCell>
                       <TableCell>
                         <Typography variant="caption" color="text.secondary" sx={{ fontSize: { xs: '0.6rem', sm: '0.75rem' } }}>
-                          {formatDate(job.created_at).split(' ')[0]}
+                          {formatDate(job.created_at)}
                         </Typography>
                       </TableCell>
                       <TableCell sx={{ display: { xs: 'none', sm: 'table-cell' } }}>
                         <Typography variant="caption" color="text.secondary" sx={{ fontSize: { xs: '0.6rem', sm: '0.75rem' } }}>
-                          {formatDate(job.updated_at).split(' ')[0]}
+                          {formatDate(job.updated_at)}
                         </Typography>
                       </TableCell>
                     </TableRow>
@@ -272,7 +310,7 @@ function JobsList({ client }: JobsListProps) {
           {jobs.length > 0 && (
             <Box mt={2}>
               <Typography variant="caption" color="text.secondary">
-                Auto-refreshing every 10 seconds • Phone numbers are masked for HIPAA compliance
+                Auto-refreshing every 10 seconds • Phone numbers are masked
               </Typography>
             </Box>
           )}
@@ -286,6 +324,9 @@ function JobsList({ client }: JobsListProps) {
         </DialogTitle>
         <DialogContent>
           {jobActionError && <Alert severity="error" sx={{ mb: 2 }}>{jobActionError}</Alert>}
+          {selectedJob && deliveryNotice(selectedJob) && <Alert severity="warning" sx={{ mb: 2 }}>
+            {deliveryNotice(selectedJob)}
+          </Alert>}
           {selectedJob && (
             <List>
               <ListItem>
@@ -307,14 +348,26 @@ function JobsList({ client }: JobsListProps) {
                   primary="Status"
                   secondary={
                     <Chip
-                      label={selectedJob.status}
-                      color={getStatusColor(selectedJob.status)}
+                      label={statusLabel(deliveryState(selectedJob))}
+                      color={getStatusColor(deliveryState(selectedJob))}
                       size="small"
                       variant="outlined"
                     />
                   }
                 />
               </ListItem>
+              {selectedJob.dispatch_mode && <>
+                <Divider />
+                <ListItem><ListItemText primary="Dispatch Mode" secondary={statusLabel(selectedJob.dispatch_mode)} /></ListItem>
+              </>}
+              {selectedJob.delivery_version != null && <>
+                <Divider />
+                <ListItem><ListItemText primary="Delivery Version" secondary={selectedJob.delivery_version} /></ListItem>
+              </>}
+              {selectedJob.provider_sid && <>
+                <Divider />
+                <ListItem><ListItemText primary="Provider Fax ID" secondary={selectedJob.provider_sid} /></ListItem>
+              </>}
               <Divider />
               <ListItem>
                 <ListItemText
@@ -396,11 +449,16 @@ function JobsList({ client }: JobsListProps) {
           {selectedJob && (
             <Button onClick={async () => {
               setJobActionError(null);
+              let refreshCompleted = false;
               try {
-                const updated = await client.refreshJob(selectedJob.id);
+                await client.refreshJob(selectedJob.id);
+                refreshCompleted = true;
+                const updated = await client.getJob(selectedJob.id);
                 setSelectedJob(updated);
               } catch (err) {
-                setJobActionError(err instanceof Error ? err.message : 'Failed to refresh job status');
+                setJobActionError(refreshCompleted
+                  ? 'Status refresh completed, but job details could not be reloaded. Reopen this job to try again.'
+                  : err instanceof Error ? err.message : 'Failed to refresh job status');
               }
             }}>Refresh Status</Button>
           )}

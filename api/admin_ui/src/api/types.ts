@@ -24,13 +24,26 @@ export interface HealthStatus {
   require_auth: boolean;
 }
 
-export interface FaxJob {
+export interface DeliveryMetadata {
+  delivery_state?: string | null;
+  dispatch_mode?: string | null;
+  delivery_version?: number | null;
+  reconciliation_reason?: string | null;
+}
+
+export interface FaxSendResult extends DeliveryMetadata {
+  id: string;
+  status: string;
+}
+
+export interface FaxJob extends DeliveryMetadata {
   id: string;
   to_number: string;
   status: string;
   backend: string;
   pages?: number;
   error?: string;
+  provider_sid?: string | null;
   created_at: string;
   updated_at: string;
   file_name?: string;

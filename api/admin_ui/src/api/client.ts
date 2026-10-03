@@ -1,6 +1,7 @@
 import type {
   HealthStatus,
   FaxJob,
+  FaxSendResult,
   ApiKey,
   Settings,
   SettingsPatch,
@@ -25,6 +26,27 @@ const safeManifestDetails = new Set([
   'No manifest candidates provided',
   'Fax sending is disabled. Validate the manifest without sending, or use Send to queue a test document.',
 ]);
+
+const safeRefreshDetails = new Set([
+  'This provider reports status through callbacks; refresh is unsupported.',
+  'This fax requires reconciliation with its original provider account before refresh.',
+  'Provider status is temporarily unavailable. This fax has not been resubmitted.',
+]);
+
+export function normalizeFaxDestination(number: string): string {
+  return number.replace(/[\s\-\(\)]/g, '');
+}
+
+export function reconciliationNotice(reason?: string | null): string {
+  let notice = reason?.trim() || 'Transmission outcome is uncertain.';
+  if (!/check (?:the )?original provider\b/i.test(notice)) {
+    notice += ' Check the original provider before taking action.';
+  }
+  if (!/do not retry transmission blindly\b/i.test(notice)) {
+    notice += ' Do not retry transmission blindly.';
+  }
+  return notice;
+}
 
 export class AdminAPIClient {
   private baseURL: string;
@@ -290,9 +312,9 @@ export class AdminAPIClient {
     return res.json();
   }
 
-  async sendFax(to: string, file: File, options: { queueOnly?: boolean } = {}): Promise<{ id: string; status: string }> {
+  async sendFax(to: string, file: File, options: { queueOnly?: boolean; idempotencyKey?: string } = {}): Promise<FaxSendResult> {
     const formData = new FormData();
-    formData.append('to', to);
+    formData.append('to', normalizeFaxDestination(to));
     formData.append('file', file);
     if (options.queueOnly) formData.append('queue_only', 'true');
 
@@ -300,15 +322,30 @@ export class AdminAPIClient {
       method: 'POST',
       headers: {
         'X-API-Key': this.apiKey,
+        ...(options.idempotencyKey ? { 'Idempotency-Key': options.idempotencyKey } : {}),
       },
       body: formData,
     });
 
     if (!res.ok) {
-      if (options.queueOnly && res.status === 409) {
-        throw new Error('Queue-only submission was refused because active settings changed. Leave and reopen Send to review the current delivery mode before trying again.');
+      const body = await res.json().catch(() => null);
+      const detail = body?.detail;
+      if (res.status === 409) {
+        if (detail === 'Queue-only request refused because outbound sending is now enabled. Refresh Send before submitting again.') {
+          throw new Error('Queue-only submission was refused because active settings changed. Leave and reopen Send to review the current delivery mode before trying again.');
+        }
+        if (detail === 'Idempotency-Key already belongs to a different fax request.'
+            || detail === 'Accepted fax record is unavailable; reconcile before submitting another request.') {
+          throw new Error(detail);
+        }
       }
-      throw new Error(`Send failed: ${res.status}`);
+      if (res.status === 503 && typeof detail === 'string') {
+        const uncertain = /^Fax acceptance is uncertain\. Retain job ([a-f0-9]{32}) for reconciliation\.$/.exec(detail);
+        if (uncertain) {
+          throw new Error(`Acceptance is uncertain. Check job ${uncertain[1]} in Jobs before starting another request.`);
+        }
+      }
+      throw new Error(`Fax acceptance was not confirmed (HTTP ${res.status}). Check Jobs before starting another request.`);
     }
 
     return res.json();
@@ -357,8 +394,20 @@ export class AdminAPIClient {
   }
 
   // Jobs admin helpers
-  async refreshJob(jobId: string): Promise<FaxJob> {
-    const res = await this.fetch(`/admin/fax-jobs/${encodeURIComponent(jobId)}/refresh`, { method: 'POST' });
+  async refreshJob(jobId: string): Promise<FaxSendResult> {
+    const res = await fetch(`${this.baseURL}/admin/fax-jobs/${encodeURIComponent(jobId)}/refresh`, {
+      method: 'POST',
+      headers: { 'X-API-Key': this.apiKey, 'Content-Type': 'application/json' },
+    });
+    if (!res.ok) {
+      if ([400, 409, 502].includes(res.status)) {
+        const body = await res.json().catch(() => null);
+        if (typeof body?.detail === 'string' && safeRefreshDetails.has(body.detail)) {
+          throw new Error(body.detail);
+        }
+      }
+      throw new Error(`API Error: ${res.status} ${res.statusText}`);
+    }
     return res.json();
   }
 

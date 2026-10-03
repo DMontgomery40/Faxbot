@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import {
   Box,
   Typography,
@@ -18,8 +18,8 @@ import {
   CheckCircle as SuccessIcon,
   Error as ErrorIcon,
 } from '@mui/icons-material';
-import AdminAPIClient from '../api/client';
-import type { AdminConfig } from '../api/types';
+import AdminAPIClient, { normalizeFaxDestination, reconciliationNotice } from '../api/client';
+import type { AdminConfig, FaxSendResult } from '../api/types';
 import {
   ResponsiveTextField,
   ResponsiveFileUpload,
@@ -33,14 +33,67 @@ interface SendFaxProps {
   configError: string | null;
 }
 
+interface SubmissionIntent {
+  key: string;
+  destination: string;
+  file: File;
+  queueOnly: boolean;
+  maxFileSizeBytes: number;
+}
+
+function submissionKey(): string {
+  if (typeof window.crypto?.randomUUID === 'function') return window.crypto.randomUUID();
+  if (typeof window.crypto?.getRandomValues !== 'function') {
+    throw new Error('Protected fax submission is unavailable in this browser. No request was sent.');
+  }
+  // getRandomValues remains available for ordinary HTTP self-hosted instances.
+  const bytes = window.crypto.getRandomValues(new Uint8Array(16));
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+function acceptanceMessage(response: FaxSendResult): string {
+  switch ((response.delivery_state || response.status).toLowerCase()) {
+    case 'held':
+      return 'Test fax accepted and held. It will never be automatically transmitted, even after outbound sending is enabled.';
+    case 'ready':
+      return 'Fax accepted and ready for dispatch. Delivery is not yet confirmed.';
+    case 'preparing':
+      return 'Fax job is preparing for transmission. Delivery is not yet confirmed.';
+    case 'submitting':
+      return 'Fax submission is underway. Delivery is not yet confirmed.';
+    case 'in_progress':
+      return 'Fax transmission is in progress. Delivery is not yet confirmed.';
+    case 'success':
+    case 'completed':
+      return 'Fax job reports successful delivery.';
+    case 'failed':
+      return 'Fax job failed. Review its details in Jobs before submitting another fax.';
+    case 'cancelled':
+    case 'canceled':
+      return 'Fax job was cancelled.';
+    case 'reconciliation_required':
+      return reconciliationNotice(response.reconciliation_reason);
+    case 'queued':
+      return 'Fax accepted and queued. Delivery is not yet confirmed. Check Jobs for the latest status.';
+    default:
+      return 'Fax request accepted. Check Jobs for its current delivery status.';
+  }
+}
+
 function SendFax({ client, config, configLoading, configError }: SendFaxProps) {
   const theme = useTheme();
   const isSmallMobile = useMediaQuery(theme.breakpoints.down('sm'));
   
   const [toNumber, setToNumber] = useState('');
   const [file, setFile] = useState<File | null>(null);
+  const [uploadPickerVersion, setUploadPickerVersion] = useState(0);
   const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<{ type: 'success' | 'error'; message: string; jobId?: string } | null>(null);
+  const [result, setResult] = useState<{ type: 'success' | 'error' | 'warning' | 'info'; message: string; jobId?: string } | null>(null);
+  const intentRef = useRef<SubmissionIntent | null>(null);
+  const submittingRef = useRef(false);
 
   // Validation states
   const [toNumberError, setToNumberError] = useState(false);
@@ -53,8 +106,9 @@ function SendFax({ client, config, configLoading, configError }: SendFaxProps) {
 
   const validatePhone = (number: string): boolean => {
     // Basic validation - allow digits, spaces, dashes, parentheses, and +
-    const cleanNumber = number.replace(/[\s\-\(\)]/g, '');
+    const cleanNumber = normalizeFaxDestination(number);
     if (!cleanNumber) return false;
+    if (!/^\+?\d+$/.test(cleanNumber)) return false;
     if (cleanNumber.startsWith('+')) {
       return cleanNumber.length >= 11 && cleanNumber.length <= 15;
     }
@@ -62,7 +116,11 @@ function SendFax({ client, config, configLoading, configError }: SendFaxProps) {
   };
 
   const handleSend = async () => {
-    if (!configReady) return;
+    if (submittingRef.current || !configReady) return;
+    const destination = normalizeFaxDestination(toNumber);
+    const retained = intentRef.current;
+    const sameIntent = retained !== null && retained.destination === destination && retained.file === file;
+    const allowedBytes = sameIntent ? retained.maxFileSizeBytes : maxFileSizeBytes;
     // Reset errors
     setToNumberError(false);
     setFileError(null);
@@ -78,8 +136,8 @@ function SendFax({ client, config, configLoading, configError }: SendFaxProps) {
     if (!file) {
       setFileError('Please select a PDF or TXT file.');
       hasError = true;
-    } else if (maxFileSizeBytes !== null && file.size > maxFileSizeBytes) {
-      setFileError(`The active upload limit is ${maxFileSizeMb} MB. Choose a smaller document.`);
+    } else if (allowedBytes !== null && file.size > allowedBytes) {
+      setFileError(`The upload limit for this request is ${allowedBytes / (1024 * 1024)} MB. Choose a smaller document.`);
       hasError = true;
     }
     
@@ -91,35 +149,47 @@ function SendFax({ client, config, configLoading, configError }: SendFaxProps) {
       return;
     }
 
+    submittingRef.current = true;
     setLoading(true);
     setResult(null);
 
     try {
-      const response = await client.sendFax(toNumber, file!, { queueOnly: faxDisabled });
+      if (!intentRef.current || intentRef.current.destination !== destination || intentRef.current.file !== file) {
+        intentRef.current = { key: submissionKey(), destination, file: file!,
+          queueOnly: faxDisabled, maxFileSizeBytes: maxFileSizeBytes! };
+      }
+      const intent = intentRef.current;
+      const response = await client.sendFax(intent.destination, intent.file,
+        { queueOnly: intent.queueOnly, idempotencyKey: intent.key });
+      const state = (response.delivery_state || response.status).toLowerCase();
       setResult({
-        type: 'success',
-        message: faxDisabled
-          ? 'Test fax accepted and queued. No fax will be delivered while outbound sending is disabled.'
-          : 'Fax accepted and queued. Delivery is not yet confirmed.',
+        type: state === 'reconciliation_required' ? 'warning' : state === 'failed' ? 'error'
+          : state === 'success' || state === 'completed' ? 'success' : 'info',
+        message: acceptanceMessage(response),
         jobId: response.id,
       });
       
       // Clear form on success
+      intentRef.current = null;
       setToNumber('');
       setFile(null);
+      setUploadPickerVersion(version => version + 1);
       
     } catch (err) {
       setResult({
         type: 'error',
-        message: err instanceof Error ? err.message : 'Failed to send fax',
+        message: `${err instanceof Error ? err.message : 'Fax acceptance was not confirmed.'}${intentRef.current ? ' Retrying the unchanged destination and document in this open form reuses the same request. Leaving or reloading starts a new request.' : ''}`,
       });
     } finally {
+      submittingRef.current = false;
       setLoading(false);
     }
   };
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !loading && configReady && toNumber && file) {
+    if (e.key === 'Enter' && e.target instanceof HTMLInputElement && e.target.type === 'tel'
+        && !loading && configReady && toNumber && file) {
+      e.preventDefault();
       handleSend();
     }
   };
@@ -135,7 +205,7 @@ function SendFax({ client, config, configLoading, configError }: SendFaxProps) {
         {configError ?? 'Active send configuration is unavailable. Leave and reopen Send to refresh it.'}
       </Alert>}
       {faxDisabled && <Alert severity="warning" sx={{ mb: 3 }}>
-        Outbound sending is disabled. Accepted jobs only queue; no actual fax delivery or simulated delivery occurs while this setting is active.
+        Outbound sending is disabled. Test jobs are held and will never be automatically transmitted, even after sending is enabled.
       </Alert>}
 
       <Box sx={{ maxWidth: { xs: '100%', md: 800 } }}>
@@ -151,12 +221,17 @@ function SendFax({ client, config, configLoading, configError }: SendFaxProps) {
                   label="Destination Number"
                   value={toNumber}
                   onChange={(value) => {
+                    if (submittingRef.current) return;
+                    if (intentRef.current && intentRef.current.destination !== normalizeFaxDestination(value)) {
+                      intentRef.current = null;
+                    }
                     setToNumber(value);
                     if (toNumberError) setToNumberError(false);
                   }}
                   placeholder="+15551234567"
                   helperText="Enter in E.164 format (+1XXXXXXXXXX) or 10-digit US number"
                   type="tel"
+                  disabled={!configReady || loading}
                   required
                   error={toNumberError}
                   errorMessage="Please enter a valid phone number"
@@ -164,16 +239,19 @@ function SendFax({ client, config, configLoading, configError }: SendFaxProps) {
                 />
 
                 <ResponsiveFileUpload
+                  key={uploadPickerVersion}
                   label="Document to Fax"
                   value={file}
                   onFileSelect={(file) => {
+                    if (submittingRef.current) return;
+                    if (intentRef.current && intentRef.current.file !== file) intentRef.current = null;
                     setFile(file);
                     setFileError(file && maxFileSizeBytes !== null && file.size > maxFileSizeBytes
                       ? `The active upload limit is ${maxFileSizeMb} MB. Choose a smaller document.`
                       : null);
                   }}
                   accept=".pdf,.txt,application/pdf,text/plain"
-                  helperText={maxFileSizeMb === null ? 'PDF or TXT files only. Active upload limit is loading.' : `PDF or TXT files only. Maximum size: ${maxFileSizeMb} MB`}
+                  helperText={maxFileSizeMb === null ? 'PDF or TXT files only. Active upload limit is loading.' : `PDF or TXT files only. New requests: maximum ${maxFileSizeMb} MB. Unchanged retries retain the original limit.`}
                   disabled={!configReady || loading}
                   required
                   error={!!fileError}
@@ -210,8 +288,10 @@ function SendFax({ client, config, configLoading, configError }: SendFaxProps) {
                     <Button
                       variant="outlined"
                       onClick={() => {
+                        intentRef.current = null;
                         setToNumber('');
                         setFile(null);
+                        setUploadPickerVersion(version => version + 1);
                         setResult(null);
                         setToNumberError(false);
                         setFileError(null);
@@ -239,7 +319,7 @@ function SendFax({ client, config, configLoading, configError }: SendFaxProps) {
           <Grow in timeout={300}>
             <Alert 
               severity={result.type}
-              icon={result.type === 'success' ? <SuccessIcon /> : <ErrorIcon />}
+              icon={result.type === 'success' ? <SuccessIcon /> : result.type === 'error' ? <ErrorIcon /> : undefined}
               sx={{ 
                 mt: 3,
                 borderRadius: 2,
@@ -294,7 +374,7 @@ function SendFax({ client, config, configLoading, configError }: SendFaxProps) {
                   <Typography variant="body2" color="text.secondary">
                     • PDF files: Standard documents, forms, letters<br />
                     • TXT files: Plain text will be converted to PDF automatically<br />
-                    • Maximum file size: {maxFileSizeMb === null ? 'unavailable until active settings load' : `${maxFileSizeMb} MB`}<br />
+                    • Maximum file size for new requests: {maxFileSizeMb === null ? 'unavailable until active settings load' : `${maxFileSizeMb} MB`}<br />
                     • Images: Convert to PDF first using a PDF creator
                   </Typography>
                 </Box>
@@ -304,8 +384,17 @@ function SendFax({ client, config, configLoading, configError }: SendFaxProps) {
                     {faxDisabled ? 'Queue-only Test Jobs' : 'Job Status'}
                   </Typography>
                   <Typography variant="body2" color="text.secondary">
-                    {faxDisabled ? <>Accepted jobs stay queued while outbound sending is disabled. This does not transmit a fax or simulate delivery.</> : <>Queue acceptance does not confirm delivery. Delivery timing and status depend on the configured provider.</>}<br />
+                    {faxDisabled ? <>Test jobs remain held permanently. Enabling sending never automatically transmits them.</> : <>Queue acceptance does not confirm delivery. Delivery timing and status depend on the configured provider.</>}<br />
                     Check the Jobs tab to monitor the accepted job.
+                  </Typography>
+                </Box>
+                <Box>
+                  <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 0.5 }}>Retrying a Submission</Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    Retrying an unchanged destination and the same selected document reuses the request while this form stays open.
+                    Unchanged retries also retain the original delivery mode and upload limit.
+                    Changing the destination or document, clearing the form, navigating away or reloading starts a new request.
+                    Check Jobs before starting another request when acceptance is uncertain.
                   </Typography>
                 </Box>
               </Stack>
