@@ -987,6 +987,8 @@ async def validate_http_manifest(payload: ManifestValidateIn):
     except Exception:
         pass
     if not payload.render_only:
+        if settings.fax_disabled:
+            raise HTTPException(409, detail="Fax sending is disabled. Validate the manifest without sending, or use Send to queue a test document.")
         try:
             rt = HttpProviderRuntime(man, payload.credentials or {}, payload.settings or {})
             res = await rt.send_fax(to=payload.to or "+15551234567", file_url=payload.file_url, from_number=payload.from_number)
@@ -3328,6 +3330,11 @@ async def admin_terminal_websocket(
                 await websocket.close(code=1008, reason="Unauthorized")
                 return
     
+    # Authentication does not override the installation's host execution gate.
+    if not _admin_exec_enabled():
+        await websocket.close(code=1008, reason="Administrative execution is disabled")
+        return
+
     # Import terminal handler
     from .terminal import handle_terminal_websocket, check_terminal_requirements
     
