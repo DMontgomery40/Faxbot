@@ -37,12 +37,13 @@ function MCP({ client }: MCPProps) {
   const desiredRevision = needsReload ? undefined : settings?._meta?.desired_revision_id;
   const canEdit = !!desiredRevision && !loading && !needsReload;
   const revisionMeta = needsReload && saveReceipt ? saveReceipt._meta : settings?._meta;
+  const pendingCount = needsReload ? 0 : settings?._meta?.pending_fields?.length ?? 0;
 
   const readSnapshot = async (epoch: number) => {
     const [desired, active] = await Promise.all([client.getSettings(), client.getMcpConfig()]);
     if (epoch !== requestEpoch.current) return;
     if (!desired._meta?.desired_revision_id || !desired.mcp || !active?.mcp) {
-      throw new Error('A canonical desired revision and active MCP settings are required before editing.');
+      throw new Error('MCP settings could not be loaded. Refresh to try again.');
     }
     const mcp = desired.mcp;
     setSettings(desired);
@@ -62,7 +63,7 @@ function MCP({ client }: MCPProps) {
       try {
         await client.getMcpHealth(`${path}/health`);
         if (epoch === requestEpoch.current) setHealth(transport);
-      } catch { /* Health remains unconfirmed; desired settings are still readable. */ }
+      } catch { /* Health stays unconfirmed; the settings above remain editable. */ }
     }
   };
 
@@ -111,7 +112,7 @@ function MCP({ client }: MCPProps) {
     };
     const changed = Object.entries(values).filter(([key, value]) => value !== baseline[key]);
     if (!changed.length) {
-      setSnack('No changes to save. The loaded desired MCP settings are unchanged.');
+      setSnack('Nothing changed.');
       return;
     }
     actionFence.current = true;
@@ -126,19 +127,21 @@ function MCP({ client }: MCPProps) {
       setHealth(null);
       setActiveMcp(null);
       setSnack(receipt._meta.apply_state === 'pending_restart'
-        ? `${receipt.changed ? 'Desired MCP settings saved durably.' : 'Desired MCP settings are unchanged.'} Every API worker must stop and the installation restart to activate the pending revision.`
-        : receipt.changed ? 'MCP settings saved durably and active.' : 'MCP settings are unchanged and active.');
+        ? `${receipt.changed ? 'Settings saved.' : 'Nothing changed.'} Restart Faxbot to apply pending changes.`
+        : receipt.changed ? 'Settings saved.' : 'Nothing changed.');
       try {
         await readSnapshot(epoch);
       } catch {
-        if (epoch === requestEpoch.current) setError('Save confirmed; the MCP settings view could not be reloaded. Editing is paused. Refresh explicitly, or sign in again, before another save.');
+        if (epoch === requestEpoch.current) setError('MCP settings could not be reloaded. Refresh to keep editing.');
       }
     } catch (e: any) {
       if (epoch !== requestEpoch.current) return;
       setNeedsReload(true);
       setError((e?.message || '').includes('409')
-        ? 'Settings changed after this editor loaded. Your draft is retained. Refresh explicitly to discard it and review the current desired revision before saving again.'
-        : `${configurationWriteRejected(e) ? 'Save was rejected. Your draft is retained.' : 'Save was not confirmed.'} ${e?.message || ''} Refresh to check the current configuration before saving again.`);
+        ? 'Someone else changed these settings. Your edits are kept here; refresh to see the current values.'
+        : configurationWriteRejected(e)
+          ? `Settings were not saved (error ${e.status}). Refresh to try again.`
+          : 'Faxbot could not confirm the save. Refresh to check the current values.');
     } finally {
       if (epoch === requestEpoch.current) {
         actionFence.current = false;
@@ -172,32 +175,40 @@ function MCP({ client }: MCPProps) {
       <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
         <Typography variant="h4" component="h1">MCP Integration</Typography>
         {health ? (
-          <Chip label={`Active ${health} healthy`} color="success" variant="outlined" />
+          <Chip label={`${health} transport healthy`} color="success" variant="outlined" />
         ) : (
-          <Chip label={activeMcp && !activeMcp.sse_enabled && !activeMcp.http_enabled ? 'Active MCP disabled' : 'Active MCP health unconfirmed'} color="warning" variant="outlined" />
+          <Chip label={activeMcp && !activeMcp.sse_enabled && !activeMcp.http_enabled ? 'MCP disabled' : 'Health not confirmed'} color="warning" variant="outlined" />
         )}
       </Box>
 
       {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
       {snack && <Alert severity={saveReceipt?._meta.apply_state === 'pending_restart' ? 'warning' : 'success'} sx={{ mb: 2 }} onClose={() => setSnack(null)}>{snack}</Alert>}
-      {revisionMeta && <Alert severity={revisionMeta.apply_state === 'pending_restart' ? 'warning' : 'info'} sx={{ mb: 2 }}>
-        {needsReload && saveReceipt ? 'Confirmed saved' : 'Loaded'} desired revision: {revisionMeta.desired_revision_id}. Active revision: {revisionMeta.active_revision_id}. Generation: {revisionMeta.generation}.
-        {revisionMeta.apply_state === 'pending_restart' && ' Active behavior continues until every worker stops and the installation restarts.'}
-      </Alert>}
-      {needsReload && <Alert severity="warning" sx={{ mb: 2 }}>Editing and saving are paused. Refresh explicitly to load the current desired revision; this discards the visible draft.</Alert>}
+      {revisionMeta?.apply_state === 'pending_restart' && !(snack && saveReceipt?._meta.apply_state === 'pending_restart') && (
+        <Alert severity="warning" sx={{ mb: 2 }}>
+          {pendingCount > 0
+            ? `Restart Faxbot to apply ${pendingCount} pending ${pendingCount === 1 ? 'change' : 'changes'}.`
+            : 'Restart Faxbot to apply pending changes.'}
+        </Alert>
+      )}
+      {needsReload && !loading && !error && <Alert severity="warning" sx={{ mb: 2 }}>Refresh to load the current settings.</Alert>}
 
       <Grid container spacing={3}>
         <Grid item xs={12}>
           <Card>
             <CardContent>
               <Typography variant="h6" gutterBottom>Server Settings</Typography>
-              <Alert severity="info" sx={{ mb: 2 }}>
-                Embedded Python MCP servers use the transport paths configured in installation settings when enabled. No external Node process is required for SSE/HTTP.
-              </Alert>
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                Turn on the transports your AI assistant uses to connect to Faxbot.
+              </Typography>
               <Box component="fieldset" disabled={!canEdit} sx={{ border: 0, m: 0, p: 0, minWidth: 0 }}>
-              <Typography variant="body2" sx={{ mb: 2 }}>These controls edit desired MCP settings. Client examples and health below use separately loaded active settings.</Typography>
-              <FormControlLabel control={<Switch checked={sseEnabled} onChange={(e) => setSseEnabled(e.target.checked)} />} label="Enable SSE" />
-              <FormControlLabel control={<Switch checked={httpEnabled} onChange={(e) => setHttpEnabled(e.target.checked)} />} label="Enable Streamable HTTP" />
+              <Box sx={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap' }}>
+                <FormControlLabel control={<Switch checked={sseEnabled} onChange={(e) => setSseEnabled(e.target.checked)} />} label="SSE transport" />
+                {settings?.mcp?.sse_path && <Typography variant="caption" color="text.secondary" sx={{ fontFamily: 'monospace' }}>{settings.mcp.sse_path}</Typography>}
+              </Box>
+              <Box sx={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap' }}>
+                <FormControlLabel control={<Switch checked={httpEnabled} onChange={(e) => setHttpEnabled(e.target.checked)} />} label="HTTP transport" />
+                {settings?.mcp?.http_path && <Typography variant="caption" color="text.secondary" sx={{ fontFamily: 'monospace' }}>{settings.mcp.http_path}</Typography>}
+              </Box>
               <FormControlLabel control={<Switch checked={requireOAuth} onChange={(e) => setRequireOAuth(e.target.checked)} />} label="Require OAuth (JWT)" />
               {requireOAuth && (
                 <Box sx={{ display: 'grid', gridTemplateColumns: '1fr', gap: 2, mt: 2 }}>
@@ -219,8 +230,8 @@ function MCP({ client }: MCPProps) {
           <Card>
             <CardContent>
               <Typography variant="h6" gutterBottom>Claude Desktop Config</Typography>
-              {!activeMcp ? <Alert severity="info">Reload active MCP settings before copying a client configuration.</Alert> : <>
-              {!activeMcp.sse_enabled && <Alert severity="warning" sx={{ mb: 2 }}>SSE is disabled in the loaded active configuration. This client example will be usable only after SSE is active.</Alert>}
+              {!activeMcp ? <Alert severity="info">The client configuration appears once MCP settings load.</Alert> : <>
+              {!activeMcp.sse_enabled && <Alert severity="warning" sx={{ mb: 2 }}>The SSE transport is off, so this configuration won't connect yet.</Alert>}
               <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
                 Add to your Claude Desktop MCP config. SSE URL: {sseUrl()}
               </Typography>
