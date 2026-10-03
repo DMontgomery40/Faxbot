@@ -33,9 +33,6 @@ STATIC_MOUNTS = {"/admin/ui", "/assets"}
 # Still on legacy guards at this revision; other slices convert them. Remove each
 # entry when its route declares policy; the pending test below fails until then.
 PENDING = {
-    ("GET", "/inbound"): "converted by access-core",
-    ("GET", "/inbound/{inbound_id}"): "converted by access-core",
-    ("GET", "/inbound/{inbound_id}/pdf"): "converted by access-core",
     ("WS", "/admin/terminal"): "converted by the terminal handshake owner",
     ("POST", "/admin/tunnel/pair"): "converted by the pairing owner",
 }
