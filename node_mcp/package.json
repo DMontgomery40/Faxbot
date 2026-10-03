@@ -16,7 +16,8 @@
     "stdio": "node src/servers/stdio.js",
     "http": "node src/servers/http.js",
     "sse": "node src/servers/sse.js",
-    "ws": "node src/servers/ws.js"
+    "ws": "node src/servers/ws.js",
+    "check": "node scripts/check-imports.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.17.5",
