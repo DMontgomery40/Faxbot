@@ -16,6 +16,10 @@ Pick your backend and environment, then deploy.
   Full control with your SIP trunk.  
   [Guide](sip-asterisk.md)
 
+- :material-phone-in-talk: **SIP trunk (your carrier)**  
+  Fax by the minute through Telnyx, SignalWire, Sinch, AnveoDirect, Flowroute or another carrier.  
+  [Guide](sip-trunk.md)
+
 - :material-cloud-lock: **Deployment**  
   Checklist for public exposure and TLS.  
   [Read](../deployment.md)
@@ -47,5 +51,6 @@ Pick your backend and environment, then deploy.
 - Phaxio (Cloud): [phaxio.md](phaxio.md)
 - Sinch (Cloud v3): [sinch.md](sinch.md)
 - SIP/Asterisk (Self‑hosted): [sip-asterisk.md](sip-asterisk.md)
+- SIP trunk with your own carrier: [sip-trunk.md](sip-trunk.md)
 - Deployment: [../deployment.md](../deployment.md)
 - Security overview: [../security/index.md](../security/index.md)
