@@ -1,0 +1,10 @@
+apis:
+  faxbot:
+    root: ../../docs/generated/openapi.json
+extends:
+  - recommended
+theme:
+  openapi:
+    hideDownloadButton: false
+    expandResponses: '200,201,202'
+    hideHostname: false

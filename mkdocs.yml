@@ -1,8 +1,10 @@
-site_name: Docs
+site_name: Faxbot Docs
 site_url: https://docs.faxbot.net
 repo_url: https://github.com/DMontgomery40/Faxbot
 repo_name: DMontgomery40/Faxbot
-edit_uri: edit/mkdocs/docs/
+edit_uri: edit/main/docs/
+hooks:
+  - scripts/docs_ai/use_built_artifact.py
 theme:
   name: material
   custom_dir: docs/overrides
@@ -136,6 +138,10 @@ nav:
     - Admin Demo: admin-demo.md
   - Reference:
     - Overview: reference/index.md
+    - Generated source:
+      - Overview: generated/index.md
+      - Configuration: generated/configuration.md
+      - Providers: generated/providers.md
     - API:
       - Reference: api.md
       - Canonical Events: api/canonical-events.md
@@ -172,4 +178,4 @@ nav:
     - MCP Integration (Legacy): archive/mcp-integration-legacy.md
     - Backends (Overview): archive/backends-overview.md
 extra_css:
-  - docs/overrides/extra.css
+  - overrides/extra.css

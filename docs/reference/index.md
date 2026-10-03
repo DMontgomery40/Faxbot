@@ -2,6 +2,8 @@
 
 Deep dives and contracts for building with Faxbot.
 
+[Generated source reference](../generated/index.md) provides the current OpenAPI, typed configuration fields, provider declarations, and exact build provenance. It documents source declarations rather than live installation state.
+
 <div class="grid cards" markdown>
 
 - :material-api: **API Reference**  

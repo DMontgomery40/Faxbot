@@ -2,60 +2,76 @@ name: Build and Deploy MkDocs (mike)
 
 on:
   push:
-    branches: [ mkdocs ]
+    branches: [ main, feat/faxbot-refresh ]
+  pull_request:
+    branches: [ main ]
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  build-deploy:
+  preview:
+    uses: ./.github/workflows/api-docs.yml
+    with:
+      source_sha: ${{ github.sha }}
+      source_ref: ${{ github.head_ref || github.ref_name }}
+  publish:
+    needs: preview
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    concurrency:
+      # Keep every source version eligible; a shared group drops pending runs.
+      group: faxbot-docs-publication-${{ github.sha }}
+      cancel-in-progress: false
+    permissions:
+      contents: write
+      pages: write
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          submodules: false
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-
-      - name: Install MkDocs toolchain
+      - name: Install pinned publication toolchain
+        run: python -m pip install -r docs/requirements.txt
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.preview.outputs.artifact_name }}
+          path: ${{ runner.temp }}/docs-artifact
+      - name: Restore generated reference overlay from verified artifact
+        run: cp -R "$RUNNER_TEMP/docs-artifact/docs/generated" docs/generated
+      - name: Publish exact source version without replacing newer latest or site history
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+          FAXBOT_DOCS_BUILT_SITE: ${{ runner.temp }}/docs-artifact/site
         run: |
-          python -m pip install --upgrade pip
-          pip install mkdocs mkdocs-material mike mkdocs-exclude mkdocs-redirects
-
-      - name: Preflight build (strict)
-        run: |
-          mkdocs --version
-          echo "Listing docs/" && ls -la docs || true
-          echo "Showing mkdocs.yml" && sed -n '1,160p' mkdocs.yml
-          mkdocs build -v --strict
-
-      - name: Configure Git author
-        run: |
-          git config user.name "GitHub Actions"
-          git config user.email "actions@github.com"
-
-      - name: Deploy docs with mike to gh-pages
-        run: |
-          VERSION=$(git rev-parse --short HEAD)
-          mike deploy --push --branch gh-pages --update-aliases "$VERSION" latest
-          mike set-default --push --branch gh-pages latest
-
-      - name: Ensure CNAME at gh-pages root
-        run: |
-          set -e
-          git fetch origin gh-pages
-          git checkout gh-pages
-          echo "docs.faxbot.net" > CNAME
-          git add CNAME
-          if git diff --staged --quiet; then
-            echo "CNAME unchanged"
-          else
-            git commit -m "docs: add/update CNAME for custom domain"
-            git push origin gh-pages
-          fi
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          python -c 'import json,os; from pathlib import Path; data=json.loads(Path("docs/generated/provenance.json").read_text()); assert data["source_sha"] == os.environ["SOURCE_SHA"] and not data["source_tree_dirty"]'
+          git config user.name "Faxbot documentation bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # A non-fast-forward rejection retries from the newly published head.
+          # This is the cross-run compare-and-swap, without a force push.
+          for ATTEMPT in 1 2 3 4 5; do
+            git fetch origin gh-pages
+            git branch --force gh-pages origin/gh-pages
+            MAIN_SHA=$(git ls-remote origin refs/heads/main | cut -f1)
+            if [ "$MAIN_SHA" = "$SOURCE_SHA" ]; then
+              mike deploy --branch gh-pages --update-aliases "$SOURCE_SHA" latest
+              mike set-default --branch gh-pages latest
+            else
+              mike deploy --branch gh-pages "$SOURCE_SHA"
+            fi
+            git diff --exit-code origin/gh-pages gh-pages -- CNAME
+            if git push origin gh-pages; then
+              exit 0
+            fi
+            sleep "$ATTEMPT"
+          done
+          echo "Documentation publication could not reconcile concurrent updates." >&2
+          exit 1
+      - name: Request build of the existing GitHub Pages site
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api --method POST "repos/$GITHUB_REPOSITORY/pages/builds"

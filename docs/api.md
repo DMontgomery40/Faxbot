@@ -1,5 +1,7 @@
 # API_REFERENCE.md
 
+The [generated source reference](generated/index.md) contains the current OpenAPI contract and records its source commit. This page remains instructional prose and can describe older behavior. Runtime availability and provider delivery require separate verification. The legacy `faxbot.net/api` site has a separate compatibility deployment.
+
 ## Base URL
 - Default: `http://localhost:8080`
 - Health: `GET /health` → `{ "status": "ok" }`
