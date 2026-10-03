@@ -21,23 +21,26 @@ Run (example):
     uvicorn server:app --host 0.0.0.0 --port 3003
 """
 import base64
-import asyncio
 import pathlib
 import os
-import time
 import inspect
 from contextlib import asynccontextmanager
 from typing import Dict, Any, Optional
 
 import httpx
-from jose import jwt
 from starlette.applications import Starlette
 from starlette.responses import JSONResponse
 from starlette.requests import Request
-from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.routing import Route, Mount
 
 from mcp.server.fastmcp import FastMCP
+
+if __package__:
+    from .transport_config import (APIConfiguration, APIConfigurationProvider, BearerTokenVerifier,
+                                   OAuthConfiguration, OAuthMiddleware, bind_tool, current_api_configuration)
+else:
+    from transport_config import (APIConfiguration, APIConfigurationProvider, BearerTokenVerifier,
+                                  OAuthConfiguration, OAuthMiddleware, bind_tool, current_api_configuration)
 
 
 # ===== Config =====
@@ -49,22 +52,12 @@ API_KEY = os.getenv("API_KEY", "")
 
 
 # ===== JWT validation helpers =====
-_jwks_cache: Dict[str, Any] = {"ts": 0, "jwks": None}
-_jwks_ttl = 300  # seconds
+_default_verifier = BearerTokenVerifier(OAuthConfiguration(OAUTH_ISSUER, OAUTH_AUDIENCE, OAUTH_JWKS_URL))
+_jwks_cache = _default_verifier.cache
 
 
 async def fetch_jwks(client: httpx.AsyncClient) -> Dict[str, Any]:
-    now = time.time()
-    if _jwks_cache["jwks"] and (now - _jwks_cache["ts"]) < _jwks_ttl:
-        return _jwks_cache["jwks"]
-    if not OAUTH_JWKS_URL:
-        raise RuntimeError("OAUTH_JWKS_URL is not configured")
-    resp = await client.get(OAUTH_JWKS_URL, timeout=10.0)
-    resp.raise_for_status()
-    jwks = resp.json()
-    _jwks_cache["jwks"] = jwks
-    _jwks_cache["ts"] = now
-    return jwks
+    return await _default_verifier.fetch_jwks(client)
 
 
 def _find_jwk_for_kid(jwks: Dict[str, Any], kid: str) -> Optional[Dict[str, Any]]:
@@ -76,32 +69,7 @@ def _find_jwk_for_kid(jwks: Dict[str, Any], kid: str) -> Optional[Dict[str, Any]
 
 
 async def verify_bearer_token(auth_header: str) -> Dict[str, Any]:
-    if not auth_header or not auth_header.startswith("Bearer "):
-        raise ValueError("Missing bearer token")
-    token = auth_header.split(" ", 1)[1].strip()
-
-    # Decode header to find kid
-    header = jwt.get_unverified_header(token)
-    kid = header.get("kid")
-    if not kid:
-        raise ValueError("Token missing 'kid' header")
-
-    async with httpx.AsyncClient() as client:
-        jwks = await fetch_jwks(client)
-    jwk = _find_jwk_for_kid(jwks, kid)
-    if not jwk:
-        raise ValueError("No matching JWK for token")
-
-    # Verify using python-jose
-    claims = jwt.decode(
-        token,
-        jwk,
-        algorithms=["RS256", "RS384", "RS512", "ES256", "ES384", "ES512"],
-        audience=OAUTH_AUDIENCE,
-        issuer=OAUTH_ISSUER,
-        options={"verify_aud": True, "verify_exp": True, "verify_nbf": True},
-    )
-    return claims
+    return await _default_verifier.verify(auth_header)
 
 
 # ===== Faxbot HTTP helpers =====
@@ -125,16 +93,15 @@ async def api_send_fax(to: str, file_name: str, file_b64: str, file_type: Option
     if not data:
         raise ValueError("File content is empty")
 
-    headers = {}
-    if API_KEY:
-        headers["X-API-Key"] = API_KEY
+    configuration = current_api_configuration(FAX_API_URL, API_KEY)
+    headers = {"X-API-Key": configuration.api_key} if configuration.api_key else {}
 
     files = {
         "to": (None, to),
         "file": (file_name, data, content_type),
     }
     async with httpx.AsyncClient(timeout=30.0) as client:
-        resp = await client.post(f"{FAX_API_URL}/fax", headers=headers, files=files)
+        resp = await client.post(f"{configuration.api_base_url}/fax", headers=headers, files=files)
         if resp.status_code != 202:
             detail = None
             try:
@@ -148,11 +115,10 @@ async def api_send_fax(to: str, file_name: str, file_b64: str, file_type: Option
 async def api_get_status(job_id: str) -> Dict[str, Any]:
     if not job_id:
         raise ValueError("jobId is required")
-    headers = {}
-    if API_KEY:
-        headers["X-API-Key"] = API_KEY
+    configuration = current_api_configuration(FAX_API_URL, API_KEY)
+    headers = {"X-API-Key": configuration.api_key} if configuration.api_key else {}
     async with httpx.AsyncClient(timeout=10.0) as client:
-        resp = await client.get(f"{FAX_API_URL}/fax/{job_id}", headers=headers)
+        resp = await client.get(f"{configuration.api_base_url}/fax/{job_id}", headers=headers)
         if resp.status_code != 200:
             detail = None
             try:
@@ -238,16 +204,15 @@ async def get_fax_status(jobId: str) -> str:  # noqa: N803
 
 @mcp.tool()
 async def list_inbound(limit: Optional[int] = 20, cursor: Optional[str] = None) -> str:
-    headers = {}
-    if API_KEY:
-        headers['X-API-Key'] = API_KEY
+    configuration = current_api_configuration(FAX_API_URL, API_KEY)
+    headers = {'X-API-Key': configuration.api_key} if configuration.api_key else {}
     params = {}
     if limit is not None:
         params['limit'] = limit
     if cursor:
         params['cursor'] = cursor
     async with httpx.AsyncClient(timeout=10.0) as client:
-        resp = await client.get(f"{FAX_API_URL}/inbound", headers=headers, params=params)
+        resp = await client.get(f"{configuration.api_base_url}/inbound", headers=headers, params=params)
         resp.raise_for_status()
         data = resp.json()
     if isinstance(data, dict) and 'items' in data:
@@ -259,9 +224,10 @@ async def list_inbound(limit: Optional[int] = 20, cursor: Optional[str] = None) 
 @mcp.tool()
 async def get_fax(id: str) -> str:  # noqa: N803
     if id.lower().startswith('in_'):
-        headers = {'X-API-Key': API_KEY} if API_KEY else {}
+        configuration = current_api_configuration(FAX_API_URL, API_KEY)
+        headers = {'X-API-Key': configuration.api_key} if configuration.api_key else {}
         async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(f"{FAX_API_URL}/inbound/{id}", headers=headers)
+            resp = await client.get(f"{configuration.api_base_url}/inbound/{id}", headers=headers)
             if resp.status_code == 404:
                 raise ValueError(f"Inbound not found: {id}")
             resp.raise_for_status()
@@ -283,9 +249,10 @@ async def get_fax(id: str) -> str:  # noqa: N803
 
 @mcp.tool()
 async def get_inbound_pdf(inboundId: str, asBase64: Optional[bool] = False) -> str:  # noqa: N803
-    headers = {'X-API-Key': API_KEY} if API_KEY else {}
+    configuration = current_api_configuration(FAX_API_URL, API_KEY)
+    headers = {'X-API-Key': configuration.api_key} if configuration.api_key else {}
     async with httpx.AsyncClient(timeout=30.0) as client:
-        resp = await client.get(f"{FAX_API_URL}/inbound/{inboundId}/pdf", headers=headers)
+        resp = await client.get(f"{configuration.api_base_url}/inbound/{inboundId}/pdf", headers=headers)
         if resp.status_code == 404:
             raise ValueError(f"Inbound not found: {inboundId}")
         resp.raise_for_status()
@@ -307,10 +274,10 @@ class _SseAsgiEndpoint:
         await self.endpoint(Request(scope, receive, send))
 
 
-def _sse_app():
-    application = mcp.sse_app()
+def _sse_app(server: FastMCP = mcp):
+    application = server.sse_app()
     for index, route in enumerate(application.routes):
-        if isinstance(route, Route) and route.path == mcp.settings.sse_path:
+        if isinstance(route, Route) and route.path == server.settings.sse_path:
             # Authenticated SDK endpoints are already ASGI callables; retain them.
             if inspect.iscoroutinefunction(route.endpoint):
                 if route.app.__module__ != "starlette.routing":
@@ -326,39 +293,54 @@ def _sse_app():
 inner_app = _sse_app()
 
 
-class AuthMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request: Request, call_next):  # type: ignore[override]
-        # Allow health without auth
-        if request.url.path == "/health":
-            return await call_next(request)
-        auth = request.headers.get("authorization")
-        try:
-            claims = await verify_bearer_token(auth or "")
-            # Attach claims for downstream use if needed
-            request.state.user = claims
-        except Exception:
-            return JSONResponse({"error": "Unauthorized"}, status_code=401)
-        return await call_next(request)
+class AuthMiddleware(OAuthMiddleware):
+    def __init__(self, app, *, verifier=verify_bearer_token):
+        super().__init__(app, verifier=verifier)
 
 
 async def health(_request: Request):
     return JSONResponse({"status": "ok", "transport": "sse", "server": "faxbot-mcp", "version": "2.0.0"})
 
 
-@asynccontextmanager
-async def lifespan(application: Starlette):
-    async with inner_app.router.lifespan_context(inner_app):
-        yield
+def create_app(*, api_base_url: str = FAX_API_URL, api_key: str = API_KEY,
+               api_config_provider: Optional[APIConfigurationProvider] = None,
+               require_oauth: bool = True, oauth_issuer: str = OAUTH_ISSUER,
+               oauth_audience: str = OAUTH_AUDIENCE, oauth_jwks_url: str = OAUTH_JWKS_URL) -> Starlette:
+    """Create an isolated embedded transport; OAuth is fixed until restart.
+
+    A provider is read once per tool invocation so an installation can rotate its
+    active API key without keeping the initial SSE connection's settings frame.
+    """
+    fixed = APIConfiguration(api_base_url, api_key)
+    provider = api_config_provider if api_config_provider is not None else lambda: fixed
+
+    def new_server():
+        configured = FastMCP(name='Faxbot MCP (Python)')
+        for tool in (send_fax, get_fax_status, list_inbound, get_fax, get_inbound_pdf):
+            configured.tool()(bind_tool(tool, provider))
+        return configured
+
+    configured = new_server()
+    transport_mount = Mount('/', app=_sse_app(configured))
+
+    @asynccontextmanager
+    async def lifespan(application: Starlette):
+        configured = new_server()
+        transport = _sse_app(configured)
+        application.state.mcp = configured
+        transport_mount.app = transport
+        async with transport.router.lifespan_context(transport):
+            yield
+
+    application = Starlette(routes=[Route('/health', health, methods=['GET']), transport_mount], lifespan=lifespan)
+    application.state.mcp = configured
+    if require_oauth:
+        verifier = BearerTokenVerifier(OAuthConfiguration(oauth_issuer, oauth_audience, oauth_jwks_url))
+        application.add_middleware(AuthMiddleware, verifier=verifier.verify)
+    return application
 
 
-app = Starlette(
-    routes=[
-        Route('/health', health, methods=['GET']),
-        Mount('/', app=inner_app),
-    ],
-    lifespan=lifespan,
-)
-app.add_middleware(AuthMiddleware)
+app = create_app()
 
 
 def main() -> None:

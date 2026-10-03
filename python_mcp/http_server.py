@@ -2,7 +2,7 @@
 Faxbot MCP streamable HTTP server (Python).
 
 Exposes the Streamable HTTP transport for MCP, mounted under /mcp endpoints.
-This variant does not add OAuth2; place behind your own gateway if needed.
+Standalone defaults do not add OAuth2; embedded factories can require it.
 
 Usage:
     cd python_mcp
@@ -24,6 +24,13 @@ from starlette.middleware.cors import CORSMiddleware
 from mcp.server.fastmcp import FastMCP
 
 import httpx
+
+if __package__:
+    from .transport_config import (APIConfiguration, APIConfigurationProvider, BearerTokenVerifier,
+                                   OAuthConfiguration, OAuthMiddleware, bind_tool, current_api_configuration)
+else:
+    from transport_config import (APIConfiguration, APIConfigurationProvider, BearerTokenVerifier,
+                                  OAuthConfiguration, OAuthMiddleware, bind_tool, current_api_configuration)
 
 FAX_API_URL = os.getenv("FAX_API_URL", "http://localhost:8080").rstrip("/")
 API_KEY = os.getenv("API_KEY", "")
@@ -49,18 +56,20 @@ async def _api_send(to: str, file_name: str, file_b64: str, file_type: Optional[
     data = base64.b64decode(file_b64)
     if not data:
         raise ValueError("File content is empty")
-    headers = {"X-API-Key": API_KEY} if API_KEY else {}
+    configuration = current_api_configuration(FAX_API_URL, API_KEY)
+    headers = {"X-API-Key": configuration.api_key} if configuration.api_key else {}
     files = {"to": (None, to), "file": (file_name, data, content_type)}
     async with httpx.AsyncClient(timeout=30.0) as client:
-        resp = await client.post(f"{FAX_API_URL}/fax", headers=headers, files=files)
+        resp = await client.post(f"{configuration.api_base_url}/fax", headers=headers, files=files)
         resp.raise_for_status()
         return resp.json()
 
 
 async def _api_status(job_id: str):
-    headers = {"X-API-Key": API_KEY} if API_KEY else {}
+    configuration = current_api_configuration(FAX_API_URL, API_KEY)
+    headers = {"X-API-Key": configuration.api_key} if configuration.api_key else {}
     async with httpx.AsyncClient(timeout=10.0) as client:
-        resp = await client.get(f"{FAX_API_URL}/fax/{job_id}", headers=headers)
+        resp = await client.get(f"{configuration.api_base_url}/fax/{job_id}", headers=headers)
         resp.raise_for_status()
         return resp.json()
 
@@ -85,21 +94,37 @@ def health(_):
     return JSONResponse({"status": "ok", "transport": "streamable-http", "server": "faxbot-mcp", "version": "2.0.0"})
 
 
-def create_app() -> Starlette:
+def create_app(*, api_base_url: str = FAX_API_URL, api_key: str = API_KEY,
+               api_config_provider: Optional[APIConfigurationProvider] = None,
+               require_oauth: bool = False, oauth_issuer: str = '',
+               oauth_audience: str = '', oauth_jwks_url: str = '') -> Starlette:
+    fixed = APIConfiguration(api_base_url, api_key)
+    provider = api_config_provider if api_config_provider is not None else lambda: fixed
+
+    def new_server():
+        server = FastMCP(name='Faxbot MCP (Python)')
+        server.tool()(bind_tool(send_fax, provider))
+        server.tool()(bind_tool(get_fax_status, provider))
+        return server
+
     # SDK session managers are single-use. Each lifespan owns a fresh server/manager.
-    transport_mount = Mount('/', app=_http_app_from_mcp(mcp))
+    server = new_server()
+    transport_mount = Mount('/', app=_http_app_from_mcp(server))
 
     @asynccontextmanager
     async def lifespan(application: Starlette):
-        server = FastMCP(name="Faxbot MCP (Python)")
-        server.tool()(send_fax)
-        server.tool()(get_fax_status)
+        server = new_server()
         inner = _http_app_from_mcp(server)
         transport_mount.app = inner
+        application.state.mcp = server
         async with inner.router.lifespan_context(inner):
             yield
 
     application = Starlette(routes=[Route('/health', health), transport_mount], lifespan=lifespan)
+    application.state.mcp = server
+    if require_oauth:
+        verifier = BearerTokenVerifier(OAuthConfiguration(oauth_issuer, oauth_audience, oauth_jwks_url))
+        application.add_middleware(OAuthMiddleware, verifier=verifier.verify)
     application.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
