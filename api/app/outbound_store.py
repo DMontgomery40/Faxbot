@@ -91,12 +91,14 @@ class OutboundStore:
 
     def grant_pdf(self, claim, *, url, token, expires_at):
         """Persist the captured provider's media capability before submission."""
-        now = datetime.utcnow()
         if (not isinstance(url, str) or not url or len(url) > 512
                 or not isinstance(token, str) or not token or len(token) > 128
-                or not isinstance(expires_at, datetime) or expires_at <= now):
+                or not isinstance(expires_at, datetime)):
             raise ValueError('Invalid delivery media grant.')
         with self.configuration._locked() as connection:
+            now = datetime.utcnow()
+            if expires_at <= now:
+                raise ValueError('Invalid delivery media grant.')
             self._preparing(connection, claim, now)
             connection.execute(self.configuration.jobs.update().where(
                 self.configuration.jobs.c.id == claim.job_id).values(
@@ -118,10 +120,10 @@ class OutboundStore:
             **changes, version=row['version'] + 1, updated_at=now))
 
     def claim(self, owner, *, now=None, lease_seconds=30):
-        now = now or datetime.utcnow()
         if not isinstance(owner, str) or not owner or len(owner) > 40 or not 1 <= lease_seconds <= 300:
             raise ValueError('Invalid delivery worker claim.')
         with self.configuration._locked() as connection:
+            now = datetime.utcnow() if now is None else now
             if not self._enabled(connection):
                 return None
             row = connection.execute(sa.select(self.deliveries).where(
@@ -156,8 +158,8 @@ class OutboundStore:
         return row is not None and row['attempt_id'] == claim.attempt_id and row['claim_owner'] == claim.owner and row['claim_token'] == claim.token
 
     def begin_submission(self, claim, *, now=None):
-        now = now or datetime.utcnow()
         with self.configuration._locked() as connection:
+            now = datetime.utcnow() if now is None else now
             row = self._row(connection, claim.job_id)
             if (not self._owns(row, claim) or row['state'] != 'preparing'
                     or row['claim_expires_at'] is None or row['claim_expires_at'] <= now):
@@ -210,8 +212,8 @@ class OutboundStore:
                 attempt_id=claim.attempt_id, details={'category': category})
 
     def recover_expired(self, *, now=None):
-        now = now or datetime.utcnow()
         with self.configuration._locked() as connection:
+            now = datetime.utcnow() if now is None else now
             rows = connection.execute(sa.select(self.deliveries).where(
                 self.deliveries.c.state.in_(['preparing', 'submitting']), self.deliveries.c.claim_expires_at <= now)).mappings().all()
             for row in rows:
