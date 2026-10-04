@@ -31,6 +31,19 @@ else
   printf '%s\n' '[general]' 'enabled=no' 'webenabled=no' > "$out_dir/manager.conf"
 fi
 
+# A public-address install publishes one narrow media range
+# (docker-compose.public.yml), and Asterisk must use exactly that range: the
+# first third for T.38 (UDPTL), the rest for audio (RTP and RTCP).
+if [ -n "${FAXBOT_MEDIA_PORTS:-}" ]; then
+  [[ "$FAXBOT_MEDIA_PORTS" =~ ^([0-9]{1,5})-([0-9]{1,5})$ ]] || refuse 'Unsupported media port range'
+  first=$((10#${BASH_REMATCH[1]})) last=$((10#${BASH_REMATCH[2]}))
+  (( first >= 1024 && last <= 65535 && last - first >= 5 && last - first < 2000 )) \
+    || refuse 'Unsupported media port range'
+  udptl_last=$(( first + (last - first + 1) / 3 - 1 ))
+  sed -i -e "s/^udptlstart=.*/udptlstart=$first/" -e "s/^udptlend=.*/udptlend=$udptl_last/" "$out_dir/udptl.conf"
+  sed -i -e "s/^rtpstart=.*/rtpstart=$((udptl_last + 1))/" -e "s/^rtpend=.*/rtpend=$last/" "$out_dir/rtp.conf"
+fi
+
 # Faxbot writes this file from its SIP trunk settings (console "Apply to
 # Asterisk" or "python -m app.sip_trunk write"); it replaces the older
 # SIP_USERNAME/SIP_PASSWORD/SIP_SERVER settings when present.

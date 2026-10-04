@@ -24,7 +24,7 @@
   - API logs show reconnect with exponential backoff.
 - T.38 negotiation failed:
   - Provider supports UDPTL.
-  - Firewall forwards UDP `4000-4999`.
+  - The carrier sends T.38 data back to the path Faxbot's packets came from (no port forwarding is needed; see [Asterisk and SIP](setup/sip-asterisk.md#networking-nothing-to-open)).
   - `pjsip.conf` has `t38_udptl=yes` and redundancy.
 - No fax send:
   - Check Asterisk logs for `SendFAX` and `FaxResult` events.
