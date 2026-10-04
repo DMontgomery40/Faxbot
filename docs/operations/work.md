@@ -14,6 +14,8 @@ Every received document gets one work item once Faxbot holds the document itself
 
 The item sits in the mailbox the document was routed to by its fax number. A document that matched no routing rule is in no mailbox; only people with access on everything see it.
 
+A test fax created from the console or with `faxbot inbound simulate` becomes an item too, marked **Test fax**, so you can try the queue without a real fax.
+
 When two documents have identical bytes, each keeps its own item, because they are separate arrivals. Each shows "Same document as the one received …" with the other's time.
 
 ## Owners and backups
