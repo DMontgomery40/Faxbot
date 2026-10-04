@@ -353,8 +353,8 @@ def _reconcile_summary(result):
     extra = (f" Telnyx billed {unattached} {'call' if unattached == 1 else 'calls'} Faxbot has no record of."
              if unattached else '')
     if attached:
-        extra += (f" {attached} {'call' if attached == 1 else 'calls'} reached Faxbot without a call record; "
-                  f"{'its fax is' if attached == 1 else 'their faxes are'} in the Inbox.")
+        extra += (f" {attached} {'call' if attached == 1 else 'calls'} came in that Faxbot did not record at the time; "
+                  f"{'its fax is' if attached == 1 else 'their faxes are'} in Received.")
     if result['carrier_unavailable'] and not result['checked']:
         return 'Telnyx could not be reached; Faxbot will ask again later.'
     if not result['checked']:

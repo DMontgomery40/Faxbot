@@ -253,6 +253,12 @@ export interface Settings {
     enabled: boolean;
     organization: string;
     fax_number: string;
+    allow_private_peers?: boolean;
+  };
+  // The header text and station ID faxes sent over the carrier trunk carry.
+  sender?: {
+    header: string;
+    station_id: string;
   };
   numbers?: {
     default_country: string;

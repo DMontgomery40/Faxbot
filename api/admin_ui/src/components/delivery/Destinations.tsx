@@ -7,7 +7,7 @@ import {
 } from '@mui/material';
 import PhoneIcon from '@mui/icons-material/Phone';
 import AdminAPIClient from '../../api/client';
-import type { Destination, DestinationDetail } from '../../api/deliveryTypes';
+import type { Destination, DestinationDetail, DirectPartner } from '../../api/deliveryTypes';
 import { EmptyState, Field, FormDialog, useSmallScreens } from '../access/AccessViews';
 import { DeliveryError, formatMoney, formatMoneyList, formatPercent } from './shared';
 import { numberPlaceholder, useNumberFormat } from '../common/numbers';
@@ -121,11 +121,26 @@ export function DestinationDialog({ client, number, canWrite, onClose, onSaved }
   );
 }
 
-export default function Destinations({ client, destinations, canWrite, onChanged }: {
+// The route a number is sent by first: the preferred one, or Faxbot's own choice.
+function preferredText(destination: Destination): string {
+  if (!destination.preferred_route) return 'Cheapest reliable';
+  if (destination.preferred_route === 'direct') return 'Direct delivery';
+  return destination.routes.find((route) => route.route === destination.preferred_route)?.label ?? destination.preferred_route;
+}
+
+function partnerText(destination: Destination, partners: DirectPartner[] | null): string {
+  const partner = (partners ?? []).find((peer) => peer.fax_number === destination.number && peer.state !== 'revoked');
+  if (!partner) return '-';
+  return partner.state === 'verified' ? partner.organization : `${partner.organization} (waiting for verification)`;
+}
+
+export default function Destinations({ client, destinations, canWrite, onChanged, partners = null }: {
   client: AdminAPIClient;
   destinations: Destination[];
   canWrite: boolean;
   onChanged: () => void;
+  // Direct delivery partners, to say which numbers belong to one; null when not readable.
+  partners?: DirectPartner[] | null;
 }) {
   const { isMobile } = useSmallScreens();
   const [open, setOpen] = useState<string | null>(null);
@@ -171,6 +186,9 @@ export default function Destinations({ client, destinations, canWrite, onChanged
                 <TableCell>Fax number</TableCell>
                 <TableCell>Routes</TableCell>
                 <TableCell>Last 30 days</TableCell>
+                <TableCell>Preferred way to send</TableCell>
+                <TableCell>Partner</TableCell>
+                <TableCell>Case packets</TableCell>
                 <TableCell align="right">Actions</TableCell>
               </TableRow>
             </TableHead>
@@ -183,6 +201,9 @@ export default function Destinations({ client, destinations, canWrite, onChanged
                   </TableCell>
                   <TableCell>{routeSummary(destination)}</TableCell>
                   <TableCell>{formatMoneyList(destination.estimated_cost_30_days)}</TableCell>
+                  <TableCell>{preferredText(destination)}</TableCell>
+                  <TableCell>{partnerText(destination, partners)}</TableCell>
+                  <TableCell>{destination.accepts_references ? 'Takes a one-page list instead' : 'Full documents'}</TableCell>
                   <TableCell align="right">
                     <Button size="small" onClick={() => setOpen(destination.number)} aria-label={`Details for ${destination.number}`}>Details</Button>
                   </TableCell>

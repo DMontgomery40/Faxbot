@@ -243,3 +243,4 @@ def test_editor_projects_delivery_routes_intake_email_and_direct_delivery_settin
     assert defaults['routing'] == {'outbound_routes': '', 'min_success_percent': 80}
     assert defaults['intake']['email_enabled'] is False and defaults['intake']['smtp_port'] == 587
     assert defaults['direct'] == {'enabled': False, 'organization': '', 'fax_number': '', 'allow_private_peers': False}
+    assert defaults['sender'] == {'header': 'Faxbot', 'station_id': defaults['sip']['station_id']}

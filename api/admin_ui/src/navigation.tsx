@@ -3,7 +3,8 @@
 // address of its own (#/<area>/<page>) so Back, Forward, reload and links work.
 // Visibility here is a display hint only; the server checks every request again.
 import type { ReactElement, ReactNode } from 'react';
-import { Alert } from '@mui/material';
+import { Alert, Box } from '@mui/material';
+import FolderCopyIcon from '@mui/icons-material/FolderCopy';
 import DashboardIcon from '@mui/icons-material/Dashboard';
 import FaxIcon from '@mui/icons-material/Fax';
 import InboxIcon from '@mui/icons-material/Inbox';
@@ -54,6 +55,8 @@ import Logs from './components/Logs';
 import SendFax from './components/SendFax';
 import Received, { readFilter } from './components/Received';
 import ReceivingAddresses from './components/delivery/ReceivingAddresses';
+import CasePackets from './components/delivery/CasePackets';
+import WorkSettingsPanel from './components/work/WorkSettingsPanel';
 import Terminal from './components/Terminal';
 import ScriptsTests from './components/ScriptsTests';
 import Users from './components/Users';
@@ -200,11 +203,22 @@ export const NAVIGATION: NavArea[] = [
     id: 'numbers', label: 'Numbers', icon: <DialpadIcon />,
     pages: [
       { id: 'list', label: 'Your numbers', icon: <DialpadIcon />, gate: { anyOf: ['mailboxes:read', 'mailboxes:manage'] },
-        render: (ctx) => <ResourceAccess client={ctx.client} me={ctx.me} section="numbers" /> },
-      { id: 'mailboxes', label: 'Mailboxes', icon: <MoveToInboxIcon />, gate: { anyOf: ['mailboxes:read', 'mailboxes:manage'] },
-        render: (ctx) => <ResourceAccess client={ctx.client} me={ctx.me} section="mailboxes" /> },
+        render: (ctx) => <ResourceAccess client={ctx.client} me={ctx.me} section="numbers" onNavigate={ctx.navigate} /> },
+      // Acknowledgement targets are settings, so people who read settings see them here too.
+      { id: 'mailboxes', label: 'Mailboxes', icon: <MoveToInboxIcon />, gate: { anyOf: ['mailboxes:read', 'mailboxes:manage', 'settings:read'] },
+        render: (ctx) => (
+          <>
+            {(ctx.permissions.has('mailboxes:read') || ctx.permissions.has('mailboxes:manage'))
+              && <ResourceAccess client={ctx.client} me={ctx.me} section="mailboxes" />}
+            {ctx.permissions.has('settings:read') && (
+              <Box sx={{ mt: 4 }}><WorkSettingsPanel client={ctx.client} canWrite={ctx.permissions.has('settings:write')} /></Box>
+            )}
+          </>
+        ) },
       { id: 'email', label: 'Email delivery', icon: <EmailIcon />, gate: { anyOf: SETTINGS_READ },
         render: settingsPage(['intake', 'email'], 'Email delivery') },
+      { id: 'identity', label: 'Sender identity', icon: <BadgeIcon />, gate: { anyOf: SETTINGS_READ },
+        render: settingsPage(['identity'], 'Sender identity') },
     ],
   },
   {
@@ -219,6 +233,9 @@ export const NAVIGATION: NavArea[] = [
             {settingsPage(['direct'])(ctx)}
           </>
         ) },
+      { id: 'cases', label: 'Case packets', icon: <FolderCopyIcon />, gate: { anyOf: SETTINGS_READ },
+        render: (ctx) => <CasePackets client={ctx.client} canSend={ctx.context.navigation.send}
+          canWrite={ctx.permissions.has('settings:write')} onNavigate={ctx.navigate} /> },
     ],
   },
   {

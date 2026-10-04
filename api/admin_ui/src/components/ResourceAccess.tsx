@@ -51,6 +51,9 @@ import {
 } from './access/AccessViews';
 import { resourceLabel } from './access/permissions';
 import { numberHint, numberPlaceholder, useNumberFormat } from './common/numbers';
+import type { EmailConnector } from '../api/deliveryTypes';
+import type { Settings } from '../api/types';
+import type { AdminDestination } from '../navigation';
 
 // Who has access is under Access; mailboxes and fax numbers are under Numbers.
 export type ResourceAccessSection = 'assignments' | 'mailboxes' | 'numbers';
@@ -316,17 +319,109 @@ function MailboxesSection({ client, canManage }: { client: AdminAPIClient; canMa
   );
 }
 
-function NumbersSection({ client, canManage }: { client: AdminAPIClient; canManage: boolean }) {
+// A fax number in one form for comparing: the international form where it can be
+// told, so a HumbleFax number typed as 10 digits matches its +1 mailbox rule.
+export function comparableNumber(value: string | null | undefined): string {
+  const text = (value ?? '').trim();
+  const digits = text.replace(/\D/g, '');
+  if (!digits) return '';
+  if (text.startsWith('+')) return `+${digits}`;
+  if (digits.length === 11 && digits.startsWith('1')) return `+${digits}`;
+  if (digits.length === 10) return `+1${digits}`;
+  return digits;
+}
+
+// The numbers each provider this installation knows carries, from the settings document.
+export interface CarriedNumber {
+  number: string;
+  provider: string;
+  label: string;
+  page: AdminDestination;
+  inUse: boolean;
+}
+
+const CARRIER_PAGES: Record<string, { label: string; page: AdminDestination }> = {
+  sip: { label: 'Carrier trunk', page: 'providers/trunk' },
+  humblefax: { label: 'HumbleFax', page: 'providers/humblefax' },
+  efax: { label: 'eFax', page: 'providers/efax' },
+  signalwire: { label: 'SignalWire', page: 'providers/signalwire' },
+  freeswitch: { label: 'FreeSWITCH', page: 'providers/freeswitch' },
+};
+
+export function carriedNumbers(settings: Settings): CarriedNumber[] {
+  const sending = settings.hybrid?.outbound_backend ?? settings.backend.type;
+  const receiving = settings.inbound.enabled ? (settings.hybrid?.inbound_backend ?? settings.backend.type) : '';
+  const extra = (settings.routing?.outbound_routes ?? '').split(',').map((route) => route.trim());
+  const used = (provider: string) => provider === sending || provider === receiving || extra.includes(provider);
+  const trunk = (settings.sip as { trunk?: { dids?: string[] } }).trunk;
+  const found: Array<[string, string | null | undefined]> = [
+    ...(trunk?.dids ?? []).map((number): [string, string] => ['sip', number]),
+    ['humblefax', settings.humblefax?.from_number],
+    ['efax', settings.efax?.caller_id],
+    ['signalwire', settings.signalwire?.from_fax],
+    ['freeswitch', settings.fs?.caller_id_number],
+  ];
+  return found.filter(([, number]) => comparableNumber(number)).map(([provider, number]) => ({
+    number: comparableNumber(number), provider, label: CARRIER_PAGES[provider].label, page: CARRIER_PAGES[provider].page,
+    inUse: used(provider),
+  }));
+}
+
+export const NO_MAILBOX = 'No mailbox: received faxes are visible to people with access to everything.';
+
+interface NumberRow { number: string; rule: InboundRule | null; carriers: CarriedNumber[] }
+
+function NumbersSection({ client, canManage, canReadSettings, onNavigate }: {
+  client: AdminAPIClient;
+  canManage: boolean;
+  // Carried numbers come from the settings document, read with settings:read.
+  canReadSettings: boolean;
+  onNavigate?: (destination: AdminDestination) => void;
+}) {
   const fetcher = useCallback(async () => {
     const [rules, mailboxes] = await Promise.all([client.listInboundRules(), client.listMailboxes()]);
     return { rules: rules.items, mailboxes: mailboxes.items };
   }, [client]);
   const { data, state, load, reload } = useSection<{ rules: InboundRule[]; mailboxes: AccessMailbox[] }>(client, fetcher);
+  const [carried, setCarried] = useState<CarriedNumber[]>([]);
+  const [connectors, setConnectors] = useState<EmailConnector[] | null>(null);
   const [draft, setDraft] = useState<{ ruleId: string | null; toNumber: string; mailboxId: string } | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState<string | null>(null);
   const numberFormat = useNumberFormat(client);
+
+  const loadExtras = useCallback(async () => {
+    const [settings, email] = await Promise.allSettled([
+      canReadSettings ? client.getSettings() : Promise.resolve(null),
+      client.listEmailConnectors(),
+    ]);
+    setCarried(settings.status === 'fulfilled' && settings.value ? carriedNumbers(settings.value) : []);
+    setConnectors(email.status === 'fulfilled' ? email.value.connectors : null);
+  }, [client, canReadSettings]);
+  useEffect(() => { void loadExtras(); }, [loadExtras]);
+
+  const rows = useMemo<NumberRow[]>(() => {
+    const byNumber = new Map<string, NumberRow>();
+    for (const rule of data?.rules ?? []) {
+      byNumber.set(comparableNumber(rule.to_number) || rule.to_number, { number: rule.to_number, rule, carriers: [] });
+    }
+    for (const entry of carried) {
+      const row = byNumber.get(entry.number) ?? { number: entry.number, rule: null, carriers: [] };
+      row.carriers.push(entry);
+      byNumber.set(entry.number, row);
+    }
+    return [...byNumber.values()];
+  }, [data, carried]);
+
+  const emailText = (number: string) => {
+    if (connectors === null) return '-';
+    const covering = connectors.filter((connector) => connector.enabled
+      && (connector.match_number === null || comparableNumber(connector.match_number) === comparableNumber(number)));
+    if (covering.length === 0) return 'Not emailed';
+    const recipients = [...new Set(covering.flatMap((connector) => connector.recipients))];
+    return recipients.length ? `Emailed to ${recipients.join(', ')}` : 'Emailed';
+  };
 
   const save = async () => {
     if (!draft || !data) return;
@@ -356,11 +451,18 @@ function NumbersSection({ client, canManage }: { client: AdminAPIClient; canMana
     }
   };
 
-  const reloadAll = async () => { setError(null); await reload(); };
+  const reloadAll = async () => { setError(null); await reload(); await loadExtras(); };
+  const choose = (row: NumberRow) => {
+    setError(null);
+    setSaved(null);
+    setDraft(row.rule ? { ruleId: row.rule.id, toNumber: row.rule.to_number, mailboxId: row.rule.mailbox_id }
+      : { ruleId: null, toNumber: row.number, mailboxId: '' });
+  };
 
   return (
     <Box>
-      <ScreenHeader title="Fax numbers" subtitle="Choose which mailbox receives faxes sent to each of your numbers."
+      <ScreenHeader title="Your numbers"
+        subtitle="Each fax number Faxbot carries: who carries it, which mailbox receives its faxes, whether they are emailed and who can see them."
         onRefresh={() => void reloadAll()} busy={state === 'loading'}>
         {canManage && (
           <Button variant="contained" startIcon={<AddIcon />} disabled={state !== 'ready' || !data?.mailboxes.length}
@@ -376,31 +478,60 @@ function NumbersSection({ client, canManage }: { client: AdminAPIClient; canMana
         </Fade>
       )}
       {state !== 'ready' || !data ? <LoadStateView state={state} onRetry={() => void load()} />
-        : data.rules.length === 0 ? <EmptyState icon={<PhoneIcon />} title="No fax numbers routed"
+        : rows.length === 0 ? <EmptyState icon={<PhoneIcon />} title="No fax numbers yet"
             text={data.mailboxes.length ? 'Add a number to send its faxes to a mailbox.' : 'Add a mailbox first, then route numbers to it.'} />
         : (
           <TableContainer component={Paper} sx={{ borderRadius: 2 }}>
-            <Table>
+            <Table aria-label="Your numbers">
               <TableHead>
                 <TableRow>
                   <TableCell>Fax number</TableCell>
+                  <TableCell>Provided by</TableCell>
                   <TableCell>Mailbox</TableCell>
+                  <TableCell>Email delivery</TableCell>
+                  <TableCell>Who can see its faxes</TableCell>
                   {canManage && <TableCell align="right">Actions</TableCell>}
                 </TableRow>
               </TableHead>
               <TableBody>
-                {data.rules.map((r) => (
-                  <TableRow key={r.id} hover>
-                    <TableCell>{r.to_number}</TableCell>
-                    <TableCell>{r.mailbox_label}</TableCell>
+                {rows.map((row) => (
+                  <TableRow key={row.number} hover>
+                    <TableCell>{row.number}</TableCell>
+                    <TableCell>
+                      {row.carriers.length === 0 ? <Typography variant="body2" color="text.secondary">-</Typography>
+                        : row.carriers.map((entry) => (
+                          <Box key={entry.provider}>
+                            {onNavigate ? (
+                              <Button size="small" sx={{ px: 0, minWidth: 0, textTransform: 'none' }} onClick={() => onNavigate(entry.page)}>
+                                {entry.label}
+                              </Button>
+                            ) : <Typography variant="body2">{entry.label}</Typography>}
+                            {!entry.inUse && <Typography variant="caption" color="text.secondary" display="block">Not in use now</Typography>}
+                          </Box>
+                        ))}
+                    </TableCell>
+                    <TableCell>
+                      {row.rule ? row.rule.mailbox_label
+                        : <Typography variant="body2" color="text.secondary" sx={{ maxWidth: 260 }}>{NO_MAILBOX}</Typography>}
+                    </TableCell>
+                    <TableCell>{emailText(row.number)}</TableCell>
+                    <TableCell>
+                      {row.rule ? `People with access to ${row.rule.mailbox_label}, or to everything` : 'People with access to everything'}
+                    </TableCell>
                     {canManage && (
                       <TableCell align="right">
-                        <Tooltip title="Edit">
-                          <IconButton aria-label={`Edit ${r.to_number}`} size="small"
-                            onClick={() => { setError(null); setSaved(null); setDraft({ ruleId: r.id, toNumber: r.to_number, mailboxId: r.mailbox_id }); }}>
-                            <EditIcon />
-                          </IconButton>
-                        </Tooltip>
+                        {row.rule ? (
+                          <Tooltip title="Edit">
+                            <IconButton aria-label={`Edit ${row.rule.to_number}`} size="small" onClick={() => choose(row)}>
+                              <EditIcon />
+                            </IconButton>
+                          </Tooltip>
+                        ) : (
+                          <Button size="small" disabled={!data.mailboxes.length} onClick={() => choose(row)}
+                            aria-label={`Choose a mailbox for ${row.number}`}>
+                            Choose mailbox
+                          </Button>
+                        )}
                       </TableCell>
                     )}
                   </TableRow>
@@ -409,6 +540,11 @@ function NumbersSection({ client, canManage }: { client: AdminAPIClient; canMana
             </Table>
           </TableContainer>
         )}
+      {!canReadSettings && state === 'ready' && (
+        <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 1 }}>
+          Numbers without a mailbox are shown only to people who can see settings.
+        </Typography>
+      )}
       <FormDialog client={client} open={draft !== null} title={draft?.ruleId ? 'Edit fax number' : 'Add fax number'}
         submitLabel={draft?.ruleId ? 'Save' : 'Add number'} busy={busy} error={error}
         canSubmit={Boolean(draft?.toNumber.trim() && draft.mailboxId)} onSubmit={() => void save()} onClose={() => setDraft(null)}
@@ -426,7 +562,12 @@ function NumbersSection({ client, canManage }: { client: AdminAPIClient; canMana
   );
 }
 
-export default function ResourceAccess({ client, me, section }: { client: AdminAPIClient; me: AuthMe; section: ResourceAccessSection }) {
+export default function ResourceAccess({ client, me, section, onNavigate }: {
+  client: AdminAPIClient;
+  me: AuthMe;
+  section: ResourceAccessSection;
+  onNavigate?: (destination: AdminDestination) => void;
+}) {
   const permissions = useMemo(() => new Set(me.permissions), [me.permissions]);
   const allowed = section === 'assignments'
     ? permissions.has('grants:read') || permissions.has('grants:manage')
@@ -438,7 +579,8 @@ export default function ResourceAccess({ client, me, section }: { client: AdminA
     <Box>
       {section === 'assignments' && <AssignmentsSection client={client} canManage={permissions.has('grants:manage')} />}
       {section === 'mailboxes' && <MailboxesSection client={client} canManage={permissions.has('mailboxes:manage')} />}
-      {section === 'numbers' && <NumbersSection client={client} canManage={permissions.has('mailboxes:manage')} />}
+      {section === 'numbers' && <NumbersSection client={client} canManage={permissions.has('mailboxes:manage')}
+        canReadSettings={permissions.has('settings:read')} onNavigate={onNavigate} />}
     </Box>
   );
 }

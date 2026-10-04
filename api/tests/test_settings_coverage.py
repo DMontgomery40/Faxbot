@@ -40,12 +40,10 @@ READ_ONLY_OR_ENV = {
 # Settings the console has not placed yet, with the home the map gives them. Builder L shrinks this.
 AWAITING_CONSOLE = {
     'telnyx_api_key': 'Providers → Carrier trunk: Telnyx charges key',
-    'fax_header': 'Numbers → Sender identity',
     'admin_allow_restart': 'System → Diagnostics: Restart Faxbot',
     'persisted_env_path': 'System → Storage & retention: settings file',
     'providers_dir': 'System → Developer → Provider plugins',
     'plugin_registry_path': 'System → Developer → Provider plugins',
-    'direct_allow_private_peers': 'Recipients → Partners: allow partners on private networks',
     'sip_public_address_check_minutes': 'Providers → Carrier trunk: check the internet address every … minutes',
     'enable_s3_diagnostics': 'System → Diagnostics: also check the S3 bucket',
     'mobile_local_base': 'Access → Keys & phones: address phones use on your network',

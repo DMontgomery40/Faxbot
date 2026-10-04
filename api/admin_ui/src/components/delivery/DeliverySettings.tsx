@@ -57,6 +57,7 @@ export function deliveryEditorValues(data: Settings): Values {
     values.direct_delivery_enabled = data.direct.enabled;
     values.direct_organization = data.direct.organization;
     values.direct_fax_number = data.direct.fax_number;
+    values.direct_allow_private_peers = data.direct.allow_private_peers ?? false;
   }
   if (data.intake) {
     values.intake_email_enabled = data.intake.email_enabled;
@@ -166,6 +167,7 @@ function SwitchField({ label, helper, checked, onChange }: {
 }
 
 const KEY_LOCATION = 'Kept on this server in a private file in the fax data folder, unless the installation names another file. It is never shown or exported, so include it in server backups.';
+const PRIVATE_PEERS_HELP = 'Off: Faxbot only sends documents to partners on the public internet. Turn this on only for partners on a network you control.';
 const SUBJECT_HELP = 'Can include {from_number}, {to_number}, {pages} and {received_at}.';
 const SECURITY_OPTIONS = [
   { value: 'starttls', label: 'STARTTLS' }, { value: 'tls', label: 'TLS' }, { value: 'none', label: 'None' },
@@ -242,6 +244,9 @@ export function DeliverySettingsSections({ client, settings, form, loaded, onCha
           {text('Our fax number', 'direct_fax_number', numberHint(settingsNumberFormat(settings), 'The number partners fax you at'))}
           <ResponsiveSettingItem icon={<VpnKeyIcon />} label="Private key" editValue="On this server"
             helperText={KEY_LOCATION} showCurrentValue={false} />
+          <SwitchField label="Allow partners on private networks (advanced)" checked={Boolean(form.direct_allow_private_peers)}
+            onChange={(checked) => onChange('direct_allow_private_peers', checked)}
+            helper={PRIVATE_PEERS_HELP} />
           {notice && <Alert severity="success" onClose={() => setNotice(null)}>{notice}</Alert>}
           {cardError ? <DeliveryError error={cardError} onClose={() => setCardError(null)} /> : null}
           <Box display="flex" alignItems="center" gap={2} flexWrap="wrap">

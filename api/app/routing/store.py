@@ -280,18 +280,24 @@ class RouteStore:
             row = connection.execute(sa.select(self.costs).where(self.costs.c.id == attempt_id)).mappings().one_or_none()
             return dict(row) if row is not None else None
 
+    def batch_members(self):
+        """The sending-together members table (one row per fax), or None before it exists."""
+        if self._members is None:
+            try:
+                self._members = reflect(self.engine, ('outbound_batch_members',))['outbound_batch_members']
+            except DeliveryStoreError:
+                return None
+        return self._members
+
     def rides_in_another_call(self, attempt_id=None):
         """Attempts that rode in another attempt's call (faxes sent together); that call carries their cost.
 
         With ``attempt_id``, whether that attempt did; otherwise a subquery of
         all of them, or None before the sending-together tables exist.
         """
-        if self._members is None:
-            try:
-                self._members = reflect(self.engine, ('outbound_batch_members',))['outbound_batch_members']
-            except DeliveryStoreError:
-                return False if attempt_id is not None else None
-        m = self._members
+        m = self.batch_members()
+        if m is None:
+            return False if attempt_id is not None else None
         riders = sa.select(m.c.attempt_id).where(m.c.attempt_id.is_not(None), m.c.batch_id.is_not(None),
                                                  m.c.attempt_id != m.c.batch_id)
         if attempt_id is None:

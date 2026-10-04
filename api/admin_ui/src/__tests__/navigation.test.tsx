@@ -202,7 +202,7 @@ describe('the console shell', () => {
         opened.push(`${area.id}/${page.id}`);
       }
     }
-    expect(opened).toHaveLength(37);
+    expect(opened).toHaveLength(39);
   }, 60000);
 
   it('keeps the old destination names working', async () => {
