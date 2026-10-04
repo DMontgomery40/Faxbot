@@ -24,11 +24,11 @@ The iOS app lets you send faxes and check statuses from your phone. It connects 
 
 ## Pair the app
 
-1. In the admin console, open **Settings → Settings** and scroll to **VPN Tunnel**.
-2. Select **Pair an iPhone**. Faxbot shows a six-digit code, a QR code and a countdown.
+1. In the admin console, open **Settings → Keys**, or **Settings → Settings** and scroll to **VPN Tunnel**.
+2. Select **Pair a phone**. Faxbot shows a six-digit code, a QR code and a countdown.
 3. In the iOS app, enter the code or scan the QR code before the countdown ends.
 
-The code lasts five minutes and works once. If it expires or the app reports that it did not work, select **Pair an iPhone** again for a new code.
+The code lasts five minutes and works once. If it expires or the app reports that it did not work, select **Pair a phone** again for a new code.
 
 When the app sends a valid code to `/mobile/pair`, Faxbot creates a key for that phone and returns it together with the server's addresses. The key can send faxes, see sent faxes and their documents, and see received faxes and their documents. It appears on **Settings → Keys** under the device's name. Revoke it there if the phone is lost or replaced.
 
