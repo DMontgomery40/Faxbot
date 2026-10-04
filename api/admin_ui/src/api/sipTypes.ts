@@ -111,6 +111,8 @@ export interface SipTrunkStatus {
   // While Faxbot is not published on the local network: the command that publishes it and the .env setting.
   phone_system_command?: string | null;
   phone_system_setting?: string | null;
+  // Docker Desktop or Colima hides the phone system's address, so it cannot connect from this host.
+  phone_system_hidden?: boolean;
   message: string;
 }
 

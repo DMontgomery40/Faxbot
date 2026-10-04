@@ -93,6 +93,7 @@ def test_status_without_a_trunk_says_so_in_one_sentence(bare_client):
                     'engine_managed': False, 'engine_restarting': False, 'in_use': False,
                     'handover_ready': None, 'handover_text': None, 't38_off_reason': None, 't38_off_at': None,
                     'phone_system': None, 'phone_system_command': None, 'phone_system_setting': None,
+                    'phone_system_hidden': False,
                     'message': 'No SIP trunk is set up. Choose your carrier to start.'}
 
 
@@ -594,7 +595,7 @@ def test_a_managed_phone_system_install_says_how_to_publish_faxbot_then_what_to_
                                      'faxes_at_once': 6}
     assert after['ports_text'] == ('Give your phone system administrator this address: 192.168.10.20, port 5060 '
                                    '(UDP or TCP), and media ports 4000\u20134019, enough for 6 faxes at once.')
-    assert after['phone_system_command'] is None
+    assert after['phone_system_command'] is None and after['phone_system_hidden'] is False
     # IP-authenticated peer: no registration, reachability from Asterisk's checks of the phone system.
     assert (after['registration'], after['reachability'], after['in_use']) == ('not_used', 'reachable', True)
     assert after['registration_text'] == ('Faxbot and your phone system recognise each other by address, so there '
@@ -613,6 +614,7 @@ def test_docker_desktop_or_colima_is_named_because_it_hides_the_phone_system_add
     hidden = ("Faxbot runs in Docker Desktop or Colima here, which hide your phone system's address from Faxbot, "
               "so the phone system cannot connect; run Faxbot on a Linux computer to connect a phone system.")
     assert body['message'] == hidden and body['ports_text'] == hidden
+    assert body['phone_system_hidden'] is True
     assert body['phone_system']['address'] == '192.168.10.20'
 
 

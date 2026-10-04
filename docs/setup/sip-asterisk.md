@@ -32,13 +32,23 @@ Faxbot's loopback proof (`make native-proof`) shows that both directions work wh
 
 ### Carriers that sign in by IP address
 
-AnveoDirect, and Telnyx or Flowroute when set to IP sign-in, send calls to a fixed public address, which a router does not pass on. Use them only on a host with its own public address. Start Compose with the public override:
+AnveoDirect, Gamma, BT One Voice, and Telnyx or Flowroute when set to IP sign-in, send calls to a fixed public address, which a router does not pass on. Use them only on a host with its own public address. Start Compose with the public override:
 
 ```
 docker compose -f docker-compose.yml -f docker-compose.public.yml up -d
 ```
 
 It publishes SIP on 5060 (UDP and TCP) and 5061 (TCP), plus one 32-port media range, 4000 to 4031 UDP. Asterisk then uses exactly that range: the first third for T.38 and the rest for audio, enough for about ten calls at once. The range stays small because Docker starts one helper process per published port, and a 1000-port range used up a 4 GB host. Open the same ports in the host firewall.
+
+### A phone system on your local network
+
+An Avaya IP Office or Aura phone system sends calls to Faxbot on your local network. Set `FAXBOT_LAN_ADDRESS` in `.env` to this computer's address on that network and start Compose with the phone system override:
+
+```
+docker compose -f docker-compose.yml -f docker-compose.phone-system.yml up -d
+```
+
+It publishes SIP on 5060 (UDP and TCP) and the media range `FAXBOT_MEDIA_PORTS` (default 4000 to 4019 UDP, at most 100 ports) on that address only. Asterisk tells the phone system that address in every call. Use a Linux host. See [Avaya IP Office and Aura](avaya.md).
 
 ## Configure API and Asterisk separately
 

@@ -518,6 +518,8 @@ async def status(request: Request, identity=Depends(require_permission('provider
                          if lan else None),
         'phone_system_command': PHONE_SYSTEM_COMMAND if phone and ports_text == LAN_NOT_STARTED else None,
         'phone_system_setting': PHONE_SYSTEM_SETTING if phone and ports_text == LAN_NOT_STARTED else None,
+        # Docker Desktop or Colima replaces the phone system's address, so it cannot connect from this host.
+        'phone_system_hidden': bool(phone and ports_text == LAN_HIDDEN),
         # Why new calls use audio fax when Faxbot chose it ({reason, at}); None when T.38 is on or a person chose.
         't38_off_reason': off['reason'] if off else None,
         't38_off_at': off['at'] if off else None,
