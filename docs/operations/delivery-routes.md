@@ -97,7 +97,7 @@ Job Details says "Sent in one call with 2 other faxes" and shows the fax's share
 
 From the command line: `faxbot routing batching show|set|off NUMBER` (`set` takes `--recipient-agreed`, `--wait`, `--max-pages` and `--mixed-senders`), `faxbot send --now` and `faxbot jobs send-now FAX_ID`.
 
-Not yet confirmed on a live trunk or the local T.38 test line: tests so far use synthetic faxes.
+Tested on 4 October 2026 over a local T.38 test line between two Faxbot fax engines (`make native-proof`). One call carried two faxes, 5 pages including separators, in 39 seconds, and both were delivered with identical pages. A call ended after 27 seconds: the sender counted 2 confirmed pages, the first fax was delivered and the second failed. In an earlier cut, the receiver held 1 page while the sender counted 0, so the receiver can hold one page more than the sender saw confirmed. Not yet confirmed on a live trunk.
 
 ## Costs
 
