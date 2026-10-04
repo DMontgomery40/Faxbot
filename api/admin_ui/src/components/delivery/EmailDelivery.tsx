@@ -145,7 +145,7 @@ export default function EmailDelivery({ client, canWrite }: { client: AdminAPICl
                         To {connector.recipients.join(', ')} · {connector.match_number ? `faxes to ${connector.match_number}` : 'all fax numbers'}
                       </Typography>
                       <Typography variant="body2" color="text.secondary">
-                        {connector.enabled ? 'Delivering new faxes.' : 'Paused.'}{connector.managed ? ' Set in Intake defaults above.' : ''}
+                        {connector.enabled ? 'Delivering new faxes.' : 'Paused.'}{connector.managed ? ' Set in Email delivery for the whole installation, above.' : ''}
                       </Typography>
                     </Box>
                     <Box>

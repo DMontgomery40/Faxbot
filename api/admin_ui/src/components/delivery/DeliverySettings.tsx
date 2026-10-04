@@ -261,14 +261,14 @@ export function DeliverySettingsSections({ client, settings, form, loaded, onCha
       {(shows('intake') || shows('email')) && (
       <Box id={EMAIL_DELIVERY_SECTION} sx={{ scrollMarginTop: 80 }}>
       {settings.intake && shows('intake') && (
-        <ResponsiveFormSection title="Intake defaults"
+        <ResponsiveFormSection title="Email delivery for the whole installation"
           subtitle="Email delivery for received faxes, set for the whole installation. It appears under Email delivery below and is changed only here. Changes take effect as soon as you apply them."
           icon={<MoveToInboxIcon />}>
           <SwitchField label="Email received faxes" checked={Boolean(form.intake_email_enabled)}
             onChange={(checked) => onChange('intake_email_enabled', checked)}
             helper="Faxbot emails each received document, with the original PDF attached." />
           {text('Email server', 'intake_smtp_host', 'For example, smtp.example.org.')}
-          {text('Port', 'intake_smtp_port', 'Usually 587 for STARTTLS or 465 for TLS.', 'number')}
+          {text('Port', 'intake_smtp_port', 'Usually 587, or 465. Your email provider says which.', 'number')}
           <ResponsiveSettingItem icon={<SettingsIcon />} label="Security" value={loaded.intake_smtp_security ?? ''}
             editValue={form.intake_smtp_security ?? 'starttls'} onChange={(value) => onChange('intake_smtp_security', value)}
             type="select" options={SECURITY_OPTIONS} showCurrentValue={showCurrentValue} />
@@ -336,7 +336,7 @@ export function DeliveryWizardFields({ settings, config, baseline, onChange, out
             onChange={(event) => onChange('intake_email_enabled', event.target.checked)} />} label="Email each received fax" />
           {config.intake_email_enabled && <>
             {field('Email server', 'intake_smtp_host')}
-            {field('Port', 'intake_smtp_port', 'Usually 587 for STARTTLS or 465 for TLS.', true)}
+            {field('Port', 'intake_smtp_port', 'Usually 587, or 465. Your email provider says which.', true)}
             <TextField select fullWidth disabled={disabled} label="Security" value={config.intake_smtp_security ?? 'starttls'} sx={{ mt: 2 }}
               onChange={(event) => onChange('intake_smtp_security', event.target.value)} SelectProps={{ native: true }} InputLabelProps={{ shrink: true }}>
               {SECURITY_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}

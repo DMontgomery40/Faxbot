@@ -48,6 +48,7 @@ import { formatServerTime } from '../api/time';
 import type { AdminDestination } from '../navigation';
 import { ResponsiveFormSection } from './common/ResponsiveFormFields';
 import DatabaseStatus from './DatabaseStatus';
+import { providerLabel } from '../providerLabels';
 
 interface DiagnosticsProps {
   client: AdminAPIClient;
@@ -191,9 +192,9 @@ function Diagnostics({ client, onNavigate, docsBase }: DiagnosticsProps) {
     try {
       if (!navigator.clipboard?.writeText) throw new Error('Clipboard access is unavailable in this browser. Use Download instead.');
       await navigator.clipboard.writeText(JSON.stringify(diagnosticsForExport(diagnostics), null, 2));
-      setExportNotice({ severity: 'success', text: 'Diagnostics JSON copied to the clipboard.' });
+      setExportNotice({ severity: 'success', text: 'Diagnostics copied.' });
     } catch (err) {
-      setExportNotice({ severity: 'error', text: err instanceof Error ? err.message : 'Failed to copy diagnostics JSON' });
+      setExportNotice({ severity: 'error', text: err instanceof Error ? err.message : 'Diagnostics could not be copied.' });
     } finally {
       setCopying(false);
     }
@@ -212,9 +213,9 @@ function Diagnostics({ client, onNavigate, docsBase }: DiagnosticsProps) {
       anchor.download = 'diagnostics.json';
       document.body.appendChild(anchor);
       anchor.click();
-      setExportNotice({ severity: 'info', text: 'Diagnostics JSON download requested.' });
+      setExportNotice({ severity: 'info', text: 'Diagnostics downloaded.' });
     } catch (err) {
-      setExportNotice({ severity: 'error', text: err instanceof Error ? err.message : 'Failed to download diagnostics JSON' });
+      setExportNotice({ severity: 'error', text: err instanceof Error ? err.message : 'Diagnostics could not be downloaded.' });
     } finally {
       anchor?.remove();
       if (url) {
@@ -245,7 +246,7 @@ function Diagnostics({ client, onNavigate, docsBase }: DiagnosticsProps) {
       case 'efax': docs.push({ text: 'eFax setup guide', href: docsLink('efax', docsBase) }); break;
       case 'signalwire': docs.push({ text: 'SignalWire setup guide', href: docsLink('signalwire', docsBase) }); break;
       case 'freeswitch': docs.push({ text: 'FreeSWITCH setup guide', href: docsLink('freeswitch', docsBase) }); break;
-      case 'sip': docs.push({ text: 'SIP trunk (Asterisk) setup guide', href: docsLink('sip', docsBase) }); break;
+      case 'sip': docs.push({ text: 'Carrier trunk setup guide', href: docsLink('sip', docsBase) }); break;
     }
     return docs;
   };
@@ -356,7 +357,7 @@ function Diagnostics({ client, onNavigate, docsBase }: DiagnosticsProps) {
               <HealthIcon sx={{ fontSize: 48, color: 'text.secondary', mb: 2 }} />
               <Typography variant="h6" gutterBottom>Run System Diagnostics</Typography>
               <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-                Check this installation's settings and dependencies. No fax is sent.
+                Check this installation's settings and the services it needs. No fax is sent.
               </Typography>
               <Button variant="contained" startIcon={<DiagnosticIcon />} onClick={runDiagnostics} sx={{ borderRadius: 2 }}>Start Diagnostics</Button>
             </Paper>
@@ -368,7 +369,7 @@ function Diagnostics({ client, onNavigate, docsBase }: DiagnosticsProps) {
             <Box sx={{ textAlign: 'center' }}>
               <CircularProgress sx={{ mb: 2 }} />
               <Typography variant="body1">Running diagnostics…</Typography>
-              <Typography variant="caption" color="text.secondary">Checking settings and dependencies</Typography>
+              <Typography variant="caption" color="text.secondary">Checking settings and services</Typography>
             </Box>
             <LinearProgress sx={{ mt: 3 }} />
           </Paper>
@@ -377,15 +378,15 @@ function Diagnostics({ client, onNavigate, docsBase }: DiagnosticsProps) {
         {diagnostics && (
           <Fade in>
             <Box>
-              <ResponsiveFormSection title="Diagnostic Summary" subtitle={diagnostics.summary.healthy ? 'Ready' : 'Issues detected'} icon={<HealthIcon />}>
+              <ResponsiveFormSection title="Summary" subtitle={diagnostics.summary.healthy ? 'Ready' : 'Issues detected'} icon={<HealthIcon />}>
                 <Stack spacing={3}>
                   <Box>
                     <Chip icon={diagnostics.summary.healthy ? <CheckCircleIcon /> : <ErrorIcon />} label={diagnostics.summary.healthy ? 'Ready' : 'Issues detected'} color={diagnostics.summary.healthy ? 'success' : 'error'} sx={{ borderRadius: 1 }} />
                   </Box>
                   <Box sx={{ overflowWrap: 'anywhere' }}>
-                    <Typography variant="body2">Outbound provider: <strong>{diagnostics.outbound_backend}</strong></Typography>
-                    <Typography variant="body2">Inbound provider: <strong>{diagnostics.inbound_backend}</strong></Typography>
-                    <Typography variant="body2">Default provider: <strong>{diagnostics.default_backend}</strong></Typography>
+                    <Typography variant="body2">Sending: <strong>{diagnostics.outbound_backend ? providerLabel(diagnostics.outbound_backend) : 'No provider'}</strong></Typography>
+                    <Typography variant="body2">Receiving: <strong>{diagnostics.inbound_backend ? providerLabel(diagnostics.inbound_backend) : 'No provider'}</strong></Typography>
+                    <Typography variant="body2">Main provider: <strong>{diagnostics.default_backend ? providerLabel(diagnostics.default_backend) : 'No provider'}</strong></Typography>
                     <Typography variant="body2">Saved changes waiting for a restart: <strong>{diagnostics.configuration.pending_restart ? 'Yes' : 'No'}</strong></Typography>
                     <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 1 }}>Checked at {formatServerTime(diagnostics.timestamp)}</Typography>
                   </Box>
@@ -404,8 +405,8 @@ function Diagnostics({ client, onNavigate, docsBase }: DiagnosticsProps) {
                   )}
                   <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
                     {onNavigate && <Button variant="outlined" onClick={() => onNavigate('settings')} size="small">Open Settings</Button>}
-                    <Button variant="outlined" startIcon={<ContentCopyIcon />} onClick={copyDiagnostics} disabled={copying} size="small">{copying ? 'Copying…' : 'Copy JSON'}</Button>
-                    <Button variant="outlined" startIcon={<DownloadIcon />} onClick={downloadDiagnostics} size="small">Download JSON</Button>
+                    <Button variant="outlined" startIcon={<ContentCopyIcon />} onClick={copyDiagnostics} disabled={copying} size="small">{copying ? 'Copying…' : 'Copy results'}</Button>
+                    <Button variant="outlined" startIcon={<DownloadIcon />} onClick={downloadDiagnostics} size="small">Download results</Button>
                   </Box>
                   {exportNotice && <Alert severity={exportNotice.severity} onClose={() => setExportNotice(null)}>{exportNotice.text}</Alert>}
                 </Stack>

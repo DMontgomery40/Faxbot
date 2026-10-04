@@ -132,8 +132,8 @@ describe('The trunk page', () => {
     const order = screen.getByTestId('sip-trunk-settings').compareDocumentPosition(engine);
     expect(order & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     fireEvent.click(button);
-    expect(await within(engine).findByText('AMI Host')).toBeTruthy();
-    expect(within(engine).getByText('Asterisk Inbound Secret')).toBeTruthy();
+    expect(await within(engine).findByText('Fax engine address')).toBeTruthy();
+    expect(within(engine).getByText('Fax engine secret for received faxes')).toBeTruthy();
   });
 });
 

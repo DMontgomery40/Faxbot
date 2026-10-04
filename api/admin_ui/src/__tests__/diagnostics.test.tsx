@@ -53,7 +53,7 @@ describe('Diagnostics', () => {
     Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
     render(<Diagnostics client={client()} />);
     fireEvent.click(screen.getByRole('button', { name: 'Run Diagnostics' }));
-    fireEvent.click(await screen.findByRole('button', { name: 'Copy JSON' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Copy results' }));
     await waitFor(() => expect(writeText).toHaveBeenCalled());
     const copied = JSON.parse(writeText.mock.calls[0][0]);
     expect(copied.configuration).toEqual({ pending_restart: true });

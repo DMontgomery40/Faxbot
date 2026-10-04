@@ -139,7 +139,7 @@ export default function WizardTestFax({ client, sending, receiving, numbers, num
       await client.applySipTrunk();
       if (alive.current) setAudio('switched');
     } catch {
-      if (alive.current) setOutcome({ severity: 'error', text: 'Audio fax could not be turned on. Try again in the SIP trunk section.' });
+      if (alive.current) setOutcome({ severity: 'error', text: 'Audio fax could not be turned on. Try again in the fax line settings.' });
     }
   };
 
@@ -163,7 +163,7 @@ export default function WizardTestFax({ client, sending, receiving, numbers, num
           // Keep waiting; the next check may work.
         }
         if (Date.now() - started >= receiveWaitMs) {
-          setArrival({ severity: 'info', text: 'No fax arrived in 5 minutes. Check trunk status, then wait again.' });
+          setArrival({ severity: 'info', text: 'No fax arrived in 5 minutes. Check the fax line, then wait again.' });
           return;
         }
       }
@@ -182,7 +182,7 @@ export default function WizardTestFax({ client, sending, receiving, numbers, num
   const receiveText = receiving === 'sip'
     ? (numbers.length
       ? `Send a fax to ${numbers.join(' or ')} from any fax machine or service; it will show up in your received faxes.`
-      : 'Add your fax number to the SIP trunk first, then send a fax to it from any fax service.')
+      : 'Add your fax number to your fax line first, then send a fax to it from any fax service.')
     : `Send a fax to your ${providerLabel(receiving)} fax number from any fax machine or service; it will show up in your received faxes.`;
 
   return (

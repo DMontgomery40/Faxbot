@@ -125,7 +125,7 @@ describe('Logs in plain words', () => {
     expect(screen.getByText(/To search one column, type its name, a colon and the words/)).toBeTruthy();
     expect(parseQueryTokens('provider:sinch result:failed busy')).toEqual({ q: 'busy', filters: { backend: 'sinch', status: 'failed' } });
     fireEvent.change(screen.getByLabelText('Search'), { target: { value: 'provider:sinch' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Apply Filters' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Show matching entries' }));
     await waitFor(() => expect(screen.queryByText('job_sent')).toBeNull());
     expect(screen.getByText('job_failed')).toBeTruthy();
   });

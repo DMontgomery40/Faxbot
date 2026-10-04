@@ -115,7 +115,7 @@ describe('eFax in Settings', () => {
     }));
     render(<Settings client={client()} />);
     const section = await screen.findByTestId('efax-settings');
-    expect(await screen.findByText('Your eFax Enterprise API account')).toBeTruthy();
+    expect(await screen.findByText('Your eFax Enterprise account')).toBeTruthy();
     expect(within(section).getByRole('combobox', { name: 'Check eFax for received faxes' }).textContent).toBe('Every minute');
     fireEvent.change(within(section).getByLabelText('Station name (optional)'), { target: { value: 'Clinic' } });
     fireEvent.click(within(section).getByRole('checkbox', { name: 'Delete each fax from eFax once Faxbot has stored it' }));
@@ -193,7 +193,7 @@ describe('eFax prices where its API has no published price', () => {
     render(<Spending client={client()} providers={[provider] as any} received={[]} carrier={null} canWrite
       onChanged={() => undefined} />);
     const note = await screen.findByTestId('published-note-efax');
-    expect(note.textContent).toBe(`${usPlan.sentence} Rate cards, below, can use it as your estimate.`);
+    expect(note.textContent).toBe(`${usPlan.sentence} Prices & plans can use it as your estimate.`);
     expect(screen.getByText('No published price; add your rate')).toBeTruthy();
   });
 

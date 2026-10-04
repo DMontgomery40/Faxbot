@@ -57,6 +57,7 @@ import { InboundCostLine, useInboundCosts } from './delivery/FaxCost';
 import InboundRecovery from './InboundRecovery';
 import WorkDetail from './work/WorkDetail';
 import { can, duplicateSentence, workStateSentence } from './work/text';
+import { providerLabel } from '../providerLabels';
 
 // Which received faxes are listed. The first four follow the work queue's own views.
 export type ReceivedFilter = 'all' | 'mine' | 'waiting' | 'overdue' | 'not-delivered';
@@ -489,9 +490,9 @@ export default function Received({
   const sipLine = receiving && callbacks?.backend === 'sip' && (
     <Alert severity={callbacks.receiving?.ready ? 'success' : 'warning'} sx={{ mb: 2, borderRadius: 2 }} data-testid="sip-receiving"
       action={onNavigate && permissions?.has('settings:read') ? (
-        <Button color="inherit" size="small" onClick={() => onNavigate('trunk')}>Open trunk settings</Button>
+        <Button color="inherit" size="small" onClick={() => onNavigate('trunk')}>{`Open ${providerLabel('sip')}`}</Button>
       ) : undefined}>
-      {callbacks.receiving?.message ?? 'Receiving over your SIP trunk.'}{' '}
+      {callbacks.receiving?.message ?? `Receiving through ${providerLabel('sip')}.`}{' '}
       <Box component="a" href={docsLink('inbound', docsBase)} target="_blank" rel="noreferrer" sx={{ color: 'inherit' }}>How receiving works</Box>
       {canChangeProviders && <InboundRecovery client={client} onRecovered={() => { void fetchList(); }} />}
     </Alert>

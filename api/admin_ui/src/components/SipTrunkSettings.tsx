@@ -352,7 +352,7 @@ function SipTrunkSettings({ client, showCalls = true, revision: sharedRevision, 
     if (result.engine === 'restarting' || result.engine === 'current') {
       setConnecting(true);
       setNotice({ severity: 'info', text: result.engine === 'restarting'
-        ? 'Asterisk is restarting to use these settings. Checking the carrier…' : 'Checking the carrier…' });
+        ? 'The fax engine is restarting to use these settings. Checking the carrier…' : 'Checking the carrier…' });
       const latest = await waitForTrunk();
       if (!alive.current) return;
       setConnecting(false);
@@ -371,7 +371,7 @@ function SipTrunkSettings({ client, showCalls = true, revision: sharedRevision, 
     try {
       if (await saveForm(true)) await connect();
     } catch (error) {
-      setNotice({ severity: 'error', text: failure(error, 'The trunk could not be applied to Asterisk. Try again.') });
+      setNotice({ severity: 'error', text: failure(error, 'Faxbot could not start using these settings. Try again.') });
     } finally {
       if (alive.current) {
         setConnecting(false);
@@ -527,15 +527,15 @@ function SipTrunkSettings({ client, showCalls = true, revision: sharedRevision, 
               required={needsHost} placeholder={phone ? '192.168.1.10' : preset.host || 'sip.example.com'}
               InputLabelProps={{ shrink: true }}
               helperText={phone ? `${preset.label}'s address on your local network.`
-                : needsHost ? 'The SIP server name your carrier gave you.' : `Leave empty to use ${preset.host}.`}
+                : needsHost ? 'The server name your carrier gave you.' : `Leave empty to use ${preset.host}.`}
               onChange={(event) => update('host', event.target.value.trim())} />
             <TextField size="small" label="Port" type="number" value={form.port || ''}
               placeholder={String(portInForce)} sx={{ minWidth: 120 }} InputLabelProps={{ shrink: true }}
               helperText={form.port ? undefined : `Leave empty to use ${portInForce}.`}
               onChange={(event) => update('port', Number(event.target.value) || 0)} />
             <FormControl size="small" sx={{ minWidth: 180 }}>
-              <InputLabel id="sip-transport-label" shrink>Transport</InputLabel>
-              <Select labelId="sip-transport-label" label="Transport" value={form.transport} displayEmpty notched
+              <InputLabel id="sip-transport-label" shrink>Connection type</InputLabel>
+              <Select labelId="sip-transport-label" label="Connection type" value={form.transport} displayEmpty notched
                 onChange={(event) => update('transport', String(event.target.value))}>
                 <MenuItem value="">{`Default: ${TRANSPORT_TEXT[preset.transport] ?? preset.transport.toUpperCase()}`}</MenuItem>
                 {(preset.transports ?? TRANSPORTS_OFFERED).filter((name) => TRANSPORTS_OFFERED.includes(name))
@@ -583,8 +583,8 @@ function SipTrunkSettings({ client, showCalls = true, revision: sharedRevision, 
 
           {(phone || preset.codecs_by_country) && (
             <FormControl size="small" fullWidth>
-              <InputLabel id="sip-codecs-label" shrink>Codec order</InputLabel>
-              <Select labelId="sip-codecs-label" label="Codec order" value={form.codecs} displayEmpty notched
+              <InputLabel id="sip-codecs-label" shrink>Call sound format</InputLabel>
+              <Select labelId="sip-codecs-label" label="Call sound format" value={form.codecs} displayEmpty notched
                 onChange={(event) => update('codecs', String(event.target.value))}>
                 <MenuItem value="">{'Default: A-law first, or \u00b5-law first in North America and Japan'}</MenuItem>
                 <MenuItem value="alaw,ulaw">A-law first (UK, Europe and Australia)</MenuItem>

@@ -215,7 +215,7 @@ describe('SIP trunk settings', () => {
     await screen.findByRole('radio', { name: 'Server IP address' });
     fireEvent.click(screen.getByRole('button', { name: 'Apply and connect' }));
     expect(await screen.findByText(detail)).toBeTruthy();
-    fireEvent.mouseDown(screen.getByLabelText('Transport'));
+    fireEvent.mouseDown(screen.getByLabelText('Connection type'));
     const options = await screen.findAllByRole('option');
     expect(options.map((option) => option.textContent)).toEqual(
       ['Default: Encrypted (TLS)', 'Encrypted (TLS)', 'TCP', 'UDP (older)']);
@@ -361,7 +361,7 @@ describe('SIP trunk settings', () => {
     expect(screen.getByText('Leave empty to use sip.telnyx.com.')).toBeTruthy();
     expect(screen.getByLabelText('Port').getAttribute('placeholder')).toBe('5061');
     expect(screen.getByText('Leave empty to use 5061.')).toBeTruthy();
-    expect(screen.getByLabelText('Transport').textContent).toBe('Default: Encrypted (TLS)');
+    expect(screen.getByLabelText('Connection type').textContent).toBe('Default: Encrypted (TLS)');
   });
 
   it('matches the directions the trunk carries: a receiving-only trunk needs no caller ID', async () => {
@@ -513,7 +513,7 @@ describe('SIP trunk to a phone system', () => {
     expect(within(steps).getByText('support.avaya.com')).toBeTruthy();
     expect(steps.textContent).toContain(`, read ${readOn('2026-10-03')}`);
     // Only the transports a phone system takes.
-    fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Transport' }));
+    fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Connection type' }));
     const listbox = await screen.findByRole('listbox');
     expect(within(listbox).getAllByRole('option').map((option) => option.textContent))
       .toEqual(['Default: UDP (older)', 'TCP', 'UDP (older)']);
@@ -565,7 +565,7 @@ describe('SIP trunk to a phone system', () => {
     fireEvent.click(within(await screen.findByRole('listbox')).getByRole('option', { name: /As a phone here dials it/ }));
     fireEvent.change(await screen.findByLabelText('Outside-line prefix (optional)'), { target: { value: '9x' } });
     expect((screen.getByLabelText('Outside-line prefix (optional)') as HTMLInputElement).value).toBe('9');
-    fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Codec order' }));
+    fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Call sound format' }));
     fireEvent.click(within(await screen.findByRole('listbox')).getByRole('option', { name: /A-law first \(UK/ }));
     fireEvent.click(screen.getByRole('button', { name: 'Save trunk settings' }));
     await waitFor(() => expect(writes).toHaveLength(1));

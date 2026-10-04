@@ -48,7 +48,7 @@ export const AUDIT_ACTIONS: Record<string, string> = {
   'providers.write': 'Changed providers',
   'providers.install': 'Installed a provider plugin',
   'configuration.bootstrap.activate': 'Applied the first settings',
-  'configuration.environment': 'Took settings from .env',
+  'configuration.environment': 'Read the settings Faxbot was installed with',
   'routing.rate_cards_added': 'Added prices',
   'fax.accept': 'Submitted a fax',
   'fax.reconcile': 'Checked a fax whose result was unclear',
