@@ -259,14 +259,16 @@ class IntakeStore:
         if not hasattr(self, '_imports'):
             self._imports = reflect(self.engine, ('inbound_imports',))['inbound_imports']
         imports = self._imports
+        from ..inbound.acquisition import PLACEHOLDER_DIGESTS
         recorded = sa.exists(sa.select(1).where(imports.c.inbound_fax_id == inbound.c.id))
+        authentic = sa.or_(inbound.c.sha256.is_(None), inbound.c.sha256.not_in(tuple(PLACEHOLDER_DIGESTS)))
         acquired = sa.exists(sa.select(1).where(imports.c.inbound_fax_id == inbound.c.id,
                                                 imports.c.state.in_(('received', 'conflict'))))
         query = (sa.select(inbound.c.id, inbound.c.from_number, inbound.c.to_number, inbound.c.pages,
                            inbound.c.received_at)
                  .select_from(inbound.outerjoin(items, items.c.inbound_fax_id == inbound.c.id))
                  .where(items.c.id.is_(None), inbound.c.pdf_path.is_not(None), inbound.c.pdf_path != '',
-                        sa.or_(~recorded, sa.and_(inbound.c.status == 'received', acquired)))
+                        sa.or_(sa.and_(~recorded, authentic), sa.and_(inbound.c.status == 'received', acquired)))
                  .order_by(inbound.c.received_at, inbound.c.id).limit(limit))
         created = 0
         with read_connection(self.engine) as connection:

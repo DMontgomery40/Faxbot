@@ -30,78 +30,77 @@ assert verify_phaxio_signature(
 )
 ```
 
-`PHAXIO_API_SECRET` authenticates send/status API calls and cannot substitute for the Callback Token. Missing/invalid signatures, a missing token, mismatched locators or a captured `PHAXIO_VERIFY_SIGNATURE=false` reject outbound callback updates. Disabling verification never enables unsigned updates. Later configuration changes do not replace a job's captured token, URL or verification setting. Status polling continues with the captured original account when a provider fax ID is available; it does not resubmit the fax. This outbound implementation does not establish that inbound verification has been updated.
+`PHAXIO_API_SECRET` authenticates send/status API calls and cannot substitute for the Callback Token. Missing/invalid signatures, a missing token, mismatched locators or a captured `PHAXIO_VERIFY_SIGNATURE=false` reject outbound callback updates. Disabling verification never enables unsigned updates. Later configuration changes do not replace a job's captured token, URL or verification setting. Status polling continues with the captured original account when a provider fax ID is available; it does not resubmit the fax. Received-fax notifications use the same verifier; see [Receiving faxes](../operations/receiving.md).
 
 The [generated outbound callback source reference](../generated/outbound-callbacks.md) shows this build's exact verifier, URL construction and captured-attempt checks, with source hashes in its provenance.
 
-## Inbound — Phaxio
+## Inbound — received faxes
 
-- Endpoint: `POST /phaxio-inbound`
-- Signature: header `X-Phaxio-Signature` (HMAC‑SHA256)
+[Receiving faxes](../operations/receiving.md) describes the whole flow: statuses, **Fetch again**, test faxes and the evidence Faxbot keeps. In short, nothing is recorded until a notification is checked. The document always comes from the provider's API by fax ID, or from an image inside the data folder, never from an address in the notification.
 
-Example JSON payload:
-```json
-{
-  "fax": {
-    "id": 98765,
-    "from": "+15551230000",
-    "to": "+15559870000",
-    "num_pages": 3,
-    "status": "received",
-    "file_url": "https://files.phaxio.com/..."
-  }
-}
+### Phaxio {#inbound-phaxio}
+
+- Endpoint: `POST /phaxio-inbound`. The signed URL is `PUBLIC_API_URL` followed by `/phaxio-inbound`.
+- Signature: `X-Phaxio-Signature`, the same lowercase hexadecimal HMAC-SHA1 with `PHAXIO_CALLBACK_TOKEN` as outbound callbacks, over that URL, the sorted form fields and the SHA-1 digest of each file part.
+- With `PHAXIO_INBOUND_VERIFY_SIGNATURE=false`, Faxbot looks the fax up with `GET https://api.phaxio.com/v2.1/faxes/{id}` in the configured account before recording it, and ignores it when the account did not receive it.
+
+Phaxio sends a multipart form. The fax object arrives as a JSON `fax` field, and the PDF arrives in a `file` part when files are sent with callbacks. A shortened example:
+
+```
+fax={"id":98765,"direction":"received","num_pages":3,"status":"success","from_number":"+15551230000","to_number":"+15559870000","completed_at":"2026-10-03T08:00:00.000-06:00"}
+direction=received
+is_test=false
+success=true
+file=<the PDF>
 ```
 
-The inbound handler still uses its separate legacy raw-body HMAC-SHA256 implementation. Alignment of inbound verification with the provider contract remains unfinished; do not reuse the corrected outbound helper as evidence of inbound readiness.
+When there is no `file` part, Faxbot downloads `GET https://api.phaxio.com/v2.1/faxes/{id}/file`.
 
-## Inbound — Sinch Fax API v3
+### Sinch Fax API v3 {#inbound-sinch-fax-api-v3}
 
 - Endpoint: `POST /sinch-inbound`
-- Basic auth (optional): set `SINCH_INBOUND_BASIC_USER/PASS`
-- HMAC (optional): header `X-Sinch-Signature` with secret `SINCH_INBOUND_HMAC_SECRET`
+- Basic auth: `SINCH_INBOUND_BASIC_USER` and `SINCH_INBOUND_BASIC_PASS`. HMAC: `X-Sinch-Signature` with `SINCH_INBOUND_HMAC_SECRET`.
+- With neither set, Faxbot looks the fax up with `GET /v3/projects/{projectId}/faxes/{id}` before recording it. It downloads the document from `/file`.
 
-Example JSON payload (simplified):
+A shortened example of an incoming fax event:
+
 ```json
 {
-  "id": "abcd-1234",
-  "from": "+15551230000",
-  "to": "+15559870000",
-  "num_pages": 2,
-  "status": "received",
-  "file_url": "https://fax.api.sinch.com/v3/..."
+  "event": "INCOMING_FAX",
+  "eventTime": "2026-10-03T14:00:01Z",
+  "fax": {
+    "id": "01F3J0G1M4WQR6HGY6HCF6JA0K",
+    "direction": "INBOUND",
+    "from": "+15551230000",
+    "to": "+15559870000",
+    "numberOfPages": 2,
+    "status": "COMPLETED",
+    "completedTime": "2026-10-03T14:00:00Z"
+  },
+  "file": "<base64 PDF>",
+  "fileType": "PDF"
 }
 ```
 
-HMAC verification (Python):
-```python
-import hmac, hashlib
-secret = SINCH_INBOUND_HMAC_SECRET.encode()
-digest = hmac.new(secret, raw_body_bytes, hashlib.sha256).hexdigest()
-assert hmac.compare_digest(digest, header_value.strip().lower())
-```
+Faxbot uses an attached `file` only when basic auth or HMAC authenticated the event.
 
-## Inbound — SIP/Asterisk (Self‑Hosted)
+### SIP/Asterisk (self-hosted) {#inbound-sipasterisk-selfhosted}
 
 - Endpoint: `POST /_internal/asterisk/inbound`
 - Header: `X-Internal-Secret: <ASTERISK_INBOUND_SECRET>`
-- Body (JSON):
+- `tiff_path` must be inside the Faxbot data folder. Paths through a symbolic link are refused. A repeated `uniqueid` is the same fax.
+
+Body (JSON):
+
 ```json
 {
-  "tiff_path": "/faxdata/in.tiff",
+  "tiff_path": "/faxdata/inbound/1603261234.89.tiff",
   "to_number": "+15559870000",
   "from_number": "+15551230000",
-  "faxstatus": "received",
+  "faxstatus": "SUCCESS",
   "faxpages": 2,
   "uniqueid": "1603261234.89"
 }
-```
-
-Example curl (internal network):
-```
-curl -X POST -H 'X-Internal-Secret: <secret>' -H 'Content-Type: application/json' \
-  http://api:8080/_internal/asterisk/inbound \
-  -d '{"tiff_path":"/faxdata/in.tiff","to_number":"+1555..."}'
 ```
 
 ## Security Tips

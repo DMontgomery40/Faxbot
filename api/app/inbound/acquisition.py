@@ -55,6 +55,15 @@ LEASE = timedelta(minutes=2)
 DEFERRED_FETCH = timedelta(minutes=5)
 REPORT_LIMIT = 8192
 MEDIA_TYPE = 'application/pdf'
+# Earlier versions stored these fixed stand-ins when a document could not be
+# fetched (or for a test). They are read as "not received"; the stored rows are
+# left exactly as they are.
+PLACEHOLDER_DIGESTS = {
+    '8410c67905922df0a298607ef7d52ce1af72d765eb1f3a7ed52a58c35b25ab1d':
+        'Faxbot never received the document for this fax; ask the sender to send it again.',
+    'de8d36b2410e1dd035fb78d977281e68d55839f4cd2bd10e80838581ef926bd9':
+        'This older test fax has no document; add a new test fax instead.',
+}
 _PRIVATE_REPORT_KEYS = frozenset({'file', 'fileType', 'signature', 'authorization', 'password', 'secret',
                                   'token', 'api_key', 'api_secret', 'callback_token'})
 
@@ -179,9 +188,14 @@ def _clock_text(moment):
 def describe(row, record, *, now=None):
     """The added InboundFaxOut fields for one fax row and its import (or None)."""
     if record is None:
+        placeholder = PLACEHOLDER_DIGESTS.get(row.get('sha256'))
+        if placeholder:
+            return {'status': 'failed', 'status_text': placeholder, 'source_received_at': None,
+                    'provider_fax_id': row.get('provider_sid'), 'sha256': None, 'is_test': False,
+                    'retry_at': None, 'problem': None, 'can_fetch_again': False}
         return {'status_text': 'Received.', 'source_received_at': None,
                 'provider_fax_id': row.get('provider_sid'), 'sha256': row.get('sha256'), 'is_test': False,
-                'retry_at': None, 'problem': None}
+                'retry_at': None, 'problem': None, 'can_fetch_again': False}
     source, state = record['source'], record['state']
     name = SOURCE_NAMES.get(source, 'the provider')
     retry_at = None
@@ -200,7 +214,8 @@ def describe(row, record, *, now=None):
             'provider_fax_id': record['operation_id'] if source in FETCHABLE else None,
             'sha256': row.get('sha256') if state in ('received', 'conflict') else None,
             'is_test': source == 'test', 'retry_at': retry_at,
-            'problem': record['last_error'] if state != 'received' else None}
+            'problem': record['last_error'] if state != 'received' else None,
+            'can_fetch_again': source in FETCHABLE and state in ('pending', 'failed')}
 
 
 def _settings():
@@ -361,7 +376,7 @@ class ImportStore:
         conflict = bool(artifact_digest and record['artifact_digest'] and artifact_digest != record['artifact_digest'])
         if record['state'] in ('received', 'conflict'):
             if conflict and record['state'] == 'received':
-                self._conflict_on(connection, record, now)
+                self._conflict_on(connection, record, now, offered=artifact_digest)
                 return Begun(record['id'], record['inbound_fax_id'], 'conflict', False, True)
             return Begun(record['id'], record['inbound_fax_id'], record['state'], False, conflict)
         due = now if schedule else now + DEFERRED_FETCH
@@ -378,11 +393,13 @@ class ImportStore:
                 next_attempt_at=due, updated_at=now))
         return Begun(record['id'], record['inbound_fax_id'], 'pending', False, False)
 
-    def _conflict_on(self, connection, record, now):
+    def _conflict_on(self, connection, record, now, *, offered=None):
         connection.execute(self.imports.update().where(self.imports.c.id == record['id']).values(
             state='conflict', last_error='A later copy with different content arrived; the first copy is kept.',
             updated_at=now))
-        _audit('inbound_conflict', job_id=record['inbound_fax_id'], backend=record['source'])
+        # Both digests are evidence of what was kept and what was refused.
+        _audit('inbound_conflict', job_id=record['inbound_fax_id'], backend=record['source'],
+               kept_sha256=record['artifact_digest'], refused_sha256=offered)
 
     # Complete -----------------------------------------------------------
     def complete(self, import_id, *, artifact_path, digest, size, pages, media_type=MEDIA_TYPE,
@@ -405,7 +422,7 @@ class ImportStore:
                 kept = connection.execute(sa.select(self.faxes.c.pdf_path).where(
                     self.faxes.c.id == record['inbound_fax_id'])).scalar_one_or_none()
                 if record['state'] == 'received' and record['artifact_digest'] != digest:
-                    self._conflict_on(connection, record, now)
+                    self._conflict_on(connection, record, now, offered=digest)
                     return Completion(False, 'conflict', record['inbound_fax_id'], kept)
                 return Completion(False, record['state'], record['inbound_fax_id'], kept)
             connection.execute(self.imports.update().where(self.imports.c.id == import_id).values(

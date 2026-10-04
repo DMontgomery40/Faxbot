@@ -2,7 +2,7 @@
 
 ## Overview
 - Self-hosted backend using Asterisk and a SIP trunk with T.38 fax.
-- Send-only. You don’t need to accept inbound faxes to send.
+- Send-only. You don’t need to accept inbound faxes to send. To receive faxes as well, see [Receiving faxes](../operations/receiving.md#asterisk): the dialplan reports each fax with `ASTERISK_INBOUND_SECRET`, and the fax image must be inside the data folder (`/faxdata/inbound/`).
 - Full control, no per-fax cloud charges (you still pay your trunk provider).
 - Requires some networking setup; this guide assumes minimal prior knowledge.
 

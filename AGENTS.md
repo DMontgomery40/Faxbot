@@ -20,6 +20,7 @@ The future enterprise direction adds accountable correspondence: reusable intake
 | --- | --- | --- |
 | Outbound delivery and provider identity | `api/app/outbound_store.py`, `outbound_worker.py`, `outbound_transport.py`, `provider_execution.py` | [Durable outbound design](docs/architecture/2026-10-02-faxbot-durable-outbound.md) |
 | Route selection, cost estimates, and charge reconciliation | `api/app/routing/` | [Delivery routes and case packets](docs/operations/delivery-routes.md) |
+| Received-fax notifications, document fetching and provenance | `api/app/inbound/` | [Receiving faxes](docs/operations/receiving.md) |
 | Intake and email delivery | `api/app/intake/` | [Intake](docs/operations/intake.md) |
 | Encrypted delivery and peer verification | `api/app/direct/` | [Direct delivery](docs/operations/direct-delivery.md) |
 | Accepted case documents and packet preparation | `api/app/cases/` | [Case packets](docs/operations/delivery-routes.md#case-packets) |

@@ -34,7 +34,7 @@ Guidance for securing MCP transports and webhooks when running Faxbot in product
 
 - Phaxio (inbound)
   - Endpoint: `POST /phaxio-inbound`
-  - Signature: `X-Phaxio-Signature` (HMAC-SHA256)
+  - Signature: `X-Phaxio-Signature`, the same HMAC-SHA1 with `PHAXIO_CALLBACK_TOKEN` as outbound callbacks. With checks off, Faxbot confirms each fax with Phaxio's API before recording it. See [Receiving faxes](../operations/receiving.md#how-notifications-are-checked).
 
 - Sinch (inbound)
   - Endpoint: `POST /sinch-inbound`

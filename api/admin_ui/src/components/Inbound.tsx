@@ -35,15 +35,16 @@ import {
   CalendarToday as DateIcon,
   CheckCircle as SuccessIcon,
   Error as ErrorIcon,
-  Warning as WarningIcon,
   Info as InfoIcon,
+  Sync as FetchIcon,
 } from '@mui/icons-material';
 import AdminAPIClient from '../api/client';
 import { docsLink } from '../docsLinks';
 import type { InboundFax } from '../api/types';
-import type { IntakeItem } from '../api/deliveryTypes';
+import type { EmailConnector, IntakeItem } from '../api/deliveryTypes';
 import { parseServerTime } from '../api/time';
-import { DeliveryStatusLine, DirectDeliveries, isNewFax } from './delivery/InboxDelivery';
+import { DeliveryStatusLine, DirectDeliveries, emailDeliveryApplies, inboundFaxStatus, isNewFax, providerName } from './delivery/InboxDelivery';
+import type { DeliveryTone } from './delivery/InboxDelivery';
 import { DeliveryError, Notice } from './delivery/shared';
 import type { AdminDestination } from '../navigation';
 import { ResponsiveFormSection } from './common/ResponsiveFormFields';
@@ -67,6 +68,9 @@ function Inbound({ client, docsBase, inboundEnabled, onNavigate, permissions }: 
   const canRetryDelivery = !!permissions?.has('settings:write');
   const canOpenEmailSettings = !!permissions?.has('settings:read') && !!onNavigate;
   const [deliveries, setDeliveries] = useState<IntakeItem[] | null>(null);
+  // Email connectors decide whether a fax's number has email delivery now.
+  const [connectors, setConnectors] = useState<EmailConnector[] | null>(null);
+  const [fetchingId, setFetchingId] = useState<string | null>(null);
   const [retrying, setRetrying] = useState(false);
   const [deliveryError, setDeliveryError] = useState<unknown>(null);
   const [deliveryNotice, setDeliveryNotice] = useState<string | null>(null);
@@ -115,7 +119,27 @@ function Inbound({ client, docsBase, inboundEnabled, onNavigate, permissions }: 
     } catch {
       setDeliveries(null);
     }
+    try {
+      setConnectors((await client.listEmailConnectors()).connectors);
+    } catch {
+      setConnectors(null);
+    }
   }, [client, inboundEnabled, canReadDelivery]);
+
+  const fetchAgain = async (fax: InboundFax) => {
+    setFetchingId(fax.id);
+    setDeliveryError(null);
+    setDeliveryNotice(null);
+    try {
+      await client.fetchInboundAgain(fax.id);
+      setDeliveryNotice('Faxbot will fetch the document shortly.');
+      await fetchInbound();
+    } catch (failure) {
+      setDeliveryError(failure);
+    } finally {
+      setFetchingId(null);
+    }
+  };
 
   const retryDelivery = async (item: IntakeItem) => {
     setRetrying(true);
@@ -178,36 +202,48 @@ function Inbound({ client, docsBase, inboundEnabled, onNavigate, permissions }: 
     return () => clearInterval(interval);
   }, [fetchInbound, fetchDeliveries, inboundEnabled]);
 
-  const getStatusIcon = (status: string) => {
-    switch (status.toLowerCase()) {
-      case 'success':
-      case 'completed':
-      case 'received':
-        return <SuccessIcon />;
-      case 'failed':
-      case 'error':
-        return <ErrorIcon />;
-      case 'processing':
-        return <WarningIcon />;
-      default:
-        return <InfoIcon />;
-    }
+  const toneIcon = (tone: DeliveryTone) => {
+    if (tone === 'success') return <SuccessIcon />;
+    if (tone === 'error') return <ErrorIcon />;
+    return <InfoIcon />;
   };
 
-  const getStatusColor = (status: string): 'success' | 'error' | 'warning' | 'info' | 'default' => {
-    switch (status.toLowerCase()) {
-      case 'success':
-      case 'completed':
-      case 'received':
-        return 'success';
-      case 'failed':
-      case 'error':
-        return 'error';
-      case 'processing':
-        return 'warning';
-      default:
-        return 'default';
-    }
+  // The fax's status chip with its one sentence underneath.
+  const FaxStatus = ({ fax }: { fax: InboundFax }) => {
+    const status = inboundFaxStatus(fax);
+    return (
+      <Box>
+        <Chip
+          icon={toneIcon(status.tone)}
+          label={status.label}
+          color={status.tone}
+          size="small"
+          variant="outlined"
+          sx={{ borderRadius: 1 }}
+        />
+        {status.detail && (
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, maxWidth: 280 }}>
+            {status.detail}
+          </Typography>
+        )}
+      </Box>
+    );
+  };
+
+  const FetchAgainButton = ({ fax, fullWidth = false }: { fax: InboundFax; fullWidth?: boolean }) => {
+    if (!canAddTestFax || !inboundFaxStatus(fax).canFetchAgain) return null;
+    return (
+      <Button
+        size="small"
+        startIcon={<FetchIcon />}
+        onClick={() => void fetchAgain(fax)}
+        disabled={fetchingId !== null}
+        fullWidth={fullWidth}
+        aria-label={`Fetch again the fax from ${maskPhoneNumber(fax.fr)}`}
+      >
+        Fetch again
+      </Button>
+    );
   };
 
   const formatDate = (dateString?: string) => {
@@ -251,22 +287,10 @@ function Inbound({ client, docsBase, inboundEnabled, onNavigate, permissions }: 
           <Stack spacing={2}>
             {/* Header */}
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-              <Box>
-                <Typography variant="subtitle2" fontWeight={600}>
-                  Fax ID
-                </Typography>
-                <Typography variant="caption" color="text.secondary" fontFamily="monospace">
-                  {fax.id.slice(0, 8)}...
-                </Typography>
-              </Box>
-              <Chip
-                icon={getStatusIcon(fax.status)}
-                label={fax.status}
-                color={getStatusColor(fax.status)}
-                size="small"
-                variant="outlined"
-                sx={{ borderRadius: 1 }}
-              />
+              <Typography variant="subtitle2" fontWeight={600}>
+                Received through {providerName(fax.backend)}
+              </Typography>
+              <FaxStatus fax={fax} />
             </Box>
 
             {/* Details */}
@@ -312,20 +336,27 @@ function Inbound({ client, docsBase, inboundEnabled, onNavigate, permissions }: 
               <Box>
                 <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 0.5 }}>Email delivery</Typography>
                 <DeliveryStatusLine item={deliveryFor.get(fax.id)} canRetry={canRetryDelivery} busy={retrying} isNew={isNewFax(fax.received_at)}
+                  emailApplies={emailDeliveryApplies(connectors, fax.to)} documentPending={!inboundFaxStatus(fax).hasDocument}
                   onRetry={(item) => void retryDelivery(item)} label={`the fax from ${maskPhoneNumber(fax.fr)}`} />
               </Box>
             )}
 
             {/* Actions */}
-            <Button
-              variant="contained"
-              startIcon={<DownloadIcon />}
-              onClick={() => downloadPdf(fax.id)}
-              fullWidth
-              sx={{ borderRadius: 2 }}
-            >
-              Download PDF
-            </Button>
+            <Tooltip title={inboundFaxStatus(fax).hasDocument ? '' : 'The document has not arrived yet.'}>
+              <span>
+                <Button
+                  variant="contained"
+                  startIcon={<DownloadIcon />}
+                  onClick={() => downloadPdf(fax.id)}
+                  disabled={!inboundFaxStatus(fax).hasDocument}
+                  fullWidth
+                  sx={{ borderRadius: 2 }}
+                >
+                  Download PDF
+                </Button>
+              </span>
+            </Tooltip>
+            <FetchAgainButton fax={fax} fullWidth />
           </Stack>
         </CardContent>
       </Card>
@@ -443,7 +474,7 @@ function Inbound({ client, docsBase, inboundEnabled, onNavigate, permissions }: 
             <Typography variant="body2" sx={{ mt: 0.5 }}>
               • You see the mailboxes you have been given access to<br />
               • Phone numbers are masked for HIPAA compliance
-              {canAddTestFax && <><br />• "Add Test Fax" creates local test entries only</>}
+              {canAddTestFax && <><br />• "Add Test Fax" adds a one-page test document, marked as a test fax</>}
             </Typography>
           </Alert>
 
@@ -630,11 +661,10 @@ same => n,System(curl -s -X POST -H "Content-Type: application/json" -H "X-Inter
                 <Table>
                   <TableHead>
                     <TableRow>
-                      <TableCell>ID</TableCell>
                       <TableCell>From</TableCell>
                       <TableCell>To</TableCell>
                       <TableCell>Status</TableCell>
-                      <TableCell>Backend</TableCell>
+                      <TableCell>Received through</TableCell>
                       <TableCell>Pages</TableCell>
                       <TableCell>Received</TableCell>
                       {deliveries !== null && <TableCell>Email delivery</TableCell>}
@@ -646,11 +676,6 @@ same => n,System(curl -s -X POST -H "Content-Type: application/json" -H "X-Inter
                       <TableRow key={fax.id} hover>
                         <TableCell>
                           <Typography variant="body2" fontFamily="monospace">
-                            {fax.id.slice(0, 8)}...
-                          </Typography>
-                        </TableCell>
-                        <TableCell>
-                          <Typography variant="body2" fontFamily="monospace">
                             {maskPhoneNumber(fax.fr)}
                           </Typography>
                         </TableCell>
@@ -660,18 +685,11 @@ same => n,System(curl -s -X POST -H "Content-Type: application/json" -H "X-Inter
                           </Typography>
                         </TableCell>
                         <TableCell>
-                          <Chip
-                            icon={getStatusIcon(fax.status)}
-                            label={fax.status}
-                            color={getStatusColor(fax.status)}
-                            size="small"
-                            variant="outlined"
-                            sx={{ borderRadius: 1 }}
-                          />
+                          <FaxStatus fax={fax} />
                         </TableCell>
                         <TableCell>
                           <Typography variant="body2">
-                            {fax.backend}
+                            {providerName(fax.backend)}
                           </Typography>
                         </TableCell>
                         <TableCell>
@@ -687,19 +705,24 @@ same => n,System(curl -s -X POST -H "Content-Type: application/json" -H "X-Inter
                         {deliveries !== null && (
                           <TableCell>
                             <DeliveryStatusLine item={deliveryFor.get(fax.id)} canRetry={canRetryDelivery} busy={retrying} isNew={isNewFax(fax.received_at)}
+                              emailApplies={emailDeliveryApplies(connectors, fax.to)} documentPending={!inboundFaxStatus(fax).hasDocument}
                               onRetry={(item) => void retryDelivery(item)} label={`the fax from ${maskPhoneNumber(fax.fr)}`} />
                           </TableCell>
                         )}
                         <TableCell align="right">
-                          <Tooltip title="Download PDF">
-                            <IconButton
-                              size="small"
-                              onClick={() => downloadPdf(fax.id)}
-                              disabled={!fax.id}
-                            >
-                              <DownloadIcon />
-                            </IconButton>
+                          <Tooltip title={inboundFaxStatus(fax).hasDocument ? 'Download PDF' : 'The document has not arrived yet.'}>
+                            <span>
+                              <IconButton
+                                size="small"
+                                onClick={() => downloadPdf(fax.id)}
+                                disabled={!fax.id || !inboundFaxStatus(fax).hasDocument}
+                                aria-label={`Download the fax from ${maskPhoneNumber(fax.fr)}`}
+                              >
+                                <DownloadIcon />
+                              </IconButton>
+                            </span>
                           </Tooltip>
+                          <FetchAgainButton fax={fax} />
                         </TableCell>
                       </TableRow>
                     ))}

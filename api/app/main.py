@@ -1674,7 +1674,7 @@ def admin_inbound_callbacks():
             "name": "Phaxio Inbound",
             "url": f"{base}/phaxio-inbound",
             "verify_signature": settings.phaxio_inbound_verify_signature,
-            "notes": "Configure in Phaxio console → Inbound settings. Enable HMAC verification if policy requires.",
+            "notes": "Set this as the receive callback URL in Phaxio. Faxbot checks Phaxio's signature with the Callback Token.",
         })
     elif backend == "sinch":
         out["callbacks"].append({
@@ -1684,7 +1684,7 @@ def admin_inbound_callbacks():
                 "basic": bool(settings.sinch_inbound_basic_user),
                 "hmac": bool(settings.sinch_inbound_hmac_secret),
             },
-            "notes": "Set webhook in Sinch Fax console. Optionally use Basic and/or HMAC.",
+            "notes": "Set this as the incoming fax webhook in Sinch. Without basic auth, Faxbot confirms each fax with Sinch first.",
         })
     elif backend == "signalwire":
         out["callbacks"].append({
@@ -2566,12 +2566,15 @@ class InboundFaxOut(BaseModel):
     is_test: bool = False
     retry_at: Optional[datetime] = None
     problem: Optional[str] = None
+    can_fetch_again: bool = False
 
 
 def _inbound_pdf_response(inbound_id: str, pdf_path: Optional[str], method: str, status: Optional[str] = "received"):
     pdf_path = str(pdf_path or "")
-    if status != "received" or not pdf_path:
+    if status != "received":
         raise HTTPException(404, detail="The document has not been received yet.")
+    if not pdf_path:
+        raise HTTPException(404, detail="PDF file not found")
     no_store = {"Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache", "Expires": "0"}
     if pdf_path.startswith("s3://"):
         stream, name = get_storage().get_pdf_stream(pdf_path)
@@ -2624,19 +2627,21 @@ async def get_inbound_pdf(inbound_id: str, request: Request, token: Optional[str
         except FaxAccessError:
             shared = None
         if shared is not None:
-            return _inbound_pdf_response(inbound_id, shared["pdf_path"], "token")
+            return _inbound_pdf_response(inbound_id, shared["pdf_path"], "token",
+                                         _document_status(shared.get("status"), shared.get("sha256")))
     identity = await require_identity(request)
     document = await run_lifecycle_step(private_operation(lambda: service.inbound_queries.document(
         identity.actor, inbound_id)))
     if settings.inbound_get_rpm:
         _enforce_rate_limit({'key_id': identity.actor.replay_scope}, "/inbound/{id}/pdf", settings.inbound_get_rpm)
     return _inbound_pdf_response(inbound_id, document["pdf_path"], "api_key" if identity.source == "key" else "session",
-                                 _document_status(document.get("status")))
+                                 _document_status(document.get("status"), document.get("sha256")))
 
 
-def _document_status(status: Optional[str]) -> str:
-    """Rows from before acquisition records kept provider statuses; only waiting/failed lack a document."""
-    return "missing" if status in ("waiting", "failed") else "received"
+def _document_status(status: Optional[str], sha256: Optional[str] = None) -> str:
+    """Rows from before acquisition records kept provider statuses; waiting, failed and old stand-ins have no document."""
+    from .inbound.acquisition import PLACEHOLDER_DIGESTS
+    return "missing" if status in ("waiting", "failed") or sha256 in PLACEHOLDER_DIGESTS else "received"
 
 
 # ===== Global error logging =====

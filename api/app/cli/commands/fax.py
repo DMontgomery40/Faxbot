@@ -7,11 +7,12 @@ import typer
 from .. import state
 from ..client import segment
 from ..errors import CliError
-from ..output import local_time
+from ..output import local_time, parse_time, yes_no
 
 jobs = typer.Typer(help='Sent faxes: list them, read details, download documents and check status.',
                    no_args_is_help=True)
-inbound = typer.Typer(help='Received faxes: list them, read details and download documents.', no_args_is_help=True)
+inbound = typer.Typer(help='Received faxes: list them, read details, download documents and fetch them again.',
+                      no_args_is_help=True)
 
 _TYPES = {'.pdf': 'application/pdf', '.txt': 'text/plain'}
 
@@ -176,23 +177,60 @@ def jobs_reconcile(fax_id: str = typer.Argument(..., help='Fax ID.'),
                                                      'with the provider.'))
 
 
+def _inbound_status(item):
+    """The server's one sentence, with a retry time in this computer's time zone."""
+    retry = parse_time(item.get('retry_at'))
+    if item.get('status') == 'waiting' and retry is not None:
+        return f"The document could not be fetched; Faxbot will try again at {retry.astimezone().strftime('%H:%M')}."
+    if item.get('status') == 'failed':
+        return 'Faxbot stopped trying to fetch this document; run faxbot inbound fetch to try again.'
+    return item.get('status_text') or 'Received.'
+
+
+def _size(value):
+    if not isinstance(value, int):
+        return None
+    if value >= 1024 * 1024:
+        return f'{value / (1024 * 1024):.1f} MB'
+    return f'{max(1, round(value / 1024))} KB'
+
+
+def _document(item):
+    if item.get('status') in ('waiting', 'failed'):
+        return 'Not received yet'
+    pages = item.get('pages')
+    parts = [f"{pages} {'page' if pages == 1 else 'pages'}" if isinstance(pages, int) else None,
+             _size(item.get('size_bytes')),
+             f"SHA-256 {item['sha256'][:12]}…" if item.get('sha256') else None]
+    return ', '.join(part for part in parts if part) or '-'
+
+
+PROVIDER_NAMES = {'sip': 'SIP trunk', 'phaxio': 'Phaxio', 'sinch': 'Sinch', 'signalwire': 'SignalWire',
+                  'documo': 'Documo', 'humblefax': 'HumbleFax', 'freeswitch': 'FreeSWITCH'}
+
+
 def _inbound_fields(item):
     return [('Received fax ID', item.get('id')), ('From', item.get('fr')), ('To', item.get('to')),
-            ('Status', item.get('status')), ('Pages', item.get('pages')), ('Mailbox', item.get('mailbox')),
-            ('Provider', item.get('backend')), ('Received', local_time(item.get('received_at') or item.get('created_at')))]
+            ('Status', _inbound_status(item)), ('Problem', item.get('problem')), ('Mailbox', item.get('mailbox')),
+            ('Received through', PROVIDER_NAMES.get(item.get('backend'), item.get('backend'))),
+            ('Provider fax ID', item.get('provider_fax_id')),
+            ('Sent', local_time(item.get('source_received_at'))),
+            ('Received', local_time(item.get('received_at') or item.get('created_at'))),
+            ('Document', _document(item)), ('Test fax', yes_no(bool(item.get('is_test'))))]
 
 
 @inbound.command('list')
 def inbound_list(to_number: str = typer.Option(None, '--to', help='Only faxes sent to this number.'),
-                 status_filter: str = typer.Option(None, '--status', help='Only faxes with this status.'),
+                 status_filter: str = typer.Option(None, '--status', help='Only faxes with this status: waiting, '
+                                                                          'received or failed.'),
                  mailbox: str = typer.Option(None, '--mailbox', help='Only faxes in this mailbox.'),
                  ids: bool = typer.Option(False, '--ids', help='Also show received fax IDs, for inbound get and pdf.')):
     """List received faxes you can see."""
     items = state.api().get('/inbound', params={'to_number': to_number, 'status': status_filter, 'mailbox': mailbox})
     state.out().result(items, lambda out: out.table(
-        (['Received fax ID'] if ids else []) + ['From', 'To', 'Pages', 'Mailbox', 'Received'],
-        [([item['id']] if ids else []) + [item.get('fr'), item.get('to'), item.get('pages'), item.get('mailbox'),
-                                          local_time(item.get('received_at') or item.get('created_at'))]
+        (['Received fax ID'] if ids else []) + ['From', 'To', 'Status', 'Pages', 'Mailbox', 'Received'],
+        [([item['id']] if ids else []) + [item.get('fr'), item.get('to'), _inbound_status(item), item.get('pages'),
+                                          item.get('mailbox'), local_time(item.get('received_at') or item.get('created_at'))]
          for item in items], empty='No received faxes.'))
 
 
@@ -212,10 +250,19 @@ def inbound_pdf(inbound_id: str = typer.Argument(..., help='Received fax ID.'),
     _report_saved(save_document(response, output, f'inbound_{inbound_id}.pdf', force), len(response.content))
 
 
+@inbound.command('fetch')
+def inbound_fetch(inbound_id: str = typer.Argument(..., help='Received fax ID.')):
+    """Ask Faxbot to fetch a received fax's document again now."""
+    item = state.api().post(f'/inbound/{segment(inbound_id)}/fetch', json={})
+    state.out().result(item, lambda out: out.line('Faxbot will fetch the document shortly. Check on it with: '
+                                                  f'faxbot inbound get {inbound_id}'))
+
+
 @inbound.command('simulate')
 def inbound_simulate(from_number: str = typer.Option('+15550000000', '--from', help='Sender fax number to show.'),
                      to_number: str = typer.Option(None, '--to', help='Your fax number it arrived on.'),
-                     pages: int = typer.Option(1, '--pages', min=1, help='Number of pages to show.')):
-    """Add a test received fax with a placeholder document, to check mailboxes and delivery."""
+                     pages: int = typer.Option(1, '--pages', min=1, help='Ignored; a test fax always has one page.',
+                                               hidden=True)):
+    """Add a test fax with a real one-page document, marked as a test, to check mailboxes and email delivery."""
     result = state.api().post('/admin/inbound/simulate', json={'fr': from_number, 'to': to_number, 'pages': pages})
     state.out().result(result, lambda out: out.line(f"Test fax received with ID {result['id']}."))

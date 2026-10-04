@@ -210,6 +210,15 @@ def test_received_faxes_simulate_list_get_and_download(cli, tmp_path):
     target = tmp_path / 'received.pdf'
     cli.json('inbound', 'pdf', inbound_id, '--output', target)
     assert target.read_bytes().startswith(b'%PDF')
+    listing = cli('inbound', 'list').stdout
+    assert 'Status' in listing and 'A test fax created in Faxbot.' in listing
+    detail = cli('inbound', 'get', inbound_id).stdout
+    digest = cli.json('inbound', 'get', inbound_id)['sha256']
+    assert f'SHA-256 {digest[:12]}…' in detail and digest not in detail
+    assert re.search(r'Document\s+1 page, ', detail) and re.search(r'Test fax\s+yes', detail)
+    assert 'Provider fax ID' in detail and re.search(r'Sent\s+-', detail)
+    received = cli('inbound', 'fetch', inbound_id)
+    assert received.exit_code == 6 and received.stderr.strip() == 'Faxbot has nothing to fetch for this fax.'
     _, token = restricted_key(cli, 'Sender', role='Fax operator', permissions=('fax:send',))
     hidden = cli('inbound', 'get', inbound_id, key=token)
     assert hidden.exit_code == 5

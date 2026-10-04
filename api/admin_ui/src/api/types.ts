@@ -367,10 +367,22 @@ export interface InboundFax {
   id: string;
   fr?: string;
   to?: string;
+  // waiting (the document is still being fetched), received, or failed.
   status: string;
   backend: string;
   pages?: number;
+  size_bytes?: number | null;
+  // When Faxbot recorded the fax; source_received_at is the provider's own time.
   received_at?: string;
+  mailbox?: string | null;
+  status_text?: string | null;
+  source_received_at?: string | null;
+  provider_fax_id?: string | null;
+  sha256?: string | null;
+  is_test?: boolean;
+  retry_at?: string | null;
+  problem?: string | null;
+  can_fetch_again?: boolean;
 }
 
 // Tunnel types
