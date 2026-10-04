@@ -176,7 +176,7 @@ For every call on the trunk Faxbot keeps a call record:
 
 A call whose outcome Faxbot cannot confirm stays "not known yet" and is never sent again automatically.
 
-**Recent calls** under the trunk settings lists them, newest first, with that sentence (`faxbot trunk calls` prints the same list). When a fax over the trunk fails, **Jobs** shows the same sentence for that fax. The sentences you may see:
+**Recent calls** under the trunk settings lists them, newest first, with that sentence (`faxbot trunk calls` prints the same list). When a fax over the trunk fails, **Jobs** shows the same sentence for that fax; when the other fax machine was the problem, Jobs says "The other fax machine answered but the fax did not finish." and Recent calls keeps the reason. The sentences you may see:
 
 | Sentence | What it means |
 | --- | --- |

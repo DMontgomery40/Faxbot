@@ -147,10 +147,17 @@ def _pages_text(pages):
 
 
 def result_summary(event):
-    """One plain sentence for a finished outbound fax call, or None when the fax went through."""
+    """One plain sentence for a finished outbound fax call, or None when the fax went through.
+
+    Jobs show at most 80 characters, so the fax engine's own reason stays in
+    the call record (Recent calls) and Jobs get a fixed sentence.
+    """
     if str(event.get('Status') or '').strip().upper() == 'SUCCESS':
         return None
-    return _sentence(verdict(event), _reason(event)[:60])
+    found = verdict(event)
+    if found == 'remote_fax_failed':
+        return 'The other fax machine answered but the fax did not finish.'
+    return _sentence(found)
 
 
 def _no_pages(caller, found):

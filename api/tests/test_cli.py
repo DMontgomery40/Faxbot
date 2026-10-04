@@ -568,6 +568,7 @@ def test_trunk_status_and_calls_read_as_plain_sentences(trunk_cli):
     assert trunk_cli('trunk', 'calls', '--direction', 'sideways').exit_code != 0
     # After that verdict, the owner can switch new calls to audio fax and back.
     assert trunk_cli.json('trunk', 'status')['suggest_audio'] is True
+    assert 'Audio fax may work for new calls: run faxbot trunk mode audio.' in trunk_cli('trunk', 'status').stdout
     audio = trunk_cli('trunk', 'mode', 'audio')
     assert audio.exit_code == 0 and 'New calls use audio fax once you restart the Asterisk service.' in audio.stdout
     assert trunk_cli.json('trunk', 'status')['t38'] is False

@@ -297,7 +297,11 @@ def test_engine_reasons_with_commas_arrive_whole_through_base64():
     reason = 'Timer T2 expired while waiting for NSS, DCS or MCF'
     event = {**ANSWERED, 'Status': 'FAILED', 'Error': 'Timer T2 expired while waiting for NSS',
              'Error64': _b64(reason), 'Pages': '0', 'Mode': 'T38', 'Station64': 'KzE1NTU1NTUwMTk5', 'Cause': '16'}
-    assert sip_calls.result_summary(event) == f'The other fax machine answered but the fax failed: {reason}.'
+    assert sip_calls._reason(event) == reason
+    assert sip_calls._sentence(sip_calls.verdict(event), reason) == (
+        f'The other fax machine answered but the fax failed: {reason}.')
+    # Jobs show at most 80 characters, so they get the fixed sentence; the reason stays on the call record.
+    assert sip_calls.result_summary(event) == 'The other fax machine answered but the fax did not finish.'
     assert len(sip_calls._error_cause(event)) <= 64
 
 

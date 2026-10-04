@@ -17,6 +17,12 @@ network can reach, the way Asterisk behind a router names an address the
 carrier cannot send to, and let the other side stand in for the carrier. A
 carrier that never sends media anywhere but the advertised address leaves the
 call without fax data, and Faxbot must say so in one plain sentence.
+
+The NAT matrix puts Faxbot behind a router container (iptables MASQUERADE,
+optionally --random so ports change; the router image is built from Debian
+with iptables and needs internet access to build). Faxbot registers through it
+to a stand-in carrier that is also a registrar, and faxes go both ways over the
+registered flow.
 """
 import base64
 import hashlib
@@ -463,3 +469,234 @@ def test_a_latching_carrier_delivers_a_received_fax_when_faxbot_advertises_an_un
     assert evidence['unreachable_address_in_sdp']
     assert outcome['captured'] is not None and outcome['captured']['body']['faxpages'] == 2
     assert outcome['result']['Status'] == 'SUCCESS'
+
+
+# NAT matrix (06-nat-design.md section 7B) -----------------------------------------
+#
+# Faxbot's Asterisk sits on a private network behind a router container that
+# masquerades onto a second network where a stand-in carrier runs. Nothing on
+# the carrier side can reach Faxbot except through flows Faxbot started: the
+# registration, and the media Faxbot sends first. The carrier is a registrar,
+# so incoming calls must come back over the registered flow.
+
+ROUTER_DOCKERFILE = '''FROM debian:trixie-slim@sha256:a99cfc517144bc59b1978475ec53b46ecabec7e43635402ee5b77cc54cd1b20a
+RUN apt-get update && apt-get install -y --no-install-recommends iptables iproute2 conntrack && rm -rf /var/lib/apt/lists/*
+'''
+ROUTER_IMAGE = 'faxbot-native:nat-router'
+TRUNK_USER, TRUNK_PASSWORD = 'faxbotuser', 'Trunk-' + uuid.uuid4().hex
+
+
+def carrier_conf(router_wan, *, latches):
+    """A registrar standing in for the carrier: Faxbot registers to it, and its calls go to that registration."""
+    nat = 'yes' if latches else 'no'
+    return '\n'.join([
+        '[global]', 'type=global', '',
+        '[transport-udp]', 'type=transport', 'protocol=udp', 'bind=0.0.0.0:5060', '',
+        '[transport-tcp]', 'type=transport', 'protocol=tcp', 'bind=0.0.0.0:5060', '',
+        '[trunk-auth]', 'type=auth', 'auth_type=userpass', f'username={TRUNK_USER}', f'password={TRUNK_PASSWORD}', '',
+        # The AOR is named after the registering user, as a registrar finds it from the To header.
+        f'[{TRUNK_USER}]', 'type=aor', 'max_contacts=1', 'remove_existing=yes', '',
+        '[trunk-endpoint]', 'type=endpoint', f'aors={TRUNK_USER}', 'auth=trunk-auth', 'context=faxbot-inbound',
+        'disallow=all', 'allow=ulaw,alaw', 't38_udptl=yes', 't38_udptl_ec=redundancy',
+        't38_udptl_maxdatagram=400', f't38_udptl_nat={nat}', f'rtp_symmetric={nat}', 'force_rport=yes',
+        'rewrite_contact=yes', 'direct_media=no', '',
+        '[trunk-identify]', 'type=identify', 'endpoint=trunk-endpoint', f'match={router_wan}', ''])
+
+
+def _interface_for(docker, container, address):
+    for line in docker.run('exec', container, 'ip', '-o', '-4', 'addr', 'show').stdout.splitlines():
+        parts = line.split()
+        if len(parts) > 3 and parts[3].split('/')[0] == address:
+            return parts[1]
+    raise RuntimeError('Router interface not found')
+
+
+def _wait_for(check, seconds, message):
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        found = check()
+        if found:
+            return found
+        time.sleep(1)
+    raise AssertionError(message)
+
+
+def _ami_originate(docker, container, fields):
+    actions = (f'Action: Login\r\nActionID: proof-login\r\nUsername: {AMI_USER}\r\n'
+               f'Secret: {AMI_PASSWORD}\r\nEvents: call,user\r\n\r\n'
+               + ''.join(f'{key}: {value}\r\n' for key, value in fields.items()) + '\r\n')
+    session = docker.run('exec', '--interactive', container, 'bash', '-c', AMI_SESSION,
+                         input_text=actions, check=False, timeout=300)
+    events = parse_ami(session.stdout)
+    return next((event for event in events if event.get('UserEvent') == 'FaxResult'), None)
+
+
+def nat_exchange(tmp_path, *, transport, random_ports, latches, exact_address=False, idle_seconds=0):
+    """Register through the router, then fax both ways; returns what each side saw."""
+    docker = Docker()
+    image = os.environ.get('FAXBOT_NATIVE_IMAGE') or 'faxbot-native:t38-proof'
+    if not os.environ.get('FAXBOT_NATIVE_IMAGE'):
+        docker.run('build', '--quiet', '--tag', image, str(ROOT / 'asterisk'), timeout=3600)
+    docker.run('build', '--quiet', '--tag', ROUTER_IMAGE, '-', input_text=ROUTER_DOCKERFILE, timeout=1200)
+    wan = docker.prefix + '-wan'
+    try:
+        docker.network = docker.prefix
+        for network in (docker.network, wan):
+            docker.run('network', 'create', '--internal', '--label', 'com.faxbot.scope=t38-proof', network)
+        # The router and Faxbot's side manage routes; nothing else gets extra privileges.
+        router = f'{docker.prefix}-router'
+        docker.run('run', '--detach', '--name', router, '--network', docker.network, '--cap-add', 'NET_ADMIN',
+                   '--sysctl', 'net.ipv4.ip_forward=1', '--label', 'com.faxbot.scope=t38-proof',
+                   ROUTER_IMAGE, 'sleep', 'infinity')
+        docker.containers.append(router)
+        docker.run('network', 'connect', wan, router)
+        faxbot = f'{docker.prefix}-faxbot'
+        docker.run('run', '--detach', '--name', faxbot, '--network', docker.network, '--cap-add', 'NET_ADMIN',
+                   '--label', 'com.faxbot.scope=t38-proof', '--entrypoint', 'sleep', image, 'infinity')
+        docker.containers.append(faxbot)
+        carrier = f'{docker.prefix}-carrier'
+        docker.run('run', '--detach', '--name', carrier, '--network', wan, '--label', 'com.faxbot.scope=t38-proof',
+                   '--entrypoint', 'sleep', image, 'infinity')
+        docker.containers.append(carrier)
+        capture = docker.start('api', 'python:3.11-slim', 'python', '-c', CAPTURE)
+        docker.run('network', 'connect', wan, capture)
+
+        def on(container, network):
+            return docker.run('inspect', '--format',
+                              '{{(index .NetworkSettings.Networks "' + network + '").IPAddress}}', container).stdout.strip()
+        router_lan, router_wan = on(router, docker.network), on(router, wan)
+        carrier_wan, capture_lan, capture_wan = on(carrier, wan), on(capture, docker.network), on(capture, wan)
+        wan_interface = _interface_for(docker, router, router_wan)
+        masquerade = ['iptables', '-t', 'nat', '-A', 'POSTROUTING', '-o', wan_interface, '-j', 'MASQUERADE']
+        docker.run('exec', router, *(masquerade + (['--random'] if random_ports else [])))
+        docker.run('exec', faxbot, 'ip', 'route', 'replace', 'default', 'via', router_lan)
+        faxbot_net = docker.run('exec', faxbot, 'ip', '-o', '-4', 'route', 'show', 'scope', 'link').stdout.split()[0]
+
+        # Faxbot's side: the trunk exactly as Faxbot renders it, registering with username and password.
+        values = trunk_values(carrier_wan, SIP_TRUNK_AUTH='registration', SIP_TRUNK_TRANSPORT=transport,
+                              SIP_TRUNK_USERNAME=TRUNK_USER, SIP_TRUNK_PASSWORD=TRUNK_PASSWORD)
+        rendered = tmp_path / 'faxbot.conf'
+        rendered.write_text(sip_trunk.render_pjsip(values))
+        docker.run('exec', faxbot, 'mkdir', '-p', '/faxdata/asterisk', '/faxdata/outbound')
+        docker.run('cp', str(rendered), f'{faxbot}:/faxdata/asterisk/pjsip.conf')
+        if exact_address:
+            # What Faxbot's STUN probe records on a network that keeps port numbers: the router's address.
+            record = tmp_path / 'public-address'
+            record.write_text(json.dumps({'ip': router_wan, 'ports_preserved': True, 'probed_at': 1}) + '\n')
+            docker.run('cp', str(record), f'{faxbot}:/faxdata/asterisk/public-address')
+        carrier_file = tmp_path / 'carrier.conf'
+        carrier_file.write_text(carrier_conf(router_wan, latches=latches))
+        docker.run('exec', carrier, 'mkdir', '-p', '/faxdata/asterisk', '/faxdata/outbound')
+        docker.run('cp', str(carrier_file), f'{carrier}:/faxdata/asterisk/pjsip.conf')
+
+        for container, api in ((faxbot, capture_lan), (carrier, capture_wan)):
+            docker.run('exec', '--detach', '--env', f'ASTERISK_INBOUND_SECRET={SECRET}',
+                       '--env', f'FAXBOT_API_URL=http://{api}:8080', '--env', f'ASTERISK_AMI_USERNAME={AMI_USER}',
+                       '--env', f'ASTERISK_AMI_PASSWORD={AMI_PASSWORD}', container,
+                       'sh', '-c', '/start.sh > /tmp/asterisk.log 2>&1')
+        wait_booted(docker, faxbot)
+        wait_booted(docker, carrier)
+        docker.asterisk(carrier, 'pjsip set logger on')
+        registered = _wait_for(lambda: 'Registered' in docker.asterisk(faxbot, 'pjsip show registrations'),
+                               60, 'Faxbot did not register through the router')
+        contact = docker.asterisk(carrier, 'pjsip show contacts')
+        if idle_seconds:
+            time.sleep(idle_seconds)
+
+        sent = tmp_path / 'proof.tiff'
+        pages = proof_pages()
+        pages[0].save(sent, save_all=True, append_images=pages[1:], compression='group4', dpi=(204, 196))
+        results = {}
+        for direction, sender, receiver_api, peer in (('sent', faxbot, None, carrier_wan),
+                                                      ('received', carrier, None, router_wan)):
+            docker.run('cp', str(sent), f'{sender}:/faxdata/outbound/proof.tiff')
+            docker.run('exec', capture, 'rm', '-f', '/tmp/capture.json', check=False)
+            fields = ami.originate_fields_for(trunk_values(peer, FAX_HEADER='Faxbot NAT proof'),
+                                              uuid.uuid4().hex, DID, '/faxdata/outbound/proof.tiff',
+                                              attempt_id=uuid.uuid4().hex)
+            result = _ami_originate(docker, sender, fields)
+            deadline = time.monotonic() + 30
+            captured = None
+            while time.monotonic() < deadline and captured is None:
+                probe = docker.read(capture, '/tmp/capture.json')
+                captured = json.loads(probe) if probe.strip() else None
+                if captured is None:
+                    time.sleep(1)
+            results[direction] = {'result': result, 'captured': captured}
+        carrier_log = docker.read(carrier, '/tmp/asterisk.log')
+        # The router's media flows: original source port versus the port it used on the outside.
+        listing = docker.run('exec', router, 'conntrack', '-L', '-p', 'udp', check=False).stdout
+        conntrack = [' '.join(line.split()) for line in listing.splitlines() if re.search(r'port=4[0-9]{3}\b', line)]
+        return {
+            'registered': bool(registered), 'contact': contact, 'faxbot_net': faxbot_net,
+            'router_wan': router_wan, 'results': results, 'carrier_log': carrier_log, 'conntrack': conntrack,
+            'faxbot_sdp_addresses': sorted(set(re.findall(r'c=IN IP4 ([0-9.]+)', carrier_log))),
+            'faxbot_transport_line': docker.run('exec', faxbot, 'grep', '-E', 'external_|local_net',
+                                                '/etc/asterisk/pjsip.conf', check=False).stdout.strip(),
+        }
+    finally:
+        docker.close()
+        docker.run('network', 'rm', wan, check=False)
+
+
+def nat_evidence(outcome):
+    summary = {'registered': outcome['registered'], 'router_wan': outcome['router_wan'],
+               'faxbot_transport_line': outcome['faxbot_transport_line'],
+               'sdp_addresses_seen_by_carrier': outcome['faxbot_sdp_addresses']}
+    for direction, item in outcome['results'].items():
+        result = item['result'] or {}
+        body = (item['captured'] or {}).get('body') or {}
+        summary[direction] = {'sender_status': result.get('Status'), 'sender_pages': result.get('Pages'),
+                              'mode': result.get('Mode'), 'sender_verdict': sip_calls.verdict(result) if result else None,
+                              'receiver_status': body.get('faxstatus'), 'receiver_pages': body.get('faxpages')}
+    return summary
+
+
+def _delivered(outcome, direction):
+    item = outcome['results'][direction]
+    return (item['result'] or {}).get('Status') == 'SUCCESS' and ((item['captured'] or {}).get('body') or {}).get(
+        'faxpages') == 2
+
+
+@pytest.mark.parametrize('transport,random_ports', [('udp', False), ('tcp', True)])
+def test_faxbot_behind_a_router_registers_and_faxes_both_ways_with_a_latching_carrier(tmp_path, transport,
+                                                                                     random_ports):
+    outcome = nat_exchange(tmp_path, transport=transport, random_ports=random_ports, latches=True)
+    evidence = nat_evidence(outcome)
+    print(f'\nNAT_{transport.upper()}_{"RANDOM" if random_ports else "KEEP"}_EVIDENCE ' + json.dumps(evidence, indent=2))
+    assert outcome['registered'] and outcome['router_wan'] in outcome['contact']
+    # No address was advertised: Faxbot's SDP names its private address and the carrier follows its packets.
+    assert outcome['faxbot_transport_line'] == '' and outcome['router_wan'] not in evidence['sdp_addresses_seen_by_carrier']
+    assert _delivered(outcome, 'sent') and _delivered(outcome, 'received')
+
+
+def test_an_exact_address_reaches_the_carrier_through_a_port_keeping_router(tmp_path):
+    """The address Faxbot found is what the carrier sees in the SDP.
+
+    Delivery is recorded, not asserted: against a carrier that never latches,
+    the carrier's first media packet can reach the router before Faxbot's, and
+    Linux NAT then gives Faxbot's own flow a different outside port (see the
+    router's conntrack lines in the evidence), so even an exact address does
+    not guarantee the fax. A latching carrier is what the design relies on.
+    """
+    outcome = nat_exchange(tmp_path, transport='udp', random_ports=False, latches=False, exact_address=True)
+    evidence = nat_evidence(outcome)
+    evidence.update(delivered_sent=_delivered(outcome, 'sent'), delivered_received=_delivered(outcome, 'received'),
+                    router_media_flows=outcome['conntrack'])
+    print('\nNAT_EXACT_EVIDENCE ' + json.dumps(evidence, indent=2))
+    assert outcome['registered']
+    assert f'external_media_address={outcome["router_wan"]}' in outcome['faxbot_transport_line']
+    assert f'local_net={outcome["faxbot_net"]}' in outcome['faxbot_transport_line']
+    assert outcome['router_wan'] in evidence['sdp_addresses_seen_by_carrier']
+    for direction in ('sent', 'received'):
+        if not evidence[f'delivered_{direction}']:
+            assert evidence[direction]['sender_status'] != 'SUCCESS'
+
+
+def test_a_port_changing_router_and_a_carrier_that_never_latches_carry_no_fax_data(tmp_path):
+    outcome = nat_exchange(tmp_path, transport='tcp', random_ports=True, latches=False)
+    evidence = nat_evidence(outcome)
+    print('\nNAT_NO_LATCH_EVIDENCE ' + json.dumps(evidence, indent=2))
+    assert outcome['registered']
+    assert not _delivered(outcome, 'sent')
+    assert evidence['sent']['sender_verdict'] in sip_calls.NO_DATA_VERDICTS

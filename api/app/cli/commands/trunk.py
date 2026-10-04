@@ -30,6 +30,8 @@ def trunk_status():
                 out.line(result[key])
         if result.get('last_call_text'):
             out.line(f"Last call ({local_time(result.get('last_call_at'))}): {result['last_call_text']}")
+        if result.get('suggest_audio'):
+            out.line('Audio fax may work for new calls: run faxbot trunk mode audio.')
     state.out().result(result, human)
 
 

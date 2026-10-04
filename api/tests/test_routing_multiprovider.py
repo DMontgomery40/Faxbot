@@ -330,7 +330,7 @@ _NATIVE_NO_DATA = {'Event': 'UserEvent', 'UserEvent': 'FaxResult', 'Status': 'FA
      'The call connected but no fax data came back from the carrier.'),
     ('_handle_fax_result', {**_NATIVE_NO_DATA, 'Error': 'Received no response to DCS or TCF',
                             'Station64': 'KzE1NTU1NTUwMTk5'}, 'failed',
-     'The other fax machine answered but the fax failed: Received no response to DCS or TCF.'),
+     'The other fax machine answered but the fax did not finish.'),
     ('_handle_originate_response', {'Event': 'OriginateResponse', 'Response': 'Failure', 'Reason': '5'}, 'failed',
      'The number was busy.'),
     ('_handle_fax_result', {**_NATIVE_NO_DATA, 'Status': 'SUCCESS', 'Pages': '2'}, 'success', None),
@@ -367,3 +367,5 @@ async def test_native_trunk_result_explains_a_failed_fax_in_one_sentence(databas
     with database.connect() as connection:
         row = connection.execute(sa.select(configuration.jobs).where(configuration.jobs.c.id == job)).mappings().one()
     assert (row['status'], row['error']) == (state, sentence)
+    # Jobs read the error through the same sanitizer; the sentence comes back whole.
+    assert main.sanitize_error(row['error']) == sentence
