@@ -13,6 +13,7 @@ import {
   Switch,
   FormControlLabel,
   Stack,
+  Link,
 } from '@mui/material';
 import {
   Refresh as RefreshIcon,
@@ -427,12 +428,13 @@ function Settings({ client, canWrite = false, focus, onFocused }: SettingsProps)
             <ResponsiveSettingItem
               icon={<CloudIcon />}
               label="Default Provider"
-              value={settings.backend.type.toUpperCase()}
+              value={settings.backend.type ? settings.backend.type.toUpperCase() : 'Not set up'}
               editValue={form.backend ?? settings.backend.type}
               onChange={(value) => handleForm('backend', value)}
               helperText="Used for sending and receiving unless an override is set below."
               type="select"
               options={[
+                { value: '', label: 'No provider' },
                 { value: 'phaxio', label: 'Phaxio' },
                 { value: 'sinch', label: 'Sinch' },
                 { value: 'signalwire', label: 'SignalWire' },
@@ -446,13 +448,13 @@ function Settings({ client, canWrite = false, focus, onFocused }: SettingsProps)
             <ResponsiveSettingItem
               icon={<CloudIcon />}
               label="Outbound Provider"
-              value={loadedOutbound.toUpperCase()}
+              value={loadedOutbound ? loadedOutbound.toUpperCase() : 'Not set up'}
               editValue={form.outbound_backend ?? ''}
               helperText="Provider used to send faxes."
               onChange={(value) => handleForm('outbound_backend', value)}
               type="select"
               options={[
-                { value: '', label: `Inherit default provider (${String(form.backend)})` },
+                { value: '', label: form.backend ? `Inherit default provider (${String(form.backend)})` : 'Inherit default provider (none yet)' },
                 { value: 'phaxio', label: 'Phaxio (Cloud)' },
                 { value: 'sinch', label: 'Sinch (Cloud)' },
                 { value: 'signalwire', label: 'SignalWire (Cloud)' },
@@ -463,6 +465,12 @@ function Settings({ client, canWrite = false, focus, onFocused }: SettingsProps)
               ]}
               showCurrentValue={!pendingRestart}
             />
+            {!effectiveOutbound && (
+              <Typography variant="body2" sx={{ px: 2 }} data-testid="no-provider">
+                No fax provider set up yet.{' '}
+                <Link href={docsLink('providers', docsBase)} target="_blank" rel="noreferrer">Provider setup</Link>
+              </Typography>
+            )}
             {effectiveOutbound === 'humblefax' && (
               <Typography variant="body2" sx={{ px: 2 }} data-testid="humblefax-countries">
                 HumbleFax sends only to US and Canadian numbers.
@@ -472,13 +480,13 @@ function Settings({ client, canWrite = false, focus, onFocused }: SettingsProps)
             <ResponsiveSettingItem
               icon={<CloudIcon />}
               label="Inbound Provider"
-              value={loadedInbound.toUpperCase()}
+              value={loadedInbound ? loadedInbound.toUpperCase() : 'Not set up'}
               editValue={form.inbound_backend ?? ''}
               helperText="Provider used to receive faxes: SIP/Asterisk for your own phone system, or a cloud provider."
               onChange={(value) => handleForm('inbound_backend', value)}
               type="select"
               options={[
-                { value: '', label: `Inherit default provider (${String(form.backend)})` },
+                { value: '', label: form.backend ? `Inherit default provider (${String(form.backend)})` : 'Inherit default provider (none yet)' },
                 { value: 'phaxio', label: 'Phaxio (Webhook)' },
                 { value: 'sinch', label: 'Sinch (Webhook)' },
                 { value: 'sip', label: 'SIP/Asterisk (Internal)' }

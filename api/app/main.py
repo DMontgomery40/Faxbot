@@ -482,6 +482,9 @@ def _outbound_profile_ready(revision):
         return False
 
 
+NO_PROVIDER = "No fax provider set up yet."
+
+
 def _readiness_status(request: Request):
     """Shared local readiness snapshot; does not prove provider delivery.
 
@@ -562,6 +565,7 @@ def _readiness_status(request: Request):
             },
             "warnings": backend_warnings,
             "storage_error": storage_error,
+            **({"message": NO_PROVIDER} if not ob else {}),
         }
 
 
@@ -2185,6 +2189,8 @@ async def send_fax(request: Request, to: str = Form(...), file: UploadFile = Fil
         raise HTTPException(409, detail="Queue-only request refused because outbound sending is now enabled. Refresh Send before submitting again.")
     profile_id = revision.profile_id('outbound')
     if profile_id is None:
+        if not revision.values.effective_outbound:
+            raise HTTPException(409, detail=NO_PROVIDER)
         raise HTTPException(409, detail="Outbound fax delivery is disabled in this configuration.")
     profile = manager.store.read_profile(profile_id)
     ob = profile.configuration.provider_id

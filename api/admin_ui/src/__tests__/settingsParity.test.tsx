@@ -129,6 +129,30 @@ describe('Settings direct delivery', () => {
   });
 });
 
+describe('A new installation with no fax provider', () => {
+  const noProvider = () => settingsFixture((data) => {
+    data.backend.type = '';
+    data.hybrid = { outbound_backend: '', inbound_backend: '', outbound_override: '', inbound_override: '' };
+  });
+
+  it('says so on Settings, with the provider setup link', async () => {
+    settingsHandlers(noProvider());
+    render(<Settings client={client()} />);
+    const notice = await screen.findByTestId('no-provider');
+    expect(notice.textContent).toBe('No fax provider set up yet. Provider setup');
+    expect(within(notice).getByRole('link', { name: 'Provider setup' }).getAttribute('href')).toMatch(/\/setup\/$/);
+    expect(screen.queryByText(/Inherit default provider \(\)/)).toBeNull();
+  });
+
+  it('says so in the Setup Wizard', async () => {
+    settingsHandlers(noProvider());
+    server.use(http.get('/plugins', () => HttpResponse.json({ items: [] })));
+    render(<SetupWizard client={client()} />);
+    expect((await screen.findByTestId('no-provider')).textContent).toBe('No fax provider set up yet. Provider setup');
+    expect(screen.queryByText(/Outbound: ·/)).toBeNull();
+  });
+});
+
 describe('Settings outbound provider limits', () => {
   it('says HumbleFax sends only to US and Canadian numbers when it sends faxes', async () => {
     settingsHandlers(settingsFixture((data) => {

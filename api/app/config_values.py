@@ -33,7 +33,8 @@ class ConfigurationValues(BaseModel):
     fax_disabled: bool = Field(False, validation_alias='FAX_DISABLED')
     api_key: str = Field('', validation_alias='API_KEY', repr=False, json_schema_extra={'secret': True})
     require_api_key: bool = Field(False, validation_alias='REQUIRE_API_KEY')
-    fax_backend: str = Field('phaxio', validation_alias='FAX_BACKEND', json_schema_extra={'patch_name': 'backend'})
+    # Empty means no fax provider is set up yet: a new installation sends and receives nothing until one is chosen.
+    fax_backend: str = Field('', validation_alias='FAX_BACKEND', json_schema_extra={'patch_name': 'backend'})
     outbound_backend: str = Field('', validation_alias='FAX_OUTBOUND_BACKEND')
     inbound_backend: str = Field('', validation_alias='FAX_INBOUND_BACKEND')
     ami_host: str = Field('asterisk', validation_alias='ASTERISK_AMI_HOST')
@@ -277,13 +278,16 @@ class ConfigurationValues(BaseModel):
         return stored_number(value, country=country) if value.strip() else value
 
     def validate_provider_selection(self, registry: Mapping[str, object]) -> None:
-        """Require explicit selections in the caller's validated provider registry."""
+        """Require explicit selections in the caller's validated provider registry.
+
+        An empty selection means no provider is set up for that role yet.
+        """
         known = set(registry) - {"_schema"}
         issues = []
         for key, selected in (("FAX_BACKEND", self.fax_backend),
                               ("FAX_OUTBOUND_BACKEND", self.effective_outbound),
                               ("FAX_INBOUND_BACKEND", self.effective_inbound)):
-            if selected not in known:
+            if selected and selected not in known:
                 issues.append({"field": key, "reason": "unknown_provider"})
         if issues:
             raise ConfigurationValueError(issues)

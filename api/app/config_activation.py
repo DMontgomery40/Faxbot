@@ -133,7 +133,8 @@ def compile_profiles(values, catalog, state):
         _validate_manifest_settings(definition.manifest.as_dict() if definition.manifest is not None else None, settings)
     profiles = {}
     for role, identity in [('outbound', values.effective_outbound), ('inbound', values.effective_inbound)]:
-        if not state['roles'][role]['enabled'] or (role == 'inbound' and not values.inbound_enabled):
+        # No provider set up for this role yet: it has no profile, as when the role is turned off.
+        if not identity or not state['roles'][role]['enabled'] or (role == 'inbound' and not values.inbound_enabled):
             continue
         definition = _effective_definition(values, catalog.get(identity))
         traits = definition.traits.as_dict()

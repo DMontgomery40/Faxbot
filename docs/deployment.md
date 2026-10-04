@@ -68,7 +68,7 @@ Back up before `migrate`:
 
     With PostgreSQL, also take a `pg_dump` of the database.
 
-`faxbot admin migrate` upgrades the database in place. Stored faxes, documents, mailboxes, number routes and API keys stay as they were. Starting the new version would also upgrade the database, but running `migrate` first shows the result before anything serves requests.
+`faxbot admin migrate` upgrades the database in place. Stored faxes, documents, mailboxes, number routes and API keys stay as they were. An upgraded installation that never set `FAX_BACKEND` keeps using Phaxio; a new installation starts with no provider until you choose one. Starting the new version would also upgrade the database, but running `migrate` first shows the result before anything serves requests.
 
 After upgrading an installation from before October 2026:
 

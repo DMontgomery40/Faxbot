@@ -29,7 +29,7 @@ def manager(database, tmp_path):
 
 
 def environment(tmp_path):
-    return {'FAXBOT_CONFIG_PATH': str(tmp_path / 'no-legacy.json'), 'PHAXIO_API_KEY': 'original-key',
+    return {'FAXBOT_CONFIG_PATH': str(tmp_path / 'no-legacy.json'), 'FAX_BACKEND': 'phaxio', 'PHAXIO_API_KEY': 'original-key',
             'PHAXIO_API_SECRET': 'original-secret'}
 
 

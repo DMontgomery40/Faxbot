@@ -45,6 +45,8 @@ def settings_get(section: str = typer.Argument(None, help='Only this section, fo
         rows = []
         _flatten('', {key: value for key, value in shown.items() if key != '_meta'}, rows)
         out.table(['Setting', 'Value'], rows)
+        if not (current.get('backend') or {}).get('type') and (not section or section in {'backend', 'hybrid'}):
+            out.line('No fax provider set up yet.')
         if meta.get('apply_state') == 'pending_restart':
             out.line('Some saved changes take effect after a restart: ' + ', '.join(meta.get('pending_fields') or []))
     state.out().result(shown if section else current, human)
@@ -296,6 +298,8 @@ def health():
                     ('Ghostscript', checks.get('ghostscript'))])
         for warning in (ready or {}).get('warnings') or []:
             out.line('Warning: ' + warning)
+        if (ready or {}).get('message'):
+            out.line(ready['message'])
     state.out().result(result, human)
     if (ready or {}).get('status') != 'ready':
         raise typer.Exit(1)

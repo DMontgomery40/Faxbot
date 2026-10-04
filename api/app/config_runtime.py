@@ -38,6 +38,48 @@ async def run_lifecycle_step(operation):
         raise
 
 
+def _earlier_release_schema(database_url):
+    """Whether the database still has a release's tables from before saved configuration."""
+    from .schema import create_database_engine
+    try:
+        engine = create_database_engine(database_url)
+    except Exception:
+        return False
+    try:
+        with engine.connect() as connection:
+            tables = set(sa.inspect(connection).get_table_names())
+        return 'fax_jobs' in tables and 'configuration_state' not in tables
+    except sa.exc.SQLAlchemyError:
+        return False
+    finally:
+        engine.dispose()
+
+
+def _earlier_release_records(engine):
+    """Whether the database upgrade found faxes, keys or mailboxes from an earlier release.
+
+    The access migration records what it found in one installation audit entry;
+    a new database records zero of everything.
+    """
+    import json
+    found = ('keys_total', 'outbound_personal', 'outbound_legacy', 'inbound_legacy', 'mailbox_resources')
+    try:
+        with engine.connect() as connection:
+            audit = sa.table('access_audit', sa.column('operation'), sa.column('target_kind'), sa.column('details'))
+            rows = connection.execute(sa.select(audit.c.details).where(
+                audit.c.operation == 'access_migration', audit.c.target_kind == 'installation')).scalars().all()
+    except sa.exc.SQLAlchemyError:
+        return False
+    for details in rows:
+        try:
+            counts = json.loads(details)
+        except (TypeError, ValueError):
+            continue
+        if isinstance(counts, dict) and any(isinstance(counts.get(name), int) and counts[name] > 0 for name in found):
+            return True
+    return False
+
+
 class ConfigurationRuntime:
     def __init__(self, environment):
         self.environment = dict(environment)
@@ -56,6 +98,7 @@ class ConfigurationRuntime:
         self.lifecycle.acquire()
         try:
             self._require_stopped_schema_upgrade()
+            earlier_schema = _earlier_release_schema(self.locations.database_url)
             with use_configuration(self.locations):
                 db.init_db()
             key_path = self.environment.get('FAXBOT_INSTALLATION_KEY_PATH') or str(directory / '.configuration.key')
@@ -64,7 +107,8 @@ class ConfigurationRuntime:
             try:
                 snapshot = store.read()
             except ConfigurationNotInitialized:
-                imported = load_bootstrap_configuration(self.environment)
+                imported = load_bootstrap_configuration(
+                    self.environment, earlier_release=earlier_schema or _earlier_release_records(db.engine))
                 # The deployment must locate its store and lock/key directory
                 # before reading that store. A legacy file cannot redirect them.
                 if (imported.values.database_url != self.locations.database_url

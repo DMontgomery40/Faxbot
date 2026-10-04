@@ -2,6 +2,7 @@ export const DEFAULT_DOCS_BASE = 'https://docs.faxbot.net/latest/';
 
 const DOCS_PAGES = {
   home: '',
+  providers: 'setup/',
   phaxio: 'setup/phaxio/',
   sinch: 'setup/sinch/',
   documo: 'setup/documo/',

@@ -259,7 +259,7 @@ function Dashboard({ client, onNavigate }: DashboardProps) {
                   variant="outlined"
                 />
                 <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-                  Outbound provider: {health.backend}
+                  {health.backend ? `Outbound provider: ${health.backend}` : 'No fax provider set up yet.'}
                 </Typography>
               </CardContent>
               </Card>
@@ -452,7 +452,7 @@ function Dashboard({ client, onNavigate }: DashboardProps) {
                 <Typography variant="h6" gutterBottom>Config Overview</Typography>
                 <Grid container spacing={1}>
                   <Grid item xs={6}><Typography variant="body2" color="text.secondary">Default provider</Typography></Grid>
-                  <Grid item xs={6}><Chip size="small" label={cfg?.backend ?? 'Unavailable'} /></Grid>
+                  <Grid item xs={6}><Chip size="small" label={cfg ? (cfg.backend || 'Not set up') : 'Unavailable'} /></Grid>
                   <Grid item xs={6}><Typography variant="body2" color="text.secondary">Storage</Typography></Grid>
                   <Grid item xs={6}><Chip size="small" label={cfg?.storage?.backend || 'local'} /></Grid>
                   <Grid item xs={6}><Typography variant="body2" color="text.secondary">Authentication</Typography></Grid>

@@ -29,6 +29,8 @@ def isolated_installation(monkeypatch, tmp_path):
         'FAXBOT_CONFIG_PATH': str(tmp_path / 'absent-legacy.json'),
         'FAXBOT_PROVIDERS_DIR': str(tmp_path / 'providers'),
         'FAX_DISABLED': 'true',
+        # A new installation has no fax provider; these legacy fixtures exercise a Phaxio one.
+        'FAX_BACKEND': 'phaxio',
         'REQUIRE_API_KEY': 'false',
         'ENABLE_PERSISTED_SETTINGS': 'false',
         'ENABLE_MCP_SSE': 'false',

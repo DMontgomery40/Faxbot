@@ -441,3 +441,68 @@ def test_upgraded_installation_backs_up_and_restores_into_a_fresh_installation(p
         shown = json.dumps(settings)
         assert provider_secret not in shown
         assert settings['phaxio']['api_secret'], 'the restored provider secret is reported as set'
+
+
+# -- which fax provider an installation starts with --------------------------------------------------------
+
+def _without_provider(monkeypatch):
+    for name in ('FAX_BACKEND', 'FAX_OUTBOUND_BACKEND', 'FAX_INBOUND_BACKEND'):
+        monkeypatch.delenv(name, raising=False)
+
+
+def _provider(client):
+    view = client.get('/admin/settings', headers=_headers(BOOTSTRAP)).json()
+    return view['backend']['type'], view['hybrid']['outbound_backend'], view['hybrid']['inbound_backend']
+
+
+def test_a_new_installation_starts_with_no_fax_provider(monkeypatch, tmp_path):
+    installation = Installation(monkeypatch, tmp_path, f"sqlite:///{tmp_path / 'installation.db'}")
+    _without_provider(monkeypatch)
+    monkeypatch.setenv('INBOUND_ENABLED', 'true')
+    with installation.serve() as client:
+        assert _provider(client) == ('', '', '')
+        ready = client.get('/health/ready')
+        assert ready.status_code == 503 and ready.json()['message'] == 'No fax provider set up yet.'
+        refused = client.post('/fax', headers=_headers(BOOTSTRAP), data={'to': '+15551230001'},
+                              files={'file': ('note.txt', b'Synthetic\n', 'text/plain')})
+        assert refused.status_code == 409 and refused.json() == {'detail': 'No fax provider set up yet.'}
+        assert client.post('/phaxio-inbound', data={}).status_code == 404
+        assert client.post('/sinch-inbound', data={}).status_code == 404
+        health = installation.remote(client, 'health')
+        assert 'No fax provider set up yet.' in health.stdout
+        shown = installation.remote(client, 'settings', 'get', 'backend')
+        assert shown.exit_code == 0 and 'No fax provider set up yet.' in shown.stdout
+    installation.main.app.state.direct_http = None
+
+
+@pytest.mark.parametrize('path', ['migrate_first', 'start_directly'])
+def test_an_upgraded_installation_without_fax_backend_keeps_phaxio(previous_release, monkeypatch, path):
+    installation = previous_release
+    _without_provider(monkeypatch)
+    if path == 'migrate_first':
+        installation.admin_json('migrate')
+    with installation.serve() as client:
+        assert _provider(client) == ('phaxio', 'phaxio', 'phaxio')
+        sent = client.post('/fax', headers=_headers(installation.made['tokens']['sender']),
+                           data={'to': '+15551230003'}, files={'file': ('note.txt', b'Synthetic\n', 'text/plain')})
+        assert sent.status_code == 202, sent.text
+
+
+def test_an_empty_database_migrated_before_its_first_start_is_a_new_installation(monkeypatch, tmp_path):
+    installation = Installation(monkeypatch, tmp_path, f"sqlite:///{tmp_path / 'installation.db'}")
+    _without_provider(monkeypatch)
+    installation.data_dir.mkdir()
+    installation.admin_json('migrate')
+    with installation.serve() as client:
+        assert _provider(client) == ('', '', '')
+
+
+def test_a_saved_provider_is_kept_when_the_environment_no_longer_names_it(monkeypatch, tmp_path, database_url):
+    installation = Installation(monkeypatch, tmp_path, database_url)
+    monkeypatch.setenv('FAX_BACKEND', 'sip')
+    monkeypatch.delenv('FAX_OUTBOUND_BACKEND', raising=False)
+    with installation.serve() as client:
+        assert _provider(client) == ('sip', 'sip', 'sip')
+    _without_provider(monkeypatch)
+    with installation.serve() as client:
+        assert _provider(client) == ('sip', 'sip', 'sip')
