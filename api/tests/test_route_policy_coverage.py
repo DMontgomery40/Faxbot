@@ -16,6 +16,7 @@ OWN_AUTHENTICATION = {
     ("GET", "/health/ready"): "public readiness without private state",
     ("POST", "/auth/login"): "password login",
     ("POST", "/auth/key-login"): "key-to-session login",
+    ("GET", "/auth/setup"): "public: only whether a first owner is still needed, for the sign-in page",
     ("GET", "/fax/{job_id}/pdf"): "short-lived provider document token",
     ("GET", "/inbound/{inbound_id}/pdf"): "inbound:document via identity, or the fax's unexpired download token (checked in the handler)",
     ("POST", "/phaxio-callback"): "verified provider callback",

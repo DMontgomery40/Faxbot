@@ -49,8 +49,8 @@ VERDICTS = NO_DATA_VERDICTS | {'no_fax_answer', 'remote_fax_failed', NOT_HANDED_
 # What the Asterisk notify script prints when a hand-over fails, and the plain
 # reason after "A fax was received but could not be handed to Faxbot: ".
 HANDOVER_REASONS = {
-    'no_secret': 'the fax engine has no inbound secret yet; select Apply to Asterisk',
-    'refused': "Faxbot refused the fax engine's inbound secret; select Apply to Asterisk",
+    'no_secret': 'the fax engine has no inbound secret yet; select Apply and connect',
+    'refused': "Faxbot refused the fax engine's inbound secret; select Apply and connect",
     'not_receiving': 'receiving faxes is turned off in Faxbot',
     'unreadable': 'Faxbot could not read the received image',
     'unreachable': 'Faxbot could not be reached',

@@ -262,8 +262,21 @@ function Inbound({ client, docsBase, inboundEnabled, onNavigate, permissions }: 
     }
   };
 
+  // When the fax arrived (the provider's time when known), marked when Faxbot brought it in later.
+  const arrivedText = (fax: InboundFax) => {
+    const value = fax.source_received_at || fax.received_at;
+    const date = parseServerTime(value);
+    // Always with the time of day: a recovered fax arrived well before it was brought in.
+    const when = date && isSmallMobile
+      ? date.toLocaleString(undefined, { month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+      : formatDate(value);
+    return fax.recovered ? `${when} · brought in later` : when;
+  };
+
   const maskPhoneNumber = (phone?: string) => {
-    if (!phone || phone.length < 4) return '****';
+    // A number nobody reported is unknown, not hidden.
+    if (!phone) return 'Unknown';
+    if (phone.length < 4) return '****';
     return '*'.repeat(phone.length - 4) + phone.slice(-4);
   };
 
@@ -321,7 +334,7 @@ function Inbound({ client, docsBase, inboundEnabled, onNavigate, permissions }: 
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                 <DateIcon fontSize="small" color="action" />
                 <Typography variant="body2">
-                  {formatDate(fax.received_at)}
+                  {arrivedText(fax)}
                 </Typography>
               </Box>
 
@@ -543,89 +556,13 @@ function Inbound({ client, docsBase, inboundEnabled, onNavigate, permissions }: 
           )}
 
           {inboundEnabled !== false && callbacks && callbacks.backend === 'sip' && (
-            <Box>
-              <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 1 }}>
-                Asterisk Inbound Configuration
-              </Typography>
-              <Paper
-                elevation={0}
-                sx={{
-                  p: 2,
-                  border: '1px solid',
-                  borderColor: 'divider',
-                  borderRadius: 2,
-                  backgroundColor: theme.palette.mode === 'dark' 
-                    ? 'rgba(255, 255, 255, 0.02)' 
-                    : 'rgba(0, 0, 0, 0.02)',
-                }}
-              >
-                <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-                  Add this dialplan step after ReceiveFAX to POST the TIFF path internally:
-                </Typography>
-                <Box 
-                  component="pre" 
-                  sx={{ 
-                    p: 2, 
-                    bgcolor: 'background.default', 
-                    border: '1px solid', 
-                    borderColor: 'divider', 
-                    borderRadius: 1, 
-                    overflowX: 'auto', 
-                    fontSize: isSmallMobile ? '0.7rem' : '0.75rem',
-                    fontFamily: 'monospace',
-                    whiteSpace: 'pre-wrap',
-                    wordBreak: 'break-all'
-                  }}
-                >
-{`same => n,Set(FAXFILE=/faxdata/${'${UNIQUEID}'}.tiff)
-same => n,ReceiveFAX(${"${FAXFILE}"})
-same => n,Set(FAXSTATUS=${'${FAXOPT(status)}'})
-same => n,Set(FAXPAGES=${'${FAXOPT(pages)}'})
-same => n,System(curl -s -X POST \\
-  -H "Content-Type: application/json" \\
-  -H "X-Internal-Secret: YOUR_SECRET" \\
-  -d "{\\"tiff_path\\":\\"${'${FAXFILE}'}\\",\\"to_number\\":\\"${'${EXTEN}'}\\",\\"from_number\\":\\"${'${CALLERID(num)'}'}\\",\\"faxstatus\\":\\"${'${FAXSTATUS}'}\\",\\"faxpages\\":\\"${'${FAXPAGES}'}\\",\\"uniqueid\\":\\"${'${UNIQUEID}'}\\"}" \\
-  http://api:8080/_internal/asterisk/inbound)`}
-                </Box>
-                <Box sx={{ 
-                  display: 'flex', 
-                  gap: 1, 
-                  mt: 2,
-                  flexDirection: { xs: 'column', sm: 'row' }
-                }}>
-                  <Button 
-                    size="small" 
-                    variant="outlined" 
-                    startIcon={<ContentCopyIcon />} 
-                    onClick={() => copyToClipboard(
-`same => n,Set(FAXFILE=/faxdata/${'${UNIQUEID}'}.tiff)
-same => n,ReceiveFAX(${"${FAXFILE}"})
-same => n,Set(FAXSTATUS=${'${FAXOPT(status)}'})
-same => n,Set(FAXPAGES=${'${FAXOPT(pages)}'})
-same => n,System(curl -s -X POST -H "Content-Type: application/json" -H "X-Internal-Secret: YOUR_SECRET" -d "{\\"tiff_path\\":\\"${'${FAXFILE}'}\\",\\"to_number\\":\\"${'${EXTEN}'}\\",\\"from_number\\":\\"${'${CALLERID(num)'}'}\\",\\"faxstatus\\":\\"${'${FAXSTATUS}'}\\",\\"faxpages\\":\\"${'${FAXPAGES}'}\\",\\"uniqueid\\":\\"${'${UNIQUEID}'}\\"}" http://api:8080/_internal/asterisk/inbound)`, 
-                      'Dialplan snippet copied'
-                    )}
-                    fullWidth={isSmallMobile}
-                    sx={{ borderRadius: 1 }}
-                  >
-                    Copy dialplan
-                  </Button>
-                  <Button 
-                    size="small" 
-                    href={docsLink('inbound', docsBase)}
-                    target="_blank" 
-                    rel="noreferrer"
-                    fullWidth={isSmallMobile}
-                    sx={{ borderRadius: 1 }}
-                  >
-                    Learn more
-                  </Button>
-                </Box>
-                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 2 }}>
-                  Use service name "api" when running via Docker Compose; otherwise, point to your API host. Ensure Asterisk mounts the same /faxdata volume.
-                </Typography>
-              </Paper>
-            </Box>
+            <Alert severity={callbacks.receiving?.ready ? 'success' : 'warning'} sx={{ borderRadius: 2 }} data-testid="sip-receiving"
+              action={onNavigate && permissions?.has('settings:read') ? (
+                <Button color="inherit" size="small" onClick={() => onNavigate('trunk')}>Open trunk settings</Button>
+              ) : undefined}>
+              {callbacks.receiving?.message ?? 'Receiving over your SIP trunk.'}{' '}
+              <Box component="a" href={docsLink('inbound', docsBase)} target="_blank" rel="noreferrer" sx={{ color: 'inherit' }}>How receiving works</Box>
+            </Alert>
           )}
         </Stack>
       </ResponsiveFormSection>}
@@ -703,7 +640,7 @@ same => n,System(curl -s -X POST -H "Content-Type: application/json" -H "X-Inter
                         </TableCell>
                         <TableCell>
                           <Typography variant="caption" color="text.secondary">
-                            {formatDate(fax.received_at)}
+                            {arrivedText(fax)}
                           </Typography>
                         </TableCell>
                         {deliveries !== null && (

@@ -90,6 +90,21 @@ describe('Dashboard delivery cards', () => {
     expect(await screen.findByText('No faxes sent in the last 30 days.')).toBeTruthy();
   });
 
+  it('offers one clear action when no fax provider is set up', async () => {
+    server.use(http.get('/admin/health-status', () => HttpResponse.json({ timestamp: new Date().toISOString(),
+      backend: '', backend_healthy: false, backend_message: 'No fax provider set up yet.',
+      jobs: { queued: 0, in_progress: 0, recent_failures: 0 }, inbound_enabled: false, api_keys_configured: true, require_auth: true })));
+    const navigate = vi.fn();
+    const { unmount } = render(<Dashboard client={client()} onNavigate={navigate} canSetUp />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Set up a fax provider' }));
+    expect(navigate).toHaveBeenCalledWith('setup');
+    expect(navigate).not.toHaveBeenCalledWith('diagnostics');
+    unmount();
+    render(<Dashboard client={client()} onNavigate={navigate} />);
+    expect(await screen.findByText('No fax provider set up yet.')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Set up a fax provider' })).toBeNull();
+  });
+
   it('says in one sentence when Faxbot cannot sign in to its fax engine', async () => {
     const sentence = "Faxbot can't sign in to its fax engine. Check that the Asterisk manager password matches.";
     server.use(http.get('/admin/health-status', () => HttpResponse.json({ timestamp: new Date().toISOString(),

@@ -56,6 +56,9 @@ interface SettingsProps {
 type FormValue = string | number | boolean;
 type SettingsForm = Record<string, FormValue>;
 
+// The trunk section, opened from the Inbox receiving status.
+const SIP_TRUNK_SECTION = 'sip-trunk';
+
 const ENV_IMPORT_HELP = 'Keys and passwords in .env are read at every start; other settings are read from .env only on the first start.';
 
 // Limits checked before saving, so a value the server would refuse gets a plain sentence.
@@ -356,6 +359,7 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
   useEffect(() => {
     if (!settings || !focus) return;
     if (focus === 'email') document.getElementById(EMAIL_DELIVERY_SECTION)?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
+    if (focus === 'trunk') document.getElementById(SIP_TRUNK_SECTION)?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
     onFocused?.();
   }, [settings, focus, onFocused]);
 
@@ -787,7 +791,7 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
                       onChange={(value) => handleForm('fax_station_id', value)}
                       showCurrentValue={!pendingRestart && (!!settings.sip.station_id)}
                     />
-                    <SipTrunkSettings client={client} />
+                    <Box id={SIP_TRUNK_SECTION}><SipTrunkSettings client={client} /></Box>
                   </ResponsiveSettingSection>
                 )}
 

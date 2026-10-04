@@ -9,7 +9,7 @@ import SipTrunkSettings from '../components/SipTrunkSettings';
 import { server } from '../test/server';
 
 const client = () => new AdminAPIClient({ kind: 'key', key: 'synthetic-console-key' });
-const SENTENCE = 'A fax was received but could not be handed to Faxbot: the fax engine has no inbound secret yet; select Apply to Asterisk.';
+const SENTENCE = 'A fax was received but could not be handed to Faxbot: the fax engine has no inbound secret yet; select Apply and connect.';
 
 function call(recovered: boolean) {
   const started = new Date(Date.now() - 60 * 60 * 1000).toISOString();

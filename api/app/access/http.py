@@ -432,6 +432,23 @@ async def me(request: Request, identity=Depends(require_identity)):
     return await run_lifecycle_step(lambda: _me(runtime(request), identity))
 
 
+class AuthSetupResponse(BaseModel):
+    first_owner: bool
+
+
+@router.get('/setup', response_model=AuthSetupResponse, summary='Sign-in setup',
+    description='Public. Whether the installation still has no named Owner, so the sign-in page asks for the '
+        'installation key that creates the first one. Nothing else is disclosed; once an Owner exists it is false.')
+async def sign_in_setup(request: Request):
+    service = runtime(request)
+
+    @private_operation
+    def read():
+        with service.store.transaction() as connection:
+            return {'first_owner': not _Graph(connection, service.store.tables).owners(service.credential_codec)}
+    return await run_lifecycle_step(read)
+
+
 @router.get('/context', response_model=ConsoleContextResponse,
     summary='Console context',
     description='Current permission-scoped navigation and active configuration hints. '

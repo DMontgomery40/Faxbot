@@ -387,6 +387,8 @@ export interface InboundFax {
   retry_at?: string | null;
   problem?: string | null;
   can_fetch_again?: boolean;
+  // Brought in later from an image the fax engine could not hand over.
+  recovered?: boolean;
 }
 
 // Tunnel types

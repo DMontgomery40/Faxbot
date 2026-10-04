@@ -174,6 +174,15 @@ def test_auth_me_reports_owner_status_and_what_the_actor_may_grant(client):
     assert (me['is_owner'], me['can_enroll_owner'], me['grantable']) == (False, False, {'installation': []})
 
 
+def test_sign_in_page_learns_only_whether_a_first_owner_is_needed(client):
+    """A new install's sign-in page asks for the installation key; afterwards it is as before."""
+    first = client.get('/auth/setup')
+    assert first.status_code == 200 and first.json() == {'first_owner': True}
+    assert first.headers['cache-control'].startswith('no-store') or 'no-store' in first.headers['cache-control']
+    enroll_owner(client)
+    assert client.get('/auth/setup').json() == {'first_owner': False}
+
+
 def test_owner_enrollment_requires_bootstrap_or_complete_owner(client):
     assert client.post('/auth/owner/enroll', json={'login': 'x', 'display_name': 'X',
         'expected_policy_version': 1}).status_code == 401

@@ -120,6 +120,9 @@ function createState() {
     country: 'US',
     numberExample: '(201) 555-0123',
     resolveNumber: ((value: string) => value) as (value: string) => string | null,
+    // The provider hints in /auth/context, and whether sign-in still needs a first owner.
+    providerView: null as null | { plugins_enabled: boolean; install_enabled: boolean; active_outbound: string; active_inbound: string },
+    firstOwner: false,
   };
 }
 
@@ -290,8 +293,9 @@ const accessHandlers = [
       ? { fax_disabled: true, max_file_size_mb: 10, default_country: s().country, number_example: s().numberExample } : null,
     inbound_enabled: true,
     branding: { docs_base: 'https://docs.faxbot.net/latest/', logo_path: '/admin/ui/faxbot_full_logo.png' },
-    provider_view: null,
+    provider_view: s().providerView,
   })),
+  http.get('/auth/setup', () => json({ first_owner: s().firstOwner })),
   guarded('post', '/auth/logout', () => {
     s().session = null;
     return json({ ok: true });

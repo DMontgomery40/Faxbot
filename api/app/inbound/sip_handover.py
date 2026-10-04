@@ -4,7 +4,7 @@ Asterisk stores each received image as ``<fax data>/inbound/<uniqueid>.tiff``
 and hands it over to ``POST /_internal/asterisk/inbound`` with a shared secret.
 That secret is plumbing between two containers of one installation, so Faxbot
 creates it when none is set (an operator or ``.env`` value always wins) and
-Apply to Asterisk writes it where the Asterisk container reads it.
+Apply and connect writes it where the Asterisk container reads it.
 
 A hand-over can still fail: the API was down, the secret was missing or
 refused, or Faxbot stopped between the call and the hand-over. The image then
@@ -132,11 +132,17 @@ def recover(store, engine, values, *, now=None) -> Recovered:
             continue
         found += 1
         call = records.inbound_call(uniqueid) or {}
+        report = {'recovered': True, 'source_time': 'image file modified time', 'uniqueid': uniqueid}
+        to_number = call.get('did')
+        dids = list(values.sip_trunk_did_list)
+        if not to_number and len(dids) == 1:
+            # The trunk has one fax number, so the fax arrived on it.
+            to_number = dids[0]
+            report['to_number'] = 'inferred from the only fax number on the trunk'
         begun = store.begin(
             source='sip', account=account_identity('sip', values.sip_trunk_username), operation_id=uniqueid,
-            backend='sip', inbound_backend=values.effective_inbound or 'sip', to_number=call.get('did'), from_number=call.get('caller'),
-            reported_pages=call.get('pages'),
-            report={'recovered': True, 'source_time': 'image file modified time', 'uniqueid': uniqueid},
+            backend='sip', inbound_backend=values.effective_inbound or 'sip', to_number=to_number,
+            from_number=call.get('caller'), reported_pages=call.get('pages'), report=report,
             source_received_at=modified, tiff_path=str(path), schedule=False,
             country=values.fax_default_country or DEFAULT_COUNTRY)
         if begun.state == 'pending':

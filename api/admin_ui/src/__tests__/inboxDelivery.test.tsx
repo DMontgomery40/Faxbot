@@ -249,3 +249,59 @@ describe('Received fax status', () => {
     expect(within(failed).queryByRole('button', { name: /Fetch again/ })).toBeNull();
   });
 });
+
+describe('Inbox wording for received faxes', () => {
+  const READY = 'Received faxes reach Faxbot: ready.';
+
+  function recoveredInbox(receiving: { ready: boolean; message: string }) {
+    server.use(
+      http.get('/inbound', () => HttpResponse.json([{ id: 'recovered', fr: null, to: null, status: 'received', backend: 'sip',
+        pages: 1, received_at: '2026-10-04T03:48:00', source_received_at: '2026-10-04T03:14:00', recovered: true }])),
+      http.get('/admin/inbound/callbacks', () => HttpResponse.json({ backend: 'sip', callbacks: [], receiving })),
+      http.get('/intake/items', () => HttpResponse.json({ items: [], counts: { received: 0, sending: 0, delivered: 0, failed: 0 } })),
+    );
+  }
+
+  it('says Unknown for a number nobody reported and shows when a recovered fax arrived', async () => {
+    recoveredInbox({ ready: true, message: READY });
+    render(<Inbound client={client()} inboundEnabled permissions={new Set([...operator, 'providers:read'])} />);
+    const row = (await screen.findAllByText('Unknown'))[0].closest('tr') as HTMLElement;
+    expect(within(row).getAllByText('Unknown')).toHaveLength(2);
+    const arrived = formatServerTime('2026-10-04T03:14:00');
+    expect(within(row).getByText(`${arrived} · brought in later`)).toBeTruthy();
+    expect(within(row).queryByText(formatServerTime('2026-10-04T03:48:00'))).toBeNull();
+    expect(screen.queryByText('****')).toBeNull();
+  });
+
+  it('shows one receiving line with a link to the trunk instead of a dialplan snippet', async () => {
+    recoveredInbox({ ready: true, message: READY });
+    const navigate = vi.fn();
+    render(<Inbound client={client()} inboundEnabled onNavigate={navigate} permissions={new Set([...operator, 'providers:read'])} />);
+    const status = await screen.findByTestId('sip-receiving');
+    expect(status.textContent).toContain(READY);
+    expect(screen.queryByText(/_internal|YOUR_SECRET|curl|dialplan/i)).toBeNull();
+    fireEvent.click(within(status).getByRole('button', { name: 'Open trunk settings' }));
+    expect(navigate).toHaveBeenCalledWith('trunk');
+  });
+
+  it('names a failed hand-over in that line', async () => {
+    const sentence = 'A fax was received but could not be handed to Faxbot: Faxbot could not be reached.';
+    recoveredInbox({ ready: false, message: sentence });
+    render(<Inbound client={client()} inboundEnabled permissions={new Set([...operator, 'providers:read'])} />);
+    expect((await screen.findByTestId('sip-receiving')).textContent).toContain(sentence);
+  });
+
+  it('keeps the time of day on a phone, so a recovered fax shows when it arrived', async () => {
+    recoveredInbox({ ready: true, message: READY });
+    const original = window.matchMedia;
+    window.matchMedia = ((query: string) => ({ ...original(query), matches: query.includes('max-width') })) as typeof window.matchMedia;
+    try {
+      render(<Inbound client={client()} inboundEnabled permissions={new Set([...operator, 'providers:read'])} />);
+      const arrived = parseServerTime('2026-10-04T03:14:00')!
+        .toLocaleString(undefined, { month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+      expect(await screen.findByText(`${arrived} · brought in later`)).toBeTruthy();
+    } finally {
+      window.matchMedia = original;
+    }
+  });
+});

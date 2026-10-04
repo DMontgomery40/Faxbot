@@ -208,13 +208,21 @@ def _document(item):
 
 
 
+def _arrived(item):
+    """When the fax arrived (the provider's time when known), marked when Faxbot brought it in later."""
+    when = local_time(item.get('source_received_at') or item.get('received_at') or item.get('created_at'))
+    return f'{when} (brought in later)' if item.get('recovered') else when
+
+
 def _inbound_fields(item):
-    return [('Received fax ID', item.get('id')), ('From', item.get('fr')), ('To', item.get('to')),
+    return [('Received fax ID', item.get('id')), ('From', item.get('fr') or 'Unknown'),
+            ('To', item.get('to') or 'Unknown'),
             ('Status', _inbound_status(item)), ('Problem', item.get('problem')), ('Mailbox', item.get('mailbox')),
             ('Received through', provider_label(item.get('backend')) if item.get('backend') else None),
             ('Provider fax ID', item.get('provider_fax_id')),
             ('Sent', local_time(item.get('source_received_at'))),
-            ('Received', local_time(item.get('received_at') or item.get('created_at'))),
+            ('Received', _arrived(item)),
+            *([('Brought in', local_time(item.get('received_at')))] if item.get('recovered') else []),
             ('Document', _document(item)), ('Test fax', yes_no(bool(item.get('is_test'))))]
 
 
@@ -228,8 +236,8 @@ def inbound_list(to_number: str = typer.Option(None, '--to', help='Only faxes se
     items = state.api().get('/inbound', params={'to_number': to_number, 'status': status_filter, 'mailbox': mailbox})
     state.out().result(items, lambda out: out.table(
         (['Received fax ID'] if ids else []) + ['From', 'To', 'Status', 'Pages', 'Mailbox', 'Received'],
-        [([item['id']] if ids else []) + [item.get('fr'), item.get('to'), _inbound_status(item), item.get('pages'),
-                                          item.get('mailbox'), local_time(item.get('received_at') or item.get('created_at'))]
+        [([item['id']] if ids else []) + [item.get('fr') or 'Unknown', item.get('to') or 'Unknown',
+                                          _inbound_status(item), item.get('pages'), item.get('mailbox'), _arrived(item)]
          for item in items], empty='No received faxes.'))
 
 

@@ -4,7 +4,7 @@
 - Faxbot's own fax engine: Asterisk sends and receives faxes over a SIP trunk from your carrier, with T.38 fax over IP.
 - No per-fax cloud charges; your carrier bills the calls by the minute.
 - No router changes: you do not open, publish or forward any port. [Carrier SIP trunk](sip-trunk.md) covers choosing and setting up the trunk in the console.
-- Receiving: see [Receiving faxes](../operations/receiving.md#asterisk). The dialplan reports each fax with `ASTERISK_INBOUND_SECRET`, and the fax image must be inside the data folder (`/faxdata/inbound/`).
+- Receiving: see [Receiving faxes](../operations/receiving.md#asterisk). The dialplan hands each fax over with an inbound secret that Faxbot creates (a value set in Settings or as `ASTERISK_INBOUND_SECRET` in `.env` is used instead), and the fax image must be inside the data folder (`/faxdata/inbound/`).
 
 ## What Is SIP? (Crash Course)
 - SIP (Session Initiation Protocol): the signaling that sets up calls over the internet.

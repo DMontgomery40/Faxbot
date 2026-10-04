@@ -1724,7 +1724,7 @@ async def mobile_pair(request: Request):
 
 @app.get("/admin/inbound/callbacks", dependencies=[Depends(require_permission('providers:read'))],
          responses=_PERMISSION_RESPONSES)
-def admin_inbound_callbacks():
+def admin_inbound_callbacks(request: Request):
     base = settings.public_api_url.rstrip("/")
     backend = active_inbound()
     out: dict[str, Any] = {"backend": backend, "callbacks": []}
@@ -1752,19 +1752,29 @@ def admin_inbound_callbacks():
             "notes": "Configure StatusCallback on send; this endpoint will process updates.",
         })
     elif backend == "sip":
-        out["callbacks"].append({
-            "name": "Asterisk Internal",
-            "url": f"/_internal/asterisk/inbound",
-            "header": "X-Internal-Secret",
-            "secret_configured": bool(settings.asterisk_inbound_secret),
-            "notes": "Call from dialplan/AGI on the private network only.",
-            "example_curl": (
-                "curl -X POST -H 'X-Internal-Secret: <secret>' -H 'Content-Type: application/json' "
-                "http://api:8080/_internal/asterisk/inbound "
-                "-d '{\"tiff_path\":\"/faxdata/in.tiff\",\"to_number\":\"+1555...\"}'"
-            ),
-        })
+        # Faxbot's own Asterisk hands received faxes over by itself; there is no URL to configure.
+        out["receiving"] = _sip_receiving_status(request)
     return out
+
+
+def _sip_receiving_status(request):
+    """One sentence about receiving over the SIP trunk, the same one the trunk screen shows."""
+    from . import sip_http, sip_trunk
+    values = request.scope["faxbot.configuration"].active.values
+    if not values.inbound_enabled:
+        return {"ready": False, "message": "Receiving faxes is turned off in Settings."}
+    if not sip_trunk.configured(values):
+        return {"ready": False, "message": sip_http.NO_TRUNK}
+    try:
+        from .routing.background import installation_engine
+        engine, _ = installation_engine(request.app)
+        last = sip_http._last_call(sip_calls.SipCallRecords(engine))
+    except Exception:
+        last = None
+    handover = sip_http._handover(values, sip_trunk.engine_managed(values), last)
+    if handover is None:
+        return {"ready": False, "message": "Receiving faxes is turned off in Settings."}
+    return {"ready": handover["ready"], "message": handover["text"]}
 
 
 class SimulateInboundIn(BaseModel):
@@ -2633,6 +2643,9 @@ class InboundFaxOut(BaseModel):
     retry_at: Optional[datetime] = None
     problem: Optional[str] = None
     can_fetch_again: bool = False
+    # Brought in later from an image the fax engine stored but could not hand over;
+    # source_received_at is then the image's modification time.
+    recovered: bool = False
 
 
 def _inbound_pdf_response(inbound_id: str, pdf_path: Optional[str], method: str, status: Optional[str] = "received"):

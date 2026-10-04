@@ -363,9 +363,9 @@ def test_a_received_call_that_left_no_image_still_has_a_record(records):
 
 @pytest.mark.parametrize(('reason', 'sentence'), [
     ('no_secret', 'A fax was received but could not be handed to Faxbot: the fax engine has no inbound secret yet; '
-                  'select Apply to Asterisk.'),
+                  'select Apply and connect.'),
     ('refused', "A fax was received but could not be handed to Faxbot: Faxbot refused the fax engine's inbound "
-                'secret; select Apply to Asterisk.'),
+                'secret; select Apply and connect.'),
     ('unreachable', 'A fax was received but could not be handed to Faxbot: Faxbot could not be reached.'),
     ('something-new', 'A fax was received but could not be handed to Faxbot: Faxbot answered with an error.'),
 ])

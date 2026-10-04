@@ -117,8 +117,8 @@ When the iPhone app pairs, Faxbot creates an integration for that device and giv
 A new installation has no users. To create the first owner:
 
 1. Set `API_KEY` in the environment before the installation starts for the first time. Faxbot saves it then; later `.env` edits do not change it.
-2. Open the admin console, select **Sign in with API key** and paste the `API_KEY` value.
-3. Select **Create the first owner**, then enter a username and display name.
+2. Open the admin console. While no owner exists, the sign-in page says so and shows the **Installation key** field first; paste the `API_KEY` value. (Once an owner exists, the page asks for a username and password, and **Sign in with API key** is the way to use a key.)
+3. Select **Create the first owner**, then enter a username and display name. When no fax provider is set up yet, closing the temporary password opens Settings → Setup.
 4. Copy the temporary password. It is shown only once.
 5. Sign out, then sign in with the new username and temporary password. Faxbot asks you to choose a new password.
 

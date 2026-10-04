@@ -104,7 +104,7 @@ async def _lifespan(app):
         await run_lifecycle_step(lambda: prepare_handover(runtime.manager, runtime.manager.store.read().active.values))
     except Exception:
         logging.getLogger(__name__).warning('Faxbot could not prepare the inbound secret for the fax engine; '
-                                            'select Apply to Asterisk in Settings.')
+                                            'select Apply and connect in Settings.')
     try:
         yield
     finally:

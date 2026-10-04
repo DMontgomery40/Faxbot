@@ -307,6 +307,8 @@ function ConsoleShell({ client, me, initialContext, onSignOut, onIdentityChanged
   const currentTool = toolsItems.find((item) => item.value === toolsTab)?.value ?? toolsItems[0]?.value ?? null;
 
   const docsBase = context.branding?.docs_base;
+  // Setup Wizard is in Settings for people who may change settings.
+  const canSetUp = settingsItems.some((item) => item.value === 'setup');
   const adminConfig: AdminConfig | null = context.send ? {
     fax_disabled: context.send.fax_disabled,
     max_file_size_mb: context.send.max_file_size_mb,
@@ -343,8 +345,12 @@ function ConsoleShell({ client, me, initialContext, onSignOut, onIdentityChanged
       case 'keys':
         openSettings('keys');
         break;
+      case 'setup':
+        if (canSetUp) openSettings('setup');
+        break;
       case 'email':
-        setSettingsFocus('email');
+      case 'trunk':
+        setSettingsFocus(destination);
         openSettings('settings');
         break;
       case 'diagnostics':
@@ -463,7 +469,11 @@ function ConsoleShell({ client, me, initialContext, onSignOut, onIdentityChanged
       <Container maxWidth="xl" sx={{ flex: 1, px: { xs: 1, sm: 2, md: 3 } }}>
         {me.can_enroll_owner && (
           <Box sx={{ mt: 2 }}>
-            <OwnerEnrollment client={client} onEnrolled={onIdentityChanged} />
+            <OwnerEnrollment client={client} onEnrolled={() => {
+              onIdentityChanged();
+              // A new installation's next step after its first owner is choosing a fax provider.
+              if (context.provider_view && !context.provider_view.active_outbound) handleNavigate('setup');
+            }} />
           </Box>
         )}
 
@@ -528,7 +538,7 @@ function ConsoleShell({ client, me, initialContext, onSignOut, onIdentityChanged
         </Drawer>
 
         <TabPanel value="dashboard" current={currentTab}>
-          <Dashboard client={client} onNavigate={handleNavigate} />
+          <Dashboard client={client} onNavigate={handleNavigate} canSetUp={canSetUp} />
         </TabPanel>
         <TabPanel value="send" current={currentTab}>
           <SendFax client={client} config={adminConfig} configLoading={contextLoading} configError={contextError}

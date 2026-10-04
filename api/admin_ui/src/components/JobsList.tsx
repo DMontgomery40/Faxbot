@@ -146,7 +146,7 @@ function eventDetails(event: DeliveryHistoryEvent): string {
     details.category && categoryLabels[details.category],
     details.status && `Status: ${statusLabel(details.status)}`,
     details.dispatch_mode && `Sending mode: ${statusLabel(details.dispatch_mode)}`,
-    details.actor && `Operator: ${details.actor}`,
+    // details.actor is an internal sign-in ID, so it is not shown.
     details.provider_sid && `Provider fax ID: ${details.provider_sid}`,
     details.route && `Route: ${details.route === 'direct' ? 'Direct delivery' : providerLabel(details.route)}`,
     details.legacy_status && `Earlier status: ${details.legacy_status}`,
@@ -534,19 +534,20 @@ function JobsList({ client, openJobId, onOpened }: JobsListProps) {
                           {job.pages || '-'}
                         </Typography>
                       </TableCell>
-                      <TableCell sx={{ maxWidth: 200, display: { xs: 'none', lg: 'table-cell' } }}>
+                      <TableCell sx={{ minWidth: 200, maxWidth: 320, display: { xs: 'none', lg: 'table-cell' } }}>
                         {job.error && (
+                          // The whole sentence, wrapped between words; never cut mid-word.
                           <Typography
                             variant="caption"
                             color="error"
+                            data-testid="job-error"
                             sx={{
                               display: 'block',
-                              overflow: 'hidden',
-                              textOverflow: 'ellipsis',
-                              whiteSpace: 'nowrap',
+                              whiteSpace: 'normal',
+                              overflowWrap: 'normal',
+                              wordBreak: 'normal',
                               fontSize: { xs: '0.6rem', sm: '0.75rem' }
                             }}
-                            title={job.error}
                           >
                             {job.error}
                           </Typography>
@@ -695,8 +696,9 @@ function JobsList({ client, openJobId, onOpened }: JobsListProps) {
           {delivery && <>
             {direct && <Alert severity={direct.severity} sx={{ mb: 2 }}>{direct.text}</Alert>}
             <List dense>
-              <ListItem><ListItemText primary="Original Provider" secondary={delivery.provider_id ?? 'Unavailable'} /></ListItem>
-              <ListItem><ListItemText primary="Original Provider Account" secondary={delivery.profile_id ?? 'Unavailable'} /></ListItem>
+              {/* The account is kept by ID in the API; there is no name to show for it here. */}
+              <ListItem><ListItemText primary="Original Provider"
+                secondary={delivery.provider_id ? providerLabel(delivery.provider_id) : 'Unavailable'} /></ListItem>
             </List>
             <Typography variant="subtitle1" component="h3" sx={{ mt: 2 }}>Latest Attempt</Typography>
             {delivery.attempt ? <List dense>
@@ -731,7 +733,7 @@ function JobsList({ client, openJobId, onOpened }: JobsListProps) {
                 onChange={(event) => {
                   if (!detailActionRef.current && !reviewRequired) setOriginalAccountConfirmed(event.target.checked);
                 }}
-              />} label="I matched this fax ID in the ORIGINAL provider account shown above against this fax's destination, document and submission time." />
+              />} label="I matched this fax ID in the provider account this fax was sent with (the original provider shown above) against this fax's destination, document and submission time." />
               <Button type="submit" variant="contained"
                 disabled={detailBusy || reviewRequired || !validProviderId || !originalAccountConfirmed}>
                 Attach Confirmed Provider Fax ID
