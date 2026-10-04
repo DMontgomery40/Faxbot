@@ -129,7 +129,7 @@ export default function LoginScreen({ notice, onPasswordSignIn, onKeySignIn }: L
                   Send, receive and manage faxes for this installation
                 </Typography>
                 <Box sx={{ display: 'flex', gap: 1, justifyContent: 'center', flexWrap: 'wrap' }}>
-                  {['Send', 'Jobs', 'Inbox', 'Users', 'Keys'].map((item) => <Chip key={item} label={item} size="small" />)}
+                  {['Faxes', 'Numbers', 'Recipients', 'Providers', 'Costs'].map((item) => <Chip key={item} label={item} size="small" />)}
                 </Box>
               </Box>
             </Slide>

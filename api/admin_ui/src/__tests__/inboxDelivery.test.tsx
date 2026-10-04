@@ -5,7 +5,7 @@ import { http, HttpResponse } from 'msw';
 import AdminAPIClient from '../api/client';
 import Inbound from '../components/Inbound';
 import { emailDeliveryApplies, inboundFaxStatus, inboxDeliveryStatus, providerName } from '../components/delivery/InboxDelivery';
-import { visibleTools } from '../navigation';
+import { visibleNavigation } from '../navigation';
 import { formatServerTime, parseServerTime, toServerTime } from '../api/time';
 import type { EmailConnector, IntakeItem } from '../api/deliveryTypes';
 import { server } from '../test/server';
@@ -143,10 +143,11 @@ describe('Inbox email delivery', () => {
     expect(navigate).toHaveBeenCalledWith('email');
   });
 
-  it('has no Intake tool any more', () => {
-    const tools = visibleTools(new Set(['mailboxes:read', 'settings:read', 'diagnostics:read']), false).map((tool) => tool.label);
-    expect(tools).not.toContain('Intake');
-    expect(tools).toContain('Delivery routes');
+  it('has no Intake page any more', () => {
+    const pages = visibleNavigation(new Set(['mailboxes:read', 'settings:read', 'diagnostics:read']),
+      { send: false, jobs: false, inbox: true }, { pluginsEnabled: false }).flatMap((area) => area.pages.map((page) => page.label));
+    expect(pages).not.toContain('Intake');
+    expect(pages).toEqual(expect.arrayContaining(['Email delivery', 'Recipients', 'Spending']));
   });
 });
 

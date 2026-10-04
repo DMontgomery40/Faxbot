@@ -8,6 +8,13 @@ function type(label: string, value: string) {
   fireEvent.change(screen.getByLabelText(label), { target: { value } });
 }
 
+// Opens a page from the left panel: its area first, then the page's link.
+async function openPage(area: string, page: string) {
+  const areaButton = await screen.findByRole('button', { name: area });
+  if (areaButton.getAttribute('aria-expanded') !== 'true') fireEvent.click(areaButton);
+  fireEvent.click(await screen.findByRole('link', { name: page }));
+}
+
 async function signInWithPassword(login: string, password: string) {
   await screen.findByRole('heading', { name: 'Sign in' });
   type('Username', login);
@@ -33,7 +40,8 @@ describe('console sign-in', () => {
     expect(backend.requestsTo('POST', '/auth/login')[0].body).toEqual({ login: 'admin', password: 'correct horse' });
     expect(screen.queryByText(/local only/i)).toBeNull();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Sign out' }));
+    fireEvent.click(screen.getByTestId('user-menu-button'));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Sign out' }));
     await screen.findByRole('heading', { name: 'Sign in' });
     const logout = backend.requestsTo('POST', '/auth/logout');
     expect(logout).toHaveLength(1);
@@ -111,7 +119,7 @@ describe('console sign-in', () => {
     await signInWithPassword('admin', 'correct horse');
     await screen.findByText('Ada Admin');
     const probesBefore = backend.requestsTo('GET', '/auth/me').length;
-    fireEvent.click(screen.getByRole('tab', { name: 'Jobs' }));
+    await openPage('Faxes', 'Sent');
     await waitFor(() => expect(backend.requestsTo('GET', '/auth/me').length).toBeGreaterThan(probesBefore));
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(screen.queryByRole('heading', { name: 'Sign in' })).toBeNull();
@@ -123,7 +131,8 @@ describe('console sign-in', () => {
     await signInWithPassword('admin', 'correct horse');
     await screen.findByText('Ada Admin');
     backend.state.session = null;
-    fireEvent.click(screen.getByRole('tab', { name: 'Inbox' }));
+    // Send a fax reads the console context again on entry.
+    await openPage('Faxes', 'Send a fax');
     await screen.findByRole('heading', { name: 'Sign in' });
     expect(screen.getByText('Your session has ended. Sign in again.')).toBeTruthy();
   });

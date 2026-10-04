@@ -180,13 +180,19 @@ interface SectionsProps {
   showCurrentValue: boolean;
   outbound: string;
   canWrite: boolean;
+  // Show only these sections (a console page shows its own part); all four when absent.
+  only?: DeliverySection[];
 }
 
 // The anchor the Inbox's "Email delivery settings" link opens.
 export const EMAIL_DELIVERY_SECTION = 'email-delivery';
 
+export const DELIVERY_SECTIONS = ['routes', 'direct', 'intake', 'email'] as const;
+export type DeliverySection = typeof DELIVERY_SECTIONS[number];
+
 // The Delivery routes, Direct delivery, Intake defaults and Email delivery sections of Settings.
-export function DeliverySettingsSections({ client, settings, form, loaded, onChange, showCurrentValue, outbound, canWrite }: SectionsProps) {
+export function DeliverySettingsSections({ client, settings, form, loaded, onChange, showCurrentValue, outbound, canWrite, only }: SectionsProps) {
+  const shows = (section: DeliverySection) => !only || only.includes(section);
   const [card, setCard] = useState<string | null>(null);
   const [cardError, setCardError] = useState<unknown>(null);
   const [cardBusy, setCardBusy] = useState(false);
@@ -215,7 +221,7 @@ export function DeliverySettingsSections({ client, settings, form, loaded, onCha
 
   return (
     <>
-      {settings.routing && (
+      {settings.routing && shows('routes') && (
         <ResponsiveFormSection title="Delivery routes" subtitle="Other providers a fax may use, and how reliable a route must be."
           icon={<AltRouteIcon />}>
           <RouteOrderEditor value={form.outbound_routes} onChange={(next) => onChange('outbound_routes', next)}
@@ -226,7 +232,7 @@ export function DeliverySettingsSections({ client, settings, form, loaded, onCha
         </ResponsiveFormSection>
       )}
 
-      {settings.direct && (
+      {settings.direct && shows('direct') && (
         <ResponsiveFormSection title="Direct delivery" subtitle="Exchange documents with other Faxbot installations, with no fax call."
           icon={<HandshakeIcon />}>
           <SwitchField label="Use direct delivery" checked={Boolean(form.direct_delivery_enabled)}
@@ -247,8 +253,9 @@ export function DeliverySettingsSections({ client, settings, form, loaded, onCha
         </ResponsiveFormSection>
       )}
 
+      {(shows('intake') || shows('email')) && (
       <Box id={EMAIL_DELIVERY_SECTION} sx={{ scrollMarginTop: 80 }}>
-      {settings.intake && (
+      {settings.intake && shows('intake') && (
         <ResponsiveFormSection title="Intake defaults"
           subtitle="Email delivery for received faxes, set for the whole installation. It appears under Email delivery below and is changed only here; changes take effect within a few minutes."
           icon={<MoveToInboxIcon />}>
@@ -272,8 +279,9 @@ export function DeliverySettingsSections({ client, settings, form, loaded, onCha
           {text('Subject', 'intake_email_subject', SUBJECT_HELP)}
         </ResponsiveFormSection>
       )}
-      <EmailDelivery client={client} canWrite={canWrite} />
+      {shows('email') && <EmailDelivery client={client} canWrite={canWrite} />}
       </Box>
+      )}
 
       <DirectCardDialog card={card} onClose={() => setCard(null)} onCopied={() => { setCard(null); setNotice('Card copied.'); }} />
     </>

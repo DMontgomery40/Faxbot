@@ -6,7 +6,7 @@ import AdminAPIClient from '../api/client';
 import type { WorkItem } from '../api/types';
 import Work from '../components/Work';
 import { duplicateSentence, OPERATIONAL_TARGET, shortTime, targetLabel, workStateSentence } from '../components/work/text';
-import { visibleTopTabs } from '../navigation';
+import { visibleNavigation } from '../navigation';
 import { server } from '../test/server';
 
 const client = () => new AdminAPIClient({ kind: 'key', key: 'synthetic-key' });
@@ -37,12 +37,12 @@ describe('work sentences', () => {
       .toEqual(['Installation target', 'No target', '1 hour', '8 hours']);
   });
 
-  it('places Work between Inbox and Settings only for people who can read work', () => {
+  it('places Work after Received under Faxes only for people who can read work', () => {
     const permissions = new Set<string>();
-    expect(visibleTopTabs(permissions, { send: false, jobs: false, inbox: true, work: true }, false))
-      .toEqual(['inbox', 'work', 'settings']);
-    expect(visibleTopTabs(permissions, { send: false, jobs: false, inbox: true, work: false }, false))
-      .toEqual(['inbox', 'settings']);
+    const faxPages = (work: boolean) => visibleNavigation(permissions, { send: false, jobs: false, inbox: true, work }, { pluginsEnabled: false })
+      .find((area) => area.id === 'faxes')?.pages.map((page) => page.id);
+    expect(faxPages(true)).toEqual(['received', 'work']);
+    expect(faxPages(false)).toEqual(['received']);
   });
 });
 
