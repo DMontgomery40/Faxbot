@@ -933,6 +933,11 @@ export class AdminAPIClient {
     return this.json(`/routing/faxes/${id(jobId)}/cost`);
   }
 
+  // Costs for several sent faxes at once, for the Sent list; faxes this person cannot read are left out.
+  async getFaxCosts(jobIds: string[]): Promise<{ costs: Record<string, FaxCost> }> {
+    return this.json(`/routing/fax-costs${query({ ids: jobIds.join(',') })}`);
+  }
+
   // Sending short faxes to the same number together in one call.
   async getBatching(number: string): Promise<BatchingNumber> {
     return this.json(`/batching/numbers/${id(number)}`);

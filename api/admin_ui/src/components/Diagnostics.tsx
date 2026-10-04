@@ -335,7 +335,7 @@ function Diagnostics({ client, onNavigate, docsBase }: DiagnosticsProps) {
               {loading ? 'Running…' : 'Run Diagnostics'}
             </Button>
             <Button variant="outlined" startIcon={restartState === 'pending' ? <CircularProgress size={20} color="inherit" /> : <RestartIcon />} onClick={requestRestart} disabled={restartState === 'pending'} size={isSmallMobile ? 'medium' : 'large'} sx={{ borderRadius: 2 }}>
-              {restartState === 'pending' ? 'Requesting…' : 'Restart API'}
+              {restartState === 'pending' ? 'Requesting…' : 'Restart Faxbot'}
             </Button>
           </Box>
         </Box>
@@ -411,7 +411,7 @@ function Diagnostics({ client, onNavigate, docsBase }: DiagnosticsProps) {
               <ResponsiveFormSection title="Test a fax through Send" subtitle="Choose your own document and destination" icon={<SendIcon />}>
                 <Stack spacing={2}>
                   <Typography variant="body2" color="text.secondary">
-                    Send a test fax to a number you control, then follow it in Jobs.
+                    Send a test fax to a number you control, then follow it in Sent.
                   </Typography>
                   <Box>
                     <Button variant="outlined" startIcon={<SendIcon />} onClick={() => onNavigate?.('send')} disabled={!onNavigate} sx={{ borderRadius: 2 }}>Open Send</Button>

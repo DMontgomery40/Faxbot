@@ -178,9 +178,9 @@ describe('Overview', () => {
     const expected: Array<[string, string, string]> = [
       ['failed', '3', 'faxes/sent'],
       ['uncertain', '1', 'faxes/sent'],
-      ['unassigned', '2', 'faxes/work'],
-      ['overdue', '1', 'faxes/work'],
-      ['not-delivered', '4', 'faxes/received'],
+      ['unassigned', '2', 'faxes/received?show=waiting'],
+      ['overdue', '1', 'faxes/received?show=overdue'],
+      ['not-delivered', '4', 'faxes/received?show=not-delivered'],
       ['unrecorded', '3', 'costs/spending'],
     ];
     for (const [key, count, destination] of expected) {

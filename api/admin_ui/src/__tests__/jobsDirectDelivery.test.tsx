@@ -46,12 +46,12 @@ function jobServer(state: string, detail: ReturnType<typeof delivery>, direct: R
 async function openJob() {
   render(<JobsList client={client()} />);
   fireEvent.click(await screen.findByText('+15550100001'));
-  const dialog = await screen.findByRole('dialog', { name: 'Job Details' });
-  await within(dialog).findByText('Delivery Events');
+  const dialog = await screen.findByRole('dialog', { name: 'Fax details' });
+  await within(dialog).findByText('What happened');
   return dialog;
 }
 
-const ATTACH = 'Attach Confirmed Provider Fax ID';
+const ATTACH = 'Confirm receipt';
 
 describe('Job Details for direct delivery', () => {
   it('waits for the partner instead of offering a provider fax ID', async () => {
@@ -108,7 +108,7 @@ describe('Jobs list wording', () => {
     expect(within(table).getByText('SIP trunk (Asterisk)')).toBeTruthy();
     expect(within(table).queryByText(/^sip$|Backend|Job ID|[0-9a-f]{8}\.\.\./)).toBeNull();
     fireEvent.click(within(table).getByText('+15550100001'));
-    const dialog = await screen.findByRole('dialog', { name: 'Job Details' });
+    const dialog = await screen.findByRole('dialog', { name: 'Fax details' });
     expect(within(dialog).getByText(JOB)).toBeTruthy();
     expect(within(dialog).getByText('SIP trunk (Asterisk)')).toBeTruthy();
   });
@@ -131,7 +131,7 @@ describe('Jobs list wording', () => {
     ]), provider_id: 'sip', profile_id: 'bd26f4bd-011a-4e14-9d1f-052975afafa4' };
     jobServer('reconciliation_required', detail, () => HttpResponse.json({ deliveries: [] }));
     const dialog = await openJob();
-    expect(within(dialog).getByText('Original Provider').closest('li')?.textContent).toContain('SIP trunk (Asterisk)');
+    expect(within(dialog).getByText('Original provider').closest('li')?.textContent).toContain('SIP trunk (Asterisk)');
     expect(within(dialog).queryByText(/Original Provider Account|bd26f4bd|principal:|Operator:/)).toBeNull();
     expect(within(dialog).getByText(/Provider fax ID: FAX-123/)).toBeTruthy();
   });
@@ -140,8 +140,70 @@ describe('Jobs list wording', () => {
     jobServer('ready', delivery('ready', 'att-1', false, []), () => HttpResponse.json({ deliveries: [] }));
     const opened = vi.fn();
     render(<JobsList client={client()} openJobId={JOB} onOpened={opened} />);
-    const dialog = await screen.findByRole('dialog', { name: 'Job Details' });
+    const dialog = await screen.findByRole('dialog', { name: 'Fax details' });
     expect(await within(dialog).findByText(JOB)).toBeTruthy();
     expect(opened).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('Sent', () => {
+  const OTHER = 'b'.repeat(32);
+
+  it('lists each fax with its route and cost, saying "estimate" until the carrier reports', async () => {
+    server.use(
+      http.get('/admin/fax-jobs', () => HttpResponse.json({ total: 2, jobs: [
+        { ...job('success'), backend: 'sip' }, { ...job('success'), id: OTHER, to_number: '+15550100002' },
+      ] })),
+      http.get('/routing/fax-costs', ({ request }) => {
+        expect(new URL(request.url).searchParams.get('ids')).toBe(`${JOB},${OTHER}`);
+        return HttpResponse.json({ costs: {
+          [JOB]: { state: 'reported', summary: 'Telnyx charged $0.005 for this call.', reported_cost: [{ currency: 'USD', amount: '0.005' }], estimated_cost: [] },
+          [OTHER]: { state: 'waiting', summary: 'Cost not reported yet.', reported_cost: [], estimated_cost: [{ currency: 'USD', amount: '0.07' }] },
+        } });
+      }),
+    );
+    const send = vi.fn();
+    render(<JobsList client={client()} onSendFax={send} />);
+    expect(await screen.findByRole('heading', { name: 'Sent' })).toBeTruthy();
+    for (const name of ['To', 'Status', 'Route', 'Pages', 'Cost', 'Created', 'Updated']) {
+      expect(screen.getByRole('columnheader', { name })).toBeTruthy();
+    }
+    const charged = (await screen.findByText('$0.005')).closest('tr') as HTMLElement;
+    expect(within(charged).getByText('SIP trunk (Asterisk)')).toBeTruthy();
+    expect(within(charged).getByText('$0.005').getAttribute('title')).toBe('Telnyx charged $0.005 for this call.');
+    const estimated = (await screen.findByText('$0.07 estimate')).closest('tr') as HTMLElement;
+    expect(within(estimated).getByText('+15550100002')).toBeTruthy();
+    expect(screen.getByText('2 faxes')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Send a fax' }));
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows no Send a fax button to people who may not send', async () => {
+    render(<JobsList client={client()} />);
+    expect(await screen.findByText('No faxes sent yet.')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Send a fax' })).toBeNull();
+  });
+
+  it('explains the delivery attempts and confirms receipt with the provider fax ID, which never sends the fax again', async () => {
+    const posted: unknown[] = [];
+    const sends: unknown[] = [];
+    jobServer('reconciliation_required', delivery('reconciliation_required', 'att-1', true, []), () => HttpResponse.json({ deliveries: [] }));
+    server.use(
+      http.post(`/admin/fax-jobs/${JOB}/reconcile`, async ({ request }) => {
+        posted.push(await request.json());
+        return HttpResponse.json(delivery('reconciliation_required', 'att-1', false, [
+          event('e1', 'att-1', 'operator_identity_bound', { provider_sid: 'FAX-9' })]));
+      }),
+      http.post('/fax', () => { sends.push(true); return HttpResponse.json({}); }),
+    );
+    const dialog = await openJob();
+    expect(within(dialog).getByText('Each try to send this fax and what the provider reported, as Faxbot recorded it.')).toBeTruthy();
+    expect(within(dialog).getByText(/This never sends the fax again\./)).toBeTruthy();
+    fireEvent.change(within(dialog).getByLabelText('Provider fax ID'), { target: { value: 'FAX-9' } });
+    fireEvent.click(within(dialog).getByRole('checkbox'));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Confirm receipt' }));
+    expect(await within(dialog).findByText('Receipt confirmed. Select Refresh status to check delivery with the provider.')).toBeTruthy();
+    expect(posted).toEqual([{ expected_version: 3, provider_sid: 'FAX-9', confirm_original_account: true }]);
+    expect(sends).toEqual([]);
   });
 });

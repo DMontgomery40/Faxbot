@@ -90,7 +90,7 @@ describe('A waiting fax in Jobs', () => {
     const line = await screen.findByTestId('job-together');
     expect(line.textContent).toBe(`Waiting to go with other faxes to this number until ${formatWaitTime(later)}.`);
     fireEvent.click(screen.getByText('*******0123'));
-    const dialog = await screen.findByRole('dialog', { name: 'Job Details' });
+    const dialog = await screen.findByRole('dialog', { name: 'Fax details' });
     fireEvent.click(await within(dialog).findByRole('button', { name: 'Send now' }));
     await waitFor(() => expect(released).toBe(true));
     expect(await within(dialog).findByText('Going now with the faxes waiting for this number.')).toBeTruthy();
@@ -112,7 +112,7 @@ describe('A waiting fax in Jobs', () => {
     render(<JobsList client={client()} />);
     expect((await screen.findByTestId('job-together')).textContent).toBe('Sent in one call with 2 other faxes.');
     fireEvent.click(screen.getByText('*******0123'));
-    const dialog = await screen.findByRole('dialog', { name: 'Job Details' });
+    const dialog = await screen.findByRole('dialog', { name: 'Fax details' });
     expect(await within(dialog).findByText("Its share of the call's charge, split by pages: $0.002 of $0.005.")).toBeTruthy();
     expect(within(dialog).getByText('Its separator page says Faxbot cccccccc (document 2 of 3).')).toBeTruthy();
     expect(within(dialog).getByText('Going in one call with other faxes to this number')).toBeTruthy();

@@ -218,7 +218,7 @@ describe('Send follows the installation country', () => {
     await send('2015550123', document());
     expect(await screen.findByText('Fax queued for +12015550123.')).toBeTruthy();
     expect(screen.queryByText(/Job ID|cccccccc/)).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'Follow it in Jobs' }));
+    fireEvent.click(screen.getByRole('button', { name: 'See it in Sent' }));
     expect(opened).toHaveBeenCalledWith(id);
   });
 
@@ -228,7 +228,38 @@ describe('Send follows the installation country', () => {
     openFor(us);
     await send('2015550123', document());
     expect(await screen.findByText(detail)).toBeTruthy();
-    expect(screen.queryByText(/HTTP|Check Jobs/)).toBeNull();
+    expect(screen.queryByText(/HTTP|Check Jobs|Check Sent/)).toBeNull();
     expect(window.sessionStorage.getItem('faxbot_pending_send')).toBeNull();
+  });
+});
+
+describe('Before sending', () => {
+  it('shows the route Faxbot will use for the number and what one page is estimated to cost', async () => {
+    const asked: string[] = [];
+    server.use(http.get('/routing/destinations/:number', ({ params }) => {
+      asked.push(String(params.number));
+      return HttpResponse.json({ number: params.number, display_name: null, notes: null, preferred_route: null,
+        accepts_references: false, version: 0, routes: [], estimated_cost_30_days: [], direct_partner: null, available_routes: [],
+        recommended_routes: [{ route: 'phaxio', label: 'Phaxio', reason: 'cheapest',
+          explanation: 'Faxbot picks the cheapest route that works reliably.',
+          estimated_cost_one_page: { currency: 'USD', amount: '0.07' }, included_in_plan: false, monthly_fee: null }] });
+    }));
+    openSend();
+    fireEvent.change(screen.getByRole('textbox', { name: /Destination Number/ }), { target: { value: '+12025550123' } });
+    const route = await screen.findByTestId('send-route', {}, { timeout: 2000 });
+    expect(route.textContent).toContain('Faxbot will send it through Phaxio.');
+    expect(route.textContent).toContain('Faxbot picks the cheapest route that works reliably.');
+    expect(route.textContent).toContain('Estimated cost: $0.07 a page.');
+    expect(asked).toEqual(['+12025550123']);
+    expect(screen.getByRole('heading', { name: 'Send a fax' })).toBeTruthy();
+  });
+
+  it('sends without a route line when the number has no recommendation or routing is not readable', async () => {
+    server.use(http.get('/routing/destinations/:number', () => HttpResponse.json({ detail: 'Forbidden' }, { status: 403 })));
+    openSend();
+    fireEvent.change(screen.getByRole('textbox', { name: /Destination Number/ }), { target: { value: '+12025550123' } });
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    expect(screen.queryByTestId('send-route')).toBeNull();
+    expect(screen.queryByText(/Forbidden|couldn't/)).toBeNull();
   });
 });

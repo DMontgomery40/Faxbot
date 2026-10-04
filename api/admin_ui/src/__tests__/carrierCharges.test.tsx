@@ -6,7 +6,7 @@ import { http, HttpResponse } from 'msw';
 import AdminAPIClient from '../api/client';
 import Dashboard from '../components/Dashboard';
 import DeliveryRoutes from '../components/DeliveryRoutes';
-import Inbound from '../components/Inbound';
+import Received from '../components/Received';
 import JobsList from '../components/JobsList';
 import { localToday } from '../components/delivery/RateCards';
 import { server } from '../test/server';
@@ -78,7 +78,7 @@ describe('Delivery routes spending', () => {
     expect(within(inbound).getByText('1 call could not be matched to one Telnyx record, so its cost is unknown.')).toBeTruthy();
     expect(within(inbound).getByText(/5 calls, 3 faxes received, 3 minutes/)).toBeTruthy();
     expect(within(inbound).getByText('Telnyx billed 1 call Faxbot has no record of: $0.0032.')).toBeTruthy();
-    expect(within(inbound).getByText('1 call reached Faxbot without a call record; its fax is in the Inbox.')).toBeTruthy();
+    expect(within(inbound).getByText('1 call came in that Faxbot did not record at the time; its fax is in Received.')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Check Telnyx charges now' }));
     expect(await screen.findByText('Checked 4 calls: 4 new charges recorded.')).toBeTruthy();
     expect(posts).toHaveLength(1);
@@ -165,7 +165,7 @@ describe('Job Details cost', () => {
     );
     render(<JobsList client={client()} />);
     fireEvent.click(await screen.findByText('+15550100001'));
-    const dialog = await screen.findByRole('dialog', { name: 'Job Details' });
+    const dialog = await screen.findByRole('dialog', { name: 'Fax details' });
     expect(await within(dialog).findByText('Telnyx charged $0.005 for this call.')).toBeTruthy();
     expect(within(dialog).getByText('Cost')).toBeTruthy();
   });
@@ -188,7 +188,7 @@ describe('Inbox cost', () => {
         } });
       }),
     );
-    render(<Inbound client={client()} inboundEnabled permissions={operator} />);
+    render(<Received client={client()} inboundEnabled permissions={operator} />);
     const first = (await screen.findByText('********1111')).closest('tr') as HTMLElement;
     expect(await within(first).findByText('Telnyx charged $0.0032 for this call.')).toBeTruthy();
     const second = screen.getByText('********2222').closest('tr') as HTMLElement;
@@ -202,8 +202,8 @@ describe('Inbox cost', () => {
       http.get('/inbound', () => HttpResponse.json([])),
       http.get('/routing/inbound-costs', () => { asked.push('asked'); return HttpResponse.json({ costs: {} }); }),
     );
-    render(<Inbound client={client()} inboundEnabled permissions={operator} />);
-    expect(await screen.findByText('No Inbound Faxes')).toBeTruthy();
+    render(<Received client={client()} inboundEnabled permissions={operator} />);
+    expect(await screen.findByText('No received faxes yet.')).toBeTruthy();
     expect(asked).toEqual([]);
   });
 });

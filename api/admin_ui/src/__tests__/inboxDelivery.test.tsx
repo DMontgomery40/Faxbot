@@ -3,7 +3,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import AdminAPIClient from '../api/client';
-import Inbound from '../components/Inbound';
+import Received from '../components/Received';
+import ReceivingAddresses from '../components/delivery/ReceivingAddresses';
 import { emailDeliveryApplies, inboundFaxStatus, inboxDeliveryStatus, providerName } from '../components/delivery/InboxDelivery';
 import { visibleNavigation } from '../navigation';
 import { formatServerTime, parseServerTime, toServerTime } from '../api/time';
@@ -63,7 +64,7 @@ const rowFor = async (from: string) => (await screen.findByText(masked(from))).c
 describe('Inbox email delivery', () => {
   it('shows each fax\'s email delivery in plain words', async () => {
     inbox();
-    render(<Inbound client={client()} inboundEnabled permissions={operator} onNavigate={() => undefined} />);
+    render(<Received client={client()} inboundEnabled permissions={operator} onNavigate={() => undefined} />);
     // One column in the fax table and one in the direct delivery table.
     expect(await screen.findAllByRole('columnheader', { name: 'Email delivery' })).toHaveLength(2);
     const delivered = await rowFor('+15550101111');
@@ -88,7 +89,7 @@ describe('Inbox email delivery', () => {
 
   it('retries a delivery that did not go through', async () => {
     const retries = inbox();
-    render(<Inbound client={client()} inboundEnabled permissions={operator} />);
+    render(<Received client={client()} inboundEnabled permissions={operator} />);
     const failed = await rowFor('+15550103333');
     fireEvent.click(within(failed).getByRole('button', { name: `Retry delivery of the fax from ${masked('+15550103333')}` }));
     expect(await screen.findByText('Faxbot will deliver it shortly.')).toBeTruthy();
@@ -99,7 +100,7 @@ describe('Inbox email delivery', () => {
   it('sends a fax that arrived before email delivery covered its number, once it does', async () => {
     const retries = inbox();
     server.use(http.get('/intake/connectors', () => HttpResponse.json({ connectors: [emailConnector(null)] })));
-    render(<Inbound client={client()} inboundEnabled permissions={operator} />);
+    render(<Received client={client()} inboundEnabled permissions={operator} />);
     const unrouted = await rowFor('+15550104444');
     fireEvent.click(within(unrouted).getByRole('button', { name: `Retry delivery of the fax from ${masked('+15550104444')}` }));
     expect(await screen.findByText('Faxbot will deliver it shortly.')).toBeTruthy();
@@ -108,7 +109,7 @@ describe('Inbox email delivery', () => {
 
   it('offers no retry to people who cannot change settings', async () => {
     inbox();
-    render(<Inbound client={client()} inboundEnabled permissions={new Set(['inbound:list', 'mailboxes:read'])} />);
+    render(<Received client={client()} inboundEnabled permissions={new Set(['inbound:list', 'mailboxes:read'])} />);
     expect(within(await rowFor('+15550103333')).getByText('Not delivered')).toBeTruthy();
     expect(screen.queryByRole('button', { name: /Retry delivery/ })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Email delivery settings' })).toBeNull();
@@ -118,7 +119,7 @@ describe('Inbox email delivery', () => {
     let asked = 0;
     inbox();
     server.use(http.get('/intake/items', () => { asked += 1; return HttpResponse.json({ detail: 'Forbidden' }, { status: 403 }); }));
-    render(<Inbound client={client()} inboundEnabled permissions={new Set(['inbound:list', 'inbound:read'])} />);
+    render(<Received client={client()} inboundEnabled permissions={new Set(['inbound:list', 'inbound:read'])} />);
     await rowFor('+15550101111');
     expect(screen.queryByRole('columnheader', { name: 'Email delivery' })).toBeNull();
     expect(screen.queryByText(/Waiting for email delivery|Forbidden|could not/i)).toBeNull();
@@ -128,7 +129,7 @@ describe('Inbox email delivery', () => {
   it('hides the column quietly if the delivery list is refused anyway', async () => {
     inbox();
     server.use(http.get('/intake/items', () => HttpResponse.json({ detail: 'Forbidden' }, { status: 403 })));
-    render(<Inbound client={client()} inboundEnabled permissions={operator} />);
+    render(<Received client={client()} inboundEnabled permissions={operator} />);
     await rowFor('+15550101111');
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(screen.queryByRole('columnheader', { name: 'Email delivery' })).toBeNull();
@@ -138,7 +139,7 @@ describe('Inbox email delivery', () => {
   it('links to the email delivery settings', async () => {
     inbox();
     const navigate = vi.fn();
-    render(<Inbound client={client()} inboundEnabled permissions={operator} onNavigate={navigate} />);
+    render(<Received client={client()} inboundEnabled permissions={operator} onNavigate={navigate} />);
     fireEvent.click(await screen.findByRole('button', { name: 'Email delivery settings' }));
     expect(navigate).toHaveBeenCalledWith('email');
   });
@@ -157,7 +158,7 @@ describe('Inbox on phones', () => {
     window.matchMedia = ((query: string) => ({ ...original(query), matches: query.includes('max-width') })) as typeof window.matchMedia;
     try {
       inbox();
-      render(<Inbound client={client()} inboundEnabled permissions={operator} />);
+      render(<Received client={client()} inboundEnabled permissions={operator} />);
       await waitFor(() => expect(screen.getAllByText('Email delivery').length).toBeGreaterThan(0));
       expect(await screen.findByText('Delivered to frontdesk@clinic.example')).toBeTruthy();
       expect(screen.queryByRole('columnheader', { name: 'Email delivery' })).toBeNull();
@@ -219,7 +220,7 @@ describe('Received fax status', () => {
         return HttpResponse.json({ ...fax(String(params.id), '+15550108888'), status: 'waiting' });
       }),
     );
-    render(<Inbound client={client()} inboundEnabled permissions={new Set([...operator, 'providers:write'])} />);
+    render(<Received client={client()} inboundEnabled permissions={new Set([...operator, 'providers:write'])} />);
     const waiting = await rowFor('+15550108888');
     expect(within(waiting).getByText('Waiting for the document from the SIP trunk.')).toBeTruthy();
     expect(within(waiting).getByText('SIP trunk (Asterisk)')).toBeTruthy();
@@ -243,7 +244,7 @@ describe('Received fax status', () => {
         can_fetch_again: true, status_text: 'Faxbot stopped trying to fetch this document; select Fetch again.' }])),
       http.get('/admin/inbound/callbacks', () => HttpResponse.json({ callbacks: [] })),
     );
-    render(<Inbound client={client()} inboundEnabled permissions={operator} />);
+    render(<Received client={client()} inboundEnabled permissions={operator} />);
     const failed = await rowFor('+15550108888');
     expect(within(failed).getByText('Not received')).toBeTruthy();
     expect(within(failed).getByText('Faxbot stopped trying to fetch this document; select Fetch again.')).toBeTruthy();
@@ -265,7 +266,7 @@ describe('Inbox wording for received faxes', () => {
 
   it('says Unknown for a number nobody reported and shows when a recovered fax arrived', async () => {
     recoveredInbox({ ready: true, message: READY });
-    render(<Inbound client={client()} inboundEnabled permissions={new Set([...operator, 'providers:read'])} />);
+    render(<Received client={client()} inboundEnabled permissions={new Set([...operator, 'providers:read'])} />);
     const row = (await screen.findAllByText('Unknown'))[0].closest('tr') as HTMLElement;
     expect(within(row).getAllByText('Unknown')).toHaveLength(2);
     const arrived = formatServerTime('2026-10-04T03:14:00');
@@ -277,7 +278,7 @@ describe('Inbox wording for received faxes', () => {
   it('shows one receiving line with a link to the trunk instead of a dialplan snippet', async () => {
     recoveredInbox({ ready: true, message: READY });
     const navigate = vi.fn();
-    render(<Inbound client={client()} inboundEnabled onNavigate={navigate} permissions={new Set([...operator, 'providers:read'])} />);
+    render(<Received client={client()} inboundEnabled onNavigate={navigate} permissions={new Set([...operator, 'providers:read'])} />);
     const status = await screen.findByTestId('sip-receiving');
     expect(status.textContent).toContain(READY);
     expect(screen.queryByText(/_internal|YOUR_SECRET|curl|dialplan/i)).toBeNull();
@@ -288,7 +289,7 @@ describe('Inbox wording for received faxes', () => {
   it('names a failed hand-over in that line', async () => {
     const sentence = 'A fax was received but could not be handed to Faxbot: Faxbot could not be reached.';
     recoveredInbox({ ready: false, message: sentence });
-    render(<Inbound client={client()} inboundEnabled permissions={new Set([...operator, 'providers:read'])} />);
+    render(<Received client={client()} inboundEnabled permissions={new Set([...operator, 'providers:read'])} />);
     expect((await screen.findByTestId('sip-receiving')).textContent).toContain(sentence);
   });
 
@@ -297,12 +298,64 @@ describe('Inbox wording for received faxes', () => {
     const original = window.matchMedia;
     window.matchMedia = ((query: string) => ({ ...original(query), matches: query.includes('max-width') })) as typeof window.matchMedia;
     try {
-      render(<Inbound client={client()} inboundEnabled permissions={new Set([...operator, 'providers:read'])} />);
+      render(<Received client={client()} inboundEnabled permissions={new Set([...operator, 'providers:read'])} />);
       const arrived = parseServerTime('2026-10-04T03:14:00')!
         .toLocaleString(undefined, { month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' });
       expect(await screen.findByText(`${arrived} · brought in later`)).toBeTruthy();
     } finally {
       window.matchMedia = original;
     }
+  });
+});
+
+describe('How received faxes reach Faxbot', () => {
+  it('offers to bring in faxes the trunk did not hand over, to people who may change providers', async () => {
+    const recovered: unknown[] = [];
+    server.use(
+      http.get('/admin/inbound/callbacks', () => HttpResponse.json({ backend: 'sip', callbacks: [],
+        receiving: { ready: true, message: 'Received faxes reach Faxbot: ready.' } })),
+      http.post('/admin/inbound/recover', () => {
+        recovered.push(true);
+        return HttpResponse.json({ found: 0, imported: 0, waiting: 0, message: 'No received faxes were waiting to be brought in.' });
+      }),
+    );
+    const { unmount } = render(<Received client={client()} inboundEnabled permissions={new Set(['inbound:list', 'providers:read'])} />);
+    expect(await screen.findByTestId('sip-receiving')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Bring in faxes that were received but not handed over' })).toBeNull();
+    unmount();
+    render(<Received client={client()} inboundEnabled permissions={new Set(['inbound:list', 'providers:read', 'providers:write'])} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Bring in faxes that were received but not handed over' }));
+    expect(await screen.findByText('No received faxes were waiting to be brought in.')).toBeTruthy();
+    expect(recovered).toHaveLength(1);
+  });
+
+  it('says when Faxbot last checked eFax, and any note about faxes still stored there', async () => {
+    server.use(
+      http.get('/admin/inbound/callbacks', () => HttpResponse.json({ backend: 'efax', callbacks: [] })),
+      http.get('/admin/inbound/efax', () => HttpResponse.json({ receiving: true, checked_at: '2026-10-04T15:05:00', problem: null,
+        pending_deletions: 1, stopped_deletions: 0, notes: ['Faxbot is still deleting 1 received fax from eFax.'] })),
+    );
+    render(<Received client={client()} inboundEnabled permissions={new Set(['inbound:list', 'providers:read'])} />);
+    const line = await screen.findByTestId('efax-receiving');
+    const at = parseServerTime('2026-10-04T15:05:00')!.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    expect(line.textContent).toBe(`Faxbot checks eFax for received faxes; it last checked at ${at}.`);
+    expect(screen.getByText('Faxbot is still deleting 1 received fax from eFax.')).toBeTruthy();
+  });
+
+  it('says in one sentence where to turn receiving on when it is off', async () => {
+    const navigate = vi.fn();
+    render(<Received client={client()} inboundEnabled={false} onNavigate={navigate} permissions={new Set(['inbound:list', 'settings:read'])} />);
+    expect(await screen.findByText('Receiving faxes is turned off. Turn it on under Providers, Sending & receiving.')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Open Sending & receiving' }));
+    expect(navigate).toHaveBeenCalledWith('providers/sending');
+  });
+
+  it('lists the addresses to give the receiving provider on Sending & receiving', async () => {
+    server.use(http.get('/admin/inbound/callbacks', () => HttpResponse.json({ backend: 'phaxio',
+      callbacks: [{ name: 'Phaxio inbound', url: 'https://fax.example/phaxio-inbound' }] })));
+    render(<ReceivingAddresses client={client()} />);
+    expect(await screen.findByText('Addresses to give your provider')).toBeTruthy();
+    expect(screen.getByText('https://fax.example/phaxio-inbound')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Copy' })).toBeTruthy();
   });
 });

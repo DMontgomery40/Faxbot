@@ -162,7 +162,7 @@ export default function EmailDelivery({ client, canWrite }: { client: AdminAPICl
       </Box>
       {editing && <ConnectorDialog connector={editing} busy={busy} error={error} onSave={(input) => void save(input)} onClose={() => setEditing(null)} />}
       <ConfirmDialog open={removing !== null} title={`Remove ${removing?.name ?? 'this email delivery'}?`} danger busy={busy} error={error}
-        text="New faxes for these numbers wait in the Inbox until another email delivery is set up."
+        text="New faxes for these numbers stay in your received faxes until another email delivery is set up."
         confirmLabel="Remove" onConfirm={() => void remove()} onCancel={() => setRemoving(null)} />
     </ResponsiveFormSection>
   );
