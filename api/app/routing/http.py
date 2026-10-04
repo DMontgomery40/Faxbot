@@ -475,6 +475,31 @@ async def list_rate_cards(request: Request):
     return {'cards': [_card_view(card) for card in cards]}
 
 
+@router.get('/published-plans', dependencies=[Depends(require_permission('settings:read'))])
+async def published_plans(provider_id: str, request: Request):
+    """A provider's published plans for the installation country, where its API has no published price."""
+    from .reference import suggestion
+    country = request.scope['faxbot.configuration'].active.values.fax_default_country
+    found = await run_lifecycle_step(lambda: suggestion(provider_id.strip().lower()[:64], country))
+    if found is None:
+        raise HTTPException(404, detail='Faxbot knows no published plans for this provider.')
+    return found
+
+
+@router.get('/published-plans/in-use', dependencies=[Depends(require_permission('settings:read'))])
+async def published_plans_in_use(request: Request):
+    """Published plans for each sending provider in use with no sending rate card yet, such as eFax."""
+    from .reference import suggestion
+    values = request.scope['faxbot.configuration'].active.values
+    cards = await _call(_store(request).current_cards)
+    priced = {card.provider_id for card in cards if card.direction == 'outbound'}
+    sending = [provider for provider in dict.fromkeys([values.effective_outbound, *values.outbound_route_providers])
+               if provider and provider not in priced]
+    country = values.fax_default_country
+    found = await run_lifecycle_step(lambda: [suggestion(provider, country) for provider in sending])
+    return {'items': [item for item in found if item is not None]}
+
+
 @router.put('/rate-cards', dependencies=[Depends(require_permission('settings:write'))])
 async def put_rate_cards(payload: RateCardsIn, request: Request):
     try:

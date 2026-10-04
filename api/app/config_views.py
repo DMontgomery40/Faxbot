@@ -88,6 +88,18 @@ def project_admin_settings(snapshot: ConfigurationSnapshot, pending_fields: Iter
             'from_number': values.humblefax_from_number,
             'configured': bool(values.humblefax_access_key and values.humblefax_secret_key),
         },
+        'efax': {
+            'app_id': mask_secret(values.efax_app_id),
+            'api_key': mask_secret(values.efax_api_key),
+            'user_id': mask_secret(values.efax_user_id),
+            'caller_id': values.efax_caller_id,
+            'csid': values.efax_csid,
+            'poll_seconds': values.efax_poll_seconds,
+            'delete_after_download': values.efax_delete_after_download,
+            'webhook_secret': mask_secret(values.efax_webhook_secret),
+            'webhook_secret_set': bool(values.efax_webhook_secret),
+            'configured': bool(values.efax_app_id and values.efax_api_key and values.efax_user_id),
+        },
         'sinch': {
             'project_id': values.sinch_project_id,
             'base_url': values.sinch_base_url,

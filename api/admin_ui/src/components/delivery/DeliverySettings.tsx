@@ -82,6 +82,7 @@ export function providersSetUp(values: Values, sipPasswordIsDefault: boolean): s
   if (filled('signalwire_space_url', 'signalwire_project_id', 'signalwire_api_token')) result.push('signalwire');
   if (filled('documo_api_key')) result.push('documo');
   if (filled('humblefax_access_key', 'humblefax_secret_key')) result.push('humblefax');
+  if (filled('efax_app_id', 'efax_api_key', 'efax_user_id')) result.push('efax');
   if (filled('ami_username', 'ami_password') && !sipPasswordIsDefault) result.push('sip');
   for (const field of ['backend', 'outbound_backend', 'inbound_backend']) {
     if (values[field] === 'freeswitch' && !result.includes('freeswitch')) result.push('freeswitch');

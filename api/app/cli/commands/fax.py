@@ -273,7 +273,15 @@ def _inbound_fields(item):
             ('Sent', local_time(item.get('source_received_at'))),
             ('Received', _arrived(item)),
             *([('Brought in', local_time(item.get('received_at')))] if item.get('recovered') else []),
-            ('Document', _document(item)), ('Test fax', yes_no(bool(item.get('is_test'))))]
+            ('Document', _document(item)), ('Test fax', yes_no(bool(item.get('is_test')))),
+            *([('Provider copy', item['provider_note'])] if item.get('provider_note') else [])]
+
+
+def _provider_copies(items):
+    """One sentence for received faxes still stored at eFax, as the eFax settings section says it."""
+    from ...efax_service import PENDING_DELETION_NOTE, STOPPED_DELETION_NOTE, deletion_sentences
+    notes = [item.get('provider_note') for item in items]
+    return deletion_sentences(notes.count(PENDING_DELETION_NOTE), notes.count(STOPPED_DELETION_NOTE))
 
 
 @inbound.command('list')
@@ -284,11 +292,17 @@ def inbound_list(to_number: str = typer.Option(None, '--to', help='Only faxes se
                  ids: bool = typer.Option(False, '--ids', help='Also show received fax IDs, for inbound get and pdf.')):
     """List received faxes you can see."""
     items = state.api().get('/inbound', params={'to_number': to_number, 'status': status_filter, 'mailbox': mailbox})
-    state.out().result(items, lambda out: out.table(
-        (['Received fax ID'] if ids else []) + ['From', 'To', 'Status', 'Pages', 'Mailbox', 'Received'],
-        [([item['id']] if ids else []) + [item.get('fr') or 'Unknown', item.get('to') or 'Unknown',
-                                          _inbound_status(item), item.get('pages'), item.get('mailbox'), _arrived(item)]
-         for item in items], empty='No received faxes.'))
+
+    def human(out):
+        out.table(
+            (['Received fax ID'] if ids else []) + ['From', 'To', 'Status', 'Pages', 'Mailbox', 'Received'],
+            [([item['id']] if ids else []) + [item.get('fr') or 'Unknown', item.get('to') or 'Unknown',
+                                              _inbound_status(item), item.get('pages'), item.get('mailbox'),
+                                              _arrived(item)]
+             for item in items], empty='No received faxes.')
+        for sentence in _provider_copies(items):
+            out.line(sentence)
+    state.out().result(items, human)
 
 
 @inbound.command('get')

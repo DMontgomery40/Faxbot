@@ -162,6 +162,18 @@ export interface Settings {
     from_number: string;
     configured: boolean;
   };
+  efax?: {
+    app_id: string;
+    api_key: string;
+    user_id: string;
+    caller_id: string;
+    csid: string;
+    poll_seconds: number;
+    delete_after_download: boolean;
+    webhook_secret?: string;
+    webhook_secret_set?: boolean;
+    configured: boolean;
+  };
   sinch: {
     project_id: string;
     base_url?: string;
@@ -392,6 +404,8 @@ export interface InboundFax {
   can_fetch_again?: boolean;
   // Brought in later from an image the fax engine could not hand over.
   recovered?: boolean;
+  // A sentence about the provider's own copy, such as an eFax deletion Faxbot is still retrying.
+  provider_note?: string | null;
 }
 
 // Tunnel types
@@ -657,4 +671,14 @@ export interface ImportResult {
   import_id: string;
   inbound_id: string;
   status: 'received' | 'duplicate';
+}
+
+// GET /admin/inbound/efax: Faxbot checking eFax for received faxes, and copies left at eFax.
+export interface EfaxStatus {
+  receiving: boolean;
+  checked_at: string | null;
+  problem: string | null;
+  pending_deletions: number;
+  stopped_deletions: number;
+  notes: string[];
 }

@@ -507,7 +507,8 @@ def test_repository_base_keeps_known_builtin_definitions(tmp_path):
     repository = Path(__file__).resolve().parents[2]
     catalog = catalog_module().ProviderCatalog.load(
         repository / "config" / "provider_traits.json", tmp_path / "providers")
-    assert catalog.provider_ids == frozenset({"phaxio", "sinch", "signalwire", "documo", "humblefax", "sip", "freeswitch"})
+    assert catalog.provider_ids == frozenset({"phaxio", "sinch", "signalwire", "documo", "humblefax", "efax", "sip",
+                                              "freeswitch"})
     assert catalog.get("sip").traits.as_dict()["requires_tiff"] is True
     assert catalog.get("sip").kind == "self_hosted"
     assert catalog.get("phaxio").traits.as_dict()["inbound_verification"] == "hmac"

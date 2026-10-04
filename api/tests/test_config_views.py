@@ -124,6 +124,7 @@ def test_empty_credentials_are_empty_and_all_nonempty_credentials_have_opaque_ma
 MASKED_PATHS = {
     'security.api_key', 'phaxio.api_key', 'phaxio.api_secret', 'phaxio.callback_token', 'sinch.api_key',
     'sinch.api_secret', 'documo.api_key', 'humblefax.access_key', 'humblefax.secret_key', 'signalwire.api_token',
+    'efax.app_id', 'efax.api_key', 'efax.user_id', 'efax.webhook_secret',
     'signalwire.webhook_signing_key', 'sip.ami_password', 'sip.trunk.password', 'sip.telnyx_api_key', 'fs.esl_password',
     'inbound.sip.asterisk_secret', 'inbound.sinch.basic_pass', 'inbound.sinch.hmac_secret', 'intake.smtp_password',
     'database.url',

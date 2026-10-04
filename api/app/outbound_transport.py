@@ -71,6 +71,9 @@ class PreparedSubmission:
         if pid == 'humblefax':
             # The attempt identity lets an operator find this fax in HumbleFax history.
             return _receipt(await self.service.send_fax_file(to, self.pdf_path, uuid=self.claim.attempt_id))
+        if pid == 'efax':
+            # The attempt identity is eFax's client_reference_id, so a person can find this fax there.
+            return _receipt(await self.service.send_fax_file(to, self.pdf_path, reference=self.claim.attempt_id))
         if pid == 'sip':
             await self.ami.originate_sendfax(self.claim.job_id, to, self.tiff_path,
                 attempt_id=self.claim.attempt_id)
@@ -155,6 +158,13 @@ class CapturedTransport:
             except ValueError:
                 # HumbleFax sends only to US/Canadian numbers; refuse before submission.
                 raise PreparationFailure('preparation_failed') from None
+        if manifest is None and pid == 'efax':
+            from .efax_service import EfaxError
+            try:
+                # Sign in before the fax is marked as sent: a refused key is a definite failure, not an uncertain send.
+                await service.authenticate()
+            except (EfaxError, ValueError):
+                raise PreparationFailure('provider_unavailable') from None
         # Multipart manifests consume the already prepared local PDF. Other
         # HTTP templates can refer to the captured, tokenized media capability.
         needs_url = pid in {'phaxio', 'signalwire'} and manifest is None

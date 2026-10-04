@@ -761,6 +761,7 @@ def get_admin_config(request: Request, identity=Depends(require_identity)):
             "signalwire": bool(values.signalwire_space_url and values.signalwire_project_id and values.signalwire_api_token),
             "documo": bool(values.documo_api_key),
             "humblefax": bool(values.humblefax_access_key and values.humblefax_secret_key),
+            "efax": bool(values.efax_app_id and values.efax_api_key and values.efax_user_id),
             "sip_ami_configured": bool(values.ami_username and values.ami_password),
             "sip_ami_password_default": (values.ami_password == "changeme"),
         },
@@ -820,6 +821,9 @@ class ValidateSettingsRequest(BaseModel):
     ami_port: Optional[int] = None
     ami_username: Optional[str] = None
     ami_password: Optional[str] = None
+    efax_app_id: Optional[str] = None
+    efax_api_key: Optional[str] = None
+    efax_user_id: Optional[str] = None
 
 
 _PERMISSION_RESPONSES = {status: _PUBLIC_DETAIL_RESPONSES[status] for status in (401, 403, 429, 503)}
@@ -853,6 +857,19 @@ async def validate_settings(payload: ValidateSettingsRequest):
         results["checks"]["auth"] = bool(
             payload.sinch_project_id and payload.sinch_api_key and payload.sinch_api_secret
         )
+    elif payload.backend == "efax":
+        # GET /health needs no sign-in; a sign-in with the given keys proves them without sending a fax.
+        from .efax_service import EfaxError, EfaxFaxService
+        results["checks"]["api_answering"] = await EfaxFaxService("", "", "").health()
+        if payload.efax_app_id and payload.efax_api_key and payload.efax_user_id:
+            try:
+                await EfaxFaxService(payload.efax_app_id, payload.efax_api_key, payload.efax_user_id).authenticate()
+                results["checks"]["auth"] = True
+            except (EfaxError, ValueError) as error:
+                results["checks"]["auth"] = False
+                results["checks"]["error"] = str(error)
+        else:
+            results["checks"]["auth"] = False
     elif payload.backend == "sip":
         if all([payload.ami_host, payload.ami_username, payload.ami_password]):
             try:
@@ -1755,6 +1772,12 @@ def admin_inbound_callbacks(request: Request):
                 "hmac": bool(settings.sinch_inbound_hmac_secret),
             },
             "notes": "Set this as the incoming fax webhook in Sinch. Without basic auth, Faxbot confirms each fax with Sinch first.",
+        })
+    elif backend == "efax" and settings.efax_webhook_secret:
+        out["callbacks"].append({
+            "name": "eFax notification",
+            "url": f"{base}/efax-inbound",
+            "notes": "Optional. Give eFax this address with the notification secret; Faxbot then checks eFax at once.",
         })
     elif backend == "signalwire":
         out["callbacks"].append({
@@ -2680,6 +2703,8 @@ class InboundFaxOut(BaseModel):
     # Brought in later from an image the fax engine stored but could not hand over;
     # source_received_at is then the image's modification time.
     recovered: bool = False
+    # A sentence about the provider's own copy, such as an eFax deletion Faxbot is still retrying.
+    provider_note: Optional[str] = None
 
 
 def _inbound_pdf_response(inbound_id: str, pdf_path: Optional[str], method: str, status: Optional[str] = "received"):
@@ -2839,6 +2864,15 @@ def _installed_plugins(snapshot=None) -> list[dict[str, Any]]:
         "categories": ["outbound"],
         "capabilities": ["send", "get_status"],
         "enabled": (current == "humblefax"),
+        "configurable": True,
+    })
+    items.append({
+        "id": "efax",
+        "name": "eFax",
+        "version": "1.0.0",
+        "categories": ["outbound"],
+        "capabilities": ["send", "get_status", "receive"],
+        "enabled": (current == "efax"),
         "configurable": True,
     })
     items.append({

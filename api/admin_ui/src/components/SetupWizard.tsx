@@ -13,6 +13,7 @@ import SecretInput from './common/SecretInput';
 import EnvSetField, { environmentManaged } from './common/EnvSetField';
 import RestartNotice, { RESTARTED } from './common/RestartFaxbot';
 import SipTrunkSettings from './SipTrunkSettings';
+import EfaxSettings, { EFAX_FIELDS, efaxEditorValues } from './EfaxSettings';
 import { COUNTRY_HELP, CountryField, settingsNumberFormat } from './common/numbers';
 import WizardTestFax from './WizardTestFax';
 import { directionSummary, providerLabel } from '../providerLabels';
@@ -59,6 +60,8 @@ const credentialFields: Record<string, CredentialField[]> = {
     { key: 'humblefax_secret_key', label: 'Secret Key', secret: true },
     { key: 'humblefax_from_number', label: 'From Number (optional)', helper: 'Leave empty to use the account default number.' },
   ],
+  // eFax has its own section (EfaxSettings).
+  efax: [],
   freeswitch: [
     { key: 'fs_gateway_name', label: 'Gateway Name' },
     { key: 'fs_caller_id_number', label: 'Caller ID Number' },
@@ -110,6 +113,7 @@ function editorValues(data: Settings): WizardConfig {
     humblefax_access_key: data.humblefax?.access_key ?? '',
     humblefax_secret_key: data.humblefax?.secret_key ?? '',
     humblefax_from_number: data.humblefax?.from_number ?? '',
+    ...efaxEditorValues(data),
     ami_host: data.sip.ami_host,
     ami_port: data.sip.ami_port,
     ami_username: data.sip.ami_username,
@@ -127,7 +131,8 @@ function stepFields(step: number, data: Settings | null): string[] {
   if (step === 0) return [...PROVIDER_FIELDS, 'fax_default_country'];
   if (step === 1) {
     return ['public_api_url', 'phaxio_verify_signature', 'documo_use_sandbox', STATION_FIELD.key,
-      ...Object.values(credentialFields).flat().map(field => field.key), ...amiFields.map(field => field.key)];
+      ...Object.values(credentialFields).flat().map(field => field.key), ...amiFields.map(field => field.key),
+      ...EFAX_FIELDS];
   }
   if (step === 2) return ['enforce_public_https', 'audit_log_enabled', 'pdf_token_ttl_minutes'];
   if (step === 3) return data ? Object.keys(deliveryEditorValues(data)) : [];
@@ -593,6 +598,8 @@ function SetupWizard({ client, onDone, docsBase, canRestart = true }: SetupWizar
           </Grid>}
           {id === 'documo' && <Grid item xs={12}><FormControlLabel control={<Switch disabled={!canEdit} checked={!!config.documo_use_sandbox} onChange={event => handleConfigChange('documo_use_sandbox', event.target.checked)} />} label="Use Documo sandbox" /></Grid>}
         </Grid>}
+        {id === 'efax' && <EfaxSettings values={config} onChange={handleConfigChange} settings={settings} disabled={!canEdit}
+          receives={roles.receives} docsHref={docsLink('efax', docsBase)} client={client} />}
         {CHECKABLE.has(id) && <Box sx={{ mt: 2 }}>
           <Button variant="outlined" onClick={() => { void handleValidate(id); }}>Check these credentials</Button>
           {renderValidation()}
@@ -616,7 +623,7 @@ function SetupWizard({ client, onDone, docsBase, canRestart = true }: SetupWizar
             </AccordionDetails>
           </Accordion>
         </>}
-        {roles.receives && id !== 'sip' && callbackDetails()}
+        {roles.receives && id !== 'sip' && id !== 'efax' && callbackDetails()}
       </>}
     </Paper>;
   };

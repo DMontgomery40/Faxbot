@@ -241,6 +241,7 @@ function Diagnostics({ client, onNavigate, docsBase }: DiagnosticsProps) {
       case 'sinch': docs.push({ text: 'Sinch setup guide', href: docsLink('sinch', docsBase) }); break;
       case 'documo': docs.push({ text: 'Documo setup guide', href: docsLink('documo', docsBase) }); break;
       case 'humblefax': docs.push({ text: 'HumbleFax setup guide', href: docsLink('humblefax', docsBase) }); break;
+      case 'efax': docs.push({ text: 'eFax setup guide', href: docsLink('efax', docsBase) }); break;
       case 'signalwire': docs.push({ text: 'SignalWire setup guide', href: docsLink('signalwire', docsBase) }); break;
       case 'freeswitch': docs.push({ text: 'FreeSWITCH setup guide', href: docsLink('freeswitch', docsBase) }); break;
       case 'sip': docs.push({ text: 'SIP trunk (Asterisk) setup guide', href: docsLink('sip', docsBase) }); break;

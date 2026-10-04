@@ -178,7 +178,7 @@ describe('Setup Wizard providers for sending and receiving', () => {
     await start(settingsFixture());
     fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Receiving' }));
     const names = within(await screen.findByRole('listbox')).getAllByRole('option').map((option) => option.textContent);
-    expect(names).toEqual(['No provider', 'Phaxio', 'Sinch', 'SIP trunk (Asterisk)']);
+    expect(names).toEqual(['No provider', 'Phaxio', 'Sinch', 'eFax', 'SIP trunk (Asterisk)']);
   });
 });
 

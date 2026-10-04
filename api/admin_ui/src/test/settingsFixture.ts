@@ -8,6 +8,8 @@ export function settingsFixture(overrides: (data: Json) => void = () => undefine
     phaxio: { api_key: '***', api_secret: '***', callback_token: '', callback_url: '', verify_signature: true, configured: true },
     documo: { api_key: '', base_url: 'https://api.documo.com', sandbox: false, configured: false },
     humblefax: { access_key: '***', secret_key: '***', from_number: '', configured: true },
+    efax: { app_id: '', api_key: '', user_id: '', caller_id: '', csid: '', poll_seconds: 60, delete_after_download: false,
+      webhook_secret: '', webhook_secret_set: false, configured: false },
     sinch: { project_id: '', base_url: '', api_key: '', api_secret: '', configured: false },
     signalwire: { space_url: '', project_id: '', api_token: '', from_fax: '', from_sms: '', callback_url: '',
       webhook_signing_key: '', status_poll_seconds: 0, configured: false },

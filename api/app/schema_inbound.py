@@ -30,8 +30,9 @@ INDEXES = (
 )
 
 
-def _definition():
-    sources = ' OR '.join(f"source = '{value}'" for value in SOURCES)
+def _definition(sources=SOURCES):
+    """The 0010 table; a later revision passes its own source list (see schema_inbound_sources)."""
+    sources = ' OR '.join(f"source = '{value}'" for value in sources)
     states = ' OR '.join(f"state = '{value}'" for value in STATES)
     return (
         sa.Column('id', sa.String(40), nullable=False),

@@ -77,6 +77,19 @@
       "outbound_status_only": false
     }
   },
+  "efax": {
+    "id": "efax",
+    "kind": "cloud",
+    "traits": {
+      "requires_ghostscript": true,
+      "requires_ami": false,
+      "requires_tiff": false,
+      "supports_inbound": true,
+      "inbound_verification": "none",
+      "needs_storage": true,
+      "outbound_status_only": false
+    }
+  },
   "sip": {
     "id": "sip",
     "kind": "self_hosted",

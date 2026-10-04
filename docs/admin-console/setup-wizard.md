@@ -18,6 +18,7 @@ Setup shows one section for each provider in use, headed **For sending: …** an
 - Sinch: Project ID, API Key and API Secret. Its direct-upload path does not need a provider-fetch PDF URL.
 - Documo: API Key and sandbox selection.
 - HumbleFax: Access Key, Secret Key and an optional From Number. HumbleFax only sends faxes, so it is not offered for receiving.
+- eFax: App ID, API key and User ID from eFax's welcome email, an optional caller ID and station name and, when eFax receives, how often Faxbot checks eFax, whether it deletes each stored fax from eFax and an optional notification secret. eFax needs no callback address; with the secret, eFax can tell Faxbot the moment a fax arrives. See [eFax](../setup/efax.md).
 - SignalWire: Space URL, Project ID, API Token and From number; configure the signing key and other shared fields in Settings.
 - SIP trunk (Asterisk): the carrier trunk form (see [SIP trunk](../setup/sip-trunk.md)), shown whenever the trunk sends or receives. **Apply and connect** saves the form, restarts Asterisk with the trunk when no call is up (Docker Compose install) and shows the trunk check on the same step: the transport Faxbot registered over, whether the carrier answers its checks, Faxbot's internet address and "No ports need to be opened or forwarded." When it sends, the **Fax station ID** is the number receiving machines show. When it receives, the step says "Received faxes reach Faxbot: ready." or what keeps them from Faxbot; the secret Asterisk sends with each received fax is created and written by Faxbot, so there is nothing to type. The fax engine connection (manager host, port, username and password) sits under **Advanced**: Faxbot creates the password the first time it starts with the SIP trunk in use and shares it with Asterisk itself (a password set in `.env` wins), so change these only for a fax engine you run yourself, and keep it on your private network.
 - FreeSWITCH: gateway and caller ID. Configure ESL and the result hook separately; Setup does not install a working telephony stack.
@@ -61,6 +62,7 @@ Finish shows what sends and what receives faxes. Every step has already saved it
 - [Sinch](../setup/sinch.md)
 - [Documo](../setup/documo.md)
 - [HumbleFax](../setup/humblefax.md)
+- [eFax](../setup/efax.md)
 - [SIP trunk (Asterisk)](../setup/sip-asterisk.md)
 - [FreeSWITCH](../setup/freeswitch.md)
 - [SignalWire](../setup/signalwire.md)

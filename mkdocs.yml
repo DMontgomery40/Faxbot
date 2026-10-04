@@ -147,6 +147,7 @@ nav:
     - Avaya IP Office and Aura: setup/avaya.md
     - Documo (mFax): setup/documo.md
     - HumbleFax: setup/humblefax.md
+    - eFax: setup/efax.md
     - SignalWire: setup/signalwire.md
     - FreeSWITCH: setup/freeswitch.md
     - Fax numbers on SIP: setup/sip-numbers.md
