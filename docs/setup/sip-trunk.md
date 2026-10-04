@@ -65,7 +65,7 @@ Carrier pages used for the presets:
 
 ## Set it up
 
-1. In the console, open **Settings**, choose **SIP/Asterisk** as the provider, and find **Carrier SIP trunk**. The setup wizard shows the same form.
+1. In the console, open the **Setup Wizard**, choose **SIP trunk (Asterisk)** for sending, receiving or both, and select **Next**. The first time, select **Restart now** when Setup asks. The next step shows the trunk form; **Settings** shows the same form under **Carrier SIP trunk**.
 2. Choose your carrier and how Faxbot signs in. Fill in the server if the carrier asks for one, then the username and password.
 3. Enter your caller ID and the fax numbers the carrier sends to this trunk.
 4. Select **Save trunk settings**, then **Apply to Asterisk**, then restart the Asterisk service (for example `docker compose restart asterisk`).
@@ -121,7 +121,7 @@ docker compose -f docker-compose.yml -f docker-compose.public.yml up -d
 
 See [Asterisk and SIP](sip-asterisk.md#carriers-that-sign-in-by-ip-address) for the ports. Keep the Asterisk manager port, 5038, private.
 
-**Apply to Asterisk** also saves the inbound secret from **Inbound Receiving**, so Asterisk can report received faxes to Faxbot.
+**Apply to Asterisk** also writes the inbound secret Asterisk sends with each received fax. Faxbot creates that secret when none is set, so there is nothing to choose; a secret set in **Inbound Receiving** or as `ASTERISK_INBOUND_SECRET` in `.env` is used instead. If a received fax cannot be handed to Faxbot, Recent calls says why and Faxbot brings the fax in once the cause is fixed (see [Receiving faxes](../operations/receiving.md#asterisk)).
 
 ## T.38
 

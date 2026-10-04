@@ -34,11 +34,18 @@ import type { SipCallRecord, SipPreset, SipTrunkSettings as TrunkValues, SipTrun
 import SecretInput from './common/SecretInput';
 import EnvSetField, { environmentManaged } from './common/EnvSetField';
 import { numberHint, numberPlaceholder, settingsNumberFormat } from './common/numbers';
+import InboundRecovery from './InboundRecovery';
 
 interface SipTrunkSettingsProps {
   client: AdminAPIClient;
   // The setup wizard shows the trunk form without the call history.
   showCalls?: boolean;
+  // The setup wizard shares its settings revision and hears about saves, so
+  // neither form is refused for the other's change.
+  revision?: string;
+  onSaved?: () => void | Promise<void>;
+  // Whether the form has changes that are not saved yet.
+  onDirtyChange?: (dirty: boolean) => void;
 }
 
 type Notice = { severity: 'success' | 'info' | 'warning' | 'error'; text: string } | null;
@@ -87,7 +94,7 @@ function failure(error: unknown, fallback: string): string {
   return fallback;
 }
 
-function SipTrunkSettings({ client, showCalls = true }: SipTrunkSettingsProps) {
+function SipTrunkSettings({ client, showCalls = true, revision: sharedRevision, onSaved, onDirtyChange }: SipTrunkSettingsProps) {
   const theme = useTheme();
   const narrow = useMediaQuery(theme.breakpoints.down('md'));
   const [presets, setPresets] = useState<SipPreset[]>([]);
@@ -105,6 +112,10 @@ function SipTrunkSettings({ client, showCalls = true }: SipTrunkSettingsProps) {
   const [passwordInEnv, setPasswordInEnv] = useState(false);
 
   const preset = useMemo(() => presets.find((item) => item.id === form.preset), [presets, form.preset]);
+  const expectedRevision = sharedRevision ?? revision;
+  const dirty = !!form.password || !!didEntry.trim() || (Object.keys(EMPTY) as Array<keyof TrunkValues>)
+    .some((key) => key !== 'password' && key !== 'password_set' && JSON.stringify(form[key]) !== JSON.stringify(saved[key]));
+  useEffect(() => { onDirtyChange?.(dirty); }, [dirty, onDirtyChange]);
 
   const load = useCallback(async () => {
     try {
@@ -156,7 +167,7 @@ function SipTrunkSettings({ client, showCalls = true }: SipTrunkSettingsProps) {
   };
 
   const save = async () => {
-    const patch: SettingsPatch = { expected_revision_id: revision };
+    const patch: SettingsPatch = { expected_revision_id: expectedRevision };
     const fields: Array<[keyof TrunkValues, string]> = [
       ['preset', 'sip_trunk_preset'], ['auth', 'sip_trunk_auth'], ['host', 'sip_trunk_host'],
       ['port', 'sip_trunk_port'], ['transport', 'sip_trunk_transport'], ['username', 'sip_trunk_username'],
@@ -185,6 +196,7 @@ function SipTrunkSettings({ client, showCalls = true }: SipTrunkSettingsProps) {
           : 'Saved. Apply the trunk to Asterisk to use it.',
       });
       await load();
+      await onSaved?.();
     } catch (error) {
       setNotice({ severity: 'error', text: failure(error, 'The trunk settings could not be saved. Try again.') });
     } finally {
@@ -219,12 +231,13 @@ function SipTrunkSettings({ client, showCalls = true }: SipTrunkSettingsProps) {
   const useAudioFax = async () => {
     setBusy(true);
     try {
-      await client.updateSettings({ expected_revision_id: revision, sip_t38_enabled: false });
+      await client.updateSettings({ expected_revision_id: expectedRevision, sip_t38_enabled: false });
       await client.applySipTrunk();
       setStatus(null);
       setNotice({ severity: 'success',
         text: 'Saved for Asterisk. Restart the Asterisk service to send and receive new faxes as audio.' });
       await load();
+      await onSaved?.();
     } catch (error) {
       setNotice({ severity: 'error', text: failure(error, 'Audio fax could not be turned on. Try again.') });
     } finally {
@@ -458,6 +471,7 @@ function SipTrunkSettings({ client, showCalls = true }: SipTrunkSettingsProps) {
             </Table>
           ))}
           {nextCursor && <Button sx={{ mt: 1 }} onClick={() => loadCalls(nextCursor)}>Show older calls</Button>}
+          <InboundRecovery client={client} onRecovered={() => { void loadCalls(); }} />
         </Box>
       )}
     </Stack>

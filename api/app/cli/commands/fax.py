@@ -8,6 +8,7 @@ from .. import state
 from ..client import segment
 from ..errors import CliError
 from ..output import local_time, parse_time, yes_no
+from ...provider_labels import provider_label
 
 jobs = typer.Typer(help='Sent faxes: list them, read details, download documents and check status.',
                    no_args_is_help=True)
@@ -205,14 +206,12 @@ def _document(item):
     return ', '.join(part for part in parts if part) or '-'
 
 
-PROVIDER_NAMES = {'sip': 'SIP trunk', 'phaxio': 'Phaxio', 'sinch': 'Sinch', 'signalwire': 'SignalWire',
-                  'documo': 'Documo', 'humblefax': 'HumbleFax', 'freeswitch': 'FreeSWITCH'}
 
 
 def _inbound_fields(item):
     return [('Received fax ID', item.get('id')), ('From', item.get('fr')), ('To', item.get('to')),
             ('Status', _inbound_status(item)), ('Problem', item.get('problem')), ('Mailbox', item.get('mailbox')),
-            ('Received through', PROVIDER_NAMES.get(item.get('backend'), item.get('backend'))),
+            ('Received through', provider_label(item.get('backend')) if item.get('backend') else None),
             ('Provider fax ID', item.get('provider_fax_id')),
             ('Sent', local_time(item.get('source_received_at'))),
             ('Received', local_time(item.get('received_at') or item.get('created_at'))),
@@ -256,6 +255,13 @@ def inbound_fetch(inbound_id: str = typer.Argument(..., help='Received fax ID.')
     item = state.api().post(f'/inbound/{segment(inbound_id)}/fetch', json={})
     state.out().result(item, lambda out: out.line('Faxbot will fetch the document shortly. Check on it with: '
                                                   f'faxbot inbound get {inbound_id}'))
+
+
+@inbound.command('recover')
+def inbound_recover():
+    """Bring in faxes the SIP trunk received but could not hand to Faxbot (Faxbot also does this every minute)."""
+    result = state.api().post('/admin/inbound/recover', json={})
+    state.out().result(result, lambda out: out.line(result['message']))
 
 
 @inbound.command('simulate')

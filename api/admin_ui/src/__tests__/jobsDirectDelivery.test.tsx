@@ -1,6 +1,6 @@
 // A fax sent by direct delivery shows the partner's answer in Job Details
 // instead of offering to attach a provider fax ID.
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import AdminAPIClient from '../api/client';
@@ -45,7 +45,7 @@ function jobServer(state: string, detail: ReturnType<typeof delivery>, direct: R
 
 async function openJob() {
   render(<JobsList client={client()} />);
-  fireEvent.click(await screen.findByText(`${JOB.slice(0, 8)}...`));
+  fireEvent.click(await screen.findByText('+15550100001'));
   const dialog = await screen.findByRole('dialog', { name: 'Job Details' });
   await within(dialog).findByText('Delivery Events');
   return dialog;
@@ -91,5 +91,34 @@ describe('Job Details for direct delivery', () => {
     const dialog = await openJob();
     expect(within(dialog).getByRole('button', { name: ATTACH })).toBeTruthy();
     expect(within(dialog).queryByText(/partner|directly/)).toBeNull();
+  });
+});
+
+describe('Jobs list wording', () => {
+  it('names the provider in words and keeps the job ID for the detail view only', async () => {
+    const sip = { ...job('success'), backend: 'sip' };
+    server.use(
+      http.get('/admin/fax-jobs', () => HttpResponse.json({ total: 1, jobs: [sip] })),
+      http.get(`/admin/fax-jobs/${JOB}`, () => HttpResponse.json(sip)),
+      http.get(`/admin/fax-jobs/${JOB}/delivery`, () => HttpResponse.json(delivery('success', 'att-1', false, []))),
+      http.get('/direct/deliveries', () => HttpResponse.json({ deliveries: [] })),
+    );
+    render(<JobsList client={client()} />);
+    const table = (await screen.findByText('+15550100001')).closest('table') as HTMLElement;
+    expect(within(table).getByText('SIP trunk (Asterisk)')).toBeTruthy();
+    expect(within(table).queryByText(/^sip$|Backend|Job ID|[0-9a-f]{8}\.\.\./)).toBeNull();
+    fireEvent.click(within(table).getByText('+15550100001'));
+    const dialog = await screen.findByRole('dialog', { name: 'Job Details' });
+    expect(within(dialog).getByText(JOB)).toBeTruthy();
+    expect(within(dialog).getByText('SIP trunk (Asterisk)')).toBeTruthy();
+  });
+
+  it('opens the fax Send just queued', async () => {
+    jobServer('ready', delivery('ready', 'att-1', false, []), () => HttpResponse.json({ deliveries: [] }));
+    const opened = vi.fn();
+    render(<JobsList client={client()} openJobId={JOB} onOpened={opened} />);
+    const dialog = await screen.findByRole('dialog', { name: 'Job Details' });
+    expect(await within(dialog).findByText(JOB)).toBeTruthy();
+    expect(opened).toHaveBeenCalledTimes(1);
   });
 });

@@ -12,13 +12,11 @@ import sqlalchemy as sa
 from .database import read_connection
 from .policy import DIRECT, RouteCandidate, RouteChoice, RoutePolicy
 from .store import destination_key
+from ..provider_labels import PROVIDER_LABELS
 
 
 MIN_ATTEMPTS = 3
-LABELS = {
-    'direct': 'Direct delivery', 'sip': 'Your SIP trunk (Asterisk)', 'freeswitch': 'Your SIP trunk (FreeSWITCH)',
-    'phaxio': 'Phaxio', 'sinch': 'Sinch', 'documo': 'Documo', 'humblefax': 'HumbleFax', 'signalwire': 'SignalWire',
-}
+LABELS = {'direct': 'Direct delivery', **PROVIDER_LABELS}
 REASON_TEXT = {
     'direct_peer': 'Delivered straight to a verified partner, with no fax call.',
     'preferred': 'You chose this route for this number.',

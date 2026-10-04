@@ -104,6 +104,13 @@ export function normalizeFaxDestination(number: string): string {
   return number.replace(/[\s\-\(\)]/g, '');
 }
 
+// The installation does not allow restarting Faxbot from the console (ADMIN_ALLOW_RESTART is off).
+export class RestartNotAllowed extends Error {
+  constructor() {
+    super("API process restart from this console is disabled for this installation. Use the installation's deployment manager to restart the service.");
+  }
+}
+
 export class AdminAPIError extends Error {
   constructor(readonly status: number, statusText: string, readonly detail: string | null = null) {
     super(`API Error: ${status} ${statusText}`);
@@ -123,6 +130,9 @@ export function plainRefusal(error: unknown): string | null {
 
 // The server refused a fax before accepting it, so nothing was sent.
 export class FaxRefusedError extends Error {}
+
+// The server's fixed refusal for plugin routes while provider plugins are turned off.
+const PLUGINS_TURNED_OFF = 'v3 plugins feature disabled';
 
 // Faxbot's fixed sentences for a missing connection to its fax engine (Asterisk).
 export const FAX_ENGINE_SENTENCES = new Set([
@@ -295,7 +305,7 @@ export class AdminAPIClient {
       if (path === '/admin/restart' && response.status === 403) {
         // Decode only this fixed refusal; arbitrary error details stay opaque.
         if (await readDetail(response) === 'Restart not allowed') {
-          throw new Error("API process restart from this console is disabled for this installation. Use the installation's deployment manager to restart the service.");
+          throw new RestartNotAllowed();
         }
       }
       if (extras.manifestValidation && (response.status === 400 || response.status === 409)) {
@@ -570,6 +580,16 @@ export class AdminAPIClient {
     return this.json('/admin/restart', { method: 'POST' });
   }
 
+  // Whether the API answers its liveness check; false while it restarts or is unreachable.
+  async isServing(): Promise<boolean> {
+    try {
+      const res = await this.send('/health', {}, { quiet401: true });
+      return res.ok;
+    } catch {
+      return false;
+    }
+  }
+
   // SIP trunk for Faxbot's own fax engine
   async getSipPresets(): Promise<{ presets: SipPreset[] }> {
     return this.json('/admin/sip/presets');
@@ -585,6 +605,11 @@ export class AdminAPIClient {
 
   async listSipCalls(params: { cursor?: string | null; limit?: number; direction?: 'outbound' | 'inbound' } = {}): Promise<SipCallPage> {
     return this.json(`/admin/sip/calls${query(params)}`);
+  }
+
+  // Bring in faxes the SIP trunk received but could not hand to Faxbot.
+  async recoverInbound(): Promise<{ found: number; imported: number; waiting: number; message: string }> {
+    return this.json('/admin/inbound/recover', { method: 'POST', body: JSON.stringify({}) });
   }
 
   // Diagnostics
@@ -775,7 +800,13 @@ export class AdminAPIClient {
 
   // v3 Plugins (feature-gated)
   async listPlugins(): Promise<{ items: any[] }> {
-    return this.json('/plugins');
+    try {
+      return await this.json('/plugins');
+    } catch (error) {
+      // With provider plugins turned off (the default) there are simply no installed plugins to list.
+      if (error instanceof AdminAPIError && error.status === 404 && error.detail === PLUGINS_TURNED_OFF) return { items: [] };
+      throw error;
+    }
   }
 
   async getPluginConfig(pluginId: string, role?: PluginRole): Promise<PluginConfiguration> {

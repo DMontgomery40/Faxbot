@@ -2747,7 +2747,7 @@ def _installed_plugins(snapshot=None) -> list[dict[str, Any]]:
     # Outbound providers
     items.append({
         "id": "phaxio",
-        "name": "Phaxio Cloud Fax",
+        "name": "Phaxio",
         "version": "1.0.0",
         "categories": ["outbound"],
         "capabilities": ["send", "get_status", "webhook"],
@@ -2756,7 +2756,7 @@ def _installed_plugins(snapshot=None) -> list[dict[str, Any]]:
     })
     items.append({
         "id": "sinch",
-        "name": "Sinch Fax API v3",
+        "name": "Sinch",
         "version": "1.0.0",
         "categories": ["outbound"],
         "capabilities": ["send", "get_status"],
@@ -2765,7 +2765,7 @@ def _installed_plugins(snapshot=None) -> list[dict[str, Any]]:
     })
     items.append({
         "id": "signalwire",
-        "name": "SignalWire (Compatibility Fax API)",
+        "name": "SignalWire",
         "version": "1.0.0",
         "categories": ["outbound"],
         "capabilities": ["send", "get_status", "webhook"],
@@ -2774,7 +2774,7 @@ def _installed_plugins(snapshot=None) -> list[dict[str, Any]]:
     })
     items.append({
         "id": "documo",
-        "name": "Documo mFax",
+        "name": "Documo",
         "version": "1.0.0",
         "categories": ["outbound"],
         "capabilities": ["send", "get_status"],
@@ -2792,7 +2792,7 @@ def _installed_plugins(snapshot=None) -> list[dict[str, Any]]:
     })
     items.append({
         "id": "sip",
-        "name": "SIP/Asterisk (Self-hosted)",
+        "name": "SIP trunk (Asterisk)",
         "version": "1.0.0",
         "categories": ["outbound"],
         "capabilities": ["send", "get_status"],
@@ -2801,7 +2801,7 @@ def _installed_plugins(snapshot=None) -> list[dict[str, Any]]:
     })
     items.append({
         "id": "freeswitch",
-        "name": "FreeSWITCH (Self-hosted)",
+        "name": "SIP trunk (FreeSWITCH)",
         "version": "1.0.0",
         "categories": ["outbound"],
         "capabilities": ["send"],

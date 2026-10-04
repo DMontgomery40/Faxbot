@@ -32,17 +32,21 @@ import AdminAPIClient, { configurationWriteRejected, isForbidden, plainRefusal }
 import { DeliverySettingsSections, EMAIL_DELIVERY_SECTION, deliveryEditorValues } from './delivery/DeliverySettings';
 import { DEFAULT_DOCS_BASE, docsLink } from '../docsLinks';
 import EnvSetField, { ENV_SET_HELP, environmentManaged } from './common/EnvSetField';
+import RestartNotice from './common/RestartFaxbot';
 import type { ConfigurationWriteResult, Settings as SettingsType, SettingsPatch } from '../api/types';
 import { ResponsiveSettingItem, ResponsiveSettingSection } from './common/ResponsiveSettingItem';
 import { ResponsiveTextField, ResponsiveFormSection } from './common/ResponsiveFormFields';
 import TunnelSettings from './TunnelSettings';
 import SipTrunkSettings from './SipTrunkSettings';
 import { COUNTRY_HELP, CountryField, countryName, internationalHint, settingsNumberFormat } from './common/numbers';
+import { BUILTIN_PROVIDERS, RECEIVING_PROVIDERS, providerLabel } from '../providerLabels';
 
 interface SettingsProps {
   client: AdminAPIClient;
   // May this account change settings (email delivery actions are shown only then).
   canWrite?: boolean;
+  // May this account restart Faxbot (host:restart); the restart message then offers Restart now.
+  canRestart?: boolean;
   // A section to scroll to once settings load, such as the email delivery settings.
   focus?: string | null;
   onFocused?: () => void;
@@ -147,7 +151,7 @@ function editorValues(data: SettingsType): SettingsForm {
   };
 }
 
-function Settings({ client, canWrite = false, focus, onFocused }: SettingsProps) {
+function Settings({ client, canWrite = false, canRestart = false, focus, onFocused }: SettingsProps) {
   const [settings, setSettings] = useState<SettingsType | null>(null);
   const [envContent, setEnvContent] = useState<string>('');
   const [loading, setLoading] = useState(false);
@@ -161,6 +165,9 @@ function Settings({ client, canWrite = false, focus, onFocused }: SettingsProps)
   const [saveResult, setSaveResult] = useState<ConfigurationWriteResult | null>(null);
   // Why sending cannot work right now, such as the fax engine refusing Faxbot's login.
   const [engineMessage, setEngineMessage] = useState<string | null>(null);
+  // Whether the installation lets the console restart Faxbot (ADMIN_ALLOW_RESTART).
+  const [allowRestart, setAllowRestart] = useState(false);
+  const [restarted, setRestarted] = useState(false);
   const actionFence = useRef(false);
   const requestEpoch = useRef(0);
   const desiredRevision = needsReload ? undefined : settings?._meta?.desired_revision_id;
@@ -308,7 +315,10 @@ function Settings({ client, canWrite = false, focus, onFocused }: SettingsProps)
       hydrate(data);
       try {
         const cfg = await client.getConfig();
-        if (epoch === requestEpoch.current) setDocsBase(cfg?.branding?.docs_base || DEFAULT_DOCS_BASE);
+        if (epoch === requestEpoch.current) {
+          setDocsBase(cfg?.branding?.docs_base || DEFAULT_DOCS_BASE);
+          setAllowRestart(cfg?.allow_restart === true);
+        }
       } catch { /* Settings remain usable when branding is unavailable. */ }
       try {
         const message = await client.getFaxEngineMessage();
@@ -431,8 +441,13 @@ function Settings({ client, canWrite = false, focus, onFocused }: SettingsProps)
           Editing is paused. Click Load Settings to continue.
         </Alert>
       ) : settings && pendingRestart && !needsReload ? (
-        <Alert severity="warning" sx={{ mb: 3 }}>
-          {restartMessage}
+        <Box sx={{ mb: 3 }}>
+          <RestartNotice client={client} text={restartMessage} canRestart={canRestart && allowRestart}
+            onBack={async () => { await fetchSettings(); setRestarted(true); }} />
+        </Box>
+      ) : settings && restarted && !needsReload ? (
+        <Alert severity="success" sx={{ mb: 3 }} onClose={() => setRestarted(false)}>
+          Faxbot restarted and is using the saved settings.
         </Alert>
       ) : null}
 
@@ -453,40 +468,28 @@ function Settings({ client, canWrite = false, focus, onFocused }: SettingsProps)
             <ResponsiveSettingItem
               icon={<CloudIcon />}
               label="Default Provider"
-              value={settings.backend.type ? settings.backend.type.toUpperCase() : 'Not set up'}
+              value={settings.backend.type ? providerLabel(settings.backend.type) : 'Not set up'}
               editValue={form.backend ?? settings.backend.type}
               onChange={(value) => handleForm('backend', value)}
               helperText="Used for sending and receiving unless an override is set below."
               type="select"
               options={[
                 { value: '', label: 'No provider' },
-                { value: 'phaxio', label: 'Phaxio' },
-                { value: 'sinch', label: 'Sinch' },
-                { value: 'signalwire', label: 'SignalWire' },
-                { value: 'documo', label: 'Documo' },
-                { value: 'humblefax', label: 'HumbleFax' },
-                { value: 'sip', label: 'SIP/Asterisk' },
-                { value: 'freeswitch', label: 'FreeSWITCH' }
+                ...BUILTIN_PROVIDERS.map((value) => ({ value, label: providerLabel(value) })),
               ]}
               showCurrentValue={!pendingRestart}
             />
             <ResponsiveSettingItem
               icon={<CloudIcon />}
               label="Outbound Provider"
-              value={loadedOutbound ? loadedOutbound.toUpperCase() : 'Not set up'}
+              value={loadedOutbound ? providerLabel(loadedOutbound) : 'Not set up'}
               editValue={form.outbound_backend ?? ''}
               helperText="Provider used to send faxes."
               onChange={(value) => handleForm('outbound_backend', value)}
               type="select"
               options={[
-                { value: '', label: form.backend ? `Inherit default provider (${String(form.backend)})` : 'Inherit default provider (none yet)' },
-                { value: 'phaxio', label: 'Phaxio (Cloud)' },
-                { value: 'sinch', label: 'Sinch (Cloud)' },
-                { value: 'signalwire', label: 'SignalWire (Cloud)' },
-                { value: 'documo', label: 'Documo (Cloud)' },
-                { value: 'humblefax', label: 'HumbleFax (Cloud)' },
-                { value: 'sip', label: 'SIP/Asterisk (Self-hosted)' },
-                { value: 'freeswitch', label: 'FreeSWITCH (Self-hosted)' }
+                { value: '', label: form.backend ? `Inherit default provider (${providerLabel(String(form.backend))})` : 'Inherit default provider (none yet)' },
+                ...BUILTIN_PROVIDERS.map((value) => ({ value, label: providerLabel(value) })),
               ]}
               showCurrentValue={!pendingRestart}
             />
@@ -505,22 +508,20 @@ function Settings({ client, canWrite = false, focus, onFocused }: SettingsProps)
             <ResponsiveSettingItem
               icon={<CloudIcon />}
               label="Inbound Provider"
-              value={loadedInbound ? loadedInbound.toUpperCase() : 'Not set up'}
+              value={loadedInbound ? providerLabel(loadedInbound) : 'Not set up'}
               editValue={form.inbound_backend ?? ''}
-              helperText="Provider used to receive faxes: SIP/Asterisk for your own phone system, or a cloud provider."
+              helperText="Provider used to receive faxes: the SIP trunk (Asterisk) for your own phone line, or a cloud provider."
               onChange={(value) => handleForm('inbound_backend', value)}
               type="select"
               options={[
-                { value: '', label: form.backend ? `Inherit default provider (${String(form.backend)})` : 'Inherit default provider (none yet)' },
-                { value: 'phaxio', label: 'Phaxio (Webhook)' },
-                { value: 'sinch', label: 'Sinch (Webhook)' },
-                { value: 'sip', label: 'SIP/Asterisk (Internal)' }
+                { value: '', label: form.backend ? `Inherit default provider (${providerLabel(String(form.backend))})` : 'Inherit default provider (none yet)' },
+                ...[...RECEIVING_PROVIDERS].map((value) => ({ value, label: providerLabel(value) })),
               ]}
               showCurrentValue={!pendingRestart}
             />
             {form.inbound_backend === '' && (
               <Chip
-                label={`Inbound uses the default provider (${String(form.backend)}).`}
+                label={`Inbound uses the default provider (${providerLabel(String(form.backend))}).`}
                 color="info"
                 size="small"
                 variant="outlined"

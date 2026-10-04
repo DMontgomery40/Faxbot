@@ -5,6 +5,7 @@ import type { EmailConnector, IntakeItem } from '../../api/deliveryTypes';
 import type { InboundFax } from '../../api/types';
 import { formatServerTime, parseServerTime } from '../../api/time';
 import { StatusChip, useSmallScreens } from '../access/AccessViews';
+import { providerLabel } from '../../providerLabels';
 
 // The server's sentence for a fax whose number has no email delivery.
 const NO_EMAIL_DELIVERY = 'No email delivery is set up for this number yet.';
@@ -67,14 +68,9 @@ export function inboundFaxStatus(fax: Pick<InboundFax, 'status' | 'status_text' 
 }
 
 // The provider a fax came through, in words people use.
-const PROVIDER_NAMES: Record<string, string> = {
-  sip: 'SIP trunk', phaxio: 'Phaxio', sinch: 'Sinch', signalwire: 'SignalWire', documo: 'Documo',
-  humblefax: 'HumbleFax', freeswitch: 'FreeSWITCH',
-};
-
 export function providerName(backend: string | null | undefined): string {
   if (!backend) return '-';
-  return PROVIDER_NAMES[backend.toLowerCase()] ?? backend;
+  return providerLabel(backend);
 }
 
 // Whether an enabled email connector covers this fax number now: one for the

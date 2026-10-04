@@ -57,6 +57,7 @@ faxbot status <fax id>                         # where it is now
 faxbot jobs list                               # sent faxes, newest first
 faxbot inbound list                            # received faxes
 faxbot inbound pdf <received fax id> -o fax.pdf
+faxbot inbound recover                         # bring in faxes the SIP trunk received but could not hand over
 faxbot users add jsmith --name "Jane Smith"    # shows a temporary password once
 faxbot access grant jsmith "Fax operator"
 faxbot integrations add "Front desk scanner"   # an identity for an app or device
