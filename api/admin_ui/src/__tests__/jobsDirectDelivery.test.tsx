@@ -125,6 +125,17 @@ describe('Jobs list wording', () => {
     expect(style.textOverflow).not.toBe('ellipsis');
   });
 
+  it('names the original provider in words and shows no internal account or sign-in IDs', async () => {
+    const detail = { ...delivery('reconciliation_required', 'att-1', true, [
+      event('e1', 'att-1', 'provider_identity_bound', { actor: 'principal:bd26f4bd-011a-4e14-9d1f-052975afafa4', provider_sid: 'FAX-123' }),
+    ]), provider_id: 'sip', profile_id: 'bd26f4bd-011a-4e14-9d1f-052975afafa4' };
+    jobServer('reconciliation_required', detail, () => HttpResponse.json({ deliveries: [] }));
+    const dialog = await openJob();
+    expect(within(dialog).getByText('Original Provider').closest('li')?.textContent).toContain('SIP trunk (Asterisk)');
+    expect(within(dialog).queryByText(/Original Provider Account|bd26f4bd|principal:|Operator:/)).toBeNull();
+    expect(within(dialog).getByText(/Provider fax ID: FAX-123/)).toBeTruthy();
+  });
+
   it('opens the fax Send just queued', async () => {
     jobServer('ready', delivery('ready', 'att-1', false, []), () => HttpResponse.json({ deliveries: [] }));
     const opened = vi.fn();
