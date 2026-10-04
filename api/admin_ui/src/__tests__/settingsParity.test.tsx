@@ -129,6 +129,25 @@ describe('Settings direct delivery', () => {
   });
 });
 
+describe('Settings outbound provider limits', () => {
+  it('says HumbleFax sends only to US and Canadian numbers when it sends faxes', async () => {
+    settingsHandlers(settingsFixture((data) => {
+      data.hybrid.outbound_backend = 'humblefax';
+      data.hybrid.outbound_override = 'humblefax';
+    }));
+    render(<Settings client={client()} />);
+    expect((await screen.findByTestId('humblefax-countries')).textContent)
+      .toBe('HumbleFax sends only to US and Canadian numbers.');
+  });
+
+  it('says nothing about countries for other outbound providers', async () => {
+    settingsHandlers(settingsFixture());
+    render(<Settings client={client()} />);
+    await screen.findAllByText('Outbound Provider');
+    expect(screen.queryByTestId('humblefax-countries')).toBeNull();
+  });
+});
+
 describe('Settings intake defaults', () => {
   it('keeps the saved password unless it is replaced, and saves connector fields', async () => {
     const writes = settingsHandlers(settingsFixture());

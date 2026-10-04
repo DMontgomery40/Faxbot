@@ -1,6 +1,6 @@
 # HumbleFax
 
-The builtin HumbleFax adapter uploads prepared PDFs directly and polls the original account for status. It sends faxes only; it does not receive them. A public document URL is not needed. Submission acknowledgement is separate from delivery.
+The builtin HumbleFax adapter uploads prepared PDFs directly and polls the original account for status. It sends faxes only, and only to US and Canadian numbers (+1): Faxbot refuses other destinations before contacting HumbleFax. It does not receive faxes. A public document URL is not needed. Submission acknowledgement is separate from delivery.
 
 ## Create API keys
 

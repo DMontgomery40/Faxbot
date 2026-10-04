@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import AdminAPIClient from '../api/client';
-import ApiKeys from '../components/ApiKeys';
+import ApiKeys, { lastUsedText } from '../components/ApiKeys';
+import { formatServerTime, toServerTime } from '../api/time';
 import { backend } from '../test/server';
 
 async function signedInClient() {
@@ -69,6 +70,24 @@ describe('API keys', () => {
     const row = (await screen.findByText('Old scanner')).closest('tr')!;
     expect(within(row).getByText('Revoked')).toBeTruthy();
     expect(within(row).queryByRole('button')).toBeNull();
+  });
+
+  it('shows a key used seconds ago as just now and an unused key as never', async () => {
+    backend.state.keys.get('key_scan')!.last_used_at = toServerTime(new Date(Date.now() - 20_000));
+    const { client, me } = await signedInClient();
+    render(<ApiKeys client={client} me={me} />);
+    const used = (await screen.findByText('Scanner')).closest('tr')!;
+    expect(within(used).getByText('just now')).toBeTruthy();
+    const unused = screen.getByText('Old scanner').closest('tr')!;
+    expect(within(unused).getAllByText('Never')).toHaveLength(2); // never expires, never used
+  });
+
+  it('formats older uses as a local time', () => {
+    const now = Date.parse('2026-10-03T12:00:00Z');
+    expect(lastUsedText(null, now)).toBe('Never');
+    expect(lastUsedText('2026-10-03T11:59:10', now)).toBe('just now');
+    expect(lastUsedText('2026-10-03T09:00:00', now)).toBe(formatServerTime('2026-10-03T09:00:00'));
+    expect(lastUsedText('2026-10-03T09:00:00', now)).not.toMatch(/T09:00/);
   });
 
   it('edits a migrated key that has no name or note', async () => {

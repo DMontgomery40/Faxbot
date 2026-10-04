@@ -163,6 +163,8 @@ class ConfigurationValues(BaseModel):
     direct_delivery_enabled: bool = Field(False, validation_alias='DIRECT_DELIVERY_ENABLED')
     direct_organization: str = Field('', validation_alias='DIRECT_ORGANIZATION')
     direct_fax_number: str = Field('', validation_alias='DIRECT_FAX_NUMBER')
+    # Partners on loopback, link-local or private addresses are refused unless this is on.
+    direct_allow_private_peers: bool = Field(False, validation_alias='DIRECT_ALLOW_PRIVATE_PEERS')
     # Work queue: the team's operational target for acknowledging a received
     # document, in hours from when it arrived. 0 sets no target. Not a legal deadline.
     work_acknowledge_hours: int = Field(0, validation_alias='WORK_ACKNOWLEDGE_HOURS', ge=0, le=8760)

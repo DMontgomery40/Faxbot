@@ -25,7 +25,7 @@ import KeyIcon from '@mui/icons-material/VpnKey';
 import PhoneIcon from '@mui/icons-material/PhoneIphone';
 import AdminAPIClient from '../api/client';
 import type { AccessKey, AccessUser, AuthMe } from '../api/types';
-import { endOfLocalDay, formatServerTime, isPast, localDay } from '../api/time';
+import { endOfLocalDay, formatServerTime, isPast, localDay, parseServerTime } from '../api/time';
 import SecretDialog, { type SecretReveal } from './access/SecretDialog';
 import PairPhoneDialog from './access/PairPhoneDialog';
 import {
@@ -70,6 +70,16 @@ type Editor =
 type Pending = { action: 'rotate' | 'revoke'; keyId: string };
 
 const KIND_LABEL: Record<string, string> = { user: 'Person', integration: 'Integration', bootstrap: 'Installation key' };
+
+// Faxbot records a key's use at most once a minute, so a use in the last two minutes is "just now".
+const JUST_NOW_MS = 2 * 60 * 1000;
+
+export function lastUsedText(value: string | null | undefined, now = Date.now()): string {
+  const used = parseServerTime(value);
+  if (!used) return 'Never';
+  const age = now - used.getTime();
+  return age >= -JUST_NOW_MS && age < JUST_NOW_MS ? 'just now' : formatServerTime(value, 'Never');
+}
 
 function keyStatus(key: AccessKey): { label: string; tone: 'success' | 'default' | 'warning' | 'error' } {
   if (key.revoked_at) return { label: 'Revoked', tone: 'default' };
@@ -304,7 +314,7 @@ export default function ApiKeys({ client, me }: ApiKeysProps) {
                       </Box>
                       <Typography variant="body2">Belongs to {key.principal.display_name}</Typography>
                       <Typography variant="body2" color="text.secondary">Expires: {formatServerTime(key.expires_at, 'Never')}</Typography>
-                      <Typography variant="body2" color="text.secondary">Last used: {formatServerTime(key.last_used_at, 'Never')}</Typography>
+                      <Typography variant="body2" color="text.secondary">Last used: {lastUsedText(key.last_used_at)}</Typography>
                       <PermissionChips permissions={permissionsOf(key)} />
                       <Box>{actions(key)}</Box>
                     </Stack>
@@ -342,7 +352,7 @@ export default function ApiKeys({ client, me }: ApiKeysProps) {
                       </TableCell>
                       <TableCell><PermissionChips permissions={permissionsOf(key)} limit={4} /></TableCell>
                       <TableCell>{formatServerTime(key.expires_at, 'Never')}</TableCell>
-                      <TableCell>{formatServerTime(key.last_used_at, 'Never')}</TableCell>
+                      <TableCell>{lastUsedText(key.last_used_at)}</TableCell>
                       <TableCell><StatusChip label={status.label} tone={status.tone} /></TableCell>
                       <TableCell align="right" sx={{ whiteSpace: 'nowrap' }}>{actions(key)}</TableCell>
                     </TableRow>

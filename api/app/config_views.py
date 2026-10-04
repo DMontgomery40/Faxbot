@@ -188,6 +188,7 @@ def project_admin_settings(snapshot: ConfigurationSnapshot, pending_fields: Iter
             'enabled': values.direct_delivery_enabled,
             'organization': values.direct_organization,
             'fax_number': values.direct_fax_number,
+            'allow_private_peers': values.direct_allow_private_peers,
         },
         'inbound': {
             'enabled': values.inbound_enabled,

@@ -158,3 +158,23 @@ def test_header_key_use_records_last_used_at_most_once_a_minute(isolated_install
         assert client.get("/auth/me", headers={"X-API-Key": key["token"]}).status_code == 200
         moved = datetime.fromisoformat(_last_used(client, "bootstrap_admin_only", key["key_id"]))
         assert moved > earlier + timedelta(minutes=4)
+
+
+def test_last_used_is_recorded_after_authentication_and_a_failed_write_never_refuses_the_request(
+        isolated_installation, monkeypatch):
+    import sqlalchemy as sa
+    with _key_client(monkeypatch) as client:
+        key = _issue(client, "bootstrap_admin_only", ["fax:read"], name="scanner").json()
+        engine = app.state.access_runtime.store.engine
+        # A database that refuses the bookkeeping write (here a trigger) must not refuse the request.
+        with engine.begin() as connection:
+            connection.execute(sa.text(
+                "CREATE TRIGGER refuse_key_use BEFORE UPDATE OF last_used_at ON api_keys "
+                "BEGIN SELECT RAISE(ABORT, 'synthetic bookkeeping failure'); END"))
+        assert client.get("/auth/me", headers={"X-API-Key": key["token"]}).status_code == 200
+        assert _last_used(client, "bootstrap_admin_only", key["key_id"]) is None
+        with engine.begin() as connection:
+            connection.execute(sa.text("DROP TRIGGER refuse_key_use"))
+        # The write happens once the request's authentication has committed.
+        assert client.get("/auth/me", headers={"X-API-Key": key["token"]}).status_code == 200
+        assert _last_used(client, "bootstrap_admin_only", key["key_id"]) is not None

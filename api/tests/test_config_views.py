@@ -195,9 +195,10 @@ def test_editor_projects_delivery_routes_intake_email_and_direct_delivery_settin
         'smtp_username': 'fax', 'smtp_password': '', 'email_from': 'fax@example.invalid',
         'email_to': 'desk@example.invalid', 'email_subject': 'Fax for {to_number}',
     }
-    assert view['direct'] == {'enabled': False, 'organization': 'County Clinic', 'fax_number': '+12025550123'}
+    assert view['direct'] == {'enabled': False, 'organization': 'County Clinic', 'fax_number': '+12025550123',
+                              'allow_private_peers': False}
 
     defaults = project_admin_settings(snapshot())
     assert defaults['routing'] == {'outbound_routes': '', 'min_success_percent': 80}
     assert defaults['intake']['email_enabled'] is False and defaults['intake']['smtp_port'] == 587
-    assert defaults['direct'] == {'enabled': False, 'organization': '', 'fax_number': ''}
+    assert defaults['direct'] == {'enabled': False, 'organization': '', 'fax_number': '', 'allow_private_peers': False}

@@ -60,7 +60,7 @@ def _probe():
 
 @admin.command('status')
 def admin_status():
-    """Show the database schema version, saved configuration state and record counts."""
+    """Show whether the database is up to date, the saved configuration state and record counts."""
     from ..local import status, stopped
     installation = _installation()
     with stopped(installation, _probe):
@@ -69,9 +69,9 @@ def admin_status():
     def human(out):
         configuration = result.get('configuration') or {}
         key_state = configuration.get('installation_key_set')
+        # The schema revision is in --json output only.
         out.fields([('Database', result['database']), ('Data folder', result['data_dir']),
-                    ('Schema version', result['schema_revision'] or 'not created'),
-                    ('Schema up to date', result['schema_current']),
+                    ('Database up to date', result['schema_current']),
                     ('Configuration saved', bool(configuration)),
                     ('Settings changes waiting for restart', configuration.get('restart_pending')),
                     ('Installation key (API_KEY) set', 'unknown (key file not found)'
@@ -82,7 +82,7 @@ def admin_status():
         out.table(['Records', 'Count'], [[labels[name], '-' if count is None else count]
                                           for name, count in result['counts'].items()])
         if not result['schema_current']:
-            out.line('Run faxbot admin migrate to upgrade the database.')
+            out.line('The database needs an upgrade; run faxbot admin migrate before starting Faxbot.')
     state.out().result(result, human)
 
 
@@ -93,9 +93,9 @@ def admin_migrate():
     installation = _installation()
     with stopped(installation, _probe):
         result = migrate(installation)
-    state.out().result(result, lambda out: out.line(
-        f"Database upgraded from {result['before'] or 'empty'} to {result['after']}." if result['changed']
-        else f"The database is already up to date ({result['after']})."))
+    # Revisions are in --json output only.
+    state.out().result(result, lambda out: out.line('Database upgraded.' if result['changed']
+                                                    else 'The database is up to date.'))
 
 
 @admin.command('recover-owner')

@@ -463,6 +463,11 @@ function Settings({ client, canWrite = false, focus, onFocused }: SettingsProps)
               ]}
               showCurrentValue={!pendingRestart}
             />
+            {effectiveOutbound === 'humblefax' && (
+              <Typography variant="body2" sx={{ px: 2 }} data-testid="humblefax-countries">
+                HumbleFax sends only to US and Canadian numbers.
+              </Typography>
+            )}
 
             <ResponsiveSettingItem
               icon={<CloudIcon />}

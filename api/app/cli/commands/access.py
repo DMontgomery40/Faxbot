@@ -521,7 +521,9 @@ def keys_approve(key_id: str = typer.Argument(..., help='Key ID of a key that ne
     result = api.post(f"/access/keys/{segment(found['id'])}/approve", json=api.with_policy({
         'principal': {'id': principal['id'], 'version': principal['version']},
         'ceiling': _ceiling(api, permission, where), 'version': found['version']}))
-    state.out().result(result, lambda out: out.line(f"API key {found['id']} approved."))
+    # People know a key by its name; the key ID stays in --json output.
+    sentence = f"API key {found['name']} approved." if found.get('name') else 'API key approved.'
+    state.out().result(result, lambda out: out.line(sentence))
 
 
 @keys.command('update')

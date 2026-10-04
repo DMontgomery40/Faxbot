@@ -188,13 +188,24 @@ class AuthenticationService:
         with self.store.transaction() as connection:
             now = self._clock()
             actor = self.proofs.authenticate_key_on(connection, proof, now=now)
-            # Record use for the Keys screen, at most once a minute per key.
-            keys = self.store.tables['api_keys']
-            connection.execute(keys.update().where(
-                keys.c.id == actor.credential.binding_id,
-                sa.or_(keys.c.last_used_at.is_(None), keys.c.last_used_at <= now - KEY_USE_INTERVAL),
-            ).values(last_used_at=now))
-            return actor
+        self._record_key_use(actor.credential.binding_id, now)
+        return actor
+
+    def _record_key_use(self, binding_id, now):
+        """Record use for the Keys screen, at most once a minute per key.
+
+        A separate short write after authentication has committed: bookkeeping
+        never holds the access lock, and a failed write never refuses the request.
+        """
+        keys = self.store.tables['api_keys']
+        try:
+            with self.store.engine.begin() as connection:
+                connection.execute(keys.update().where(
+                    keys.c.id == binding_id,
+                    sa.or_(keys.c.last_used_at.is_(None), keys.c.last_used_at <= now - KEY_USE_INTERVAL),
+                ).values(last_used_at=now))
+        except Exception:
+            pass
 
     @_safe_backend
     def change_password(self, actor, current_password, replacement_password):
