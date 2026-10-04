@@ -9,7 +9,7 @@ import PhoneIcon from '@mui/icons-material/Phone';
 import AdminAPIClient from '../../api/client';
 import type { Destination, DestinationDetail, DirectPartner } from '../../api/deliveryTypes';
 import { EmptyState, Field, FormDialog, useSmallScreens } from '../access/AccessViews';
-import { DeliveryError, formatMoney, formatMoneyList, formatPercent } from './shared';
+import { DeliveryError, formatMoneyList, formatPercent } from './shared';
 import { numberPlaceholder, useNumberFormat } from '../common/numbers';
 import { SendingTogetherPanel } from './SendingTogether';
 
@@ -87,7 +87,7 @@ export function DestinationDialog({ client, number, canWrite, onClose, onSaved }
               <ListItem key={route.route} disableGutters>
                 <ListItemText
                   primary={`${index + 1}. ${route.label}${route.included_in_plan ? ' · included in your plan'
-                    : route.estimated_cost_one_page ? ` · about ${formatMoney(route.estimated_cost_one_page)} for one page` : ' · cost unknown'}`}
+                    : route.rate ? ` · about ${route.rate}` : ' · cost unknown'}`}
                   secondary={route.explanation} />
               </ListItem>
             ))}

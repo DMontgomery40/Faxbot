@@ -31,7 +31,8 @@ import { clearPendingSend, loadPendingSend, savePendingSend, sendFingerprint } f
 import { countryName, numberHint, numberPlaceholder } from './common/numbers';
 import type { BatchingCheck } from '../api/batchingTypes';
 import type { RecommendedRoute } from '../api/deliveryTypes';
-import { formatMoney } from './delivery/shared';
+import { routeCostSentence } from './delivery/shared';
+import { countPdfPages } from './common/pdfPages';
 
 interface SendFaxProps {
   client: AdminAPIClient;
@@ -121,7 +122,17 @@ function SendFax({ client, config, configLoading, configError, onOpenJob }: Send
     return () => { live = false; window.clearTimeout(timer); };
   }, [client, toNumber]);
 
-  // The route Faxbot would use for this number and what one page costs there, before sending.
+  // How many pages the chosen PDF has, so the estimate is for this document.
+  const [pages, setPages] = useState<number | null>(null);
+  useEffect(() => {
+    setPages(null);
+    if (!file) return undefined;
+    let live = true;
+    void countPdfPages(file).then((count) => { if (live) setPages(count); });
+    return () => { live = false; };
+  }, [file]);
+
+  // The route Faxbot would use for this number and what this fax costs there, before sending.
   // People who may not read routing settings see the form without it.
   const [route, setRoute] = useState<RecommendedRoute | null>(null);
   useEffect(() => {
@@ -129,12 +140,13 @@ function SendFax({ client, config, configLoading, configError, onOpenJob }: Send
     if (!/\d{3}/.test(toNumber)) return undefined;
     let live = true;
     const timer = window.setTimeout(() => {
-      client.getDestination(normalizeFaxDestination(toNumber))
+      client.getDestination(normalizeFaxDestination(toNumber), pages ?? undefined)
         .then((detail) => { if (live) setRoute(detail.recommended_routes[0] ?? null); })
         .catch(() => undefined);
     }, 400);
     return () => { live = false; window.clearTimeout(timer); };
-  }, [client, toNumber]);
+  }, [client, toNumber, pages]);
+  const costSentence = route ? routeCostSentence(route, pages) : null;
 
   // Validation states
   const [toNumberError, setToNumberError] = useState(false);
@@ -322,10 +334,8 @@ function SendFax({ client, config, configLoading, configError, onOpenJob }: Send
                   <Box data-testid="send-route">
                     <Typography variant="body2">Faxbot will send it through {route.label}.</Typography>
                     <Typography variant="body2" color="text.secondary">{route.explanation}</Typography>
-                    {route.estimated_cost_one_page && !route.included_in_plan && (
-                      <Typography variant="body2" color="text.secondary">
-                        Estimated cost: {formatMoney(route.estimated_cost_one_page)} a page.
-                      </Typography>
+                    {costSentence && (
+                      <Typography variant="body2" color="text.secondary" data-testid="send-cost">{costSentence}</Typography>
                     )}
                   </Box>
                 )}

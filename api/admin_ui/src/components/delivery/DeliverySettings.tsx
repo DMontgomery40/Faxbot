@@ -262,7 +262,7 @@ export function DeliverySettingsSections({ client, settings, form, loaded, onCha
       <Box id={EMAIL_DELIVERY_SECTION} sx={{ scrollMarginTop: 80 }}>
       {settings.intake && shows('intake') && (
         <ResponsiveFormSection title="Intake defaults"
-          subtitle="Email delivery for received faxes, set for the whole installation. It appears under Email delivery below and is changed only here; changes take effect within a few minutes."
+          subtitle="Email delivery for received faxes, set for the whole installation. It appears under Email delivery below and is changed only here. Changes take effect as soon as you apply them."
           icon={<MoveToInboxIcon />}>
           <SwitchField label="Email received faxes" checked={Boolean(form.intake_email_enabled)}
             onChange={(checked) => onChange('intake_email_enabled', checked)}

@@ -50,6 +50,8 @@ import type {
   RouteCostsResponse,
   CaseDocuments,
   CasePacket,
+  CaseSummary,
+  Savings,
 } from './deliveryTypes';
 import type {
   ImportManifest, ImportResult, WorkAssignee, WorkCounts, WorkEvent, WorkItem, WorkSettings, WorkView,
@@ -916,8 +918,9 @@ export class AdminAPIClient {
     return this.json('/routing/destinations');
   }
 
-  async getDestination(number: string): Promise<DestinationDetail> {
-    return this.json(`/routing/destinations/${id(number)}`);
+  // The route order for the next fax to a number; with `pages`, each estimate is for a fax that long.
+  async getDestination(number: string, pages?: number): Promise<DestinationDetail> {
+    return this.json(`/routing/destinations/${id(number)}${query({ pages })}`);
   }
 
   async updateDestination(number: string, patch: DestinationPatch): Promise<Destination> {
@@ -1098,6 +1101,16 @@ export class AdminAPIClient {
 
   async saveWorkMailbox(entry: { mailbox_id: string; acknowledge_hours: number | null; backup_principal_id: string | null; version: number }): Promise<WorkSettings> {
     return this.json('/work/settings', { method: 'PUT', body: JSON.stringify({ mailboxes: [entry] }) });
+  }
+
+  // What sending together, direct delivery and case packets saved in the last `days` (estimates).
+  async getSavings(days?: number): Promise<Savings> {
+    return this.json(`/routing/savings${query({ days })}`);
+  }
+
+  // The newest cases this installation sent packets for, with recipient and counts.
+  async listCases(): Promise<{ cases: CaseSummary[] }> {
+    return this.json('/cases');
   }
 
   // Case packets: what a recipient already holds for a case, and sending only what is new.

@@ -16,6 +16,7 @@ import RestartNotice, { RESTARTED } from './common/RestartFaxbot';
 import SipTrunkSettings from './SipTrunkSettings';
 import EfaxSettings, { EFAX_FIELDS, efaxEditorValues } from './EfaxSettings';
 import { COUNTRY_HELP, CountryField, settingsNumberFormat } from './common/numbers';
+import TimeZoneField from './common/TimeZoneField';
 import WizardTestFax from './WizardTestFax';
 import { directionSummary, providerLabel } from '../providerLabels';
 import ProviderDirectionFields, { directionPatch, directionProblem, loadedDirections } from './common/ProviderDirections';
@@ -125,13 +126,14 @@ function editorValues(data: Settings): WizardConfig {
     fs_gateway_name: data.fs?.gateway_name ?? '',
     fs_caller_id_number: data.fs?.caller_id_number ?? '',
     ...(data.numbers ? { fax_default_country: data.numbers.default_country } : {}),
+    ...(data.installation ? { time_zone: data.installation.time_zone } : {}),
     ...deliveryEditorValues(data),
   };
 }
 
 // Which wizard fields each step saves when the person leaves it.
 function stepFields(step: number, data: Settings | null): string[] {
-  if (step === 0) return [...PROVIDER_FIELDS, 'fax_default_country', 'sip_trunk_preset'];
+  if (step === 0) return [...PROVIDER_FIELDS, 'fax_default_country', 'time_zone', 'sip_trunk_preset'];
   if (step === 1) {
     return ['public_api_url', 'phaxio_verify_signature', 'documo_use_sandbox', STATION_FIELD.key,
       ...Object.values(credentialFields).flat().map(field => field.key), ...amiFields.map(field => field.key),
@@ -666,6 +668,10 @@ function SetupWizard({ client, onDone, docsBase, canRestart = true }: SetupWizar
           value={String(config.fax_default_country ?? settings.numbers.default_country)}
           countries={settings.numbers.supported_countries}
           onChange={code => handleConfigChange('fax_default_country', code)} />
+      </Box>}
+      {settings?.installation && <Box sx={{ mt: 3, maxWidth: 480 }} data-testid="time-zone">
+        <TimeZoneField value={String(config.time_zone ?? '')} disabled={!canEdit}
+          onChange={zone => handleConfigChange('time_zone', zone)} />
       </Box>}
     </Box>;
 

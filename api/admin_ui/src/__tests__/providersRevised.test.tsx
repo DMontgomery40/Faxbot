@@ -136,3 +136,59 @@ describe('The trunk page', () => {
     expect(within(engine).getByText('Asterisk Inbound Secret')).toBeTruthy();
   });
 });
+
+describe('Provider pages after 4b', () => {
+  const keyClient = () => new AdminAPIClient({ kind: 'key', key: 'synthetic-key' });
+
+  function trunkServer(data: Record<string, any>, writes: Array<Record<string, unknown>>) {
+    server.use(
+      http.get('/admin/settings', () => HttpResponse.json(data)),
+      http.put('/admin/settings', async ({ request }) => {
+        writes.push(await request.json() as Record<string, unknown>);
+        return HttpResponse.json({ ok: true, changed: true, _meta: { ...data._meta, desired_revision_id: 'rev-b' } });
+      }),
+      http.get('/admin/sip/presets', () => HttpResponse.json({ presets: [{ id: 'telnyx', label: 'Telnyx', host: 'sip.telnyx.com',
+        port: 5061, transport: 'tls', auth_modes: ['registration', 'ip'], codecs: ['ulaw'], needs_host: false, ip_dial_prefix: false,
+        t38: '', notes: [], sources: [] }] })),
+      http.get('/admin/sip/status', () => HttpResponse.json({ configured: true, applied: true, asterisk_connected: true,
+        registration: 'registered', reachability: 'reachable', registration_text: '', reachability_text: '', message: '' })),
+    );
+  }
+
+  it('checks the internet address every few minutes and keeps the Telnyx key on the Telnyx page', async () => {
+    const writes: Array<Record<string, unknown>> = [];
+    const data = settingsFixture((value) => {
+      withDirections(value, 'humblefax', 'sip');
+      value.sip.trunk = { preset: 'telnyx', dids: ['+17208565062'], external_address: '', public_address_check_minutes: 5 };
+      value.sip.telnyx_api_key = '***';
+      value.sip.telnyx_api_key_set = true;
+      value._meta.env_managed = ['telnyx_api_key'];
+    });
+    trunkServer(data, writes);
+    setProviderNames({ sip: 'Telnyx' });
+    render(<Settings client={keyClient()} sections={['trunk']} title={providerLabel('sip')} canWrite />);
+    const minutes = await screen.findByLabelText('Check the internet address every … minutes') as HTMLInputElement;
+    expect(minutes.value).toBe('5');
+    const key = screen.getByTestId('telnyx-key');
+    expect(within(key).getByText('Key for reading Telnyx charges')).toBeTruthy();
+    expect(within(key).getByDisplayValue('Set in .env')).toBeTruthy();
+    fireEvent.change(minutes, { target: { value: '15' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save trunk settings' }));
+    await waitFor(() => expect(writes).toHaveLength(1));
+    expect(writes[0]).toEqual({ expected_revision_id: 'rev-a', sip_public_address_check_minutes: 15 });
+  });
+
+  it('says what FreeSWITCH still needs, and titles each provider page in normal case', async () => {
+    const data = settingsFixture((value) => {
+      value.fs.problem = 'Enter the caller ID number your carrier gave you for FreeSWITCH.';
+    });
+    server.use(http.get('/admin/settings', () => HttpResponse.json(data)));
+    const { unmount } = render(<Settings client={keyClient()} sections={['freeswitch']} title="FreeSWITCH (advanced)" />);
+    expect((await screen.findByTestId('freeswitch-problem')).textContent)
+      .toBe('Enter the caller ID number your carrier gave you for FreeSWITCH.');
+    unmount();
+    render(<Settings client={keyClient()} />);
+    expect(await screen.findByRole('heading', { name: 'Phaxio' })).toBeTruthy();
+    expect(screen.queryByText(/PHAXIO|Phaxio Configuration/)).toBeNull();
+  });
+});

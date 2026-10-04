@@ -54,6 +54,7 @@ import { numberHint, numberPlaceholder, useNumberFormat } from './common/numbers
 import type { EmailConnector } from '../api/deliveryTypes';
 import type { Settings } from '../api/types';
 import type { AdminDestination } from '../navigation';
+import { providerLabel } from '../providerLabels';
 
 // Who has access is under Access; mailboxes and fax numbers are under Numbers.
 export type ResourceAccessSection = 'assignments' | 'mailboxes' | 'numbers';
@@ -357,12 +358,22 @@ export function carriedNumbers(settings: Settings): CarriedNumber[] {
   const found: Array<[string, string | null | undefined]> = [
     ...(trunk?.dids ?? []).map((number): [string, string] => ['sip', number]),
     ['humblefax', settings.humblefax?.from_number],
+    // Every number on the HumbleFax account, as HumbleFax lists them.
+    ...(settings.humblefax?.account_numbers ?? []).map((number): [string, string] => ['humblefax', number]),
     ['efax', settings.efax?.caller_id],
     ['signalwire', settings.signalwire?.from_fax],
     ['freeswitch', settings.fs?.caller_id_number],
   ];
-  return found.filter(([, number]) => comparableNumber(number)).map(([provider, number]) => ({
-    number: comparableNumber(number), provider, label: CARRIER_PAGES[provider].label, page: CARRIER_PAGES[provider].page,
+  const seen = new Set<string>();
+  return found.filter(([provider, number]) => {
+    const key = `${provider} ${comparableNumber(number)}`;
+    if (!comparableNumber(number) || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  }).map(([provider, number]) => ({
+    number: comparableNumber(number), provider,
+    // The trunk is named by its carrier or phone system once one is chosen.
+    label: provider === 'sip' ? providerLabel('sip') : CARRIER_PAGES[provider].label, page: CARRIER_PAGES[provider].page,
     inUse: used(provider),
   }));
 }

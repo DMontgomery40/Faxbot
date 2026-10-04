@@ -20,7 +20,7 @@ ROOT = API_DIRECTORY.parent
 
 
 def test_inbound_sources_is_head_after_sending_together():
-    assert schema.HEAD == schema_inbound_sources.REVISION == '0015_inbound_sources'
+    assert schema.INBOUND_SOURCES == schema_inbound_sources.REVISION == '0015_inbound_sources'
     assert schema.BATCHING == '0014_send_together'
     assert schema_inbound_sources.TABLES == frozenset()
 

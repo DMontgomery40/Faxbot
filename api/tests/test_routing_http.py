@@ -208,16 +208,11 @@ def test_reconcile_records_telnyx_charges_and_the_console_reads_them(telnyx_clie
     assert telnyx_client.get('/routing/fax-costs', params={'ids': job}).status_code == 401
 
 
-def test_faxes_sent_together_each_cost_their_share_and_the_call_counts_once(telnyx_client, monkeypatch):
-    """Two faxes in one Telnyx call: each shows its share by pages, an estimate until Telnyx reports the call."""
-    from datetime import timedelta
+def _two_faxes_in_one_call(client, answer, end):
+    """Two faxes to one number that shared one SIP call placed by the first fax's attempt."""
     from uuid import uuid4
-    from app.routing import http as routing_http
-    from api.tests.test_carrier_charges import FakeTelnyx, telnyx as record
-    answer = datetime.utcnow().replace(microsecond=0) - timedelta(hours=1)
-    end = answer + timedelta(seconds=45)
-    first, call = _sent_fax_with_call(telnyx_client, answer, end)  # the fax that placed the call
-    second = telnyx_client.post('/fax', headers=ADMIN, data={'to': '+12025550123'},
+    first, call = _sent_fax_with_call(client, answer, end)  # the fax that placed the call
+    second = client.post('/fax', headers=ADMIN, data={'to': '+12025550123'},
                                 files={'file': ('note.txt', b'Synthetic second\n', 'text/plain')}).json()['id']
     routes, rider = RouteStore(_engine()), uuid4().hex
     members = routes.batch_members()
@@ -233,6 +228,18 @@ def test_faxes_sent_together_each_cost_their_share_and_the_call_counts_once(teln
     # The second fax rode in the first fax's call: its own attempt is never costed on its own.
     routes.record_decision(attempt_id=rider, job_id=second, destination='+12025550123', route='sip',
                            reason='configured', provider_id='sip')
+    return first, second, call
+
+
+def test_faxes_sent_together_each_cost_their_share_and_the_call_counts_once(telnyx_client, monkeypatch):
+    """Two faxes in one Telnyx call: each shows its share by pages, an estimate until Telnyx reports the call."""
+    from datetime import timedelta
+    from app.routing import http as routing_http
+    from api.tests.test_carrier_charges import FakeTelnyx, telnyx as record
+    answer = datetime.utcnow().replace(microsecond=0) - timedelta(hours=1)
+    end = answer + timedelta(seconds=45)
+    first, second, call = _two_faxes_in_one_call(telnyx_client, answer, end)
+    routes = RouteStore(_engine())
     whole = routes.decision(call)['estimated_cost_micros']
     assert whole and whole % 2 == 0
 
@@ -260,6 +267,69 @@ def test_faxes_sent_together_each_cost_their_share_and_the_call_counts_once(teln
     sip = next(item for item in telnyx_client.get('/routing/costs', headers=ADMIN).json()['providers']
                if item['provider_id'] == 'sip')
     assert sip['reported_cost'] == [{'currency': 'USD', 'amount': '0.005'}] and sip['attempts'] == 1
+
+
+def test_savings_count_calls_saved_and_calls_avoided_and_stay_estimates(telnyx_client, monkeypatch):
+    """Sending together saves calls; a document a partner accepted avoids one; neither is ever a reported figure."""
+    from datetime import timedelta
+    from uuid import uuid4
+    import sqlalchemy as sa
+    from app.routing import http as routing_http
+    from app.routing.costs import estimate_cost, format_amount
+    from api.tests.test_carrier_charges import FakeTelnyx, telnyx as record
+    empty = telnyx_client.get('/routing/savings', headers=ADMIN)
+    assert empty.status_code == 200, empty.text
+    body = empty.json()
+    assert body['estimate'] is True and body['days'] == 30 and body['total_saved'] == []
+    assert body['sending_together']['calls'] == 0 and body['direct_delivery']['faxes'] == 0
+    assert body['case_packets']['packets'] == 0 and body['case_packets']['counted_from'] is None
+    assert body['sending_together']['sentence'] == 'No faxes were sent together in the last 30 days.'
+    answer = datetime.utcnow().replace(microsecond=0) - timedelta(hours=1)
+    end = answer + timedelta(seconds=45)
+    first, second, call = _two_faxes_in_one_call(telnyx_client, answer, end)
+    routes = RouteStore(_engine())
+    card, whole = routes.card_for('sip'), routes.decision(call)['estimated_cost_micros']
+    separate = estimate_cost(card, 1) * 2
+    # A third fax a partner accepted directly, and a fourth the partner refused: only the third counts.
+    jobs = [telnyx_client.post('/fax', headers=ADMIN, data={'to': '+12025550188'},
+                               files={'file': ('note.txt', b'Synthetic direct\n', 'text/plain')}).json()['id']
+            for _ in range(2)]
+    direct_deliveries = sa.Table('direct_deliveries', sa.MetaData(), autoload_with=_engine())
+    with _engine().begin() as connection:
+        connection.execute(sa.text('UPDATE fax_jobs SET pages = 3 WHERE id = :id'), {'id': jobs[0]})
+        for job, state in zip(jobs, ('accepted', 'refused')):
+            connection.execute(direct_deliveries.insert().values(
+                id=uuid4().hex, direction='outbound', message_id=uuid4().hex, job_id=job,
+                recipient_number='+12025550188', digest='d' * 64, size_bytes=10, manifest='{}', state=state,
+                accepted_at=end if state == 'accepted' else None, created_at=answer, updated_at=end))
+    avoided = estimate_cost(card, 3)
+
+    def read():
+        response = telnyx_client.get('/routing/savings', headers=ADMIN)
+        assert response.status_code == 200, response.text
+        return response.json()
+    before = read()
+    together, direct = before['sending_together'], before['direct_delivery']
+    assert (together['numbers'], together['calls'], together['faxes'], together['calls_saved']) == (1, 1, 2, 1)
+    assert together['estimate'] is True and together['priced_calls'] == 1
+    assert together['saved'] == [{'currency': 'USD', 'amount': format_amount(separate - whole)}]
+    assert together['sentence'] == (f"2 faxes to the same number went in 1 call instead of 2, saving 1 call and "
+                                    f"about ${format_amount(separate - whole)}.")
+    assert (direct['faxes'], direct['calls_avoided'], direct['pages'], direct['priced']) == (1, 1, 3, 1)
+    assert direct['saved'] == [{'currency': 'USD', 'amount': format_amount(avoided)}]
+    assert direct['sentence'] == (f'1 document went straight to a partner instead of by fax: 1 fax call and '
+                                  f'about ${format_amount(avoided)} saved.')
+    assert before['total_saved'] == [{'currency': 'USD', 'amount': format_amount(separate - whole + avoided)}]
+    # Telnyx reports the shared call: the saving uses the reported charge and is still an estimate.
+    monkeypatch.setattr(routing_http, 'carrier_source', lambda api_key: FakeTelnyx([record(
+        'rec-shared', 'outbound', answer - timedelta(seconds=1), answer, end, '0.005',
+        cli='+13035550100', cld='+12025550123')]))
+    assert telnyx_client.post('/routing/reconcile', headers=ADMIN).status_code == 200
+    after = read()
+    assert after['estimate'] is True and after['sending_together']['estimate'] is True
+    assert after['sending_together']['saved'] == [{'currency': 'USD', 'amount': format_amount(separate - 5000)}]
+    assert telnyx_client.get('/routing/savings', headers=ADMIN, params={'days': 0}).status_code == 422
+    assert telnyx_client.get('/routing/savings', headers=scoped_key(telnyx_client, ['fax:send'])).status_code == 403
 
 
 def test_a_received_fax_cost_is_read_with_the_fax(telnyx_client):
@@ -297,6 +367,48 @@ def test_a_received_fax_cost_is_read_with_the_fax(telnyx_client):
     assert {key: value['summary'] for key, value in batch.json()['costs'].items()} == {
         'inbound-1': 'Telnyx charged $0.0032 for this call.'}
     assert telnyx_client.get('/routing/inbound-costs', params={'ids': 'inbound-1'}).status_code == 401
+
+
+def test_each_estimate_is_worded_by_its_card_and_counts_this_fax(client):
+    """A per-minute trunk is never priced by the page; a 2-page fax is estimated as one call of whole minutes."""
+    assert client.put('/routing/rate-cards', headers=ADMIN, json={'cards': [TELNYX, PHAXIO]}).status_code == 200
+
+    def routes(**params):
+        response = client.get('/routing/destinations/+12025550123', headers=ADMIN, params=params)
+        assert response.status_code == 200, response.text
+        return {route['route']: route for route in response.json()['recommended_routes']}
+    one = routes()
+    assert one['sip']['rate'] == '$0.005 a minute, at least 1 minute'
+    assert one['phaxio']['rate'] == '$0.07 a page'
+    assert one['signalwire']['rate'] is None and one['signalwire']['estimated_cost'] is None  # no rate card
+    assert one['sip']['pages'] == 1 and one['sip']['estimated_cost'] == {'currency': 'USD', 'amount': '0.005'}
+    two = routes(pages=2)
+    # About 30 seconds to connect and 30 a page: 90 seconds, billed as 2 whole minutes.
+    assert two['sip']['pages'] == 2 and two['sip']['estimated_cost'] == {'currency': 'USD', 'amount': '0.01'}
+    assert two['sip']['estimated_cost_one_page'] == {'currency': 'USD', 'amount': '0.005'}
+    assert two['phaxio']['estimated_cost'] == {'currency': 'USD', 'amount': '0.14'}
+    assert client.get('/routing/destinations/+12025550123', headers=ADMIN, params={'pages': 0}).status_code == 422
+
+
+def test_a_fax_through_a_flat_plan_is_in_the_plan_while_it_is_still_sending(client):
+    """Sent shows "In your plan" as soon as the route is chosen, not only after the fax finishes."""
+    from uuid import uuid4
+    plan = {'provider_id': 'phaxio', 'label': 'Phaxio unlimited plan', 'monthly_fee': '10.00', 'captured_on': '2026-10-03'}
+    assert client.put('/routing/rate-cards', headers=ADMIN, json={'cards': [plan]}).status_code == 200
+    sent = client.post('/fax', headers=ADMIN, data={'to': '+12025550123'},
+                       files={'file': ('note.txt', b'Synthetic\n', 'text/plain')})
+    assert sent.status_code == 202, sent.text
+    job, attempt = sent.json()['id'], uuid4().hex
+    assert client.get(f'/routing/faxes/{job}/cost', headers=ADMIN).json()['state'] == 'none'  # no route yet
+    routes, now = RouteStore(_engine()), datetime.utcnow()
+    with _engine().begin() as connection:
+        connection.execute(routes.attempts.insert().values(id=attempt, job_id=job, sequence=1, phase='submitting',
+                                                           created_at=now))
+    routes.record_decision(attempt_id=attempt, job_id=job, destination='+12025550123', route='phaxio',
+                           reason='configured', provider_id='phaxio')
+    cost = client.get(f'/routing/faxes/{job}/cost', headers=ADMIN).json()
+    assert (cost['state'], cost['summary']) == ('included', 'Included in your Phaxio plan ($10 a month).')
+    assert client.get('/routing/fax-costs', headers=ADMIN, params={'ids': job}).json()['costs'][job] == cost
 
 
 def test_recommendations_never_call_an_unknown_cost_the_cheapest(client):

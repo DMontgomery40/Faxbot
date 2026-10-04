@@ -2,7 +2,7 @@
 // and one plain sentence for a failed request.
 import { Alert, Fade } from '@mui/material';
 import { AdminAPIError, accessErrorMessage } from '../../api/client';
-import type { Money } from '../../api/deliveryTypes';
+import type { Money, RecommendedRoute } from '../../api/deliveryTypes';
 
 export function formatMoney(value: Money | null | undefined): string {
   if (!value) return '-';
@@ -20,6 +20,17 @@ export function formatMoney(value: Money | null | undefined): string {
 export function formatMoneyList(values: Money[] | null | undefined, empty = 'None yet'): string {
   if (!values || values.length === 0) return empty;
   return values.map(formatMoney).join(' + ');
+}
+
+// What a fax costs on a route, in the route's own units: "About $0.01 for this 2-page fax
+// ($0.005 a minute, at least 1 minute)." or, with no page count, "About $0.07 a page."
+// Nothing for a route in a flat plan; its explanation already says so.
+export function routeCostSentence(route: RecommendedRoute, pages: number | null): string | null {
+  if (route.included_in_plan) return null;
+  if (pages && route.pages === pages && route.estimated_cost) {
+    return `About ${formatMoney(route.estimated_cost)} for this ${pages}-page fax${route.rate ? ` (${route.rate})` : ''}.`;
+  }
+  return route.rate ? `About ${route.rate}.` : null;
 }
 
 export function formatRate(amount: string, currency: string, unit: string): string | null {

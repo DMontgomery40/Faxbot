@@ -3,7 +3,9 @@ import { fireEvent, render, screen, within } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import AdminAPIClient from '../api/client';
 import DeliveryRoutes from '../components/DeliveryRoutes';
-import { backend, server } from '../test/server';
+import Savings from '../components/delivery/Savings';
+import Recommendations, { NO_RECOMMENDATIONS } from '../components/delivery/Recommendations';
+import { backend, emptySavings, server } from '../test/server';
 
 type Recorded = { method: string; path: string; body: unknown };
 
@@ -32,8 +34,8 @@ function routingHandlers(record: (request: Request) => Promise<void>) {
     http.get('/routing/destinations/:number', () => HttpResponse.json({
       ...destination, direct_partner: null,
       recommended_routes: [
-        { route: 'sip', label: 'Carrier trunk', reason: 'cheapest', explanation: 'The cheapest route that works reliably for this number.', estimated_cost_one_page: { currency: 'USD', amount: '0.005' } },
-        { route: 'phaxio', label: 'Phaxio', reason: 'alternative', explanation: 'Used if the routes above it are unavailable.', estimated_cost_one_page: { currency: 'USD', amount: '0.07' } },
+        { route: 'sip', label: 'Carrier trunk', reason: 'cheapest', explanation: 'The cheapest route that works reliably for this number.', estimated_cost_one_page: { currency: 'USD', amount: '0.005' }, rate: '$0.005 a minute, at least 1 minute' },
+        { route: 'phaxio', label: 'Phaxio', reason: 'alternative', explanation: 'Used if the routes above it are unavailable.', estimated_cost_one_page: { currency: 'USD', amount: '0.07' }, rate: '$0.07 a page' },
       ],
       available_routes: [{ route: 'phaxio', label: 'Phaxio' }, { route: 'sip', label: 'Carrier trunk' }],
     })),
@@ -73,7 +75,8 @@ describe('delivery routes', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Details for +12025550123' }));
     const dialog = await screen.findByRole('dialog');
     expect(await within(dialog).findByText('The cheapest route that works reliably for this number.')).toBeTruthy();
-    expect(within(dialog).getByText(/about \$0\.005 for one page/)).toBeTruthy();
+    expect(within(dialog).getByText(/about \$0\.005 a minute, at least 1 minute/)).toBeTruthy();
+    expect(within(dialog).getByText(/about \$0\.07 a page/)).toBeTruthy();
     fireEvent.change(within(dialog).getByLabelText('Preferred route'), { target: { value: 'phaxio' } });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
     await screen.findByText('Spending');
@@ -136,5 +139,41 @@ describe('delivery routes', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Look up' }));
     expect(await screen.findByRole('dialog', { name: '+441782684953' })).toBeTruthy();
     expect(looked).toEqual(['01782 684953']);
+  });
+});
+
+describe('Savings and Recommendations', () => {
+  it('shows each saving with its sentence, every one marked an estimate, and from when case packets count', async () => {
+    const savings = emptySavings();
+    savings.total_saved = [{ currency: 'USD', amount: '0.42' }] as never[];
+    savings.sending_together.sentence = '5 faxes to the same numbers went in 2 calls instead of 5, saving 3 calls and about $0.012.';
+    savings.direct_delivery.sentence = '1 document went straight to a partner instead of by fax: 1 fax call and about $0.005 saved.';
+    Object.assign(savings.case_packets, {
+      sentence: '1 case packet left out 1 document the recipient already had: 39 pages and about $0.40 saved.',
+      counted_from: '2026-10-04T12:00:00', earlier_not_counted: true,
+      counted_from_sentence: 'Counted from October 4, 2026, when Faxbot started recording what each packet left out.',
+    });
+    server.use(http.get('/routing/savings', () => HttpResponse.json(savings)));
+    render(<Savings client={client()} />);
+    expect(await screen.findByText(/Each figure is an estimate/)).toBeTruthy();
+    expect(screen.getByTestId('savings-total').textContent).toBe('About $0.42 saved in the last 30 days.');
+    for (const [id, text] of [['savings-together', 'saving 3 calls'], ['savings-direct', '1 fax call and about $0.005 saved'],
+      ['savings-packets', '39 pages and about $0.40 saved']] as const) {
+      const part = screen.getByTestId(id);
+      expect(part.textContent).toContain(text);
+      expect(within(part).getByText('Estimate')).toBeTruthy();
+    }
+    const day = new Date('2026-10-04T12:00:00Z').toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' });
+    expect(within(screen.getByTestId('savings-packets'))
+      .getByText(`Counted from ${day}, when Faxbot started recording what each packet left out.`)).toBeTruthy();
+  });
+
+  it('says nothing was saved yet on a new installation, and Recommendations says what will appear', async () => {
+    const { unmount } = render(<Savings client={client()} />);
+    expect((await screen.findByTestId('savings-total')).textContent).toBe('No money saved in the last 30 days, as far as Faxbot can tell.');
+    expect(screen.getByText('No faxes were sent together in the last 30 days.')).toBeTruthy();
+    unmount();
+    render(<Recommendations />);
+    expect(screen.getByTestId('recommendations-empty').textContent).toBe(NO_RECOMMENDATIONS);
   });
 });

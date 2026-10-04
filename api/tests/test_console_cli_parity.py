@@ -82,7 +82,10 @@ AWAITING_CONSOLE = {
 }
 
 # Gaps still open in the command line. Builder M removes each entry with the command that closes it.
-AWAITING_CLI: dict = {}
+AWAITING_CLI = {
+    ('GET', '/routing/savings'): 'faxbot costs savings',
+    ('GET', '/cases'): 'faxbot recipients cases list',
+}
 
 LISTS = {'NOT_OPERATOR': NOT_OPERATOR, 'CONSOLE_ONLY': CONSOLE_ONLY, 'CLI_ONLY': CLI_ONLY,
          'AWAITING_CONSOLE': AWAITING_CONSOLE, 'AWAITING_CLI': AWAITING_CLI}

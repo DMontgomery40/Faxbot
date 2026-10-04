@@ -64,15 +64,15 @@ describe('the navigation table', () => {
 
   it('follows each page permission as the old tabs did', () => {
     expect(pagesOf(visible(['diagnostics:read']), 'overview')).toEqual(['overview']);
-    expect(pagesOf(visible(['settings:read']), 'system')).toEqual(['security', 'storage', 'remote', 'api', 'assistants']);
+    expect(pagesOf(visible(['settings:read']), 'system')).toEqual(['security', 'storage', 'remote', 'api', 'assistants', 'plugins']);
     expect(pagesOf(visible(['settings:write']), 'system')).toEqual(['setup']);
     expect(pagesOf(visible(['host:terminal', 'logs:read']), 'system')).toEqual(['logs', 'terminal']);
     expect(pagesOf(visible(['keys:manage']), 'access')).toEqual(['keys', 'sessions']);
     expect(pagesOf(visible(['grants:read']), 'access')).toEqual(['who', 'sessions']);
   });
 
-  it('shows Provider plugins only when plugins are on', () => {
-    expect(pagesOf(visible(['providers:read']), 'system')).toEqual([]);
+  it('lists Provider plugins whether or not plugins are on, so they can be turned on there', () => {
+    expect(pagesOf(visible(['providers:read']), 'system')).toEqual(['plugins']);
     expect(pagesOf(visible(['providers:read'], noScreens, true), 'system')).toEqual(['plugins']);
   });
 
@@ -203,7 +203,7 @@ describe('the console shell', () => {
         opened.push(`${area.id}/${page.id}`);
       }
     }
-    expect(opened).toHaveLength(39);
+    expect(opened).toHaveLength(41);
   }, 60000);
 
   it('keeps the old destination names working', async () => {

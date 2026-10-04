@@ -144,6 +144,22 @@ export const backend = {
 const s = () => backend.state;
 const nextId = (prefix: string) => `${prefix}_${++s().sequence}`;
 const json = (body: JsonBodyType, status = 200) => HttpResponse.json(body, { status });
+
+// GET /routing/savings for an installation that has saved nothing yet.
+export function emptySavings() {
+  const part = (sentence: string) => ({ estimate: true, saved: [], sentence });
+  return {
+    days: 30, since: '2026-09-04T00:00:00', estimate: true, total_saved: [],
+    sentence: 'Each figure is an estimate: what you paid compared with what the same faxes would have cost the usual way.',
+    sending_together: { ...part('No faxes were sent together in the last 30 days.'),
+      numbers: 0, calls: 0, faxes: 0, calls_saved: 0, priced_calls: 0 },
+    direct_delivery: { ...part('No documents went straight to a partner in the last 30 days.'),
+      faxes: 0, calls_avoided: 0, pages: 0, priced: 0, in_plan: 0, unpriced: 0 },
+    case_packets: { ...part('No case packet in the last 30 days left out a document the recipient already had.'),
+      counted_from: null, earlier_not_counted: false, counted_from_sentence: null, packets: 0, documents_left_out: 0,
+      pages_not_resent: 0, pages_saved: 0, priced: 0, in_plan: 0, unpriced: 0 },
+  };
+}
 const fail = (status: number, detail: string) => json({ detail }, status);
 
 async function capture(request: Request, path: string): Promise<Json | null> {
@@ -599,6 +615,10 @@ const consoleHandlers = [
   http.get('/routing/faxes/:jobId/cost', () => json({ state: 'none', summary: null, reported_cost: [], estimated_cost: [] })),
   http.get('/routing/inbound-costs', () => json({ costs: {} })),
   http.get('/routing/fax-costs', () => json({ costs: {} })),
+  // Savings: nothing saved yet, every part an estimate.
+  http.get('/routing/savings', () => json(emptySavings())),
+  // Case packets: none sent yet.
+  http.get('/cases', () => json({ cases: [] })),
   // A number with no history and no route recommendation yet.
   http.get('/routing/destinations/:number', ({ params }) => json({ number: params.number, display_name: null, notes: null,
     preferred_route: null, accepts_references: false, version: 0, routes: [], estimated_cost_30_days: [],

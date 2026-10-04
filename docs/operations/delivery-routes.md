@@ -190,7 +190,9 @@ Send a case packet with `POST /cases/{case}/faxes`, using form fields `to`, one 
 - Otherwise the packet holds every document.
 - When nothing is new, Faxbot refuses the packet instead of faxing an index alone.
 
-For example, a 40-page record and a cover letter go out as 41 pages. Each later update of four pages then goes out as 5 pages instead of 45. Add `preview=true` to see the packet without sending it. `GET /cases/{case}/documents?to=` lists what the recipient has accepted.
+For example, a 40-page record and a cover letter go out as 41 pages. Each later update of four pages then goes out as 5 pages instead of 45. Add `preview=true` to see the packet without sending it. `GET /cases/{case}/documents?to=` lists what the recipient has accepted. `GET /cases?limit=` (default 50, at most 200) lists the newest cases this installation sent packets for, one row per case and recipient, with the number of documents, how many the recipient has, the pages and when the last one was sent; **Recipients → Case packets** shows the same list. Both need `settings:read`.
+
+Faxbot records what each packet left out when it is sent (schema `0016_case_packet_sends`). Savings from case packets count from the first packet recorded this way; earlier packets are not counted.
 
 ## API
 
@@ -199,7 +201,8 @@ These routes need `settings:read`, or `settings:write` for changes:
 | Method | Path | Purpose |
 | --- | --- | --- |
 | GET | `/routing/destinations` | Numbers with their routes, delivery rate and 30-day cost |
-| GET | `/routing/destinations/{number}` | One number, with the route order for its next fax |
+| GET | `/routing/destinations/{number}?pages=` | One number, with the route order for its next fax. Each route gives `rate`, its price in the card's own unit ("$0.005 a minute, at least 1 minute", "$0.07 a page"), and `estimated_cost` for a fax of `pages` pages (default 1): about 30 seconds to connect and 30 a page, rounded the way the card bills |
+| GET | `/routing/savings?days=` | What sending together (calls saved), direct delivery (fax calls avoided) and case packets (pages not sent again) saved in the last `days` (default 30). Every figure is an estimate, even after the carrier reports, because it compares with calls that never happened; a fax that would have gone through a flat plan counts as `in_plan` and saves no money |
 | PATCH | `/routing/destinations/{number}` | Name, notes, preferred route, case references |
 | GET | `/routing/costs?since=` | Spending by route and for received calls, with charged, estimated and waiting counts |
 | POST | `/routing/reconcile` | Ask the SIP trunk carrier now what each open call cost (`settings:write`) |
@@ -208,4 +211,4 @@ These routes need `settings:read`, or `settings:write` for changes:
 
 Anyone who may send faxes can ask whether a number sends faxes together: `GET /batching/check?to=`. Anyone who may read a fax can see whether it is waiting or went with others, and its share of the charge: `GET /batching/faxes/{id}`. They can also send a waiting fax now: `POST /batching/faxes/{id}/send-now`. `POST /fax` takes an optional `send_now=true`.
 
-Anyone who may read a fax can read its cost: `GET /routing/faxes/{id}/cost` for a sent fax, `GET /routing/fax-costs?ids=` for up to 100 sent faxes at once (the cost column of Faxes → Sent), `GET /routing/inbound/{id}/cost` for a received fax, and `GET /routing/inbound-costs?ids=` for up to 100 received faxes at once. Faxes the person cannot read are left out. A fax sent together with others in one call costs its share of that call, split by pages, as an estimate until the carrier reports the call; the whole call is counted once in the spending totals.
+Anyone who may read a fax can read its cost: `GET /routing/faxes/{id}/cost` for a sent fax, `GET /routing/fax-costs?ids=` for up to 100 sent faxes at once (the cost column of Faxes → Sent), `GET /routing/inbound/{id}/cost` for a received fax, and `GET /routing/inbound-costs?ids=` for up to 100 received faxes at once. Faxes the person cannot read are left out. A fax sent together with others in one call costs its share of that call, split by pages, as an estimate until the carrier reports the call; the whole call is counted once in the spending totals. A fax going through a flat plan reads "Included in your HumbleFax plan ($10 a month)." as soon as Faxbot has chosen its route, while it is still sending.
