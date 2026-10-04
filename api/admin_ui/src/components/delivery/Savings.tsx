@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Box, Chip, CircularProgress, Paper, Stack, Typography } from '@mui/material';
 import AdminAPIClient from '../../api/client';
 import type { Savings as SavingsResult } from '../../api/deliveryTypes';
+import { parseServerTime } from '../../api/time';
 import { ScreenHeader } from '../access/AccessViews';
 import { DeliveryError, formatMoneyList } from './shared';
 
@@ -12,8 +13,8 @@ import { DeliveryError, formatMoneyList } from './shared';
 export function countedFromSentence(packets: SavingsResult['case_packets']): string | null {
   if (!packets.earlier_not_counted) return null;
   if (!packets.counted_from) return packets.counted_from_sentence;
-  const day = new Date(`${packets.counted_from.replace(/Z$/, '')}Z`);
-  if (Number.isNaN(day.getTime())) return packets.counted_from_sentence;
+  const day = parseServerTime(packets.counted_from);
+  if (!day) return packets.counted_from_sentence;
   const date = day.toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' });
   return `Counted from ${date}, when Faxbot started recording what each packet left out.`;
 }
