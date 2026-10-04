@@ -5,13 +5,48 @@ Presence flags describe local configuration only, not remote account validation.
 """
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from typing import TYPE_CHECKING, Any
 
 from .routing.numbers import SUPPORTED_COUNTRIES, number_example
 
 if TYPE_CHECKING:
     from .config_store import ConfigurationSnapshot
+
+
+# Environment-only settings the console shows read-only (System → Security, Storage & retention,
+# Diagnostics, Developer, Terminal and the trunk's advanced box). They are read from the process
+# environment at start and are never changed from the console or the command line.
+DEPLOYMENT_VARIABLES = (
+    'FAXBOT_ALLOW_INSECURE_HTTP_SESSIONS', 'FAXBOT_CONSOLE_ORIGINS', 'ENABLE_LOCAL_ADMIN', 'ENABLE_ADMIN_EXEC',
+    'FAXBOT_ALLOW_INSECURE_LOOPBACK', 'FAXBOT_INSTALLATION_KEY_PATH', 'FAXBOT_DIRECT_KEY_PATH',
+    'FAXBOT_MEDIA_PORTS', 'FAXBOT_PHONE_SYSTEM_ADDRESS',
+    'MCP_ALLOWED_HOSTS', 'MCP_ALLOWED_ORIGINS', 'MCP_OAUTH_SUBJECT_KEYS_FILE', 'MCP_RESOURCE_URL',
+    'MCP_HTTP_PORT', 'MCP_WS_PORT', 'MCP_WS_API_KEY', 'TZ',
+)
+# Whether these are set is shown; their values never are.
+SECRET_DEPLOYMENT_VARIABLES = frozenset({'MCP_WS_API_KEY'})
+_TRUE = {'1', 'true', 'yes'}
+
+
+def deployment_view(environment: Mapping[str, str]) -> dict[str, Any]:
+    """{variable: {set, value}} for the environment-only settings; a secret's value is never included."""
+    view = {}
+    for name in DEPLOYMENT_VARIABLES:
+        raw = environment.get(name)
+        present = isinstance(raw, str) and raw.strip() != ''
+        view[name] = {'set': present,
+                      'value': raw.strip()[:512] if present and name not in SECRET_DEPLOYMENT_VARIABLES else None}
+    # The terminal is on when ENABLE_ADMIN_EXEC says so, or, when it is not set, when the console is served here.
+    exec_value, local = environment.get('ENABLE_ADMIN_EXEC'), environment.get('ENABLE_LOCAL_ADMIN', 'false')
+    view['ENABLE_ADMIN_EXEC']['effective'] = (exec_value.lower() in _TRUE if exec_value is not None
+                                              else local.lower() in _TRUE)
+    return view
+
+
+def _owner_only() -> list[str]:
+    from .access.configuration import owner_only_fields
+    return sorted(owner_only_fields())
 
 
 def _audio_reason(values) -> dict:
@@ -62,11 +97,13 @@ def _database_view(url: str) -> dict[str, Any]:
 
 
 def project_admin_settings(snapshot: ConfigurationSnapshot, pending_fields: Iterable[str] = (),
-                           env_managed: Iterable[str] = ()) -> dict[str, Any]:
+                           env_managed: Iterable[str] = (),
+                           environment: Mapping[str, str] | None = None) -> dict[str, Any]:
     """Retain the legacy nested shape while exposing desired/active identity.
 
     Callers can add existing change hints to the returned ``_meta`` dictionary.
-    Neither process environment nor mutable runtime settings are consulted.
+    Neither process environment nor mutable runtime settings are consulted; the
+    environment-only settings come from ``environment`` when the caller passes it.
     """
     values = snapshot.desired.values
     return {
@@ -224,6 +261,10 @@ def project_admin_settings(snapshot: ConfigurationSnapshot, pending_fields: Iter
         'restart': {'allowed': values.admin_allow_restart},
         # Where provider plugin files are read from; shown read-only.
         'plugin_files': {'providers_dir': values.providers_dir, 'plugin_registry_path': values.plugin_registry_path},
+        # Environment-only settings, shown read-only; never a secret's value.
+        'deployment': deployment_view(environment or {}),
+        # Settings only the owner may change; the console shows them disabled to everyone else.
+        'owner_only': _owner_only(),
         'numbers': {
             'default_country': values.fax_default_country,
             'example': number_example(values.fax_default_country),

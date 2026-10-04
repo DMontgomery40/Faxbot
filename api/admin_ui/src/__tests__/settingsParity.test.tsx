@@ -69,6 +69,11 @@ function settingsHandlers(data: Json, put: (body: Json) => Response | null = () 
 
 const apply = () => fireEvent.click(screen.getByRole('button', { name: 'Apply settings' }));
 const section = async (title: string) => (await screen.findByText(title)).closest('.MuiPaper-root') as HTMLElement;
+// The Receiving section, found by its switch (other sections also say "Receiving").
+const receivingSection = async () => {
+  await screen.findByLabelText('Receiving is on');
+  return screen.getByTestId('switch-inbound_enabled').closest('.MuiPaper-root') as HTMLElement;
+};
 
 describe('Settings delivery routes', () => {
   it('shows the saved routes in order and does not count loading as a change', async () => {
@@ -383,7 +388,7 @@ describe('Settings authentication and receiving', () => {
     render(<Settings client={client()} />);
     const warning = /HumbleFax cannot receive faxes, so Faxbot will not save receiving with it/;
     expect(await screen.findByText(warning)).toBeTruthy();
-    const inbound = await section('Inbound Receiving');
+    const inbound = await receivingSection();
     fireEvent.click(within(inbound).getByLabelText('Receiving is on'));
     await waitFor(() => expect(screen.queryByText(warning)).toBeNull());
     // Off, it cannot be turned on again with a provider that only sends.
@@ -398,7 +403,7 @@ describe('Settings authentication and receiving', () => {
       data.inbound.enabled = false;
     }));
     render(<Settings client={client()} sections={['providers', 'inbound', 'routes']} canWrite />);
-    const inbound = await section('Inbound Receiving');
+    const inbound = await receivingSection();
     expect(within(inbound).getByText('Turn this on to receive faxes through Carrier trunk.')).toBeTruthy();
     expect(screen.queryByText('Enable Inbound Fax Receiving')).toBeNull();
     expect(screen.queryByText('Feature Flags')).toBeNull();
@@ -695,17 +700,61 @@ describe('Settings when Faxbot cannot reach its fax engine', () => {
 });
 
 describe('Settings placed on their own pages', () => {
-  it('turns on the S3 check and console restarts on Diagnostics', async () => {
+  it('applies the S3 check and console restarts separately, so one refusal does not undo the other', async () => {
     const writes = settingsHandlers(settingsFixture((data) => {
       data.storage.s3_diagnostics = false;
       data.restart = { allowed: false };
-    }));
+    }), (body) => ('admin_allow_restart' in body
+      ? HttpResponse.json({ detail: 'Forbidden' }, { status: 403 }) : null));
     render(<Settings client={client()} sections={['diagnostics']} canWrite />);
     fireEvent.click(await screen.findByLabelText('Also check the S3 bucket'));
     fireEvent.click(screen.getByLabelText('Allow restarting Faxbot from here'));
-    fireEvent.click(screen.getByRole('button', { name: 'Apply settings' }));
-    await waitFor(() => expect(writes).toHaveLength(1));
-    expect(writes[0]).toEqual({ expected_revision_id: expect.any(String), enable_s3_diagnostics: true, admin_allow_restart: true });
+    expect(screen.queryByRole('button', { name: 'Apply settings' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Apply: Allow restarting Faxbot from here' }));
+    expect(await screen.findByText('You do not have permission to change this setting.')).toBeTruthy();
+    expect(writes[0]).toEqual({ expected_revision_id: expect.any(String), admin_allow_restart: true });
+    // The S3 change is still there and can be applied on its own.
+    expect((screen.getByLabelText('Also check the S3 bucket') as HTMLInputElement).checked).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Apply: Also check the S3 bucket' }));
+    await waitFor(() => expect(writes).toHaveLength(2));
+    expect(writes[1]).toEqual({ expected_revision_id: expect.any(String), enable_s3_diagnostics: true });
+  });
+
+  it('shows owner-only settings disabled, with one sentence, to people who are not the owner', async () => {
+    settingsHandlers(settingsFixture((data) => {
+      data.restart = { allowed: false };
+      data.mobile = { local_base: '' };
+      data.owner_only = ['admin_allow_restart', 'mobile_local_base', 'docs_base_url', 'feature_v3_plugins'];
+    }));
+    const { unmount } = render(<Settings client={client()} sections={['diagnostics']} canWrite isOwner={false} />);
+    expect((await screen.findByLabelText('Allow restarting Faxbot from here') as HTMLInputElement).disabled).toBe(true);
+    expect((screen.getByLabelText('Also check the S3 bucket') as HTMLInputElement).disabled).toBe(false);
+    expect(within(screen.getByTestId('switch-admin_allow_restart')).getByText(/Only the owner of this installation can change this\.$/)).toBeTruthy();
+    unmount();
+    render(<Settings client={client()} sections={['phones']} canWrite isOwner={false} />);
+    expect((await screen.findByRole('textbox') as HTMLInputElement).disabled).toBe(true);
+    expect(screen.getByText(/Only the owner of this installation can change this\.$/)).toBeTruthy();
+  });
+
+  it('asks before turning sending off, and not before turning it on', async () => {
+    const writes = settingsHandlers(settingsFixture());
+    render(<Settings client={client()} sections={['providers', 'inbound', 'routes']} canWrite />);
+    const sending = await screen.findByLabelText('Sending is on') as HTMLInputElement;
+    fireEvent.click(sending);
+    const dialog = await screen.findByRole('dialog', { name: 'Turn off sending?' });
+    expect(within(dialog).getByText('Faxbot will stop sending, and faxes submitted while sending is off stay on hold until you turn it back on.')).toBeTruthy();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(sending.checked).toBe(true);
+    fireEvent.click(sending);
+    fireEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Turn off sending' }));
+    await waitFor(() => expect(sending.checked).toBe(false));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    // Turning it back on needs no confirmation.
+    fireEvent.click(sending);
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(sending.checked).toBe(true);
+    expect(writes).toEqual([]);
   });
 
   it('sets the address phones use on the local network on Keys & phones', async () => {
@@ -735,7 +784,7 @@ describe('Settings placed on their own pages', () => {
   it('keeps the plugin switches on Provider plugins, not on In use', async () => {
     const writes = settingsHandlers(settingsFixture());
     const { unmount } = render(<Settings client={client()} sections={['providers', 'inbound', 'routes']} />);
-    await section('Inbound Receiving');
+    await receivingSection();
     expect(screen.queryByText('Use provider plugins')).toBeNull();
     expect(screen.getByLabelText('Sending is on')).toBeTruthy();
     unmount();
@@ -745,5 +794,102 @@ describe('Settings placed on their own pages', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Apply settings' }));
     await waitFor(() => expect(writes).toHaveLength(1));
     expect(writes[0]).toEqual({ expected_revision_id: expect.any(String), feature_v3_plugins: true });
+  });
+});
+
+describe('System, milestone 5', () => {
+  const deployment = (values: Record<string, string>) => Object.fromEntries([
+    'FAXBOT_ALLOW_INSECURE_HTTP_SESSIONS', 'FAXBOT_CONSOLE_ORIGINS', 'ENABLE_LOCAL_ADMIN', 'ENABLE_ADMIN_EXEC',
+    'FAXBOT_ALLOW_INSECURE_LOOPBACK', 'FAXBOT_INSTALLATION_KEY_PATH', 'FAXBOT_DIRECT_KEY_PATH', 'FAXBOT_MEDIA_PORTS',
+    'FAXBOT_PHONE_SYSTEM_ADDRESS', 'MCP_ALLOWED_HOSTS', 'MCP_ALLOWED_ORIGINS', 'MCP_OAUTH_SUBJECT_KEYS_FILE',
+    'MCP_RESOURCE_URL', 'MCP_HTTP_PORT', 'MCP_WS_PORT', 'MCP_WS_API_KEY', 'TZ',
+  ].map((name) => [name, name in values ? { set: true, value: name === 'MCP_WS_API_KEY' ? null : values[name] } : { set: false, value: null }]));
+
+  it('shows the environment-only security settings with their meaning, and set or not set', async () => {
+    settingsHandlers(settingsFixture((data) => {
+      data.deployment = deployment({ FAXBOT_CONSOLE_ORIGINS: 'https://fax.clinic.example', ENABLE_LOCAL_ADMIN: 'true' });
+    }));
+    render(<Settings client={client()} sections={['security']} title="Security" />);
+    const rows = await screen.findByTestId('deployment-rows');
+    expect(within(rows).getByDisplayValue('https://fax.clinic.example')).toBeTruthy();
+    expect(within(rows).getByText('Console addresses allowed to sign in')).toBeTruthy();
+    expect(within(rows).getByText('Console served by this installation')).toBeTruthy();
+    expect(within(rows).getByDisplayValue('On')).toBeTruthy();
+    expect(within(rows).getByDisplayValue('Not set')).toBeTruthy();
+    expect(within(rows).getAllByText('Set in .env.')).toHaveLength(2);
+    // Variable names are for Developer pages only.
+    expect(within(rows).queryByText(/FAXBOT_|ENABLE_/)).toBeNull();
+    expect(screen.queryByText('Audit Logging')).toBeNull();
+  });
+
+  it('names the assistant servers\' settings in Developer and never shows a secret', async () => {
+    settingsHandlers(settingsFixture((data) => {
+      data.deployment = deployment({ MCP_HTTP_PORT: '3001', MCP_WS_API_KEY: 'hidden' });
+    }));
+    render(<Settings client={client()} sections={['mcp']} />);
+    const rows = await screen.findByTestId('deployment-rows');
+    expect(within(rows).getByDisplayValue('3001')).toBeTruthy();
+    expect(within(rows).getByText('Set in .env. (MCP_WS_API_KEY)')).toBeTruthy();
+    expect(within(rows).getByDisplayValue('Set in .env')).toBeTruthy();
+    expect(document.body.textContent).not.toContain('hidden');
+  });
+
+  it('puts the server time zone in Diagnostics and the key locations in Storage & retention', async () => {
+    settingsHandlers(settingsFixture((data) => {
+      data.deployment = deployment({ TZ: 'America/Denver' });
+    }));
+    const { unmount } = render(<Settings client={client()} sections={['diagnostics']} />);
+    expect(within(await screen.findByTestId('deployment-rows')).getByDisplayValue('America/Denver')).toBeTruthy();
+    unmount();
+    render(<Settings client={client()} sections={['storage', 'advanced', 'backup']} title="Storage & retention" />);
+    const rows = await screen.findByTestId('deployment-rows');
+    expect(within(rows).getByText('Where the installation key is kept')).toBeTruthy();
+    expect(within(rows).getAllByText('Not set: Faxbot keeps it in its data folder.')).toHaveLength(2);
+  });
+
+  it('words the receiving settings plainly', async () => {
+    settingsHandlers(settingsFixture());
+    render(<Settings client={client()} sections={['providers', 'inbound', 'routes']} />);
+    const receiving = await receivingSection();
+    expect(within(receiving).getByText('Keep received faxes for (days)')).toBeTruthy();
+    expect(within(receiving).getByText('Download links work for (minutes)')).toBeTruthy();
+    expect(screen.queryByText(/Token TTL|Retention Days|Configure inbound/)).toBeNull();
+  });
+
+  it('keeps the five event settings on the Audit log page, in words', async () => {
+    const writes = settingsHandlers(settingsFixture((data) => {
+      data.audit = { enabled: false, format: 'json', file: '', syslog: false, syslog_address: '/dev/log' };
+      data.security.audit_enabled = false;
+    }));
+    render(<Settings client={client()} sections={['audit']} canWrite />);
+    fireEvent.click(await screen.findByLabelText('Record events'));
+    for (const label of ['How each event is written', 'Also save events in a file on the server', 'Address of the system log']) {
+      expect(screen.getByText(label)).toBeTruthy();
+    }
+    fireEvent.click(screen.getByLabelText('Also send events to the system log'));
+    fireEvent.click(screen.getByRole('button', { name: 'Apply settings' }));
+    await waitFor(() => expect(writes).toHaveLength(1));
+    expect(writes[0]).toEqual({ expected_revision_id: expect.any(String), audit_log_enabled: true, audit_log_syslog: true });
+  });
+});
+
+describe('Owner-only settings everywhere', () => {
+  it('disables every owner-only setting on In use, Security and Storage for people who are not the owner', async () => {
+    settingsHandlers(settingsFixture((data) => {
+      data.owner_only = ['inbound_token_ttl_minutes', 'enforce_public_https', 'enable_persisted_settings',
+        'max_requests_per_minute', 'inbound_list_rpm', 'inbound_get_rpm'];
+    }));
+    const { unmount } = render(<Settings client={client()} sections={['providers', 'inbound', 'routes']} canWrite isOwner={false} />);
+    const receiving = await receivingSection();
+    const minutes = within(receiving).getByText('Download links work for (minutes)').closest('.MuiBox-root')?.parentElement as HTMLElement;
+    expect((within(receiving).getByDisplayValue('60') as HTMLInputElement).disabled).toBe(true);
+    expect(within(receiving).getByText(/How long a link to download a received fax keeps working\. Only the owner/)).toBeTruthy();
+    expect(minutes).toBeTruthy();
+    // Receiving itself is not owner-only and stays changeable.
+    expect((within(receiving).getByLabelText('Receiving is on') as HTMLInputElement).disabled).toBe(false);
+    unmount();
+    render(<Settings client={client()} sections={['security', 'storage', 'advanced']} canWrite isOwner={false} />);
+    await screen.findByText('HTTPS Enforced');
+    expect(screen.getAllByText(/Only the owner of this installation can change this\.$/).length).toBeGreaterThanOrEqual(5);
   });
 });

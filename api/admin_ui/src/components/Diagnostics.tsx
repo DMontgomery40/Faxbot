@@ -47,6 +47,7 @@ import type { DiagnosticsOutcome, DiagnosticsResult, DiagnosticsValue } from '..
 import { formatServerTime } from '../api/time';
 import type { AdminDestination } from '../navigation';
 import { ResponsiveFormSection } from './common/ResponsiveFormFields';
+import DatabaseStatus from './DatabaseStatus';
 
 interface DiagnosticsProps {
   client: AdminAPIClient;
@@ -346,6 +347,8 @@ function Diagnostics({ client, onNavigate, docsBase }: DiagnosticsProps) {
             {restartMessage}
           </Alert>
         )}
+
+        <DatabaseStatus client={client} />
 
         {!diagnostics && !loading && (
           <Fade in>

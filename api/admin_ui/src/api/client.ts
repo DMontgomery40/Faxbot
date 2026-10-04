@@ -18,6 +18,8 @@ import type {
   AuthMe,
   ConsoleContext,
   Page,
+  AuditEntry,
+  DatabaseStatus,
   PermissionInfo,
   AccessRole,
   AccessUser,
@@ -630,6 +632,17 @@ export class AdminAPIClient {
   // Bring in faxes the SIP trunk received but could not hand to Faxbot.
   async recoverInbound(): Promise<{ found: number; imported: number; waiting: number; message: string }> {
     return this.json('/admin/inbound/recover', { method: 'POST', body: JSON.stringify({}) });
+  }
+
+  // The security audit log, newest first; filters by person, action and what was changed.
+  async listAudit(params: { cursor?: string | null; limit?: number; actor_id?: string; operation?: string; target_id?: string } = {}): Promise<Page<AuditEntry>> {
+    return this.json(`/access/audit${query({ cursor: params.cursor, limit: params.limit ?? 50, actor_id: params.actor_id,
+      operation: params.operation, target_id: params.target_id })}`);
+  }
+
+  // The database Faxbot uses and whether it can reach it.
+  async getDatabaseStatus(): Promise<DatabaseStatus> {
+    return this.json('/admin/db-status');
   }
 
   // Diagnostics

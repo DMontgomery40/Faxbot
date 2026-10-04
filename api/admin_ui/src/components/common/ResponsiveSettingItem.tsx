@@ -31,6 +31,8 @@ interface ResponsiveSettingItemProps {
   infoLink?: { text: string; url: string };
   // A custom control in place of the built-in input, labelled by this row.
   renderControl?: (labels: { id: string; labelledBy: string; describedBy?: string }) => React.ReactNode;
+  // Shown but not changeable, such as a setting only the owner may change.
+  disabled?: boolean;
 }
 
 export function ResponsiveSettingItem({
@@ -48,6 +50,7 @@ export function ResponsiveSettingItem({
   showCurrentValue = true,
   infoLink,
   renderControl,
+  disabled = false,
 }: ResponsiveSettingItemProps) {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
@@ -74,6 +77,7 @@ export function ResponsiveSettingItem({
         <TextField
           select
           id={inputId}
+          disabled={disabled}
           fullWidth={fullWidth}
           value={inputValue}
           onChange={(e) => onChange?.(e.target.value)}
@@ -106,6 +110,7 @@ export function ResponsiveSettingItem({
     return (
       <TextField
         id={inputId}
+        disabled={disabled}
         fullWidth={fullWidth}
         type={type === 'password' ? (showPassword ? 'text' : 'password') : type}
         value={inputValue}

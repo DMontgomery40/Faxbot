@@ -237,6 +237,10 @@ export default function CasePackets({ client, canSend, canWrite, onNavigate }: {
         </Box>
       )}
 
+      {cases && cases.length === 0 && (
+        <Typography variant="body2" color="text.secondary" sx={{ mt: 4 }} data-testid="no-cases">No case packets have been sent yet.</Typography>
+      )}
+
       {cases && cases.length > 0 && (
         <Box component="section" sx={{ mt: 4 }} data-testid="recent-cases">
           <Typography variant="h6" component="h2" sx={{ mb: 1 }}>Recent cases</Typography>

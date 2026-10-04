@@ -10,7 +10,7 @@ import {
 } from '@mui/icons-material';
 import type AdminAPIClient from '../api/client';
 import type { HealthStatus } from '../api/types';
-import { providerLabel } from '../providerLabels';
+import { SDK_VERSIONS } from '../sdkVersions';
 
 function useConfig(client: AdminAPIClient) {
   const [cfg, setCfg] = useState<any | null>(null);
@@ -99,29 +99,15 @@ export default function DeveloperOverview({ client }: { client: AdminAPIClient }
         </Button>
       </Box>
       <Grid container spacing={{ xs: 2, md: 3 }}>
-        {/* Config Overview */}
+        {/* Held test faxes */}
         <Grid item xs={12} md={6}>
           <Card sx={{ height: '100%' }}>
             <CardContent>
-              <Typography variant="h6" gutterBottom>Config Overview</Typography>
-              <Grid container spacing={1}>
-                <Grid item xs={6}><Typography variant="body2" color="text.secondary">Sending</Typography></Grid>
-                <Grid item xs={6}><Chip size="small"
-                  label={cfg ? (cfg.hybrid?.outbound ? providerLabel(cfg.hybrid.outbound) : 'No provider') : 'Unavailable'} /></Grid>
-                <Grid item xs={6}><Typography variant="body2" color="text.secondary">Receiving</Typography></Grid>
-                <Grid item xs={6}><Chip size="small"
-                  label={cfg ? (cfg.inbound?.enabled && cfg.hybrid?.inbound ? providerLabel(cfg.hybrid.inbound) : 'No provider') : 'Unavailable'} /></Grid>
-                <Grid item xs={6}><Typography variant="body2" color="text.secondary">Storage</Typography></Grid>
-                <Grid item xs={6}><Chip size="small" label={cfg?.storage?.backend || 'local'} /></Grid>
-                <Grid item xs={6}><Typography variant="body2" color="text.secondary">Authentication</Typography></Grid>
-                <Grid item xs={6}><Chip size="small" label="Required" color="success" variant="outlined" /></Grid>
-                <Grid item xs={6}><Typography variant="body2" color="text.secondary">Enforce HTTPS</Typography></Grid>
-                <Grid item xs={6}><Chip size="small" label={(cfg?.enforce_public_https ? 'Enabled' : 'Disabled')} color={cfg?.enforce_public_https ? 'success' : 'default'} variant="outlined" /></Grid>
-                <Grid item xs={6}><Typography variant="body2" color="text.secondary">v3 Plugins</Typography></Grid>
-                <Grid item xs={6}><Chip size="small" label={(cfg?.v3_plugins?.enabled ? `Enabled (${cfg?.v3_plugins?.active_outbound ? providerLabel(cfg.v3_plugins.active_outbound) : '-'})` : 'Disabled')} color={cfg?.v3_plugins?.enabled ? 'success' : 'default'} variant="outlined" /></Grid>
-                <Grid item xs={6}><Typography variant="body2" color="text.secondary">Held Test Faxes</Typography></Grid>
-                <Grid item xs={6}><Chip size="small" data-testid="held-test-faxes" label={String(health?.jobs.held ?? 'Unavailable')} variant="outlined" /></Grid>
-              </Grid>
+              <Typography variant="h6" component="h2" gutterBottom>Test faxes</Typography>
+              <Box display="flex" alignItems="center" gap={1}>
+                <Typography variant="body2" color="text.secondary">Held Test Faxes</Typography>
+                <Chip size="small" data-testid="held-test-faxes" label={String(health?.jobs.held ?? 'Unavailable')} variant="outlined" />
+              </Box>
             </CardContent>
           </Card>
         </Grid>
@@ -174,10 +160,10 @@ export default function DeveloperOverview({ client }: { client: AdminAPIClient }
               <Typography variant="body2">Base URL: {window.location.origin}</Typography>
               <Typography variant="body2" sx={{ mb: 1 }}>Header: X-API-Key: &lt;your key&gt;</Typography>
               <Typography variant="body2" color="text.secondary">Node:</Typography>
-              <Box component="pre" sx={{ p: 1, bgcolor: 'background.default', borderRadius: 1, overflow: 'auto' }}>{`npm i faxbot@1.0.2
+              <Box component="pre" sx={{ p: 1, bgcolor: 'background.default', borderRadius: 1, overflow: 'auto' }}>{`npm i faxbot@${SDK_VERSIONS.node}
 node -e "(async()=>{const FaxbotClient=require('faxbot');const c=new FaxbotClient('${window.location.origin}','<key>');const r=await c.sendFax('+15551234567','/path/to/file.pdf');console.log(r)})()"`}</Box>
               <Typography variant="body2" color="text.secondary">Python:</Typography>
-              <Box component="pre" sx={{ p: 1, bgcolor: 'background.default', borderRadius: 1, overflow: 'auto' }}>{`pip install faxbot==1.0.2
+              <Box component="pre" sx={{ p: 1, bgcolor: 'background.default', borderRadius: 1, overflow: 'auto' }}>{`pip install faxbot==${SDK_VERSIONS.python}
 python - <<'PY'
 from faxbot import FaxbotClient
 c=FaxbotClient('${window.location.origin}','<key>')

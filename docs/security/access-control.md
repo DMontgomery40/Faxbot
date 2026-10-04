@@ -136,7 +136,7 @@ If `API_KEY` is empty or lost, the host operator can set a new one with Faxbot s
 
 Faxbot records access changes and sign-ins in a security audit: users, integrations, groups, roles, access, keys, mailboxes and routing rules that were added or changed, and every session started, whether allowed or refused. Received faxes also record which mailbox they were placed in.
 
-Read the security audit through `GET /access/audit`, which needs `audit:read`. The console does not show it yet. The **Logs** screen, which needs `logs:read`, shows the separate activity log, including terminal use and iPhone pairing.
+Read the security audit through `GET /access/audit`, which needs `audit:read`, or in the console under **System → Audit log**: who did what, how they were signed in, what changed and whether it was refused, newest first, filtered by person and by action. The same page holds the event-recording settings (whether Faxbot records events, their format, a file and the system log); only the owner can change them. The **Logs** screen, which needs `logs:read`, shows the separate activity log, including terminal use and iPhone pairing.
 
 ## API reference
 

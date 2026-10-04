@@ -804,7 +804,7 @@ def _refuse_environment_managed(expected, changes):
 
 def _settings_view(snapshot):
     return project_admin_settings(snapshot, _configuration_manager().pending_fields(snapshot),
-                                  env_managed=_environment_managed())
+                                  env_managed=_environment_managed(), environment=os.environ)
 
 
 @app.get("/admin/settings", responses={**_CONFIGURATION_READ_RESPONSES, **_CONFIGURATION_VALIDATION_RESPONSES})
