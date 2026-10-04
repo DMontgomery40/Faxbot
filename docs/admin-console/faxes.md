@@ -4,6 +4,8 @@
 
 **Faxes → Received** (`#/faxes/received`) lists received faxes and the work on them in one list. Filters: **All**, **Mine**, **Waiting for an owner**, **Overdue** and **Not delivered** (email delivery failed). Each fax shows when it arrived, who sent it, which number received it, **Received through** the provider or carrier, its cost when the carrier reports it, and its email delivery.
 
+**Import a document** (for people who may import) adds a PDF from another system with where it came from, its number or ID in that system and, optionally, a version, the To and From numbers, when it was received and its pages. It appears in Received like a received fax, in the mailbox for its To number; importing the same number or ID again never adds a second copy (`POST /imports`).
+
 People who handle faxes can **Assign** a fax, **Acknowledge** it and download its evidence; the download is recorded in the fax's history. Received reads at most 200 work items at a time.
 
 The receiving line says how faxes reach Faxbot. Over your own carrier line it says "Received faxes reach Faxbot: ready." or what stops them, with a button to the carrier's page; Phaxio and Sinch show the address to enter in their consoles. See [receiving](../setup/sip-trunk.md) for your own line, and [email delivery](../operations/intake.md).

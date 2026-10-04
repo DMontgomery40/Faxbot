@@ -237,6 +237,8 @@ def project_admin_settings(snapshot: ConfigurationSnapshot, pending_fields: Iter
             'oauth': {'issuer': values.oauth_issuer, 'audience': values.oauth_audience, 'jwks_url': values.oauth_jwks_url},
         },
         'persisted': {'enabled': values.enable_persisted_settings, 'path': values.persisted_env_path},
+        # The older settings file, read once when a new installation first starts; shown read-only.
+        'legacy_config': {'path': values.faxbot_config_path},
         'features': {
             'v3_plugins': values.feature_v3_plugins,
             'fax_disabled': values.fax_disabled,

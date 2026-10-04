@@ -74,7 +74,7 @@ export type SettingsSection =
   | 'phaxio' | 'sinch' | 'documo' | 'humblefax' | 'efax' | 'trunk' | 'signalwire' | 'freeswitch'
   | 'direct' | 'intake' | 'email'
   | 'security' | 'tunnel' | 'storage' | 'advanced' | 'backup' | 'mcp' | 'identity'
-  | 'plugins' | 'diagnostics' | 'phones' | 'developer' | 'audit';
+  | 'plugins' | 'diagnostics' | 'phones' | 'developer' | 'audit' | 'installation-key';
 
 // Sections whose settings each have their own Apply, so one refusal never fails another change.
 const OWN_APPLY_SECTIONS = new Set<SettingsSection>(['diagnostics']);
@@ -113,6 +113,7 @@ const READ_ONLY_FILES: Array<{ field: string; label: string; value: (data: Setti
   { field: 'persisted_env_path', label: 'Recovery .env file', value: (data) => data.persisted?.path },
   { field: 'providers_dir', label: 'Provider plugin folder', value: (data) => data.plugin_files?.providers_dir },
   { field: 'plugin_registry_path', label: 'Plugin registry file', value: (data) => data.plugin_files?.plugin_registry_path },
+  { field: 'faxbot_config_path', label: 'Older settings file, read when Faxbot was first installed', value: (data) => data.legacy_config?.path },
 ];
 
 // Each control starts with the loaded settings, including redacted secrets.
@@ -421,7 +422,8 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
   };
   const readOnlyField = (label: string, field: string, value: string | undefined) => (
     <ResponsiveSettingItem key={field} icon={<StorageIcon />} label={label} value={value ?? ''}
-      editValue={value || 'Not set'} helperText="Read only. Changing it is a planned maintenance task." showCurrentValue={false} />
+      editValue={value || 'Not set'} showCurrentValue={false}
+      helperText={field === 'faxbot_config_path' ? 'Set when Faxbot started. (FAXBOT_CONFIG_PATH)' : 'Read only. Changing it is a planned maintenance task.'} />
   );
   // Receiving goes through the receiving provider chosen in the Setup wizard; some providers only send.
   const receiver = String(effectiveInbound || '');
@@ -1286,20 +1288,20 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
           {shows('storage') && (
           <ResponsiveFormSection
             title="Where faxes are kept"
-            subtitle="On this server, or in an Amazon S3 bucket."
+            subtitle="On this server, or in S3 storage (Amazon S3 or a compatible service)."
             icon={<StorageIcon />}
           >
             <ResponsiveSettingItem
               icon={getStatusIcon(settings.storage?.backend === 's3')}
               label="Keep fax files"
-              value={settings.storage?.backend === 's3' ? 'In Amazon S3' : 'On this server'}
+              value={settings.storage?.backend === 's3' ? 'In S3 storage' : 'On this server'}
               editValue={form.storage_backend ?? settings.storage?.backend ?? 'local'}
               helperText="Where fax files are stored: on this server, or in your S3 bucket."
               onChange={(value) => handleForm('storage_backend', value)}
               type="select"
               options={[
                 { value: 'local', label: 'On this server' },
-                { value: 's3', label: 'In Amazon S3' }
+                { value: 's3', label: 'In S3 storage' }
               ]}
               showCurrentValue={!pendingRestart}
             />
@@ -1536,6 +1538,15 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
               </Box>
             ))}
             <DeploymentRows settings={settings} names={['TZ']} />
+          </ResponsiveFormSection>
+          )}
+
+          {/* Access > Keys & phones: the installation key (api_key), shown read-only and never by value */}
+          {sections?.includes('installation-key') && (
+          <ResponsiveFormSection title="Installation key" icon={<SecurityIcon />}>
+            <ResponsiveSettingItem icon={<SecurityIcon />} label="Installation key"
+              editValue={settings.security.api_key ? 'Set in .env' : 'Not set'} showCurrentValue={false}
+              helperText="Set when Faxbot was first installed. Faxbot never shows it; only the owner can replace it." />
           </ResponsiveFormSection>
           )}
 

@@ -30,10 +30,10 @@ ADMIN = {'X-API-Key': BOOTSTRAP}
 
 # Not set from the console or the command line, each for its reason.
 READ_ONLY_OR_ENV = {
-    'api_key': 'the installation key lives in .env and changes only through owner recovery; shown as "Set in .env"',
+    'api_key': 'the installation key lives in .env and changes only through owner recovery; shown read-only as "Set in .env" under Access → Keys & phones',
     'database_url': 'moving the database needs the maintenance transfer; shown read-only',
     'fax_data_dir': 'the data folder is fixed for the installation; shown read-only',
-    'faxbot_config_path': 'the older settings file, read once at first start; shown read-only',
+    'faxbot_config_path': 'the older settings file, read once at first start; shown read-only under System → Developer',
     'require_api_key': 'authentication is always required; the console offers no switch to turn it off',
 }
 

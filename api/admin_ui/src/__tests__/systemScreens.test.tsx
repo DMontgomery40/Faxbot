@@ -1,9 +1,12 @@
 // System, milestone 5: the Audit log screen, database status in Diagnostics, Logs in plain
 // column names, the terminal's environment-only switch and an empty case list. Synthetic data only.
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
-import AdminAPIClient from '../api/client';
+import AdminAPIClient, { AdminAPIError } from '../api/client';
+import ImportDocument, { IMPORT_SENTENCE } from '../components/ImportDocument';
+import Received from '../components/Received';
+import Settings from '../components/Settings';
 import AuditLog, { auditAction } from '../components/AuditLog';
 import DatabaseStatus from '../components/DatabaseStatus';
 import Logs, { parseQueryTokens } from '../components/Logs';
@@ -160,5 +163,72 @@ describe('Audit log one-time codes', () => {
     expect(await screen.findByText('Terminal access code')).toBeTruthy();
     expect(screen.getByText('Phone pairing code')).toBeTruthy();
     expect(screen.queryByText('Item')).toBeNull();
+  });
+});
+
+describe('Import a document', () => {
+  it('imports a PDF with its source and reference, and says it appears in Received', async () => {
+    const api = client();
+    const sent: Array<{ name: string; manifest: Record<string, unknown> }> = [];
+    vi.spyOn(api, 'importDocument').mockImplementation(async (file, manifest) => {
+      sent.push({ name: file.name, manifest: manifest as unknown as Record<string, unknown> });
+      return { import_id: 'imp-1', inbound_id: 'in-1', status: 'received' };
+    });
+    let reloaded = 0;
+    render(<ImportDocument client={api} onImported={() => { reloaded += 1; }} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Import a document' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Import a document' });
+    expect(within(dialog).getByText(IMPORT_SENTENCE)).toBeTruthy();
+    const importButton = within(dialog).getByRole('button', { name: 'Import' }) as HTMLButtonElement;
+    expect(importButton.disabled).toBe(true);  // a PDF first
+    fireEvent.change(within(dialog).getByTestId('import-file'), { target: { files: [new File(['%PDF-1.4'], 'scan.pdf', { type: 'application/pdf' })] } });
+    fireEvent.change(within(dialog).getByLabelText(/Where it came from/), { target: { value: 'Front desk scanner' } });
+    fireEvent.change(within(dialog).getByLabelText(/Its number or ID in that system/), { target: { value: 'scan-0042' } });
+    fireEvent.change(within(dialog).getByLabelText(/To number/), { target: { value: '+15555550123' } });
+    fireEvent.change(within(dialog).getByLabelText(/Pages/), { target: { value: '2' } });
+    fireEvent.click(importButton);
+    expect(await within(dialog).findByText('Imported. It is in Received now.')).toBeTruthy();
+    expect(sent).toEqual([{ name: 'scan.pdf', manifest: { source_system: 'Front desk scanner', operation_id: 'scan-0042',
+      to_number: '+15555550123', pages: 2 } }]);
+    expect(reloaded).toBe(1);
+  });
+
+  it('shows the server sentence when a reference already holds another document', async () => {
+    const api = client();
+    vi.spyOn(api, 'importDocument').mockRejectedValue(new AdminAPIError(400, 'Bad Request',
+      'A different document was already imported with this operation id and revision; the first one is kept.'));
+    render(<ImportDocument client={api} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Import a document' }));
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.change(within(dialog).getByTestId('import-file'), { target: { files: [new File(['%PDF-1.4'], 'a.pdf', { type: 'application/pdf' })] } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Import' }));
+    expect(await within(dialog).findByText(/the first one is kept\./)).toBeTruthy();
+  });
+
+  it('offers it on Received only to people who may import', async () => {
+    const { unmount } = render(<Received client={client()} permissions={new Set(['inbound:list'])} canWork={false} />);
+    expect(await screen.findByRole('heading', { name: 'Received' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Import a document' })).toBeNull();
+    unmount();
+    render(<Received client={client()} permissions={new Set(['inbound:list', 'work:import'])} canWork={false} />);
+    expect(await screen.findByRole('button', { name: 'Import a document' })).toBeTruthy();
+  });
+});
+
+describe('Installation key and older settings file', () => {
+  it('shows the installation key as set in .env, never its value, and the older settings file in Developer', async () => {
+    const data = settingsFixture((value) => {
+      value.security.api_key = '***';
+      value.legacy_config = { path: '/app/config/faxbot.config.json' };
+    });
+    server.use(http.get('/admin/settings', () => HttpResponse.json(data)));
+    const { unmount } = render(<Settings client={client()} sections={['installation-key', 'phones']} />);
+    expect(await screen.findByText('Installation key', { selector: 'h6, h2, h3, span, p, div' })).toBeTruthy();
+    expect(screen.getByDisplayValue('Set in .env')).toBeTruthy();
+    expect(document.body.textContent).not.toContain('***');
+    unmount();
+    render(<Settings client={client()} sections={['developer']} />);
+    expect(await screen.findByDisplayValue('/app/config/faxbot.config.json')).toBeTruthy();
+    expect(screen.getByText('Set when Faxbot started. (FAXBOT_CONFIG_PATH)')).toBeTruthy();
   });
 });
