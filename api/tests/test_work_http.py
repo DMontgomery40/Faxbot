@@ -296,6 +296,10 @@ def test_import_routes_by_number_replays_as_duplicate_and_refuses_different_byte
     assert revised.status_code == 200 and revised.json()['inbound_id'] != body['inbound_id']
     assert feed(4) == 2
     item = item_of(client, body['inbound_id'])
+    replayed = _import(client, content, manifest)  # a replay after the item exists changes nothing
+    assert replayed.status_code == 200 and replayed.json()['status'] == 'duplicate'
+    assert feed(9) == 0 and len(client.get('/work', headers=B).json()['items']) == 2
+    assert item_of(client, body['inbound_id'])['due_at'] == item['due_at'] is not None
     assert item['mailbox'] == 'Front Desk' and item['state_text'] == 'Waiting for an owner.'
     files = _export(client.get(f"/work/{item['id']}/export", headers=B))
     manifest_out = json.loads(files['manifest.json'])
