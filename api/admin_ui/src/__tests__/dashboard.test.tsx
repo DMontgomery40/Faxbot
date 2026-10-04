@@ -87,7 +87,7 @@ describe('Dashboard delivery cards', () => {
 
   it('says plainly when nothing was sent', async () => {
     render(<Dashboard client={client()} />);
-    expect(await screen.findByText('No faxes sent in the last 30 days.')).toBeTruthy();
+    expect(await screen.findByText('No faxes sent or received in the last 30 days.')).toBeTruthy();
   });
 
   it('says in one sentence when Faxbot cannot sign in to its fax engine', async () => {

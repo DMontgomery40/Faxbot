@@ -20,6 +20,23 @@ const BILLING = [
 const PROVIDERS = ['sip', 'freeswitch', 'signalwire', 'phaxio', 'sinch', 'documo', 'humblefax']
   .map((value) => ({ value, label: providerLabel(value) }));
 
+// Today in the viewer's own time zone, as YYYY-MM-DD (not the UTC date).
+export function localToday(now: Date = new Date()): string {
+  const pad = (value: number) => String(value).padStart(2, '0');
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+}
+
+// A monthly fee with nothing charged per minute, page or call.
+function flatPlan(card: RateCard): boolean {
+  return Number(card.monthly_fee ?? 0) > 0 && !(Number(card.per_minute) > 0) && !(Number(card.per_page) > 0)
+    && !(Number(card.per_call) > 0);
+}
+
+function billingText(card: RateCard): string {
+  if (card.included_in_plan || flatPlan(card)) return 'Flat monthly fee';
+  return `${billingLabel(card.billing_increment_seconds)}${card.minimum_seconds ? `, at least ${card.minimum_seconds} seconds` : ''}`;
+}
+
 function billingLabel(seconds: number): string {
   return BILLING.find((option) => option.value === seconds)?.label ?? `Every ${seconds} seconds`;
 }
@@ -35,7 +52,7 @@ function pricing(card: RateCard): string {
 
 const EMPTY: RateCard = {
   provider_id: 'sip', label: '', direction: 'outbound', currency: 'USD', per_minute: '0', per_page: '0', per_call: '0',
-  billing_increment_seconds: 60, minimum_seconds: 0, source_url: null, captured_on: new Date().toISOString().slice(0, 10),
+  billing_increment_seconds: 60, minimum_seconds: 0, source_url: null, captured_on: '',
   monthly_fee: null,
 };
 
@@ -46,7 +63,10 @@ function CardDialog({ card, onClose, onSave, busy, error }: {
   busy: boolean;
   error: unknown;
 }) {
-  const [draft, setDraft] = useState<RateCard>(card ?? EMPTY);
+  const [draft, setDraft] = useState<RateCard>(() => {
+    const start = card ?? EMPTY;
+    return start.captured_on ? start : { ...start, captured_on: localToday() };
+  });
   const set = <K extends keyof RateCard>(key: K, value: RateCard[K]) => setDraft((current) => ({ ...current, [key]: value }));
   return (
     <FormDialog open={card !== null} title={card?.id ? 'Edit rate card' : 'Add rate card'} submitLabel="Save" busy={busy}
@@ -71,14 +91,19 @@ function CardDialog({ card, onClose, onSave, busy, error }: {
       <Field label={`Monthly plan fee (${draft.currency})`} value={draft.monthly_fee ?? ''}
         onChange={(value) => set('monthly_fee', value.trim() ? value : null)}
         helperText="For an unlimited plan, enter the monthly fee and leave the other prices at 0." />
-      <Box display="grid" gridTemplateColumns={{ xs: '1fr', sm: '1fr 1fr 1fr' }} columnGap={2}>
-        <TextField select fullWidth margin="normal" label="Billing" value={String(draft.billing_increment_seconds)}
-          onChange={(e) => set('billing_increment_seconds', Number(e.target.value))} SelectProps={{ native: true }} InputLabelProps={{ shrink: true }}>
-          {BILLING.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-        </TextField>
-        <Field label="Minimum seconds" value={String(draft.minimum_seconds)} onChange={(value) => set('minimum_seconds', Number(value) || 0)} />
+      {flatPlan(draft) ? (
+        // Only a monthly fee: there is no call time to round, so billing rules do not apply.
         <Field label="Currency" value={draft.currency} onChange={(value) => set('currency', value.toUpperCase().slice(0, 3))} />
-      </Box>
+      ) : (
+        <Box display="grid" gridTemplateColumns={{ xs: '1fr', sm: '1fr 1fr 1fr' }} columnGap={2}>
+          <TextField select fullWidth margin="normal" label="Billing" value={String(draft.billing_increment_seconds)}
+            onChange={(e) => set('billing_increment_seconds', Number(e.target.value))} SelectProps={{ native: true }} InputLabelProps={{ shrink: true }}>
+            {BILLING.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+          </TextField>
+          <Field label="Minimum seconds" value={String(draft.minimum_seconds)} onChange={(value) => set('minimum_seconds', Number(value) || 0)} />
+          <Field label="Currency" value={draft.currency} onChange={(value) => set('currency', value.toUpperCase().slice(0, 3))} />
+        </Box>
+      )}
       <Field label="Price source" value={draft.source_url ?? ''} onChange={(value) => set('source_url', value || null)}
         helperText="The provider's pricing page." />
       <Field label="Advertised on" type="date" value={draft.captured_on} onChange={(value) => set('captured_on', value)} />
@@ -150,7 +175,7 @@ export default function RateCards({ client, cards, canWrite, onChanged }: {
                 <Typography variant="subtitle1">{card.label}</Typography>
                 <Typography variant="body2">{pricing(card)}</Typography>
                 <Typography variant="body2" color="text.secondary">
-                  {card.direction === 'outbound' ? 'Sending' : 'Receiving'} · {billingLabel(card.billing_increment_seconds)}
+                  {card.direction === 'outbound' ? 'Sending' : 'Receiving'} · {billingText(card)}
                 </Typography>
                 {source(card)}
                 <Box mt={1}>{actions(card)}</Box>
@@ -177,7 +202,7 @@ export default function RateCards({ client, cards, canWrite, onChanged }: {
                   <TableCell>{card.label}</TableCell>
                   <TableCell>{card.direction === 'outbound' ? 'Sending' : 'Receiving'}</TableCell>
                   <TableCell>{pricing(card)}</TableCell>
-                  <TableCell>{billingLabel(card.billing_increment_seconds)}{card.minimum_seconds ? `, at least ${card.minimum_seconds} seconds` : ''}</TableCell>
+                  <TableCell>{billingText(card)}</TableCell>
                   <TableCell>{source(card)}</TableCell>
                   <TableCell align="right">{actions(card)}</TableCell>
                 </TableRow>

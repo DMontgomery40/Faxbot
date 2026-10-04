@@ -118,10 +118,24 @@ def _route_name(item):
 
 def _not_billed(item, unreported):
     """Estimate for faxes the carrier has not billed yet, or the plan that includes them."""
-    if item.get('plan'):
-        fee = item['plan']['monthly_fee']
-        return f"included in plan ({money([fee])} a month)"
+    plan = item.get('plan')
+    if plan:
+        fee = plan.get('monthly_fee_text') or money([plan['monthly_fee']])
+        return f"Included in your {plan['label']} plan ({fee} a month)"
+    if item.get('priced') is False and not item.get('reported_cost'):
+        return 'No published price; add your rate'
     return money(item.get('estimated_cost_not_reported')) if item.get(unreported) else '-'
+
+
+def _unrecorded_lines(out, items):
+    for item in items:
+        calls = item.get('unrecorded_calls') or 0
+        if calls:
+            who = item.get('carrier') or 'Your carrier'
+            matched = item.get('unrecorded_matched_to_faxes') or 0
+            note = f"; {matched} matched a received fax" if matched else ''
+            out.line(f"{who} billed {calls} {'call' if calls == 1 else 'calls'} Faxbot has no record of: "
+                     f"{money(item.get('unrecorded_cost'))}{note}. It is included in Charged.")
 
 
 @routing.command('costs')
@@ -146,6 +160,10 @@ def routing_costs(since: str = typer.Option(None, '--since', help='Start date, f
                       [[_route_name(item), item['calls'], item['faxes'], item['billed_minutes'],
                         money(item['reported_cost']), _not_billed(item, 'calls_without_reported_cost'),
                         item['awaiting_carrier_bill'], item['unmatched_charges']] for item in received])
+        _unrecorded_lines(out, [*result.get('providers', []), *received])
+        if result.get('total_cost'):
+            out.line(f"Total: {money(result['total_cost'])} (charges, estimates for faxes not billed yet, and plan fees "
+                     "counted once per 30 days, pro-rated by day).")
         carrier = result.get('carrier_charges') or {}
         if carrier.get('supported') and not carrier.get('readable'):
             out.line(f"{carrier['carrier']} call charges appear once a {carrier['carrier']} API key is set: "

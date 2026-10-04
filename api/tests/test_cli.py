@@ -671,6 +671,21 @@ def test_routing_reconcile_asks_the_carrier_and_costs_show_charges(telnyx_cli, m
     assert costs['carrier_charges'] == {'carrier': 'Telnyx', 'supported': True, 'readable': True}
     human = telnyx_cli('routing', 'costs')
     assert 'call charges appear once' not in human.stdout
+    # A Telnyx record of a call Faxbot never recorded is shown, included in Charged, and in the total.
+    from datetime import datetime, timedelta
+    import sqlalchemy as sa
+    engine = telnyx_cli.client.app.state.configuration_runtime.manager.store.engine
+    records = sa.Table('carrier_records', sa.MetaData(), autoload_with=engine)
+    moment = datetime.utcnow() - timedelta(hours=1)
+    with engine.begin() as connection:
+        connection.execute(records.insert().values(
+            id='r1', provider_id='telnyx', record_id='rec-r1', version=1, direction='inbound', calling='+17205550111',
+            called='+13035550100', started_at=moment, answered_at=moment, finished_at=moment + timedelta(seconds=25),
+            amount_micros=3200, raw_amount='0.0032', currency='USD', billed_seconds=60, call_seconds=25,
+            effective_at=moment, observed_at=moment, applied=1, created_at=moment))
+    human = telnyx_cli('routing', 'costs')
+    assert 'Telnyx billed 1 call Faxbot has no record of: 0.0032 USD. It is included in Charged.' in human.stdout
+    assert 'Total: 0.0032 USD' in human.stdout
 
 
 def test_intake_connectors_items_and_test_email(cli):

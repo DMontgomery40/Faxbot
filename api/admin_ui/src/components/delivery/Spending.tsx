@@ -6,6 +6,7 @@ import AdminAPIClient from '../../api/client';
 import type { CarrierChargeStatus, Money, ProviderCosts, ReceivedCosts } from '../../api/deliveryTypes';
 import { providerLabel } from '../../providerLabels';
 import { DeliveryError, Notice, formatMinutes, formatMoney, formatMoneyList } from './shared';
+import { receivedCost, receivedLabel, sentCost } from './spendingSummary';
 
 function count(value: number, one: string, many = one === 'fax' ? 'faxes' : `${one}s`): string {
   return `${value} ${value === 1 ? one : many}`;
@@ -43,15 +44,28 @@ function OpenCounts({ carrier, unreported, estimate, awaiting, unmatched, unit }
   );
 }
 
-function headline(reported: Money[], estimated: Money[], included: boolean): { amount: string; caption: string } {
-  if (reported.length > 0) return { amount: formatMoneyList(reported), caption: 'charged' };
-  if (included) return { amount: 'Included in your plan', caption: '' };
-  return { amount: formatMoneyList(estimated, 'No price set'), caption: estimated.length ? 'estimated' : '' };
+function caption(reported: Money[], estimatedOpen: Money[] | undefined, unreported: number): string {
+  const open = unreported > 0 && (estimatedOpen?.length ?? 0) > 0;
+  if (reported.length > 0) return open ? 'charged and estimated' : 'charged';
+  return open ? 'estimated' : '';
+}
+
+function Unrecorded({ carrier, calls, cost, matched }: { carrier: string | null | undefined; calls: number; cost: Money[] | undefined; matched: number }) {
+  if (!calls) return null;
+  const who = carrier ?? 'Your carrier';
+  return (
+    <Typography variant="body2" color="text.secondary">
+      {who} billed {count(calls, 'call')} Faxbot has no record of: {formatMoneyList(cost)}
+      {matched > 0 ? (matched === calls ? (calls === 1 ? '; it matched a received fax.' : '; each matched a received fax.')
+        : `; ${matched} matched a received fax.`) : '.'}
+    </Typography>
+  );
 }
 
 function SentCard({ provider }: { provider: ProviderCosts }) {
   const reported = provider.attempts_with_reported_cost ?? 0;
-  const top = headline(provider.reported_cost, provider.estimated_cost, Boolean(provider.plan));
+  const top = { amount: sentCost(provider),
+    caption: provider.plan ? '' : caption(provider.reported_cost, provider.estimated_cost_not_reported, provider.attempts_without_reported_cost) };
   const name = providerLabel(provider.provider_id);
   return (
     <Card variant="outlined" sx={{ borderRadius: 2, height: '100%' }}>
@@ -65,11 +79,13 @@ function SentCard({ provider }: { provider: ProviderCosts }) {
         {reported > 0 && (
           <Typography variant="body2" color="text.secondary">{charged(provider.carrier, provider.reported_cost, reported, 'fax')}</Typography>
         )}
-        {provider.plan && (
+        {provider.plan?.period_fee && (
           <Typography variant="body2" color="text.secondary">
-            {provider.plan.label} plan: {formatMoney(provider.plan.monthly_fee)} a month, faxes included.
+            Counted in the total: {formatMoney(provider.plan.period_fee)} for these {provider.plan.period_days ?? 30} days (the monthly fee, pro-rated by day).
           </Typography>
         )}
+        <Unrecorded carrier={provider.carrier} calls={provider.unrecorded_calls ?? 0} cost={provider.unrecorded_cost}
+          matched={provider.unrecorded_matched_to_faxes ?? 0} />
         {!provider.plan && (
           <OpenCounts carrier={provider.carrier} unreported={provider.attempts_without_reported_cost}
             estimate={provider.estimated_cost_not_reported} awaiting={provider.awaiting_carrier_bill ?? 0}
@@ -81,13 +97,12 @@ function SentCard({ provider }: { provider: ProviderCosts }) {
 }
 
 function ReceivedCard({ entry }: { entry: ReceivedCosts }) {
-  const top = headline(entry.reported_cost, entry.estimated_cost, false);
+  const top = { amount: receivedCost(entry),
+    caption: caption(entry.reported_cost, entry.estimated_cost_not_reported, entry.calls_without_reported_cost) };
   return (
     <Card variant="outlined" sx={{ borderRadius: 2, height: '100%' }}>
       <CardContent>
-        <Typography variant="subtitle1">
-          Received on your {providerLabel(entry.provider_id)}{entry.carrier ? ` · ${entry.carrier}` : ''}
-        </Typography>
+        <Typography variant="subtitle1">{receivedLabel(entry)}</Typography>
         <Typography variant="h5" component="p" sx={{ mt: 1 }}>{top.amount}</Typography>
         {top.caption && <Typography variant="caption" color="text.secondary">{top.caption}</Typography>}
         <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
@@ -101,6 +116,8 @@ function ReceivedCard({ entry }: { entry: ReceivedCosts }) {
         <OpenCounts carrier={entry.carrier} unreported={entry.calls_without_reported_cost}
           estimate={entry.estimated_cost_not_reported} awaiting={entry.awaiting_carrier_bill}
           unmatched={entry.unmatched_charges} unit="call" />
+        <Unrecorded carrier={entry.carrier} calls={entry.unrecorded_calls ?? 0} cost={entry.unrecorded_cost}
+          matched={entry.unrecorded_matched_to_faxes ?? 0} />
       </CardContent>
     </Card>
   );
