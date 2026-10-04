@@ -117,6 +117,9 @@ def test_a_t38_call_with_no_fax_data_back_switches_new_calls_to_audio_without_re
     try:
         async def deliver():
             listener.callbacks[0]({**NO_T38_DATA, 'Status': 'SUCCESS', 'Pages': '2'})
+            # A person answered and hung up: the verdict is the same, but it never switches the installation.
+            listener.callbacks[0]({**NO_T38_DATA, 'Error': 'The call dropped prematurely'})
+            assert not sip_fax_mode._pending
             listener.callbacks[0](NO_T38_DATA)
             await asyncio.gather(*list(sip_fax_mode._pending))
         asyncio.run(deliver())
@@ -132,7 +135,8 @@ def test_a_t38_call_with_no_fax_data_back_switches_new_calls_to_audio_without_re
 
 
 NO_DATA_INBOUND = {'UniqueID': '1791075343.12', 'Caller': '+13035550100', 'DID': '+15555550100', 'Status': 'FAILED',
-                   'Error': 'The call dropped prematurely', 'Pages': '0', 'Mode': 'T38', 'Answered': '1791075343',
+                   'Error': 'Timed out waiting for initial communication', 'Cause': '16', 'Pages': '0', 'Mode': 'T38',
+                   'Answered': '1791075343',
                    'Ended': '1791075357'}
 
 
@@ -140,7 +144,10 @@ def test_t38_turned_off_after_a_no_data_call_before_any_record_shows_that_call_a
     from app import sip_calls
     network['result'] = KEEPS_PORTS
     runtime = client.app.state.configuration_runtime
-    sip_calls.SipCallRecords(runtime.manager.store.engine).record_inbound_event(NO_DATA_INBOUND)
+    records = sip_calls.SipCallRecords(runtime.manager.store.engine)
+    records.record_inbound_event(NO_DATA_INBOUND)
+    # Exactly what the acceptance install stored for its 21:00 call: the reason is cut short.
+    assert records.latest()['error_cause'] == 'no_t38_data_back: Timed out waiting for initial commu (cause 16)'
     # A person turned T.38 off right after that call, before Faxbot kept its own record.
     _set_t38(client, False)
     status = client.get('/admin/sip/status', headers=ADMIN).json()
@@ -180,19 +187,23 @@ class _Calls:
 
 @pytest.mark.parametrize('calls, audio, sentence', [
     # Tonight's install: T.38 got no data back, then an audio fax went through.
-    ((({'t38': 'no', 'verdict': 'sent'}), {'t38': 'yes', 'verdict': 'no_t38_data_back'}), True,
+    ((({'t38': 'no', 'verdict': 'sent'}), {'t38': 'yes', 'verdict': 'no_t38_data_back', 'error_cause': 'no_t38_data_back: Timed out waiting for the first messa (cause 16)'}), True,
      "Faxbot's internet address is 198.51.100.7; your network changes port numbers, and Telnyx follows Faxbot's "
      "audio packets (a fax went through) but not its T.38 packets, so Faxbot uses audio fax."),
-    (({'t38': 'yes', 'verdict': 'no_t38_data_back'},), False,
+    (({'t38': 'yes', 'verdict': 'no_t38_data_back', 'error_cause': 'no_t38_data_back: Timed out waiting for the first messa (cause 16)'},), False,
      "Faxbot's internet address is 198.51.100.7; your network changes port numbers, and the last T.38 fax got no fax "
      "data back, so Telnyx does not follow Faxbot's T.38 packets on this network."),
-    (({'t38': 'yes', 'verdict': 'received'}, {'t38': 'yes', 'verdict': 'no_t38_data_back'}), False,
+    (({'t38': 'yes', 'verdict': 'received'}, {'t38': 'yes', 'verdict': 'no_t38_data_back', 'error_cause': 'no_t38_data_back: Timed out waiting for the first messa (cause 16)'}), False,
      "Faxbot's internet address is 198.51.100.7; your network changes port numbers, so Telnyx has to follow Faxbot's "
      "packets, and a T.38 fax that went through shows it does."),
     (({'t38': 'no', 'verdict': 'received'},), False,
      "Faxbot's internet address is 198.51.100.7; your network changes port numbers, so Telnyx has to follow Faxbot's "
      "packets, and a fax that went through shows it does."),
     ((), False,
+     "Faxbot's internet address is 198.51.100.7; your network changes port numbers, so Telnyx has to follow Faxbot's "
+     "packets, and the first test fax shows whether it does."),
+    # A plain hang-up says nothing about T.38 on this network.
+    (({'t38': 'yes', 'verdict': 'no_t38_data_back', 'error_cause': 'no_t38_data_back: The call dropped prematurely'},), False,
      "Faxbot's internet address is 198.51.100.7; your network changes port numbers, so Telnyx has to follow Faxbot's "
      "packets, and the first test fax shows whether it does."),
 ])
@@ -226,3 +237,13 @@ def test_the_switch_waits_for_the_failed_call_to_hang_up_then_restarts_asterisk_
     assert result['engine'] == 'restarting'
     assert actions == ['CoreShowChannels', 'CoreShowChannels', 'CoreShowChannels', 'core stop gracefully']
     assert _t38(client) is False
+
+
+def test_a_t38_call_that_was_simply_hung_up_gives_no_derived_reason(client, network):
+    from app import sip_calls
+    network['result'] = KEEPS_PORTS
+    runtime = client.app.state.configuration_runtime
+    sip_calls.SipCallRecords(runtime.manager.store.engine).record_inbound_event(
+        {**NO_DATA_INBOUND, 'Error': 'The call dropped prematurely'})
+    _set_t38(client, False)
+    assert client.get('/admin/sip/status', headers=ADMIN).json()['t38_off_reason'] is None
