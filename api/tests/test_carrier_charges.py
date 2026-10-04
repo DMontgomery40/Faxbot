@@ -519,6 +519,45 @@ def test_a_record_near_a_call_still_waiting_for_its_own_is_left_to_the_normal_ma
     assert carriers.unrecorded_in_effect() == [] and carriers.history(skewed) == []
 
 
+def _numberless_fax(routes, identity, source_received_at):
+    """A fax recovered before Faxbot learned its numbers: From and To unknown."""
+    faxes = sa.Table('inbound_faxes', sa.MetaData(), autoload_with=routes.engine)
+    imports = sa.Table('inbound_imports', sa.MetaData(), autoload_with=routes.engine)
+    with routes.engine.begin() as connection:
+        connection.execute(faxes.insert().values(
+            id=identity, from_number=None, to_number=None, status='received', backend='sip', pages=1,
+            created_at=NOW, received_at=NOW, updated_at=NOW))
+        connection.execute(imports.insert().values(
+            id='import-' + identity, source='sip', account='trunk', operation_id=identity, revision='1',
+            state='received', attempts=1, imported_at=NOW, source_received_at=source_received_at, acquired_at=NOW,
+            artifact_digest='a' * 64, artifact_size=10, inbound_fax_id=identity, created_at=NOW, updated_at=NOW))
+
+
+def test_a_recovered_fax_without_numbers_is_matched_by_time_alone_when_unique(ledger):
+    installation, routes, carriers = ledger
+    _numberless_fax(routes, 'fax-r1', at(14, 26))
+    _numberless_fax(routes, 'fax-later', at(40))  # far from any record
+    CarrierReconciler(carriers, routes, FakeTelnyx([received_c()]), numbers=lambda: (OURS,)).run_now(now=NOW)
+    [row] = carriers.unrecorded_in_effect()
+    assert row['inbound_fax_id'] == 'fax-r1'
+    spending = Spending(routes, carriers)
+    assert spending.inbound('fax-r1')['summary'] == 'Telnyx charged $0.0032 for this call.'
+    assert spending.inbound('fax-later')['summary'] == 'Cost not reported yet.'
+    entry = spending.received(BASE - timedelta(days=1), now=NOW)[0]
+    assert (entry['unrecorded'], entry['unrecorded_attached'], entry['unrecorded_unattached_micros']) == (1, 1, {})
+
+
+def test_two_numberless_faxes_near_one_record_attach_neither(ledger):
+    installation, routes, carriers = ledger
+    _numberless_fax(routes, 'fax-1', at(14, 20))
+    _numberless_fax(routes, 'fax-2', at(14, 40))
+    CarrierReconciler(carriers, routes, FakeTelnyx([received_c()]), numbers=lambda: (OURS,)).run_now(now=NOW)
+    [row] = carriers.unrecorded_in_effect()
+    assert row['inbound_fax_id'] is None
+    entry = Spending(routes, carriers).received(BASE - timedelta(days=1), now=NOW)[0]
+    assert entry['unrecorded_unattached_micros'] == {'USD': 3200}
+
+
 def test_an_unrecorded_record_fitting_two_received_faxes_is_kept_but_attached_to_neither(ledger):
     installation, routes, carriers = ledger
     faxes = sa.Table('inbound_faxes', sa.MetaData(), autoload_with=routes.engine)

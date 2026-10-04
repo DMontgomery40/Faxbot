@@ -38,7 +38,8 @@ const received = {
   provider_id: 'sip', label: 'SIP trunk (Asterisk)', carrier: 'Telnyx', calls: 3, faxes: 2, billed_minutes: 3,
   estimated_cost: [usd('0.0096')], reported_cost: [usd('0.0064')], calls_with_reported_cost: 2, calls_without_reported_cost: 1,
   estimated_cost_not_reported: [usd('0.0032')], awaiting_carrier_bill: 0, unmatched_charges: 1,
-  unrecorded_calls: 1, unrecorded_cost: [usd('0.0032')], unrecorded_matched_to_faxes: 1, total_cost: [usd('0.0128')],
+  unrecorded_calls: 2, unrecorded_cost: [usd('0.0064')], unrecorded_matched_to_faxes: 1,
+  unrecorded_unmatched_cost: [usd('0.0032')], total_cost: [usd('0.0128')],
 };
 
 function routes(costs: Record<string, unknown>, posts: unknown[] = []) {
@@ -73,10 +74,11 @@ describe('Delivery routes spending', () => {
     expect(within(plan).getByText(/Counted in the total: \$10\.00 for these 30 days/)).toBeTruthy();
     expect(within(plan).queryByText(/not billed yet/)).toBeNull();
     const inbound = screen.getByText('Received on your SIP trunk (Asterisk) · Telnyx').closest('.MuiCard-root') as HTMLElement;
-    expect(within(inbound).getByText('Telnyx charged $0.0064 for 2 calls.')).toBeTruthy();
+    expect(within(inbound).getByText('Telnyx charged $0.0064 for 4 calls, 2 without a Faxbot call record.')).toBeTruthy();
     expect(within(inbound).getByText('1 call could not be matched to one Telnyx record, so its cost is unknown.')).toBeTruthy();
-    expect(within(inbound).getByText(/3 calls, 2 faxes received, 3 minutes/)).toBeTruthy();
-    expect(within(inbound).getByText('Telnyx billed 1 call Faxbot has no record of: $0.0032; it matched a received fax.')).toBeTruthy();
+    expect(within(inbound).getByText(/5 calls, 3 faxes received, 3 minutes/)).toBeTruthy();
+    expect(within(inbound).getByText('Telnyx billed 1 call Faxbot has no record of: $0.0032.')).toBeTruthy();
+    expect(within(inbound).getByText('1 call reached Faxbot without a call record; its fax is in the Inbox.')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Check Telnyx charges now' }));
     expect(await screen.findByText('Checked 4 calls: 4 new charges recorded.')).toBeTruthy();
     expect(posts).toHaveLength(1);

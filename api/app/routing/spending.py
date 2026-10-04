@@ -155,10 +155,13 @@ class Spending:
         entry.setdefault('unrecorded', 0)
         entry.setdefault('unrecorded_micros', {})
         entry.setdefault('unrecorded_attached', 0)
+        entry.setdefault('unrecorded_unattached_micros', {})
         for row in rows:
             entry['unrecorded'] += 1
             entry['unrecorded_attached'] += row['inbound_fax_id'] is not None
             _add(entry['unrecorded_micros'], row['currency'], row['amount_micros'])
+            if row['inbound_fax_id'] is None:
+                _add(entry['unrecorded_unattached_micros'], row['currency'], row['amount_micros'])
             _add(entry['reported_cost_micros'], row['currency'], row['amount_micros'])
             entry['billed_seconds'] += int(row['billed_seconds'] or 0)
 
@@ -214,6 +217,7 @@ class Spending:
             entry.setdefault('unrecorded', 0)
             entry.setdefault('unrecorded_micros', {})
             entry.setdefault('unrecorded_attached', 0)
+            entry.setdefault('unrecorded_unattached_micros', {})
             entry['total_micros'] = self.total(entry)
         return [totals[key] for key in sorted(totals)]
 

@@ -12,8 +12,11 @@ function count(value: number, one: string, many = one === 'fax' ? 'faxes' : `${o
   return `${value} ${value === 1 ? one : many}`;
 }
 
-function charged(who: string | null | undefined, money: Money[], faxes: number, unit: string): string {
-  return `${who ?? 'Your provider'} charged ${formatMoneyList(money)} for ${count(faxes, unit)}.`;
+function charged(who: string | null | undefined, money: Money[], faxes: number, unit: string, unrecorded = 0): string {
+  const extra = !unrecorded ? '' : unit === 'call' ? `, ${unrecorded} without a Faxbot call record`
+    : ` and ${count(unrecorded, 'call')} without a Faxbot call record`;
+  const items = unit === 'call' ? faxes + unrecorded : faxes;
+  return `${who ?? 'Your provider'} charged ${formatMoneyList(money)} for ${count(items, unit)}${extra}.`;
 }
 
 function OpenCounts({ carrier, unreported, estimate, awaiting, unmatched, unit }: {
@@ -53,12 +56,20 @@ function caption(reported: Money[], estimatedOpen: Money[] | undefined, unreport
 function Unrecorded({ carrier, calls, cost, matched }: { carrier: string | null | undefined; calls: number; cost: Money[] | undefined; matched: number }) {
   if (!calls) return null;
   const who = carrier ?? 'Your carrier';
+  const unmatched = calls - matched;
   return (
-    <Typography variant="body2" color="text.secondary">
-      {who} billed {count(calls, 'call')} Faxbot has no record of: {formatMoneyList(cost)}
-      {matched > 0 ? (matched === calls ? (calls === 1 ? '; it matched a received fax.' : '; each matched a received fax.')
-        : `; ${matched} matched a received fax.`) : '.'}
-    </Typography>
+    <>
+      {unmatched > 0 && (
+        <Typography variant="body2" color="text.secondary">
+          {who} billed {count(unmatched, 'call')} Faxbot has no record of: {formatMoneyList(cost)}.
+        </Typography>
+      )}
+      {matched > 0 && (
+        <Typography variant="body2" color="text.secondary">
+          {count(matched, 'call')} reached Faxbot without a call record; {matched === 1 ? 'its fax is' : 'their faxes are'} in the Inbox.
+        </Typography>
+      )}
+    </>
   );
 }
 
@@ -76,16 +87,18 @@ function SentCard({ provider }: { provider: ProviderCosts }) {
         <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
           {count(provider.attempts, 'fax', 'faxes')}, {provider.successes} delivered, {formatMinutes(provider.billed_minutes)}, {count(provider.billed_pages, 'page')}
         </Typography>
-        {reported > 0 && (
-          <Typography variant="body2" color="text.secondary">{charged(provider.carrier, provider.reported_cost, reported, 'fax')}</Typography>
+        {(reported > 0 || (provider.unrecorded_calls ?? 0) > 0) && (
+          <Typography variant="body2" color="text.secondary">
+            {charged(provider.carrier, provider.reported_cost, reported, 'fax', provider.unrecorded_calls ?? 0)}
+          </Typography>
         )}
         {provider.plan?.period_fee && (
           <Typography variant="body2" color="text.secondary">
             Counted in the total: {formatMoney(provider.plan.period_fee)} for these {provider.plan.period_days ?? 30} days (the monthly fee, pro-rated by day).
           </Typography>
         )}
-        <Unrecorded carrier={provider.carrier} calls={provider.unrecorded_calls ?? 0} cost={provider.unrecorded_cost}
-          matched={provider.unrecorded_matched_to_faxes ?? 0} />
+        <Unrecorded carrier={provider.carrier} calls={provider.unrecorded_calls ?? 0}
+          cost={provider.unrecorded_unmatched_cost ?? provider.unrecorded_cost} matched={provider.unrecorded_matched_to_faxes ?? 0} />
         {!provider.plan && (
           <OpenCounts carrier={provider.carrier} unreported={provider.attempts_without_reported_cost}
             estimate={provider.estimated_cost_not_reported} awaiting={provider.awaiting_carrier_bill ?? 0}
@@ -106,18 +119,18 @@ function ReceivedCard({ entry }: { entry: ReceivedCosts }) {
         <Typography variant="h5" component="p" sx={{ mt: 1 }}>{top.amount}</Typography>
         {top.caption && <Typography variant="caption" color="text.secondary">{top.caption}</Typography>}
         <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-          {count(entry.calls, 'call')}, {count(entry.faxes, 'fax', 'faxes')} received, {formatMinutes(entry.billed_minutes)}
+          {count(entry.calls + (entry.unrecorded_calls ?? 0), 'call')}, {count(entry.faxes + (entry.unrecorded_matched_to_faxes ?? 0), 'fax', 'faxes')} received, {formatMinutes(entry.billed_minutes)}
         </Typography>
-        {entry.calls_with_reported_cost > 0 && (
+        {(entry.calls_with_reported_cost > 0 || (entry.unrecorded_calls ?? 0) > 0) && (
           <Typography variant="body2" color="text.secondary">
-            {charged(entry.carrier, entry.reported_cost, entry.calls_with_reported_cost, 'call')}
+            {charged(entry.carrier, entry.reported_cost, entry.calls_with_reported_cost, 'call', entry.unrecorded_calls ?? 0)}
           </Typography>
         )}
         <OpenCounts carrier={entry.carrier} unreported={entry.calls_without_reported_cost}
           estimate={entry.estimated_cost_not_reported} awaiting={entry.awaiting_carrier_bill}
           unmatched={entry.unmatched_charges} unit="call" />
-        <Unrecorded carrier={entry.carrier} calls={entry.unrecorded_calls ?? 0} cost={entry.unrecorded_cost}
-          matched={entry.unrecorded_matched_to_faxes ?? 0} />
+        <Unrecorded carrier={entry.carrier} calls={entry.unrecorded_calls ?? 0}
+          cost={entry.unrecorded_unmatched_cost ?? entry.unrecorded_cost} matched={entry.unrecorded_matched_to_faxes ?? 0} />
       </CardContent>
     </Card>
   );

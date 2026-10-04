@@ -16,7 +16,9 @@ Priced records on the trunk's own numbers that fit no Faxbot call at all (for
 example a received fax whose hand-over failed before its call was recorded)
 are kept in ``carrier_records`` so spending is not under-reported. One is
 attached to a received fax only when exactly one fax received over the trunk
-fits it by called number and time, and that fax fits no other such record.
+fits it by number and time, and that fax fits no other such record. A fax whose
+numbers were never learned (an early recovered fax) is compared by time alone;
+the record is already known to be on the trunk's own numbers.
 
 Charges are append-only observations (``carrier_charges``): a repeated report
 has one effect, a different amount reported later supersedes the earlier one
@@ -111,6 +113,17 @@ def fits(call, record, tolerance=TOLERANCE):
         # Faxbot's outbound start is its submission time, so answered and ended decide.
         return _near(call.answered_at, record.answered_at, tolerance) and _near(call.ended_at, record.finished_at, tolerance)
     return _near(call.started_at, record.started_at, tolerance) and _near(call.ended_at, record.finished_at, tolerance)
+
+
+def _fax_fits(fax, record, tolerance):
+    """A received fax fits a carrier record: its time, and each number the fax knows."""
+    if not _near(fax['received'], record.finished_at, tolerance):
+        return False
+    if _digits(fax['to_number']) and not same_number(fax['to_number'], record.cld):
+        return False
+    if _digits(fax.get('from_number')) and not same_number(fax['from_number'], record.cli):
+        return False
+    return True
 
 
 def match_records(targets, calls, records, *, attached=None, holding=(), tolerance=TOLERANCE):
@@ -329,7 +342,7 @@ class CarrierChargeStore:
         faxes, imports, calls = self.faxes, self.imports, self.calls
         received = sa.func.coalesce(imports.c.source_received_at, faxes.c.received_at, faxes.c.created_at)
         named = sa.select(calls.c.job_id).where(calls.c.direction == 'inbound', calls.c.job_id.is_not(None))
-        query = (sa.select(faxes.c.id, faxes.c.to_number, received.label('received'))
+        query = (sa.select(faxes.c.id, faxes.c.to_number, faxes.c.from_number, received.label('received'))
                  .select_from(faxes.outerjoin(imports, imports.c.inbound_fax_id == faxes.c.id))
                  .where(faxes.c.backend == 'sip', faxes.c.id.not_in(named), received >= start, received < end))
         with read_connection(self.engine) as connection:
@@ -507,8 +520,7 @@ class CarrierReconciler:
                 continue  # a call with no record yet may be this one; the normal match decides
             alone.append(record)
         faxes = self.store.received_faxes(start - timedelta(hours=1), end + timedelta(hours=1))
-        fitting = {record.id: [fax['id'] for fax in faxes if same_number(fax['to_number'], record.cld)
-                               and _near(fax['received'], record.finished_at, self.tolerance)]
+        fitting = {record.id: [fax['id'] for fax in faxes if _fax_fits(fax, record, self.tolerance)]
                    for record in alone if record.direction == 'inbound'}
         claims = {}
         for found in fitting.values():

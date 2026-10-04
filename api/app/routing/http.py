@@ -319,7 +319,9 @@ async def costs(request: Request, since: datetime | None = Query(default=None)):
 def _unrecorded_view(entry):
     """Carrier records Faxbot has no call record of: already in the charged total, counted here too."""
     return {'unrecorded_calls': entry.get('unrecorded', 0), 'unrecorded_cost': _money(entry.get('unrecorded_micros', {})),
-            'unrecorded_matched_to_faxes': entry.get('unrecorded_attached', 0)}
+            'unrecorded_matched_to_faxes': entry.get('unrecorded_attached', 0),
+            # The part of unrecorded_cost not matched to a received fax: calls Faxbot has no record of at all.
+            'unrecorded_unmatched_cost': _money(entry.get('unrecorded_unattached_micros', {}))}
 
 
 def _spending(request):

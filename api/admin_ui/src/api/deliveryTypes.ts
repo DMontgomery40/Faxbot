@@ -81,6 +81,7 @@ export interface ProviderCosts {
   unrecorded_calls?: number;
   unrecorded_cost?: Money[];
   unrecorded_matched_to_faxes?: number;
+  unrecorded_unmatched_cost?: Money[];
   // Charges, estimates for faxes not billed yet, and any plan fee for the period.
   total_cost?: Money[];
 }
@@ -103,6 +104,7 @@ export interface ReceivedCosts {
   unrecorded_calls?: number;
   unrecorded_cost?: Money[];
   unrecorded_matched_to_faxes?: number;
+  unrecorded_unmatched_cost?: Money[];
   // Charges, estimates for faxes not billed yet, and any plan fee for the period.
   total_cost?: Money[];
 }
