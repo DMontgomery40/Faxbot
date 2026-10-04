@@ -53,6 +53,15 @@ def private_operation(operation):
     return wrapped
 
 
+KEY_OWNER_RESET = 'The owner of this key must set a new password before it can be used.'
+SESSION_RESET = 'Choose a new password before continuing.'
+
+
+def _reset_message(request):
+    """A temporary password blocks its owner's keys and sessions; say which one was used."""
+    return KEY_OWNER_RESET if request.headers.get('x-api-key') is not None else SESSION_RESET
+
+
 async def access_error_response(request, error):
     headers = dict(PRIVATE_HEADERS)
     if isinstance(error, AuthenticationThrottledError):
@@ -73,6 +82,8 @@ async def access_error_response(request, error):
         status = {'not_found':404, 'invalid_target':404, 'invalid_input':400}.get(error.code, 403)
         message = {400:'Invalid fax request.', 403:'This operation is not permitted.',
                    404:'Fax not found.'}[status]
+        if error.code == 'reset_required':
+            message = _reset_message(request)
     elif isinstance(error, (SessionDeniedError, MutationDeniedError)):
         code = error.code
         status = {'invalid_input':400, 'duplicate':400, 'invalid_target':404, 'stale_version':409}.get(code, 403)
@@ -80,6 +91,8 @@ async def access_error_response(request, error):
             409:'Access policy changed. Reload and try again.', 403:'This operation is not permitted.'}[status]
         message = {'duplicate':'That name is already in use.', 'last_owner':'The installation must keep at least one owner.',
             'owner_required':'Only an owner can do this.'}.get(code, message)
+        if code == 'reset_required':
+            message = _reset_message(request)
     elif isinstance(error, InvalidCredentialInputError):
         status, message = 400, 'Invalid credential input.'
     else:

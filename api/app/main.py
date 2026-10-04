@@ -19,6 +19,7 @@ from .config import (
     reload_settings,
     active_outbound,
     active_inbound,
+    get_provider_traits,
     providerHasTrait,
     providerTraitValue,
 )
@@ -407,8 +408,28 @@ async def _initialize_runtime(tasks: list[asyncio.Task]) -> bool:
         use_syslog=settings.audit_log_syslog,
         syslog_address=(settings.audit_log_syslog_address or None),
     )
-    # Start AMI when required by traits (either direction)
-    return not settings.fax_disabled and providerHasTrait("any", "requires_ami")
+    return _ami_required()
+
+
+def _provider_requires_ami(provider_id: str) -> bool:
+    try:
+        return (get_provider_traits(provider_id).get("traits") or {}).get("requires_ami") is True
+    except Exception:
+        return False
+
+
+def _ami_required() -> bool:
+    """Connect AMI when sending is on and Asterisk serves this installation.
+
+    That is when the provider in either direction needs AMI, or when an extra
+    outbound route (FAX_OUTBOUND_ROUTES) does: a fax routed to SIP as an
+    alternative is sent through the same Asterisk connection.
+    """
+    if settings.fax_disabled:
+        return False
+    if providerHasTrait("any", "requires_ami"):
+        return True
+    return any(_provider_requires_ami(identity) for identity in settings.outbound_route_providers)
 
 
 def _deliveries():
@@ -2885,8 +2906,13 @@ def update_plugin_config(plugin_id: str, payload: UpdatePluginConfigIn, request:
     if isinstance(payload.settings, dict):
         from .config_plugin_fields import PLUGIN_FIELDS
         mapping = PLUGIN_FIELDS.get(plugin_id.lower(), {})
-        _refuse_environment_managed(expected, {mapping[key]: value for key, value in payload.settings.items()
-                                               if key in mapping})
+        if payload.settings:
+            changes = {mapping[key]: value for key, value in payload.settings.items() if key in mapping}
+        else:
+            # Empty settings reset every provider field to its default (see _patch_plugin_values).
+            defaults = ConfigurationValues.from_environment({})
+            changes = {name: getattr(defaults, name) for name in mapping.values()}
+        _refuse_environment_managed(expected, changes)
     snapshot = _configuration_manager().patch_plugin_authorized(expected, plugin_id.lower(),
         settings=payload.settings, enabled=payload.enabled, role=payload.role,
         principal=identity.actor, control=access.control)

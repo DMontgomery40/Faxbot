@@ -317,3 +317,21 @@ def test_requeue_cap_and_partner_refusal_rules(multi):
     assert delivery.fallback_count(job) == 2
     with pytest.raises(ValueError):
         delivery.requeue_after_failure(job, attempt_id='x', category='timeout')
+
+
+@pytest.mark.parametrize('environment, expected', [
+    ({'FAX_BACKEND': 'phaxio'}, False),
+    ({'FAX_BACKEND': 'phaxio', 'FAX_OUTBOUND_ROUTES': 'sip'}, True),
+    ({'FAX_BACKEND': 'phaxio', 'FAX_OUTBOUND_ROUTES': 'humblefax, sip'}, True),
+    ({'FAX_BACKEND': 'phaxio', 'FAX_OUTBOUND_ROUTES': 'humblefax'}, False),
+    ({'FAX_BACKEND': 'sip'}, True),
+    ({'FAX_BACKEND': 'phaxio', 'FAX_INBOUND_BACKEND': 'sip'}, True),
+    ({'FAX_BACKEND': 'phaxio', 'FAX_OUTBOUND_ROUTES': 'sip', 'FAX_DISABLED': 'true'}, False),
+    ({}, False),
+])
+def test_asterisk_connects_for_sip_as_provider_or_as_an_extra_route(environment, expected):
+    from api.app import main
+    from api.app.config import use_configuration
+    values = ConfigurationValues.from_environment({'FAX_DISABLED': 'false', **environment})
+    with use_configuration(values):
+        assert main._ami_required() is expected

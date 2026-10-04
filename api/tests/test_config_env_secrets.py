@@ -191,6 +191,10 @@ def test_plugin_configuration_refuses_an_environment_credential(installation, mo
         refused = client.put('/plugins/humblefax/config', headers=ADMIN, json={
             'expected_revision_id': expected, 'settings': {'access_key': 'synthetic-other'}})
         assert refused.status_code == 409 and refused.json() == {'detail': REFUSAL}
+        # Empty settings would reset every HumbleFax field, including the one set in .env.
+        cleared = client.put('/plugins/humblefax/config', headers=ADMIN, json={
+            'expected_revision_id': expected, 'settings': {}})
+        assert cleared.status_code == 409 and cleared.json() == {'detail': REFUSAL}
         assert installation.store().read().active.values.humblefax_access_key == 'synthetic-access-env'
 
 

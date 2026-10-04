@@ -153,6 +153,47 @@ describe('A new installation with no fax provider', () => {
   });
 });
 
+describe('Plain wording on provider and security settings', () => {
+  const ENV_NAME = /[A-Z]{3,}_[A-Z_]{2,}/;
+
+  it.each(['phaxio', 'documo', 'humblefax', 'sip', 'signalwire'])(
+    'shows no environment variable names and no switch to turn authentication off (%s)', async (provider) => {
+      settingsHandlers(settingsFixture((data) => {
+        data.backend.type = provider;
+        data.hybrid = { outbound_backend: provider, inbound_backend: provider === 'humblefax' ? 'phaxio' : provider,
+          outbound_override: '', inbound_override: '' };
+        data.inbound.enabled = true;
+      }));
+      const { container } = render(<Settings client={client()} />);
+      await screen.findByText('Security Settings');
+      for (const input of Array.from(container.querySelectorAll('input, textarea'))) {
+        expect(input.getAttribute('placeholder') ?? '').not.toMatch(ENV_NAME);
+      }
+      for (const label of Array.from(container.querySelectorAll('label'))) {
+        expect(label.textContent ?? '').not.toMatch(ENV_NAME);
+      }
+      expect(screen.queryByRole('checkbox', { name: /API Key Required|Require API Key/i })).toBeNull();
+      expect(screen.queryByText(/API Key Required|Require API Key/i)).toBeNull();
+    });
+});
+
+describe('MCP OAuth wording', () => {
+  it('labels the OAuth fields without environment variable names', async () => {
+    const data = settingsFixture((fixture) => {
+      fixture.mcp = { sse_enabled: false, sse_path: '/mcp/sse', http_enabled: true, http_path: '/mcp/http',
+        require_oauth: true, oauth: { issuer: 'https://id.example', audience: 'faxbot', jwks_url: '' } };
+    });
+    settingsHandlers(data);
+    server.use(http.get('/admin/config', () => HttpResponse.json({ mcp: data.mcp })));
+    const { default: MCP } = await import('../components/MCP');
+    render(<MCP client={client()} />);
+    expect(await screen.findByLabelText('Issuer')).toBeTruthy();
+    expect(screen.getByLabelText('Audience')).toBeTruthy();
+    expect(screen.getByLabelText('JWKS URL')).toBeTruthy();
+    expect(screen.queryByText(/OAUTH_/)).toBeNull();
+  });
+});
+
 describe('Credentials set in .env', () => {
   const fromEnvironment = (names: string[]) => settingsFixture((data) => {
     data.backend.type = 'humblefax';
@@ -169,8 +210,8 @@ describe('Credentials set in .env', () => {
     expect(screen.getAllByText('Change it in .env and restart Faxbot.').length).toBeGreaterThanOrEqual(2);
     expect(screen.queryByRole('button', { name: /Show Email password/ })).toBeNull();
     // The secret key is not set in .env and stays editable.
-    expect(screen.getAllByPlaceholderText('HUMBLEFAX_SECRET_KEY').every((input) => !(input as HTMLInputElement).disabled)).toBe(true);
-    expect(screen.queryAllByPlaceholderText('HUMBLEFAX_ACCESS_KEY')).toHaveLength(0);
+    expect(screen.getAllByPlaceholderText('Secret key').every((input) => !(input as HTMLInputElement).disabled)).toBe(true);
+    expect(screen.queryAllByPlaceholderText('Access key')).toHaveLength(0);
   });
 
   it('shows them as set in .env in the Setup Wizard', async () => {

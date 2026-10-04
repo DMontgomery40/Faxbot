@@ -638,7 +638,7 @@ function Settings({ client, canWrite = false, focus, onFocused }: SettingsProps)
                       value={settings.phaxio.api_key?.replace(/./g, '*').slice(0, 20) || ''}
                       editValue={form.phaxio_api_key ?? ''}
                       helperText="Find this in the Phaxio console; keep it secret."
-                      placeholder="Update PHAXIO_API_KEY"
+                      placeholder="Enter a new API key"
                       onChange={(value) => handleForm('phaxio_api_key', value)}
                       type="password"
                       showCurrentValue={!pendingRestart && (!!settings.phaxio.api_key)}
@@ -651,7 +651,7 @@ function Settings({ client, canWrite = false, focus, onFocused }: SettingsProps)
                       value={settings.phaxio.api_secret?.replace(/./g, '*').slice(0, 20) || ''}
                       editValue={form.phaxio_api_secret ?? ''}
                       helperText="Shown next to the API key in the Phaxio console."
-                      placeholder="Update PHAXIO_API_SECRET"
+                      placeholder="Enter a new API secret"
                       onChange={(value) => handleForm('phaxio_api_secret', value)}
                       type="password"
                       showCurrentValue={!pendingRestart && (!!settings.phaxio.api_secret)}
@@ -664,7 +664,7 @@ function Settings({ client, canWrite = false, focus, onFocused }: SettingsProps)
                       value={settings.phaxio.callback_token ?? ''}
                       editValue={form.phaxio_callback_token ?? ''}
                       helperText="The Callback Token from the Phaxio console (not the API secret), used to verify status callbacks."
-                      placeholder="Update PHAXIO_CALLBACK_TOKEN"
+                      placeholder="Enter a new callback token"
                       onChange={(value) => handleForm('phaxio_callback_token', value)}
                       type="password"
                       showCurrentValue={!pendingRestart && !!settings.phaxio.callback_token}
@@ -705,7 +705,7 @@ function Settings({ client, canWrite = false, focus, onFocused }: SettingsProps)
                       value={settings?.documo?.configured ? 'Configured' : ''}
                       editValue={form.documo_api_key ?? ''}
                       helperText="Enter your Documo API key for authentication."
-                      placeholder="DOCUMO_API_KEY"
+                      placeholder="Documo API key"
                       onChange={(value) => handleForm('documo_api_key', value)}
                       type="password"
                       showCurrentValue={!pendingRestart && (settings?.documo?.configured)}
@@ -741,7 +741,7 @@ function Settings({ client, canWrite = false, focus, onFocused }: SettingsProps)
                       value={settings?.humblefax?.configured ? 'Configured' : ''}
                       editValue={form.humblefax_access_key ?? ''}
                       helperText="Enter the access key from your HumbleFax account."
-                      placeholder="HUMBLEFAX_ACCESS_KEY"
+                      placeholder="Access key"
                       onChange={(value) => handleForm('humblefax_access_key', value)}
                       type="password"
                       showCurrentValue={!pendingRestart && (settings?.humblefax?.configured)}
@@ -753,7 +753,7 @@ function Settings({ client, canWrite = false, focus, onFocused }: SettingsProps)
                       value={settings?.humblefax?.configured ? 'Configured' : ''}
                       editValue={form.humblefax_secret_key ?? ''}
                       helperText="Enter the secret key from your HumbleFax account."
-                      placeholder="HUMBLEFAX_SECRET_KEY"
+                      placeholder="Secret key"
                       onChange={(value) => handleForm('humblefax_secret_key', value)}
                       type="password"
                       showCurrentValue={!pendingRestart && (settings?.humblefax?.configured)}
@@ -774,7 +774,7 @@ function Settings({ client, canWrite = false, focus, onFocused }: SettingsProps)
                       value={settings.sip.ami_host || ''}
                       editValue={form.ami_host ?? ''}
                       helperText='Asterisk service hostname on your private network (e.g., docker compose service name "asterisk").'
-                      placeholder="ASTERISK_AMI_HOST"
+                      placeholder="For example, asterisk"
                       onChange={(value) => handleForm('ami_host', value)}
                       showCurrentValue={!pendingRestart && (!!settings.sip.ami_host)}
                     />
@@ -787,7 +787,7 @@ function Settings({ client, canWrite = false, focus, onFocused }: SettingsProps)
                       value={settings.sip.ami_password_is_default ? 'Using default (insecure)' : 'Custom password set'}
                       editValue={form.ami_password ?? ''}
                       helperText="Must match Asterisk manager.conf and must not be the default; never expose port 5038 publicly."
-                      placeholder="Update ASTERISK_AMI_PASSWORD"
+                      placeholder="Enter a new password"
                       onChange={(value) => handleForm('ami_password', value)}
                       type="password"
                       showCurrentValue={!pendingRestart && (!settings.sip.ami_password_is_default)}
@@ -938,7 +938,7 @@ function Settings({ client, canWrite = false, focus, onFocused }: SettingsProps)
                   editValue={form.asterisk_inbound_secret ?? ''}
                   helperText="Shared secret your Asterisk dialplan sends when posting inbound faxes to Faxbot; keep it private."
                   onChange={(value) => handleForm('asterisk_inbound_secret', value)}
-                  placeholder="ASTERISK_INBOUND_SECRET"
+                  placeholder="Shared secret"
                   type="password"
                   showCurrentValue={false}
                   {...envField('asterisk_inbound_secret')}
@@ -1031,7 +1031,7 @@ function Settings({ client, canWrite = false, focus, onFocused }: SettingsProps)
                   editValue={form.sinch_inbound_basic_user ?? ''}
                   helperText="Optional: require HTTP Basic credentials on Sinch callbacks."
                   onChange={(value) => handleForm('sinch_inbound_basic_user', value)}
-                  placeholder="SINCH_INBOUND_BASIC_USER"
+                  placeholder="User name"
                   showCurrentValue={false}
                 />
                 
@@ -1042,7 +1042,7 @@ function Settings({ client, canWrite = false, focus, onFocused }: SettingsProps)
                   editValue={form.sinch_inbound_basic_pass ?? ''}
                   helperText="Password for Basic authentication"
                   onChange={(value) => handleForm('sinch_inbound_basic_pass', value)}
-                  placeholder="SINCH_INBOUND_BASIC_PASS"
+                  placeholder="Password"
                   type="password"
                   showCurrentValue={false}
                   {...envField('sinch_inbound_basic_pass')}
@@ -1055,7 +1055,7 @@ function Settings({ client, canWrite = false, focus, onFocused }: SettingsProps)
                   editValue={form.sinch_inbound_hmac_secret ?? ''}
                   helperText="Optional: verify Sinch callbacks with this shared secret; set the same value in Sinch."
                   onChange={(value) => handleForm('sinch_inbound_hmac_secret', value)}
-                  placeholder="SINCH_INBOUND_HMAC_SECRET"
+                  placeholder="Signing secret"
                   type="password"
                   showCurrentValue={false}
                   {...envField('sinch_inbound_hmac_secret')}
@@ -1092,7 +1092,7 @@ function Settings({ client, canWrite = false, focus, onFocused }: SettingsProps)
                 editValue={form.signalwire_project_id ?? ''}
                 helperText="Your SignalWire project identifier"
                 onChange={(value) => handleForm('signalwire_project_id', value)}
-                placeholder="SIGNALWIRE_PROJECT_ID"
+                placeholder="Project ID"
                 showCurrentValue={!pendingRestart && (!!settings.signalwire?.project_id)}
               />
               
@@ -1103,7 +1103,7 @@ function Settings({ client, canWrite = false, focus, onFocused }: SettingsProps)
                 editValue={form.signalwire_api_token ?? ''}
                 helperText="Your SignalWire API token for authentication"
                 onChange={(value) => handleForm('signalwire_api_token', value)}
-                placeholder="SIGNALWIRE_API_TOKEN"
+                placeholder="API token"
                 type="password"
                 showCurrentValue={!pendingRestart && (!!settings.signalwire?.api_token)}
                 {...envField('signalwire_api_token')}
@@ -1142,7 +1142,7 @@ function Settings({ client, canWrite = false, focus, onFocused }: SettingsProps)
                   <Box sx={{ mt: 2 }}>
                     <Typography variant="subtitle2" gutterBottom>Outbound Result Hook (copyable)</Typography>
                     <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-                      Add this to your outbound dialplan (before hangup) to post result details back to Faxbot. Replace YOUR_SECRET with your <code>ASTERISK_INBOUND_SECRET</code> (shared internal secret).
+                      Add this to your outbound dialplan (before hangup) to post result details back to Faxbot. Replace YOUR_SECRET with the inbound shared secret set above.
                     </Typography>
                     <Box component="pre" sx={{ p: 1, bgcolor: 'background.default', border: '1px solid', borderColor: 'divider', borderRadius: 1, overflowX: 'auto', fontSize: '0.75rem' }}>
 {`<action application="set" data="api_hangup_hook=system curl -s -X POST \
@@ -1228,7 +1228,7 @@ function Settings({ client, canWrite = false, focus, onFocused }: SettingsProps)
                   editValue={form.s3_endpoint_url ?? ''}
                   helperText="Custom S3 endpoint for S3-compatible services (MinIO, etc.)"
                   onChange={(value) => handleForm('s3_endpoint_url', value)}
-                  placeholder="S3_ENDPOINT_URL"
+                  placeholder="Only for S3-compatible storage"
                   showCurrentValue={!pendingRestart && (!!settings.storage?.s3_endpoint_url)}
                 />
                 
@@ -1239,7 +1239,7 @@ function Settings({ client, canWrite = false, focus, onFocused }: SettingsProps)
                   editValue={form.s3_kms_key_id ?? ''}
                   helperText="Enable server-side encryption with KMS by specifying a CMK (recommended for PHI)"
                   onChange={(value) => handleForm('s3_kms_key_id', value)}
-                  placeholder="S3_KMS_KEY_ID"
+                  placeholder="Optional KMS key ID"
                   showCurrentValue={false}
                 />
                 

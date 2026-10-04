@@ -108,6 +108,22 @@ describe('policy version refresh', () => {
       expect(await within(dialog).findByText(POLICY_CHANGED)).toBeTruthy();
     });
 
+  it.each(scenarios.filter((s) => ['Users', 'Keys'].includes(s.name)))(
+    '$name: after a refusal the version is read again once, so saving again after a review works', async (scenario) => {
+      const { client, me } = await signedInClient();
+      render(scenario.screen(client, me));
+      await scenario.open();
+      const dialog = await screen.findByRole('dialog', { name: scenario.dialog });
+      scenario.fill(dialog);
+      await act(() => client.refreshPolicy());
+      backend.bumpPolicy();
+      fireEvent.click(within(dialog).getByRole('button', { name: scenario.submit }));
+      expect(await within(dialog).findByText('Access settings changed; review and save again.')).toBeTruthy();
+      await waitFor(() => expect(client.policyVersion).toBe(backend.state.policyVersion));
+      fireEvent.click(within(dialog).getByRole('button', { name: scenario.submit }));
+      await scenario.done();
+    });
+
   it('picks up the policy change from pairing a phone before the next edit', async () => {
     const expires = toServerTime(new Date(Date.now() + 5 * 60 * 1000));
     server.use(http.post('/admin/tunnel/pair', () => {
