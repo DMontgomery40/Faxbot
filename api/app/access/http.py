@@ -27,8 +27,8 @@ PRIVATE_HEADERS = {'Cache-Control':'no-store', 'X-Content-Type-Options':'nosniff
 
 
 def private_response_path(path):
-    return path in {'/fax', '/inbound', '/plugins', '/plugin-registry'} or path.startswith(
-        ('/auth/', '/access/', '/admin/', '/fax/', '/inbound/', '/plugins/'))
+    return path in {'/fax', '/inbound', '/plugins', '/plugin-registry', '/work', '/imports'} or path.startswith(
+        ('/auth/', '/access/', '/admin/', '/fax/', '/inbound/', '/plugins/', '/work/', '/imports/'))
 
 
 class BrowserRequestVerificationError(AccessError):
@@ -262,6 +262,7 @@ class ConsoleNavigationResponse(AuthOutput):
     jobs: bool
     inbox: bool
     send: bool
+    work: bool = False
 
 
 class ConsoleSendResponse(AuthOutput):
@@ -426,7 +427,13 @@ async def console_context(request: Request, identity=Depends(require_identity)):
     service = runtime(request)
     @private_operation
     def snapshot():
-        return service.context.snapshot(identity.actor)
+        result = service.context.snapshot(identity.actor)
+        # The work queue is visible with work:read on any received document, like the Inbox.
+        with service.store.transaction() as connection:
+            source = service.control._current_source_on(connection, identity.actor, utcnow())
+            result['navigation']['work'] = bool(not source.reset_required and service.context._has_scope_on(
+                connection, identity.actor, source, 'work:read', ('mailbox', 'legacy', 'inbound')))
+        return result
     return await run_lifecycle_step(snapshot)
 
 

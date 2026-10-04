@@ -22,6 +22,7 @@ The future enterprise direction adds accountable correspondence: reusable intake
 | Route selection, cost estimates, and charge reconciliation | `api/app/routing/` | [Delivery routes and case packets](docs/operations/delivery-routes.md) |
 | Received-fax notifications, document fetching and provenance | `api/app/inbound/` | [Receiving faxes](docs/operations/receiving.md) |
 | Intake and email delivery | `api/app/intake/` | [Intake](docs/operations/intake.md) |
+| Work queue, acknowledgement targets, evidence export and generic import | `api/app/work/` | [Work](docs/operations/work.md) |
 | Encrypted delivery and peer verification | `api/app/direct/` | [Direct delivery](docs/operations/direct-delivery.md) |
 | Accepted case documents and packet preparation | `api/app/cases/` | [Case packets](docs/operations/delivery-routes.md#case-packets) |
 | Document conversion and request identity | `api/app/conversion.py`, `api/app/request_identity.py` | [Conversion implementation](api/app/conversion.py), [held test jobs](docs/setup/test-mode.md) |

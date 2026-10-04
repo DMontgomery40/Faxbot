@@ -261,7 +261,8 @@ def test_mixed_builtin_scope_projection_and_assignment_removal_receipt(mworld):
     assert receipt.related == (T.VersionedEntity('bob', 2),)
     with w.store.transaction() as c:
         projected = w.control.scope_projection_on(c, BUILTIN_ROLE_PERMISSIONS['role_fax_operator'], ResourceRef('personal-bob'))
-        assert projected.inactive == frozenset({'inbound:list', 'inbound:read', 'inbound:document'})
+        assert projected.inactive == frozenset({'inbound:list', 'inbound:read', 'inbound:document',
+                                                'work:read', 'work:manage'})
     removed = w.call('remove_assignment', receipt.target)
     assert removed.target == receipt.target and removed.related == (T.VersionedEntity('bob', 3),)
     assert not [r for r in w.rows('access_assignments') if r['id'] == receipt.target.id]

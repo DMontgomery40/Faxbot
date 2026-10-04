@@ -38,6 +38,10 @@ export const PERMISSION_LABELS: Record<string, string> = {
   'owner:recover': 'Owner recovery',
   'mailboxes:read': 'See mailboxes',
   'mailboxes:manage': 'Manage mailboxes',
+  'work:read': 'See the work queue',
+  'work:manage': 'Assign, complete and reopen work',
+  'work:export': 'Export work evidence',
+  'work:import': 'Import documents from other systems',
 };
 
 export const GROUP_LABELS: Record<PermissionGroup, string> = {
@@ -56,6 +60,7 @@ const FALLBACK_GROUPS: Record<string, PermissionGroup> = {
   fax: 'fax', inbound: 'inbound', mailboxes: 'mailbox', keys: 'identity', users: 'identity', groups: 'identity',
   roles: 'identity', grants: 'identity', sessions: 'identity', owner: 'identity', settings: 'config',
   providers: 'config', diagnostics: 'host', tunnels: 'host', host: 'host', logs: 'audit', audit: 'audit',
+  work: 'inbound',
 };
 
 // Used when the server does not publish its catalogue yet.

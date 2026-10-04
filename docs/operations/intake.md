@@ -6,6 +6,8 @@ In the Admin Console, the **Inbox** shows each received fax with its email deliv
 
 A fax enters the queue only after its real document has arrived and been checked; see [Receiving faxes](receiving.md).
 
+Email delivery is not acknowledgement: to give each received document an owner who acknowledges it, see [Work](work.md).
+
 ## Delivery status in the Inbox
 
 Each received fax shows one of these in its **Email delivery** column (a line on each card on phones):

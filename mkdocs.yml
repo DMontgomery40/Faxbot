@@ -166,6 +166,7 @@ nav:
     - Delivery routes: operations/delivery-routes.md
     - Receiving faxes: operations/receiving.md
     - Intake: operations/intake.md
+    - Work: operations/work.md
     - Direct delivery: operations/direct-delivery.md
     - Tools:
       - Terminal: terminal.md

@@ -98,7 +98,7 @@ def test_received_document_becomes_one_owned_item_through_its_lifecycle(ww):
     view = ww.service.detail(admin, item['id'])
     assert view['state_text'] == 'Waiting for an owner.' and view['mailbox'] == 'Front Desk'
     assert view['due_text'] == 'Acknowledge within 24 hours of the document arriving (installation setting)'
-    assert view['actions'] == ['assign', 'done', 'export', 'document']
+    assert view['actions'] == ['assign', 'done', 'export', 'document'] and view['is_test'] is False
     assert [person['name'] for person in ww.service.assignees(admin, item['id'])] == ['admin', 'dana']
 
     assigned = ww.service.assign(admin, item['id'], 'dana', version=1)
@@ -347,3 +347,37 @@ def test_mailbox_settings_require_a_backup_who_sees_the_whole_mailbox(ww):
         ww.service.update_settings(admin, [{'mailbox_id': 'front', 'acknowledge_hours': 2, 'version': 0}])
     with pytest.raises(WorkForbidden):
         ww.service.settings(ww.user('dana-viewer'))
+
+
+def test_a_mailbox_operator_from_before_the_upgrade_sees_that_mailboxes_work(database):
+    """An installation upgraded from 0009: role holders gain work on what they could already see."""
+    from api.tests.test_access_policy import World
+    from api.tests.test_access_schema import at_revision
+    from api.app.access.policy import AccessControl
+    from api.app.access.store import AccessStore
+    from api.app.schema import upgrade_schema
+    at_revision(database, '0009_sip_call_records')
+    before = World.__new__(World)  # the same synthetic rows, written into the older schema
+    metadata = sa.MetaData()
+    metadata.reflect(database)
+    before.engine, before.tables = database, metadata.tables
+    olive = before.user('olive')
+    for mailbox in ('front', 'billing'):
+        before.insert('mailboxes', id=mailbox, label=mailbox.title())
+        before.resource('mailbox-' + mailbox, 'mailbox', 'installation', 'installation', mailbox_id=mailbox)
+        moment = NOW - timedelta(minutes=30)
+        before.insert('inbound_faxes', id='fax-' + mailbox, from_number='+15559990000', to_number='+15550100001',
+                      status='received', backend='sip', pages=1, pdf_path=f'/synthetic/{mailbox}.pdf',
+                      created_at=moment, received_at=moment, updated_at=moment)
+        before.resource('resource-' + mailbox, 'inbound', 'mailbox-' + mailbox, 'mailbox', inbound_fax_id='fax-' + mailbox)
+    before.assignment('olive', 'role_fax_operator', 'mailbox-front')
+    upgrade_schema(database)
+    store = AccessStore(database)
+    work = WorkStore(database)
+    assert work.feed(installation_hours=0, now=NOW) == 2
+    service = WorkService(work, SimpleNamespace(store=store, control=AccessControl(store)),
+                          values=lambda: SimpleNamespace(work_acknowledge_hours=0), clock=lambda: NOW)
+    (item,) = service.list(olive)
+    assert item['inbound_fax_id'] == 'fax-front' and item['mailbox'] == 'Front'
+    assert item['actions'] == ['assign', 'done', 'document']
+    assert [person['id'] for person in service.assignees(olive, item['id'])] == ['olive']
