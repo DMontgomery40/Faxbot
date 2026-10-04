@@ -570,6 +570,16 @@ export class AdminAPIClient {
     return this.json('/admin/restart', { method: 'POST' });
   }
 
+  // Whether the API answers its liveness check; false while it restarts or is unreachable.
+  async isServing(): Promise<boolean> {
+    try {
+      const res = await this.send('/health', {}, { quiet401: true });
+      return res.ok;
+    } catch {
+      return false;
+    }
+  }
+
   // SIP trunk for Faxbot's own fax engine
   async getSipPresets(): Promise<{ presets: SipPreset[] }> {
     return this.json('/admin/sip/presets');
