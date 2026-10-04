@@ -74,6 +74,7 @@ The optional Diagnostics **Restart API** action stops the API process when resta
 - `POST /admin/settings/reload` only reads durable state
 - `POST /admin/settings/persist` writes a recovery file; it does not become the authoritative settings store
 - Jobs table uses admin‑scoped endpoints (`/admin/fax-jobs*`) with masked phone numbers
+- Jobs lists each fax by its number, state and provider name (for example **SIP trunk (Asterisk)**); the job ID appears only in Job Details, where it can be copied. After a send, the confirmation names the number ("Fax queued for +12015550123.") and **Follow it in Jobs** opens that fax's details.
 
 ## Inbound Controls (v2)
 

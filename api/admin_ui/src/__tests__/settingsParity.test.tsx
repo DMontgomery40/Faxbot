@@ -153,6 +153,32 @@ describe('A new installation with no fax provider', () => {
   });
 });
 
+describe('Provider plugins on a clean install', () => {
+  const NOTICE = /Installed provider plugins could not be listed/;
+
+  it('shows nothing in Setup when plugins are simply turned off', async () => {
+    settingsHandlers(settingsFixture());
+    server.use(http.get('/plugins', () => HttpResponse.json({ detail: 'v3 plugins feature disabled' }, { status: 404 })));
+    render(<SetupWizard client={client()} />);
+    await screen.findByText('Choose Providers', { selector: 'h6' });
+    expect(screen.queryByText(NOTICE)).toBeNull();
+  });
+
+  it('still says so when the list really fails', async () => {
+    settingsHandlers(settingsFixture());
+    server.use(http.get('/plugins', () => HttpResponse.json({ detail: 'Boom.' }, { status: 500 })));
+    render(<SetupWizard client={client()} />);
+    expect(await screen.findByText(NOTICE)).toBeTruthy();
+  });
+
+  it('treats only the plugins-off refusal as an empty list', async () => {
+    server.use(http.get('/plugins', () => HttpResponse.json({ detail: 'v3 plugins feature disabled' }, { status: 404 })));
+    expect(await client().listPlugins()).toEqual({ items: [] });
+    server.use(http.get('/plugins', () => HttpResponse.json({ detail: 'Not Found' }, { status: 404 })));
+    await expect(client().listPlugins()).rejects.toThrow();
+  });
+});
+
 describe('Plain wording on provider and security settings', () => {
   const ENV_NAME = /[A-Z]{3,}_[A-Z_]{2,}/;
 

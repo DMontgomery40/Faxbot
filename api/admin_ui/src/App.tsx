@@ -295,6 +295,8 @@ function ConsoleShell({ client, me, initialContext, onSignOut, onIdentityChanged
   );
 
   const [tab, setTab] = useState<TopTab>(() => topTabs[0]);
+  // A fax Send just queued, opened in Jobs when the person follows it.
+  const [jobToOpen, setJobToOpen] = useState<string | null>(null);
   const [settingsTab, setSettingsTab] = useState<SettingsTab>(() => settingsItems[0]?.value ?? 'sessions');
   const [toolsTab, setToolsTab] = useState<ToolTab | null>(() => toolsItems[0]?.value ?? null);
   const [settingsFocus, setSettingsFocus] = useState<string | null>(null);
@@ -529,10 +531,11 @@ function ConsoleShell({ client, me, initialContext, onSignOut, onIdentityChanged
           <Dashboard client={client} onNavigate={handleNavigate} />
         </TabPanel>
         <TabPanel value="send" current={currentTab}>
-          <SendFax client={client} config={adminConfig} configLoading={contextLoading} configError={contextError} />
+          <SendFax client={client} config={adminConfig} configLoading={contextLoading} configError={contextError}
+            onOpenJob={(jobId) => { setJobToOpen(jobId); handleNavigate('jobs'); }} />
         </TabPanel>
         <TabPanel value="jobs" current={currentTab}>
-          <JobsList client={client} />
+          <JobsList client={client} openJobId={jobToOpen} onOpened={() => setJobToOpen(null)} />
         </TabPanel>
         <TabPanel value="inbox" current={currentTab}>
           {contextLoading ? <Alert severity="info">Loading…</Alert>
