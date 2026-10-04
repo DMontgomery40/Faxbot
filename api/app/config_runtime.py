@@ -151,7 +151,7 @@ class ConfigurationRuntime:
         except ConfigurationValueError:
             variables = ', '.join(sorted(supplied[name][0] for name in changes))
             raise ConfigurationBootstrapError(
-                f'A credential set in the environment is not valid ({variables}); fix it in .env and restart Faxbot.') from None
+                f'A credential set in the environment is not valid ({variables}); fix it in .env, then run docker compose up -d.') from None
 
     def _require_stopped_schema_upgrade(self):
         """Mixed old/new delivery writers cannot coexist during a migration."""

@@ -101,7 +101,7 @@ def test_apply_writes_the_private_trunk_file_and_status_never_shows_the_password
     body = after.json()
     assert body['applied'] is True and body['preset_label'] == 'Telnyx' and body['host'] == 'sip.telnyx.com'
     assert body['dids'] == ['+15555550100', '+15555550101'] and body['missing'] == []
-    assert body['message'] == 'Faxbot is not connected to Asterisk.'
+    assert body['message'] == 'Faxbot connects to its fax engine when the SIP trunk is the provider in use.'
     assert PASSWORD not in after.text + before.text + applied.text
     settings = client.get('/admin/settings', headers=ADMIN)
     assert settings.status_code == 200

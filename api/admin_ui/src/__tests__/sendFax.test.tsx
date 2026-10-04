@@ -183,12 +183,12 @@ describe('Send follows the installation country', () => {
 
     try {
       await send('01782 684953', document());
-      expect(await screen.findByText('Fax queued for sending.')).toBeTruthy();
+      // The confirmation names the number the server stored.
+      expect(await screen.findByText('Fax queued for +441782684953.')).toBeTruthy();
       expect(sent()).toEqual(['01782684953']);
     } finally {
       append.mockRestore();
     }
-    expect(screen.getByText('+441782684953')).toBeTruthy();
   });
 
   it('still shows the US example for a US installation', () => {
@@ -206,6 +206,29 @@ describe('Send follows the installation country', () => {
     expect(await screen.findByText(detail)).toBeTruthy();
     expect(screen.queryByText(/To retry without creating a duplicate/)).toBeNull();
     expect(screen.queryByText(/HTTP/)).toBeNull();
+    expect(window.sessionStorage.getItem('faxbot_pending_send')).toBeNull();
+  });
+
+  it('confirms with the number and a way to follow the fax in Jobs, never a raw job ID', async () => {
+    const id = 'c'.repeat(32);
+    server.use(http.post('/fax', () => HttpResponse.json({ id, to: '+12015550123', status: 'queued',
+      delivery_state: 'ready' }, { status: 202 })));
+    const opened = vi.fn();
+    render(<SendFax client={client()} config={us} configLoading={false} configError={null} onOpenJob={opened} />);
+    await send('2015550123', document());
+    expect(await screen.findByText('Fax queued for +12015550123.')).toBeTruthy();
+    expect(screen.queryByText(/Job ID|cccccccc/)).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Follow it in Jobs' }));
+    expect(opened).toHaveBeenCalledWith(id);
+  });
+
+  it('says why a fax was refused when Faxbot cannot sign in to its fax engine', async () => {
+    const detail = "Faxbot can't sign in to its fax engine. Check that the Asterisk manager password matches.";
+    server.use(http.post('/fax', () => HttpResponse.json({ detail }, { status: 503 })));
+    openFor(us);
+    await send('2015550123', document());
+    expect(await screen.findByText(detail)).toBeTruthy();
+    expect(screen.queryByText(/HTTP|Check Jobs/)).toBeNull();
     expect(window.sessionStorage.getItem('faxbot_pending_send')).toBeNull();
   });
 });

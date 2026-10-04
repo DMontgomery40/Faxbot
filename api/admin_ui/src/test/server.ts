@@ -579,6 +579,9 @@ const consoleHandlers = [
   http.get('/admin/health-status', () => json({ timestamp: now(), backend: 'phaxio', backend_healthy: true,
     jobs: { queued: 0, in_progress: 0, recent_failures: 0 }, inbound_enabled: true, api_keys_configured: true, require_auth: true })),
   http.get('/admin/config', () => json({ fax_disabled: true, max_file_size_mb: 10 })),
+  // Public liveness and readiness: up and ready unless a test says otherwise.
+  http.get('/health', () => json({ status: 'ok' })),
+  http.get('/health/ready', () => json({ status: 'ready', backend: 'phaxio', checks: {}, warnings: [] })),
   http.get('/admin/fax-jobs', () => json({ total: 0, jobs: [] })),
   http.get('/inbound', () => json([])),
   http.get('/admin/inbound/callbacks', () => json({ callbacks: [] })),

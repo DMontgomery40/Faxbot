@@ -479,3 +479,91 @@ async def test_stdio_sdk_initialize_and_original_tool_listing():
             assert {tool.name for tool in (await session.list_tools()).tools} == {
                 "send_fax", "get_fax_status", "list_inbound", "get_fax", "get_inbound_pdf",
             }
+
+
+class _RefusingAsterisk:
+    """A manager port that answers every login with an error, as Asterisk does for a wrong password."""
+
+    def __init__(self):
+        import socketserver
+        import threading
+        self.logins = 0
+        outer = self
+
+        class Handler(socketserver.StreamRequestHandler):
+            def handle(self):
+                self.wfile.write(b'Asterisk Call Manager/9.0.0\r\n')
+                data = b''
+                while b'\r\n\r\n' not in data:
+                    chunk = self.rfile.read1(1024)
+                    if not chunk:
+                        return
+                    data += chunk
+                outer.logins += 1
+                self.wfile.write(b'Response: Error\r\nMessage: Authentication failed\r\n\r\n')
+
+        self.server = socketserver.ThreadingTCPServer(('127.0.0.1', 0), Handler)
+        self.server.daemon_threads = True
+        self.port = self.server.server_address[1]
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+
+    def close(self):
+        self.server.shutdown()
+        self.server.server_close()
+
+
+def _closed_port():
+    with socket.socket() as probe:
+        probe.bind(('127.0.0.1', 0))
+        return probe.getsockname()[1]
+
+
+@pytest.mark.parametrize('engine', ['refuses_login', 'not_running'])
+def test_startup_without_the_fax_engine_still_serves_the_console(isolated_installation, monkeypatch, engine):
+    """A wrong manager password or a stopped Asterisk never locks people out of the console that fixes it."""
+    import time
+    from fastapi.testclient import TestClient
+    from app.ami import ami_client, ENGINE_LOGIN_REJECTED, ENGINE_UNREACHABLE
+    asterisk = _RefusingAsterisk() if engine == 'refuses_login' else None
+    expected = ENGINE_LOGIN_REJECTED if asterisk else ENGINE_UNREACHABLE
+    bootstrap = 'synthetic-runtime-bootstrap'
+    for name, value in {'FAX_BACKEND': 'sip', 'FAX_DISABLED': 'false', 'ASTERISK_AMI_HOST': '127.0.0.1',
+                        'ASTERISK_AMI_PORT': str(asterisk.port if asterisk else _closed_port()),
+                        'ASTERISK_AMI_USERNAME': 'synthetic-runtime',
+                        'ASTERISK_AMI_PASSWORD': 'synthetic-wrong-password', 'API_KEY': bootstrap,
+                        'REQUIRE_API_KEY': 'true', 'PUBLIC_API_URL': 'https://testserver',
+                        'MAX_REQUESTS_PER_MINUTE': '0'}.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setenv('FAXBOT_CONSOLE_ORIGINS', 'https://testserver')
+    monkeypatch.setattr(main, 'AMI_STARTUP_WAIT_SECONDS', 0.5)
+    headers = {'X-API-Key': bootstrap}
+    started = time.monotonic()
+    try:
+        with TestClient(main.app, base_url='https://testserver', headers={'Origin': 'https://testserver'}) as client:
+            if asterisk:
+                # A refused login ends the startup wait at once instead of after the timeout.
+                assert time.monotonic() - started < 5
+            assert client.get('/health').json() == {'status': 'ok'}
+            ready = client.get('/health/ready')
+            assert ready.status_code == 503 and ready.json()['message'] == expected
+            assert ready.json()['checks']['outbound']['ami_connected'] is False
+            assert client.get('/admin/settings', headers=headers).status_code == 200
+            health = client.get('/admin/health-status', headers=headers).json()
+            assert health['backend_healthy'] is False and health['backend_message'] == expected
+            diagnostics = client.post('/admin/diagnostics/run', headers=headers).json()
+            assert diagnostics['summary']['critical_issues'].count(expected) == 1
+            sent = client.post('/fax', headers=headers, data={'to': '+15555550123'},
+                               files={'file': ('synthetic.pdf', b'%PDF-1.4\n%%EOF\n', 'application/pdf')})
+            assert sent.status_code == 503 and sent.json()['detail'] == expected
+            if asterisk:
+                # The client keeps signing in again in the background (after 1 s, then 2 s).
+                deadline = time.monotonic() + 6
+                while asterisk.logins < 2 and time.monotonic() < deadline:
+                    time.sleep(0.1)
+                assert asterisk.logins >= 2
+                assert ami_client.problem == 'login_rejected'
+        assert ami_client.problem is None and not ami_client._connected.is_set()
+    finally:
+        if asterisk:
+            asterisk.close()

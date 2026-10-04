@@ -134,7 +134,7 @@ describe('SIP trunk settings', () => {
     const password = await screen.findByLabelText('Password');
     expect((password as HTMLInputElement).value).toBe('Set in .env');
     expect((password as HTMLInputElement).disabled).toBe(true);
-    expect(screen.getByText('Change it in .env and restart Faxbot.')).toBeTruthy();
+    expect(screen.getByText('Change it in .env, then run docker compose up -d.')).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Show Password' })).toBeNull();
   });
 

@@ -19,6 +19,17 @@ STATUS_EVENT_FIELDS = {
     "outboundregistrationdetail": ("ObjectName", "Status", "ServerUri", "NextReg", "Transport"),
     "contactlist": ("ObjectName", "Status", "RoundtripUsec"),
 }
+# One plain sentence for each state of Faxbot's connection to its fax engine
+# (Asterisk). Readiness, the dashboard, diagnostics, trunk status and a refused
+# send all show the same sentence.
+ENGINE_LOGIN_REJECTED = "Faxbot can't sign in to its fax engine. Check that the Asterisk manager password matches."
+ENGINE_UNREACHABLE = "Faxbot can't reach its fax engine. Check that the Asterisk service is running."
+ENGINE_CONNECTING = "Faxbot is still connecting to its fax engine."
+ENGINE_NOT_IN_USE = "Faxbot connects to its fax engine when the SIP trunk is the provider in use."
+
+
+class AMILoginRejected(ConnectionError):
+    """Asterisk answered the login with an error: the manager username or password does not match."""
 
 
 def _validate_headers(fields: Dict[str, str]):
@@ -164,7 +175,7 @@ async def _login(
             if not line:
                 if "Response" in fields:
                     if fields["Response"].lower() != "success":
-                        raise ConnectionError("AMI login rejected")
+                        raise AMILoginRejected("AMI login rejected")
                     return
                 fields = {}
             elif ":" in line:
@@ -187,6 +198,30 @@ class AMIClient:
         self._connection_task: Optional[asyncio.Task] = None
         self._pending_actions: Dict[str, asyncio.Future] = {}
         self._queries: Dict[str, Dict[str, object]] = {}
+        # Why the last connection attempt failed ("login_rejected" or
+        # "unreachable"); None after a successful login or before any attempt.
+        self.problem: Optional[str] = None
+
+    def engine_message(self) -> Optional[str]:
+        """The plain sentence for a missing connection, or None while connected."""
+        if self._connected.is_set():
+            return None
+        if self._connection_task is None:
+            return ENGINE_NOT_IN_USE
+        return {"login_rejected": ENGINE_LOGIN_REJECTED, "unreachable": ENGINE_UNREACHABLE}.get(
+            self.problem, ENGINE_CONNECTING)
+
+    async def settle(self, timeout: float) -> bool:
+        """Wait up to ``timeout`` seconds for a connection; stop early when the login is refused.
+
+        Startup uses this so a quick connection is in place before the worker
+        runs, without ever blocking startup on Asterisk.
+        """
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
+        while not self._connected.is_set() and self.problem != "login_rejected" and loop.time() < deadline:
+            await asyncio.sleep(0.05)
+        return self._connected.is_set()
 
     async def connect(self):
         async with self._conn_lock:
@@ -221,12 +256,19 @@ class AMIClient:
                     settings.ami_username,
                     settings.ami_password,
                 )
+                self.problem = None
                 self._connected.set()
                 delay = 1.0
                 await self._read_loop()
             except asyncio.CancelledError:
                 raise
+            except AMILoginRejected:
+                self.problem = "login_rejected"
+                logging.getLogger(__name__).warning(
+                    "Asterisk refused Faxbot's manager login; check that the Asterisk manager password matches. Retrying"
+                )
             except Exception:
+                self.problem = "unreachable"
                 logging.getLogger(__name__).warning(
                     "AMI connection unavailable; retrying"
                 )
@@ -252,6 +294,7 @@ class AMIClient:
             supervisor.cancel()
             await asyncio.gather(supervisor, return_exceptions=True)
         self._connected.clear()
+        self.problem = None
         await self._close_writer()
 
     async def _read_loop(self):

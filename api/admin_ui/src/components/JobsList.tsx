@@ -37,8 +37,18 @@ import type { FaxJob, OperatorDelivery, DeliveryHistoryEvent } from '../api/type
 import type { DirectDeliveryRecord } from '../api/deliveryTypes';
 import { ROUTE_LABELS } from './delivery/DeliverySettings';
 
+// Plain provider names; the shared provider label map will replace this.
+const PROVIDER_NAMES: Record<string, string> = {
+  phaxio: 'Phaxio', sinch: 'Sinch', signalwire: 'SignalWire', documo: 'Documo', humblefax: 'HumbleFax',
+  sip: 'SIP trunk (Asterisk)', freeswitch: 'FreeSWITCH',
+};
+const providerLabel = (backend: string | null | undefined) => (backend ? PROVIDER_NAMES[backend] ?? backend : '-');
+
 interface JobsListProps {
   client: AdminAPIClient;
+  // A fax to open in Job Details on arrival, such as the one Send just queued.
+  openJobId?: string | null;
+  onOpened?: () => void;
 }
 
 const statusOptions = [
@@ -150,7 +160,7 @@ function eventDetails(event: DeliveryHistoryEvent): string {
 
 interface DetailSelection { jobId: string }
 
-function JobsList({ client }: JobsListProps) {
+function JobsList({ client, openJobId, onOpened }: JobsListProps) {
   const [jobs, setJobs] = useState<FaxJob[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -298,6 +308,13 @@ function JobsList({ client }: JobsListProps) {
     try { await loadDetail(selection); }
     finally { finishDetailAction(selection, action); }
   };
+
+  // Arriving from Send's "Follow it in Jobs" opens that fax's details.
+  useEffect(() => {
+    if (!openJobId) return;
+    onOpened?.();
+    void handleJobClick(openJobId);
+  }, [openJobId]);
 
   const handleCloseJobDetail = () => {
     detailSelectionRef.current = null;
@@ -478,10 +495,9 @@ function JobsList({ client }: JobsListProps) {
               <Table size="small">
                 <TableHead>
                   <TableRow>
-                    <TableCell sx={{ minWidth: 120 }}>Job ID</TableCell>
-                    <TableCell sx={{ minWidth: 100, display: { xs: 'none', sm: 'table-cell' } }}>To Number</TableCell>
+                    <TableCell sx={{ minWidth: 100 }}>To Number</TableCell>
                     <TableCell sx={{ minWidth: 80 }}>Status</TableCell>
-                    <TableCell sx={{ minWidth: 80, display: { xs: 'none', md: 'table-cell' } }}>Backend</TableCell>
+                    <TableCell sx={{ minWidth: 80, display: { xs: 'none', md: 'table-cell' } }}>Provider</TableCell>
                     <TableCell sx={{ minWidth: 60, display: { xs: 'none', md: 'table-cell' } }}>Pages</TableCell>
                     <TableCell sx={{ minWidth: 150, display: { xs: 'none', lg: 'table-cell' } }}>Error</TableCell>
                     <TableCell sx={{ minWidth: 120 }}>Created</TableCell>
@@ -497,11 +513,6 @@ function JobsList({ client }: JobsListProps) {
                       onClick={() => handleJobClick(job.id)}
                     >
                       <TableCell>
-                        <Typography variant="body2" fontFamily="monospace" sx={{ fontSize: { xs: '0.7rem', sm: '0.875rem' } }}>
-                          {job.id.slice(0, 8)}...
-                        </Typography>
-                      </TableCell>
-                      <TableCell sx={{ display: { xs: 'none', sm: 'table-cell' } }}>
                         <Typography variant="body2" fontFamily="monospace" sx={{ fontSize: { xs: '0.7rem', sm: '0.875rem' } }}>
                           {job.to_number}
                         </Typography>
@@ -520,7 +531,7 @@ function JobsList({ client }: JobsListProps) {
                       </TableCell>
                       <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }}>
                         <Typography variant="body2" sx={{ fontSize: { xs: '0.7rem', sm: '0.875rem' } }}>
-                          {job.backend}
+                          {providerLabel(job.backend)}
                         </Typography>
                       </TableCell>
                       <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }}>
@@ -628,8 +639,8 @@ function JobsList({ client }: JobsListProps) {
               <Divider />
               <ListItem>
                 <ListItemText
-                  primary="Backend"
-                  secondary={detailJob.backend}
+                  primary="Provider"
+                  secondary={providerLabel(detailJob.backend)}
                 />
               </ListItem>
               <Divider />

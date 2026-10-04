@@ -11,7 +11,11 @@ from .access.route_policy import require_permission
 from .config import configuration_values
 from .config_runtime import run_lifecycle_step
 from . import sip_trunk, stun
-from .sip_calls import SipCallRecordError, SipCallRecords
+from .ami import ENGINE_UNREACHABLE
+from .config_store import ConfigurationStoreError
+from .inbound.acquisition import AcquisitionError
+from .inbound.sip_handover import ensure_inbound_secret
+from .sip_calls import NOT_HANDED_OVER, SipCallRecordError, SipCallRecords
 
 
 router = APIRouter(prefix='/admin/sip', tags=['SIP trunk'])
@@ -122,11 +126,15 @@ def _last_call(records):
     return latest
 
 
-def _engine(request):
+def _runtime(request):
     runtime = getattr(request.app.state, 'configuration_runtime', None)
     if runtime is None or not runtime.serving:
         raise HTTPException(503, detail='Installation configuration is not ready.')
-    return runtime.manager.store.engine
+    return runtime
+
+
+def _engine(request):
+    return _runtime(request).manager.store.engine
 
 
 def _summary(values):
@@ -167,6 +175,7 @@ async def _asterisk_status(values):
     result = {'connected': bool(ami_client._connected.is_set()), 'registration': 'unknown',
               'reachability': 'unknown', 'permission': True, 'transport': None}
     if not result['connected']:
+        result['engine_message'] = ami_client.engine_message()
         return result
     try:
         if values.sip_trunk_auth == 'registration':
@@ -217,7 +226,7 @@ def _message(summary, asterisk, applied, ports_text=None, transport=None):
     if not applied:
         return 'Apply these settings to Asterisk, then restart the Asterisk service.'
     if not asterisk['connected']:
-        return 'Faxbot is not connected to Asterisk.'
+        return asterisk.get('engine_message') or ENGINE_UNREACHABLE
     if not asterisk['permission']:
         return 'Asterisk does not let Faxbot read trunk status. Restart the Asterisk service to update its access.'
     if asterisk['registration'] == 'rejected':
@@ -263,6 +272,9 @@ async def status(request: Request, identity=Depends(require_permission('provider
     if (changed and ports_text != BEHIND_ROUTER and asterisk['connected'] and asterisk['permission']
             and asterisk['registration'] != 'rejected'):
         message = ADDRESS_CHANGED
+    if last and last['verdict'] == NOT_HANDED_OVER:
+        # A received fax waits outside Faxbot; that matters more than any trunk detail.
+        message = last['summary']
     return {
         **summary, 'applied': applied, 'asterisk_connected': asterisk['connected'],
         'registration': asterisk['registration'], 'registration_transport': transport,
@@ -293,7 +305,7 @@ def _records(request):
 
 
 @router.post('/apply')
-async def apply(identity=Depends(require_permission('providers:write'))):
+async def apply(request: Request, identity=Depends(require_permission('providers:write'))):
     """Write the trunk configuration Asterisk loads when it starts."""
     values = configuration_values()
     if not sip_trunk.configured(values):
@@ -305,7 +317,9 @@ async def apply(identity=Depends(require_permission('providers:write'))):
         if values.sip_trunk_auth == 'ip' and network and network.behind_nat:
             raise HTTPException(400, detail=BEHIND_ROUTER)
     try:
-        await run_lifecycle_step(lambda: sip_trunk.write_asterisk_configuration(values))
+        # Received faxes reach Faxbot with this secret; Faxbot creates it when none is set.
+        secret = await run_lifecycle_step(lambda: ensure_inbound_secret(_runtime(request).manager))
+        await run_lifecycle_step(lambda: sip_trunk.write_asterisk_configuration(values, inbound_secret=secret))
         if not values.sip_external_address:
             # What Asterisk advertises at its next start (only on a network that keeps port numbers).
             await run_lifecycle_step(lambda: sip_trunk.write_public_address(values, network))
@@ -314,6 +328,8 @@ async def apply(identity=Depends(require_permission('providers:write'))):
         raise HTTPException(400, detail=f'Fill in the {names} before applying.')
     except OSError:
         raise HTTPException(500, detail='Faxbot could not save the trunk settings for Asterisk.') from None
+    except (AcquisitionError, ConfigurationStoreError):
+        raise HTTPException(503, detail='Faxbot could not save an inbound secret for the fax engine. Try again.') from None
     return {'ok': True, 'message': 'Saved for Asterisk. Restart the Asterisk service to use these settings.'}
 
 

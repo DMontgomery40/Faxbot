@@ -57,6 +57,22 @@ def test_docker_compose_config_for_the_default_install_publishes_no_media_range(
     assert all(int(port.get('published', 0)) not in range(4000, 5000) for _, port in published), published
 
 
+@pytest.mark.parametrize('name', ['api', 'asterisk'])
+def test_services_start_again_after_any_exit(name):
+    """Restart API exits with code 0; only "always" or "unless-stopped" bring that process back."""
+    service = yaml.safe_load((ROOT / 'docker-compose.yml').read_text())['services'][name]
+    assert service.get('restart') == 'unless-stopped'
+
+
+@pytest.mark.skipif(shutil.which('docker') is None, reason='The docker command is not installed.')
+def test_docker_compose_config_keeps_the_restart_policy():
+    result = subprocess.run(['docker', 'compose', '-f', 'docker-compose.yml', '-f', 'docker-compose.public.yml',
+                             'config', '--format', 'json'], cwd=ROOT, capture_output=True, text=True, timeout=60)
+    assert result.returncode == 0, result.stderr[-500:]
+    services = json.loads(result.stdout)['services']
+    assert {services[name].get('restart') for name in ('api', 'asterisk')} == {'unless-stopped'}
+
+
 def test_public_override_publishes_one_narrow_range_that_asterisk_uses():
     asterisk = yaml.safe_load((ROOT / 'docker-compose.public.yml').read_text())['services']['asterisk']
     ranges = [port_range for port_range, protocol in _published(asterisk) if _width(port_range) > 1]
@@ -72,3 +88,25 @@ def test_start_script_splits_the_published_range_between_t38_and_audio():
     for name in ('rtp.conf', 'udptl.conf'):
         text = (ROOT / 'asterisk' / 'etc' / 'asterisk' / name).read_text()
         assert 'Publish UDP' not in text
+
+
+def test_asterisk_starts_without_errors_and_keeps_every_fax_module():
+    """Every start logged a burst of "X declined to load" ERRORs (seen on the acceptance install).
+
+    The native proof (make native-proof) checks the real start log; this keeps
+    the shipped configuration from drifting back.
+    """
+    etc = ROOT / 'asterisk' / 'etc' / 'asterisk'
+    entries = re.findall(r'^(require|load|noload) => (\S+)$', (etc / 'modules.conf').read_text(), re.M)
+    skipped = {module for kind, module in entries if kind == 'noload'}
+    needed = {module for kind, module in entries if kind != 'noload'}
+    assert not skipped & needed
+    assert {'func_shell.so', 'func_base64.so', 'app_stack.so', 'app_userevent.so', 'res_fax.so',
+            'res_fax_spandsp.so', 'chan_pjsip.so', 'res_pjsip.so'} <= needed
+    assert {'app_amd.so', 'pbx_dundi.so', 'chan_unistim.so', 'app_festival.so', 'app_alarmreceiver.so',
+            'app_followme.so', 'pbx_ael.so', 'res_prometheus.so', 'app_queue.so'} <= skipped
+    # Core and PJSIP pieces report a missing file as an ERROR; each ships a minimal one.
+    for name in ('cdr.conf', 'cel.conf', 'features.conf', 'acl.conf', 'pjproject.conf', 'pjsip_wizard.conf',
+                 'statsd.conf', 'aeap.conf', 'websocket_client.conf', 'chan_websocket.conf', 'ari.conf'):
+        assert (etc / name).is_file(), name
+    assert 'astkeydir=/var/lib/asterisk\n' in (etc / 'asterisk.conf').read_text()

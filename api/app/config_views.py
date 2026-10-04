@@ -82,8 +82,8 @@ def project_admin_settings(snapshot: ConfigurationSnapshot, pending_fields: Iter
             'space_url': values.signalwire_space_url,
             'project_id': values.signalwire_project_id,
             'api_token': mask_secret(values.signalwire_api_token),
-            'from_fax': mask_secret(values.signalwire_fax_from_e164),
-            'from_sms': mask_secret(values.signalwire_sms_from_e164),
+            'from_fax': values.signalwire_fax_from_e164,
+            'from_sms': values.signalwire_sms_from_e164,
             'callback_url': values.signalwire_status_callback_url,
             'webhook_signing_key': mask_secret(values.signalwire_webhook_signing_key),
             'status_poll_seconds': values.signalwire_status_poll_seconds,
@@ -103,7 +103,8 @@ def project_admin_settings(snapshot: ConfigurationSnapshot, pending_fields: Iter
             'ami_username': values.ami_username,
             'ami_password': mask_secret(values.ami_password),
             'ami_password_is_default': values.ami_password == 'changeme',
-            'station_id': mask_secret(values.fax_station_id),
+            # A fax number, not a secret: the person sees and edits the stored number.
+            'station_id': values.fax_station_id,
             'configured': bool(values.ami_username and values.ami_password),
             'trunk': {
                 'preset': values.sip_trunk_preset,

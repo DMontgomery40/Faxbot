@@ -120,6 +120,45 @@ def test_empty_credentials_are_empty_and_all_nonempty_credentials_have_opaque_ma
     assert empty['signalwire']['configured'] is False
 
 
+# Every masked value in the editor view; each is a credential or the database URL.
+MASKED_PATHS = {
+    'security.api_key', 'phaxio.api_key', 'phaxio.api_secret', 'phaxio.callback_token', 'sinch.api_key',
+    'sinch.api_secret', 'documo.api_key', 'humblefax.access_key', 'humblefax.secret_key', 'signalwire.api_token',
+    'signalwire.webhook_signing_key', 'sip.ami_password', 'sip.trunk.password', 'fs.esl_password',
+    'inbound.sip.asterisk_secret', 'inbound.sinch.basic_pass', 'inbound.sinch.hmac_secret', 'intake.smtp_password',
+    'database.url',
+}
+
+
+def _masked(view, prefix=''):
+    for key, value in view.items():
+        path = prefix + key
+        if isinstance(value, dict):
+            yield from _masked(value, path + '.')
+        elif value == '***':
+            yield path
+
+
+def test_only_credentials_are_masked_and_fax_numbers_show_as_stored():
+    """The station ID showed as *** in the Setup Wizard; numbers are not secrets."""
+    from api.app.config_views import project_admin_settings
+    from api.app.config_values import ConfigurationValues
+
+    environment = {}
+    for name, field in ConfigurationValues.model_fields.items():
+        alias = field.validation_alias
+        alias = alias if isinstance(alias, str) else alias.choices[0]
+        if (field.json_schema_extra or {}).get('secret') or name == 'database_url':
+            environment[alias] = 'sqlite:////faxdata/faxbot.db' if name == 'database_url' else 'synthetic-secret-value'
+    environment.update({'FAX_LOCAL_STATION_ID': '+13035550100', 'SIGNALWIRE_FAX_FROM_E164': '+13035550101',
+                        'SIGNALWIRE_SMS_FROM_E164': '+13035550102'})
+    view = project_admin_settings(snapshot(environment))
+    assert set(_masked(view)) == MASKED_PATHS
+    assert view['sip']['station_id'] == '+13035550100'
+    assert (view['signalwire']['from_fax'], view['signalwire']['from_sms']) == ('+13035550101', '+13035550102')
+    assert 'synthetic-secret-value' not in json.dumps(view)
+
+
 @pytest.mark.parametrize(('url', 'scheme', 'persistent'), [
     ('postgresql+psycopg://user:password@db.invalid/faxbot?sslpassword=synthetic-secret', 'postgresql', False),
     ('postgres://user:password@db.invalid/faxbot#synthetic-secret', 'postgresql', False),

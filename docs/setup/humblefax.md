@@ -24,7 +24,7 @@ Setup does not authenticate HumbleFax keys. Readiness checks local configuration
 | `HUMBLEFAX_ACCESS_KEY` | `HUMBLEFAX_API_ACCESS_KEY` |
 | `HUMBLEFAX_SECRET_KEY` | `HUMBLEFAX_API_SECRET_KEY` |
 
-While a key is set in `.env`, Settings shows it as **Set in .env**; change it there and restart Faxbot.
+While a key is set in `.env`, Settings shows it as **Set in .env**; change it there, then run `docker compose up -d`.
 
 ## Destinations
 

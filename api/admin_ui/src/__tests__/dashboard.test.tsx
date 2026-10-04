@@ -89,6 +89,16 @@ describe('Dashboard delivery cards', () => {
     render(<Dashboard client={client()} />);
     expect(await screen.findByText('No faxes sent in the last 30 days.')).toBeTruthy();
   });
+
+  it('says in one sentence when Faxbot cannot sign in to its fax engine', async () => {
+    const sentence = "Faxbot can't sign in to its fax engine. Check that the Asterisk manager password matches.";
+    server.use(http.get('/admin/health-status', () => HttpResponse.json({ timestamp: new Date().toISOString(),
+      backend: 'sip', backend_healthy: false, backend_message: sentence,
+      jobs: { queued: 0, in_progress: 0, recent_failures: 0 }, inbound_enabled: true, api_keys_configured: true, require_auth: true })));
+    render(<Dashboard client={client()} />);
+    expect((await screen.findByTestId('engine-message')).textContent).toBe(sentence);
+    expect(screen.getByText('Needs attention')).toBeTruthy();
+  });
 });
 
 describe('Dashboard authentication', () => {

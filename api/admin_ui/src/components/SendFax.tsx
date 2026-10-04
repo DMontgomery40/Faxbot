@@ -33,6 +33,8 @@ interface SendFaxProps {
   config: AdminConfig | null;
   configLoading: boolean;
   configError: string | null;
+  // Open this fax in Jobs (the confirmation links to it).
+  onOpenJob?: (jobId: string) => void;
 }
 
 interface SubmissionIntent {
@@ -58,13 +60,13 @@ function submissionKey(): string {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
-function acceptanceMessage(response: FaxSendResult): string {
+function acceptanceMessage(response: FaxSendResult, to?: string): string {
   switch ((response.delivery_state || response.status).toLowerCase()) {
     case 'held':
-      return 'Test fax queued. It is held and will not be sent.';
+      return to ? `Test fax for ${to} queued. It is held and will not be sent.` : 'Test fax queued. It is held and will not be sent.';
     case 'ready':
     case 'queued':
-      return 'Fax queued for sending.';
+      return to ? `Fax queued for ${to}.` : 'Fax queued for sending.';
     case 'preparing':
       return 'Fax is being prepared.';
     case 'submitting':
@@ -85,7 +87,7 @@ function acceptanceMessage(response: FaxSendResult): string {
   }
 }
 
-function SendFax({ client, config, configLoading, configError }: SendFaxProps) {
+function SendFax({ client, config, configLoading, configError, onOpenJob }: SendFaxProps) {
   const theme = useTheme();
   const isSmallMobile = useMediaQuery(theme.breakpoints.down('sm'));
   
@@ -93,7 +95,7 @@ function SendFax({ client, config, configLoading, configError }: SendFaxProps) {
   const [file, setFile] = useState<File | null>(null);
   const [uploadPickerVersion, setUploadPickerVersion] = useState(0);
   const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<{ type: 'success' | 'error' | 'warning' | 'info'; message: string; jobId?: string; to?: string } | null>(null);
+  const [result, setResult] = useState<{ type: 'success' | 'error' | 'warning' | 'info'; message: string; jobId?: string } | null>(null);
   const intentRef = useRef<SubmissionIntent | null>(null);
   const [resuming, setResuming] = useState(false);
   const submittingRef = useRef(false);
@@ -171,12 +173,12 @@ function SendFax({ client, config, configLoading, configError }: SendFaxProps) {
       const response = await client.sendFax(intent.destination, intent.file,
         { queueOnly: intent.queueOnly, idempotencyKey: intent.key });
       const state = (response.delivery_state || response.status).toLowerCase();
+      const to = typeof response.to === 'string' && response.to ? response.to : undefined;
       setResult({
         type: state === 'reconciliation_required' ? 'warning' : state === 'failed' ? 'error'
           : state === 'success' || state === 'completed' ? 'success' : 'info',
-        message: acceptanceMessage(response),
+        message: acceptanceMessage(response, to),
         jobId: response.id,
-        to: typeof response.to === 'string' && response.to ? response.to : undefined,
       });
       
       // Clear form on success; a new send gets a new key, even for the same document and number.
@@ -360,21 +362,13 @@ function SendFax({ client, config, configLoading, configError }: SendFaxProps) {
                 <Typography variant="body1" fontWeight={500}>
                   {result.message}
                 </Typography>
-                {result.to && (
-                  <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-                    Fax number: <strong>{result.to}</strong>
-                  </Typography>
-                )}
-                {result.jobId && (
-                  <Box sx={{ mt: 1 }}>
-                    <Typography variant="body2" color="text.secondary">
-                      Job ID: <strong>{result.jobId}</strong>
-                    </Typography>
-                    <Typography variant="caption" color="text.secondary">
-                      You can track the status in the Jobs tab
-                    </Typography>
-                  </Box>
-                )}
+                {result.jobId && (onOpenJob ? (
+                  <Button size="small" sx={{ mt: 1, px: 0 }} onClick={() => onOpenJob(result.jobId!)}>
+                    Follow it in Jobs
+                  </Button>
+                ) : (
+                  <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>Follow it in Jobs.</Typography>
+                ))}
               </Box>
             </Alert>
           </Grow>
