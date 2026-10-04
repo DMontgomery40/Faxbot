@@ -273,7 +273,7 @@ def test_recommendations_never_call_an_unknown_cost_the_cheapest(client):
     card = next(card for card in saved.json()['cards'] if card['provider_id'] == 'phaxio')
     assert (card['monthly_fee'], card['included_in_plan']) == ('10.00', True)
     first = client.get('/routing/destinations/+12025550123', headers=ADMIN).json()['recommended_routes'][0]
-    assert (first['reason'], first['explanation']) == ('included', 'Included in your Phaxio plan.')
+    assert (first['reason'], first['explanation']) == ('included', 'Included in your Phaxio plan ($10 a month).')
     assert first['monthly_fee'] == {'currency': 'USD', 'amount': '10.00'} and first['included_in_plan'] is True
     too_much = client.put('/routing/rate-cards', headers=ADMIN, json={'cards': [{**plan, 'monthly_fee': '5000'}]})
     assert too_much.status_code == 400

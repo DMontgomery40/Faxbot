@@ -12,8 +12,8 @@ from api.tests.test_access_schema import at_revision
 NOW = datetime(2026, 10, 3, 12)
 
 
-def test_carrier_charges_are_head_after_work_items():
-    assert schema.HEAD == schema_charges.REVISION == '0012_carrier_charges'
+def test_carrier_charges_follow_work_items():
+    assert schema.CHARGES == schema_charges.REVISION == '0012_carrier_charges'
     assert schema.WORK == '0011_work_items'
     assert schema_charges.TABLES <= schema.STRICT_TABLES
 

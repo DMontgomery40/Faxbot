@@ -436,6 +436,91 @@ def test_flat_plan_cards_are_included_not_unknown(ledger):
                                                            created_at=at(1), submitted_at=at(1), completed_at=at(2)))
     routes.capture(CaptureTarget(attempt, job, FAR, 'humblefax', 'hf-1', 'success', 3, at(1), at(2), False))
     spending = Spending(routes, carriers)
-    assert spending.job(job)['summary'] == 'Included in your HumbleFax plan.'
-    totals = spending.outbound(BASE - timedelta(days=1), now=NOW)[0]
+    assert spending.job(job)['summary'] == 'Included in your HumbleFax plan ($10 a month).'
+    totals = spending.outbound(NOW - timedelta(days=30), now=NOW)[0]
     assert totals['plan_card'].provider_id == 'humblefax' and totals['cost_micros'] == {'USD': 0}
+    # The plan fee counts once for 30 days, pro-rated by day for other periods.
+    assert (totals['plan_fee_micros'], totals['plan_days'], totals['total_micros']) == (10_000_000, 30, {'USD': 10_000_000})
+    week = spending.outbound(NOW - timedelta(days=7), now=NOW)[0]
+    assert week['plan_fee_micros'] == 2_333_334
+
+
+def test_unrecorded_records_are_kept_attached_to_a_received_fax_and_counted_once(ledger):
+    """R1: Telnyx billed a received call Faxbot has no call record of; its recovered fax gets the charge."""
+    installation, routes, carriers = ledger
+    received = inbound_call(ledger, answer=at(18, 56), end=at(19, 27), caller=CALLER_D, inbound_id=None)
+    faxes = sa.Table('inbound_faxes', sa.MetaData(), autoload_with=routes.engine)
+    imports = sa.Table('inbound_imports', sa.MetaData(), autoload_with=routes.engine)
+    with routes.engine.begin() as connection:
+        for identity, pages in (('fax-r1', 1), ('fax-other', 2)):
+            connection.execute(faxes.insert().values(
+                id=identity, from_number=CALLER_C, to_number=OURS, status='received', backend='sip', pages=pages,
+                created_at=NOW, received_at=NOW, updated_at=NOW))
+        # R1 was brought in later; the source's receipt time is when the call ended.
+        connection.execute(imports.insert().values(
+            id='import-1', source='sip', account='trunk', operation_id='1791083644.1', revision='1', state='received',
+            attempts=1, imported_at=NOW, source_received_at=at(14, 26), acquired_at=NOW, artifact_digest='a' * 64,
+            artifact_size=10, inbound_fax_id='fax-r1', created_at=NOW, updated_at=NOW))
+    source = FakeTelnyx([received_c(), received_d(), sent_a(), telnyx(
+        'rec-zero', 'inbound', at(20), at(20), at(21), '0', cli=CALLER_C, cld=OURS), telnyx(
+        'rec-other-number', 'inbound', at(22), at(22), at(23), '0.0032', cli=CALLER_C, cld='+19995550000')])
+    reconciler = CarrierReconciler(carriers, routes, source, numbers=lambda: (OURS,))
+    result = reconciler.run_now(now=NOW)
+    # rec-d matched its call; rec-c fits no call and is kept; rec-a (sent, Faxbot recorded nothing at all) too;
+    # zero charges and other numbers are left out.
+    assert result.unrecorded == 2
+    kept = {row['record_id']: row for row in carriers.unrecorded_in_effect()}
+    assert set(kept) == {'rec-c', 'rec-a'}
+    assert kept['rec-c']['inbound_fax_id'] == 'fax-r1' and kept['rec-a']['inbound_fax_id'] is None
+    spending = Spending(routes, carriers)
+    assert spending.inbound('fax-r1')['summary'] == 'Telnyx charged $0.0032 for this call.'
+    assert spending.inbound('fax-other')['summary'] == 'Cost not reported yet.'
+    entry = spending.received(BASE - timedelta(days=1), now=NOW)[0]
+    assert (entry['calls'], entry['reported'], entry['unrecorded'], entry['unrecorded_attached']) == (1, 1, 1, 1)
+    assert entry['reported_cost_micros'] == {'USD': 6400} and entry['unrecorded_micros'] == {'USD': 3200}
+    sent = spending.outbound(BASE - timedelta(days=1), now=NOW)[0]
+    assert (sent['provider_id'], sent['unrecorded'], sent['reported_cost_micros']) == ('sip', 1, {'USD': 10_000})
+    # Repeated sweeps have one effect; a later call record that holds the record removes it from the list.
+    CarrierReconciler(carriers, routes, source, numbers=lambda: (OURS,)).run_now(now=NOW + timedelta(minutes=5))
+    with routes.engine.connect() as connection:
+        assert connection.execute(sa.select(sa.func.count()).select_from(carriers.records)).scalar_one() == 2
+    job = accept(installation)
+    outbound_attempt(ledger, job, phase='success', answer=at(0, 29), end=at(1, 31))
+    CarrierReconciler(carriers, routes, source, numbers=lambda: (OURS,)).run_now(now=NOW + timedelta(minutes=10))
+    assert {row['record_id'] for row in carriers.unrecorded_in_effect()} == {'rec-c'}
+    assert spending.outbound(BASE - timedelta(days=1), now=NOW)[0]['reported_cost_micros'] == {'USD': 10_000}
+
+
+def test_an_unrecorded_record_fitting_two_received_faxes_is_kept_but_attached_to_neither(ledger):
+    installation, routes, carriers = ledger
+    faxes = sa.Table('inbound_faxes', sa.MetaData(), autoload_with=routes.engine)
+    with routes.engine.begin() as connection:
+        for identity in ('fax-1', 'fax-2'):
+            connection.execute(faxes.insert().values(
+                id=identity, from_number=CALLER_C, to_number=OURS, status='received', backend='sip', pages=1,
+                created_at=at(14, 30), received_at=at(14, 30), updated_at=at(14, 30)))
+    CarrierReconciler(carriers, routes, FakeTelnyx([received_c()]), numbers=lambda: (OURS,)).run_now(now=NOW)
+    [row] = carriers.unrecorded_in_effect()
+    assert row['inbound_fax_id'] is None
+    assert Spending(routes, carriers).inbound('fax-1')['summary'] == 'Cost not reported yet.'
+
+
+def test_shipped_cards_are_added_for_providers_in_use_once_and_never_after_removal(ledger):
+    from api.app.config_values import ConfigurationValues
+    from api.app.routing.seed import cards_in_use, load_cards
+    installation, routes, carriers = ledger
+    values = ConfigurationValues.from_environment({
+        'FAX_OUTBOUND_BACKEND': 'humblefax', 'FAX_INBOUND_BACKEND': 'sip', 'FAX_OUTBOUND_ROUTES': 'sip, phaxio',
+        'SIP_TRUNK_PRESET': 'telnyx'})
+    chosen = {(card.provider_id, card.direction) for card in cards_in_use(values, load_cards())}
+    assert chosen == {('humblefax', 'outbound'), ('phaxio', 'outbound'), ('sip-telnyx', 'outbound'),
+                      ('sip-telnyx', 'inbound')}
+    added = routes.add_missing_cards(cards_in_use(values, load_cards()))
+    # The ledger already had 'sip' cards for both directions, not 'sip-telnyx' ones.
+    assert {(card.provider_id, card.direction) for card in added} == chosen
+    plan = routes.card_for('humblefax')
+    assert plan.flat_plan and plan.source_url == 'https://humblefax.com/faq'
+    assert routes.add_missing_cards(cards_in_use(values, load_cards())) == []
+    routes.replace_cards([card for card in routes.current_cards() if card.provider_id != 'humblefax'])
+    assert routes.add_missing_cards(cards_in_use(values, load_cards())) == []  # a removal is remembered
+    assert routes.card_for('humblefax') is None

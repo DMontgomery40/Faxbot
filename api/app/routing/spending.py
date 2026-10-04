@@ -5,13 +5,17 @@ separate. An estimate is only summed for faxes that have no reported charge,
 so the two never count the same fax twice. "Waiting for the carrier's bill"
 means Faxbot can read this carrier's charges and is still asking; a call it
 could not match to exactly one carrier record is counted as unmatched.
+
+A carrier record that fits no call Faxbot recorded is still money spent: it is
+included in the charged total of its direction and counted separately as
+"billed but not recorded by Faxbot".
 """
 from datetime import timedelta
 
 import sqlalchemy as sa
 
 from .carriers import GIVE_UP, carrier_label
-from .costs import attempt_cost, billed_seconds, money_list_text
+from .costs import attempt_cost, billed_seconds, money_list_text, plan_fee_for_days, plan_fee_text
 from .database import read_connection, utcnow
 from .plan import route_label
 
@@ -111,10 +115,52 @@ class Spending:
                 entry['unmatched'] += call is not None and call[1] == 'ambiguous'
             else:
                 entry['reported'] += 1
+        unrecorded = [row for row in self.carriers.unrecorded_in_effect(since=since) if row['direction'] == 'outbound']
+        if unrecorded:
+            entry = totals.setdefault('sip', self._empty_outbound('sip'))
+            self._add_unrecorded(entry, unrecorded)
+            entry['carriers'].update(row['provider_id'] for row in unrecorded)
+        days = max(1, round((now - since).total_seconds() / 86_400))
         for entry in totals.values():
             card = cards.get(entry['provider_id'])
             entry['plan_card'] = card if card is not None and card.flat_plan else None
+            entry['plan_fee_micros'] = plan_fee_for_days(card, days) if entry['plan_card'] is not None else 0
+            entry['plan_days'] = days
+            entry['has_card'] = self.routes.card_for(entry['provider_id']) is not None
+            entry['total_micros'] = self.total(entry)
         return sorted(totals.values(), key=lambda entry: entry['provider_id'])
+
+    @staticmethod
+    def total(entry):
+        """What a card cost: charges, estimates only for faxes not billed yet, and a plan's fee for the period."""
+        total = {}
+        for bucket in (entry['reported_cost_micros'], entry['unreported_estimate_micros']):
+            for currency, micros in bucket.items():
+                _add(total, currency, micros)
+        card = entry.get('plan_card')
+        if card is not None:
+            _add(total, card.currency, entry.get('plan_fee_micros', 0))
+        return total
+
+    @staticmethod
+    def _empty_outbound(provider_id):
+        return {'provider_id': provider_id, 'attempts': 0, 'successes': 0, 'failures': 0, 'uncertain': 0,
+                'billed_seconds': 0, 'billed_pages': 0, 'cost_micros': {}, 'reported_cost_micros': {},
+                'settled_cost_micros': {}, 'unreported': 0, 'reported': 0, 'unreported_estimate_micros': {},
+                'awaiting': 0, 'unmatched': 0, 'carriers': set()}
+
+    @staticmethod
+    def _add_unrecorded(entry, rows):
+        """Fold carrier records Faxbot has no call for into a card's charged total, and count them."""
+        entry.setdefault('unrecorded', 0)
+        entry.setdefault('unrecorded_micros', {})
+        entry.setdefault('unrecorded_attached', 0)
+        for row in rows:
+            entry['unrecorded'] += 1
+            entry['unrecorded_attached'] += row['inbound_fax_id'] is not None
+            _add(entry['unrecorded_micros'], row['currency'], row['amount_micros'])
+            _add(entry['reported_cost_micros'], row['currency'], row['amount_micros'])
+            entry['billed_seconds'] += int(row['billed_seconds'] or 0)
 
     def received(self, since, *, now=None):
         """Per trunk carrier: received calls, faxes, billed minutes, charges and estimates."""
@@ -156,6 +202,19 @@ class Spending:
             entry['awaiting'] += (preset in self.carrier_presets and row['ended_at'] is not None
                                   and row['state'] not in ('ambiguous', 'unreported')
                                   and row['ended_at'] >= now - GIVE_UP)
+        for row in self.carriers.unrecorded_in_effect(since=since):
+            if row['direction'] != 'inbound':
+                continue
+            entry = totals.setdefault(row['provider_id'], {
+                'provider_id': 'sip', 'carrier': row['provider_id'], 'calls': 0, 'faxes': 0, 'billed_seconds': 0,
+                'cost_micros': {}, 'reported_cost_micros': {}, 'unreported_estimate_micros': {}, 'reported': 0,
+                'unreported': 0, 'awaiting': 0, 'unmatched': 0})
+            self._add_unrecorded(entry, [row])
+        for entry in totals.values():
+            entry.setdefault('unrecorded', 0)
+            entry.setdefault('unrecorded_micros', {})
+            entry.setdefault('unrecorded_attached', 0)
+            entry['total_micros'] = self.total(entry)
         return [totals[key] for key in sorted(totals)]
 
     # One fax ---------------------------------------------------------------------
@@ -206,7 +265,8 @@ class Spending:
         else:
             card = self.routes.card_for(rows[-1]['provider_id'])
             if card is not None and card.flat_plan:
-                summary, state = f'Included in your {route_label(rows[-1]["provider_id"])} plan.', 'included'
+                fee = plan_fee_text(card.monthly_fee_micros, card.currency)
+                summary, state = f'Included in your {route_label(rows[-1]["provider_id"])} plan ({fee} a month).', 'included'
             else:
                 summary, state = 'Cost not reported yet.', 'waiting'
         return {'state': state, 'summary': summary, 'reported_cost': reported_total,
@@ -221,9 +281,21 @@ class Spending:
                 .select_from(calls.outerjoin(checks, checks.c.id == calls.c.id))
                 .where(calls.c.direction == 'inbound', calls.c.job_id == inbound_id)).all()
             effective = self.carriers.in_effect([row.id for row in rows], connection)
-        if not rows:
-            return {'state': 'none', 'summary': None, 'reported_cost': {}}
+            unrecorded = self.carriers.unrecorded_in_effect(inbound_fax_ids=[inbound_id], connection=connection)
+            backend = connection.execute(sa.select(self.carriers.faxes.c.backend).where(
+                self.carriers.faxes.c.id == inbound_id)).scalar_one_or_none()
         total, carriers = {}, set()
+        for row in unrecorded:
+            # The carrier's record matched this fax by number and time; Faxbot kept no call record of it.
+            _add(total, row['currency'], row['amount_micros'])
+            carriers.add(row['provider_id'])
+        if not rows:
+            if total:
+                return {'state': 'reported', 'reported_cost': total,
+                        'summary': f'{carrier_label(next(iter(carriers)))} charged {money_list_text(total)} for this call.'}
+            if backend == 'sip':
+                return {'state': 'waiting', 'summary': 'Cost not reported yet.', 'reported_cost': {}}
+            return {'state': 'none', 'summary': None, 'reported_cost': {}}
         for row in rows:
             for charge in effective.get(row.id, []):
                 _add(total, charge['currency'], charge['amount_micros'])

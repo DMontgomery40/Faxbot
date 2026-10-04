@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "description": "Advertised US prices for calls over each SIP trunk preset when Faxbot's own fax engine places or answers the call. Prices are advertised starting or typical rates, not quotes; confirm them against your carrier account. Amounts are decimal strings in the card currency. per_call is a charge for each call; number_setup is a one-time charge for each number. A null price or increment means the carrier does not publish it.",
+  "description": "Advertised US prices, read 2026-10-03 from each provider's own pages. cards: calls over each SIP trunk preset when Faxbot's own fax engine places or answers the call. providers: cloud fax providers' per-page or per-minute prices. plans: flat monthly plans with nothing charged per fax. Prices are advertised starting or typical rates, not quotes; confirm them against your account. Amounts are decimal strings in the card currency. per_call is a charge for each call; number_setup is a one-time charge for each number. A null price or increment means the provider does not publish it. Documo publishes no fax API price, so it has no card.",
   "cards": [
     {
       "provider_id": "sip-telnyx",
@@ -66,7 +66,10 @@
       "minimum_seconds": 0,
       "rounding": "not_published",
       "source_url": "https://signalwire.com/pricing/rates",
-      "sources": ["https://signalwire.com/pricing/rates", "https://signalwire.com/pricing"],
+      "sources": [
+        "https://signalwire.com/pricing/rates",
+        "https://signalwire.com/pricing"
+      ],
       "advertised_on": "2026-10-03",
       "notes": "Programmable voice local outbound rate. SignalWire also lists SIP and WebRTC at $0.003 per minute each way; the page does not say whether that applies in addition to the voice rate. Its managed fax product is a separate $0.0095 per minute. No billing increment is published, so a whole-minute assumption is the cautious estimate."
     },
@@ -86,7 +89,10 @@
       "minimum_seconds": 0,
       "rounding": "not_published",
       "source_url": "https://signalwire.com/pricing/rates",
-      "sources": ["https://signalwire.com/pricing/rates", "https://signalwire.com/pricing"],
+      "sources": [
+        "https://signalwire.com/pricing/rates",
+        "https://signalwire.com/pricing"
+      ],
       "advertised_on": "2026-10-03",
       "notes": "Programmable voice local inbound rate; see the outbound card about the separate SIP rate. No billing increment is published."
     },
@@ -106,7 +112,10 @@
       "minimum_seconds": 0,
       "rounding": "not_published",
       "source_url": "https://sinch.com/voice/pricing/",
-      "sources": ["https://sinch.com/voice/pricing/", "https://sinch.com/voice/sip-trunking/elastic/"],
+      "sources": [
+        "https://sinch.com/voice/pricing/",
+        "https://sinch.com/voice/sip-trunking/elastic/"
+      ],
       "advertised_on": "2026-10-03",
       "notes": "Sinch says Elastic SIP Trunking has per-minute rates and monthly number fees but does not show them on its pages without an account. Enter your contracted rates."
     },
@@ -126,7 +135,10 @@
       "minimum_seconds": 0,
       "rounding": "not_published",
       "source_url": "https://sinch.com/voice/pricing/",
-      "sources": ["https://sinch.com/voice/pricing/", "https://sinch.com/voice/sip-trunking/elastic/"],
+      "sources": [
+        "https://sinch.com/voice/pricing/",
+        "https://sinch.com/voice/sip-trunking/elastic/"
+      ],
       "advertised_on": "2026-10-03",
       "notes": "Rates are not published; enter your contracted rates."
     },
@@ -170,7 +182,10 @@
       "minimum_seconds": 0,
       "rounding": "not_published",
       "source_url": "https://anveodirect.com/prices/did",
-      "sources": ["https://anveodirect.com/prices/did", "https://www.anveodirect.com/about/faq"],
+      "sources": [
+        "https://anveodirect.com/prices/did",
+        "https://www.anveodirect.com/about/faq"
+      ],
       "advertised_on": "2026-10-03",
       "notes": "Per-minute number with ten inbound channels. Prime numbers instead buy channels at $11.25 per month plus $14 setup each. AnveoDirect requires $25 of prepaid funds. The inbound billing increment is not published."
     },
@@ -234,9 +249,126 @@
       "per_call": "0",
       "billing_increment_seconds": 60,
       "minimum_seconds": 0,
-      "source_url": "https://humblefax.com/",
+      "source_url": "https://humblefax.com/faq",
       "advertised_on": "2026-10-03",
-      "notes": "The HumbleFax homepage, read October 3, 2026, states Unlimited Faxing $10 / month with no monthly page limits. Faxes are included in the plan, so Faxbot adds nothing per fax."
+      "notes": "The HumbleFax FAQ, read October 3, 2026: \"$10 per month to send and receive unlimited faxes. You receive your own dedicated local phone number.\" and \"No gimmicks, no hidden fees, no overage charges.\" Faxes are included in the plan, so Faxbot adds nothing per fax.",
+      "sources": [
+        "https://humblefax.com/faq",
+        "https://humblefax.com/"
+      ],
+      "includes": "unlimited faxing"
+    }
+  ],
+  "providers": [
+    {
+      "provider_id": "phaxio",
+      "label": "Phaxio, US and Canada, sending",
+      "direction": "outbound",
+      "currency": "USD",
+      "per_minute": "0",
+      "per_page": "0.07",
+      "per_call": "0",
+      "billing_increment_seconds": 60,
+      "minimum_seconds": 0,
+      "rounding": "whole_minute",
+      "source_url": "https://www.phaxio.com/pricing/",
+      "sources": [
+        "https://www.phaxio.com/pricing/",
+        "https://www.phaxio.com/"
+      ],
+      "advertised_on": "2026-10-03",
+      "notes": "7 cents per page in the US and Canada; 5 cents from 50,000 pages a month and 4 cents from 100,000. Numbers are $2 a month."
+    },
+    {
+      "provider_id": "phaxio",
+      "label": "Phaxio, US and Canada, receiving",
+      "direction": "inbound",
+      "currency": "USD",
+      "per_minute": "0",
+      "per_page": "0.07",
+      "per_call": "0",
+      "billing_increment_seconds": 60,
+      "minimum_seconds": 0,
+      "rounding": "whole_minute",
+      "source_url": "https://www.phaxio.com/",
+      "sources": [
+        "https://www.phaxio.com/",
+        "https://www.phaxio.com/pricing/"
+      ],
+      "advertised_on": "2026-10-03",
+      "notes": "The homepage says send and receive starting at 7 cents per page; caller name is 1 cent more per fax received."
+    },
+    {
+      "provider_id": "sinch",
+      "label": "Sinch Fax API, sending",
+      "direction": "outbound",
+      "currency": "USD",
+      "per_minute": "0",
+      "per_page": "0.045",
+      "per_call": "0",
+      "billing_increment_seconds": 60,
+      "minimum_seconds": 0,
+      "rounding": "whole_minute",
+      "source_url": "https://sinch.com/voice/fax-api/",
+      "sources": [
+        "https://sinch.com/voice/fax-api/"
+      ],
+      "advertised_on": "2026-10-03",
+      "notes": "Flat rate of $0.045 per page; the page lists no separate sending and receiving rates and no number fee."
+    },
+    {
+      "provider_id": "sinch",
+      "label": "Sinch Fax API, receiving",
+      "direction": "inbound",
+      "currency": "USD",
+      "per_minute": "0",
+      "per_page": "0.045",
+      "per_call": "0",
+      "billing_increment_seconds": 60,
+      "minimum_seconds": 0,
+      "rounding": "whole_minute",
+      "source_url": "https://sinch.com/voice/fax-api/",
+      "sources": [
+        "https://sinch.com/voice/fax-api/"
+      ],
+      "advertised_on": "2026-10-03",
+      "notes": "Flat rate of $0.045 per page, the same for receiving."
+    },
+    {
+      "provider_id": "signalwire",
+      "label": "SignalWire Fax, sending",
+      "direction": "outbound",
+      "currency": "USD",
+      "per_minute": "0.0095",
+      "per_page": "0",
+      "per_call": "0",
+      "billing_increment_seconds": null,
+      "minimum_seconds": 0,
+      "rounding": "not_published",
+      "source_url": "https://signalwire.com/pricing/fax",
+      "sources": [
+        "https://signalwire.com/pricing/fax"
+      ],
+      "advertised_on": "2026-10-03",
+      "notes": "$0.0095 per minute for the 48 contiguous states and Canada. No billing increment is published, so whole minutes is the cautious estimate."
+    },
+    {
+      "provider_id": "signalwire",
+      "label": "SignalWire Fax, receiving",
+      "direction": "inbound",
+      "currency": "USD",
+      "per_minute": "0.0095",
+      "per_page": "0",
+      "per_call": "0",
+      "billing_increment_seconds": null,
+      "minimum_seconds": 0,
+      "rounding": "not_published",
+      "source_url": "https://signalwire.com/pricing/fax",
+      "sources": [
+        "https://signalwire.com/pricing/fax"
+      ],
+      "advertised_on": "2026-10-03",
+      "notes": "$0.0095 per minute inbound; the number is a voice number at $0.50 a month."
     }
   ]
 }

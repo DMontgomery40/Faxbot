@@ -16,7 +16,7 @@ from .spending import CARRIER_PRESETS, Spending
 from .telnyx import TelnyxDetailRecords
 from .fallback import FallbackPolicy, FallbackScheduler
 from .seed import load_cards
-from .costs import InvalidRateCard, RateCard, format_amount, parse_amount
+from .costs import InvalidRateCard, RateCard, format_amount, parse_amount, plan_fee_text
 from .database import DeliveryStoreError, utcnow
 from .numbers import InvalidNumber, normalize_number
 from .plan import RoutePlanner, explain, extra_routes, route_label
@@ -36,12 +36,15 @@ def _background(app):
     # Starting rate cards go in before the API serves its first request, so a
     # rate-card save can never race the seed.
     try:
-        routes.seed_cards(load_cards())
+        shipped = load_cards()
+        routes.seed_cards(shipped)
+        _add_shipped_cards(app, routes, shipped, runtime)
     except Exception:
         import logging
         logging.getLogger(__name__).warning('Starting rate cards could not be loaded.')
     billing = BillingReconciler(routes, {'signalwire': SignalWireCharges(delivery)})
-    carriers = CarrierReconciler(CarrierChargeStore(engine), routes, carrier_source(_telnyx_key))
+    carriers = CarrierReconciler(CarrierChargeStore(engine), routes, carrier_source(_telnyx_key),
+                                 numbers=lambda: _trunk_numbers(_managed_values()))
     fallback = FallbackScheduler(delivery, routes, ami=ami_client)
     return [('faxbot-route-policy', _install_policy(OutboundStore, FallbackPolicy(fallback))),
             ('faxbot-route-costs', repeat(recorder.step, interval=15.0, initial_delay=5.0,
@@ -54,15 +57,52 @@ def _background(app):
                                              warning='Fax route fallback is temporarily unavailable.'))]
 
 
+def _add_shipped_cards(app, routes, shipped, runtime):
+    """Give each provider in use that never had a rate card its shipped, dated card; audited."""
+    from .seed import cards_in_use
+    values = runtime.manager.store.read().active.values
+    added = routes.add_missing_cards(cards_in_use(values, shipped))
+    if not added:
+        return
+    details = {'source': 'shipped advertised prices',
+               'cards': sorted(f'{card.provider_id} {card.direction}' for card in added)}
+    access = getattr(app.state, 'access_runtime', None)
+    if access is not None:
+        import json
+        from uuid import uuid4
+        with access.store.transaction() as connection:
+            version = access.store.require_lock_on(connection)
+            connection.execute(access.store.tables['access_audit'].insert().values(
+                id=uuid4().hex, actor_principal_id=None, actor_key_binding_id=None, actor_session_id=None,
+                operation='routing.rate_cards_added', target_kind='installation', target_id='rate_cards',
+                policy_version_before=version, policy_version_after=version, outcome='allowed',
+                details=json.dumps(details, ensure_ascii=True, separators=(',', ':'), sort_keys=True),
+                created_at=utcnow()))
+    from ..audit import audit_event
+    audit_event('rate_cards_added', **details)
+
+
 def carrier_source(api_key):
     """The trunk carrier's charge records; ``api_key()`` returns the current key."""
     return TelnyxDetailRecords(api_key)
 
 
-def _telnyx_key():
+def _managed_values():
     from ..config import managed_configuration_values
-    values = managed_configuration_values()
+    return managed_configuration_values()
+
+
+def _telnyx_key():
+    values = _managed_values()
     return getattr(values, 'telnyx_api_key', '') if values is not None else ''
+
+
+def _trunk_numbers(values):
+    """The SIP trunk's own fax numbers: its DIDs and caller ID."""
+    if values is None:
+        return ()
+    return tuple(number for number in (*getattr(values, 'sip_trunk_did_list', ()),
+                                       getattr(values, 'sip_trunk_caller_id', '')) if number)
 
 
 async def _install_policy(store_class, policy):
@@ -238,11 +278,22 @@ async def costs(request: Request, since: datetime | None = Query(default=None)):
         names = sorted(entry['carriers'])
         return carrier_label(names[0]) if len(names) == 1 else None
 
-    def plan(card):
-        return None if card is None else {'label': route_label(card.provider_id),
-                                          'monthly_fee': {'currency': card.currency,
-                                                          'amount': format_amount(card.monthly_fee_micros)}}
-    return {'since': start, 'carrier_charges': _carrier_status(values), 'providers': [{
+    def plan(entry):
+        card = entry['plan_card']
+        if card is None:
+            return None
+        return {'label': route_label(card.provider_id),
+                'monthly_fee': {'currency': card.currency, 'amount': format_amount(card.monthly_fee_micros)},
+                'monthly_fee_text': plan_fee_text(card.monthly_fee_micros, card.currency),
+                # The fee is counted once per 30 days, pro-rated by day for other periods.
+                'period_fee': {'currency': card.currency, 'amount': format_amount(entry['plan_fee_micros'])},
+                'period_days': entry['plan_days']}
+
+    grand = {}
+    for entry in [*outbound, *received]:
+        for currency, micros in entry['total_micros'].items():
+            grand[currency] = grand.get(currency, 0) + micros
+    return {'since': start, 'carrier_charges': _carrier_status(values), 'total_cost': _money(grand), 'providers': [{
         'provider_id': entry['provider_id'], 'label': route_label(entry['provider_id']), 'carrier': carrier(entry),
         'attempts': entry['attempts'], 'successes': entry['successes'], 'failures': entry['failures'],
         'uncertain': entry['uncertain'], 'billed_minutes': round(entry['billed_seconds'] / 60, 1),
@@ -251,7 +302,8 @@ async def costs(request: Request, since: datetime | None = Query(default=None)):
         'attempts_without_reported_cost': entry['unreported'], 'attempts_with_reported_cost': entry['reported'],
         'estimated_cost_not_reported': _money(entry['unreported_estimate_micros']),
         'awaiting_carrier_bill': entry['awaiting'], 'unmatched_charges': entry['unmatched'],
-        'plan': plan(entry['plan_card'])} for entry in outbound],
+        **_unrecorded_view(entry), 'plan': plan(entry), 'priced': entry['has_card'] or bool(entry['reported']),
+        'total_cost': _money(entry['total_micros'])} for entry in outbound],
         'received': [{
             'provider_id': entry['provider_id'], 'label': route_label(entry['provider_id']),
             'carrier': carrier_label(entry['carrier']) if entry['carrier'] else None,
@@ -259,8 +311,15 @@ async def costs(request: Request, since: datetime | None = Query(default=None)):
             'estimated_cost': _money(entry['cost_micros']), 'reported_cost': _money(entry['reported_cost_micros']),
             'calls_with_reported_cost': entry['reported'], 'calls_without_reported_cost': entry['unreported'],
             'estimated_cost_not_reported': _money(entry['unreported_estimate_micros']),
-            'awaiting_carrier_bill': entry['awaiting'], 'unmatched_charges': entry['unmatched']}
+            'awaiting_carrier_bill': entry['awaiting'], 'unmatched_charges': entry['unmatched'],
+            **_unrecorded_view(entry), 'total_cost': _money(entry['total_micros'])}
             for entry in received]}
+
+
+def _unrecorded_view(entry):
+    """Carrier records Faxbot has no call record of: already in the charged total, counted here too."""
+    return {'unrecorded_calls': entry.get('unrecorded', 0), 'unrecorded_cost': _money(entry.get('unrecorded_micros', {})),
+            'unrecorded_matched_to_faxes': entry.get('unrecorded_attached', 0)}
 
 
 def _spending(request):
@@ -286,10 +345,13 @@ NO_TELNYX_KEY = ('Faxbot needs a Telnyx API key to read call charges. Add TELNYX
 
 
 def _reconcile_summary(result):
+    unrecorded = result.get('unrecorded_calls', 0)
+    extra = (f" Telnyx billed {unrecorded} {'call' if unrecorded == 1 else 'calls'} Faxbot has no record of."
+             if unrecorded else '')
     if result['carrier_unavailable'] and not result['checked']:
         return 'Telnyx could not be reached; Faxbot will ask again later.'
     if not result['checked']:
-        return 'No calls are waiting for a charge.'
+        return 'No calls are waiting for a charge.' + extra
     recorded = result['charges_recorded']
     parts = [f"{recorded} new {'charge' if recorded == 1 else 'charges'} recorded"]
     if result['waiting']:
@@ -297,7 +359,7 @@ def _reconcile_summary(result):
     if result['ambiguous']:
         parts.append(f"{result['ambiguous']} could not be matched to one Telnyx record")
     calls = f"{result['checked']} {'call' if result['checked'] == 1 else 'calls'}"
-    return f'Checked {calls}: ' + ', '.join(parts) + '.'
+    return f'Checked {calls}: ' + ', '.join(parts) + '.' + extra
 
 
 @router.post('/reconcile', dependencies=[Depends(require_permission('settings:write'))])
@@ -310,8 +372,11 @@ async def reconcile(request: Request):
     if not key:
         raise HTTPException(409, detail=NO_TELNYX_KEY)
 
+    values = request.scope['faxbot.configuration'].active.values
+
     def run():
-        reconciler = CarrierReconciler(CarrierChargeStore(engine), RouteStore(engine), carrier_source(lambda: key))
+        reconciler = CarrierReconciler(CarrierChargeStore(engine), RouteStore(engine), carrier_source(lambda: key),
+                                       numbers=lambda: _trunk_numbers(values))
         return reconciler.run_now().as_dict()
     result = await _call(run)
     return {**result, 'summary': _reconcile_summary(result)}

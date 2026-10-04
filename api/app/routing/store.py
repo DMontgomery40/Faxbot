@@ -151,6 +151,25 @@ class RouteStore:
             connection.execute(self.cards.update().where(self.cards.c.id.in_(retired)).values(superseded_at=now))
         return self.current_cards(connection)
 
+    def add_missing_cards(self, cards):
+        """Add each card whose provider and direction never had a card; returns the cards added.
+
+        A card the operator removed or replaced is never added back: any earlier
+        version, current or not, means the operator has already decided.
+        """
+        unique = {}
+        for card in cards:
+            unique.setdefault((card.provider_id, card.direction), card)
+        if not unique:
+            return []
+        with write_transaction(self.engine) as connection:
+            known = set(connection.execute(sa.select(self.cards.c.provider_id, self.cards.c.direction)).all())
+            missing = [card for key, card in unique.items() if key not in known]
+            if missing:
+                current = self.current_cards(connection)
+                self._write_cards(connection, current + missing)
+        return missing
+
     def seed_cards(self, cards):
         """Load starting rate cards once, only into an empty table; the table stays authoritative.
 

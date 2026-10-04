@@ -119,6 +119,21 @@ def money_text(micros, currency):
     return f'{sign}${amount}' if currency == 'USD' else f'{sign}{amount} {currency}'
 
 
+def plan_fee_text(micros, currency):
+    """A monthly fee for a sentence, without cents when it is whole: "$10", "$9.99"."""
+    if micros % MICROS == 0:
+        whole = micros // MICROS
+        return f'${whole}' if currency == 'USD' else f'{whole} {currency}'
+    return money_text(micros, currency)
+
+
+def plan_fee_for_days(card, days):
+    """A flat plan's fee for a period, pro-rated by days: a 30-day period counts one monthly fee."""
+    if not card.monthly_fee_micros or days <= 0:
+        return 0
+    return _ceil_div(card.monthly_fee_micros * days, 30)
+
+
 def money_list_text(amounts):
     """{currency: micros} as one phrase, such as "$0.015" or "$0.01 + 0.02 EUR"."""
     return ' + '.join(money_text(micros, currency) for currency, micros in sorted(amounts.items()))
