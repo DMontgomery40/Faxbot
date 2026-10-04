@@ -18,6 +18,7 @@ KEY = {'X-API-Key': BOOTSTRAP}
 
 @pytest.fixture
 def cli(monkeypatch, tmp_path):
+    monkeypatch.setattr('app.work.worker.WorkWorker.step', lambda self, now=None: False)
     for client in _serve(monkeypatch, tmp_path):
         yield Cli(client)
 
@@ -137,3 +138,20 @@ def test_import_command_imports_once_and_reports_a_replay(cli, tmp_path):
     assert first.exit_code == 0 and 'Document imported.' in first.stdout, first.stdout + first.stderr
     again = cli.json('import', document, '--source', 'case-system', '--id', 'case-7', '--to', '+15550100001')
     assert again['status'] == 'duplicate'
+
+
+def test_a_user_runs_work_commands_with_their_own_key(cli, tmp_path):
+    ready_user(cli.client, 'dana', 'Dana Example')
+    created = cli.json('keys', 'create', '--for', 'dana', '-p', 'work:read', '-p', 'inbound:read',
+                       '--name', 'Dana laptop')
+    dana = created['token']
+    receive(tmp_path, '+15550100001')
+    feed(0)
+    (item,) = cli.json('work', 'list')['items']
+    assert cli('work', 'assign', item['id'], 'dana').exit_code == 0
+    mine = cli.json('work', 'list', '--mine', key=dana)['items']
+    assert [entry['id'] for entry in mine] == [item['id']]
+    acknowledged = cli('work', 'acknowledge', item['id'], key=dana)
+    assert acknowledged.exit_code == 0 and 'Acknowledged by Dana Example.' in acknowledged.stdout
+    refused = cli('work', 'reopen', item['id'], key=dana)  # the key carries no work:manage
+    assert refused.exit_code != 0

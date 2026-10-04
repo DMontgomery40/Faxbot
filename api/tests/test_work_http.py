@@ -27,10 +27,16 @@ def pdf(text):
     return output.getvalue()
 
 
+def hold_worker(monkeypatch):
+    """The lifespan's work worker waits, so a test feeds items with the target it chooses."""
+    monkeypatch.setattr('app.work.worker.WorkWorker.step', lambda self, now=None: False)
+
+
 @pytest.fixture
 def client(monkeypatch, tmp_path):
     _environment(monkeypatch, tmp_path)
     monkeypatch.setenv('INBOUND_ENABLED', 'true')
+    hold_worker(monkeypatch)
     with TestClient(app, base_url=ORIGIN, headers={'Origin': ORIGIN}) as test_client:
         yield test_client
 
@@ -152,6 +158,7 @@ def test_documents_without_bytes_wait_outside_the_queue(client, tmp_path):
 def test_duplicates_are_marked_and_deadlines_survive_restart(monkeypatch, tmp_path):
     _environment(monkeypatch, tmp_path)
     monkeypatch.setenv('INBOUND_ENABLED', 'true')
+    hold_worker(monkeypatch)
     content = pdf('same bytes twice')
     with TestClient(app, base_url=ORIGIN, headers={'Origin': ORIGIN}) as client:
         first = receive(tmp_path, '+15550100001', content=content, minutes_ago=50)
@@ -160,6 +167,7 @@ def test_duplicates_are_marked_and_deadlines_survive_restart(monkeypatch, tmp_pa
         one, two = item_of(client, first), item_of(client, second)
         assert two['duplicate_of']['id'] == one['id'] and one['duplicate_of']['id'] == two['id']
         due = (one['due_at'], two['due_at'])
+        assert None not in due
     with TestClient(app, base_url=ORIGIN, headers={'Origin': ORIGIN}) as restarted:
         feed(9)  # the installation target changed; existing deadlines stay
         assert (item_of(restarted, first)['due_at'], item_of(restarted, second)['due_at']) == due
@@ -299,3 +307,21 @@ def test_import_routes_by_number_replays_as_duplicate_and_refuses_different_byte
     assert 'No provider receipt was retained for this fax.' not in manifest_out['missing']
     with engine().connect() as connection:
         assert connection.execute(sa.text('SELECT COUNT(*) FROM inbound_faxes')).scalar_one() == 2
+
+
+def test_the_running_service_feeds_received_documents_into_the_queue(monkeypatch, tmp_path):
+    """No test feeding here: the lifespan's own worker creates the item."""
+    _environment(monkeypatch, tmp_path)
+    monkeypatch.setenv('INBOUND_ENABLED', 'true')
+    monkeypatch.setenv('WORK_ACKNOWLEDGE_HOURS', '6')
+    with TestClient(app, base_url=ORIGIN, headers={'Origin': ORIGIN}) as client:
+        fax = receive(tmp_path, '+15550100001', content=pdf('fed by the service'))
+        deadline = datetime.utcnow() + timedelta(seconds=20)
+        items = []
+        while not items and datetime.utcnow() < deadline:
+            items = client.get('/work', headers=B).json()['items']
+            if not items:
+                import time
+                time.sleep(0.5)
+        assert [item['inbound_fax_id'] for item in items] == [fax]
+        assert items[0]['due_hours'] == 6 and items[0]['due_source'] == 'installation'
