@@ -113,7 +113,8 @@ def _observed(records):
         went_through = item.get('verdict') in ('sent', 'received')
         if item.get('t38') == 'yes':
             if newest_t38:
-                found['t38_failed'] = item.get('verdict') == 'no_t38_data_back'
+                found['t38_failed'] = (item.get('verdict') == 'no_t38_data_back'
+                                       and sip_fax_mode.t38_timeout(item.get('error_cause')))
                 found['t38_ok'] = went_through
             newest_t38 = False
         elif went_through:
