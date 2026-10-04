@@ -68,7 +68,7 @@ function Unrecorded({ carrier, calls, cost, matched }: { carrier: string | null 
       )}
       {matched > 0 && (
         <Typography variant="body2" color="text.secondary">
-          {count(matched, 'call')} reached Faxbot without a call record; {matched === 1 ? 'its fax is' : 'their faxes are'} in the Inbox.
+          {count(matched, 'call')} came in that Faxbot did not record at the time; {matched === 1 ? 'its fax is' : 'their faxes are'} in Received.
         </Typography>
       )}
     </>

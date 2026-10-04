@@ -7,7 +7,6 @@ import { Alert } from '@mui/material';
 import DashboardIcon from '@mui/icons-material/Dashboard';
 import FaxIcon from '@mui/icons-material/Fax';
 import InboxIcon from '@mui/icons-material/Inbox';
-import AssignmentIndIcon from '@mui/icons-material/AssignmentInd';
 import ListAltIcon from '@mui/icons-material/ListAlt';
 import SendIcon from '@mui/icons-material/Send';
 import DialpadIcon from '@mui/icons-material/Dialpad';
@@ -53,8 +52,8 @@ import Diagnostics from './components/Diagnostics';
 import MCP from './components/MCP';
 import Logs from './components/Logs';
 import SendFax from './components/SendFax';
-import Inbound from './components/Inbound';
-import Work from './components/Work';
+import Received, { readFilter } from './components/Received';
+import ReceivingAddresses from './components/delivery/ReceivingAddresses';
 import Terminal from './components/Terminal';
 import ScriptsTests from './components/ScriptsTests';
 import Users from './components/Users';
@@ -87,13 +86,21 @@ export const LEGACY_DESTINATIONS: Record<LegacyDestination, string> = {
   setup: 'system/setup',
 };
 
+type NavigationKey = 'send' | 'jobs' | 'inbox' | 'work';
+
+// Addresses that moved: the old Work page is Received, showing faxes waiting for an owner.
+export const MOVED_ADDRESSES: Record<string, string> = {
+  'faxes/work': 'faxes/received?show=waiting',
+};
+
 // Who may see a page. A page is visible when every stated condition holds;
 // a page with no condition is visible to everyone signed in.
 export interface Gate {
   // Holds at least one of these permissions at the installation.
   anyOf?: readonly string[];
-  // The server says this person may use this kind of screen (their own faxes count).
-  navigation?: 'send' | 'jobs' | 'inbox' | 'work';
+  // The server says this person may use this kind of screen (their own faxes count);
+  // with several, any one is enough.
+  navigation?: NavigationKey | NavigationKey[];
   // Provider plugins are turned on for this installation.
   plugins?: true;
 }
@@ -155,6 +162,11 @@ function settingsPage(sections: SettingsSection[], title?: string) {
   );
 }
 
+// Send a fax, from the pages that offer it, for people who may send.
+function sendFax(ctx: PageContext): (() => void) | undefined {
+  return ctx.context.navigation.send ? () => ctx.navigate('faxes/send') : undefined;
+}
+
 function providerPage(id: string, label: string, section: SettingsSection, icon: ReactElement = <CloudIcon />): NavPage {
   return { id, label, icon, gate: { anyOf: SETTINGS_READ }, render: settingsPage([section], label) };
 }
@@ -164,19 +176,21 @@ export const NAVIGATION: NavArea[] = [
     id: 'overview', label: 'Overview', icon: <DashboardIcon />,
     pages: [
       { id: 'overview', label: 'Overview', icon: <DashboardIcon />, gate: OVERVIEW_GATE,
-        render: (ctx) => <Dashboard client={ctx.client} onNavigate={ctx.navigate} canSetUp={ctx.canSetUp} /> },
+        render: (ctx) => <Dashboard client={ctx.client} onNavigate={ctx.navigate} canSetUp={ctx.canSetUp} onSendFax={sendFax(ctx)} /> },
     ],
   },
   {
     id: 'faxes', label: 'Faxes', icon: <FaxIcon />,
     pages: [
-      { id: 'received', label: 'Received', icon: <InboxIcon />, gate: { navigation: 'inbox' }, refreshContext: true,
-        render: (ctx) => whenContextReady(ctx, <Inbound client={ctx.client} inboundEnabled={ctx.context.inbound_enabled ?? undefined}
-          onNavigate={ctx.navigate} docsBase={ctx.docsBase} permissions={ctx.permissions} />) },
-      { id: 'work', label: 'Work', icon: <AssignmentIndIcon />, gate: { navigation: 'work' },
-        render: (ctx) => <Work client={ctx.client} permissions={ctx.permissions} /> },
+      { id: 'received', label: 'Received', icon: <InboxIcon />, gate: { navigation: ['inbox', 'work'] }, refreshContext: true,
+        render: (ctx) => whenContextReady(ctx, <Received client={ctx.client} inboundEnabled={ctx.context.inbound_enabled ?? undefined}
+          onNavigate={ctx.navigate} docsBase={ctx.docsBase} permissions={ctx.permissions}
+          canList={ctx.context.navigation.inbox} canWork={Boolean(ctx.context.navigation.work)}
+          show={readFilter(ctx.params.get('show'))}
+          onShowChange={(next) => ctx.navigate(next === 'all' ? 'faxes/received' : `faxes/received?show=${next}`)}
+          onSendFax={sendFax(ctx)} />) },
       { id: 'sent', label: 'Sent', icon: <ListAltIcon />, gate: { navigation: 'jobs' },
-        render: (ctx) => <JobsList client={ctx.client} openJobId={ctx.jobToOpen} onOpened={ctx.jobOpened} /> },
+        render: (ctx) => <JobsList client={ctx.client} openJobId={ctx.jobToOpen} onOpened={ctx.jobOpened} onSendFax={sendFax(ctx)} /> },
       { id: 'send', label: 'Send a fax', icon: <SendIcon />, gate: { navigation: 'send' }, refreshContext: true,
         render: (ctx) => <SendFax client={ctx.client} config={ctx.adminConfig} configLoading={ctx.contextLoading}
           configError={ctx.contextError} onOpenJob={ctx.openJob} /> },
@@ -211,7 +225,12 @@ export const NAVIGATION: NavArea[] = [
     id: 'providers', label: 'Providers', icon: <CloudIcon />,
     pages: [
       { id: 'sending', label: 'Sending & receiving', icon: <SwapHorizIcon />, gate: { anyOf: SETTINGS_READ },
-        render: settingsPage(['providers', 'features', 'inbound', 'routes'], 'Sending & receiving') },
+        render: (ctx) => (
+          <>
+            {settingsPage(['providers', 'features', 'inbound', 'routes'], 'Sending & receiving')(ctx)}
+            {ctx.permissions.has('providers:read') && <ReceivingAddresses client={ctx.client} />}
+          </>
+        ) },
       providerPage('humblefax', 'HumbleFax', 'humblefax'),
       providerPage('efax', 'eFax', 'efax'),
       providerPage('phaxio', 'Phaxio', 'phaxio'),
@@ -293,7 +312,7 @@ export type ConsoleNavigation = ConsoleContext['navigation'];
 export function pageVisible(gate: Gate, permissions: ReadonlySet<string>, navigation: ConsoleNavigation,
   options: { pluginsEnabled: boolean }): boolean {
   if (gate.anyOf && !gate.anyOf.some((permission) => permissions.has(permission))) return false;
-  if (gate.navigation && !navigation[gate.navigation]) return false;
+  if (gate.navigation && ![gate.navigation].flat().some((key) => navigation[key])) return false;
   if (gate.plugins && !options.pluginsEnabled) return false;
   return true;
 }
@@ -341,8 +360,10 @@ export interface ResolvedPage {
 // The page for an address among the visible ones: the area's first page when
 // only the area is named, and the first visible page when the address is
 // unknown or this person may not see it.
-export function resolveAddress(visible: NavArea[], parsed: ParsedAddress | null): ResolvedPage | null {
+export function resolveAddress(visible: NavArea[], requested: ParsedAddress | null): ResolvedPage | null {
   if (visible.length === 0) return null;
+  const moved = requested?.page ? MOVED_ADDRESSES[`${requested.area}/${requested.page}`] : undefined;
+  const parsed = moved ? parseAddress(`#/${moved}`) : requested;
   const area = parsed ? visible.find((candidate) => candidate.id === parsed.area) : undefined;
   if (area) {
     const requested = parsed?.page ? area.pages.find((page) => page.id === parsed.page) : undefined;

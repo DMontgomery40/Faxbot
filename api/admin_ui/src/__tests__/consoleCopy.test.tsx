@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import AdminAPIClient from '../api/client';
-import Inbound from '../components/Inbound';
+import Received from '../components/Received';
+import ScriptsTests from '../components/ScriptsTests';
 import Logs from '../components/Logs';
 import MCP from '../components/MCP';
 import { server } from '../test/server';
@@ -169,25 +170,39 @@ describe('Inbox for people without provider access', () => {
   it('hides provider setup and test faxes from a fax operator and never shows a raw error', async () => {
     const calls = inboxServer();
     const operator = new Set(['fax:send', 'fax:read', 'fax:document', 'inbound:list', 'inbound:read', 'inbound:document']);
-    render(<Inbound client={keyClient()} inboundEnabled permissions={operator} />);
+    render(<Received client={keyClient()} inboundEnabled permissions={operator} />);
 
-    expect(await screen.findByText('No Inbound Faxes')).toBeTruthy();
+    expect(await screen.findByText('No received faxes yet.')).toBeTruthy();
     expect(screen.queryByText('Inbound Fax Configuration')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Add Test Fax' })).toBeNull();
     expect(screen.queryByText(/API Error|403|Forbidden/)).toBeNull();
     expect(calls.callbacks).toBe(0);
   });
 
-  it('shows provider setup to provider readers and the test fax button only with provider changes allowed', async () => {
-    inboxServer();
-    const { unmount } = render(<Inbound client={keyClient()} inboundEnabled permissions={new Set(['inbound:list', 'providers:read'])} />);
-    expect(await screen.findByText('Inbound Fax Configuration')).toBeTruthy();
-    expect(await screen.findByText("Callback details couldn't be loaded. Select Refresh to try again.")).toBeTruthy();
-    expect(screen.queryByText(/API Error|Forbidden/)).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Add Test Fax' })).toBeNull();
-    unmount();
+  it('has no setup panel or test fax button even for provider administrators, and stays quiet when receiving details fail', async () => {
+    const calls = inboxServer();
+    render(<Received client={keyClient()} inboundEnabled permissions={new Set(['inbound:list', 'providers:read', 'providers:write'])} />);
+    expect(await screen.findByText('No received faxes yet.')).toBeTruthy();
+    await waitFor(() => expect(calls.callbacks).toBe(1));
+    expect(screen.queryByText('Inbound Fax Configuration')).toBeNull();
+    expect(screen.queryByText(/Requirements|HIPAA compliance/)).toBeNull();
+    expect(screen.queryByRole('button', { name: /Test Fax/i })).toBeNull();
+    expect(screen.queryByText(/API Error|Forbidden|couldn't be loaded/)).toBeNull();
+  });
 
-    render(<Inbound client={keyClient()} inboundEnabled permissions={new Set(['inbound:list', 'providers:read', 'providers:write'])} />);
-    expect(await screen.findByRole('button', { name: 'Add Test Fax' })).toBeTruthy();
+  it('adds a test fax from System, Developer, Scripts & checks', async () => {
+    const added: unknown[] = [];
+    server.use(
+      http.get('/admin/settings', () => HttpResponse.json({ backend: { type: 'phaxio' }, inbound: { enabled: true } })),
+      http.get('/admin/actions', () => HttpResponse.json({ enabled: false, items: [] })),
+      http.post('/admin/inbound/simulate', async ({ request }) => {
+        added.push(await request.json());
+        return HttpResponse.json({ id: 'test-1', status: 'received' });
+      }),
+    );
+    render(<ScriptsTests client={keyClient()} onNavigate={() => undefined} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Add a test fax' }));
+    expect(await screen.findByText('A test fax was added to your received faxes.')).toBeTruthy();
+    expect(added).toEqual([{}]);
   });
 });

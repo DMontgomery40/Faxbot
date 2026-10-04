@@ -682,7 +682,9 @@ export class AdminAPIClient {
 
   private async deliveryRequest(jobId: string, confirmation?: ProviderIdentityConfirmation): Promise<OperatorDelivery> {
     const attaching = confirmation !== undefined;
-    const res = await this.send(`/admin/fax-jobs/${id(jobId)}/${attaching ? 'reconcile' : 'delivery'}`, {
+    // Two literal paths, so the console's callers of each route can be found by reading the source.
+    const path = attaching ? `/admin/fax-jobs/${id(jobId)}/reconcile` : `/admin/fax-jobs/${id(jobId)}/delivery`;
+    const res = await this.send(path, {
       method: attaching ? 'POST' : 'GET',
       headers: { 'Content-Type': 'application/json' },
       ...(attaching ? { body: JSON.stringify(confirmation) } : {}),
@@ -931,6 +933,11 @@ export class AdminAPIClient {
 
   async getFaxCost(jobId: string): Promise<FaxCost> {
     return this.json(`/routing/faxes/${id(jobId)}/cost`);
+  }
+
+  // Costs for several sent faxes at once, for the Sent list; faxes this person cannot read are left out.
+  async getFaxCosts(jobIds: string[]): Promise<{ costs: Record<string, FaxCost> }> {
+    return this.json(`/routing/fax-costs${query({ ids: jobIds.join(',') })}`);
   }
 
   // Sending short faxes to the same number together in one call.

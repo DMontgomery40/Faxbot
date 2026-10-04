@@ -255,7 +255,7 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
   const applySettings = async () => {
     if (actionFence.current || loading) return;
     if (!desiredRevision) {
-      setError('Load Settings before applying changes.');
+      setError('Select Reload before applying changes.');
       return;
     }
     actionFence.current = true;
@@ -294,7 +294,7 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
         hydrate(data);
       } catch {
         if (epoch !== requestEpoch.current) return;
-        setError('The page could not refresh. Click Load Settings before making more changes.');
+        setError('The page could not refresh. Select Reload before making more changes.');
       }
     } catch (err) {
       if (epoch !== requestEpoch.current) return;
@@ -356,7 +356,7 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
       setLoading(true);
       const data = await client.getSettings();
       if (epoch !== requestEpoch.current) return;
-      if (!data._meta?.desired_revision_id) throw new Error('Settings could not be loaded. Click Load Settings to try again.');
+      if (!data._meta?.desired_revision_id) throw new Error('Settings could not be loaded. Select Reload to try again.');
       hydrate(data);
       try {
         const cfg = await client.getConfig();
@@ -450,7 +450,7 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
             disabled={loading}
             sx={{ mr: 1 }}
           >
-            Load Settings
+            Reload
           </Button>
           {shows('backup') && (<>
           <Button variant="contained" onClick={exportEnv} disabled={loading} sx={{ mr: 1 }}>
@@ -488,7 +488,7 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
       )}
       {settings && needsReload && !loading && !error ? (
         <Alert severity="warning" sx={{ mb: 3 }}>
-          Editing is paused. Click Load Settings to continue.
+          Editing is paused. Select Reload to continue.
         </Alert>
       ) : settings && pendingRestart && !needsReload ? (
         <Box sx={{ mb: 3 }}>
@@ -1429,15 +1429,12 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
           <Button variant="contained" onClick={applySettings} disabled={!canEdit || changedFields.length === 0}>
             Apply settings
           </Button>
-          <Button variant="outlined" startIcon={<RefreshIcon />} onClick={fetchSettings} disabled={loading}>
-            Refresh
-          </Button>
         </Box>
 
         </Box>
       ) : (
         <Typography variant="body2" color="text.secondary">
-          Click "Load Settings" to view and edit settings.
+          Select Reload to view and edit settings.
         </Typography>
       )}
 

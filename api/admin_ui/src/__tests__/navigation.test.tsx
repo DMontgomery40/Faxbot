@@ -315,6 +315,10 @@ describe('a page that shows part of the settings', () => {
     server.use(http.get('/admin/settings', () => HttpResponse.json(settingsFixture())));
     render(<Settings client={keyClient()} sections={['storage', 'advanced', 'backup']} title="Storage & retention" />);
     expect(await screen.findByRole('button', { name: 'Export .env' })).toBeTruthy();
+    // One way to read the settings again, called Reload.
+    expect(screen.getAllByRole('button', { name: 'Reload' })).toHaveLength(1);
+    expect(screen.queryByText(/Load Settings/)).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Refresh' })).toBeNull();
     expect(screen.getByText('Storage Configuration')).toBeTruthy();
     expect(screen.queryByText('Fax providers')).toBeNull();
   });
