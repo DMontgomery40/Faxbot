@@ -45,8 +45,10 @@ FIRST_RETRY = timedelta(minutes=5)
 LONGEST_RETRY = timedelta(hours=6)
 BUCKET = timedelta(hours=6)
 MARGIN = timedelta(minutes=10)
-# Records that fit no call: the trunk's last two days, checked hourly; a record
-# within five minutes of any Faxbot call with its numbers is never called unrecorded.
+# Records that fit no call: the trunk's last two days, checked hourly. A record
+# within five minutes of a Faxbot call with its numbers that still has no record of
+# its own is left to the normal match; a call that already holds its record claims
+# nothing more.
 UNRECORDED_WINDOW = timedelta(days=2)
 UNRECORDED_EVERY = timedelta(hours=1)
 UNRECORDED_GRACE = timedelta(minutes=15)
@@ -492,14 +494,17 @@ class CarrierReconciler:
             return result
         calls = [self.store.view(row) for row in self.store.calls_between(start - MARGIN, end + MARGIN, None)]
         charged = self.store.charged_record_ids([record.id for record in records])
+        _, holding = self.store.holders([], [call.id for call in calls])
+        # Only a call still waiting for its own record can be the call behind a nearby record.
+        open_calls = [call for call in calls if call.id not in holding]
         alone = []
         for record in records:
             if not record.amount_micros or record.id in charged or not self._ours(record):
                 continue  # unpriced, zero, already held, or not on this trunk's numbers
             if any(call.sip_call_id and call.sip_call_id == record.sip_call_id for call in calls):
                 continue
-            if any(fits(call, record, NEAR_A_CALL) for call in calls):
-                continue  # Faxbot has a call that may be this one; the normal match decides
+            if any(fits(call, record, NEAR_A_CALL) for call in open_calls):
+                continue  # a call with no record yet may be this one; the normal match decides
             alone.append(record)
         faxes = self.store.received_faxes(start - timedelta(hours=1), end + timedelta(hours=1))
         fitting = {record.id: [fax['id'] for fax in faxes if same_number(fax['to_number'], record.cld)

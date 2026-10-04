@@ -491,6 +491,34 @@ def test_unrecorded_records_are_kept_attached_to_a_received_fax_and_counted_once
     assert spending.outbound(BASE - timedelta(days=1), now=NOW)[0]['reported_cost_micros'] == {'USD': 10_000}
 
 
+def test_a_record_four_minutes_before_a_matched_call_is_still_unrecorded(ledger):
+    """Live R1: the same caller faxed at 03:14 (no call record) and 03:18 (recorded and matched).
+
+    The 03:18 call already holds its own record, so it cannot be the call behind the 03:14 record.
+    """
+    installation, routes, carriers = ledger
+    same_caller = CALLER_C
+    later = inbound_call(ledger, answer=at(18, 56), end=at(19, 27), caller=same_caller, inbound_id=None)
+    records = [received_c(), telnyx('rec-d', 'inbound', at(18, 54), at(18, 54), at(19, 25), '0.0032', cli=same_caller,
+                                   cld=OURS)]
+    reconciler = CarrierReconciler(carriers, routes, FakeTelnyx(records), numbers=lambda: (OURS,))
+    result = reconciler.run_now(now=NOW)
+    assert (result.matched, result.unrecorded) == (1, 1)
+    assert [charge['record_id'] for charge in carriers.in_effect([later])[later]] == ['rec-d']
+    assert [row['record_id'] for row in carriers.unrecorded_in_effect()] == ['rec-c']
+    entry = Spending(routes, carriers).received(BASE - timedelta(days=1), now=NOW)[0]
+    assert (entry['reported'], entry['unrecorded'], entry['reported_cost_micros']) == (1, 1, {'USD': 6400})
+
+
+def test_a_record_near_a_call_still_waiting_for_its_own_is_left_to_the_normal_match(ledger):
+    """Clock skew beyond 45 s: the call cannot match yet, so the record is not called unrecorded."""
+    installation, routes, carriers = ledger
+    skewed = inbound_call(ledger, answer=at(15, 30), end=at(15, 55), caller=CALLER_C, inbound_id=None)
+    result = CarrierReconciler(carriers, routes, FakeTelnyx([received_c()]), numbers=lambda: (OURS,)).run_now(now=NOW)
+    assert (result.matched, result.unrecorded) == (0, 0)
+    assert carriers.unrecorded_in_effect() == [] and carriers.history(skewed) == []
+
+
 def test_an_unrecorded_record_fitting_two_received_faxes_is_kept_but_attached_to_neither(ledger):
     installation, routes, carriers = ledger
     faxes = sa.Table('inbound_faxes', sa.MetaData(), autoload_with=routes.engine)
