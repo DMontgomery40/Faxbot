@@ -665,7 +665,10 @@ def numbers_list(ids: bool = IDS):
     for number, provider, in_use in carried:
         row = rows.setdefault(number, {'number': number, 'rule': None, 'providers': []})
         row['providers'].append({'provider': provider, 'name': CARRIERS[provider], 'in_use': in_use})
-    found = [{**row, 'mailbox': (row['rule'] or {}).get('mailbox_label'),
+    # --json rows keep the keys an inbound rule had (id, to_number, mailbox_id, mailbox_label, version),
+    # None for a number with no mailbox rule, next to the new ones.
+    found = [{'id': None, 'to_number': row['number'], 'mailbox_id': None, 'mailbox_label': None, 'version': None,
+              **(row['rule'] or {}), **row, 'mailbox': (row['rule'] or {}).get('mailbox_label'),
               'email': _email_text(connectors, row['number'])} for row in rows.values()]
 
     def provided(row):
