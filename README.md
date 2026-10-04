@@ -130,6 +130,7 @@ Checked items are implemented in the current source checkout. Unchecked items ar
 - [x] Stable send-operation ids in both SDKs, both MCP servers and the console, with an explicit resume path and no automatic resend.
 - [x] Source-derived reference documentation and scoped AI prose proposals, with maintained planning outside the generated tree.
 - [x] Credentials in `.env` read at every start (carrier names such as `TELNYX_PASS` accepted), shown as **Set in .env**; a new installation starts with no fax provider until one is chosen.
+- [x] A fax received over the SIP trunk always reaches the Inbox: Faxbot creates the Asterisk inbound secret itself, a failed hand-over is logged and named in Recent calls, **Check trunk status** and the Dashboard, and an image that was never handed over is brought in automatically or with `faxbot inbound recover` (tested with synthetic images; recovery of a live orphan pending).
 
 ### Next
 

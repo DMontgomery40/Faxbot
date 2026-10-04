@@ -52,10 +52,17 @@ JSON_BODY_BYTES = MAX_DOCUMENT_BYTES * 4 // 3 + 1024 * 1024
 class InboundAcquisition:
     """The installation's import store and fetcher, with a thread-safe wake-up."""
 
-    def __init__(self, store, acquirer):
+    def __init__(self, store, acquirer, runtime=None):
         self.store, self.acquirer = store, acquirer
+        self.runtime = runtime
         self.loop = None
         self.wake = None
+
+    def recover(self):
+        """Bring in received SIP images that were never handed over (see sip_handover)."""
+        from .sip_handover import recover
+        values = self.runtime.manager.store.read().active.values
+        return recover(self.store, self.runtime.manager.store.engine, values)
 
     def kick(self):
         loop, wake = self.loop, self.wake
@@ -77,24 +84,47 @@ def _frame(runtime):
 
 @asynccontextmanager
 async def _lifespan(app):
-    task = None
+    tasks = []
     try:
+        runtime = app.state.configuration_runtime
         store = ImportStore(app.state.access_runtime.inbound)
-        acquirer = Acquirer(store, frame=_frame(app.state.configuration_runtime))
-        service = InboundAcquisition(store, acquirer)
+        acquirer = Acquirer(store, frame=_frame(runtime))
+        service = InboundAcquisition(store, acquirer, runtime)
         app.state.inbound_acquisition = service
         if AUTOMATIC:
             service.loop, service.wake = asyncio.get_running_loop(), asyncio.Event()
-            task = asyncio.create_task(run_forever(acquirer, service.wake), name='faxbot-inbound-acquisition')
+            tasks.append(asyncio.create_task(run_forever(acquirer, service.wake), name='faxbot-inbound-acquisition'))
+            tasks.append(asyncio.create_task(_recover_forever(service), name='faxbot-inbound-recovery'))
     except Exception:
         logging.getLogger(__name__).warning('Received-fax fetching could not start; the API is still available.')
     try:
+        # The secret Asterisk sends with each received fax: created when none is set, written for Asterisk.
+        from .sip_handover import prepare_handover
+        runtime = app.state.configuration_runtime
+        await run_lifecycle_step(lambda: prepare_handover(runtime.manager, runtime.manager.store.read().active.values))
+    except Exception:
+        logging.getLogger(__name__).warning('Faxbot could not prepare the inbound secret for the fax engine; '
+                                            'select Apply to Asterisk in Settings.')
+    try:
         yield
     finally:
-        if task is not None:
+        for task in tasks:
             task.cancel()
-            await asyncio.gather(task, return_exceptions=True)
+        await asyncio.gather(*tasks, return_exceptions=True)
         app.state.inbound_acquisition = None
+
+
+async def _recover_forever(service):
+    """Every minute, bring in received SIP images that were never handed over."""
+    from .sip_handover import SCAN_SECONDS
+    while True:
+        await asyncio.sleep(SCAN_SECONDS)
+        try:
+            await run_lifecycle_step(service.recover)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logging.getLogger(__name__).warning('Faxbot could not check for received faxes that were not handed over.')
 
 
 router = APIRouter(tags=['Inbound'], lifespan=_lifespan)
@@ -451,6 +481,25 @@ def asterisk_inbound(request: Request, payload: dict = Body(...),
         sip_calls.record_inbound_call(engine, call, call_id=uniqueid, inbound_fax_id=begun.inbound_fax_id,
                                       preset=settings.sip_trunk_preset, fax_status=faxstatus)
     return {'id': begun.inbound_fax_id, 'status': 'ok'}
+
+
+# Received over the trunk but never handed over -------------------------------
+@router.post('/admin/inbound/recover')
+async def recover_inbound(request: Request, identity=Depends(require_permission('providers:write', audit=True))):
+    """Bring in faxes the SIP trunk received but could not hand to Faxbot; Faxbot also checks every minute."""
+    from .sip_handover import receives_over_trunk
+    service = _acquisition(request)
+    values = request.scope['faxbot.configuration'].active.values
+    if not values.inbound_enabled or not receives_over_trunk(values):
+        raise HTTPException(409, detail='Turn on receiving over the SIP trunk first.')
+    result = await run_lifecycle_step(service.recover)
+    count = len(result.imported)
+    if not count:
+        message = 'No received faxes are waiting to be brought in.'
+    else:
+        message = f"Brought in {count} received {'fax' if count == 1 else 'faxes'}"
+        message += f'; Faxbot is still reading {result.waiting} of them.' if result.waiting else '.'
+    return {'found': result.found, 'imported': count, 'waiting': result.waiting, 'message': message}
 
 
 # Fetch again -----------------------------------------------------------------

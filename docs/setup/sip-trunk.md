@@ -121,7 +121,7 @@ docker compose -f docker-compose.yml -f docker-compose.public.yml up -d
 
 See [Asterisk and SIP](sip-asterisk.md#carriers-that-sign-in-by-ip-address) for the ports. Keep the Asterisk manager port, 5038, private.
 
-**Apply to Asterisk** also saves the inbound secret from **Inbound Receiving**, so Asterisk can report received faxes to Faxbot.
+**Apply to Asterisk** also writes the inbound secret Asterisk sends with each received fax. Faxbot creates that secret when none is set, so there is nothing to choose; a secret set in **Inbound Receiving** or as `ASTERISK_INBOUND_SECRET` in `.env` is used instead. If a received fax cannot be handed to Faxbot, Recent calls says why and Faxbot brings the fax in once the cause is fixed (see [Receiving faxes](../operations/receiving.md#asterisk)).
 
 ## T.38
 

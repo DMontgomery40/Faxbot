@@ -374,26 +374,40 @@ def applied_public_address(values):
         return None
 
 
-def write_asterisk_configuration(values) -> Path:
+def write_asterisk_configuration(values, *, inbound_secret=None) -> Path:
     """Atomically write the private files the Asterisk container reads.
 
     ``pjsip.conf`` is loaded when Asterisk starts. ``inbound.secret`` holds the
-    shared secret the inbound dialplan sends with each received fax, so a
-    secret set in the console reaches Asterisk too; it is removed when unset.
+    shared secret the inbound dialplan sends with each received fax; the
+    console's Apply always passes one (Faxbot creates it when none is set). It
+    is removed only when no secret is known at all.
     """
     text = render_pjsip(values)
     target = configuration_path(values)
     target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     _write_private(target, text)
-    secret = secret_path(values)
-    if values.asterisk_inbound_secret:
-        _write_private(secret, values.asterisk_inbound_secret)
+    secret = inbound_secret or values.asterisk_inbound_secret
+    if secret:
+        write_inbound_secret(values, secret)
     else:
         try:
-            secret.unlink()
+            secret_path(values).unlink()
         except FileNotFoundError:
             pass
     return target
+
+
+def write_inbound_secret(values, secret: str) -> Path:
+    """Write the inbound secret the Asterisk notify script reads with each received fax (mode 0600)."""
+    path = secret_path(values)
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    try:
+        if path.read_text(encoding='utf-8') == secret:
+            return path
+    except OSError:
+        pass
+    _write_private(path, secret)
+    return path
 
 
 def _write_private(target: Path, text: str):

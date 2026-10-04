@@ -327,6 +327,7 @@ $ faxbot inbound [OPTIONS] COMMAND [ARGS]...
 * `get`: Show one received fax.
 * `pdf`: Download the document of a received fax.
 * `fetch`: Ask Faxbot to fetch a received fax&#x27;s...
+* `recover`: Bring in faxes the SIP trunk received but...
 * `simulate`: Add a test fax with a real one-page...
 
 ### `faxbot inbound list`
@@ -398,6 +399,20 @@ $ faxbot inbound fetch [OPTIONS] {inbound_id}
 **Arguments**:
 
 * `inbound_id`: Received fax ID.  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+### `faxbot inbound recover`
+
+Bring in faxes the SIP trunk received but could not hand to Faxbot (Faxbot also does this every minute).
+
+**Usage**:
+
+```console
+$ faxbot inbound recover [OPTIONS]
+```
 
 **Options**:
 
