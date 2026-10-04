@@ -46,6 +46,9 @@ import type {
   ProviderCosts,
   RateCard,
 } from './deliveryTypes';
+import type {
+  ImportManifest, ImportResult, WorkAssignee, WorkCounts, WorkEvent, WorkItem, WorkSettings, WorkView,
+} from './types';
 
 // These manifest validation messages contain no paths, credentials, or provider
 // responses. All other server error bodies remain opaque to the UI.
@@ -899,6 +902,63 @@ export class AdminAPIClient {
 
   async removeDirectPartner(partnerId: string): Promise<DirectPartner> {
     return this.json(`/direct/peers/${id(partnerId)}/revoke`, { method: 'POST', body: '{}' });
+  }
+
+  // Work queue
+  async listWork(params: { view?: WorkView; mailbox?: string; limit?: number } = {}): Promise<{ items: WorkItem[] }> {
+    return this.json(`/work${query(params)}`);
+  }
+
+  async workCounts(): Promise<WorkCounts> {
+    return this.json('/work/counts');
+  }
+
+  async getWork(itemId: string): Promise<WorkItem> {
+    return this.json(`/work/${id(itemId)}`);
+  }
+
+  async workHistory(itemId: string): Promise<{ events: WorkEvent[] }> {
+    return this.json(`/work/${id(itemId)}/history`);
+  }
+
+  async workAssignees(itemId: string): Promise<{ people: WorkAssignee[] }> {
+    return this.json(`/work/${id(itemId)}/assignees`);
+  }
+
+  async assignWork(itemId: string, principalId: string, version: number): Promise<WorkItem> {
+    return this.json(`/work/${id(itemId)}/assign`, { method: 'POST', body: JSON.stringify({ principal_id: principalId, version }) });
+  }
+
+  async acknowledgeWork(itemId: string, version: number): Promise<WorkItem> {
+    return this.json(`/work/${id(itemId)}/acknowledge`, { method: 'POST', body: JSON.stringify({ version }) });
+  }
+
+  async completeWork(itemId: string, note: string, version: number): Promise<WorkItem> {
+    return this.json(`/work/${id(itemId)}/done`, { method: 'POST', body: JSON.stringify({ note, version }) });
+  }
+
+  async reopenWork(itemId: string, version: number): Promise<WorkItem> {
+    return this.json(`/work/${id(itemId)}/reopen`, { method: 'POST', body: JSON.stringify({ version }) });
+  }
+
+  async exportWork(itemId: string): Promise<Blob> {
+    const res = await this.fetch(`/work/${id(itemId)}/export`);
+    return res.blob();
+  }
+
+  async getWorkSettings(): Promise<WorkSettings> {
+    return this.json('/work/settings');
+  }
+
+  async saveWorkMailbox(entry: { mailbox_id: string; acknowledge_hours: number | null; backup_principal_id: string | null; version: number }): Promise<WorkSettings> {
+    return this.json('/work/settings', { method: 'PUT', body: JSON.stringify({ mailboxes: [entry] }) });
+  }
+
+  async importDocument(file: File, manifest: ImportManifest): Promise<ImportResult> {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('manifest', JSON.stringify(manifest));
+    return this.json('/imports', { method: 'POST', body: formData });
   }
 }
 

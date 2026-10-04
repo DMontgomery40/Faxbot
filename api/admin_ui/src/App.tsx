@@ -29,6 +29,7 @@ import DashboardIcon from '@mui/icons-material/Dashboard';
 import SendIcon from '@mui/icons-material/Send';
 import ListAltIcon from '@mui/icons-material/ListAlt';
 import InboxIcon from '@mui/icons-material/Inbox';
+import AssignmentIndIcon from '@mui/icons-material/AssignmentInd';
 import VpnKeyIcon from '@mui/icons-material/VpnKey';
 import CodeIcon from '@mui/icons-material/Code';
 import TerminalIcon from '@mui/icons-material/Terminal';
@@ -56,6 +57,7 @@ import MCP from './components/MCP';
 import Logs from './components/Logs';
 import SendFax from './components/SendFax';
 import Inbound from './components/Inbound';
+import Work from './components/Work';
 import Terminal from './components/Terminal';
 import ScriptsTests from './components/ScriptsTests';
 import Users from './components/Users';
@@ -246,11 +248,11 @@ function TabPanel({ children, value, current }: TabPanelProps) {
 }
 
 const TOP_LABELS: Record<TopTab, string> = {
-  dashboard: 'Dashboard', send: 'Send', jobs: 'Jobs', inbox: 'Inbox', settings: 'Settings', tools: 'Tools',
+  dashboard: 'Dashboard', send: 'Send', jobs: 'Jobs', inbox: 'Inbox', work: 'Work', settings: 'Settings', tools: 'Tools',
 };
 
 const TOP_ICONS: Record<TopTab, React.ReactElement> = {
-  dashboard: <DashboardIcon />, send: <SendIcon />, jobs: <ListAltIcon />, inbox: <InboxIcon />,
+  dashboard: <DashboardIcon />, send: <SendIcon />, jobs: <ListAltIcon />, inbox: <InboxIcon />, work: <AssignmentIndIcon />,
   settings: <SettingsIcon />, tools: <ScienceIcon />,
 };
 
@@ -536,6 +538,9 @@ function ConsoleShell({ client, me, initialContext, onSignOut, onIdentityChanged
           {contextLoading ? <Alert severity="info">Loading…</Alert>
             : contextError ? <Alert severity="error">{contextError}</Alert>
             : <Inbound client={client} inboundEnabled={context.inbound_enabled ?? undefined} onNavigate={handleNavigate} docsBase={docsBase} permissions={permissions} />}
+        </TabPanel>
+        <TabPanel value="work" current={currentTab}>
+          <Work client={client} permissions={permissions} />
         </TabPanel>
         <TabPanel value="settings" current={currentTab}>
           <Paper elevation={0} sx={groupPaperSx}>

@@ -1,7 +1,7 @@
 // 'email' opens Settings at the email delivery settings; 'routes' opens Tools, Delivery routes.
 export type AdminDestination = 'send' | 'jobs' | 'inbox' | 'settings' | 'keys' | 'diagnostics' | 'routes' | 'email';
 
-export type TopTab = 'dashboard' | 'send' | 'jobs' | 'inbox' | 'settings' | 'tools';
+export type TopTab = 'dashboard' | 'send' | 'jobs' | 'inbox' | 'work' | 'settings' | 'tools';
 export type SettingsTab = 'setup' | 'settings' | 'keys' | 'users' | 'groups' | 'roles' | 'access' | 'sessions' | 'mcp';
 export type ToolTab = 'routes' | 'terminal' | 'diagnostics' | 'logs' | 'plugins' | 'scripts';
 
@@ -45,7 +45,7 @@ export function visibleTools(permissions: ReadonlySet<string>, pluginsEnabled: b
 
 export function visibleTopTabs(
   permissions: ReadonlySet<string>,
-  navigation: { send: boolean; jobs: boolean; inbox: boolean },
+  navigation: { send: boolean; jobs: boolean; inbox: boolean; work?: boolean },
   hasTools: boolean,
 ): TopTab[] {
   const tabs: TopTab[] = [];
@@ -53,6 +53,8 @@ export function visibleTopTabs(
   if (navigation.send) tabs.push('send');
   if (navigation.jobs) tabs.push('jobs');
   if (navigation.inbox) tabs.push('inbox');
+  // Work is visible with work:read on any received document.
+  if (navigation.work) tabs.push('work');
   tabs.push('settings');
   if (hasTools) tabs.push('tools');
   return tabs;

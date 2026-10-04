@@ -412,7 +412,7 @@ export interface AuthMe {
 export interface ConsoleContext {
   policy_version: number;
   permissions: string[];
-  navigation: { jobs: boolean; inbox: boolean; send: boolean };
+  navigation: { jobs: boolean; inbox: boolean; send: boolean; work?: boolean };
   send: { fax_disabled: boolean; max_file_size_mb: number; default_country?: string; number_example?: string } | null;
   inbound_enabled: boolean | null;
   branding: { docs_base: string; logo_path: string };
@@ -540,4 +540,99 @@ export interface InboundRule {
   mailbox_id: string;
   mailbox_label: string;
   version: number;
+}
+
+// Work queue: received documents with an owner, an acknowledgement target and a history.
+export type WorkView = 'all' | 'mine' | 'unassigned' | 'overdue';
+export type WorkStateKey = 'waiting' | 'assigned' | 'overdue' | 'escalated' | 'acknowledged' | 'done';
+export type WorkAction = 'assign' | 'acknowledge' | 'done' | 'reopen' | 'export' | 'document';
+
+export interface WorkPerson {
+  id: string;
+  name: string | null;
+}
+
+export interface WorkItem {
+  id: string;
+  inbound_fax_id: string;
+  state: 'open' | 'acknowledged' | 'done';
+  state_key: WorkStateKey;
+  state_text: string;
+  due_text: string;
+  due_at: string | null;
+  due_hours: number | null;
+  due_source: 'mailbox' | 'installation' | null;
+  available_at: string;
+  from_number: string | null;
+  to_number: string | null;
+  pages: number | null;
+  mailbox: string | null;
+  owner: WorkPerson | null;
+  backup: WorkPerson | null;
+  assigned_at: string | null;
+  acknowledged_by: string | null;
+  acknowledged_at: string | null;
+  escalated_at: string | null;
+  done_at: string | null;
+  done_by: string | null;
+  done_note: string | null;
+  duplicate_of: { id: string; available_at: string } | null;
+  is_mine: boolean;
+  overdue: boolean;
+  version: number;
+  actions: WorkAction[];
+  owner_can_see?: boolean | null;
+}
+
+export interface WorkCounts {
+  open: number;
+  acknowledged: number;
+  done: number;
+  unassigned: number;
+  mine: number;
+  overdue: number;
+}
+
+export interface WorkEvent {
+  kind: string;
+  occurred_at: string;
+  actor: string | null;
+  text: string;
+}
+
+export interface WorkAssignee {
+  id: string;
+  name: string;
+  login: string;
+}
+
+export interface WorkMailboxSetting {
+  mailbox_id: string;
+  label: string;
+  enabled: boolean;
+  acknowledge_hours: number | null;
+  backup: WorkPerson | null;
+  version: number;
+  people: WorkAssignee[];
+}
+
+export interface WorkSettings {
+  acknowledge_hours: number;
+  mailboxes: WorkMailboxSetting[];
+}
+
+export interface ImportManifest {
+  source_system: string;
+  operation_id: string;
+  revision?: string;
+  source_received_at?: string;
+  to_number?: string;
+  from_number?: string;
+  pages?: number;
+}
+
+export interface ImportResult {
+  import_id: string;
+  inbound_id: string;
+  status: 'received' | 'duplicate';
 }
