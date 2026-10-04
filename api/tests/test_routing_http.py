@@ -208,6 +208,60 @@ def test_reconcile_records_telnyx_charges_and_the_console_reads_them(telnyx_clie
     assert telnyx_client.get('/routing/fax-costs', params={'ids': job}).status_code == 401
 
 
+def test_faxes_sent_together_each_cost_their_share_and_the_call_counts_once(telnyx_client, monkeypatch):
+    """Two faxes in one Telnyx call: each shows its share by pages, an estimate until Telnyx reports the call."""
+    from datetime import timedelta
+    from uuid import uuid4
+    from app.routing import http as routing_http
+    from api.tests.test_carrier_charges import FakeTelnyx, telnyx as record
+    answer = datetime.utcnow().replace(microsecond=0) - timedelta(hours=1)
+    end = answer + timedelta(seconds=45)
+    first, call = _sent_fax_with_call(telnyx_client, answer, end)  # the fax that placed the call
+    second = telnyx_client.post('/fax', headers=ADMIN, data={'to': '+12025550123'},
+                                files={'file': ('note.txt', b'Synthetic second\n', 'text/plain')}).json()['id']
+    routes, rider = RouteStore(_engine()), uuid4().hex
+    members = routes.batch_members()
+    with _engine().begin() as connection:
+        connection.execute(routes.attempts.insert().values(id=rider, job_id=second, sequence=1, phase='success',
+                                                           created_at=answer, submitted_at=answer, completed_at=end))
+        for document, (job, attempt) in enumerate(((first, call), (second, rider)), start=1):
+            connection.execute(members.insert().values(
+                id=job, phone_number='+12025550123', sender_scope='key:env', pages=1, urgent=0, hold_until=answer,
+                state='together', batch_id=call, attempt_id=attempt, document_number=document, documents=2,
+                first_page=2 * document - 1, last_page=2 * document, reference='Faxbot ' + job[:8],
+                created_at=answer, updated_at=end))
+    # The second fax rode in the first fax's call: its own attempt is never costed on its own.
+    routes.record_decision(attempt_id=rider, job_id=second, destination='+12025550123', route='sip',
+                           reason='configured', provider_id='sip')
+    whole = routes.decision(call)['estimated_cost_micros']
+    assert whole and whole % 2 == 0
+
+    def costs():
+        batch = telnyx_client.get('/routing/fax-costs', headers=ADMIN, params={'ids': f'{first},{second}'}).json()['costs']
+        single = {job: telnyx_client.get(f'/routing/faxes/{job}/cost', headers=ADMIN).json() for job in (first, second)}
+        assert batch == single
+        return single
+
+    half = f'{whole / 2_000_000:g}'
+    before = costs()
+    for job in (first, second):
+        assert before[job]['state'] == 'waiting' and before[job]['reported_cost'] == []
+        assert before[job]['estimated_cost'] == [{'currency': 'USD', 'amount': half}]
+    monkeypatch.setattr(routing_http, 'carrier_source', lambda api_key: FakeTelnyx([record(
+        'rec-shared', 'outbound', answer - timedelta(seconds=1), answer, end, '0.005',
+        cli='+13035550100', cld='+12025550123')]))
+    assert telnyx_client.post('/routing/reconcile', headers=ADMIN).status_code == 200
+    after = costs()
+    for job in (first, second):
+        assert after[job]['state'] == 'reported'
+        assert after[job]['reported_cost'] == [{'currency': 'USD', 'amount': '0.0025'}]
+        assert after[job]['summary'] == "Telnyx charged $0.0025 for this fax's share of the call."
+    # The spending totals count the call once, at its whole charge.
+    sip = next(item for item in telnyx_client.get('/routing/costs', headers=ADMIN).json()['providers']
+               if item['provider_id'] == 'sip')
+    assert sip['reported_cost'] == [{'currency': 'USD', 'amount': '0.005'}] and sip['attempts'] == 1
+
+
 def test_a_received_fax_cost_is_read_with_the_fax(telnyx_client):
     from datetime import timedelta
     from uuid import uuid4
@@ -304,9 +358,9 @@ def test_the_check_now_summary_splits_unrecorded_calls_like_the_spending_card():
     base = {'checked': 4, 'matched': 4, 'charges_recorded': 0, 'waiting': 0, 'ambiguous': 0,
             'carrier_unavailable': False}
     assert _reconcile_summary({**base, 'unrecorded_calls': 1, 'unrecorded_matched_to_faxes': 1}) == (
-        'Checked 4 calls: 0 new charges recorded. 1 call reached Faxbot without a call record; its fax is in the Inbox.')
+        'Checked 4 calls: 0 new charges recorded. 1 call came in that Faxbot did not record at the time; its fax is in Received.')
     assert _reconcile_summary({**base, 'unrecorded_calls': 3, 'unrecorded_matched_to_faxes': 1}) == (
         'Checked 4 calls: 0 new charges recorded. Telnyx billed 2 calls Faxbot has no record of. '
-        '1 call reached Faxbot without a call record; its fax is in the Inbox.')
+        '1 call came in that Faxbot did not record at the time; its fax is in Received.')
     assert _reconcile_summary({**base, 'unrecorded_calls': 0}) == 'Checked 4 calls: 0 new charges recorded.'
 

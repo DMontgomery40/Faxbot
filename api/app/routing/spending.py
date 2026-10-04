@@ -222,16 +222,56 @@ class Spending:
         return [totals[key] for key in sorted(totals)]
 
     # One fax ---------------------------------------------------------------------
+    def _shares(self, connection, job_id):
+        """{call attempt: (this fax's pages, all the call's pages)} for calls this fax shared with other faxes.
+
+        A call that carried several faxes is costed once, on the attempt that
+        placed it; each fax's part of it is split by pages, each fax counting
+        its separator page, as the fax's sending-together details say.
+        """
+        members = self.routes.batch_members()
+        if members is None:
+            return {}
+        together = members.c.state == 'together'
+        result = {}
+        for batch_id, pages in connection.execute(sa.select(members.c.batch_id, members.c.pages).where(
+                members.c.id == job_id, together, members.c.batch_id.is_not(None))).all():
+            count, total = connection.execute(sa.select(sa.func.count(), sa.func.sum(members.c.pages + 1)).where(
+                members.c.batch_id == batch_id, together)).one()
+            if count > 1 and total:
+                result[batch_id] = (pages + 1, int(total))
+        return result
+
+    @staticmethod
+    def _part(micros, share):
+        if micros is None:
+            return None
+        part, total = share
+        return (int(micros) * part + total // 2) // total
+
     def job(self, job_id, *, now=None):
-        """The cost of one sent fax across all its attempts, including charged failures."""
+        """The cost of one sent fax across all its attempts, including charged failures.
+
+        A fax sent together with others in one call costs its share of that call
+        (an estimate until the carrier reports the call), whichever fax placed it;
+        the whole call is counted once only in the spending totals.
+        """
         now = now or utcnow()
         c = self.routes.costs
-        mine = c.c.job_id == job_id
         with read_connection(self.routes.engine) as connection:
-            rows = connection.execute(sa.select(c).where(mine, c.c.outcome.in_(('success', 'failed', 'uncertain')))
-                                      .order_by(c.c.created_at, c.c.id)).mappings().all()
+            shares = self._shares(connection, job_id)
+            mine = sa.or_(c.c.job_id == job_id, c.c.id.in_(list(shares))) if shares else c.c.job_id == job_id
+            found = connection.execute(sa.select(c).where(mine, c.c.outcome.in_(('success', 'failed', 'uncertain')))
+                                       .order_by(c.c.created_at, c.c.id)).mappings().all()
             calls = self._outbound_calls(connection, mine)
             reported = self._reported_charges(connection, mine)
+        rows = []
+        for row in found:
+            share = shares.get(row['id'])
+            rows.append(dict(row) if share is None else {
+                **row, 'estimated_cost_micros': self._part(row['estimated_cost_micros'], share),
+                'reported_cost_micros': self._part(row['reported_cost_micros'], share)})
+        shared = any(row['id'] in shares for row in rows)
         if not rows:
             return {'state': 'none', 'summary': None, 'reported_cost': {}, 'estimated_cost': {}, 'attempts': 0}
         reported_total, estimated_total, carriers = {}, {}, set()
@@ -252,7 +292,9 @@ class Spending:
         unit = 'call' if sip else 'attempt'
         who = carrier_label(next(iter(carriers))) if len(carriers) == 1 else 'Your providers'
         if done and not waiting:
-            if len(rows) == 1:
+            if len(rows) == 1 and shared:
+                summary = f"{who} charged {money_list_text(reported_total)} for this fax's share of the call."
+            elif len(rows) == 1:
                 summary = f'{who} charged {money_list_text(reported_total)} for this {"call" if sip else "fax"}.'
             else:
                 summary = f'{who} charged {money_list_text(reported_total)} for {_plural(len(rows), unit)}.'
