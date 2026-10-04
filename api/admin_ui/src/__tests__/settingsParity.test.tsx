@@ -544,6 +544,47 @@ describe('Settings email delivery', () => {
   });
 });
 
+describe('Settings pending restart', () => {
+  const pending = () => settingsFixture((data) => {
+    data._meta = { ...data._meta, apply_state: 'pending_restart', pending_fields: ['enable_mcp_http', 'mcp_http_path'] };
+  });
+
+  it('offers Restart now, waits for Faxbot to come back and loads the settings again', async () => {
+    let loads = 0;
+    const health = [false, true];
+    let restarts = 0;
+    server.use(
+      http.get('/admin/settings', () => HttpResponse.json(loads++ === 0 ? pending() : settingsFixture())),
+      http.get('/admin/tunnel/status', () => HttpResponse.json({ enabled: false, provider: 'none', status: 'disabled' })),
+      http.get('/direct/card', () => HttpResponse.json({ detail: 'Not ready.' }, { status: 409 })),
+      http.get('/admin/config', () => HttpResponse.json({ allow_restart: true, branding: {} })),
+      http.post('/admin/restart', () => { restarts += 1; return HttpResponse.json({ ok: true }); }),
+      http.get('/health', () => (health.shift() ?? true) ? HttpResponse.json({ status: 'ok' }) : HttpResponse.error()),
+    );
+    render(<Settings client={client()} canRestart />);
+    const notice = await screen.findByTestId('restart-notice');
+    expect(notice.textContent).toContain('Restart Faxbot to apply 2 pending changes.');
+    fireEvent.click(within(notice).getByRole('button', { name: 'Restart now' }));
+    expect(await screen.findByText('Faxbot restarted and is using the saved settings.', {}, { timeout: 8000 })).toBeTruthy();
+    expect(restarts).toBe(1);
+    expect(loads).toBeGreaterThanOrEqual(2);
+    expect(screen.queryByTestId('restart-notice')).toBeNull();
+  });
+
+  it.each([
+    ['the account may not restart the server', false, true],
+    ['the installation does not allow restarts from the console', true, false],
+  ])('says how to restart by hand when %s', async (_case, canRestart, allowRestart) => {
+    settingsHandlers(pending());
+    server.use(http.get('/admin/config', () => HttpResponse.json({ allow_restart: allowRestart, branding: {} })));
+    render(<Settings client={client()} canRestart={canRestart} />);
+    const notice = await screen.findByTestId('restart-notice');
+    await waitFor(() => expect(notice.textContent).toBe(
+      'Restart Faxbot to apply 2 pending changes. Run docker compose restart api on the server.'));
+    expect(within(notice).queryByRole('button', { name: 'Restart now' })).toBeNull();
+  });
+});
+
 describe('Settings when Faxbot cannot reach its fax engine', () => {
   const sentence = "Faxbot can't sign in to its fax engine. Check that the Asterisk manager password matches.";
 

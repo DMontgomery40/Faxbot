@@ -52,7 +52,7 @@ Setup Wizard and Settings load canonical desired values and the revision they ed
 
 A redacted export is a desired template, not persistence or a complete backup. Settings can write a private recovery environment file; it does not promote pending settings. Preserve the database, installation encryption key and document artifacts for recovery. Environment and legacy JSON inputs bootstrap an installation without canonical state; subsequent `.env` edits do not override its saved revision. See [Settings](admin-console/settings.md) and [Setup](admin-console/setup-wizard.md).
 
-The optional Diagnostics **Restart API** action stops the API process when restarts are allowed. With Docker Compose the `api` service starts again by itself (`restart: unless-stopped`). Where several API processes run, arrange an installation-wide stop and start through the process manager instead.
+The **Restart now** button in the Settings restart message and the Diagnostics **Restart API** action stop the API process when restarts are allowed. With Docker Compose the `api` service starts again by itself (`restart: unless-stopped`). Where several API processes run, arrange an installation-wide stop and start through the process manager instead.
 
 ## Storage (S3)
 

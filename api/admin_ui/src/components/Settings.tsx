@@ -32,6 +32,7 @@ import AdminAPIClient, { configurationWriteRejected, isForbidden, plainRefusal }
 import { DeliverySettingsSections, EMAIL_DELIVERY_SECTION, deliveryEditorValues } from './delivery/DeliverySettings';
 import { DEFAULT_DOCS_BASE, docsLink } from '../docsLinks';
 import EnvSetField, { ENV_SET_HELP, environmentManaged } from './common/EnvSetField';
+import RestartNotice from './common/RestartFaxbot';
 import type { ConfigurationWriteResult, Settings as SettingsType, SettingsPatch } from '../api/types';
 import { ResponsiveSettingItem, ResponsiveSettingSection } from './common/ResponsiveSettingItem';
 import { ResponsiveTextField, ResponsiveFormSection } from './common/ResponsiveFormFields';
@@ -43,6 +44,8 @@ interface SettingsProps {
   client: AdminAPIClient;
   // May this account change settings (email delivery actions are shown only then).
   canWrite?: boolean;
+  // May this account restart Faxbot (host:restart); the restart message then offers Restart now.
+  canRestart?: boolean;
   // A section to scroll to once settings load, such as the email delivery settings.
   focus?: string | null;
   onFocused?: () => void;
@@ -147,7 +150,7 @@ function editorValues(data: SettingsType): SettingsForm {
   };
 }
 
-function Settings({ client, canWrite = false, focus, onFocused }: SettingsProps) {
+function Settings({ client, canWrite = false, canRestart = false, focus, onFocused }: SettingsProps) {
   const [settings, setSettings] = useState<SettingsType | null>(null);
   const [envContent, setEnvContent] = useState<string>('');
   const [loading, setLoading] = useState(false);
@@ -161,6 +164,9 @@ function Settings({ client, canWrite = false, focus, onFocused }: SettingsProps)
   const [saveResult, setSaveResult] = useState<ConfigurationWriteResult | null>(null);
   // Why sending cannot work right now, such as the fax engine refusing Faxbot's login.
   const [engineMessage, setEngineMessage] = useState<string | null>(null);
+  // Whether the installation lets the console restart Faxbot (ADMIN_ALLOW_RESTART).
+  const [allowRestart, setAllowRestart] = useState(false);
+  const [restarted, setRestarted] = useState(false);
   const actionFence = useRef(false);
   const requestEpoch = useRef(0);
   const desiredRevision = needsReload ? undefined : settings?._meta?.desired_revision_id;
@@ -308,7 +314,10 @@ function Settings({ client, canWrite = false, focus, onFocused }: SettingsProps)
       hydrate(data);
       try {
         const cfg = await client.getConfig();
-        if (epoch === requestEpoch.current) setDocsBase(cfg?.branding?.docs_base || DEFAULT_DOCS_BASE);
+        if (epoch === requestEpoch.current) {
+          setDocsBase(cfg?.branding?.docs_base || DEFAULT_DOCS_BASE);
+          setAllowRestart(cfg?.allow_restart === true);
+        }
       } catch { /* Settings remain usable when branding is unavailable. */ }
       try {
         const message = await client.getFaxEngineMessage();
@@ -431,8 +440,13 @@ function Settings({ client, canWrite = false, focus, onFocused }: SettingsProps)
           Editing is paused. Click Load Settings to continue.
         </Alert>
       ) : settings && pendingRestart && !needsReload ? (
-        <Alert severity="warning" sx={{ mb: 3 }}>
-          {restartMessage}
+        <Box sx={{ mb: 3 }}>
+          <RestartNotice client={client} text={restartMessage} canRestart={canRestart && allowRestart}
+            onBack={async () => { await fetchSettings(); setRestarted(true); }} />
+        </Box>
+      ) : settings && restarted && !needsReload ? (
+        <Alert severity="success" sx={{ mb: 3 }} onClose={() => setRestarted(false)}>
+          Faxbot restarted and is using the saved settings.
         </Alert>
       ) : null}
 
