@@ -38,6 +38,9 @@ export interface SipTrunkSettings {
   fax_preference_header: boolean;
   codecs: string;
   external_address: string;
+  // Why Faxbot chose audio fax for new calls, and when (read only).
+  t38_off_reason?: 'no_data_back' | 'network' | null;
+  t38_off_at?: string | null;
 }
 
 export type SipRegistration = 'registered' | 'not_registered' | 'rejected' | 'not_used' | 'unknown';

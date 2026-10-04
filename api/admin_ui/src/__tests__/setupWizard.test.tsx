@@ -86,7 +86,8 @@ describe('Setup Wizard providers for sending and receiving', () => {
   });
 
   it('saves the SIP trunk for both directions when moving on, then asks for a restart', async () => {
-    const writes = await start(settingsFixture());
+    const data = settingsFixture();
+    const writes = await start(data);
     await choose('Sending', 'SIP trunk (Asterisk)');
     await choose('Receiving', 'SIP trunk (Asterisk)');
     expect(screen.getByText('Sending: SIP trunk (Asterisk) · Receiving: SIP trunk (Asterisk)')).toBeTruthy();
@@ -94,7 +95,19 @@ describe('Setup Wizard providers for sending and receiving', () => {
     await screen.findByText('Connect Providers', { selector: 'h6' });
     expect(writes).toEqual([{ expected_revision_id: 'rev-a', backend: 'sip', inbound_enabled: true }]);
     expect(screen.getByTestId('restart-notice').textContent).toContain('Restart Faxbot to start using these providers.');
-    expect(screen.getByRole('button', { name: 'Restart now' })).toBeTruthy();
+    // Restart now: Faxbot goes away, answers again, and this step says the restart worked.
+    const answers = [false, true];
+    server.use(
+      http.post('/admin/restart', () => {
+        data._meta = { ...data._meta, active_revision_id: data._meta.desired_revision_id, apply_state: 'applied', pending_fields: [] };
+        return HttpResponse.json({ ok: true });
+      }),
+      http.get('/health', () => (answers.shift() ?? true) ? HttpResponse.json({ status: 'ok' }) : HttpResponse.error()),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Restart now' }));
+    expect(await screen.findByText('Faxbot restarted and is using the saved settings.', {}, { timeout: 5000 })).toBeTruthy();
+    expect(screen.queryByTestId('restart-notice')).toBeNull();
+    expect(screen.getByText('Connect Providers', { selector: 'h6' })).toBeTruthy();
     expect(sectionHeadings()).toEqual(['For sending and receiving: SIP trunk (Asterisk)']);
     expect(await screen.findByTestId('sip-trunk-settings')).toBeTruthy();
     expect(screen.getByLabelText('Fax station ID')).toBeTruthy();

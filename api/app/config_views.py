@@ -14,6 +14,15 @@ if TYPE_CHECKING:
     from .config_store import ConfigurationSnapshot
 
 
+def _audio_reason(values) -> dict:
+    from .sip_fax_mode import reason_for
+    try:
+        found = reason_for(values)
+    except (TypeError, ValueError, OSError):
+        found = None
+    return {'t38_off_reason': found['reason'] if found else None, 't38_off_at': found['at'] if found else None}
+
+
 def _engine_login_shared(values) -> bool:
     from .sip_trunk import manager_credentials_shared
     try:
@@ -132,6 +141,8 @@ def project_admin_settings(snapshot: ConfigurationSnapshot, pending_fields: Iter
                 'fax_preference_header': values.sip_fax_preference_header,
                 'codecs': values.sip_trunk_codecs,
                 'external_address': values.sip_external_address,
+                # Why Faxbot chose audio fax for new calls ('no_data_back' or 'network'), and when; else None.
+                **_audio_reason(values),
             },
         },
         'security': {

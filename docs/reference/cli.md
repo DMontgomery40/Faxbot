@@ -1821,7 +1821,7 @@ $ faxbot trunk apply [OPTIONS]
 **Options**:
 
 * `--wait / --no-wait`: Wait for Asterisk and the carrier, then show the trunk check.  [default: wait]
-* `--timeout <int range>`: Seconds to wait.  [default: 90; 5&lt;=x&lt;=600]
+* `--timeout <int range>`: Seconds to wait.  [default: 60; 5&lt;=x&lt;=600]
 * `--help`: Show this message and exit.
 
 ### `faxbot trunk calls`

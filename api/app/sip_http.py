@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from .access.route_policy import require_permission
 from .config import configuration_values
 from .config_runtime import run_lifecycle_step
-from . import sip_trunk, stun
+from . import sip_fax_mode, sip_trunk, stun
 from .ami import ENGINE_UNREACHABLE
 from .config_store import ConfigurationStoreError
 from .inbound.acquisition import AcquisitionError
@@ -79,8 +79,41 @@ async def probe_network(preset, *, fresh=False):
     return result
 
 
-def _address_text(summary, network, carrier):
-    """Faxbot's internet address in use and how the network treats it, in one sentence."""
+_UNTESTED = 'the first test fax shows whether it does.'
+
+
+def _observed(records):
+    """What calls have shown about T.38 on this network: 'no_t38_data_back', 'fax_ok' or None."""
+    try:
+        items = records.page(limit=50)['items'] if records else []
+    except (SipCallRecordError, ValueError):
+        return None
+    for item in items:
+        if item.get('verdict') == 'no_t38_data_back':
+            return 'no_t38_data_back'
+        if item.get('verdict') in ('sent', 'received'):
+            return 'fax_ok'
+    return None
+
+
+def _address_text(summary, network, carrier, observed=None, audio=False):
+    """Faxbot's internet address in use and how the network treats it, in one sentence.
+
+    Once a call has shown whether the carrier follows Faxbot's packets, the
+    sentence says what it showed instead of waiting for the first test fax.
+    """
+    text = _network_text(summary, network, carrier)
+    if not text.endswith(_UNTESTED) or observed is None:
+        return text
+    lead = text[:-len(_UNTESTED)].rstrip(' ,;').removesuffix(', and')
+    if observed == 'fax_ok':
+        return f'{lead}, and a fax that went through shows it does.'
+    lead = lead.removesuffix(f", so {carrier} has to follow Faxbot's packets")
+    return (f'{lead}, and the last T.38 fax got no fax data back, so {carrier} does not follow Faxbot\'s T.38 packets '
+            f'on this network{"; audio fax is in use" if audio else ""}.')
+
+
+def _network_text(summary, network, carrier):
     typed = summary.get('public_address')
     if typed:
         if network and network.public_ip and network.public_ip != typed:
@@ -135,6 +168,28 @@ def _handover(values, managed, last):
     if written:
         return {'ready': True, 'text': HANDOVER_READY}
     return {'ready': False, 'text': HANDOVER_MANAGED if managed else HANDOVER_MANUAL}
+
+
+NO_TRUNK = 'No SIP trunk is set up. Choose your carrier to start.'
+TRUNK_INCOMPLETE = 'Some trunk settings are missing.'
+
+
+def sip_trunk_message(values):
+    """Readiness: the sentence when a direction uses the SIP trunk and the trunk is not set up; else None.
+
+    An older install whose Asterisk container carries the trunk itself
+    (SIP_USERNAME/SIP_SERVER in its environment) counts as set up.
+    """
+    uses = values.effective_outbound == 'sip' or (values.inbound_enabled and values.effective_inbound == 'sip')
+    if not uses or os.environ.get('SIP_SERVER') or os.environ.get('SIP_USERNAME'):
+        return None
+    if not sip_trunk.configured(values):
+        return NO_TRUNK
+    try:
+        sip_trunk.effective_trunk(values, for_calls=values.effective_outbound == 'sip')
+    except sip_trunk.TrunkConfigurationError:
+        return TRUNK_INCOMPLETE
+    return None
 
 
 def _restarting():
@@ -269,9 +324,9 @@ def _reachability_text(asterisk):
 def _message(summary, asterisk, applied, ports_text=None, transport=None, *, managed=False, in_use=True,
              restarting=False):
     if not summary.get('configured'):
-        return 'No SIP trunk is set up. Choose your carrier to start.'
+        return NO_TRUNK
     if summary['missing']:
-        return 'Some trunk settings are missing.'
+        return TRUNK_INCOMPLETE
     if ports_text == BEHIND_ROUTER:
         return BEHIND_ROUTER
     if restarting:
@@ -325,6 +380,8 @@ async def status(request: Request, identity=Depends(require_permission('provider
     in_use = bool(managed and await run_lifecycle_step(lambda: sip_trunk.engine_uses_current(values)))
     restarting = bool(configured and _restarting())
     handover = await run_lifecycle_step(lambda: _handover(values, managed, last)) if configured else None
+    observed = await run_lifecycle_step(lambda: _observed(_records(request))) if configured else None
+    off = await run_lifecycle_step(lambda: sip_fax_mode.reason_for(values)) if configured else None
     if configured:
         summary['advertised_address'] = await run_lifecycle_step(lambda: sip_trunk.applied_public_address(values)) or None
     message = _message(summary, asterisk, applied, ports_text, transport, managed=managed, in_use=in_use,
@@ -345,7 +402,11 @@ async def status(request: Request, identity=Depends(require_permission('provider
         'internet_address': network.public_ip if network else None,
         'behind_router': network.behind_nat if network else None,
         'port_numbers': network.ports if network else None,
-        'public_address_text': _address_text(summary, network, carrier) if configured else None,
+        'public_address_text': (_address_text(summary, network, carrier, observed, not values.sip_t38_enabled)
+                                if configured else None),
+        # Why new calls use audio fax when Faxbot chose it ({reason, at}); None when T.38 is on or a person chose.
+        't38_off_reason': off['reason'] if off else None,
+        't38_off_at': off['at'] if off else None,
         'ports_text': ports_text,
         'last_call_text': last['summary'] if last else None,
         'last_call_at': last['started_at'] if last else None,
@@ -383,6 +444,13 @@ async def apply(request: Request, identity=Depends(require_permission('providers
         # A carrier that signs in by address sends calls to a fixed public address, which a router does not pass on.
         if values.sip_trunk_auth == 'ip' and network and network.behind_nat:
             raise HTTPException(400, detail=BEHIND_ROUTER)
+    runtime = _runtime(request)
+    has_calls = await run_lifecycle_step(lambda: _last_call(_records(request)) is not None)
+    if sip_fax_mode.network_prefers_audio(values, network, has_calls=has_calls):
+        # A new Telnyx trunk on a network that changes port numbers: T.38 data was seen not to come back there.
+        values = await run_lifecycle_step(lambda: _audio_for_network(runtime))
+    else:
+        await run_lifecycle_step(lambda: sip_fax_mode.reconcile(values))
     try:
         # Received faxes reach Faxbot with this secret; Faxbot creates it when none is set.
         secret = await run_lifecycle_step(lambda: ensure_inbound_secret(_runtime(request).manager))
@@ -401,6 +469,14 @@ async def apply(request: Request, identity=Depends(require_permission('providers
     except (AcquisitionError, ConfigurationStoreError):
         raise HTTPException(503, detail='Faxbot could not save an inbound secret for the fax engine. Try again.') from None
     return await _load_into_engine(values)
+
+
+def _audio_for_network(runtime):
+    snapshot = runtime.manager.store.read()
+    runtime.manager.patch(snapshot, {'sip_t38_enabled': False}, actor='system')
+    values = runtime.manager.store.read().active.values
+    sip_fax_mode.write(values, 'audio', sip_fax_mode.NETWORK)
+    return values
 
 
 async def _load_into_engine(values):

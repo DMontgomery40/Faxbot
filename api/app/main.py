@@ -28,8 +28,8 @@ from .models import FaxJobOut
 from .conversion import ensure_dir
 from .documents import prepare_upload, UploadPreparationError
 from .ami import ami_client, ENGINE_UNREACHABLE
-from . import sip_calls
-from .sip_http import router as sip_router, watch_public_address
+from . import sip_calls, sip_fax_mode
+from .sip_http import router as sip_router, sip_trunk_message, watch_public_address
 from .phaxio_service import get_phaxio_service
 from .sinch_service import get_sinch_service
 from .signalwire_service import get_signalwire_service
@@ -119,6 +119,8 @@ async def lifespan(application: FastAPI):
                     ami_client.on_fax_result(_handle_fax_result)
                     ami_client.on_originate_response(_handle_originate_response)
                     sip_calls.attach(ami_client, runtime.manager.store.engine)
+                    # A T.38 call whose fax data never came back switches new calls to audio fax.
+                    sip_fax_mode.attach(ami_client, runtime)
                     tasks.append(asyncio.create_task(ami_client.connect(), name="faxbot-ami-connect"))
                     # Start without the fax engine rather than lock people out of the
                     # console that fixes it; the client keeps retrying in the background.
@@ -569,13 +571,15 @@ def _readiness_status(request: Request):
 
     # Required traits for readiness
     ami_required = providerHasTrait("any", "requires_ami")
-    # One plain reason when the fax engine is missing: no provider, or Faxbot cannot sign in or reach it.
-    message = NO_PROVIDER if not ob else (ami_client.engine_message() if ami_required else None)
+    # One plain reason when the fax engine is missing: no provider, or Faxbot cannot sign in or reach it,
+    # or the SIP trunk it would call through is not set up yet.
+    trunk_message = sip_trunk_message(settings)
+    message = NO_PROVIDER if not ob else (ami_client.engine_message() if ami_required else None) or trunk_message
     storage_required = settings.inbound_enabled and providerHasTrait("inbound", "needs_storage")
     ready = bool(
         db_ok and gs_installed and outbound_ok and inbound_ok and
         (not ami_required or ami_connected) and
-        (not storage_required or storage_ok)
+        (not storage_required or storage_ok) and trunk_message is None
     )
     return {
             "status": "ready" if ready else "not_ready",

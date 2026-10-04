@@ -4,7 +4,7 @@ import time
 import typer
 
 from .. import state
-from ..output import local_time
+from ..output import local_time, parse_time
 
 trunk = typer.Typer(help="Faxbot's own carrier SIP trunk: status, network and recent calls.", no_args_is_help=True)
 
@@ -29,6 +29,12 @@ def _status_lines(out, result):
         out.line(f"Last call ({local_time(result.get('last_call_at'))}): {result['last_call_text']}")
     if result.get('suggest_audio'):
         out.line('Audio fax may work for new calls: run faxbot trunk mode audio.')
+    if result.get('t38_off_reason'):
+        from ...sip_fax_mode import off_sentence
+        moment = parse_time(result.get('t38_off_at'))
+        day = moment.astimezone().strftime('%-d %B') if moment else ''
+        out.line(off_sentence(result['t38_off_reason'], day))
+        out.line('To try T.38 again, run faxbot trunk mode t38.')
 
 
 @trunk.command('status')
@@ -39,8 +45,12 @@ def trunk_status():
 
 
 def _settled(status):
-    return (not status.get('engine_restarting') and status.get('asterisk_connected')
-            and status.get('registration') in ('registered', 'rejected', 'not_used'))
+    """Asterisk is back and the carrier has refused Faxbot or answered its check."""
+    if status.get('engine_restarting') or not status.get('asterisk_connected'):
+        return False
+    if status.get('registration') == 'rejected':
+        return True
+    return status.get('registration') in ('registered', 'not_used') and status.get('reachability') == 'reachable'
 
 
 def _connect(api, wait, timeout):
@@ -60,7 +70,7 @@ def _connect(api, wait, timeout):
 @trunk.command('apply')
 def trunk_apply(wait: bool = typer.Option(True, '--wait/--no-wait',
                                           help='Wait for Asterisk and the carrier, then show the trunk check.'),
-                timeout: int = typer.Option(90, '--timeout', min=5, max=600, help='Seconds to wait.')):
+                timeout: int = typer.Option(60, '--timeout', min=5, max=600, help='Seconds to wait.')):
     """Write the saved trunk for Asterisk and connect it.
 
     In the Docker Compose install Faxbot restarts Asterisk to load the trunk,

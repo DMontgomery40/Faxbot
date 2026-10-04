@@ -84,7 +84,7 @@ def test_status_without_a_trunk_says_so_in_one_sentence(bare_client):
                     'public_address_text': None, 'ports_text': None, 'last_call_text': None, 'last_call_at': None,
                     'address_changed': False, 'last_call_verdict': None, 'suggest_audio': False,
                     'engine_managed': False, 'engine_restarting': False, 'in_use': False,
-                    'handover_ready': None, 'handover_text': None,
+                    'handover_ready': None, 'handover_text': None, 't38_off_reason': None, 't38_off_at': None,
                     'message': 'No SIP trunk is set up. Choose your carrier to start.'}
 
 
@@ -474,3 +474,25 @@ def test_status_says_whether_received_faxes_reach_faxbot(isolated_installation, 
         assert client.put('/admin/settings', headers=ADMIN, json={
             'expected_revision_id': current['_meta']['desired_revision_id'], 'inbound_enabled': False}).status_code == 200
         assert client.get('/admin/sip/status', headers=ADMIN).json()['handover_text'] is None
+
+
+def test_readiness_waits_for_a_trunk_on_each_direction_that_uses_it(isolated_installation, monkeypatch):
+    monkeypatch.setattr(ami_client._connected, 'is_set', lambda: True)
+    with _client(monkeypatch, {'FAX_BACKEND': 'sip', 'INBOUND_ENABLED': 'true'}) as client:
+        ready = client.get('/health/ready')
+        assert ready.status_code == 503
+        assert ready.json()['message'] == 'No SIP trunk is set up. Choose your carrier to start.'
+        health = client.get('/admin/health-status', headers=ADMIN).json()
+        assert health['backend_healthy'] is False
+        assert health['backend_message'] == 'No SIP trunk is set up. Choose your carrier to start.'
+        current = client.get('/admin/settings', headers=ADMIN).json()
+        saved = client.put('/admin/settings', headers=ADMIN, json={
+            'expected_revision_id': current['_meta']['desired_revision_id'], 'sip_trunk_preset': 'telnyx',
+            'sip_trunk_username': 'faxbotuser'})
+        assert saved.status_code == 200, saved.text
+        assert client.get('/health/ready').json()['message'] == 'Some trunk settings are missing.'
+        current = client.get('/admin/settings', headers=ADMIN).json()
+        client.put('/admin/settings', headers=ADMIN, json={
+            'expected_revision_id': current['_meta']['desired_revision_id'], 'sip_trunk_password': PASSWORD,
+            'sip_trunk_caller_id': '+15555550100'})
+        assert 'message' not in client.get('/health/ready').json()

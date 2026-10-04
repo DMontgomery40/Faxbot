@@ -261,6 +261,9 @@ describe('SIP trunk settings', () => {
     const statuses = [
       { engine_restarting: true, asterisk_connected: false, registration: 'unknown', message: 'Asterisk is restarting to use the new settings.' },
       { engine_restarting: false, asterisk_connected: true, registration: 'not_registered', message: 'Faxbot is not registered with the carrier yet.' },
+      // Registered, but the carrier has not answered a check yet: keep checking instead of showing a red result.
+      { engine_restarting: false, asterisk_connected: true, registration: 'registered', reachability: 'unreachable',
+        reachability_text: "The carrier does not answer Faxbot's checks.", message: "The carrier does not answer Faxbot's checks." },
       { engine_restarting: false, asterisk_connected: true, registration: 'registered', registration_transport: 'tls',
         registration_text: "The carrier accepted Faxbot's registration over TLS.", reachability: 'reachable',
         reachability_text: "The carrier answered Faxbot's check in 38 ms.", internet_address: '198.51.100.7',
@@ -294,8 +297,56 @@ describe('SIP trunk settings', () => {
     expect(within(status).getByText('The trunk is ready.')).toBeTruthy();
     expect(within(status).getByText("The carrier accepted Faxbot's registration over TLS.")).toBeTruthy();
     expect(within(status).getByText('No ports need to be opened or forwarded.')).toBeTruthy();
-    expect(order).toEqual(['save', 'apply', 'status', 'status', 'status']);
+    expect(order).toEqual(['save', 'apply', 'status', 'status', 'status', 'status']);
+    expect(screen.queryByText("The carrier does not answer Faxbot's checks.")).toBeNull();
     expect(document.body.textContent).not.toMatch(/Restart the Asterisk service/);
+  });
+
+  it('says when Asterisk already uses these settings and still shows the trunk check', async () => {
+    server.use(
+      http.get('/admin/sip/presets', () => HttpResponse.json({ presets: PRESETS })),
+      http.get('/admin/settings', () => HttpResponse.json(settings())),
+      http.get('/admin/sip/calls', () => HttpResponse.json({ items: [], next_cursor: null })),
+      http.post('/admin/sip/apply', () => HttpResponse.json({ ok: true, engine: 'current',
+        message: 'Saved. Asterisk already uses these settings.' })),
+      http.get('/admin/sip/status', () => HttpResponse.json({ configured: true, applied: true, asterisk_connected: true,
+        registration: 'registered', registration_text: "The carrier accepted Faxbot's registration over TLS.",
+        reachability: 'reachable', reachability_text: "The carrier answered Faxbot's check in 38 ms.",
+        message: 'The trunk is ready.' })),
+    );
+    render(<SipTrunkSettings client={client()} pollMs={5} />);
+    await screen.findByText('A password is saved.');
+    fireEvent.click(screen.getByRole('button', { name: 'Apply and connect' }));
+    expect(await screen.findByText('Saved. Asterisk already uses these settings.')).toBeTruthy();
+    expect(within(await screen.findByTestId('sip-trunk-status')).getByText('The trunk is ready.')).toBeTruthy();
+  });
+
+  it('says why Faxbot chose audio fax and offers to try T.38 again', async () => {
+    const writes: Array<Record<string, unknown>> = [];
+    let applied = 0;
+    server.use(
+      http.get('/admin/sip/presets', () => HttpResponse.json({ presets: PRESETS })),
+      http.get('/admin/settings', () => HttpResponse.json(settings(writes.length ? { t38_enabled: true } : {
+        t38_enabled: false, t38_off_reason: 'no_data_back', t38_off_at: '2026-10-03T22:40:00Z' }))),
+      http.get('/admin/sip/calls', () => HttpResponse.json({ items: [], next_cursor: null })),
+      http.put('/admin/settings', async ({ request }) => {
+        writes.push(await request.json() as Record<string, unknown>);
+        return HttpResponse.json({ ok: true, changed: true, _meta: { active_revision_id: 'rev-2',
+          desired_revision_id: 'rev-2', generation: 2, apply_state: 'applied', restart_recommended: false } });
+      }),
+      http.post('/admin/sip/apply', () => { applied += 1; return HttpResponse.json({ ok: true, engine: 'busy',
+        message: 'Saved. A call is in progress, so Asterisk keeps its current settings until you apply again after it ends.' }); }),
+    );
+    render(<SipTrunkSettings client={client()} />);
+    const reason = await screen.findByTestId('t38-off-reason');
+    expect(reason.textContent).toMatch(/^Off: on .+ a T\.38 fax got no fax data back on this network, so Faxbot uses audio fax\.Try T\.38 again$/);
+    expect(screen.getByRole('checkbox', { name: 'Use T.38 fax over IP' })).toBeTruthy();
+    expect(screen.queryByText(/recommended/)).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Try T.38 again' }));
+    await waitFor(() => expect(applied).toBe(1));
+    expect(writes).toEqual([{ expected_revision_id: 'rev-1', sip_t38_enabled: true }]);
+    await waitFor(() => expect(screen.queryByTestId('t38-off-reason')).toBeNull());
+    expect(screen.getByRole('checkbox', { name: 'Use T.38 fax over IP (recommended)' })).toBeTruthy();
   });
 
   it('says so in one sentence when a call keeps Asterisk from restarting', async () => {

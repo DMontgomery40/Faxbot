@@ -68,7 +68,8 @@ Carrier pages used for the presets:
 1. In the console, open the **Setup Wizard**, choose **SIP trunk (Asterisk)** for sending, receiving or both, and select **Next**. The first time, select **Restart now** when Setup asks. The next step shows the trunk form; **Settings** shows the same form under **Carrier SIP trunk**.
 2. Choose your carrier and how Faxbot signs in. Fill in the server if the carrier asks for one, then the username and password.
 3. Enter your caller ID and the fax numbers the carrier sends to this trunk.
-4. Select **Apply and connect**. Faxbot saves what you typed, writes the trunk for Asterisk, restarts Asterisk to load it and waits until the carrier answers, then shows the trunk check on the same screen: the transport Faxbot registered over, how quickly the carrier answers its checks, Faxbot's internet address and "No ports need to be opened or forwarded." From the command line, `faxbot trunk apply` does the same.
+4. Select **Apply and connect**. Faxbot saves what you typed, writes the trunk for Asterisk, restarts Asterisk to load it and keeps checking ("Checking the carrier…") until the carrier answers Faxbot's check, for up to a minute, then shows the trunk check on the same screen: the transport Faxbot registered over, how quickly the carrier answers its checks, Faxbot's internet address and "No ports need to be opened or forwarded." From the command line, `faxbot trunk apply` does the same.
+   When Asterisk already runs exactly these settings, nothing restarts and the result says "Saved. Asterisk already uses these settings." Until a trunk is set up for each direction that uses it, Faxbot's readiness and the Dashboard say "No SIP trunk is set up. Choose your carrier to start." (or "Some trunk settings are missing.").
 5. **Check trunk status** repeats the check at any time. "The trunk is ready." means the carrier accepted Faxbot and answers its checks. The same check from the command line is `faxbot trunk status`.
 
 ### What Apply and connect does with Asterisk
@@ -98,7 +99,7 @@ If you manage settings with an environment file instead of the console, set the 
 | `SIP_TRUNK_CALLER_ID` | Your carrier-authorized number, such as `+15551234567` |
 | `SIP_TRUNK_DIDS` | Your fax numbers on this trunk, separated by commas |
 | `SIP_T38_ENABLED` | `true` by default |
-| `SIP_FAX_PREFERENCE_HEADER` | `false` by default; see below |
+| `SIP_FAX_PREFERENCE_HEADER` | `true` by default; see below |
 | `SIP_TRUNK_CODECS` | `ulaw`, `alaw` or both; leave empty for the preset |
 | `SIP_EXTERNAL_ADDRESS` | Leave empty: Faxbot finds its internet address itself. Only an override for a host whose public address you want to state |
 | `SIP_PUBLIC_ADDRESS_CHECK_MINUTES` | How often Faxbot checks its internet address again; `5` by default, `0` turns it off |
@@ -113,11 +114,13 @@ Faxbot learns its internet address with STUN when you select **Apply and connect
 
 Encryption also hides the call setup from router features that rewrite it (often called SIP ALG). If **Check trunk status** keeps saying Faxbot is not registered over the encrypted connection, switch **Transport** to TCP, apply again and restart Asterisk.
 
-This works with carriers that send their media back to wherever Faxbot's packets come from, which Telnyx does for audio. Whether Telnyx does the same for T.38 data is settled by your first test fax. When a carrier does not, the call connects but no fax data arrives, and Faxbot says so on that call: "The call connected but no fax data came back from the carrier." In that case, run Faxbot's fax engine on a host with a public address, or use a cloud fax provider.
+This works with carriers that send their media back to wherever Faxbot's packets come from, which Telnyx does for audio. Whether Telnyx does the same for T.38 data is settled by your first test fax; once a call has shown it, **Check trunk status** says what it showed instead. When a carrier does not, the call connects but no fax data arrives, and Faxbot says so on that call: "The call connected but no fax data came back from the carrier." In that case, run Faxbot's fax engine on a host with a public address, or use a cloud fax provider.
 
 ### When T.38 data does not come back: audio fax
 
-If a call switched to T.38 and Faxbot says "The call connected but no fax data came back from the carrier.", the carrier is not sending T.38 data back to Faxbot's path, though it may still do so for audio. **Check trunk status** then offers **Use audio fax for new calls** (or run `faxbot trunk mode audio`). It turns off **Use T.38 fax over IP** and connects the trunk again, which restarts Asterisk when no call is up. New calls then stay audio: Faxbot declines the carrier's switch to T.38 and sends at up to 9600 bit/s with error correction, which survives a voice path better. Faxbot never changes this by itself and never resends the failed fax; send it again when you are ready. `faxbot trunk mode t38` switches back. With Telnyx you can also set **T.38 fax re-invite initiated by** to **Disabled** for audio fax.
+If a call switched to T.38 and no fax data came back ("The call connected but no fax data came back from the carrier."), the carrier is not sending T.38 data back to Faxbot's path, though it may still do so for audio. Faxbot then switches new calls to audio fax by itself: it turns off **Use T.38 fax over IP** (saved by "system"), connects the trunk again once no call is up, and says next to the switch "Off: on 3 October a T.38 fax got no fax data back on this network, so Faxbot uses audio fax." with **Try T.38 again**. It never resends the failed fax; send it again when you are ready. New calls stay audio: Faxbot declines the carrier's switch to T.38 and sends at up to 9600 bit/s with error correction, which survives a voice path better.
+
+A new Telnyx trunk on a network that changes port numbers starts with audio fax for the same reason, because Telnyx's T.38 data was seen not to come back through such a network; the switch says "Off: your network changes port numbers, and Telnyx's T.38 fax data does not come back through such networks, so Faxbot uses audio fax." Once you choose T.38 yourself (**Try T.38 again**, the switch, or `faxbot trunk mode t38`), Faxbot leaves your choice alone until another T.38 call gets no fax data back. `faxbot trunk mode audio` turns audio fax on by hand, and `faxbot trunk status` says why audio fax is in use. With Telnyx you can also set **T.38 fax re-invite initiated by** to **Disabled** for audio fax.
 
 ### Server IP sign-in needs a public host
 
@@ -139,7 +142,7 @@ A carrier listing T.38 support does not guarantee every call completes as T.38. 
 
 ### Fax preference on outgoing calls
 
-**Mark outgoing calls as fax when they start** adds a standard fax marker (RFC 6913) to each new outgoing call. Some carriers use it to pick a fax-capable route; others ignore it. It is off by default. It only describes the call; Faxbot never places a second call because of it, and never resends a fax whose outcome is unknown.
+**Mark outgoing calls as fax when they start** adds a standard fax marker (RFC 6913) to each new outgoing call. Some carriers use it to pick a fax-capable route; others ignore it. It is on by default: it is a preference (`Accept-Contact`, never `Require`), so a carrier that does not know it still connects the call. Turn it off only if your carrier refuses calls that carry it. It only describes the call; Faxbot never places a second call because of it, and never resends a fax whose outcome is unknown.
 
 ## Caller ID
 

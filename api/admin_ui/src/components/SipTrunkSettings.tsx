@@ -59,7 +59,7 @@ type Notice = { severity: 'success' | 'info' | 'warning' | 'error'; text: string
 const EMPTY: TrunkValues = {
   preset: '', auth: 'registration', host: '', port: 0, transport: '', username: '', password: '',
   password_set: false, outbound_proxy: '', caller_id: '', dids: [], t38_enabled: true,
-  fax_preference_header: false, codecs: '', external_address: '',
+  fax_preference_header: true, codecs: '', external_address: '',
 };
 
 // Plain names for the signaling transport; encrypted is the default for carriers that offer it.
@@ -100,14 +100,29 @@ function failure(error: unknown, fallback: string): string {
   return fallback;
 }
 
-// Asterisk answered again after the restart and the carrier has accepted or refused Faxbot.
+// Asterisk is back and the carrier has refused Faxbot or answered its check.
 function settled(status: SipTrunkStatus): boolean {
-  return !status.engine_restarting && status.asterisk_connected
-    && ['registered', 'rejected', 'not_used'].includes(status.registration);
+  if (status.engine_restarting || !status.asterisk_connected) return false;
+  if (status.registration === 'rejected') return true;
+  return ['registered', 'not_used'].includes(status.registration) && status.reachability === 'reachable';
+}
+
+// Why Faxbot uses audio fax for new calls, in one sentence.
+export function audioReason(reason: string | null | undefined, at?: string | null): string | null {
+  if (reason === 'no_data_back') {
+    const date = at ? new Date(at) : null;
+    const day = date && !Number.isNaN(date.getTime())
+      ? `on ${date.toLocaleDateString(undefined, { day: 'numeric', month: 'long' })} ` : '';
+    return `Off: ${day}a T.38 fax got no fax data back on this network, so Faxbot uses audio fax.`;
+  }
+  if (reason === 'network') {
+    return "Off: your network changes port numbers, and Telnyx's T.38 fax data does not come back through such networks, so Faxbot uses audio fax.";
+  }
+  return null;
 }
 
 function SipTrunkSettings({ client, showCalls = true, revision: sharedRevision, onSaved, onDirtyChange,
-  showReceiving = false, pollMs = 2000, waitMs = 90000 }: SipTrunkSettingsProps) {
+  showReceiving = false, pollMs = 2000, waitMs = 60000 }: SipTrunkSettingsProps) {
   const theme = useTheme();
   const narrow = useMediaQuery(theme.breakpoints.down('md'));
   const [presets, setPresets] = useState<SipPreset[]>([]);
@@ -266,11 +281,12 @@ function SipTrunkSettings({ client, showCalls = true, revision: sharedRevision, 
     if (result.engine === 'restarting' || result.engine === 'current') {
       setConnecting(true);
       setNotice({ severity: 'info', text: result.engine === 'restarting'
-        ? 'Asterisk is restarting to use these settings. Checking the trunk…' : 'Checking the trunk…' });
+        ? 'Asterisk is restarting to use these settings. Checking the carrier…' : 'Checking the carrier…' });
       const latest = await waitForTrunk();
       if (!alive.current) return;
       setConnecting(false);
-      setNotice(savedText ? { severity: 'success', text: savedText } : null);
+      setNotice(savedText ? { severity: 'success', text: savedText }
+        : result.engine === 'current' ? { severity: 'success', text: result.message } : null);
       if (latest) setStatus(latest);
       else setNotice({ severity: 'error', text: 'Trunk status is not available right now.' });
       return;
@@ -323,6 +339,26 @@ function SipTrunkSettings({ client, showCalls = true, revision: sharedRevision, 
     }
   };
 
+  // Turn T.38 back on after Faxbot chose audio fax, and connect the trunk with it.
+  const tryT38Again = async () => {
+    setBusy(true);
+    try {
+      await client.updateSettings({ expected_revision_id: expectedRevision, sip_t38_enabled: true });
+      setStatus(null);
+      await load();
+      await onSaved?.();
+      await connect('New calls try T.38 again.');
+    } catch (error) {
+      setNotice({ severity: 'error', text: failure(error, 'T.38 could not be turned back on. Try again.') });
+    } finally {
+      if (alive.current) {
+        setConnecting(false);
+        setBusy(false);
+      }
+    }
+  };
+
+  const offReason = !form.t38_enabled && !saved.t38_enabled ? audioReason(saved.t38_off_reason, saved.t38_off_at) : null;
   const statusSeverity = status?.message === 'The trunk is ready.' ? 'success'
     : status && (status.registration === 'rejected' || status.reachability === 'unreachable'
       || (!!status.ports_text && status.ports_text === status.message)) ? 'error' : 'info';
@@ -441,7 +477,13 @@ function SipTrunkSettings({ client, showCalls = true, revision: sharedRevision, 
 
           <FormControlLabel
             control={<Switch checked={form.t38_enabled} onChange={(event) => update('t38_enabled', event.target.checked)} />}
-            label="Use T.38 fax over IP (recommended)" />
+            label={offReason ? 'Use T.38 fax over IP' : 'Use T.38 fax over IP (recommended)'} />
+          {offReason && (
+            <Box data-testid="t38-off-reason" sx={{ mt: -1 }}>
+              <Typography variant="body2" color="text.secondary">{offReason}</Typography>
+              <Button size="small" onClick={tryT38Again} disabled={busy}>Try T.38 again</Button>
+            </Box>
+          )}
           <FormControlLabel
             control={<Switch checked={form.fax_preference_header}
               onChange={(event) => update('fax_preference_header', event.target.checked)} />}

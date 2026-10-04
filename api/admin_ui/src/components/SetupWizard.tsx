@@ -11,7 +11,7 @@ import { docsLink } from '../docsLinks';
 import type { ConfigurationWriteResult, Settings, SettingsPatch, ValidationResult } from '../api/types';
 import SecretInput from './common/SecretInput';
 import EnvSetField, { environmentManaged } from './common/EnvSetField';
-import RestartNotice from './common/RestartFaxbot';
+import RestartNotice, { RESTARTED } from './common/RestartFaxbot';
 import SipTrunkSettings from './SipTrunkSettings';
 import { COUNTRY_HELP, CountryField } from './common/numbers';
 import { BUILTIN_PROVIDERS, NO_PROVIDER_LABEL, RECEIVING_PROVIDERS, directionSummary, providerLabel } from '../providerLabels';
@@ -256,6 +256,12 @@ function SetupWizard({ client, onDone, docsBase, canRestart = true }: SetupWizar
     }
     setLoading(false);
   }, [client, stopWatching]);
+
+  // After Restart now: reload, stay on this step and say that the restart worked.
+  const afterRestart = useCallback(async () => {
+    await loadSettings();
+    setNotice({ severity: 'success', text: RESTARTED });
+  }, [loadSettings]);
 
   // The trunk section saved settings itself: take the new saved values and
   // revision, and keep what the person is still editing here.
@@ -742,7 +748,7 @@ function SetupWizard({ client, onDone, docsBase, canRestart = true }: SetupWizar
     </Box>
     {loading && <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}><CircularProgress size={24} /><Typography>Loading settings…</Typography></Box>}
     {loadError && <Alert severity="error" sx={{ mb: 2 }}>{loadError}</Alert>}
-    {pendingRestart && <Box sx={{ mb: 2 }}><RestartNotice client={client} text={restartMessage} canRestart={canRestart} onBack={loadSettings} /></Box>}
+    {pendingRestart && <Box sx={{ mb: 2 }}><RestartNotice client={client} text={restartMessage} canRestart={canRestart} onBack={afterRestart} /></Box>}
     {notice && <Alert severity={notice.severity} sx={{ mb: 2 }} onClose={() => setNotice(null)}>{notice.text}</Alert>}
     {showPaused && <Alert severity="warning" sx={{ mb: 2 }}>Editing is paused. Reload to continue.</Alert>}
     {settings && <>
