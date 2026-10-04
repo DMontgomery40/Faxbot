@@ -2,13 +2,14 @@ import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import {
   Box, Card, CardContent, Typography, Stepper, Step, StepLabel, Button,
   TextField, FormControl, InputLabel, Select, MenuItem, Alert,
-  CircularProgress, Grid, Paper, Chip, Switch, FormControlLabel,
+  CircularProgress, Grid, Paper, Chip, Switch, FormControlLabel, Link,
 } from '@mui/material';
 import AdminAPIClient, { configurationWriteRejected, plainRefusal } from '../api/client';
 import { DeliveryWizardFields, deliveryEditorValues } from './delivery/DeliverySettings';
 import { docsLink } from '../docsLinks';
 import type { ConfigurationWriteResult, Settings, SettingsPatch, ValidationResult } from '../api/types';
 import SecretInput from './common/SecretInput';
+import EnvSetField, { environmentManaged } from './common/EnvSetField';
 import SipTrunkSettings from './SipTrunkSettings';
 import { COUNTRY_HELP, CountryField } from './common/numbers';
 
@@ -494,7 +495,9 @@ function SetupWizard({ client, onDone, docsBase }: SetupWizardProps) {
       <InputLabel id={`${fieldId}-${field}-label`} shrink>{label}</InputLabel>
       <Select id={`${fieldId}-${field}`} labelId={`${fieldId}-${field}-label`} displayEmpty
         value={config[field] ?? ''} disabled={!canEdit} label={label} onChange={event => handleConfigChange(field, event.target.value)}>
-        {override && <MenuItem value="">Use default provider ({String(config.backend)})</MenuItem>}
+        {override
+          ? <MenuItem value="">{config.backend ? `Use default provider (${String(config.backend)})` : 'Use default provider (none yet)'}</MenuItem>
+          : <MenuItem value="">No provider</MenuItem>}
         {Array.from(providerOptions.values())
           .filter(provider => !inbound || !outboundOnly.has(provider.id) || provider.id === config[field])
           .map(provider => <MenuItem key={provider.id} value={provider.id}>{provider.name}</MenuItem>)}
@@ -508,7 +511,8 @@ function SetupWizard({ client, onDone, docsBase }: SetupWizardProps) {
       {providerControl('backend', 'Default Provider')}
       {providerControl('outbound_backend', 'Outbound Override', true)}
       {providerControl('inbound_backend', 'Inbound Override', true, true)}
-      <Typography sx={{ mt: 2 }}>Outbound: {ob} · Inbound: {ib}</Typography>
+      {ob ? <Typography sx={{ mt: 2 }}>Outbound: {ob} · Inbound: {ib || 'none'}</Typography>
+        : <Alert severity="warning" sx={{ mt: 2 }} data-testid="no-provider">No fax provider set up yet. <Link href={docsLink('providers', docsBase)} target="_blank" rel="noreferrer">Provider setup</Link></Alert>}
       <FormControlLabel control={<Switch disabled={!canEdit} checked={!!config.inbound_enabled} onChange={event => handleConfigChange('inbound_enabled', event.target.checked)} />} label="Enable inbound handling" />
       <Alert severity="info" sx={{ mt: 1 }}>Leave an override empty to use the default provider; inbound handling is turned on separately.</Alert>
       {settings?.numbers && <Box sx={{ mt: 3 }}>
@@ -529,7 +533,8 @@ function SetupWizard({ client, onDone, docsBase }: SetupWizardProps) {
         {ob === 'freeswitch' && <Alert severity="info" sx={{ mt: 2 }}>FreeSWITCH also needs mod_spandsp, a gateway and the Faxbot result hook.</Alert>}
         <Grid container spacing={2} sx={{ mt: 0 }}>
           {credentialFields[ob].map(field => <Grid item xs={12} key={field.key}>
-            {field.secret ? <SecretInput fullWidth disabled={!canEdit} label={field.label} value={config[field.key] ?? ''}
+            {field.secret && environmentManaged(settings).has(field.key) ? <EnvSetField fullWidth label={field.label} /> :
+              field.secret ? <SecretInput fullWidth disabled={!canEdit} label={field.label} value={config[field.key] ?? ''}
               onChange={value => handleConfigChange(field.key, value)} helperText={field.helper} /> :
               <TextField fullWidth disabled={!canEdit} label={field.label} value={config[field.key] ?? ''} type={field.number ? 'number' : 'text'}
                 onChange={event => handleConfigChange(field.key, field.number && event.target.value !== '' ? Number(event.target.value) : event.target.value)} helperText={field.helper} />}

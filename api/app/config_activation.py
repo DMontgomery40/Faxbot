@@ -133,7 +133,8 @@ def compile_profiles(values, catalog, state):
         _validate_manifest_settings(definition.manifest.as_dict() if definition.manifest is not None else None, settings)
     profiles = {}
     for role, identity in [('outbound', values.effective_outbound), ('inbound', values.effective_inbound)]:
-        if not state['roles'][role]['enabled'] or (role == 'inbound' and not values.inbound_enabled):
+        # No provider set up for this role yet: it has no profile, as when the role is turned off.
+        if not identity or not state['roles'][role]['enabled'] or (role == 'inbound' and not values.inbound_enabled):
             continue
         definition = _effective_definition(values, catalog.get(identity))
         traits = definition.traits.as_dict()
@@ -210,6 +211,14 @@ class ConfigurationManager:
         if changes.get('inbound_enabled') is not None:
             state['roles']['inbound']['enabled'] = values.inbound_enabled
         return values, state
+
+    def apply_environment(self, expected, changes):
+        """Credentials the environment supplies at startup (config_runtime); never an HTTP path."""
+        values, state = self._patch_values(expected, changes)
+        catalog = self._catalog_for(expected, values)
+        profiles, restart = self._prepare_apply(expected, values, state, catalog)
+        return self.store.apply_environment(expected, values, restart_required=restart, providers=profiles,
+                                            plugins=state, fields=tuple(changes))
 
     def patch(self, expected, changes, *, actor):
         """Trusted internal edit; human adapters use patch_authorized."""

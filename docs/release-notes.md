@@ -8,11 +8,13 @@ This release rebuilds Faxbot's backend, delivery and self-hosted administration.
 
 - **People sign in as themselves.** Users have their own username and password; apps, scanners and phones are integrations with their own API keys. Roles, groups and mailbox access decide what each may do, and the server checks every request. The installation key (`API_KEY`) creates the [first owner](security/access-control.md#create-the-first-owner) and recovers access; it is not for daily work. See [Access control](security/access-control.md).
 - **Console sessions need HTTPS.** Browser sign-in works over HTTPS or on the same computer. Plain HTTP works only when you set `FAXBOT_ALLOW_INSECURE_HTTP_SESSIONS=true` on a private network you control. API keys work over any connection. See [HTTPS and plain HTTP](security/authentication.md#https-and-plain-http).
-- **Settings live in the installation.** `.env` is read only when a new installation starts for the first time. After that, change settings on the console's [Settings](admin-console/settings.md) screen or with `faxbot settings`. When a change waits for a restart, stop every API process, start again, and check that nothing is waiting.
+- **Settings live in the installation.** `.env` is read only when a new installation starts for the first time, except credentials. After that, change settings on the console's [Settings](admin-console/settings.md) screen or with `faxbot settings`. When a change waits for a restart, stop every API process, start again, and check that nothing is waiting.
+- **Credentials from .env.** Provider keys, passwords and secrets in `.env` are read at every start and are the values in force; the console shows them as **Set in .env**. Carrier names such as `HUMBLEFAX_API_ACCESS_KEY` and `TELNYX_PASS` are accepted. See [Credentials from .env](admin-console/settings.md#credentials-from-env).
 - **Delivery routes and costs.** Add outbound routes, rate cards and destination preferences. Faxbot ranks routes by estimated price and delivery history, records each attempt, and keeps unknown charges unknown. See [Delivery routes](operations/delivery-routes.md).
 - **Intake and the Inbox.** Every received document goes into one intake queue, and email delivery sends the PDF to the inboxes staff already use. The console's **Inbox** shows each fax with its email delivery and a retry action. An uncertain email outcome waits for a person. See [Intake](operations/intake.md).
 - **Direct delivery.** Verified partner installations exchange encrypted original PDFs and signed receipts, with ordinary fax as the fallback. See [Direct delivery](operations/direct-delivery.md).
 - **Your own SIP trunk.** Connect a carrier SIP trunk (Telnyx first) to the built-in Asterisk engine and fax over T.38, with a record of every call. A live carrier call has not been tested yet. See [SIP trunk](setup/sip-trunk.md).
+- **No provider until you choose one.** An upgraded installation that never set `FAX_BACKEND` keeps using Phaxio; a new installation starts with no provider until you choose one. Sending is refused with "No fax provider set up yet." until then.
 - **One destination per fax, in E.164.** Faxbot reads national numbers for the installation country (`FAX_DEFAULT_COUNTRY`, UK and US) and stores the full international number on the job.
 - **A command line for everything.** `faxbot` covers the console's tasks. With Faxbot stopped, `faxbot admin` shows the installation's state, upgrades its database, recovers owner access, and makes and restores backups. See [Command line](operations/cli.md).
 - **Docker Compose.** `.env` is optional, so a new installation starts with defaults. The MCP containers no longer receive the installation key.
@@ -41,7 +43,7 @@ This release rebuilds Faxbot's backend, delivery and self-hosted administration.
 
 1. Stop every Faxbot API process that uses the installation: all workers and all containers.
 2. Back up. An installation from an earlier release has no installation key yet, so copy its database and data folder yourself.
-3. Run `faxbot admin migrate` with the new version.
+3. Run `faxbot admin migrate` with the new version. An upgraded installation that never set `FAX_BACKEND` keeps using Phaxio; a new installation starts with no provider until you choose one.
 4. Start Faxbot, sign in with the installation key, and create the first owner.
 5. Approve or replace keys waiting for review, and issue new keys for apps that open received documents.
 6. Make a fresh backup with `faxbot admin backup`.

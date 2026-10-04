@@ -20,6 +20,11 @@ class ConfigurationValueError(ValueError):
         super().__init__("Invalid configuration fields: " + fields)
 
 
+# Credentials read from the environment at every start (config_runtime). API_KEY keeps
+# its first-start and owner-recovery rules; DATABASE_URL changes need a datastore transfer.
+ENVIRONMENT_CREDENTIAL_EXCLUSIONS = frozenset({"api_key", "database_url"})
+ENVIRONMENT_MANAGED_REFUSAL = "This key is set in .env. Change it there and restart Faxbot."
+
 # Fax numbers in settings are saved in E.164; national input uses the country.
 _NUMBER_FIELDS = frozenset({"direct_fax_number", "sip_trunk_caller_id", "sip_trunk_dids",
                             "signalwire_fax_from_e164"})
@@ -33,7 +38,8 @@ class ConfigurationValues(BaseModel):
     fax_disabled: bool = Field(False, validation_alias='FAX_DISABLED')
     api_key: str = Field('', validation_alias='API_KEY', repr=False, json_schema_extra={'secret': True})
     require_api_key: bool = Field(False, validation_alias='REQUIRE_API_KEY')
-    fax_backend: str = Field('phaxio', validation_alias='FAX_BACKEND', json_schema_extra={'patch_name': 'backend'})
+    # Empty means no fax provider is set up yet: a new installation sends and receives nothing until one is chosen.
+    fax_backend: str = Field('', validation_alias='FAX_BACKEND', json_schema_extra={'patch_name': 'backend'})
     outbound_backend: str = Field('', validation_alias='FAX_OUTBOUND_BACKEND')
     inbound_backend: str = Field('', validation_alias='FAX_INBOUND_BACKEND')
     ami_host: str = Field('asterisk', validation_alias='ASTERISK_AMI_HOST')
@@ -57,7 +63,8 @@ class ConfigurationValues(BaseModel):
     sip_trunk_port: int = Field(0, validation_alias='SIP_TRUNK_PORT', ge=0, le=65535)
     sip_trunk_transport: str = Field('', validation_alias='SIP_TRUNK_TRANSPORT', pattern=r'^(?:|udp|tcp|tls)$')
     sip_trunk_username: str = Field('', validation_alias='SIP_TRUNK_USERNAME', pattern=r'^[A-Za-z0-9_.+-]{0,128}$')
-    sip_trunk_password: str = Field('', validation_alias='SIP_TRUNK_PASSWORD', repr=False, json_schema_extra={'secret': True},
+    sip_trunk_password: str = Field('', validation_alias=AliasChoices('SIP_TRUNK_PASSWORD', 'TELNYX_SIP_PASSWORD', 'TELNYX_PASS'),
+                                    repr=False, json_schema_extra={'secret': True},
                                     pattern=r'^(?:[!-:<-\[\]-~](?:[ !-:<-\[\]-~]{0,126}[!-:<-\[\]-~])?)?$')
     sip_trunk_outbound_proxy: str = Field('', validation_alias='SIP_TRUNK_OUTBOUND_PROXY',
                                           pattern=r'^(?:[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?(?::[0-9]{1,5})?)?$')
@@ -91,8 +98,10 @@ class ConfigurationValues(BaseModel):
     documo_api_key: str = Field('', validation_alias='DOCUMO_API_KEY', repr=False, json_schema_extra={'secret': True})
     documo_base_url: str = Field('https://api.documo.com', validation_alias='DOCUMO_BASE_URL')
     documo_use_sandbox: bool = Field(False, validation_alias='DOCUMO_SANDBOX')
-    humblefax_access_key: str = Field('', validation_alias='HUMBLEFAX_ACCESS_KEY', repr=False, json_schema_extra={'secret': True})
-    humblefax_secret_key: str = Field('', validation_alias='HUMBLEFAX_SECRET_KEY', repr=False, json_schema_extra={'secret': True})
+    humblefax_access_key: str = Field('', validation_alias=AliasChoices('HUMBLEFAX_ACCESS_KEY', 'HUMBLEFAX_API_ACCESS_KEY'),
+                                      repr=False, json_schema_extra={'secret': True})
+    humblefax_secret_key: str = Field('', validation_alias=AliasChoices('HUMBLEFAX_SECRET_KEY', 'HUMBLEFAX_API_SECRET_KEY'),
+                                      repr=False, json_schema_extra={'secret': True})
     humblefax_from_number: str = Field('', validation_alias='HUMBLEFAX_FROM_NUMBER', pattern=r'^(?:\+1[2-9][0-9]{9}|1?[2-9][0-9]{9})?$')
     fax_header: str = Field('Faxbot', validation_alias='FAX_HEADER')
     fax_station_id: str = Field('+10000000000', validation_alias='FAX_LOCAL_STATION_ID')
@@ -215,6 +224,29 @@ class ConfigurationValues(BaseModel):
         values._explicit_keys = frozenset(environment.keys()) & cls.environment_keys()
         return values
 
+    @classmethod
+    def environment_credentials(cls, environment: Mapping[str, str]) -> dict[str, tuple[str, str]]:
+        """Credentials the environment supplies, as {field: (variable, value)}.
+
+        Every setting marked secret except API_KEY and DATABASE_URL. An empty
+        variable supplies nothing. Sinch's optional Phaxio fallback is not an
+        explicit Sinch credential.
+        """
+        result = {}
+        for name, field in cls.model_fields.items():
+            if name in ENVIRONMENT_CREDENTIAL_EXCLUSIONS or not (field.json_schema_extra or {}).get("secret"):
+                continue
+            alias = field.validation_alias
+            choices = list(alias.choices if isinstance(alias, AliasChoices) else [alias])
+            if name in {"sinch_api_key", "sinch_api_secret"}:
+                choices = choices[:1]
+            for key in choices:
+                value = environment.get(key)
+                if isinstance(value, str) and value != "":
+                    result[name] = (key, value)
+                    break
+        return result
+
     def to_environment(self, *, redact_secrets: bool = False) -> dict[str, str]:
         """Complete literal values; callers choose private or redacted output.
 
@@ -277,13 +309,16 @@ class ConfigurationValues(BaseModel):
         return stored_number(value, country=country) if value.strip() else value
 
     def validate_provider_selection(self, registry: Mapping[str, object]) -> None:
-        """Require explicit selections in the caller's validated provider registry."""
+        """Require explicit selections in the caller's validated provider registry.
+
+        An empty selection means no provider is set up for that role yet.
+        """
         known = set(registry) - {"_schema"}
         issues = []
         for key, selected in (("FAX_BACKEND", self.fax_backend),
                               ("FAX_OUTBOUND_BACKEND", self.effective_outbound),
                               ("FAX_INBOUND_BACKEND", self.effective_inbound)):
-            if selected not in known:
+            if selected and selected not in known:
                 issues.append({"field": key, "reason": "unknown_provider"})
         if issues:
             raise ConfigurationValueError(issues)

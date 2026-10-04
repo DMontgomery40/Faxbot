@@ -13,6 +13,7 @@ import {
   Switch,
   FormControlLabel,
   Stack,
+  Link,
 } from '@mui/material';
 import {
   Refresh as RefreshIcon,
@@ -30,6 +31,7 @@ import {
 import AdminAPIClient, { configurationWriteRejected, isForbidden, plainRefusal } from '../api/client';
 import { DeliverySettingsSections, EMAIL_DELIVERY_SECTION, deliveryEditorValues } from './delivery/DeliverySettings';
 import { DEFAULT_DOCS_BASE, docsLink } from '../docsLinks';
+import EnvSetField, { ENV_SET_HELP, environmentManaged } from './common/EnvSetField';
 import type { ConfigurationWriteResult, Settings as SettingsType, SettingsPatch } from '../api/types';
 import { ResponsiveSettingItem, ResponsiveSettingSection } from './common/ResponsiveSettingItem';
 import { ResponsiveTextField, ResponsiveFormSection } from './common/ResponsiveFormFields';
@@ -172,6 +174,17 @@ function Settings({ client, canWrite = false, focus, onFocused }: SettingsProps)
   const loadedOutbound = settings?.hybrid?.outbound_backend ?? settings?.backend.type ?? '';
   const loadedInbound = settings?.hybrid?.inbound_backend ?? settings?.backend.type ?? '';
   const effectiveOutbound = form.outbound_backend || form.backend || loadedOutbound;
+  // Credentials supplied by .env: shown as set there, never editable or revealable here.
+  const envSet = environmentManaged(settings);
+  const envField = (field: string) => (envSet.has(field) ? {
+    onChange: undefined,
+    showCurrentValue: false,
+    helperText: ENV_SET_HELP,
+    renderControl: ({ id, labelledBy, describedBy }: { id: string; labelledBy: string; describedBy?: string }) => (
+      <EnvSetField id={id} fullWidth size="small" withHelp={false}
+        inputProps={{ 'aria-labelledby': labelledBy, 'aria-describedby': describedBy }} />
+    ),
+  } : {});
   const effectiveInbound = form.inbound_backend || form.backend || loadedInbound;
   const providerSelected = (provider: string) => effectiveOutbound === provider || effectiveInbound === provider;
   const changedFields = Object.keys(form).filter((field) => form[field] !== loadedForm[field]);
@@ -427,12 +440,13 @@ function Settings({ client, canWrite = false, focus, onFocused }: SettingsProps)
             <ResponsiveSettingItem
               icon={<CloudIcon />}
               label="Default Provider"
-              value={settings.backend.type.toUpperCase()}
+              value={settings.backend.type ? settings.backend.type.toUpperCase() : 'Not set up'}
               editValue={form.backend ?? settings.backend.type}
               onChange={(value) => handleForm('backend', value)}
               helperText="Used for sending and receiving unless an override is set below."
               type="select"
               options={[
+                { value: '', label: 'No provider' },
                 { value: 'phaxio', label: 'Phaxio' },
                 { value: 'sinch', label: 'Sinch' },
                 { value: 'signalwire', label: 'SignalWire' },
@@ -446,13 +460,13 @@ function Settings({ client, canWrite = false, focus, onFocused }: SettingsProps)
             <ResponsiveSettingItem
               icon={<CloudIcon />}
               label="Outbound Provider"
-              value={loadedOutbound.toUpperCase()}
+              value={loadedOutbound ? loadedOutbound.toUpperCase() : 'Not set up'}
               editValue={form.outbound_backend ?? ''}
               helperText="Provider used to send faxes."
               onChange={(value) => handleForm('outbound_backend', value)}
               type="select"
               options={[
-                { value: '', label: `Inherit default provider (${String(form.backend)})` },
+                { value: '', label: form.backend ? `Inherit default provider (${String(form.backend)})` : 'Inherit default provider (none yet)' },
                 { value: 'phaxio', label: 'Phaxio (Cloud)' },
                 { value: 'sinch', label: 'Sinch (Cloud)' },
                 { value: 'signalwire', label: 'SignalWire (Cloud)' },
@@ -463,6 +477,12 @@ function Settings({ client, canWrite = false, focus, onFocused }: SettingsProps)
               ]}
               showCurrentValue={!pendingRestart}
             />
+            {!effectiveOutbound && (
+              <Typography variant="body2" sx={{ px: 2 }} data-testid="no-provider">
+                No fax provider set up yet.{' '}
+                <Link href={docsLink('providers', docsBase)} target="_blank" rel="noreferrer">Provider setup</Link>
+              </Typography>
+            )}
             {effectiveOutbound === 'humblefax' && (
               <Typography variant="body2" sx={{ px: 2 }} data-testid="humblefax-countries">
                 HumbleFax sends only to US and Canadian numbers.
@@ -472,13 +492,13 @@ function Settings({ client, canWrite = false, focus, onFocused }: SettingsProps)
             <ResponsiveSettingItem
               icon={<CloudIcon />}
               label="Inbound Provider"
-              value={loadedInbound.toUpperCase()}
+              value={loadedInbound ? loadedInbound.toUpperCase() : 'Not set up'}
               editValue={form.inbound_backend ?? ''}
               helperText="Provider used to receive faxes: SIP/Asterisk for your own phone system, or a cloud provider."
               onChange={(value) => handleForm('inbound_backend', value)}
               type="select"
               options={[
-                { value: '', label: `Inherit default provider (${String(form.backend)})` },
+                { value: '', label: form.backend ? `Inherit default provider (${String(form.backend)})` : 'Inherit default provider (none yet)' },
                 { value: 'phaxio', label: 'Phaxio (Webhook)' },
                 { value: 'sinch', label: 'Sinch (Webhook)' },
                 { value: 'sip', label: 'SIP/Asterisk (Internal)' }
@@ -622,6 +642,7 @@ function Settings({ client, canWrite = false, focus, onFocused }: SettingsProps)
                       onChange={(value) => handleForm('phaxio_api_key', value)}
                       type="password"
                       showCurrentValue={!pendingRestart && (!!settings.phaxio.api_key)}
+                      {...envField('phaxio_api_key')}
                     />
                     
                     <ResponsiveSettingItem
@@ -634,6 +655,7 @@ function Settings({ client, canWrite = false, focus, onFocused }: SettingsProps)
                       onChange={(value) => handleForm('phaxio_api_secret', value)}
                       type="password"
                       showCurrentValue={!pendingRestart && (!!settings.phaxio.api_secret)}
+                      {...envField('phaxio_api_secret')}
                     />
                     
                     <ResponsiveSettingItem
@@ -646,6 +668,7 @@ function Settings({ client, canWrite = false, focus, onFocused }: SettingsProps)
                       onChange={(value) => handleForm('phaxio_callback_token', value)}
                       type="password"
                       showCurrentValue={!pendingRestart && !!settings.phaxio.callback_token}
+                      {...envField('phaxio_callback_token')}
                     />
 
                     <ResponsiveSettingItem
@@ -686,6 +709,7 @@ function Settings({ client, canWrite = false, focus, onFocused }: SettingsProps)
                       onChange={(value) => handleForm('documo_api_key', value)}
                       type="password"
                       showCurrentValue={!pendingRestart && (settings?.documo?.configured)}
+                      {...envField('documo_api_key')}
                     />
                     
                     {textField('Documo Base URL', 'documo_base_url')}
@@ -721,6 +745,7 @@ function Settings({ client, canWrite = false, focus, onFocused }: SettingsProps)
                       onChange={(value) => handleForm('humblefax_access_key', value)}
                       type="password"
                       showCurrentValue={!pendingRestart && (settings?.humblefax?.configured)}
+                      {...envField('humblefax_access_key')}
                     />
                     <ResponsiveSettingItem
                       icon={getStatusIcon(!!settings?.humblefax?.configured)}
@@ -732,6 +757,7 @@ function Settings({ client, canWrite = false, focus, onFocused }: SettingsProps)
                       onChange={(value) => handleForm('humblefax_secret_key', value)}
                       type="password"
                       showCurrentValue={!pendingRestart && (settings?.humblefax?.configured)}
+                      {...envField('humblefax_secret_key')}
                     />
                     {textField('HumbleFax From Number', 'humblefax_from_number', 'Optional. 10 digits, or 11 digits starting with 1. Leave empty to use the account default number.')}
                   </ResponsiveSettingSection>
@@ -765,6 +791,7 @@ function Settings({ client, canWrite = false, focus, onFocused }: SettingsProps)
                       onChange={(value) => handleForm('ami_password', value)}
                       type="password"
                       showCurrentValue={!pendingRestart && (!settings.sip.ami_password_is_default)}
+                      {...envField('ami_password')}
                     />
                     
                     <ResponsiveSettingItem
@@ -914,6 +941,7 @@ function Settings({ client, canWrite = false, focus, onFocused }: SettingsProps)
                   placeholder="ASTERISK_INBOUND_SECRET"
                   type="password"
                   showCurrentValue={false}
+                  {...envField('asterisk_inbound_secret')}
                 />
                 <Box sx={{ display: 'flex', gap: 1, mt: 1, flexWrap: 'wrap' }}>
                   <Button 
@@ -1017,6 +1045,7 @@ function Settings({ client, canWrite = false, focus, onFocused }: SettingsProps)
                   placeholder="SINCH_INBOUND_BASIC_PASS"
                   type="password"
                   showCurrentValue={false}
+                  {...envField('sinch_inbound_basic_pass')}
                 />
                 
                 <ResponsiveSettingItem
@@ -1029,6 +1058,7 @@ function Settings({ client, canWrite = false, focus, onFocused }: SettingsProps)
                   placeholder="SINCH_INBOUND_HMAC_SECRET"
                   type="password"
                   showCurrentValue={false}
+                  {...envField('sinch_inbound_hmac_secret')}
                 />
               </Box>
             )}
@@ -1076,6 +1106,7 @@ function Settings({ client, canWrite = false, focus, onFocused }: SettingsProps)
                 placeholder="SIGNALWIRE_API_TOKEN"
                 type="password"
                 showCurrentValue={!pendingRestart && (!!settings.signalwire?.api_token)}
+                {...envField('signalwire_api_token')}
               />
               
               <ResponsiveSettingItem

@@ -20,7 +20,7 @@ Storage and database
 
 Configuration and activation
 
-- Environment variables and the legacy plugin JSON file are read once, when a new installation starts for the first time. Keep container ports, mounts and telephony service settings in the deployment configuration. With Docker Compose, `.env` is optional.
+- Environment variables and the legacy plugin JSON file are read once, when a new installation starts for the first time, except credentials: provider keys, passwords and secrets in `.env` are read at every start and are the values in force (see [Credentials from .env](admin-console/settings.md#credentials-from-env)). Keep container ports, mounts and telephony service settings in the deployment configuration. With Docker Compose, `.env` is optional.
 - On an existing installation, change settings on the admin console's Settings screen and apply.
 - When Settings asks for a restart, stop every API process and start the installation again, then load Settings to confirm nothing is pending. Restarting one process while others keep running, or using the reload button, is not enough.
 - Back up the database, the installation key file and stored documents together; the exported `.env` template is not a backup. See [Back up and restore](#back-up-and-restore).
@@ -68,7 +68,7 @@ Back up before `migrate`:
 
     With PostgreSQL, also take a `pg_dump` of the database.
 
-`faxbot admin migrate` upgrades the database in place. Stored faxes, documents, mailboxes, number routes and API keys stay as they were. Starting the new version would also upgrade the database, but running `migrate` first shows the result before anything serves requests.
+`faxbot admin migrate` upgrades the database in place. Stored faxes, documents, mailboxes, number routes and API keys stay as they were. An upgraded installation that never set `FAX_BACKEND` keeps using Phaxio; a new installation starts with no provider until you choose one. Starting the new version would also upgrade the database, but running `migrate` first shows the result before anything serves requests.
 
 After upgrading an installation from before October 2026:
 
@@ -100,7 +100,7 @@ docker compose run --rm --no-deps -v "$PWD/backups:/backups" api faxbot admin re
 docker compose up -d api
 ```
 
-The restored installation keeps its own installation key, users, keys, received faxes and settings, including provider credentials; `API_KEY` in `.env` does not replace them. People sign in with their usual passwords. Restore refuses a backup whose files do not match its manifest, and it does not overwrite an existing installation unless you add `--force`. Restore to the same database and data folder locations the installation used; with the default Compose file that is `/faxdata`.
+The restored installation keeps its own installation key, users, keys, received faxes and settings, including provider credentials. `API_KEY` in `.env` does not replace the restored installation key; credentials set in `.env` are applied at start, as on every start. People sign in with their usual passwords. Restore refuses a backup whose files do not match its manifest, and it does not overwrite an existing installation unless you add `--force`. Restore to the same database and data folder locations the installation used; with the default Compose file that is `/faxdata`.
 
 References
 - AWS S3 SSE‑KMS: <https://docs.aws.amazon.com/AmazonS3/latest/userguide/UsingKMSEncryption.html>

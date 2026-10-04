@@ -143,13 +143,17 @@ def test_unknown_provider_selection_cannot_fall_back_to_legacy_or_schema_metadat
     registry = {'_schema': {'version': 1}, 'phaxio': {'id': 'phaxio'}, 'sip': {'id': 'sip'}}
     known = ConfigurationValues.from_environment({'FAX_BACKEND': 'phaxio', 'FAX_OUTBOUND_BACKEND': 'sip'})
     known.validate_provider_selection(registry)
-    for selector in ('misspelled-provider', '_schema', ''):
-        field = 'FAX_OUTBOUND_BACKEND' if selector else 'FAX_BACKEND'
-        unknown = ConfigurationValues.from_environment({'FAX_BACKEND': 'phaxio', field: selector})
-        with pytest.raises(ConfigurationValueError) as error:
-            unknown.validate_provider_selection(registry)
-        assert field in {item['field'] for item in error.value.issues}
+    for selector in ('misspelled-provider', '_schema'):
+        for field in ('FAX_BACKEND', 'FAX_OUTBOUND_BACKEND'):
+            unknown = ConfigurationValues.from_environment({'FAX_BACKEND': 'phaxio', field: selector})
+            with pytest.raises(ConfigurationValueError) as error:
+                unknown.validate_provider_selection(registry)
+            assert field in {item['field'] for item in error.value.issues}
     assert known.effective_outbound == 'sip'
+    # An empty selection means no provider is set up yet; it is valid and selects nothing.
+    unset = ConfigurationValues.from_environment({})
+    unset.validate_provider_selection(registry)
+    assert (unset.fax_backend, unset.effective_outbound, unset.effective_inbound) == ('', '', '')
 
 
 def test_masks_returned_for_short_or_newline_ending_secrets_cannot_be_saved_as_credentials():

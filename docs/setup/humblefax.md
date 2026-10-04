@@ -17,7 +17,14 @@ The builtin HumbleFax adapter uploads prepared PDFs directly and polls the origi
 5. Apply the changes. If Faxbot asks for a restart, stop every API process and start the installation again, then confirm that no restart is pending.
 6. Use **Send** with a synthetic document and a controlled destination. Disabled sending creates permanently held jobs; real transmission requires sending to be enabled. Inspect **Jobs** and the HumbleFax sent history for the result and document fidelity.
 
-Setup does not authenticate HumbleFax keys. Readiness checks local configuration, not account access or delivery. The key pair must permit both sending faxes and reading sent fax details. When a new installation starts for the first time, it can read `FAX_OUTBOUND_BACKEND=humblefax`, `HUMBLEFAX_ACCESS_KEY`, `HUMBLEFAX_SECRET_KEY` and `HUMBLEFAX_FROM_NUMBER` from the environment. After that, change them in Settings; later `.env` edits are not imported.
+Setup does not authenticate HumbleFax keys. Readiness checks local configuration, not account access or delivery. The key pair must permit both sending faxes and reading sent fax details. When a new installation starts for the first time, it reads `FAX_OUTBOUND_BACKEND=humblefax` and `HUMBLEFAX_FROM_NUMBER` from the environment; change them in Settings after that. The keys are read from the environment at every start:
+
+| Setting | Also accepted |
+| --- | --- |
+| `HUMBLEFAX_ACCESS_KEY` | `HUMBLEFAX_API_ACCESS_KEY` |
+| `HUMBLEFAX_SECRET_KEY` | `HUMBLEFAX_API_SECRET_KEY` |
+
+While a key is set in `.env`, Settings shows it as **Set in .env**; change it there and restart Faxbot.
 
 ## Destinations
 

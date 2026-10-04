@@ -110,7 +110,8 @@ def _acquisition(request):
 def _require_route(provider, path):
     if not settings.inbound_enabled:
         raise HTTPException(404, detail='Inbound not enabled')
-    if os.getenv('FAX_INBOUND_BACKEND') and active_inbound() != provider:
+    # With no inbound provider set up yet, no provider's receiving route is active.
+    if (os.getenv('FAX_INBOUND_BACKEND') or not active_inbound()) and active_inbound() != provider:
         audit_event('inbound_route_blocked', route=path, active_inbound=active_inbound(),
                     inbound_enabled=settings.inbound_enabled)
         raise HTTPException(404, detail='Inbound route not active for current backend')

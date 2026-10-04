@@ -2,6 +2,8 @@
 
 Pick your backend and environment, then deploy.
 
+A new installation starts with no fax provider: the console, `faxbot health` and `/health/ready` say "No fax provider set up yet." and sending is refused until you choose one in Settings or set `FAX_BACKEND` before the first start. An upgraded installation that never set `FAX_BACKEND` keeps using Phaxio.
+
 <div class="grid cards" markdown>
 
 - :material-fax: **Phaxio (Cloud)**  

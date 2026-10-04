@@ -129,6 +129,63 @@ describe('Settings direct delivery', () => {
   });
 });
 
+describe('A new installation with no fax provider', () => {
+  const noProvider = () => settingsFixture((data) => {
+    data.backend.type = '';
+    data.hybrid = { outbound_backend: '', inbound_backend: '', outbound_override: '', inbound_override: '' };
+  });
+
+  it('says so on Settings, with the provider setup link', async () => {
+    settingsHandlers(noProvider());
+    render(<Settings client={client()} />);
+    const notice = await screen.findByTestId('no-provider');
+    expect(notice.textContent).toBe('No fax provider set up yet. Provider setup');
+    expect(within(notice).getByRole('link', { name: 'Provider setup' }).getAttribute('href')).toMatch(/\/setup\/$/);
+    expect(screen.queryByText(/Inherit default provider \(\)/)).toBeNull();
+  });
+
+  it('says so in the Setup Wizard', async () => {
+    settingsHandlers(noProvider());
+    server.use(http.get('/plugins', () => HttpResponse.json({ items: [] })));
+    render(<SetupWizard client={client()} />);
+    expect((await screen.findByTestId('no-provider')).textContent).toBe('No fax provider set up yet. Provider setup');
+    expect(screen.queryByText(/Outbound: ·/)).toBeNull();
+  });
+});
+
+describe('Credentials set in .env', () => {
+  const fromEnvironment = (names: string[]) => settingsFixture((data) => {
+    data.backend.type = 'humblefax';
+    data.hybrid = { outbound_backend: 'humblefax', inbound_backend: 'humblefax', outbound_override: '', inbound_override: '' };
+    data._meta.env_managed = names;
+  });
+
+  it('shows them as set in .env on Settings, disabled and without a reveal button', async () => {
+    settingsHandlers(fromEnvironment(['humblefax_access_key', 'intake_smtp_password']));
+    render(<Settings client={client()} />);
+    const fields = await screen.findAllByDisplayValue('Set in .env');
+    expect(fields.length).toBeGreaterThanOrEqual(2);
+    for (const field of fields) expect((field as HTMLInputElement).disabled).toBe(true);
+    expect(screen.getAllByText('Change it in .env and restart Faxbot.').length).toBeGreaterThanOrEqual(2);
+    expect(screen.queryByRole('button', { name: /Show Email password/ })).toBeNull();
+    // The secret key is not set in .env and stays editable.
+    expect(screen.getAllByPlaceholderText('HUMBLEFAX_SECRET_KEY').every((input) => !(input as HTMLInputElement).disabled)).toBe(true);
+    expect(screen.queryAllByPlaceholderText('HUMBLEFAX_ACCESS_KEY')).toHaveLength(0);
+  });
+
+  it('shows them as set in .env in the Setup Wizard', async () => {
+    settingsHandlers(fromEnvironment(['humblefax_access_key']));
+    server.use(http.get('/plugins', () => HttpResponse.json({ items: [] })));
+    render(<SetupWizard client={client()} />);
+    await screen.findByText('Choose Providers', { selector: 'h6' });
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+    const access = await screen.findByLabelText('Access Key');
+    expect((access as HTMLInputElement).value).toBe('Set in .env');
+    expect((access as HTMLInputElement).disabled).toBe(true);
+    expect((screen.getByLabelText('Secret Key') as HTMLInputElement).disabled).toBe(false);
+  });
+});
+
 describe('Settings outbound provider limits', () => {
   it('says HumbleFax sends only to US and Canadian numbers when it sends faxes', async () => {
     settingsHandlers(settingsFixture((data) => {

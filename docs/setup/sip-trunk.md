@@ -77,7 +77,7 @@ If you manage settings with an environment file instead of the console, set the 
 | `SIP_TRUNK_PRESET` | `telnyx`, `signalwire`, `sinch`, `anveo`, `flowroute` or `custom` |
 | `SIP_TRUNK_AUTH` | `registration` (username and password) or `ip` |
 | `SIP_TRUNK_HOST`, `SIP_TRUNK_PORT`, `SIP_TRUNK_TRANSPORT` | Leave empty to use the preset's server, port and transport |
-| `SIP_TRUNK_USERNAME`, `SIP_TRUNK_PASSWORD` | Carrier credentials; the password is stored as a secret |
+| `SIP_TRUNK_USERNAME`, `SIP_TRUNK_PASSWORD` | Carrier credentials; the password is stored as a secret. The password is read from the environment at every start, also as `TELNYX_SIP_PASSWORD` or `TELNYX_PASS` |
 | `SIP_TRUNK_OUTBOUND_PROXY` | Only if the carrier asks for one |
 | `SIP_TRUNK_CALLER_ID` | Your carrier-authorized number, such as `+15551234567` |
 | `SIP_TRUNK_DIDS` | Your fax numbers on this trunk, separated by commas |
