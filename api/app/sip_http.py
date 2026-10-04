@@ -381,7 +381,7 @@ async def status(request: Request, identity=Depends(require_permission('provider
     restarting = bool(configured and _restarting())
     handover = await run_lifecycle_step(lambda: _handover(values, managed, last)) if configured else None
     observed = await run_lifecycle_step(lambda: _observed(_records(request))) if configured else None
-    off = await run_lifecycle_step(lambda: sip_fax_mode.reason_for(values)) if configured else None
+    off = await run_lifecycle_step(lambda: sip_fax_mode.reason_for(values, _records(request))) if configured else None
     if configured:
         summary['advertised_address'] = await run_lifecycle_step(lambda: sip_trunk.applied_public_address(values)) or None
     message = _message(summary, asterisk, applied, ports_text, transport, managed=managed, in_use=in_use,
@@ -445,6 +445,8 @@ async def apply(request: Request, identity=Depends(require_permission('providers
         if values.sip_trunk_auth == 'ip' and network and network.behind_nat:
             raise HTTPException(400, detail=BEHIND_ROUTER)
     runtime = _runtime(request)
+    # T.38 already off after a call that got no fax data back: that call is the reason, not a person's choice.
+    await run_lifecycle_step(lambda: sip_fax_mode.derive(values, _records(request)))
     has_calls = await run_lifecycle_step(lambda: _last_call(_records(request)) is not None)
     if sip_fax_mode.network_prefers_audio(values, network, has_calls=has_calls):
         # A new Telnyx trunk on a network that changes port numbers: T.38 data was seen not to come back there.

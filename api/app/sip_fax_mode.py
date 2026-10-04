@@ -42,13 +42,56 @@ def read(values):
     return record if isinstance(record, dict) and record.get('mode') in ('t38', 'audio') else None
 
 
-def write(values, mode, reason, at=None):
+def write(values, mode, reason, at=None, *, derived=False):
+    """Record a decision; ``at`` is a datetime or an ISO time from a call record."""
     path = record_path(values)
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    record = {'mode': mode, 'reason': reason,
-              'at': (at or datetime.now(timezone.utc)).replace(tzinfo=None).isoformat(timespec='seconds') + 'Z'}
+    if isinstance(at, str):
+        when = at if at.endswith('Z') else at + 'Z'
+    else:
+        when = (at or datetime.now(timezone.utc)).replace(tzinfo=None).isoformat(timespec='seconds') + 'Z'
+    record = {'mode': mode, 'reason': reason, 'at': when}
+    if derived:
+        record['derived'] = True
     sip_trunk._write_private(path, json.dumps(record) + '\n')
     return record
+
+
+def _call_records():
+    """The call records of the running installation, when its fax engine connection is attached."""
+    from . import sip_calls
+    return sip_calls._current
+
+
+def derive(values, records=None):
+    """T.38 is off with no record of why: read the reason from the call history, once.
+
+    When the most recent T.38 call (either direction) got no fax data back, no
+    T.38 call has succeeded since, so that call is why audio fax is in use; it
+    is recorded as Faxbot's reason, marked as derived, with that call's end
+    time. Anything else leaves no record (a person's own choice).
+    """
+    if values.sip_t38_enabled or read(values) is not None or not sip_trunk.configured(values):
+        return None
+    records = records or _call_records()
+    if records is None:
+        return None
+    cursor = None
+    for _ in range(4):
+        try:
+            page = records.page(cursor=cursor, limit=50)
+        except Exception:
+            return None
+        for call in page['items']:
+            if call.get('t38') != 'yes':
+                continue
+            if call.get('verdict') != 'no_t38_data_back':
+                return None
+            return write(values, 'audio', NO_DATA_BACK, call.get('ended_at') or call.get('started_at'), derived=True)
+        cursor = page.get('next_cursor')
+        if not cursor:
+            return None
+    return None
 
 
 def off_sentence(reason, day=''):
@@ -62,11 +105,11 @@ def off_sentence(reason, day=''):
     return None
 
 
-def reason_for(values):
+def reason_for(values, records=None):
     """Why new calls use audio fax ({reason, at}), or None when T.38 is on or a person turned it off."""
     if values.sip_t38_enabled:
         return None
-    record = read(values)
+    record = read(values) or derive(values, records)
     if record and record['mode'] == 'audio' and record.get('reason') in (NO_DATA_BACK, NETWORK):
         return {'reason': record['reason'], 'at': record.get('at')}
     return None

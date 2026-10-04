@@ -129,3 +129,42 @@ def test_a_t38_call_with_no_fax_data_back_switches_new_calls_to_audio_without_re
     assert sent == []
     # Once audio fax is in use, a second such call changes nothing.
     assert asyncio.run(sip_fax_mode.switch_to_audio(runtime, sip_fax_mode.NO_DATA_BACK)) is None
+
+
+NO_DATA_INBOUND = {'UniqueID': '1791075343.12', 'Caller': '+13035550100', 'DID': '+15555550100', 'Status': 'FAILED',
+                   'Error': 'The call dropped prematurely', 'Pages': '0', 'Mode': 'T38', 'Answered': '1791075343',
+                   'Ended': '1791075357'}
+
+
+def test_t38_turned_off_after_a_no_data_call_before_any_record_shows_that_call_as_the_reason(client, network):
+    from app import sip_calls
+    network['result'] = KEEPS_PORTS
+    runtime = client.app.state.configuration_runtime
+    sip_calls.SipCallRecords(runtime.manager.store.engine).record_inbound_event(NO_DATA_INBOUND)
+    # A person turned T.38 off right after that call, before Faxbot kept its own record.
+    _set_t38(client, False)
+    status = client.get('/admin/sip/status', headers=ADMIN).json()
+    assert status['t38_off_reason'] == 'no_data_back'
+    assert status['t38_off_at'] == '2026-10-04T00:55:57Z'
+    values = runtime.manager.store.read().active.values
+    assert sip_fax_mode.read(values) == {'mode': 'audio', 'reason': 'no_data_back', 'at': '2026-10-04T00:55:57Z',
+                                         'derived': True}
+    # A later Apply keeps that reason instead of recording a person's choice.
+    assert client.post('/admin/sip/apply', headers=ADMIN).status_code == 200
+    assert client.get('/admin/settings', headers=ADMIN).json()['sip']['trunk']['t38_off_reason'] == 'no_data_back'
+
+
+def test_a_t38_fax_that_went_through_since_leaves_no_derived_reason(client, network):
+    from app import sip_calls
+    network['result'] = KEEPS_PORTS
+    runtime = client.app.state.configuration_runtime
+    records = sip_calls.SipCallRecords(runtime.manager.store.engine)
+    records.record_inbound_event(NO_DATA_INBOUND)
+    records.record_inbound({'started_at': '1791079000', 'answered_at': '1791079001', 'ended_at': '1791079060',
+                            'did': '+15555550100', 'caller': '+13035550100', 't38': True, 'pages': 2},
+                           call_id='1791079000.40', inbound_fax_id='c' * 32, fax_status='SUCCESS')
+    _set_t38(client, False)
+    assert client.get('/admin/sip/status', headers=ADMIN).json()['t38_off_reason'] is None
+    assert client.post('/admin/sip/apply', headers=ADMIN).status_code == 200
+    values = runtime.manager.store.read().active.values
+    assert sip_fax_mode.read(values)['reason'] == 'chosen'
