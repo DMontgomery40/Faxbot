@@ -58,7 +58,14 @@ jobs:
             git branch --force gh-pages origin/gh-pages
             MAIN_SHA=$(git ls-remote origin refs/heads/main | cut -f1)
             if [ "$MAIN_SHA" = "$SOURCE_SHA" ]; then
-              mike deploy --branch gh-pages --update-aliases "$SOURCE_SHA" latest
+              # An early deploy published a version literally named "latest", which
+              # stops "latest" from becoming an alias. Remove only that version, in a
+              # new gh-pages commit, so earlier history stays in Git.
+              if git show gh-pages:versions.json | python -c 'import json,sys; sys.exit(0 if any(v["version"] == "latest" for v in json.load(sys.stdin)) else 1)'; then
+                mike delete --branch gh-pages latest
+              fi
+              # Redirect aliases: GitHub Pages does not serve symlinked folders reliably.
+              mike deploy --branch gh-pages --update-aliases --alias-type=redirect "$SOURCE_SHA" latest
               mike set-default --branch gh-pages latest
             else
               mike deploy --branch gh-pages "$SOURCE_SHA"
