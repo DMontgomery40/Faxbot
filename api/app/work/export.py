@@ -19,7 +19,6 @@ import sqlalchemy as sa
 
 from ..access.types import ResourceRef
 from . import text
-from .service import WorkForbidden
 
 
 FORMAT = 'faxbot-work-evidence-1'
@@ -198,10 +197,7 @@ class EvidenceExport:
         service = self.service
         with service.access_store.transaction() as connection:
             now = service.clock()
-            try:
-                service._require(connection, actor, item_id, 'work:export', now)
-            except WorkForbidden:
-                raise
+            service._require(connection, actor, item_id, 'work:export', now)
             name = self.store.names_on(connection, [actor.principal_id]).get(actor.principal_id)
             self.store.event_on(connection, item_id, 'exported', actor_id=actor.principal_id, now=now,
                                 details={'actor_name': name, 'export_id': export_id,
