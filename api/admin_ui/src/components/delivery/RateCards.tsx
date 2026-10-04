@@ -1,12 +1,12 @@
 // Advertised provider prices Faxbot uses to estimate cost and rank routes.
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
-  Box, Button, Card, CardContent, Link, Paper, Stack, Table, TableBody, TableCell, TableContainer, TableHead,
+  Alert, Box, Button, Card, CardContent, Link, Paper, Stack, Table, TableBody, TableCell, TableContainer, TableHead,
   TableRow, TextField, Typography,
 } from '@mui/material';
 import PriceChangeIcon from '@mui/icons-material/PriceChange';
 import AdminAPIClient from '../../api/client';
-import type { RateCard } from '../../api/deliveryTypes';
+import type { PublishedPlans, RateCard } from '../../api/deliveryTypes';
 import { ConfirmDialog, EmptyState, Field, FormDialog, useSmallScreens } from '../access/AccessViews';
 import { DeliveryError, formatMoney, formatRate } from './shared';
 import { providerLabel } from '../../providerLabels';
@@ -17,7 +17,7 @@ const BILLING = [
   { value: 60, label: 'Whole minutes' },
 ];
 
-const PROVIDERS = ['sip', 'freeswitch', 'signalwire', 'phaxio', 'sinch', 'documo', 'humblefax']
+const PROVIDERS = ['sip', 'freeswitch', 'signalwire', 'phaxio', 'sinch', 'documo', 'humblefax', 'efax']
   .map((value) => ({ value, label: providerLabel(value) }));
 
 // Today in the viewer's own time zone, as YYYY-MM-DD (not the UTC date).
@@ -111,13 +111,35 @@ function CardDialog({ card, onClose, onSave, busy, error }: {
   );
 }
 
-export default function RateCards({ client, cards, canWrite, onChanged }: {
+// Sending providers in use with no published price and no card of yours, such as eFax, whose API is
+// priced by quote: one sentence on what the provider publishes, and its plan as an estimate on request.
+function usePublishedPlans(client: AdminAPIClient, cards: RateCard[], unpriced: string[]): PublishedPlans[] {
+  const [found, setFound] = useState<PublishedPlans[]>([]);
+  const wanted = unpriced.filter((id) => !cards.some((card) => card.provider_id === id && card.direction === 'outbound'));
+  const key = wanted.join(',');
+  useEffect(() => {
+    if (!key) {
+      setFound([]);
+      return undefined;
+    }
+    let current = true;
+    void Promise.all(key.split(',').map((id) => client.getPublishedPlans(id).catch(() => null)))
+      .then((items) => { if (current) setFound(items.filter((item): item is PublishedPlans => item !== null)); });
+    return () => { current = false; };
+  }, [client, key]);
+  return found;
+}
+
+export default function RateCards({ client, cards, canWrite, onChanged, unpriced = [] }: {
   client: AdminAPIClient;
   cards: RateCard[];
   canWrite: boolean;
   onChanged: () => void;
+  // Sending providers whose price Faxbot does not know.
+  unpriced?: string[];
 }) {
   const { isMobile } = useSmallScreens();
+  const published = usePublishedPlans(client, cards, unpriced);
   const [editing, setEditing] = useState<RateCard | null>(null);
   const [removing, setRemoving] = useState<RateCard | null>(null);
   const [busy, setBusy] = useState(false);
@@ -159,6 +181,17 @@ export default function RateCards({ client, cards, canWrite, onChanged }: {
 
   return (
     <Box>
+      {published.map((item) => (
+        <Alert key={item.provider_id} severity="info" sx={{ mb: 2 }} data-testid={`published-plans-${item.provider_id}`}
+          action={canWrite && item.card ? (
+            <Button color="inherit" size="small" onClick={() => { setError(null); setEditing({ ...item.card!, id: null }); }}>
+              Use a published plan as my estimate
+            </Button>
+          ) : undefined}>
+          {item.sentence}
+          {item.page_url && <> <Link href={item.page_url} target="_blank" rel="noreferrer">{item.page_label}</Link></>}
+        </Alert>
+      ))}
       {canWrite && (
         <Box mb={2}>
           <Button variant="outlined" onClick={() => { setError(null); setEditing({ ...EMPTY }); }} sx={{ borderRadius: 2 }}>Add rate card</Button>

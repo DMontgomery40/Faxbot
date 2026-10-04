@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "description": "Advertised US prices, read 2026-10-03 from each provider's own pages. cards: calls over each SIP trunk preset when Faxbot's own fax engine places or answers the call. providers: cloud fax providers' per-page or per-minute prices. plans: flat monthly plans with nothing charged per fax. Prices are advertised starting or typical rates, not quotes; confirm them against your account. Amounts are decimal strings in the card currency. per_call is a charge for each call; number_setup is a one-time charge for each number. A null price or increment means the provider does not publish it. Documo publishes no fax API price, so it has no card.",
+  "description": "Advertised US prices, read 2026-10-03 from each provider's own pages. cards: calls over each SIP trunk preset when Faxbot's own fax engine places or answers the call. providers: cloud fax providers' per-page or per-minute prices. plans: flat monthly plans with nothing charged per fax. Prices are advertised starting or typical rates, not quotes; confirm them against your account. Amounts are decimal strings in the card currency. per_call is a charge for each call; number_setup is a one-time charge for each number. A null price or increment means the provider does not publish it. Documo publishes no fax API price, so it has no card. reference_plans: plans a provider publishes that Faxbot never adds as a rate card by itself, because the provider prices the API Faxbot uses differently (eFax prices its API by quote in every country); a person can choose one as their own estimate. included_pages and overage_per_page describe the plan; the estimate counts the monthly fee only.",
   "cards": [
     {
       "provider_id": "sip-telnyx",
@@ -369,6 +369,202 @@
       ],
       "advertised_on": "2026-10-03",
       "notes": "$0.0095 per minute inbound; the number is a voice number at $0.50 a month."
+    }
+  ],
+  "reference_plans": [
+    {
+      "provider_id": "efax",
+      "country": "US",
+      "label": "eFax Personal plan",
+      "direction": "outbound",
+      "currency": "USD",
+      "monthly_fee": "18.99",
+      "per_minute": "0",
+      "per_page": "0",
+      "per_call": "0",
+      "billing_increment_seconds": 60,
+      "minimum_seconds": 0,
+      "included_pages": 200,
+      "overage_per_page": "0.10",
+      "includes": "200 pages a month to the US and Canada",
+      "setup_fee": null,
+      "api_access_stated": false,
+      "source_url": "https://www.efax.com/pricing",
+      "sources": [
+        "https://www.efax.com/pricing"
+      ],
+      "advertised_on": "2026-10-04",
+      "notes": "eFax's pricing page, read October 4, 2026 (its published offer data): 200 pages a month to the US and Canada, $0.10 per additional page, 1 user, 1 fax number; $18.99 a month billed monthly or $15.83 a month ($189.96 a year) billed annually. The US page offers the eFax API with eFax Corporate only."
+    },
+    {
+      "provider_id": "efax",
+      "country": "US",
+      "label": "eFax Business plan",
+      "direction": "outbound",
+      "currency": "USD",
+      "monthly_fee": "39.99",
+      "per_minute": "0",
+      "per_page": "0",
+      "per_call": "0",
+      "billing_increment_seconds": 60,
+      "minimum_seconds": 0,
+      "included_pages": 500,
+      "overage_per_page": "0.07",
+      "includes": "500 pages a month to 51 countries",
+      "setup_fee": null,
+      "api_access_stated": false,
+      "source_url": "https://www.efax.com/pricing",
+      "sources": [
+        "https://www.efax.com/pricing"
+      ],
+      "advertised_on": "2026-10-04",
+      "notes": "eFax's pricing page, read October 4, 2026: 500 pages a month to 51 countries, $0.07 per page over the plan (or $25 for each extra 500 pages), 5 users (+$10 a month each), 1 fax number (+$5 a month each); $39.99 a month billed monthly or $33.33 a month ($399.96 a year) billed annually. The US page offers the eFax API with eFax Corporate only."
+    },
+    {
+      "provider_id": "efax",
+      "country": "US",
+      "label": "eFax Corporate (API)",
+      "direction": "outbound",
+      "currency": "USD",
+      "monthly_fee": null,
+      "per_minute": "0",
+      "per_page": "0",
+      "per_call": "0",
+      "billing_increment_seconds": 60,
+      "minimum_seconds": 0,
+      "included_pages": null,
+      "overage_per_page": null,
+      "includes": null,
+      "setup_fee": null,
+      "api_access_stated": true,
+      "source_url": "https://www.efax.com/pricing",
+      "sources": [
+        "https://www.efax.com/pricing",
+        "https://www.efax.com/products/fax-api"
+      ],
+      "advertised_on": "2026-10-04",
+      "notes": "eFax's pricing page, read October 4, 2026: eFax Corporate, which includes the full eFax API, is priced by custom quote. No published price; add your rate."
+    },
+    {
+      "provider_id": "efax",
+      "country": "AU",
+      "label": "eFax Plus plan (Australia)",
+      "direction": "outbound",
+      "currency": "AUD",
+      "monthly_fee": "16.95",
+      "per_minute": "0",
+      "per_page": "0",
+      "per_call": "0",
+      "billing_increment_seconds": 60,
+      "minimum_seconds": 0,
+      "included_pages": 150,
+      "overage_per_page": "0.10",
+      "includes": "150 pages sent and 150 received a month",
+      "setup_fee": "10.00",
+      "api_access_stated": true,
+      "source_url": "https://www.efax.com.au/pricing/efax/",
+      "sources": [
+        "https://www.efax.com.au/pricing/efax/"
+      ],
+      "advertised_on": "2026-10-04",
+      "notes": "eFax Australia pricing page, read October 4, 2026, prices excluding GST: from $16.95 a month billed monthly or $14.13 a month ($169.50 a year) billed annually, $10 set-up fee, 150 pages sent and 150 received a month, 10 cents per additional page. The page lists the API as available on this plan; confirm with eFax Australia."
+    },
+    {
+      "provider_id": "efax",
+      "country": "AU",
+      "label": "eFax Pro plan (Australia)",
+      "direction": "outbound",
+      "currency": "AUD",
+      "monthly_fee": "18.95",
+      "per_minute": "0",
+      "per_page": "0",
+      "per_call": "0",
+      "billing_increment_seconds": 60,
+      "minimum_seconds": 0,
+      "included_pages": 200,
+      "overage_per_page": "0.10",
+      "includes": "200 pages sent and 200 received a month",
+      "setup_fee": "10.00",
+      "api_access_stated": true,
+      "source_url": "https://www.efax.com.au/pricing/efax/",
+      "sources": [
+        "https://www.efax.com.au/pricing/efax/"
+      ],
+      "advertised_on": "2026-10-04",
+      "notes": "eFax Australia pricing page, read October 4, 2026, prices excluding GST: from $18.95 a month billed monthly or $15.80 a month ($189.90 a year) billed annually, $10 set-up fee, 200 pages sent and 200 received a month, 10 cents per additional page."
+    },
+    {
+      "provider_id": "efax",
+      "country": "AU",
+      "label": "eFax Pro2 plan (Australia)",
+      "direction": "outbound",
+      "currency": "AUD",
+      "monthly_fee": "23.95",
+      "per_minute": "0",
+      "per_page": "0",
+      "per_call": "0",
+      "billing_increment_seconds": 60,
+      "minimum_seconds": 0,
+      "included_pages": 300,
+      "overage_per_page": "0.10",
+      "includes": "300 pages sent and 300 received a month",
+      "setup_fee": "10.00",
+      "api_access_stated": true,
+      "source_url": "https://www.efax.com.au/pricing/efax/",
+      "sources": [
+        "https://www.efax.com.au/pricing/efax/"
+      ],
+      "advertised_on": "2026-10-04",
+      "notes": "eFax Australia pricing page, read October 4, 2026, prices excluding GST: from $23.95 a month billed monthly or $19.95 a month ($239.50 a year) billed annually, $10 set-up fee, 300 pages sent and 300 received a month, 10 cents per additional page."
+    },
+    {
+      "provider_id": "efax",
+      "country": "AU",
+      "label": "eFax Corporate (API, Australia)",
+      "direction": "outbound",
+      "currency": "AUD",
+      "monthly_fee": null,
+      "per_minute": "0",
+      "per_page": "0",
+      "per_call": "0",
+      "billing_increment_seconds": 60,
+      "minimum_seconds": 0,
+      "included_pages": null,
+      "overage_per_page": null,
+      "includes": null,
+      "setup_fee": null,
+      "api_access_stated": true,
+      "source_url": "https://www.efax.com.au/pricing/efax/",
+      "sources": [
+        "https://www.efax.com.au/pricing/efax/"
+      ],
+      "advertised_on": "2026-10-04",
+      "notes": "eFax Australia pricing page, read October 4, 2026: eFax Corporate has custom pricing plans. No published price; add your rate."
+    },
+    {
+      "provider_id": "efax",
+      "country": "GB",
+      "label": "eFax (UK)",
+      "direction": "outbound",
+      "currency": "GBP",
+      "monthly_fee": null,
+      "per_minute": "0",
+      "per_page": "0",
+      "per_call": "0",
+      "billing_increment_seconds": 60,
+      "minimum_seconds": 0,
+      "included_pages": null,
+      "overage_per_page": null,
+      "includes": null,
+      "setup_fee": null,
+      "api_access_stated": true,
+      "source_url": "https://ww2.efax.com/uk/",
+      "sources": [
+        "https://ww2.efax.com/uk/",
+        "https://enterprise.efax.eu/"
+      ],
+      "advertised_on": "2026-10-04",
+      "notes": "eFax UK, read October 4, 2026: the UK site's plan and sign-up links lead to eFax's US price page and a US dollar checkout when read from the US, so no UK price could be read; eFax Corporate in the UK is sold through enterprise.efax.eu by quote. No published price; add your rate."
     }
   ]
 }

@@ -508,6 +508,20 @@ async def recover_inbound(request: Request, identity=Depends(require_permission(
 
 
 # Fetch again -----------------------------------------------------------------
+@router.get('/admin/inbound/efax')
+async def efax_inbound_status(request: Request, identity=Depends(require_permission('providers:read'))):
+    """Whether Faxbot is checking eFax for received faxes, and received faxes still stored at eFax."""
+    from .efax import deletion_counts, deletion_sentences, receiving_active
+    service = _acquisition(request)
+    pending, stopped = await run_lifecycle_step(private_operation(lambda: deletion_counts(service.store)))
+    receiver = service.efax
+    return {'receiving': receiving_active(settings),
+            'checked_at': receiver.last_checked if receiver is not None else None,
+            'problem': receiver.last_problem if receiver is not None else None,
+            'pending_deletions': pending, 'stopped_deletions': stopped,
+            'notes': deletion_sentences(pending, stopped)}
+
+
 @router.post('/inbound/{inbound_id}/fetch')
 async def fetch_inbound(inbound_id: str, request: Request,
                         identity=Depends(require_permission('providers:write', audit=True))):

@@ -115,17 +115,20 @@ def settings_set(assignments: list[str] = typer.Argument(None, metavar='NAME=VAL
 VALIDATE_FIELDS = (('phaxio_api_key', 'PHAXIO_API_KEY'), ('phaxio_api_secret', 'PHAXIO_API_SECRET'),
                    ('sinch_project_id', 'SINCH_PROJECT_ID'), ('sinch_api_key', 'SINCH_API_KEY'),
                    ('sinch_api_secret', 'SINCH_API_SECRET'), ('ami_host', 'AMI_HOST'),
-                   ('ami_username', 'AMI_USERNAME'), ('ami_password', 'AMI_PASSWORD'))
+                   ('ami_username', 'AMI_USERNAME'), ('ami_password', 'AMI_PASSWORD'),
+                   ('efax_app_id', 'EFAX_APP_ID'), ('efax_api_key', 'EFAX_API_KEY'), ('efax_user_id', 'EFAX_USER_ID'))
 
 
 @settings.command('validate')
-def settings_validate(backend: str = typer.Argument(..., help='Provider to check: phaxio, sinch or sip.'),
+def settings_validate(backend: str = typer.Argument(..., help='Provider to check: phaxio, sinch, efax or sip.'),
                       ami_port: int = typer.Option(None, '--ami-port', help='Asterisk manager port (sip).')):
     """Check provider credentials without saving them or sending a fax.
 
     Credentials are read from the environment so they stay out of your shell
     history: PHAXIO_API_KEY, PHAXIO_API_SECRET, SINCH_PROJECT_ID, SINCH_API_KEY,
-    SINCH_API_SECRET, AMI_HOST, AMI_USERNAME and AMI_PASSWORD.
+    SINCH_API_SECRET, AMI_HOST, AMI_USERNAME, AMI_PASSWORD, EFAX_APP_ID, EFAX_API_KEY
+    and EFAX_USER_ID. Checking eFax keys can sign in to eFax again, which ends the
+    sign-in Faxbot was using; Faxbot then signs in again by itself.
     """
     import os
     body = {'backend': backend}

@@ -1466,7 +1466,9 @@ Check provider credentials without saving them or sending a fax.
 
 Credentials are read from the environment so they stay out of your shell
 history: PHAXIO_API_KEY, PHAXIO_API_SECRET, SINCH_PROJECT_ID, SINCH_API_KEY,
-SINCH_API_SECRET, AMI_HOST, AMI_USERNAME and AMI_PASSWORD.
+SINCH_API_SECRET, AMI_HOST, AMI_USERNAME, AMI_PASSWORD, EFAX_APP_ID, EFAX_API_KEY
+and EFAX_USER_ID. Checking eFax keys can sign in to eFax again, which ends the
+sign-in Faxbot was using; Faxbot then signs in again by itself.
 
 **Usage**:
 
@@ -1476,7 +1478,7 @@ $ faxbot settings validate [OPTIONS] {backend}
 
 **Arguments**:
 
-* `backend`: Provider to check: phaxio, sinch or sip.  [required]
+* `backend`: Provider to check: phaxio, sinch, efax or sip.  [required]
 
 **Options**:
 
@@ -1881,6 +1883,7 @@ $ faxbot routing [OPTIONS] COMMAND [ARGS]...
 * `reconcile`: Ask the SIP trunk carrier now what each...
 * `fax-cost`: Show what one fax cost: the carrier&#x27;s...
 * `rate-cards`: Show the prices Faxbot uses to estimate...
+* `plans`: Show the plans a provider publishes, with...
 
 ### `faxbot routing destinations`
 
@@ -1997,6 +2000,24 @@ $ faxbot routing rate-cards [OPTIONS]
 **Options**:
 
 * `--replace FILE`: Replace all rate cards with the cards in this JSON file ({&quot;cards&quot;: [...]}, or &#x27;-&#x27; for standard input).
+* `--help`: Show this message and exit.
+
+### `faxbot routing plans`
+
+Show the plans a provider publishes, with their source and the day Faxbot read them.
+
+**Usage**:
+
+```console
+$ faxbot routing plans [OPTIONS] {provider}
+```
+
+**Arguments**:
+
+* `provider`: Provider whose fax API has no published price, for example efax.  [required]
+
+**Options**:
+
 * `--help`: Show this message and exit.
 
 ## `faxbot intake`

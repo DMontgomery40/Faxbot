@@ -218,7 +218,15 @@ def describe(row, record, *, now=None):
             'is_test': source == 'test', 'retry_at': retry_at,
             'problem': record['last_error'] if state != 'received' else None,
             'can_fetch_again': source in FETCHABLE and state in ('pending', 'failed'),
-            'recovered': _recovered(record)}
+            'recovered': _recovered(record), 'provider_note': _provider_note(record)}
+
+
+def _provider_note(record):
+    """A sentence about the provider's own copy, such as an eFax deletion Faxbot is still retrying."""
+    if record.get('source') != 'efax' or record.get('state') != 'received':
+        return None
+    from .efax import deletion_note
+    return deletion_note(record.get('report'))
 
 
 def _recovered(record):

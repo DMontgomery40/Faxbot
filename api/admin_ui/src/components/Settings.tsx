@@ -38,6 +38,7 @@ import { ResponsiveSettingItem, ResponsiveSettingSection } from './common/Respon
 import { ResponsiveTextField, ResponsiveFormSection } from './common/ResponsiveFormFields';
 import TunnelSettings from './TunnelSettings';
 import SipTrunkSettings from './SipTrunkSettings';
+import EfaxSettings, { efaxEditorValues } from './EfaxSettings';
 import { COUNTRY_HELP, CountryField, countryName, internationalHint, settingsNumberFormat } from './common/numbers';
 import { directionSummary } from '../providerLabels';
 import ProviderDirectionFields, { directionFields, directionProblem, loadedDirections } from './common/ProviderDirections';
@@ -102,6 +103,7 @@ function editorValues(data: SettingsType): SettingsForm {
     humblefax_access_key: data.humblefax?.access_key ?? '',
     humblefax_secret_key: data.humblefax?.secret_key ?? '',
     humblefax_from_number: data.humblefax?.from_number ?? '',
+    ...efaxEditorValues(data),
     ami_host: data.sip.ami_host,
     ami_port: data.sip.ami_port,
     ami_username: data.sip.ami_username,
@@ -747,6 +749,14 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
                       {...envField('humblefax_secret_key')}
                     />
                     {textField('HumbleFax From Number', 'humblefax_from_number', 'Optional. 10 digits, or 11 digits starting with 1. Leave empty to use the account default number.')}
+                  </ResponsiveSettingSection>
+                )}
+
+                {providerSelected('efax') && (
+                  <ResponsiveSettingSection title="eFax" subtitle="Your eFax Enterprise API account">
+                    <EfaxSettings values={form} onChange={handleForm} settings={settings} disabled={!canEdit}
+                      receives={effectiveInbound === 'efax' && !!form.inbound_enabled} docsHref={docsLink('efax', docsBase)}
+                      client={client} />
                   </ResponsiveSettingSection>
                 )}
 

@@ -212,6 +212,38 @@ def routing_rate_cards(replace: str = typer.Option(None, '--replace', metavar='F
          for card in result.get('cards', [])], empty='No rate cards.'))
 
 
+def _read_on(value):
+    from datetime import date
+    try:
+        day = date.fromisoformat(str(value))
+    except ValueError:
+        return '-'
+    return f'{day.day} {day:%B %Y}'
+
+
+def _plan_row(plan):
+    fee = f"{plan['currency']} {plan['monthly_fee']} a month" if plan.get('monthly_fee') else 'By quote'
+    extra = f"{plan['currency']} {plan['overage_per_page']}" if plan.get('overage_per_page') else '-'
+    return [plan.get('label'), plan.get('country') or '-', fee, plan.get('includes') or '-', extra,
+            plan.get('source_url') or '-', _read_on(plan.get('advertised_on'))]
+
+
+@routing.command('plans')
+def routing_plans(provider: str = typer.Argument(..., help='Provider whose fax API has no published price, '
+                                                           'for example efax.')):
+    """Show the plans a provider publishes, with their source and the day Faxbot read them."""
+    result = state.api().get('/routing/published-plans', params={'provider_id': provider})
+
+    def human(out):
+        out.line(result.get('sentence') or '')
+        out.table(['Plan', 'Country', 'Price', 'Includes', 'Extra page', 'Source', 'Read on'],
+                  [_plan_row(plan) for plan in result.get('plans') or []], empty='No published plans.')
+        if result.get('card'):
+            out.line('To use the first plan as your estimate, add it as a rate card in Tools, Delivery routes, '
+                     'or with faxbot routing rate-cards --replace.')
+    state.out().result(result, human)
+
+
 # -- intake ------------------------------------------------------------------------------
 
 @intake.command('items')

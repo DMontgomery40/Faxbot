@@ -44,13 +44,14 @@ import type {
   FaxCost,
   IntakeCounts,
   IntakeItem,
-  RateCard,
+  PublishedPlans, RateCard,
   ReconcileResult,
   RouteCostsResponse,
 } from './deliveryTypes';
 import type {
   ImportManifest, ImportResult, WorkAssignee, WorkCounts, WorkEvent, WorkItem, WorkSettings, WorkView,
 } from './types';
+import type { EfaxStatus } from './types';
 
 // These manifest validation messages contain no paths, credentials, or provider
 // responses. All other server error bodies remain opaque to the UI.
@@ -738,6 +739,11 @@ export class AdminAPIClient {
     return this.json('/admin/inbound/callbacks');
   }
 
+  // Whether Faxbot is checking eFax for received faxes, and faxes still stored at eFax.
+  async getEfaxStatus(): Promise<EfaxStatus> {
+    return this.json('/admin/inbound/efax');
+  }
+
   async simulateInbound(opts: { backend?: string; fr?: string; to?: string; pages?: number; status?: string } = {}): Promise<{ id: string; status: string }> {
     return this.json('/admin/inbound/simulate', { method: 'POST', body: JSON.stringify(opts) });
   }
@@ -935,6 +941,10 @@ export class AdminAPIClient {
 
   async listRateCards(): Promise<{ cards: RateCard[] }> {
     return this.json('/routing/rate-cards');
+  }
+
+  async getPublishedPlans(providerId: string): Promise<PublishedPlans> {
+    return this.json(`/routing/published-plans?provider_id=${encodeURIComponent(providerId)}`);
   }
 
   async saveRateCards(cards: RateCard[]): Promise<{ cards: RateCard[] }> {

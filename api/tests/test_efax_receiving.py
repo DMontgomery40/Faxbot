@@ -58,7 +58,12 @@ class FakeEfax:
                               'path': request.url.path, 'params': dict(request.url.params),
                               'headers': {k.lower(): v for k, v in request.headers.items()}, 'body': body})
         path = request.url.path
+        if path == '/health':
+            return httpx.Response(200, json={'status': 'UP'})
         if path == '/tokens':
+            if request.headers.get('authorization') != 'Basic ' + base64.b64encode(
+                    (APP_ID + ':' + API_KEY).encode()).decode():
+                return httpx.Response(401, json={})
             return httpx.Response(200, json={'access_token': 'synthetic-token', 'expires_in': 86399})
         if request.headers.get('user-id') != USER_ID or request.headers.get('authorization') != 'Bearer synthetic-token':
             return httpx.Response(403, json={'errors': [{'error_code': 'FORBIDDEN'}]})
@@ -191,6 +196,94 @@ def test_deleting_from_efax_happens_only_when_turned_on_and_after_storing(isolat
         assert only_fax(http)['status'] == 'received'
     assert efax.deleted == [FAX_ID]
     assert efax.calls()[-2:] == [('PATCH', f'/faxes/{FAX_ID}/metadata'), ('DELETE', f'/faxes/{FAX_ID}')]
+
+
+def _retry(later):
+    """Retry due deletions as if ``later`` had passed."""
+    from app.inbound.acquisition import utcnow
+    from app.inbound.efax import retry_deletions
+    store = main.app.state.inbound_acquisition.store
+    moment = utcnow() + later
+    store.clock = lambda: moment
+    try:
+        return asyncio.run(retry_deletions(store, values()))
+    finally:
+        store.clock = utcnow
+
+
+def _status(http):
+    response = http.get('/admin/inbound/efax', headers=ADMIN)
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def test_a_refused_deletion_is_retried_until_efax_deletes_the_fax(isolated_installation, monkeypatch, efax):
+    environment(monkeypatch, EFAX_DELETE_AFTER_DOWNLOAD='true')
+    efax.receive(FAX_ID, pdf_bytes())
+    with client() as http:
+        check()
+        efax.fail[('DELETE', f'/faxes/{FAX_ID}')] = httpx.Response(500, json={})
+        assert step() is True
+        fax = only_fax(http)
+        assert fax['status'] == 'received'
+        assert fax['provider_note'] == 'Still stored at eFax; Faxbot will try again to delete it.'
+        status = _status(http)
+        assert status['receiving'] is True and status['pending_deletions'] == 1
+        assert status['notes'] == ['1 received fax is still stored at eFax; Faxbot will try again to delete it.']
+        [record] = rows(isolated_installation, 'inbound_imports')
+        report = json.loads(record['report'])
+        assert report['efax_delete']['state'] == 'pending' and report['efax_delete']['attempts'] == 1
+        assert report['fax']['fax_id'] == FAX_ID  # what eFax listed is kept as it was
+        assert _retry(timedelta(seconds=30)) == 0  # not due yet
+        assert efax.calls().count(('DELETE', f'/faxes/{FAX_ID}')) == 1
+        assert _retry(timedelta(minutes=2)) == 0  # due, refused again: the wait doubles
+        report = json.loads(rows(isolated_installation, 'inbound_imports')[0]['report'])
+        assert report['efax_delete']['attempts'] == 2
+        del efax.fail[('DELETE', f'/faxes/{FAX_ID}')]
+        assert _retry(timedelta(minutes=2)) == 0  # the second wait is two minutes from the last try
+        assert _retry(timedelta(minutes=5)) == 1
+        assert efax.deleted == [FAX_ID]
+        assert only_fax(http)['provider_note'] is None
+        assert _status(http)['notes'] == []
+        report = json.loads(rows(isolated_installation, 'inbound_imports')[0]['report'])
+        assert 'efax_delete' not in report and report['fax']['fax_id'] == FAX_ID
+        assert _retry(timedelta(hours=1)) == 0
+
+
+def test_deletion_stops_after_seven_days_and_says_to_delete_it_in_efax(isolated_installation, monkeypatch, efax):
+    environment(monkeypatch, EFAX_DELETE_AFTER_DOWNLOAD='true')
+    efax.receive(FAX_ID, pdf_bytes())
+    efax.receive(SECOND_ID, pdf_bytes('Second'))
+    with client() as http:
+        check()
+        efax.fail[('DELETE', f'/faxes/{FAX_ID}')] = httpx.Response(503, json={})
+        efax.fail[('DELETE', f'/faxes/{SECOND_ID}')] = httpx.Response(503, json={})
+        assert step() is True and step() is True
+        assert _status(http)['notes'] == [
+            '2 received faxes are still stored at eFax; Faxbot will try again to delete them.']
+        assert _retry(timedelta(days=7, minutes=1)) == 0
+        status = _status(http)
+        assert (status['pending_deletions'], status['stopped_deletions']) == (0, 2)
+        assert status['notes'] == ['Faxbot stopped trying to delete 2 received faxes from eFax; '
+                                   'delete them in your eFax account.']
+        notes = {fax['provider_note'] for fax in http.get('/inbound', headers=ADMIN).json()}
+        assert notes == {'Faxbot stopped trying to delete this fax from eFax; delete it in your eFax account.'}
+        before = len(efax.requests)
+        assert _retry(timedelta(days=8)) == 0
+        assert len(efax.requests) == before
+
+
+def test_the_command_line_says_which_received_faxes_are_still_at_efax():
+    from app.cli.commands.fax import _inbound_fields, _provider_copies
+    from app.efax_service import PENDING_DELETION_NOTE, STOPPED_DELETION_NOTE
+    items = [{'provider_note': PENDING_DELETION_NOTE}, {'provider_note': None}, {'provider_note': STOPPED_DELETION_NOTE},
+             {'provider_note': PENDING_DELETION_NOTE}]
+    assert _provider_copies(items) == [
+        '2 received faxes are still stored at eFax; Faxbot will try again to delete them.',
+        'Faxbot stopped trying to delete 1 received fax from eFax; delete it in your eFax account.']
+    assert _provider_copies([{'provider_note': None}]) == []
+    assert ('Provider copy', PENDING_DELETION_NOTE) in _inbound_fields({'provider_note': PENDING_DELETION_NOTE})
+    assert all(name != 'Provider copy' for name, _ in _inbound_fields({}))
 
 
 # 2. Listing again never duplicates a fax or moves its retry schedule ------------------
@@ -409,3 +502,22 @@ def test_receiving_through_efax_compiles_an_inbound_profile(tmp_path):
 def test_efax_completion_times_are_read():
     assert parse_source_time(COMPLETED).isoformat() == '2026-10-03T14:00:00'
     assert parse_source_time('2017-03-01T01:33:49.000+0000').isoformat() == '2017-03-01T01:33:49'
+
+
+def test_checking_efax_keys_signs_in_without_sending_anything(isolated_installation, monkeypatch, efax):
+    environment(monkeypatch)
+    with client() as http:
+        good = http.post('/admin/settings/validate', headers=ADMIN, json={
+            'backend': 'efax', 'efax_app_id': APP_ID, 'efax_api_key': API_KEY, 'efax_user_id': USER_ID})
+        assert good.status_code == 200, good.text
+        assert good.json()['checks']['api_answering'] is True and good.json()['checks']['auth'] is True
+        efax_module().clear_tokens()
+        bad = http.post('/admin/settings/validate', headers=ADMIN, json={
+            'backend': 'efax', 'efax_app_id': APP_ID, 'efax_api_key': 'synthetic-wrong-key', 'efax_user_id': USER_ID})
+        assert bad.json()['checks']['auth'] is False
+        assert bad.json()['checks']['error'] == 'eFax refused the app ID, API key or user ID.'
+        assert 'synthetic-wrong-key' not in bad.text
+        missing = http.post('/admin/settings/validate', headers=ADMIN, json={'backend': 'efax'})
+        assert missing.json()['checks']['auth'] is False
+    assert {path for _, path in efax.calls()} == {'/health'}
+

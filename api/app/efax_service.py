@@ -116,6 +116,24 @@ def clear_tokens() -> None:
     _TOKENS.clear()
 
 
+# One received fax's copy at eFax, when Faxbot could not delete it (see inbound/efax.py).
+PENDING_DELETION_NOTE = 'Still stored at eFax; Faxbot will try again to delete it.'
+STOPPED_DELETION_NOTE = 'Faxbot stopped trying to delete this fax from eFax; delete it in your eFax account.'
+
+
+def deletion_sentences(pending: int, stopped: int) -> list[str]:
+    """Plain sentences for the eFax section and the command line; none when nothing is left at eFax."""
+    sentences = []
+    if pending:
+        sentences.append('1 received fax is still stored at eFax; Faxbot will try again to delete it.' if pending == 1
+                         else f'{pending} received faxes are still stored at eFax; Faxbot will try again to delete them.')
+    if stopped:
+        sentences.append('Faxbot stopped trying to delete 1 received fax from eFax; delete it in your eFax account.'
+                         if stopped == 1 else f'Faxbot stopped trying to delete {stopped} received faxes from eFax; '
+                         'delete them in your eFax account.')
+    return sentences
+
+
 def efax_destination(value: object) -> str:
     """eFax's dialable form of a number: 1 plus ten digits for +1, otherwise + and digits."""
     from .routing.numbers import InvalidNumber, canonical_number

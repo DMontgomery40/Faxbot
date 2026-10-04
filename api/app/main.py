@@ -810,6 +810,9 @@ class ValidateSettingsRequest(BaseModel):
     ami_port: Optional[int] = None
     ami_username: Optional[str] = None
     ami_password: Optional[str] = None
+    efax_app_id: Optional[str] = None
+    efax_api_key: Optional[str] = None
+    efax_user_id: Optional[str] = None
 
 
 _PERMISSION_RESPONSES = {status: _PUBLIC_DETAIL_RESPONSES[status] for status in (401, 403, 429, 503)}
@@ -843,6 +846,19 @@ async def validate_settings(payload: ValidateSettingsRequest):
         results["checks"]["auth"] = bool(
             payload.sinch_project_id and payload.sinch_api_key and payload.sinch_api_secret
         )
+    elif payload.backend == "efax":
+        # GET /health needs no sign-in; a sign-in with the given keys proves them without sending a fax.
+        from .efax_service import EfaxError, EfaxFaxService
+        results["checks"]["api_answering"] = await EfaxFaxService("", "", "").health()
+        if payload.efax_app_id and payload.efax_api_key and payload.efax_user_id:
+            try:
+                await EfaxFaxService(payload.efax_app_id, payload.efax_api_key, payload.efax_user_id).authenticate()
+                results["checks"]["auth"] = True
+            except (EfaxError, ValueError) as error:
+                results["checks"]["auth"] = False
+                results["checks"]["error"] = str(error)
+        else:
+            results["checks"]["auth"] = False
     elif payload.backend == "sip":
         if all([payload.ami_host, payload.ami_username, payload.ami_password]):
             try:
@@ -2647,6 +2663,8 @@ class InboundFaxOut(BaseModel):
     # Brought in later from an image the fax engine stored but could not hand over;
     # source_received_at is then the image's modification time.
     recovered: bool = False
+    # A sentence about the provider's own copy, such as an eFax deletion Faxbot is still retrying.
+    provider_note: Optional[str] = None
 
 
 def _inbound_pdf_response(inbound_id: str, pdf_path: Optional[str], method: str, status: Optional[str] = "received"):

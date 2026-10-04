@@ -139,6 +139,17 @@ export interface ReconcileResult {
   summary: string;
 }
 
+// GET /routing/published-plans: what a provider publishes where its API has no published price.
+export interface PublishedPlans {
+  provider_id: string;
+  country: string;
+  sentence: string;
+  // A card a person can save as their own estimate; null when no price could be read.
+  card: RateCard | null;
+  page_url: string | null;
+  page_label: string;
+}
+
 export interface RateCard {
   id?: string | null;
   provider_id: string;

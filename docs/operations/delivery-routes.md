@@ -108,6 +108,7 @@ Every time Faxbot starts, each provider you send or receive with that has never 
 | HumbleFax | $10 a month to send and receive unlimited faxes, no overage charges | [humblefax.com/faq](https://humblefax.com/faq) |
 | Your SIP trunk | the trunk carrier's per-minute prices in [What a call costs](../setup/sip-trunk.md#what-a-call-costs) | carrier pages |
 | Documo | no published fax API price; add your contracted rate | [documo.com/pricing](https://www.documo.com/pricing/) |
+| eFax | the API is priced by quote, so no card; **Rate cards** names eFax's cheapest published plan for your installation country and **Use a published plan as my estimate** adds it as your own card when you choose (`faxbot routing plans efax`) | [eFax](../setup/efax.md#prices) |
 
 ## Rate cards
 
