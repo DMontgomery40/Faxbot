@@ -950,6 +950,7 @@ $ faxbot recipients show [OPTIONS] {number}
 
 **Options**:
 
+* `--pages <int range>`: Estimate the cost of a fax this many pages long.  [default: 1; 1&lt;=x&lt;=1000]
 * `--help`: Show this message and exit.
 
 ### `faxbot recipients set`
@@ -1227,8 +1228,24 @@ $ faxbot recipients cases [OPTIONS] COMMAND [ARGS]...
 
 **Commands**:
 
+* `list`: List the newest cases you sent packets...
 * `documents`: List the documents of a case already sent...
 * `send`: Send a case packet, leaving out documents...
+
+#### `faxbot recipients cases list`
+
+List the newest cases you sent packets for: who received them, documents sent and received, and when.
+
+**Usage**:
+
+```console
+$ faxbot recipients cases list [OPTIONS]
+```
+
+**Options**:
+
+* `--limit <int range>`: How many cases to show.  [default: 50; 1&lt;=x&lt;=200]
+* `--help`: Show this message and exit.
 
 #### `faxbot recipients cases documents`
 
@@ -1652,6 +1669,7 @@ $ faxbot costs [OPTIONS] COMMAND [ARGS]...
 * `reconcile`: Ask your SIP trunk carrier now what each...
 * `fax`: Show what one fax cost: the carrier&#x27;s...
 * `received`: Show what the call that brought in a...
+* `savings`: Show how much money Faxbot saved by...
 * `rate-cards`: Show the prices Faxbot uses to estimate...
 * `plans`: Show the price plans a fax service...
 
@@ -1720,6 +1738,21 @@ $ faxbot costs received [OPTIONS] [fax_id]
 **Options**:
 
 * `--all`: Every received fax you can see, newest 100 first.
+* `--help`: Show this message and exit.
+
+### `faxbot costs savings`
+
+Show how much money Faxbot saved by batching faxes to the same number, delivering directly to partners, and leaving out documents a recipient already has. All figures are estimates.
+
+**Usage**:
+
+```console
+$ faxbot costs savings [OPTIONS]
+```
+
+**Options**:
+
+* `--days <int range>`: How many days back to count.  [default: 30; 1&lt;=x&lt;=366]
 * `--help`: Show this message and exit.
 
 ### `faxbot costs rate-cards`

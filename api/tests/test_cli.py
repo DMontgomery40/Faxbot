@@ -757,6 +757,12 @@ def test_routing_destinations_costs_and_rate_cards(cli, tmp_path):
     replaced = cli.json('costs', 'rate-cards', '--replace', cards)
     assert [card['per_page'] for card in replaced['cards']] == ['0.07']
     assert cli.json('costs', 'rate-cards')['cards'][0]['label'] == 'Phaxio list price'
+    # Each route says how it charges and what this fax would cost, for the pages asked.
+    three = cli.json('recipients', 'show', '+15551230001', '--pages', '3')['recommended_routes']
+    assert three and three[0]['pages'] == 3 and three[0]['rate'] and three[0]['estimated_cost']
+    table = cli('recipients', 'show', '+15551230001', '--pages', '3').stdout
+    assert 'Estimated cost, 3 pages' in table and 'Rate' in table and ' estimate' in table
+    assert 'Estimated cost, 1 page' in cli('recipients', 'show', '+15551230001').stdout
     bad = cli('recipients', 'show', 'not-a-number')
     assert bad.exit_code == 9
     human = cli('costs', 'spending')
@@ -896,6 +902,21 @@ def test_case_packet_preview_send_and_documents(cli, tmp_path):
     assert [item['title'] for item in documents['documents']] == ['referral']
     human = cli('recipients', 'cases', 'documents', 'CASE-1', '--to', '+15551230009')
     assert human.exit_code == 0 and 'referral' in human.stdout
+    (case,) = cli.json('recipients', 'cases', 'list')['cases']
+    assert (case['case_id'], case['to'], case['documents']) == ('CASE-1', '+15551230009', 1)
+    listed = cli('recipients', 'cases', 'list', '--limit', '5').stdout
+    assert 'CASE-1' in listed and '1 sent, ' in listed and 'Last sent' in listed
+
+
+def test_costs_savings_reads_as_estimates(cli):
+    result = cli.json('costs', 'savings', '--days', '7')
+    assert result['days'] == 7 and result['estimate'] is True
+    assert {'sending_together', 'direct_delivery', 'case_packets'} <= set(result)
+    human = cli('costs', 'savings')
+    assert human.exit_code == 0
+    assert 'No money saved in the last 30 days, as far as Faxbot can tell.' in human.stdout
+    assert 'Sending together' in human.stdout and 'Direct delivery' in human.stdout and 'Case packets' in human.stdout
+    assert result['sentence'] in ' '.join(cli('costs', 'savings', '--days', '7').stdout.split())
 
 
 # -- profiles --------------------------------------------------------------------------------

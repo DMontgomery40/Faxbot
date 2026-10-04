@@ -63,9 +63,11 @@ def _route_rows(routes):
 
 
 @routing.command('destination')
-def routing_destination(number: str = typer.Argument(..., help='Fax number.')):
+def routing_destination(number: str = typer.Argument(..., help='Fax number.'),
+                        pages: int = typer.Option(1, '--pages', min=1, max=1000,
+                                                  help='Estimate the cost of a fax this many pages long.')):
     """Show one number you fax: its settings, how faxes to it went, and how Faxbot would send now."""
-    view = state.api().get('/routing/destinations/' + segment(number))
+    view = state.api().get('/routing/destinations/' + segment(number), params={'pages': pages})
 
     def human(out):
         partner = view.get('direct_partner') or {}
@@ -76,9 +78,10 @@ def routing_destination(number: str = typer.Argument(..., help='Fax number.')):
                     ('Available routes', [item['label'] for item in view.get('available_routes', [])])])
         out.table(['Route', 'Attempts', 'Delivered', 'Failed', 'Success', 'Estimated cost', 'Last used'],
                   _route_rows(view.get('routes', [])), empty='No faxes sent to this number in the last 30 days.')
-        out.table(['Faxbot would choose', 'Why', 'Estimated cost, one page'],
-                  [[item['label'], item['explanation'], 'included in your plan' if item.get('included_in_plan')
-                    else money([item['estimated_cost_one_page']]) if item.get('estimated_cost_one_page') else 'unknown']
+        out.table(['Faxbot would choose', 'Why', 'Rate', f"Estimated cost, {pages} {'page' if pages == 1 else 'pages'}"],
+                  [[item['label'], item['explanation'], item.get('rate') or 'No price set',
+                    'In your plan' if item.get('included_in_plan')
+                    else f"{money([item['estimated_cost']])} estimate" if item.get('estimated_cost') else 'Unknown']
                    for item in view.get('recommended_routes', [])],
                   empty='No route recommendation: outbound delivery is not set up.')
     state.out().result(view, human)
@@ -215,6 +218,29 @@ def routing_received_costs(fax_id: str = typer.Argument(None, help="Received fax
         if items else {}
     state.out().result({'costs': costs}, lambda out: out.table(
         ['From', 'Received', 'Cost'], _received_cost_rows(costs, items), empty='No received faxes.'))
+
+
+SAVING_PARTS = (('sending_together', 'Sending together'), ('direct_delivery', 'Direct delivery'),
+                ('case_packets', 'Case packets'))
+
+
+def routing_savings(days: int = typer.Option(30, '--days', min=1, max=366, help='How many days back to count.')):
+    """Show how much money Faxbot saved by batching faxes to the same number, delivering directly to partners, and leaving out documents a recipient already has. All figures are estimates."""
+    result = state.api().get('/routing/savings', params={'days': days})
+
+    def human(out):
+        total = result.get('total_saved') or []
+        out.line(f"About {money(total)} saved in the last {result['days']} days." if total
+                 else f"No money saved in the last {result['days']} days, as far as Faxbot can tell.")
+        out.table(['Saving', 'Estimate', 'What happened'],
+                  [[title, money((result.get(key) or {}).get('saved')), (result.get(key) or {}).get('sentence') or '-']
+                   for key, title in SAVING_PARTS])
+        counted = (result.get('case_packets') or {}).get('counted_from_sentence')
+        if counted:
+            out.line(counted)
+        if result.get('sentence'):
+            out.line(result['sentence'])
+    state.out().result(result, human)
 
 
 @routing.command('rate-cards')
@@ -561,6 +587,18 @@ def direct_deliveries():
 
 
 # -- case packets ---------------------------------------------------------------------------------
+
+@cases.command('list')
+def cases_list(limit: int = typer.Option(50, '--limit', min=1, max=200, help='How many cases to show.')):
+    """List the newest cases you sent packets for: who received them, documents sent and received, and when."""
+    result = state.api().get('/cases', params={'limit': limit})
+    items = result.get('cases') or []
+    state.out().result(result, lambda out: out.table(
+        ['Case', 'Recipient', 'Documents', 'Pages', 'Last sent'],
+        [[item['case_id'], item['to'], f"{item['documents']} sent, {item['accepted']} received", item['pages'],
+          local_time(item.get('last_sent_at'))] for item in items],
+        empty='No case packets sent yet.'))
+
 
 @cases.command('documents')
 def cases_documents(case_id: str = typer.Argument(..., help='Your case reference.'),
