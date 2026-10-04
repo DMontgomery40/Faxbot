@@ -14,8 +14,7 @@ async function signedInClient() {
 describe('resource access', () => {
   it('keeps the mailbox draft on a policy conflict, then creates it after Reload', async () => {
     const { client, me } = await signedInClient();
-    render(<ResourceAccess client={client} me={me} />);
-    fireEvent.click(await screen.findByRole('tab', { name: 'Mailboxes' }));
+    render(<ResourceAccess client={client} me={me} section="mailboxes" />);
     fireEvent.click(await screen.findByRole('button', { name: 'Add mailbox' }));
     const dialog = await screen.findByRole('dialog', { name: 'Add mailbox' });
     fireEvent.change(within(dialog).getByLabelText('Mailbox name'), { target: { value: 'Billing' } });
@@ -40,7 +39,7 @@ describe('resource access', () => {
 
   it('warns that installation-wide access covers every fax and mailbox', async () => {
     const { client, me } = await signedInClient();
-    render(<ResourceAccess client={client} me={me} />);
+    render(<ResourceAccess client={client} me={me} section="assignments" />);
     fireEvent.click(await screen.findByRole('button', { name: 'Give access' }));
     const dialog = await screen.findByRole('dialog', { name: 'Give access' });
     fireEvent.change(within(dialog).getByLabelText('Where'), { target: { value: 'res_installation' } });
@@ -67,8 +66,7 @@ describe('fax numbers follow the installation country', () => {
 
   async function openAddNumber() {
     const { client, me } = await signedInClient();
-    render(<ResourceAccess client={client} me={me} />);
-    fireEvent.click(await screen.findByRole('tab', { name: 'Fax numbers' }));
+    render(<ResourceAccess client={client} me={me} section="numbers" />);
     const add = await screen.findByRole('button', { name: 'Add number' });
     await waitFor(() => expect((add as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(add);

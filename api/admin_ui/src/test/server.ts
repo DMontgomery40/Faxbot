@@ -600,6 +600,10 @@ const consoleHandlers = [
   http.get('/direct/deliveries', () => json({ deliveries: [] })),
   // SIP trunk call history (the Dashboard names a received call that left no fax).
   http.get('/admin/sip/calls', () => json({ items: [], next_cursor: null })),
+  // Published plans for providers in use with no rate card yet: none.
+  http.get('/routing/published-plans/in-use', () => json({ items: [] })),
+  // Work counts for the Overview's Needs attention card: nothing waiting.
+  http.get('/work/counts', () => json({ open: 0, acknowledged: 0, done: 0, unassigned: 0, mine: 0, overdue: 0 })),
   // Sending together: no number sends faxes together until a test says otherwise.
   http.get('/batching/check', ({ request }) => json({ number: new URL(request.url).searchParams.get('to'),
     sends_together: false, wait_minutes: null, sentence: null })),

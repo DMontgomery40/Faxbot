@@ -4,81 +4,32 @@ import {
   AppBar,
   Toolbar,
   Typography,
-  Container,
   Alert,
-  Button,
-  Paper,
-  Tabs,
-  Tab,
   IconButton,
   Drawer,
-  List,
-  ListItemButton,
-  ListItemText,
-  ListItemIcon,
-  Divider,
-  Tooltip,
   useMediaQuery,
   useTheme as useMuiTheme,
-  Fade,
   CircularProgress,
 } from '@mui/material';
 import MenuIcon from '@mui/icons-material/Menu';
-import SettingsIcon from '@mui/icons-material/Settings';
-import DashboardIcon from '@mui/icons-material/Dashboard';
-import SendIcon from '@mui/icons-material/Send';
-import ListAltIcon from '@mui/icons-material/ListAlt';
-import InboxIcon from '@mui/icons-material/Inbox';
-import AssignmentIndIcon from '@mui/icons-material/AssignmentInd';
-import VpnKeyIcon from '@mui/icons-material/VpnKey';
-import CodeIcon from '@mui/icons-material/Code';
-import TerminalIcon from '@mui/icons-material/Terminal';
-import AssessmentIcon from '@mui/icons-material/Assessment';
-import DescriptionIcon from '@mui/icons-material/Description';
-import ExtensionIcon from '@mui/icons-material/Extension';
-import ScienceIcon from '@mui/icons-material/Science';
-import LogoutIcon from '@mui/icons-material/Logout';
-import HelpIcon from '@mui/icons-material/Help';
-import PersonIcon from '@mui/icons-material/Person';
-import GroupsIcon from '@mui/icons-material/Groups';
-import BadgeIcon from '@mui/icons-material/Badge';
-import LockOpenIcon from '@mui/icons-material/LockOpen';
-import DevicesIcon from '@mui/icons-material/Devices';
-import AltRouteIcon from '@mui/icons-material/AltRoute';
 import AdminAPIClient, { AdminAPIError, type ClientCredential } from './api/client';
-import Dashboard from './components/Dashboard';
-import SetupWizard from './components/SetupWizard';
-import JobsList from './components/JobsList';
-import Plugins from './components/Plugins';
-import ApiKeys from './components/ApiKeys';
-import Settings from './components/Settings';
-import Diagnostics from './components/Diagnostics';
-import MCP from './components/MCP';
-import Logs from './components/Logs';
-import SendFax from './components/SendFax';
-import Inbound from './components/Inbound';
-import Work from './components/Work';
-import Terminal from './components/Terminal';
-import ScriptsTests from './components/ScriptsTests';
-import Users from './components/Users';
-import Groups from './components/Groups';
-import Roles from './components/Roles';
-import ResourceAccess from './components/ResourceAccess';
-import Sessions from './components/Sessions';
-import DeliveryRoutes from './components/DeliveryRoutes';
 import LoginScreen from './components/LoginScreen';
 import PasswordChange from './components/PasswordChange';
 import OwnerEnrollment from './components/OwnerEnrollment';
+import NavPanel from './components/shell/NavPanel';
+import PageBreadcrumbs from './components/shell/PageBreadcrumbs';
+import UserMenu from './components/shell/UserMenu';
 import { ThemeProvider } from './theme/ThemeContext';
-import { ThemeToggle } from './components/ThemeToggle';
 import {
-  visibleSettings,
-  visibleTools,
-  visibleTopTabs,
+  destinationAddress,
+  pageAddress,
+  parseAddress,
+  resolveAddress,
+  visibleNavigation,
   type AdminDestination,
-  type SettingsTab,
-  type ToolTab,
-  type TopTab,
+  type NavArea,
+  type NavPage,
+  type PageContext,
 } from './navigation';
 import type { AdminConfig, AuthMe, ConsoleContext } from './api/types';
 import { contextNumberFormat } from './components/common/numbers';
@@ -231,41 +182,9 @@ function AppContent() {
   );
 }
 
-interface TabPanelProps {
-  children?: React.ReactNode;
-  value: string;
-  current: string;
-}
 
-function TabPanel({ children, value, current }: TabPanelProps) {
-  return (
-    <Fade in={value === current} timeout={300}>
-      <div role="tabpanel" hidden={value !== current} id={`admin-tabpanel-${value}`}>
-        {value === current && <Box sx={{ py: { xs: 2, md: 3 } }}>{children}</Box>}
-      </div>
-    </Fade>
-  );
-}
-
-const TOP_LABELS: Record<TopTab, string> = {
-  dashboard: 'Dashboard', send: 'Send', jobs: 'Jobs', inbox: 'Inbox', work: 'Work', settings: 'Settings', tools: 'Tools',
-};
-
-const TOP_ICONS: Record<TopTab, React.ReactElement> = {
-  dashboard: <DashboardIcon />, send: <SendIcon />, jobs: <ListAltIcon />, inbox: <InboxIcon />, work: <AssignmentIndIcon />,
-  settings: <SettingsIcon />, tools: <ScienceIcon />,
-};
-
-const SETTINGS_ICONS: Record<SettingsTab, React.ReactElement> = {
-  setup: <HelpIcon />, settings: <SettingsIcon />, keys: <VpnKeyIcon />, users: <PersonIcon />,
-  groups: <GroupsIcon />, roles: <BadgeIcon />, access: <LockOpenIcon />, sessions: <DevicesIcon />, mcp: <CodeIcon />,
-};
-
-const TOOL_ICONS: Record<ToolTab, React.ReactElement> = {
-  routes: <AltRouteIcon />,
-  terminal: <TerminalIcon />, diagnostics: <AssessmentIcon />, logs: <DescriptionIcon />,
-  plugins: <ExtensionIcon />, scripts: <ScienceIcon />,
-};
+const DRAWER_WIDTH = 264;
+const CONTEXT_FAILED = 'Could not load current settings. Leave and reopen this section to try again.';
 
 interface ConsoleShellProps {
   client: AdminAPIClient;
@@ -275,40 +194,82 @@ interface ConsoleShellProps {
   onIdentityChanged: () => void;
 }
 
+// The address in the browser bar is the page shown; Back and Forward change it.
+function useAddress(): [string, (next: string) => void] {
+  const [hash, setHash] = useState(() => window.location.hash);
+  useEffect(() => {
+    const follow = () => setHash(window.location.hash);
+    window.addEventListener('hashchange', follow);
+    return () => window.removeEventListener('hashchange', follow);
+  }, []);
+  const go = useCallback((next: string) => {
+    if (window.location.hash !== next) window.location.hash = next;
+    setHash(next);
+  }, []);
+  return [hash, go];
+}
+
 function ConsoleShell({ client, me, initialContext, onSignOut, onIdentityChanged }: ConsoleShellProps) {
   const muiTheme = useMuiTheme();
   const isMobile = useMediaQuery(muiTheme.breakpoints.down('md'));
-  const isTablet = useMediaQuery(muiTheme.breakpoints.down('lg'));
 
   const [context, setContext] = useState<ConsoleContext>(initialContext);
-  const [contextLoading, setContextLoading] = useState(false);
-  const [contextError, setContextError] = useState<string | null>(null);
   const [mobileOpen, setMobileOpen] = useState(false);
+  // A fax Send just queued, opened in Sent when the person follows it.
+  const [jobToOpen, setJobToOpen] = useState<string | null>(null);
 
   const permissions = useMemo(() => new Set(me.permissions), [me.permissions]);
   const pluginsEnabled = Boolean(context.provider_view?.plugins_enabled);
-  const settingsItems = useMemo(() => visibleSettings(permissions), [permissions]);
-  const toolsItems = useMemo(() => visibleTools(permissions, pluginsEnabled), [permissions, pluginsEnabled]);
-  const topTabs = useMemo(
-    () => visibleTopTabs(permissions, context.navigation, toolsItems.length > 0),
-    [permissions, context.navigation, toolsItems.length],
+  const visible = useMemo(
+    () => visibleNavigation(permissions, context.navigation, { pluginsEnabled }),
+    [permissions, context.navigation, pluginsEnabled],
   );
 
-  const [tab, setTab] = useState<TopTab>(() => topTabs[0]);
-  // A fax Send just queued, opened in Jobs when the person follows it.
-  const [jobToOpen, setJobToOpen] = useState<string | null>(null);
-  const [settingsTab, setSettingsTab] = useState<SettingsTab>(() => settingsItems[0]?.value ?? 'sessions');
-  const [toolsTab, setToolsTab] = useState<ToolTab | null>(() => toolsItems[0]?.value ?? null);
-  const [settingsFocus, setSettingsFocus] = useState<string | null>(null);
-  const clearSettingsFocus = useCallback(() => setSettingsFocus(null), []);
+  const [hash, setAddress] = useAddress();
+  const route = resolveAddress(visible, parseAddress(hash));
+  const pageKey = route ? `${route.area.id}/${route.page.id}` : '';
 
-  const currentTab = topTabs.includes(tab) ? tab : topTabs[0];
-  const currentSettings = settingsItems.some((item) => item.value === settingsTab) ? settingsTab : settingsItems[0].value;
-  const currentTool = toolsItems.find((item) => item.value === toolsTab)?.value ?? toolsItems[0]?.value ?? null;
+  // An unknown address, one this person may not open, or none at all shows a
+  // page they may open; the address is corrected in place, without a history entry.
+  useEffect(() => {
+    if (!route || route.address === hash) return;
+    window.history.replaceState(window.history.state, '', route.address);
+    setAddress(route.address);
+  }, [route?.address, hash, setAddress]);
+
+  const navigateTo = useCallback((address: string) => {
+    setAddress(address);
+    setMobileOpen(false);
+    window.scrollTo?.({ top: 0 });
+  }, [setAddress]);
+  const openPage = useCallback((area: NavArea, page: NavPage) => navigateTo(pageAddress(area.id, page.id)), [navigateTo]);
+  const navigate = useCallback((destination: AdminDestination) => navigateTo(destinationAddress(destination)), [navigateTo]);
+  const goHome = useCallback(() => {
+    if (visible[0]) openPage(visible[0], visible[0].pages[0]);
+  }, [visible, openPage]);
+
+  // Pages that show active settings read the console context again on each entry.
+  const [refresh, setRefresh] = useState<{ key: string; state: 'loading' | 'ready' | 'error' }>({ key: '', state: 'ready' });
+  const refreshes = Boolean(route?.page.refreshContext);
+  useEffect(() => {
+    if (!refreshes) return;
+    let current = true;
+    setRefresh({ key: pageKey, state: 'loading' });
+    client.context().then((next) => {
+      if (!current) return;
+      setContext(next);
+      setRefresh({ key: pageKey, state: 'ready' });
+    }).catch(() => {
+      if (current) setRefresh({ key: pageKey, state: 'error' });
+    });
+    return () => { current = false; };
+  }, [client, pageKey, refreshes]);
+  const contextLoading = refreshes && (refresh.key !== pageKey || refresh.state === 'loading');
+  const contextError = refreshes && refresh.key === pageKey && refresh.state === 'error' ? CONTEXT_FAILED : null;
 
   const docsBase = context.branding?.docs_base;
-  // Setup Wizard is in Settings for people who may change settings.
-  const canSetUp = settingsItems.some((item) => item.value === 'setup');
+  // The Setup Wizard is for people who may change settings.
+  const canSetUp = permissions.has('settings:write');
   const adminConfig: AdminConfig | null = context.send ? {
     fax_disabled: context.send.fax_disabled,
     max_file_size_mb: context.send.max_file_size_mb,
@@ -318,302 +279,78 @@ function ConsoleShell({ client, me, initialContext, onSignOut, onIdentityChanged
     v3_plugins: { enabled: pluginsEnabled },
   } : null;
 
-  const changeTab = (next: TopTab) => {
-    if ((next === 'send' || next === 'inbox' || next === 'tools') && currentTab !== next) {
-      setContextLoading(true);
-      setContextError(null);
-    }
-    setTab(next);
-    if (isMobile) setMobileOpen(false);
+  const pageContext: PageContext = {
+    client, me, permissions, context, adminConfig, contextLoading, contextError, docsBase, canSetUp,
+    params: route ? parseAddress(route.address)?.params ?? new URLSearchParams() : new URLSearchParams(),
+    navigate, goHome, jobToOpen,
+    openJob: (jobId) => { setJobToOpen(jobId); navigate('jobs'); },
+    jobOpened: () => setJobToOpen(null),
   };
 
-  const openSettings = (next: SettingsTab) => {
-    setSettingsTab(next);
-    changeTab('settings');
-  };
+  const logo = (
+    <Box component="a" href={visible[0] ? pageAddress(visible[0].id, visible[0].pages[0].id) : '#'}
+      onClick={(event: React.MouseEvent) => { event.preventDefault(); goHome(); }}
+      sx={{ display: 'inline-flex', alignItems: 'center', borderRadius: 1 }}>
+      <Box component="img"
+        src={muiTheme.palette.mode === 'dark' ? '/admin/ui/faxbot_mini_banner_dark.png' : '/admin/ui/faxbot_mini_banner_light.png'}
+        alt="Faxbot" sx={{ height: 34, borderRadius: 1 }} />
+    </Box>
+  );
 
-  const handleNavigate = (destination: AdminDestination) => {
-    switch (destination) {
-      case 'send':
-      case 'jobs':
-      case 'inbox':
-        if (topTabs.includes(destination)) changeTab(destination);
-        break;
-      case 'settings':
-        openSettings('settings');
-        break;
-      case 'keys':
-        openSettings('keys');
-        break;
-      case 'setup':
-        if (canSetUp) openSettings('setup');
-        break;
-      case 'email':
-      case 'trunk':
-        setSettingsFocus(destination);
-        openSettings('settings');
-        break;
-      case 'diagnostics':
-      case 'routes':
-        if (toolsItems.some((item) => item.value === destination)) {
-          setToolsTab(destination);
-          changeTab('tools');
-        }
-        break;
-    }
-  };
-
-  // Sections that depend on active settings refresh the console context on entry.
-  useEffect(() => {
-    if (currentTab !== 'send' && currentTab !== 'inbox' && currentTab !== 'tools') return;
-    let current = true;
-    setContextLoading(true);
-    setContextError(null);
-    client.context().then((next) => {
-      if (current) setContext(next);
-    }).catch(() => {
-      if (current) setContextError('Could not load current settings. Leave and reopen this section to try again.');
-    }).finally(() => {
-      if (current) setContextLoading(false);
-    });
-    return () => { current = false; };
-  }, [client, currentTab]);
-
-  const tabsSx = {
-    '& .MuiTab-root': {
-      minWidth: { xs: 'auto', sm: 90 },
-      fontSize: { xs: '0.75rem', sm: '0.875rem' },
-      px: { xs: 1, sm: 2 },
-      transition: 'all 0.2s',
-      borderRadius: '8px 8px 0 0',
-      '&:hover': { backgroundColor: muiTheme.palette.action.hover },
-    },
-    '& .MuiTabs-indicator': { height: 3, borderRadius: '3px 3px 0 0' },
-  };
-
-  const groupPaperSx = { borderRadius: 3, overflow: 'hidden', border: '1px solid', borderColor: 'divider' };
-  const groupHeaderSx = { borderBottom: 1, borderColor: 'divider', backgroundColor: muiTheme.palette.action.hover };
-
-  const drawerItemSx = { borderRadius: '0 24px 24px 0', mx: 1, mb: 0.5 };
+  const panel = route && (
+    <NavPanel areas={visible} currentArea={route.area.id} currentPage={route.page.id} onNavigate={openPage} logo={logo}
+      footer={<UserMenu client={client} me={me} onNavigate={navigate} onSignOut={onSignOut} onIdentityChanged={onIdentityChanged} />} />
+  );
 
   return (
-    <Box sx={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
-      <AppBar
-        position="sticky"
-        elevation={0}
-        sx={{
-          color: 'text.primary',
-          backdropFilter: 'blur(10px)',
+    <Box sx={{ display: 'flex', minHeight: '100vh' }}>
+      {/* Phones: a slim bar with the menu button; the panel opens as a drawer. */}
+      {isMobile && (
+        <AppBar position="fixed" elevation={0} sx={{
+          color: 'text.primary', backdropFilter: 'blur(10px)', borderBottom: '1px solid', borderColor: 'divider',
           background: muiTheme.palette.mode === 'dark' ? 'rgba(15, 15, 17, 0.9)' : 'rgba(255, 255, 255, 0.9)',
-          borderBottom: '1px solid',
-          borderColor: 'divider',
-        }}
-      >
-        <Toolbar sx={{ minHeight: { xs: 56, sm: 64 }, px: { xs: 1, sm: 2 } }}>
-          <IconButton
-            color="inherit"
-            edge="start"
-            onClick={() => setMobileOpen(true)}
-            sx={{ mr: 1, display: { xs: 'inline-flex', md: 'none' } }}
-            aria-label="open navigation"
-          >
-            <MenuIcon />
-          </IconButton>
-          <Box
-            component="img"
-            src={muiTheme.palette.mode === 'dark' ? '/admin/ui/faxbot_mini_banner_dark.png' : '/admin/ui/faxbot_mini_banner_light.png'}
-            alt="Faxbot"
-            onClick={() => changeTab(topTabs[0])}
-            sx={{
-              height: { xs: 30, sm: 36 },
-              mr: { xs: 1, sm: 2 },
-              borderRadius: 1,
-              cursor: 'pointer',
-              transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
-              '&:hover': { opacity: 0.8, transform: 'scale(1.05)' },
-            }}
-          />
-          <Typography
-            variant="h6"
-            sx={{ flexGrow: 1, fontSize: { xs: '0.95rem', sm: '1.2rem' }, fontWeight: 600, display: { xs: 'none', md: 'block' } }}
-          >
-            Admin Console
-          </Typography>
-          <Box sx={{ flexGrow: { xs: 1, md: 0 } }} />
-          <Typography variant="body2" color="text.secondary" sx={{ mr: 1, display: { xs: 'none', sm: 'block' } }}>
-            {me.principal.display_name}
-          </Typography>
-          <ThemeToggle />
-          <Tooltip title="Open Settings">
-            <IconButton
-              color="inherit"
-              onClick={() => openSettings(settingsItems.some((item) => item.value === 'settings') ? 'settings' : settingsItems[0].value)}
-              sx={{ mx: 1 }}
-              aria-label="open settings"
-            >
-              <SettingsIcon />
+        }}>
+          <Toolbar sx={{ minHeight: 56, px: 1 }}>
+            <IconButton color="inherit" edge="start" onClick={() => setMobileOpen(true)} sx={{ mr: 1 }} aria-label="open navigation">
+              <MenuIcon />
             </IconButton>
-          </Tooltip>
-          <Button
-            color="inherit"
-            onClick={onSignOut}
-            startIcon={<LogoutIcon />}
-            size={isMobile ? 'small' : 'medium'}
-            sx={{ fontSize: { xs: '0.75rem', sm: '0.875rem' }, borderRadius: 2, px: { xs: 1.5, sm: 2 } }}
-          >
-            Sign out
-          </Button>
-        </Toolbar>
-      </AppBar>
+            {logo}
+          </Toolbar>
+        </AppBar>
+      )}
+      {isMobile ? (
+        <Drawer anchor="left" open={mobileOpen} onClose={() => setMobileOpen(false)} ModalProps={{ keepMounted: false }}
+          sx={{ '& .MuiDrawer-paper': { width: DRAWER_WIDTH, borderRadius: '0 16px 16px 0' } }}>
+          {panel}
+        </Drawer>
+      ) : (
+        <Drawer variant="permanent" sx={{ width: DRAWER_WIDTH, flexShrink: 0,
+          '& .MuiDrawer-paper': { width: DRAWER_WIDTH, boxSizing: 'border-box' } }}>
+          {panel}
+        </Drawer>
+      )}
 
-      <Container maxWidth="xl" sx={{ flex: 1, px: { xs: 1, sm: 2, md: 3 } }}>
+      <Box component="main" sx={{ flex: 1, minWidth: 0, px: { xs: 1.5, sm: 2, md: 4 }, pt: { xs: 9, md: 3 }, pb: 4 }}>
         {me.can_enroll_owner && (
-          <Box sx={{ mt: 2 }}>
+          <Box sx={{ mb: 2 }}>
             <OwnerEnrollment client={client} onEnrolled={() => {
               onIdentityChanged();
               // A new installation's next step after its first owner is choosing a fax provider.
-              if (context.provider_view && !context.provider_view.active_outbound) handleNavigate('setup');
+              if (context.provider_view && !context.provider_view.active_outbound) navigate('setup');
             }} />
           </Box>
         )}
-
-        {!isMobile && (
-          <Box sx={{ borderBottom: 1, borderColor: 'divider', mt: { xs: 1, md: 2 } }}>
-            <Tabs
-              value={currentTab}
-              onChange={(_, next: TopTab) => changeTab(next)}
-              variant={isTablet ? 'scrollable' : 'standard'}
-              scrollButtons={isTablet ? 'auto' : false}
-              allowScrollButtonsMobile
-              sx={tabsSx}
-            >
-              {topTabs.map((value) => (
-                <Tab key={value} value={value} icon={TOP_ICONS[value]} iconPosition="start" label={TOP_LABELS[value]} />
-              ))}
-            </Tabs>
-          </Box>
+        {route ? (
+          <>
+            <PageBreadcrumbs area={route.area} page={route.page} onNavigate={openPage} />
+            <Box key={pageKey}>
+              {route.page.render(pageContext)}
+            </Box>
+          </>
+        ) : (
+          <Alert severity="info">There is nothing in the console for this account yet.</Alert>
         )}
-
-        <Drawer
-          anchor="left"
-          open={mobileOpen}
-          onClose={() => setMobileOpen(false)}
-          sx={{ display: { xs: 'block', md: 'none' }, '& .MuiDrawer-paper': { width: 280, borderRadius: '0 16px 16px 0' } }}
-        >
-          <Box sx={{ width: 280, pt: 2 }} role="presentation" onClick={() => setMobileOpen(false)}>
-            <Box sx={{ px: 2, pb: 2 }}>
-              <Typography variant="h6" fontWeight={600}>Navigation</Typography>
-            </Box>
-            <List>
-              {topTabs.filter((value) => value !== 'settings' && value !== 'tools').map((value) => (
-                <ListItemButton key={value} selected={currentTab === value} onClick={() => changeTab(value)} sx={drawerItemSx}>
-                  <ListItemIcon>{TOP_ICONS[value]}</ListItemIcon>
-                  <ListItemText primary={TOP_LABELS[value]} />
-                </ListItemButton>
-              ))}
-              <Divider sx={{ my: 2 }} />
-              <ListItemText primary="Settings" primaryTypographyProps={{ fontWeight: 600 }} sx={{ px: 3 }} />
-              {settingsItems.map((item) => (
-                <ListItemButton key={item.value} selected={currentTab === 'settings' && currentSettings === item.value}
-                  onClick={() => openSettings(item.value)} sx={{ ...drawerItemSx, pl: 4 }}>
-                  <ListItemIcon>{SETTINGS_ICONS[item.value]}</ListItemIcon>
-                  <ListItemText primary={item.label} />
-                </ListItemButton>
-              ))}
-              {toolsItems.length > 0 && (
-                <>
-                  <Divider sx={{ my: 2 }} />
-                  <ListItemText primary="Tools" primaryTypographyProps={{ fontWeight: 600 }} sx={{ px: 3 }} />
-                  {toolsItems.map((item) => (
-                    <ListItemButton key={item.value} selected={currentTab === 'tools' && currentTool === item.value}
-                      onClick={() => { setToolsTab(item.value); changeTab('tools'); }} sx={{ ...drawerItemSx, pl: 4 }}>
-                      <ListItemIcon>{TOOL_ICONS[item.value]}</ListItemIcon>
-                      <ListItemText primary={item.label} />
-                    </ListItemButton>
-                  ))}
-                </>
-              )}
-            </List>
-          </Box>
-        </Drawer>
-
-        <TabPanel value="dashboard" current={currentTab}>
-          <Dashboard client={client} onNavigate={handleNavigate} canSetUp={canSetUp} />
-        </TabPanel>
-        <TabPanel value="send" current={currentTab}>
-          <SendFax client={client} config={adminConfig} configLoading={contextLoading} configError={contextError}
-            onOpenJob={(jobId) => { setJobToOpen(jobId); handleNavigate('jobs'); }} />
-        </TabPanel>
-        <TabPanel value="jobs" current={currentTab}>
-          <JobsList client={client} openJobId={jobToOpen} onOpened={() => setJobToOpen(null)} />
-        </TabPanel>
-        <TabPanel value="inbox" current={currentTab}>
-          {contextLoading ? <Alert severity="info">Loading…</Alert>
-            : contextError ? <Alert severity="error">{contextError}</Alert>
-            : <Inbound client={client} inboundEnabled={context.inbound_enabled ?? undefined} onNavigate={handleNavigate} docsBase={docsBase} permissions={permissions} />}
-        </TabPanel>
-        <TabPanel value="work" current={currentTab}>
-          <Work client={client} permissions={permissions} />
-        </TabPanel>
-        <TabPanel value="settings" current={currentTab}>
-          <Paper elevation={0} sx={groupPaperSx}>
-            <Box sx={groupHeaderSx}>
-              <Tabs
-                value={currentSettings}
-                onChange={(_, next: SettingsTab) => setSettingsTab(next)}
-                variant="scrollable"
-                scrollButtons="auto"
-                sx={{ px: 2 }}
-              >
-                {settingsItems.map((item) => (
-                  <Tab key={item.value} value={item.value} icon={SETTINGS_ICONS[item.value]} iconPosition="start" label={item.label} />
-                ))}
-              </Tabs>
-            </Box>
-            <Box sx={{ p: { xs: 2, md: 3 } }}>
-              {currentSettings === 'setup' && <SetupWizard client={client} onDone={() => changeTab(topTabs[0])} docsBase={docsBase} canRestart={permissions.has('host:restart')} />}
-              {currentSettings === 'settings' && <Settings client={client} canWrite={permissions.has('settings:write')} canRestart={permissions.has('host:restart')}
-                focus={settingsFocus} onFocused={clearSettingsFocus} />}
-              {currentSettings === 'keys' && <ApiKeys client={client} me={me} />}
-              {currentSettings === 'users' && <Users client={client} me={me} />}
-              {currentSettings === 'groups' && <Groups client={client} me={me} />}
-              {currentSettings === 'roles' && <Roles client={client} me={me} />}
-              {currentSettings === 'access' && <ResourceAccess client={client} me={me} />}
-              {currentSettings === 'sessions' && <Sessions client={client} me={me} />}
-              {currentSettings === 'mcp' && <MCP client={client} />}
-            </Box>
-          </Paper>
-        </TabPanel>
-        <TabPanel value="tools" current={currentTab}>
-          {contextLoading ? <Alert severity="info">Loading…</Alert>
-            : contextError ? <Alert severity="error">{contextError}</Alert>
-            : currentTool && (
-              <Paper elevation={0} sx={groupPaperSx}>
-                <Box sx={groupHeaderSx}>
-                  <Tabs
-                    value={currentTool}
-                    onChange={(_, next: ToolTab) => setToolsTab(next)}
-                    variant={isMobile ? 'scrollable' : 'standard'}
-                    scrollButtons={isMobile ? 'auto' : false}
-                    sx={{ px: 2 }}
-                  >
-                    {toolsItems.map((item) => (
-                      <Tab key={item.value} value={item.value} icon={TOOL_ICONS[item.value]} iconPosition="start" label={item.label} />
-                    ))}
-                  </Tabs>
-                </Box>
-                <Box sx={{ p: { xs: 2, md: 3 } }}>
-                  {currentTool === 'routes' && <DeliveryRoutes client={client} canWrite={permissions.has('settings:write')} />}
-                  {currentTool === 'terminal' && <Terminal client={client} />}
-                  {currentTool === 'diagnostics' && <Diagnostics client={client} onNavigate={handleNavigate} docsBase={docsBase} />}
-                  {currentTool === 'logs' && <Logs client={client} />}
-                  {currentTool === 'plugins' && <Plugins client={client} config={adminConfig} configLoading={contextLoading} configError={contextError} onNavigate={handleNavigate} />}
-                  {currentTool === 'scripts' && <ScriptsTests client={client} onNavigate={handleNavigate} docsBase={docsBase} />}
-                </Box>
-              </Paper>
-            )}
-        </TabPanel>
-      </Container>
+      </Box>
     </Box>
   );
 }

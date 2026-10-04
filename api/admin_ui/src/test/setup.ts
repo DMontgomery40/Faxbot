@@ -15,6 +15,9 @@ if (!window.matchMedia) {
   });
 }
 
+// The console scrolls to the top when it opens a page; jsdom does not scroll.
+window.scrollTo = (() => undefined) as typeof window.scrollTo;
+
 // xterm probes a canvas at import time; jsdom has none.
 HTMLCanvasElement.prototype.getContext = (() => null) as typeof HTMLCanvasElement.prototype.getContext;
 
@@ -24,5 +27,7 @@ afterEach(() => {
   cleanup();
   server.resetHandlers();
   try { window.localStorage.clear(); } catch { /* ignore */ }
+  // Each test starts at the console's bare address, not the page the last one opened.
+  window.history.replaceState(null, '', '/');
 });
 afterAll(() => server.close());

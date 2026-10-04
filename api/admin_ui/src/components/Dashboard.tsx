@@ -17,11 +17,10 @@ import {
   Refresh as RefreshIcon,
   CheckCircle as CheckCircleIcon,
   Error as ErrorIcon,
-  ContentCopy as ContentCopyIcon,
+  ChevronRight as ChevronRightIcon,
 } from '@mui/icons-material';
-import { IconButton } from '@mui/material';
 import AdminAPIClient, { AdminAPIError, isNotAvailable } from '../api/client';
-import type { HealthStatus } from '../api/types';
+import type { HealthStatus, WorkCounts } from '../api/types';
 import type { DirectPartner, IntakeCounts, RouteCostsResponse } from '../api/deliveryTypes';
 import type { SipCallRecord } from '../api/sipTypes';
 import type { AdminDestination } from '../navigation';
@@ -105,6 +104,56 @@ function Line({ label, value, color }: { label: string; value: React.ReactNode; 
   );
 }
 
+// One thing that needs a person, with how many and the page that handles it.
+export interface AttentionItem {
+  key: string;
+  label: string;
+  count: number | null;
+  destination: AdminDestination;
+}
+
+// What needs a person now, from the cards' own data. Items this account
+// cannot read, and items with nothing in them, are left out.
+export function attentionItems({ health, work, intake, costs, canSetUp = false }: {
+  health: HealthStatus | null;
+  work: CardData<WorkCounts>;
+  intake: CardData<IntakeCounts>;
+  costs: CardData<RouteCostsResponse>;
+  canSetUp?: boolean;
+}): AttentionItem[] {
+  const items: AttentionItem[] = [];
+  if (health && !health.backend) {
+    items.push({ key: 'no-provider', label: 'No fax provider is set up yet', count: null,
+      destination: canSetUp ? 'setup' : 'diagnostics' });
+  }
+  if (health && health.backend && !health.backend_healthy) {
+    items.push({ key: 'not-ready', label: 'Faxbot is not ready to send faxes', count: null, destination: 'system/diagnostics' });
+  }
+  if (health?.jobs.recent_failures) {
+    items.push({ key: 'failed', label: 'Faxes that failed in the last 24 hours', count: health.jobs.recent_failures, destination: 'faxes/sent' });
+  }
+  if (health?.jobs.reconciliation_required) {
+    items.push({ key: 'uncertain', label: 'Sent faxes with an uncertain result', count: health.jobs.reconciliation_required, destination: 'faxes/sent' });
+  }
+  if (work.kind === 'ready' && work.data.unassigned > 0) {
+    items.push({ key: 'unassigned', label: 'Received faxes waiting for an owner', count: work.data.unassigned, destination: 'faxes/work' });
+  }
+  if (work.kind === 'ready' && work.data.overdue > 0) {
+    items.push({ key: 'overdue', label: 'Received faxes that are overdue', count: work.data.overdue, destination: 'faxes/work' });
+  }
+  if (intake.kind === 'ready' && intake.data.failed > 0) {
+    items.push({ key: 'not-delivered', label: 'Received faxes not delivered by email', count: intake.data.failed, destination: 'faxes/received' });
+  }
+  if (costs.kind === 'ready') {
+    const unrecorded = [...costs.data.providers, ...(costs.data.received ?? [])]
+      .reduce((total, row) => total + (row.unrecorded_calls ?? 0), 0);
+    if (unrecorded > 0) {
+      items.push({ key: 'unrecorded', label: 'Carrier charges with no matching fax, last 30 days', count: unrecorded, destination: 'costs/spending' });
+    }
+  }
+  return items;
+}
+
 interface DashboardProps {
   client: AdminAPIClient;
   onNavigate?: (destination: AdminDestination) => void;
@@ -122,23 +171,25 @@ function Dashboard({ client, onNavigate, canSetUp = false }: DashboardProps) {
   const [error, setError] = useState<string | null>(null);
   const [justApplied, setJustApplied] = useState<boolean>(false);
   const [cfg, setCfg] = useState<any | null>(null);
-  const [plugins, setPlugins] = useState<any[] | null>(null);
   const [spending, setSpending] = useState<CardData<RouteCostsResponse>>({ kind: 'loading' });
   const [intake, setIntake] = useState<CardData<IntakeCounts>>({ kind: 'loading' });
   const [partners, setPartners] = useState<CardData<DirectPartner[]>>({ kind: 'loading' });
+  const [work, setWork] = useState<CardData<WorkCounts>>({ kind: 'loading' });
   const [missedCall, setMissedCall] = useState<string | null>(null);
 
   // Delivery cards load on entry and on Refresh, not on every health poll.
   const fetchDelivery = async () => {
-    const [costs, queue, peers, calls] = await Promise.all([
+    const [costs, queue, peers, calls, counts] = await Promise.all([
       settle(client.getRouteCosts()),
       settle(client.listIntakeItems({ limit: 1 }).then((result) => result.counts)),
       settle(client.listDirectPartners().then((result) => result.peers)),
       settle(client.listSipCalls({ limit: 20, direction: 'inbound' }).then((result) => result.items)),
+      settle(client.workCounts()),
     ]);
     setSpending(costs);
     setIntake(queue);
     setPartners(peers);
+    setWork(counts);
     setMissedCall(calls.kind === 'ready' ? missedInboundCall(calls.data) : null);
   };
 
@@ -158,21 +209,9 @@ function Dashboard({ client, onNavigate, canSetUp = false }: DashboardProps) {
 
   const fetchConfig = async () => {
     try {
-      const c = await client.getConfig();
-      setCfg(c);
-      // Lazy-load plugins list only when v3 plugins are enabled
-      if (c?.v3_plugins?.enabled) {
-        try {
-          const list = await client.listPlugins();
-          setPlugins(list?.items || []);
-        } catch {
-          setPlugins([]);
-        }
-      } else {
-        setPlugins(null);
-      }
+      setCfg(await client.getConfig());
     } catch {
-      // ignore
+      // The status card says "Unavailable" for what it could not read.
     }
   };
 
@@ -184,14 +223,14 @@ function Dashboard({ client, onNavigate, canSetUp = false }: DashboardProps) {
       sessionStorage.removeItem('fb_admin_applied');
       setTimeout(() => setJustApplied(false), 4000);
     }
-    
+
     // Start polling
     const cleanup = client.startPolling((data) => {
       setHealth(data);
       setError(null);
       fetchConfig();
     });
-    
+
     return cleanup;
   }, [client]);
 
@@ -211,6 +250,9 @@ function Dashboard({ client, onNavigate, canSetUp = false }: DashboardProps) {
     );
   }
 
+  const attention = attentionItems({ health, work, intake, costs: spending, canSetUp });
+  const attentionLoading = work.kind === 'loading' || intake.kind === 'loading' || spending.kind === 'loading';
+
   return (
     <Box>
       {justApplied && (
@@ -220,7 +262,7 @@ function Dashboard({ client, onNavigate, canSetUp = false }: DashboardProps) {
       )}
       <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
         <Typography variant="h4" component="h1">
-          Dashboard
+          Overview
         </Typography>
         <Button
           variant="outlined"
@@ -240,12 +282,13 @@ function Dashboard({ client, onNavigate, canSetUp = false }: DashboardProps) {
 
       {health && (
         <Grid container spacing={{ xs: 2, md: 3 }}>
-          {/* System Status */}
+          {/* System Status, and what sends and receives faxes */}
           <Grid item xs={12} sm={6} lg={3}>
             <Tooltip title="Click to view detailed diagnostics" arrow>
-              <Card 
-                sx={{ 
+              <Card
+                sx={{
                   cursor: 'pointer',
+                  height: '100%',
                   '&:hover': {
                     backgroundColor: 'rgba(59, 160, 255, 0.08)',
                     transform: 'translateY(-2px)',
@@ -281,17 +324,61 @@ function Dashboard({ client, onNavigate, canSetUp = false }: DashboardProps) {
                     {health.backend_message}
                   </Typography>
                 )}
+                <Box display="flex" flexDirection="column" gap={0.5} sx={{ mt: 1.5 }}>
+                  <Box display="flex" justifyContent="space-between" alignItems="center" gap={1}>
+                    <Typography variant="body2" color="text.secondary">Sending</Typography>
+                    <Chip size="small" data-testid="config-sending"
+                      label={cfg ? (cfg.hybrid?.outbound ? providerLabel(cfg.hybrid.outbound) : 'Not set up yet') : 'Unavailable'} />
+                  </Box>
+                  <Box display="flex" justifyContent="space-between" alignItems="center" gap={1}>
+                    <Typography variant="body2" color="text.secondary">Receiving</Typography>
+                    <Chip size="small" data-testid="config-receiving"
+                      label={cfg ? (cfg.inbound?.enabled && cfg.hybrid?.inbound ? providerLabel(cfg.hybrid.inbound) : 'Not set up yet') : 'Unavailable'} />
+                  </Box>
+                </Box>
               </CardContent>
               </Card>
             </Tooltip>
           </Grid>
 
+          {/* Needs attention: what is waiting for a person, each opening the page that handles it */}
+          <Grid item xs={12} sm={6} lg={3}>
+            <Card sx={{ height: '100%' }} data-testid="needs-attention">
+              <CardContent sx={{ pb: { xs: 1, sm: 2 } }}>
+                <Typography variant="h6" component="h2" gutterBottom sx={{ fontSize: { xs: '1rem', sm: '1.25rem' } }}>
+                  Needs attention
+                </Typography>
+                {attention.length === 0 ? (
+                  attentionLoading ? <CircularProgress size={20} aria-label="Loading Needs attention" />
+                    : <Typography variant="body2" color="text.secondary">Nothing needs attention.</Typography>
+                ) : (
+                  <Box display="flex" flexDirection="column" gap={0.5}>
+                    {attention.map((item) => (
+                      <Button key={item.key} data-testid={`attention-${item.key}`} color="inherit" size="small"
+                        disabled={!onNavigate} onClick={() => onNavigate?.(item.destination)}
+                        endIcon={<ChevronRightIcon fontSize="small" />}
+                        sx={{ justifyContent: 'space-between', textAlign: 'left', textTransform: 'none', px: 1, mx: -1 }}>
+                        <Typography variant="body2" component="span" sx={{ flex: 1 }}>{item.label}</Typography>
+                        {item.count !== null && (
+                          <Typography variant="body2" component="span" fontWeight="bold" color={warningTextColor} sx={{ ml: 2 }}>
+                            {item.count}
+                          </Typography>
+                        )}
+                      </Button>
+                    ))}
+                  </Box>
+                )}
+              </CardContent>
+            </Card>
+          </Grid>
+
           {/* Job Queue */}
           <Grid item xs={12} sm={6} lg={3}>
             <Tooltip title="Click to view all jobs" arrow>
-              <Card 
-                sx={{ 
+              <Card
+                sx={{
                   cursor: 'pointer',
+                  height: '100%',
                   '&:hover': {
                     backgroundColor: 'rgba(59, 160, 255, 0.08)',
                     transform: 'translateY(-2px)',
@@ -320,18 +407,12 @@ function Dashboard({ client, onNavigate, canSetUp = false }: DashboardProps) {
                   </Box>
                   <Box display="flex" justifyContent="space-between">
                     <Typography variant="body2">Failures (Last 24 Hours):</Typography>
-                    <Typography 
-                      variant="body2" 
+                    <Typography
+                      variant="body2"
                       fontWeight="bold"
                       color={health.jobs.recent_failures > 0 ? 'error' : 'text.primary'}
                     >
                       {health.jobs.recent_failures}
-                    </Typography>
-                  </Box>
-                  <Box display="flex" justifyContent="space-between">
-                    <Typography variant="body2">Held Test Faxes:</Typography>
-                    <Typography variant="body2" fontWeight="bold">
-                      {health.jobs.held ?? 'Unavailable'}
                     </Typography>
                   </Box>
                   <Box display="flex" justifyContent="space-between">
@@ -355,9 +436,10 @@ function Dashboard({ client, onNavigate, canSetUp = false }: DashboardProps) {
           {/* Inbound Status */}
           <Grid item xs={12} sm={6} lg={3}>
             <Tooltip title="Click to view inbound faxes" arrow>
-              <Card 
-                sx={{ 
+              <Card
+                sx={{
                   cursor: 'pointer',
+                  height: '100%',
                   '&:hover': {
                     backgroundColor: 'rgba(59, 160, 255, 0.08)',
                     transform: 'translateY(-2px)',
@@ -387,49 +469,11 @@ function Dashboard({ client, onNavigate, canSetUp = false }: DashboardProps) {
             </Tooltip>
           </Grid>
 
-          {/* Security Status */}
-          <Grid item xs={12} sm={6} lg={3}>
-            <Tooltip title="Click to manage API keys" arrow>
-              <Card 
-                sx={{ 
-                  cursor: 'pointer',
-                  '&:hover': {
-                    backgroundColor: 'rgba(59, 160, 255, 0.08)',
-                    transform: 'translateY(-2px)',
-                    boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
-                  },
-                  transition: 'all 0.2s ease-in-out',
-                }}
-                onClick={() => onNavigate?.('keys')}
-              >
-                <CardContent sx={{ pb: { xs: 1, sm: 2 } }}>
-                  <Typography variant="h6" component="h2" gutterBottom sx={{ fontSize: { xs: '1rem', sm: '1.25rem' } }}>
-                    Security
-                  </Typography>
-                  <Box display="flex" flexDirection="column" gap={1}>
-                    <Box display="flex" alignItems="center">
-                      <CheckCircleIcon color="success" />
-                      <Typography variant="body2" sx={{ ml: 1 }}>
-                        Authentication required
-                      </Typography>
-                    </Box>
-                    <Box display="flex" alignItems="center">
-                      {health.api_keys_configured ? <CheckCircleIcon color="success" /> : <ErrorIcon color="error" />}
-                      <Typography variant="body2" sx={{ ml: 1 }}>
-                        {health.api_keys_configured ? 'API Keys Configured' : 'No API Keys'}
-                      </Typography>
-                    </Box>
-                  </Box>
-                </CardContent>
-              </Card>
-            </Tooltip>
-          </Grid>
-
           {/* Spending by provider, last 30 days */}
           <Grid item xs={12} sm={6} lg={4}>
-            <DeliveryCard title="Spending, last 30 days" hint="Click to view delivery routes" data={spending} onOpen={() => onNavigate?.('routes')}>
+            <DeliveryCard title="Spending, last 30 days" hint="Click to view spending" data={spending} onOpen={() => onNavigate?.('routes')}>
               {(costs) => {
-                // The same reading of spending as Tools → Delivery routes (spendingSummary).
+                // The same reading of spending as Costs → Spending (spendingSummary).
                 const lines = spendingLines(costs);
                 return lines.length === 0 ? (
                   <Typography variant="body2" color="text.secondary">No faxes sent or received in the last 30 days.</Typography>
@@ -445,7 +489,7 @@ function Dashboard({ client, onNavigate, canSetUp = false }: DashboardProps) {
 
           {/* Received faxes waiting for or done with email delivery */}
           <Grid item xs={12} sm={6} lg={4}>
-            <DeliveryCard title="Email delivery" hint="Click to view the inbox" data={intake} onOpen={() => onNavigate?.('inbox')}>
+            <DeliveryCard title="Email delivery" hint="Click to view received faxes" data={intake} onOpen={() => onNavigate?.('inbox')}>
               {(counts) => (
                 <Box display="flex" flexDirection="column" gap={1}>
                   <Line label="Waiting" value={counts.received + counts.sending} />
@@ -458,7 +502,7 @@ function Dashboard({ client, onNavigate, canSetUp = false }: DashboardProps) {
 
           {/* Direct delivery partners */}
           <Grid item xs={12} sm={6} lg={4}>
-            <DeliveryCard title="Direct partners" hint="Click to view direct partners" data={partners} onOpen={() => onNavigate?.('routes')}>
+            <DeliveryCard title="Direct partners" hint="Click to view partners" data={partners} onOpen={() => onNavigate?.('recipients/partners')}>
               {(peers) => {
                 const verified = peers.filter((peer) => peer.state === 'verified').length;
                 const pending = peers.filter((peer) => peer.state === 'pending').length;
@@ -470,104 +514,6 @@ function Dashboard({ client, onNavigate, canSetUp = false }: DashboardProps) {
                 );
               }}
             </DeliveryCard>
-          </Grid>
-
-          {/* Config Overview */}
-          <Grid item xs={12} md={6}>
-            <Card>
-              <CardContent>
-                <Typography variant="h6" gutterBottom>Config Overview</Typography>
-                <Grid container spacing={1}>
-                  <Grid item xs={6}><Typography variant="body2" color="text.secondary">Sending</Typography></Grid>
-                  <Grid item xs={6}><Chip size="small" data-testid="config-sending"
-                    label={cfg ? (cfg.hybrid?.outbound ? providerLabel(cfg.hybrid.outbound) : 'No provider') : 'Unavailable'} /></Grid>
-                  <Grid item xs={6}><Typography variant="body2" color="text.secondary">Receiving</Typography></Grid>
-                  <Grid item xs={6}><Chip size="small" data-testid="config-receiving"
-                    label={cfg ? (cfg.inbound?.enabled && cfg.hybrid?.inbound ? providerLabel(cfg.hybrid.inbound) : 'No provider') : 'Unavailable'} /></Grid>
-                  <Grid item xs={6}><Typography variant="body2" color="text.secondary">Storage</Typography></Grid>
-                  <Grid item xs={6}><Chip size="small" label={cfg?.storage?.backend || 'local'} /></Grid>
-                  <Grid item xs={6}><Typography variant="body2" color="text.secondary">Authentication</Typography></Grid>
-                  <Grid item xs={6}><Chip size="small" label="Required" color="success" variant="outlined" /></Grid>
-                  <Grid item xs={6}><Typography variant="body2" color="text.secondary">Enforce HTTPS</Typography></Grid>
-                  <Grid item xs={6}><Chip size="small" label={(cfg?.enforce_public_https ? 'Enabled' : 'Disabled')} color={cfg?.enforce_public_https ? 'success' : 'default'} variant="outlined" /></Grid>
-                  <Grid item xs={6}><Typography variant="body2" color="text.secondary">v3 Plugins</Typography></Grid>
-                  <Grid item xs={6}><Chip size="small" label={(cfg?.v3_plugins?.enabled ? `Enabled (${cfg?.v3_plugins?.active_outbound ? providerLabel(cfg.v3_plugins.active_outbound) : '-'})` : 'Disabled')} color={cfg?.v3_plugins?.enabled ? 'success' : 'default'} variant="outlined" /></Grid>
-                </Grid>
-              </CardContent>
-            </Card>
-          </Grid>
-
-          {/* MCP Overview */}
-          <Grid item xs={12} md={6}>
-            <Card>
-              <CardContent>
-                <Typography variant="h6" gutterBottom>MCP Overview</Typography>
-                <Grid container spacing={1} alignItems="center">
-                  <Grid item xs={4}><Typography variant="body2" color="text.secondary">SSE</Typography></Grid>
-                  <Grid item xs={8}>
-                    <Chip size="small" label={cfg?.mcp?.sse_enabled ? 'Enabled' : 'Disabled'} color={cfg?.mcp?.sse_enabled ? 'success' : 'default'} variant="outlined" />
-                    {cfg?.mcp?.sse_enabled && (
-                      <Tooltip title="Copy SSE URL">
-                        <IconButton size="small" sx={{ ml: 1 }} onClick={() => navigator.clipboard.writeText(`${window.location.origin}${cfg?.mcp?.sse_path || '/mcp/sse'}`)}>
-                          <ContentCopyIcon fontSize="small" />
-                        </IconButton>
-                      </Tooltip>
-                    )}
-                  </Grid>
-                  <Grid item xs={4}><Typography variant="body2" color="text.secondary">HTTP</Typography></Grid>
-                  <Grid item xs={8}>
-                    <Chip size="small" label={cfg?.mcp?.http_enabled ? 'Enabled' : 'Disabled'} color={cfg?.mcp?.http_enabled ? 'success' : 'default'} variant="outlined" />
-                    {cfg?.mcp?.http_enabled && (
-                      <Tooltip title="Copy HTTP URL">
-                        <IconButton size="small" sx={{ ml: 1 }} onClick={() => navigator.clipboard.writeText(`${window.location.origin}${cfg?.mcp?.http_path || '/mcp/http'}`)}>
-                          <ContentCopyIcon fontSize="small" />
-                        </IconButton>
-                      </Tooltip>
-                    )}
-                  </Grid>
-                  <Grid item xs={4}><Typography variant="body2" color="text.secondary">OAuth</Typography></Grid>
-                  <Grid item xs={8}><Chip size="small" label={cfg?.mcp?.require_oauth ? 'Required' : 'Optional'} variant="outlined" /></Grid>
-                </Grid>
-              </CardContent>
-            </Card>
-          </Grid>
-
-          {/* Plugins (feature-gated) */}
-          {cfg?.v3_plugins?.enabled && (
-            <Grid item xs={12} md={6}>
-              <Card>
-                <CardContent>
-                  <Typography variant="h6" gutterBottom>Plugins</Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    Outbound: {cfg?.v3_plugins?.active_outbound || '-'} • Installed: {plugins?.length ?? 0}
-                  </Typography>
-                  <Typography variant="caption" color="text.secondary">
-                    Manifest warnings appear under Diagnostics.
-                  </Typography>
-                </CardContent>
-              </Card>
-            </Grid>
-          )}
-
-          {/* SDK & Quickstart */}
-          <Grid item xs={12} md={cfg?.v3_plugins?.enabled ? 6 : 12}>
-            <Card>
-              <CardContent>
-                <Typography variant="h6" gutterBottom>SDK & Quickstart</Typography>
-                <Typography variant="body2">Base URL: {window.location.origin}</Typography>
-                <Typography variant="body2" sx={{ mb: 1 }}>Header: X-API-Key: &lt;your key&gt;</Typography>
-                <Typography variant="body2" color="text.secondary">Node:</Typography>
-                <Box component="pre" sx={{ p: 1, bgcolor: 'background.default', borderRadius: 1, overflow: 'auto' }}>{`npm i faxbot@1.0.2
-node -e "(async()=>{const FaxbotClient=require('faxbot');const c=new FaxbotClient('${window.location.origin}','<key>');const r=await c.sendFax('+15551234567','/path/to/file.pdf');console.log(r)})()"`}</Box>
-                <Typography variant="body2" color="text.secondary">Python:</Typography>
-                <Box component="pre" sx={{ p: 1, bgcolor: 'background.default', borderRadius: 1, overflow: 'auto' }}>{`pip install faxbot==1.0.2
-python - <<'PY'
-from faxbot import FaxbotClient
-c=FaxbotClient('${window.location.origin}','<key>')
-print(c.send_fax('+15551234567','/path/to/file.pdf'))
-PY`}</Box>
-              </CardContent>
-            </Card>
           </Grid>
 
           {/* Last Updated */}

@@ -29,7 +29,7 @@ import {
   Public as PublicIcon,
 } from '@mui/icons-material';
 import AdminAPIClient, { configurationWriteRejected, isForbidden, plainRefusal } from '../api/client';
-import { DeliverySettingsSections, EMAIL_DELIVERY_SECTION, deliveryEditorValues } from './delivery/DeliverySettings';
+import { DELIVERY_SECTIONS, DeliverySettingsSections, EMAIL_DELIVERY_SECTION, deliveryEditorValues, type DeliverySection } from './delivery/DeliverySettings';
 import { DEFAULT_DOCS_BASE, docsLink } from '../docsLinks';
 import EnvSetField, { ENV_SET_HELP, environmentManaged } from './common/EnvSetField';
 import RestartNotice from './common/RestartFaxbot';
@@ -40,7 +40,7 @@ import TunnelSettings from './TunnelSettings';
 import SipTrunkSettings from './SipTrunkSettings';
 import EfaxSettings, { efaxEditorValues } from './EfaxSettings';
 import { COUNTRY_HELP, CountryField, countryName, internationalHint, settingsNumberFormat } from './common/numbers';
-import { directionSummary } from '../providerLabels';
+import { directionSummary, providerLabel } from '../providerLabels';
 import ProviderDirectionFields, { directionFields, directionProblem, loadedDirections } from './common/ProviderDirections';
 
 interface SettingsProps {
@@ -52,6 +52,29 @@ interface SettingsProps {
   // A section to scroll to once settings load, such as the email delivery settings.
   focus?: string | null;
   onFocused?: () => void;
+  // Show only these sections, under this page title (a console page shows its own part of the settings).
+  sections?: SettingsSection[];
+  title?: string;
+}
+
+// The parts of the settings document a console page can show on its own.
+export type SettingsSection =
+  | 'providers' | 'features' | 'inbound' | 'routes'
+  | 'phaxio' | 'sinch' | 'documo' | 'humblefax' | 'efax' | 'trunk' | 'signalwire' | 'freeswitch'
+  | 'direct' | 'intake' | 'email'
+  | 'security' | 'tunnel' | 'storage' | 'advanced' | 'backup' | 'mcp';
+
+const PROVIDER_NAMES: Record<string, string> = { sip: 'your phone carrier', freeswitch: 'FreeSWITCH' };
+
+// One sentence on a provider's own page: whether Faxbot uses it now.
+export function providerUseSentence(provider: string, directions: { sending: string; receiving: string }): string {
+  const name = PROVIDER_NAMES[provider] ?? providerLabel(provider);
+  const sends = directions.sending === provider;
+  const receives = directions.receiving === provider;
+  if (sends && receives) return `Faxbot sends and receives faxes through ${name}.`;
+  if (sends) return `Faxbot sends faxes through ${name}.`;
+  if (receives) return `Faxbot receives faxes through ${name}.`;
+  return `Faxbot does not use ${name} now. To use it, choose it under Sending & receiving.`;
 }
 
 type FormValue = string | number | boolean;
@@ -157,7 +180,9 @@ function editorValues(data: SettingsType): SettingsForm {
   };
 }
 
-function Settings({ client, canWrite = false, canRestart = false, focus, onFocused }: SettingsProps) {
+function Settings({ client, canWrite = false, canRestart = false, focus, onFocused, sections, title }: SettingsProps) {
+  // Without sections, the whole settings document is shown.
+  const shows = (section: SettingsSection) => !sections || sections.includes(section);
   const [settings, setSettings] = useState<SettingsType | null>(null);
   const [envContent, setEnvContent] = useState<string>('');
   const [loading, setLoading] = useState(false);
@@ -209,6 +234,13 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
     receiving: form.inbound_enabled ? String(form.inbound_backend || form.backend || '') : '',
   };
   const providerSelected = (provider: string) => effectiveOutbound === provider || effectiveInbound === provider;
+  // A provider's own page shows its settings whether or not it is in use, with one sentence saying which.
+  const providerShown = (provider: string, section: SettingsSection) => (sections ? sections.includes(section) : providerSelected(provider));
+  const providerStatus = (provider: string) => (sections && settings ? (
+    <Typography variant="body2" sx={{ mb: 2 }} data-testid="provider-use">
+      {providerUseSentence(provider, loadedDirections(settings))}
+    </Typography>
+  ) : null);
   const changedFields = Object.keys(form).filter((field) => form[field] !== loadedForm[field]);
 
   const hydrate = (data: SettingsType) => {
@@ -404,10 +436,12 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
 
   return (
     <Box>
-      <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
-        <Typography variant="h4" component="h1">
-          Settings
-        </Typography>
+      <Box display="flex" justifyContent={sections && !title ? 'flex-end' : 'space-between'} alignItems="center" mb={3}>
+        {(!sections || title) && (
+          <Typography variant="h4" component="h1">
+            {sections ? title : 'Settings'}
+          </Typography>
+        )}
         <Box>
           <Button
             variant="outlined"
@@ -418,6 +452,7 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
           >
             Load Settings
           </Button>
+          {shows('backup') && (<>
           <Button variant="contained" onClick={exportEnv} disabled={loading} sx={{ mr: 1 }}>
             Export .env
           </Button>
@@ -436,6 +471,7 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
           >
             Write recovery .env
           </Button>
+          </>)}
 
         </Box>
       </Box>
@@ -445,7 +481,7 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
           {error}
         </Alert>
       )}
-      {engineMessage && (
+      {engineMessage && (shows('providers') || shows('trunk')) && (
         <Alert severity="error" sx={{ mb: 3 }} data-testid="engine-message">
           {engineMessage}
         </Alert>
@@ -474,6 +510,7 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
         <Box component="fieldset" disabled={!canEdit} sx={{ border: 0, m: 0, p: 0, minWidth: 0 }}>
         <Stack spacing={3}>
           {/* Fax providers: the same two choices as the Setup Wizard */}
+          {shows('providers') && (
           <ResponsiveFormSection
             title="Fax providers"
             subtitle="Which provider sends your faxes and which receives them"
@@ -529,8 +566,10 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
               />
             )}
           </ResponsiveFormSection>
+          )}
 
           {/* Security Settings */}
+          {shows('security') && (
           <ResponsiveFormSection
             title="Security Settings"
             subtitle="Configure authentication, HTTPS, and audit logging"
@@ -594,20 +633,24 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
             {toggleField('Audit Syslog', 'audit_log_syslog')}
             {textField('Audit Syslog Address', 'audit_log_syslog_address')}
           </ResponsiveFormSection>
+          )}
 
           {/* VPN Tunnel (iOS connectivity) */}
+          {shows('tunnel') && (
           <TunnelSettings
             client={client}
             docsBase={docsBase}
             hipaaMode={Boolean(settings.security?.enforce_https && settings.security?.require_api_key)}
           />
+          )}
 
           {/* Backend-Specific Configuration */}
-          {providerSelected('phaxio') && (
+          {providerShown('phaxio', 'phaxio') && (
                   <ResponsiveSettingSection
                     title="PHAXIO Configuration"
                     subtitle="Configure your Phaxio API credentials and settings"
                   >
+                    {providerStatus('phaxio')}
                     <Box sx={{ display: 'flex', gap: 1, mb: 2, flexWrap: 'wrap' }}>
                       <Chip
                         label="Faxbot: Phaxio Setup"
@@ -674,8 +717,9 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
                   </ResponsiveSettingSection>
                 )}
 
-                {providerSelected('sinch') && (
+                {providerShown('sinch', 'sinch') && (
                   <ResponsiveSettingSection title="Sinch Configuration" subtitle="Configure your Sinch fax endpoint and credentials">
+                    {providerStatus('sinch')}
                     {textField('Sinch Project ID', 'sinch_project_id')}
                     {textField('Sinch Base URL', 'sinch_base_url', 'Leave empty to use the standard Sinch endpoint.')}
                     {textField('Sinch API Key', 'sinch_api_key', 'Leave unchanged to keep the saved key.', 'password')}
@@ -683,11 +727,12 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
                   </ResponsiveSettingSection>
                 )}
 
-                {providerSelected('documo') && (
+                {providerShown('documo', 'documo') && (
                   <ResponsiveSettingSection
                     title="Documo Configuration"
                     subtitle="Configure your Documo API settings"
                   >
+                    {providerStatus('documo')}
                     <ResponsiveSettingItem
                       icon={getStatusIcon(!!settings?.documo?.configured)}
                       label="Documo API Key"
@@ -719,11 +764,12 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
                   </ResponsiveSettingSection>
                 )}
 
-                {providerSelected('humblefax') && (
+                {providerShown('humblefax', 'humblefax') && (
                   <ResponsiveSettingSection
                     title="HumbleFax Configuration"
                     subtitle="Configure your HumbleFax API keys"
                   >
+                    {providerStatus('humblefax')}
                     <ResponsiveSettingItem
                       icon={getStatusIcon(!!settings?.humblefax?.configured)}
                       label="HumbleFax Access Key"
@@ -752,19 +798,21 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
                   </ResponsiveSettingSection>
                 )}
 
-                {providerSelected('efax') && (
+                {providerShown('efax', 'efax') && (
                   <ResponsiveSettingSection title="eFax" subtitle="Your eFax Enterprise API account">
+                    {providerStatus('efax')}
                     <EfaxSettings values={form} onChange={handleForm} settings={settings} disabled={!canEdit}
                       receives={effectiveInbound === 'efax' && !!form.inbound_enabled} docsHref={docsLink('efax', docsBase)}
                       client={client} />
                   </ResponsiveSettingSection>
                 )}
 
-                {providerSelected('sip') && (
+                {providerShown('sip', 'trunk') && (
                   <ResponsiveSettingSection
                     title="SIP / Asterisk Configuration"
                     subtitle="Configure your Asterisk AMI connection settings"
                   >
+                    {providerStatus('sip')}
                     <ResponsiveSettingItem
                       icon={getStatusIcon(!!settings.sip.ami_host)}
                       label="AMI Host"
@@ -806,6 +854,7 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
                 )}
 
           {/* Feature Flags */}
+          {shows('features') && (
           <ResponsiveFormSection
             title="Feature Flags"
             subtitle="Optional features; some take effect after a restart."
@@ -875,8 +924,10 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
             </Stack>
 
           </ResponsiveFormSection>
+          )}
 
           {/* Inbound Receiving */}
+          {shows('inbound') && (
           <ResponsiveFormSection
             title="Inbound Receiving"
             subtitle="Configure inbound fax receiving and storage settings"
@@ -1060,17 +1111,20 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
               </Box>
             )}
           </ResponsiveFormSection>
+          )}
 
           <DeliverySettingsSections client={client} settings={settings} form={form} loaded={loadedForm}
-            onChange={handleForm} showCurrentValue={!pendingRestart} outbound={String(effectiveOutbound)} canWrite={canWrite} />
+            onChange={handleForm} showCurrentValue={!pendingRestart} outbound={String(effectiveOutbound)} canWrite={canWrite}
+            only={sections?.filter((section): section is DeliverySection => DELIVERY_SECTIONS.includes(section as DeliverySection))} />
 
           {/* SignalWire (cloud) */}
-          {providerSelected('signalwire') && (
+          {providerShown('signalwire', 'signalwire') && (
             <ResponsiveFormSection
               title="SignalWire Configuration"
               subtitle="Configure your SignalWire fax settings"
               icon={<CloudIcon />}
             >
+              {providerStatus('signalwire')}
               <ResponsiveSettingItem
                 icon={<CloudIcon />}
                 label="Space URL"
@@ -1125,11 +1179,12 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
 
           {/* Storage Configuration */}
           {/* FreeSWITCH (self-hosted) */}
-          {providerSelected('freeswitch') && (
+          {providerShown('freeswitch', 'freeswitch') && (
             <Grid item xs={12}>
               <Card>
                 <CardContent>
                   <Typography variant="h6" gutterBottom>FreeSWITCH</Typography>
+                  {providerStatus('freeswitch')}
                   {textField('ESL Host', 'fs_esl_host', 'FreeSWITCH ESL host on the private network.')}
                   {textField('ESL Port', 'fs_esl_port', 'FreeSWITCH ESL port.', 'number')}
                   {textField('ESL Password', 'fs_esl_password', 'Leave unchanged to keep the saved password, or clear it to remove it.', 'password')}
@@ -1163,6 +1218,7 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
               </Card>
             </Grid>
           )}
+          {shows('storage') && (
           <ResponsiveFormSection
             title="Storage Configuration"
             subtitle="Configure file storage backend and S3 settings"
@@ -1271,7 +1327,9 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
               </Box>
             )}
           </ResponsiveFormSection>
+          )}
 
+          {shows('mcp') && (
           <ResponsiveFormSection title="MCP Configuration" subtitle="Connections for AI assistants; changes take effect after a restart." icon={<SettingsIcon />}>
             {toggleField('Enable MCP SSE', 'enable_mcp_sse')}
             {textField('MCP SSE Path', 'mcp_sse_path')}
@@ -1282,8 +1340,10 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
             {textField('OAuth Audience', 'oauth_audience')}
             {textField('OAuth JWKS URL', 'oauth_jwks_url')}
           </ResponsiveFormSection>
+          )}
 
           {/* Advanced Settings */}
+          {shows('advanced') && (
           <ResponsiveFormSection
               title="Advanced Settings"
               subtitle="Database, rate limiting, and upload configuration"
@@ -1362,6 +1422,7 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
                 </Alert>
               </Stack>
             </ResponsiveFormSection>
+          )}
         </Stack>
         </Box>
         <Box sx={{ display: 'flex', gap: 1, mt: 2 }}>
@@ -1380,7 +1441,7 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
         </Typography>
       )}
 
-      {envContent && (
+      {envContent && shows('backup') && (
         <Card sx={{ mt: 3 }}>
           <CardContent>
             <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>

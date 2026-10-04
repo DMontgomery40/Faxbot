@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
+  Alert,
   Box,
   Button,
   Card,
@@ -50,6 +51,9 @@ import { grantable } from './access/permissions';
 interface ApiKeysProps {
   client: AdminAPIClient;
   me: AuthMe;
+  // Show only the signed-in person's own keys (My API keys), with a way back to every key.
+  onlyMine?: boolean;
+  onShowAll?: () => void;
 }
 
 type Principal = Pick<AccessUser, 'id' | 'kind' | 'display_name' | 'version'>;
@@ -92,7 +96,7 @@ const emptyDraft = (permissions: string[]): KeyDraft => ({ principalId: '', name
 
 const keyName = (key: AccessKey) => key.name || 'Unnamed key';
 
-export default function ApiKeys({ client, me }: ApiKeysProps) {
+export default function ApiKeys({ client, me, onlyMine = false, onShowAll }: ApiKeysProps) {
   const { isMobile } = useSmallScreens();
   const catalogue = useCatalogue(client);
   const allowed = useMemo(() => grantable(me), [me]);
@@ -280,6 +284,7 @@ export default function ApiKeys({ client, me }: ApiKeysProps) {
   };
 
   const permissionsOf = (key: AccessKey) => [...new Set(key.ceiling.map((entry) => entry.permission))];
+  const shown = onlyMine ? keys.filter((key) => key.principal.id === me.principal.id) : keys;
 
   return (
     <Box>
@@ -296,13 +301,21 @@ export default function ApiKeys({ client, me }: ApiKeysProps) {
 
       <ErrorBanner error={error} onReload={() => void reload()} onClose={() => setError(null)} />
 
+      {onlyMine && (
+        <Alert severity="info" sx={{ mb: 2 }} data-testid="only-my-keys"
+          action={onShowAll && <Button color="inherit" size="small" onClick={onShowAll}>Show all</Button>}>
+          These are only the keys that belong to you.
+        </Alert>
+      )}
+
       {state !== 'ready' ? <LoadStateView state={state} onRetry={() => void load()} />
-        : keys.length === 0 ? (
-          <EmptyState icon={<KeyIcon />} title="No API keys" text="Create a key for an app, scanner or phone that sends faxes."
+        : shown.length === 0 ? (
+          <EmptyState icon={<KeyIcon />} title="No API keys"
+            text={onlyMine ? 'You have not made any keys for yourself.' : 'Create a key for an app, scanner or phone that sends faxes.'}
             action={<Button variant="contained" startIcon={<AddIcon />} onClick={openCreate} sx={{ borderRadius: 2 }}>Create key</Button>} />
         ) : isMobile ? (
           <Stack spacing={2}>
-            {keys.map((key) => {
+            {shown.map((key) => {
               const status = keyStatus(key);
               return (
                 <Card key={key.id} sx={{ borderRadius: 2 }}>
@@ -338,7 +351,7 @@ export default function ApiKeys({ client, me }: ApiKeysProps) {
                 </TableRow>
               </TableHead>
               <TableBody>
-                {keys.map((key) => {
+                {shown.map((key) => {
                   const status = keyStatus(key);
                   return (
                     <TableRow key={key.id} hover>

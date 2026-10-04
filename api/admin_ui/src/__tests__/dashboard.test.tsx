@@ -3,6 +3,7 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import AdminAPIClient from '../api/client';
 import Dashboard from '../components/Dashboard';
+import DeveloperOverview from '../components/DeveloperOverview';
 import { server } from '../test/server';
 
 const client = () => new AdminAPIClient({ kind: 'key', key: 'synthetic-key' });
@@ -46,7 +47,7 @@ describe('Dashboard delivery cards', () => {
     fireEvent.click(spending);
     fireEvent.click(delivery);
     fireEvent.click(partners);
-    expect(navigate.mock.calls.map(([destination]) => destination)).toEqual(['routes', 'inbox', 'routes']);
+    expect(navigate.mock.calls.map(([destination]) => destination)).toEqual(['routes', 'inbox', 'recipients/partners']);
   });
 
   it('says a card is not available to this account when permission is missing', async () => {
@@ -112,7 +113,9 @@ describe('Dashboard delivery cards', () => {
       jobs: { queued: 0, in_progress: 0, recent_failures: 0 }, inbound_enabled: true, api_keys_configured: true, require_auth: true })));
     render(<Dashboard client={client()} />);
     expect((await screen.findByTestId('engine-message')).textContent).toBe(sentence);
-    expect(screen.getByText('Needs attention')).toBeTruthy();
+    // The status chip and the Needs attention card both say so.
+    expect(screen.getAllByText('Needs attention')).toHaveLength(2);
+    expect((await screen.findByTestId('attention-not-ready')).textContent).toContain('Faxbot is not ready to send faxes');
   });
 });
 
@@ -128,11 +131,70 @@ describe('Dashboard providers', () => {
   });
 });
 
-describe('Dashboard authentication', () => {
+describe('System → Developer → API & SDKs', () => {
   it('states authentication is required and never that it is optional', async () => {
-    render(<Dashboard client={client()} />);
+    render(<DeveloperOverview client={client()} />);
     expect(await screen.findByText('Authentication required')).toBeTruthy();
+    expect(await screen.findByText('API Keys Configured')).toBeTruthy();
     expect(screen.queryByText('Auth Optional')).toBeNull();
     expect(screen.queryByText('Require API Key')).toBeNull();
+  });
+
+  it('keeps the developer panels the Overview no longer shows', async () => {
+    server.use(http.get('/admin/health-status', () => HttpResponse.json({ timestamp: new Date().toISOString(),
+      backend: 'phaxio', backend_healthy: true, jobs: { queued: 0, in_progress: 0, recent_failures: 0, held: 2 },
+      inbound_enabled: true, api_keys_configured: true, require_auth: true })));
+    render(<DeveloperOverview client={client()} />);
+    expect(await screen.findByText('SDK & Quickstart')).toBeTruthy();
+    expect(screen.getByText('Config Overview')).toBeTruthy();
+    expect((await screen.findByTestId('held-test-faxes')).textContent).toBe('2');
+  });
+});
+
+describe('Overview', () => {
+  it('shows no developer panels', async () => {
+    render(<Dashboard client={client()} />);
+    await screen.findByText('Needs attention');
+    for (const panel of ['SDK & Quickstart', 'MCP Overview', 'Config Overview', 'API Keys Configured', 'Held Test Faxes:']) {
+      expect(screen.queryByText(panel)).toBeNull();
+    }
+  });
+
+  it('lists what needs a person, each opening the page that handles it', async () => {
+    server.use(
+      http.get('/admin/health-status', () => HttpResponse.json({ timestamp: new Date().toISOString(), backend: 'phaxio',
+        backend_healthy: true, jobs: { queued: 0, in_progress: 0, recent_failures: 3, reconciliation_required: 1 },
+        inbound_enabled: true, api_keys_configured: true, require_auth: true })),
+      http.get('/work/counts', () => HttpResponse.json({ open: 4, acknowledged: 0, done: 0, unassigned: 2, mine: 0, overdue: 1 })),
+      http.get('/intake/items', () => HttpResponse.json({ items: [], counts: { received: 0, sending: 0, delivered: 5, failed: 4 } })),
+      http.get('/routing/costs', () => HttpResponse.json({ since: '2026-09-03T00:00:00',
+        providers: [{ ...provider('sip', 'SIP trunk (Asterisk)', '1.00'), unrecorded_calls: 2 }],
+        received: [{ provider_id: 'sip', label: 'SIP trunk (Asterisk)', carrier: 'Telnyx', calls: 1, faxes: 1, billed_minutes: 1,
+          estimated_cost: [], reported_cost: [], calls_with_reported_cost: 1, calls_without_reported_cost: 0,
+          estimated_cost_not_reported: [], awaiting_carrier_bill: 0, unmatched_charges: 0, unrecorded_calls: 1 }] })),
+    );
+    const navigate = vi.fn();
+    render(<Dashboard client={client()} onNavigate={navigate} />);
+    const expected: Array<[string, string, string]> = [
+      ['failed', '3', 'faxes/sent'],
+      ['uncertain', '1', 'faxes/sent'],
+      ['unassigned', '2', 'faxes/work'],
+      ['overdue', '1', 'faxes/work'],
+      ['not-delivered', '4', 'faxes/received'],
+      ['unrecorded', '3', 'costs/spending'],
+    ];
+    for (const [key, count, destination] of expected) {
+      const line = await screen.findByTestId(`attention-${key}`);
+      expect(line.textContent).toContain(count);
+      fireEvent.click(line);
+      expect(navigate).toHaveBeenLastCalledWith(destination);
+    }
+    expect(screen.queryByText('Nothing needs attention.')).toBeNull();
+  });
+
+  it('says so when nothing needs attention, and leaves out what this account cannot read', async () => {
+    server.use(http.get('/work/counts', () => HttpResponse.json({ detail: 'Forbidden' }, { status: 403 })));
+    render(<Dashboard client={client()} />);
+    expect(await screen.findByText('Nothing needs attention.')).toBeTruthy();
   });
 });

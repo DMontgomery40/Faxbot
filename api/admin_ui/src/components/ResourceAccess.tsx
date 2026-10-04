@@ -8,14 +8,12 @@ import {
   FormControlLabel,
   IconButton,
   Paper,
-  Tab,
   Table,
   TableBody,
   TableCell,
   TableContainer,
   TableHead,
   TableRow,
-  Tabs,
   Tooltip,
   Typography,
 } from '@mui/material';
@@ -54,7 +52,8 @@ import {
 import { resourceLabel } from './access/permissions';
 import { numberHint, numberPlaceholder, useNumberFormat } from './common/numbers';
 
-type Section = 'assignments' | 'mailboxes' | 'numbers';
+// Who has access is under Access; mailboxes and fax numbers are under Numbers.
+export type ResourceAccessSection = 'assignments' | 'mailboxes' | 'numbers';
 
 export const INSTALLATION_WARNING = 'Applies to every fax and mailbox, including history';
 
@@ -427,31 +426,19 @@ function NumbersSection({ client, canManage }: { client: AdminAPIClient; canMana
   );
 }
 
-export default function ResourceAccess({ client, me }: { client: AdminAPIClient; me: AuthMe }) {
+export default function ResourceAccess({ client, me, section }: { client: AdminAPIClient; me: AuthMe; section: ResourceAccessSection }) {
   const permissions = useMemo(() => new Set(me.permissions), [me.permissions]);
-  const sections = useMemo(() => {
-    const visible: Array<{ value: Section; label: string }> = [];
-    if (permissions.has('grants:read') || permissions.has('grants:manage')) visible.push({ value: 'assignments', label: 'Who has access' });
-    if (permissions.has('mailboxes:read') || permissions.has('mailboxes:manage')) {
-      visible.push({ value: 'mailboxes', label: 'Mailboxes' }, { value: 'numbers', label: 'Fax numbers' });
-    }
-    return visible;
-  }, [permissions]);
-  const [section, setSection] = useState<Section | null>(sections[0]?.value ?? null);
-  const current = sections.find((s) => s.value === section)?.value ?? sections[0]?.value ?? null;
+  const allowed = section === 'assignments'
+    ? permissions.has('grants:read') || permissions.has('grants:manage')
+    : permissions.has('mailboxes:read') || permissions.has('mailboxes:manage');
 
-  if (!current) return <LoadStateView state="denied" />;
+  if (!allowed) return <LoadStateView state="denied" />;
 
   return (
     <Box>
-      {sections.length > 1 && (
-        <Tabs value={current} onChange={(_, value: Section) => setSection(value)} sx={{ mb: 3 }}>
-          {sections.map((s) => <Tab key={s.value} value={s.value} label={s.label} />)}
-        </Tabs>
-      )}
-      {current === 'assignments' && <AssignmentsSection client={client} canManage={permissions.has('grants:manage')} />}
-      {current === 'mailboxes' && <MailboxesSection client={client} canManage={permissions.has('mailboxes:manage')} />}
-      {current === 'numbers' && <NumbersSection client={client} canManage={permissions.has('mailboxes:manage')} />}
+      {section === 'assignments' && <AssignmentsSection client={client} canManage={permissions.has('grants:manage')} />}
+      {section === 'mailboxes' && <MailboxesSection client={client} canManage={permissions.has('mailboxes:manage')} />}
+      {section === 'numbers' && <NumbersSection client={client} canManage={permissions.has('mailboxes:manage')} />}
     </Box>
   );
 }
