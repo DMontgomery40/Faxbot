@@ -11,7 +11,7 @@ Ports
 - `3001`: MCP Streamable HTTP (Node)
 - `3004`: MCP Streamable HTTP (Python)
 - `3003`: MCP SSE (Python, for older clients)
-- SIP/Asterisk only: `5060` (SIP), `5038` (AMI internal), `4000-4999` (UDPTL)
+- SIP/Asterisk: nothing is published; `5038` (AMI) stays on the Compose network. Only a public host with IP sign-in adds `docker-compose.public.yml` (SIP and a 32-port media range).
 
 Storage and database
 - `FAX_DATA_DIR` for PDFs/TIFFs (default `./faxdata`)

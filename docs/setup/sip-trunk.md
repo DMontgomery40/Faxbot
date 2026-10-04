@@ -88,9 +88,21 @@ If you manage settings with an environment file instead of the console, set the 
 
 Asterisk reads the trunk when it starts. Faxbot writes it to `asterisk/pjsip.conf` inside the shared fax data folder; while that file exists it replaces the older `SIP_USERNAME`, `SIP_PASSWORD` and `SIP_SERVER` settings.
 
-Open UDP 5060 (or the carrier's port) and UDP 4000 to 4999 to the Asterisk host: T.38 uses 4000 to 4499 and audio uses 4500 to 4999. Keep the Asterisk manager port, 5038, private.
+### Behind a router: nothing to open
 
-If Asterisk is behind a router or firewall, or runs in Docker with port publishing, enter your public IP address under **Public IP address**. Without it, the carrier is told a private address and calls connect with no fax data. On a server with a public address you can leave it empty.
+With username and password sign-in you do not open, publish or forward any port, and the default Docker Compose file publishes none. Asterisk registers with the carrier and keeps that connection alive, and the carrier sends incoming calls back over it. On every call Asterisk sends the first audio and T.38 packets itself, so your router lets the carrier's answer back in on the same path. Leave **Public IP address** empty; it is only an override for a host whose address you want to state yourself.
+
+This works with carriers that send their media back to wherever Faxbot's packets come from, which Telnyx does for audio. Whether Telnyx does the same for T.38 data is settled by your first test fax. When a carrier does not, the call connects but no fax data arrives, and Faxbot says so on that call: "The call connected but no fax data came back from the carrier." In that case, run Faxbot's fax engine on a host with a public address, or use a cloud fax provider.
+
+### Server IP sign-in needs a public host
+
+A carrier that signs in by IP address (AnveoDirect, or Telnyx and Flowroute set to IP sign-in) sends calls to a fixed public address, which a router does not pass on. Use it only on a host with its own public address, and start Compose with the public override, which publishes SIP and one 32-port media range that Asterisk then uses exactly:
+
+```
+docker compose -f docker-compose.yml -f docker-compose.public.yml up -d
+```
+
+See [Asterisk and SIP](sip-asterisk.md#carriers-that-sign-in-by-ip-address) for the ports. Keep the Asterisk manager port, 5038, private.
 
 **Apply to Asterisk** also saves the inbound secret from **Inbound Receiving**, so Asterisk can report received faxes to Faxbot.
 

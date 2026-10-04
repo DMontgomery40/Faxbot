@@ -1,0 +1,20 @@
+# Only for a host with its own public address whose carrier signs in by IP
+# address (AnveoDirect, or Telnyx/Flowroute set to IP sign-in). Such a carrier
+# sends calls to a fixed address, so SIP and a media range must be reachable:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.public.yml up -d
+#
+# Registration with a username and password (the default) needs none of this.
+# The media range is 32 ports on purpose: Docker starts one helper process per
+# published port. Asterisk uses exactly this range, the first third for T.38
+# and the rest for audio, which carries about ten fax calls at once (each uses
+# one T.38 port and two audio ports). Open the same ports in the host firewall.
+services:
+  asterisk:
+    environment:
+      - FAXBOT_MEDIA_PORTS=4000-4031
+    ports:
+      - "5060:5060/udp"
+      - "5060:5060/tcp"
+      - "5061:5061/tcp"
+      - "4000-4031:4000-4031/udp"

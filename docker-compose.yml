@@ -34,11 +34,13 @@ services:
       - TZ=${TZ:-UTC}
     volumes:
       - faxdata:/faxdata
-    ports:
-      - "5060:5060/udp"
-      - "5060:5060/tcp"
-      # AMI (5038) is intentionally not exposed; keep internal only.
-      - "4000-4999:4000-4999/udp" # UDPTL for T.38
+    # No published ports. Asterisk registers with the carrier and starts every
+    # call's audio and fax data from inside, so the carrier answers on those
+    # flows and nothing has to reach in. (Publishing the old 1000-port media
+    # range started one docker-proxy process per port and exhausted small hosts.)
+    # A carrier that signs in by IP address needs a public host: add
+    # -f docker-compose.public.yml, see docs/setup/sip-trunk.md.
+    # The manager port (5038) stays private on the compose network.
 
   # Optional: Faxbot MCP Server for AI integration
   # Each MCP client sends its own Faxbot API key with every request, so the MCP
