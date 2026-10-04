@@ -682,7 +682,9 @@ export class AdminAPIClient {
 
   private async deliveryRequest(jobId: string, confirmation?: ProviderIdentityConfirmation): Promise<OperatorDelivery> {
     const attaching = confirmation !== undefined;
-    const res = await this.send(`/admin/fax-jobs/${id(jobId)}/${attaching ? 'reconcile' : 'delivery'}`, {
+    // Two literal paths, so the console's callers of each route can be found by reading the source.
+    const path = attaching ? `/admin/fax-jobs/${id(jobId)}/reconcile` : `/admin/fax-jobs/${id(jobId)}/delivery`;
+    const res = await this.send(path, {
       method: attaching ? 'POST' : 'GET',
       headers: { 'Content-Type': 'application/json' },
       ...(attaching ? { body: JSON.stringify(confirmation) } : {}),

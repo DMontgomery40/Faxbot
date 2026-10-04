@@ -130,6 +130,18 @@ describe('Received with owners (the former Work screen)', () => {
     expect(shown).toEqual(['waiting']);
   });
 
+  it('reads as many work items as the server lists at once, so recent faxes keep their owner', async () => {
+    queue([open()]);
+    const asked: Array<string | null> = [];
+    server.use(http.get('/work', ({ request }) => {
+      const url = new URL(request.url);
+      asked.push(`${url.searchParams.get('view')}:${url.searchParams.get('limit')}`);
+      return HttpResponse.json({ items: [open()] });
+    }));
+    render(<Received client={client()} inboundEnabled permissions={new Set(['inbound:list'])} show="mine" />);
+    await waitFor(() => expect(asked).toEqual(expect.arrayContaining(['all:200', 'mine:200'])));
+  });
+
   it('opens on the filter the address names', async () => {
     queue([open(), mine()], [], { overdue: [] });
     render(<Received client={client()} inboundEnabled permissions={new Set(['inbound:list'])} show="overdue" />);

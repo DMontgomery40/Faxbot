@@ -66,6 +66,9 @@ export const RECEIVED_FILTERS: ReceivedFilter[] = ['all', 'mine', 'waiting', 'ov
 
 const FILTER_VIEW: Partial<Record<ReceivedFilter, WorkView>> = { mine: 'mine', waiting: 'unassigned', overdue: 'overdue' };
 
+// The most work items the server lists at once; open ones come first.
+const WORK_LIMIT = 200;
+
 const EMPTY: Record<ReceivedFilter, string> = {
   all: 'No received faxes yet.',
   mine: 'Nothing is assigned to you.',
@@ -186,9 +189,9 @@ export default function Received({
     const view = FILTER_VIEW[filter];
     const [faxResult, workResult, countResult, viewResult] = await Promise.allSettled([
       receiving && canList ? client.listInbound() : Promise.resolve([] as InboundFax[]),
-      canWork ? client.listWork({ view: 'all' }) : Promise.resolve(null),
+      canWork ? client.listWork({ view: 'all', limit: WORK_LIMIT }) : Promise.resolve(null),
       canWork ? client.workCounts() : Promise.resolve(null),
-      canWork && view ? client.listWork({ view }) : Promise.resolve(null),
+      canWork && view ? client.listWork({ view, limit: WORK_LIMIT }) : Promise.resolve(null),
     ]);
     if (faxResult.status === 'fulfilled') setFaxes(faxResult.value);
     // Without the work queue the list still shows every received fax, without owners.
