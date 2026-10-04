@@ -13,7 +13,8 @@ import SecretInput from './common/SecretInput';
 import EnvSetField, { environmentManaged } from './common/EnvSetField';
 import RestartNotice, { RESTARTED } from './common/RestartFaxbot';
 import SipTrunkSettings from './SipTrunkSettings';
-import { COUNTRY_HELP, CountryField } from './common/numbers';
+import { COUNTRY_HELP, CountryField, settingsNumberFormat } from './common/numbers';
+import WizardTestFax from './WizardTestFax';
 import { directionSummary, providerLabel } from '../providerLabels';
 import ProviderDirectionFields, { directionPatch, directionProblem, loadedDirections } from './common/ProviderDirections';
 
@@ -681,6 +682,11 @@ function SetupWizard({ client, onDone, docsBase, canRestart = true }: SetupWizar
       <Typography variant="h6" gutterBottom>Finish</Typography>
       <Typography sx={{ mb: 2 }}>{directionSummary(sending, receiving)}</Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>Each step saved its settings when you moved on.</Typography>
+      {settings && (sending || receiving) && (pendingRestart
+        ? <Alert severity="info" sx={{ mb: 2 }}>Restart Faxbot first; then you can send and receive a test fax here.</Alert>
+        : <Box sx={{ mb: 2 }}><WizardTestFax client={client} sending={sending} receiving={receiving}
+          numbers={(settings.sip as { trunk?: { dids?: string[] } }).trunk?.dids ?? []}
+          numberFormat={settingsNumberFormat(settings)} /></Box>)}
       <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
         <Button variant="outlined" onClick={exportSettings} disabled={changedFields.length > 0}>Export .env Template</Button>
       </Box>
