@@ -268,7 +268,7 @@ function Logs({ client }: LogsProps) {
             gap: 2,
           }}>
             <TextField label="Search" value={query} onChange={(e)=>setQuery(e.target.value)} size="small" placeholder="Words to find" />
-            <TextField label="Event" value={eventFilter} onChange={(e)=>setEventFilter(e.target.value)} size="small" placeholder="Part of an event name, such as failed" />
+            <TextField label="Event" value={eventFilter} onChange={(e)=>setEventFilter(e.target.value)} size="small" placeholder="The whole event name, such as job_failed" />
             <Box sx={{
               display: 'grid',
               gridTemplateColumns: { xs: 'minmax(0, 1fr)', md: '140px minmax(220px, 1fr)' },

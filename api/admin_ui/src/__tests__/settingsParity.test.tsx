@@ -872,3 +872,24 @@ describe('System, milestone 5', () => {
     expect(writes[0]).toEqual({ expected_revision_id: expect.any(String), audit_log_enabled: true, audit_log_syslog: true });
   });
 });
+
+describe('Owner-only settings everywhere', () => {
+  it('disables every owner-only setting on In use, Security and Storage for people who are not the owner', async () => {
+    settingsHandlers(settingsFixture((data) => {
+      data.owner_only = ['inbound_token_ttl_minutes', 'enforce_public_https', 'enable_persisted_settings',
+        'max_requests_per_minute', 'inbound_list_rpm', 'inbound_get_rpm'];
+    }));
+    const { unmount } = render(<Settings client={client()} sections={['providers', 'inbound', 'routes']} canWrite isOwner={false} />);
+    const receiving = await receivingSection();
+    const minutes = within(receiving).getByText('Download links work for (minutes)').closest('.MuiBox-root')?.parentElement as HTMLElement;
+    expect((within(receiving).getByDisplayValue('60') as HTMLInputElement).disabled).toBe(true);
+    expect(within(receiving).getByText(/How long a link to download a received fax keeps working\. Only the owner/)).toBeTruthy();
+    expect(minutes).toBeTruthy();
+    // Receiving itself is not owner-only and stays changeable.
+    expect((within(receiving).getByLabelText('Receiving is on') as HTMLInputElement).disabled).toBe(false);
+    unmount();
+    render(<Settings client={client()} sections={['security', 'storage', 'advanced']} canWrite isOwner={false} />);
+    await screen.findByText('HTTPS Enforced');
+    expect(screen.getAllByText(/Only the owner of this installation can change this\.$/).length).toBeGreaterThanOrEqual(5);
+  });
+});

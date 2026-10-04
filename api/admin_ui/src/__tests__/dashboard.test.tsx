@@ -5,7 +5,7 @@ import AdminAPIClient from '../api/client';
 import Dashboard from '../components/Dashboard';
 import DeveloperOverview from '../components/DeveloperOverview';
 import { SDK_VERSIONS } from '../sdkVersions';
-import nodePackage from '../../../../sdks/node/package.json';
+import nodePackage from '../../../../sdks/node/package.json?raw';
 import pythonSetup from '../../../../sdks/python/setup.py?raw';
 import { server } from '../test/server';
 
@@ -209,6 +209,6 @@ describe('Overview', () => {
 describe('SDK versions', () => {
   it('match the packages\' own metadata', () => {
     const python = /version="([^"]+)"/.exec(pythonSetup)?.[1];
-    expect(SDK_VERSIONS).toEqual({ node: nodePackage.version, python });
+    expect(SDK_VERSIONS).toEqual({ node: JSON.parse(nodePackage).version, python });
   });
 });

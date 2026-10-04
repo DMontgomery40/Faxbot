@@ -50,7 +50,7 @@ export const AUDIT_ACTIONS: Record<string, string> = {
   'configuration.bootstrap.activate': 'Applied the first settings',
   'configuration.environment': 'Took settings from .env',
   'routing.rate_cards_added': 'Added prices',
-  'fax.accept': 'Sent a fax',
+  'fax.accept': 'Submitted a fax',
   'fax.reconcile': 'Checked a fax whose result was unclear',
   'inbound.receive': 'Received a fax',
   'inbound.backfill': 'Added earlier received faxes',

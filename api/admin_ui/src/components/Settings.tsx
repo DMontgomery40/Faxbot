@@ -766,7 +766,7 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
               label="HTTPS Enforced"
               value={settings.security.enforce_https ? 'Yes' : 'No'}
               editValue={form.enforce_public_https ?? settings.security.enforce_https}
-              helperText="Require HTTPS for public document links."
+              helperText={withOwnerNote('enforce_public_https', "Require HTTPS for public document links.")}
               onChange={(value) => handleForm('enforce_public_https', value === 'true')}
               type="select"
               options={[
@@ -774,6 +774,7 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
                 { value: 'false', label: 'No' }
               ]}
               showCurrentValue={!pendingRestart}
+              disabled={locked('enforce_public_https')}
             />
             
             
@@ -782,7 +783,7 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
               label="Allow .env import on the first start"
               value={settings.persisted?.enabled ? 'Enabled' : 'Disabled'}
               editValue={form.enable_persisted_settings ?? settings.persisted?.enabled ?? false}
-              helperText={ENV_IMPORT_HELP}
+              helperText={withOwnerNote('enable_persisted_settings', ENV_IMPORT_HELP)}
               onChange={(value) => handleForm('enable_persisted_settings', value === 'true')}
               type="select"
               options={[
@@ -790,6 +791,7 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
                 { value: 'false', label: 'Disabled' }
               ]}
               showCurrentValue={!pendingRestart}
+              disabled={locked('enable_persisted_settings')}
             />
             {textField('Public API URL', 'public_api_url', 'Public address of this server, used for document links and provider callbacks.')}
             <DeploymentRows settings={settings}
@@ -1092,11 +1094,12 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
               label="Download links work for (minutes)"
               value={String(settings.inbound?.token_ttl_minutes ?? 60)}
               editValue={form.inbound_token_ttl_minutes ?? settings.inbound?.token_ttl_minutes ?? 60}
-              helperText="How long a link to download a received fax keeps working."
+              helperText={withOwnerNote('inbound_token_ttl_minutes', "How long a link to download a received fax keeps working.")}
               onChange={(value) => handleForm('inbound_token_ttl_minutes', value === '' ? '' : Number(value))}
               type="number"
               placeholder={String(settings.inbound?.token_ttl_minutes ?? 60)}
               showCurrentValue={!pendingRestart}
+              disabled={locked('inbound_token_ttl_minutes')}
             />
 
             {/* On the console's own pages this secret is in the trunk's fax engine connection box. */}
@@ -1108,7 +1111,7 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
                 label="Verify Phaxio Inbound Signature"
                 value={settings.inbound?.phaxio?.verify_signature ? 'Enabled' : 'Disabled'}
                 editValue={form.phaxio_inbound_verify_signature ?? settings.inbound?.phaxio?.verify_signature ?? false}
-                helperText="Enable HMAC signature verification for Phaxio inbound webhooks (recommended for security)"
+                helperText={withOwnerNote('phaxio_inbound_verify_signature', "Enable HMAC signature verification for Phaxio inbound webhooks (recommended for security)")}
                 onChange={(value) => handleForm('phaxio_inbound_verify_signature', value === 'true')}
                 type="select"
                 options={[
@@ -1116,6 +1119,7 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
                   { value: 'false', label: 'Disabled' }
                 ]}
                 showCurrentValue={!pendingRestart}
+                disabled={locked('phaxio_inbound_verify_signature')}
               />
             )}
 
@@ -1126,7 +1130,7 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
                   label="Verify Sinch Inbound Signature"
                   value={settings.inbound?.sinch?.verify_signature ? 'Enabled' : 'Disabled'}
                   editValue={form.sinch_inbound_verify_signature ?? settings.inbound?.sinch?.verify_signature ?? false}
-                  helperText="Enable HMAC signature verification for Sinch inbound webhooks"
+                  helperText={withOwnerNote('sinch_inbound_verify_signature', "Enable HMAC signature verification for Sinch inbound webhooks")}
                   onChange={(value) => handleForm('sinch_inbound_verify_signature', value === 'true')}
                   type="select"
                   options={[
@@ -1134,6 +1138,7 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
                     { value: 'false', label: 'Disabled' }
                   ]}
                   showCurrentValue={!pendingRestart}
+                  disabled={locked('sinch_inbound_verify_signature')}
                 />
                 
                 <ResponsiveSettingItem
@@ -1472,9 +1477,10 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
                   value={String(form.max_requests_per_minute ?? settings.limits?.rate_limit_rpm ?? 60)}
                   onChange={(value) => handleForm('max_requests_per_minute', value === '' ? '' : Number(value))}
                   placeholder="60"
-                  helperText="Requests per minute allowed for each API key; 0 turns the limit off."
+                  helperText={withOwnerNote('max_requests_per_minute', "Requests per minute allowed for each API key; 0 turns the limit off.")}
                   type="number"
                   icon={<SecurityIcon />}
+                  disabled={locked('max_requests_per_minute')}
                 />
 
                 <ResponsiveTextField
@@ -1482,9 +1488,10 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
                   value={String(form.inbound_list_rpm ?? settings.limits?.inbound_list_rpm ?? 30)}
                   onChange={(value) => handleForm('inbound_list_rpm', value === '' ? '' : Number(value))}
                   placeholder="30"
-                  helperText="Requests per minute for each API key when listing inbound faxes."
+                  helperText={withOwnerNote('inbound_list_rpm', "Requests per minute for each API key when listing inbound faxes.")}
                   type="number"
                   icon={<SecurityIcon />}
+                  disabled={locked('inbound_list_rpm')}
                 />
 
                 <ResponsiveTextField
@@ -1492,9 +1499,10 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
                   value={String(form.inbound_get_rpm ?? settings.limits?.inbound_get_rpm ?? 60)}
                   onChange={(value) => handleForm('inbound_get_rpm', value === '' ? '' : Number(value))}
                   placeholder="60"
-                  helperText="Rate limit for fetching inbound fax metadata/PDF (per key)."
+                  helperText={withOwnerNote('inbound_get_rpm', "Rate limit for fetching inbound fax metadata/PDF (per key).")}
                   type="number"
                   icon={<SecurityIcon />}
+                  disabled={locked('inbound_get_rpm')}
                 />
 
                 {textField('PDF Token TTL (minutes)', 'pdf_token_ttl_minutes', '', 'number')}
