@@ -21,7 +21,7 @@ describe('Dashboard delivery cards', () => {
   it('shows spending by provider, email delivery counts and verified partners, each opening its screen', async () => {
     server.use(
       http.get('/routing/costs', () => HttpResponse.json({ since: '2026-09-03T00:00:00', providers: [
-        provider('sip', 'Your SIP trunk (Asterisk)', '1.25'), provider('phaxio', 'Phaxio', '3.50'),
+        provider('sip', 'SIP trunk (Asterisk)', '1.25'), provider('phaxio', 'Phaxio', '3.50'),
       ] })),
       http.get('/intake/items', () => HttpResponse.json({ items: [], counts: { received: 2, sending: 1, delivered: 40, failed: 1 } })),
       http.get('/direct/peers', () => HttpResponse.json({ peers: [peer('a', 'verified'), peer('b', 'verified'), peer('c', 'pending'), peer('d', 'revoked')] })),
@@ -30,7 +30,7 @@ describe('Dashboard delivery cards', () => {
     render(<Dashboard client={client()} onNavigate={navigate} />);
 
     const spending = await screen.findByRole('button', { name: 'Spending, last 30 days' });
-    expect(spending.textContent).toContain('Your SIP trunk (Asterisk)$1.25');
+    expect(spending.textContent).toContain('SIP trunk (Asterisk)$1.25');
     expect(spending.textContent).toContain('Phaxio$3.50');
     expect(spending.textContent).toContain('Total$4.75');
 

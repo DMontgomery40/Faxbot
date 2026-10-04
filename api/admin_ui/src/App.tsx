@@ -558,7 +558,7 @@ function ConsoleShell({ client, me, initialContext, onSignOut, onIdentityChanged
               </Tabs>
             </Box>
             <Box sx={{ p: { xs: 2, md: 3 } }}>
-              {currentSettings === 'setup' && <SetupWizard client={client} onDone={() => changeTab(topTabs[0])} docsBase={docsBase} />}
+              {currentSettings === 'setup' && <SetupWizard client={client} onDone={() => changeTab(topTabs[0])} docsBase={docsBase} canRestart={permissions.has('host:restart')} />}
               {currentSettings === 'settings' && <Settings client={client} canWrite={permissions.has('settings:write')}
                 focus={settingsFocus} onFocused={clearSettingsFocus} />}
               {currentSettings === 'keys' && <ApiKeys client={client} me={me} />}

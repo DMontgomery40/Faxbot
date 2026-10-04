@@ -38,6 +38,7 @@ import { ResponsiveTextField, ResponsiveFormSection } from './common/ResponsiveF
 import TunnelSettings from './TunnelSettings';
 import SipTrunkSettings from './SipTrunkSettings';
 import { COUNTRY_HELP, CountryField, countryName, internationalHint, settingsNumberFormat } from './common/numbers';
+import { BUILTIN_PROVIDERS, RECEIVING_PROVIDERS, providerLabel } from '../providerLabels';
 
 interface SettingsProps {
   client: AdminAPIClient;
@@ -453,40 +454,28 @@ function Settings({ client, canWrite = false, focus, onFocused }: SettingsProps)
             <ResponsiveSettingItem
               icon={<CloudIcon />}
               label="Default Provider"
-              value={settings.backend.type ? settings.backend.type.toUpperCase() : 'Not set up'}
+              value={settings.backend.type ? providerLabel(settings.backend.type) : 'Not set up'}
               editValue={form.backend ?? settings.backend.type}
               onChange={(value) => handleForm('backend', value)}
               helperText="Used for sending and receiving unless an override is set below."
               type="select"
               options={[
                 { value: '', label: 'No provider' },
-                { value: 'phaxio', label: 'Phaxio' },
-                { value: 'sinch', label: 'Sinch' },
-                { value: 'signalwire', label: 'SignalWire' },
-                { value: 'documo', label: 'Documo' },
-                { value: 'humblefax', label: 'HumbleFax' },
-                { value: 'sip', label: 'SIP/Asterisk' },
-                { value: 'freeswitch', label: 'FreeSWITCH' }
+                ...BUILTIN_PROVIDERS.map((value) => ({ value, label: providerLabel(value) })),
               ]}
               showCurrentValue={!pendingRestart}
             />
             <ResponsiveSettingItem
               icon={<CloudIcon />}
               label="Outbound Provider"
-              value={loadedOutbound ? loadedOutbound.toUpperCase() : 'Not set up'}
+              value={loadedOutbound ? providerLabel(loadedOutbound) : 'Not set up'}
               editValue={form.outbound_backend ?? ''}
               helperText="Provider used to send faxes."
               onChange={(value) => handleForm('outbound_backend', value)}
               type="select"
               options={[
-                { value: '', label: form.backend ? `Inherit default provider (${String(form.backend)})` : 'Inherit default provider (none yet)' },
-                { value: 'phaxio', label: 'Phaxio (Cloud)' },
-                { value: 'sinch', label: 'Sinch (Cloud)' },
-                { value: 'signalwire', label: 'SignalWire (Cloud)' },
-                { value: 'documo', label: 'Documo (Cloud)' },
-                { value: 'humblefax', label: 'HumbleFax (Cloud)' },
-                { value: 'sip', label: 'SIP/Asterisk (Self-hosted)' },
-                { value: 'freeswitch', label: 'FreeSWITCH (Self-hosted)' }
+                { value: '', label: form.backend ? `Inherit default provider (${providerLabel(String(form.backend))})` : 'Inherit default provider (none yet)' },
+                ...BUILTIN_PROVIDERS.map((value) => ({ value, label: providerLabel(value) })),
               ]}
               showCurrentValue={!pendingRestart}
             />
@@ -505,22 +494,20 @@ function Settings({ client, canWrite = false, focus, onFocused }: SettingsProps)
             <ResponsiveSettingItem
               icon={<CloudIcon />}
               label="Inbound Provider"
-              value={loadedInbound ? loadedInbound.toUpperCase() : 'Not set up'}
+              value={loadedInbound ? providerLabel(loadedInbound) : 'Not set up'}
               editValue={form.inbound_backend ?? ''}
-              helperText="Provider used to receive faxes: SIP/Asterisk for your own phone system, or a cloud provider."
+              helperText="Provider used to receive faxes: the SIP trunk (Asterisk) for your own phone line, or a cloud provider."
               onChange={(value) => handleForm('inbound_backend', value)}
               type="select"
               options={[
-                { value: '', label: form.backend ? `Inherit default provider (${String(form.backend)})` : 'Inherit default provider (none yet)' },
-                { value: 'phaxio', label: 'Phaxio (Webhook)' },
-                { value: 'sinch', label: 'Sinch (Webhook)' },
-                { value: 'sip', label: 'SIP/Asterisk (Internal)' }
+                { value: '', label: form.backend ? `Inherit default provider (${providerLabel(String(form.backend))})` : 'Inherit default provider (none yet)' },
+                ...[...RECEIVING_PROVIDERS].map((value) => ({ value, label: providerLabel(value) })),
               ]}
               showCurrentValue={!pendingRestart}
             />
             {form.inbound_backend === '' && (
               <Chip
-                label={`Inbound uses the default provider (${String(form.backend)}).`}
+                label={`Inbound uses the default provider (${providerLabel(String(form.backend))}).`}
                 color="info"
                 size="small"
                 variant="outlined"

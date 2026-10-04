@@ -9,6 +9,7 @@ import AdminAPIClient from '../../api/client';
 import type { RateCard } from '../../api/deliveryTypes';
 import { ConfirmDialog, EmptyState, Field, FormDialog, useSmallScreens } from '../access/AccessViews';
 import { DeliveryError, formatRate } from './shared';
+import { providerLabel } from '../../providerLabels';
 
 const BILLING = [
   { value: 1, label: 'Per second' },
@@ -16,15 +17,8 @@ const BILLING = [
   { value: 60, label: 'Whole minutes' },
 ];
 
-const PROVIDERS = [
-  { value: 'sip', label: 'Your SIP trunk (Asterisk)' },
-  { value: 'freeswitch', label: 'Your SIP trunk (FreeSWITCH)' },
-  { value: 'signalwire', label: 'SignalWire' },
-  { value: 'phaxio', label: 'Phaxio' },
-  { value: 'sinch', label: 'Sinch' },
-  { value: 'documo', label: 'Documo' },
-  { value: 'humblefax', label: 'HumbleFax' },
-];
+const PROVIDERS = ['sip', 'freeswitch', 'signalwire', 'phaxio', 'sinch', 'documo', 'humblefax']
+  .map((value) => ({ value, label: providerLabel(value) }));
 
 function billingLabel(seconds: number): string {
   return BILLING.find((option) => option.value === seconds)?.label ?? `Every ${seconds} seconds`;

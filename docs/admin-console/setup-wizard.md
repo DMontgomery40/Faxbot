@@ -4,39 +4,45 @@ Setup walks through the most important settings step by step. It opens with the 
 
 ## 1. Choose providers
 
-Review the default provider, the outbound override and the inbound override. An empty override uses the default provider. For example, default Phaxio with outbound `my-provider` and an empty inbound override sends through `my-provider` and receives through Phaxio.
+Choose one provider for **Sending** and one for **Receiving**, or **No provider**. Each provider has one name everywhere in Faxbot; your own carrier line through Faxbot's fax engine is **SIP trunk (Asterisk)**. Receiving offers only providers that can receive faxes (Phaxio, Sinch and the SIP trunk, plus installed plugins that receive). Faxbot needs a sending provider even when it mainly receives, so Setup asks for one before it saves receiving on its own.
 
-Installed providers stay selectable. When Setup has no credential panel for a provider installed from a manifest, configure it in **Tools → Plugins**. Receiving is turned on separately, and choosing a provider does not prove that faxes will arrive.
+**Next** saves the step. Setup never keeps unsaved choices from one step to another: each step saves its own changes when you move on with **Next** or **Back**, and a step that cannot be saved stays open with the reason. Choosing the SIP trunk for the first time, or moving away from it, takes effect after Faxbot restarts. Setup says so in one sentence with a **Restart now** button; Faxbot restarts, comes back within a few seconds and Setup reloads. When restarting from the console is turned off, the sentence says to run `docker compose restart api` on the server.
 
-## 2. Configure credentials
+Installed provider plugins stay selectable. When Setup has no fields for a provider installed from a manifest, set it up in **Tools → Plugins**.
 
-Edit the fields of the provider that sends your faxes. Hidden secrets stay as they are unless you type a replacement or clear the field.
+## 2. Connect providers
+
+Setup shows one section for each provider in use, headed **For sending: …** and **For receiving: …**. A provider used for both appears once, as **For sending and receiving: …**. Hidden secrets stay as they are unless you type a replacement or clear the field. A key set in `.env` shows **Set in .env** and cannot be changed here.
 
 - Phaxio: API Key, API Secret, separate Callback Token, Status Callback URL and outbound signature verification. Set Public API URL to a reachable HTTPS endpoint. An empty status URL derives from the public URL. Verification disabled rejects outbound callback updates; original-account polling continues.
 - Sinch: Project ID, API Key and API Secret. Its direct-upload path does not need a provider-fetch PDF URL.
 - Documo: API Key and sandbox selection.
-- HumbleFax: Access Key, Secret Key and an optional From Number. HumbleFax only sends faxes, so it is not offered as an inbound provider.
+- HumbleFax: Access Key, Secret Key and an optional From Number. HumbleFax only sends faxes, so it is not offered for receiving.
 - SignalWire: Space URL, Project ID, API Token and From number; configure the signing key and other shared fields in Settings.
-- SIP/Asterisk: AMI host, port, user/password and station ID. Keep AMI private and configure the separate Asterisk trunk deployment.
+- SIP trunk (Asterisk): the carrier trunk form (see [SIP trunk](../setup/sip-trunk.md)), shown whenever the trunk sends or receives. When it sends, the **Fax station ID** is the number receiving machines show. The fax engine connection (manager host, port, username and password) sits under **Advanced**; Faxbot sets it up itself, so change it only for a fax engine you run yourself, and keep it on your private network.
 - FreeSWITCH: gateway and caller ID. Configure ESL and the result hook separately; Setup does not install a working telephony stack.
 
-Public API URL is a setting, not a tunnel launcher. Start a tunnel yourself, paste its address here or in Settings, then apply. The older `setup-phaxio-tunnel.sh` script only edits the `.env` file used when a new installation first starts; it does not change an existing installation. See [Public Access](../setup/public-access.md).
+Save or undo changes in the SIP trunk form before you move on; Setup does not leave the step while the form has unsaved changes. The trunk form and Setup share one saved version of the settings, so saving one never makes the other refuse a save.
 
-**Check Supplied Outbound Credentials** only uses explicit, unmasked values for supported Phaxio, Sinch and SIP checks. Sinch's current check tests presence, not authentication. Custom and other unsupported providers show a Diagnostics/Plugins note. These checks do not send a fax or verify inbound document readiness.
+Public API URL appears when a cloud provider is in use. It is a setting, not a tunnel launcher. Start a tunnel yourself, paste its address here or in Settings, then move on. The older `setup-phaxio-tunnel.sh` script only edits the `.env` file used when a new installation first starts; it does not change an existing installation. See [Public Access](../setup/public-access.md).
 
-**Show Active Callback Details** shows the callback addresses Faxbot is using now, regardless of unsaved edits. **Simulate Inbound Record** adds a test record; it is not a real received fax and does not prove a usable PDF. **Watch New Inbound Log Events** watches the logs until you stop it; a test record also counts as an event.
+**Check these credentials** (Phaxio and Sinch) only uses explicit, unmasked values. Sinch's check tests presence, not authentication. These checks do not send a fax or verify inbound document readiness.
+
+For a cloud provider that receives, **Show callback details** shows the callback addresses Faxbot is using now. **Add a test received fax** adds a test record to the Inbox; it is not a real received fax and does not prove a usable PDF. **Wait for a received fax** watches for one for a minute; a test record also counts.
 
 ## 3. Review security settings
 
 Review public HTTPS enforcement, audit logging and how long document download links last. These are individual settings, not a compliance profile. **Require API Key** no longer turns off authentication: every request needs an API key or a signed-in session. Use Settings for other security, storage and receiving fields.
 
-## 4. Apply and export
+## 4. Delivery options
 
-**Apply Changes** sends only the fields you changed. If nothing changed, nothing is saved. If someone else saved settings after Setup loaded them, Setup keeps your edits and pauses until you select **Reload (discard draft)** to load the current values.
+Optional delivery routes, direct delivery and email delivery. You can change them later in Settings.
 
-The result says whether the changes are already in use or wait for a restart. For a restart, stop every Faxbot API process and start the installation again, then reload to confirm. Setup does not restart Faxbot or leave the page on its own. **Done** closes Setup; it reads **Done (discard draft)** when you have unsaved edits.
+## 5. Finish
 
-**Export .env Template** downloads the saved settings as a `.env` template with secrets hidden. It is unavailable while you have unsaved edits. Copy and Download are offered, but the template is not a complete backup and does not change anything. See [Settings](settings.md).
+Finish shows what sends and what receives faxes. Every step has already saved its changes. If someone else saved settings after Setup loaded them, Setup keeps your edits and pauses until you select **Reload (discard changes)** to load the current values.
+
+**Export .env Template** downloads the saved settings as a `.env` template with secrets hidden. Copy and Download are offered, but the template is not a complete backup and does not change anything. See [Settings](settings.md). **Done** closes Setup.
 
 ## Check a document
 
@@ -51,6 +57,6 @@ The result says whether the changes are already in use or wait for a restart. Fo
 - [Sinch](../setup/sinch.md)
 - [Documo](../setup/documo.md)
 - [HumbleFax](../setup/humblefax.md)
-- [SIP/Asterisk](../setup/sip-asterisk.md)
+- [SIP trunk (Asterisk)](../setup/sip-asterisk.md)
 - [FreeSWITCH](../setup/freeswitch.md)
 - [SignalWire](../setup/signalwire.md)

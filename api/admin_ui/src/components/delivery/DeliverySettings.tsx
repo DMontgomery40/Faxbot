@@ -23,6 +23,7 @@ import { ResponsiveSettingItem } from '../common/ResponsiveSettingItem';
 import SecretInput from '../common/SecretInput';
 import EnvSetField, { environmentManaged } from '../common/EnvSetField';
 import { numberHint, settingsNumberFormat } from '../common/numbers';
+import { PROVIDER_LABELS, providerLabel } from '../../providerLabels';
 import DirectCardDialog from './DirectCardDialog';
 import EmailDelivery from './EmailDelivery';
 import { DeliveryError } from './shared';
@@ -30,13 +31,10 @@ import { DeliveryError } from './shared';
 type FormValue = string | number | boolean;
 type Values = Record<string, FormValue>;
 
-// The same names the delivery routes screen uses.
-export const ROUTE_LABELS: Record<string, string> = {
-  phaxio: 'Phaxio', sinch: 'Sinch', signalwire: 'SignalWire', documo: 'Documo', humblefax: 'HumbleFax',
-  sip: 'Your SIP trunk (Asterisk)', freeswitch: 'Your SIP trunk (FreeSWITCH)',
-};
+// The same names every screen uses for providers.
+export const ROUTE_LABELS: Record<string, string> = PROVIDER_LABELS;
 
-const routeLabel = (id: string) => ROUTE_LABELS[id] ?? id;
+const routeLabel = (id: string) => providerLabel(id);
 
 export function parseRoutes(value: FormValue | undefined): string[] {
   const result: string[] = [];

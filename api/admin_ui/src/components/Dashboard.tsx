@@ -26,6 +26,7 @@ import type { DirectPartner, IntakeCounts, Money, ProviderCosts } from '../api/d
 import type { SipCallRecord } from '../api/sipTypes';
 import type { AdminDestination } from '../navigation';
 import { formatMoney, formatMoneyList } from './delivery/shared';
+import { providerLabel } from '../providerLabels';
 
 type CardData<T> = { kind: 'loading' } | { kind: 'ready'; data: T } | { kind: 'denied' | 'unavailable' | 'error' };
 
@@ -273,7 +274,7 @@ function Dashboard({ client, onNavigate }: DashboardProps) {
                   variant="outlined"
                 />
                 <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-                  {health.backend ? `Outbound provider: ${health.backend}` : 'No fax provider set up yet.'}
+                  {health.backend ? `Sending: ${providerLabel(health.backend)}` : 'No fax provider set up yet.'}
                 </Typography>
                 {health.backend && health.backend_message && (
                   <Typography variant="body2" color="error" sx={{ mt: 1 }} data-testid="engine-message">
@@ -476,7 +477,7 @@ function Dashboard({ client, onNavigate }: DashboardProps) {
                 <Typography variant="h6" gutterBottom>Config Overview</Typography>
                 <Grid container spacing={1}>
                   <Grid item xs={6}><Typography variant="body2" color="text.secondary">Default provider</Typography></Grid>
-                  <Grid item xs={6}><Chip size="small" label={cfg ? (cfg.backend || 'Not set up') : 'Unavailable'} /></Grid>
+                  <Grid item xs={6}><Chip size="small" label={cfg ? (cfg.backend ? providerLabel(cfg.backend) : 'Not set up') : 'Unavailable'} /></Grid>
                   <Grid item xs={6}><Typography variant="body2" color="text.secondary">Storage</Typography></Grid>
                   <Grid item xs={6}><Chip size="small" label={cfg?.storage?.backend || 'local'} /></Grid>
                   <Grid item xs={6}><Typography variant="body2" color="text.secondary">Authentication</Typography></Grid>
