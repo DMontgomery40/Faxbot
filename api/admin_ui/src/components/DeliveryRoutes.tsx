@@ -56,7 +56,8 @@ export default function DeliveryRoutes({ client, canWrite, section }: { client: 
         wants('numbers') ? client.listDestinations() : null,
         wants('spending') ? client.getRouteCosts() : null,
         wants('rates') ? client.listRateCards() : null,
-        wants('partners') ? client.listDirectPartners() : null,
+        // The recipients list names the partner each number belongs to, when partners can be read.
+        wants('partners') || section === 'numbers' ? client.listDirectPartners().catch(() => null) : null,
       ]);
       if (routes) setDestinations(routes.destinations);
       if (costs) {
@@ -92,7 +93,8 @@ export default function DeliveryRoutes({ client, canWrite, section }: { client: 
             <Spending client={client} providers={providers} received={received} carrier={carrier} canWrite={canWrite}
               onChanged={() => void load()} />)}
           {shows('numbers') && part('numbers',
-            <Destinations client={client} destinations={destinations} canWrite={canWrite} onChanged={() => void load()} />)}
+            <Destinations client={client} destinations={destinations} canWrite={canWrite} onChanged={() => void load()}
+              partners={section === 'numbers' ? partners : null} />)}
           {shows('rates') && part('rates',
             <RateCards client={client} cards={cards} canWrite={canWrite} onChanged={() => void load()} />)}
           {shows('partners') && part('partners',

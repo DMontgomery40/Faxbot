@@ -79,8 +79,6 @@ CLI_ONLY: dict = {}
 AWAITING_CONSOLE = {
     ('GET', '/access/audit'): 'System → Audit log',
     ('GET', '/admin/db-status'): 'System → Diagnostics: database status',
-    ('GET', '/cases/{case_id}/documents'): 'Recipients → Case packets',
-    ('POST', '/cases/{case_id}/faxes'): 'Recipients → Case packets',
 }
 
 # Gaps still open in the command line. Builder M removes each entry with the command that closes it.

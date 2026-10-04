@@ -6,7 +6,8 @@ import AdminAPIClient from '../api/client';
 import type { WorkItem } from '../api/types';
 import Received from '../components/Received';
 import { duplicateSentence, OPERATIONAL_TARGET, shortTime, targetLabel, workStateSentence } from '../components/work/text';
-import { parseAddress, resolveAddress, visibleNavigation } from '../navigation';
+import { NAVIGATION, parseAddress, resolveAddress, visibleNavigation } from '../navigation';
+import WorkSettingsPanel from '../components/work/WorkSettingsPanel';
 import { server } from '../test/server';
 
 const client = () => new AdminAPIClient({ kind: 'key', key: 'synthetic-key' });
@@ -155,11 +156,22 @@ describe('Received with owners (the former Work screen)', () => {
     expect(within(row).getByRole('button', { name: 'Assign' })).toBeTruthy();
   });
 
-  it('labels the acknowledgement target as operational for people who can read settings', async () => {
+  it('leaves acknowledgement targets to Numbers, Mailboxes', async () => {
     queue([]);
     render(<Received client={client()} inboundEnabled permissions={new Set(['settings:read'])} />);
+    await rowFor('+15550109999');
+    expect(screen.queryByText('Acknowledgement targets')).toBeNull();
+  });
+});
+
+describe('Acknowledgement targets under Numbers, Mailboxes', () => {
+  it('labels the target as operational, read only without settings:write', async () => {
+    queue([]);
+    const mailboxes = NAVIGATION.find((area) => area.id === 'numbers')!.pages.find((page) => page.id === 'mailboxes')!;
+    expect(mailboxes.gate.anyOf).toContain('settings:read');
+    render(<WorkSettingsPanel client={client()} canWrite={false} />);
     expect(await screen.findByText('Acknowledgement targets')).toBeTruthy();
     expect(screen.getByText(new RegExp(OPERATIONAL_TARGET.replace(/[.']/g, '.')))).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'Save' })).toBeNull();  // read only without settings:write
+    expect(screen.queryByRole('button', { name: 'Save' })).toBeNull();
   });
 });

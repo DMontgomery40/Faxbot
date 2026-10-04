@@ -267,3 +267,31 @@ export interface DirectDeliveryRecord {
   created_at: string;
   accepted_at: string | null;
 }
+
+// GET /cases/{case}/documents?to=: documents of a case already sent to one recipient.
+export interface CaseDocument {
+  title: string;
+  pages: number;
+  reference: string;
+  accepted: boolean;
+  accepted_at: string | null;
+  fax_id: string | null;
+}
+
+export interface CaseDocuments {
+  case_id: string;
+  to: string;
+  accepts_references: boolean;
+  documents: CaseDocument[];
+}
+
+// POST /cases/{case}/faxes: the packet, sent or previewed (fax_id is null for a preview).
+export interface CasePacket {
+  case_id: string;
+  to: string;
+  accepts_references: boolean;
+  pages: number;
+  pages_saved: number;
+  documents: Array<{ title: string; pages: number; status: 'included' | 'referenced' }>;
+  fax_id: string | null;
+}

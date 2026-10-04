@@ -228,6 +228,8 @@ def project_admin_settings(snapshot: ConfigurationSnapshot, pending_fields: Iter
         'work': {
             'acknowledge_hours': values.work_acknowledge_hours,
         },
+        # What every sent fax carries: the header text and the station ID (your fax number).
+        'sender': {'header': values.fax_header, 'station_id': values.fax_station_id},
         'direct': {
             'enabled': values.direct_delivery_enabled,
             'organization': values.direct_organization,

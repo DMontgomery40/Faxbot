@@ -56,7 +56,6 @@ import { DeliveryError, Notice } from './delivery/shared';
 import { InboundCostLine, useInboundCosts } from './delivery/FaxCost';
 import InboundRecovery from './InboundRecovery';
 import WorkDetail from './work/WorkDetail';
-import WorkSettingsPanel from './work/WorkSettingsPanel';
 import { can, duplicateSentence, workStateSentence } from './work/text';
 
 // Which received faxes are listed. The first four follow the work queue's own views.
@@ -662,11 +661,6 @@ export default function Received({
         <DirectDeliveries items={directItems} canRetry={canRetryDelivery} busy={retrying} onRetry={(item) => void retryDelivery(item)} />
       )}
 
-      {canWork && permissions?.has('settings:read') && (
-        <Box sx={{ mt: 4 }}>
-          <WorkSettingsPanel client={client} canWrite={permissions.has('settings:write')} />
-        </Box>
-      )}
 
       <Menu anchorEl={assigning?.anchor} open={Boolean(assigning)} onClose={() => setAssigning(null)}>
         {assigning?.people === null && <MenuItem disabled>Loading…</MenuItem>}

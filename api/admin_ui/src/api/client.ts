@@ -48,6 +48,8 @@ import type {
   PublishedPlans, RateCard,
   ReconcileResult,
   RouteCostsResponse,
+  CaseDocuments,
+  CasePacket,
 } from './deliveryTypes';
 import type {
   ImportManifest, ImportResult, WorkAssignee, WorkCounts, WorkEvent, WorkItem, WorkSettings, WorkView,
@@ -1096,6 +1098,22 @@ export class AdminAPIClient {
 
   async saveWorkMailbox(entry: { mailbox_id: string; acknowledge_hours: number | null; backup_principal_id: string | null; version: number }): Promise<WorkSettings> {
     return this.json('/work/settings', { method: 'PUT', body: JSON.stringify({ mailboxes: [entry] }) });
+  }
+
+  // Case packets: what a recipient already holds for a case, and sending only what is new.
+  async getCaseDocuments(caseId: string, to: string): Promise<CaseDocuments> {
+    return this.json(`/cases/${id(caseId)}/documents${query({ to: normalizeFaxDestination(to) })}`);
+  }
+
+  async sendCasePacket(caseId: string, to: string, documents: Array<{ file: File; title: string }>, preview: boolean): Promise<CasePacket> {
+    const formData = new FormData();
+    formData.append('to', normalizeFaxDestination(to));
+    formData.append('preview', preview ? 'true' : 'false');
+    for (const document of documents) {
+      formData.append('documents', document.file);
+      formData.append('titles', document.title);
+    }
+    return this.json(`/cases/${id(caseId)}/faxes`, { method: 'POST', body: formData });
   }
 
   async importDocument(file: File, manifest: ImportManifest): Promise<ImportResult> {

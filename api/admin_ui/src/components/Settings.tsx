@@ -62,7 +62,7 @@ export type SettingsSection =
   | 'providers' | 'features' | 'inbound' | 'routes'
   | 'phaxio' | 'sinch' | 'documo' | 'humblefax' | 'efax' | 'trunk' | 'signalwire' | 'freeswitch'
   | 'direct' | 'intake' | 'email'
-  | 'security' | 'tunnel' | 'storage' | 'advanced' | 'backup' | 'mcp';
+  | 'security' | 'tunnel' | 'storage' | 'advanced' | 'backup' | 'mcp' | 'identity';
 
 const PROVIDER_NAMES: Record<string, string> = { sip: 'your phone carrier', freeswitch: 'FreeSWITCH' };
 
@@ -132,6 +132,7 @@ function editorValues(data: SettingsType): SettingsForm {
     ami_username: data.sip.ami_username,
     ami_password: data.sip.ami_password,
     fax_station_id: data.sip.station_id,
+    ...(data.sender ? { fax_header: data.sender.header } : {}),
     fs_esl_host: data.fs?.esl_host ?? '',
     fs_esl_port: data.fs?.esl_port ?? 8021,
     fs_esl_password: data.fs?.esl_password ?? '',
@@ -839,6 +840,8 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
                       {...envField('ami_password')}
                     />
                     
+                    {/* On the console's own pages the station ID is under Numbers, Sender identity. */}
+                    {!sections && (
                     <ResponsiveSettingItem
                       icon={getStatusIcon(!!settings.sip.station_id)}
                       label="Station ID"
@@ -849,6 +852,7 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
                       onChange={(value) => handleForm('fax_station_id', value)}
                       showCurrentValue={!pendingRestart && (!!settings.sip.station_id)}
                     />
+                    )}
                     <Box id={SIP_TRUNK_SECTION}><SipTrunkSettings client={client} /></Box>
                   </ResponsiveSettingSection>
                 )}
@@ -1326,6 +1330,27 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
                 </Box>
               </Box>
             )}
+          </ResponsiveFormSection>
+          )}
+
+          {/* Sender identity: on its own page under Numbers. */}
+          {sections?.includes('identity') && (
+          <ResponsiveFormSection title="Sender identity" icon={<SettingsIcon />}
+            subtitle="What the receiving fax machine shows for faxes Faxbot sends over your carrier trunk or phone system.">
+            {textField('Header text', 'fax_header', 'Printed at the top of each page, usually your organization name.')}
+            <ResponsiveSettingItem
+              icon={<SettingsIcon />}
+              label="Station ID"
+              value={settings.sip.station_id || ''}
+              editValue={form.fax_station_id ?? ''}
+              helperText={internationalHint(settingsNumberFormat(settings), 'Your fax number, shown to the receiving fax machine')}
+              placeholder={settingsNumberFormat(settings)?.international || undefined}
+              onChange={(value) => handleForm('fax_station_id', value)}
+              showCurrentValue={!pendingRestart && (!!settings.sip.station_id)}
+            />
+            <Typography variant="body2" color="text.secondary" sx={{ px: 2 }}>
+              Faxes sent through a fax service such as Phaxio or HumbleFax show the name and number set in that service's account.
+            </Typography>
           </ResponsiveFormSection>
           )}
 
