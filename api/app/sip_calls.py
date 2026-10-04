@@ -41,7 +41,33 @@ NOT_A_FAX = 'The call connected but the other end did not answer as a fax machin
 # Verdicts for an answered call that delivered no fax. The no-data ones mean the
 # network path failed; the other two mean the network carried the call.
 NO_DATA_VERDICTS = frozenset({'no_media_back', 'no_t38_data_back', 'no_fax_data_back'})
-VERDICTS = NO_DATA_VERDICTS | {'no_fax_answer', 'remote_fax_failed'}
+# A received fax whose image Asterisk stored but could not hand to Faxbot.
+NOT_HANDED_OVER = 'not_handed_over'
+VERDICTS = NO_DATA_VERDICTS | {'no_fax_answer', 'remote_fax_failed', NOT_HANDED_OVER}
+# What the Asterisk notify script prints when a hand-over fails, and the plain
+# reason after "A fax was received but could not be handed to Faxbot: ".
+HANDOVER_REASONS = {
+    'no_secret': 'the fax engine has no inbound secret yet; select Apply to Asterisk',
+    'refused': "Faxbot refused the fax engine's inbound secret; select Apply to Asterisk",
+    'not_receiving': 'receiving faxes is turned off in Faxbot',
+    'unreadable': 'Faxbot could not read the received image',
+    'unreachable': 'Faxbot could not be reached',
+    'failed': 'Faxbot answered with an error',
+}
+
+
+def handover_sentence(reason):
+    """One sentence for a received fax that Asterisk could not hand to Faxbot."""
+    text = HANDOVER_REASONS.get(str(reason or '').strip(), HANDOVER_REASONS['failed'])
+    return f'A fax was received but could not be handed to Faxbot: {text}.'
+
+
+def _handover(event):
+    """The failed hand-over reason in a FaxInboundCall event, or None."""
+    reason = str(event.get('Handover') or '').strip().lower()
+    if not reason or reason == 'ok':
+        return None
+    return reason if reason in HANDOVER_REASONS else 'failed'
 # Fax engine endings that mean the far end never sent one fax message: spandsp's
 # T0 and T1 timers run only until the first message arrives, res_fax's TIMEOUT
 # means nothing moved in either direction, and a hang-up or an unanswered
@@ -185,6 +211,10 @@ def originate_summary(event):
 
 def stored_verdict(record):
     """The verdict a stored call record carries: sent, received, a failure verdict, or None."""
+    code = (record['error_cause'] or '').split(':', 1)[0]
+    if code == NOT_HANDED_OVER and record['direction'] == 'inbound' and record['job_id'] is None:
+        # Until Faxbot brings the image in, the fax is not in Faxbot even when the call succeeded.
+        return code
     if record['disposition'] == 'answered' and record['fax_status'] == 'SUCCESS':
         return 'sent' if record['direction'] == 'outbound' else 'received'
     code = (record['error_cause'] or '').split(':', 1)[0]
@@ -199,6 +229,8 @@ def call_summary(record):
     if disposition != 'answered':
         return _DISPOSITION_TEXT[disposition]
     found = stored_verdict(record)
+    if found == NOT_HANDED_OVER:
+        return handover_sentence((record['error_cause'] or '').split(':', 1)[1])
     if record['direction'] == 'inbound' and record['job_id'] is None and found != 'received':
         return _no_pages(record['caller'], found)
     if found == 'sent':
@@ -421,16 +453,57 @@ class SipCallRecords:
         ended = _epoch(event.get('Ended')) or now
         did, caller = _number(event.get('DID')), _number(event.get('Caller'))
         status = re.sub(r'[^A-Z_]', '', str(event.get('Status') or '').upper())[:16] or None
+        handover = _handover(event)
+        if handover is not None:
+            error_cause = f'{NOT_HANDED_OVER}: {handover}'
+        else:
+            error_cause = _error_cause(event) if answered else 'caller hung up before answer'
         record = {
             'id': uuid4().hex, 'direction': 'inbound', 'call_id': call_id, 'job_id': None, 'attempt_id': None,
             'trunk_preset': str(preset or '')[:32] or None, 'did': did, 'caller': caller, 'called': did,
             'started_at': started or answered or now, 'answered_at': answered, 'ended_at': ended,
             'disposition': 'answered' if answered else 'failed', 'connected_seconds': _seconds(answered, ended),
             't38': _t38(event.get('Mode')), 'pages': _pages(event.get('Pages')), 'fax_status': status,
-            'remote_station_id': _station(event.get('Station64')),
-            'error_cause': _error_cause(event) if answered else 'caller hung up before answer',
+            'remote_station_id': _station(event.get('Station64')), 'error_cause': error_cause,
             'fax_preference': 0, 'created_at': now, 'updated_at': now}
         return self._insert_inbound(record)
+
+    def link_inbound(self, call_id, inbound_fax_id):
+        """Point a received call that was not handed over at the fax Faxbot brought in later.
+
+        Only an empty link is filled; what the call record observed stays as it was.
+        """
+        inbound_fax_id = _identity(inbound_fax_id)
+        if inbound_fax_id is None or not _CALL.fullmatch(str(call_id or '')):
+            return False
+
+        def apply(connection, table):
+            result = connection.execute(table.update().where(
+                table.c.direction == 'inbound', table.c.call_id == call_id, table.c.job_id.is_(None)).values(
+                job_id=inbound_fax_id, updated_at=utcnow()))
+            return result.rowcount > 0
+        return self._write(apply)
+
+    def inbound_call(self, call_id):
+        """The received call's numbers and pages, or None."""
+        try:
+            with self.engine.connect() as connection:
+                row = self._find(connection, self.table, 'inbound', str(call_id))
+        except (sa.exc.SQLAlchemyError, SipCallRecordError):
+            return None
+        return {'did': row['did'], 'caller': row['caller'], 'pages': row['pages']} if row is not None else None
+
+    def unclaimed_inbound_calls(self):
+        """Calls whose image Asterisk stored but could not hand over, not linked to a fax yet."""
+        try:
+            with self.engine.connect() as connection:
+                table = self.table
+                rows = connection.execute(sa.select(table.c.call_id).where(
+                    table.c.direction == 'inbound', table.c.job_id.is_(None),
+                    table.c.error_cause.like(NOT_HANDED_OVER + ':%'))).scalars().all()
+        except (sa.exc.SQLAlchemyError, SipCallRecordError):
+            return set()
+        return set(rows)
 
     def _insert_inbound(self, record):
         def apply(connection, table):
@@ -567,8 +640,12 @@ def detach():
 def record_inbound_call(engine, call, *, call_id, inbound_fax_id, preset=None, fax_status=None):
     """Record a received call's details; the fax itself is already stored, so failures only log."""
     try:
-        return SipCallRecords(engine).record_inbound(call, call_id=call_id, inbound_fax_id=inbound_fax_id,
-                                                     preset=preset, fax_status=fax_status)
+        records = SipCallRecords(engine)
+        recorded = records.record_inbound(call, call_id=call_id, inbound_fax_id=inbound_fax_id,
+                                          preset=preset, fax_status=fax_status)
+        # A hand-over that was reported as failed but reached Faxbot later links its call here.
+        records.link_inbound(call_id, inbound_fax_id)
+        return recorded
     except Exception:
         logging.getLogger(__name__).warning('A SIP call record could not be saved.')
         return None

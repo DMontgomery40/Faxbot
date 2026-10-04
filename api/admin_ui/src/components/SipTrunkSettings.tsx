@@ -34,6 +34,7 @@ import type { SipCallRecord, SipPreset, SipTrunkSettings as TrunkValues, SipTrun
 import SecretInput from './common/SecretInput';
 import EnvSetField, { environmentManaged } from './common/EnvSetField';
 import { numberHint, numberPlaceholder, settingsNumberFormat } from './common/numbers';
+import InboundRecovery from './InboundRecovery';
 
 interface SipTrunkSettingsProps {
   client: AdminAPIClient;
@@ -458,6 +459,7 @@ function SipTrunkSettings({ client, showCalls = true }: SipTrunkSettingsProps) {
             </Table>
           ))}
           {nextCursor && <Button sx={{ mt: 1 }} onClick={() => loadCalls(nextCursor)}>Show older calls</Button>}
+          <InboundRecovery client={client} onRecovered={() => { void loadCalls(); }} />
         </Box>
       )}
     </Stack>

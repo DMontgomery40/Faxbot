@@ -358,6 +358,35 @@ def test_a_received_call_that_left_no_image_still_has_a_record(records):
     assert sip_calls.inbound_summary(inbound_call()) == record['summary']
 
 
+@pytest.mark.parametrize(('reason', 'sentence'), [
+    ('no_secret', 'A fax was received but could not be handed to Faxbot: the fax engine has no inbound secret yet; '
+                  'select Apply to Asterisk.'),
+    ('refused', "A fax was received but could not be handed to Faxbot: Faxbot refused the fax engine's inbound "
+                'secret; select Apply to Asterisk.'),
+    ('unreachable', 'A fax was received but could not be handed to Faxbot: Faxbot could not be reached.'),
+    ('something-new', 'A fax was received but could not be handed to Faxbot: Faxbot answered with an error.'),
+])
+def test_a_received_fax_that_was_not_handed_over_says_why_until_faxbot_brings_it_in(records, reason, sentence):
+    """The live receive stored an image that never reached Faxbot, and nothing said so."""
+    event = inbound_call(UniqueID='1791083644.1', Status='SUCCESS', Error64='', Pages='2', Handover=reason)
+    records.record_inbound_event(event, preset='telnyx', now=NOW)
+    [record] = records.page(direction='inbound')['items']
+    assert (record['verdict'], record['summary'], record['job_id']) == ('not_handed_over', sentence, None)
+    assert records.unclaimed_inbound_calls() == {'1791083644.1'}
+    assert records.inbound_call('1791083644.1') == {'did': '+15555550199', 'caller': '+13035550100', 'pages': 2}
+    assert records.link_inbound('1791083644.1', 'f' * 32) is True
+    assert records.link_inbound('1791083644.1', 'e' * 32) is False
+    [linked] = records.page(direction='inbound')['items']
+    assert (linked['verdict'], linked['summary'], linked['job_id']) == ('received', 'Received: 2 pages.', 'f' * 32)
+    assert records.unclaimed_inbound_calls() == set()
+
+
+def test_a_successful_hand_over_reported_by_the_dialplan_is_not_a_failure(records):
+    records.record_inbound_event(inbound_call(UniqueID='1.3', Handover='ok'))
+    [record] = records.page(direction='inbound')['items']
+    assert record['verdict'] == 'no_t38_data_back'
+
+
 def test_a_received_call_with_other_endings_reads_as_no_pages(records):
     records.record_inbound_event(inbound_call(UniqueID='1.1', Station64='KzE1NTU1NTUwMTk5'))
     records.record_inbound_event(inbound_call(UniqueID='1.2', Answered='', Caller='<script>'))

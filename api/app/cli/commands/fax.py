@@ -258,6 +258,13 @@ def inbound_fetch(inbound_id: str = typer.Argument(..., help='Received fax ID.')
                                                   f'faxbot inbound get {inbound_id}'))
 
 
+@inbound.command('recover')
+def inbound_recover():
+    """Bring in faxes the SIP trunk received but could not hand to Faxbot (Faxbot also does this every minute)."""
+    result = state.api().post('/admin/inbound/recover', json={})
+    state.out().result(result, lambda out: out.line(result['message']))
+
+
 @inbound.command('simulate')
 def inbound_simulate(from_number: str = typer.Option('+15550000000', '--from', help='Sender fax number to show.'),
                      to_number: str = typer.Option(None, '--to', help='Your fax number it arrived on.'),

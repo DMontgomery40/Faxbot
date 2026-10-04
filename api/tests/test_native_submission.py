@@ -884,8 +884,8 @@ def test_inbound_dialplan_only_passes_filtered_or_encoded_caller_values_to_the_s
     assert any("FAXBOT_CALLER=${FILTER(0123456789+,${CALLERID(num)})}" in line for line in receive)
     assert any("hangup_handler_push)=faxbot-inbound-done" in line for line in receive)
     assert sum("ReceiveFAX(" in line for line in receive) == 1
-    system = [line for line in done if "System(" in line]
-    assert len(system) == 1
+    system = [line for line in done if "SHELL(" in line or "System(" in line]
+    assert len(system) == 1 and "SHELL(/usr/local/bin/faxbot-inbound-notify " in system[0]
     command = system[0]
     assert "ENV(" not in "\n".join(entry + receive + done)
     assert "CALLERID" not in command and "REMOTESTATIONID" not in command and "EXTEN" not in command

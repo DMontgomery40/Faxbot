@@ -587,6 +587,11 @@ export class AdminAPIClient {
     return this.json(`/admin/sip/calls${query(params)}`);
   }
 
+  // Bring in faxes the SIP trunk received but could not hand to Faxbot.
+  async recoverInbound(): Promise<{ found: number; imported: number; waiting: number; message: string }> {
+    return this.json('/admin/inbound/recover', { method: 'POST', body: JSON.stringify({}) });
+  }
+
   // Diagnostics
   async runDiagnostics(): Promise<DiagnosticsResult> {
     return this.json('/admin/diagnostics/run', { method: 'POST' });
