@@ -63,7 +63,7 @@ Screens follow the signed-in user's permissions and provider capabilities. See t
 
 Health checks are available at `/health` and `/health/ready`. Readiness does not prove that a fax has been delivered.
 
-After initial bootstrap, change server settings through the console. Editing `.env` does not replace saved configuration. Follow any requested restart and confirm the active settings before transmitting. [Held test jobs](docs/setup/test-mode.md) remain held when sending is enabled later.
+Credentials in `.env` (provider keys, passwords and secrets) are read at every start and are the values in force; the console shows them as **Set in .env** and they are changed there, followed by a restart. `API_KEY` (the installation key) is read only at the first start, and other settings are managed in the console after that. Follow any requested restart and confirm the active settings before transmitting. [Held test jobs](docs/setup/test-mode.md) remain held when sending is enabled later.
 
 ## SDKs and AI assistants
 
@@ -124,6 +124,7 @@ Checked items are implemented in the current source checkout. Unchecked items ar
 - [x] No blank TXT page from a final line break; one-bit TIFF pages stay one-bit in generated PDFs.
 - [x] Stable send-operation ids in both SDKs, both MCP servers and the console, with an explicit resume path and no automatic resend.
 - [x] Source-derived reference documentation and scoped AI prose proposals, with maintained planning outside the generated tree.
+- [x] Credentials in `.env` read at every start (carrier names such as `TELNYX_PASS` accepted), shown as **Set in .env**; a new installation starts with no fax provider until one is chosen.
 
 ### Next
 

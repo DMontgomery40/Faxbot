@@ -9,6 +9,7 @@ import { DeliveryWizardFields, deliveryEditorValues } from './delivery/DeliveryS
 import { docsLink } from '../docsLinks';
 import type { ConfigurationWriteResult, Settings, SettingsPatch, ValidationResult } from '../api/types';
 import SecretInput from './common/SecretInput';
+import EnvSetField, { environmentManaged } from './common/EnvSetField';
 import SipTrunkSettings from './SipTrunkSettings';
 import { COUNTRY_HELP, CountryField } from './common/numbers';
 
@@ -532,7 +533,8 @@ function SetupWizard({ client, onDone, docsBase }: SetupWizardProps) {
         {ob === 'freeswitch' && <Alert severity="info" sx={{ mt: 2 }}>FreeSWITCH also needs mod_spandsp, a gateway and the Faxbot result hook.</Alert>}
         <Grid container spacing={2} sx={{ mt: 0 }}>
           {credentialFields[ob].map(field => <Grid item xs={12} key={field.key}>
-            {field.secret ? <SecretInput fullWidth disabled={!canEdit} label={field.label} value={config[field.key] ?? ''}
+            {field.secret && environmentManaged(settings).has(field.key) ? <EnvSetField fullWidth label={field.label} /> :
+              field.secret ? <SecretInput fullWidth disabled={!canEdit} label={field.label} value={config[field.key] ?? ''}
               onChange={value => handleConfigChange(field.key, value)} helperText={field.helper} /> :
               <TextField fullWidth disabled={!canEdit} label={field.label} value={config[field.key] ?? ''} type={field.number ? 'number' : 'text'}
                 onChange={event => handleConfigChange(field.key, field.number && event.target.value !== '' ? Number(event.target.value) : event.target.value)} helperText={field.helper} />}

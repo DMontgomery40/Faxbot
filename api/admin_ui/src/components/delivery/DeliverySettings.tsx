@@ -21,6 +21,7 @@ import type { Settings } from '../../api/types';
 import { ResponsiveFormSection } from '../common/ResponsiveFormFields';
 import { ResponsiveSettingItem } from '../common/ResponsiveSettingItem';
 import SecretInput from '../common/SecretInput';
+import EnvSetField, { environmentManaged } from '../common/EnvSetField';
 import { numberHint, settingsNumberFormat } from '../common/numbers';
 import DirectCardDialog from './DirectCardDialog';
 import EmailDelivery from './EmailDelivery';
@@ -262,9 +263,10 @@ export function DeliverySettingsSections({ client, settings, form, loaded, onCha
             type="select" options={SECURITY_OPTIONS} showCurrentValue={showCurrentValue} />
           {text('User name', 'intake_smtp_username', 'Leave empty if the server needs no sign-in.')}
           <Box>
+            {environmentManaged(settings).has('intake_smtp_password') ? <EnvSetField fullWidth size="small" label="Email password" /> :
             <SecretInput fullWidth size="small" label="Email password" value={String(form.intake_smtp_password ?? '')}
               onChange={(value) => onChange('intake_smtp_password', value)}
-              helperText={loaded.intake_smtp_password ? 'Leave unchanged to keep the saved password.' : 'Leave empty if the server needs no sign-in.'} />
+              helperText={loaded.intake_smtp_password ? 'Leave unchanged to keep the saved password.' : 'Leave empty if the server needs no sign-in.'} />}
           </Box>
           {text('Sent from', 'intake_email_from', 'For example, fax@example.org.')}
           {text('Recipients', 'intake_email_to', 'Email addresses, separated by commas.')}
@@ -328,9 +330,10 @@ export function DeliveryWizardFields({ settings, config, baseline, onChange, out
               {SECURITY_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
             </TextField>
             {field('User name', 'intake_smtp_username')}
+            {environmentManaged(settings).has('intake_smtp_password') ? <EnvSetField fullWidth label="Email password" sx={{ mt: 2 }} /> :
             <SecretInput fullWidth disabled={disabled} label="Email password" value={String(config.intake_smtp_password ?? '')} sx={{ mt: 2 }}
               onChange={(value) => onChange('intake_smtp_password', value)}
-              helperText={baseline.intake_smtp_password ? 'Leave unchanged to keep the saved password.' : undefined} />
+              helperText={baseline.intake_smtp_password ? 'Leave unchanged to keep the saved password.' : undefined} />}
             {field('Sent from', 'intake_email_from', 'For example, fax@example.org.')}
             {field('Recipients', 'intake_email_to', 'Email addresses, separated by commas.')}
           </>}

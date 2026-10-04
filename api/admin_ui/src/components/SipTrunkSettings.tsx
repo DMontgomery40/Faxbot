@@ -32,6 +32,7 @@ import AdminAPIClient, { AdminAPIError, isForbidden } from '../api/client';
 import type { NumberFormat, SettingsPatch } from '../api/types';
 import type { SipCallRecord, SipPreset, SipTrunkSettings as TrunkValues, SipTrunkStatus } from '../api/sipTypes';
 import SecretInput from './common/SecretInput';
+import EnvSetField, { environmentManaged } from './common/EnvSetField';
 import { numberHint, numberPlaceholder, settingsNumberFormat } from './common/numbers';
 
 interface SipTrunkSettingsProps {
@@ -94,6 +95,7 @@ function SipTrunkSettings({ client, showCalls = true }: SipTrunkSettingsProps) {
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [callsNote, setCallsNote] = useState<string | null>(null);
   const [numberFormat, setNumberFormat] = useState<NumberFormat | null>(null);
+  const [passwordInEnv, setPasswordInEnv] = useState(false);
 
   const preset = useMemo(() => presets.find((item) => item.id === form.preset), [presets, form.preset]);
 
@@ -105,6 +107,7 @@ function SipTrunkSettings({ client, showCalls = true }: SipTrunkSettingsProps) {
       setSaved(trunk);
       setForm(trunk);
       setRevision(settings._meta?.desired_revision_id);
+      setPasswordInEnv(environmentManaged(settings).has('sip_trunk_password'));
       setNumberFormat(settingsNumberFormat(settings));
     } catch (error) {
       setNotice({ severity: 'error', text: failure(error, 'Trunk settings could not be loaded. Try again.') });
@@ -276,7 +279,8 @@ function SipTrunkSettings({ client, showCalls = true }: SipTrunkSettingsProps) {
               <TextField size="small" fullWidth label={prefixLogin ? 'Tech prefix' : 'Username'} value={form.username}
                 helperText={prefixLogin ? 'The eight-digit prefix from your Flowroute account.' : undefined}
                 onChange={(event) => update('username', event.target.value.trim())} />
-              {form.auth === 'registration' && (
+              {form.auth === 'registration' && passwordInEnv && <EnvSetField size="small" fullWidth label="Password" />}
+              {form.auth === 'registration' && !passwordInEnv && (
                 <SecretInput size="small" fullWidth label="Password" value={form.password}
                   placeholder={saved.password_set ? 'Saved; type a new one to replace it' : ''}
                   helperText={saved.password_set ? 'A password is saved.' : 'Not saved yet.'}

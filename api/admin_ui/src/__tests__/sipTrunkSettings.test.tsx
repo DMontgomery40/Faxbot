@@ -115,6 +115,20 @@ describe('SIP trunk settings', () => {
     expect(await screen.findByText(detail)).toBeTruthy();
   });
 
+  it('shows a trunk password set in .env as set there, without an input', async () => {
+    server.use(
+      http.get('/admin/sip/presets', () => HttpResponse.json({ presets: PRESETS })),
+      http.get('/admin/settings', () => HttpResponse.json({ ...settings(), _meta: { ...META, env_managed: ['sip_trunk_password'] } })),
+      http.get('/admin/sip/calls', () => HttpResponse.json({ items: [], next_cursor: null })),
+    );
+    render(<SipTrunkSettings client={client()} />);
+    const password = await screen.findByLabelText('Password');
+    expect((password as HTMLInputElement).value).toBe('Set in .env');
+    expect((password as HTMLInputElement).disabled).toBe(true);
+    expect(screen.getByText('Change it in .env and restart Faxbot.')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Show Password' })).toBeNull();
+  });
+
   it('links one carrier documentation page instead of listing every source', async () => {
     const presets = [{ ...PRESETS[0], sources: [
       { url: 'https://developers.telnyx.com/docs/voice/sip-trunking/get-started', read_on: '2026-10-03' },
