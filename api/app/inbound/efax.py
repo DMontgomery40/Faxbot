@@ -236,16 +236,29 @@ def _marked_rows(store, account=None):
 
 
 async def retry_deletions(store, values, *, service=None, limit=50):
-    """Retry the due deletions for the eFax account in settings; returns how many were deleted."""
+    """Retry the due deletions for the eFax account in settings; returns how many were deleted.
+
+    A pending deletion of a fax that arrived on another eFax account (the app
+    ID or user ID changed since) can never be retried with these settings, so
+    it is marked stopped and reads "delete it in your eFax account".
+    """
     service = service or service_for(values)
     account = account_for(values)
     now = store.clock()
-    rows = await run_lifecycle_step(lambda: _marked_rows(store, account))
-    deleted = 0
-    for import_id, fax_id, _, mark in rows[:limit]:
-        due = _when(mark.get('next_at'))
-        if mark['state'] != 'pending' or (due is not None and due > now):
+    rows = await run_lifecycle_step(lambda: _marked_rows(store))
+    deleted = attempted = 0
+    for import_id, fax_id, row_account, mark in rows:
+        if mark['state'] != 'pending':
             continue
+        if row_account != account:
+            stopped = {key: value for key, value in mark.items() if key != 'next_at'}
+            stopped['state'] = 'stopped'
+            await run_lifecycle_step(lambda: _write_mark(store, import_id, stopped))
+            continue
+        due = _when(mark.get('next_at'))
+        if (due is not None and due > now) or attempted >= limit:
+            continue
+        attempted += 1
         if await _delete(service, store, import_id, fax_id, mark):
             deleted += 1
     return deleted

@@ -947,6 +947,11 @@ export class AdminAPIClient {
     return this.json(`/routing/published-plans?provider_id=${encodeURIComponent(providerId)}`);
   }
 
+  // Published plans for each sending provider in use that has no sending rate card yet.
+  async getPublishedPlansInUse(): Promise<{ items: PublishedPlans[] }> {
+    return this.json('/routing/published-plans/in-use');
+  }
+
   async saveRateCards(cards: RateCard[]): Promise<{ cards: RateCard[] }> {
     const body = cards.map(({ id: _id, ...card }) => card);
     return this.json('/routing/rate-cards', { method: 'PUT', body: JSON.stringify({ cards: body }) });

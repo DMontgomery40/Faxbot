@@ -63,8 +63,7 @@ export default function DeliveryRoutes({ client, canWrite }: { client: AdminAPIC
             <Destinations client={client} destinations={destinations} canWrite={canWrite} onChanged={() => void load()} />
           </Section>
           <Section title="Rate cards" text="Advertised prices Faxbot uses to estimate costs and choose the cheapest route.">
-            <RateCards client={client} cards={cards} canWrite={canWrite} onChanged={() => void load()}
-              unpriced={providers.filter((provider) => provider.priced === false && !provider.plan).map((provider) => provider.provider_id)} />
+            <RateCards client={client} cards={cards} canWrite={canWrite} onChanged={() => void load()} />
           </Section>
           <Section title="Direct partners" text="Organizations that receive your documents directly, with no fax call.">
             <DirectPartners client={client} partners={partners} canWrite={canWrite} onChanged={() => void load()} />

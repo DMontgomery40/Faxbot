@@ -273,6 +273,25 @@ def test_deletion_stops_after_seven_days_and_says_to_delete_it_in_efax(isolated_
         assert len(efax.requests) == before
 
 
+def test_a_deletion_on_an_earlier_efax_account_stops_and_says_to_delete_it_there(isolated_installation, monkeypatch,
+                                                                                  efax):
+    environment(monkeypatch, EFAX_DELETE_AFTER_DOWNLOAD='true')
+    efax.receive(FAX_ID, pdf_bytes())
+    with client():
+        check()
+        efax.fail[('DELETE', f'/faxes/{FAX_ID}')] = httpx.Response(500, json={})
+        assert step() is True
+    monkeypatch.setenv('EFAX_USER_ID', 'synthetic-other-user')
+    with client() as http:
+        before = len(efax.requests)
+        assert _retry(timedelta(minutes=5)) == 0
+        assert len(efax.requests) == before  # the earlier account is never asked with the new settings
+        status = _status(http)
+        assert (status['pending_deletions'], status['stopped_deletions']) == (0, 1)
+        assert only_fax(http)['provider_note'] == (
+            'Faxbot stopped trying to delete this fax from eFax; delete it in your eFax account.')
+
+
 def test_the_command_line_says_which_received_faxes_are_still_at_efax():
     from app.cli.commands.fax import _inbound_fields, _provider_copies
     from app.efax_service import PENDING_DELETION_NOTE, STOPPED_DELETION_NOTE

@@ -111,35 +111,28 @@ function CardDialog({ card, onClose, onSave, busy, error }: {
   );
 }
 
-// Sending providers in use with no published price and no card of yours, such as eFax, whose API is
-// priced by quote: one sentence on what the provider publishes, and its plan as an estimate on request.
-function usePublishedPlans(client: AdminAPIClient, cards: RateCard[], unpriced: string[]): PublishedPlans[] {
+// Sending providers in use with no sending card, such as eFax, whose API is priced by quote: one
+// sentence on what the provider publishes, and its plan as an estimate on request.
+export function usePublishedPlans(client: AdminAPIClient, cards: RateCard[]): PublishedPlans[] {
   const [found, setFound] = useState<PublishedPlans[]>([]);
-  const wanted = unpriced.filter((id) => !cards.some((card) => card.provider_id === id && card.direction === 'outbound'));
-  const key = wanted.join(',');
+  const key = cards.filter((card) => card.direction === 'outbound').map((card) => card.provider_id).sort().join(',');
   useEffect(() => {
-    if (!key) {
-      setFound([]);
-      return undefined;
-    }
     let current = true;
-    void Promise.all(key.split(',').map((id) => client.getPublishedPlans(id).catch(() => null)))
-      .then((items) => { if (current) setFound(items.filter((item): item is PublishedPlans => item !== null)); });
+    client.getPublishedPlansInUse().then((result) => { if (current) setFound(result.items ?? []); })
+      .catch(() => { if (current) setFound([]); });
     return () => { current = false; };
   }, [client, key]);
   return found;
 }
 
-export default function RateCards({ client, cards, canWrite, onChanged, unpriced = [] }: {
+export default function RateCards({ client, cards, canWrite, onChanged }: {
   client: AdminAPIClient;
   cards: RateCard[];
   canWrite: boolean;
   onChanged: () => void;
-  // Sending providers whose price Faxbot does not know.
-  unpriced?: string[];
 }) {
   const { isMobile } = useSmallScreens();
-  const published = usePublishedPlans(client, cards, unpriced);
+  const published = usePublishedPlans(client, cards);
   const [editing, setEditing] = useState<RateCard | null>(null);
   const [removing, setRemoving] = useState<RateCard | null>(null);
   const [busy, setBusy] = useState(false);

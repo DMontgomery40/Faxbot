@@ -82,14 +82,36 @@ def test_unknown_providers_and_unreadable_files_have_no_reference_plans(tmp_path
     assert load_reference_plans(tmp_path / 'broken.json') == []
 
 
-@pytest.fixture
-def client(isolated_installation, monkeypatch):
+def _start(monkeypatch, **extra):
     for name, value in {'REQUIRE_API_KEY': 'true', 'API_KEY': BOOTSTRAP, 'PUBLIC_API_URL': 'https://testserver',
                         'FAX_BACKEND': 'efax', 'MAX_REQUESTS_PER_MINUTE': '0',
-                        'FAXBOT_CONSOLE_ORIGINS': 'https://testserver'}.items():
+                        'FAXBOT_CONSOLE_ORIGINS': 'https://testserver', **extra}.items():
         monkeypatch.setenv(name, value)
-    with TestClient(main.app, base_url='https://testserver', headers={'Origin': 'https://testserver'}) as client:
+    return TestClient(main.app, base_url='https://testserver', headers={'Origin': 'https://testserver'})
+
+
+@pytest.fixture
+def client(isolated_installation, monkeypatch):
+    with _start(monkeypatch) as client:
         yield client
+
+
+def test_a_new_installation_sending_with_efax_is_offered_its_published_plan(client):
+    """No fax has been sent yet: the plan is offered from the settings, not from spending."""
+    assert client.get('/routing/costs', headers=ADMIN).json()['providers'] == []
+    [item] = client.get('/routing/published-plans/in-use', headers=ADMIN).json()['items']
+    assert item['provider_id'] == 'efax' and item['card']['monthly_fee'] == '18.99'
+    saved = client.put('/routing/rate-cards', headers=ADMIN, json={'cards': [item['card']]})
+    assert saved.status_code == 200, saved.text
+    assert client.get('/routing/published-plans/in-use', headers=ADMIN).json()['items'] == []
+
+
+def test_a_uk_installation_reads_the_uk_sentence_through_the_api(isolated_installation, monkeypatch):
+    with _start(monkeypatch, FAX_DEFAULT_COUNTRY='GB') as client:
+        [item] = client.get('/routing/published-plans/in-use', headers=ADMIN).json()['items']
+        assert item['country'] == 'GB' and item['card'] is None and item['page_url'] == 'https://ww2.efax.com/uk/'
+        single = client.get('/routing/published-plans', params={'provider_id': 'efax'}, headers=ADMIN).json()
+        assert single['sentence'] == item['sentence']
 
 
 def test_efax_in_use_reads_no_published_price_and_its_plans_come_from_the_api(client):

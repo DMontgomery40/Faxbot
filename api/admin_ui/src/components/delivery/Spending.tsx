@@ -6,7 +6,9 @@ import AdminAPIClient from '../../api/client';
 import type { CarrierChargeStatus, Money, ProviderCosts, ReceivedCosts } from '../../api/deliveryTypes';
 import { providerLabel } from '../../providerLabels';
 import { DeliveryError, Notice, formatMinutes, formatMoney, formatMoneyList } from './shared';
-import { receivedCost, receivedLabel, sentCost } from './spendingSummary';
+import { NO_PUBLISHED_PRICE, receivedCost, receivedLabel, sentCost } from './spendingSummary';
+import { usePublishedPlans } from './RateCards';
+import type { PublishedPlans } from '../../api/deliveryTypes';
 
 function count(value: number, one: string, many = one === 'fax' ? 'faxes' : `${one}s`): string {
   return `${value} ${value === 1 ? one : many}`;
@@ -62,7 +64,8 @@ function Unrecorded({ carrier, calls, cost, matched }: { carrier: string | null 
   );
 }
 
-function SentCard({ provider }: { provider: ProviderCosts }) {
+// published: what the provider publishes when its API has no published price (eFax), from Rate cards.
+function SentCard({ provider, published }: { provider: ProviderCosts; published?: PublishedPlans }) {
   const reported = provider.attempts_with_reported_cost ?? 0;
   const top = { amount: sentCost(provider),
     caption: provider.plan ? '' : caption(provider.reported_cost, provider.estimated_cost_not_reported, provider.attempts_without_reported_cost) };
@@ -73,6 +76,12 @@ function SentCard({ provider }: { provider: ProviderCosts }) {
         <Typography variant="subtitle1">{provider.carrier ? `${name} · ${provider.carrier}` : name}</Typography>
         <Typography variant="h5" component="p" sx={{ mt: 1 }}>{top.amount}</Typography>
         {top.caption && <Typography variant="caption" color="text.secondary">{top.caption}</Typography>}
+
+        {published && top.amount === NO_PUBLISHED_PRICE && (
+          <Typography variant="body2" color="text.secondary" data-testid={`published-note-${provider.provider_id}`}>
+            {published.sentence}{published.card ? ' Rate cards, below, can use it as your estimate.' : ''}
+          </Typography>
+        )}
         <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
           {count(provider.attempts, 'fax', 'faxes')}, {provider.successes} delivered, {formatMinutes(provider.billed_minutes)}, {count(provider.billed_pages, 'page')}
         </Typography>
@@ -134,6 +143,7 @@ export default function Spending({ client, providers, received, carrier, canWrit
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const published = usePublishedPlans(client, []);
 
   const checkNow = async () => {
     setBusy(true);
@@ -172,7 +182,7 @@ export default function Spending({ client, providers, received, carrier, canWrit
         <Grid container spacing={2}>
           {providers.map((provider) => (
             <Grid item xs={12} sm={6} md={4} key={`sent-${provider.provider_id}`}>
-              <SentCard provider={provider} />
+              <SentCard provider={provider} published={published.find((item) => item.provider_id === provider.provider_id)} />
             </Grid>
           ))}
           {received.map((entry) => (

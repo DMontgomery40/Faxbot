@@ -12,7 +12,8 @@ eFax gives API access through its sales team; there is no self-service sign-up.
     - **API key**: the secret that goes with the App ID.
     - **User ID**: the eFax user, and with it the fax number, that sends and receives.
 3. Keep the API key in a password manager. eFax asks that it never travels in the same message as the App ID.
-4. eFax provides a demo fax number for testing; you can send to it and receive on it at the same time.
+4. Use a separate App ID for each Faxbot installation (eFax issues test and live ones). Signing in to eFax ends the previous sign-in for that App ID, so two installations sharing one keep signing each other out.
+5. eFax provides a demo fax number for testing; you can send to it and receive on it at the same time.
 
 ## Set it up in Faxbot
 
@@ -100,7 +101,7 @@ Faxbot accepts a notification only when its `X-HMAC-Signature` header is the hex
 
 ## Prices
 
-eFax prices the API by quote in every country, so Faxbot gives eFax no starting rate card and shows **No published price; add your rate**. Tools → **Delivery routes** → **Rate cards** names eFax's cheapest published plan for your installation country, and **Use a published plan as my estimate** opens a new rate card filled in from it, saved only when you click Save. `faxbot routing plans efax` lists the same plans.
+eFax prices the API by quote in every country, so Faxbot gives eFax no starting rate card and shows **No published price; add your rate**. Tools → **Delivery routes** names eFax's cheapest published plan for your installation country on the eFax line under **Spending** and under **Rate cards**, and **Use a published plan as my estimate** opens a new rate card filled in from it, saved only when you click Save. `faxbot routing plans efax` lists the same plans.
 
 | Plan | Country | Price a month | Includes | Extra page | Read on |
 | --- | --- | --- | --- | --- | --- |

@@ -159,14 +159,14 @@ describe('eFax prices where its API has no published price', () => {
   async function renderCards(plans: Json) {
     const saved: Json[] = [];
     server.use(
-      http.get('/routing/published-plans', () => HttpResponse.json(plans)),
+      http.get('/routing/published-plans/in-use', () => HttpResponse.json({ items: [plans] })),
       http.put('/routing/rate-cards', async ({ request }) => {
         saved.push(await request.json() as Json);
         return HttpResponse.json({ cards: [] });
       }),
     );
     const { default: RateCards } = await import('../components/delivery/RateCards');
-    render(<RateCards client={client()} cards={[]} canWrite onChanged={() => undefined} unpriced={['efax']} />);
+    render(<RateCards client={client()} cards={[]} canWrite onChanged={() => undefined} />);
     return saved;
   }
 
@@ -182,6 +182,19 @@ describe('eFax prices where its API has no published price', () => {
     expect((within(dialog).getByLabelText('Monthly plan fee (USD)') as HTMLInputElement).value).toBe('18.99');
     fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(saved).toEqual([{ cards: [usPlan.card] }]));
+  });
+
+  it('says the same on the Spending line that has no published price', async () => {
+    server.use(http.get('/routing/published-plans/in-use', () => HttpResponse.json({ items: [usPlan] })));
+    const { default: Spending } = await import('../components/delivery/Spending');
+    const provider = { provider_id: 'efax', label: 'eFax', carrier: null, attempts: 2, successes: 2, failures: 0,
+      uncertain: 0, billed_minutes: 0, billed_pages: 3, estimated_cost: [], reported_cost: [], priced: false, plan: null,
+      attempts_with_reported_cost: 0, attempts_without_reported_cost: 2, estimated_cost_not_reported: [] };
+    render(<Spending client={client()} providers={[provider] as any} received={[]} carrier={null} canWrite
+      onChanged={() => undefined} />);
+    const note = await screen.findByTestId('published-note-efax');
+    expect(note.textContent).toBe(`${usPlan.sentence} Rate cards, below, can use it as your estimate.`);
+    expect(screen.getByText('No published price; add your rate')).toBeTruthy();
   });
 
   it('says the UK prices could not be read and links eFax’s UK page, with nothing to save', async () => {
