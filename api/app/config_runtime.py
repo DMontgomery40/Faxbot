@@ -175,10 +175,15 @@ class ConfigurationRuntime:
         if self.candidate is not self.snapshot.pending:
             return
         store = self.manager.store
-        old_ami = any(store.read_profile(identity).configuration.traits.get('requires_ami') is True
-                      for _, identity in self.snapshot.active.profiles)
-        new_ami = any(store.read_profile(identity).configuration.traits.get('requires_ami') is True
-                      for _, identity in self.candidate.profiles)
+        from .config_activation import _routes_need_ami
+        active, candidate = self.snapshot.active.values, self.candidate.values
+        # A SIP extra route uses the same Asterisk connection as a SIP provider.
+        old_ami = (any(store.read_profile(identity).configuration.traits.get('requires_ami') is True
+                       for _, identity in self.snapshot.active.profiles)
+                   or _routes_need_ami(active, self.manager.catalog_loader(active)))
+        new_ami = (any(store.read_profile(identity).configuration.traits.get('requires_ami') is True
+                       for _, identity in self.candidate.profiles)
+                   or _routes_need_ami(candidate, self.manager.catalog_loader(candidate)))
         fields = ('ami_host', 'ami_port', 'ami_username', 'ami_password')
         replaces_ami = old_ami and (not new_ami or self.candidate.values.fax_disabled or any(
             getattr(self.snapshot.active.values, field) != getattr(self.candidate.values, field) for field in fields))

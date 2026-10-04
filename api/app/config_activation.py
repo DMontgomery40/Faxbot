@@ -149,6 +149,24 @@ def compile_profiles(values, catalog, state):
     return profiles
 
 
+def _routes_need_ami(values, catalog):
+    """Whether an extra outbound route (FAX_OUTBOUND_ROUTES) sends through Asterisk.
+
+    Asterisk connects at startup for such a route too, so adding or removing one
+    waits for a restart like changing the provider.
+    """
+    for identity in values.outbound_route_providers:
+        if identity not in catalog.provider_ids:
+            continue
+        try:
+            traits = _effective_definition(values, catalog.get(identity)).traits.as_dict()
+        except (ConfigurationActivationError, ValueError, KeyError, AttributeError):
+            continue
+        if traits.get('requires_ami') is True:
+            return True
+    return False
+
+
 class ConfigurationManager:
     def __init__(self, store, *, catalog_loader=_catalog):
         self.store = store
@@ -187,9 +205,11 @@ class ConfigurationManager:
         self._validate_maintenance(expected, values)
         profiles = compile_profiles(values, catalog, state)
         restart = any(getattr(values, name) != getattr(expected.active.values, name) for name in _RESTART_FIELDS)
-        old_ami = any(self.store.read_profile(identity).configuration.traits.get('requires_ami', False)
-                      for _, identity in expected.active.profiles)
-        new_ami = any(profile.traits.get('requires_ami', False) for profile in profiles.values())
+        old_ami = (any(self.store.read_profile(identity).configuration.traits.get('requires_ami', False)
+                       for _, identity in expected.active.profiles)
+                   or _routes_need_ami(expected.active.values, catalog))
+        new_ami = (any(profile.traits.get('requires_ami', False) for profile in profiles.values())
+                   or _routes_need_ami(values, catalog))
         restart = restart or old_ami != new_ami or ((old_ami or new_ami)
             and any(getattr(values, name) != getattr(expected.active.values, name) for name in _AMI_FIELDS))
         return profiles, restart

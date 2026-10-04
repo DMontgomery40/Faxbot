@@ -61,6 +61,17 @@ def test_manager_ignores_changed_bootstrap_after_initialization_and_rotates_live
     assert old.id != new.id
 
 
+def test_adding_or_removing_an_asterisk_extra_route_waits_for_a_restart(database, tmp_path):
+    # Asterisk connects at startup for a SIP extra route, as for a SIP provider.
+    control = manager(database, tmp_path)
+    first = control.initialize(environment(tmp_path))
+    cloud_only = control.patch(first, {'outbound_routes': 'sinch'}, actor='admin')
+    assert cloud_only.pending is None
+    staged = control.patch(cloud_only, {'outbound_routes': 'sinch,sip'}, actor='admin')
+    assert staged.pending is not None and staged.active.values.outbound_routes == 'sinch'
+    assert staged.desired.values.outbound_routes == 'sinch,sip'
+
+
 def test_manager_stages_entire_restart_patch_and_rejects_datastore_transfer(database, tmp_path):
     control = manager(database, tmp_path)
     first = control.initialize(environment(tmp_path))
