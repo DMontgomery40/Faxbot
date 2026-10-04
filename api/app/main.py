@@ -1762,6 +1762,12 @@ def admin_inbound_callbacks(request: Request):
             },
             "notes": "Set this as the incoming fax webhook in Sinch. Without basic auth, Faxbot confirms each fax with Sinch first.",
         })
+    elif backend == "efax" and settings.efax_webhook_secret:
+        out["callbacks"].append({
+            "name": "eFax notification",
+            "url": f"{base}/efax-inbound",
+            "notes": "Optional. Give eFax this address with the notification secret; Faxbot then checks eFax at once.",
+        })
     elif backend == "signalwire":
         out["callbacks"].append({
             "name": "SignalWire Fax Status",

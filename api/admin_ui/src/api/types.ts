@@ -167,6 +167,8 @@ export interface Settings {
     csid: string;
     poll_seconds: number;
     delete_after_download: boolean;
+    webhook_secret?: string;
+    webhook_secret_set?: boolean;
     configured: boolean;
   };
   sinch: {

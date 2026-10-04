@@ -21,7 +21,9 @@ a page of 100 at a time and at most ``MAX_PAGES`` pages per check:
    the fax has to be deleted in eFax. A deletion that succeeds removes the mark.
 
 Nothing here follows an address from a reply; every request goes to the one
-eFax API host with the configured account. A failure is one plain sentence
+eFax API host with the configured account. A notification eFax posts to
+``/efax-inbound`` (signed with ``EFAX_WEBHOOK_SECRET``) only makes the next
+check start now; its contents are never used. A failure is one plain sentence
 and the next check waits longer, up to 30 minutes, or as long as eFax asks.
 """
 import asyncio
@@ -47,6 +49,8 @@ SOURCE = 'efax'
 PROVIDER = 'eFax'
 MAX_PAGES = 10
 MAX_BACKOFF_SECONDS = 1800
+# A notification never starts checks closer together than this.
+MIN_GAP_SECONDS = 5.0
 DELETE_FOR = timedelta(days=7)
 MARK = 'efax_delete'
 _TIFF_MAGIC = (b'II*\x00', b'MM\x00*')
@@ -327,11 +331,19 @@ class EfaxReceiver:
         self.failures = 0
         self.last_checked = None
         self.last_problem = None
+        # While eFax asked Faxbot to wait (HTTP 429), a notification does not start a check.
+        self.hold_until = 0.0
+        self.loop = None
+        self.event = None
+        self.nudged = 0
 
     async def step(self):
         """One check; returns the seconds to wait before the next one."""
         values, _ = await run_lifecycle_step(self.frame)
         interval = values.efax_poll_seconds
+        held = self.hold_until - _monotonic()
+        if held > 0:
+            return held
         if not receiving_active(values):
             self.failures = 0
             return interval
@@ -341,7 +353,9 @@ class EfaxReceiver:
         except EfaxBusy as busy:
             self.failures += 1
             self.last_problem = str(busy)
-            return min(MAX_BACKOFF_SECONDS, max(interval * 2 ** self.failures, busy.retry_after or 0))
+            wait = min(MAX_BACKOFF_SECONDS, max(interval * 2 ** self.failures, busy.retry_after or 0))
+            self.hold_until = _monotonic() + wait
+            return wait
         except (EfaxError, AcquisitionError, ValueError) as error:
             self.failures += 1
             self.last_problem = str(error)
@@ -351,9 +365,22 @@ class EfaxReceiver:
         self.failures, self.last_problem, self.last_checked = 0, None, utcnow()
         return interval
 
+    def nudge(self):
+        """A signed eFax notification arrived: start the next check now (thread-safe)."""
+        self.nudged += 1
+        loop, event = self.loop, self.event
+        if loop is None or event is None or loop.is_closed():
+            return
+        try:
+            loop.call_soon_threadsafe(event.set)
+        except RuntimeError:
+            pass
+
     async def run(self, *, initial_delay=5.0):
+        self.loop, self.event = asyncio.get_running_loop(), asyncio.Event()
         await self.sleep(initial_delay)
         while True:
+            started = _monotonic()
             try:
                 wait = await self.step()
             except asyncio.CancelledError:
@@ -362,7 +389,37 @@ class EfaxReceiver:
                 logging.getLogger(__name__).warning('Checking eFax for received faxes is temporarily unavailable.')
                 self.failures += 1
                 wait = min(MAX_BACKOFF_SECONDS, 60 * 2 ** self.failures)
-            await self.sleep(wait)
+            try:
+                await asyncio.wait_for(self.event.wait(), timeout=wait)
+            except asyncio.TimeoutError:
+                pass
+            self.event.clear()
+            gap = MIN_GAP_SECONDS - (_monotonic() - started)
+            if gap > 0:
+                await self.sleep(gap)
+
+
+def _monotonic():
+    import time
+    return time.monotonic()
+
+
+def signature_valid(secret, body, signature):
+    """eFax's X-HMAC-Signature: the hex HMAC-SHA256 of the raw body with the shared secret.
+
+    eFax's samples disagree (one compares decoded bytes, one compares hex
+    text); both describe a hex digest, which is what is checked here, in
+    constant time and ignoring letter case.
+    """
+    import hashlib
+    import hmac
+    if not secret or not isinstance(body, (bytes, bytearray)) or not isinstance(signature, str):
+        return False
+    given = signature.strip().lower()
+    if len(given) != 64 or any(character not in '0123456789abcdef' for character in given):
+        return False
+    expected = hmac.new(secret.encode('utf-8'), bytes(body), hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, given)
 
 
 def _audit(event, fax_id):

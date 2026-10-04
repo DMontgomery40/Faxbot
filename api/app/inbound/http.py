@@ -10,6 +10,9 @@ Nothing is stored before a notification is authenticated:
 - Sinch: HTTP basic auth and/or the HMAC header when configured; otherwise the
   same look-up-by-ID rule in the configured Sinch project.
 - Asterisk: the internal shared secret, and a TIFF inside the data folder.
+- eFax: the documented ``X-HMAC-Signature`` (hex HMAC-SHA256 of the raw body
+  with ``EFAX_WEBHOOK_SECRET``). A verified notification only starts the next
+  check of eFax now; nothing in it is stored or followed.
 
 A document attached to a notification is used only when the notification was
 authenticated by signature or basic auth. Faxbot never requests an address a
@@ -91,14 +94,14 @@ async def _lifespan(app):
         store = ImportStore(app.state.access_runtime.inbound)
         acquirer = Acquirer(store, frame=_frame(runtime))
         service = InboundAcquisition(store, acquirer, runtime)
+        from .efax import EfaxReceiver
+        service.efax = EfaxReceiver(store, _frame(runtime), kick=service.kick)
         app.state.inbound_acquisition = service
         if AUTOMATIC:
             service.loop, service.wake = asyncio.get_running_loop(), asyncio.Event()
             tasks.append(asyncio.create_task(run_forever(acquirer, service.wake), name='faxbot-inbound-acquisition'))
             tasks.append(asyncio.create_task(_recover_forever(service), name='faxbot-inbound-recovery'))
             # Received eFax faxes are found by asking eFax; it does nothing unless eFax receives.
-            from .efax import EfaxReceiver
-            service.efax = EfaxReceiver(store, _frame(runtime), kick=service.kick)
             tasks.append(asyncio.create_task(service.efax.run(), name='faxbot-inbound-efax'))
     except Exception:
         logging.getLogger(__name__).warning('Received-fax fetching could not start; the API is still available.')
@@ -508,6 +511,32 @@ async def recover_inbound(request: Request, identity=Depends(require_permission(
 
 
 # Fetch again -----------------------------------------------------------------
+EFAX_NOTIFICATION_BYTES = 64 * 1024
+
+
+@router.post('/efax-inbound')
+async def efax_inbound(request: Request):
+    """eFax's notification that a fax arrived: with a valid signature, check eFax now."""
+    from .efax import signature_valid
+    _require_route('efax', '/efax-inbound')
+    service = _acquisition(request)
+    if not settings.efax_webhook_secret:
+        raise HTTPException(404, detail='eFax notifications are not set up; Faxbot checks eFax on its own.')
+    _limit_unverified(request, '/efax-inbound')
+    body = bytearray()
+    async for chunk in request.stream():
+        body.extend(chunk)
+        if len(body) > EFAX_NOTIFICATION_BYTES:
+            raise HTTPException(413, detail='The notification is larger than Faxbot accepts.')
+    if not signature_valid(settings.efax_webhook_secret, bytes(body), request.headers.get('x-hmac-signature')):
+        audit_event('inbound_notification_refused', backend='efax')
+        raise HTTPException(401, detail='The notification signature is not valid.')
+    if service.efax is not None:
+        service.efax.nudge()
+    audit_event('inbound_notification', backend='efax')
+    return {'status': 'SUCCESS'}
+
+
 @router.get('/admin/inbound/efax')
 async def efax_inbound_status(request: Request, identity=Depends(require_permission('providers:read'))):
     """Whether Faxbot is checking eFax for received faxes, and received faxes still stored at eFax."""

@@ -28,7 +28,7 @@ import { numberHint, numberPlaceholder, settingsNumberFormat } from './common/nu
 type FormValue = string | number | boolean;
 
 export const EFAX_FIELDS = ['efax_app_id', 'efax_api_key', 'efax_user_id', 'efax_caller_id', 'efax_csid',
-  'efax_poll_seconds', 'efax_delete_after_download'];
+  'efax_poll_seconds', 'efax_delete_after_download', 'efax_webhook_secret'];
 
 // The loaded eFax values under their settings names; saved keys arrive hidden.
 export function efaxEditorValues(data: Settings): Record<string, FormValue> {
@@ -40,6 +40,7 @@ export function efaxEditorValues(data: Settings): Record<string, FormValue> {
     efax_csid: data.efax?.csid ?? '',
     efax_poll_seconds: data.efax?.poll_seconds ?? 60,
     efax_delete_after_download: data.efax?.delete_after_download ?? false,
+    efax_webhook_secret: data.efax?.webhook_secret ?? '',
   };
 }
 
@@ -140,6 +141,11 @@ export default function EfaxSettings({ values, onChange, settings, disabled, rec
           {values.efax_delete_after_download ? 'eFax keeps no copy after Faxbot stores a fax.'
             : 'A copy stays in your eFax account.'}
         </Typography>
+        {managed.has('efax_webhook_secret')
+          ? <EnvSetField fullWidth label="Notification secret (optional)" />
+          : <SecretInput fullWidth disabled={disabled} label="Notification secret (optional)"
+              value={String(values.efax_webhook_secret ?? '')} onChange={(value) => onChange('efax_webhook_secret', value)}
+              helperText="With a secret, eFax can tell Faxbot the moment a fax arrives; the eFax guide says what to give eFax." />}
         {checked && !status?.problem && <Typography variant="body2" data-testid="efax-checked">{checked}</Typography>}
         {status?.receiving && status.problem && <Alert severity="warning">{status.problem}</Alert>}
         {status?.notes.map((note) => <Alert key={note} severity="info" data-testid="efax-note">{note}</Alert>)}

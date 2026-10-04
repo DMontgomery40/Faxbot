@@ -468,6 +468,7 @@ def test_receiver_waits_longer_after_problems_and_as_long_as_efax_asks(isolated_
         assert receiver.last_problem == 'eFax did not list received faxes.'
         efax.fail[('GET', '/faxes/received')] = httpx.Response(429, headers={'Retry-After': '900'})
         assert asyncio.run(receiver.step()) == 900
+        receiver.hold_until = 0.0  # as if eFax's wait had passed
         del efax.fail[('GET', '/faxes/received')]
         efax.receive(FAX_ID, pdf_bytes())
         assert asyncio.run(receiver.step()) == 60 and receiver.failures == 0 and kicks == [1]
@@ -520,4 +521,109 @@ def test_checking_efax_keys_signs_in_without_sending_anything(isolated_installat
         missing = http.post('/admin/settings/validate', headers=ADMIN, json={'backend': 'efax'})
         assert missing.json()['checks']['auth'] is False
     assert {path for _, path in efax.calls()} == {'/health'}
+
+
+# 6. eFax's notification only starts the next check ----------------------------------
+WEBHOOK_SECRET = 'synthetic-webhook-secret-0001'
+
+
+def _signed(body, secret=WEBHOOK_SECRET):
+    import hashlib
+    import hmac
+    return hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+
+
+def test_the_signature_is_the_hex_hmac_sha256_of_the_raw_body():
+    from app.inbound.efax import signature_valid
+    body = b'{"direction":"INBOUND","fax_id":"' + FAX_ID.encode() + b'"}'
+    known = 'c9e4a9e1c3f1de7cf5fbfbd7c0de8f3d1b5fd3a1d9ab51b3e4c1b0c0a1fb6b8b'
+    assert len(known) == 64
+    signature = _signed(body)
+    assert signature_valid(WEBHOOK_SECRET, body, signature)
+    assert signature_valid(WEBHOOK_SECRET, body, signature.upper())
+    assert signature_valid(WEBHOOK_SECRET, body, ' ' + signature + ' ')
+    assert not signature_valid(WEBHOOK_SECRET, body + b' ', signature)
+    assert not signature_valid('other-secret', body, signature)
+    assert not signature_valid('', body, _signed(body, ''))
+    for bad in (None, '', signature[:-1], signature + '0', 'z' * 64, known):
+        assert not signature_valid(WEBHOOK_SECRET, body, bad)
+    # A fixed vector, so the algorithm cannot drift: HMAC-SHA256("key", "The quick brown fox jumps over the lazy dog").
+    assert signature_valid('key', b'The quick brown fox jumps over the lazy dog',
+                           'f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8')
+
+
+def test_a_signed_notification_starts_a_check_and_stores_nothing(isolated_installation, monkeypatch, efax):
+    environment(monkeypatch, EFAX_WEBHOOK_SECRET=WEBHOOK_SECRET)
+    efax.receive(FAX_ID, pdf_bytes())
+    body = json.dumps({'app_id': 'synthetic', 'direction': 'INBOUND', 'fax_id': OTHER_ID,
+                       'resource_url': 'https://elsewhere.invalid/' + OTHER_ID}).encode()
+    with client() as http:
+        receiver = main.app.state.inbound_acquisition.efax
+        refused = http.post('/efax-inbound', content=body, headers={'X-HMAC-Signature': '0' * 64,
+                                                                       'Content-Type': 'application/json'})
+        assert refused.status_code == 401 and receiver.nudged == 0
+        accepted = http.post('/efax-inbound', content=body, headers={'X-HMAC-Signature': _signed(body),
+                                                                        'Content-Type': 'application/json'})
+        assert accepted.status_code == 200 and accepted.json() == {'status': 'SUCCESS'}
+        assert receiver.nudged == 1
+        assert rows(isolated_installation, 'inbound_imports') == []
+        too_big = b'{' + b' ' * (64 * 1024) + b'}'
+        assert http.post('/efax-inbound', content=too_big,
+                         headers={'X-HMAC-Signature': _signed(too_big)}).status_code == 413
+        callbacks = http.get('/admin/inbound/callbacks', headers=ADMIN).json()['callbacks']
+        assert [item['url'] for item in callbacks] == ['https://testserver/efax-inbound']
+    assert efax.requests == []  # the notification itself never reaches eFax or the address it names
+
+
+@pytest.mark.parametrize('extra', [{}, {'EFAX_WEBHOOK_SECRET': WEBHOOK_SECRET, 'FAX_INBOUND_BACKEND': 'phaxio',
+                                         'PHAXIO_API_KEY': 'synthetic', 'PHAXIO_API_SECRET': 'synthetic'}])
+def test_notifications_are_refused_unless_set_up_for_efax_receiving(isolated_installation, monkeypatch, efax, extra):
+    environment(monkeypatch, **extra)
+    body = b'{}'
+    with client() as http:
+        response = http.post('/efax-inbound', content=body, headers={'X-HMAC-Signature': _signed(body)})
+        assert response.status_code == 404
+        assert main.app.state.inbound_acquisition.efax.nudged == 0
+
+
+def test_a_notification_wakes_the_waiting_receiver_but_never_inside_efax_s_wait():
+    from app.inbound.efax import EfaxReceiver
+
+    async def scenario():
+        receiver = EfaxReceiver(None, lambda: None)
+        steps = []
+
+        async def step():
+            steps.append(len(steps))
+            return 3600
+
+        async def no_sleep(_seconds):
+            return None
+
+        receiver.step, receiver.sleep = step, no_sleep
+        task = asyncio.create_task(receiver.run(initial_delay=0))
+        for _ in range(20):
+            await asyncio.sleep(0.01)
+        assert steps == [0]
+        receiver.nudge()
+        for _ in range(20):
+            await asyncio.sleep(0.01)
+        assert steps == [0, 1]
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(scenario())
+
+
+def test_while_efax_asks_to_wait_a_check_makes_no_request(isolated_installation, monkeypatch, efax):
+    from app.inbound.efax import EfaxReceiver
+    environment(monkeypatch)
+    with client():
+        receiver = EfaxReceiver(main.app.state.inbound_acquisition.store, lambda: (values(), {}))
+        efax.fail[('GET', '/faxes/received')] = httpx.Response(429, headers={'Retry-After': '600'})
+        assert asyncio.run(receiver.step()) == 600
+        before = len(efax.requests)
+        held = asyncio.run(receiver.step())
+        assert 590 < held <= 600 and len(efax.requests) == before
 

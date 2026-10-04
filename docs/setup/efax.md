@@ -43,6 +43,8 @@ The settings in `.env` that are not keys are read only on the first start; chang
 | `EFAX_POLL_SECONDS` | How often Faxbot checks eFax for received faxes, 30 to 3600 seconds | 60 |
 | `EFAX_DELETE_AFTER_DOWNLOAD` | Delete each received fax from eFax once Faxbot stored it | `false` |
 
+`EFAX_WEBHOOK_SECRET`, for [notifications](#notifications-optional), is a key like the other three: Faxbot reads it at every start.
+
 ### Check the keys
 
 ```
@@ -86,7 +88,15 @@ Things to know:
 
 - Faxbot only collects faxes eFax lists as not downloaded. If another program, or eFax's own web portal, downloads a fax first, Faxbot does not see it.
 - Faxbot only asks eFax's API address, `https://api.securedocex.com`, with the account in settings, and never follows an address from a reply. If you change the App ID or User ID, faxes that arrived on the earlier account are not fetched with the new one; the Inbox says so.
-- eFax can also send a notification to an address of yours when a fax arrives, signed with `X-HMAC-Signature` (HMAC-SHA256 of the message). Faxbot does not use these notifications; it checks eFax instead, which also works when Faxbot has no public address.
+
+### Notifications (optional)
+
+Checking every minute needs no public address. If Faxbot has one, eFax can also tell Faxbot the moment a fax arrives:
+
+1. Choose a long random notification secret and put it in `.env` as `EFAX_WEBHOOK_SECRET` (or in the eFax section of Settings).
+2. Ask eFax (your account team) to send inbound notifications to `https://<your Faxbot address>/efax-inbound` with HMAC authentication using that secret. eFax requires HTTPS on port 443 or 8443.
+
+Faxbot accepts a notification only when its `X-HMAC-Signature` header is the hex HMAC-SHA256 of the message with the secret, and then only starts its next check of eFax at once. It never uses the notification's contents: the fax and its details always come from eFax's API, as above. If eFax has asked Faxbot to wait, a notification does not start a check sooner, and checks are never closer than five seconds apart. eFax's two code samples disagree on how to compare the signature (one compares decoded bytes, one compares hex text); both describe a hex digest of the message, which is what Faxbot checks, ignoring letter case.
 
 ## Prices
 

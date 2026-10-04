@@ -152,13 +152,14 @@ def test_settings_read_the_documented_variables_and_hide_all_three_credentials()
         ConfigurationRevision('active', values), None))
     assert view['efax'] == {'app_id': '***', 'api_key': '***', 'user_id': '***', 'caller_id': '+13235551212',
                             'csid': 'Faxbot Clinic', 'poll_seconds': 120, 'delete_after_download': True,
-                            'configured': True}
+                            'webhook_secret': '', 'webhook_secret_set': False, 'configured': True}
     for secret in (APP_ID, API_KEY, USER_ID):
         assert secret not in json.dumps(view)
     empty = project_admin_settings(ConfigurationSnapshot('installation', 1,
         ConfigurationRevision('active', ConfigurationValues.from_environment({})), None))
     assert empty['efax'] == {'app_id': '', 'api_key': '', 'user_id': '', 'caller_id': '', 'csid': '',
-                             'poll_seconds': 60, 'delete_after_download': False, 'configured': False}
+                             'poll_seconds': 60, 'delete_after_download': False, 'webhook_secret': '',
+                             'webhook_secret_set': False, 'configured': False}
 
 
 def test_caller_id_entered_nationally_is_saved_in_international_form():
@@ -201,7 +202,7 @@ def test_selected_provider_compiles_a_captured_profile(tmp_path, monkeypatch, en
     catalog = ProviderCatalog.load(provider_traits_path(), tmp_path / 'providers')
     profile = compile_profiles(values, catalog, default_plugin_state(values))['outbound']
     assert profile.provider_id == 'efax' and profile.manifest is None
-    assert set(profile.credentials) == {'app_id', 'api_key', 'user_id'}
+    assert set(profile.credentials) == {'app_id', 'api_key', 'user_id', 'webhook_secret'}
     assert profile.traits['requires_tiff'] is False
     monkeypatch.setenv('EFAX_API_KEY', 'unrelated-current-key')
     adapter = service_from_profile(ProviderProfile('profile', 'account', profile))

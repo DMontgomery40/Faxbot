@@ -62,6 +62,7 @@ describe('eFax in the Setup Wizard', () => {
     expect(screen.queryByRole('button', { name: 'Show callback details' })).toBeNull();
     expect(screen.getByText('Faxbot asks eFax for new faxes, so nothing needs to reach Faxbot from the internet.')).toBeTruthy();
     expect(screen.getByText('A copy stays in your eFax account.')).toBeTruthy();
+    expect(screen.getByLabelText('Notification secret (optional)')).toBeTruthy();
     expect(document.body.textContent).not.toMatch(RAW_IDS);
     for (const label of Array.from(document.querySelectorAll('label'))) expect(label.textContent ?? '').not.toMatch(ENV_NAME);
 
@@ -101,6 +102,7 @@ describe('eFax in the Setup Wizard', () => {
     expect((within(section).getByLabelText('App ID') as HTMLInputElement).disabled).toBe(false);
     expect(within(section).queryByRole('combobox', { name: 'Check eFax for received faxes' })).toBeNull();
     expect(within(section).queryByRole('checkbox', { name: /Delete each fax/ })).toBeNull();
+    expect(within(section).queryByLabelText('Notification secret (optional)')).toBeNull();
   });
 });
 

@@ -19,7 +19,7 @@ PLUGIN_FIELDS = {
                   'from_number': 'humblefax_from_number'},
     'efax': {'app_id': 'efax_app_id', 'api_key': 'efax_api_key', 'user_id': 'efax_user_id',
              'caller_id': 'efax_caller_id', 'csid': 'efax_csid', 'poll_seconds': 'efax_poll_seconds',
-             'delete_after_download': 'efax_delete_after_download'},
+             'delete_after_download': 'efax_delete_after_download', 'webhook_secret': 'efax_webhook_secret'},
     'sip': {'ami_host': 'ami_host', 'ami_port': 'ami_port', 'ami_username': 'ami_username',
             'ami_password': 'ami_password', 'inbound_secret': 'asterisk_inbound_secret'},
     'freeswitch': {'esl_host': 'fs_esl_host', 'esl_port': 'fs_esl_port', 'esl_password': 'fs_esl_password',

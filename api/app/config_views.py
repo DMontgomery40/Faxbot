@@ -96,6 +96,8 @@ def project_admin_settings(snapshot: ConfigurationSnapshot, pending_fields: Iter
             'csid': values.efax_csid,
             'poll_seconds': values.efax_poll_seconds,
             'delete_after_download': values.efax_delete_after_download,
+            'webhook_secret': mask_secret(values.efax_webhook_secret),
+            'webhook_secret_set': bool(values.efax_webhook_secret),
             'configured': bool(values.efax_app_id and values.efax_api_key and values.efax_user_id),
         },
         'sinch': {

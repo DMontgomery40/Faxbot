@@ -23,6 +23,7 @@ OWN_AUTHENTICATION = {
     ("POST", "/signalwire-callback"): "verified provider callback",
     ("POST", "/phaxio-inbound"): "verified provider ingest",
     ("POST", "/sinch-inbound"): "verified provider ingest",
+    ("POST", "/efax-inbound"): "verified provider signal; starts a check of eFax, stores nothing",
     ("POST", "/_internal/asterisk/inbound"): "internal shared secret",
     ("POST", "/_internal/freeswitch/outbound_result"): "internal shared secret",
     ("POST", "/mobile/pair"): "single-use pairing code minted by a principal with tunnels:pair",

@@ -120,6 +120,9 @@ class ConfigurationValues(BaseModel):
     # How often Faxbot asks eFax for received faxes, and whether it deletes each one from eFax once stored.
     efax_poll_seconds: int = Field(60, validation_alias='EFAX_POLL_SECONDS', ge=30, le=3600)
     efax_delete_after_download: bool = Field(False, validation_alias='EFAX_DELETE_AFTER_DOWNLOAD')
+    # The HMAC secret given to eFax with a notification address; a signed notification makes Faxbot check eFax now.
+    efax_webhook_secret: str = Field('', validation_alias='EFAX_WEBHOOK_SECRET', repr=False,
+                                     json_schema_extra={'secret': True}, pattern=r'^[!-~]{0,256}$')
     fax_header: str = Field('Faxbot', validation_alias='FAX_HEADER')
     fax_station_id: str = Field('+10000000000', validation_alias='FAX_LOCAL_STATION_ID')
     # Installation country (ISO 3166 alpha-2, such as US or GB) for fax numbers
