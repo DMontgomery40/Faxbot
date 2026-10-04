@@ -20,6 +20,7 @@ import TimeZoneField from './common/TimeZoneField';
 import WizardTestFax from './WizardTestFax';
 import { directionSummary, providerLabel } from '../providerLabels';
 import ProviderDirectionFields, { directionPatch, directionProblem, loadedDirections } from './common/ProviderDirections';
+import { OWNER_ONLY_SENTENCE } from './Settings';
 
 interface SetupWizardProps {
   client: AdminAPIClient;
@@ -27,6 +28,8 @@ interface SetupWizardProps {
   docsBase?: string;
   // Whether this person may restart Faxbot from the console (host:restart).
   canRestart?: boolean;
+  // Is this person the installation's owner? Owner-only settings are shown disabled to everyone else.
+  isOwner?: boolean;
 }
 
 type FormValue = string | number | boolean;
@@ -144,7 +147,7 @@ function stepFields(step: number, data: Settings | null): string[] {
   return [];
 }
 
-function SetupWizard({ client, onDone, docsBase, canRestart = true }: SetupWizardProps) {
+function SetupWizard({ client, onDone, docsBase, canRestart = true, isOwner = true }: SetupWizardProps) {
   const [activeStep, setActiveStep] = useState(0);
   const [settings, setSettings] = useState<Settings | null>(null);
   const [config, setConfig] = useState<WizardConfig>({});
@@ -178,6 +181,9 @@ function SetupWizard({ client, onDone, docsBase, canRestart = true }: SetupWizar
   const sending = String(config.sending ?? '');
   const receiving = String(config.receiving ?? '');
   const canEdit = !!settings && !!desiredRevision && !loading && !busy && !needsReload;
+  // Owner-only settings stay unchanged for everyone else, so the rest of a step still saves.
+  const ownerOnly = new Set(settings?.owner_only ?? []);
+  const locked = (field: string) => !isOwner && ownerOnly.has(field);
   const docsURL = docsLink('home', docsBase);
   // Loaded settings are authoritative; after a save that could not be reloaded, fall back to the save result.
   const pendingRestart = needsReload ? saveResult?._meta.apply_state === 'pending_restart' : settings?._meta?.apply_state === 'pending_restart';
@@ -613,7 +619,7 @@ function SetupWizard({ client, onDone, docsBase, canRestart = true }: SetupWizar
         {credentialFields[id].length > 0 && <Grid container spacing={2} sx={{ mt: 0 }}>
           {credentialFields[id].map(field)}
           {id === 'phaxio' && <Grid item xs={12}>
-            <FormControlLabel control={<Switch disabled={!canEdit} checked={!!config.phaxio_verify_signature} onChange={event => handleConfigChange('phaxio_verify_signature', event.target.checked)} />} label="Check that status updates come from Phaxio" />
+            <FormControlLabel control={<Switch disabled={!canEdit || locked('phaxio_verify_signature')} checked={!!config.phaxio_verify_signature} onChange={event => handleConfigChange('phaxio_verify_signature', event.target.checked)} />} label="Check that status updates come from Phaxio" />
             <Alert severity="info">When off, Phaxio status callbacks are rejected and Faxbot checks status by polling instead.</Alert>
           </Grid>}
           {id === 'documo' && <Grid item xs={12}><FormControlLabel control={<Switch disabled={!canEdit} checked={!!config.documo_use_sandbox} onChange={event => handleConfigChange('documo_use_sandbox', event.target.checked)} />} label="Use Documo test mode (sandbox)" /></Grid>}
@@ -688,8 +694,9 @@ function SetupWizard({ client, onDone, docsBase, canRestart = true }: SetupWizar
         <Typography variant="h6" gutterBottom>Connect Providers</Typography>
         {!sections.length && <Alert severity="info">Choose a provider on the first step to connect it here.</Alert>}
         {sections.map(([id, heading, roles]) => providerSection(id, heading, roles))}
-        {cloud && <TextField fullWidth disabled={!canEdit} label="This server's public address" value={config.public_api_url ?? ''} sx={{ mt: 3 }}
-          onChange={event => handleConfigChange('public_api_url', event.target.value)} helperText="The address fax services use to fetch documents and send status updates, such as https://fax.example.com." />}
+        {cloud && <TextField fullWidth disabled={!canEdit || locked('public_api_url')} label="This server's public address" value={config.public_api_url ?? ''} sx={{ mt: 3 }}
+          onChange={event => handleConfigChange('public_api_url', event.target.value)}
+          helperText={`The address fax services use to fetch documents and send status updates, such as https://fax.example.com.${locked('public_api_url') ? ` ${OWNER_ONLY_SENTENCE}` : ''}`} />}
       </Box>;
     }
 
@@ -700,10 +707,13 @@ function SetupWizard({ client, onDone, docsBase, canRestart = true }: SetupWizar
         {[
           ['enforce_public_https', 'Require HTTPS for document links'],
           ['audit_log_enabled', 'Record events'],
-        ].map(([name, title]) => <Grid item xs={12} sm={6} key={name}><FormControlLabel control={<Switch disabled={!canEdit} checked={!!config[name]} onChange={event => handleConfigChange(name, event.target.checked)} />} label={title} /></Grid>)}
-        <Grid item xs={12} sm={6}><TextField fullWidth disabled={!canEdit} label="Document links for fax services work for (minutes)" type="number" value={config.pdf_token_ttl_minutes ?? ''}
+        ].map(([name, title]) => <Grid item xs={12} sm={6} key={name}><FormControlLabel control={<Switch disabled={!canEdit || locked(name)} checked={!!config[name]} onChange={event => handleConfigChange(name, event.target.checked)} />} label={title} /></Grid>)}
+        <Grid item xs={12} sm={6}><TextField fullWidth disabled={!canEdit || locked('pdf_token_ttl_minutes')} label="Document links for fax services work for (minutes)" type="number" value={config.pdf_token_ttl_minutes ?? ''}
           onChange={event => handleConfigChange('pdf_token_ttl_minutes', event.target.value === '' ? '' : Number(event.target.value))} helperText="How long a fax service may fetch a document Faxbot sends through it." /></Grid>
       </Grid>
+      {['enforce_public_https', 'audit_log_enabled', 'pdf_token_ttl_minutes'].some(locked) && (
+        <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }} data-testid="owner-only-note">{OWNER_ONLY_SENTENCE}</Typography>
+      )}
     </Box>;
 
     if (activeStep === 3) return <Box>

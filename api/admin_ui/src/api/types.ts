@@ -290,6 +290,8 @@ export interface Settings {
   developer?: { docs_base_url: string };
   // Whether the console may restart Faxbot.
   restart?: { allowed: boolean };
+  // The older settings file, read once when a new installation first starts (read only).
+  legacy_config?: { path: string };
   // Where provider plugin files are read from (read only).
   plugin_files?: { providers_dir: string; plugin_registry_path: string };
   // Environment-only settings, shown read-only, by variable name.

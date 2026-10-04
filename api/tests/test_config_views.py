@@ -209,6 +209,7 @@ def test_editor_has_omitted_provider_and_resource_settings_and_preserves_false_z
     }
     assert view['features'] == {'v3_plugins': False, 'fax_disabled': False, 'inbound_enabled': False, 'plugin_install': False}
     assert view['restart'] == {'allowed': False}
+    assert set(view['legacy_config']) == {'path'}
     # Without an environment every environment-only setting reads as not set.
     assert all(entry['set'] is False and entry['value'] is None for entry in view['deployment'].values())
     assert {'admin_allow_restart', 'docs_base_url', 'mobile_local_base', 'feature_v3_plugins',

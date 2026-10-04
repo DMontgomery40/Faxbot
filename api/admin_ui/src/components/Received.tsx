@@ -55,6 +55,7 @@ import type { DeliveryTone } from './delivery/InboxDelivery';
 import { DeliveryError, Notice } from './delivery/shared';
 import { InboundCostLine, useInboundCosts } from './delivery/FaxCost';
 import InboundRecovery from './InboundRecovery';
+import ImportDocument from './ImportDocument';
 import WorkDetail from './work/WorkDetail';
 import { can, duplicateSentence, workStateSentence } from './work/text';
 import { providerLabel } from '../providerLabels';
@@ -522,7 +523,8 @@ export default function Received({
             </Button>
           )}
         </Box>
-        <Box display="flex" gap={1}>
+        <Box display="flex" gap={1} flexWrap="wrap">
+          {permissions?.has('work:import') && <ImportDocument client={client} onImported={() => { void fetchList(); }} />}
           {onSendFax && (
             <Button variant="contained" startIcon={<SendIcon />} onClick={onSendFax}
               size={isSmallMobile ? 'medium' : 'large'} sx={{ borderRadius: 2, minHeight: isSmallMobile ? 40 : 42 }}>

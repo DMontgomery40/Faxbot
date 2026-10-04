@@ -276,3 +276,29 @@ describe('Setup Wizard time zone', () => {
     expect(await screen.findByText(/^Choose a time zone from the list, such as America\/Denver\./)).toBeTruthy();
   });
 });
+
+describe('Setup Wizard owner-only settings', () => {
+  it('locks owner-only settings for people who are not the owner, so their other changes still save', async () => {
+    const data = settingsFixture((value) => {
+      withDirections(value, 'phaxio', 'phaxio');
+      value.owner_only = ['public_api_url', 'phaxio_verify_signature', 'enforce_public_https', 'audit_log_enabled', 'pdf_token_ttl_minutes'];
+    });
+    const writes = backend(data);
+    render(<SetupWizard client={client()} isOwner={false} />);
+    await screen.findByText('Choose Providers', { selector: 'h6' });
+    next();
+    await screen.findByText('Connect Providers', { selector: 'h6' });
+    const address = screen.getByLabelText("This server's public address") as HTMLInputElement;
+    expect(address.disabled).toBe(true);
+    expect(screen.getByText(/Only the owner of this installation can change this\./)).toBeTruthy();
+    expect((screen.getByLabelText('Check that status updates come from Phaxio') as HTMLInputElement).disabled).toBe(true);
+    fireEvent.change(screen.getAllByLabelText(/API Secret/)[0], { target: { value: 'synthetic-new-secret' } });
+    next();
+    await screen.findByText('Security', { selector: 'h6' });
+    expect(writes).toHaveLength(1);
+    expect(writes[0]).toEqual({ expected_revision_id: expect.any(String), phaxio_api_secret: 'synthetic-new-secret' });
+    expect((screen.getByLabelText('Require HTTPS for document links') as HTMLInputElement).disabled).toBe(true);
+    expect((screen.getByLabelText('Record events') as HTMLInputElement).disabled).toBe(true);
+    expect(screen.getByTestId('owner-only-note').textContent).toBe('Only the owner of this installation can change this.');
+  });
+});

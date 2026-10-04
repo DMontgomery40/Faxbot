@@ -10,7 +10,7 @@
 
 ## Storage & retention
 
-**System → Storage & retention** (`#/system/storage`): **Where faxes are kept** (on this server or in Amazon S3, with **Check the bucket**), limits and cleanup (largest document, requests per minute for each key, how long document links and sent fax files last), **Export settings** and **Save a recovery copy**, and, read-only, where the installation key and the direct-delivery key are kept.
+**System → Storage & retention** (`#/system/storage`): **Where faxes are kept** (on this server or in S3 storage, with **Check the bucket**), limits and cleanup (largest document, requests per minute for each key, how long document links and sent fax files last), **Export settings** and **Save a recovery copy**, and, read-only, where the installation key and the direct-delivery key are kept.
 
 ## Remote access
 
@@ -34,7 +34,7 @@ Below the list, **Event recording** sets what Faxbot records for Logs: **Record 
 
 The Developer pages use developer words; the rest of the console does not.
 
-- **API & SDKs**: security status, held test faxes, and the quickstart with the SDKs' current version; **Documentation address** and the files Faxbot reads.
+- **API & SDKs**: security status, held test faxes, and the quickstart with the SDKs' current version; **Documentation address** and the files Faxbot reads, including the older settings file read once at the first start.
 - **AI assistants**: the MCP servers and their settings, and the assistant servers' own settings, read-only with their variable names.
 - **Terminal**: a shell on the server for people allowed to use it; whether it is on is set when Faxbot is installed.
 - **Scripts & checks**: test faxes and a simulated received fax.

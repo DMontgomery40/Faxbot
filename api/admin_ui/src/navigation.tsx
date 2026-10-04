@@ -317,7 +317,7 @@ export const NAVIGATION: NavArea[] = [
           <>
             <ApiKeys client={ctx.client} me={ctx.me} onlyMine={ctx.params.get('mine') === '1'}
               onShowAll={() => ctx.navigate('access/keys')} />
-            {ctx.permissions.has('settings:read') && <Box sx={{ mt: 4 }}>{settingsPage(['phones'])(ctx)}</Box>}
+            {ctx.permissions.has('settings:read') && <Box sx={{ mt: 4 }}>{settingsPage(['installation-key', 'phones'])(ctx)}</Box>}
           </>
         ) },
       // Everyone can see and end their own sessions.
@@ -329,7 +329,8 @@ export const NAVIGATION: NavArea[] = [
     id: 'system', label: 'System', icon: <SettingsIcon />,
     pages: [
       { id: 'setup', label: 'Setup', icon: <HelpIcon />, gate: { anyOf: ['settings:write'] },
-        render: (ctx) => <SetupWizard client={ctx.client} onDone={ctx.goHome} docsBase={ctx.docsBase} canRestart={ctx.permissions.has('host:restart')} /> },
+        render: (ctx) => <SetupWizard client={ctx.client} onDone={ctx.goHome} docsBase={ctx.docsBase} canRestart={ctx.permissions.has('host:restart')}
+          isOwner={isOwner(ctx)} /> },
       { id: 'security', label: 'Security', icon: <SecurityIcon />, gate: { anyOf: SETTINGS_READ },
         render: settingsPage(['security'], 'Security') },
       { id: 'storage', label: 'Storage & retention', icon: <StorageIcon />, gate: { anyOf: SETTINGS_READ },
