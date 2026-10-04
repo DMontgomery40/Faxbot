@@ -39,6 +39,7 @@ import {
   Sync as FetchIcon,
 } from '@mui/icons-material';
 import AdminAPIClient from '../api/client';
+import { docsLink } from '../docsLinks';
 import type { InboundFax } from '../api/types';
 import type { EmailConnector, IntakeItem } from '../api/deliveryTypes';
 import { parseServerTime } from '../api/time';
@@ -58,7 +59,7 @@ interface InboundProps {
   permissions?: ReadonlySet<string>;
 }
 
-function Inbound({ client, inboundEnabled, onNavigate, permissions }: InboundProps) {
+function Inbound({ client, docsBase, inboundEnabled, onNavigate, permissions }: InboundProps) {
   const canReadProviders = !!permissions?.has('providers:read');
   const canAddTestFax = !!permissions?.has('providers:write');
   // Email delivery status comes from the installation's intake queue; accounts
@@ -261,7 +262,12 @@ function Inbound({ client, inboundEnabled, onNavigate, permissions }: InboundPro
 
   // When the fax arrived (the provider's time when known), marked when Faxbot brought it in later.
   const arrivedText = (fax: InboundFax) => {
-    const when = formatDate(fax.source_received_at || fax.received_at);
+    const value = fax.source_received_at || fax.received_at;
+    const date = parseServerTime(value);
+    // Always with the time of day: a recovered fax arrived well before it was brought in.
+    const when = date && isSmallMobile
+      ? date.toLocaleString(undefined, { month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+      : formatDate(value);
     return fax.recovered ? `${when} · brought in later` : when;
   };
 
@@ -551,7 +557,8 @@ function Inbound({ client, inboundEnabled, onNavigate, permissions }: InboundPro
               action={onNavigate && permissions?.has('settings:read') ? (
                 <Button color="inherit" size="small" onClick={() => onNavigate('trunk')}>Open trunk settings</Button>
               ) : undefined}>
-              {callbacks.receiving?.message ?? 'Receiving over your SIP trunk.'}
+              {callbacks.receiving?.message ?? 'Receiving over your SIP trunk.'}{' '}
+              <Box component="a" href={docsLink('inbound', docsBase)} target="_blank" rel="noreferrer" sx={{ color: 'inherit' }}>How receiving works</Box>
             </Alert>
           )}
         </Stack>

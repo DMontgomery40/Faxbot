@@ -290,4 +290,18 @@ describe('Inbox wording for received faxes', () => {
     render(<Inbound client={client()} inboundEnabled permissions={new Set([...operator, 'providers:read'])} />);
     expect((await screen.findByTestId('sip-receiving')).textContent).toContain(sentence);
   });
+
+  it('keeps the time of day on a phone, so a recovered fax shows when it arrived', async () => {
+    recoveredInbox({ ready: true, message: READY });
+    const original = window.matchMedia;
+    window.matchMedia = ((query: string) => ({ ...original(query), matches: query.includes('max-width') })) as typeof window.matchMedia;
+    try {
+      render(<Inbound client={client()} inboundEnabled permissions={new Set([...operator, 'providers:read'])} />);
+      const arrived = parseServerTime('2026-10-04T03:14:00')!
+        .toLocaleString(undefined, { month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+      expect(await screen.findByText(`${arrived} · brought in later`)).toBeTruthy();
+    } finally {
+      window.matchMedia = original;
+    }
+  });
 });

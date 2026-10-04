@@ -542,6 +542,28 @@ describe('Settings email delivery', () => {
       Element.prototype.scrollIntoView = original;
     }
   });
+
+  it('opens at the SIP trunk when the Inbox receiving line asks for it', async () => {
+    settingsHandlers(settingsFixture((data) => {
+      data.backend.type = 'sip';
+      data.hybrid = { outbound_backend: 'sip', inbound_backend: 'sip', outbound_override: '', inbound_override: '' };
+    }));
+    server.use(
+      http.get('/admin/sip/presets', () => HttpResponse.json({ presets: [] })),
+      http.get('/admin/sip/calls', () => HttpResponse.json({ items: [], next_cursor: null })),
+    );
+    const scrolled = vi.fn();
+    const original = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = function (this: Element) { scrolled(this.id); } as typeof original;
+    const focused = vi.fn();
+    try {
+      render(<Settings client={client()} focus="trunk" onFocused={focused} />);
+      await waitFor(() => expect(focused).toHaveBeenCalled());
+      expect(scrolled).toHaveBeenCalledWith('sip-trunk');
+    } finally {
+      Element.prototype.scrollIntoView = original;
+    }
+  });
 });
 
 describe('Settings pending restart', () => {

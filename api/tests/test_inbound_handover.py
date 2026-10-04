@@ -350,7 +350,20 @@ def test_cli_shows_when_a_recovered_fax_arrived_and_unknown_numbers_in_words(mon
 
 
 def test_sip_receiving_shows_one_status_line_instead_of_an_internal_url(isolated_installation, monkeypatch):
+    from app import sip_http, stun
+    monkeypatch.setattr(stun, 'probe', lambda servers, **_: None)
+    monkeypatch.setattr(sip_http, '_probes', {})
     with _client(monkeypatch, FAX_BACKEND='sip', INBOUND_ENABLED='true') as client:
+        receiving = lambda: client.get('/admin/inbound/callbacks', headers=ADMIN).json()['receiving']  # noqa: E731
+        assert receiving() == {'ready': False, 'message': 'Receiving over your SIP trunk is not set up yet: '
+                                                          'choose your carrier on the trunk screen.'}
+        current = _settings(client)
+        assert client.put('/admin/settings', headers=ADMIN, json={
+            'expected_revision_id': current['_meta']['desired_revision_id'], 'sip_trunk_preset': 'telnyx',
+            'sip_trunk_username': 'faxbotuser', 'sip_trunk_password': 'synthetic-Trunk-Pass!42'}).status_code == 200
+        assert receiving() == {'ready': False, 'message': 'Receiving over your SIP trunk is not ready: select Apply to '
+                                                          'Asterisk on the trunk screen, then restart the Asterisk service.'}
+        assert client.post('/admin/sip/apply', headers=ADMIN).status_code == 200
         status = client.get('/admin/inbound/callbacks', headers=ADMIN).json()
         assert status == {'backend': 'sip', 'callbacks': [],
                           'receiving': {'ready': True, 'message': 'Receiving over your SIP trunk: ready.'}}

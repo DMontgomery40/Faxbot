@@ -82,7 +82,7 @@ The **Restart now** button in the Settings restart message and the Diagnostics *
 - Toggle inbound receiving on/off and configure retention/token TTL in Settings.
 - The Inbox shows when each fax arrived (the provider's time when known) and Unknown for a number nobody reported. With your own SIP trunk receiving, it shows one line, "Receiving over your SIP trunk: ready." or why a received fax could not be handed to Faxbot, with **Open trunk settings**; there is no URL or dialplan to configure. Phaxio and Sinch show the callback URL to enter in their consoles.
 - Backend-specific auth:
-  - SIP/Asterisk: set `ASTERISK_INBOUND_SECRET` for the private `/_internal/asterisk/inbound` route.
+  - SIP/Asterisk: Faxbot creates the secret Asterisk sends with each received fax; a value set in Settings or as `ASTERISK_INBOUND_SECRET` in `.env` is used instead.
   - Phaxio: enable HMAC verification for inbound webhooks.
   - Sinch: configure Basic auth and/or HMAC verification for inbound callbacks.
 

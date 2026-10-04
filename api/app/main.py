@@ -1758,10 +1758,23 @@ SIP_RECEIVING_READY = "Receiving over your SIP trunk: ready."
 
 def _sip_receiving_status(request):
     """One sentence about receiving over the SIP trunk: ready, or what stops a fax reaching Faxbot."""
+    from . import sip_trunk
+    values = request.scope["faxbot.configuration"].active.values
     if not settings.inbound_enabled:
         return {"ready": False, "message": "Receiving faxes is turned off in Settings."}
+    if not sip_trunk.configured(values):
+        return {"ready": False, "message": "Receiving over your SIP trunk is not set up yet: choose your carrier on the trunk screen."}
+    apply_first = ("Receiving over your SIP trunk is not ready: select Apply to Asterisk on the trunk screen, "
+                   "then restart the Asterisk service.")
     if not settings.asterisk_inbound_secret:
-        return {"ready": False, "message": "Receiving over your SIP trunk is not ready: select Apply to Asterisk on the trunk screen."}
+        return {"ready": False, "message": apply_first}
+    try:
+        # The trunk file Asterisk loads at start must match the saved settings.
+        applied = sip_trunk.configuration_path(values).read_text() == sip_trunk.render_pjsip(values)
+    except (OSError, sip_trunk.TrunkConfigurationError):
+        applied = False
+    if not applied:
+        return {"ready": False, "message": apply_first}
     try:
         from .routing.background import installation_engine
         engine, _ = installation_engine(request.app)
