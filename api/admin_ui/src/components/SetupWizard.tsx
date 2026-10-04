@@ -641,15 +641,17 @@ function SetupWizard({ client, onDone, docsBase, canRestart = true }: SetupWizar
         </Box>}
         {id === 'sip' && <>
           <SipTrunkSettings client={client} showCalls={false} revision={desiredRevision} onSaved={rebase}
-            onDirtyChange={setTrunkDirty} />
+            onDirtyChange={setTrunkDirty} showReceiving={roles.receives} />
           {roles.sends && <Grid container spacing={2} sx={{ mt: 1 }}>{field(STATION_FIELD)}</Grid>}
           <Accordion disableGutters variant="outlined" sx={{ mt: 2 }}>
             <AccordionSummary expandIcon={<ExpandMoreIcon />}><Typography>Advanced: fax engine connection</Typography></AccordionSummary>
             <AccordionDetails>
               <Typography variant="body2" sx={{ mb: 1 }}>
-                {environment.has('ami_password') ? 'The fax engine password is set in .env and shared with the fax engine.' :
-                  settings?.sip.ami_password_is_default ? 'Faxbot creates the fax engine password when it first starts with the SIP trunk in use.' :
-                    'Faxbot shares this password with its fax engine; change it only for a fax engine you run yourself.'}
+                {environment.has('ami_password') ? 'The fax engine password is set in .env, which both Faxbot and its fax engine read.' :
+                  settings?.sip.ami_password_is_default ? 'Faxbot creates the fax engine password when it first starts with the SIP trunk in use; there is nothing to type.' :
+                    settings?.sip.ami_password_shared ? 'Faxbot shares this password with its fax engine; there is nothing to type.' :
+                      'Faxbot shares this password with its fax engine when it next starts.'}
+                {' '}Change these only for a fax engine you run yourself.
               </Typography>
               <Alert severity="warning" sx={{ mb: 2 }}>Keep the fax engine connection on your private network; never expose its port to the internet.</Alert>
               <Grid container spacing={2}>{amiFields.map(field)}</Grid>

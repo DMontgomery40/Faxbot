@@ -80,6 +80,9 @@ export interface SipTrunkStatus {
   engine_restarting?: boolean;
   // The running Asterisk loaded exactly the current trunk settings.
   in_use?: boolean;
+  // Whether a fax received over the trunk can reach Faxbot, in one sentence; null when the trunk does not receive.
+  handover_ready?: boolean | null;
+  handover_text?: string | null;
   message: string;
 }
 

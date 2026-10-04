@@ -42,7 +42,18 @@ It publishes SIP on 5060 (UDP and TCP) and 5061 (TCP), plus one 32-port media ra
 
 ## Configure API and Asterisk separately
 
-On an existing installation, select SIP for the desired outbound direction and edit AMI/station/header fields in Settings. Apply with the loaded revision, complete any pending installation-wide restart and confirm active identity. These canonical API values are not replaced by later `.env` edits.
+On an existing installation, choose **SIP trunk (Asterisk)** for sending, receiving or both in the Setup Wizard and select **Restart now** when it asks.
+
+### The fax engine login: nothing to type
+
+Faxbot and Asterisk share one manager login (the Asterisk Manager Interface, port 5038, private to the Compose network). You do not have to choose it or type it twice:
+
+- The first time Faxbot starts with the SIP trunk in use, it creates a random manager password (saved as a setting by "system"), and before it connects it writes the username and password to `/faxdata/asterisk/manager.credentials`, readable only by its owner. It writes the file again at every start that uses the trunk and on **Apply and connect**.
+- Asterisk's start script turns its manager port on with that login. An Asterisk that started before the file existed runs with the manager port off and watches the file; when Faxbot writes it, Asterisk stops gracefully within seconds (once no call is up), Docker starts it again with the login, and Faxbot, which keeps retrying, signs in.
+- `ASTERISK_AMI_USERNAME` and `ASTERISK_AMI_PASSWORD` in `.env` always win: both containers read them, and Asterisk then ignores the file.
+- An installation that already used its own Asterisk with the shipped default password keeps that password; set `ASTERISK_AMI_PASSWORD` in `.env` to replace it.
+
+The Setup Wizard shows these fields only under **Advanced: fax engine connection**, for a fax engine you run yourself.
 
 The trunk itself is set up on the **Carrier SIP trunk** screen: **Apply and connect** writes the trunk file Asterisk loads at start and, in the Docker Compose install, restarts Asterisk to load it once no call is up (see [Carrier SIP trunk](sip-trunk.md)). For first bootstrap, the API names below can also be supplied in `.env`:
 ```
@@ -52,6 +63,7 @@ FAX_BACKEND=sip
 ASTERISK_AMI_HOST=asterisk
 ASTERISK_AMI_PORT=5038
 ASTERISK_AMI_USERNAME=api
+# Optional: without it Faxbot creates the manager password itself (see above)
 ASTERISK_AMI_PASSWORD=change_me_safe
 
 # Presentation
@@ -121,7 +133,7 @@ Notes:
 
 ## Understanding the Asterisk Configuration
 - Faxbot renders the whole trunk (`pjsip.conf`) from its settings; **Apply and connect** writes it to `<FAX_DATA_DIR>/asterisk/pjsip.conf` and Asterisk loads it at start. At each start Asterisk also records the trunk it loaded (`pjsip.conf.started`) and the time it started (`engine-started`) in that folder, so Faxbot can tell whether a restart is needed and that it may restart this Asterisk. Without a trunk, Asterisk starts offline with no registration.
-- `asterisk/etc/asterisk/templates/manager.conf.template` uses `${ASTERISK_AMI_USERNAME}` as the user section and `${ASTERISK_AMI_PASSWORD}` for the secret. Ensure these match the API’s active canonical AMI credentials. Manager access is disabled when Asterisk deployment AMI credentials are omitted; supplying both renders the account.
+- `asterisk/etc/asterisk/templates/manager.conf.template` uses `${ASTERISK_AMI_USERNAME}` as the user section and `${ASTERISK_AMI_PASSWORD}` for the secret. Without them, the start script reads `/faxdata/asterisk/manager.credentials`, which Faxbot writes; with neither, manager access stays off until Faxbot writes the file. The account may originate calls, read status, list channels and run the one command Faxbot uses to restart Asterisk (`core stop gracefully`).
 - When the passwords differ, Faxbot still starts so you can fix it from the console. The dashboard, Settings, readiness (`/health/ready`), Diagnostics and **Check trunk status** say "Faxbot can't sign in to its fax engine. Check that the Asterisk manager password matches.", new faxes are refused with that sentence (held test faxes are still accepted), and Faxbot keeps trying to sign in. When Asterisk is not running at all, the sentence is "Faxbot can't reach its fax engine. Check that the Asterisk service is running."
 - `modules.conf` skips modules a fax server does not use, and small files such as `cdr.conf` and `pjproject.conf` stand in for configuration those modules would otherwise report missing, so a healthy start logs no ERROR lines. An ERROR in the Asterisk log means something needs attention, such as a received fax that could not be handed to Faxbot.
 - The dedicated `faxbot-send` context executes `SendFAX()` and emits the terminal result from its hangup handler. The older `faxout` context remains for compatibility; the new originate path does not use it.

@@ -366,6 +366,51 @@ def read_public_address(values):
         return None
 
 
+def manager_credentials_path(values) -> Path:
+    """The manager login Asterisk's start script reads when the environment sets none."""
+    return Path(values.fax_data_dir) / 'asterisk' / 'manager.credentials'
+
+
+_MANAGER_USERNAME = re.compile(r'[A-Za-z0-9_-]{1,64}')
+
+
+def _manager_login_usable(username, password) -> bool:
+    """What asterisk/start.sh accepts: a plain username and a password manager.conf can hold."""
+    return bool(_MANAGER_USERNAME.fullmatch(username or '') and username.lower() != 'general' and password
+                and password == password.strip() and not re.search(r'[\x00-\x1f\x7f;\\]', password))
+
+
+def write_manager_credentials(values):
+    """Write Faxbot's manager username and password for Asterisk (mode 0600); None when unusable.
+
+    Asterisk's start script turns its manager port on with this login, and
+    restarts itself when the file changes, so the two containers never need a
+    password typed twice. ASTERISK_AMI_PASSWORD in the environment still wins
+    in both containers.
+    """
+    if not _manager_login_usable(values.ami_username, values.ami_password):
+        return None
+    path = manager_credentials_path(values)
+    text = f'{values.ami_username}\n{values.ami_password}\n'
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    try:
+        if path.read_text(encoding='utf-8') == text:
+            return path
+    except OSError:
+        pass
+    _write_private(path, text)
+    return path
+
+
+def manager_credentials_shared(values) -> bool:
+    """Whether the file Asterisk reads holds exactly the login Faxbot uses."""
+    try:
+        return manager_credentials_path(values).read_text(encoding='utf-8') == \
+            f'{values.ami_username}\n{values.ami_password}\n'
+    except OSError:
+        return False
+
+
 def engine_marker_path(values) -> Path:
     """Written by the Asterisk container at every start (asterisk/start.sh)."""
     return Path(values.fax_data_dir) / 'asterisk' / 'engine-started'

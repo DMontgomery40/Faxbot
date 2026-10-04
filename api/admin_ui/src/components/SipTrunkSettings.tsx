@@ -47,6 +47,8 @@ interface SipTrunkSettingsProps {
   onSaved?: () => void | Promise<void>;
   // Whether the form has changes that are not saved yet.
   onDirtyChange?: (dirty: boolean) => void;
+  // The trunk receives faxes: say whether a received fax can reach Faxbot.
+  showReceiving?: boolean;
   // How often and how long Apply and connect checks the trunk after a restart.
   pollMs?: number;
   waitMs?: number;
@@ -105,7 +107,7 @@ function settled(status: SipTrunkStatus): boolean {
 }
 
 function SipTrunkSettings({ client, showCalls = true, revision: sharedRevision, onSaved, onDirtyChange,
-  pollMs = 2000, waitMs = 90000 }: SipTrunkSettingsProps) {
+  showReceiving = false, pollMs = 2000, waitMs = 90000 }: SipTrunkSettingsProps) {
   const theme = useTheme();
   const narrow = useMediaQuery(theme.breakpoints.down('md'));
   const [presets, setPresets] = useState<SipPreset[]>([]);
@@ -122,6 +124,7 @@ function SipTrunkSettings({ client, showCalls = true, revision: sharedRevision, 
   const [numberFormat, setNumberFormat] = useState<NumberFormat | null>(null);
   const [passwordInEnv, setPasswordInEnv] = useState(false);
   const [connecting, setConnecting] = useState(false);
+  const [handover, setHandover] = useState<{ ready: boolean; text: string } | null>(null);
   const alive = useRef(true);
   useEffect(() => () => { alive.current = false; }, []);
 
@@ -158,6 +161,18 @@ function SipTrunkSettings({ client, showCalls = true, revision: sharedRevision, 
   }, [client]);
 
   useEffect(() => { void load(); }, [load]);
+  // Received faxes: shown as soon as the form opens, from the same check as trunk status.
+  useEffect(() => {
+    if (!showReceiving) return;
+    let current = true;
+    client.getSipStatus().then((result) => {
+      if (current && result.handover_text) setHandover({ ready: !!result.handover_ready, text: result.handover_text });
+    }).catch(() => undefined);
+    return () => { current = false; };
+  }, [client, showReceiving]);
+  useEffect(() => {
+    if (status?.handover_text) setHandover({ ready: !!status.handover_ready, text: status.handover_text });
+  }, [status]);
   useEffect(() => { if (showCalls) void loadCalls(); }, [showCalls, loadCalls]);
 
   const update = <K extends keyof TrunkValues>(key: K, value: TrunkValues[K]) =>
@@ -444,6 +459,10 @@ function SipTrunkSettings({ client, showCalls = true, revision: sharedRevision, 
         <Button variant="outlined" onClick={checkStatus} disabled={busy}>Check trunk status</Button>
       </Stack>
 
+      {showReceiving && handover && (
+        <Alert severity={handover.ready ? 'success' : 'warning'} data-testid="sip-handover">{handover.text}</Alert>
+      )}
+
       <Fade in={!!notice} unmountOnExit>
         <Alert severity={notice?.severity ?? 'info'} onClose={() => setNotice(null)}>{notice?.text}</Alert>
       </Fade>
@@ -462,6 +481,8 @@ function SipTrunkSettings({ client, showCalls = true, revision: sharedRevision, 
               {status.public_address_text && <Typography variant="body2">{status.public_address_text}</Typography>}
               {status.ports_text && status.ports_text !== status.message
                 && <Typography variant="body2">{status.ports_text}</Typography>}
+              {!showReceiving && status.handover_text && status.handover_text !== status.message
+                && <Typography variant="body2">{status.handover_text}</Typography>}
               {status.last_call_text && (
                 <Typography variant="body2">
                   {`Last call${status.last_call_at ? `, ${when(status.last_call_at)}` : ''}: ${status.last_call_text}`}

@@ -23,6 +23,11 @@ function backend(data: Json) {
     http.get('/admin/settings', () => HttpResponse.json(data)),
     http.get('/plugins', () => HttpResponse.json({ items: [] })),
     http.get('/admin/sip/presets', () => HttpResponse.json({ presets: PRESETS })),
+    http.get('/admin/sip/status', () => HttpResponse.json({ configured: false, applied: false, asterisk_connected: false,
+      registration: 'unknown', reachability: 'unknown', registration_text: '', reachability_text: '',
+      handover_ready: data.inbound.enabled && data.hybrid.inbound_backend === 'sip' ? true : null,
+      handover_text: data.inbound.enabled && data.hybrid.inbound_backend === 'sip' ? 'Received faxes reach Faxbot: ready.' : null,
+      message: 'No SIP trunk is set up. Choose your carrier to start.' })),
     http.put('/admin/settings', async ({ request }) => {
       const body = await request.json() as Json;
       writes.push(body);
@@ -117,6 +122,9 @@ describe('Setup Wizard providers for sending and receiving', () => {
     expect(screen.getByText('Advanced: fax engine connection')).toBeTruthy();
     expect(screen.queryByLabelText('Fax station ID')).toBeNull();
     expect(screen.getByLabelText('Access Key')).toBeTruthy();
+    // The inbound secret is Faxbot's own business: the step says whether received faxes reach Faxbot.
+    expect((await screen.findByTestId('sip-handover')).textContent).toBe('Received faxes reach Faxbot: ready.');
+    expect(screen.queryByLabelText(/inbound secret|Asterisk secret/i)).toBeNull();
     expect(document.body.textContent).not.toMatch(RAW_IDS);
   });
 
@@ -131,6 +139,8 @@ describe('Setup Wizard providers for sending and receiving', () => {
     expect(await screen.findByTestId('sip-trunk-settings')).toBeTruthy();
     expect(screen.getByLabelText('Fax station ID')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Show callback details' })).toBeTruthy();
+    // The trunk only sends here, so nothing is said about received faxes.
+    expect(screen.queryByTestId('sip-handover')).toBeNull();
     expect(document.body.textContent).not.toMatch(RAW_IDS);
   });
 

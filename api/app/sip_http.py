@@ -111,6 +111,32 @@ _RESTART_SECONDS = 120
 _restart = {'at': None}
 
 
+HANDOVER_READY = 'Received faxes reach Faxbot: ready.'
+HANDOVER_MANAGED = 'Received faxes cannot reach Faxbot yet; select Apply and connect to connect them.'
+HANDOVER_MANUAL = ('Received faxes cannot reach Faxbot yet; apply these settings to Asterisk, '
+                   'then restart the Asterisk service.')
+
+
+def _handover(values, managed, last):
+    """Whether a fax received over the trunk can reach Faxbot, in one sentence; None when the trunk does not receive.
+
+    Asterisk reads the inbound secret from the shared folder for each received
+    fax, so the secret Faxbot keeps and the written file must agree.
+    """
+    if not (values.inbound_enabled and values.effective_inbound == 'sip'):
+        return None
+    if last and last['verdict'] == NOT_HANDED_OVER:
+        return {'ready': False, 'text': last['summary']}
+    secret = values.asterisk_inbound_secret
+    try:
+        written = bool(secret) and sip_trunk.secret_path(values).read_text(encoding='utf-8') == secret
+    except OSError:
+        written = False
+    if written:
+        return {'ready': True, 'text': HANDOVER_READY}
+    return {'ready': False, 'text': HANDOVER_MANAGED if managed else HANDOVER_MANUAL}
+
+
 def _restarting():
     """True from Faxbot's restart request until Faxbot has logged in to the restarted Asterisk."""
     from .ami import ami_client
@@ -298,6 +324,7 @@ async def status(request: Request, identity=Depends(require_permission('provider
     managed = configured and await run_lifecycle_step(lambda: sip_trunk.engine_managed(values))
     in_use = bool(managed and await run_lifecycle_step(lambda: sip_trunk.engine_uses_current(values)))
     restarting = bool(configured and _restarting())
+    handover = await run_lifecycle_step(lambda: _handover(values, managed, last)) if configured else None
     if configured:
         summary['advertised_address'] = await run_lifecycle_step(lambda: sip_trunk.applied_public_address(values)) or None
     message = _message(summary, asterisk, applied, ports_text, transport, managed=managed, in_use=in_use,
@@ -330,6 +357,9 @@ async def status(request: Request, identity=Depends(require_permission('provider
         'engine_managed': bool(managed),
         'engine_restarting': restarting,
         'in_use': in_use,
+        # Received faxes over the trunk: ready, or what keeps them from Faxbot (None when the trunk does not receive).
+        'handover_ready': handover['ready'] if handover else None,
+        'handover_text': handover['text'] if handover else None,
         'message': message,
     }
 
@@ -357,6 +387,9 @@ async def apply(request: Request, identity=Depends(require_permission('providers
         # Received faxes reach Faxbot with this secret; Faxbot creates it when none is set.
         secret = await run_lifecycle_step(lambda: ensure_inbound_secret(_runtime(request).manager))
         await run_lifecycle_step(lambda: sip_trunk.write_asterisk_configuration(values, inbound_secret=secret))
+        if values.ami_password not in ('', 'changeme'):
+            # The manager login Faxbot uses now, for an Asterisk that has none yet or an older one.
+            await run_lifecycle_step(lambda: sip_trunk.write_manager_credentials(values))
         if not values.sip_external_address:
             # What Asterisk advertises at its next start (only on a network that keeps port numbers).
             await run_lifecycle_step(lambda: sip_trunk.write_public_address(values, network))

@@ -84,6 +84,7 @@ def test_status_without_a_trunk_says_so_in_one_sentence(bare_client):
                     'public_address_text': None, 'ports_text': None, 'last_call_text': None, 'last_call_at': None,
                     'address_changed': False, 'last_call_verdict': None, 'suggest_audio': False,
                     'engine_managed': False, 'engine_restarting': False, 'in_use': False,
+                    'handover_ready': None, 'handover_text': None,
                     'message': 'No SIP trunk is set up. Choose your carrier to start.'}
 
 
@@ -452,3 +453,24 @@ def test_an_asterisk_this_install_does_not_manage_keeps_the_manual_sentence(clie
     assert applied == {'ok': True, 'engine': 'manual',
                        'message': 'Saved for Asterisk. Restart the Asterisk service to use these settings.'}
     assert 'CoreShowChannels' not in actions
+
+
+def test_status_says_whether_received_faxes_reach_faxbot(isolated_installation, monkeypatch):
+    with _client(monkeypatch, {**TRUNK, 'FAX_BACKEND': 'sip', 'INBOUND_ENABLED': 'true'}) as client:
+        # Faxbot created the inbound secret at start and wrote it where Asterisk reads it; nobody typed it.
+        body = client.get('/admin/sip/status', headers=ADMIN).json()
+        assert (body['handover_ready'], body['handover_text']) == (True, 'Received faxes reach Faxbot: ready.')
+        secret = os.path.join(isolated_installation['FAX_DATA_DIR'], 'asterisk', 'inbound.secret')
+        os.remove(secret)
+        body = client.get('/admin/sip/status', headers=ADMIN).json()
+        assert body['handover_ready'] is False
+        assert body['handover_text'] == ('Received faxes cannot reach Faxbot yet; apply these settings to Asterisk, '
+                                         'then restart the Asterisk service.')
+        assert client.post('/admin/sip/apply', headers=ADMIN).status_code == 200
+        assert client.get('/admin/sip/status', headers=ADMIN).json()['handover_ready'] is True
+        assert open(secret).read() not in client.get('/admin/sip/status', headers=ADMIN).text
+        # A trunk that only sends says nothing about received faxes.
+        current = client.get('/admin/settings', headers=ADMIN).json()
+        assert client.put('/admin/settings', headers=ADMIN, json={
+            'expected_revision_id': current['_meta']['desired_revision_id'], 'inbound_enabled': False}).status_code == 200
+        assert client.get('/admin/sip/status', headers=ADMIN).json()['handover_text'] is None
