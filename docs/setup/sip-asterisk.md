@@ -48,7 +48,7 @@ An Avaya IP Office or Aura phone system sends calls to Faxbot on your local netw
 docker compose -f docker-compose.yml -f docker-compose.phone-system.yml up -d
 ```
 
-It publishes SIP on 5060 (UDP and TCP) and the media range `FAXBOT_MEDIA_PORTS` (default 4000 to 4019 UDP, at most 100 ports) on that address only. Asterisk tells the phone system that address in every call. Use a Linux host. See [Avaya IP Office and Aura](avaya.md).
+It publishes SIP on 5060 (UDP and TCP) and the media range `FAXBOT_MEDIA_PORTS` (default 4000 to 4019 UDP) on that address only. Never set more than 100 ports: Docker publishes the whole range before Asterisk starts, and Asterisk then refuses it. Asterisk tells the phone system that address in every call. Use a Linux host. See [Avaya IP Office and Aura](avaya.md).
 
 ## Configure API and Asterisk separately
 

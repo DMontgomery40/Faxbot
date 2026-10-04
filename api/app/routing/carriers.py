@@ -56,7 +56,12 @@ CARRIER_LABELS = {'telnyx': 'Telnyx', 'signalwire': 'SignalWire'}
 
 
 def carrier_label(provider_id):
-    return CARRIER_LABELS.get(provider_id, provider_id)
+    """The plain name of a carrier or SIP trunk preset (Avaya IP Office, BT One Voice), never its id."""
+    if provider_id in CARRIER_LABELS:
+        return CARRIER_LABELS[provider_id]
+    from ..sip_trunk import PRESETS
+    preset = PRESETS.get(provider_id)
+    return preset.label if preset else provider_id
 
 
 @dataclass(frozen=True)

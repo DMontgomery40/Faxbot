@@ -41,7 +41,7 @@ By default Faxbot publishes no SIP ports at all. A phone system has to send call
 | 5060 | UDP and TCP | SIP calls between the phone system and Faxbot |
 | 4000–4019 | UDP | Fax data: the first third is T.38, the rest is audio |
 
-Every three media ports carry about one fax at a time. `FAXBOT_MEDIA_PORTS` in `.env` changes the range, up to 100 ports. Docker starts one helper process for every published port, which is why the range stays small.
+Every three media ports carry about one fax at a time. `FAXBOT_MEDIA_PORTS` in `.env` changes the range. Never set more than 100 ports. Docker starts one helper process for every published port and publishes the whole range before Asterisk starts. Asterisk then refuses a range wider than 100 ports and does not start.
 
 | `FAXBOT_MEDIA_PORTS` | Faxes at once |
 | --- | --- |
@@ -79,6 +79,8 @@ Then select **Apply and connect**. Under **Reaching Faxbot from your phone syste
 - "Faxbot and your phone system recognise each other by address, so there is no registration; calls use UDP."
 - "The phone system answered Faxbot's check in 3 ms." Faxbot checks the phone system every 25 seconds over UDP and every 30 seconds over TCP.
 - "The trunk is ready." once the phone system answers.
+
+If you keep settings in `.env` rather than the console, set `SIP_TRUNK_PRESET=avaya-ipoffice` (or `avaya-aura`), `SIP_TRUNK_AUTH=ip` and `SIP_TRUNK_HOST`. A phone system takes only sign-in by address. The other `SIP_TRUNK_*` settings are in [SIP trunk](sip-trunk.md#set-it-up).
 
 From the command line:
 

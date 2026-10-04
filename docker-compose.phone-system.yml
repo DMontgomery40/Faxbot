@@ -7,11 +7,12 @@
 #
 # SIP (5060, UDP and TCP) and the media range are published on that address
 # only, never on every interface, so nothing is opened toward the internet.
-# FAXBOT_MEDIA_PORTS sets the media range (default 4000-4019, at most 100
-# ports): Asterisk uses its first third for T.38 and the rest for audio, so
-# every three ports carry about one fax at a time (20 ports: 6 faxes at once).
-# Docker starts one helper process per published port, which is why the range
-# stays small. Do not combine this file with docker-compose.public.yml.
+# FAXBOT_MEDIA_PORTS sets the media range (default 4000-4019): Asterisk uses
+# its first third for T.38 and the rest for audio, so every three ports carry
+# about one fax at a time (20 ports: 6 faxes at once). Never set more than 100
+# ports: Docker starts one helper process per published port and publishes
+# the whole range before Asterisk starts; Asterisk then refuses a range wider
+# than 100. Do not combine this file with docker-compose.public.yml.
 #
 # The phone system and Faxbot recognise each other by address, so the phone
 # system's own address must reach Asterisk unchanged: Docker Engine on Linux

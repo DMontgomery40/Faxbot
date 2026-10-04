@@ -351,3 +351,19 @@ def test_catalog_says_which_presets_are_phone_systems_and_lists_the_administrato
     for preset in ('gamma', 'bt-one-voice', 'telstra-sip-connect'):
         assert any('has not been tested' in note for note in catalog[preset]['notes'])
         assert catalog[preset]['kind'] == 'carrier' and not catalog[preset]['admin_steps']
+
+
+def test_presets_without_a_published_price_get_no_card_so_spending_asks_for_your_rate():
+    """Null prices are never seeded, so Spending says "No published price; add your rate" for these trunks."""
+    from app.routing.carriers import carrier_label
+    from app.routing.seed import cards_in_use, load_cards
+    shipped = load_cards()
+    for preset in ('gamma', 'bt-one-voice', 'telstra-sip-connect', 'avaya-ipoffice', 'avaya-aura'):
+        installation = ConfigurationValues.from_environment({'FAX_BACKEND': 'sip', 'SIP_TRUNK_PRESET': preset})
+        assert [card for card in cards_in_use(installation, shipped) if card.provider_id.startswith('sip-')] == []
+    telnyx = ConfigurationValues.from_environment({'FAX_BACKEND': 'sip', 'SIP_TRUNK_PRESET': 'telnyx'})
+    assert {card.provider_id for card in cards_in_use(telnyx, shipped)} == {'sip-telnyx'}
+    # Spending names the trunk's carrier or phone system in plain words, never by its preset id.
+    assert [carrier_label(preset) for preset in ('avaya-ipoffice', 'bt-one-voice', 'telstra-sip-connect',
+                                                 'flowroute', 'telnyx')] == [
+        'Avaya IP Office', 'BT One Voice', 'Telstra SIP Connect', 'Flowroute', 'Telnyx']
