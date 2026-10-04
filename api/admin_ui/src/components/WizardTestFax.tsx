@@ -113,7 +113,7 @@ export default function WizardTestFax({ client, sending, receiving, numbers, num
           return;
         }
         if (Date.now() - started >= sendWaitMs) {
-          setOutcome({ severity: 'info', text: 'The test fax is still on its way; follow it in Jobs.' });
+          setOutcome({ severity: 'info', text: 'The test fax is still on its way; follow it in Sent.' });
           return;
         }
         const through = job.backend || sending;
@@ -156,7 +156,7 @@ export default function WizardTestFax({ client, sending, receiving, numbers, num
         try {
           const fresh = (await client.listInbound()).find((fax) => !known.has(fax.id));
           if (fresh) {
-            setArrival({ severity: 'success', text: `A fax${fresh.fr ? ` from ${fresh.fr}` : ''} arrived; it is in the Inbox.` });
+            setArrival({ severity: 'success', text: `A fax${fresh.fr ? ` from ${fresh.fr}` : ''} arrived; it is in your received faxes.` });
             return;
           }
         } catch {
@@ -168,7 +168,7 @@ export default function WizardTestFax({ client, sending, receiving, numbers, num
         }
       }
     } catch {
-      if (epoch === waitEpoch.current) setArrival({ severity: 'error', text: 'The Inbox could not be read. Try again.' });
+      if (epoch === waitEpoch.current) setArrival({ severity: 'error', text: 'Received faxes could not be read. Try again.' });
     } finally {
       if (epoch === waitEpoch.current) setWaiting(false);
     }
@@ -181,9 +181,9 @@ export default function WizardTestFax({ client, sending, receiving, numbers, num
 
   const receiveText = receiving === 'sip'
     ? (numbers.length
-      ? `Send a fax to ${numbers.join(' or ')} from any fax service; it appears in the Inbox.`
+      ? `Send a fax to ${numbers.join(' or ')} from any fax machine or service; it will show up in your received faxes.`
       : 'Add your fax number to the SIP trunk first, then send a fax to it from any fax service.')
-    : `Send a fax to your ${providerLabel(receiving)} fax number from any fax service; it appears in the Inbox.`;
+    : `Send a fax to your ${providerLabel(receiving)} fax number from any fax machine or service; it will show up in your received faxes.`;
 
   return (
     <Stack spacing={2} data-testid="wizard-test-fax">

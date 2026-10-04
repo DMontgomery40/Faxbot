@@ -489,7 +489,7 @@ function SetupWizard({ client, onDone, docsBase, canRestart = true }: SetupWizar
     const epoch = requestEpoch.current;
     try {
       await client.simulateInbound({ backend: callbacks.backend });
-      if (epoch === requestEpoch.current) setNotice({ severity: 'info', text: 'A test received fax was added to the Inbox.' });
+      if (epoch === requestEpoch.current) setNotice({ severity: 'info', text: 'A test fax was added to your received faxes.' });
     } catch (error) {
       if (epoch === requestEpoch.current) setNotice({ severity: 'error', text: errorText(error, 'Inbound simulation failed.') });
     } finally {

@@ -152,6 +152,7 @@ const ConsoleBox: React.FC<{ lines: string[]; loading?: boolean; title?: string 
 const ScriptsTests: React.FC<Props> = ({ client, onNavigate, docsBase }) => {
   const [error, setError] = useState<string>('');
   const [busyInbound, setBusyInbound] = useState<boolean>(false);
+  const [testFaxAdded, setTestFaxAdded] = useState<boolean>(false);
   const [busyInfo, setBusyInfo] = useState<boolean>(false);
   const [inboundLines, setInboundLines] = useState<string[]>([]);
   const [infoLines, setInfoLines] = useState<string[]>([]);
@@ -338,6 +339,35 @@ const ScriptsTests: React.FC<Props> = ({ client, onNavigate, docsBase }) => {
                   </Stack>
                 </Stack>
                 <ConsoleBox lines={inboundLines} loading={busyInbound} />
+                <Box>
+                  <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                    Add a test fax adds a one-page test document to Received, marked as a test fax everywhere.
+                  </Typography>
+                  <Button
+                    variant="outlined"
+                    onClick={async () => {
+                      setError(''); setTestFaxAdded(false); setBusyInbound(true);
+                      try {
+                        await client.simulateInbound();
+                        setTestFaxAdded(true);
+                      } catch {
+                        setError("The test fax couldn't be added. Try again.");
+                      } finally {
+                        setBusyInbound(false);
+                      }
+                    }}
+                    disabled={busyInbound || busyInfo}
+                    startIcon={<InboundIcon />}
+                    sx={{ borderRadius: 2 }}
+                  >
+                    Add a test fax
+                  </Button>
+                  {testFaxAdded && (
+                    <Alert severity="success" sx={{ mt: 1, borderRadius: 2 }} onClose={() => setTestFaxAdded(false)}>
+                      A test fax was added to your received faxes.
+                    </Alert>
+                  )}
+                </Box>
               </Stack>
             </ResponsiveFormSection>
           </Grid>

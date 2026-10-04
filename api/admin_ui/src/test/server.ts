@@ -594,6 +594,14 @@ const consoleHandlers = [
   // One fax's cost: nothing to say for a fax that placed no call.
   http.get('/routing/faxes/:jobId/cost', () => json({ state: 'none', summary: null, reported_cost: [], estimated_cost: [] })),
   http.get('/routing/inbound-costs', () => json({ costs: {} })),
+  http.get('/routing/fax-costs', () => json({ costs: {} })),
+  // A number with no history and no route recommendation yet.
+  http.get('/routing/destinations/:number', ({ params }) => json({ number: params.number, display_name: null, notes: null,
+    preferred_route: null, accepts_references: false, version: 0, routes: [], estimated_cost_30_days: [],
+    direct_partner: null, recommended_routes: [], available_routes: [] })),
+  // The work queue: nothing assigned until a test says otherwise.
+  http.get('/work', () => json({ items: [] })),
+  http.get('/work/settings', () => json({ acknowledge_hours: 24, mailboxes: [] })),
   http.get('/intake/items', () => json({ items: [], counts: { received: 0, sending: 0, delivered: 0, failed: 0 } })),
   http.get('/intake/connectors', () => json({ connectors: [] })),
   http.get('/direct/peers', () => json({ peers: [] })),

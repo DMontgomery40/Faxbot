@@ -25,6 +25,12 @@ const result = {
 };
 
 describe('Diagnostics', () => {
+  it('offers to restart Faxbot, in those words', () => {
+    render(<Diagnostics client={client()} />);
+    expect(screen.getByRole('button', { name: 'Restart Faxbot' })).toBeTruthy();
+    expect(screen.queryByText(/Restart API/)).toBeNull();
+  });
+
   it('shows configuration as plain facts, with no revision identifiers or counters', async () => {
     server.use(http.post('/admin/diagnostics/run', () => HttpResponse.json(result)));
     render(<Diagnostics client={client()} />);

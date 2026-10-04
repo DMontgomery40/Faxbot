@@ -79,14 +79,14 @@ CLI_ONLY: dict = {}
 AWAITING_CONSOLE = {
     ('GET', '/access/audit'): 'System → Audit log',
     ('GET', '/admin/db-status'): 'System → Diagnostics: database status',
-    ('GET', '/admin/fax-jobs/{job_id}/delivery'): 'Faxes → Sent: delivery attempts and evidence',
-    ('POST', '/admin/fax-jobs/{job_id}/reconcile'): 'Faxes → Sent: Confirm receipt for an uncertain fax',
     ('GET', '/cases/{case_id}/documents'): 'Recipients → Case packets',
     ('POST', '/cases/{case_id}/faxes'): 'Recipients → Case packets',
 }
 
 # Gaps still open in the command line. Builder M removes each entry with the command that closes it.
-AWAITING_CLI: dict = {}
+AWAITING_CLI = {
+    ('GET', '/routing/fax-costs'): 'faxbot sent list: a cost column, as on Faxes → Sent',
+}
 
 LISTS = {'NOT_OPERATOR': NOT_OPERATOR, 'CONSOLE_ONLY': CONSOLE_ONLY, 'CLI_ONLY': CLI_ONLY,
          'AWAITING_CONSOLE': AWAITING_CONSOLE, 'AWAITING_CLI': AWAITING_CLI}

@@ -137,11 +137,11 @@ describe('Setup Wizard test fax', () => {
     server.use(http.get('/inbound', () => HttpResponse.json(lists.length > 1 ? lists.shift() : lists[0])));
     render(<WizardTestFax client={client()} sending="" receiving="sip" numbers={['+15555550100']} pollMs={5} />);
     expect(screen.getByTestId('receive-instructions').textContent)
-      .toBe('Send a fax to +15555550100 from any fax service; it appears in the Inbox.');
+      .toBe('Send a fax to +15555550100 from any fax machine or service; it will show up in your received faxes.');
     expect(screen.queryByText('Send a test fax (optional)')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Wait for a received fax' }));
     expect(await screen.findByText('Waiting for a fax…')).toBeTruthy();
-    expect((await screen.findByTestId('test-receive-outcome')).textContent).toBe('A fax from +13035550100 arrived; it is in the Inbox.');
+    expect((await screen.findByTestId('test-receive-outcome')).textContent).toBe('A fax from +13035550100 arrived; it is in your received faxes.');
     await waitFor(() => expect(screen.queryByText('Waiting for a fax…')).toBeNull());
   });
 });

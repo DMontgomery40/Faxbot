@@ -18,6 +18,7 @@ import {
   CheckCircle as CheckCircleIcon,
   Error as ErrorIcon,
   ChevronRight as ChevronRightIcon,
+  Send as SendIcon,
 } from '@mui/icons-material';
 import AdminAPIClient, { AdminAPIError, isNotAvailable } from '../api/client';
 import type { HealthStatus, WorkCounts } from '../api/types';
@@ -136,13 +137,13 @@ export function attentionItems({ health, work, intake, costs, canSetUp = false }
     items.push({ key: 'uncertain', label: 'Sent faxes with an uncertain result', count: health.jobs.reconciliation_required, destination: 'faxes/sent' });
   }
   if (work.kind === 'ready' && work.data.unassigned > 0) {
-    items.push({ key: 'unassigned', label: 'Received faxes waiting for an owner', count: work.data.unassigned, destination: 'faxes/work' });
+    items.push({ key: 'unassigned', label: 'Received faxes waiting for an owner', count: work.data.unassigned, destination: 'faxes/received?show=waiting' });
   }
   if (work.kind === 'ready' && work.data.overdue > 0) {
-    items.push({ key: 'overdue', label: 'Received faxes that are overdue', count: work.data.overdue, destination: 'faxes/work' });
+    items.push({ key: 'overdue', label: 'Received faxes that are overdue', count: work.data.overdue, destination: 'faxes/received?show=overdue' });
   }
   if (intake.kind === 'ready' && intake.data.failed > 0) {
-    items.push({ key: 'not-delivered', label: 'Received faxes not delivered by email', count: intake.data.failed, destination: 'faxes/received' });
+    items.push({ key: 'not-delivered', label: 'Received faxes not delivered by email', count: intake.data.failed, destination: 'faxes/received?show=not-delivered' });
   }
   if (costs.kind === 'ready') {
     const unrecorded = [...costs.data.providers, ...(costs.data.received ?? [])]
@@ -159,9 +160,11 @@ interface DashboardProps {
   onNavigate?: (destination: AdminDestination) => void;
   // May this account open the Setup Wizard (settings:write)?
   canSetUp?: boolean;
+  // Opens Send a fax; absent for people who may not send.
+  onSendFax?: () => void;
 }
 
-function Dashboard({ client, onNavigate, canSetUp = false }: DashboardProps) {
+function Dashboard({ client, onNavigate, canSetUp = false, onSendFax }: DashboardProps) {
   const theme = useTheme();
   const warningTextColor = theme.palette.mode === 'light'
     ? darken(theme.palette.warning.light, 0.6)
@@ -264,14 +267,21 @@ function Dashboard({ client, onNavigate, canSetUp = false }: DashboardProps) {
         <Typography variant="h4" component="h1">
           Overview
         </Typography>
-        <Button
-          variant="outlined"
-          startIcon={<RefreshIcon />}
-          onClick={() => { void fetchHealth(); void fetchDelivery(); }}
-          disabled={loading}
-        >
-          Refresh
-        </Button>
+        <Box display="flex" gap={1}>
+          {onSendFax && (
+            <Button variant="contained" startIcon={<SendIcon />} onClick={onSendFax}>
+              Send a fax
+            </Button>
+          )}
+          <Button
+            variant="outlined"
+            startIcon={<RefreshIcon />}
+            onClick={() => { void fetchHealth(); void fetchDelivery(); }}
+            disabled={loading}
+          >
+            Refresh
+          </Button>
+        </Box>
       </Box>
 
       {error && (

@@ -30,13 +30,15 @@ import {
 import { clearPendingSend, loadPendingSend, savePendingSend, sendFingerprint } from './sendIntent';
 import { countryName, numberHint, numberPlaceholder } from './common/numbers';
 import type { BatchingCheck } from '../api/batchingTypes';
+import type { RecommendedRoute } from '../api/deliveryTypes';
+import { formatMoney } from './delivery/shared';
 
 interface SendFaxProps {
   client: AdminAPIClient;
   config: AdminConfig | null;
   configLoading: boolean;
   configError: string | null;
-  // Open this fax in Jobs (the confirmation links to it).
+  // Open this fax in Sent (the confirmation links to it).
   onOpenJob?: (jobId: string) => void;
 }
 
@@ -79,12 +81,12 @@ function acceptanceMessage(response: FaxSendResult, to?: string): string {
     case 'completed':
       return 'Fax delivered.';
     case 'failed':
-      return 'Fax failed. See Jobs for details.';
+      return 'Fax failed. See Sent for details.';
     case 'cancelled':
     case 'canceled':
       return 'Fax cancelled.';
     case 'reconciliation_required':
-      return "Faxbot couldn't confirm whether this fax was sent. Check Jobs before sending it again.";
+      return "Faxbot couldn't confirm whether this fax was sent. Check Sent before sending it again.";
     default:
       return 'Fax submitted.';
   }
@@ -114,6 +116,21 @@ function SendFax({ client, config, configLoading, configError, onOpenJob }: Send
     const timer = window.setTimeout(() => {
       client.checkBatching(toNumber)
         .then((answer) => { if (live) setTogether(answer.sends_together ? answer : null); })
+        .catch(() => undefined);
+    }, 400);
+    return () => { live = false; window.clearTimeout(timer); };
+  }, [client, toNumber]);
+
+  // The route Faxbot would use for this number and what one page costs there, before sending.
+  // People who may not read routing settings see the form without it.
+  const [route, setRoute] = useState<RecommendedRoute | null>(null);
+  useEffect(() => {
+    setRoute(null);
+    if (!/\d{3}/.test(toNumber)) return undefined;
+    let live = true;
+    const timer = window.setTimeout(() => {
+      client.getDestination(normalizeFaxDestination(toNumber))
+        .then((detail) => { if (live) setRoute(detail.recommended_routes[0] ?? null); })
         .catch(() => undefined);
     }, 400);
     return () => { live = false; window.clearTimeout(timer); };
@@ -239,7 +256,7 @@ function SendFax({ client, config, configLoading, configError, onOpenJob }: Send
   return (
     <Box onKeyPress={handleKeyPress}>
       <Typography variant="h4" component="h1" gutterBottom sx={{ mb: 3 }}>
-        {faxDisabled ? 'Queue Test Fax' : 'Send Fax'}
+        {faxDisabled ? 'Queue a test fax' : 'Send a fax'}
       </Typography>
 
       {configLoading && <Alert severity="info" sx={{ mb: 3 }}>Loading send settings…</Alert>}
@@ -300,6 +317,18 @@ function SendFax({ client, config, configLoading, configError, onOpenJob }: Send
                   errorMessage={fileError ?? undefined}
                   icon={<DocumentIcon />}
                 />
+
+                {route && (
+                  <Box data-testid="send-route">
+                    <Typography variant="body2">Faxbot will send it through {route.label}.</Typography>
+                    <Typography variant="body2" color="text.secondary">{route.explanation}</Typography>
+                    {route.estimated_cost_one_page && !route.included_in_plan && (
+                      <Typography variant="body2" color="text.secondary">
+                        Estimated cost: {formatMoney(route.estimated_cost_one_page)} a page.
+                      </Typography>
+                    )}
+                  </Box>
+                )}
 
                 {together && (
                   <Box data-testid="send-now">
@@ -393,10 +422,10 @@ function SendFax({ client, config, configLoading, configError, onOpenJob }: Send
                 </Typography>
                 {result.jobId && (onOpenJob ? (
                   <Button size="small" sx={{ mt: 1, px: 0 }} onClick={() => onOpenJob(result.jobId!)}>
-                    Follow it in Jobs
+                    See it in Sent
                   </Button>
                 ) : (
-                  <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>Follow it in Jobs.</Typography>
+                  <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>See it in Sent.</Typography>
                 ))}
               </Box>
             </Alert>
@@ -441,7 +470,7 @@ function SendFax({ client, config, configLoading, configError, onOpenJob }: Send
                     Job Status
                   </Typography>
                   <Typography variant="body2" color="text.secondary">
-                    Follow each fax in the Jobs tab; delivery time depends on your provider.
+                    Follow each fax under Faxes, Sent; delivery time depends on your provider.
                   </Typography>
                 </Box>
               </Stack>

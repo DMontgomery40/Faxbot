@@ -197,6 +197,15 @@ def test_reconcile_records_telnyx_charges_and_the_console_reads_them(telnyx_clie
     assert 'KEYsynthetic-telnyx' not in response.text + str(costs)
     assert telnyx_client.get('/routing/faxes/' + '0' * 32 + '/cost', headers=ADMIN).status_code == 404
     assert telnyx_client.get(f'/routing/faxes/{job}/cost').status_code == 401
+    # The Sent list reads its costs in one request; unknown and unreadable faxes are left out.
+    batch = telnyx_client.get('/routing/fax-costs', headers=ADMIN, params={'ids': f'{job},{"0" * 32},{job}'})
+    assert batch.status_code == 200, batch.text
+    assert {key: value['summary'] for key, value in batch.json()['costs'].items()} == {
+        job: 'Telnyx charged $0.005 for this call.'}
+    assert batch.json()['costs'][job]['reported_cost'] == [{'currency': 'USD', 'amount': '0.005'}]
+    outsider = scoped_key(telnyx_client, ['inbound:list'])
+    assert telnyx_client.get('/routing/fax-costs', headers=outsider, params={'ids': job}).json() == {'costs': {}}
+    assert telnyx_client.get('/routing/fax-costs', params={'ids': job}).status_code == 401
 
 
 def test_a_received_fax_cost_is_read_with_the_fax(telnyx_client):
