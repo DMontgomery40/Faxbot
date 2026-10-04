@@ -207,7 +207,7 @@ describe('Credentials set in .env', () => {
     const fields = await screen.findAllByDisplayValue('Set in .env');
     expect(fields.length).toBeGreaterThanOrEqual(2);
     for (const field of fields) expect((field as HTMLInputElement).disabled).toBe(true);
-    expect(screen.getAllByText('Change it in .env and restart Faxbot.').length).toBeGreaterThanOrEqual(2);
+    expect(screen.getAllByText('Change it in .env, then run docker compose up -d.').length).toBeGreaterThanOrEqual(2);
     expect(screen.queryByRole('button', { name: /Show Email password/ })).toBeNull();
     // The secret key is not set in .env and stays editable.
     expect(screen.getAllByPlaceholderText('Secret key').every((input) => !(input as HTMLInputElement).disabled)).toBe(true);

@@ -23,7 +23,7 @@ class ConfigurationValueError(ValueError):
 # Credentials read from the environment at every start (config_runtime). API_KEY keeps
 # its first-start and owner-recovery rules; DATABASE_URL changes need a datastore transfer.
 ENVIRONMENT_CREDENTIAL_EXCLUSIONS = frozenset({"api_key", "database_url"})
-ENVIRONMENT_MANAGED_REFUSAL = "This key is set in .env. Change it there and restart Faxbot."
+ENVIRONMENT_MANAGED_REFUSAL = "This key is set in .env. Change it there, then run docker compose up -d."
 
 # Fax numbers in settings are saved in E.164; national input uses the country.
 _NUMBER_FIELDS = frozenset({"direct_fax_number", "sip_trunk_caller_id", "sip_trunk_dids",

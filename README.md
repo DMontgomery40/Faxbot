@@ -64,7 +64,7 @@ Screens follow the signed-in user's permissions and provider capabilities. See t
 
 Health checks are available at `/health` and `/health/ready`. Readiness does not prove that a fax has been delivered. Faxbot starts even when it cannot sign in to its fax engine (Asterisk): readiness, the dashboard and Settings give the reason in one sentence, sends are refused with it, and Faxbot keeps trying. The Compose file restarts the `api` and `asterisk` services after any exit, including **Restart API** in the console.
 
-Credentials in `.env` (provider keys, passwords and secrets) are read at every start and are the values in force; the console shows them as **Set in .env** and they are changed there, followed by a restart. `API_KEY` (the installation key) is read only at the first start, and other settings are managed in the console after that. Follow any requested restart and confirm the active settings before transmitting. [Held test jobs](docs/setup/test-mode.md) remain held when sending is enabled later.
+Credentials in `.env` (provider keys, passwords and secrets) are read at every start and are the values in force; the console shows them as **Set in .env** and they are changed there, followed by `docker compose up -d` (a plain `docker compose restart` keeps the old values). `API_KEY` (the installation key) is read only at the first start, and other settings are managed in the console after that. Follow any requested restart and confirm the active settings before transmitting. [Held test jobs](docs/setup/test-mode.md) remain held when sending is enabled later.
 
 ## SDKs and AI assistants
 

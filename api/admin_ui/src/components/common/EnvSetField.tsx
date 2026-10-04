@@ -3,7 +3,8 @@ import { TextField, type TextFieldProps } from '@mui/material';
 // Credentials supplied by the environment (.env) are read at every start; the
 // console shows that they are set there and never offers to edit or reveal them.
 export const ENV_SET_TEXT = 'Set in .env';
-export const ENV_SET_HELP = 'Change it in .env and restart Faxbot.';
+// A plain `docker compose restart` keeps the container's old environment; `up -d` recreates it.
+export const ENV_SET_HELP = 'Change it in .env, then run docker compose up -d.';
 
 /** Names of settings whose value comes from the environment, from GET /admin/settings. */
 export function environmentManaged(settings: { _meta?: { [hint: string]: unknown } } | null | undefined): Set<string> {

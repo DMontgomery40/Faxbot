@@ -51,7 +51,7 @@ def settings_get(section: str = typer.Argument(None, help='Only this section, fo
                 row[1] = 'set in .env'
         out.table(['Setting', 'Value'], rows)
         if managed:
-            out.line('Set in .env (change them there and restart Faxbot): ' + ', '.join(sorted(managed)))
+            out.line('Set in .env (change them there, then run docker compose up -d): ' + ', '.join(sorted(managed)))
         if not (current.get('backend') or {}).get('type') and (not section or section in {'backend', 'hybrid'}):
             out.line('No fax provider set up yet.')
         if meta.get('apply_state') == 'pending_restart':
@@ -93,7 +93,7 @@ def settings_set(assignments: list[str] = typer.Argument(None, metavar='NAME=VAL
     api = state.api()
     current = api.get('/admin/settings')
     if set(changes) & set(current.get('_meta', {}).get('env_managed') or []):
-        raise CliError('This key is set in .env. Change it there and restart Faxbot.', EXIT_CONFLICT)
+        raise CliError('This key is set in .env. Change it there, then run docker compose up -d.', EXIT_CONFLICT)
     result = api.put('/admin/settings', json={**changes, 'expected_revision_id': current['_meta']['desired_revision_id']})
 
     def human(out):

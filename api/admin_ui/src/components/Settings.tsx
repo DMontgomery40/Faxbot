@@ -51,6 +51,8 @@ interface SettingsProps {
 type FormValue = string | number | boolean;
 type SettingsForm = Record<string, FormValue>;
 
+const ENV_IMPORT_HELP = 'Keys and passwords in .env are read at every start; other settings are read from .env only on the first start.';
+
 // Limits checked before saving, so a value the server would refuse gets a plain sentence.
 const FIELD_RANGES: Record<string, { min: number; max: number; message: string }> = {
   route_min_success_percent: { min: 0, max: 100, message: 'Enter a minimum delivery rate from 0 to 100.' },
@@ -598,10 +600,10 @@ function Settings({ client, canWrite = false, focus, onFocused }: SettingsProps)
             
             <ResponsiveSettingItem
               icon={settings.persisted?.enabled ? <CheckCircleIcon color="success" /> : <WarningIcon color="warning" />}
-              label="Allow .env import for first bootstrap"
+              label="Allow .env import on the first start"
               value={settings.persisted?.enabled ? 'Enabled' : 'Disabled'}
               editValue={form.enable_persisted_settings ?? settings.persisted?.enabled ?? false}
-              helperText="Lets a .env file set up a new Faxbot once; later edits to the file are ignored."
+              helperText={ENV_IMPORT_HELP}
               onChange={(value) => handleForm('enable_persisted_settings', value === 'true')}
               type="select"
               options={[
