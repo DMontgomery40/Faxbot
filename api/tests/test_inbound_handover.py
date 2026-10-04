@@ -298,3 +298,28 @@ def test_cli_recover_prints_the_plain_result(monkeypatch):
     result = CliRunner().invoke(cli, ['inbound', 'recover'])
     assert result.exit_code == 0, result.output
     assert result.output.strip() == 'Brought in 1 received fax.'
+
+
+@needs_shell
+def test_notifier_passes_the_sip_call_id_in_the_call_object(tmp_path):
+    """The SIP Call-ID (base64) rides in the call object so the carrier's charge matches the call exactly."""
+    data = tmp_path / 'faxdata'
+    (data / 'asterisk').mkdir(parents=True)
+    (data / 'asterisk' / 'inbound.secret').write_text('synthetic-file-secret')
+    file = tiff(data / 'inbound' / '1791083644.7.tiff')
+    faxbot = _Faxbot(200)
+    environment = {'PATH': os.environ['PATH'], 'FAXBOT_DATA_DIR': str(data), 'FAXBOT_API_URL': faxbot.url,
+                   'FAXBOT_NOTIFY_RETRY_SECONDS': '0'}
+    try:
+        for extra in (['callid64=M2YwYzVhOGUtMTExMQ=="; touch pwned'], []):
+            result = subprocess.run(['sh', str(NOTIFY), f'file={file}', 'did=+15555550199', 'uniqueid=1791083644.7',
+                                     *extra], env=environment, capture_output=True, text=True, timeout=60)
+            assert result.stdout == 'ok\n'
+    finally:
+        faxbot.close()
+    first, second = (request['body']['call'] for request in faxbot.requests)
+    assert first['sip_call_id_b64'] == 'M2YwYzVhOGUtMTExMQ==touchpwned'  # only base64 characters survive
+    assert second['sip_call_id_b64'] is None
+    assert set(first) - {'sip_call_id_b64'} == {'did', 'caller', 'started_at', 'answered_at', 'ended_at', 'pages',
+                                                't38', 'remote_station_id_b64'}
+

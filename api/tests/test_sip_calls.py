@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 import pytest
 import sqlalchemy as sa
 
-from api.app import schema, schema_sip
+from api.app import schema, schema_charges, schema_sip
 # The fake AMI peer fixtures bind settings through the ``app`` package.
 from app import sip_calls
 from app.config import use_configuration
@@ -36,8 +36,11 @@ def test_0009_upgrade_preserves_0008_state_and_validates_frozen_shape(database):
     for name, rows in before.items():
         if name != 'alembic_version':
             assert without_work_catalogue(name, after[name]) == rows, name
-    metadata = schema_sip.frozen_metadata(dialect=database.dialect.name)
+    # Later revisions add the SIP Call-ID column and its index to this table.
+    metadata = schema_charges.frozen_metadata(dialect=database.dialect.name)
     table = metadata.tables['sip_call_records']
+    later = {(name, columns, unique) for name, owner, columns, unique in schema_charges.INDEXES
+             if owner == 'sip_call_records'}
     with database.connect() as connection:
         assert schema.validate_schema(connection, require_version=True) == schema.HEAD
         inspector = sa.inspect(connection)
@@ -46,7 +49,7 @@ def test_0009_upgrade_preserves_0008_state_and_validates_frozen_shape(database):
             c.name for c in table.constraints if isinstance(c, sa.CheckConstraint)}
         assert {(i['name'], tuple(i['column_names']), bool(i['unique']))
                 for i in inspector.get_indexes('sip_call_records')} == {
-            (name, columns, unique) for name, columns, unique in schema_sip.INDEXES}
+            (name, columns, unique) for name, columns, unique in schema_sip.INDEXES} | later
         columns = {c['name']: c for c in inspector.get_columns('sip_call_records')}
         assert set(columns) == {column.name for column in table.columns}
         assert not columns['disposition']['nullable'] and columns['answered_at']['nullable']
@@ -409,3 +412,30 @@ async def test_inbound_call_events_flow_from_the_manager_connection_into_records
             sip_calls.detach()
     [record] = records.page(direction='inbound')['items']
     assert record['verdict'] == 'no_t38_data_back' and record['caller'] == '+13035550100'
+
+
+def _sip_call_ids(records):
+    table = records.table
+    with records.engine.connect() as connection:
+        return dict(connection.execute(sa.select(table.c.call_id, table.c.sip_call_id)).all())
+
+
+def test_the_sip_call_id_is_stored_from_every_call_report_and_never_replaced(records):
+    """The carrier bills each call under its SIP Call-ID; it is kept so the charge matches exactly."""
+    outbound, inbound = '3f0c5a8e-1111-4000-8000-000000000001', '6a1d0c2b-2222-4000-8000-000000000002'
+    records.record_submission(submission(), now=NOW)
+    records.record_fax_result(fax_result(CallID64=_b64(outbound)), now=NOW + timedelta(seconds=74))
+    records.record_fax_result(fax_result(CallID64=_b64('a-later-different-id')), now=NOW + timedelta(seconds=75))
+    call = {'did': '+15555550199', 'caller': '+15555550100', 'started_at': _epoch(NOW), 'answered_at': _epoch(NOW),
+            'ended_at': _epoch(NOW + timedelta(seconds=26)), 'sip_call_id_b64': _b64(inbound)}
+    records.record_inbound(call, call_id='1791049108.4', inbound_fax_id='f' * 32, preset='telnyx')
+    # A call reported first without its image and later handed over gains the Call-ID once.
+    records.record_inbound_event(inbound_call(UniqueID='1791075343.20'), preset='telnyx')
+    records.record_inbound({**call, 'sip_call_id_b64': _b64('b7e3-late')}, call_id='1791075343.20')
+    records.record_inbound_event(inbound_call(UniqueID='1791075343.21', CallID64='not base64!'), preset='telnyx')
+    records.record_inbound_event(inbound_call(UniqueID='1791075343.22', CallID64=_b64('has space')), preset='telnyx')
+    assert _sip_call_ids(records) == {ATTEMPT: outbound, '1791049108.4': inbound, '1791075343.20': 'b7e3-late',
+                                      '1791075343.21': None, '1791075343.22': None}
+    # The public call record shape is unchanged.
+    assert 'sip_call_id' not in records.for_attempt(ATTEMPT)[0]
+

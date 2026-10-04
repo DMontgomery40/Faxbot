@@ -53,7 +53,8 @@ def test_too_few_outcomes_are_not_evidence_of_unreliability():
 
 def test_verified_direct_route_is_preferred_over_every_provider():
     trunk = provider('sip', card('sip', minute='0.001'), bound=True)
-    assert keys(RoutePolicy().order([trunk, DIRECT])) == [('direct', 'direct_peer'), ('sip', 'cheapest')]
+    # With one provider there is nothing to compare: it is the configured provider, not the cheapest.
+    assert keys(RoutePolicy().order([trunk, DIRECT])) == [('direct', 'direct_peer'), ('sip', 'configured')]
 
 
 def test_explicit_provider_preference_overrides_cost_and_direct_route():
@@ -67,7 +68,7 @@ def test_explicit_provider_preference_overrides_cost_and_direct_route():
 def test_preferring_direct_keeps_the_default_order():
     trunk = provider('sip', card('sip', minute='0.001'), bound=True)
     assert keys(RoutePolicy().order([trunk, DIRECT], preferred='direct')) == [
-        ('direct', 'direct_peer'), ('sip', 'cheapest')]
+        ('direct', 'direct_peer'), ('sip', 'configured')]
 
 
 def test_no_providers_means_no_routes():
@@ -78,8 +79,9 @@ def test_unknown_cost_sorts_after_known_cost_and_keeps_outbound_provider_first_o
     unknown_bound = provider('documo', None, bound=True)
     unknown = provider('sinch', None)
     priced = provider('signalwire', card('signalwire', minute='0.0095'))
+    # Other routes' prices are unknown, so the priced one is only the cheapest with a known price.
     assert keys(RoutePolicy().order([unknown, unknown_bound, priced])) == [
-        ('signalwire', 'cheapest'), ('documo', 'alternative'), ('sinch', 'alternative')]
+        ('signalwire', 'known_cheapest'), ('documo', 'alternative'), ('sinch', 'alternative')]
 
 
 def test_duplicate_routes_are_rejected():

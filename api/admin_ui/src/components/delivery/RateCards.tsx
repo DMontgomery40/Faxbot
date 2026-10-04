@@ -8,7 +8,7 @@ import PriceChangeIcon from '@mui/icons-material/PriceChange';
 import AdminAPIClient from '../../api/client';
 import type { RateCard } from '../../api/deliveryTypes';
 import { ConfirmDialog, EmptyState, Field, FormDialog, useSmallScreens } from '../access/AccessViews';
-import { DeliveryError, formatRate } from './shared';
+import { DeliveryError, formatMoney, formatRate } from './shared';
 import { providerLabel } from '../../providerLabels';
 
 const BILLING = [
@@ -25,14 +25,18 @@ function billingLabel(seconds: number): string {
 }
 
 function pricing(card: RateCard): string {
+  const monthly = card.monthly_fee && Number(card.monthly_fee) > 0
+    ? `${formatMoney({ amount: card.monthly_fee, currency: card.currency })} a month` : null;
+  if (card.included_in_plan && monthly) return `${monthly}, faxes included`;
   const parts = [formatRate(card.per_minute, card.currency, 'minute'), formatRate(card.per_page, card.currency, 'page'),
-    formatRate(card.per_call, card.currency, 'call')].filter(Boolean);
+    formatRate(card.per_call, card.currency, 'call'), monthly && `plus ${monthly}`].filter(Boolean);
   return parts.length ? parts.join(', ') : 'No charge';
 }
 
 const EMPTY: RateCard = {
   provider_id: 'sip', label: '', direction: 'outbound', currency: 'USD', per_minute: '0', per_page: '0', per_call: '0',
   billing_increment_seconds: 60, minimum_seconds: 0, source_url: null, captured_on: new Date().toISOString().slice(0, 10),
+  monthly_fee: null,
 };
 
 function CardDialog({ card, onClose, onSave, busy, error }: {
@@ -64,6 +68,9 @@ function CardDialog({ card, onClose, onSave, busy, error }: {
         <Field label={`Per page (${draft.currency})`} value={draft.per_page} onChange={(value) => set('per_page', value)} />
         <Field label={`Per call (${draft.currency})`} value={draft.per_call} onChange={(value) => set('per_call', value)} />
       </Box>
+      <Field label={`Monthly plan fee (${draft.currency})`} value={draft.monthly_fee ?? ''}
+        onChange={(value) => set('monthly_fee', value.trim() ? value : null)}
+        helperText="For an unlimited plan, enter the monthly fee and leave the other prices at 0." />
       <Box display="grid" gridTemplateColumns={{ xs: '1fr', sm: '1fr 1fr 1fr' }} columnGap={2}>
         <TextField select fullWidth margin="normal" label="Billing" value={String(draft.billing_increment_seconds)}
           onChange={(e) => set('billing_increment_seconds', Number(e.target.value))} SelectProps={{ native: true }} InputLabelProps={{ shrink: true }}>

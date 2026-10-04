@@ -78,6 +78,9 @@ class ConfigurationValues(BaseModel):
     # Public address the carrier should send signaling and media to when Asterisk is behind NAT.
     sip_external_address: str = Field('', validation_alias='SIP_EXTERNAL_ADDRESS',
                                       pattern=r'^(?:[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?)?$')
+    # Read-only Telnyx API v2 key: Faxbot reads what each trunk call was charged. Never used to place calls.
+    telnyx_api_key: str = Field('', validation_alias='TELNYX_API_KEY', repr=False, json_schema_extra={'secret': True},
+                                pattern=r'^[!-~]{0,256}$')
     phaxio_api_key: str = Field('', validation_alias='PHAXIO_API_KEY', repr=False, json_schema_extra={'secret': True})
     phaxio_api_secret: str = Field('', validation_alias='PHAXIO_API_SECRET', repr=False, json_schema_extra={'secret': True})
     phaxio_callback_token: str = Field('', validation_alias='PHAXIO_CALLBACK_TOKEN', repr=False, json_schema_extra={'secret': True})

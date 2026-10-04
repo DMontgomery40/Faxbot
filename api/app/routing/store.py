@@ -87,7 +87,7 @@ class RouteStore:
         return RateCard(row['id'], row['provider_id'], row['direction'], row['label'], row['currency'],
                         row['per_minute_micros'], row['per_page_micros'], row['per_call_micros'],
                         row['billing_increment_seconds'], row['minimum_seconds'], row['source_url'],
-                        row['captured_on'])
+                        row['captured_on'], row.get('monthly_fee_micros'))
 
     def current_cards(self, connection=None):
         def read(conn):
@@ -144,7 +144,7 @@ class RouteStore:
                 per_call_micros=card.per_call_micros,
                 billing_increment_seconds=card.billing_increment_seconds,
                 minimum_seconds=card.minimum_seconds, source_url=card.source_url,
-                captured_on=card.captured_on, created_at=now))
+                captured_on=card.captured_on, monthly_fee_micros=card.monthly_fee_micros, created_at=now))
             wanted[(card.provider_id, card.direction)] = identity
         retired = [card.id for key, card in current.items() if wanted.get(key) != card.id]
         if retired:

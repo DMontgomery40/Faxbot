@@ -175,6 +175,34 @@ Rounding applies to each call separately. With whole-minute billing, a 59-second
 
 Check your carrier account for your actual rates before you rely on these figures.
 
+### How actual charges arrive (Telnyx)
+
+The figures above are estimates. With a Telnyx trunk, Faxbot can also read what Telnyx actually charged for each call, sent or received, and show it in **Tools → Delivery routes**, in **Job Details** and in the Inbox.
+
+1. In the Telnyx portal, create an API key (**Account settings → Keys & credentials → API keys**).
+2. Add it to `.env` and restart:
+
+   ```env
+   TELNYX_API_KEY=KEY...
+   ```
+
+   ```bash
+   docker compose up -d
+   ```
+
+The key is read at every start and never shown in the console. Faxbot only reads billing records with it; it never places calls or changes your Telnyx account.
+
+About once a minute, Faxbot asks Telnyx for the billing records (detail records) of finished calls and matches each one to its own call record:
+
+- by the call's SIP Call-ID, which Asterisk records for every call;
+- otherwise, only when exactly one call has the same numbers and was answered and ended within 45 seconds of the Telnyx record, and that record fits no other call. If Faxbot did not learn the number a received call dialled, the caller's number must match instead; time alone never decides.
+
+A record that could fit more than one call is never guessed. It stays unmatched, the call's cost stays unknown, and Spending counts it as "could not be matched".
+
+Telnyx usually has a call's record within minutes. Until then the fax shows "Cost not reported yet." A record without a price stays unknown, never zero. Faxbot asks again with growing gaps, checks once more a day after the call to settle the charge, and stops asking after 7 days. If Telnyx later reports a different amount, the new amount replaces the old one and both are kept. A charge never changes a fax's delivery status, and a failed call that Telnyx charged for still counts toward that fax's cost.
+
+To ask Telnyx straight away, select **Check Telnyx charges now** under Spending, or run `faxbot routing reconcile`.
+
 ## How Faxbot records each call
 
 For every call on the trunk Faxbot keeps a call record:

@@ -587,6 +587,9 @@ const consoleHandlers = [
   http.get('/admin/inbound/callbacks', () => json({ callbacks: [] })),
   // Delivery routes, intake and direct delivery: empty until a test says otherwise.
   http.get('/routing/costs', () => json({ since: '2026-09-03T00:00:00', providers: [] })),
+  // One fax's cost: nothing to say for a fax that placed no call.
+  http.get('/routing/faxes/:jobId/cost', () => json({ state: 'none', summary: null, reported_cost: [], estimated_cost: [] })),
+  http.get('/routing/inbound-costs', () => json({ costs: {} })),
   http.get('/intake/items', () => json({ items: [], counts: { received: 0, sending: 0, delivered: 0, failed: 0 } })),
   http.get('/intake/connectors', () => json({ connectors: [] })),
   http.get('/direct/peers', () => json({ peers: [] })),

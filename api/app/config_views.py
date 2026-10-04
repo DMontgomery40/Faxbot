@@ -144,6 +144,9 @@ def project_admin_settings(snapshot: ConfigurationSnapshot, pending_fields: Iter
                 # Why Faxbot chose audio fax for new calls ('no_data_back' or 'network'), and when; else None.
                 **_audio_reason(values),
             },
+            # Lets Faxbot read what Telnyx charged for each call; never shown.
+            'telnyx_api_key': mask_secret(values.telnyx_api_key),
+            'telnyx_api_key_set': bool(values.telnyx_api_key),
         },
         'security': {
             'api_key': mask_secret(values.api_key),
