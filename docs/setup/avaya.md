@@ -50,6 +50,20 @@ Every three media ports carry about one fax at a time. `FAXBOT_MEDIA_PORTS` in `
 | `4000-4059` | 20 |
 | `4000-4099` (largest) | 33 |
 
+On a Linux host you can also stop Docker from starting a helper process for every published port, which is what once used up a small host's memory:
+
+1. In `/etc/docker/daemon.json`, set:
+
+   ```json
+   { "userland-proxy": false }
+   ```
+
+2. Restart Docker (`sudo systemctl restart docker`).
+
+Docker's [daemon reference](https://docs.docker.com/reference/cli/dockerd/) lists this option as "Use userland proxy for loopback traffic (default true)". Its [host network page](https://docs.docker.com/engine/network/drivers/host/) notes that a bridge network otherwise creates a "userland-proxy" for each port. Both pages were read on 4 October 2026.
+
+The setting covers every container on that Docker host. Docker describes it as being for loopback traffic, so calls from a phone system elsewhere on the network do not depend on it. Keep the range at or below 100 ports either way.
+
 If the computer has a firewall, allow these ports from the phone system's address. Never combine this file with `docker-compose.public.yml`, which is for carriers that reach Faxbot from the internet.
 
 Faxbot tells the phone system this address in every call. A phone system on a private network would otherwise be handed Docker's internal address, which it cannot reach.

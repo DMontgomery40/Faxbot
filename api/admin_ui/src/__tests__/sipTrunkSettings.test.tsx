@@ -589,6 +589,10 @@ describe('SIP trunk to a phone system', () => {
     const reach = await screen.findByTestId('phone-system-reach');
     await waitFor(() => expect(within(reach).getByText(given)).toBeTruthy());
     expect(reach.textContent).not.toContain('docker compose');
+    // The trunk check does not repeat what the phone system section already says.
+    fireEvent.click(screen.getByRole('button', { name: 'Check trunk status' }));
+    expect(await screen.findByTestId('sip-trunk-status')).toBeTruthy();
+    expect(screen.getAllByText(given)).toHaveLength(1);
     const hidden = "Faxbot runs in Docker Desktop or Colima here, which hide your phone system's address from "
       + 'Faxbot, so the phone system cannot connect; run Faxbot on a Linux computer to connect a phone system.';
     status = { ...status, ports_text: hidden, message: hidden, phone_system_hidden: true };
