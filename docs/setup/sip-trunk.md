@@ -190,7 +190,7 @@ A carrier listing T.38 support does not guarantee every call completes as T.38. 
 
 Faxbot sends only the caller ID you enter, and you should enter only a number your carrier has assigned to you or verified for you. Carriers reject calls with numbers they have not authorized. Faxbot never presents a number you do not control.
 
-The fax header and station ID that appear on the received pages are separate settings.
+The fax header and station ID that appear on the received pages are separate settings. Leave the station ID empty to send the trunk's caller ID as the station ID; Faxbot never sends a made-up one.
 
 ## Keep your fax number
 

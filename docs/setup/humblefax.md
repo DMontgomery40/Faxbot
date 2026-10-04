@@ -54,6 +54,7 @@ HumbleFax cancellation, webhooks and inbound faxes are not implemented by this a
 - Faxbot stores the credentials encrypted in its database. The exported `.env` template hides them and is not a backup.
 - When HumbleFax rejects the key pair, it creates no fax and Faxbot does not resend. The job still shows that it requires reconciliation. Recreate or recopy both keys from **Developer Settings**, apply them in Settings, then send a new fax. Editing current credentials does not replace an accepted attempt's captured account.
 - A sender number that is not on the account is rejected by HumbleFax. Clear **HumbleFax From Number** to use the account default.
+- Faxbot reads the numbers your HumbleFax API user can send from (HumbleFax's GetUser, read-only, kept for an hour, never while sending) and lists them under Numbers → Your numbers and in `faxbot numbers list`. A sent fax's status also tells Faxbot the number it went from.
 - HumbleFax documents a limit of 5 requests per second per IP address and blocks an address for 60 seconds when it is exceeded. Read failures and rate limits preserve uncertainty; inspect the original fax before considering another submission.
 - Document retention, caller name and account notifications are HumbleFax account settings, not controls enforced by this panel. Faxbot always asks HumbleFax not to add a cover sheet.
 - Confirm HumbleFax's compliance terms before sending protected health information. See [HIPAA requirements](../HIPAA_REQUIREMENTS.md).

@@ -605,7 +605,9 @@ def fs_boundary(monkeypatch):
         return f"+OK Job-UUID: {ACK_UUID}\n"
 
     monkeypatch.setattr(freeswitch_service.subprocess, "check_output", output)
-    return calls
+    # FreeSWITCH needs the caller ID the carrier gave; there is no made-up default any more.
+    with use_configuration(ConfigurationValues.from_environment({"FREESWITCH_CALLER_ID_NUMBER": "+15555550100"})):
+        yield calls
 
 
 def test_freeswitch_returns_canonical_acceptance_uuid_with_bounded_single_command(
@@ -962,3 +964,16 @@ async def test_status_query_never_connects_and_cleans_up_on_disconnect(monkeypat
         with pytest.raises(ConnectionError):
             await asyncio.wait_for(task, 1)
         assert not client._queries
+
+
+def test_an_empty_station_id_is_the_trunk_caller_id_and_none_without_a_trunk():
+    trunk = ami.originate_fields_for(_trunk(FAX_LOCAL_STATION_ID=""), JOB, "+15555550123", "/fax/a.tif",
+                                     attempt_id=ATTEMPT)
+    station = _asterisk_variable_assignments(trunk["Variable"])["FAXSTATION64"]
+    assert base64.b64decode(station).decode() == "+15555550100" == trunk["CallerID"]
+    legacy = ami.originate_fields_for(ConfigurationValues.from_environment({}), JOB, "+15555550123", "/fax/a.tif",
+                                      attempt_id=ATTEMPT)
+    # No made-up station ID: the dialplan skips an empty one (station-empty).
+    assert _asterisk_variable_assignments(legacy["Variable"])["FAXSTATION64"] == ""
+    assert ConfigurationValues.from_environment({}).fax_station_id == ""
+

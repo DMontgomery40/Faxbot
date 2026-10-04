@@ -367,7 +367,7 @@ def test_users_groups_roles_access_mailboxes_numbers_audit_and_sessions(cli, ser
     assert [item['label'] for item in cli.json('numbers', 'mailboxes', 'list')] == ['Billing office']
     cli.json('numbers', 'add', '+15550100002', '--mailbox', 'Billing office')
     cli.json('numbers', 'update', '+1 555 010 0002', '--number', '+15550100003')
-    assert [item['to_number'] for item in cli.json('numbers', 'list')] == ['+15550100003']
+    assert [item['number'] for item in cli.json('numbers', 'list')] == ['+15550100003']
 
     granted = cli.json('access', 'grants', 'add', 'group:Front desk', 'Senders', '--on', 'mailbox:Billing office')
     assert granted['assignment']['resource']['name'] == 'Billing office'

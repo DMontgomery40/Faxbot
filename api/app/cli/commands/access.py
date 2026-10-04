@@ -594,13 +594,89 @@ def mailboxes_update(mailbox: str = typer.Argument(..., help='Mailbox name or id
     state.out().result(result, lambda out: out.line(f"Mailbox {result['mailbox'].get('label') or mailbox} updated."))
 
 
+# The providers whose numbers Your numbers lists, as the console names them.
+CARRIERS = {'sip': 'Carrier trunk', 'humblefax': 'HumbleFax', 'efax': 'eFax', 'signalwire': 'SignalWire',
+            'freeswitch': 'FreeSWITCH'}
+NO_MAILBOX = 'No mailbox: received faxes are visible to people with access to everything.'
+
+
+def comparable_number(value):
+    """A fax number in one form for comparing, as the console does: +1 for ten US/Canadian digits."""
+    text = (value or '').strip()
+    digits = ''.join(character for character in text if character.isdigit())
+    if not digits:
+        return ''
+    if text.startswith('+') or (len(digits) == 11 and digits.startswith('1')):
+        return '+' + digits
+    return '+1' + digits if len(digits) == 10 else digits
+
+
+def carried_numbers(settings):
+    """The numbers each provider carries, from the settings document: [(number, provider, in use)]."""
+    hybrid = settings.get('hybrid') or {}
+    backend = (settings.get('backend') or {}).get('type') or ''
+    sending = hybrid.get('outbound_backend') or backend
+    receiving = (hybrid.get('inbound_backend') or backend) if (settings.get('inbound') or {}).get('enabled') else ''
+    extra = [route.strip() for route in ((settings.get('routing') or {}).get('outbound_routes') or '').split(',')]
+    humblefax = settings.get('humblefax') or {}
+    found = [*[('sip', number) for number in ((settings.get('sip') or {}).get('trunk') or {}).get('dids') or []],
+             ('humblefax', humblefax.get('from_number')),
+             *[('humblefax', number) for number in humblefax.get('account_numbers') or []],
+             ('efax', (settings.get('efax') or {}).get('caller_id')),
+             ('signalwire', (settings.get('signalwire') or {}).get('from_fax')),
+             ('freeswitch', (settings.get('fs') or {}).get('caller_id_number'))]
+    result = []
+    for provider, number in found:
+        number = comparable_number(number)
+        if number and (number, provider) not in [(item[0], item[1]) for item in result]:
+            result.append((number, provider, provider in {sending, receiving} or provider in extra))
+    return result
+
+
+def _email_text(connectors, number):
+    if connectors is None:
+        return '-'
+    covering = [item for item in connectors if item.get('enabled') and (
+        item.get('match_number') is None or comparable_number(item['match_number']) == comparable_number(number))]
+    if not covering:
+        return 'Not emailed'
+    recipients = list(dict.fromkeys(address for item in covering for address in item.get('recipients') or []))
+    return 'Emailed to ' + ', '.join(recipients) if recipients else 'Emailed'
+
+
 @numbers.command('list')
 def numbers_list(ids: bool = IDS):
-    """List your fax numbers and the mailbox each one delivers to."""
-    items = state.api().pages('/access/inbound-rules')
-    state.out().result(items, lambda out: out.table(_columns(ids, ['Fax number', 'Mailbox']),
-        [_with_id(ids, item['id'], [item['to_number'], item.get('mailbox_label')]) for item in items],
-        empty='No fax number rules. Received faxes go to the unassigned inbox.'))
+    """List your fax numbers: who provides each one, the mailbox its faxes go to, and whether they are emailed."""
+    from ..errors import CliError
+    api = state.api()
+    rules = api.pages('/access/inbound-rules')
+    try:
+        carried = carried_numbers(api.get('/admin/settings'))
+    except CliError:
+        carried = []  # without settings:read, only the numbers that have a mailbox
+    try:
+        connectors = api.get('/intake/connectors')['connectors']
+    except CliError:
+        connectors = None
+    rows = {}
+    for rule in rules:
+        rows[comparable_number(rule['to_number']) or rule['to_number']] = {
+            'number': rule['to_number'], 'rule': rule, 'providers': []}
+    for number, provider, in_use in carried:
+        row = rows.setdefault(number, {'number': number, 'rule': None, 'providers': []})
+        row['providers'].append({'provider': provider, 'name': CARRIERS[provider], 'in_use': in_use})
+    found = [{**row, 'mailbox': (row['rule'] or {}).get('mailbox_label'),
+              'email': _email_text(connectors, row['number'])} for row in rows.values()]
+
+    def provided(row):
+        return ', '.join(item['name'] + ('' if item['in_use'] else ' (not in use now)')
+                         for item in row['providers']) or '-'
+
+    state.out().result(found, lambda out: out.table(
+        _columns(ids, ['Fax number', 'Provided by', 'Mailbox', 'Email delivery']),
+        [_with_id(ids, (row['rule'] or {}).get('id') or '-', [row['number'], provided(row), row['mailbox'] or NO_MAILBOX,
+                                                             row['email']]) for row in found],
+        empty='No fax numbers yet.'))
 
 
 @numbers.command('add')

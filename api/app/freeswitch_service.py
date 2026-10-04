@@ -7,6 +7,16 @@ from uuid import UUID
 from .config import settings
 
 
+CALLER_ID_MISSING = 'Enter the caller ID number your carrier gave you for FreeSWITCH.'
+
+
+class CallerIdMissing(ValueError):
+    """FreeSWITCH never places a call with a made-up caller ID."""
+
+    def __init__(self) -> None:
+        super().__init__(CALLER_ID_MISSING)
+
+
 def fs_cli_available() -> bool:
     return shutil.which("fs_cli") is not None
 
@@ -26,6 +36,8 @@ def build_originate_command(
     Only plain POSIX paths without whitespace or FreeSWITCH expansion syntax
     are supported. Do not apply shell quoting to FreeSWITCH's command grammar.
     """
+    if caller_id_number in ("", None):
+        raise CallerIdMissing()
     for number in (to_number, caller_id_number):
         if not isinstance(number, str) or not re.fullmatch(r"\+?[0-9]+", number):
             raise ValueError("Unsupported FreeSWITCH phone number")

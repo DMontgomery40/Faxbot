@@ -131,6 +131,7 @@ class ConfigurationRuntime:
             if self.lifecycle.can_promote:
                 # Before any other write: a write saves every setting and ends the adoption.
                 snapshot = self._adopt_promoted_environment(snapshot)
+                snapshot = self._clear_placeholder_numbers(snapshot)
                 snapshot = self._apply_environment_credentials(snapshot)
                 snapshot = self._create_engine_password(snapshot, new_installation=initialized)
             self.snapshot = snapshot
@@ -159,6 +160,17 @@ class ConfigurationRuntime:
                     '%s in the environment is not valid; Faxbot kept its saved setting.', variable)
                 continue
             changes[name] = value
+        if not changes:
+            return snapshot
+        return self.manager.apply_environment(snapshot, changes)
+
+    def _clear_placeholder_numbers(self, snapshot):
+        """Clear an earlier release's made-up station ID and FreeSWITCH caller ID, once.
+
+        A fax machine shows the station ID and the carrier sees the caller ID, so
+        neither may be a number nobody was given. One revision with an audit row.
+        """
+        changes = snapshot.desired.values.placeholder_clearings()
         if not changes:
             return snapshot
         return self.manager.apply_environment(snapshot, changes)
