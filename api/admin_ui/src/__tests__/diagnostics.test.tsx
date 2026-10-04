@@ -5,6 +5,7 @@ import AdminAPIClient from '../api/client';
 import Diagnostics from '../components/Diagnostics';
 import { formatServerTime } from '../api/time';
 import { server } from '../test/server';
+import { settingsFixture } from '../test/settingsFixture';
 
 const client = () => new AdminAPIClient({ kind: 'key', key: 'synthetic-key' });
 
@@ -72,5 +73,16 @@ describe('Diagnostics check names', () => {
     expect(screen.getByText('Document links for fax services last (minutes)')).toBeTruthy();
     expect(screen.getAllByText('Needs the fax engine').length).toBeGreaterThan(0);
     expect(document.body.textContent).not.toMatch(/\bAmi\b|Pdf Token Ttl|Requires Ami/);
+  });
+});
+
+describe('Reading saved settings again', () => {
+  it('asks the server to read its saved settings again and says pending changes still wait', async () => {
+    let asked = 0;
+    server.use(http.post('/admin/settings/reload', () => { asked += 1; return HttpResponse.json(settingsFixture()); }));
+    render(<Diagnostics client={client()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Read saved settings again' }));
+    expect(await screen.findByText('Faxbot read its saved settings again. Changes waiting for a restart still wait.')).toBeTruthy();
+    expect(asked).toBe(1);
   });
 });

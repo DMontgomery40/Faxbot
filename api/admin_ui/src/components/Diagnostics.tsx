@@ -174,6 +174,9 @@ function Diagnostics({ client, onNavigate, docsBase }: DiagnosticsProps) {
   const [expandedSections, setExpandedSections] = useState<string[]>([]);
   const [restartState, setRestartState] = useState<'idle' | 'pending' | 'success' | 'error'>('idle');
   const [restartMessage, setRestartMessage] = useState('');
+  // Reading the saved settings again (POST /admin/settings/reload); it never applies pending changes.
+  const [reloadNotice, setReloadNotice] = useState<ActionNotice | null>(null);
+  const [reloading, setReloading] = useState(false);
   const [exportNotice, setExportNotice] = useState<ActionNotice | null>(null);
   const [copying, setCopying] = useState(false);
 
@@ -193,6 +196,22 @@ function Diagnostics({ client, onNavigate, docsBase }: DiagnosticsProps) {
       setError(err instanceof Error ? err.message : 'Failed to run diagnostics');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const reloadSaved = async () => {
+    if (reloading) return;
+    setReloading(true);
+    setReloadNotice(null);
+    try {
+      await client.reloadSettings();
+      // The panel and every page read the saved settings again too.
+      client.announceSettingsChanged();
+      setReloadNotice({ severity: 'success', text: 'Faxbot read its saved settings again. Changes waiting for a restart still wait.' });
+    } catch {
+      setReloadNotice({ severity: 'error', text: 'The saved settings could not be read again. Try again in a moment.' });
+    } finally {
+      setReloading(false);
     }
   };
 
@@ -368,6 +387,14 @@ function Diagnostics({ client, onNavigate, docsBase }: DiagnosticsProps) {
           </Box>
         </Box>
 
+        <Box sx={{ mb: 2 }}>
+          <Button variant="text" onClick={reloadSaved} disabled={reloading} size="small">
+            {reloading ? 'Reading…' : 'Read saved settings again'}
+          </Button>
+        </Box>
+        {reloadNotice && (
+          <Alert severity={reloadNotice.severity} sx={{ mb: 3, borderRadius: 2 }} onClose={() => setReloadNotice(null)}>{reloadNotice.text}</Alert>
+        )}
         {error && <Alert severity="error" sx={{ mb: 3, borderRadius: 2 }} onClose={() => setError(null)}>{error}</Alert>}
         {restartState !== 'idle' && (
           <Alert severity={restartState === 'error' ? 'error' : restartState === 'success' ? 'success' : 'info'} sx={{ mb: 3, borderRadius: 2 }} onClose={restartState === 'pending' ? undefined : () => setRestartState('idle')}>
