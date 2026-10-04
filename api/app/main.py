@@ -2813,7 +2813,7 @@ def _installed_plugins(snapshot=None) -> list[dict[str, Any]]:
         "name": "eFax",
         "version": "1.0.0",
         "categories": ["outbound"],
-        "capabilities": ["send", "get_status"],
+        "capabilities": ["send", "get_status", "receive"],
         "enabled": (current == "efax"),
         "configurable": True,
     })

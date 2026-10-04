@@ -12,6 +12,8 @@ under, so the same provider fax ID under two accounts stays two records:
 
 - Phaxio: ``phaxio:`` and the first 12 hex digits of SHA-256 of the API key.
 - Sinch: ``sinch:`` and the project ID.
+- eFax: ``efax:`` and the first 12 hex digits of SHA-256 of the app ID and user ID
+  (``efax_service.account_key``); Faxbot finds eFax faxes by asking eFax's API.
 - SIP trunk: ``sip:`` and the trunk user name, or ``sip:asterisk``.
 - Generic import: ``import:`` and the importing principal's ID.
 - Test fax: ``test:`` and the principal's ID.
@@ -43,10 +45,10 @@ import sqlalchemy as sa
 from ..routing.numbers import DEFAULT_COUNTRY
 
 
-SOURCES = ('phaxio', 'sinch', 'sip', 'import', 'test')
-FETCHABLE = ('phaxio', 'sinch', 'sip')
+SOURCES = ('phaxio', 'sinch', 'sip', 'import', 'test', 'efax')
+FETCHABLE = ('phaxio', 'sinch', 'sip', 'efax')
 SOURCE_NAMES = {'phaxio': 'Phaxio', 'sinch': 'Sinch', 'sip': 'the SIP trunk', 'import': 'the import',
-                'test': 'Faxbot'}
+                'test': 'Faxbot', 'efax': 'eFax'}
 # Minutes to wait after each failed attempt: 1, 2, 4, 8, 16, 32, then hourly for 24 hours.
 RETRY_MINUTES = (1, 2, 4, 8, 16, 32) + (60,) * 24
 LEASE = timedelta(minutes=2)
@@ -117,8 +119,8 @@ class StoredArtifact:
 def account_identity(source, value=None):
     """The documented non-secret account identity for a source (see module docstring)."""
     value = '' if value is None else str(value)
-    if source == 'phaxio':
-        return 'phaxio:' + hashlib.sha256(value.encode('utf-8')).hexdigest()[:12]
+    if source in ('phaxio', 'efax'):
+        return source + ':' + hashlib.sha256(value.encode('utf-8')).hexdigest()[:12]
     if source == 'sip':
         return ('sip:' + (value.strip() or 'asterisk'))[:100]
     if source in ('sinch', 'import', 'test'):

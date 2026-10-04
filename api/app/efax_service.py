@@ -86,6 +86,8 @@ _clock = time.monotonic
 # (app ID, SHA-256 of the API key) -> (token, monotonic time it stops being used).
 _TOKENS: dict[tuple[str, str], tuple[str, float]] = {}
 _LOCKS: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
+# Tests replace this with an ``httpx.MockTransport``; production uses the network.
+_TRANSPORT = None
 
 
 class EfaxError(RuntimeError):
@@ -238,7 +240,7 @@ class EfaxFaxService:
         return account_key(self.app_id, self.user_id)
 
     def _client(self, timeout: httpx.Timeout) -> httpx.AsyncClient:
-        return httpx.AsyncClient(timeout=timeout, transport=self.transport, follow_redirects=False,
+        return httpx.AsyncClient(timeout=timeout, transport=self.transport or _TRANSPORT, follow_redirects=False,
                                  trust_env=False)
 
     def _cache_key(self) -> tuple[str, str]:

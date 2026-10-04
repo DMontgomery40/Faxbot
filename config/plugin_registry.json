@@ -59,8 +59,8 @@
       "name": "eFax",
       "version": "1.0.0",
       "categories": ["outbound"],
-      "capabilities": ["send", "get_status"],
-      "description": "Cloud fax through the eFax Enterprise API (eFax Corporate) in the US, UK and Australia, with original-account status polling.",
+      "capabilities": ["send", "get_status", "receive"],
+      "description": "Cloud fax through the eFax Enterprise API (eFax Corporate) in the US, UK and Australia; Faxbot polls sent-fax status and checks eFax for received faxes.",
       "learn_more": "https://docs.faxbot.net/latest/setup/efax/"
     },
     {

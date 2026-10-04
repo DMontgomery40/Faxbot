@@ -2,7 +2,8 @@
 
 Each step recovers expired fetch leases, leases the import due longest and
 acquires it: a Phaxio or Sinch fax is looked up and downloaded from the
-provider's API with the configured account, a SIP fax is converted from its
+provider's API with the configured account (an eFax fax through ``efax.acquire``),
+a SIP fax is converted from its
 retained TIFF. Any failure becomes one plain sentence and a scheduled retry;
 the source stays for the next attempt.
 """
@@ -87,6 +88,10 @@ class Acquirer:
         from ..config import settings
         source, inbound_id = claim['source'], claim['inbound_fax_id']
         source_time = None
+        if source == 'efax':
+            from .efax import acquire
+            await acquire(self.store, claim, settings)
+            return
         if source == 'sip':
             path = inside_directory(claim.get('tiff_path'), settings.fax_data_dir)
             artifact = await run_lifecycle_step(lambda: convert_tiff(path, inbound_id))

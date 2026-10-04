@@ -28,6 +28,7 @@ config.attributes["schema_work"] = importlib.import_module(package + ".schema_wo
 config.attributes["schema_charges"] = importlib.import_module(package + ".schema_charges")
 config.attributes["schema_records"] = importlib.import_module(package + ".schema_records")
 config.attributes["schema_batching"] = importlib.import_module(package + ".schema_batching")
+config.attributes["schema_inbound_sources"] = importlib.import_module(package + ".schema_inbound_sources")
 
 
 def migrate(connection):

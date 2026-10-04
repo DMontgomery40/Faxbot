@@ -13,7 +13,7 @@ NOW = datetime(2026, 10, 3, 12)
 
 
 def test_sending_together_is_head_after_carrier_records():
-    assert schema.HEAD == schema_batching.REVISION == '0014_send_together'
+    assert schema.BATCHING == schema_batching.REVISION == '0014_send_together'
     assert schema.RECORDS == '0013_carrier_records'
     assert schema_batching.TABLES <= schema.STRICT_TABLES
 

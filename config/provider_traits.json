@@ -84,7 +84,7 @@
       "requires_ghostscript": true,
       "requires_ami": false,
       "requires_tiff": false,
-      "supports_inbound": false,
+      "supports_inbound": true,
       "inbound_verification": "none",
       "needs_storage": true,
       "outbound_status_only": false

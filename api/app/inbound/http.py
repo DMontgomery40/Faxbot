@@ -57,6 +57,7 @@ class InboundAcquisition:
         self.runtime = runtime
         self.loop = None
         self.wake = None
+        self.efax = None
 
     def recover(self):
         """Bring in received SIP images that were never handed over (see sip_handover)."""
@@ -95,6 +96,10 @@ async def _lifespan(app):
             service.loop, service.wake = asyncio.get_running_loop(), asyncio.Event()
             tasks.append(asyncio.create_task(run_forever(acquirer, service.wake), name='faxbot-inbound-acquisition'))
             tasks.append(asyncio.create_task(_recover_forever(service), name='faxbot-inbound-recovery'))
+            # Received eFax faxes are found by asking eFax; it does nothing unless eFax receives.
+            from .efax import EfaxReceiver
+            service.efax = EfaxReceiver(store, _frame(runtime), kick=service.kick)
+            tasks.append(asyncio.create_task(service.efax.run(), name='faxbot-inbound-efax'))
     except Exception:
         logging.getLogger(__name__).warning('Received-fax fetching could not start; the API is still available.')
     try:

@@ -18,7 +18,7 @@ export const PROVIDER_LABELS: Record<string, string> = {
 export const BUILTIN_PROVIDERS = ['phaxio', 'sinch', 'signalwire', 'documo', 'humblefax', 'efax', 'sip', 'freeswitch'];
 
 // Built-in providers that can receive faxes; the others only send.
-export const RECEIVING_PROVIDERS = new Set(['phaxio', 'sinch', 'sip']);
+export const RECEIVING_PROVIDERS = new Set(['phaxio', 'sinch', 'efax', 'sip']);
 
 export const NO_PROVIDER_LABEL = 'No provider';
 
