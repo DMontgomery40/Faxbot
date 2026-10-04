@@ -123,6 +123,9 @@ def project_admin_settings(snapshot: ConfigurationSnapshot, pending_fields: Iter
                 'codecs': values.sip_trunk_codecs,
                 'external_address': values.sip_external_address,
             },
+            # Lets Faxbot read what Telnyx charged for each call; never shown.
+            'telnyx_api_key': mask_secret(values.telnyx_api_key),
+            'telnyx_api_key_set': bool(values.telnyx_api_key),
         },
         'security': {
             'api_key': mask_secret(values.api_key),

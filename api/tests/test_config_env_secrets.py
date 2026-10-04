@@ -157,6 +157,7 @@ def test_environment_credentials_are_read_at_every_start(installation):
     ('HUMBLEFAX_API_SECRET_KEY', 'humblefax_secret_key', 'secret_key'),
     ('TELNYX_SIP_PASSWORD', 'sip_trunk_password', None),
     ('TELNYX_PASS', 'sip_trunk_password', None),
+    ('TELNYX_API_KEY', 'telnyx_api_key', None),
 ])
 def test_carrier_names_are_aliases(installation, variable, field, public):
     with installation.start(**{variable: 'synthetic-alias-value'}) as client:
@@ -165,6 +166,19 @@ def test_carrier_names_are_aliases(installation, variable, field, public):
         assert getattr(store.read().active.values, field) == 'synthetic-alias-value'
         if public:
             assert _active_humblefax(store)[public] == 'synthetic-alias-value'
+
+
+def test_the_telnyx_api_key_is_environment_managed_and_never_shown(installation):
+    with installation.start(TELNYX_API_KEY='KEYsynthetic0telnyx_value') as client:
+        settings = _settings(client)
+        assert settings['_meta']['env_managed'] == ['telnyx_api_key']
+        assert settings['sip']['telnyx_api_key_set'] is True
+        assert 'KEYsynthetic0telnyx_value' not in json.dumps(settings)
+        expected = settings['_meta']['desired_revision_id']
+        refused = client.put('/admin/settings', headers=ADMIN, json={
+            'expected_revision_id': expected, 'telnyx_api_key': 'KEYsynthetic-other'})
+        assert refused.status_code == 409 and refused.json() == {'detail': REFUSAL}
+        assert installation.store().read().active.values.telnyx_api_key == 'KEYsynthetic0telnyx_value'
 
 
 def test_the_api_refuses_to_change_a_credential_set_in_the_environment(installation):
