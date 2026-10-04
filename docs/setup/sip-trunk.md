@@ -184,7 +184,7 @@ The key is read at every start and never shown in the console. Faxbot only reads
 About once a minute, Faxbot asks Telnyx for the billing records (detail records) of finished calls and matches each one to its own call record:
 
 - by the call's SIP Call-ID, which Asterisk records for every call;
-- otherwise, only when exactly one call has the same numbers and was answered and ended within 45 seconds of the Telnyx record, and that record fits no other call.
+- otherwise, only when exactly one call has the same numbers and was answered and ended within 45 seconds of the Telnyx record, and that record fits no other call. If Faxbot did not learn the number a received call dialled, the caller's number must match instead; time alone never decides.
 
 A record that could fit more than one call is never guessed. It stays unmatched, the call's cost stays unknown, and Spending counts it as "could not be matched".
 

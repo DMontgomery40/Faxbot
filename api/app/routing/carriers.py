@@ -8,7 +8,8 @@ A record belongs to a call when:
 2. otherwise, its SIP Call-ID equals the one Faxbot captured for exactly one call;
 3. otherwise, exactly one call has the same direction and numbers and was
    answered and ended within ``TOLERANCE`` of the record, and that record
-   fits no other call. Anything else is ambiguous: it stays unmatched and is
+   fits no other call. A received call whose dialled number Faxbot did not
+   learn is compared by the caller's number alone, never by time alone. Anything else is ambiguous: it stays unmatched and is
    counted, never guessed.
 
 Charges are append-only observations (``carrier_charges``): a repeated report
@@ -83,9 +84,12 @@ def fits(call, record, tolerance=TOLERANCE):
     if call.direction != record.direction:
         return False
     called, calling = (call.remote, call.local) if call.direction == 'outbound' else (call.local, call.remote)
-    if not same_number(called, record.cld):
-        return False
-    if calling and record.cli and not same_number(calling, record.cli):
+    if _digits(called):
+        if not same_number(called, record.cld):
+            return False
+    elif not (_digits(calling) and record.cli):
+        return False  # with neither number known on both sides, nothing ties this record to the call
+    if _digits(calling) and record.cli and not same_number(calling, record.cli):
         return False
     if (call.answered_at is None) != (record.answered_at is None):
         return False

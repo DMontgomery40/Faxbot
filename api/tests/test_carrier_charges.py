@@ -157,6 +157,16 @@ def test_tonights_calls_match_by_numbers_and_time_without_call_ids():
         'c': [('rec-c', 'time_window')], 'd': [('rec-d', 'time_window')]}
 
 
+def test_a_received_call_without_its_dialled_number_needs_the_caller_number():
+    record = parse_record(received_c())
+    no_did = view('c', 'inbound', at(14, 6), at(14, 31), local=None, remote='7205550111')
+    assert match_records([no_did], [no_did], [record])[0] == {'c': [(record, 'time_window')]}
+    anonymous = view('c', 'inbound', at(14, 6), at(14, 31), local=None, remote=None)
+    assert match_records([anonymous], [anonymous], [record]) == ({}, set())  # time alone never decides
+    other_caller = view('c', 'inbound', at(14, 6), at(14, 31), local=None, remote=CALLER_D)
+    assert match_records([other_caller], [other_caller], [record]) == ({}, set())
+
+
 def test_a_captured_call_id_matches_exactly_even_with_a_skewed_clock():
     record = parse_record(sent_b(call_id='3f0c5a8e-1111-4000-8000-000000000001'))
     skewed = view('b', 'outbound', at(9), at(10), call_id='3f0c5a8e-1111-4000-8000-000000000001')
