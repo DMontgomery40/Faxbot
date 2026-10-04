@@ -88,3 +88,25 @@ def test_start_script_splits_the_published_range_between_t38_and_audio():
     for name in ('rtp.conf', 'udptl.conf'):
         text = (ROOT / 'asterisk' / 'etc' / 'asterisk' / name).read_text()
         assert 'Publish UDP' not in text
+
+
+def test_asterisk_starts_without_errors_and_keeps_every_fax_module():
+    """Every start logged a burst of "X declined to load" ERRORs (seen on the acceptance install).
+
+    The native proof (make native-proof) checks the real start log; this keeps
+    the shipped configuration from drifting back.
+    """
+    etc = ROOT / 'asterisk' / 'etc' / 'asterisk'
+    entries = re.findall(r'^(require|load|noload) => (\S+)$', (etc / 'modules.conf').read_text(), re.M)
+    skipped = {module for kind, module in entries if kind == 'noload'}
+    needed = {module for kind, module in entries if kind != 'noload'}
+    assert not skipped & needed
+    assert {'func_shell.so', 'func_base64.so', 'app_stack.so', 'app_userevent.so', 'res_fax.so',
+            'res_fax_spandsp.so', 'chan_pjsip.so', 'res_pjsip.so'} <= needed
+    assert {'app_amd.so', 'pbx_dundi.so', 'chan_unistim.so', 'app_festival.so', 'app_alarmreceiver.so',
+            'app_followme.so', 'pbx_ael.so', 'res_prometheus.so', 'app_queue.so'} <= skipped
+    # Core and PJSIP pieces report a missing file as an ERROR; each ships a minimal one.
+    for name in ('cdr.conf', 'cel.conf', 'features.conf', 'acl.conf', 'pjproject.conf', 'pjsip_wizard.conf',
+                 'statsd.conf', 'aeap.conf', 'websocket_client.conf', 'chan_websocket.conf', 'ari.conf'):
+        assert (etc / name).is_file(), name
+    assert 'astkeydir=/var/lib/asterisk\n' in (etc / 'asterisk.conf').read_text()
