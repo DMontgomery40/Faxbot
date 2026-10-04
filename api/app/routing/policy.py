@@ -2,6 +2,8 @@
 
 The policy never contacts a provider and never decides whether a send may be
 repeated; it only orders the routes a delivery may try for one destination.
+The first route's reason says what decided it: a route whose cost is unknown
+is never called the cheapest, and a flat monthly plan is "included".
 """
 from dataclasses import dataclass
 
@@ -10,7 +12,12 @@ from .costs import estimate_cost
 
 DIRECT = 'direct'
 # ``configured``: the installation's outbound provider, recorded without a choice.
-REASONS = ('direct_peer', 'preferred', 'cheapest', 'alternative', 'unreliable', 'configured')
+# ``known_cheapest``: cheapest among routes with a known price while another route's price is unknown.
+# ``included``: a flat monthly plan with nothing charged per fax.
+# ``reliable``: first because cheaper routes often failed here; its own cost is unknown.
+# ``unknown_cost``: no route has a known price, so the configured order decides.
+REASONS = ('direct_peer', 'preferred', 'cheapest', 'alternative', 'unreliable', 'configured', 'known_cheapest',
+           'included', 'reliable', 'unknown_cost')
 
 
 @dataclass(frozen=True)
@@ -92,8 +99,20 @@ class RoutePolicy:
             return (estimate is None, estimate if estimate is not None else 0,
                     not candidate.bound, position[candidate.key])
 
+        def first_reason(candidate):
+            estimate = estimates[candidate.key]
+            if estimate is None:
+                return 'reliable' if doubtful else 'unknown_cost'
+            if getattr(candidate.card, 'flat_plan', False):
+                return 'included'
+            if len(remaining) == 1:
+                return 'configured' if candidate.bound else 'cheapest'
+            if any(estimates[other.key] is None for other in reliable if other is not candidate):
+                return 'known_cheapest'
+            return 'cheapest'
+
         for index, candidate in enumerate(sorted(reliable, key=cost_rank)):
-            take(candidate, 'cheapest' if index == 0 and override is None else 'alternative')
+            take(candidate, first_reason(candidate) if index == 0 and override is None else 'alternative')
         for candidate in sorted(doubtful, key=lambda c: (-(stats[c.key].success_percent or 0),) + cost_rank(c)):
             take(candidate, 'unreliable')
         return chosen

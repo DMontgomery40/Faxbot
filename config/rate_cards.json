@@ -221,5 +221,22 @@
       "advertised_on": "2026-10-03",
       "notes": "Inbound calls bill in whole minutes, rounded up."
     }
+  ],
+  "plans": [
+    {
+      "provider_id": "humblefax",
+      "label": "HumbleFax unlimited plan",
+      "direction": "outbound",
+      "currency": "USD",
+      "monthly_fee": "10.00",
+      "per_minute": "0",
+      "per_page": "0",
+      "per_call": "0",
+      "billing_increment_seconds": 60,
+      "minimum_seconds": 0,
+      "source_url": "https://humblefax.com/",
+      "advertised_on": "2026-10-03",
+      "notes": "The HumbleFax homepage, read October 3, 2026, states Unlimited Faxing $10 / month with no monthly page limits. Faxes are included in the plan, so Faxbot adds nothing per fax."
+    }
   ]
 }

@@ -23,6 +23,8 @@ REASON_TEXT = {
     'direct_peer': 'Delivered straight to a verified partner, with no fax call.',
     'preferred': 'You chose this route for this number.',
     'cheapest': 'The cheapest route that works reliably for this number.',
+    'known_cheapest': 'The cheapest route with a known price that works reliably for this number.',
+    'reliable': 'More reliable for this number; its cost is unknown.',
     'alternative': 'Used if the routes above it are unavailable.',
     'unreliable': 'Recent faxes to this number often failed on this route.',
     'configured': 'Your outbound fax provider.',
@@ -31,6 +33,16 @@ REASON_TEXT = {
 
 def route_label(key):
     return LABELS.get(key, key)
+
+
+def explain(choice):
+    """One sentence saying what decided this route."""
+    if choice.reason == 'included':
+        return f'Included in your {route_label(choice.route.key)} plan.'
+    if choice.reason == 'unknown_cost':
+        return ('Your outbound fax provider; its cost is unknown.' if choice.route.bound
+                else 'First in your list of routes; its cost is unknown.')
+    return REASON_TEXT[choice.reason]
 
 
 def extra_routes(values, bound):

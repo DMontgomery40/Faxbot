@@ -64,7 +64,7 @@ def test_destination_recommendation_ranks_configured_routes_by_cost(client):
     view = client.get('/routing/destinations/+12025550123', headers=ADMIN).json()
     assert view['display_name'] == 'County clinic'
     assert [(route['route'], route['reason']) for route in view['recommended_routes']] == [
-        ('sip', 'cheapest'), ('phaxio', 'alternative'), ('signalwire', 'alternative')]
+        ('sip', 'known_cheapest'), ('phaxio', 'alternative'), ('signalwire', 'alternative')]
     assert view['recommended_routes'][0]['estimated_cost_one_page'] == {'currency': 'USD', 'amount': '0.005'}
     assert view['recommended_routes'][0]['explanation'].endswith('.')
     assert [route['route'] for route in view['available_routes']] == ['phaxio', 'sip', 'signalwire']
@@ -107,3 +107,168 @@ def test_route_fallback_policy_lives_with_the_application(isolated_installation,
             time.sleep(0.05)
         assert isinstance(OutboundStore.fallback_policy, FallbackPolicy)
     assert OutboundStore.fallback_policy is None
+
+
+# Carrier call charges, per-fax costs and honest recommendations -------------------------
+
+def _engine():
+    return main.app.state.configuration_runtime.manager.store.engine
+
+
+def _sent_fax_with_call(client, answer, end):
+    """A fax sent through the API (held in test mode) with one finished SIP attempt and its call record."""
+    from datetime import timedelta
+    from uuid import uuid4
+    from app.routing.carriers import CarrierChargeStore
+    from app.routing.store import CaptureTarget
+    sent = client.post('/fax', headers=ADMIN, data={'to': '+12025550123'},
+                       files={'file': ('note.txt', b'Synthetic\n', 'text/plain')})
+    assert sent.status_code == 202, sent.text
+    job, attempt = sent.json()['id'], uuid4().hex
+    routes, carriers = RouteStore(_engine()), CarrierChargeStore(_engine())
+    start = answer - timedelta(seconds=5)
+    with _engine().begin() as connection:
+        connection.execute(routes.attempts.insert().values(id=attempt, job_id=job, sequence=1, phase='success',
+                                                           created_at=start, submitted_at=start, completed_at=end))
+        connection.execute(carriers.calls.insert().values(
+            id=uuid4().hex, direction='outbound', call_id=attempt, job_id=job, attempt_id=attempt,
+            trunk_preset='telnyx', did='+13035550100', caller='+13035550100', called='+12025550123',
+            started_at=start, answered_at=answer, ended_at=end, disposition='answered',
+            connected_seconds=int((end - answer).total_seconds()), t38='yes', pages=1, fax_status='SUCCESS',
+            fax_preference=0, created_at=start, updated_at=end))
+    routes.capture(CaptureTarget(attempt, job, '+12025550123', 'sip', None, 'success', 1, start, end, False))
+    return job, attempt
+
+
+@pytest.fixture
+def telnyx_client(isolated_installation, monkeypatch):
+    for name, value in {'REQUIRE_API_KEY': 'true', 'API_KEY': BOOTSTRAP, 'PUBLIC_API_URL': 'https://testserver',
+                        'FAX_BACKEND': 'sip', 'SIP_TRUNK_PRESET': 'telnyx', 'TELNYX_API_KEY': 'KEYsynthetic-telnyx',
+                        'MAX_REQUESTS_PER_MINUTE': '0', 'FAXBOT_CONSOLE_ORIGINS': 'https://testserver'}.items():
+        monkeypatch.setenv(name, value)
+    with TestClient(main.app, base_url='https://testserver', headers={'Origin': 'https://testserver'}) as client:
+        yield client
+
+
+def test_reconcile_needs_a_telnyx_key_and_write_permission(client):
+    refused = client.post('/routing/reconcile', headers=ADMIN)
+    assert refused.status_code == 409
+    assert refused.json()['detail'].startswith('Faxbot needs a Telnyx API key to read call charges.')
+    reader = scoped_key(client, ['fax:send'])
+    assert client.post('/routing/reconcile', headers=reader).status_code == 403
+    costs = client.get('/routing/costs', headers=ADMIN).json()
+    assert costs['carrier_charges']['readable'] is False and costs['received'] == []
+
+
+def test_reconcile_records_telnyx_charges_and_the_console_reads_them(telnyx_client, monkeypatch):
+    from datetime import timedelta
+    from app.routing import http as routing_http
+    from api.tests.test_carrier_charges import FakeTelnyx, telnyx as record
+    answer = datetime.utcnow().replace(microsecond=0) - timedelta(hours=1)
+    end = answer + timedelta(seconds=45)
+    job, attempt = _sent_fax_with_call(telnyx_client, answer, end)
+    keys = []
+    payload = record('rec-live', 'outbound', answer - timedelta(seconds=1), answer, end, '0.005',
+                     cli='+13035550100', cld='+12025550123')
+
+    def source(api_key):
+        keys.append(api_key())
+        return FakeTelnyx([payload])
+    monkeypatch.setattr(routing_http, 'carrier_source', source)
+    before = telnyx_client.get(f'/routing/faxes/{job}/cost', headers=ADMIN)
+    assert before.status_code == 200, before.text
+    before = before.json()
+    assert before['summary'] == 'Cost not reported yet.' and before['reported_cost'] == []
+    response = telnyx_client.post('/routing/reconcile', headers=ADMIN)
+    assert response.status_code == 200, response.text
+    assert response.json()['summary'] == 'Checked 1 call: 1 new charge recorded.'
+    assert keys == ['KEYsynthetic-telnyx']
+    cost = telnyx_client.get(f'/routing/faxes/{job}/cost', headers=ADMIN).json()
+    assert cost['summary'] == 'Telnyx charged $0.005 for this call.'
+    assert cost['reported_cost'] == [{'currency': 'USD', 'amount': '0.005'}]
+    again = telnyx_client.post('/routing/reconcile', headers=ADMIN).json()
+    assert again['charges_recorded'] == 0
+    costs = telnyx_client.get('/routing/costs', headers=ADMIN).json()
+    sip = next(item for item in costs['providers'] if item['provider_id'] == 'sip')
+    assert sip['carrier'] == 'Telnyx' and sip['reported_cost'] == [{'currency': 'USD', 'amount': '0.005'}]
+    assert (sip['attempts_with_reported_cost'], sip['awaiting_carrier_bill'], sip['unmatched_charges']) == (1, 0, 0)
+    assert sip['billed_minutes'] == 1.0
+    assert costs['carrier_charges'] == {'carrier': 'Telnyx', 'supported': True, 'readable': True}
+    assert 'KEYsynthetic-telnyx' not in response.text + str(costs)
+    assert telnyx_client.get('/routing/faxes/' + '0' * 32 + '/cost', headers=ADMIN).status_code == 404
+    assert telnyx_client.get(f'/routing/faxes/{job}/cost').status_code == 401
+
+
+def test_a_received_fax_cost_is_read_with_the_fax(telnyx_client):
+    from datetime import timedelta
+    from uuid import uuid4
+    import sqlalchemy as sa
+    from app.routing.carriers import CarrierChargeStore, CarrierReconciler
+    from api.tests.test_carrier_charges import FakeTelnyx, telnyx as record
+    engine = _engine()
+    now = datetime.utcnow().replace(microsecond=0)
+    answer, end = now - timedelta(minutes=50), now - timedelta(minutes=49, seconds=29)
+    carriers = CarrierChargeStore(engine)
+    main.app.state.access_runtime.inbound.accept({
+        'id': 'inbound-1', 'from_number': '+17205550111', 'to_number': '+13035550100', 'status': 'received',
+        'backend': 'sip', 'pages': 1, 'size_bytes': 1024, 'sha256': 'a' * 64, 'pdf_path': '/data/inbound-1.pdf',
+        'created_at': now, 'received_at': now, 'updated_at': now})
+    with engine.begin() as connection:
+        connection.execute(carriers.calls.insert().values(
+            id=uuid4().hex, direction='inbound', call_id='1759.1', job_id='inbound-1', trunk_preset='telnyx',
+            did='+13035550100', caller='+17205550111', called='+13035550100', started_at=answer, answered_at=answer,
+            ended_at=end, disposition='answered', connected_seconds=31, t38='yes', pages=1, fax_status='SUCCESS',
+            fax_preference=0, created_at=answer, updated_at=end))
+    waiting = telnyx_client.get('/routing/inbound/inbound-1/cost', headers=ADMIN)
+    assert waiting.status_code == 200 and waiting.json()['summary'] == 'Cost not reported yet.'
+    CarrierReconciler(carriers, RouteStore(engine), FakeTelnyx([record(
+        'rec-in', 'inbound', answer, answer, end, '0.0032', cli='+17205550111', cld='+13035550100')])).run_now()
+    assert telnyx_client.get('/routing/inbound/inbound-1/cost', headers=ADMIN).json()['summary'] == (
+        'Telnyx charged $0.0032 for this call.')
+    received = telnyx_client.get('/routing/costs', headers=ADMIN).json()['received']
+    assert [(item['carrier'], item['calls'], item['reported_cost']) for item in received] == [
+        ('Telnyx', 1, [{'currency': 'USD', 'amount': '0.0032'}])]
+    assert telnyx_client.get('/routing/inbound/missing/cost', headers=ADMIN).status_code == 404
+
+
+def test_recommendations_never_call_an_unknown_cost_the_cheapest(client):
+    """A route with no rate card that wins on reliability says so; a flat plan says it is included."""
+    from datetime import timedelta
+    from uuid import uuid4
+    store = RouteStore(_engine())
+    cards = client.put('/routing/rate-cards', headers=ADMIN, json={'cards': [TELNYX]})
+    assert cards.status_code == 200, cards.text
+    # Recent faxes to this number failed on the SIP trunk; Phaxio has no rate card.
+    now = datetime.utcnow()
+    configuration = main.app.state.configuration_runtime.manager.store
+    jobs = [uuid4().hex for _ in range(4)]
+    for job in jobs:
+        configuration.accept_outbound(configuration.read().active, {
+            'id': job, 'to_number': '+12025550123', 'file_name': 'x.txt', 'tiff_path': '', 'status': 'queued',
+            'pages': 1, 'created_at': now, 'updated_at': now})
+    with _engine().begin() as connection:
+        for index, job in enumerate(jobs):
+            attempt = uuid4().hex
+            connection.execute(store.attempts.insert().values(id=attempt, job_id=job, sequence=1, phase='failed',
+                                                              created_at=now, submitted_at=now, completed_at=now))
+            connection.execute(store.costs.insert().values(
+                id=attempt, job_id=job, destination='+12025550123', route='sip', route_reason='configured',
+                provider_id='sip', outcome='failed', billing_checks=0, created_at=now - timedelta(minutes=index),
+                updated_at=now))
+    view = client.get('/routing/destinations/+12025550123', headers=ADMIN).json()
+    first = view['recommended_routes'][0]
+    assert (first['route'], first['reason']) == ('phaxio', 'reliable')
+    assert first['explanation'] == 'More reliable for this number; its cost is unknown.'
+    assert first['estimated_cost_one_page'] is None and first['included_in_plan'] is False
+    assert all(route['reason'] != 'cheapest' for route in view['recommended_routes'] if route['estimated_cost_one_page'] is None)
+    plan = {'provider_id': 'phaxio', 'label': 'Phaxio unlimited plan', 'monthly_fee': '10.00',
+            'captured_on': '2026-10-03', 'source_url': 'https://example.com/pricing'}
+    saved = client.put('/routing/rate-cards', headers=ADMIN, json={'cards': [TELNYX, plan]})
+    assert saved.status_code == 200, saved.text
+    card = next(card for card in saved.json()['cards'] if card['provider_id'] == 'phaxio')
+    assert (card['monthly_fee'], card['included_in_plan']) == ('10.00', True)
+    first = client.get('/routing/destinations/+12025550123', headers=ADMIN).json()['recommended_routes'][0]
+    assert (first['reason'], first['explanation']) == ('included', 'Included in your Phaxio plan.')
+    assert first['monthly_fee'] == {'currency': 'USD', 'amount': '10.00'} and first['included_in_plan'] is True
+    too_much = client.put('/routing/rate-cards', headers=ADMIN, json={'cards': [{**plan, 'monthly_fee': '5000'}]})
+    assert too_much.status_code == 400
