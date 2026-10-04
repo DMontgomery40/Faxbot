@@ -25,6 +25,8 @@ import sqlalchemy as sa
 _ID = re.compile(r'[A-Za-z0-9_-]{1,40}', re.ASCII)
 _NUMBER = re.compile(r'\+?[0-9]{3,20}', re.ASCII)
 _CALL = re.compile(r'[A-Za-z0-9_.:-]{1,100}', re.ASCII)
+# A SIP Call-ID: visible ASCII without spaces (RFC 3261 word characters and @).
+_SIP_CALL_ID = re.compile(r'[!-~]{1,100}', re.ASCII)
 # AMI OriginateResponse Reason values (Asterisk include/asterisk/frame.h and
 # pbx_dial_reason in main/pbx.c): 0 failure, 1 hangup, 3 rang without answer,
 # 4 answered, 5 busy, 8 congestion.
@@ -47,8 +49,8 @@ VERDICTS = NO_DATA_VERDICTS | {'no_fax_answer', 'remote_fax_failed', NOT_HANDED_
 # What the Asterisk notify script prints when a hand-over fails, and the plain
 # reason after "A fax was received but could not be handed to Faxbot: ".
 HANDOVER_REASONS = {
-    'no_secret': 'the fax engine has no inbound secret yet; select Apply to Asterisk',
-    'refused': "Faxbot refused the fax engine's inbound secret; select Apply to Asterisk",
+    'no_secret': 'the fax engine has no inbound secret yet; select Apply and connect',
+    'refused': "Faxbot refused the fax engine's inbound secret; select Apply and connect",
     'not_receiving': 'receiving faxes is turned off in Faxbot',
     'unreadable': 'Faxbot could not read the received image',
     'unreachable': 'Faxbot could not be reached',
@@ -269,6 +271,18 @@ def _identity(value):
     return text if _ID.fullmatch(text) else None
 
 
+def _sip_call_id(encoded):
+    """The SIP Call-ID the dialplan captured (base64), the carrier's key for its bill; None when absent."""
+    if not encoded:
+        return None
+    try:
+        text = base64.b64decode(str(encoded), validate=True).decode('ascii')
+    except (binascii.Error, ValueError, UnicodeDecodeError):
+        return None
+    text = text.strip()
+    return text if _SIP_CALL_ID.fullmatch(text) else None
+
+
 def _station(encoded):
     if not encoded:
         return None
@@ -415,6 +429,9 @@ class SipCallRecords:
                        'connected_seconds': _seconds(answered_at, ended), 't38': _t38(event.get('Mode')),
                        'pages': _pages(event.get('Pages')), 'fax_status': status,
                        'remote_station_id': _station(event.get('Station64')), 'error_cause': error_cause}
+            sip_call_id = _sip_call_id(event.get('CallID64'))
+            if sip_call_id and not row['sip_call_id']:
+                changes['sip_call_id'] = sip_call_id
             connection.execute(table.update().where(table.c.id == row['id']).values(updated_at=now, **changes))
             return row['id']
         return self._write(apply)
@@ -439,7 +456,8 @@ class SipCallRecords:
             't38': 'yes' if t38 is True else 'no' if t38 is False else 'unknown',
             'pages': _pages(call.get('pages')), 'fax_status': status,
             'remote_station_id': _station(call.get('remote_station_id_b64')), 'error_cause': None,
-            'fax_preference': 0, 'created_at': now, 'updated_at': now}
+            'fax_preference': 0, 'sip_call_id': _sip_call_id(call.get('sip_call_id_b64')),
+            'created_at': now, 'updated_at': now}
 
         return self._insert_inbound(record)
 
@@ -465,7 +483,8 @@ class SipCallRecords:
             'disposition': 'answered' if answered else 'failed', 'connected_seconds': _seconds(answered, ended),
             't38': _t38(event.get('Mode')), 'pages': _pages(event.get('Pages')), 'fax_status': status,
             'remote_station_id': _station(event.get('Station64')), 'error_cause': error_cause,
-            'fax_preference': 0, 'created_at': now, 'updated_at': now}
+            'fax_preference': 0, 'sip_call_id': _sip_call_id(event.get('CallID64')), 'created_at': now,
+            'updated_at': now}
         return self._insert_inbound(record)
 
     def link_inbound(self, call_id, inbound_fax_id):
@@ -508,6 +527,10 @@ class SipCallRecords:
     def _insert_inbound(self, record):
         def apply(connection, table):
             existing = self._find(connection, table, 'inbound', record['call_id'])
+            if existing is not None and record.get('sip_call_id') and not existing['sip_call_id']:
+                # A later report of the same call may carry the SIP Call-ID; only an empty one is filled.
+                connection.execute(table.update().where(table.c.id == existing['id']).values(
+                    sip_call_id=record['sip_call_id']))
             if existing is not None:
                 return existing['id']
             connection.execute(table.insert().values(**record))

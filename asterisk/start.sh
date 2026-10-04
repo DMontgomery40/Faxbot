@@ -3,9 +3,13 @@ set -euo pipefail
 
 # No real trunk or AMI account is created unless explicitly configured.
 umask 077
-tpl_dir=/etc/asterisk/templates
-out_dir=/etc/asterisk
-mkdir -p "$out_dir"
+# The directories are fixed in the image; tests point them elsewhere.
+tpl_dir=${FAXBOT_ASTERISK_TEMPLATES:-/etc/asterisk/templates}
+out_dir=${FAXBOT_ASTERISK_ETC:-/etc/asterisk}
+data_dir=${FAXBOT_DATA:-/faxdata}
+# Shared with Faxbot: it writes the trunk and secrets here, and reads what Asterisk loaded.
+shared=$data_dir/asterisk
+mkdir -p "$out_dir" "$shared"
 
 refuse() { printf '%s\n' "$1" >&2; exit 1; }
 safe_value() {
@@ -20,15 +24,33 @@ render() {
   mv -f "$temporary" "$out_dir/$name"
 }
 
+# The manager login Faxbot uses. ASTERISK_AMI_USERNAME and ASTERISK_AMI_PASSWORD
+# in the environment win (the API reads the same .env). Otherwise Faxbot writes
+# the login it created to the shared folder when the SIP trunk first comes into
+# use; until then the manager port stays off.
+credentials=$shared/manager.credentials
+check_login() {
+  [[ "$ASTERISK_AMI_USERNAME" =~ ^[A-Za-z0-9_-]{1,64}$ ]] \
+    && [[ ! "$ASTERISK_AMI_USERNAME" =~ ^[Gg][Ee][Nn][Ee][Rr][Aa][Ll]$ ]] \
+    && safe_value "$ASTERISK_AMI_PASSWORD" || refuse 'Unsupported AMI configuration syntax'
+}
+login_from=none
 if [ -n "${ASTERISK_AMI_USERNAME:-}${ASTERISK_AMI_PASSWORD:-}" ]; then
   [ -n "${ASTERISK_AMI_USERNAME:-}" ] && [ -n "${ASTERISK_AMI_PASSWORD:-}" ] \
     || refuse 'Incomplete AMI configuration'
-  [[ "$ASTERISK_AMI_USERNAME" =~ ^[A-Za-z0-9_-]{1,64}$ ]] \
-    && [[ "${ASTERISK_AMI_USERNAME,,}" != general ]] \
-    && safe_value "$ASTERISK_AMI_PASSWORD" || refuse 'Unsupported AMI configuration syntax'
-  render manager.conf '${ASTERISK_AMI_USERNAME} ${ASTERISK_AMI_PASSWORD}'
-else
+  check_login
+  login_from=environment
+elif [ -f "$credentials" ] && [ ! -L "$credentials" ]; then
+  ASTERISK_AMI_USERNAME='' ASTERISK_AMI_PASSWORD=''
+  { IFS= read -r ASTERISK_AMI_USERNAME || true; IFS= read -r ASTERISK_AMI_PASSWORD || true; } < "$credentials"
+  check_login
+  export ASTERISK_AMI_USERNAME ASTERISK_AMI_PASSWORD
+  login_from=faxbot
+fi
+if [ "$login_from" = none ]; then
   printf '%s\n' '[general]' 'enabled=no' 'webenabled=no' > "$out_dir/manager.conf"
+else
+  render manager.conf '${ASTERISK_AMI_USERNAME} ${ASTERISK_AMI_PASSWORD}'
 fi
 
 # A public-address install publishes one narrow media range
@@ -47,14 +69,20 @@ fi
 # Faxbot writes this file from its SIP trunk settings (console "Apply to
 # Asterisk" or "python -m app.sip_trunk write"); it replaces the older
 # SIP_USERNAME/SIP_PASSWORD/SIP_SERVER settings when present.
-trunk_conf=${FAXBOT_TRUNK_CONF:-/faxdata/asterisk/pjsip.conf}
-mkdir -p /faxdata/inbound
+trunk_conf=${FAXBOT_TRUNK_CONF:-$shared/pjsip.conf}
+mkdir -p "$data_dir/inbound"
+rm -f "$shared/pjsip.conf.started"
 if [ -f "$trunk_conf" ] && [ ! -L "$trunk_conf" ]; then
   temporary=$(mktemp "$out_dir/.pjsip.conf.XXXXXX")
   cat "$trunk_conf" > "$temporary"
+  # The trunk exactly as loaded now, before addresses are filled in; Faxbot
+  # compares it with its settings to tell whether Asterisk needs a restart.
+  started=$(mktemp "$shared/.pjsip.conf.started.XXXXXX")
+  cat "$temporary" > "$started"
+  mv -f "$started" "$shared/pjsip.conf.started"
   mv -f "$temporary" "$out_dir/pjsip.conf"
   # The internet address Faxbot found, or no address lines at all (no network call here).
-  /usr/local/bin/faxbot-public-address "$out_dir/pjsip.conf"
+  "${FAXBOT_PUBLIC_ADDRESS_BIN:-/usr/local/bin/faxbot-public-address}" "$out_dir/pjsip.conf"
 elif [ -n "${SIP_USERNAME:-}${SIP_PASSWORD:-}${SIP_SERVER:-}" ]; then
   [ -n "${SIP_USERNAME:-}" ] && [ -n "${SIP_PASSWORD:-}" ] && [ -n "${SIP_SERVER:-}" ] \
     || refuse 'Incomplete SIP configuration'
@@ -88,4 +116,35 @@ else
     '[transport-udp]' 'type=transport' 'protocol=udp' 'bind=0.0.0.0' > "$out_dir/pjsip.conf"
 fi
 
+# This Asterisk shares Faxbot's data folder, so Faxbot may restart it (over the
+# manager connection, once no call is up) to load new settings; Docker's
+# restart policy starts it again.
+date +%s > "$shared/engine-started"
+
+# Without a login in the environment, follow the one Faxbot writes: when it
+# appears or changes, stop gracefully (once no call is up) and Docker starts
+# Asterisk again with it. First boot in Compose: both containers start; this
+# Asterisk has no login yet and runs with its manager port off; when the SIP
+# trunk first comes into use, Faxbot creates the login and writes it before it
+# connects; this watcher restarts Asterisk within seconds and Faxbot's
+# connection, which keeps retrying, logs in. An Asterisk started after Faxbot
+# wrote the login reads it above.
+if [ "$login_from" != environment ]; then
+  login_sum() { if [ -f "$credentials" ]; then cksum < "$credentials"; else echo none; fi; }
+  loaded=$(login_sum)
+  (
+    while sleep "${FAXBOT_LOGIN_CHECK_SECONDS:-5}"; do
+      kill -0 "$$" 2>/dev/null || exit 0
+      current=$(login_sum)
+      if [ "$current" != "$loaded" ] \
+          && "${FAXBOT_ASTERISK_CONTROL:-asterisk}" -rx 'core stop gracefully' >/dev/null 2>&1; then
+        exit 0
+      fi
+    done
+  ) </dev/null >/dev/null 2>&1 &
+fi
+
+if [ -n "${FAXBOT_ASTERISK_COMMAND:-}" ]; then
+  exec "$FAXBOT_ASTERISK_COMMAND"
+fi
 exec asterisk -f -C "$out_dir/asterisk.conf"

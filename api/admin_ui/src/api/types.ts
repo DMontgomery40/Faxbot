@@ -183,6 +183,8 @@ export interface Settings {
     ami_username: string;
     ami_password: string;
     ami_password_is_default: boolean;
+    // Faxbot has written this login where its own Asterisk reads it.
+    ami_password_shared?: boolean;
     station_id: string;
     configured: boolean;
   };

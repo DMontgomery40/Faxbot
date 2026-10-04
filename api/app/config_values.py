@@ -72,11 +72,15 @@ class ConfigurationValues(BaseModel):
     sip_trunk_dids: str = Field('', validation_alias='SIP_TRUNK_DIDS',
                                 pattern=r'^(?:\+[1-9][0-9]{6,14}(?:\s*,\s*\+[1-9][0-9]{6,14}){0,99})?$')
     sip_t38_enabled: bool = Field(True, validation_alias='SIP_T38_ENABLED')
-    sip_fax_preference_header: bool = Field(False, validation_alias='SIP_FAX_PREFERENCE_HEADER')
+    # On by default: the RFC 6913 Accept-Contact preference only (never Require), which carriers may ignore.
+    sip_fax_preference_header: bool = Field(True, validation_alias='SIP_FAX_PREFERENCE_HEADER')
     sip_trunk_codecs: str = Field('', validation_alias='SIP_TRUNK_CODECS', pattern=r'^(?:(?:ulaw|alaw)(?:,(?:ulaw|alaw))?)?$')
     # Public address the carrier should send signaling and media to when Asterisk is behind NAT.
     sip_external_address: str = Field('', validation_alias='SIP_EXTERNAL_ADDRESS',
                                       pattern=r'^(?:[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?)?$')
+    # Read-only Telnyx API v2 key: Faxbot reads what each trunk call was charged. Never used to place calls.
+    telnyx_api_key: str = Field('', validation_alias='TELNYX_API_KEY', repr=False, json_schema_extra={'secret': True},
+                                pattern=r'^[!-~]{0,256}$')
     phaxio_api_key: str = Field('', validation_alias='PHAXIO_API_KEY', repr=False, json_schema_extra={'secret': True})
     phaxio_api_secret: str = Field('', validation_alias='PHAXIO_API_SECRET', repr=False, json_schema_extra={'secret': True})
     phaxio_callback_token: str = Field('', validation_alias='PHAXIO_CALLBACK_TOKEN', repr=False, json_schema_extra={'secret': True})

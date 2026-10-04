@@ -355,22 +355,52 @@ def test_sip_receiving_shows_one_status_line_instead_of_an_internal_url(isolated
     monkeypatch.setattr(sip_http, '_probes', {})
     with _client(monkeypatch, FAX_BACKEND='sip', INBOUND_ENABLED='true') as client:
         receiving = lambda: client.get('/admin/inbound/callbacks', headers=ADMIN).json()['receiving']  # noqa: E731
-        assert receiving() == {'ready': False, 'message': 'Receiving over your SIP trunk is not set up yet: '
-                                                          'choose your carrier on the trunk screen.'}
+        assert receiving() == {'ready': False, 'message': sip_http.NO_TRUNK}
         current = _settings(client)
         assert client.put('/admin/settings', headers=ADMIN, json={
             'expected_revision_id': current['_meta']['desired_revision_id'], 'sip_trunk_preset': 'telnyx',
             'sip_trunk_username': 'faxbotuser', 'sip_trunk_password': 'synthetic-Trunk-Pass!42'}).status_code == 200
-        assert receiving() == {'ready': False, 'message': 'Receiving over your SIP trunk is not ready: select Apply to '
-                                                          'Asterisk on the trunk screen, then restart the Asterisk service.'}
+        # The same sentence the trunk screen shows, from the same check.
+        values = main.app.state.configuration_runtime.manager.store.read().active.values
+        from app import sip_trunk
+        sip_trunk.secret_path(values).unlink()
+        assert receiving() == {'ready': False, 'message': sip_http.HANDOVER_MANUAL}
+        assert 'Apply to Asterisk' not in receiving()['message']
         assert client.post('/admin/sip/apply', headers=ADMIN).status_code == 200
         status = client.get('/admin/inbound/callbacks', headers=ADMIN).json()
         assert status == {'backend': 'sip', 'callbacks': [],
-                          'receiving': {'ready': True, 'message': 'Receiving over your SIP trunk: ready.'}}
+                          'receiving': {'ready': True, 'message': sip_http.HANDOVER_READY}}
+        trunk = client.get('/admin/sip/status', headers=ADMIN).json()
+        assert (trunk['handover_ready'], trunk['handover_text']) == (True, status['receiving']['message'])
         from app.sip_calls import SipCallRecords
         SipCallRecords(main.app.state.configuration_runtime.manager.store.engine).record_inbound_event({
             'UniqueID': '1791083644.1', 'Status': 'SUCCESS', 'Answered': '1791083644', 'Handover': 'refused'})
         failed = client.get('/admin/inbound/callbacks', headers=ADMIN).json()['receiving']
         assert failed == {'ready': False, 'message': "A fax was received but could not be handed to Faxbot: Faxbot "
-                                                     "refused the fax engine's inbound secret; select Apply to Asterisk."}
+                                                     "refused the fax engine's inbound secret; select Apply and connect."}
         assert '_internal' not in client.get('/admin/inbound/callbacks', headers=ADMIN).text
+
+
+@needs_shell
+def test_notifier_passes_the_sip_call_id_in_the_call_object(tmp_path):
+    """The SIP Call-ID (base64) rides in the call object so the carrier's charge matches the call exactly."""
+    data = tmp_path / 'faxdata'
+    (data / 'asterisk').mkdir(parents=True)
+    (data / 'asterisk' / 'inbound.secret').write_text('synthetic-file-secret')
+    file = tiff(data / 'inbound' / '1791083644.7.tiff')
+    faxbot = _Faxbot(200)
+    environment = {'PATH': os.environ['PATH'], 'FAXBOT_DATA_DIR': str(data), 'FAXBOT_API_URL': faxbot.url,
+                   'FAXBOT_NOTIFY_RETRY_SECONDS': '0'}
+    try:
+        for extra in (['callid64=M2YwYzVhOGUtMTExMQ=="; touch pwned'], []):
+            result = subprocess.run(['sh', str(NOTIFY), f'file={file}', 'did=+15555550199', 'uniqueid=1791083644.7',
+                                     *extra], env=environment, capture_output=True, text=True, timeout=60)
+            assert result.stdout == 'ok\n'
+    finally:
+        faxbot.close()
+    first, second = (request['body']['call'] for request in faxbot.requests)
+    assert first['sip_call_id_b64'] == 'M2YwYzVhOGUtMTExMQ==touchpwned'  # only base64 characters survive
+    assert second['sip_call_id_b64'] is None
+    assert set(first) - {'sip_call_id_b64'} == {'did', 'caller', 'started_at', 'answered_at', 'ended_at', 'pages',
+                                                't38', 'remote_station_id_b64'}
+

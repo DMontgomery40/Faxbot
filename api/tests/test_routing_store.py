@@ -120,7 +120,7 @@ async def test_worker_records_route_and_reason_then_cost_is_captured(installatio
     attempt = delivery.get(job)['attempt_id']
     decision = routes.decision(attempt)
     assert (decision['route'], decision['route_reason'], decision['provider_id'], decision['outcome']) == (
-        'phaxio', 'cheapest', 'phaxio', 'pending')
+        'phaxio', 'configured', 'phaxio', 'pending')
     assert decision['destination'] == '+12025550123'
     assert CostRecorder(routes).step() is False
     priced = routes.decision(attempt)

@@ -33,16 +33,11 @@ import {
 } from '@mui/material';
 import { Refresh as RefreshIcon } from '@mui/icons-material';
 import AdminAPIClient from '../api/client';
+import { FaxCostItem } from './delivery/FaxCost';
 import type { FaxJob, OperatorDelivery, DeliveryHistoryEvent } from '../api/types';
 import type { DirectDeliveryRecord } from '../api/deliveryTypes';
-import { ROUTE_LABELS } from './delivery/DeliverySettings';
+import { providerLabel } from '../providerLabels';
 
-// Plain provider names; the shared provider label map will replace this.
-const PROVIDER_NAMES: Record<string, string> = {
-  phaxio: 'Phaxio', sinch: 'Sinch', signalwire: 'SignalWire', documo: 'Documo', humblefax: 'HumbleFax',
-  sip: 'SIP trunk (Asterisk)', freeswitch: 'FreeSWITCH',
-};
-const providerLabel = (backend: string | null | undefined) => (backend ? PROVIDER_NAMES[backend] ?? backend : '-');
 
 interface JobsListProps {
   client: AdminAPIClient;
@@ -153,7 +148,7 @@ function eventDetails(event: DeliveryHistoryEvent): string {
     details.dispatch_mode && `Sending mode: ${statusLabel(details.dispatch_mode)}`,
     // details.actor is an internal sign-in ID, so it is not shown.
     details.provider_sid && `Provider fax ID: ${details.provider_sid}`,
-    details.route && `Route: ${ROUTE_LABELS[details.route] ?? (details.route === 'direct' ? 'Direct delivery' : details.route)}`,
+    details.route && `Route: ${details.route === 'direct' ? 'Direct delivery' : providerLabel(details.route)}`,
     details.legacy_status && `Earlier status: ${details.legacy_status}`,
   ].filter(Boolean).join(' • ');
 }
@@ -651,6 +646,7 @@ function JobsList({ client, openJobId, onOpened }: JobsListProps) {
                   secondary={detailJob.pages || 'Unknown'}
                 />
               </ListItem>
+              <FaxCostItem client={client} jobId={detailJob.id} />
               <Divider />
               <ListItem>
                 <ListItemText

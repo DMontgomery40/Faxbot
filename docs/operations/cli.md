@@ -58,6 +58,7 @@ faxbot jobs list                               # sent faxes, newest first
 faxbot inbound list                            # received faxes
 faxbot inbound pdf <received fax id> -o fax.pdf
 faxbot inbound recover                         # bring in faxes the SIP trunk received but could not hand over
+faxbot trunk apply                             # connect the saved SIP trunk and show the trunk check
 faxbot users add jsmith --name "Jane Smith"    # shows a temporary password once
 faxbot access grant jsmith "Fax operator"
 faxbot integrations add "Front desk scanner"   # an identity for an app or device

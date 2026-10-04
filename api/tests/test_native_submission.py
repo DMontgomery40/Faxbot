@@ -780,7 +780,11 @@ def test_trunk_call_uses_carrier_caller_id_number_format_and_separate_station_id
     assert fields["CallerID"] == "+15555550100"
     variables = _asterisk_variable_assignments(fields["Variable"])
     assert base64.b64decode(variables["FAXSTATION64"]).decode() == "+15555550111"
-    assert "PJSIP_HEADER(add,Accept-Contact)" not in variables
+    # The fax preference is on by default and can be turned off.
+    assert "PJSIP_HEADER(add,Accept-Contact)" in variables
+    plain = ami.originate_fields_for(_trunk(SIP_FAX_PREFERENCE_HEADER="false"), JOB, "+15555550123", "/fax/a.tif",
+                                     attempt_id=ATTEMPT)
+    assert "PJSIP_HEADER(add,Accept-Contact)" not in _asterisk_variable_assignments(plain["Variable"])
     flowroute = ami.originate_fields_for(
         _trunk(SIP_TRUNK_PRESET="flowroute", SIP_TRUNK_USERNAME="12345678"), JOB, "+15555550123",
         "/fax/a.tif", attempt_id=ATTEMPT)
@@ -876,6 +880,20 @@ def test_outbound_result_reports_answer_end_media_and_remote_station_without_new
         assert field in event
 
 
+def test_the_sip_call_id_is_captured_encoded_for_every_call_report():
+    """The carrier bills each call under its SIP Call-ID; every call report carries it, base64 encoded."""
+    capture = 'Set(FAXBOT_CALLID64=${BASE64_ENCODE(${CHANNEL(pjsip,call-id)})})'
+    send, terminal = _context_lines("faxbot-send"), _context_lines("faxbot-result")
+    receive, done = _context_lines("faxbot-inbound-receive"), _context_lines("faxbot-inbound-done")
+    assert sum(capture in line for line in send) == 1 and sum(capture in line for line in receive) == 1
+    answer = next(index for index, line in enumerate(receive) if "Answer()" in line)
+    assert any(capture in line for line in receive[:answer])
+    reports = [line for line in terminal + done if "UserEvent(" in line]
+    assert len(reports) == 3 and all(",CallID64:${FAXBOT_CALLID64}" in line for line in reports)
+    shell = next(line for line in done if "SHELL(" in line)
+    assert "callid64=${FILTER(" in shell
+
+
 def test_inbound_dialplan_only_passes_filtered_or_encoded_caller_values_to_the_shell():
     entry = _context_lines("faxbot-inbound")
     receive = _context_lines("faxbot-inbound-receive")
@@ -891,9 +909,10 @@ def test_inbound_dialplan_only_passes_filtered_or_encoded_caller_values_to_the_s
     assert "CALLERID" not in command and "REMOTESTATIONID" not in command and "EXTEN" not in command
     for variable in re.findall(r"\$\{([A-Z0-9_]+)\}", command):
         assert variable in {"FAXBOT_FILE", "FAXBOT_DID", "FAXBOT_CALLER", "FAXBOT_STARTED", "FAXBOT_ANSWERED",
-                            "FAXBOT_ENDED", "FAXBOT_STATION64", "FAXSTATUS", "FAXPAGES", "FAXMODE",
-                            "UNIQUEID"}, variable
-    for raw in ("${FAXSTATUS}", "${FAXPAGES}", "${FAXMODE}", "${UNIQUEID}", "${FAXBOT_STATION64}"):
+                            "FAXBOT_ENDED", "FAXBOT_STATION64", "FAXBOT_CALLID64", "FAXSTATUS", "FAXPAGES",
+                            "FAXMODE", "UNIQUEID"}, variable
+    for raw in ("${FAXSTATUS}", "${FAXPAGES}", "${FAXMODE}", "${UNIQUEID}", "${FAXBOT_STATION64}",
+                "${FAXBOT_CALLID64}"):
         assert command.count(raw) == command.count("," + raw + ")"), raw
     assert done[-1].endswith("Return()")
 

@@ -6,7 +6,7 @@ Open **Tools → Delivery routes** in the Admin Console.
 
 ## What you see
 
-- **Spending** shows the last 30 days per provider: faxes sent, faxes delivered, billed minutes, billed pages and the estimated cost.
+- **Spending** shows the last 30 days per route: faxes sent and delivered, billed minutes, what the carrier charged, an estimate for faxes it has not billed yet, and how many are still waiting for the carrier's bill. Calls received on your SIP trunk get their own card. See [Costs](#costs).
 - **Fax numbers** lists every number Faxbot has sent to, which routes reached it, how often each route delivered, and what the number cost.
 - **Rate cards** hold the prices Faxbot uses for its estimates.
 - **Direct partners** are organizations that receive your documents straight into their Faxbot, with no fax call. See [Direct delivery](direct-delivery.md).
@@ -17,8 +17,21 @@ For each fax, Faxbot puts the available routes in this order:
 
 1. A verified direct partner for the number, if there is one.
 2. The cheapest route that has worked reliably for that number.
-3. The other routes, cheapest first.
+3. The other routes, cheapest first. A route without a known price comes after the routes with one.
 4. Routes that have recently failed for that number. These come last.
+
+Each route in a number's **Details** says what decided its place:
+
+| Reason | Meaning |
+| --- | --- |
+| The cheapest route that works reliably for this number. | Every reliable route has a known price, and this one costs least. |
+| The cheapest route with a known price that works reliably for this number. | Another reliable route has no rate card, so Faxbot cannot say it is the cheapest overall. |
+| Included in your HumbleFax plan. | The route's rate card is a flat monthly plan, so a fax adds nothing. |
+| More reliable for this number; its cost is unknown. | Cheaper routes often failed for this number, and this route has no rate card. |
+| Your outbound fax provider; its cost is unknown. | No route has a known price, so your configured order decides. |
+| Your outbound fax provider. | There is only one route to choose from. |
+
+A route whose cost is unknown is never called the cheapest.
 
 A route counts as unreliable for a number after at least three finished faxes with less than 80% delivered in the last 30 days. Set `FAX_ROUTE_MIN_SUCCESS_PERCENT` to change that threshold.
 
@@ -50,12 +63,35 @@ Faxbot never resends a fax whose outcome is unknown, for example when a provider
 Faxbot keeps three amounts for each attempt:
 
 - **Estimated** comes from your rate card and the call or pages Faxbot observed. It is rounded per call under the card's billing rule. With whole-minute billing, a 59-second call and a 61-second call bill as 1 and 2 minutes, which is 3 minutes in total.
-- **Charged by the provider** is the amount the provider reports, when it reports one. Faxbot currently reads SignalWire's reported price. That price can arrive after the fax is delivered, so Faxbot keeps asking for up to 7 days.
-- **Settled** is the provider's amount once it has stopped changing. A price seen a day after the call ended is treated as settled. Corrections from the provider replace the earlier amount.
+- **Charged** is the amount the provider or carrier reports. Faxbot reads SignalWire's reported fax price and, for faxes sent or received on a Telnyx SIP trunk, what Telnyx billed for each call (see [What a call costs](../setup/sip-trunk.md#what-a-call-costs)). A charge can arrive after the fax is delivered, so Faxbot keeps asking for up to 7 days.
+- **Settled** is the charge once it has stopped changing. A charge seen a day after the call ended is treated as settled.
 
-A price the provider has not reported stays empty; Faxbot never fills it in with its own estimate. For a fax with an unknown outcome, the estimate assumes the fax was sent.
+A charge the provider has not reported stays empty; Faxbot never fills it in with its own estimate. For a fax with an unknown outcome, the estimate assumes the fax was sent. A failed attempt that the carrier charged for counts in that fax's total. Billing never changes a fax's delivery status.
+
+Spending adds up charges where they exist and estimates only for faxes without one, so the same fax is never counted twice. Each route card says:
+
+- what the carrier charged, for how many faxes;
+- the estimate for faxes not billed yet;
+- how many are waiting for the carrier's bill;
+- how many could not be matched to exactly one carrier record (their cost stays unknown).
+
+**Job Details** shows one fax's cost, for example "Telnyx charged $0.005 for this call." or "Cost not reported yet." The Inbox shows the same line for each received fax under **Received through**.
+
+From the command line:
+
+```bash
+faxbot routing costs                 # spending per route and for received calls
+faxbot routing reconcile             # ask Telnyx now, instead of waiting for the next check
+faxbot routing fax-cost FAX_ID       # one sent fax; add --received for a received fax
+```
 
 If a call record with measured connected time is available for an attempt, Faxbot uses it instead of its own timing, which includes queueing and ringing.
+
+### Flat monthly plans
+
+Some providers charge a monthly fee and nothing per fax. Give that provider a rate card with a **Monthly plan fee** and leave the per-minute, per-page and per-call prices at 0. Faxbot then shows its faxes as included in your plan, not as an unknown cost, and ranks the route as costing nothing extra per fax. The fee itself is shared by all faxes and is never added to one fax.
+
+The shipped starting cards include the HumbleFax unlimited plan: the HumbleFax homepage, read on 2026-10-03, states "Unlimited Faxing $10 / month" with no monthly page limits. Starting cards only load into an installation that has no rate cards yet; add the plan in **Rate cards** otherwise.
 
 ## Rate cards
 
@@ -105,5 +141,8 @@ These routes need `settings:read`, or `settings:write` for changes:
 | GET | `/routing/destinations` | Numbers with their routes, delivery rate and 30-day cost |
 | GET | `/routing/destinations/{number}` | One number, with the route order for its next fax |
 | PATCH | `/routing/destinations/{number}` | Name, notes, preferred route, case references |
-| GET | `/routing/costs?since=` | Totals by provider |
+| GET | `/routing/costs?since=` | Spending by route and for received calls, with charged, estimated and waiting counts |
+| POST | `/routing/reconcile` | Ask the SIP trunk carrier now what each open call cost (`settings:write`) |
 | GET, PUT | `/routing/rate-cards` | Read or replace the rate cards |
+
+Anyone who may read a fax can read its cost: `GET /routing/faxes/{id}/cost` for a sent fax, `GET /routing/inbound/{id}/cost` for a received fax, and `GET /routing/inbound-costs?ids=` for up to 100 received faxes at once. Faxes the person cannot read are left out.

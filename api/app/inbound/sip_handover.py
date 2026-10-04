@@ -4,7 +4,7 @@ Asterisk stores each received image as ``<fax data>/inbound/<uniqueid>.tiff``
 and hands it over to ``POST /_internal/asterisk/inbound`` with a shared secret.
 That secret is plumbing between two containers of one installation, so Faxbot
 creates it when none is set (an operator or ``.env`` value always wins) and
-Apply to Asterisk writes it where the Asterisk container reads it.
+Apply and connect writes it where the Asterisk container reads it.
 
 A hand-over can still fail: the API was down, the secret was missing or
 refused, or Faxbot stopped between the call and the hand-over. The image then

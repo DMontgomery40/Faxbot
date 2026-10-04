@@ -14,6 +14,23 @@ if TYPE_CHECKING:
     from .config_store import ConfigurationSnapshot
 
 
+def _audio_reason(values) -> dict:
+    from .sip_fax_mode import reason_for
+    try:
+        found = reason_for(values)
+    except (TypeError, ValueError, OSError):
+        found = None
+    return {'t38_off_reason': found['reason'] if found else None, 't38_off_at': found['at'] if found else None}
+
+
+def _engine_login_shared(values) -> bool:
+    from .sip_trunk import manager_credentials_shared
+    try:
+        return manager_credentials_shared(values)
+    except (TypeError, ValueError):
+        return False
+
+
 def mask_secret(value: str) -> str:
     """Do not disclose a secret's suffix or length; preserve an explicit clear."""
     return '***' if value else ''
@@ -103,6 +120,8 @@ def project_admin_settings(snapshot: ConfigurationSnapshot, pending_fields: Iter
             'ami_username': values.ami_username,
             'ami_password': mask_secret(values.ami_password),
             'ami_password_is_default': values.ami_password == 'changeme',
+            # Faxbot has written this login where its own Asterisk reads it.
+            'ami_password_shared': _engine_login_shared(values),
             # A fax number, not a secret: the person sees and edits the stored number.
             'station_id': values.fax_station_id,
             'configured': bool(values.ami_username and values.ami_password),
@@ -122,7 +141,12 @@ def project_admin_settings(snapshot: ConfigurationSnapshot, pending_fields: Iter
                 'fax_preference_header': values.sip_fax_preference_header,
                 'codecs': values.sip_trunk_codecs,
                 'external_address': values.sip_external_address,
+                # Why Faxbot chose audio fax for new calls ('no_data_back' or 'network'), and when; else None.
+                **_audio_reason(values),
             },
+            # Lets Faxbot read what Telnyx charged for each call; never shown.
+            'telnyx_api_key': mask_secret(values.telnyx_api_key),
+            'telnyx_api_key_set': bool(values.telnyx_api_key),
         },
         'security': {
             'api_key': mask_secret(values.api_key),

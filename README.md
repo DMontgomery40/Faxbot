@@ -29,7 +29,7 @@ This README describes the current source checkout. Published packages and deploy
 - **Send and receive faxes.** Prepare PDF, TXT, and supported TIFF documents, track outbound jobs, and organize received faxes in mailboxes. Uncertain submissions wait for confirmation instead of being blindly sent again. A received fax shows as waiting until Faxbot has fetched and checked its real document; see [receiving faxes](docs/operations/receiving.md).
 - **Choose providers independently.** Use separate outbound and inbound providers. Built-in adapters cover Phaxio, Sinch, Documo, HumbleFax, SignalWire, SIP/Asterisk, and FreeSWITCH; supported operations vary by provider. Additional HTTP providers can use manifests. See [provider setup](docs/setup/index.md) and [the plugin registry](docs/plugins/registry.md).
 - **Fax through your own SIP carrier.** Connect a carrier SIP trunk (Telnyx first; SignalWire, Sinch, AnveoDirect, Flowroute or another) to the built-in Asterisk engine, fax over T.38 by the minute with no per-page fee, and keep a record of every call. See [SIP trunk setup](docs/setup/sip-trunk.md).
-- **Choose delivery routes and track spending.** Configure additional outbound routes, rate cards, and destination preferences. Faxbot uses price estimates and delivery history to rank routes, records each attempt, and reconciles reported SignalWire charges separately from delivery status. Unknown charges stay unknown. See [delivery routes](docs/operations/delivery-routes.md).
+- **Choose delivery routes and track spending.** Configure additional outbound routes, rate cards (including flat monthly plans), and destination preferences. Faxbot uses price estimates and delivery history to rank routes, records each attempt, and reconciles reported SignalWire charges and, with a `TELNYX_API_KEY`, what Telnyx billed for each sent and received trunk call, separately from delivery status. Unknown charges stay unknown and a route with an unknown cost is never called the cheapest. See [delivery routes](docs/operations/delivery-routes.md).
 - **Deliver incoming documents by email.** One intake queue collects ordinary faxes and direct deliveries. SMTP connectors send the received PDF to configured inboxes, with retries for confirmed temporary failures and review for uncertain outcomes. See [intake](docs/operations/intake.md).
 - **Hand received documents to an owner.** The **Work** screen and `faxbot work` give each received document an owner who acknowledges it and marks it done, with an optional operational acknowledgement target per installation or mailbox, one escalation to a backup person, and a per-item evidence export. An owner must already be able to see the document; assignment never grants access. See [Work](docs/operations/work.md).
 - **Send directly to verified Faxbot partners.** Enrolled installations can exchange encrypted original PDFs and signed receipts using the recipient's usual fax number. Enrollment requires both installations and a fax challenge; ordinary fax fallback preserves the delivery's identity and uncertainty checks. See [direct delivery](docs/operations/direct-delivery.md).
@@ -118,11 +118,12 @@ Checked items are implemented in the current source checkout. Unchecked items ar
 - [x] Durable outbound jobs, uncertain-outcome handling, server-side idempotency, and held test jobs.
 - [x] Users, groups, roles, scoped keys, sessions, mailbox access, and single-use mobile pairing.
 - [x] Cost-aware route selection, versioned rate cards, attempt costs, and separate reconciliation of reported SignalWire charges.
+- [x] Telnyx charges for every trunk call, sent and received: matched by SIP Call-ID or by a unique number-and-time match (ambiguous records stay unmatched and are counted), kept with corrections and never changing delivery; shown per route in Spending, in Job Details and in the Inbox, and with `faxbot routing costs`, `reconcile` and `fax-cost`. Route recommendations never call an unknown cost the cheapest, and a flat plan reads "Included in your HumbleFax plan." (Tested with synthetic Telnyx records shaped like the live calls; live charges not yet observed in the console. Matching by the captured SIP Call-ID is not yet confirmed against Telnyx records.)
 - [x] Shared intake queue and SMTP email delivery, with console management.
 - [x] Enrolled direct partners, encrypted original-PDF delivery, signed receipts, and controlled fax fallback.
 - [x] Recipient-approved case packets, accepted-document history, and preview through the API.
-- [x] Carrier SIP trunk presets with T.38, per-call records, and native faxes priced by the trunk carrier (proven in a loopback; live carrier call pending).
-- [x] Fax over a SIP trunk from behind a router with no published or forwarded ports: Asterisk registers and starts every flow itself (proven in loopback and router tests in both directions; live carrier call pending), with audio fax for new calls one click away when T.38 data cannot come back.
+- [x] Carrier SIP trunk presets with T.38, per-call records, and native faxes priced by the trunk carrier. Proven live over Telnyx on 3 October 2026: a two-page fax sent to a cloud fax line and a fax received back, both configured entirely in the console.
+- [x] Fax over a SIP trunk from behind a router with no published or forwarded ports: Asterisk registers and starts every flow itself, with audio fax for new calls one click away when T.38 data cannot come back. Proven live in both directions from behind a home router in audio mode; over Telnyx, T.38 data did not come back through a router that changes port numbers.
 - [x] Encrypted trunk registration by default, Faxbot's internet address found by STUN, and one plain sentence per trunk call (for example "no fax data came back from the carrier") in Recent calls, Jobs, the Dashboard and `faxbot trunk`.
 - [x] `faxbot` command line covering the product, with stopped-server owner recovery, backup, restore, and database upgrades.
 - [x] One E.164 destination per fax, read for the installation country (UK and US), stored on the job, with versioned idempotent replays.
@@ -130,10 +131,17 @@ Checked items are implemented in the current source checkout. Unchecked items ar
 - [x] Stable send-operation ids in both SDKs, both MCP servers and the console, with an explicit resume path and no automatic resend.
 - [x] Source-derived reference documentation and scoped AI prose proposals, with maintained planning outside the generated tree.
 - [x] Credentials in `.env` read at every start (carrier names such as `TELNYX_PASS` accepted), shown as **Set in .env**; a new installation starts with no fax provider until one is chosen.
+- [x] Setup Wizard chooses one provider for sending and one for receiving, shows one section per provider in use (the SIP trunk whenever it sends or receives) and saves each step as you move on, with **Restart now** when a change waits for a restart. Every screen and `faxbot` call each provider by one name, such as **SIP trunk (Asterisk)**.
+- [x] **Apply and connect** (and `faxbot trunk apply`) writes the SIP trunk, restarts the Compose install's Asterisk to load it once no call is up, waits, and shows the trunk check on the same screen; no host shell is needed (tested with a simulated Asterisk manager; first live restart pending).
+- [x] Audio fax chosen by Faxbot when T.38 cannot work: after a T.38 call gets no fax data back, or for a new Telnyx trunk on a network that changes port numbers, new calls use audio fax and the switch says why, with **Try T.38 again** (the failed fax is never resent). The fax marker on outgoing calls is on by default, and readiness waits until a SIP trunk is set up for each direction that uses it.
+- [x] No hand-made shared secrets between Faxbot's containers: Faxbot creates the Asterisk manager password when the SIP trunk first comes into use and Asterisk picks it up by itself (a password in `.env` still wins), and the Setup Wizard says whether received faxes reach Faxbot instead of asking for the inbound secret (start-script and startup tests; live first boot pending).
 - [x] A fax received over the SIP trunk always reaches the Inbox: Faxbot creates the Asterisk inbound secret itself, a failed hand-over is logged and named in Recent calls, **Check trunk status** and the Dashboard, and an image that was never handed over is brought in automatically or with `faxbot inbound recover` (tested with synthetic images; recovery of a live orphan pending).
 
 ### Next
 
+- [ ] Live confirmation of Telnyx charges in the console against the faxes of 3 October 2026, and of SIP Call-ID matching in both directions; charges from other trunk carriers.
+- [ ] A Setup Wizard that takes an operator from nothing to a working fax: providers per direction saved as they go, trunk applied and checked without a host shell, no hand-made secrets between Faxbot's own containers, and an optional test fax.
+- [ ] SSLFax through an optional HylaFAX+ engine for peers that already support it, with normal-fax fallback; the [isolated experiment](docs/operations/delivery-routes.md#sslfax) is the starting point.
 
 ### Proposed enterprise foundation
 
@@ -154,7 +162,13 @@ Enterprise software acceptance uses synthetic/local tests. Live customer end-to-
 - [ ] Destination-level scheduling and verified same-installation delivery, guided by actual traffic and retry costs.
 - [ ] Additional intake connectors, including watched folders and email ingestion, through the proposed enterprise import contract; specific vendor integrations follow demonstrated needs.
 - [ ] Measure fax negotiation, lossless compression, and error-correction choices before enabling adaptive transport behavior.
-- [ ] Evaluate a supported SSLFax integration using the [isolated HylaFAX+ experiment](docs/operations/delivery-routes.md#sslfax); Faxbot does not currently offer SSLFax.
+- [ ] Batch faxes to the same number within a short per-number window, with an urgency bypass, so short faxes share one call.
+- [ ] Cost per delivered fax for each destination, from every attempt's negotiated speed, error correction, duration and real charge, and route choice based on it rather than on rate cards alone.
+- [ ] Notice fax for enrolled partners whose intake needs a fax event: the original goes by the encrypted direct route and one opaque notice page goes by fax.
+- [ ] Receiving-side savings from real call history: which numbers should share a channel pool and which stay metered, quiet numbers, and trunk consolidation.
+- [ ] Resend only the missing pages to an enrolled partner after a broken call, with the document assembled whole on the receiving side.
+- [ ] Assemble a packet from a recipient's own checklist, and send once to an organization that distributes internally, only where the recipient agrees.
+- [ ] Reuse templates and unchanged pages between enrolled partners by content fingerprint, sending only what the other side does not already hold.
 - [ ] Prove T.38 Internet Aware Fax interoperability on compatible endpoints before offering it as a transport.
 - [ ] Evaluate SIP routing preferences, inbound channel pooling, and existing plan entitlements against real account costs and delivery reliability.
 - [ ] Explore automatic partner discovery only with a verified number, organization, and inbox binding.

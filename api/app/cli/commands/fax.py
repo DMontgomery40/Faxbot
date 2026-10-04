@@ -8,6 +8,7 @@ from .. import state
 from ..client import segment
 from ..errors import CliError
 from ..output import local_time, parse_time, yes_no
+from ...provider_labels import provider_label
 
 jobs = typer.Typer(help='Sent faxes: list them, read details, download documents and check status.',
                    no_args_is_help=True)
@@ -205,8 +206,6 @@ def _document(item):
     return ', '.join(part for part in parts if part) or '-'
 
 
-PROVIDER_NAMES = {'sip': 'SIP trunk', 'phaxio': 'Phaxio', 'sinch': 'Sinch', 'signalwire': 'SignalWire',
-                  'documo': 'Documo', 'humblefax': 'HumbleFax', 'freeswitch': 'FreeSWITCH'}
 
 
 def _arrived(item):
@@ -219,7 +218,7 @@ def _inbound_fields(item):
     return [('Received fax ID', item.get('id')), ('From', item.get('fr') or 'Unknown'),
             ('To', item.get('to') or 'Unknown'),
             ('Status', _inbound_status(item)), ('Problem', item.get('problem')), ('Mailbox', item.get('mailbox')),
-            ('Received through', PROVIDER_NAMES.get(item.get('backend'), item.get('backend'))),
+            ('Received through', provider_label(item.get('backend')) if item.get('backend') else None),
             ('Provider fax ID', item.get('provider_fax_id')),
             ('Sent', local_time(item.get('source_received_at'))),
             ('Received', _arrived(item)),

@@ -26,6 +26,7 @@ import type { DirectPartner, IntakeCounts, Money, ProviderCosts } from '../api/d
 import type { SipCallRecord } from '../api/sipTypes';
 import type { AdminDestination } from '../navigation';
 import { formatMoney, formatMoneyList } from './delivery/shared';
+import { providerLabel } from '../providerLabels';
 
 type CardData<T> = { kind: 'loading' } | { kind: 'ready'; data: T } | { kind: 'denied' | 'unavailable' | 'error' };
 
@@ -275,7 +276,7 @@ function Dashboard({ client, onNavigate, canSetUp = false }: DashboardProps) {
                   variant="outlined"
                 />
                 <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-                  {health.backend ? `Outbound provider: ${health.backend}` : 'No fax provider set up yet.'}
+                  {health.backend ? `Sending: ${providerLabel(health.backend)}` : 'No fax provider set up yet.'}
                 </Typography>
                 {!health.backend && canSetUp && onNavigate && (
                   <Button variant="contained" size="small" sx={{ mt: 1.5 }}
@@ -483,8 +484,12 @@ function Dashboard({ client, onNavigate, canSetUp = false }: DashboardProps) {
               <CardContent>
                 <Typography variant="h6" gutterBottom>Config Overview</Typography>
                 <Grid container spacing={1}>
-                  <Grid item xs={6}><Typography variant="body2" color="text.secondary">Default provider</Typography></Grid>
-                  <Grid item xs={6}><Chip size="small" label={cfg ? (cfg.backend || 'Not set up') : 'Unavailable'} /></Grid>
+                  <Grid item xs={6}><Typography variant="body2" color="text.secondary">Sending</Typography></Grid>
+                  <Grid item xs={6}><Chip size="small" data-testid="config-sending"
+                    label={cfg ? (cfg.hybrid?.outbound ? providerLabel(cfg.hybrid.outbound) : 'No provider') : 'Unavailable'} /></Grid>
+                  <Grid item xs={6}><Typography variant="body2" color="text.secondary">Receiving</Typography></Grid>
+                  <Grid item xs={6}><Chip size="small" data-testid="config-receiving"
+                    label={cfg ? (cfg.inbound?.enabled && cfg.hybrid?.inbound ? providerLabel(cfg.hybrid.inbound) : 'No provider') : 'Unavailable'} /></Grid>
                   <Grid item xs={6}><Typography variant="body2" color="text.secondary">Storage</Typography></Grid>
                   <Grid item xs={6}><Chip size="small" label={cfg?.storage?.backend || 'local'} /></Grid>
                   <Grid item xs={6}><Typography variant="body2" color="text.secondary">Authentication</Typography></Grid>
@@ -492,7 +497,7 @@ function Dashboard({ client, onNavigate, canSetUp = false }: DashboardProps) {
                   <Grid item xs={6}><Typography variant="body2" color="text.secondary">Enforce HTTPS</Typography></Grid>
                   <Grid item xs={6}><Chip size="small" label={(cfg?.enforce_public_https ? 'Enabled' : 'Disabled')} color={cfg?.enforce_public_https ? 'success' : 'default'} variant="outlined" /></Grid>
                   <Grid item xs={6}><Typography variant="body2" color="text.secondary">v3 Plugins</Typography></Grid>
-                  <Grid item xs={6}><Chip size="small" label={(cfg?.v3_plugins?.enabled ? `Enabled (${cfg?.v3_plugins?.active_outbound || '-'})` : 'Disabled')} color={cfg?.v3_plugins?.enabled ? 'success' : 'default'} variant="outlined" /></Grid>
+                  <Grid item xs={6}><Chip size="small" label={(cfg?.v3_plugins?.enabled ? `Enabled (${cfg?.v3_plugins?.active_outbound ? providerLabel(cfg.v3_plugins.active_outbound) : '-'})` : 'Disabled')} color={cfg?.v3_plugins?.enabled ? 'success' : 'default'} variant="outlined" /></Grid>
                 </Grid>
               </CardContent>
             </Card>

@@ -38,6 +38,9 @@ export interface SipTrunkSettings {
   fax_preference_header: boolean;
   codecs: string;
   external_address: string;
+  // Why Faxbot chose audio fax for new calls, and when (read only).
+  t38_off_reason?: 'no_data_back' | 'network' | null;
+  t38_off_at?: string | null;
 }
 
 export type SipRegistration = 'registered' | 'not_registered' | 'rejected' | 'not_used' | 'unknown';
@@ -74,6 +77,24 @@ export interface SipTrunkStatus {
   last_call_verdict?: string | null;
   // True after a T.38 call carried no fax data while T.38 is on: offer audio fax for new calls.
   suggest_audio?: boolean;
+  // Asterisk shares Faxbot's data folder, so Apply and connect restarts it.
+  engine_managed?: boolean;
+  // Faxbot asked Asterisk to restart and has not logged in to it again yet.
+  engine_restarting?: boolean;
+  // The running Asterisk loaded exactly the current trunk settings.
+  in_use?: boolean;
+  // Whether a fax received over the trunk can reach Faxbot, in one sentence; null when the trunk does not receive.
+  handover_ready?: boolean | null;
+  handover_text?: string | null;
+  message: string;
+}
+
+// What Apply and connect did with the fax engine after saving its files.
+export type SipEngineAction = 'restarting' | 'current' | 'busy' | 'manual' | 'not_connected' | 'not_allowed';
+
+export interface SipApplyResult {
+  ok: true;
+  engine?: SipEngineAction;
   message: string;
 }
 

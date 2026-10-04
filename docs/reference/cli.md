@@ -1787,8 +1787,9 @@ $ faxbot trunk [OPTIONS] COMMAND [ARGS]...
 **Commands**:
 
 * `status`: Check the trunk: registration, the...
+* `apply`: Write the saved trunk for Asterisk and...
 * `calls`: List recent trunk calls, newest first,...
-* `mode`: Choose T.38 or audio fax for new calls,...
+* `mode`: Choose T.38 or audio fax for new calls and...
 
 ### `faxbot trunk status`
 
@@ -1802,6 +1803,25 @@ $ faxbot trunk status [OPTIONS]
 
 **Options**:
 
+* `--help`: Show this message and exit.
+
+### `faxbot trunk apply`
+
+Write the saved trunk for Asterisk and connect it.
+
+In the Docker Compose install Faxbot restarts Asterisk to load the trunk,
+once no call is up; elsewhere it says to restart the Asterisk service.
+
+**Usage**:
+
+```console
+$ faxbot trunk apply [OPTIONS]
+```
+
+**Options**:
+
+* `--wait / --no-wait`: Wait for Asterisk and the carrier, then show the trunk check.  [default: wait]
+* `--timeout <int range>`: Seconds to wait.  [default: 60; 5&lt;=x&lt;=600]
 * `--help`: Show this message and exit.
 
 ### `faxbot trunk calls`
@@ -1822,7 +1842,7 @@ $ faxbot trunk calls [OPTIONS]
 
 ### `faxbot trunk mode`
 
-Choose T.38 or audio fax for new calls, save it for Asterisk, and say what to restart.
+Choose T.38 or audio fax for new calls and connect the trunk with it.
 
 **Usage**:
 
@@ -1857,7 +1877,9 @@ $ faxbot routing [OPTIONS] COMMAND [ARGS]...
 * `destinations`: List destinations Faxbot knows about, with...
 * `destination`: Show one destination: its settings, the...
 * `update-destination`: Change a destination&#x27;s name, notes,...
-* `costs`: Show fax attempts and costs per provider:...
+* `costs`: Show what faxing cost per route: carrier...
+* `reconcile`: Ask the SIP trunk carrier now what each...
+* `fax-cost`: Show what one fax cost: the carrier&#x27;s...
 * `rate-cards`: Show the prices Faxbot uses to estimate...
 
 ### `faxbot routing destinations`
@@ -1916,7 +1938,7 @@ $ faxbot routing update-destination [OPTIONS] {number}
 
 ### `faxbot routing costs`
 
-Show fax attempts and costs per provider: Faxbot&#x27;s estimate, the provider&#x27;s report and settled charges.
+Show what faxing cost per route: carrier charges, estimates for faxes not billed yet, and what is waiting.
 
 **Usage**:
 
@@ -1927,6 +1949,39 @@ $ faxbot routing costs [OPTIONS]
 **Options**:
 
 * `--since <str>`: Start date, for example 2026-09-01. Default: the last 30 days.
+* `--help`: Show this message and exit.
+
+### `faxbot routing reconcile`
+
+Ask the SIP trunk carrier now what each open call cost. Delivery results never change.
+
+**Usage**:
+
+```console
+$ faxbot routing reconcile [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+### `faxbot routing fax-cost`
+
+Show what one fax cost: the carrier&#x27;s charge, or why it is not known yet.
+
+**Usage**:
+
+```console
+$ faxbot routing fax-cost [OPTIONS] {fax_id}
+```
+
+**Arguments**:
+
+* `fax_id`: Fax ID from &#x27;faxbot jobs&#x27; or, with --received, from &#x27;faxbot inbound list&#x27;.  [required]
+
+**Options**:
+
+* `--received`: The fax is a received fax.
 * `--help`: Show this message and exit.
 
 ### `faxbot routing rate-cards`

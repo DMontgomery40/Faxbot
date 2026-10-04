@@ -28,8 +28,8 @@ from .models import FaxJobOut
 from .conversion import ensure_dir
 from .documents import prepare_upload, UploadPreparationError
 from .ami import ami_client, ENGINE_UNREACHABLE
-from . import sip_calls
-from .sip_http import router as sip_router, watch_public_address
+from . import sip_calls, sip_fax_mode
+from .sip_http import router as sip_router, sip_trunk_message, watch_public_address
 from .phaxio_service import get_phaxio_service
 from .sinch_service import get_sinch_service
 from .signalwire_service import get_signalwire_service
@@ -119,6 +119,8 @@ async def lifespan(application: FastAPI):
                     ami_client.on_fax_result(_handle_fax_result)
                     ami_client.on_originate_response(_handle_originate_response)
                     sip_calls.attach(ami_client, runtime.manager.store.engine)
+                    # A T.38 call whose fax data never came back switches new calls to audio fax.
+                    sip_fax_mode.attach(ami_client, runtime)
                     tasks.append(asyncio.create_task(ami_client.connect(), name="faxbot-ami-connect"))
                     # Start without the fax engine rather than lock people out of the
                     # console that fixes it; the client keeps retrying in the background.
@@ -569,13 +571,15 @@ def _readiness_status(request: Request):
 
     # Required traits for readiness
     ami_required = providerHasTrait("any", "requires_ami")
-    # One plain reason when the fax engine is missing: no provider, or Faxbot cannot sign in or reach it.
-    message = NO_PROVIDER if not ob else (ami_client.engine_message() if ami_required else None)
+    # One plain reason when the fax engine is missing: no provider, or Faxbot cannot sign in or reach it,
+    # or the SIP trunk it would call through is not set up yet.
+    trunk_message = sip_trunk_message(settings)
+    message = NO_PROVIDER if not ob else (ami_client.engine_message() if ami_required else None) or trunk_message
     storage_required = settings.inbound_enabled and providerHasTrait("inbound", "needs_storage")
     ready = bool(
         db_ok and gs_installed and outbound_ok and inbound_ok and
         (not ami_required or ami_connected) and
-        (not storage_required or storage_ok)
+        (not storage_required or storage_ok) and trunk_message is None
     )
     return {
             "status": "ready" if ready else "not_ready",
@@ -1753,37 +1757,24 @@ def admin_inbound_callbacks(request: Request):
     return out
 
 
-SIP_RECEIVING_READY = "Receiving over your SIP trunk: ready."
-
-
 def _sip_receiving_status(request):
-    """One sentence about receiving over the SIP trunk: ready, or what stops a fax reaching Faxbot."""
-    from . import sip_trunk
+    """One sentence about receiving over the SIP trunk, the same one the trunk screen shows."""
+    from . import sip_http, sip_trunk
     values = request.scope["faxbot.configuration"].active.values
-    if not settings.inbound_enabled:
+    if not values.inbound_enabled:
         return {"ready": False, "message": "Receiving faxes is turned off in Settings."}
     if not sip_trunk.configured(values):
-        return {"ready": False, "message": "Receiving over your SIP trunk is not set up yet: choose your carrier on the trunk screen."}
-    apply_first = ("Receiving over your SIP trunk is not ready: select Apply to Asterisk on the trunk screen, "
-                   "then restart the Asterisk service.")
-    if not settings.asterisk_inbound_secret:
-        return {"ready": False, "message": apply_first}
-    try:
-        # The trunk file Asterisk loads at start must match the saved settings.
-        applied = sip_trunk.configuration_path(values).read_text() == sip_trunk.render_pjsip(values)
-    except (OSError, sip_trunk.TrunkConfigurationError):
-        applied = False
-    if not applied:
-        return {"ready": False, "message": apply_first}
+        return {"ready": False, "message": sip_http.NO_TRUNK}
     try:
         from .routing.background import installation_engine
         engine, _ = installation_engine(request.app)
-        latest = sip_calls.SipCallRecords(engine).page(limit=1, direction="inbound")["items"]
+        last = sip_http._last_call(sip_calls.SipCallRecords(engine))
     except Exception:
-        latest = []
-    if latest and latest[0]["verdict"] == sip_calls.NOT_HANDED_OVER:
-        return {"ready": False, "message": latest[0]["summary"]}
-    return {"ready": True, "message": SIP_RECEIVING_READY}
+        last = None
+    handover = sip_http._handover(values, sip_trunk.engine_managed(values), last)
+    if handover is None:
+        return {"ready": False, "message": "Receiving faxes is turned off in Settings."}
+    return {"ready": handover["ready"], "message": handover["text"]}
 
 
 class SimulateInboundIn(BaseModel):
@@ -2773,7 +2764,7 @@ def _installed_plugins(snapshot=None) -> list[dict[str, Any]]:
     # Outbound providers
     items.append({
         "id": "phaxio",
-        "name": "Phaxio Cloud Fax",
+        "name": "Phaxio",
         "version": "1.0.0",
         "categories": ["outbound"],
         "capabilities": ["send", "get_status", "webhook"],
@@ -2782,7 +2773,7 @@ def _installed_plugins(snapshot=None) -> list[dict[str, Any]]:
     })
     items.append({
         "id": "sinch",
-        "name": "Sinch Fax API v3",
+        "name": "Sinch",
         "version": "1.0.0",
         "categories": ["outbound"],
         "capabilities": ["send", "get_status"],
@@ -2791,7 +2782,7 @@ def _installed_plugins(snapshot=None) -> list[dict[str, Any]]:
     })
     items.append({
         "id": "signalwire",
-        "name": "SignalWire (Compatibility Fax API)",
+        "name": "SignalWire",
         "version": "1.0.0",
         "categories": ["outbound"],
         "capabilities": ["send", "get_status", "webhook"],
@@ -2800,7 +2791,7 @@ def _installed_plugins(snapshot=None) -> list[dict[str, Any]]:
     })
     items.append({
         "id": "documo",
-        "name": "Documo mFax",
+        "name": "Documo",
         "version": "1.0.0",
         "categories": ["outbound"],
         "capabilities": ["send", "get_status"],
@@ -2818,7 +2809,7 @@ def _installed_plugins(snapshot=None) -> list[dict[str, Any]]:
     })
     items.append({
         "id": "sip",
-        "name": "SIP/Asterisk (Self-hosted)",
+        "name": "SIP trunk (Asterisk)",
         "version": "1.0.0",
         "categories": ["outbound"],
         "capabilities": ["send", "get_status"],
@@ -2827,7 +2818,7 @@ def _installed_plugins(snapshot=None) -> list[dict[str, Any]]:
     })
     items.append({
         "id": "freeswitch",
-        "name": "FreeSWITCH (Self-hosted)",
+        "name": "SIP trunk (FreeSWITCH)",
         "version": "1.0.0",
         "categories": ["outbound"],
         "capabilities": ["send"],

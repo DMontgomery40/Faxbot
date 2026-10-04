@@ -77,8 +77,9 @@ def routing_destination(number: str = typer.Argument(..., help='Fax number.')):
         out.table(['Route', 'Attempts', 'Delivered', 'Failed', 'Success', 'Estimated cost', 'Last used'],
                   _route_rows(view.get('routes', [])), empty='No faxes sent to this number in the last 30 days.')
         out.table(['Faxbot would choose', 'Why', 'Estimated cost, one page'],
-                  [[item['label'], item['explanation'], money([item['estimated_cost_one_page']])
-                    if item.get('estimated_cost_one_page') else 'unknown'] for item in view.get('recommended_routes', [])],
+                  [[item['label'], item['explanation'], 'included in your plan' if item.get('included_in_plan')
+                    else money([item['estimated_cost_one_page']]) if item.get('estimated_cost_one_page') else 'unknown']
+                   for item in view.get('recommended_routes', [])],
                   empty='No route recommendation: outbound delivery is not set up.')
     state.out().result(view, human)
 
@@ -111,21 +112,62 @@ def routing_update_destination(number: str = typer.Argument(..., help='Fax numbe
     state.out().result(view, lambda out: out.line(f"Destination {view['number']} updated."))
 
 
+def _route_name(item):
+    return f"{item['label']} ({item['carrier']})" if item.get('carrier') else item['label']
+
+
+def _not_billed(item, unreported):
+    """Estimate for faxes the carrier has not billed yet, or the plan that includes them."""
+    if item.get('plan'):
+        fee = item['plan']['monthly_fee']
+        return f"included in plan ({money([fee])} a month)"
+    return money(item.get('estimated_cost_not_reported')) if item.get(unreported) else '-'
+
+
 @routing.command('costs')
 def routing_costs(since: str = typer.Option(None, '--since', help='Start date, for example 2026-09-01. Default: '
                                                                   'the last 30 days.')):
-    """Show fax attempts and costs per provider: Faxbot's estimate, the provider's report and settled charges."""
+    """Show what faxing cost per route: carrier charges, estimates for faxes not billed yet, and what is waiting."""
     result = state.api().get('/routing/costs', params={'since': since})
 
     def human(out):
         out.line(f"Since {local_time(result['since'])}")
-        out.table(['Provider', 'Attempts', 'Delivered', 'Failed', 'Uncertain', 'Estimated', 'Provider reported',
-                   'Settled', 'No reported cost'],
-                  [[item['label'], item['attempts'], item['successes'], item['failures'], item['uncertain'],
-                    money(item['estimated_cost']), money(item['reported_cost']), money(item['settled_cost']),
-                    item['attempts_without_reported_cost']] for item in result.get('providers', [])],
-                  empty='No fax attempts in this period.')
+        out.table(['Route', 'Faxes', 'Delivered', 'Billed minutes', 'Charged', 'Estimated, not billed yet',
+                   'Waiting for the bill', 'Could not be matched'],
+                  [[_route_name(item), item['attempts'], item['successes'], item['billed_minutes'],
+                    money(item['reported_cost']), _not_billed(item, 'attempts_without_reported_cost'),
+                    item.get('awaiting_carrier_bill', 0), item.get('unmatched_charges', 0)]
+                   for item in result.get('providers', [])],
+                  empty='No faxes sent in this period.')
+        received = result.get('received') or []
+        if received:
+            out.table(['Received on', 'Calls', 'Faxes', 'Billed minutes', 'Charged', 'Estimated, not billed yet',
+                       'Waiting for the bill', 'Could not be matched'],
+                      [[_route_name(item), item['calls'], item['faxes'], item['billed_minutes'],
+                        money(item['reported_cost']), _not_billed(item, 'calls_without_reported_cost'),
+                        item['awaiting_carrier_bill'], item['unmatched_charges']] for item in received])
+        carrier = result.get('carrier_charges') or {}
+        if carrier.get('supported') and not carrier.get('readable'):
+            out.line(f"{carrier['carrier']} call charges appear once a {carrier['carrier']} API key is set: "
+                     "add TELNYX_API_KEY to .env, then run docker compose up -d.")
     state.out().result(result, human)
+
+
+@routing.command('reconcile')
+def routing_reconcile():
+    """Ask the SIP trunk carrier now what each open call cost. Delivery results never change."""
+    result = state.api().post('/routing/reconcile', json={})
+    state.out().result(result, lambda out: out.line(result['summary']))
+
+
+@routing.command('fax-cost')
+def routing_fax_cost(fax_id: str = typer.Argument(..., help="Fax ID from 'faxbot jobs' or, with --received, "
+                                                           "from 'faxbot inbound list'."),
+                     received: bool = typer.Option(False, '--received', help='The fax is a received fax.')):
+    """Show what one fax cost: the carrier's charge, or why it is not known yet."""
+    path = ('/routing/inbound/' if received else '/routing/faxes/') + segment(fax_id) + '/cost'
+    result = state.api().get(path)
+    state.out().result(result, lambda out: out.line(result.get('summary') or 'No call was placed for this fax.'))
 
 
 @routing.command('rate-cards')
@@ -145,8 +187,9 @@ def routing_rate_cards(replace: str = typer.Option(None, '--replace', metavar='F
     else:
         result = api.get('/routing/rate-cards')
     state.out().result(result, lambda out: out.table(
-        ['Provider', 'Name', 'Per minute', 'Per page', 'Per call', 'Billing step', 'Currency', 'Captured'],
+        ['Provider', 'Name', 'Per minute', 'Per page', 'Per call', 'Monthly', 'Billing step', 'Currency', 'Captured'],
         [[card['provider_id'], card['label'], card['per_minute'], card['per_page'], card['per_call'],
+          (f"{card['monthly_fee']}, faxes included" if card.get('included_in_plan') else card.get('monthly_fee')) or '-',
           f"{card['billing_increment_seconds']} s", card['currency'], card['captured_on']]
          for card in result.get('cards', [])], empty='No rate cards.'))
 

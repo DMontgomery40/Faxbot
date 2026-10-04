@@ -40,7 +40,7 @@ def add_work_catalogue(engine):
 
 
 def test_work_items_are_head_after_inbound_imports():
-    assert schema.HEAD == schema_work.REVISION == '0011_work_items'
+    assert schema.WORK == schema_work.REVISION == '0011_work_items'
     assert schema.INBOUND == '0010_inbound_imports'
     assert schema_work.TABLES <= schema.STRICT_TABLES
     assert WORK <= PERMISSIONS

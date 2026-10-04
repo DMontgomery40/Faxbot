@@ -46,6 +46,7 @@ import { parseServerTime } from '../api/time';
 import { DeliveryStatusLine, DirectDeliveries, emailDeliveryApplies, inboundFaxStatus, isNewFax, providerName } from './delivery/InboxDelivery';
 import type { DeliveryTone } from './delivery/InboxDelivery';
 import { DeliveryError, Notice } from './delivery/shared';
+import { InboundCostLine, useInboundCosts } from './delivery/FaxCost';
 import type { AdminDestination } from '../navigation';
 import { ResponsiveFormSection } from './common/ResponsiveFormFields';
 
@@ -78,6 +79,7 @@ function Inbound({ client, docsBase, inboundEnabled, onNavigate, permissions }: 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [hasLoaded, setHasLoaded] = useState(false);
+  const costs = useInboundCosts(client, faxes);
   const [callbacks, setCallbacks] = useState<any | null>(null);
   const [callbacksError, setCallbacksError] = useState<string | null>(null);
   const [simulating, setSimulating] = useState(false);
@@ -305,6 +307,7 @@ function Inbound({ client, docsBase, inboundEnabled, onNavigate, permissions }: 
               </Typography>
               <FaxStatus fax={fax} />
             </Box>
+            <InboundCostLine cost={costs.get(fax.id)} />
 
             {/* Details */}
             <Stack spacing={1}>
@@ -628,6 +631,7 @@ function Inbound({ client, docsBase, inboundEnabled, onNavigate, permissions }: 
                           <Typography variant="body2">
                             {providerName(fax.backend)}
                           </Typography>
+                          <InboundCostLine cost={costs.get(fax.id)} />
                         </TableCell>
                         <TableCell>
                           <Typography variant="body2">

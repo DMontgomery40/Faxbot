@@ -646,6 +646,34 @@ def test_routing_destinations_costs_and_rate_cards(cli, tmp_path):
     assert cli.json('routing', 'rate-cards')['cards'][0]['label'] == 'Phaxio list price'
     bad = cli('routing', 'destination', 'not-a-number')
     assert bad.exit_code == 9
+    human = cli('routing', 'costs')
+    assert human.exit_code == 0 and 'No faxes sent in this period.' in human.stdout
+    refused = cli('routing', 'reconcile')
+    assert refused.exit_code != 0
+    assert 'Faxbot needs a Telnyx API key to read call charges.' in refused.stdout + refused.stderr
+    assert cli('routing', 'fax-cost', '0' * 32).exit_code != 0
+
+
+@pytest.fixture
+def telnyx_cli(monkeypatch, tmp_path):
+    for client in _serve(monkeypatch, tmp_path, TELNYX_API_KEY='KEYsynthetic-cli', SIP_TRUNK_PRESET='telnyx'):
+        yield Cli(client)
+
+
+def test_routing_reconcile_asks_the_carrier_and_costs_show_charges(telnyx_cli, monkeypatch):
+    from app.routing import http as routing_http
+    from api.tests.test_carrier_charges import FakeTelnyx
+    sources = []
+    monkeypatch.setattr(routing_http, 'carrier_source', lambda key: sources.append(key()) or FakeTelnyx([]))
+    result = telnyx_cli('routing', 'reconcile')
+    assert result.exit_code == 0, (result.stdout, result.stderr)
+    assert result.stdout.strip() == 'No calls are waiting for a charge.'
+    assert sources == ['KEYsynthetic-cli'] and 'KEYsynthetic-cli' not in result.stdout
+    assert telnyx_cli.json('routing', 'reconcile')['checked'] == 0
+    costs = telnyx_cli.json('routing', 'costs')
+    assert costs['carrier_charges'] == {'carrier': 'Telnyx', 'supported': True, 'readable': True}
+    human = telnyx_cli('routing', 'costs')
+    assert 'call charges appear once' not in human.stdout
 
 
 def test_intake_connectors_items_and_test_email(cli):
@@ -782,7 +810,9 @@ def test_trunk_status_and_calls_read_as_plain_sentences(trunk_cli):
     assert status.exit_code == 0, status.stdout
     for sentence in ('Apply these settings to Asterisk, then restart the Asterisk service.',
                      'Encrypted (TLS)', '198.51.100.7', 'No ports need to be opened or forwarded.',
-                     "your network changes port numbers, so Telnyx has to follow Faxbot's packets",
+                     # A call has shown what the first test fax would have: no T.38 data came back.
+                     "your network changes port numbers, and the last T.38 fax got no fax data back, so Telnyx "
+                     "does not follow Faxbot's T.38 packets on this network.",
                      'A fax call from +13035550100 came in, but no fax data arrived from the carrier.'):
         assert sentence in status.stdout, sentence
     assert 'synthetic-Trunk-Pass' not in status.stdout and 'no_t38' not in status.stdout
@@ -798,5 +828,20 @@ def test_trunk_status_and_calls_read_as_plain_sentences(trunk_cli):
     assert audio.exit_code == 0 and 'New calls use audio fax once you restart the Asterisk service.' in audio.stdout
     assert trunk_cli.json('trunk', 'status')['t38'] is False
     assert 'already uses audio fax' in trunk_cli('trunk', 'mode', 'audio').stdout
-    assert trunk_cli.json('trunk', 'mode', 't38') == {'mode': 't38', 'changed': True, 'applied': True}
+    assert trunk_cli.json('trunk', 'mode', 't38') == {
+        'mode': 't38', 'changed': True, 'applied': True, 'engine': 'manual',
+        'message': 'Saved for Asterisk. Restart the Asterisk service to use these settings.'}
     assert trunk_cli('trunk', 'mode', 'fast').exit_code != 0
+    # When Faxbot chose audio fax itself, status says why and how to try T.38 again.
+    from app import sip_fax_mode
+    assert trunk_cli('trunk', 'mode', 'audio').exit_code == 0
+    values = trunk_cli.client.app.state.configuration_runtime.manager.store.read().active.values
+    sip_fax_mode.write(values, 'audio', sip_fax_mode.NO_DATA_BACK)
+    status = trunk_cli('trunk', 'status').stdout
+    assert 'a T.38 fax got no fax data back on this network, so Faxbot uses audio fax.' in status
+    assert 'To try T.38 again, run faxbot trunk mode t38.' in status
+    # Apply writes the trunk for Asterisk; this test install manages no Asterisk, so it says what to restart.
+    applied = trunk_cli('trunk', 'apply')
+    assert applied.exit_code == 0, applied.stdout
+    assert 'Saved for Asterisk. Restart the Asterisk service to use these settings.' in applied.stdout
+    assert trunk_cli.json('trunk', 'apply', '--no-wait')['engine'] == 'manual'

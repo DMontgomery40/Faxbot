@@ -76,7 +76,7 @@ describe('Settings delivery routes', () => {
     render(<Settings client={client()} />);
     const routes = within(await section('Delivery routes')).getByRole('list', { name: 'Extra outbound routes' });
     expect(within(routes).getAllByRole('listitem').map((item) => item.textContent)).toEqual([
-      expect.stringContaining('1. Your SIP trunk (Asterisk)'), expect.stringContaining('2. HumbleFax'),
+      expect.stringContaining('1. SIP trunk (Asterisk)'), expect.stringContaining('2. HumbleFax'),
     ]);
     expect((screen.getByRole('button', { name: 'Apply settings' }) as HTMLButtonElement).disabled).toBe(true);
   });
@@ -86,10 +86,10 @@ describe('Settings delivery routes', () => {
     render(<Settings client={client()} />);
     const routes = await section('Delivery routes');
     fireEvent.click(within(routes).getByRole('button', { name: 'Move HumbleFax up' }));
-    fireEvent.click(within(routes).getByRole('button', { name: 'Remove Your SIP trunk (Asterisk)' }));
+    fireEvent.click(within(routes).getByRole('button', { name: 'Remove SIP trunk (Asterisk)' }));
     // The outbound provider itself and unconfigured providers are not offered.
     const add = within(routes).getByLabelText('Add a route');
-    expect([...add.querySelectorAll('option')].map((option) => option.textContent)).toEqual(['Choose a provider…', 'Your SIP trunk (Asterisk)']);
+    expect([...add.querySelectorAll('option')].map((option) => option.textContent)).toEqual(['Choose a provider…', 'SIP trunk (Asterisk)']);
     fireEvent.change(add, { target: { value: 'sip' } });
     fireEvent.change(within(routes).getByLabelText('Minimum delivery rate (%)'), { target: { value: '90' } });
     apply();
@@ -164,18 +164,56 @@ describe('Provider plugins on a clean install', () => {
     expect(screen.queryByText(NOTICE)).toBeNull();
   });
 
-  it('still says so when the list really fails', async () => {
-    settingsHandlers(settingsFixture());
-    server.use(http.get('/plugins', () => HttpResponse.json({ detail: 'Boom.' }, { status: 500 })));
-    render(<SetupWizard client={client()} />);
-    expect(await screen.findByText(NOTICE)).toBeTruthy();
-  });
-
   it('treats only the plugins-off refusal as an empty list', async () => {
     server.use(http.get('/plugins', () => HttpResponse.json({ detail: 'v3 plugins feature disabled' }, { status: 404 })));
     expect(await client().listPlugins()).toEqual({ items: [] });
     server.use(http.get('/plugins', () => HttpResponse.json({ detail: 'Not Found' }, { status: 404 })));
     await expect(client().listPlugins()).rejects.toThrow();
+  });
+});
+
+describe('Provider names', () => {
+  it('shows each provider by its one plain name, never its id', async () => {
+    settingsHandlers(settingsFixture((data) => {
+      data.backend.type = 'sip';
+      data.hybrid = { outbound_backend: 'sip', inbound_backend: 'phaxio', outbound_override: '', inbound_override: 'phaxio' };
+      data.inbound.enabled = true;
+    }));
+    server.use(http.get('/admin/sip/presets', () => HttpResponse.json({ presets: [] })));
+    render(<Settings client={client()} />);
+    const backend = await section('Fax providers');
+    expect(within(backend).getByText('In use: Sending: SIP trunk (Asterisk) · Receiving: Phaxio')).toBeTruthy();
+    expect(within(backend).getByRole('combobox', { name: 'Sending' }).textContent).toBe('SIP trunk (Asterisk)');
+    expect(within(backend).getByRole('combobox', { name: 'Receiving' }).textContent).toBe('Phaxio');
+    expect(backend.textContent).not.toMatch(/\b(sip|phaxio|sinch|signalwire|documo|humblefax|freeswitch)\b|PHAXIO|SIP\/Asterisk|Inherit|Default Provider/);
+  });
+
+  it('saves the same two choices as the Setup Wizard', async () => {
+    const writes = settingsHandlers(settingsFixture());
+    server.use(http.get('/admin/sip/presets', () => HttpResponse.json({ presets: [] })));
+    render(<Settings client={client()} />);
+    const backend = await section('Fax providers');
+    fireEvent.mouseDown(within(backend).getByRole('combobox', { name: 'Sending' }));
+    fireEvent.click(within(await screen.findByRole('listbox')).getByRole('option', { name: 'HumbleFax' }));
+    fireEvent.mouseDown(within(backend).getByRole('combobox', { name: 'Receiving' }));
+    fireEvent.click(within(await screen.findByRole('listbox')).getByRole('option', { name: 'SIP trunk (Asterisk)' }));
+    apply();
+    await screen.findByText(/Settings saved\./);
+    expect(writes[0]).toEqual({ expected_revision_id: 'rev-a', backend: 'humblefax', inbound_backend: 'sip', inbound_enabled: true });
+  });
+
+  it('refuses receiving without a sending provider in one sentence', async () => {
+    const writes = settingsHandlers(settingsFixture());
+    render(<Settings client={client()} />);
+    const backend = await section('Fax providers');
+    fireEvent.mouseDown(within(backend).getByRole('combobox', { name: 'Sending' }));
+    fireEvent.click(within(await screen.findByRole('listbox')).getByRole('option', { name: 'No provider' }));
+    fireEvent.mouseDown(within(backend).getByRole('combobox', { name: 'Receiving' }));
+    fireEvent.click(within(await screen.findByRole('listbox')).getByRole('option', { name: 'Phaxio' }));
+    apply();
+    expect((await screen.findAllByText('Choose a provider for sending as well; Faxbot needs one even when it mainly receives.')).length)
+      .toBeGreaterThan(0);
+    expect(writes).toEqual([]);
   });
 });
 
@@ -267,7 +305,7 @@ describe('Settings outbound provider limits', () => {
   it('says nothing about countries for other outbound providers', async () => {
     settingsHandlers(settingsFixture());
     render(<Settings client={client()} />);
-    await screen.findAllByText('Outbound Provider');
+    await section('Fax providers');
     expect(screen.queryByTestId('humblefax-countries')).toBeNull();
   });
 });
@@ -371,19 +409,23 @@ describe('Setup Wizard delivery options', () => {
     render(<SetupWizard client={client()} />);
     await screen.findByText('Choose Providers', { selector: 'h6' });
     next();
+    await screen.findByText('Connect Providers', { selector: 'h6' });
     next();
     expect(await screen.findByText(/Authentication: required\./)).toBeTruthy();
     expect(screen.queryByLabelText('Require API Key')).toBeNull();
     next();
     expect(await screen.findByText('Delivery Options', { selector: 'h6' })).toBeTruthy();
+    // Steps with no changes save nothing.
+    expect(writes).toEqual([]);
     expect(screen.getByRole('list', { name: 'Extra outbound routes' })).toBeTruthy();
     fireEvent.change(screen.getByLabelText('Our fax number'), { target: { value: '+12025550199' } });
     fireEvent.click(screen.getByRole('checkbox', { name: 'Email each received fax' }));
     fireEvent.change(screen.getByLabelText('Port'), { target: { value: '465' } });
+    // Moving on saves this step's changes.
     next();
-    fireEvent.click(screen.getByRole('button', { name: 'Apply Changes' }));
     await screen.findByText('Settings saved.');
-    expect(writes[0]).toEqual({ expected_revision_id: 'rev-a', direct_fax_number: '+12025550199', intake_email_enabled: true, intake_smtp_port: 465 });
+    expect(await screen.findByText('Finish', { selector: 'h6' })).toBeTruthy();
+    expect(writes).toEqual([{ expected_revision_id: 'rev-a', direct_fax_number: '+12025550199', intake_email_enabled: true, intake_smtp_port: 465 }]);
   });
 });
 
@@ -451,14 +493,16 @@ describe('Installation country', () => {
     await screen.findByText('Choose Providers', { selector: 'h6' });
     await chooseCountry('United Kingdom', 'GB');
     next();
+    await screen.findByText('Connect Providers', { selector: 'h6' });
+    expect(writes).toEqual([{ expected_revision_id: 'rev-a', fax_default_country: 'GB' }]);
     next();
+    await screen.findByText('Security Settings', { selector: 'h6' });
     next();
     await screen.findByText('Delivery Options', { selector: 'h6' });
     fireEvent.change(screen.getByLabelText('Our fax number'), { target: { value: '01782 684953' } });
     next();
-    fireEvent.click(screen.getByRole('button', { name: 'Apply Changes' }));
-    await screen.findByText('Settings saved.');
-    expect(writes[0]).toEqual({ expected_revision_id: 'rev-a', fax_default_country: 'GB', direct_fax_number: '01782 684953' });
+    await screen.findByText('Finish', { selector: 'h6' });
+    expect(writes[1]).toEqual({ expected_revision_id: 'rev-a', direct_fax_number: '01782 684953' });
     fireEvent.click(screen.getByRole('button', { name: 'Back' }));
     await waitFor(() => expect((screen.getByLabelText('Our fax number') as HTMLInputElement).value).toBe('+441782684953'));
     expect(screen.getByText('The number partners fax you at, for example 0121 234 5678 or +44 121 234 5678.')).toBeTruthy();

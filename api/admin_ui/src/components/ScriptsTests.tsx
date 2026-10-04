@@ -369,7 +369,7 @@ const ScriptsTests: React.FC<Props> = ({ client, onNavigate, docsBase }) => {
                 </Button>
               </Box>
               <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
-                <Link href={docsLink('sip', docsBase)} target="_blank" rel="noreferrer" color="primary" underline="always" sx={documentationLinkSx}>SIP/Asterisk setup guide</Link>
+                <Link href={docsLink('sip', docsBase)} target="_blank" rel="noreferrer" color="primary" underline="always" sx={documentationLinkSx}>SIP trunk (Asterisk) setup guide</Link>
                 <Link href={docsLink('phaxio', docsBase)} target="_blank" rel="noreferrer" color="primary" underline="always" sx={documentationLinkSx}>Phaxio setup guide</Link>
               </Stack>
             </Stack>

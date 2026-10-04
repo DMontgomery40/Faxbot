@@ -35,6 +35,9 @@ export interface RecommendedRoute {
   reason: string;
   explanation: string;
   estimated_cost_one_page: Money | null;
+  // A flat monthly plan: faxes are included and nothing is charged per fax.
+  included_in_plan?: boolean;
+  monthly_fee?: Money | null;
 }
 
 export interface DestinationDetail extends Destination {
@@ -64,6 +67,61 @@ export interface ProviderCosts {
   reported_cost: Money[];
   settled_cost: Money[];
   attempts_without_reported_cost: number;
+  // The carrier that reported these charges, such as Telnyx; null when none did.
+  carrier?: string | null;
+  attempts_with_reported_cost?: number;
+  // Rate-card estimates for faxes the carrier has not reported yet (never double-counted).
+  estimated_cost_not_reported?: Money[];
+  awaiting_carrier_bill?: number;
+  unmatched_charges?: number;
+  plan?: { label: string; monthly_fee: Money } | null;
+}
+
+export interface ReceivedCosts {
+  provider_id: string;
+  label: string;
+  carrier: string | null;
+  calls: number;
+  faxes: number;
+  billed_minutes: number;
+  estimated_cost: Money[];
+  reported_cost: Money[];
+  calls_with_reported_cost: number;
+  calls_without_reported_cost: number;
+  estimated_cost_not_reported: Money[];
+  awaiting_carrier_bill: number;
+  unmatched_charges: number;
+}
+
+export interface CarrierChargeStatus {
+  carrier: string | null;
+  supported: boolean;
+  readable: boolean;
+}
+
+export interface RouteCostsResponse {
+  since: string;
+  providers: ProviderCosts[];
+  received?: ReceivedCosts[];
+  carrier_charges?: CarrierChargeStatus;
+}
+
+// One fax's cost: what the carrier charged, or why it is not known yet.
+export interface FaxCost {
+  state: 'reported' | 'partial' | 'waiting' | 'unmatched' | 'included' | 'none';
+  summary: string | null;
+  reported_cost: Money[];
+  estimated_cost?: Money[];
+}
+
+export interface ReconcileResult {
+  checked: number;
+  matched: number;
+  charges_recorded: number;
+  waiting: number;
+  ambiguous: number;
+  carrier_unavailable: boolean;
+  summary: string;
 }
 
 export interface RateCard {
@@ -79,6 +137,9 @@ export interface RateCard {
   minimum_seconds: number;
   source_url: string | null;
   captured_on: string;
+  // A flat monthly plan fee; with no per-minute, per-page or per-call price, faxes are included.
+  monthly_fee?: string | null;
+  included_in_plan?: boolean;
 }
 
 export interface IntakeItem {

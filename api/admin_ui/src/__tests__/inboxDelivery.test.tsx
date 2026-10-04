@@ -189,7 +189,7 @@ describe('Received fax status', () => {
       status_text: 'Faxbot never received the document for this fax; ask the sender to send it again.' }))
       .toMatchObject({ label: 'Not received', canFetchAgain: false });
     expect([providerName('sip'), providerName('phaxio'), providerName('sinch'), providerName(undefined)])
-      .toEqual(['SIP trunk', 'Phaxio', 'Sinch', '-']);
+      .toEqual(['SIP trunk (Asterisk)', 'Phaxio', 'Sinch', '-']);
   });
 
   it('offers no delivery retry while no email delivery covers the number', () => {
@@ -221,7 +221,7 @@ describe('Received fax status', () => {
     render(<Inbound client={client()} inboundEnabled permissions={new Set([...operator, 'providers:write'])} />);
     const waiting = await rowFor('+15550108888');
     expect(within(waiting).getByText('Waiting for the document from the SIP trunk.')).toBeTruthy();
-    expect(within(waiting).getByText('SIP trunk')).toBeTruthy();
+    expect(within(waiting).getByText('SIP trunk (Asterisk)')).toBeTruthy();
     // No record IDs or raw provider words in the table.
     expect(screen.queryByRole('columnheader', { name: 'ID' })).toBeNull();
     expect(screen.queryByText(/fax-wait|^sip$/)).toBeNull();
@@ -251,7 +251,7 @@ describe('Received fax status', () => {
 });
 
 describe('Inbox wording for received faxes', () => {
-  const READY = 'Receiving over your SIP trunk: ready.';
+  const READY = 'Received faxes reach Faxbot: ready.';
 
   function recoveredInbox(receiving: { ready: boolean; message: string }) {
     server.use(
