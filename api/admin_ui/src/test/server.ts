@@ -619,6 +619,12 @@ const consoleHandlers = [
   http.get('/routing/savings', () => json(emptySavings())),
   // Case packets: none sent yet.
   http.get('/cases', () => json({ cases: [] })),
+  // The audit log: nothing recorded yet.
+  http.get('/access/audit', () => json({ items: [], next_cursor: null })),
+  // The database: a file on the data volume, reachable.
+  http.get('/admin/db-status', () => json({ url: 'sqlite:////faxdata/faxbot.db', engine: 'sqlite', connected: true, error: null,
+    counts: { fax_jobs: 0, inbound_fax: 0, api_keys: null },
+    sqlite: { path: '/faxdata/faxbot.db', exists: true, size_bytes: 4096, persistent_volume: true } })),
   // A number with no history and no route recommendation yet.
   http.get('/routing/destinations/:number', ({ params }) => json({ number: params.number, display_name: null, notes: null,
     preferred_route: null, accepts_references: false, version: 0, routes: [], estimated_cost_30_days: [],

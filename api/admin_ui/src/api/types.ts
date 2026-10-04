@@ -292,6 +292,10 @@ export interface Settings {
   restart?: { allowed: boolean };
   // Where provider plugin files are read from (read only).
   plugin_files?: { providers_dir: string; plugin_registry_path: string };
+  // Environment-only settings, shown read-only, by variable name.
+  deployment?: Record<string, DeploymentValue>;
+  // Settings only the owner may change, by the names a settings change sends.
+  owner_only?: string[];
   mcp?: {
     sse_enabled: boolean;
     sse_path: string;
@@ -488,6 +492,39 @@ export interface ConsoleContext {
 export interface Page<T> {
   items: T[];
   next_cursor: string | null;
+}
+
+// GET /access/audit: one security audit entry, newest first.
+export interface AuditEntry {
+  id: string;
+  at: string;
+  actor: { id: string; display_name: string | null } | null;
+  // How the person or system was signed in when it happened.
+  credential_kind: 'session' | 'key' | 'bootstrap' | 'system';
+  operation: string;
+  target: { kind: string; id: string; name: string | null } | null;
+  outcome: 'allowed' | 'denied';
+  policy_version: number | null;
+  details: Record<string, unknown>;
+}
+
+// GET /admin/db-status: the database Faxbot uses and whether it can reach it.
+export interface DatabaseStatus {
+  url: string;
+  engine: 'sqlite' | 'postgres' | 'mysql' | 'unknown';
+  connected: boolean;
+  error: string | null;
+  // Rows this person can see; api_keys is null without keys:manage.
+  counts: { fax_jobs?: number; inbound_fax?: number; api_keys?: number | null };
+  sqlite: { path: string; exists: boolean; size_bytes?: number; modified?: string; persistent_volume?: boolean } | null;
+}
+
+// An environment-only setting: whether it is set, and its value unless it is a secret.
+export interface DeploymentValue {
+  set: boolean;
+  value: string | null;
+  // ENABLE_ADMIN_EXEC only: whether the terminal is on.
+  effective?: boolean;
 }
 
 export type PermissionGroup = 'fax' | 'inbound' | 'identity' | 'config' | 'host' | 'mailbox' | 'audit';

@@ -17,6 +17,10 @@ import {
   FormControlLabel,
   Stack,
   Link,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
 } from '@mui/material';
 import {
   Refresh as RefreshIcon,
@@ -37,6 +41,7 @@ import { DELIVERY_SECTIONS, DeliverySettingsSections, EMAIL_DELIVERY_SECTION, de
 import { DEFAULT_DOCS_BASE, docsLink } from '../docsLinks';
 import EnvSetField, { ENV_SET_HELP, environmentManaged } from './common/EnvSetField';
 import RestartNotice from './common/RestartFaxbot';
+import { DeploymentRows } from './common/Deployment';
 import type { ConfigurationWriteResult, Settings as SettingsType, SettingsPatch } from '../api/types';
 import { ResponsiveSettingItem, ResponsiveSettingSection } from './common/ResponsiveSettingItem';
 import { ResponsiveTextField, ResponsiveFormSection } from './common/ResponsiveFormFields';
@@ -59,6 +64,8 @@ interface SettingsProps {
   // Show only these sections, under this page title (a console page shows its own part of the settings).
   sections?: SettingsSection[];
   title?: string;
+  // Is this person the installation's owner? Owner-only settings are shown disabled to everyone else.
+  isOwner?: boolean;
 }
 
 // The parts of the settings document a console page can show on its own.
@@ -67,7 +74,12 @@ export type SettingsSection =
   | 'phaxio' | 'sinch' | 'documo' | 'humblefax' | 'efax' | 'trunk' | 'signalwire' | 'freeswitch'
   | 'direct' | 'intake' | 'email'
   | 'security' | 'tunnel' | 'storage' | 'advanced' | 'backup' | 'mcp' | 'identity'
-  | 'plugins' | 'diagnostics' | 'phones' | 'developer';
+  | 'plugins' | 'diagnostics' | 'phones' | 'developer' | 'audit';
+
+// Sections whose settings each have their own Apply, so one refusal never fails another change.
+const OWN_APPLY_SECTIONS = new Set<SettingsSection>(['diagnostics']);
+
+export const OWNER_ONLY_SENTENCE = 'Only the owner of this installation can change this.';
 
 // One sentence on a provider's own page: whether Faxbot uses it now. The trunk is
 // named by its carrier ("Telnyx") once one is chosen.
@@ -198,7 +210,7 @@ function editorValues(data: SettingsType): SettingsForm {
   };
 }
 
-function Settings({ client, canWrite = false, canRestart = false, focus, onFocused, sections, title }: SettingsProps) {
+function Settings({ client, canWrite = false, canRestart = false, focus, onFocused, sections, title, isOwner = true }: SettingsProps) {
   // Without sections, the whole settings document is shown.
   const shows = (section: SettingsSection) => !sections || sections.includes(section);
   const [settings, setSettings] = useState<SettingsType | null>(null);
@@ -217,6 +229,8 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
   // Whether the installation lets the console restart Faxbot (ADMIN_ALLOW_RESTART).
   const [allowRestart, setAllowRestart] = useState(false);
   const [restarted, setRestarted] = useState(false);
+  // A switch change waiting for the person to confirm it, such as turning sending off.
+  const [confirming, setConfirming] = useState<{ field: string; value: boolean; title: string; text: string; action: string } | null>(null);
   const actionFence = useRef(false);
   const requestEpoch = useRef(0);
   const desiredRevision = needsReload ? undefined : settings?._meta?.desired_revision_id;
@@ -272,7 +286,7 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
     setNeedsReload(false);
   };
 
-  const applySettings = async () => {
+  const applySettings = async (only?: string[]) => {
     if (actionFence.current || loading) return;
     if (!desiredRevision) {
       setError('Select Reload before applying changes.');
@@ -285,10 +299,13 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
       setLoading(true);
       setError(null);
       setSnack(null);
-      const problem = directionProblem(providerChoice);
+      const problem = only ? null : directionProblem(providerChoice);
       if (problem) throw new Error(problem);
       const patch: SettingsPatch = { expected_revision_id: desiredRevision };
-      for (const field of changedFields) {
+      const fields = only ? changedFields.filter((field) => only.includes(field)) : changedFields;
+      // Edits to other settings stay on screen after a partial apply.
+      const kept = Object.fromEntries(changedFields.filter((field) => !fields.includes(field)).map((field) => [field, form[field]]));
+      for (const field of fields) {
         const value = form[field];
         if (typeof loadedForm[field] === 'number' && (value === '' || !Number.isFinite(Number(value)) || !Number.isSafeInteger(Number(value)))) {
           throw new Error(`Enter a whole number for ${field.replace(/_/g, ' ')}. An empty number does not clear the setting.`);
@@ -312,6 +329,7 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
         if (epoch !== requestEpoch.current) return;
         if (!data._meta?.desired_revision_id) throw new Error('Settings could not be loaded.');
         hydrate(data);
+        if (only) setForm((previous) => ({ ...previous, ...kept }));
       } catch {
         if (epoch !== requestEpoch.current) return;
         setError('The page could not refresh. Select Reload before making more changes.');
@@ -321,6 +339,11 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
       const message = err instanceof Error ? err.message : 'Failed to apply settings';
       if (!writeStarted) {
         setError(message);
+        return;
+      }
+      // A partial apply that was refused changed nothing: say why and keep editing.
+      if (only && (isForbidden(err) || plainRefusal(err))) {
+        setError(isForbidden(err) ? 'You do not have permission to change this setting.' : plainRefusal(err));
         return;
       }
       setNeedsReload(true);
@@ -341,6 +364,11 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
     }
   };
 
+  // Settings only the owner may change: shown, but disabled with one sentence, to everyone else.
+  const ownerOnly = new Set(settings?.owner_only ?? []);
+  const locked = (field: string) => !isOwner && ownerOnly.has(field);
+  const withOwnerNote = (field: string, helperText: string) => (locked(field)
+    ? [helperText, OWNER_ONLY_SENTENCE].filter(Boolean).join(' ') : helperText);
   const textField = (label: string, field: string, helperText = '', type: 'text' | 'password' | 'number' = 'text') => (
     <ResponsiveSettingItem
       icon={type === 'password' ? <SecurityIcon /> : <SettingsIcon />}
@@ -348,9 +376,10 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
       value={loadedForm[field] ?? ''}
       editValue={form[field] ?? ''}
       onChange={(value) => handleForm(field, type === 'number' && value !== '' ? Number(value) : value)}
-      helperText={helperText}
+      helperText={withOwnerNote(field, helperText)}
       type={type}
       showCurrentValue={!pendingRestart}
+      disabled={locked(field)}
     />
   );
   const toggleField = (label: string, field: string, helperText = '') => (
@@ -360,23 +389,33 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
       value={loadedForm[field] ? 'Enabled' : 'Disabled'}
       editValue={form[field] ?? false}
       onChange={(value) => handleForm(field, value === 'true')}
-      helperText={helperText}
+      helperText={withOwnerNote(field, helperText)}
       type="select"
       options={[{ value: 'true', label: 'Enabled' }, { value: 'false', label: 'Disabled' }]}
       showCurrentValue={!pendingRestart}
+      disabled={locked(field)}
     />
   );
 
+  // A switch; `confirmOff` asks before turning it off (one sentence), never before turning it on.
   const switchField = (label: string, field: string, helperText: string,
-    options: { inverted?: boolean; disabled?: boolean } = {}) => {
+    options: { inverted?: boolean; disabled?: boolean; confirmOff?: { title: string; text: string; action: string } } = {}) => {
     const value = Boolean(form[field]);
+    const note = withOwnerNote(field, helperText);
     return (
       <Box sx={{ px: 2 }} data-testid={`switch-${field}`}>
         <FormControlLabel
-          control={<Switch checked={options.inverted ? !value : value} disabled={options.disabled}
-            onChange={(event) => handleForm(field, options.inverted ? !event.target.checked : event.target.checked)} />}
+          control={<Switch checked={options.inverted ? !value : value} disabled={options.disabled || locked(field)}
+            onChange={(event) => {
+              const next = options.inverted ? !event.target.checked : event.target.checked;
+              if (!event.target.checked && options.confirmOff) {
+                setConfirming({ field, value: next, ...options.confirmOff });
+                return;
+              }
+              handleForm(field, next);
+            }} />}
           label={label} />
-        {helperText && <Typography variant="body2" color="text.secondary" sx={{ ml: 6 }}>{helperText}</Typography>}
+        {note && <Typography variant="body2" color="text.secondary" sx={{ ml: 6 }}>{note}</Typography>}
       </Box>
     );
   };
@@ -686,7 +725,8 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
 
             {switchField('Sending is on', 'fax_disabled',
               'Off: Faxbot stops sending. Faxes submitted while sending is off stay on hold after you turn it back on.',
-              { inverted: true })}
+              { inverted: true, confirmOff: { title: 'Turn off sending?', action: 'Turn off sending',
+                text: 'Faxbot will stop sending, and faxes submitted while sending is off stay on hold until you turn it back on.' } })}
             {settings.numbers && (
               <ResponsiveSettingItem
                 icon={<PublicIcon />}
@@ -736,20 +776,6 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
               showCurrentValue={!pendingRestart}
             />
             
-            <ResponsiveSettingItem
-              icon={settings.security.audit_enabled ? <CheckCircleIcon color="success" /> : <WarningIcon color="warning" />}
-              label="Audit Logging"
-              value={settings.security.audit_enabled ? 'Enabled' : 'Disabled'}
-              editValue={form.audit_log_enabled ?? settings.security.audit_enabled}
-              helperText="Record admin actions and fax activity; view them in the Logs tab."
-              onChange={(value) => handleForm('audit_log_enabled', value === 'true')}
-              type="select"
-              options={[
-                { value: 'true', label: 'Enabled' },
-                { value: 'false', label: 'Disabled' }
-              ]}
-              showCurrentValue={!pendingRestart}
-            />
             
             <ResponsiveSettingItem
               icon={settings.persisted?.enabled ? <CheckCircleIcon color="success" /> : <WarningIcon color="warning" />}
@@ -766,10 +792,31 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
               showCurrentValue={!pendingRestart}
             />
             {textField('Public API URL', 'public_api_url', 'Public address of this server, used for document links and provider callbacks.')}
-            {textField('Audit Log Format', 'audit_log_format')}
-            {textField('Audit Log File', 'audit_log_file', 'Leave empty to stop writing audit logs to a file.')}
-            {toggleField('Audit Syslog', 'audit_log_syslog')}
-            {textField('Audit Syslog Address', 'audit_log_syslog_address')}
+            <DeploymentRows settings={settings}
+              names={['FAXBOT_ALLOW_INSECURE_HTTP_SESSIONS', 'FAXBOT_CONSOLE_ORIGINS', 'ENABLE_LOCAL_ADMIN']} />
+          </ResponsiveFormSection>
+          )}
+
+          {/* System > Audit log: the event record Logs reads */}
+          {shows('audit') && (
+          <ResponsiveFormSection title="Event recording" icon={<SettingsIcon />}
+            subtitle="Faxbot can record what happens, such as sign-ins and sent faxes, for the Logs page. Changes take effect after Faxbot restarts.">
+            {switchField('Record events', 'audit_log_enabled', 'Sign-ins, setting changes and fax activity, shown in Logs.')}
+            <ResponsiveSettingItem
+              icon={<SettingsIcon />}
+              label="How each event is written"
+              value={loadedForm.audit_log_format === 'text' ? 'Plain text' : 'Structured (JSON)'}
+              editValue={form.audit_log_format ?? 'json'}
+              helperText={withOwnerNote('audit_log_format', 'Structured is easier for other programs to read.')}
+              onChange={(value) => handleForm('audit_log_format', value)}
+              type="select"
+              options={[{ value: 'json', label: 'Structured (JSON)' }, { value: 'text', label: 'Plain text' }]}
+              showCurrentValue={!pendingRestart}
+              disabled={locked('audit_log_format')}
+            />
+            {textField('Also save events in a file on the server', 'audit_log_file', 'Leave empty to keep them only in Logs.')}
+            {switchField('Also send events to the system log', 'audit_log_syslog', 'For servers that collect logs in one place.')}
+            {textField('Address of the system log', 'audit_log_syslog_address', "Leave this as it is unless the server's log collector uses another address.")}
           </ResponsiveFormSection>
           )}
 
@@ -993,6 +1040,7 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
                           </Typography>
                           {amiFields()}
                           {inboundSecret()}
+                          <DeploymentRows settings={settings} names={['FAXBOT_MEDIA_PORTS', 'FAXBOT_PHONE_SYSTEM_ADDRESS']} />
                         </AccordionDetails>
                       </Accordion>
                     )}
@@ -1016,8 +1064,7 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
           {/* Inbound Receiving */}
           {shows('inbound') && (
           <ResponsiveFormSection
-            title="Inbound Receiving"
-            subtitle="Configure inbound fax receiving and storage settings"
+            title="Receiving"
             icon={<CheckCircleIcon />}
           >
             {switchField('Receiving is on', 'inbound_enabled', receivingSentence,
@@ -1030,10 +1077,10 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
 
             <ResponsiveSettingItem
               icon={<SettingsIcon />}
-              label="Retention Days"
+              label="Keep received faxes for (days)"
               value={String(settings.inbound?.retention_days ?? 30)}
               editValue={form.inbound_retention_days ?? settings.inbound?.retention_days ?? 30}
-              helperText="How long to keep inbound fax files before automatic cleanup"
+              helperText="After this many days Faxbot deletes a received fax's file. 0 keeps them."
               onChange={(value) => handleForm('inbound_retention_days', value === '' ? '' : Number(value))}
               type="number"
               placeholder={String(settings.inbound?.retention_days ?? 30)}
@@ -1042,10 +1089,10 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
             
             <ResponsiveSettingItem
               icon={<SettingsIcon />}
-              label="Token TTL (minutes)"
+              label="Download links work for (minutes)"
               value={String(settings.inbound?.token_ttl_minutes ?? 60)}
               editValue={form.inbound_token_ttl_minutes ?? settings.inbound?.token_ttl_minutes ?? 60}
-              helperText="How long PDF download tokens remain valid"
+              helperText="How long a link to download a received fax keeps working."
               onChange={(value) => handleForm('inbound_token_ttl_minutes', value === '' ? '' : Number(value))}
               type="number"
               placeholder={String(settings.inbound?.token_ttl_minutes ?? 60)}
@@ -1346,6 +1393,7 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
                 </Box>
               </Box>
             )}
+            <DeploymentRows settings={settings} names={['FAXBOT_INSTALLATION_KEY_PATH', 'FAXBOT_DIRECT_KEY_PATH']} />
           </ResponsiveFormSection>
           )}
 
@@ -1380,6 +1428,8 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
             {textField('OAuth Issuer', 'oauth_issuer')}
             {textField('OAuth Audience', 'oauth_audience')}
             {textField('OAuth JWKS URL', 'oauth_jwks_url')}
+            <DeploymentRows settings={settings} showNames names={['MCP_ALLOWED_HOSTS', 'MCP_ALLOWED_ORIGINS',
+              'MCP_OAUTH_SUBJECT_KEYS_FILE', 'MCP_RESOURCE_URL', 'MCP_HTTP_PORT', 'MCP_WS_PORT', 'MCP_WS_API_KEY']} />
           </ResponsiveFormSection>
           )}
 
@@ -1468,10 +1518,23 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
           {/* System > Diagnostics */}
           {shows('diagnostics') && (
           <ResponsiveFormSection title="Diagnostics options" icon={<SettingsIcon />}>
-            {switchField('Also check the S3 bucket', 'enable_s3_diagnostics',
-              'When on, Diagnostics also make sure Faxbot can reach the online storage that holds your faxes.')}
-            {switchField('Allow restarting Faxbot from here', 'admin_allow_restart',
-              'Turn this on only if Faxbot starts again by itself after it stops. Ask whoever installed Faxbot if you are not sure.')}
+            {[
+              ['enable_s3_diagnostics', 'Also check the S3 bucket',
+                'When on, Diagnostics also make sure Faxbot can reach the online storage that holds your faxes.'],
+              ['admin_allow_restart', 'Allow restarting Faxbot from here',
+                'Turn this on only if Faxbot starts again by itself after it stops. Ask whoever installed Faxbot if you are not sure.'],
+            ].map(([field, label, help]) => (
+              <Box key={field} sx={{ mb: 2 }}>
+                {switchField(label, field, help)}
+                <Box sx={{ px: 2, mt: 1 }}>
+                  <Button size="small" variant="outlined" onClick={() => void applySettings([field])}
+                    disabled={!canEdit || !changedFields.includes(field)} aria-label={`Apply: ${label}`}>
+                    Apply
+                  </Button>
+                </Box>
+              </Box>
+            ))}
+            <DeploymentRows settings={settings} names={['TZ']} />
           </ResponsiveFormSection>
           )}
 
@@ -1488,14 +1551,17 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
           <ResponsiveFormSection title="Developer settings" subtitle="Help links and the files Faxbot reads." icon={<SettingsIcon />}>
             {textField('Documentation address', 'docs_base_url', 'Where help links in the console point.')}
             {READ_ONLY_FILES.map(({ field, label, value }) => readOnlyField(label, field, value(settings)))}
+            <DeploymentRows settings={settings} showNames names={['FAXBOT_ALLOW_INSECURE_LOOPBACK']} />
           </ResponsiveFormSection>
           )}
         </Stack>
         </Box>
         <Box sx={{ display: 'flex', gap: 1, mt: 2 }}>
-          <Button variant="contained" onClick={applySettings} disabled={!canEdit || changedFields.length === 0}>
+          {!(sections && sections.every((section) => OWN_APPLY_SECTIONS.has(section))) && (
+          <Button variant="contained" onClick={() => void applySettings()} disabled={!canEdit || changedFields.length === 0}>
             Apply settings
           </Button>
+          )}
         </Box>
 
         </Box>
@@ -1504,6 +1570,18 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
           Select Reload to view and edit settings.
         </Typography>
       )}
+
+      <Dialog open={confirming !== null} onClose={() => setConfirming(null)} maxWidth="xs" fullWidth>
+        <DialogTitle>{confirming?.title}</DialogTitle>
+        <DialogContent><Typography variant="body2">{confirming?.text}</Typography></DialogContent>
+        <DialogActions>
+          <Button onClick={() => setConfirming(null)}>Cancel</Button>
+          <Button variant="contained" color="warning" onClick={() => {
+            if (confirming) handleForm(confirming.field, confirming.value);
+            setConfirming(null);
+          }}>{confirming?.action}</Button>
+        </DialogActions>
+      </Dialog>
 
       {envContent && shows('backup') && (
         <Card sx={{ mt: 3 }}>

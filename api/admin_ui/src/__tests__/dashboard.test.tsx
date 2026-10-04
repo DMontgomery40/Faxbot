@@ -4,6 +4,9 @@ import { http, HttpResponse } from 'msw';
 import AdminAPIClient from '../api/client';
 import Dashboard from '../components/Dashboard';
 import DeveloperOverview from '../components/DeveloperOverview';
+import { SDK_VERSIONS } from '../sdkVersions';
+import nodePackage from '../../../../sdks/node/package.json';
+import pythonSetup from '../../../../sdks/python/setup.py?raw';
 import { server } from '../test/server';
 
 const client = () => new AdminAPIClient({ kind: 'key', key: 'synthetic-key' });
@@ -146,8 +149,12 @@ describe('System → Developer → API & SDKs', () => {
       inbound_enabled: true, api_keys_configured: true, require_auth: true })));
     render(<DeveloperOverview client={client()} />);
     expect(await screen.findByText('SDK & Quickstart')).toBeTruthy();
-    expect(screen.getByText('Config Overview')).toBeTruthy();
+    expect(screen.queryByText('Config Overview')).toBeNull();
     expect((await screen.findByTestId('held-test-faxes')).textContent).toBe('2');
+    // The quickstart installs the SDK version the packages say, never an old pinned one.
+    expect(document.body.textContent).toContain(`npm i faxbot@${SDK_VERSIONS.node}`);
+    expect(document.body.textContent).toContain(`pip install faxbot==${SDK_VERSIONS.python}`);
+    expect(document.body.textContent).not.toContain('1.0.2');
   });
 });
 
@@ -196,5 +203,12 @@ describe('Overview', () => {
     server.use(http.get('/work/counts', () => HttpResponse.json({ detail: 'Forbidden' }, { status: 403 })));
     render(<Dashboard client={client()} />);
     expect(await screen.findByText('Nothing needs attention.')).toBeTruthy();
+  });
+});
+
+describe('SDK versions', () => {
+  it('match the packages\' own metadata', () => {
+    const python = /version="([^"]+)"/.exec(pythonSetup)?.[1];
+    expect(SDK_VERSIONS).toEqual({ node: nodePackage.version, python });
   });
 });

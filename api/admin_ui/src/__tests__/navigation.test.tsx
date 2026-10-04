@@ -69,6 +69,7 @@ describe('the navigation table', () => {
     expect(pagesOf(visible(['host:terminal', 'logs:read']), 'system')).toEqual(['logs', 'terminal']);
     expect(pagesOf(visible(['keys:manage']), 'access')).toEqual(['keys', 'sessions']);
     expect(pagesOf(visible(['grants:read']), 'access')).toEqual(['who', 'sessions']);
+    expect(pagesOf(visible(['audit:read']), 'system')).toEqual(['audit']);
   });
 
   it('lists Provider plugins whether or not plugins are on, so they can be turned on there', () => {
@@ -100,7 +101,7 @@ describe('page addresses', () => {
   });
 
   it('opens the named page, or the area first page when only the area is named', () => {
-    expect(resolveAddress(areas, parseAddress('#/system/audit'))?.address).toBe('#/overview');
+    expect(resolveAddress(areas, parseAddress('#/system/no-such-page'))?.address).toBe('#/overview');
     expect(resolveAddress(areas, parseAddress('#/providers/trunk'))?.address).toBe('#/providers/trunk');
     expect(resolveAddress(areas, parseAddress('#/providers'))?.address).toBe('#/providers/sending');
     expect(resolveAddress(areas, parseAddress('#/overview'))?.address).toBe('#/overview');
@@ -203,7 +204,7 @@ describe('the console shell', () => {
         opened.push(`${area.id}/${page.id}`);
       }
     }
-    expect(opened).toHaveLength(41);
+    expect(opened).toHaveLength(42);
   }, 60000);
 
   it('keeps the old destination names working', async () => {

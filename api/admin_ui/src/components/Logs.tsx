@@ -18,13 +18,22 @@ const sinceOptions = [
   { value: '24h', label: 'Last 24h' },
 ];
 
-function parseQueryTokens(input: string): { q: string; filters: Record<string,string> } {
+// The columns, each with the name shown and the field it reads.
+export const LOG_COLUMNS: Array<{ field: string; label: string }> = [
+  { field: 'ts', label: 'Time' }, { field: 'event', label: 'Event' }, { field: 'job_id', label: 'Fax' },
+  { field: 'key_id', label: 'Key' }, { field: 'backend', label: 'Provider' }, { field: 'status', label: 'Result' },
+  { field: 'error', label: 'Error' }, { field: 'to', label: 'To' }, { field: 'from', label: 'From' },
+];
+const COLUMN_FIELDS: Record<string, string> = Object.fromEntries(LOG_COLUMNS.map(({ field, label }) => [label.toLowerCase(), field]));
+
+// "provider:sinch result:failed" matches one column each; other words search everything.
+export function parseQueryTokens(input: string): { q: string; filters: Record<string,string> } {
   const parts = input.split(/\s+/).filter(Boolean);
   const filters: Record<string, string> = {};
   const free: string[] = [];
   for (const p of parts) {
     const [k, v] = p.split(':', 2);
-    if (v) filters[k.toLowerCase()] = v;
+    if (v) filters[COLUMN_FIELDS[k.toLowerCase()] ?? k.toLowerCase()] = v;
     else free.push(p);
   }
   return { q: free.join(' '), filters };
@@ -98,7 +107,7 @@ function Logs({ client }: LogsProps) {
     return () => clearInterval(id);
   }, [follow, query, eventFilter, sincePreset, since, limit, source, fileLines]);
 
-  const columns = useMemo(() => ['ts','event','job_id','key_id','backend','status','error','to','from','path'], []);
+  const columns = useMemo(() => LOG_COLUMNS, []);
 
   useEffect(() => {
     configurationEpoch.current += 1;
@@ -258,8 +267,8 @@ function Logs({ client }: LogsProps) {
             gridTemplateColumns: { xs: 'minmax(0, 1fr)', sm: 'repeat(2, minmax(0, 1fr))', lg: 'minmax(0, 1fr) 160px minmax(380px, 1.4fr) 100px' },
             gap: 2,
           }}>
-            <TextField label="Search (supports key:value)" value={query} onChange={(e)=>setQuery(e.target.value)} size="small" />
-            <TextField label="Event" value={eventFilter} onChange={(e)=>setEventFilter(e.target.value)} size="small" placeholder="e.g., job_created" />
+            <TextField label="Search" value={query} onChange={(e)=>setQuery(e.target.value)} size="small" placeholder="Words to find" />
+            <TextField label="Event" value={eventFilter} onChange={(e)=>setEventFilter(e.target.value)} size="small" placeholder="Part of an event name, such as failed" />
             <Box sx={{
               display: 'grid',
               gridTemplateColumns: { xs: 'minmax(0, 1fr)', md: '140px minmax(220px, 1fr)' },
@@ -326,7 +335,7 @@ function Logs({ client }: LogsProps) {
             <Table stickyHeader size="small">
               <TableHead>
                 <TableRow>
-                  {columns.map(col => (<TableCell key={col}>{col.toUpperCase()}</TableCell>))}
+                  {columns.map(col => (<TableCell key={col.field}>{col.label}</TableCell>))}
                 </TableRow>
               </TableHead>
               <TableBody>
@@ -335,8 +344,8 @@ function Logs({ client }: LogsProps) {
                 ) : items.map((row, idx) => (
                   <TableRow key={idx} hover onClick={()=>{ setExpandedRow(row); setExpandOpen(true); }} sx={{ cursor: 'pointer' }}>
                     {columns.map(col => (
-                      <TableCell key={col} sx={{ maxWidth: wrap? 'none': 340, whiteSpace: wrap? 'normal':'nowrap', overflow: wrap? 'visible':'hidden', textOverflow: wrap? 'clip':'ellipsis' }}>
-                        {row[col] !== undefined ? String(row[col]) : ''}
+                      <TableCell key={col.field} sx={{ maxWidth: wrap? 'none': 340, whiteSpace: wrap? 'normal':'nowrap', overflow: wrap? 'visible':'hidden', textOverflow: wrap? 'clip':'ellipsis' }}>
+                        {row[col.field] !== undefined ? String(row[col.field]) : ''}
                       </TableCell>
                     ))}
                   </TableRow>
@@ -345,7 +354,7 @@ function Logs({ client }: LogsProps) {
             </Table>
           </TableContainer>
           <Box mt={1}>
-            <Typography variant="caption" color="text.secondary">Tips: use key:value filters like "event:job_failed backend:sinch" and free-text search to refine results.</Typography>
+            <Typography variant="caption" color="text.secondary">To search one column, type its name, a colon and the words, such as provider:sinch or result:failed. Select an entry to see all of it.</Typography>
           </Box>
         </CardContent>
       </Card>

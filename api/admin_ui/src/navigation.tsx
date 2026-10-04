@@ -38,6 +38,7 @@ import StorageIcon from '@mui/icons-material/Storage';
 import PublicIcon from '@mui/icons-material/Public';
 import AssessmentIcon from '@mui/icons-material/Assessment';
 import DescriptionIcon from '@mui/icons-material/Description';
+import FactCheckIcon from '@mui/icons-material/FactCheck';
 import ApiIcon from '@mui/icons-material/Api';
 import SmartToyIcon from '@mui/icons-material/SmartToy';
 import TerminalIcon from '@mui/icons-material/Terminal';
@@ -65,6 +66,8 @@ import Savings from './components/delivery/Savings';
 import Recommendations from './components/delivery/Recommendations';
 import WorkSettingsPanel from './components/work/WorkSettingsPanel';
 import Terminal from './components/Terminal';
+import AuditLog from './components/AuditLog';
+import { DeploymentSection } from './components/common/Deployment';
 import ScriptsTests from './components/ScriptsTests';
 import Users from './components/Users';
 import Groups from './components/Groups';
@@ -173,10 +176,15 @@ function whenContextReady(ctx: PageContext, node: ReactNode): ReactNode {
   return node;
 }
 
+// The owner (or the installation key) may change every setting; others see owner-only ones disabled.
+function isOwner(ctx: PageContext): boolean {
+  return Boolean(ctx.me.is_owner) || ctx.me.principal.kind === 'bootstrap';
+}
+
 function settingsPage(sections: SettingsSection[], title?: string) {
   return (ctx: PageContext) => (
     <Settings client={ctx.client} canWrite={ctx.permissions.has('settings:write')} canRestart={ctx.permissions.has('host:restart')}
-      sections={sections} title={title} />
+      sections={sections} title={title} isOwner={isOwner(ctx)} />
   );
 }
 
@@ -328,6 +336,13 @@ export const NAVIGATION: NavArea[] = [
         render: settingsPage(['storage', 'advanced', 'backup'], 'Storage & retention') },
       { id: 'remote', label: 'Remote access', icon: <PublicIcon />, gate: { anyOf: SETTINGS_READ },
         render: settingsPage(['tunnel'], 'Remote access') },
+      { id: 'audit', label: 'Audit log', icon: <FactCheckIcon />, gate: { anyOf: ['audit:read'] },
+        render: (ctx) => (
+          <>
+            <AuditLog client={ctx.client} canListPeople={ctx.permissions.has('users:read')} />
+            {ctx.permissions.has('settings:read') && <Box sx={{ mt: 4 }}>{settingsPage(['audit'])(ctx)}</Box>}
+          </>
+        ) },
       { id: 'diagnostics', label: 'Diagnostics', icon: <AssessmentIcon />, gate: { anyOf: ['diagnostics:read'] }, refreshContext: true,
         render: (ctx) => whenContextReady(ctx,
           <>
@@ -352,7 +367,12 @@ export const NAVIGATION: NavArea[] = [
           </>
         ) },
       { id: 'terminal', label: 'Terminal', icon: <TerminalIcon />, gate: { anyOf: ['host:terminal'] }, group: 'Developer',
-        render: (ctx) => <Terminal client={ctx.client} /> },
+        render: (ctx) => (
+          <>
+            <Terminal client={ctx.client} />
+            <DeploymentSection client={ctx.client} names={['ENABLE_ADMIN_EXEC']} title="Terminal setting" showNames />
+          </>
+        ) },
       { id: 'scripts', label: 'Scripts & checks', icon: <ScienceIcon />, gate: { anyOf: ['providers:write'] }, group: 'Developer',
         refreshContext: true,
         render: (ctx) => whenContextReady(ctx, <ScriptsTests client={ctx.client} onNavigate={ctx.navigate} docsBase={ctx.docsBase} />) },

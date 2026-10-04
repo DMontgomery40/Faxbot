@@ -209,6 +209,11 @@ def test_editor_has_omitted_provider_and_resource_settings_and_preserves_false_z
     }
     assert view['features'] == {'v3_plugins': False, 'fax_disabled': False, 'inbound_enabled': False, 'plugin_install': False}
     assert view['restart'] == {'allowed': False}
+    # Without an environment every environment-only setting reads as not set.
+    assert all(entry['set'] is False and entry['value'] is None for entry in view['deployment'].values())
+    assert {'admin_allow_restart', 'docs_base_url', 'mobile_local_base', 'feature_v3_plugins',
+            'feature_plugin_install', 'audit_log_enabled'} <= set(view['owner_only'])
+    assert not {'fax_header', 'enable_s3_diagnostics', 'backend', 'inbound_enabled'} & set(view['owner_only'])
     assert set(view['plugin_files']) == {'providers_dir', 'plugin_registry_path'}
     assert view['plugin_files']['plugin_registry_path'].endswith('plugin_registry.json')
     assert view['storage'] == {
@@ -247,3 +252,19 @@ def test_editor_projects_delivery_routes_intake_email_and_direct_delivery_settin
     assert defaults['intake']['email_enabled'] is False and defaults['intake']['smtp_port'] == 587
     assert defaults['direct'] == {'enabled': False, 'organization': '', 'fax_number': '', 'allow_private_peers': False}
     assert defaults['sender'] == {'header': 'Faxbot', 'station_id': defaults['sip']['station_id']}
+
+
+def test_environment_only_settings_show_whether_they_are_set_and_never_a_secret():
+    from api.app.config_views import DEPLOYMENT_VARIABLES, deployment_view
+
+    view = deployment_view({'FAXBOT_CONSOLE_ORIGINS': ' https://fax.example ', 'MCP_WS_API_KEY': 'synthetic-ws-secret',
+                            'ENABLE_LOCAL_ADMIN': 'true', 'TZ': '', 'UNRELATED': 'x'})
+    assert set(view) == set(DEPLOYMENT_VARIABLES)
+    assert view['FAXBOT_CONSOLE_ORIGINS'] == {'set': True, 'value': 'https://fax.example'}
+    assert view['MCP_WS_API_KEY'] == {'set': True, 'value': None}
+    assert view['TZ'] == {'set': False, 'value': None}
+    assert 'synthetic-ws-secret' not in repr(view)
+    # The terminal follows the console when ENABLE_ADMIN_EXEC is not set, and ENABLE_ADMIN_EXEC when it is.
+    assert view['ENABLE_ADMIN_EXEC'] == {'set': False, 'value': None, 'effective': True}
+    assert deployment_view({'ENABLE_LOCAL_ADMIN': 'true', 'ENABLE_ADMIN_EXEC': 'false'})['ENABLE_ADMIN_EXEC']['effective'] is False
+    assert deployment_view({})['ENABLE_ADMIN_EXEC']['effective'] is False

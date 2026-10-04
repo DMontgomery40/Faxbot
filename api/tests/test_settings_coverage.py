@@ -360,3 +360,18 @@ def test_a_new_installation_takes_its_zone_from_tz_and_an_upgrade_takes_it_once(
         assert installation.store().read().active.values.time_zone == 'America/Denver'
     with installation.start(TZ='Europe/London'):  # taken once; the console owns it from then on
         assert installation.store().read().active.values.time_zone == 'America/Denver'
+
+
+def test_environment_only_settings_are_shown_read_only_and_never_a_secret(cli, monkeypatch):
+    client = cli.client
+    monkeypatch.setenv('FAXBOT_MEDIA_PORTS', '10000-10100')
+    monkeypatch.setenv('MCP_WS_API_KEY', 'synthetic-ws-secret-value')
+    monkeypatch.delenv('TZ', raising=False)
+    response = client.get('/admin/settings', headers=ADMIN)
+    assert response.status_code == 200, response.text
+    deployment = response.json()['deployment']
+    assert deployment['FAXBOT_MEDIA_PORTS'] == {'set': True, 'value': '10000-10100'}
+    assert deployment['MCP_WS_API_KEY'] == {'set': True, 'value': None}
+    assert deployment['TZ'] == {'set': False, 'value': None}
+    assert 'synthetic-ws-secret-value' not in response.text
+    assert 'admin_allow_restart' in response.json()['owner_only']

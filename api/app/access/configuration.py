@@ -75,6 +75,17 @@ def _policy_values(values: ConfigurationValues) -> dict:
     return result
 
 
+def owner_only_fields() -> frozenset[str]:
+    """Settings only the installation's owner may change, by the names a settings change sends."""
+    names = set()
+    for name, field in ConfigurationValues.model_fields.items():
+        if name in _ORDINARY_FIELDS or name in _PROVIDER_FIELDS:
+            continue
+        extra = field.json_schema_extra if isinstance(field.json_schema_extra, dict) else {}
+        names.add(extra.get('patch_name', name))
+    return frozenset(names)
+
+
 def configuration_requirements(
     before: ConfigurationValues, after: ConfigurationValues,
 ) -> ConfigurationRequirements:
