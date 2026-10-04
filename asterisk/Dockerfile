@@ -47,6 +47,18 @@ RUN ./configure --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedi
     && test -f /opt/install/usr/lib/asterisk/modules/func_base64.so \
     && test -f /opt/install/usr/lib/asterisk/modules/chan_pjsip.so
 
+# Debian links /var/run to /run. BuildKit will not copy a real directory over
+# that link, so the installed run directory moves to where the link points,
+# and the build stops if any other installed directory would land on a link.
+RUN if [ -d /opt/install/var/run ] && [ ! -L /opt/install/var/run ]; then \
+       mkdir -p /opt/install/run \
+       && cp -a /opt/install/var/run/. /opt/install/run/ \
+       && rm -rf /opt/install/var/run; \
+    fi \
+    && find /opt/install -mindepth 1 -type d -printf '/%P\n' | while read -r path; do \
+       if [ -L "$path" ]; then echo "Installed directory $path would replace a link" >&2; exit 1; fi; \
+    done
+
 FROM base
 ENV DEBIAN_FRONTEND=noninteractive LANG=C.UTF-8
 LABEL org.opencontainers.image.title="Faxbot Asterisk" \
