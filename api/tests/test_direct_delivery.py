@@ -96,6 +96,7 @@ def b_client(isolated_installation, monkeypatch, tmp_path):
     for name, value in {'REQUIRE_API_KEY': 'true', 'API_KEY': BOOTSTRAP, 'PUBLIC_API_URL': 'https://testserver',
                         'FAX_BACKEND': 'phaxio', 'MAX_REQUESTS_PER_MINUTE': '0', 'DIRECT_DELIVERY_ENABLED': 'true',
                         'DIRECT_ORGANIZATION': 'County Clinic', 'DIRECT_FAX_NUMBER': B_NUMBER,
+                        'DIRECT_ALLOW_PRIVATE_PEERS': 'true',
                         'FAXBOT_DIRECT_KEY_PATH': str(tmp_path / 'b-direct.key')}.items():
         monkeypatch.setenv(name, value)
     monkeypatch.setenv('FAXBOT_CONSOLE_ORIGINS', 'https://testserver')
@@ -116,7 +117,8 @@ def pair(b_client, tmp_path):
     values = ConfigurationValues.from_environment({
         'FAX_BACKEND': 'phaxio', 'FAX_DISABLED': 'false', 'FAX_DATA_DIR': str(data),
         'PUBLIC_API_URL': 'https://a.example', 'DIRECT_DELIVERY_ENABLED': 'true',
-        'DIRECT_ORGANIZATION': 'Valley Hospital', 'DIRECT_FAX_NUMBER': A_NUMBER})
+        'DIRECT_ORGANIZATION': 'Valley Hospital', 'DIRECT_FAX_NUMBER': A_NUMBER,
+        'DIRECT_ALLOW_PRIVATE_PEERS': 'true'})
     phaxio = ProviderConfiguration('phaxio', credentials={'api_key': 'k', 'api_secret': 's'})
     snapshot = configuration.initialize(values, actor='test', providers={'outbound': phaxio})
     to_b = ToB(b_client)
@@ -351,3 +353,135 @@ def test_uk_installation_card_and_partner_lookup_use_e164(b_client, tmp_path):
     view = b_client.get('/routing/destinations/+44 1782 684953', headers=ADMIN)
     assert view.status_code == 200, view.text
     assert view.json()['number'] == '+441782684953'
+
+
+# -- partner addresses (SSRF guard) ------------------------------------------------------------------
+
+from api.app.direct import addresses as partner_addresses  # noqa: E402
+from api.app.direct import service as direct_service  # noqa: E402
+
+PRIVATE_SENTENCE = ("The partner's address points to a private or local network, which direct delivery refuses "
+                    'unless DIRECT_ALLOW_PRIVATE_PEERS is turned on.')
+
+
+@pytest.mark.parametrize('address, allowed', [
+    ('127.0.0.1', False), ('::1', False), ('10.1.2.3', False), ('172.16.0.1', False), ('192.168.1.1', False),
+    ('169.254.169.254', False), ('fe80::1', False), ('fc00::1', False), ('fd12:3456::1', False),
+    ('224.0.0.1', False), ('ff02::1', False), ('0.0.0.0', False), ('::', False), ('::ffff:127.0.0.1', False),
+    ('::ffff:10.0.0.1', False), ('100.64.0.1', False),
+    ('1.1.1.1', True), ('8.8.8.8', True), ('2606:4700:4700::1111', True), ('::ffff:8.8.8.8', True),
+])
+def test_only_public_internet_addresses_are_partner_addresses(address, allowed):
+    assert partner_addresses.public(address) is allowed
+
+
+def _guarded_service(tmp_path, *, allow_private, answers):
+    from api.app.schema import create_database_engine
+    engine = create_database_engine('sqlite:///' + str(tmp_path / 'guard.db'))
+    upgrade_schema(engine)
+    settings = {'value': ConfigurationValues.from_environment({
+        'PUBLIC_API_URL': 'https://own.example', 'DIRECT_DELIVERY_ENABLED': 'true',
+        'DIRECT_ORGANIZATION': 'County Clinic', 'DIRECT_FAX_NUMBER': A_NUMBER,
+        'DIRECT_ALLOW_PRIVATE_PEERS': 'true' if allow_private else 'false'})}
+    lookups = []
+
+    def resolver(host, port):
+        """Synthetic DNS: IP literals resolve to themselves, unknown names are not found."""
+        import ipaddress
+        import socket
+        lookups.append((host, port))
+        try:
+            return [str(ipaddress.ip_address(host))]
+        except ValueError:
+            pass
+        if host not in answers:
+            raise socket.gaierror('synthetic name not found')
+        return answers[host]
+    service = DirectService(engine, values=lambda: settings['value'], resolver=resolver,
+                            environment={'FAXBOT_DIRECT_KEY_PATH': str(tmp_path / 'guard.key')})
+    return service, settings, lookups
+
+
+def _partner_card(endpoint):
+    return card(Identity.generate(), organization='Valley Hospital', fax_number=B_NUMBER, endpoint=endpoint)
+
+
+def test_enrollment_refuses_partners_on_private_or_unknown_addresses(tmp_path):
+    service, _, lookups = _guarded_service(tmp_path, allow_private=False, answers={
+        'metadata.example': ['169.254.169.254'], 'mixed.example': ['93.184.215.14', '10.0.0.7'],
+        'valley.example': ['93.184.215.14', '2606:2800:21f:cb07:6820:80da:af6b:8b2c']})
+    for endpoint in ('https://metadata.example', 'https://mixed.example', 'https://127.0.0.1', 'https://[::1]:8443'):
+        with pytest.raises(direct_service.DirectConflict) as refused:
+            service.enroll(_partner_card(endpoint))
+        assert str(refused.value) == PRIVATE_SENTENCE
+    with pytest.raises(direct_service.DirectConflict) as unknown:
+        service.enroll(_partner_card('https://nowhere.example'))
+    assert str(unknown.value) == "Faxbot could not find the partner's address; check the card and try again."
+    assert service.store.list_peers() == []
+    enrolled = service.enroll(_partner_card('https://valley.example'))
+    assert enrolled['endpoint_url'] == 'https://valley.example' and ('valley.example', 443) in lookups
+
+
+def test_private_partners_are_allowed_only_when_the_setting_is_on(tmp_path):
+    service, _, lookups = _guarded_service(tmp_path, allow_private=True, answers={})
+    enrolled = service.enroll(_partner_card('https://10.0.0.7'))
+    assert enrolled['endpoint_url'] == 'https://10.0.0.7' and lookups == []
+
+
+class _Capture:
+    """Stands in for httpx.AsyncClient and records what would have been sent."""
+    requests = []
+
+    def __init__(self, **options):
+        self.options = options
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    async def request(self, method, url, **kwargs):
+        type(self).requests.append((method, url, kwargs))
+        return httpx.Response(200, json={'verified': True})
+
+
+def test_requests_go_to_the_checked_address_with_the_partner_host_name(tmp_path, monkeypatch):
+    _Capture.requests = []
+    monkeypatch.setattr(direct_service.httpx, 'AsyncClient', _Capture)
+    service, settings, _ = _guarded_service(tmp_path, allow_private=False, answers={
+        'valley.example': ['93.184.215.14'], 'v6.example': ['2606:2800:21f:cb07:6820:80da:af6b:8b2c']})
+    status, body = asyncio.run(service.http.request('POST', 'https://valley.example/direct/verifications',
+                                                    json={'statement': 's'}))
+    assert (status, body) == (200, {'verified': True})
+    method, url, options = _Capture.requests[-1]
+    assert (method, url) == ('POST', 'https://93.184.215.14/direct/verifications')
+    assert options['headers']['Host'] == 'valley.example'
+    assert options['extensions'] == {'sni_hostname': 'valley.example'} and options['json'] == {'statement': 's'}
+    asyncio.run(service.http.request('GET', 'https://v6.example:8443/direct/deliveries/m1', headers={'X-A': '1'}))
+    _, url, options = _Capture.requests[-1]
+    assert url == 'https://[2606:2800:21f:cb07:6820:80da:af6b:8b2c]:8443/direct/deliveries/m1'
+    assert options['headers'] == {'X-A': '1', 'Host': 'v6.example:8443'}
+
+
+def test_a_partner_whose_address_turns_private_is_refused_before_anything_is_sent(tmp_path, monkeypatch):
+    _Capture.requests = []
+    monkeypatch.setattr(direct_service.httpx, 'AsyncClient', _Capture)
+    answers = {'valley.example': ['93.184.215.14']}
+    service, _, _ = _guarded_service(tmp_path, allow_private=False, answers=answers)
+    peer = service.enroll(_partner_card('https://valley.example'))
+    answers['valley.example'] = ['10.0.0.7']  # the partner's DNS now points inside our network
+    with pytest.raises(direct_service.DirectConflict) as refused:
+        asyncio.run(service.send_confirmation(peer['id'], '1234 5678'))
+    assert str(refused.value) == PRIVATE_SENTENCE
+    with pytest.raises(direct_service.PartnerAddressRefused):
+        asyncio.run(service.http.request('GET', 'https://valley.example/direct/deliveries/m1'))
+    assert _Capture.requests == []
+
+
+def test_allowing_private_partners_keeps_the_original_address(tmp_path, monkeypatch):
+    _Capture.requests = []
+    monkeypatch.setattr(direct_service.httpx, 'AsyncClient', _Capture)
+    service, _, lookups = _guarded_service(tmp_path, allow_private=True, answers={})
+    asyncio.run(service.http.request('POST', 'https://partner.lan/direct/verifications', json={}))
+    assert _Capture.requests[-1][1] == 'https://partner.lan/direct/verifications' and lookups == []

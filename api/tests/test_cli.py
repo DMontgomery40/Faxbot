@@ -56,6 +56,7 @@ def _serve(monkeypatch, tmp_path, **extra):
         'DIRECT_DELIVERY_ENABLED': 'true',
         'DIRECT_ORGANIZATION': 'County Clinic',
         'DIRECT_FAX_NUMBER': '+15550006666',
+        'DIRECT_ALLOW_PRIVATE_PEERS': 'true',  # synthetic partners have no public DNS
         'FAXBOT_CLI_CONFIG': str(tmp_path / 'cli-config' / 'config.toml'),
         'COLUMNS': '200',
         'TZ': 'UTC',
@@ -634,6 +635,24 @@ def test_intake_connectors_items_and_test_email(cli):
     assert cli('intake', 'retry', 'missing-item').exit_code in (5, 6, 9)
     cli.json('intake', 'connectors', 'remove', 'Front desk email')
     assert cli.json('intake', 'connectors', 'list') == []
+
+
+def test_only_owners_allow_direct_partners_on_private_networks(cli, tmp_path):
+    from app.direct.crypto import Identity, card
+    saved = cli.json('settings', 'set', 'direct_allow_private_peers=false')
+    assert saved['changed'] is True
+    assert cli.json('settings', 'get', 'direct')['direct']['allow_private_peers'] is False
+    local = tmp_path / 'local.json'
+    local.write_text(json.dumps(card(Identity.generate(), organization='Basement server', fax_number='+15550007778',
+                                     endpoint='https://127.0.0.1:8443')))
+    refused = cli('direct', 'peers', 'add', local)
+    assert refused.exit_code == 6
+    assert refused.stderr.strip() == ("The partner's address points to a private or local network, which direct "
+                                      'delivery refuses unless DIRECT_ALLOW_PRIVATE_PEERS is turned on.')
+    _, token = restricted_key(cli, 'Settings helper', role='Administrator', permissions=('settings:read', 'settings:write'))
+    assert cli('settings', 'set', 'direct_allow_private_peers=true', key=token).exit_code == 4
+    cli.json('settings', 'set', 'direct_allow_private_peers=true')
+    assert cli.json('direct', 'peers', 'add', local)['endpoint'] == 'https://127.0.0.1:8443'
 
 
 def test_direct_card_peers_challenge_and_confirm(cli, tmp_path):
