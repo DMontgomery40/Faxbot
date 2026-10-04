@@ -56,7 +56,7 @@ spec.loader.exec_module(module)
 module.ROOT = Path(sys.argv[2])
 response = Path(sys.argv[3]).read_text()
 module.call_llm = lambda prompt, provider: response
-sys.argv = [sys.argv[1], '--base', 'HEAD', '--llm', 'openai', '--apply']
+sys.argv = [sys.argv[1], '--base', 'HEAD', '--llm', 'codex', '--apply']
 module.main()
 """
     return subprocess.run([sys.executable, '-c', runner, str(SCRIPT), str(repository), str(response)],
@@ -78,15 +78,19 @@ def test_local_apply_rejects_protected_changes_before_mutating_checkout(reposito
     assert (repository / '.git/index').read_bytes() == before_index
     assert git(repository, 'diff', 'HEAD', '--') == b''
     assert all((repository / name).read_text() == ORIGINAL for name in names)
-    assert (repository / 'mkdocs-docs-llm.patch').read_text() == patch
+    # A rejected proposal never reaches the patch file.
+    assert not (repository / 'mkdocs-docs-llm.patch').exists()
+    assert 'outside maintained docs Markdown' in result.stderr
 
 
 def test_local_apply_rejects_malformed_patch_with_nonzero_exit(repository):
     before_index = (repository / '.git/index').read_bytes()
     result = run_local_apply(repository, 'This is not a unified diff.\n')
     assert result.returncode != 0, result.stdout + result.stderr
+    assert result.stderr.strip() == 'The model proposed no documentation changes; nothing was written.'
     assert (repository / '.git/index').read_bytes() == before_index
     assert git(repository, 'diff', 'HEAD', '--') == b''
+    assert not (repository / 'mkdocs-docs-llm.patch').exists()
 
 
 def test_local_apply_stages_an_ordinary_document_edit(repository):
@@ -97,3 +101,12 @@ def test_local_apply_stages_an_ordinary_document_edit(repository):
     assert git(repository, 'show', ':docs/guide.md').decode() == REPLACEMENT
     assert git(repository, 'diff', '--cached', '--name-only').decode() == 'docs/guide.md\n'
     assert git(repository, 'diff', '--') == b''
+    assert (repository / 'mkdocs-docs-llm.patch').read_text() == patch
+
+
+def test_fenced_model_reply_is_unwrapped_before_validation(repository):
+    patch = proposal(repository, ('docs/guide.md',))
+    result = run_local_apply(repository, 'Here is the update:\n\n```diff\n' + patch + '```\n')
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (repository / 'mkdocs-docs-llm.patch').read_text() == patch
+    assert git(repository, 'diff', '--cached', '--name-only').decode() == 'docs/guide.md\n'

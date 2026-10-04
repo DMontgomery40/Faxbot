@@ -68,3 +68,7 @@ site/
 
 # Claude Code agent worktrees
 .claude/worktrees/
+
+# Docs Autopilot outputs (review, never commit as-is)
+mkdocs-docs-plan.md
+mkdocs-docs-llm.patch

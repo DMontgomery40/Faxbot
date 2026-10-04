@@ -82,9 +82,10 @@ PRESETS: dict[str, TrunkPreset] = {preset.id: preset for preset in (
                'The US signaling addresses are 192.76.120.10 and 64.16.250.10.',
                'Choose an outbound voice profile for the connection so it can place calls.',
                'Keep only the G.711 U and G.711 A codecs on the connection.'),
-        sources=(Source('https://sip.telnyx.com/voice.json'),
+        # The first source is the page the console links as the carrier's documentation.
+        sources=(Source('https://developers.telnyx.com/docs/voice/sip-trunking/get-started'),
+                 Source('https://sip.telnyx.com/voice.json'),
                  Source('https://sip.telnyx.com/'),
-                 Source('https://developers.telnyx.com/docs/voice/sip-trunking/get-started'),
                  Source('https://developers.telnyx.com/docs/voice/sip-trunking/authentication/credential-types'),
                  Source('https://developers.telnyx.com/docs/voice/sip-trunking/configuration/caller-id-policy'),
                  Source('https://support.telnyx.com/en/articles/1130672-fax-service-with-telnyx-via-t-38-or-g711'),
@@ -110,8 +111,8 @@ PRESETS: dict[str, TrunkPreset] = {preset.id: preset for preset in (
                'Faxbot signs in to Sinch with a username and password, because Sinch does not publish '
                'the addresses it sends calls from on a page Faxbot could verify.',
                'Sinch expects called numbers and caller ID in E.164 format with a plus sign.'),
-        sources=(Source('https://developers.sinch.com/docs/est/test-plan'),
-                 Source('https://developers.sinch.com/docs/est'),
+        sources=(Source('https://developers.sinch.com/docs/est'),
+                 Source('https://developers.sinch.com/docs/est/test-plan'),
                  Source('https://developers.sinch.com/docs/est/integration-guides/livekit'),
                  Source('https://developers.sinch.com/docs/est/integration-guides/ribbon-sbc'),
                  Source('https://sinch.com/voice/sip-trunking/elastic/')),

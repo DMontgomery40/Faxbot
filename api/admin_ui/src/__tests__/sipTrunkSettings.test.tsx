@@ -115,6 +115,26 @@ describe('SIP trunk settings', () => {
     expect(await screen.findByText(detail)).toBeTruthy();
   });
 
+  it('links one carrier documentation page instead of listing every source', async () => {
+    const presets = [{ ...PRESETS[0], sources: [
+      { url: 'https://developers.telnyx.com/docs/voice/sip-trunking/get-started', read_on: '2026-10-03' },
+      { url: 'https://sip.telnyx.com/voice.json', read_on: '2026-10-03' },
+      { url: 'https://support.telnyx.com/en/articles/1130672', read_on: '2026-10-03' }] }, PRESETS[1]];
+    server.use(
+      http.get('/admin/sip/presets', () => HttpResponse.json({ presets })),
+      http.get('/admin/settings', () => HttpResponse.json(settings())),
+      http.get('/admin/sip/calls', () => HttpResponse.json({ items: [], next_cursor: null })),
+    );
+    const { container } = render(<SipTrunkSettings client={client()} />);
+    const link = await screen.findByRole('link', { name: 'Telnyx documentation' });
+    expect(link.getAttribute('href')).toBe('https://developers.telnyx.com/docs/voice/sip-trunking/get-started');
+    expect(screen.getAllByRole('link').filter((item) => item.textContent?.includes('documentation'))).toHaveLength(1);
+    expect(container.textContent).not.toContain('2026-10-03');
+    expect(container.textContent).not.toContain('support.telnyx.com');
+    expect(container.querySelector('a[href="https://sip.telnyx.com/voice.json"]')).toBeNull();
+    expect(container.textContent).not.toMatch(/read \d/);
+  });
+
   it('offers only the sign-in methods a carrier supports', async () => {
     server.use(
       http.get('/admin/sip/presets', () => HttpResponse.json({ presets: PRESETS })),
