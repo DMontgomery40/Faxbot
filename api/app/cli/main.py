@@ -18,8 +18,75 @@ from .state import State
 VERSION = '1.0.0'
 
 
+GLOBAL_OPTIONS = ('url', 'key', 'profile', 'json_output', 'quiet')
+
+
+def _option_table_for(param):
+    takes_value = not (param.is_flag or param.count)
+    return {name: takes_value for name in (*param.opts, *param.secondary_opts)}
+
+
+def _option_table(command, ctx):
+    """Every option string of a command, mapped to whether it takes a value."""
+    table = {}
+    for param in command.get_params(ctx):
+        if getattr(param, 'param_type_name', None) == 'option':
+            table.update(_option_table_for(param))
+    return table
+
+
+def hoist_global_options(root, ctx, args):
+    """Move global options written after a subcommand to just before it.
+
+    `faxbot inbound list --json` then means `faxbot --json inbound list`. An option
+    the subcommand defines itself (config set-profile --url) stays with it, option
+    values are never mistaken for options, and nothing after `--` moves.
+    """
+    globals_table = {name: value for param in root.get_params(ctx) if param.name in GLOBAL_OPTIONS
+                     for name, value in _option_table_for(param).items()}
+    command, kept, hoisted, insert_at = root, [], [], None
+    position = 0
+    while position < len(args):
+        token = args[position]
+        position += 1
+        if token == '--':
+            kept.append(token)
+            kept.extend(args[position:])
+            break
+        if token.startswith('-') and len(token) > 1:
+            name, has_value = token.split('=', 1)[0], '=' in token
+            own = _option_table(command, ctx)
+            if name in own:
+                kept.append(token)
+                if own[name] and not has_value and position < len(args):
+                    kept.append(args[position])
+                    position += 1
+            elif command is not root and name in globals_table:
+                hoisted.append(token)
+                if globals_table[name] and not has_value and position < len(args):
+                    hoisted.append(args[position])
+                    position += 1
+            else:
+                kept.append(token)
+            continue
+        if hasattr(command, 'get_command'):  # a command group
+            subcommand = command.get_command(ctx, token)
+            if subcommand is not None:
+                if command is root:
+                    insert_at = len(kept)
+                command = subcommand
+        kept.append(token)
+    if not hoisted or insert_at is None:
+        return list(args)
+    return kept[:insert_at] + hoisted + kept[insert_at:]
+
+
 class FaxbotGroup(TyperGroup):
     """Report expected failures as one plain sentence; never print tracebacks or local values."""
+
+    def parse_args(self, ctx, args):
+        # Global options are also accepted after the subcommand: faxbot inbound list --json.
+        return super().parse_args(ctx, hoist_global_options(self, ctx, args))
 
     def invoke(self, ctx):
         try:

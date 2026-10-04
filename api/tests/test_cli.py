@@ -406,6 +406,184 @@ def test_logs_tunnel_actions_restart_and_database(cli):
     assert turned_off.stderr.strip() == 'Provider plugins are turned off on this installation.'
 
 
+# -- global options after the subcommand ------------------------------------------------------
+
+def test_global_options_are_accepted_before_or_after_the_subcommand(cli, tmp_path):
+    inbound_id = cli.json('inbound', 'simulate', '--from', '+15559990000', '--to', '+15551112222')['id']
+    before = cli.runner.invoke(cli_app, ['--url', ORIGIN, '--key', BOOTSTRAP, '--json', 'inbound', 'list'],
+                               obj={'client_factory': lambda address, timeout: (cli.client, False)})
+    after = cli('inbound', 'list', '--json', '--url', ORIGIN, '--key', BOOTSTRAP, url=None, key=None)
+    equals = cli('inbound', 'list', '--json', f'--url={ORIGIN}', f'--key={BOOTSTRAP}', url=None, key=None)
+    for result in (before, after, equals):
+        assert result.exit_code == 0, result.stderr
+        assert [item['id'] for item in json.loads(result.stdout)] == [inbound_id]
+
+    # --quiet / -q after the subcommand prints only the secret shown once.
+    key_id, token = restricted_key(cli, 'Scanner')
+    for flag in ('--quiet', '-q'):
+        rotated = cli('keys', 'rotate', key_id, flag)
+        assert rotated.exit_code == 0 and rotated.stdout.strip().startswith('fbk_live_' + key_id)
+        assert len(rotated.stdout.strip().splitlines()) == 1
+
+    # --profile after the subcommand selects the saved profile.
+    saved = cli('config', 'set-profile', 'clinic', '--key-stdin', '--no-use', input=BOOTSTRAP + '\n', key=None)
+    assert saved.exit_code == 0, saved.stderr
+    me = cli('me', '--profile', 'clinic', '--json', url=None, key=None)
+    assert me.exit_code == 0, me.stderr
+    assert json.loads(me.stdout)['principal']['kind'] == 'bootstrap'
+
+    # An option the subcommand defines itself stays with it: set-profile --url is the profile's address.
+    remote = cli('config', 'set-profile', 'remote', '--url', 'https://fax.example.test', '--no-key', '--no-use',
+                 '--json', key=None)
+    assert remote.exit_code == 0, remote.stderr
+    assert json.loads(remote.stdout)['url'] == 'https://fax.example.test'
+
+    # Option values are never taken for global options, and --help still works after a subcommand.
+    noted = cli('keys', 'update', key_id, '--note', '--json')
+    assert noted.exit_code == 0 and not noted.stdout.lstrip().startswith('{')
+    assert [item['note'] for item in cli.json('keys', 'list') if item['id'] == key_id] == ['--json']
+    helped = cli('inbound', 'list', '--help', url=None, key=None)
+    assert helped.exit_code == 0 and 'Usage' in helped.stdout
+
+
+def test_global_options_are_moved_only_from_after_the_subcommand():
+    import typer
+    from typer._click import Context
+    from app.cli.main import hoist_global_options
+    root = typer.main.get_command(cli_app)
+    context = Context(root)
+    cases = {
+        ('inbound', 'list', '--json'): ['--json', 'inbound', 'list'],
+        ('--url', 'A', 'jobs', 'list', '--url=B', '-q'): ['--url', 'A', '--url=B', '-q', 'jobs', 'list'],
+        ('me', '--profile', 'p', '--key', 'K'): ['--profile', 'p', '--key', 'K', 'me'],
+        ('admin', '--data-dir', 'D', 'status', '--json'): ['--json', 'admin', '--data-dir', 'D', 'status'],
+        ('config', 'set-profile', 'x', '--url', 'U', '--json'): ['--json', 'config', 'set-profile', 'x', '--url', 'U'],
+        ('keys', 'update', 'k', '--note', '--json'): ['keys', 'update', 'k', '--note', '--json'],
+        ('send', '+15551230001', '--', '--json'): ['send', '+15551230001', '--', '--json'],
+        ('jobs', 'list', '--help'): ['jobs', 'list', '--help'],
+        ('--json', 'me'): ['--json', 'me'],
+    }
+    for given, expected in cases.items():
+        assert hoist_global_options(root, context, list(given)) == expected, given
+
+
+# -- commands that change the installation or its host ----------------------------------------
+
+class Recorder:
+    """An HTTP client that records each request and answers from a table, for host-side commands."""
+
+    def __init__(self, answers):
+        import httpx
+        self.requests = []
+        self.answers = answers
+
+        def handle(request):
+            body = json.loads(request.content) if request.content else None
+            self.requests.append((request.method, request.url.path, body, request.headers.get('X-API-Key')))
+            status, payload = self.answers[(request.method, request.url.path)]
+            return httpx.Response(status, json=payload)
+        self.client = httpx.Client(base_url=ORIGIN, transport=httpx.MockTransport(handle))
+
+    def __call__(self, *args, input=None):
+        return CliRunner().invoke(cli_app, ['--url', ORIGIN, '--key', BOOTSTRAP, *[str(arg) for arg in args]],
+                                  input=input, obj={'client_factory': lambda address, timeout: (self.client, False)})
+
+
+def test_keys_approve_turns_a_key_waiting_for_review_into_a_working_key(cli):
+    import sqlalchemy as sa
+    key_id, token = restricted_key(cli, 'Old script', permissions=('fax:read',))
+    store = main_module.app.state.access_runtime.store
+    with store.engine.begin() as connection:
+        connection.execute(sa.text("UPDATE access_key_bindings SET state = 'pending_review' WHERE id = "
+                                   "(SELECT id FROM api_keys WHERE key_id = :key)"), {'key': key_id})
+    assert cli('me', key=token).exit_code == 3
+    listed = cli('keys', 'list')
+    assert 'needs review' in listed.stdout
+    approved = cli('keys', 'approve', key_id, '--for', 'Old script', '-p', 'fax:read')
+    assert approved.exit_code == 0, approved.stderr
+    assert approved.stdout.strip().endswith('approved.')
+    assert cli.json('me', key=token)['principal']['display_name'] == 'Old script'
+    assert [item.get('pending_review') for item in cli.json('keys', 'list') if item['id'] == key_id] == [False]
+
+
+def test_jobs_reconcile_records_the_provider_id_without_sending():
+    recorder = Recorder({
+        ('GET', '/admin/fax-jobs/job-1'): (200, {'id': 'job-1', 'delivery_version': 4}),
+        ('POST', '/admin/fax-jobs/job-1/reconcile'): (200, {'id': 'job-1', 'state': 'submitted'}),
+    })
+    result = recorder('jobs', 'reconcile', 'job-1', '--provider-fax-id', 'PX-881', '--confirm-original-account')
+    assert result.exit_code == 0, result.stderr
+    assert result.stdout.strip() == 'Provider fax ID recorded. Faxbot will follow this fax with the provider.'
+    assert recorder.requests == [
+        ('GET', '/admin/fax-jobs/job-1', None, BOOTSTRAP),
+        ('POST', '/admin/fax-jobs/job-1/reconcile',
+         {'expected_version': 4, 'provider_sid': 'PX-881', 'confirm_original_account': True}, BOOTSTRAP)]
+    assert not any(path == '/fax' for _, path, _, _ in recorder.requests)
+
+
+def test_tunnel_test_and_restart_send_one_request_and_print_one_sentence():
+    recorder = Recorder({
+        ('POST', '/admin/tunnel/test'): (200, {'ok': True, 'message': 'OK', 'target': 'fax.example.test:443/health'}),
+        ('POST', '/admin/restart'): (200, {'ok': True}),
+    })
+    tested = recorder('tunnel', 'test')
+    assert tested.exit_code == 0 and tested.stdout.strip() == 'Reachable at fax.example.test:443/health: OK'
+    restarted = recorder('restart', '--yes')
+    assert restarted.exit_code == 0
+    assert restarted.stdout.strip() == 'Faxbot is restarting. Its service manager starts it again.'
+    declined = recorder('restart', input='n\n')
+    assert declined.exit_code == 1
+    assert [(method, path) for method, path, _, _ in recorder.requests] == [
+        ('POST', '/admin/tunnel/test'), ('POST', '/admin/restart')]
+
+
+def test_actions_run_executes_an_approved_action(cli, monkeypatch):
+    monkeypatch.setenv('ENABLE_ADMIN_EXEC', 'true')
+    assert 'python_version' in [item['id'] for item in cli.json('actions', 'list')['items']]
+    ran = cli.json('actions', 'run', 'python_version')
+    assert ran['ok'] is True and ran['code'] == 0 and sys.version.split()[0] in ran['stdout']
+    human = cli('actions', 'run', 'python_version')
+    assert human.exit_code == 0 and human.stdout.startswith('Finished. (exit code 0)')
+    unknown = cli('actions', 'run', 'rm_everything')
+    assert unknown.exit_code == 5
+
+
+def test_settings_persist_writes_the_private_recovery_file(monkeypatch, tmp_path):
+    target = tmp_path / 'recovery' / 'faxbot.env'
+    for client in _serve(monkeypatch, tmp_path, PERSISTED_ENV_PATH=str(target)):
+        cli = Cli(client)
+        result = cli('settings', 'persist')
+        assert result.exit_code == 0, result.stderr
+        assert result.stdout.strip() == f'Settings written to {target} on the server.'
+        assert stat.S_IMODE(target.stat().st_mode) == 0o600
+        written = target.read_text()
+        assert 'MAX_FILE_SIZE_MB=' in written and f'API_KEY={BOOTSTRAP}' in written
+        assert BOOTSTRAP not in result.stdout + result.stderr
+        _, token = restricted_key(cli, 'Helper', role='Administrator', permissions=('settings:read',))
+        assert cli('settings', 'persist', key=token).exit_code == 4
+
+
+def test_providers_validate_and_install_an_http_manifest(plugins_cli, tmp_path):
+    cli = plugins_cli
+    manifest = tmp_path / 'provider.json'
+    manifest.write_text(json.dumps({
+        'id': 'synthetic-http', 'name': 'Synthetic HTTP provider', 'allowed_domains': ['synthetic.invalid'],
+        'actions': {'send_fax': {'url': 'https://synthetic.invalid/send'},
+                    'get_status': {'url': 'https://synthetic.invalid/status'}}}))
+    checked = cli('providers', 'validate', manifest)
+    assert checked.exit_code == 0, checked.stderr
+    assert checked.stdout.strip() == 'The manifest is valid.'
+    installed = cli('providers', 'install', manifest)
+    assert installed.exit_code == 0, installed.stderr
+    assert installed.stdout.strip() == ('Provider synthetic-http installed. Configure it with faxbot providers '
+                                        'configure synthetic-http.')
+    assert any(item['id'] == 'synthetic-http' for item in cli.json('providers', 'list'))
+    broken = tmp_path / 'broken.json'
+    broken.write_text('{not json')
+    refused = cli('providers', 'install', broken)
+    assert refused.exit_code == 1 and refused.stderr.strip() == f'{broken} is not valid JSON.'
+
+
 def test_provider_plugins_list_config_and_configure(plugins_cli):
     cli = plugins_cli
     providers = cli.json('providers', 'list')
