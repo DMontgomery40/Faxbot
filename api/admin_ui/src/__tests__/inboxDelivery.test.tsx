@@ -282,7 +282,7 @@ describe('Inbox wording for received faxes', () => {
     const status = await screen.findByTestId('sip-receiving');
     expect(status.textContent).toContain(READY);
     expect(screen.queryByText(/_internal|YOUR_SECRET|curl|dialplan/i)).toBeNull();
-    fireEvent.click(within(status).getByRole('button', { name: 'Open trunk settings' }));
+    fireEvent.click(within(status).getByRole('button', { name: 'Open Carrier trunk' }));
     expect(navigate).toHaveBeenCalledWith('trunk');
   });
 

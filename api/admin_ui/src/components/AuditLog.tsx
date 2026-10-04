@@ -48,7 +48,7 @@ export const AUDIT_ACTIONS: Record<string, string> = {
   'providers.write': 'Changed providers',
   'providers.install': 'Installed a provider plugin',
   'configuration.bootstrap.activate': 'Applied the first settings',
-  'configuration.environment': 'Took settings from .env',
+  'configuration.environment': 'Read the settings Faxbot was installed with',
   'routing.rate_cards_added': 'Added prices',
   'fax.accept': 'Submitted a fax',
   'fax.reconcile': 'Checked a fax whose result was unclear',
@@ -78,10 +78,14 @@ const SIGNED_IN_WITH: Record<AuditEntry['credential_kind'], string> = {
 const TARGET_KINDS: Record<string, string> = {
   principal: 'Person', group: 'Group', role: 'Role', mailbox: 'Mailbox', inbound_rule: 'Fax number',
   binding: 'API key', key_binding: 'API key', resource: 'Fax', installation: 'This installation', session: 'Session',
+  assignment: 'Access', membership: 'Group membership', authentication: 'Sign-in',
 };
+
+const CODE_KINDS: Record<string, string> = { terminal: 'Terminal access code', pairing: 'Phone pairing code' };
 
 function changed(entry: AuditEntry): string {
   if (!entry.target) return '-';
+  if (entry.target.kind === 'capability') return CODE_KINDS[String(entry.details.kind)] ?? 'One-time code';
   const kind = TARGET_KINDS[entry.target.kind] ?? 'Item';
   if (entry.target.kind === 'installation') return kind;
   return entry.target.name ? `${kind}: ${entry.target.name}` : kind;

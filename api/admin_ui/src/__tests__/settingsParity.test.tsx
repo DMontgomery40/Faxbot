@@ -234,7 +234,7 @@ describe('Plain wording on provider and security settings', () => {
         data.inbound.enabled = true;
       }));
       const { container } = render(<Settings client={client()} />);
-      await screen.findByText('Security Settings');
+      await screen.findByText('How people sign in and how this server is reached.');
       for (const input of Array.from(container.querySelectorAll('input, textarea'))) {
         expect(input.getAttribute('placeholder') ?? '').not.toMatch(ENV_NAME);
       }
@@ -319,7 +319,7 @@ describe('Settings intake defaults', () => {
   it('keeps the saved password unless it is replaced, and saves connector fields', async () => {
     const writes = settingsHandlers(settingsFixture());
     render(<Settings client={client()} />);
-    const intake = await section('Intake defaults');
+    const intake = await section('Email delivery for the whole installation');
     expect(within(intake).getByRole('button', { name: 'Show Email password' })).toBeTruthy();
     expect(within(intake).getByText('Leave unchanged to keep the saved password.')).toBeTruthy();
     fireEvent.change(within(intake).getByLabelText('Email server'), { target: { value: 'mail.example.org' } });
@@ -331,7 +331,7 @@ describe('Settings intake defaults', () => {
   it('sends a replaced password', async () => {
     const writes = settingsHandlers(settingsFixture());
     render(<Settings client={client()} />);
-    const intake = await section('Intake defaults');
+    const intake = await section('Email delivery for the whole installation');
     fireEvent.change(within(intake).getByLabelText('Email password'), { target: { value: 'new-mail-secret' } });
     apply();
     await screen.findByText('Settings saved.');
@@ -355,7 +355,7 @@ describe('Settings save status', () => {
     apply();
     expect(await screen.findByText('Enter a minimum delivery rate from 0 to 100.')).toBeTruthy();
     fireEvent.change(within(await section('Delivery routes')).getByLabelText('Minimum delivery rate (%)'), { target: { value: '80' } });
-    fireEvent.change(within(await section('Intake defaults')).getByLabelText('Port'), { target: { value: '70000' } });
+    fireEvent.change(within(await section('Email delivery for the whole installation')).getByLabelText('Port'), { target: { value: '70000' } });
     apply();
     expect(await screen.findByText('Enter an email server port from 1 to 65535.')).toBeTruthy();
     expect(writes).toEqual([]);
@@ -364,7 +364,7 @@ describe('Settings save status', () => {
   it('says so in one sentence when the account may not change these settings', async () => {
     settingsHandlers(settingsFixture(), () => HttpResponse.json({ detail: 'This operation is not permitted.' }, { status: 403 }));
     render(<Settings client={client()} />);
-    fireEvent.change(within(await section('Intake defaults')).getByLabelText('Email server'), { target: { value: 'x.example.org' } });
+    fireEvent.change(within(await section('Email delivery for the whole installation')).getByLabelText('Email server'), { target: { value: 'x.example.org' } });
     apply();
     expect(await screen.findByText('You do not have permission to change some of these settings. Your edits are kept here; reload before trying again.')).toBeTruthy();
   });
@@ -525,7 +525,7 @@ describe('Installation country', () => {
     await screen.findByText('Connect Providers', { selector: 'h6' });
     expect(writes).toEqual([{ expected_revision_id: 'rev-a', fax_default_country: 'GB' }]);
     next();
-    await screen.findByText('Security Settings', { selector: 'h6' });
+    await screen.findByText('Security', { selector: 'h6' });
     next();
     await screen.findByText('Delivery Options', { selector: 'h6' });
     fireEvent.change(screen.getByLabelText('Our fax number'), { target: { value: '01782 684953' } });
@@ -565,7 +565,7 @@ describe('Settings email delivery', () => {
     render(<Settings client={client()} canWrite />);
     const delivery = await section('Email delivery');
     expect(await within(delivery).findByText('Front desk')).toBeTruthy();
-    expect(within(delivery).getByText(/Set in Intake defaults above\./)).toBeTruthy();
+    expect(within(delivery).getByText(/Set in Email delivery for the whole installation, above\./)).toBeTruthy();
     fireEvent.click(within(delivery).getAllByRole('button', { name: 'Send test email' })[0]);
     expect(await screen.findByText('Faxbot could not reach the email server.')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Add email delivery' }));
@@ -595,7 +595,7 @@ describe('Settings email delivery', () => {
     settingsHandlers(settingsFixture());
     server.use(http.get('/intake/connectors', () => HttpResponse.json({ detail: 'Forbidden' }, { status: 403 })));
     render(<Settings client={client()} canWrite />);
-    await section('Intake defaults');
+    await section('Email delivery for the whole installation');
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(screen.queryByText('Email delivery')).toBeNull();
     expect(screen.queryByText(/Forbidden/)).toBeNull();
@@ -694,7 +694,7 @@ describe('Settings when Faxbot cannot reach its fax engine', () => {
     settingsHandlers(settingsFixture());
     server.use(http.get('/health/ready', () => HttpResponse.json({ status: 'not_ready', message: 'Something unexpected.' }, { status: 503 })));
     render(<Settings client={client()} />);
-    await screen.findByText('Security Settings');
+    await screen.findByText('How people sign in and how this server is reached.');
     expect(screen.queryByTestId('engine-message')).toBeNull();
   });
 });
@@ -816,7 +816,8 @@ describe('System, milestone 5', () => {
     expect(within(rows).getByText('Console served by this installation')).toBeTruthy();
     expect(within(rows).getByDisplayValue('On')).toBeTruthy();
     expect(within(rows).getByDisplayValue('Not set')).toBeTruthy();
-    expect(within(rows).getAllByText('Set in .env.')).toHaveLength(2);
+    expect(within(rows).getAllByText('Set when Faxbot started.')).toHaveLength(2);
+    expect(within(rows).getByText('Not set: signing in needs HTTPS.')).toBeTruthy();
     // Variable names are for Developer pages only.
     expect(within(rows).queryByText(/FAXBOT_|ENABLE_/)).toBeNull();
     expect(screen.queryByText('Audit Logging')).toBeNull();
@@ -829,8 +830,10 @@ describe('System, milestone 5', () => {
     render(<Settings client={client()} sections={['mcp']} />);
     const rows = await screen.findByTestId('deployment-rows');
     expect(within(rows).getByDisplayValue('3001')).toBeTruthy();
-    expect(within(rows).getByText('Set in .env. (MCP_WS_API_KEY)')).toBeTruthy();
-    expect(within(rows).getByDisplayValue('Set in .env')).toBeTruthy();
+    expect(within(rows).getByText('Set when Faxbot started. (MCP_WS_API_KEY)')).toBeTruthy();
+    expect(within(rows).getByDisplayValue('Set')).toBeTruthy();
+    // A setting that is not set names the default the assistant server then uses.
+    expect(within(rows).getByText('Not set: port 3004. (MCP_WS_PORT)')).toBeTruthy();
     expect(document.body.textContent).not.toContain('hidden');
   });
 
@@ -889,7 +892,8 @@ describe('Owner-only settings everywhere', () => {
     expect((within(receiving).getByLabelText('Receiving is on') as HTMLInputElement).disabled).toBe(false);
     unmount();
     render(<Settings client={client()} sections={['security', 'storage', 'advanced']} canWrite isOwner={false} />);
-    await screen.findByText('HTTPS Enforced');
-    expect(screen.getAllByText(/Only the owner of this installation can change this\.$/).length).toBeGreaterThanOrEqual(5);
+    await screen.findByText('Require HTTPS for document links');
+    // HTTPS for document links and the three request limits; the recovery-copy row is read-only for everyone.
+    expect(screen.getAllByText(/Only the owner of this installation can change this\.$/).length).toBeGreaterThanOrEqual(4);
   });
 });

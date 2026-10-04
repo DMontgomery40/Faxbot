@@ -12,7 +12,7 @@ import { providerChoices } from '../components/common/ProviderDirections';
 import { providerLabel, setProviderNames } from '../providerLabels';
 import type { ConsoleContext } from '../api/types';
 import { ALL_PERMISSIONS, backend, server } from '../test/server';
-import { settingsFixture, withDirections } from '../test/settingsFixture';
+import { receipt, settingsFixture, withDirections } from '../test/settingsFixture';
 
 const TRUNK = [
   { id: 'telnyx', label: 'Telnyx', kind: 'carrier' as const },
@@ -132,8 +132,8 @@ describe('The trunk page', () => {
     const order = screen.getByTestId('sip-trunk-settings').compareDocumentPosition(engine);
     expect(order & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     fireEvent.click(button);
-    expect(await within(engine).findByText('AMI Host')).toBeTruthy();
-    expect(within(engine).getByText('Asterisk Inbound Secret')).toBeTruthy();
+    expect(await within(engine).findByText('Fax engine address')).toBeTruthy();
+    expect(within(engine).getByText('Fax engine secret for received faxes')).toBeTruthy();
   });
 });
 
@@ -190,5 +190,54 @@ describe('Provider pages after 4b', () => {
     render(<Settings client={keyClient()} />);
     expect(await screen.findByRole('heading', { name: 'Phaxio' })).toBeTruthy();
     expect(screen.queryByText(/PHAXIO|Phaxio Configuration/)).toBeNull();
+  });
+});
+
+describe('Names follow a saved provider change', () => {
+  it('reads the console context again after a save changes providers, without a reload', async () => {
+    const admin = backend.state.principals.get('p_admin')!;
+    admin.permissions = ALL_PERMISSIONS.map(([permission]) => permission);
+    backend.state.providerView = { plugins_enabled: false, install_enabled: false, active_outbound: 'humblefax',
+      active_inbound: 'sip', extra_routes: [], trunk_preset: 'telstra-sip-connect' };
+    backend.state.providerNames = { sip: 'Telstra SIP Connect' };
+    const data = settingsFixture((value) => { withDirections(value, 'humblefax', 'sip'); });
+    server.use(
+      http.get('/admin/settings', () => HttpResponse.json(data)),
+      // Saving switches the trunk back to Telnyx, as the Setup wizard does.
+      http.put('/admin/settings', () => {
+        backend.state.providerView = { ...backend.state.providerView!, trunk_preset: 'telnyx' };
+        backend.state.providerNames = { sip: 'Telnyx' };
+        return HttpResponse.json(receipt('rev-b'));
+      }),
+    );
+    render(<App />);
+    await screen.findByRole('heading', { name: 'Sign in' });
+    fireEvent.change(screen.getByLabelText('Username'), { target: { value: 'admin' } });
+    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'correct horse' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+    await screen.findByText('Ada Admin');
+    window.location.hash = '#/providers/sending';
+    fireEvent.click(await screen.findByRole('button', { name: 'Providers' }));
+    const list = document.getElementById('nav-providers') as HTMLElement;
+    await waitFor(() => expect(within(list).getByRole('link', { name: 'Telstra SIP Connect' })).toBeTruthy());
+    const receiving = await screen.findByLabelText('Receiving is on');
+    fireEvent.click(receiving);
+    fireEvent.click(screen.getByRole('button', { name: 'Apply settings' }));
+    await waitFor(() => expect(within(list).getByRole('link', { name: 'Telnyx' })).toBeTruthy());
+    expect(within(list).queryByRole('link', { name: 'Telstra SIP Connect' })).toBeNull();
+    // The page the lead saw: the In use list names the new carrier too, without a reload.
+    expect(within(screen.getByTestId('providers-in-use')).getByText(/Telnyx/)).toBeTruthy();
+    expect(screen.queryByText(/Telstra SIP Connect/)).toBeNull();
+  });
+
+  it('does not read the context again for a save that changes nothing it shows', async () => {
+    const client = new AdminAPIClient({ kind: 'key', key: 'synthetic-key' });
+    const heard: string[][] = [];
+    const stop = client.onSettingsChanged((changed) => heard.push(changed));
+    server.use(http.put('/admin/settings', () => HttpResponse.json(receipt('b'))));
+    await client.updateSettings({ expected_revision_id: 'a', fax_header: 'County Clinic' });
+    stop();
+    await client.updateSettings({ expected_revision_id: 'b', backend: 'phaxio' });
+    expect(heard).toEqual([['fax_header']]);
   });
 });

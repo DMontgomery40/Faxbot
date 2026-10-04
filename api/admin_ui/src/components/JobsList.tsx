@@ -203,7 +203,7 @@ function JobsList({ client, openJobId, onOpened, onSendFax }: JobsListProps) {
       setJobs(data.jobs);
       setTotal(data.total);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to fetch jobs');
+      setError(err instanceof Error ? err.message : 'Sent faxes could not be loaded.');
     } finally {
       setLoading(false);
     }

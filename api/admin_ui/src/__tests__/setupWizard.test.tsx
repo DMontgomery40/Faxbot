@@ -115,7 +115,7 @@ describe('Setup Wizard providers for sending and receiving', () => {
     expect(await screen.findByTestId('sip-trunk-settings')).toBeTruthy();
     expect(screen.getByLabelText('Fax station ID')).toBeTruthy();
     // The fax engine connection is Faxbot's own business, out of the normal path.
-    expect(screen.getByText('Advanced: fax engine connection')).toBeTruthy();
+    expect(screen.getByText('Fax engine connection (advanced)')).toBeTruthy();
     expect(document.body.textContent).not.toMatch(RAW_IDS);
 
     // Back shows the saved choice, not a draft.
@@ -135,7 +135,7 @@ describe('Setup Wizard providers for sending and receiving', () => {
     expect(sectionHeadings()).toEqual(['For sending: HumbleFax', 'For receiving: Telnyx']);
     // The trunk section, its Apply and the fax engine settings stay when sending uses another provider.
     expect(await screen.findByTestId('sip-trunk-settings')).toBeTruthy();
-    expect(screen.getByText('Advanced: fax engine connection')).toBeTruthy();
+    expect(screen.getByText('Fax engine connection (advanced)')).toBeTruthy();
     expect(screen.queryByLabelText('Fax station ID')).toBeNull();
     expect(screen.getByLabelText('Access Key')).toBeTruthy();
     // The inbound secret is Faxbot's own business: the step says whether received faxes reach Faxbot.
@@ -227,7 +227,7 @@ describe('Setup Wizard and the SIP trunk form', () => {
     expect(writes[0]).toEqual({ expected_revision_id: 'rev-a', sip_trunk_dids: '+12025550123' });
     await waitFor(() => expect((screen.getByLabelText('Fax station ID') as HTMLInputElement).value).toBe('+12025550111'));
     next();
-    await screen.findByText('Security Settings', { selector: 'h6' });
+    await screen.findByText('Security', { selector: 'h6' });
     // The step saves with the revision the trunk save produced.
     expect(writes[1]).toEqual({ expected_revision_id: 'rev-2', fax_station_id: '+12025550111' });
   });
@@ -239,7 +239,7 @@ describe('Setup Wizard and the SIP trunk form', () => {
     next();
     fireEvent.change(await screen.findByLabelText('Add a number'), { target: { value: '+12025550123' } });
     next();
-    expect(await screen.findByText('Save the SIP trunk settings first, or undo your changes there.')).toBeTruthy();
+    expect(await screen.findByText('Save the fax line settings first, or undo your changes there.')).toBeTruthy();
     expect(screen.getByText('Connect Providers', { selector: 'h6' })).toBeTruthy();
     expect(writes).toEqual([]);
   });

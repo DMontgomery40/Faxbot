@@ -48,6 +48,7 @@ import { formatServerTime } from '../api/time';
 import type { AdminDestination } from '../navigation';
 import { ResponsiveFormSection } from './common/ResponsiveFormFields';
 import DatabaseStatus from './DatabaseStatus';
+import { providerLabel } from '../providerLabels';
 
 interface DiagnosticsProps {
   client: AdminAPIClient;
@@ -137,6 +138,32 @@ function CheckValue({ value }: { value: DiagnosticsValue }) {
   );
 }
 
+// Each section and check by its plain name; an unknown one is made readable.
+export const CHECK_NAMES: Record<string, string> = {
+  outbound: 'Sending', inbound: 'Receiving', system: 'This server', storage: 'Storage', security: 'Security',
+  plugins: 'Provider plugins', backend: 'Provider', backend_config: 'Provider settings complete',
+  configuration_ready: 'Settings ready', ami_connected: 'Fax engine connected', ami_connection: 'Fax engine connected',
+  requires_ami: 'Needs the fax engine', sending_disabled: 'Sending turned off', enabled: 'Turned on',
+  ami_password_not_default: 'Fax engine password changed from the default',
+  ami_password_secure: 'Fax engine password changed from the default',
+  asterisk_secret_set: 'Fax engine secret for received faxes set', inbound_verification: 'Received faxes checked',
+  retention_days: 'Days received faxes are kept', db: 'Database', database_connected: 'Database reachable',
+  ghostscript: 'Document converter (Ghostscript)', fax_data_dir: 'Fax data folder',
+  fax_data_writable: 'Fax data folder can be written', temp_dir_writable: 'Temporary folder can be written',
+  type: 'Kind', needs_storage: 'Storage needed', required_for_active_inbound: 'Needed for receiving',
+  bucket: 'Bucket', bucket_set: 'Bucket set', accessible: 'Bucket reachable', error: 'Problem',
+  enforce_https: 'HTTPS required for document links', audit_logging: 'Events recorded', rate_limiting: 'Request limits on',
+  pdf_token_ttl: 'Document links for fax services last (minutes)', max_attempts: 'Most tries per fax',
+  v3_enabled: 'Provider plugins on', plugin_install_enabled: 'Remote plugin installation allowed',
+  active_outbound: 'Plugin that sends', installed: 'Installed plugins', manifests: 'Plugin files',
+  traits_schema: 'Plugin descriptions', allowed_keys: 'Allowed keys', allowed_domains: 'Allowed domains',
+  inspection_error: 'Problem reading plugins', storage_error: 'Storage problem', warnings: 'Warnings',
+};
+
+export function checkName(name: string): string {
+  return CHECK_NAMES[name] ?? name.replace(/_/g, ' ').replace(/^\w/, (letter) => letter.toUpperCase());
+}
+
 function Diagnostics({ client, onNavigate, docsBase }: DiagnosticsProps) {
   const [diagnostics, setDiagnostics] = useState<DiagnosticsResult | null>(null);
   const [loading, setLoading] = useState(false);
@@ -147,6 +174,9 @@ function Diagnostics({ client, onNavigate, docsBase }: DiagnosticsProps) {
   const [expandedSections, setExpandedSections] = useState<string[]>([]);
   const [restartState, setRestartState] = useState<'idle' | 'pending' | 'success' | 'error'>('idle');
   const [restartMessage, setRestartMessage] = useState('');
+  // Reading the saved settings again (POST /admin/settings/reload); it never applies pending changes.
+  const [reloadNotice, setReloadNotice] = useState<ActionNotice | null>(null);
+  const [reloading, setReloading] = useState(false);
   const [exportNotice, setExportNotice] = useState<ActionNotice | null>(null);
   const [copying, setCopying] = useState(false);
 
@@ -166,6 +196,22 @@ function Diagnostics({ client, onNavigate, docsBase }: DiagnosticsProps) {
       setError(err instanceof Error ? err.message : 'Failed to run diagnostics');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const reloadSaved = async () => {
+    if (reloading) return;
+    setReloading(true);
+    setReloadNotice(null);
+    try {
+      await client.reloadSettings();
+      // The panel and every page read the saved settings again too.
+      client.announceSettingsChanged();
+      setReloadNotice({ severity: 'success', text: 'Faxbot read its saved settings again. Changes waiting for a restart still wait.' });
+    } catch {
+      setReloadNotice({ severity: 'error', text: 'The saved settings could not be read again. Try again in a moment.' });
+    } finally {
+      setReloading(false);
     }
   };
 
@@ -191,9 +237,9 @@ function Diagnostics({ client, onNavigate, docsBase }: DiagnosticsProps) {
     try {
       if (!navigator.clipboard?.writeText) throw new Error('Clipboard access is unavailable in this browser. Use Download instead.');
       await navigator.clipboard.writeText(JSON.stringify(diagnosticsForExport(diagnostics), null, 2));
-      setExportNotice({ severity: 'success', text: 'Diagnostics JSON copied to the clipboard.' });
+      setExportNotice({ severity: 'success', text: 'Diagnostics copied.' });
     } catch (err) {
-      setExportNotice({ severity: 'error', text: err instanceof Error ? err.message : 'Failed to copy diagnostics JSON' });
+      setExportNotice({ severity: 'error', text: err instanceof Error ? err.message : 'Diagnostics could not be copied.' });
     } finally {
       setCopying(false);
     }
@@ -212,9 +258,9 @@ function Diagnostics({ client, onNavigate, docsBase }: DiagnosticsProps) {
       anchor.download = 'diagnostics.json';
       document.body.appendChild(anchor);
       anchor.click();
-      setExportNotice({ severity: 'info', text: 'Diagnostics JSON download requested.' });
+      setExportNotice({ severity: 'info', text: 'Diagnostics downloaded.' });
     } catch (err) {
-      setExportNotice({ severity: 'error', text: err instanceof Error ? err.message : 'Failed to download diagnostics JSON' });
+      setExportNotice({ severity: 'error', text: err instanceof Error ? err.message : 'Diagnostics could not be downloaded.' });
     } finally {
       anchor?.remove();
       if (url) {
@@ -229,7 +275,7 @@ function Diagnostics({ client, onNavigate, docsBase }: DiagnosticsProps) {
     setExpandedSections(prev => prev.includes(section) ? prev.filter(s => s !== section) : [...prev, section]);
   };
 
-  const displayName = (name: string) => name.replace(/_/g, ' ').replace(/\b\w/g, letter => letter.toUpperCase());
+  const displayName = checkName;
 
   const getHelpDocs = (section: string) => {
     const docs = [{ text: 'Settings guide', href: docsLink('storage', docsBase) }];
@@ -245,7 +291,7 @@ function Diagnostics({ client, onNavigate, docsBase }: DiagnosticsProps) {
       case 'efax': docs.push({ text: 'eFax setup guide', href: docsLink('efax', docsBase) }); break;
       case 'signalwire': docs.push({ text: 'SignalWire setup guide', href: docsLink('signalwire', docsBase) }); break;
       case 'freeswitch': docs.push({ text: 'FreeSWITCH setup guide', href: docsLink('freeswitch', docsBase) }); break;
-      case 'sip': docs.push({ text: 'SIP trunk (Asterisk) setup guide', href: docsLink('sip', docsBase) }); break;
+      case 'sip': docs.push({ text: 'Carrier trunk setup guide', href: docsLink('sip', docsBase) }); break;
     }
     return docs;
   };
@@ -341,6 +387,14 @@ function Diagnostics({ client, onNavigate, docsBase }: DiagnosticsProps) {
           </Box>
         </Box>
 
+        <Box sx={{ mb: 2 }}>
+          <Button variant="text" onClick={reloadSaved} disabled={reloading} size="small">
+            {reloading ? 'Reading…' : 'Read saved settings again'}
+          </Button>
+        </Box>
+        {reloadNotice && (
+          <Alert severity={reloadNotice.severity} sx={{ mb: 3, borderRadius: 2 }} onClose={() => setReloadNotice(null)}>{reloadNotice.text}</Alert>
+        )}
         {error && <Alert severity="error" sx={{ mb: 3, borderRadius: 2 }} onClose={() => setError(null)}>{error}</Alert>}
         {restartState !== 'idle' && (
           <Alert severity={restartState === 'error' ? 'error' : restartState === 'success' ? 'success' : 'info'} sx={{ mb: 3, borderRadius: 2 }} onClose={restartState === 'pending' ? undefined : () => setRestartState('idle')}>
@@ -356,7 +410,7 @@ function Diagnostics({ client, onNavigate, docsBase }: DiagnosticsProps) {
               <HealthIcon sx={{ fontSize: 48, color: 'text.secondary', mb: 2 }} />
               <Typography variant="h6" gutterBottom>Run System Diagnostics</Typography>
               <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-                Check this installation's settings and dependencies. No fax is sent.
+                Check this installation's settings and the services it needs. No fax is sent.
               </Typography>
               <Button variant="contained" startIcon={<DiagnosticIcon />} onClick={runDiagnostics} sx={{ borderRadius: 2 }}>Start Diagnostics</Button>
             </Paper>
@@ -368,7 +422,7 @@ function Diagnostics({ client, onNavigate, docsBase }: DiagnosticsProps) {
             <Box sx={{ textAlign: 'center' }}>
               <CircularProgress sx={{ mb: 2 }} />
               <Typography variant="body1">Running diagnostics…</Typography>
-              <Typography variant="caption" color="text.secondary">Checking settings and dependencies</Typography>
+              <Typography variant="caption" color="text.secondary">Checking settings and services</Typography>
             </Box>
             <LinearProgress sx={{ mt: 3 }} />
           </Paper>
@@ -377,15 +431,15 @@ function Diagnostics({ client, onNavigate, docsBase }: DiagnosticsProps) {
         {diagnostics && (
           <Fade in>
             <Box>
-              <ResponsiveFormSection title="Diagnostic Summary" subtitle={diagnostics.summary.healthy ? 'Ready' : 'Issues detected'} icon={<HealthIcon />}>
+              <ResponsiveFormSection title="Summary" subtitle={diagnostics.summary.healthy ? 'Ready' : 'Issues detected'} icon={<HealthIcon />}>
                 <Stack spacing={3}>
                   <Box>
                     <Chip icon={diagnostics.summary.healthy ? <CheckCircleIcon /> : <ErrorIcon />} label={diagnostics.summary.healthy ? 'Ready' : 'Issues detected'} color={diagnostics.summary.healthy ? 'success' : 'error'} sx={{ borderRadius: 1 }} />
                   </Box>
                   <Box sx={{ overflowWrap: 'anywhere' }}>
-                    <Typography variant="body2">Outbound provider: <strong>{diagnostics.outbound_backend}</strong></Typography>
-                    <Typography variant="body2">Inbound provider: <strong>{diagnostics.inbound_backend}</strong></Typography>
-                    <Typography variant="body2">Default provider: <strong>{diagnostics.default_backend}</strong></Typography>
+                    <Typography variant="body2">Sending: <strong>{diagnostics.outbound_backend ? providerLabel(diagnostics.outbound_backend) : 'No provider'}</strong></Typography>
+                    <Typography variant="body2">Receiving: <strong>{diagnostics.inbound_backend ? providerLabel(diagnostics.inbound_backend) : 'No provider'}</strong></Typography>
+                    <Typography variant="body2">Main provider: <strong>{diagnostics.default_backend ? providerLabel(diagnostics.default_backend) : 'No provider'}</strong></Typography>
                     <Typography variant="body2">Saved changes waiting for a restart: <strong>{diagnostics.configuration.pending_restart ? 'Yes' : 'No'}</strong></Typography>
                     <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 1 }}>Checked at {formatServerTime(diagnostics.timestamp)}</Typography>
                   </Box>
@@ -404,8 +458,8 @@ function Diagnostics({ client, onNavigate, docsBase }: DiagnosticsProps) {
                   )}
                   <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
                     {onNavigate && <Button variant="outlined" onClick={() => onNavigate('settings')} size="small">Open Settings</Button>}
-                    <Button variant="outlined" startIcon={<ContentCopyIcon />} onClick={copyDiagnostics} disabled={copying} size="small">{copying ? 'Copying…' : 'Copy JSON'}</Button>
-                    <Button variant="outlined" startIcon={<DownloadIcon />} onClick={downloadDiagnostics} size="small">Download JSON</Button>
+                    <Button variant="outlined" startIcon={<ContentCopyIcon />} onClick={copyDiagnostics} disabled={copying} size="small">{copying ? 'Copying…' : 'Copy results'}</Button>
+                    <Button variant="outlined" startIcon={<DownloadIcon />} onClick={downloadDiagnostics} size="small">Download results</Button>
                   </Box>
                   {exportNotice && <Alert severity={exportNotice.severity} onClose={() => setExportNotice(null)}>{exportNotice.text}</Alert>}
                 </Stack>

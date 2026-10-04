@@ -15,7 +15,7 @@ const meta = (pendingFields: string[]) => ({
   apply_state: pendingFields.length ? 'pending_restart' : 'applied', pending_fields: pendingFields,
 });
 
-const GENERAL_PROMPT = 'If audit logging is off, enable it to record new events.';
+const GENERAL_PROMPT = 'If event recording is off, turn it on to record new events.';
 
 function emptyLogs() {
   server.use(http.get('/admin/logs', () => HttpResponse.json({ items: [], count: 0 })));
@@ -29,9 +29,9 @@ describe('Logs audit logging status', () => {
     })));
     render(<Logs client={keyClient()} />);
 
-    expect(await screen.findByText('Audit logging turns on when Faxbot restarts.')).toBeTruthy();
+    expect(await screen.findByText('Event recording turns on when Faxbot restarts.')).toBeTruthy();
     expect(screen.queryByText(GENERAL_PROMPT)).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Enable Now' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Turn on now' })).toBeNull();
   });
 
   it('says audit logging turns off at restart when that change is saved but not applied', async () => {
@@ -41,7 +41,7 @@ describe('Logs audit logging status', () => {
     })));
     render(<Logs client={keyClient()} />);
 
-    expect(await screen.findByText('Audit logging turns off when Faxbot restarts.')).toBeTruthy();
+    expect(await screen.findByText('Event recording turns off when Faxbot restarts.')).toBeTruthy();
     expect(screen.queryByText(GENERAL_PROMPT)).toBeNull();
   });
 
@@ -56,7 +56,7 @@ describe('Logs audit logging status', () => {
 
     await waitFor(() => expect(loaded).toBe(true));
     expect(await screen.findByText(GENERAL_PROMPT)).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Enable Now' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Turn on now' })).toBeTruthy();
     expect(screen.queryByText(/when Faxbot restarts/)).toBeNull();
   });
 

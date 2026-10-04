@@ -125,7 +125,7 @@ describe('Logs in plain words', () => {
     expect(screen.getByText(/To search one column, type its name, a colon and the words/)).toBeTruthy();
     expect(parseQueryTokens('provider:sinch result:failed busy')).toEqual({ q: 'busy', filters: { backend: 'sinch', status: 'failed' } });
     fireEvent.change(screen.getByLabelText('Search'), { target: { value: 'provider:sinch' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Apply Filters' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Show matching entries' }));
     await waitFor(() => expect(screen.queryByText('job_sent')).toBeNull());
     expect(screen.getByText('job_failed')).toBeTruthy();
   });
@@ -147,5 +147,18 @@ describe('The terminal switch and an empty case list', () => {
     render(<CasePackets client={client()} canSend={false} canWrite={false} />);
     expect(await screen.findByText('No case packets have been sent yet.')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Look up' })).toBeTruthy();
+  });
+});
+
+describe('Audit log one-time codes', () => {
+  it('names a terminal access code and a phone pairing code', async () => {
+    server.use(http.get('/access/audit', () => HttpResponse.json({ items: [
+      entry('c1', 'capability.issue', { target: { kind: 'capability', id: 'cap-1', name: null }, details: { kind: 'terminal' } }),
+      entry('c2', 'capability.consume', { target: { kind: 'capability', id: 'cap-2', name: null }, details: { kind: 'pairing' } }),
+    ], next_cursor: null })));
+    render(<AuditLog client={client()} canListPeople={false} />);
+    expect(await screen.findByText('Terminal access code')).toBeTruthy();
+    expect(screen.getByText('Phone pairing code')).toBeTruthy();
+    expect(screen.queryByText('Item')).toBeNull();
   });
 });

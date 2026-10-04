@@ -5,6 +5,7 @@ import AdminAPIClient from '../api/client';
 import Diagnostics from '../components/Diagnostics';
 import { formatServerTime } from '../api/time';
 import { server } from '../test/server';
+import { settingsFixture } from '../test/settingsFixture';
 
 const client = () => new AdminAPIClient({ kind: 'key', key: 'synthetic-key' });
 
@@ -53,10 +54,35 @@ describe('Diagnostics', () => {
     Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
     render(<Diagnostics client={client()} />);
     fireEvent.click(screen.getByRole('button', { name: 'Run Diagnostics' }));
-    fireEvent.click(await screen.findByRole('button', { name: 'Copy JSON' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Copy results' }));
     await waitFor(() => expect(writeText).toHaveBeenCalled());
     const copied = JSON.parse(writeText.mock.calls[0][0]);
     expect(copied.configuration).toEqual({ pending_restart: true });
     expect(JSON.stringify(copied)).not.toMatch(/revision|generation|7f1c2a9e/);
+  });
+});
+
+describe('Diagnostics check names', () => {
+  it('names each check in plain words, never by its code', async () => {
+    server.use(http.post('/admin/diagnostics/run', () => HttpResponse.json({ ...result, checks: {
+      ...result.checks, inbound: { ami_password_not_default: true, asterisk_secret_set: true, requires_ami: true } },
+    check_outcomes: { ...result.check_outcomes, inbound: { ami_password_not_default: 'pass', asterisk_secret_set: 'pass' } } })));
+    render(<Diagnostics client={client()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Run Diagnostics' }));
+    expect(await screen.findByText('Fax engine password changed from the default')).toBeTruthy();
+    expect(screen.getByText('Document links for fax services last (minutes)')).toBeTruthy();
+    expect(screen.getAllByText('Needs the fax engine').length).toBeGreaterThan(0);
+    expect(document.body.textContent).not.toMatch(/\bAmi\b|Pdf Token Ttl|Requires Ami/);
+  });
+});
+
+describe('Reading saved settings again', () => {
+  it('asks the server to read its saved settings again and says pending changes still wait', async () => {
+    let asked = 0;
+    server.use(http.post('/admin/settings/reload', () => { asked += 1; return HttpResponse.json(settingsFixture()); }));
+    render(<Diagnostics client={client()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Read saved settings again' }));
+    expect(await screen.findByText('Faxbot read its saved settings again. Changes waiting for a restart still wait.')).toBeTruthy();
+    expect(asked).toBe(1);
   });
 });

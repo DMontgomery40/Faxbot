@@ -36,14 +36,14 @@ type Provider = { id: string; name: string; source?: string; categories?: string
 type InboundCallbacks = { backend: string; callbacks: Array<{ name: string; url: string }> };
 type CredentialField = { key: string; label: string; secret?: boolean; number?: boolean; helper?: string };
 
-const STEPS = ['Choose Providers', 'Connect Providers', 'Security Settings', 'Delivery Options', 'Finish'];
+const STEPS = ['Choose Providers', 'Connect Providers', 'Security', 'Delivery Options', 'Finish'];
 
 const credentialFields: Record<string, CredentialField[]> = {
   phaxio: [
     { key: 'phaxio_api_key', label: 'API Key', secret: true },
     { key: 'phaxio_api_secret', label: 'API Secret', secret: true },
-    { key: 'phaxio_callback_token', label: 'Callback Token', secret: true, helper: 'Separate Phaxio status callback token; this is not the API Secret.' },
-    { key: 'phaxio_status_callback_url', label: 'Status Callback URL', helper: 'Leave empty to derive the callback URL from the Public API URL.' },
+    { key: 'phaxio_callback_token', label: 'Callback Token', secret: true, helper: 'From your Phaxio account; not the API Secret.' },
+    { key: 'phaxio_status_callback_url', label: 'Address for Phaxio status updates (optional)', helper: 'Leave it empty: Faxbot uses its own public address.' },
   ],
   sinch: [
     { key: 'sinch_project_id', label: 'Project ID' },
@@ -54,34 +54,34 @@ const credentialFields: Record<string, CredentialField[]> = {
     { key: 'signalwire_space_url', label: 'Space URL' },
     { key: 'signalwire_project_id', label: 'Project ID' },
     { key: 'signalwire_api_token', label: 'API Token', secret: true },
-    { key: 'signalwire_fax_from_e164', label: 'From (fax)' },
+    { key: 'signalwire_fax_from_e164', label: 'Send faxes from' },
   ],
   documo: [{ key: 'documo_api_key', label: 'API Key', secret: true }],
   humblefax: [
     { key: 'humblefax_access_key', label: 'Access Key', secret: true },
     { key: 'humblefax_secret_key', label: 'Secret Key', secret: true },
-    { key: 'humblefax_from_number', label: 'From Number (optional)', helper: 'Leave empty to use the account default number.' },
+    { key: 'humblefax_from_number', label: 'Send from this number (optional)', helper: 'Leave empty to use the account default number.' },
   ],
   // eFax has its own section (EfaxSettings).
   efax: [],
   freeswitch: [
-    { key: 'fs_gateway_name', label: 'Gateway Name' },
+    { key: 'fs_gateway_name', label: 'FreeSWITCH gateway' },
     { key: 'fs_caller_id_number', label: 'Caller ID Number' },
   ],
   sip: [],
 };
 // The fax engine's manager connection; Faxbot sets it up, so it sits under Advanced.
 const amiFields: CredentialField[] = [
-  { key: 'ami_host', label: 'Manager host' },
-  { key: 'ami_port', label: 'Manager port', number: true },
-  { key: 'ami_username', label: 'Manager username' },
-  { key: 'ami_password', label: 'Manager password', secret: true },
+  { key: 'ami_host', label: 'Fax engine address' },
+  { key: 'ami_port', label: 'Fax engine port', number: true },
+  { key: 'ami_username', label: 'Fax engine user name' },
+  { key: 'ami_password', label: 'Fax engine password', secret: true },
 ];
 const STATION_FIELD: CredentialField = { key: 'fax_station_id', label: 'Fax station ID',
   helper: 'The number the receiving fax machine shows for faxes you send.' };
 const CHECKABLE = new Set(['phaxio', 'sinch']);
 const PROVIDER_FIELDS = ['sending', 'receiving'];
-const NUMERIC_FIELDS: Record<string, string> = { ami_port: 'Manager port', pdf_token_ttl_minutes: 'PDF Token TTL', intake_smtp_port: 'Email server port' };
+const NUMERIC_FIELDS: Record<string, string> = { ami_port: 'Fax engine port', pdf_token_ttl_minutes: 'Document links for fax services', intake_smtp_port: 'Email server port' };
 const PROVIDER_PENDING = new Set(['fax_backend', 'outbound_backend', 'inbound_backend', 'inbound_enabled', 'provider_profiles', 'plugins']);
 
 const isMask = (value: FormValue) => typeof value === 'string' && /^\*+$/.test(value);
@@ -384,7 +384,7 @@ function SetupWizard({ client, onDone, docsBase, canRestart = true }: SetupWizar
   const saveStep = async (step: number): Promise<boolean> => {
     if (!canEdit || actionFence.current || !desiredRevision) return false;
     if (step === 1 && trunkDirty) {
-      setNotice({ severity: 'warning', text: 'Save the SIP trunk settings first, or undo your changes there.' });
+      setNotice({ severity: 'warning', text: 'Save the fax line settings first, or undo your changes there.' });
       return false;
     }
     const prepared = stepPatch(step);
@@ -607,16 +607,16 @@ function SetupWizard({ client, onDone, docsBase, canRestart = true }: SetupWizar
     const environment = environmentManaged(settings);
     return <Paper variant="outlined" sx={{ p: 2, mt: 2 }} key={id} data-testid={`provider-section-${id}`}>
       <Typography variant="h6" component="h3">{heading}</Typography>
-      {!known ? <Alert severity="info" sx={{ mt: 2 }}>Set up this provider in Tools → Plugins.</Alert> : <>
+      {!known ? <Alert severity="info" sx={{ mt: 2 }}>Set up this provider under System → Developer → Provider plugins.</Alert> : <>
         {id !== 'sip' && <Alert severity="info" sx={{ my: 2 }}>Saved secrets are hidden; leave them unchanged to keep them.</Alert>}
-        {id === 'freeswitch' && <Alert severity="info" sx={{ mt: 2 }}>FreeSWITCH also needs mod_spandsp, a gateway and the Faxbot result hook.</Alert>}
+        {id === 'freeswitch' && <Alert severity="info" sx={{ mt: 2 }}>FreeSWITCH also needs its fax module (mod_spandsp), a gateway to your carrier and the result step shown on its page.</Alert>}
         {credentialFields[id].length > 0 && <Grid container spacing={2} sx={{ mt: 0 }}>
           {credentialFields[id].map(field)}
           {id === 'phaxio' && <Grid item xs={12}>
-            <FormControlLabel control={<Switch disabled={!canEdit} checked={!!config.phaxio_verify_signature} onChange={event => handleConfigChange('phaxio_verify_signature', event.target.checked)} />} label="Verify outbound status signatures" />
+            <FormControlLabel control={<Switch disabled={!canEdit} checked={!!config.phaxio_verify_signature} onChange={event => handleConfigChange('phaxio_verify_signature', event.target.checked)} />} label="Check that status updates come from Phaxio" />
             <Alert severity="info">When off, Phaxio status callbacks are rejected and Faxbot checks status by polling instead.</Alert>
           </Grid>}
-          {id === 'documo' && <Grid item xs={12}><FormControlLabel control={<Switch disabled={!canEdit} checked={!!config.documo_use_sandbox} onChange={event => handleConfigChange('documo_use_sandbox', event.target.checked)} />} label="Use Documo sandbox" /></Grid>}
+          {id === 'documo' && <Grid item xs={12}><FormControlLabel control={<Switch disabled={!canEdit} checked={!!config.documo_use_sandbox} onChange={event => handleConfigChange('documo_use_sandbox', event.target.checked)} />} label="Use Documo test mode (sandbox)" /></Grid>}
         </Grid>}
         {id === 'efax' && <EfaxSettings values={config} onChange={handleConfigChange} settings={settings} disabled={!canEdit}
           receives={roles.receives} docsHref={docsLink('efax', docsBase)} client={client} />}
@@ -630,10 +630,10 @@ function SetupWizard({ client, onDone, docsBase, canRestart = true }: SetupWizar
             onDirtyChange={setTrunkDirty} showReceiving={roles.receives} />
           {roles.sends && <Grid container spacing={2} sx={{ mt: 1 }}>{field(STATION_FIELD)}</Grid>}
           <Accordion disableGutters variant="outlined" sx={{ mt: 2 }}>
-            <AccordionSummary expandIcon={<ExpandMoreIcon />}><Typography>Advanced: fax engine connection</Typography></AccordionSummary>
+            <AccordionSummary expandIcon={<ExpandMoreIcon />}><Typography>Fax engine connection (advanced)</Typography></AccordionSummary>
             <AccordionDetails>
               <Typography variant="body2" sx={{ mb: 1 }}>
-                {environment.has('ami_password') ? 'The fax engine password is set in .env, which both Faxbot and its fax engine read.' :
+                {environment.has('ami_password') ? 'The fax engine password was set when Faxbot was installed; Faxbot and its fax engine both use it.' :
                   settings?.sip.ami_password_is_default ? 'Faxbot creates the fax engine password when it first starts with the SIP trunk in use; there is nothing to type.' :
                     settings?.sip.ami_password_shared ? 'Faxbot shares this password with its fax engine; there is nothing to type.' :
                       'Faxbot shares this password with its fax engine when it next starts.'}
@@ -688,21 +688,21 @@ function SetupWizard({ client, onDone, docsBase, canRestart = true }: SetupWizar
         <Typography variant="h6" gutterBottom>Connect Providers</Typography>
         {!sections.length && <Alert severity="info">Choose a provider on the first step to connect it here.</Alert>}
         {sections.map(([id, heading, roles]) => providerSection(id, heading, roles))}
-        {cloud && <TextField fullWidth disabled={!canEdit} label="Public API URL" value={config.public_api_url ?? ''} sx={{ mt: 3 }}
-          onChange={event => handleConfigChange('public_api_url', event.target.value)} helperText="Public address of this server, used by cloud providers to fetch documents and send callbacks." />}
+        {cloud && <TextField fullWidth disabled={!canEdit} label="This server's public address" value={config.public_api_url ?? ''} sx={{ mt: 3 }}
+          onChange={event => handleConfigChange('public_api_url', event.target.value)} helperText="The address fax services use to fetch documents and send status updates, such as https://fax.example.com." />}
       </Box>;
     }
 
     if (activeStep === 2) return <Box>
-      <Typography variant="h6" gutterBottom>Security Settings</Typography>
+      <Typography variant="h6" gutterBottom>Security</Typography>
       <Alert severity="info" sx={{ mb: 2 }}>Authentication: required. Every request needs a signed-in person or an API key; manage them in Keys and Users.</Alert>
       <Grid container spacing={2}>
         {[
-          ['enforce_public_https', 'Enforce Public HTTPS'],
-          ['audit_log_enabled', 'Enable Audit Logging'],
+          ['enforce_public_https', 'Require HTTPS for document links'],
+          ['audit_log_enabled', 'Record events'],
         ].map(([name, title]) => <Grid item xs={12} sm={6} key={name}><FormControlLabel control={<Switch disabled={!canEdit} checked={!!config[name]} onChange={event => handleConfigChange(name, event.target.checked)} />} label={title} /></Grid>)}
-        <Grid item xs={12} sm={6}><TextField fullWidth disabled={!canEdit} label="PDF Token TTL (minutes)" type="number" value={config.pdf_token_ttl_minutes ?? ''}
-          onChange={event => handleConfigChange('pdf_token_ttl_minutes', event.target.value === '' ? '' : Number(event.target.value))} helperText="How long tokenized PDF URLs remain valid" /></Grid>
+        <Grid item xs={12} sm={6}><TextField fullWidth disabled={!canEdit} label="Document links for fax services work for (minutes)" type="number" value={config.pdf_token_ttl_minutes ?? ''}
+          onChange={event => handleConfigChange('pdf_token_ttl_minutes', event.target.value === '' ? '' : Number(event.target.value))} helperText="How long a fax service may fetch a document Faxbot sends through it." /></Grid>
       </Grid>
     </Box>;
 
@@ -723,7 +723,7 @@ function SetupWizard({ client, onDone, docsBase, canRestart = true }: SetupWizar
           numbers={(settings.sip as { trunk?: { dids?: string[] } }).trunk?.dids ?? []}
           numberFormat={settingsNumberFormat(settings)} installation={settings.direct?.organization} /></Box>)}
       <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-        <Button variant="outlined" onClick={exportSettings} disabled={changedFields.length > 0}>Export .env Template</Button>
+        <Button variant="outlined" onClick={exportSettings} disabled={changedFields.length > 0}>Export settings</Button>
       </Box>
       {envContent && <Box sx={{ mt: 2 }}>
         <Alert severity="info">Secrets are masked; this file is not a full backup.</Alert>

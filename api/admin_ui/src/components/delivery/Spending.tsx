@@ -90,7 +90,7 @@ function SentCard({ provider, published }: { provider: ProviderCosts; published?
 
         {published && top.amount === NO_PUBLISHED_PRICE && (
           <Typography variant="body2" color="text.secondary" data-testid={`published-note-${provider.provider_id}`}>
-            {published.sentence}{published.card ? ' Rate cards, below, can use it as your estimate.' : ''}
+            {published.sentence}{published.card ? ' Prices & plans can use it as your estimate.' : ''}
           </Typography>
         )}
         <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>

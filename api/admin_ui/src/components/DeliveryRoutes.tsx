@@ -16,7 +16,7 @@ export type DeliveryRoutesSection = 'spending' | 'numbers' | 'rates' | 'partners
 const SECTIONS: Record<DeliveryRoutesSection, { title: string; text: string }> = {
   spending: { title: 'Spending', text: 'What your carriers charged over the last 30 days, with rate-card estimates for faxes they have not billed yet.' },
   numbers: { title: 'Fax numbers', text: 'How each number has been reached and what it cost.' },
-  rates: { title: 'Rate cards', text: 'Advertised prices Faxbot uses to estimate costs and choose the cheapest route.' },
+  rates: { title: 'Prices & plans', text: 'Advertised prices Faxbot uses to estimate costs and choose the cheapest route.' },
   partners: { title: 'Direct partners', text: 'Organizations that receive your documents directly, with no fax call.' },
 };
 

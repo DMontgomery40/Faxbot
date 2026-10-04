@@ -211,6 +211,12 @@ function useAddress(): [string, (next: string) => void] {
   return [hash, go];
 }
 
+// Settings the console context reflects (provider names, the panel, Send's limits).
+const CONTEXT_SETTINGS = new Set([
+  'backend', 'outbound_backend', 'inbound_backend', 'inbound_enabled', 'outbound_routes', 'sip_trunk_preset',
+  'feature_v3_plugins', 'feature_plugin_install', 'fax_disabled', 'max_file_size_mb', 'fax_default_country', 'docs_base_url',
+]);
+
 function ConsoleShell({ client, me, initialContext, onSignOut, onIdentityChanged }: ConsoleShellProps) {
   const muiTheme = useMuiTheme();
   const isMobile = useMediaQuery(muiTheme.breakpoints.down('md'));
@@ -251,6 +257,13 @@ function ConsoleShell({ client, me, initialContext, onSignOut, onIdentityChanged
   const goHome = useCallback(() => {
     if (visible[0]) openPage(visible[0], visible[0].pages[0]);
   }, [visible, openPage]);
+
+  // A saved change to providers, routes or the trunk's carrier (or a restart) changes what the
+  // panel and every page name: read the console context again at once.
+  useEffect(() => client.onSettingsChanged((changed) => {
+    if (changed.length > 0 && !changed.some((name) => CONTEXT_SETTINGS.has(name))) return;
+    client.context().then(setContext).catch(() => undefined);
+  }), [client]);
 
   // Pages that show active settings read the console context again on each entry.
   const [refresh, setRefresh] = useState<{ key: string; state: 'loading' | 'ready' | 'error' }>({ key: '', state: 'ready' });

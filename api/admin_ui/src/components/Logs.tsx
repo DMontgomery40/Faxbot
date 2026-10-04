@@ -12,10 +12,10 @@ type AuditSettingsSnapshot = {
 
 const sinceOptions = [
   { value: '', label: 'Custom' },
-  { value: '5m', label: 'Last 5m' },
-  { value: '15m', label: 'Last 15m' },
-  { value: '1h', label: 'Last 1h' },
-  { value: '24h', label: 'Last 24h' },
+  { value: '5m', label: 'Last 5 minutes' },
+  { value: '15m', label: 'Last 15 minutes' },
+  { value: '1h', label: 'Last hour' },
+  { value: '24h', label: 'Last 24 hours' },
 ];
 
 // The columns, each with the name shown and the field it reads.
@@ -151,7 +151,7 @@ function Logs({ client }: LogsProps) {
       throw new Error('Settings changed while loading.');
     }
     if (typeof desired.security.audit_enabled !== 'boolean' || typeof active.audit_log_enabled !== 'boolean') {
-      throw new Error('Audit logging status was not available.');
+      throw new Error('Whether events are recorded could not be read.');
     }
     return { desiredEnabled: desired.security.audit_enabled, activeEnabled: active.audit_log_enabled, meta: desired._meta };
   };
@@ -170,7 +170,7 @@ function Logs({ client }: LogsProps) {
       setAuditSnapshot(current);
       setEnableNeedsReload(false);
     } catch {
-      if (epoch === configurationEpoch.current) setEnableError("Couldn't load audit logging status. Reload to try again.");
+      if (epoch === configurationEpoch.current) setEnableError("Couldn't read whether events are recorded. Reload to try again.");
     } finally {
       if (epoch === configurationEpoch.current) {
         enableFence.current = false;
@@ -202,17 +202,17 @@ function Logs({ client }: LogsProps) {
       setEnableOutcome('confirmed');
       setEnableNeedsReload(true);
       setEnableNotice(writeResult._meta.apply_state === 'pending_restart'
-        ? `${writeResult.changed ? 'Audit logging saved.' : 'Nothing changed.'} Restart Faxbot to apply pending changes.`
-        : writeResult.changed ? 'Audit logging is on.' : 'Audit logging is already on.');
+        ? `${writeResult.changed ? 'Event recording saved.' : 'Nothing changed.'} Restart Faxbot to apply pending changes.`
+        : writeResult.changed ? 'Event recording is on.' : 'Event recording is already on.');
       try {
         const current = await readAuditSettings(epoch);
         if (epoch !== configurationEpoch.current) return;
         if (!current) return;
         setAuditSnapshot(current);
         setEnableNeedsReload(false);
-        if (!await run() && epoch === configurationEpoch.current) setEnableError("Audit logging saved, but the logs couldn't be refreshed. Select Refresh to try again.");
+        if (!await run() && epoch === configurationEpoch.current) setEnableError("Event recording saved, but the logs couldn't be refreshed. Select Refresh to try again.");
       } catch {
-        if (epoch === configurationEpoch.current) setEnableError("Audit logging saved, but its status couldn't be reloaded. Reload to check it.");
+        if (epoch === configurationEpoch.current) setEnableError("Event recording saved, but its status couldn't be reloaded. Reload to check it.");
       }
     } catch (e: any) {
       if (epoch !== configurationEpoch.current) return;
@@ -222,10 +222,10 @@ function Logs({ client }: LogsProps) {
         setEnableError((e?.message || '').includes('409')
           ? 'Someone else changed these settings. Reload to see the current values, then try again.'
           : configurationWriteRejected(e)
-            ? `Audit logging couldn't be turned on. ${e?.message || ''}`.trim()
-            : "Couldn't confirm the change. Reload to check whether audit logging is on.");
+            ? `Event recording couldn't be turned on. ${e?.message || ''}`.trim()
+            : "Couldn't confirm the change. Reload to check whether events are recorded.");
       } else {
-        setEnableError("Couldn't load audit logging settings. Nothing was changed.");
+        setEnableError("Couldn't load the event recording settings. Nothing was changed.");
       }
     } finally {
       if (epoch === configurationEpoch.current) {
@@ -240,15 +240,15 @@ function Logs({ client }: LogsProps) {
   const auditStatus: { severity: 'success' | 'info' | 'warning'; text: string } | null =
     enableError ? { severity: 'warning', text: enableError }
     : enableNotice ? { severity: enableResult?._meta.apply_state === 'pending_restart' ? 'warning' : 'success', text: enableNotice }
-    : enableBusy ? { severity: 'info', text: enableNeedsReload ? 'Checking audit logging…' : 'Turning on audit logging…' }
+    : enableBusy ? { severity: 'info', text: enableNeedsReload ? 'Checking event recording…' : 'Turning on event recording…' }
     : auditSnapshot ? (auditPending
-      ? { severity: 'warning', text: auditSnapshot.desiredEnabled ? 'Audit logging turns on when Faxbot restarts.' : 'Audit logging turns off when Faxbot restarts.' }
-      : { severity: 'info', text: auditSnapshot.activeEnabled ? 'Audit logging is on.' : 'Audit logging is off.' })
+      ? { severity: 'warning', text: auditSnapshot.desiredEnabled ? 'Event recording turns on when Faxbot restarts.' : 'Event recording turns off when Faxbot restarts.' }
+      : { severity: 'info', text: auditSnapshot.activeEnabled ? 'Event recording is on.' : 'Event recording is off.' })
     : pendingAudit !== null && enableOutcome === 'none'
-      ? { severity: 'warning', text: pendingAudit ? 'Audit logging turns on when Faxbot restarts.' : 'Audit logging turns off when Faxbot restarts.' }
-    : enableOutcome === 'unconfirmed' ? { severity: 'warning', text: 'Reload to check whether audit logging is on.' }
-    : showEnable ? { severity: 'info', text: 'If audit logging is off, enable it to record new events.' }
-    : enableNeedsReload ? { severity: 'info', text: 'Reload to check audit logging.' }
+      ? { severity: 'warning', text: pendingAudit ? 'Event recording turns on when Faxbot restarts.' : 'Event recording turns off when Faxbot restarts.' }
+    : enableOutcome === 'unconfirmed' ? { severity: 'warning', text: 'Reload to check whether events are recorded.' }
+    : showEnable ? { severity: 'info', text: 'If event recording is off, turn it on to record new events.' }
+    : enableNeedsReload ? { severity: 'info', text: 'Reload to check event recording.' }
     : null;
 
   return (
@@ -293,7 +293,7 @@ function Logs({ client }: LogsProps) {
               </FormControl>
               <TextField label="Custom" value={since} onChange={(e)=>setSince(e.target.value)} size="small" placeholder="e.g., 2025-09-12 14:00" disabled={!!sincePreset} />
             </Box>
-            <TextField label="Limit" type="number" value={limit} onChange={(e)=>setLimit(parseInt(e.target.value||'200'))} size="small" />
+            <TextField label="Most entries" type="number" value={limit} onChange={(e)=>setLimit(parseInt(e.target.value||'200'))} size="small" />
           </Box>
           <Box sx={{
             mt: 2,
@@ -303,13 +303,13 @@ function Logs({ client }: LogsProps) {
             flexWrap: 'wrap',
             gap: { xs: 1, sm: 2 },
           }}>
-            <Button variant="contained" onClick={run} disabled={loading}>Apply Filters</Button>
-            <FormControlLabel control={<Switch checked={source==='file'} onChange={(e)=>setSource(e.target.checked?'file':'ring')} />} label="Use file tail" />
+            <Button variant="contained" onClick={run} disabled={loading}>Show matching entries</Button>
+            <FormControlLabel control={<Switch checked={source==='file'} onChange={(e)=>setSource(e.target.checked?'file':'ring')} />} label="Read the log file" />
             {source==='file' && (
-              <TextField label="Lines" type="number" size="small" value={fileLines} onChange={(e)=>setFileLines(parseInt(e.target.value||'2000'))} />
+              <TextField label="Lines to read" type="number" size="small" value={fileLines} onChange={(e)=>setFileLines(parseInt(e.target.value||'2000'))} />
             )}
-            <FormControlLabel control={<Switch checked={wrap} onChange={(e)=>setWrap(e.target.checked)} />} label="Wrap" />
-            <FormControlLabel control={<Switch checked={follow} onChange={(e)=>setFollow(e.target.checked)} />} label="Follow" />
+            <FormControlLabel control={<Switch checked={wrap} onChange={(e)=>setWrap(e.target.checked)} />} label="Wrap long lines" />
+            <FormControlLabel control={<Switch checked={follow} onChange={(e)=>setFollow(e.target.checked)} />} label="Keep updating" />
           </Box>
         </CardContent>
       </Card>
@@ -320,10 +320,10 @@ function Logs({ client }: LogsProps) {
           <Box sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', columnGap: 2, rowGap: 1 }}>
             <Typography variant="body2">{auditStatus.text}</Typography>
             {showEnable && !enableNeedsReload && !auditSnapshot?.desiredEnabled && pendingAudit === null && (
-              <Button size="small" variant="outlined" onClick={enableAuditLogging} disabled={enableBusy}>Enable Now</Button>
+              <Button size="small" variant="outlined" onClick={enableAuditLogging} disabled={enableBusy}>Turn on now</Button>
             )}
             {enableNeedsReload && (
-              <Button size="small" variant="outlined" onClick={reloadAuditSettings} disabled={enableBusy}>Reload audit settings</Button>
+              <Button size="small" variant="outlined" onClick={reloadAuditSettings} disabled={enableBusy}>Reload event settings</Button>
             )}
           </Box>
         </Alert>
@@ -340,7 +340,7 @@ function Logs({ client }: LogsProps) {
               </TableHead>
               <TableBody>
                 {items.length === 0 ? (
-                  <TableRow><TableCell colSpan={columns.length}><Typography variant="body2" color="text.secondary">No matching logs</Typography></TableCell></TableRow>
+                  <TableRow><TableCell colSpan={columns.length}><Typography variant="body2" color="text.secondary">No matching entries</Typography></TableCell></TableRow>
                 ) : items.map((row, idx) => (
                   <TableRow key={idx} hover onClick={()=>{ setExpandedRow(row); setExpandOpen(true); }} sx={{ cursor: 'pointer' }}>
                     {columns.map(col => (
@@ -360,14 +360,14 @@ function Logs({ client }: LogsProps) {
       </Card>
 
       <Dialog open={expandOpen} onClose={()=>setExpandOpen(false)} maxWidth="md" fullWidth>
-        <DialogTitle>Log Entry</DialogTitle>
+        <DialogTitle>Log entry</DialogTitle>
         <DialogContent>
           <Box component="pre" sx={{ p: 2, bgcolor: 'background.default', borderRadius: 1, whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontFamily: 'monospace', fontSize: '0.85rem' }}>
             {expandedRow ? JSON.stringify(expandedRow, null, 2) : ''}
           </Box>
         </DialogContent>
         <DialogActions>
-          <Button onClick={()=>{ if (!expandedRow) return; const blob = new Blob([JSON.stringify(expandedRow, null, 2)], { type: 'application/json' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = 'log.json'; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url); }}>Download JSON</Button>
+          <Button onClick={()=>{ if (!expandedRow) return; const blob = new Blob([JSON.stringify(expandedRow, null, 2)], { type: 'application/json' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = 'log.json'; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url); }}>Download</Button>
           <Button onClick={()=>{ if (!expandedRow) return; navigator.clipboard.writeText(JSON.stringify(expandedRow, null, 2)); }}>Copy</Button>
           <Button onClick={()=>setExpandOpen(false)}>Close</Button>
         </DialogActions>

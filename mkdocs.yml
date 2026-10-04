@@ -197,9 +197,17 @@ nav:
     - Curated Registry: plugins/registry.md
     - Plugin Config File: plugins/config-file.md
   - Admin Console:
-    - Overview: admin-console.md
+    - The console: admin-console.md
+    - Overview: admin-console/overview.md
+    - Faxes: admin-console/faxes.md
+    - Numbers: admin-console/numbers.md
+    - Recipients: admin-console/recipients.md
+    - Providers: admin-console/providers.md
+    - Costs: admin-console/costs.md
+    - Access: admin-console/access.md
+    - System: admin-console/system.md
     - Setup Wizard: admin-console/setup-wizard.md
-    - Settings: admin-console/settings.md
+    - Saving settings: admin-console/settings.md
     - Diagnostics: admin-console/diagnostics.md
     - Diagnostics Matrix: admin-console/diagnostics-matrix.md
     - API Keys: admin-console/api-keys.md
