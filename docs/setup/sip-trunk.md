@@ -65,7 +65,7 @@ Carrier pages used for the presets:
 
 ## Set it up
 
-1. In the console, open **Settings**, choose **SIP/Asterisk** as the provider, and find **Carrier SIP trunk**. The setup wizard shows the same form.
+1. In the console, open the **Setup Wizard**, choose **SIP trunk (Asterisk)** for sending, receiving or both, and select **Next**. The first time, select **Restart now** when Setup asks. The next step shows the trunk form; **Settings** shows the same form under **Carrier SIP trunk**.
 2. Choose your carrier and how Faxbot signs in. Fill in the server if the carrier asks for one, then the username and password.
 3. Enter your caller ID and the fax numbers the carrier sends to this trunk.
 4. Select **Save trunk settings**, then **Apply to Asterisk**, then restart the Asterisk service (for example `docker compose restart asterisk`).

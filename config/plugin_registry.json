@@ -2,7 +2,7 @@
   "items": [
     {
       "id": "phaxio",
-      "name": "Phaxio Cloud Fax",
+      "name": "Phaxio",
       "version": "1.0.0",
       "categories": ["outbound"],
       "capabilities": ["send", "get_status", "webhook"],
@@ -11,7 +11,7 @@
     },
     {
       "id": "signalwire",
-      "name": "SignalWire (Compatibility Fax API)",
+      "name": "SignalWire",
       "version": "1.0.0",
       "categories": ["outbound"],
       "capabilities": ["send", "get_status", "webhook"],
@@ -20,7 +20,7 @@
     },
     {
       "id": "freeswitch",
-      "name": "FreeSWITCH (Self‑Hosted)",
+      "name": "SIP trunk (FreeSWITCH)",
       "version": "1.0.0",
       "categories": ["outbound"],
       "capabilities": ["send"],
@@ -29,7 +29,7 @@
     },
     {
       "id": "sinch",
-      "name": "Sinch Fax API v3",
+      "name": "Sinch",
       "version": "1.0.0",
       "categories": ["outbound"],
       "capabilities": ["send", "get_status"],
@@ -38,7 +38,7 @@
     },
     {
       "id": "documo",
-      "name": "Documo mFax",
+      "name": "Documo",
       "version": "1.0.0",
       "categories": ["outbound"],
       "capabilities": ["send", "get_status"],
@@ -56,7 +56,7 @@
     },
     {
       "id": "sip",
-      "name": "SIP/Asterisk (Self-hosted)",
+      "name": "SIP trunk (Asterisk)",
       "version": "1.0.0",
       "categories": ["outbound"],
       "capabilities": ["send", "get_status"],

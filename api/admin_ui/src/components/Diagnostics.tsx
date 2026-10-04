@@ -243,7 +243,7 @@ function Diagnostics({ client, onNavigate, docsBase }: DiagnosticsProps) {
       case 'humblefax': docs.push({ text: 'HumbleFax setup guide', href: docsLink('humblefax', docsBase) }); break;
       case 'signalwire': docs.push({ text: 'SignalWire setup guide', href: docsLink('signalwire', docsBase) }); break;
       case 'freeswitch': docs.push({ text: 'FreeSWITCH setup guide', href: docsLink('freeswitch', docsBase) }); break;
-      case 'sip': docs.push({ text: 'SIP/Asterisk setup guide', href: docsLink('sip', docsBase) }); break;
+      case 'sip': docs.push({ text: 'SIP trunk (Asterisk) setup guide', href: docsLink('sip', docsBase) }); break;
     }
     return docs;
   };

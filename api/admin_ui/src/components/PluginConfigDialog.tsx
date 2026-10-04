@@ -116,7 +116,7 @@ export default function PluginConfigDialog({ open, plugin, initialConfig, loadin
       return (
         <Box>
           <Alert severity="info">
-            Set the Asterisk connection and Station ID in Settings → Backend: SIP/Asterisk.
+            Set up the SIP trunk (Asterisk) and its fax station ID in the Setup Wizard.
           </Alert>
         </Box>
       );
