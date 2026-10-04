@@ -267,10 +267,10 @@ class AuthorizedInboundQueries:
         faxes = self.tables['inbound_faxes']
         with self.store.transaction() as connection:
             self.resources.require_inbound_on(connection, actor, inbound_id, 'inbound:document', now=self._clock())
-            row = connection.execute(sa.select(faxes.c.pdf_path, faxes.c.status).where(
+            row = connection.execute(sa.select(faxes.c.pdf_path, faxes.c.status, faxes.c.sha256).where(
                 faxes.c.id == inbound_id)).first()
             return {'id': inbound_id, 'pdf_path': row.pdf_path if row else None,
-                    'status': row.status if row else None}
+                    'status': row.status if row else None, 'sha256': row.sha256 if row else None}
 
     def require_fetchable(self, actor, inbound_id):
         """A person may ask to fetch again only a fax they can read."""
@@ -284,7 +284,8 @@ class AuthorizedInboundQueries:
         faxes = self.tables['inbound_faxes']
         try:
             with self.store.engine.connect() as connection:
-                row = connection.execute(sa.select(faxes.c.pdf_path, faxes.c.pdf_token, faxes.c.pdf_token_expires_at)
+                row = connection.execute(sa.select(faxes.c.pdf_path, faxes.c.pdf_token, faxes.c.pdf_token_expires_at,
+                                                   faxes.c.status, faxes.c.sha256)
                     .where(faxes.c.id == inbound_id)).first()
         except sa.exc.SQLAlchemyError:
             raise AccessUnavailableError() from None
@@ -296,4 +297,4 @@ class AuthorizedInboundQueries:
             raise FaxAccessError('forbidden')
         if row.pdf_token_expires_at is None or self._clock() > row.pdf_token_expires_at:
             raise FaxAccessError('forbidden')
-        return {'id': inbound_id, 'pdf_path': row.pdf_path}
+        return {'id': inbound_id, 'pdf_path': row.pdf_path, 'status': row.status, 'sha256': row.sha256}

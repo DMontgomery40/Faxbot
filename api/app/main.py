@@ -2566,6 +2566,7 @@ class InboundFaxOut(BaseModel):
     is_test: bool = False
     retry_at: Optional[datetime] = None
     problem: Optional[str] = None
+    can_fetch_again: bool = False
 
 
 def _inbound_pdf_response(inbound_id: str, pdf_path: Optional[str], method: str, status: Optional[str] = "received"):
@@ -2626,19 +2627,21 @@ async def get_inbound_pdf(inbound_id: str, request: Request, token: Optional[str
         except FaxAccessError:
             shared = None
         if shared is not None:
-            return _inbound_pdf_response(inbound_id, shared["pdf_path"], "token")
+            return _inbound_pdf_response(inbound_id, shared["pdf_path"], "token",
+                                         _document_status(shared.get("status"), shared.get("sha256")))
     identity = await require_identity(request)
     document = await run_lifecycle_step(private_operation(lambda: service.inbound_queries.document(
         identity.actor, inbound_id)))
     if settings.inbound_get_rpm:
         _enforce_rate_limit({'key_id': identity.actor.replay_scope}, "/inbound/{id}/pdf", settings.inbound_get_rpm)
     return _inbound_pdf_response(inbound_id, document["pdf_path"], "api_key" if identity.source == "key" else "session",
-                                 _document_status(document.get("status")))
+                                 _document_status(document.get("status"), document.get("sha256")))
 
 
-def _document_status(status: Optional[str]) -> str:
-    """Rows from before acquisition records kept provider statuses; only waiting/failed lack a document."""
-    return "missing" if status in ("waiting", "failed") else "received"
+def _document_status(status: Optional[str], sha256: Optional[str] = None) -> str:
+    """Rows from before acquisition records kept provider statuses; waiting, failed and old stand-ins have no document."""
+    from .inbound.acquisition import PLACEHOLDER_DIGESTS
+    return "missing" if status in ("waiting", "failed") or sha256 in PLACEHOLDER_DIGESTS else "received"
 
 
 # ===== Global error logging =====
