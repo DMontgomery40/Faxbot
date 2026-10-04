@@ -108,9 +108,9 @@ A-law comes first for UK and Australian installations; an Avaya phone system pre
 1. In the console, open the **Setup Wizard**, choose **SIP trunk (Asterisk)** for sending, receiving or both, and select **Next**. The first time, select **Restart now** when Setup asks. The next step shows the trunk form; **Settings** shows the same form under **Carrier SIP trunk**.
 2. Choose your carrier and how Faxbot signs in. The screen says which directions the trunk carries; a trunk that only receives needs no caller ID. Server, port and transport show the carrier's values in force (for example `sip.telnyx.com`, `5061`, **Default: Encrypted (TLS)**) until you type your own. Fill in the server if the carrier asks for one, then the username and password.
 3. Enter your caller ID and the fax numbers the carrier sends to this trunk.
-4. Select **Apply and connect**. Faxbot saves what you typed, writes the trunk for Asterisk, restarts Asterisk to load it and keeps checking ("Checking the carrier…") until the carrier answers Faxbot's check, for up to a minute, then shows the trunk check on the same screen: the transport Faxbot registered over, how quickly the carrier answers its checks, Faxbot's internet address and "No ports need to be opened or forwarded." From the command line, `faxbot trunk apply` does the same.
+4. Select **Apply and connect**. Faxbot saves what you typed, writes the trunk for Asterisk, restarts Asterisk to load it and keeps checking ("Checking the carrier…") until the carrier answers Faxbot's check, for up to a minute, then shows the trunk check on the same screen: the transport Faxbot registered over, how quickly the carrier answers its checks, Faxbot's internet address and "No ports need to be opened or forwarded." From the command line, `faxbot providers trunk apply` does the same.
    When Asterisk already runs exactly these settings, nothing restarts and the result says "Saved. Asterisk already uses these settings." Until a trunk is set up for each direction that uses it, Faxbot's readiness and the Dashboard say "No SIP trunk is set up. Choose your carrier to start." (or "Some trunk settings are missing.").
-5. **Check trunk status** repeats the check at any time. "The trunk is ready." means the carrier accepted Faxbot and answers its checks. The same check from the command line is `faxbot trunk status`.
+5. **Check trunk status** repeats the check at any time. "The trunk is ready." means the carrier accepted Faxbot and answers its checks. The same check from the command line is `faxbot providers trunk status`.
 
 ### What Apply and connect does with Asterisk
 
@@ -144,7 +144,7 @@ If you manage settings with an environment file instead of the console, set the 
 | `SIP_TRUNK_DIAL_FORMAT` | `e164` (`+441632960123`) or `local` (`01632960123`, as a phone at the installation dials it), where the preset offers the choice |
 | `SIP_TRUNK_DIAL_PREFIX` | Up to four digits before a number dialled the local way, such as `9` for a phone system's outside line |
 | `SIP_EXTERNAL_ADDRESS` | Leave empty: Faxbot finds its internet address itself. Only an override for a host whose public address you want to state |
-| `SIP_PUBLIC_ADDRESS_CHECK_MINUTES` | How often Faxbot checks its internet address again; `5` by default, `0` turns it off |
+| `SIP_PUBLIC_ADDRESS_CHECK_MINUTES` | How often Faxbot checks its internet address again; `5` by default, `0` turns it off. Read at the first start; after that it is a setting (see below) |
 
 Asterisk reads the trunk when it starts. Faxbot writes it to `asterisk/pjsip.conf` inside the shared fax data folder; while that file exists it replaces the older `SIP_USERNAME`, `SIP_PASSWORD` and `SIP_SERVER` settings.
 
@@ -152,7 +152,7 @@ Asterisk reads the trunk when it starts. Faxbot writes it to `asterisk/pjsip.con
 
 With username and password sign-in you do not open, publish or forward any port, and the default Docker Compose file publishes none. Asterisk registers with the carrier over one encrypted connection (TLS on port 5061 for Telnyx) and keeps it alive with a keepalive every 30 seconds and a carrier check every 30 seconds (every 25 seconds over UDP, with registration renewed every two minutes, inside common router timeouts). The carrier sends incoming calls back over that connection. On every call Asterisk sends the first audio and T.38 packets itself, and a small audio keepalive every two seconds when nothing else is sent, so your router lets the carrier's answer back in on the same path. Leave **Internet address** empty; it is only an override for a host whose address you want to state yourself. If you enter one that differs from what Faxbot sees, **Check trunk status** says so.
 
-Faxbot learns its internet address with STUN when you select **Apply and connect**, and again every five minutes (`SIP_PUBLIC_ADDRESS_CHECK_MINUTES`; `0` turns the repeat off). It tells the carrier that address only when your network keeps port numbers, because then the address and port are exactly right and the call does not depend on the carrier following Faxbot's packets. When your network changes port numbers, a public address with the wrong port would mislead the carrier, so Faxbot leaves it out and the carrier follows Faxbot's packets instead. Asterisk picks the address up when it starts; if your internet address changes later, **Check trunk status** says "Your internet address changed. Select Apply and connect so the carrier gets the new address." (or, for an Asterisk Faxbot does not manage, to restart the Asterisk service).
+Faxbot learns its internet address with STUN when you select **Apply and connect**, and again every five minutes. The interval is a setting: **Check the internet address every … minutes** under Providers → Carrier trunk in the console, or `faxbot system settings set sip_public_address_check_minutes=10`. `0` turns the repeat off, and a change applies from the next check without a restart. It tells the carrier that address only when your network keeps port numbers, because then the address and port are exactly right and the call does not depend on the carrier following Faxbot's packets. When your network changes port numbers, a public address with the wrong port would mislead the carrier, so Faxbot leaves it out and the carrier follows Faxbot's packets instead. Asterisk picks the address up when it starts; if your internet address changes later, **Check trunk status** says "Your internet address changed. Select Apply and connect so the carrier gets the new address." (or, for an Asterisk Faxbot does not manage, to restart the Asterisk service).
 
 Encryption also hides the call setup from router features that rewrite it (often called SIP ALG). If **Check trunk status** keeps saying Faxbot is not registered over the encrypted connection, switch **Transport** to TCP, apply again and restart Asterisk.
 
@@ -162,7 +162,7 @@ This works with carriers that send their media back to wherever Faxbot's packets
 
 If a call switched to T.38 and no fax data came back ("The call connected but no fax data came back from the carrier."), the carrier is not sending T.38 data back to Faxbot's path, though it may still do so for audio. Faxbot then switches new calls to audio fax by itself, but only when the fax engine timed out waiting for the other side's first fax message (a plain hang-up, a busy line or the other side hanging up never switches it): it turns off **Use T.38 fax over IP** (saved by "system"), connects the trunk again once no call is up, and says next to the switch "Off: on 3 October a T.38 fax got no fax data back on this network, so Faxbot uses audio fax." with **Try T.38 again**. It never resends the failed fax; send it again when you are ready. When T.38 is off and the most recent T.38 call got no fax data back (for example, someone turned T.38 off by hand right after such a call), Faxbot takes that call as the reason and says so the same way. New calls stay audio: Faxbot declines the carrier's switch to T.38 and sends at up to 9600 bit/s with error correction, which survives a voice path better.
 
-A new Telnyx trunk on a network that changes port numbers starts with audio fax for the same reason, because Telnyx's T.38 data was seen not to come back through such a network; the switch says "Off: your network changes port numbers, and Telnyx's T.38 fax data does not come back through such networks, so Faxbot uses audio fax." Once you choose T.38 yourself (**Try T.38 again**, the switch, or `faxbot trunk mode t38`), Faxbot leaves your choice alone until another T.38 call gets no fax data back. `faxbot trunk mode audio` turns audio fax on by hand, and `faxbot trunk status` says why audio fax is in use. With Telnyx you can also set **T.38 fax re-invite initiated by** to **Disabled** for audio fax.
+A new Telnyx trunk on a network that changes port numbers starts with audio fax for the same reason, because Telnyx's T.38 data was seen not to come back through such a network; the switch says "Off: your network changes port numbers, and Telnyx's T.38 fax data does not come back through such networks, so Faxbot uses audio fax." Once you choose T.38 yourself (**Try T.38 again**, the switch, or `faxbot providers trunk mode t38`), Faxbot leaves your choice alone until another T.38 call gets no fax data back. `faxbot providers trunk mode audio` turns audio fax on by hand, and `faxbot providers trunk status` says why audio fax is in use. With Telnyx you can also set **T.38 fax re-invite initiated by** to **Disabled** for audio fax.
 
 ### Server IP sign-in needs a public host
 
@@ -250,7 +250,7 @@ Telnyx usually has a call's record within minutes. Until then the fax shows "Cos
 
 Faxbot also reads the trunk's Telnyx records for the last two days once an hour, to find calls it has no record of, such as a received fax whose hand-over failed. Their charges count in Spending on their own line. A charge is shown on a received fax only when exactly one fax matches it by number and time. This needs the trunk's fax numbers and caller ID filled in.
 
-To ask Telnyx straight away, select **Check Telnyx charges now** under Spending, or run `faxbot routing reconcile`.
+To ask Telnyx straight away, select **Check Telnyx charges now** under Spending, or run `faxbot costs reconcile`.
 
 ## How Faxbot records each call
 
@@ -264,7 +264,7 @@ For every call on the trunk Faxbot keeps a call record:
 
 A call whose outcome Faxbot cannot confirm stays "not known yet" and is never sent again automatically.
 
-**Recent calls** under the trunk settings lists them, newest first, with that sentence (`faxbot trunk calls` prints the same list). When a fax over the trunk fails, **Jobs** shows the same sentence for that fax; when the other fax machine was the problem, Jobs says "The other fax machine answered but the fax did not finish." and Recent calls keeps the reason. The sentences you may see:
+**Recent calls** under the trunk settings lists them, newest first, with that sentence (`faxbot providers trunk calls` prints the same list). When a fax over the trunk fails, **Jobs** shows the same sentence for that fax; when the other fax machine was the problem, Jobs says "The other fax machine answered but the fax did not finish." and Recent calls keeps the reason. The sentences you may see:
 
 | Sentence | What it means |
 | --- | --- |

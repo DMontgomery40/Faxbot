@@ -151,6 +151,10 @@ OLDER_PATHS = (
 ).split('|')
 
 
+# Older commands that are now groups: `faxbot providers registry` alone still lists the registry.
+NOW_GROUPS = {('providers', 'registry')}
+
+
 def _commands(typer_app, prefix=(), hidden=False):
     """{path: (callback, hidden)} for every command under a Typer app, hidden ones included."""
     found = {}
@@ -192,15 +196,21 @@ def test_every_older_command_still_runs_the_same_command_as_its_new_home():
     assert len(older) == 131 and set(MOVED) <= set(older)
     for path in older:
         home = MOVED.get(path, path)
-        assert path in commands, f"faxbot {' '.join(path)} no longer resolves"
         assert home in commands and not commands[home][1], f"faxbot {' '.join(home)} is not shown in help"
-        assert _original(commands[path][0]) is _original(commands[home][0]), ' '.join(path)
+        if path in NOW_GROUPS:  # an older command that became a group; with nothing after it, it runs its home
+            assert path not in commands
+        else:
+            assert path in commands, f"faxbot {' '.join(path)} no longer resolves"
+            assert _original(commands[path][0]) is _original(commands[home][0]), ' '.join(path)
         # Through the command framework as a person types it, hidden or not.
         typed = CliRunner().invoke(cli_app, [*path, '--help'], env={'COLUMNS': '200'})
         assert typed.exit_code == 0, (path, typed.stdout, typed.stderr)
     # Every command shown in help is an older command's home or new in this shape.
     shown = {path for path, (_, hidden) in commands.items() if not hidden}
     assert {MOVED.get(path, path) for path in older} <= shown
+    # Names used between the first and second release of this shape stay, hidden.
+    for interim, home in ((('sent', 'history'), ('sent', 'evidence')), (('sent', 'reconcile'), ('sent', 'confirm-receipt'))):
+        assert commands[interim][1] and _original(commands[interim][0]) is _original(commands[home][0])
 
 
 def test_older_commands_still_work_against_the_server(cli, tmp_path):
@@ -260,7 +270,7 @@ def test_send_status_jobs_and_documents(cli, tmp_path):
     assert table.exit_code == 0 and sent['id'] not in table.stdout and '+15551230001' not in table.stdout
     assert sent['id'] in cli('sent', 'list', '--ids').stdout
     assert cli.json('sent', 'show', sent['id'])['id'] == sent['id']
-    history = cli.json('sent', 'history', sent['id'])
+    history = cli.json('sent', 'evidence', sent['id'])
     assert history['state'] == 'held'
 
     target = tmp_path / 'downloaded.pdf'
@@ -268,7 +278,7 @@ def test_send_status_jobs_and_documents(cli, tmp_path):
     assert saved['saved_to'] == str(target) and target.read_bytes().startswith(b'%PDF')
     refused = cli('sent', 'pdf', sent['id'], '-o', target)
     assert refused.exit_code == 1 and 'already exists' in refused.stderr
-    unconfirmed = cli('sent', 'reconcile', sent['id'], '--provider-fax-id', 'abc123')
+    unconfirmed = cli('sent', 'confirm-receipt', sent['id'], '--provider-fax-id', 'abc123')
     assert unconfirmed.exit_code == 1 and '--confirm-original-account' in unconfirmed.stderr
 
 
@@ -616,7 +626,7 @@ def test_jobs_reconcile_records_the_provider_id_without_sending():
         ('GET', '/admin/fax-jobs/job-1'): (200, {'id': 'job-1', 'delivery_version': 4}),
         ('POST', '/admin/fax-jobs/job-1/reconcile'): (200, {'id': 'job-1', 'state': 'submitted'}),
     })
-    result = recorder('sent', 'reconcile', 'job-1', '--provider-fax-id', 'PX-881', '--confirm-original-account')
+    result = recorder('sent', 'confirm-receipt', 'job-1', '--provider-fax-id', 'PX-881', '--confirm-original-account')
     assert result.exit_code == 0, result.stderr
     assert result.stdout.strip() == 'Provider fax ID recorded. Faxbot will follow this fax with the provider.'
     assert recorder.requests == [
@@ -700,7 +710,27 @@ def test_provider_plugins_list_config_and_configure(plugins_cli):
     assert 'synthetic-phaxio-key' not in saved.stdout
     masked = cli.json('providers', 'show', 'phaxio')['settings']['api_key']
     assert masked and 'synthetic-phaxio-key' not in masked
-    assert isinstance(cli.json('providers', 'registry'), dict)
+    assert cli.json('providers', 'registry') == cli.json('providers', 'registry', 'list')
+    assert isinstance(cli.json('providers', 'registry', 'list'), dict)
+
+
+def test_providers_registry_import_adds_several_descriptions(plugins_cli, tmp_path):
+    cli = plugins_cli
+    batch = tmp_path / 'providers.json'
+    batch.write_text(json.dumps({'items': [
+        {'id': 'synthetic-one', 'name': 'Synthetic one', 'allowed_domains': ['one.invalid'],
+         'actions': {'send_fax': {'url': 'https://one.invalid/send'}, 'get_status': {'url': 'https://one.invalid/s'}}},
+        {'name': 'No id'}]}))
+    added = cli('providers', 'registry', 'import', batch)
+    assert added.exit_code == 0, added.stderr
+    assert 'Added the provider Synthetic one.' in added.stdout and 'Could not add one provider: ' in added.stdout
+    assert any(item['id'] == 'synthetic-one' for item in cli.json('providers', 'list'))
+    markdown = tmp_path / 'providers.md'
+    markdown.write_text('Notes\n\n```json\n' + json.dumps(
+        {'id': 'synthetic-two', 'name': 'Synthetic two', 'allowed_domains': ['two.invalid'],
+         'actions': {'send_fax': {'url': 'https://two.invalid/send'}, 'get_status': {'url': 'https://two.invalid/s'}}})
+        + '\n```\n')
+    assert [item['id'] for item in cli.json('providers', 'registry', 'import', markdown)['imported']] == ['synthetic-two']
 
 
 # -- routing, intake, direct delivery, cases ------------------------------------------------
@@ -986,3 +1016,40 @@ def test_trunk_presets_and_use_cover_phone_systems_and_uk_and_australian_carrier
     assert trunk_cli('providers', 'trunk', 'use', 'avaya-ipoffice', '--transport', 'tls').exit_code != 0
     assert trunk_cli('providers', 'trunk', 'use', 'telnyx', '--number-format', 'local').exit_code != 0
     assert trunk_cli.json('providers', 'trunk', 'use', 'gamma', '--host', '192.0.2.40') == {'preset': 'gamma', 'changed': True}
+
+
+# -- milestone 2: counts, checks, reload and costs -------------------------------------------
+
+def test_settings_reload_together_check_and_efax_status_read_as_sentences(cli):
+    reloaded = cli('system', 'settings', 'reload')
+    assert reloaded.exit_code == 0 and reloaded.stdout.startswith('Faxbot read its saved settings again.')
+    assert '_meta' in cli.json('system', 'settings', 'reload')
+    check = cli('recipients', 'together', 'check', '+15551230001')
+    assert check.exit_code == 0
+    assert check.stdout.strip() == 'Faxes to this number go straight away; they do not wait for others.'
+    assert cli.json('recipients', 'together', 'check', '+15551230001')['sends_together'] is False
+    efax = cli('providers', 'efax', 'status')
+    assert efax.exit_code == 0
+    assert efax.stdout.strip() == 'Faxbot is not collecting received faxes from eFax; eFax is not set up to receive.'
+    assert cli.json('providers', 'efax', 'status')['receiving'] is False
+
+
+def test_costs_of_received_faxes_and_published_plans_in_use(cli):
+    first = cli.json('system', 'diagnostics', 'test-fax', '--from', '+15559990001')['id']
+    second = cli.json('system', 'diagnostics', 'test-fax', '--from', '+15559990002')['id']
+    one = cli('costs', 'received', first)
+    assert one.exit_code == 0 and one.stdout.strip()
+    every = cli.json('costs', 'received', '--all')['costs']
+    assert set(every) == {first, second}
+    table = cli('costs', 'received', '--all').stdout
+    assert 'From' in table and 'Cost' in table and '+15559990002' in table
+    for wrong in ((), (first, '--all')):
+        refused = cli('costs', 'received', *wrong)
+        assert refused.exit_code == 1 and refused.stderr.strip() == 'Give a received fax ID, or --all.'
+    in_use = cli.json('costs', 'plans', '--in-use')
+    assert isinstance(in_use['items'], list)
+    assert cli('costs', 'plans', '--in-use').exit_code == 0
+    refused = cli('costs', 'plans')
+    assert refused.exit_code == 1 and refused.stderr.strip() == 'Name a provider, such as efax, or add --in-use.'
+    efax = cli.json('costs', 'plans', 'efax')
+    assert efax['plans'] and efax['sentence']

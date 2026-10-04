@@ -92,8 +92,8 @@ def routing_update_destination(number: str = typer.Argument(..., help='Fax numbe
                                    help="Route to use first, as listed by 'faxbot recipients show'. Use "
                                         "'automatic' to let Faxbot choose."),
                                references: bool = typer.Option(None, '--accepts-references/--no-references',
-                                   help='Whether this recipient accepts case packets that refer to documents '
-                                        'they already accepted.')):
+                                   help='Whether this recipient accepts case packets that reference documents '
+                                        'they already received instead of resending them.')):
     """Change a number's name, notes, preferred route, or whether it accepts case packets."""
     api = state.api()
     body = {}
@@ -177,7 +177,7 @@ def routing_costs(since: str = typer.Option(None, '--since', help='Start date, f
 
 @routing.command('reconcile')
 def routing_reconcile():
-    """Ask your phone carrier now what each recent call cost. This never changes whether a fax was delivered."""
+    """Ask your SIP trunk carrier now what each recent call cost. This never changes a fax's delivery result."""
     result = state.api().post('/routing/reconcile', json={})
     state.out().result(result, lambda out: out.line(result['summary']))
 
@@ -190,6 +190,31 @@ def routing_fax_cost(fax_id: str = typer.Argument(..., help="Fax ID from 'faxbot
     path = ('/routing/inbound/' if received else '/routing/faxes/') + segment(fax_id) + '/cost'
     result = state.api().get(path)
     state.out().result(result, lambda out: out.line(result.get('summary') or 'No call was placed for this fax.'))
+
+
+def _received_cost_rows(costs, items):
+    return [[item.get('fr') or 'Unknown', local_time(item.get('received_at') or item.get('created_at')),
+             (costs.get(item['id']) or {}).get('summary') or 'No call record for this fax.'] for item in items]
+
+
+@routing.command('received')
+def routing_received_costs(fax_id: str = typer.Argument(None, help="Received fax ID, from 'faxbot received list --ids'."),
+                           every: bool = typer.Option(False, '--all',
+                                                      help='Every received fax you can see, newest 100 first.')):
+    """Show what the call that brought in a received fax cost, or the cost of every received fax."""
+    from .fax import received_id
+    if bool(fax_id) == every:
+        raise CliError('Give a received fax ID, or --all.')
+    api = state.api()
+    if fax_id:
+        result = received_id(api, fax_id, lambda found: api.get(f'/routing/inbound/{segment(found)}/cost'))
+        state.out().result(result, lambda out: out.line(result.get('summary') or 'No call record for this fax.'))
+        return
+    items = api.get('/inbound')[:100]
+    costs = api.get('/routing/inbound-costs', params={'ids': ','.join(item['id'] for item in items)})['costs'] \
+        if items else {}
+    state.out().result({'costs': costs}, lambda out: out.table(
+        ['From', 'Received', 'Cost'], _received_cost_rows(costs, items), empty='No received faxes.'))
 
 
 @routing.command('rate-cards')
@@ -250,7 +275,7 @@ def batching_set(number: str = typer.Argument(..., help='Fax number.'),
                  max_pages: int = typer.Option(None, '--max-pages', min=2, max=200,
                                                help='Most pages one call carries, separator pages included (default 30).'),
                  mixed_senders: bool = typer.Option(None, '--mixed-senders/--same-sender-only',
-                     help='Whether faxes from different people or keys may share a call (default: no).')):
+                     help='Whether faxes from different users or API keys may share one call (default: no).')):
     """Turn sending together on for a number, or change how long faxes wait."""
     api = state.api()
     current = api.get('/batching/numbers/' + segment(number))
@@ -265,9 +290,17 @@ def batching_set(number: str = typer.Argument(..., help='Fax number.'),
     state.out().result(view, _batching_human(view))
 
 
+@batching.command('check')
+def batching_check(number: str = typer.Argument(..., help='Fax number.')):
+    """Show whether a fax to this number would wait to go with others, or go straight away."""
+    result = state.api().get('/batching/check', params={'to': number})
+    state.out().result(result, lambda out: out.line(
+        result.get('sentence') or 'Faxes to this number go straight away; they do not wait for others.'))
+
+
 @batching.command('off')
 def batching_off(number: str = typer.Argument(..., help='Fax number.')):
-    """Turn sending together off for a number; faxes waiting for it go straight away."""
+    """Turn off batching for a number; faxes waiting for it are sent straight away."""
     view = state.api().delete('/batching/numbers/' + segment(number))
     state.out().result(view, lambda out: out.line(view['state_sentence']))
 
@@ -289,15 +322,27 @@ def _plan_row(plan):
 
 
 @routing.command('plans')
-def routing_plans(provider: str = typer.Argument(..., help='The fax service, for example efax.')):
+def routing_plans(provider: str = typer.Argument(None, help='The fax service, for example efax.'),
+                  in_use: bool = typer.Option(False, '--in-use',
+                                              help='Plans for every sending provider that has no rate card yet.')):
     """Show the price plans a fax service advertises, with where Faxbot found them and when."""
-    result = state.api().get('/routing/published-plans', params={'provider_id': provider})
+    if bool(provider) == in_use:
+        raise CliError('Name a provider, such as efax, or add --in-use.')
+    if in_use:
+        result = state.api().get('/routing/published-plans/in-use')
+        found = result.get('items') or []
+    else:
+        result = state.api().get('/routing/published-plans', params={'provider_id': provider})
+        found = [result]
 
     def human(out):
-        out.line(result.get('sentence') or '')
-        out.table(['Plan', 'Country', 'Price', 'Includes', 'Extra page', 'Source', 'Read on'],
-                  [_plan_row(plan) for plan in result.get('plans') or []], empty='No published plans.')
-        if result.get('card'):
+        if not found:
+            out.line('Every fax service you send with has a price set.')
+        for item in found:
+            out.line(item.get('sentence') or '')
+            out.table(['Plan', 'Country', 'Price', 'Includes', 'Extra page', 'Source', 'Read on'],
+                      [_plan_row(plan) for plan in item.get('plans') or []], empty='No published plans.')
+        if any(item.get('card') for item in found):
             out.line('To use the first plan as your estimate, add it as a rate card in Costs, Prices and plans, '
                      'or with faxbot costs rate-cards --replace.')
     state.out().result(result, human)
@@ -308,7 +353,7 @@ def routing_plans(provider: str = typer.Argument(..., help='The fax service, for
 @intake.command('items')
 def intake_items(state_filter: str = typer.Option(None, '--state', help='received, sending, delivered or failed.'),
                  limit: int = typer.Option(100, '--limit', min=1, max=500, help='How many to show.'),
-                 ids: bool = typer.Option(False, '--ids', help='Also show item IDs, for faxbot received deliveries retry.')):
+                 ids: bool = typer.Option(False, '--ids', help="Also show each delivery's ID, to use with faxbot received deliveries retry.")):
     """List received documents and their delivery, newest first."""
     result = state.api().get('/intake/items', params={'state': state_filter, 'limit': limit})
 
@@ -358,12 +403,12 @@ def connectors_add(name: str = typer.Argument(..., help='A name for this deliver
                    security: str = typer.Option('starttls', '--security', help='How the connection to the mail server is protected: starttls, tls or none.'),
                    username: str = typer.Option('', '--username', help='Mail server sign-in name.'),
                    ask_password: bool = typer.Option(False, '--ask-password',
-                                                     help='Ask for the mail server password without showing it. '
-                                                          'FAXBOT_SMTP_PASSWORD also works.'),
+                                                     help='Prompt for the mail server password without echoing it '
+                                                          '(or set FAXBOT_SMTP_PASSWORD).'),
                    subject: str = typer.Option('Fax from {from_number}', '--subject', help='Email subject.'),
                    match_number: str = typer.Option(None, '--fax-number',
                                                     help='Only documents sent to this fax number. Default: all.'),
-                   disabled: bool = typer.Option(False, '--disabled', help='Add the group switched off, so its roles do not apply yet.')):
+                   disabled: bool = typer.Option(False, '--disabled', help='Create the group disabled, so its roles do not apply yet.')):
     """Add an email inbox that received faxes are delivered to."""
     password = os.environ.get('FAXBOT_SMTP_PASSWORD') or None
     if ask_password:
@@ -434,7 +479,7 @@ def connectors_remove(name: str = typer.Argument(..., help='A name for this deli
 
 @direct.command('card')
 def direct_card(output: str = typer.Option(None, '--output', '-o', help='Save the card to this file.')):
-    """Show your partner card. Give it to partners so they can add you."""
+    """Show this installation's partner card. Partners need it to add you for direct delivery."""
     card = state.api().get('/direct/card')['card']
     if output:
         Path(output).write_text(json.dumps(card, indent=2) + '\n', encoding='utf-8')
@@ -487,7 +532,7 @@ def peers_challenge(partner: str = typer.Argument(..., help='Partner organizatio
 
 @peers.command('confirm')
 def peers_confirm(partner: str = typer.Argument(..., help='Partner organization, fax number or id.'),
-                  code: str = typer.Argument(..., help="The code printed on the partner's challenge fax.")):
+                  code: str = typer.Argument(..., help="The verification code printed on the partner's challenge fax.")):
     """Enter the code from a partner's check fax to prove this installation to them."""
     api = state.api()
     peer = _peer(api, partner)

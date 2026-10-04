@@ -31,7 +31,7 @@ $ faxbot [OPTIONS] COMMAND [ARGS]...
 * `received`: Received faxes: list and open them, give...
 * `sent`: Sent faxes: list them, open one, download...
 * `numbers`: Your fax numbers: which mailbox each...
-* `recipients`: The fax numbers you send to: how Faxbot...
+* `recipients`: Fax numbers you send to: routing, batching...
 * `providers`: The fax services Faxbot sends and receives...
 * `costs`: What faxing costs you: spending by route,...
 * `access`: Who can use Faxbot and what each person...
@@ -56,7 +56,7 @@ $ faxbot send [OPTIONS] {to} {file}
 
 * `--queue`: Accept the fax without sending it. Faxbot allows this only while sending is turned off (test mode).
 * `--idempotency-key KEY`: Your own reference for this fax. Sending again with the same reference returns the first fax instead of sending twice.
-* `--now`: Send at once even when this number sends faxes together; faxes waiting for it go in the same call.
+* `--now`: Send immediately, even when this number batches faxes; faxes already waiting for it go in the same call.
 * `--help`: Show this message and exit.
 
 ## `faxbot status`
@@ -101,6 +101,7 @@ $ faxbot received [OPTIONS] COMMAND [ARGS]...
 * `import`: Import a PDF from another system as if it...
 * `owners`: List received faxes with their owner and...
 * `history`: Show who has owned a received fax and...
+* `counts`: Count the received faxes you can see in...
 * `assign`: Give a received fax to an owner.
 * `acknowledge`: Acknowledge a received fax you own.
 * `done`: Mark a received fax done, with a short note.
@@ -123,7 +124,7 @@ $ faxbot received list [OPTIONS]
 * `--to <str>`: Only faxes sent to this number.
 * `--status <str>`: Only faxes with this status: waiting, received or failed.
 * `--mailbox <str>`: Only faxes in this mailbox.
-* `--ids`: Also show received fax IDs, for faxbot received show and pdf.
+* `--ids`: Also show each received fax&#x27;s ID, to use with faxbot received show and pdf.
 * `--help`: Show this message and exit.
 
 ### `faxbot received show`
@@ -138,7 +139,7 @@ $ faxbot received show [OPTIONS] {inbound_id}
 
 **Arguments**:
 
-* `inbound_id`: Received fax ID.  [required]
+* `inbound_id`: A received fax&#x27;s ID, from &#x27;faxbot received list --ids&#x27; or &#x27;faxbot received owners --ids&#x27;.  [required]
 
 **Options**:
 
@@ -156,7 +157,7 @@ $ faxbot received pdf [OPTIONS] {inbound_id}
 
 **Arguments**:
 
-* `inbound_id`: Received fax ID.  [required]
+* `inbound_id`: A received fax&#x27;s ID, from &#x27;faxbot received list --ids&#x27; or &#x27;faxbot received owners --ids&#x27;.  [required]
 
 **Options**:
 
@@ -176,7 +177,7 @@ $ faxbot received fetch [OPTIONS] {inbound_id}
 
 **Arguments**:
 
-* `inbound_id`: Received fax ID.  [required]
+* `inbound_id`: A received fax&#x27;s ID, from &#x27;faxbot received list --ids&#x27; or &#x27;faxbot received owners --ids&#x27;.  [required]
 
 **Options**:
 
@@ -212,13 +213,13 @@ $ faxbot received import [OPTIONS] {file}
 
 **Options**:
 
-* `--source <str>`: The system it comes from, for example case-system.  [required]
+* `--source <str>`: Name of the source system, for example case-system.  [required]
 * `--id <str>`: The document&#x27;s ID in that system. Importing the same ID again does not create a second document.  [required]
 * `--revision <str>`: A new version of a document already imported under this ID.
 * `--received-at <str>`: When that system received it, for example 2026-10-03T14:05:00Z.
 * `--to <str>`: The fax number it was sent to; decides the mailbox.
 * `--from <str>`: The fax number it came from.
-* `--pages <int range>`: Pages, as that system reported.  [x&gt;=1]
+* `--pages <int range>`: Page count, as the source system reported it.  [x&gt;=1]
 * `--help`: Show this message and exit.
 
 ### `faxbot received owners`
@@ -253,7 +254,21 @@ $ faxbot received history [OPTIONS] {item_id}
 
 **Arguments**:
 
-* `item_id`: ID from &#x27;faxbot received owners --ids&#x27;.  [required]
+* `item_id`: A received fax&#x27;s ID, from &#x27;faxbot received list --ids&#x27; or &#x27;faxbot received owners --ids&#x27;.  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+### `faxbot received counts`
+
+Count the received faxes you can see in each state, such as waiting for an owner or overdue.
+
+**Usage**:
+
+```console
+$ faxbot received counts [OPTIONS]
+```
 
 **Options**:
 
@@ -271,7 +286,7 @@ $ faxbot received assign [OPTIONS] {item_id} {user}
 
 **Arguments**:
 
-* `item_id`: ID from &#x27;faxbot received owners --ids&#x27;.  [required]
+* `item_id`: A received fax&#x27;s ID, from &#x27;faxbot received list --ids&#x27; or &#x27;faxbot received owners --ids&#x27;.  [required]
 * `user`: The new owner: their login or name.  [required]
 
 **Options**:
@@ -290,7 +305,7 @@ $ faxbot received acknowledge [OPTIONS] {item_id}
 
 **Arguments**:
 
-* `item_id`: ID from &#x27;faxbot received owners --ids&#x27;.  [required]
+* `item_id`: A received fax&#x27;s ID, from &#x27;faxbot received list --ids&#x27; or &#x27;faxbot received owners --ids&#x27;.  [required]
 
 **Options**:
 
@@ -308,7 +323,7 @@ $ faxbot received done [OPTIONS] {item_id}
 
 **Arguments**:
 
-* `item_id`: ID from &#x27;faxbot received owners --ids&#x27;.  [required]
+* `item_id`: A received fax&#x27;s ID, from &#x27;faxbot received list --ids&#x27; or &#x27;faxbot received owners --ids&#x27;.  [required]
 
 **Options**:
 
@@ -327,7 +342,7 @@ $ faxbot received reopen [OPTIONS] {item_id}
 
 **Arguments**:
 
-* `item_id`: ID from &#x27;faxbot received owners --ids&#x27;.  [required]
+* `item_id`: A received fax&#x27;s ID, from &#x27;faxbot received list --ids&#x27; or &#x27;faxbot received owners --ids&#x27;.  [required]
 
 **Options**:
 
@@ -345,7 +360,7 @@ $ faxbot received export [OPTIONS] {item_id}
 
 **Arguments**:
 
-* `item_id`: ID from &#x27;faxbot received owners --ids&#x27;.  [required]
+* `item_id`: A received fax&#x27;s ID, from &#x27;faxbot received list --ids&#x27; or &#x27;faxbot received owners --ids&#x27;.  [required]
 
 **Options**:
 
@@ -386,7 +401,7 @@ $ faxbot received deliveries list [OPTIONS]
 
 * `--state <str>`: received, sending, delivered or failed.
 * `--limit <int range>`: How many to show.  [default: 100; 1&lt;=x&lt;=500]
-* `--ids`: Also show item IDs, for faxbot received deliveries retry.
+* `--ids`: Also show each delivery&#x27;s ID, to use with faxbot received deliveries retry.
 * `--help`: Show this message and exit.
 
 #### `faxbot received deliveries retry`
@@ -427,8 +442,8 @@ $ faxbot sent [OPTIONS] COMMAND [ARGS]...
 * `show`: Show one sent fax.
 * `pdf`: Download the document of a sent fax.
 * `refresh`: Ask the provider for the latest status of...
-* `history`: Show the delivery history of a sent fax.
-* `reconcile`: For a fax whose delivery is uncertain,...
+* `evidence`: Show the evidence of a sent fax&#x27;s...
+* `confirm-receipt`: Confirm receipt of a fax whose delivery is...
 * `send-now`: Send a waiting fax now; the faxes waiting...
 
 ### `faxbot sent list`
@@ -447,7 +462,7 @@ $ faxbot sent list [OPTIONS]
 * `--provider <str>`: Only faxes sent through this provider.
 * `--limit <int range>`: How many faxes to show.  [default: 50; 1&lt;=x&lt;=100]
 * `--offset <int range>`: Skip this many of the newest faxes.  [default: 0; x&gt;=0]
-* `--ids`: Also show fax IDs, for faxbot sent show, pdf and refresh.
+* `--ids`: Also show each fax&#x27;s ID, to use with faxbot sent show, pdf and refresh.
 * `--help`: Show this message and exit.
 
 ### `faxbot sent show`
@@ -506,37 +521,37 @@ $ faxbot sent refresh [OPTIONS] {fax_id}
 
 * `--help`: Show this message and exit.
 
-### `faxbot sent history`
+### `faxbot sent evidence`
 
-Show the delivery history of a sent fax.
+Show the evidence of a sent fax&#x27;s delivery: each step and what the fax service reported.
 
 **Usage**:
 
 ```console
-$ faxbot sent history [OPTIONS] {fax_id}
+$ faxbot sent evidence [OPTIONS] {fax_id}
 ```
 
 **Arguments**:
 
-* `fax_id`: Fax ID.  [required]
+* `fax_id`: Fax ID, from &#x27;faxbot sent list --ids&#x27;.  [required]
 
 **Options**:
 
 * `--help`: Show this message and exit.
 
-### `faxbot sent reconcile`
+### `faxbot sent confirm-receipt`
 
-For a fax whose delivery is uncertain, record the ID the fax service gave it. This never sends it again.
+Confirm receipt of a fax whose delivery is uncertain, by recording the ID the fax service gave it. This never sends it again.
 
 **Usage**:
 
 ```console
-$ faxbot sent reconcile [OPTIONS] {fax_id}
+$ faxbot sent confirm-receipt [OPTIONS] {fax_id}
 ```
 
 **Arguments**:
 
-* `fax_id`: Fax ID.  [required]
+* `fax_id`: Fax ID, from &#x27;faxbot sent list --ids&#x27;.  [required]
 
 **Options**:
 
@@ -690,7 +705,7 @@ $ faxbot numbers mailboxes add [OPTIONS] {label}
 
 **Options**:
 
-* `--disabled`: Add the group switched off, so its roles do not apply yet.
+* `--disabled`: Create the group disabled, so its roles do not apply yet.
 * `--help`: Show this message and exit.
 
 #### `faxbot numbers mailboxes update`
@@ -728,9 +743,9 @@ $ faxbot numbers mailboxes target [OPTIONS]
 
 * `--acknowledge-hours <int range>`: The installation&#x27;s acknowledgement target in hours (0 for none). An operational target, not a legal deadline.  [0&lt;=x&lt;=8760]
 * `--mailbox <str>`: Change this mailbox, by name.
-* `--hours <int range>`: With --mailbox: this mailbox&#x27;s target in hours (0 for no target).  [0&lt;=x&lt;=8760]
-* `--use-installation-target`: With --mailbox: use the installation&#x27;s target.
-* `--backup <str>`: With --mailbox: who takes over missed items.
+* `--hours <int range>`: With --mailbox: this mailbox&#x27;s acknowledgement target in hours (0 for none).  [0&lt;=x&lt;=8760]
+* `--use-installation-target`: With --mailbox: use the installation-wide acknowledgement target for this mailbox.
+* `--backup <str>`: With --mailbox: the backup person who takes over faxes not acknowledged in time.
 * `--no-backup`: With --mailbox: remove the backup.
 * `--help`: Show this message and exit.
 
@@ -810,10 +825,10 @@ $ faxbot numbers email connectors add [OPTIONS] {name}
 * `--port <int>`: Mail server port.  [default: 587]
 * `--security <str>`: How the connection to the mail server is protected: starttls, tls or none.  [default: starttls]
 * `--username <str>`: Mail server sign-in name.
-* `--ask-password`: Ask for the mail server password without showing it. FAXBOT_SMTP_PASSWORD also works.
+* `--ask-password`: Prompt for the mail server password without echoing it (or set FAXBOT_SMTP_PASSWORD).
 * `--subject <str>`: Email subject.  [default: Fax from {from_number}]
 * `--fax-number <str>`: Only documents sent to this fax number. Default: all.
-* `--disabled`: Add the group switched off, so its roles do not apply yet.
+* `--disabled`: Create the group disabled, so its roles do not apply yet.
 * `--help`: Show this message and exit.
 
 ##### `faxbot numbers email connectors update`
@@ -884,7 +899,7 @@ $ faxbot numbers email connectors remove [OPTIONS] {name}
 
 ## `faxbot recipients`
 
-The fax numbers you send to: how Faxbot sends to each, sending several faxes in one call, partners and case packets.
+Fax numbers you send to: routing, batching several faxes into one call, direct delivery partners and case packets.
 
 **Usage**:
 
@@ -956,7 +971,7 @@ $ faxbot recipients set [OPTIONS] {number}
 * `--name <str>`: A name for this destination.
 * `--notes <str>`: Notes for your team.
 * `--preferred-route <str>`: Route to use first, as listed by &#x27;faxbot recipients show&#x27;. Use &#x27;automatic&#x27; to let Faxbot choose.
-* `--accepts-references / --no-references`: Whether this recipient accepts case packets that refer to documents they already accepted.
+* `--accepts-references / --no-references`: Whether this recipient accepts case packets that reference documents they already received instead of resending them.
 * `--help`: Show this message and exit.
 
 ### `faxbot recipients together`
@@ -977,7 +992,8 @@ $ faxbot recipients together [OPTIONS] COMMAND [ARGS]...
 
 * `show`: Show whether faxes to a number go together...
 * `set`: Turn sending together on for a number, or...
-* `off`: Turn sending together off for a number;...
+* `check`: Show whether a fax to this number would...
+* `off`: Turn off batching for a number; faxes...
 
 #### `faxbot recipients together show`
 
@@ -1016,12 +1032,30 @@ $ faxbot recipients together set [OPTIONS] {number}
 * `--recipient-agreed`: Record that this recipient has agreed to receive several documents in one call. Needed to turn sending together on.
 * `--wait MINUTES`: Longest time a fax waits for others (default 10).  [1&lt;=x&lt;=60]
 * `--max-pages <int range>`: Most pages one call carries, separator pages included (default 30).  [2&lt;=x&lt;=200]
-* `--mixed-senders / --same-sender-only`: Whether faxes from different people or keys may share a call (default: no).
+* `--mixed-senders / --same-sender-only`: Whether faxes from different users or API keys may share one call (default: no).
+* `--help`: Show this message and exit.
+
+#### `faxbot recipients together check`
+
+Show whether a fax to this number would wait to go with others, or go straight away.
+
+**Usage**:
+
+```console
+$ faxbot recipients together check [OPTIONS] {number}
+```
+
+**Arguments**:
+
+* `number`: Fax number.  [required]
+
+**Options**:
+
 * `--help`: Show this message and exit.
 
 #### `faxbot recipients together off`
 
-Turn sending together off for a number; faxes waiting for it go straight away.
+Turn off batching for a number; faxes waiting for it are sent straight away.
 
 **Usage**:
 
@@ -1053,7 +1087,7 @@ $ faxbot recipients partners [OPTIONS] COMMAND [ARGS]...
 
 **Commands**:
 
-* `card`: Show your partner card.
+* `card`: Show this installation&#x27;s partner card.
 * `list`: List your partners.
 * `add`: Add a partner from their card.
 * `challenge`: Fax the partner a one-page code to enter...
@@ -1063,7 +1097,7 @@ $ faxbot recipients partners [OPTIONS] COMMAND [ARGS]...
 
 #### `faxbot recipients partners card`
 
-Show your partner card. Give it to partners so they can add you.
+Show this installation&#x27;s partner card. Partners need it to add you for direct delivery.
 
 **Usage**:
 
@@ -1139,7 +1173,7 @@ $ faxbot recipients partners confirm [OPTIONS] {partner} {code}
 **Arguments**:
 
 * `partner`: Partner organization, fax number or id.  [required]
-* `code`: The code printed on the partner&#x27;s challenge fax.  [required]
+* `code`: The verification code printed on the partner&#x27;s challenge fax.  [required]
 
 **Options**:
 
@@ -1260,8 +1294,9 @@ $ faxbot providers [OPTIONS] COMMAND [ARGS]...
 * `configure`: Change a provider&#x27;s settings, or start or...
 * `callbacks`: Show the addresses your receiving provider...
 * `validate`: Check the file that describes a fax...
-* `install`: Add a fax service that Faxbot does not...
-* `registry`: List the providers you can add from...
+* `install`: Install a custom HTTP fax provider from...
+* `registry`: Fax services you can add from the provider...
+* `efax`: eFax receiving: whether Faxbot is...
 * `trunk`: Your own phone line for faxing, to a phone...
 
 ### `faxbot providers list`
@@ -1328,9 +1363,9 @@ $ faxbot providers configure [OPTIONS] {provider} [NAME=VALUE...]
 
 **Options**:
 
-* `--secret NAME`: Ask for this setting without showing it. Repeat for more.
+* `--secret NAME`: Prompt for this setting&#x27;s value without echoing it, for passwords and keys. Repeat for more.
 * `--role <str>`: outbound, inbound or storage.
-* `--enable`: Use this provider for the role.
+* `--enable`: Make this provider active for the role.
 * `--disable`: Stop using this provider for the role.
 * `--help`: Show this message and exit.
 
@@ -1368,7 +1403,7 @@ $ faxbot providers validate [OPTIONS] {manifest}
 
 ### `faxbot providers install`
 
-Add a fax service that Faxbot does not include, from the file that describes it.
+Install a custom HTTP fax provider from its manifest file.
 
 **Usage**:
 
@@ -1386,12 +1421,81 @@ $ faxbot providers install [OPTIONS] {manifest}
 
 ### `faxbot providers registry`
 
+Fax services you can add from the provider list, one at a time or several at once.
+
+**Usage**:
+
+```console
+$ faxbot providers registry [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `list`: List the providers you can add from...
+* `import`: Add several fax services at once from a...
+
+#### `faxbot providers registry list`
+
 List the providers you can add from Faxbot&#x27;s provider list.
 
 **Usage**:
 
 ```console
-$ faxbot providers registry [OPTIONS]
+$ faxbot providers registry list [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+#### `faxbot providers registry import`
+
+Add several fax services at once from a file of their descriptions.
+
+**Usage**:
+
+```console
+$ faxbot providers registry import [OPTIONS] {FILE}
+```
+
+**Arguments**:
+
+* `FILE`: A JSON file of provider descriptions, or a Markdown file with them in code blocks; &#x27;-&#x27; reads standard input.  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+### `faxbot providers efax`
+
+eFax receiving: whether Faxbot is collecting your faxes from eFax.
+
+**Usage**:
+
+```console
+$ faxbot providers efax [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `status`: Show whether Faxbot is collecting your...
+
+#### `faxbot providers efax status`
+
+Show whether Faxbot is collecting your received faxes from eFax, when it last checked, and faxes still stored at eFax.
+
+**Usage**:
+
+```console
+$ faxbot providers efax status [OPTIONS]
 ```
 
 **Options**:
@@ -1414,16 +1518,16 @@ $ faxbot providers trunk [OPTIONS] COMMAND [ARGS]...
 
 **Commands**:
 
-* `status`: Check the phone line: whether the carrier...
+* `status`: Check the SIP trunk: registration with the...
 * `apply`: Connect the saved phone line settings.
 * `calls`: List recent calls on the phone line,...
-* `mode`: Choose how new fax calls send pages, T.38...
+* `mode`: Choose how new fax calls are sent, T.38...
 * `presets`: List the carriers and phone systems Faxbot...
-* `use`: Choose your carrier or phone system for...
+* `use`: Choose a carrier or phone system preset...
 
 #### `faxbot providers trunk status`
 
-Check the phone line: whether the carrier accepts Faxbot, Faxbot&#x27;s internet address and the last call.
+Check the SIP trunk: registration with the carrier, Faxbot&#x27;s public IP address, and the last call.
 
 **Usage**:
 
@@ -1447,7 +1551,7 @@ $ faxbot providers trunk apply [OPTIONS]
 
 **Options**:
 
-* `--wait / --no-wait`: Wait until the phone line connects, then show its check.  [default: wait]
+* `--wait / --no-wait`: Wait until the SIP trunk registers, then show the trunk check.  [default: wait]
 * `--timeout <int range>`: Seconds to wait.  [default: 60; 5&lt;=x&lt;=600]
 * `--help`: Show this message and exit.
 
@@ -1469,7 +1573,7 @@ $ faxbot providers trunk calls [OPTIONS]
 
 #### `faxbot providers trunk mode`
 
-Choose how new fax calls send pages, T.38 (the fax standard) or audio when T.38 does not work, and reconnect the phone line.
+Choose how new fax calls are sent, T.38 (fax over IP) or audio when T.38 fails, then reconnect the trunk.
 
 **Usage**:
 
@@ -1505,9 +1609,9 @@ $ faxbot providers trunk presets [OPTIONS] [PRESET]
 
 #### `faxbot providers trunk use`
 
-Choose your carrier or phone system for the phone line and save its settings. Then connect it with faxbot providers trunk apply.
+Choose a carrier or phone system preset for the SIP trunk and save its settings; then connect it with faxbot providers trunk apply.
 
-A phone system knows Faxbot by its address, so it needs no username or password.
+A phone system recognizes Faxbot by its IP address, so it needs no username or password.
 
 **Usage**:
 
@@ -1517,14 +1621,14 @@ $ faxbot providers trunk use [OPTIONS] {PRESET}
 
 **Arguments**:
 
-* `PRESET`: Your carrier or phone system, as listed by faxbot providers trunk presets.  [required]
+* `PRESET`: Carrier or phone system preset, for example telnyx (see faxbot providers trunk presets).  [required]
 
 **Options**:
 
 * `--host <str>`: The carrier&#x27;s server address, or your phone system&#x27;s address (IP Office, or Aura Session Manager).
 * `--port <int range>`: The carrier&#x27;s port, when not the usual one.  [1&lt;=x&lt;=65535]
 * `--transport <str>`: How Faxbot connects to the line: udp, tcp or tls (encrypted), where the preset offers it.
-* `--number-format e164|local`: e164 sends +44...; local sends the number as a phone at your installation dials it.
+* `--number-format e164|local`: How numbers are dialed: e164 (international format, +44...) or local (as a phone at your site dials them).
 * `--prefix <str>`: Outside-line digits before a number dialled as a phone here dials it, such as 9.
 * `--help`: Show this message and exit.
 
@@ -1545,8 +1649,9 @@ $ faxbot costs [OPTIONS] COMMAND [ARGS]...
 **Commands**:
 
 * `spending`: Show what faxing cost per route: carrier...
-* `reconcile`: Ask your phone carrier now what each...
+* `reconcile`: Ask your SIP trunk carrier now what each...
 * `fax`: Show what one fax cost: the carrier&#x27;s...
+* `received`: Show what the call that brought in a...
 * `rate-cards`: Show the prices Faxbot uses to estimate...
 * `plans`: Show the price plans a fax service...
 
@@ -1567,7 +1672,7 @@ $ faxbot costs spending [OPTIONS]
 
 ### `faxbot costs reconcile`
 
-Ask your phone carrier now what each recent call cost. This never changes whether a fax was delivered.
+Ask your SIP trunk carrier now what each recent call cost. This never changes a fax&#x27;s delivery result.
 
 **Usage**:
 
@@ -1598,6 +1703,25 @@ $ faxbot costs fax [OPTIONS] {fax_id}
 * `--received`: The fax is a received fax.
 * `--help`: Show this message and exit.
 
+### `faxbot costs received`
+
+Show what the call that brought in a received fax cost, or the cost of every received fax.
+
+**Usage**:
+
+```console
+$ faxbot costs received [OPTIONS] [fax_id]
+```
+
+**Arguments**:
+
+* `fax_id`: Received fax ID, from &#x27;faxbot received list --ids&#x27;.
+
+**Options**:
+
+* `--all`: Every received fax you can see, newest 100 first.
+* `--help`: Show this message and exit.
+
 ### `faxbot costs rate-cards`
 
 Show the prices Faxbot uses to estimate costs, or replace them from a file.
@@ -1620,15 +1744,16 @@ Show the price plans a fax service advertises, with where Faxbot found them and 
 **Usage**:
 
 ```console
-$ faxbot costs plans [OPTIONS] {provider}
+$ faxbot costs plans [OPTIONS] [provider]
 ```
 
 **Arguments**:
 
-* `provider`: The fax service, for example efax.  [required]
+* `provider`: The fax service, for example efax.
 
 **Options**:
 
+* `--in-use`: Plans for every sending provider that has no rate card yet.
 * `--help`: Show this message and exit.
 
 ## `faxbot access`
@@ -1708,7 +1833,7 @@ $ faxbot access users list [OPTIONS]
 **Options**:
 
 * `--kind <str>`: user, integration or all.  [default: all]
-* `--search <str>`: Only names or sign-in names containing this.
+* `--search <str>`: Only users whose name or sign-in name contains this text.
 * `--limit <int range>`: Show at most this many.  [x&gt;=1]
 * `--ids`: Also show internal ids.
 * `--help`: Show this message and exit.
@@ -1771,7 +1896,7 @@ $ faxbot access users update [OPTIONS] {who}
 * `--name <str>`: New display name.
 * `--login <str>`: New sign-in name (users only).
 * `--enable`: Switch on.
-* `--disable`: Switch off. This ends their sessions and keys.
+* `--disable`: Disable the user. This ends their sessions and stops their keys.
 * `--help`: Show this message and exit.
 
 #### `faxbot access users reset-password`
@@ -1827,7 +1952,7 @@ $ faxbot access integrations add [OPTIONS] {name}
 
 **Options**:
 
-* `--disabled`: Add the group switched off, so its roles do not apply yet.
+* `--disabled`: Create the group disabled, so its roles do not apply yet.
 * `--help`: Show this message and exit.
 
 #### `faxbot access integrations list`
@@ -1918,7 +2043,7 @@ $ faxbot access groups add [OPTIONS] {name}
 **Options**:
 
 * `--description <str>`: What the group is for.
-* `--disabled`: Add the group switched off, so its roles do not apply yet.
+* `--disabled`: Create the group disabled, so its roles do not apply yet.
 * `--help`: Show this message and exit.
 
 #### `faxbot access groups update`
@@ -1940,7 +2065,7 @@ $ faxbot access groups update [OPTIONS] {name}
 * `--name <str>`: New name.
 * `--description <str>`: New description.
 * `--enable`: Switch on.
-* `--disable`: Switch off; members lose the group&#x27;s roles.
+* `--disable`: Disable the group; members lose its roles.
 * `--help`: Show this message and exit.
 
 #### `faxbot access groups members`
@@ -2088,7 +2213,7 @@ $ faxbot access roles add [OPTIONS] {name}
 
 * `-p, --permission <str>`: A permission, for example fax:send. Repeat for more.
 * `--description <str>`: What the role is for.
-* `--disabled`: Add the group switched off, so its roles do not apply yet.
+* `--disabled`: Create the group disabled, so its roles do not apply yet.
 * `--help`: Show this message and exit.
 
 #### `faxbot access roles update`
@@ -2113,7 +2238,7 @@ $ faxbot access roles update [OPTIONS] {name}
 * `--add <str>`: Add this permission. Repeat for more.
 * `--remove <str>`: Remove this permission. Repeat for more.
 * `--enable`: Switch on.
-* `--disable`: Switch off everywhere it is assigned.
+* `--disable`: Disable the role everywhere it is assigned.
 * `--help`: Show this message and exit.
 
 ### `faxbot access grants`
@@ -2148,8 +2273,8 @@ $ faxbot access grants list [OPTIONS]
 
 **Options**:
 
-* `--who <str>`: Only this user, integration or group.
-* `--on <str>`: Only roles that apply here, such as installation or mailbox:NAME.
+* `--who <str>`: Only grants for this user, integration or group.
+* `--on <str>`: Only grants on this resource, such as installation or mailbox:NAME.
 * `--ids`: Also show internal ids.
 * `--help`: Show this message and exit.
 
@@ -2170,7 +2295,7 @@ $ faxbot access grants add [OPTIONS] {who} {role}
 
 **Options**:
 
-* `--on <str>`: Where the role applies: installation (default), mailbox:NAME, personal:USER, unassigned, or a place from faxbot access resources list.  [default: installation]
+* `--on <str>`: Where the role applies: installation (the default), mailbox:NAME, personal:USER, unassigned, or a resource from faxbot access resources list.  [default: installation]
 * `--help`: Show this message and exit.
 
 #### `faxbot access grants remove`
@@ -2190,7 +2315,7 @@ $ faxbot access grants remove [OPTIONS] {who} {role}
 
 **Options**:
 
-* `--on <str>`: Where the role applies: installation (default), mailbox:NAME, personal:USER, unassigned, or a place from faxbot access resources list.  [default: installation]
+* `--on <str>`: Where the role applies: installation (the default), mailbox:NAME, personal:USER, unassigned, or a resource from faxbot access resources list.  [default: installation]
 * `--help`: Show this message and exit.
 
 ### `faxbot access keys`
@@ -2212,7 +2337,7 @@ $ faxbot access keys [OPTIONS] COMMAND [ARGS]...
 * `list`: List keys and who they belong to.
 * `create`: Create a key.
 * `rotate`: Replace a key with a new one.
-* `revoke`: Stop a key from working, for good.
+* `revoke`: Revoke a key permanently.
 * `approve`: Approve an older key that is waiting for...
 * `update`: Change a key&#x27;s name, note or expiry date.
 
@@ -2245,7 +2370,7 @@ $ faxbot access keys create [OPTIONS]
 
 * `-p, --permission <str>`: What the key may do, for example fax:send. Repeat for more.  [required]
 * `--for <str>`: User or integration the key belongs to. Default: you.
-* `--on <str>`: Where the role applies: installation (default), mailbox:NAME, personal:USER, unassigned, or a place from faxbot access resources list.  [default: installation]
+* `--on <str>`: Where the role applies: installation (the default), mailbox:NAME, personal:USER, unassigned, or a resource from faxbot access resources list.  [default: installation]
 * `--name <str>`: A name to recognise the key by.
 * `--note <str>`: A note about where the key is used.
 * `--expires <str>`: Expiry date, for example 2027-01-31.
@@ -2271,7 +2396,7 @@ $ faxbot access keys rotate [OPTIONS] {key_id}
 
 #### `faxbot access keys revoke`
 
-Stop a key from working, for good.
+Revoke a key permanently.
 
 **Usage**:
 
@@ -2304,8 +2429,8 @@ $ faxbot access keys approve [OPTIONS] {key_id}
 **Options**:
 
 * `--for <str>`: User or integration the key will belong to.  [required]
-* `-p, --permission <str>`: What the key may do. Repeat for more.  [required]
-* `--on <str>`: Where the role applies: installation (default), mailbox:NAME, personal:USER, unassigned, or a place from faxbot access resources list.  [default: installation]
+* `-p, --permission <str>`: A permission for the key, for example fax:send. Repeat for more.  [required]
+* `--on <str>`: Where the role applies: installation (the default), mailbox:NAME, personal:USER, unassigned, or a resource from faxbot access resources list.  [default: installation]
 * `--help`: Show this message and exit.
 
 #### `faxbot access keys update`
@@ -2399,12 +2524,12 @@ $ faxbot access pair [OPTIONS] COMMAND [ARGS]...
 
 **Commands**:
 
-* `new`: Create a six-digit code that pairs one phone.
-* `device`: Pair as if this computer were a phone, to...
+* `new`: Create a six-digit pairing code for one...
+* `device`: Test pairing as if this computer were a...
 
 #### `faxbot access pair new`
 
-Create a six-digit code that pairs one phone. It works once, for five minutes.
+Create a six-digit pairing code for one phone. It works once, within five minutes.
 
 **Usage**:
 
@@ -2418,7 +2543,7 @@ $ faxbot access pair new [OPTIONS]
 
 #### `faxbot access pair device`
 
-Pair as if this computer were a phone, to test pairing: enter a pairing code and get the phone&#x27;s own key.
+Test pairing as if this computer were a phone: exchange a pairing code for the device&#x27;s own API key.
 
 **Usage**:
 
@@ -2432,7 +2557,7 @@ $ faxbot access pair device [OPTIONS] {code}
 
 **Options**:
 
-* `--device-name <str>`: Name the key is listed under.  [default: Command line]
+* `--device-name <str>`: Device name shown on the new key.  [default: Command line]
 * `--save-profile NAME`: Save the new key in this profile instead of printing it.
 * `--help`: Show this message and exit.
 
@@ -2466,7 +2591,7 @@ $ faxbot access resources list [OPTIONS]
 
 **Options**:
 
-* `--kind <str>`: installation, legacy, mailbox or personal.
+* `--kind <str>`: Resource type: installation, legacy, mailbox or personal.
 * `--ids`: Also show internal ids.
 * `--help`: Show this message and exit.
 
@@ -2486,13 +2611,13 @@ $ faxbot access owner [OPTIONS] COMMAND [ARGS]...
 
 **Commands**:
 
-* `enroll`: Create a named owner, who can do...
+* `enroll`: Create a named owner, with full control,...
 
 #### `faxbot access owner enroll`
 
-Create a named owner, who can do everything, with a temporary password shown once.
+Create a named owner, with full control, and a temporary password shown once.
 
-Use the installation key or an existing owner&#x27;s key. This works for the first owner, and to get back in after faxbot system recover-owner.
+Use the installation key or an existing owner&#x27;s API key. This works for the first owner, and to regain access after faxbot system recover-owner.
 
 **Usage**:
 
@@ -2527,7 +2652,7 @@ $ faxbot system [OPTIONS] COMMAND [ARGS]...
 * `restart`: Restart Faxbot, when the installation...
 * `status`: Show whether the database is up to date,...
 * `migrate`: Update the database after you install a...
-* `recover-owner`: Get back in when no owner can sign in:...
+* `recover-owner`: Recover owner access when no owner can...
 * `backup`: Copy everything Faxbot needs to a new...
 * `restore`: Restore a backup after checking every file...
 * `settings`: Every Faxbot setting: show, change, check...
@@ -2598,8 +2723,8 @@ $ faxbot system status [OPTIONS]
 
 * `--database-url URL`: Where the database is, if not the usual place (./faxbot.db, as the server uses).  [env var: DATABASE_URL]
 * `--data-dir FOLDER`: Where the data folder is, if not the usual place (./faxdata, as the server uses).  [env var: FAX_DATA_DIR]
-* `--key-file FILE`: The installation key file, if not .configuration.key in the data folder.  [env var: FAXBOT_INSTALLATION_KEY_PATH]
-* `--direct-key-file FILE`: The partner delivery key file, if not .direct-identity.key in the data folder.  [env var: FAXBOT_DIRECT_KEY_PATH]
+* `--key-file FILE`: Installation encryption key file (default: .configuration.key in the data folder).  [env var: FAXBOT_INSTALLATION_KEY_PATH]
+* `--direct-key-file FILE`: Direct delivery signing key file (default: .direct-identity.key in the data folder).  [env var: FAXBOT_DIRECT_KEY_PATH]
 * `--help`: Show this message and exit.
 
 ### `faxbot system migrate`
@@ -2616,13 +2741,13 @@ $ faxbot system migrate [OPTIONS]
 
 * `--database-url URL`: Where the database is, if not the usual place (./faxbot.db, as the server uses).  [env var: DATABASE_URL]
 * `--data-dir FOLDER`: Where the data folder is, if not the usual place (./faxdata, as the server uses).  [env var: FAX_DATA_DIR]
-* `--key-file FILE`: The installation key file, if not .configuration.key in the data folder.  [env var: FAXBOT_INSTALLATION_KEY_PATH]
-* `--direct-key-file FILE`: The partner delivery key file, if not .direct-identity.key in the data folder.  [env var: FAXBOT_DIRECT_KEY_PATH]
+* `--key-file FILE`: Installation encryption key file (default: .configuration.key in the data folder).  [env var: FAXBOT_INSTALLATION_KEY_PATH]
+* `--direct-key-file FILE`: Direct delivery signing key file (default: .direct-identity.key in the data folder).  [env var: FAXBOT_DIRECT_KEY_PATH]
 * `--help`: Show this message and exit.
 
 ### `faxbot system recover-owner`
 
-Get back in when no owner can sign in: Faxbot makes a new installation key and shows it once.
+Recover owner access when no owner can sign in: create a new installation key and show it once.
 
 Run it while Faxbot is stopped. Anything that used the old installation key stops working. Then start Faxbot and create an owner with faxbot access owner enroll.
 
@@ -2637,8 +2762,8 @@ $ faxbot system recover-owner [OPTIONS]
 * `-y, --yes`: Do not ask for confirmation.
 * `--database-url URL`: Where the database is, if not the usual place (./faxbot.db, as the server uses).  [env var: DATABASE_URL]
 * `--data-dir FOLDER`: Where the data folder is, if not the usual place (./faxdata, as the server uses).  [env var: FAX_DATA_DIR]
-* `--key-file FILE`: The installation key file, if not .configuration.key in the data folder.  [env var: FAXBOT_INSTALLATION_KEY_PATH]
-* `--direct-key-file FILE`: The partner delivery key file, if not .direct-identity.key in the data folder.  [env var: FAXBOT_DIRECT_KEY_PATH]
+* `--key-file FILE`: Installation encryption key file (default: .configuration.key in the data folder).  [env var: FAXBOT_INSTALLATION_KEY_PATH]
+* `--direct-key-file FILE`: Direct delivery signing key file (default: .direct-identity.key in the data folder).  [env var: FAXBOT_DIRECT_KEY_PATH]
 * `--help`: Show this message and exit.
 
 ### `faxbot system backup`
@@ -2661,8 +2786,8 @@ $ faxbot system backup [OPTIONS] {folder}
 
 * `--database-url URL`: Where the database is, if not the usual place (./faxbot.db, as the server uses).  [env var: DATABASE_URL]
 * `--data-dir FOLDER`: Where the data folder is, if not the usual place (./faxdata, as the server uses).  [env var: FAX_DATA_DIR]
-* `--key-file FILE`: The installation key file, if not .configuration.key in the data folder.  [env var: FAXBOT_INSTALLATION_KEY_PATH]
-* `--direct-key-file FILE`: The partner delivery key file, if not .direct-identity.key in the data folder.  [env var: FAXBOT_DIRECT_KEY_PATH]
+* `--key-file FILE`: Installation encryption key file (default: .configuration.key in the data folder).  [env var: FAXBOT_INSTALLATION_KEY_PATH]
+* `--direct-key-file FILE`: Direct delivery signing key file (default: .direct-identity.key in the data folder).  [env var: FAXBOT_DIRECT_KEY_PATH]
 * `--help`: Show this message and exit.
 
 ### `faxbot system restore`
@@ -2684,8 +2809,8 @@ $ faxbot system restore [OPTIONS] {folder}
 * `--force`: Replace the database, data folder and keys already on this computer.
 * `--database-url URL`: Where the database is, if not the usual place (./faxbot.db, as the server uses).  [env var: DATABASE_URL]
 * `--data-dir FOLDER`: Where the data folder is, if not the usual place (./faxdata, as the server uses).  [env var: FAX_DATA_DIR]
-* `--key-file FILE`: The installation key file, if not .configuration.key in the data folder.  [env var: FAXBOT_INSTALLATION_KEY_PATH]
-* `--direct-key-file FILE`: The partner delivery key file, if not .direct-identity.key in the data folder.  [env var: FAXBOT_DIRECT_KEY_PATH]
+* `--key-file FILE`: Installation encryption key file (default: .configuration.key in the data folder).  [env var: FAXBOT_INSTALLATION_KEY_PATH]
+* `--direct-key-file FILE`: Direct delivery signing key file (default: .direct-identity.key in the data folder).  [env var: FAXBOT_DIRECT_KEY_PATH]
 * `--help`: Show this message and exit.
 
 ### `faxbot system settings`
@@ -2706,7 +2831,8 @@ $ faxbot system settings [OPTIONS] COMMAND [ARGS]...
 
 * `get`: Show the settings, including changes...
 * `set`: Change settings by name, for example...
-* `validate`: Check a provider&#x27;s sign-in details without...
+* `validate`: Check a provider&#x27;s credentials without...
+* `reload`: Read the saved settings again and show any...
 * `persist`: Save every setting, passwords and keys...
 * `export`: Print every setting, one per line, as it...
 
@@ -2750,9 +2876,9 @@ $ faxbot system settings set [OPTIONS] [NAME=VALUE...]
 
 #### `faxbot system settings validate`
 
-Check a provider&#x27;s sign-in details without saving them or sending a fax.
+Check a provider&#x27;s credentials without saving them or sending a fax.
 
-Faxbot reads them from these variables on this computer, so they stay out of your command history: PHAXIO_API_KEY, PHAXIO_API_SECRET, SINCH_PROJECT_ID, SINCH_API_KEY, SINCH_API_SECRET, AMI_HOST, AMI_USERNAME, AMI_PASSWORD, EFAX_APP_ID, EFAX_API_KEY and EFAX_USER_ID. Checking eFax details can end the sign-in Faxbot was using; Faxbot signs in again by itself.
+Credentials are read from these environment variables so they stay out of your shell history: PHAXIO_API_KEY, PHAXIO_API_SECRET, SINCH_PROJECT_ID, SINCH_API_KEY, SINCH_API_SECRET, AMI_HOST, AMI_USERNAME, AMI_PASSWORD, EFAX_APP_ID, EFAX_API_KEY and EFAX_USER_ID. Checking eFax credentials can end the eFax session Faxbot was using; Faxbot signs in again by itself.
 
 **Usage**:
 
@@ -2762,11 +2888,25 @@ $ faxbot system settings validate [OPTIONS] {backend}
 
 **Arguments**:
 
-* `backend`: Provider to check: phaxio, sinch, efax or sip.  [required]
+* `backend`: Provider whose credentials to check: phaxio, sinch, efax or sip.  [required]
 
 **Options**:
 
-* `--ami-port <int>`: For sip only: the port of Faxbot&#x27;s fax engine, if not the usual one.
+* `--ami-port <int>`: SIP only: the Asterisk manager interface port, if not 5038.
+* `--help`: Show this message and exit.
+
+#### `faxbot system settings reload`
+
+Read the saved settings again and show any changes still waiting for a restart.
+
+**Usage**:
+
+```console
+$ faxbot system settings reload [OPTIONS]
+```
+
+**Options**:
+
 * `--help`: Show this message and exit.
 
 #### `faxbot system settings persist`
@@ -2858,7 +2998,7 @@ $ faxbot system diagnostics test-fax [OPTIONS]
 **Options**:
 
 * `--from <str>`: Sender fax number to show.  [default: +15550000000]
-* `--to <str>`: Which of your fax numbers it should seem sent to.
+* `--to <str>`: Your fax number the test fax arrives on, for example +15551234567.
 * `--help`: Show this message and exit.
 
 ### `faxbot system logs`
@@ -2893,7 +3033,7 @@ $ faxbot system logs list [OPTIONS]
 **Options**:
 
 * `--search <str>`: Only entries containing this text.
-* `--event <str>`: Only this kind of entry, for example job_created.
+* `--event <str>`: Only log entries of this event type, for example job_created.
 * `--since <str>`: Only entries after this time, for example 2026-10-01.
 * `--limit <int range>`: How many entries to show.  [default: 200; x&gt;=1]
 * `--help`: Show this message and exit.
@@ -2911,7 +3051,7 @@ $ faxbot system logs tail [OPTIONS]
 **Options**:
 
 * `--search <str>`: Only lines containing this text.
-* `--event <str>`: Only this kind of entry.
+* `--event <str>`: Only log entries of this event type.
 * `--lines <int range>`: How many of the last lines to show.  [default: 200; 1&lt;=x&lt;=20000]
 * `--help`: Show this message and exit.
 
@@ -2963,7 +3103,7 @@ $ faxbot system tunnel set [OPTIONS] {provider}
 
 **Arguments**:
 
-* `provider`: How Faxbot is reached from outside: none, cloudflare, wireguard or tailscale.  [required]
+* `provider`: Remote access method: none, cloudflare, wireguard or tailscale.  [required]
 
 **Options**:
 
@@ -2973,7 +3113,7 @@ $ faxbot system tunnel set [OPTIONS] {provider}
 * `--wireguard-public-key <str>`: Server&#x27;s public key (WireGuard).
 * `--wireguard-client-ip <str>`: This computer&#x27;s tunnel address (WireGuard).
 * `--wireguard-dns <str>`: DNS server (WireGuard).
-* `--tailscale-hostname <str>`: Host name (Tailscale).
+* `--tailscale-hostname <str>`: Tailscale only: the host name for this server.
 * `--help`: Show this message and exit.
 
 #### `faxbot system tunnel test`
@@ -3190,10 +3330,10 @@ Commands from earlier versions still work but are not listed in help. Each one r
 | `faxbot integrations add` | `faxbot access integrations add` |
 | `faxbot integrations list` | `faxbot access integrations list` |
 | `faxbot jobs get` | `faxbot sent show` |
-| `faxbot jobs history` | `faxbot sent history` |
+| `faxbot jobs history` | `faxbot sent evidence` |
 | `faxbot jobs list` | `faxbot sent list` |
 | `faxbot jobs pdf` | `faxbot sent pdf` |
-| `faxbot jobs reconcile` | `faxbot sent reconcile` |
+| `faxbot jobs reconcile` | `faxbot sent confirm-receipt` |
 | `faxbot jobs refresh` | `faxbot sent refresh` |
 | `faxbot jobs send-now` | `faxbot sent send-now` |
 | `faxbot keys approve` | `faxbot access keys approve` |
@@ -3212,6 +3352,7 @@ Commands from earlier versions still work but are not listed in help. Each one r
 | `faxbot pair device` | `faxbot access pair device` |
 | `faxbot pair new` | `faxbot access pair new` |
 | `faxbot providers config` | `faxbot providers show` |
+| `faxbot providers registry` | `faxbot providers registry list` |
 | `faxbot resources list` | `faxbot access resources list` |
 | `faxbot restart` | `faxbot system restart` |
 | `faxbot roles add` | `faxbot access roles add` |

@@ -116,10 +116,12 @@ class SettingsIn(Strict):
 async def list_work(request: Request, view: Literal['all', 'mine', 'unassigned', 'overdue'] = 'all',
                     state: Literal['open', 'acknowledged', 'done'] | None = None,
                     mailbox: str | None = Query(default=None, max_length=100),
-                    limit: int = Query(default=100, ge=1, le=200), identity=Depends(require_identity)):
+                    limit: int = Query(default=100, ge=1, le=200),
+                    inbound_fax_id: str | None = Query(default=None, min_length=1, max_length=64),
+                    identity=Depends(require_identity)):
     service = work_service(request)
     return {'items': await call(lambda: service.list(identity.actor, view=view, state=state, mailbox=mailbox,
-                                                     limit=limit))}
+                                                     limit=limit, inbound_fax_id=inbound_fax_id))}
 
 
 @router.get('/counts', summary='How many items you can see in each state')

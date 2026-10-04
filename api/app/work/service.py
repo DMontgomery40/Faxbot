@@ -185,9 +185,10 @@ class WorkService:
         return self.store.names_on(connection, ids)
 
     # -- reads -----------------------------------------------------------------------
-    def list(self, actor, *, view='all', state=None, mailbox=None, limit=100):
+    def list(self, actor, *, view='all', state=None, mailbox=None, limit=100, inbound_fax_id=None):
         if view not in VIEWS or (state is not None and state not in STATES) or type(limit) is not int \
-                or not 1 <= limit <= 200 or (mailbox is not None and (type(mailbox) is not str or len(mailbox) > 100)):
+                or not 1 <= limit <= 200 or (mailbox is not None and (type(mailbox) is not str or len(mailbox) > 100)) \
+                or (inbound_fax_id is not None and (type(inbound_fax_id) is not str or len(inbound_fax_id) > 64)):
             raise WorkInputError('Choose a valid filter.')
         items, mailboxes = self.store.items, self.store.mailboxes
         with self.access_store.transaction() as connection:
@@ -202,6 +203,8 @@ class WorkService:
                 query = query.where(items.c.state == 'open', items.c.due_at.is_not(None), items.c.due_at < now)
             if state is not None:
                 query = query.where(items.c.state == state)
+            if inbound_fax_id is not None:  # the item of one received fax, found by that fax's own ID
+                query = query.where(items.c.inbound_fax_id == inbound_fax_id)
             if mailbox:
                 found = connection.execute(sa.select(mailboxes.c.id).where(mailboxes.c.label == mailbox)).scalar_one_or_none()
                 if found is None:

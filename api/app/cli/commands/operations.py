@@ -25,7 +25,7 @@ def _log_rows(items):
 
 @logs.command('list')
 def logs_list(search: str = typer.Option(None, '--search', help='Only entries containing this text.'),
-              event: str = typer.Option(None, '--event', help='Only this kind of entry, for example job_created.'),
+              event: str = typer.Option(None, '--event', help='Only log entries of this event type, for example job_created.'),
               since: str = typer.Option(None, '--since', help='Only entries after this time, for example 2026-10-01.'),
               limit: int = typer.Option(200, '--limit', min=1, help='How many entries to show.')):
     """Show recent activity log entries."""
@@ -36,7 +36,7 @@ def logs_list(search: str = typer.Option(None, '--search', help='Only entries co
 
 @logs.command('tail')
 def logs_tail(search: str = typer.Option(None, '--search', help='Only lines containing this text.'),
-              event: str = typer.Option(None, '--event', help='Only this kind of entry.'),
+              event: str = typer.Option(None, '--event', help='Only log entries of this event type.'),
               lines: int = typer.Option(200, '--lines', min=1, max=20000, help='How many of the last lines to show.')):
     """Show the end of the activity log file, when Faxbot writes one."""
     result = state.api().get('/admin/logs/tail', params={'q': search, 'event': event, 'lines': lines})
@@ -61,7 +61,7 @@ def tunnel_status():
 
 
 @tunnel.command('set')
-def tunnel_set(provider: str = typer.Argument(..., help='How Faxbot is reached from outside: none, cloudflare, wireguard or tailscale.'),
+def tunnel_set(provider: str = typer.Argument(..., help='Remote access method: none, cloudflare, wireguard or tailscale.'),
                disable: bool = typer.Option(False, '--disable', help='Save the settings but keep the tunnel off.'),
                cloudflare_domain: str = typer.Option(None, '--cloudflare-domain', help='Custom domain (Cloudflare).'),
                wireguard_endpoint: str = typer.Option(None, '--wireguard-endpoint', help='Server endpoint (WireGuard).'),
@@ -70,7 +70,7 @@ def tunnel_set(provider: str = typer.Argument(..., help='How Faxbot is reached f
                wireguard_client_ip: str = typer.Option(None, '--wireguard-client-ip', help='This computer\'s tunnel '
                                                                                            'address (WireGuard).'),
                wireguard_dns: str = typer.Option(None, '--wireguard-dns', help='DNS server (WireGuard).'),
-               tailscale_hostname: str = typer.Option(None, '--tailscale-hostname', help='Host name (Tailscale).')):
+               tailscale_hostname: str = typer.Option(None, '--tailscale-hostname', help='Tailscale only: the host name for this server.')):
     """Choose how Faxbot is reached from outside your office, and turn it on or off.
 
     For Tailscale, set TAILSCALE_AUTH_KEY to its sign-in key before you run this.

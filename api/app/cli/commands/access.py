@@ -82,9 +82,9 @@ def me():
 @owner.command('enroll')
 def owner_enroll(login: str = typer.Option(..., '--login', help='Sign-in name for the new owner.'),
                  name: str = typer.Option(..., '--name', help="The owner's display name.")):
-    """Create a named owner, who can do everything, with a temporary password shown once.
+    """Create a named owner, with full control, and a temporary password shown once.
 
-    Use the installation key or an existing owner's key. This works for the first owner, and to get back in after faxbot system recover-owner.
+    Use the installation key or an existing owner's API key. This works for the first owner, and to regain access after faxbot system recover-owner.
     """
     api = state.api()
     result = api.post('/auth/owner/enroll', json=api.with_policy({'login': login, 'display_name': name}))
@@ -106,7 +106,7 @@ def _user_rows(items, ids):
 
 @users.command('list')
 def users_list(kind: str = typer.Option('all', '--kind', help='user, integration or all.'),
-               search: str = typer.Option(None, '--search', help='Only names or sign-in names containing this.'),
+               search: str = typer.Option(None, '--search', help='Only users whose name or sign-in name contains this text.'),
                limit: int = typer.Option(None, '--limit', min=1, help='Show at most this many.'),
                ids: bool = IDS):
     """List people and apps."""
@@ -153,7 +153,7 @@ def users_update(who: str = typer.Argument(..., help='Sign-in name, display name
                  name: str = typer.Option(None, '--name', help='New display name.'),
                  login: str = typer.Option(None, '--login', help='New sign-in name (users only).'),
                  enable: bool = typer.Option(False, '--enable', help='Switch on.'),
-                 disable: bool = typer.Option(False, '--disable', help='Switch off. This ends their sessions and keys.')):
+                 disable: bool = typer.Option(False, '--disable', help='Disable the user. This ends their sessions and stops their keys.')):
     """Change a person's or app's name, sign-in name, or whether they can use Faxbot."""
     api = state.api()
     body = {key: value for key, value in (('display_name', name), ('login', login),
@@ -178,7 +178,7 @@ def users_reset_password(who: str = typer.Argument(..., help='Sign-in name, disp
 
 @integrations.command('add')
 def integrations_add(name: str = typer.Argument(..., help='Name, for example "Front desk scanner".'),
-                     disabled: bool = typer.Option(False, '--disabled', help='Add the group switched off, so its roles do not apply yet.')):
+                     disabled: bool = typer.Option(False, '--disabled', help='Create the group disabled, so its roles do not apply yet.')):
     """Add an app or device, such as a scanner, that uses Faxbot with its own key. Next give it a role, then create its key."""
     api = state.api()
     result = api.post('/access/integrations', json=api.with_policy({'display_name': name, 'enabled': not disabled}))
@@ -223,7 +223,7 @@ def groups_get(name: str = typer.Argument(..., help='Group name or id.'), ids: b
 @groups.command('add')
 def groups_add(name: str = typer.Argument(..., help='Group name.'),
                description: str = typer.Option('', '--description', help='What the group is for.'),
-               disabled: bool = typer.Option(False, '--disabled', help='Add the group switched off, so its roles do not apply yet.')):
+               disabled: bool = typer.Option(False, '--disabled', help='Create the group disabled, so its roles do not apply yet.')):
     """Add a group."""
     api = state.api()
     result = api.post('/access/groups', json=api.with_policy({'name': name, 'description': description,
@@ -236,7 +236,7 @@ def groups_update(name: str = typer.Argument(..., help='Group name or id.'),
                   new_name: str = typer.Option(None, '--name', help='New name.'),
                   description: str = typer.Option(None, '--description', help='New description.'),
                   enable: bool = typer.Option(False, '--enable', help='Switch on.'),
-                  disable: bool = typer.Option(False, '--disable', help="Switch off; members lose the group's roles.")):
+                  disable: bool = typer.Option(False, '--disable', help='Disable the group; members lose its roles.')):
     """Rename a group, change its description or switch it on or off."""
     api = state.api()
     body = {key: value for key, value in (('name', new_name), ('description', description),
@@ -309,7 +309,7 @@ PERMISSION = typer.Option(None, '--permission', '-p', help='A permission, for ex
 def roles_add(name: str = typer.Argument(..., help='Role name.'),
               permission: list[str] = PERMISSION,
               description: str = typer.Option('', '--description', help='What the role is for.'),
-              disabled: bool = typer.Option(False, '--disabled', help='Add the group switched off, so its roles do not apply yet.')):
+              disabled: bool = typer.Option(False, '--disabled', help='Create the group disabled, so its roles do not apply yet.')):
     """Add a role of your own, choosing what it allows. See faxbot access roles permissions for the choices."""
     if not permission:
         raise CliError('Add at least one --permission. See faxbot access roles permissions.')
@@ -328,7 +328,7 @@ def roles_update(name: str = typer.Argument(..., help='Role name or id.'),
                  add: list[str] = typer.Option(None, '--add', help='Add this permission. Repeat for more.'),
                  remove: list[str] = typer.Option(None, '--remove', help='Remove this permission. Repeat for more.'),
                  enable: bool = typer.Option(False, '--enable', help='Switch on.'),
-                 disable: bool = typer.Option(False, '--disable', help='Switch off everywhere it is assigned.')):
+                 disable: bool = typer.Option(False, '--disable', help='Disable the role everywhere it is assigned.')):
     """Change a custom role. Built-in roles cannot be changed."""
     api = state.api()
     found = resolve.role(api, name)
@@ -351,8 +351,8 @@ def _assignment_row(item, ids):
 
 
 @access.command('list')
-def access_list(who: str = typer.Option(None, '--who', help='Only this user, integration or group.'),
-                where: str = typer.Option(None, '--on', help='Only roles that apply here, such as installation or mailbox:NAME.'),
+def access_list(who: str = typer.Option(None, '--who', help='Only grants for this user, integration or group.'),
+                where: str = typer.Option(None, '--on', help='Only grants on this resource, such as installation or mailbox:NAME.'),
                 ids: bool = IDS):
     """List who has which role, and where."""
     api = state.api()
@@ -367,8 +367,8 @@ def access_list(who: str = typer.Option(None, '--who', help='Only this user, int
                                                     empty='No role assignments.'))
 
 
-WHERE = typer.Option('installation', '--on', help='Where the role applies: installation (default), mailbox:NAME, '
-                                                   'personal:USER, unassigned, or a place from faxbot access resources list.')
+WHERE = typer.Option('installation', '--on', help='Where the role applies: installation (the default), mailbox:NAME, '
+                                                   'personal:USER, unassigned, or a resource from faxbot access resources list.')
 
 
 @access.command('grant')
@@ -410,7 +410,7 @@ KIND_PLACE = {'installation': 'whole installation', 'legacy': 'unassigned faxes'
 
 
 @resources.command('list')
-def resources_list(kind: str = typer.Option(None, '--kind', help='installation, legacy, mailbox or personal.'),
+def resources_list(kind: str = typer.Option(None, '--kind', help='Resource type: installation, legacy, mailbox or personal.'),
                    ids: bool = IDS):
     """List the places a role can apply to."""
     items = state.api().pages('/access/resources', params={'kind': kind})
@@ -487,7 +487,7 @@ def keys_rotate(key_id: str = typer.Argument(..., help='Key ID or key name.')):
 
 @keys.command('revoke')
 def keys_revoke(key_id: str = typer.Argument(..., help='Key ID or key name.')):
-    """Stop a key from working, for good."""
+    """Revoke a key permanently."""
     api = state.api()
     found = resolve.key(api, key_id)
     result = api.post(f"/access/keys/{segment(found['id'])}/revoke", json=api.with_policy({'version': found['version']}))
@@ -498,7 +498,7 @@ def keys_revoke(key_id: str = typer.Argument(..., help='Key ID or key name.')):
 def keys_approve(key_id: str = typer.Argument(..., help='Key ID of a key that needs review.'),
                  who: str = typer.Option(..., '--for', help='User or integration the key will belong to.'),
                  permission: list[str] = typer.Option(..., '--permission', '-p',
-                                                      help='What the key may do. Repeat for more.'),
+                                                      help='A permission for the key, for example fax:send. Repeat for more.'),
                  where: str = WHERE):
     """Approve an older key that is waiting for review: choose whose it is and what it may do."""
     api = state.api()
@@ -573,7 +573,7 @@ def mailboxes_list(ids: bool = IDS):
 
 @mailboxes.command('add')
 def mailboxes_add(label: str = typer.Argument(..., help='Mailbox name, for example "Front desk".'),
-                  disabled: bool = typer.Option(False, '--disabled', help='Add the group switched off, so its roles do not apply yet.')):
+                  disabled: bool = typer.Option(False, '--disabled', help='Create the group disabled, so its roles do not apply yet.')):
     """Add a mailbox."""
     api = state.api()
     result = api.post('/access/mailboxes', json=api.with_policy({'label': label, 'enabled': not disabled}))

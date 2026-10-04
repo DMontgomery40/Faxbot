@@ -155,3 +155,29 @@ def test_a_user_runs_work_commands_with_their_own_key(cli, tmp_path):
     assert acknowledged.exit_code == 0 and 'Acknowledged by Dana Example.' in acknowledged.stdout
     refused = cli('received', 'reopen', item['id'], key=dana)  # the key carries no work:manage
     assert refused.exit_code != 0
+
+
+def test_received_commands_take_either_id_and_count_by_state(cli, tmp_path):
+    ready_user(cli.client, 'dana', 'Dana Example')
+    inbound_id = receive(tmp_path, '+15550100001')
+    feed(0)
+    (item,) = cli.json('received', 'owners')['items']
+    assert item['id'] != inbound_id
+    # Either list's ID works: the received fax's own ID for owner commands, the owners-list ID for fax commands.
+    assert cli.json('received', 'history', inbound_id)['id'] == item['id']
+    assert cli.json('received', 'show', item['id'])['id'] == inbound_id
+    target = tmp_path / 'by-owner-id.pdf'
+    assert cli('received', 'pdf', item['id'], '-o', target).exit_code == 0
+    assert target.read_bytes().startswith(b'%PDF')
+    assigned = cli('received', 'assign', inbound_id, 'dana')
+    assert assigned.exit_code == 0 and 'Assigned to Dana Example' in assigned.stdout
+    exported = tmp_path / 'by-fax-id.zip'
+    assert cli('received', 'export', inbound_id, '-o', exported).exit_code == 0 and exported.exists()
+    counts = cli.json('received', 'counts')
+    assert (counts['open'], counts['unassigned'], counts['done']) == (1, 0, 0)
+    human = cli('received', 'counts').stdout
+    assert '0 received faxes are waiting for an owner.' in human and '1 received fax is open.' in human
+    missing = cli('received', 'history', '0' * 32)
+    assert missing.exit_code == 5 and missing.stderr.strip() == ('No received fax you can see has that ID. '
+                                                                 'See faxbot received list --ids.')
+    assert cli('received', 'show', '0' * 32).exit_code == 5

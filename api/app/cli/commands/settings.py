@@ -128,11 +128,11 @@ VALIDATE_FIELDS = (('phaxio_api_key', 'PHAXIO_API_KEY'), ('phaxio_api_secret', '
 
 
 @settings.command('validate')
-def settings_validate(backend: str = typer.Argument(..., help='Provider to check: phaxio, sinch, efax or sip.'),
-                      ami_port: int = typer.Option(None, '--ami-port', help="For sip only: the port of Faxbot's fax engine, if not the usual one.")):
-    """Check a provider's sign-in details without saving them or sending a fax.
+def settings_validate(backend: str = typer.Argument(..., help='Provider whose credentials to check: phaxio, sinch, efax or sip.'),
+                      ami_port: int = typer.Option(None, '--ami-port', help='SIP only: the Asterisk manager interface port, if not 5038.')):
+    """Check a provider's credentials without saving them or sending a fax.
 
-    Faxbot reads them from these variables on this computer, so they stay out of your command history: PHAXIO_API_KEY, PHAXIO_API_SECRET, SINCH_PROJECT_ID, SINCH_API_KEY, SINCH_API_SECRET, AMI_HOST, AMI_USERNAME, AMI_PASSWORD, EFAX_APP_ID, EFAX_API_KEY and EFAX_USER_ID. Checking eFax details can end the sign-in Faxbot was using; Faxbot signs in again by itself.
+    Credentials are read from these environment variables so they stay out of your shell history: PHAXIO_API_KEY, PHAXIO_API_SECRET, SINCH_PROJECT_ID, SINCH_API_KEY, SINCH_API_SECRET, AMI_HOST, AMI_USERNAME, AMI_PASSWORD, EFAX_APP_ID, EFAX_API_KEY and EFAX_USER_ID. Checking eFax credentials can end the eFax session Faxbot was using; Faxbot signs in again by itself.
     """
     import os
     body = {'backend': backend}
@@ -147,6 +147,19 @@ def settings_validate(backend: str = typer.Argument(..., help='Provider to check
         rows = []
         _flatten('', result.get('checks', {}), rows)
         out.table(['Check', 'Result'], rows, empty='No checks apply to this provider.')
+    state.out().result(result, human)
+
+
+@settings.command('reload')
+def settings_reload():
+    """Read the saved settings again and show any changes still waiting for a restart."""
+    result = state.api().post('/admin/settings/reload', json={})
+    meta = result.get('_meta', {})
+
+    def human(out):
+        out.line('Faxbot read its saved settings again.')
+        if meta.get('apply_state') == 'pending_restart':
+            out.line('Some saved changes take effect after a restart: ' + ', '.join(meta.get('pending_fields') or []))
     state.out().result(result, human)
 
 
@@ -224,9 +237,9 @@ def providers_configure(provider: str = typer.Argument(..., help="Provider from 
                         assignments: list[str] = typer.Argument(None, metavar='NAME=VALUE...',
                                                                 help='Provider settings to change.'),
                         secret: list[str] = typer.Option(None, '--secret', metavar='NAME',
-                                                         help='Ask for this setting without showing it. Repeat for more.'),
+                                                         help="Prompt for this setting's value without echoing it, for passwords and keys. Repeat for more."),
                         role: str = typer.Option(None, '--role', help='outbound, inbound or storage.'),
-                        enable: bool = typer.Option(False, '--enable', help='Use this provider for the role.'),
+                        enable: bool = typer.Option(False, '--enable', help='Make this provider active for the role.'),
                         disable: bool = typer.Option(False, '--disable', help='Stop using this provider for the role.')):
     """Change a provider's settings, or start or stop using it."""
     if enable and disable:
@@ -264,6 +277,57 @@ def providers_registry():
         [[item.get('id'), item.get('name'), item.get('description')] for item in items], empty='The registry is empty.'))
 
 
+def efax_status():
+    """Show whether Faxbot is collecting your received faxes from eFax, when it last checked, and faxes still stored at eFax."""
+    result = state.api().get('/admin/inbound/efax')
+
+    def human(out):
+        if not result.get('receiving'):
+            out.line('Faxbot is not collecting received faxes from eFax; eFax is not set up to receive.')
+        else:
+            out.line('Faxbot collects your received faxes from eFax.')
+            checked = local_time(result.get('checked_at'), empty=None)
+            out.line(result.get('problem') or (f'Faxbot last checked eFax at {checked}.' if checked
+                                               else 'Faxbot has not checked eFax yet.'))
+        for note in result.get('notes') or []:
+            out.line(note)
+    state.out().result(result, human)
+
+
+def providers_import(source: str = typer.Argument(..., metavar='FILE',
+                                                  help="A JSON file of provider descriptions, or a Markdown file with "
+                                                       "them in code blocks; '-' reads standard input.")):
+    """Add several fax services at once from a file of their descriptions."""
+    import json
+    import sys
+    if source == '-':
+        text = sys.stdin.read()
+    else:
+        try:
+            with open(source, encoding='utf-8') as handle:
+                text = handle.read()
+        except OSError:
+            raise CliError(f'Cannot read {source}.') from None
+    try:
+        document = json.loads(text)
+    except ValueError:
+        body = {'markdown': text}
+    else:
+        if isinstance(document, dict) and isinstance(document.get('items'), list):
+            document = document['items']
+        body = {'items': document if isinstance(document, list) else [document]}
+    result = state.api().post('/admin/plugins/http/import-manifests', json=body)
+
+    def human(out):
+        for item in result.get('imported') or []:
+            out.line(f"Added the provider {item.get('name') or item.get('id')}.")
+        for item in result.get('errors') or []:
+            out.line(f"Could not add one provider: {item.get('error')}")
+        if not result.get('imported') and not result.get('errors'):
+            out.line('No providers were added.')
+    state.out().result(result, human)
+
+
 def _manifest(path):
     import json
     try:
@@ -285,7 +349,7 @@ def providers_validate(manifest: str = typer.Argument(..., help='The file that d
 
 @providers.command('install')
 def providers_install(manifest: str = typer.Argument(..., help='The file that describes the fax service (JSON).')):
-    """Add a fax service that Faxbot does not include, from the file that describes it."""
+    """Install a custom HTTP fax provider from its manifest file."""
     result = state.api().post('/admin/plugins/http/install', json={'manifest': _manifest(manifest)})
     state.out().result(result, lambda out: out.line(f"Provider {result.get('id')} installed. Configure it with "
                                                     f"faxbot providers configure {result.get('id')}."))
@@ -364,7 +428,7 @@ def diagnostics_run():
 
 @pair.command('new')
 def pair_new():
-    """Create a six-digit code that pairs one phone. It works once, for five minutes."""
+    """Create a six-digit pairing code for one phone. It works once, within five minutes."""
     result = state.api().post('/admin/tunnel/pair')
     out = state.out()
     out.result(result, lambda o: o.line(f"Valid once, until {local_time(result['expires_at'])}. Enter it in the "
@@ -374,10 +438,10 @@ def pair_new():
 
 @pair.command('device')
 def pair_device(code: str = typer.Argument(..., help='The six-digit pairing code.'),
-                device_name: str = typer.Option('Command line', '--device-name', help='Name the key is listed under.'),
+                device_name: str = typer.Option('Command line', '--device-name', help='Device name shown on the new key.'),
                 save_profile: str = typer.Option(None, '--save-profile', metavar='NAME',
                                                  help='Save the new key in this profile instead of printing it.')):
-    """Pair as if this computer were a phone, to test pairing: enter a pairing code and get the phone's own key."""
+    """Test pairing as if this computer were a phone: exchange a pairing code for the device's own API key."""
     api = state.api()
     result = api.post('/mobile/pair', auth=False, json={'code': code, 'device_name': device_name})
     out = state.out()
