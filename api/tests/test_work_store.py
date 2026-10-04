@@ -102,7 +102,7 @@ def test_received_document_becomes_one_owned_item_through_its_lifecycle(ww):
     assert [person['name'] for person in ww.service.assignees(admin, item['id'])] == ['admin', 'dana']
 
     assigned = ww.service.assign(admin, item['id'], 'dana', version=1)
-    assert assigned['state_text'] == 'Assigned to dana; acknowledge by 4 Oct 11:30 UTC.'
+    assert assigned['state_text'] == 'Assigned to dana; acknowledge by 4 Oct 11:30 AM UTC.'
     assert assigned['owner'] == {'id': 'dana', 'name': 'dana'} and assigned['version'] == 2
     with pytest.raises(WorkForbidden, match='Only the owner'):
         ww.service.acknowledge(admin, item['id'], version=2)

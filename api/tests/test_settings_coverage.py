@@ -48,6 +48,7 @@ AWAITING_CONSOLE = {
     'enable_s3_diagnostics': 'System → Diagnostics: also check the S3 bucket',
     'mobile_local_base': 'Access → Keys & phones: address phones use on your network',
     'docs_base_url': 'System → Developer: documentation address',
+    'time_zone': "System → Setup and the Setup wizard: the installation's time zone",
 }
 
 PROMOTED = {'sip_public_address_check_minutes': 'SIP_PUBLIC_ADDRESS_CHECK_MINUTES',
@@ -328,3 +329,45 @@ def test_a_new_installation_reads_the_variables_at_first_start(installation):
         values = installation.store().read().active.values
         assert (values.sip_public_address_check_minutes, values.mobile_local_base) == (0, 'http://192.0.2.32:8080')
         assert _environment_audits(installation.store()) == []
+
+
+# -- the installation's time zone ---------------------------------------------------------
+
+def test_the_time_zone_defaults_from_tz_and_never_to_a_made_up_one():
+    for environment, expected in (({}, ''), ({'TZ': 'America/Denver'}, 'America/Denver'), ({'TZ': 'UTC'}, ''),
+                                  ({'TZ': ':America/Denver'}, 'America/Denver'), ({'TZ': 'EST5EDT,M3.2.0'}, ''),
+                                  ({'FAX_TIME_ZONE': 'Europe/London', 'TZ': 'America/Denver'}, 'Europe/London')):
+        assert ConfigurationValues.from_environment(environment).time_zone == expected, environment
+
+
+def test_the_time_zone_is_a_setting_refused_with_one_sentence_when_unknown(cli):
+    client = cli.client
+    assert _settings(client)['installation'] == {'time_zone': ''}
+    assert _put(client, time_zone='America/Denver').status_code == 200
+    assert _settings(client)['installation'] == {'time_zone': 'America/Denver'}
+    refused = _put(client, time_zone='Mars/Olympus')
+    assert refused.status_code == 400
+    assert refused.json()['detail'] == 'Choose a time zone from the list, such as America/Denver.'
+    assert cli('system', 'settings', 'set', 'time_zone=Europe/London').exit_code == 0
+    assert _settings(client)['installation'] == {'time_zone': 'Europe/London'}
+
+
+def test_the_time_zone_needs_only_the_settings_permission():
+    from app.access.configuration import configuration_requirements
+    before = ConfigurationValues.from_environment({})
+    assert configuration_requirements(before, before.with_patch({'time_zone': 'America/Denver'})).permissions == \
+        {'settings:write'}
+
+
+def test_a_new_installation_takes_its_zone_from_tz_and_an_upgrade_takes_it_once(installation):
+    with pytest.MonkeyPatch.context() as earlier:
+        _earlier_release(earlier)
+        earlier.setattr(ConfigurationValues, 'to_environment', (lambda original: lambda self, **kwargs: {
+            key: value for key, value in original(self, **kwargs).items() if key != 'FAX_TIME_ZONE'})(
+                ConfigurationValues.to_environment))
+        with installation.start():
+            pass
+    with installation.start(TZ='America/Denver'):
+        assert installation.store().read().active.values.time_zone == 'America/Denver'
+    with installation.start(TZ='Europe/London'):  # taken once; the console owns it from then on
+        assert installation.store().read().active.values.time_zone == 'America/Denver'

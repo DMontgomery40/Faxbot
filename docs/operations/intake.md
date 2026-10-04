@@ -37,7 +37,7 @@ In **Settings**, under **Email delivery**:
 4. To deliver only faxes sent to one of your numbers, enter that number. Leave it empty to deliver faxes for every number.
 5. Save, then select **Send test email** to check the settings.
 
-Each email carries one sentence describing the fax, such as "Fax from +1 555 010 9999 to +1 555 010 0001, 3 pages, received 3 October 2026 at 14:05 UTC.", and the original PDF as an attachment.
+Each email carries one sentence describing the fax, such as "Fax from +1 555 010 9999 to +1 555 010 0001, 3 pages, received 3 October 2026 at 2:05 PM MDT.", and the original PDF as an attachment. The time is in the installation's time zone (System → Setup, or `faxbot system settings set time_zone=America/Denver`); with none set it says UTC. A new installation takes its zone from the server's `TZ` when that names a zone other than UTC. The subject's `{received_at}` uses the same time.
 
 When a fax number has its own email delivery, Faxbot uses it. Otherwise it uses the email delivery with no number.
 

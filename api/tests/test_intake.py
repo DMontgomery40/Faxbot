@@ -4,6 +4,8 @@ from email import message_from_bytes, policy
 import socket
 from uuid import uuid4
 
+import re
+
 import pytest
 import sqlalchemy as sa
 from aiosmtpd.controller import Controller
@@ -264,3 +266,27 @@ def test_login_is_used_when_a_user_name_is_set():
         assert seen[-1] == (b'fax', b'right') and len(recorder.messages) == 1
     finally:
         controller.stop()
+
+
+def test_the_email_says_when_the_fax_arrived_in_the_installation_time_zone(intake, smtp):
+    from app.intake.email import describe, subject_for
+    item = {'received_at': datetime(2026, 10, 4, 20, 52), 'from_number': '+15550109999', 'to_number': '+15550100001',
+            'pages': 1}
+    assert describe(item, 'America/Denver') == ('Fax from +15550109999 to +15550100001, 1 page, received '
+                                                '4 October 2026 at 2:52 PM MDT.')
+    assert describe(item).endswith('received 4 October 2026 at 8:52 PM UTC.')  # no zone set: UTC, said so
+    assert subject_for('Fax received {received_at}', item, 'America/Denver') == \
+        'Fax received 4 October 2026 at 2:52 PM MDT'
+    assert describe({**item, 'received_at': datetime(2026, 12, 4, 20, 52)}, 'America/Denver').endswith(
+        '4 December 2026 at 1:52 PM MST.')
+    # The worker writes the installation's zone into the message it sends.
+    store, _, values, tmp_path = intake
+    recorder, port = smtp
+    store.create_connector(name='Front desk', settings=email_settings(port, subject_template='Fax {received_at}'))
+    inbound(store, tmp_path)
+    assert worker(store, values.with_patch({'time_zone': 'America/Denver'})).step() is True
+    (_, _, content), = recorder.messages
+    message = message_from_bytes(content, policy=policy.default)
+    body = message.get_body(('plain',)).get_content().strip()
+    assert re.search(r'received [0-9]{1,2} [A-Z][a-z]+ 20[0-9]{2} at [0-9]{1,2}:[0-9]{2} [AP]M M[DS]T\.$', body)
+    assert re.search(r' M[DS]T$', message['Subject'])

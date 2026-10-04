@@ -12,13 +12,21 @@ from pydantic import AliasChoices, BaseModel, ConfigDict, Field, PrivateAttr, Va
 from .config_paths import bundled_config_dir
 
 
+# One plain sentence for a refused setting, where the field's name alone would not say what to do.
+FIELD_SENTENCES = {"FAX_TIME_ZONE": "Choose a time zone from the list, such as America/Denver."}
+
+
 class ConfigurationValueError(ValueError):
     """Configuration failed validation; issues never contain submitted values."""
 
     def __init__(self, issues: list[dict[str, str]]):
         self.issues = tuple(issues)
         fields = ", ".join(item["field"] for item in issues)
-        super().__init__("Invalid configuration fields: " + fields)
+        names = {item["field"] for item in issues}
+        if len(names) == 1 and next(iter(names)) in FIELD_SENTENCES:
+            super().__init__(FIELD_SENTENCES[next(iter(names))])
+        else:
+            super().__init__("Invalid configuration fields: " + fields)
 
 
 # Credentials read from the environment at every start (config_runtime). API_KEY keeps
@@ -33,7 +41,28 @@ _NUMBER_FIELDS = frozenset({"direct_fax_number", "sip_trunk_caller_id", "sip_tru
 # Read straight from the environment before they became configuration values. A saved
 # configuration from before then takes each variable once, at the next start (config_runtime).
 PROMOTED_FROM_ENVIRONMENT = ("sip_public_address_check_minutes", "enable_s3_diagnostics",
-                             "mobile_local_base", "docs_base_url")
+                             "mobile_local_base", "docs_base_url", "time_zone")
+
+
+def usable_zone(value):
+    """An IANA time zone name from TZ, or '' when it is UTC, empty or not a zone Faxbot can use."""
+    if not isinstance(value, str):
+        return ""
+    name = value.strip().lstrip(":")
+    if not name or name.upper() in {"UTC", "ETC/UTC", "GMT", "ETC/GMT", "UCT", "ZULU", "UNIVERSAL"}:
+        return ""
+    return name if _zone_name(name) else ""
+
+
+def _zone_name(name) -> bool:
+    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+    if not isinstance(name, str) or not 0 < len(name) <= 64 or name.startswith("/") or ".." in name:
+        return False
+    try:
+        ZoneInfo(name)
+    except (ZoneInfoNotFoundError, ValueError, OSError):
+        return False
+    return True
 
 
 # Placeholder numbers earlier releases saved as defaults. A saved configuration that still holds
@@ -237,6 +266,10 @@ class ConfigurationValues(BaseModel):
     mobile_local_base: str = Field('', validation_alias='MOBILE_LOCAL_BASE')
     # Where the console's help links point.
     docs_base_url: str = Field('https://docs.faxbot.net/latest/', validation_alias='DOCS_BASE_URL')
+    # The installation's time zone (IANA name) for times the server writes for people, such as the
+    # received time in an email. At the first start the process's TZ is taken when it names a zone
+    # other than UTC; empty means UTC.
+    time_zone: str = Field('', validation_alias=AliasChoices('FAX_TIME_ZONE', 'TZ'))
 
     _explicit_keys: frozenset[str] = PrivateAttr(default_factory=frozenset)
 
@@ -253,6 +286,13 @@ class ConfigurationValues(BaseModel):
             value = value.strip().upper()
             if value not in SUPPORTED_COUNTRIES:
                 raise ValueError("unsupported country")
+        return value
+
+    @field_validator("time_zone")
+    @classmethod
+    def require_time_zone(cls, value):
+        if value != "" and not _zone_name(value):
+            raise ValueError("unknown time zone")
         return value
 
     @field_validator("docs_base_url", "mobile_local_base")
@@ -283,6 +323,12 @@ class ConfigurationValues(BaseModel):
             alias = field.validation_alias
             choices = alias.choices if isinstance(alias, AliasChoices) else [alias]
             for key in choices:
+                if key == "TZ":
+                    # The process's own TZ only suggests the installation's zone: never UTC, never refused.
+                    if usable_zone(environment.get(key)):
+                        candidate[choices[0]] = usable_zone(environment[key])
+                        break
+                    continue
                 if key in environment:
                     candidate[choices[0]] = environment[key]
                     break
@@ -329,9 +375,18 @@ class ConfigurationValues(BaseModel):
         """
         result = {}
         for name in PROMOTED_FROM_ENVIRONMENT:
-            key = cls.model_fields[name].validation_alias
-            if key in environment and key not in saved._explicit_keys:
-                result[name] = (key, environment[key])
+            alias = cls.model_fields[name].validation_alias
+            choices = alias.choices if isinstance(alias, AliasChoices) else [alias]
+            if choices[0] in saved._explicit_keys:
+                continue
+            for key in choices:
+                if key not in environment:
+                    continue
+                value = usable_zone(environment[key]) if key == "TZ" else environment[key]
+                if key == "TZ" and not value:
+                    continue  # the process's TZ only suggests a zone; UTC or an unknown one suggests none
+                result[name] = (key, value)
+                break
         return result
 
     def placeholder_clearings(self) -> dict[str, str]:

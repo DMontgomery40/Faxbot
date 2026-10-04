@@ -1,14 +1,15 @@
 """One plain sentence per work state, due rule and history event.
 
-API sentences that contain a time name UTC, because the server does not know
-the reader's time zone. The console and the CLI build the same sentences from
-``state_key`` and the item fields with the reader's local time.
+API sentences that contain a time use the installation's time zone with its
+abbreviation (UTC when none is set). The console and the CLI build the same
+sentences from ``state_key`` and the item fields with the reader's local time.
 """
+from .. import people_time
 
 
-def utc_text(moment):
-    """3 Oct 14:05 UTC: a short, unambiguous time for sentences and files that travel."""
-    return f"{moment.day} {moment:%b %H:%M} UTC" if moment is not None else ''
+def time_text(moment):
+    """3 Oct 2:05 PM MDT: a short time with its zone, for sentences and files that travel."""
+    return people_time.short(moment)
 
 
 def sentence(note):
@@ -48,7 +49,7 @@ def state_text(item, names, now):
         return f'Overdue; assigned to {owner}.' if item['owner_principal_id'] else 'Overdue; waiting for an owner.'
     if key == 'assigned':
         if item['due_at'] is not None:
-            return f"Assigned to {owner}; acknowledge by {utc_text(item['due_at'])}."
+            return f"Assigned to {owner}; acknowledge by {time_text(item['due_at'])}."
         return f'Assigned to {owner}.'
     return 'Waiting for an owner.'
 

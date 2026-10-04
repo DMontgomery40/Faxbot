@@ -1836,12 +1836,13 @@ async def admin_inbound_simulate(payload: SimulateInboundIn, request: Request,
     backend = (payload.backend or settings.fax_backend).lower()[:20]
 
     def create():
-        moment = datetime.now().astimezone()
+        from .people_time import date_and_time
+        created_at = date_and_time(datetime.now(timezone.utc), settings.time_zone)
         with tempfile.TemporaryDirectory() as folder:
             text = os.path.join(folder, "test-fax.txt")
             document = os.path.join(folder, "test-fax.pdf")
             with open(text, "w", encoding="utf-8") as handle:
-                handle.write(f"Test fax created in Faxbot on {moment.strftime('%B %d, %Y at %H:%M')}.\n")
+                handle.write(f"Test fax created in Faxbot on {created_at}.\n")
             txt_to_pdf(text, document)
             with open(document, "rb") as handle:
                 data = handle.read()
