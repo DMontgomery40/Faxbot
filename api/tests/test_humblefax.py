@@ -173,12 +173,14 @@ def test_settings_use_documented_aliases_and_redact_both_keys():
     assert redacted['HUMBLEFAX_FROM_NUMBER'] == '13035550199'
     view = project_admin_settings(ConfigurationSnapshot('installation', 1,
         ConfigurationRevision('active', values), None))
+    # account_numbers are read from HumbleFax outside the snapshot; never under the test harness.
     assert view['humblefax'] == {'access_key': '***', 'secret_key': '***',
-                                 'from_number': '13035550199', 'configured': True}
+                                 'from_number': '13035550199', 'account_numbers': [], 'configured': True}
     assert ACCESS not in json.dumps(view) and SECRET not in json.dumps(view)
     empty = project_admin_settings(ConfigurationSnapshot('installation', 1,
         ConfigurationRevision('active', ConfigurationValues.from_environment({})), None))
-    assert empty['humblefax'] == {'access_key': '', 'secret_key': '', 'from_number': '', 'configured': False}
+    assert empty['humblefax'] == {'access_key': '', 'secret_key': '', 'from_number': '', 'account_numbers': [],
+                                  'configured': False}
 
 
 @pytest.mark.parametrize('number', ['+2025550123', '303-555-0199', '22025550123', '0025550123', '+442071234567', ' 3035550199'])

@@ -36,6 +36,11 @@ PROMOTED_FROM_ENVIRONMENT = ("sip_public_address_check_minutes", "enable_s3_diag
                              "mobile_local_base", "docs_base_url")
 
 
+# Placeholder numbers earlier releases saved as defaults. A saved configuration that still holds
+# exactly one of them has it cleared once, at the next start (config_runtime); a typed value stays.
+PLACEHOLDER_DEFAULTS = {"fax_station_id": "+10000000000", "fs_caller_id_number": "3035551234"}
+
+
 def _web_address(value) -> bool:
     if not (type(value) is str and 0 < len(value) <= 2048
             and all(33 <= ord(character) < 127 for character in value)
@@ -70,7 +75,8 @@ class ConfigurationValues(BaseModel):
     fs_esl_port: int = Field(8021, validation_alias='FREESWITCH_ESL_PORT', ge=1, le=65535)
     fs_esl_password: str = Field('ClueCon', validation_alias='FREESWITCH_ESL_PASSWORD', repr=False, json_schema_extra={'secret': True})
     fs_gateway_name: str = Field('gw_signalwire', validation_alias='FREESWITCH_GATEWAY_NAME')
-    fs_caller_id_number: str = Field('3035551234', validation_alias='FREESWITCH_CALLER_ID_NUMBER')
+    # The number your carrier gave you for FreeSWITCH calls; empty until entered (calls are refused without it).
+    fs_caller_id_number: str = Field('', validation_alias='FREESWITCH_CALLER_ID_NUMBER')
     fs_t38_enable: bool = Field(True, validation_alias='FREESWITCH_T38_ENABLE')
     # SIP trunk for Faxbot's own fax engine (Asterisk). Empty preset keeps the
     # older SIP_USERNAME/SIP_SERVER container settings; empty host, port,
@@ -151,7 +157,8 @@ class ConfigurationValues(BaseModel):
     efax_webhook_secret: str = Field('', validation_alias='EFAX_WEBHOOK_SECRET', repr=False,
                                      json_schema_extra={'secret': True}, pattern=r'^[!-~]{0,256}$')
     fax_header: str = Field('Faxbot', validation_alias='FAX_HEADER')
-    fax_station_id: str = Field('+10000000000', validation_alias='FAX_LOCAL_STATION_ID')
+    # The fax number printed for the receiving machine; empty means the trunk's caller ID, or none.
+    fax_station_id: str = Field('', validation_alias='FAX_LOCAL_STATION_ID')
     # Installation country (ISO 3166 alpha-2, such as US or GB) for fax numbers
     # entered without a country code; every stored number is E.164.
     fax_default_country: str = Field('US', validation_alias='FAX_DEFAULT_COUNTRY')
@@ -326,6 +333,10 @@ class ConfigurationValues(BaseModel):
             if key in environment and key not in saved._explicit_keys:
                 result[name] = (key, environment[key])
         return result
+
+    def placeholder_clearings(self) -> dict[str, str]:
+        """Settings that still hold an earlier release's placeholder number, as {field: ''}."""
+        return {name: "" for name, placeholder in PLACEHOLDER_DEFAULTS.items() if getattr(self, name) == placeholder}
 
     def to_environment(self, *, redact_secrets: bool = False) -> dict[str, str]:
         """Complete literal values; callers choose private or redacted output.

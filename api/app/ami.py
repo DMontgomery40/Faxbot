@@ -140,7 +140,8 @@ def originate_fields_for(values, job_id, dest, tiff_path, *, attempt_id=None):
     With a configured SIP trunk the call carries the carrier-authorized caller
     ID, the carrier's number format and the optional fax preference; refused
     (ValueError naming fields only) when the trunk cannot place calls. Without
-    one, the original station-ID behavior is unchanged.
+    one, the call carries the station ID as before; an empty station ID sends none.
+    An empty station ID on a trunk call means the trunk's caller ID.
     """
     from . import sip_trunk
     if not sip_trunk.configured(values):
@@ -149,7 +150,7 @@ def originate_fields_for(values, job_id, dest, tiff_path, *, attempt_id=None):
     trunk = sip_trunk.effective_trunk(values, for_calls=True)
     return prepare_originate_fields(
         job_id, dest, tiff_path, caller_id=trunk.caller_id, header=values.fax_header,
-        attempt_id=attempt_id, station_id=values.fax_station_id,
+        attempt_id=attempt_id, station_id=values.fax_station_id or None,
         dial=sip_trunk.dial_number(trunk, dest), fax_preference=trunk.fax_preference)
 
 

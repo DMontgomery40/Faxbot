@@ -31,6 +31,17 @@ def _engine_login_shared(values) -> bool:
         return False
 
 
+def _humblefax_numbers(values) -> tuple:
+    # The only view value read from outside the snapshot: HumbleFax's cached answer, never the keys.
+    from .humblefax_service import account_numbers
+    return account_numbers(values.humblefax_access_key, values.humblefax_secret_key) or ()
+
+
+def _freeswitch_caller_id_missing() -> str:
+    from .freeswitch_service import CALLER_ID_MISSING
+    return CALLER_ID_MISSING
+
+
 def mask_secret(value: str) -> str:
     """Do not disclose a secret's suffix or length; preserve an explicit clear."""
     return '***' if value else ''
@@ -86,6 +97,8 @@ def project_admin_settings(snapshot: ConfigurationSnapshot, pending_fields: Iter
             'access_key': mask_secret(values.humblefax_access_key),
             'secret_key': mask_secret(values.humblefax_secret_key),
             'from_number': values.humblefax_from_number,
+            # The account's own numbers as HumbleFax reports them (cached read; empty until known).
+            'account_numbers': list(_humblefax_numbers(values)),
             'configured': bool(values.humblefax_access_key and values.humblefax_secret_key),
         },
         'efax': {
@@ -124,6 +137,7 @@ def project_admin_settings(snapshot: ConfigurationSnapshot, pending_fields: Iter
             'esl_password': mask_secret(values.fs_esl_password),
             'gateway_name': values.fs_gateway_name,
             'caller_id_number': values.fs_caller_id_number,
+            'problem': None if values.fs_caller_id_number else _freeswitch_caller_id_missing(),
             't38_enable': values.fs_t38_enable,
         },
         'sip': {
