@@ -249,13 +249,24 @@ class IntakeStore:
         return now, None
 
     def feed_inbound(self, *, limit=100, now=None):
-        """Create one item per received inbound fax that has a document."""
+        """Create one item per received inbound fax that has its real document.
+
+        A fax whose document is still being fetched (or could not be) waits; a
+        fax recorded before acquisition records existed keeps the old rule.
+        """
         now = now or utcnow()
         inbound, items = self.inbound, self.items
+        if not hasattr(self, '_imports'):
+            self._imports = reflect(self.engine, ('inbound_imports',))['inbound_imports']
+        imports = self._imports
+        recorded = sa.exists(sa.select(1).where(imports.c.inbound_fax_id == inbound.c.id))
+        acquired = sa.exists(sa.select(1).where(imports.c.inbound_fax_id == inbound.c.id,
+                                                imports.c.state.in_(('received', 'conflict'))))
         query = (sa.select(inbound.c.id, inbound.c.from_number, inbound.c.to_number, inbound.c.pages,
                            inbound.c.received_at)
                  .select_from(inbound.outerjoin(items, items.c.inbound_fax_id == inbound.c.id))
-                 .where(items.c.id.is_(None), inbound.c.pdf_path.is_not(None), inbound.c.pdf_path != '')
+                 .where(items.c.id.is_(None), inbound.c.pdf_path.is_not(None), inbound.c.pdf_path != '',
+                        sa.or_(~recorded, sa.and_(inbound.c.status == 'received', acquired)))
                  .order_by(inbound.c.received_at, inbound.c.id).limit(limit))
         created = 0
         with read_connection(self.engine) as connection:

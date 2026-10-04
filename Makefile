@@ -55,6 +55,14 @@ cli:
 cli-docs:
 	cd api && $(abspath $(VENV))/bin/python -m app.cli.reference > ../docs/reference/cli.md
 
+# Docs Autopilot proposal with Codex on your own sign-in (codex login; no API key):
+#   make docs-propose BASE=<previous commit> [APPLY=1]
+# Writes mkdocs-docs-llm.patch only after validation; APPLY=1 also stages it. Nothing is committed.
+.PHONY: docs-propose
+docs-propose:
+	@test -n "$(BASE)" || { echo "Set BASE to the previous commit, for example: make docs-propose BASE=HEAD~1"; exit 2; }
+	$(abspath $(VENV))/bin/python scripts/docs_ai/generate_docs_from_diff.py --base "$(BASE)" --llm codex $(if $(APPLY),--apply,)
+
 # Alembic helpers (run locally)
 alembic-upgrade:
 	DATABASE_URL=$${DATABASE_URL:-sqlite:///./faxbot.db} alembic -c api/alembic.ini upgrade head
