@@ -111,3 +111,25 @@ def test_intake_permissions(client):
                                ('DELETE', '/intake/connectors/x', None)]:
         response = client.request(method, path, json=body, headers=sender)
         assert response.status_code == 403, (method, path, response.status_code)
+
+
+def test_email_settings_appear_as_a_connector_at_once(client):
+    """Apply settings, then the connector from installation settings is listed and enabled straight away."""
+    assert [item for item in client.get('/intake/connectors', headers=ADMIN).json()['connectors']
+            if item['managed']] == []
+    current = client.get('/admin/settings', headers=ADMIN).json()
+    applied = client.put('/admin/settings', headers=ADMIN, json={
+        'expected_revision_id': current['_meta']['desired_revision_id'], 'intake_email_enabled': True,
+        'intake_smtp_host': 'smtp.clinic.example', 'intake_smtp_port': 587, 'intake_email_from': 'fax@clinic.example',
+        'intake_email_to': 'frontdesk@clinic.example'})
+    assert applied.status_code == 200, applied.text
+    managed = [item for item in client.get('/intake/connectors', headers=ADMIN).json()['connectors'] if item['managed']]
+    assert len(managed) == 1 and managed[0]['enabled'] is True
+    assert managed[0]['name'] == 'Email from installation settings' and managed[0]['host'] == 'smtp.clinic.example'
+    # Turned off in settings, it is turned off at once too, and never listed twice.
+    current = client.get('/admin/settings', headers=ADMIN).json()
+    assert client.put('/admin/settings', headers=ADMIN, json={
+        'expected_revision_id': current['_meta']['desired_revision_id'],
+        'intake_email_enabled': False}).status_code == 200
+    managed = [item for item in client.get('/intake/connectors', headers=ADMIN).json()['connectors'] if item['managed']]
+    assert len(managed) == 1 and managed[0]['enabled'] is False

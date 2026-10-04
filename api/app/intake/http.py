@@ -3,6 +3,9 @@
 Reads use ``mailboxes:read`` and changes use ``settings:write``; the queue is an
 installation-wide view of every received document's delivery.
 """
+import logging
+import threading
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -19,6 +22,24 @@ def _active_values(runtime):
     return lambda: runtime.manager.store.read().active.values
 
 
+# The connector from installation settings follows each settings change at once: before the
+# connector list is read and before each delivery step, whenever the active settings changed.
+# The 300-second task below stays as a backstop. One lock keeps two callers from creating it twice.
+_SYNC_LOCK = threading.Lock()
+_SYNCED: dict[int, str] = {}
+
+
+def sync_settings_now(store, runtime, *, always=False):
+    """Bring the connector from installation settings in step with the active settings."""
+    revision = runtime.manager.store.read().active
+    key = id(runtime.manager.store)
+    with _SYNC_LOCK:
+        if not always and _SYNCED.get(key) == revision.id:
+            return
+        store.sync_managed(revision.values)
+        _SYNCED[key] = revision.id
+
+
 def _background(app):
     engine, runtime = installation_engine(app)
     if engine is None:
@@ -28,10 +49,17 @@ def _background(app):
                         country=lambda: values().fax_default_country)
     worker = IntakeWorker(store, values=values)
 
+    def deliver():
+        try:
+            sync_settings_now(store, runtime)
+        except Exception:
+            logging.getLogger(__name__).warning('The email connector from installation settings could not be updated.')
+        return worker.step()
+
     def sync_settings():
-        store.sync_managed(values())
+        sync_settings_now(store, runtime, always=True)
         return False
-    return [('faxbot-intake-delivery', repeat(worker.step, interval=5.0, initial_delay=2.0,
+    return [('faxbot-intake-delivery', repeat(deliver, interval=5.0, initial_delay=2.0,
                                               warning='Intake delivery is temporarily unavailable.')),
             ('faxbot-intake-settings', repeat(sync_settings, interval=300.0, initial_delay=1.0,
                                               warning='The email connector from installation settings could not be updated.'))]
@@ -138,7 +166,12 @@ class ConnectorIn(BaseModel):
 @router.get('/connectors', dependencies=[Depends(require_permission('mailboxes:read'))])
 async def list_connectors(request: Request):
     store = _store(request)
-    connectors = await _call(store.list_connectors)
+    _, runtime = installation_engine(request.app)
+
+    def read():
+        sync_settings_now(store, runtime)
+        return store.list_connectors()
+    connectors = await _call(read)
     return {'connectors': [_connector_view(connector) for connector in connectors]}
 
 
