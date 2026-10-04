@@ -23,14 +23,14 @@ describe('resource access', () => {
 
     backend.bumpPolicy(); // another administrator changed access meanwhile
     fireEvent.click(within(dialog).getByRole('button', { name: 'Add mailbox' }));
-    expect(await within(dialog).findByText('Access policy changed. Reload and try again.')).toBeTruthy();
+    expect(await within(dialog).findByText('Access settings changed; review and save again.')).toBeTruthy();
     expect((within(dialog).getByLabelText('Mailbox name') as HTMLInputElement).value).toBe('Billing');
     expect(backend.requestsTo('POST', '/access/mailboxes')[0].body).toEqual({ label: 'Billing', enabled: true, expected_policy_version: 7 });
 
     fireEvent.click(within(dialog).getByRole('button', { name: 'Reload' }));
     // Reload refreshes the policy version without discarding the draft.
     await waitFor(() => expect(client.policyVersion).toBe(8));
-    await waitFor(() => expect(within(dialog).queryByText('Access policy changed. Reload and try again.')).toBeNull());
+    await waitFor(() => expect(within(dialog).queryByText('Access settings changed; review and save again.')).toBeNull());
     expect((within(dialog).getByLabelText('Mailbox name') as HTMLInputElement).value).toBe('Billing');
     fireEvent.click(within(dialog).getByRole('button', { name: 'Add mailbox' }));
     expect(await screen.findByText('Billing')).toBeTruthy();

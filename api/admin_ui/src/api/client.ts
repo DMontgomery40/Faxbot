@@ -95,7 +95,7 @@ const safeReconciliationInputDetails = new Map<string, string>([
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 const CSRF_FAILURE = 'Browser request verification failed';
 export const TRANSPORT_REFUSED = 'Credential transport or browser origin is not allowed.';
-export const POLICY_CHANGED = 'Access policy changed. Reload and try again.';
+export const POLICY_CHANGED = 'Access settings changed; review and save again.';
 
 export function normalizeFaxDestination(number: string): string {
   return number.replace(/[\s\-\(\)]/g, '');
@@ -306,10 +306,18 @@ export class AdminAPIClient {
   // new one from the reply.
   private async accessWrite<T extends object>(path: string, body: object, method: 'POST' | 'PATCH' = 'POST'): Promise<T & PolicyResult> {
     if (this.policyRefresh) await this.policyRefresh;
-    const result = await this.json<T & PolicyResult>(path, {
-      method,
-      body: JSON.stringify({ ...body, expected_policy_version: this.policyVersion ?? 0 }),
-    });
+    let result: T & PolicyResult;
+    try {
+      result = await this.json<T & PolicyResult>(path, {
+        method,
+        body: JSON.stringify({ ...body, expected_policy_version: this.policyVersion ?? 0 }),
+      });
+    } catch (error) {
+      // Someone else changed access meanwhile: read the current version once, so
+      // saving again after a review is not refused for the same reason.
+      if (error instanceof AdminAPIError && error.status === 409) await this.refreshPolicy();
+      throw error;
+    }
     if (Number.isSafeInteger(result?.policy_version)) this.policyVersion = result.policy_version;
     return result;
   }
