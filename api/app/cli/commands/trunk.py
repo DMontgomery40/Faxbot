@@ -1,14 +1,19 @@
-"""The carrier SIP trunk: apply it, its status in plain sentences and its recent calls."""
+"""The SIP trunk to a carrier or to your phone system: choose it, apply it, its status and recent calls."""
 import time
 
 import typer
 
 from .. import state
+from ..errors import CliError
 from ..output import local_time, parse_time
 
-trunk = typer.Typer(help="Faxbot's own carrier SIP trunk: status, network and recent calls.", no_args_is_help=True)
+trunk = typer.Typer(help="Faxbot's own SIP trunk to a carrier or to your phone system: presets, status, "
+                         "network and recent calls.", no_args_is_help=True)
 
 TRANSPORTS = {'tls': 'Encrypted (TLS)', 'tcp': 'TCP', 'udp': 'UDP'}
+KINDS = {'carrier': 'Carrier', 'phone_system': 'Phone system'}
+SIGN_IN = {'registration': 'Username and password', 'ip': 'IP address'}
+NUMBER_FORMATS = {'e164': '+ and country code', 'local': 'As a phone here dials it'}
 
 
 def register(app):
@@ -19,12 +24,18 @@ def _status_lines(out, result):
     out.line(result.get('message') or '')
     if not result.get('configured'):
         return
-    out.fields([('Carrier', result.get('preset_label')),
+    phone = result.get('kind') == 'phone_system'
+    out.fields([('Phone system' if phone else 'Carrier', result.get('preset_label')),
                 ('Transport', TRANSPORTS.get(result.get('registration_transport') or result.get('transport'))),
-                ('Internet address', result.get('internet_address') or result.get('public_address'))])
+                ('Address on your network' if phone else 'Internet address',
+                 (result.get('phone_system') or {}).get('address') if phone
+                 else result.get('internet_address') or result.get('public_address'))])
     for key in ('registration_text', 'reachability_text', 'public_address_text', 'ports_text'):
         if result.get(key) and result.get(key) != result.get('message'):
             out.line(result[key])
+    if result.get('phone_system_command'):
+        out.line(f"Set {result.get('phone_system_setting')} in .env to this computer's address on your local "
+                 f"network, then run: {result['phone_system_command']}")
     if result.get('last_call_text'):
         out.line(f"Last call ({local_time(result.get('last_call_at'))}): {result['last_call_text']}")
     if result.get('suggest_audio'):
@@ -33,7 +44,7 @@ def _status_lines(out, result):
         from ...sip_fax_mode import off_sentence
         moment = parse_time(result.get('t38_off_at'))
         day = moment.astimezone().strftime('%-d %B') if moment else ''
-        out.line(off_sentence(result['t38_off_reason'], day))
+        out.line(off_sentence(result['t38_off_reason'], day, carrier=result.get('preset_label') or ''))
         out.line('To try T.38 again, run faxbot trunk mode t38.')
 
 
@@ -128,3 +139,104 @@ def trunk_mode(mode: str = typer.Argument(..., metavar='t38|audio',
         else:
             out.line(f'New calls use {kind} fax. {applied.get("message")}')
     state.out().result(result, human)
+
+
+@trunk.command('presets')
+def trunk_presets(preset: str = typer.Argument(None, metavar='[PRESET]',
+                                               help='Show one preset in full, for example avaya-ipoffice.')):
+    """List the carriers and phone systems Faxbot has settings for, or show one with its sources.
+
+    A phone system preset also lists what its administrator sets, in order.
+    """
+    result = state.api().get('/admin/sip/presets')
+    items = result.get('presets') or []
+    if preset:
+        chosen = next((item for item in items if item['id'] == preset), None)
+        if chosen is None:
+            raise CliError(f"No preset is called '{preset}'. Run faxbot trunk presets to list them.")
+
+        def detail(out):
+            out.fields([('Preset', chosen['id']), ('Name', chosen['label']), ('Kind', KINDS[chosen['kind']]),
+                        ('Sign-in', ', '.join(SIGN_IN[mode] for mode in chosen['auth_modes'])),
+                        ('Transport', ', '.join(TRANSPORTS[name] for name in chosen['transports']))])
+            for note in chosen['notes']:
+                out.line(note)
+            if chosen['t38']:
+                out.line(chosen['t38'])
+            if chosen['admin_steps']:
+                out.line('')
+                out.line(f"What your {chosen['label']} administrator sets:")
+                for number, step in enumerate(chosen['admin_steps'], 1):
+                    out.line(f'{number}. {step}')
+            if chosen['sources']:
+                out.line('')
+                out.line('Sources:')
+                for source in chosen['sources']:
+                    out.line(f"- {source['url']} (read {local_date(source['read_on'])})")
+        state.out().result(chosen, detail)
+        return
+
+    def human(out):
+        rows = [[item['id'], item['label'], KINDS[item['kind']],
+                 ', '.join(SIGN_IN[mode] for mode in item['auth_modes'])] for item in items]
+        out.table(['Preset', 'Name', 'Kind', 'Sign-in'], rows, empty='No presets.')
+    state.out().result(result, human)
+
+
+def local_date(day):
+    from datetime import date
+    try:
+        moment = date.fromisoformat(day)
+    except (TypeError, ValueError):
+        return day
+    return f'{moment.day} {moment.strftime("%B %Y")}'
+
+
+@trunk.command('use')
+def trunk_use(preset: str = typer.Argument(..., metavar='PRESET', help='A preset from faxbot trunk presets.'),
+              host: str = typer.Option(None, '--host', help="The carrier's SIP server, or your phone system's "
+                                                             "address (IP Office, or Aura Session Manager)."),
+              port: int = typer.Option(None, '--port', min=1, max=65535, help='SIP port, when not the default.'),
+              transport: str = typer.Option(None, '--transport', help='udp, tcp or tls, where the preset offers it.'),
+              number_format: str = typer.Option(None, '--number-format', metavar='e164|local',
+                                                help='e164 sends +44...; local sends the number as a phone at '
+                                                     'your installation dials it.'),
+              prefix: str = typer.Option(None, '--prefix', help='Outside-line digits before a number dialled '
+                                                                 'as a phone here dials it, such as 9.')):
+    """Choose a carrier or phone system for the trunk and save its settings; then run faxbot trunk apply.
+
+    For a phone system, Faxbot and the phone system recognise each other by address, so no username or
+    password is needed.
+    """
+    api = state.api()
+    catalog = {item['id']: item for item in api.get('/admin/sip/presets').get('presets') or []}
+    chosen = catalog.get(preset)
+    if chosen is None:
+        raise CliError(f"No preset is called '{preset}'. Run faxbot trunk presets to list them.")
+    current = api.get('/admin/settings')
+    saved = (current.get('sip') or {}).get('trunk') or {}
+    changes = {'sip_trunk_preset': preset}
+    if saved.get('auth') not in chosen['auth_modes']:
+        changes['sip_trunk_auth'] = chosen['auth_modes'][0]
+    if host is not None:
+        changes['sip_trunk_host'] = host.strip()
+    if port is not None:
+        changes['sip_trunk_port'] = port
+    if transport is not None:
+        if transport not in chosen['transports']:
+            raise typer.BadParameter(f"Use {' or '.join(chosen['transports'])}.", param_hint='--transport')
+        changes['sip_trunk_transport'] = transport
+    if number_format is not None:
+        if number_format not in chosen['dial_formats']:
+            raise typer.BadParameter(f"{chosen['label']} takes no number format choice."
+                                     if not chosen['dial_formats'] else 'Use e164 or local.',
+                                     param_hint='--number-format')
+        changes['sip_trunk_dial_format'] = number_format
+    if prefix is not None:
+        changes['sip_trunk_dial_prefix'] = prefix.strip()
+    result = api.put('/admin/settings', json={**changes, 'expected_revision_id': current['_meta']['desired_revision_id']})
+
+    def human(out):
+        kind = 'phone system' if chosen['kind'] == 'phone_system' else 'carrier'
+        out.line(f"Saved {chosen['label']} as the trunk's {kind}. Run faxbot trunk apply to connect it.")
+    state.out().result({'preset': preset, 'changed': bool(result.get('changed'))}, human)

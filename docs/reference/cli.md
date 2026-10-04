@@ -52,7 +52,7 @@ $ faxbot [OPTIONS] COMMAND [ARGS]...
 * `providers`: Fax providers: which are installed and...
 * `diagnostics`: Check the installation without sending a fax.
 * `pair`: Pair the Faxbot iPhone app (or a script...
-* `trunk`: Faxbot&#x27;s own carrier SIP trunk: status,...
+* `trunk`: Faxbot&#x27;s own SIP trunk to a carrier or to...
 * `routing`: Delivery routes, destinations, fax costs...
 * `intake`: The intake queue: received documents being...
 * `direct`: Direct delivery: send faxes to verified...
@@ -1792,7 +1792,7 @@ $ faxbot pair device [OPTIONS] {code}
 
 ## `faxbot trunk`
 
-Faxbot&#x27;s own carrier SIP trunk: status, network and recent calls.
+Faxbot&#x27;s own SIP trunk to a carrier or to your phone system: presets, status, network and recent calls.
 
 **Usage**:
 
@@ -1810,6 +1810,8 @@ $ faxbot trunk [OPTIONS] COMMAND [ARGS]...
 * `apply`: Write the saved trunk for Asterisk and...
 * `calls`: List recent trunk calls, newest first,...
 * `mode`: Choose T.38 or audio fax for new calls and...
+* `presets`: List the carriers and phone systems Faxbot...
+* `use`: Choose a carrier or phone system for the...
 
 ### `faxbot trunk status`
 
@@ -1876,6 +1878,52 @@ $ faxbot trunk mode [OPTIONS] {t38|audio}
 
 **Options**:
 
+* `--help`: Show this message and exit.
+
+### `faxbot trunk presets`
+
+List the carriers and phone systems Faxbot has settings for, or show one with its sources.
+
+A phone system preset also lists what its administrator sets, in order.
+
+**Usage**:
+
+```console
+$ faxbot trunk presets [OPTIONS] [PRESET]
+```
+
+**Arguments**:
+
+* `[PRESET]`: Show one preset in full, for example avaya-ipoffice.
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+### `faxbot trunk use`
+
+Choose a carrier or phone system for the trunk and save its settings; then run faxbot trunk apply.
+
+For a phone system, Faxbot and the phone system recognise each other by address, so no username or
+password is needed.
+
+**Usage**:
+
+```console
+$ faxbot trunk use [OPTIONS] {PRESET}
+```
+
+**Arguments**:
+
+* `PRESET`: A preset from faxbot trunk presets.  [required]
+
+**Options**:
+
+* `--host <str>`: The carrier&#x27;s SIP server, or your phone system&#x27;s address (IP Office, or Aura Session Manager).
+* `--port <int range>`: SIP port, when not the default.  [1&lt;=x&lt;=65535]
+* `--transport <str>`: udp, tcp or tls, where the preset offers it.
+* `--number-format e164|local`: e164 sends +44...; local sends the number as a phone at your installation dials it.
+* `--prefix <str>`: Outside-line digits before a number dialled as a phone here dials it, such as 9.
 * `--help`: Show this message and exit.
 
 ## `faxbot routing`

@@ -4,6 +4,8 @@ Faxbot can send and receive ordinary faxes with its own fax engine (Asterisk wit
 
 You can use a trunk for sending only, receiving only, or both.
 
+If your office has an Avaya phone system, Faxbot can fax through it instead of through its own carrier account: see [Avaya IP Office and Aura](avaya.md). For the UK and Australia, see [United Kingdom](#united-kingdom) and [Australia](#australia).
+
 ## Telnyx (recommended)
 
 Telnyx documents T.38 fax on its SIP connections, so it is the carrier to start with.
@@ -46,7 +48,12 @@ Faxbot has settings ready for these carriers. Each preset uses the carrier's own
 | Sinch | Username and password | Your trunk domain, such as `example.pstn.sinch.com` | T.38 is not documented by the carrier; confirm it with Sinch support and send test faxes first. Sinch asks every outgoing call for the trunk username and password; to receive, add a registered SIP endpoint with the same username and password. Sinch does not publish the addresses it sends calls from, so Faxbot does not offer IP sign-in for Sinch. |
 | AnveoDirect | Server IP address only | Your server's public IP address in the AnveoDirect portal | AnveoDirect does not support registration. T.38 is not documented on its connection page; confirm it with AnveoDirect first. |
 | Flowroute | Username and password, or server IP address | Credentials, or your eight-digit tech prefix for IP sign-in | Flowroute expects North American numbers as 1 plus ten digits; Faxbot formats them for you. |
+| Gamma (UK) | Server IP address only | The SIP server address your Gamma reseller gives you; give them your static public address | Gamma lists T.38, and a phone system maker tested T.38 fax over it. See [United Kingdom](#united-kingdom). |
+| BT One Voice (UK) | Server IP address only | The BT SIP server address from your turn-up sheet; give BT your static public address and port | BT turns T.38 into audio fax inside its network, so a new BT trunk starts with audio fax. See [United Kingdom](#united-kingdom). |
+| Telstra SIP Connect (Australia) | Username and password, over TCP | The SIP domain from your Telstra order as the server, Telstra's SBC address as the outbound proxy | Telstra does not state T.38 support. See [Australia](#australia). |
 | Another carrier | Either | The server, port and credentials your carrier gave you | Faxbot dials numbers in E.164 with a plus sign. |
+
+Gamma, BT One Voice and Telstra SIP Connect offer **Number format**: **International, with + and the country code**, or **As a phone here dials it** (`01632960123` in the UK), for a carrier that wants national numbers. Their settings are tested against Faxbot's own Asterisk standing in for the carrier; none has been tested on a live trunk yet.
 
 Carrier pages used for the presets:
 
@@ -55,6 +62,39 @@ Carrier pages used for the presets:
 - Sinch: [Elastic SIP Trunking](https://developers.sinch.com/docs/est), [test plan](https://developers.sinch.com/docs/est/test-plan), [LiveKit guide](https://developers.sinch.com/docs/est/integration-guides/livekit), [Ribbon guide](https://developers.sinch.com/docs/est/integration-guides/ribbon-sbc)
 - AnveoDirect: [FAQ](https://www.anveodirect.com/about/faq)
 - Flowroute: [points of presence](https://developer.flowroute.com/docs/inbound-and-outbound-calling-with-flowroute-new-pops/), [IP authentication](https://support.bcmone.com/flowroute-support/docs/set-up-ip-based-authentication-for-outbound-calls), [faxing](https://flowroute.com/faxing/)
+- Gamma: [Swyx interoperability sheet](https://service.swyx.net/hc/en-gb/articles/360010513919-SIP-Provider-Gamma-Telecom-UK), [Yeastar UK provider list](https://www.yeastar.com/itsp-partners/united-kingdom/), [SIP trunking](https://gammagroup.co/products/sip-trunking-call-management/)
+- BT One Voice: [technical outline](https://www.globalservices.bt.com/static/assets/pdf/products/one_voice_sip_trunking/One_Voice_SIP_trunking_technical_Outline.pdf), [UK datasheet](https://www.globalservices.bt.com/static/assets/pdf/data_sheets/Product/one_voice_sip/bt_one_voice_sip_trunk_uk_datasheet.pdf)
+- Telstra SIP Connect: [3CX setup guide](https://www.3cx.com/docs/sip-trunk/telstra-sip-connect-australia/), [Our Customer Terms, SIP Connect section](https://www.telstra.com.au/content/dam/tcom/personal/consumer-advice/pdf/business-a-full/sip-connect.pdf)
+
+## United Kingdom
+
+Openreach says "By 31 January 2027, all traditional phone lines will be going digital". Its [switch-off page](https://www.openreach.com/upgrading-the-UK-to-digital-phone-lines) lists alarms, CCTV, payment terminals, telecare devices and lift phones as things to check (read 3 October 2026). BT is plainer about fax:
+
+- On **BT Digital Voice**, "Generally, fax is supported ... although it's not 100% guaranteed", and BT suggests sending no more than 10 pages at a time ([BT help](https://www.bt.com/help/landline/digital-voice--will-my-existing-phone-and-fax-machine-still-work)).
+- On **BT Cloud Voice Express**, "some analogue devices which use a traditional phone line may no longer work, including: Tills, EPOS, Oyster, Fax machines", and "BT is not able to guarantee that all analogue devices will work with an ATA". BT advises "Changing to digital alternatives" ([BT Business help](https://business.bt.com/help/guides/getting-started-with-your-bt-business-products/using-your-cloud-voice-express-phone-service/)).
+
+Faxbot is that digital alternative. Keep your fax numbers, and fax over a SIP trunk that carries T.38 or over a cloud fax provider, instead of a fax machine on a digital line.
+
+| BT product | Use with Faxbot |
+| --- | --- |
+| **BT One Voice SIP Trunk** | The **BT One Voice** preset. BT recognises Faxbot by its address and port, with no registration, so Faxbot needs a host with a static public address (see [Server IP sign-in](#server-ip-sign-in-needs-a-public-host)). BT's technical outline says "T.38 Fax over IP is internally transcoded to Fax via G.711 pass-through", so a new BT trunk starts with audio fax and the switch says "Off: BT One Voice turns T.38 into audio fax inside its network, so Faxbot uses audio fax." **Try T.38 again** is there if you want it. A-law first in the UK. |
+| **BT Cloud Voice SIP-T** | **Another carrier**, signing in with the username and password BT gives you. BT's [connectivity guide](https://business.bt.com/content/dam/bt-business/pdfs/help-and-support/phone-systems/connecting-phone-systems-direct-to-cloud-voice-sip/cv-sip-native-connectivity-customer-guide.pdf) says nothing about fax or T.38, so send test faxes first. |
+| **BT Cloud Voice, Cloud Voice Express, Digital Voice, Cloud Work** | Not fax products, by BT's own account. Use a T.38 trunk (Gamma, or Telnyx with UK numbers) or a cloud fax provider such as eFax instead. |
+
+**Gamma** is the main UK wholesale SIP provider and sells through resellers. It recognises the fax server by its public address (no registration). Its codecs include "T.38 for FAX Negotiation", and a phone system maker tested "T.38 Negotiation and FAX transmission" over it ([Swyx, updated 17 June 2024](https://service.swyx.net/hc/en-gb/articles/360010513919-SIP-Provider-Gamma-Telecom-UK)). Choose the **Gamma** preset, enter the SIP server address your reseller gives you, and give them your static public address. Yeastar's UK list also marks DIDlogic, Fuse2 and Sona for T.38; use **Another carrier** for those. **Telnyx** has UK numbers and T.38, and works from behind a router with no open ports, which makes it the quickest UK start.
+
+No published price was found for Gamma, BT One Voice or Telstra SIP Connect, so their rate cards carry none: Spending says "No published price; add your rate" until you enter your own rate under **Tools → Delivery routes**. Gamma's own page gives only a range: £3 to £150 a month for each SIP channel, plus £50 to £150 a month service rental.
+
+## Australia
+
+- **Telstra SIP Connect**: the **Telstra SIP Connect** preset registers with a username and password over TCP.
+  - Enter the SIP domain from your Telstra order as the server, Telstra's SBC address as **Outbound proxy**, and the authentication user ID and password Telstra gives you. These settings follow [3CX's Telstra guide](https://www.3cx.com/docs/sip-trunk/telstra-sip-connect-australia/).
+  - Telstra does not state T.38 support anywhere Faxbot could read, so T.38 stays on and Faxbot switches new calls to audio fax by itself if T.38 fax data does not come back.
+  - Telstra's customer terms say the charges "are set out in your application form", so no price is published.
+- **Telnyx** has Australian numbers and is the quickest start, as in the UK.
+- Yeastar's [Australian provider list](https://www.yeastar.com/itsp-partners/australia/) marks Aatrox Communications and Binary Elements for T.38, both with registration. Use **Another carrier** for them.
+
+A-law comes first for UK and Australian installations; an Avaya phone system preset picks the order from the installation country.
 
 ## What you need from the carrier
 
@@ -91,7 +131,7 @@ If you manage settings with an environment file instead of the console, set the 
 
 | Setting | Meaning |
 | --- | --- |
-| `SIP_TRUNK_PRESET` | `telnyx`, `signalwire`, `sinch`, `anveo`, `flowroute` or `custom` |
+| `SIP_TRUNK_PRESET` | `telnyx`, `signalwire`, `sinch`, `anveo`, `flowroute`, `gamma`, `bt-one-voice`, `telstra-sip-connect`, `avaya-ipoffice`, `avaya-aura` or `custom` |
 | `SIP_TRUNK_AUTH` | `registration` (username and password) or `ip` |
 | `SIP_TRUNK_HOST`, `SIP_TRUNK_PORT`, `SIP_TRUNK_TRANSPORT` | Leave empty to use the preset's server, port and transport |
 | `SIP_TRUNK_USERNAME`, `SIP_TRUNK_PASSWORD` | Carrier credentials; the password is stored as a secret. The password is read from the environment at every start, also as `TELNYX_SIP_PASSWORD` or `TELNYX_PASS` |
@@ -100,7 +140,9 @@ If you manage settings with an environment file instead of the console, set the 
 | `SIP_TRUNK_DIDS` | Your fax numbers on this trunk, separated by commas |
 | `SIP_T38_ENABLED` | `true` by default |
 | `SIP_FAX_PREFERENCE_HEADER` | `true` by default; see below |
-| `SIP_TRUNK_CODECS` | `ulaw`, `alaw` or both; leave empty for the preset |
+| `SIP_TRUNK_CODECS` | `ulaw`, `alaw` or both; leave empty for the preset (for Avaya and BT One Voice, the order the installation country uses) |
+| `SIP_TRUNK_DIAL_FORMAT` | `e164` (`+441632960123`) or `local` (`01632960123`, as a phone at the installation dials it), where the preset offers the choice |
+| `SIP_TRUNK_DIAL_PREFIX` | Up to four digits before a number dialled the local way, such as `9` for a phone system's outside line |
 | `SIP_EXTERNAL_ADDRESS` | Leave empty: Faxbot finds its internet address itself. Only an override for a host whose public address you want to state |
 | `SIP_PUBLIC_ADDRESS_CHECK_MINUTES` | How often Faxbot checks its internet address again; `5` by default, `0` turns it off |
 
@@ -124,7 +166,7 @@ A new Telnyx trunk on a network that changes port numbers starts with audio fax 
 
 ### Server IP sign-in needs a public host
 
-A carrier that signs in by IP address (AnveoDirect, or Telnyx and Flowroute set to IP sign-in) sends calls to a fixed public address, which a router does not pass on. When Faxbot sees it is behind a router, **Apply and connect** refuses that sign-in with "Your Faxbot runs behind a router, so sign in with a username and password; server IP sign-in needs a public address." Use it only on a host with its own public address, and start Compose with the public override, which publishes SIP and one 32-port media range that Asterisk then uses exactly:
+A carrier that signs in by IP address (AnveoDirect, Gamma, BT One Voice, or Telnyx and Flowroute set to IP sign-in) sends calls to a fixed public address, which a router does not pass on. When Faxbot sees it is behind a router, **Apply and connect** refuses that sign-in with "Your Faxbot runs behind a router, so sign in with a username and password; server IP sign-in needs a public address." Use it only on a host with its own public address, and start Compose with the public override, which publishes SIP and one 32-port media range that Asterisk then uses exactly:
 
 ```
 docker compose -f docker-compose.yml -f docker-compose.public.yml up -d
@@ -170,6 +212,11 @@ Carriers bill fax calls like voice calls: by connected minutes, rounded up to th
 | Sinch | not published | not published | not published | not published |
 | AnveoDirect | about $0.00186, varies by number | $0.004 | $0.15, plus $0.25 setup | outbound per second; inbound not published |
 | Flowroute | $0.00833 | $0.005 | $1.00 | outbound 6 seconds; inbound whole minutes |
+| Gamma (GBP) | not published | not published | not published | not published |
+| BT One Voice (GBP) | not published | not published | not published | not published |
+| Telstra SIP Connect (AUD) | not published | not published | not published | not published |
+
+An Avaya phone system has no rate card: the carrier behind it bills the calls, so add your own rate for it.
 
 Rounding applies to each call separately. With whole-minute billing, a 59-second call and a 61-second call are billed as three minutes, not two. A fax of 20 pages usually takes 10 to 11 minutes on the line.
 

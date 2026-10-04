@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "description": "Advertised US prices, read 2026-10-03 from each provider's own pages. cards: calls over each SIP trunk preset when Faxbot's own fax engine places or answers the call. providers: cloud fax providers' per-page or per-minute prices. plans: flat monthly plans with nothing charged per fax. Prices are advertised starting or typical rates, not quotes; confirm them against your account. Amounts are decimal strings in the card currency. per_call is a charge for each call; number_setup is a one-time charge for each number. A null price or increment means the provider does not publish it. Documo publishes no fax API price, so it has no card.",
+  "description": "Advertised US prices, read 2026-10-03 from each provider's own pages. cards: calls over each SIP trunk preset when Faxbot's own fax engine places or answers the call. providers: cloud fax providers' per-page or per-minute prices. plans: flat monthly plans with nothing charged per fax. Prices are advertised starting or typical rates, not quotes; confirm them against your account. Amounts are decimal strings in the card currency. per_call is a charge for each call; number_setup is a one-time charge for each number. A null price or increment means the provider does not publish it. Documo publishes no fax API price, so it has no card. UK and Australian carrier cards (Gamma, BT One Voice, Telstra SIP Connect) are in their own currency and carry no price, because none is published. A phone system (Avaya) has no card: the carrier behind it bills the calls.",
   "cards": [
     {
       "provider_id": "sip-telnyx",
@@ -235,6 +235,142 @@
       ],
       "advertised_on": "2026-10-03",
       "notes": "Inbound calls bill in whole minutes, rounded up."
+    },
+    {
+      "provider_id": "sip-gamma",
+      "provider": "sip",
+      "preset": "gamma",
+      "label": "Gamma SIP trunk, UK, outbound",
+      "direction": "outbound",
+      "currency": "GBP",
+      "per_minute": null,
+      "per_page": "0",
+      "per_call": "0",
+      "number_rental_monthly": null,
+      "number_setup": null,
+      "billing_increment_seconds": null,
+      "minimum_seconds": 0,
+      "rounding": "not_published",
+      "source_url": "https://gammagroup.co/products/sip-trunking-call-management/",
+      "sources": [
+        "https://gammagroup.co/products/sip-trunking-call-management/",
+        "https://service.swyx.net/hc/en-gb/articles/360010513919-SIP-Provider-Gamma-Telecom-UK"
+      ],
+      "advertised_on": "2026-10-03",
+      "notes": "Gamma's own page gives only a range, £3 to £150 a month per SIP channel plus £50 to £150 a month service rental, and no per-minute price; Gamma sells through resellers, who set the rates (read October 3, 2026). Enter your reseller's rates."
+    },
+    {
+      "provider_id": "sip-gamma",
+      "provider": "sip",
+      "preset": "gamma",
+      "label": "Gamma SIP trunk, UK, inbound",
+      "direction": "inbound",
+      "currency": "GBP",
+      "per_minute": null,
+      "per_page": "0",
+      "per_call": "0",
+      "number_rental_monthly": null,
+      "number_setup": null,
+      "billing_increment_seconds": null,
+      "minimum_seconds": 0,
+      "rounding": "not_published",
+      "source_url": "https://gammagroup.co/products/sip-trunking-call-management/",
+      "sources": [
+        "https://gammagroup.co/products/sip-trunking-call-management/",
+        "https://service.swyx.net/hc/en-gb/articles/360010513919-SIP-Provider-Gamma-Telecom-UK"
+      ],
+      "advertised_on": "2026-10-03",
+      "notes": "Gamma's own page gives only a range, £3 to £150 a month per SIP channel plus £50 to £150 a month service rental, and no per-minute price; Gamma sells through resellers, who set the rates (read October 3, 2026). Enter your reseller's rates."
+    },
+    {
+      "provider_id": "sip-bt-one-voice",
+      "provider": "sip",
+      "preset": "bt-one-voice",
+      "label": "BT One Voice SIP trunk, UK, outbound",
+      "direction": "outbound",
+      "currency": "GBP",
+      "per_minute": null,
+      "per_page": "0",
+      "per_call": "0",
+      "number_rental_monthly": null,
+      "number_setup": null,
+      "billing_increment_seconds": null,
+      "minimum_seconds": 0,
+      "rounding": "not_published",
+      "source_url": "https://www.globalservices.bt.com/static/assets/pdf/data_sheets/Product/one_voice_sip/bt_one_voice_sip_trunk_uk_datasheet.pdf",
+      "sources": [
+        "https://www.globalservices.bt.com/static/assets/pdf/data_sheets/Product/one_voice_sip/bt_one_voice_sip_trunk_uk_datasheet.pdf",
+        "https://www.globalservices.bt.com/static/assets/pdf/products/one_voice_sip_trunking/One_Voice_SIP_trunking_technical_Outline.pdf"
+      ],
+      "advertised_on": "2026-10-03",
+      "notes": "BT prices One Voice SIP trunks in each customer's contract and publishes none (checked October 3, 2026). Enter your contracted rates."
+    },
+    {
+      "provider_id": "sip-bt-one-voice",
+      "provider": "sip",
+      "preset": "bt-one-voice",
+      "label": "BT One Voice SIP trunk, UK, inbound",
+      "direction": "inbound",
+      "currency": "GBP",
+      "per_minute": null,
+      "per_page": "0",
+      "per_call": "0",
+      "number_rental_monthly": null,
+      "number_setup": null,
+      "billing_increment_seconds": null,
+      "minimum_seconds": 0,
+      "rounding": "not_published",
+      "source_url": "https://www.globalservices.bt.com/static/assets/pdf/data_sheets/Product/one_voice_sip/bt_one_voice_sip_trunk_uk_datasheet.pdf",
+      "sources": [
+        "https://www.globalservices.bt.com/static/assets/pdf/data_sheets/Product/one_voice_sip/bt_one_voice_sip_trunk_uk_datasheet.pdf",
+        "https://www.globalservices.bt.com/static/assets/pdf/products/one_voice_sip_trunking/One_Voice_SIP_trunking_technical_Outline.pdf"
+      ],
+      "advertised_on": "2026-10-03",
+      "notes": "BT prices One Voice SIP trunks in each customer's contract and publishes none (checked October 3, 2026). Enter your contracted rates."
+    },
+    {
+      "provider_id": "sip-telstra-sip-connect",
+      "provider": "sip",
+      "preset": "telstra-sip-connect",
+      "label": "Telstra SIP Connect, Australia, outbound",
+      "direction": "outbound",
+      "currency": "AUD",
+      "per_minute": null,
+      "per_page": "0",
+      "per_call": "0",
+      "number_rental_monthly": null,
+      "number_setup": null,
+      "billing_increment_seconds": null,
+      "minimum_seconds": 0,
+      "rounding": "not_published",
+      "source_url": "https://www.telstra.com.au/content/dam/tcom/personal/consumer-advice/pdf/business-a-full/sip-connect.pdf",
+      "sources": [
+        "https://www.telstra.com.au/content/dam/tcom/personal/consumer-advice/pdf/business-a-full/sip-connect.pdf"
+      ],
+      "advertised_on": "2026-10-03",
+      "notes": "Telstra's customer terms say SIP Connect charges are set out in your application form, and calls are charged at your BusinessLine Complete or agreed rates; no price is published (section last changed June 3, 2024, read October 3, 2026). Enter your rates."
+    },
+    {
+      "provider_id": "sip-telstra-sip-connect",
+      "provider": "sip",
+      "preset": "telstra-sip-connect",
+      "label": "Telstra SIP Connect, Australia, inbound",
+      "direction": "inbound",
+      "currency": "AUD",
+      "per_minute": null,
+      "per_page": "0",
+      "per_call": "0",
+      "number_rental_monthly": null,
+      "number_setup": null,
+      "billing_increment_seconds": null,
+      "minimum_seconds": 0,
+      "rounding": "not_published",
+      "source_url": "https://www.telstra.com.au/content/dam/tcom/personal/consumer-advice/pdf/business-a-full/sip-connect.pdf",
+      "sources": [
+        "https://www.telstra.com.au/content/dam/tcom/personal/consumer-advice/pdf/business-a-full/sip-connect.pdf"
+      ],
+      "advertised_on": "2026-10-03",
+      "notes": "Telstra's customer terms say SIP Connect charges are set out in your application form, and calls are charged at your BusinessLine Complete or agreed rates; no price is published (section last changed June 3, 2024, read October 3, 2026). Enter your rates."
     }
   ],
   "plans": [

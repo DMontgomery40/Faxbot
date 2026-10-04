@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import AdminAPIClient from '../api/client';
-import SipTrunkSettings, { connectedTime } from '../components/SipTrunkSettings';
+import SipTrunkSettings, { audioReason, connectedTime, readOn } from '../components/SipTrunkSettings';
 import { server } from '../test/server';
 
 const PRESETS = [
@@ -452,5 +452,152 @@ describe('SIP trunk settings', () => {
     expect(connectedTime(42)).toBe('42 s');
     expect(connectedTime(120)).toBe('2 min');
     expect(connectedTime(125)).toBe('2 min 5 s');
+  });
+});
+
+// A phone system on the local network (Avaya IP Office) ---------------------------------------------
+
+const AVAYA = {
+  id: 'avaya-ipoffice', label: 'Avaya IP Office', host: '', port: 5060, transport: 'udp', auth_modes: ['ip'],
+  codecs: ['alaw', 'ulaw'], needs_host: true, ip_dial_prefix: false, kind: 'phone_system',
+  transports: ['udp', 'tcp'], codecs_by_country: true, dial_formats: ['e164', 'local'], audio_by_default: false,
+  t38: 'T.38 with G.711 fallback: on the Faxbot line, set Fax Transport Support to T38 Fallback.',
+  notes: ['IP Office and Faxbot recognise each other by address, so there is no username or password.'],
+  admin_steps: ['System, LAN1 (or LAN2), VoIP: tick SIP Trunks Enable.', 'T38 Fax tab: keep Use Default Values.'],
+  sources: [{ url: 'https://support.avaya.com/css/public/documents/101065243', read_on: '2026-10-03' }],
+};
+const GAMMA = { ...PRESETS[1], id: 'gamma', label: 'Gamma', host: '', kind: 'carrier', transports: ['udp', 'tcp'],
+  dial_formats: ['e164', 'local'], admin_steps: [] };
+const COMMAND = 'docker compose -f docker-compose.yml -f docker-compose.phone-system.yml up -d';
+const NOT_STARTED = 'Your phone system cannot reach Faxbot yet, because Faxbot is not published on your local network.';
+
+function phoneStatus(extra: Record<string, unknown> = {}) {
+  return { configured: true, applied: true, asterisk_connected: true, kind: 'phone_system', preset: 'avaya-ipoffice',
+    preset_label: 'Avaya IP Office', registration: 'not_used', registration_text: '', reachability: 'unknown',
+    reachability_text: '', message: NOT_STARTED, ports_text: NOT_STARTED, phone_system: null,
+    phone_system_command: COMMAND, phone_system_setting: 'FAXBOT_LAN_ADDRESS', phone_system_hidden: false, ...extra };
+}
+
+function phoneSettings(trunk: Record<string, unknown> = {}) {
+  return settings({ preset: 'avaya-ipoffice', auth: 'ip', host: '192.168.10.5', username: '', password: '',
+    password_set: false, caller_id: '+442079460000', dids: ['+442079460001'], dial_format: '', dial_prefix: '', ...trunk });
+}
+
+describe('SIP trunk to a phone system', () => {
+  it('shows the phone system fields, the administrator steps and how to publish Faxbot', async () => {
+    server.use(
+      http.get('/admin/sip/presets', () => HttpResponse.json({ presets: [...PRESETS, GAMMA, AVAYA] })),
+      http.get('/admin/settings', () => HttpResponse.json(phoneSettings())),
+      http.get('/admin/sip/calls', () => HttpResponse.json({ items: [], next_cursor: null })),
+      http.get('/admin/sip/status', () => HttpResponse.json(phoneStatus())),
+    );
+    render(<SipTrunkSettings client={client()} />);
+    expect(await screen.findByText('SIP trunk to your phone system')).toBeTruthy();
+    expect((screen.getByLabelText(/Phone system address/) as HTMLInputElement).value).toBe('192.168.10.5');
+    // Sign-in is by address: no sign-in choice, username, password, proxy or internet address.
+    expect(screen.queryByText('How Faxbot signs in to the carrier')).toBeNull();
+    expect(screen.queryByLabelText('Password')).toBeNull();
+    expect(screen.queryByLabelText('Outbound proxy (optional)')).toBeNull();
+    expect(screen.queryByLabelText('Internet address (optional)')).toBeNull();
+    expect(screen.getByText('Fax numbers your phone system sends to Faxbot')).toBeTruthy();
+    // How the phone system reaches Faxbot: not published yet, with the exact command.
+    const reach = await screen.findByTestId('phone-system-reach');
+    expect(within(reach).getByText(NOT_STARTED)).toBeTruthy();
+    expect(within(reach).getByText(COMMAND)).toBeTruthy();
+    expect(within(reach).getByText(
+      "Set FAXBOT_LAN_ADDRESS in .env to this computer's address on your local network, then run:")).toBeTruthy();
+    // The administrator's checklist, with its dated source.
+    fireEvent.click(screen.getByText('What your Avaya administrator sets'));
+    const steps = screen.getByTestId('phone-system-steps');
+    expect(within(steps).getByText('System, LAN1 (or LAN2), VoIP: tick SIP Trunks Enable.')).toBeTruthy();
+    expect(within(steps).getByText('support.avaya.com')).toBeTruthy();
+    expect(steps.textContent).toContain(`, read ${readOn('2026-10-03')}`);
+    // Only the transports a phone system takes.
+    fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Transport' }));
+    const listbox = await screen.findByRole('listbox');
+    expect(within(listbox).getAllByRole('option').map((option) => option.textContent))
+      .toEqual(['Default: UDP (older)', 'TCP', 'UDP (older)']);
+  });
+
+  it('lists phone systems apart from carriers and switches to sign-in by address when one is chosen', async () => {
+    const writes: Array<Record<string, unknown>> = [];
+    server.use(
+      http.get('/admin/sip/presets', () => HttpResponse.json({ presets: [...PRESETS, GAMMA, AVAYA] })),
+      http.get('/admin/settings', () => HttpResponse.json(settings())),
+      http.get('/admin/sip/calls', () => HttpResponse.json({ items: [], next_cursor: null })),
+      http.put('/admin/settings', async ({ request }) => {
+        writes.push(await request.json() as Record<string, unknown>);
+        return HttpResponse.json({ ok: true, changed: true, _meta: { ...META, apply_state: 'applied' } });
+      }),
+    );
+    render(<SipTrunkSettings client={client()} />);
+    expect(await screen.findByText('Carrier SIP trunk')).toBeTruthy();
+    fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Carrier' }));
+    const listbox = await screen.findByRole('listbox');
+    const entries = Array.from(listbox.children).map((item) => item.textContent);
+    expect(entries).toEqual(['No SIP trunk', 'Carrier', 'Telnyx', 'AnveoDirect', 'Gamma', 'Your phone system',
+      'Avaya IP Office']);
+    fireEvent.click(within(listbox).getByRole('option', { name: 'Avaya IP Office' }));
+    expect(await screen.findByText('SIP trunk to your phone system')).toBeTruthy();
+    fireEvent.change(screen.getByLabelText(/Phone system address/), { target: { value: '192.168.10.5' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save trunk settings' }));
+    await waitFor(() => expect(writes).toHaveLength(1));
+    expect(writes[0]).toEqual({ expected_revision_id: 'rev-1', sip_trunk_preset: 'avaya-ipoffice',
+      sip_trunk_auth: 'ip', sip_trunk_host: '192.168.10.5' });
+  });
+
+  it('saves the number format, the outside-line prefix and the codec order', async () => {
+    const writes: Array<Record<string, unknown>> = [];
+    server.use(
+      http.get('/admin/sip/presets', () => HttpResponse.json({ presets: [...PRESETS, AVAYA] })),
+      http.get('/admin/settings', () => HttpResponse.json(phoneSettings())),
+      http.get('/admin/sip/calls', () => HttpResponse.json({ items: [], next_cursor: null })),
+      http.get('/admin/sip/status', () => HttpResponse.json(phoneStatus())),
+      http.put('/admin/settings', async ({ request }) => {
+        writes.push(await request.json() as Record<string, unknown>);
+        return HttpResponse.json({ ok: true, changed: true, _meta: { ...META, apply_state: 'applied' } });
+      }),
+    );
+    render(<SipTrunkSettings client={client()} />);
+    expect(await screen.findByText('SIP trunk to your phone system')).toBeTruthy();
+    expect(screen.queryByLabelText('Outside-line prefix (optional)')).toBeNull();
+    fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Number format' }));
+    fireEvent.click(within(await screen.findByRole('listbox')).getByRole('option', { name: /As a phone here dials it/ }));
+    fireEvent.change(await screen.findByLabelText('Outside-line prefix (optional)'), { target: { value: '9x' } });
+    expect((screen.getByLabelText('Outside-line prefix (optional)') as HTMLInputElement).value).toBe('9');
+    fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Codec order' }));
+    fireEvent.click(within(await screen.findByRole('listbox')).getByRole('option', { name: /A-law first \(UK/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save trunk settings' }));
+    await waitFor(() => expect(writes).toHaveLength(1));
+    expect(writes[0]).toEqual({ expected_revision_id: 'rev-1', sip_trunk_codecs: 'alaw,ulaw',
+      sip_trunk_dial_format: 'local', sip_trunk_dial_prefix: '9' });
+  });
+
+  it('says what to give the administrator once published, and names Docker Desktop or Colima', async () => {
+    const given = 'Give your phone system administrator this address: 192.168.10.20, port 5060 (UDP or TCP), '
+      + 'and media ports 4000–4019, enough for 6 faxes at once.';
+    let status: Record<string, unknown> = phoneStatus({ ports_text: given, message: 'The trunk is ready.',
+      phone_system: { address: '192.168.10.20', sip_port: 5060, media_ports: '4000-4019', faxes_at_once: 6 },
+      phone_system_command: null, phone_system_setting: null });
+    server.use(
+      http.get('/admin/sip/presets', () => HttpResponse.json({ presets: [...PRESETS, AVAYA] })),
+      http.get('/admin/settings', () => HttpResponse.json(phoneSettings())),
+      http.get('/admin/sip/calls', () => HttpResponse.json({ items: [], next_cursor: null })),
+      http.get('/admin/sip/status', () => HttpResponse.json(status)),
+    );
+    render(<SipTrunkSettings client={client()} />);
+    const reach = await screen.findByTestId('phone-system-reach');
+    await waitFor(() => expect(within(reach).getByText(given)).toBeTruthy());
+    expect(reach.textContent).not.toContain('docker compose');
+    const hidden = "Faxbot runs in Docker Desktop or Colima here, which hide your phone system's address from "
+      + 'Faxbot, so the phone system cannot connect; run Faxbot on a Linux computer to connect a phone system.';
+    status = { ...status, ports_text: hidden, message: hidden, phone_system_hidden: true };
+    fireEvent.click(screen.getByRole('button', { name: 'Check trunk status' }));
+    await waitFor(() => expect(within(screen.getByTestId('phone-system-reach')).getByText(hidden)).toBeTruthy());
+  });
+
+  it('says why BT One Voice starts with audio fax', () => {
+    expect(audioReason('carrier', null, 'BT One Voice'))
+      .toBe('Off: BT One Voice turns T.38 into audio fax inside its network, so Faxbot uses audio fax.');
   });
 });

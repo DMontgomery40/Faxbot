@@ -23,6 +23,15 @@ render() {
   envsubst "$variables" < "$tpl_dir/${name}.template" > "$temporary"
   mv -f "$temporary" "$out_dir/$name"
 }
+# sed over a file through a temporary copy (GNU and BSD sed differ on -i).
+edit() {
+  local file=$1 temporary
+  shift
+  temporary=$(mktemp "$file.XXXXXX")
+  sed "$@" "$file" > "$temporary"
+  mv -f "$temporary" "$file"
+}
+octet='(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])'
 
 # The manager login Faxbot uses. ASTERISK_AMI_USERNAME and ASTERISK_AMI_PASSWORD
 # in the environment win (the API reads the same .env). Otherwise Faxbot writes
@@ -53,17 +62,36 @@ else
   render manager.conf '${ASTERISK_AMI_USERNAME} ${ASTERISK_AMI_PASSWORD}'
 fi
 
-# A public-address install publishes one narrow media range
-# (docker-compose.public.yml), and Asterisk must use exactly that range: the
-# first third for T.38 (UDPTL), the rest for audio (RTP and RTCP).
+# A public-address install (docker-compose.public.yml) or a phone system
+# install (docker-compose.phone-system.yml) publishes one narrow media range,
+# and Asterisk must use exactly that range: the first third for T.38 (UDPTL),
+# the rest for audio (RTP and RTCP).
 if [ -n "${FAXBOT_MEDIA_PORTS:-}" ]; then
   [[ "$FAXBOT_MEDIA_PORTS" =~ ^([0-9]{1,5})-([0-9]{1,5})$ ]] || refuse 'Unsupported media port range'
   first=$((10#${BASH_REMATCH[1]})) last=$((10#${BASH_REMATCH[2]}))
   (( first >= 1024 && last <= 65535 && last - first >= 5 && last - first < 2000 )) \
     || refuse 'Unsupported media port range'
   udptl_last=$(( first + (last - first + 1) / 3 - 1 ))
-  sed -i -e "s/^udptlstart=.*/udptlstart=$first/" -e "s/^udptlend=.*/udptlend=$udptl_last/" "$out_dir/udptl.conf"
-  sed -i -e "s/^rtpstart=.*/rtpstart=$((udptl_last + 1))/" -e "s/^rtpend=.*/rtpend=$last/" "$out_dir/rtp.conf"
+  edit "$out_dir/udptl.conf" -e "s/^udptlstart=.*/udptlstart=$first/" -e "s/^udptlend=.*/udptlend=$udptl_last/"
+  edit "$out_dir/rtp.conf" -e "s/^rtpstart=.*/rtpstart=$((udptl_last + 1))/" -e "s/^rtpend=.*/rtpend=$last/"
+fi
+
+# A phone system on the local network (Avaya IP Office or Aura) sends calls to
+# the address docker-compose.phone-system.yml publishes Asterisk on: only that
+# file sets FAXBOT_PHONE_SYSTEM_ADDRESS (from FAXBOT_LAN_ADDRESS in .env), with
+# SIP on 5060 and at most 100 media ports. The record tells Faxbot what to give
+# the phone system's administrator; without that file there is none.
+lan_record=$shared/lan-address
+if [ -n "${FAXBOT_PHONE_SYSTEM_ADDRESS:-}" ]; then
+  [[ "$FAXBOT_PHONE_SYSTEM_ADDRESS" =~ ^$octet\.$octet\.$octet\.$octet$ ]] \
+    || refuse 'Unsupported phone system address'
+  [ -n "${FAXBOT_MEDIA_PORTS:-}" ] && (( last - first < 100 )) || refuse 'Unsupported media port range'
+  temporary=$(mktemp "$shared/.lan-address.XXXXXX")
+  printf '{"address": "%s", "sip_port": 5060, "media_ports": "%s-%s"}\n' \
+    "$FAXBOT_PHONE_SYSTEM_ADDRESS" "$first" "$last" > "$temporary"
+  mv -f "$temporary" "$lan_record"
+else
+  rm -f "$lan_record"
 fi
 
 # Faxbot writes this file from its SIP trunk settings (console "Apply to
@@ -83,6 +111,13 @@ if [ -f "$trunk_conf" ] && [ ! -L "$trunk_conf" ]; then
   mv -f "$temporary" "$out_dir/pjsip.conf"
   # The internet address Faxbot found, or no address lines at all (no network call here).
   "${FAXBOT_PUBLIC_ADDRESS_BIN:-/usr/local/bin/faxbot-public-address}" "$out_dir/pjsip.conf"
+  # A phone system trunk names the address Faxbot is published on in the local
+  # network, or Asterisk's own address when it is not published there.
+  if [ -n "${FAXBOT_PHONE_SYSTEM_ADDRESS:-}" ]; then
+    edit "$out_dir/pjsip.conf" -e "s/@FAXBOT_LAN_ADDRESS@/$FAXBOT_PHONE_SYSTEM_ADDRESS/g"
+  else
+    edit "$out_dir/pjsip.conf" -e '/@FAXBOT_LAN_ADDRESS@/d'
+  fi
 elif [ -n "${SIP_USERNAME:-}${SIP_PASSWORD:-}${SIP_SERVER:-}" ]; then
   [ -n "${SIP_USERNAME:-}" ] && [ -n "${SIP_PASSWORD:-}" ] && [ -n "${SIP_SERVER:-}" ] \
     || refuse 'Incomplete SIP configuration'
