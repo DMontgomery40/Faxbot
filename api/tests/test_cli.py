@@ -801,7 +801,7 @@ def test_trunk_status_and_calls_read_as_plain_sentences(trunk_cli):
     engine = trunk_cli.client.app.state.configuration_runtime.manager.store.engine
     sip_calls.SipCallRecords(engine).record_inbound_event({
         'UniqueID': '1791075343.12', 'Caller': '+13035550100', 'DID': '+15555550100', 'Status': 'FAILED',
-        'Error': 'The call dropped prematurely', 'Pages': '0', 'Mode': 'T38', 'Answered': '1791075343',
+        'Error': 'Timed out waiting for initial communication', 'Pages': '0', 'Mode': 'T38', 'Answered': '1791075343',
         'Ended': '1791075357'})
     status = trunk_cli('trunk', 'status')
     assert status.exit_code == 0, status.stdout

@@ -20,11 +20,22 @@ import asyncio
 from datetime import datetime, timezone
 import json
 import logging
+import re
 from pathlib import Path
 
 from . import sip_trunk
 
 NO_DATA_BACK = 'no_data_back'
+# Only the fax engine's T0/T1 timeouts show that T.38 data never came back; a
+# plain hang-up, a busy line or the other side hanging up never switches the
+# installation. Stored call reasons are cut short, so the start is enough.
+_T38_TIMEOUT = re.compile(r'timed out waiting for (?:initial commu|the first mess)', re.IGNORECASE)
+
+
+def t38_timeout(text) -> bool:
+    """Whether the fax engine's words for a call are a T0/T1 timeout."""
+    return bool(_T38_TIMEOUT.search(str(text or '')))
+
 NETWORK = 'network'
 CHOSEN = 'chosen'
 
@@ -85,7 +96,7 @@ def derive(values, records=None):
         for call in page['items']:
             if call.get('t38') != 'yes':
                 continue
-            if call.get('verdict') != 'no_t38_data_back':
+            if call.get('verdict') != 'no_t38_data_back' or not t38_timeout(call.get('error_cause')):
                 return None
             return write(values, 'audio', NO_DATA_BACK, call.get('ended_at') or call.get('started_at'), derived=True)
         cursor = page.get('next_cursor')
@@ -142,8 +153,8 @@ BUSY_WAIT_SECONDS = 120
 def _on_fax_event(event):
     """AMI listener for FaxResult and FaxInboundCall; runs in the event loop and never raises."""
     try:
-        from .sip_calls import verdict
-        if _runtime is None or verdict(event) != 'no_t38_data_back':
+        from .sip_calls import _reason, verdict
+        if _runtime is None or verdict(event) != 'no_t38_data_back' or not t38_timeout(_reason(event)):
             return
         task = asyncio.get_running_loop().create_task(switch_to_audio(_runtime, NO_DATA_BACK))
         _pending.add(task)
