@@ -600,6 +600,17 @@ const consoleHandlers = [
   http.get('/direct/deliveries', () => json({ deliveries: [] })),
   // SIP trunk call history (the Dashboard names a received call that left no fax).
   http.get('/admin/sip/calls', () => json({ items: [], next_cursor: null })),
+  // Sending together: no number sends faxes together until a test says otherwise.
+  http.get('/batching/check', ({ request }) => json({ number: new URL(request.url).searchParams.get('to'),
+    sends_together: false, wait_minutes: null, sentence: null })),
+  http.get('/batching/faxes/:jobId', () => json({ state: null, sentence: null })),
+  http.get('/batching/numbers/:number', ({ params }) => json({ number: params.number, enabled: false,
+    max_wait_minutes: 10, max_pages: 30, mixed_senders: false, version: 0, saves_money: false,
+    route_sentence: 'Faxbot sends faxes together only over its own SIP trunk; faxes to this number go through Phaxio, so they go straight away.',
+    state_sentence: 'Off: faxes to this number go straight away.', agreement: null, history: [],
+    savings: { calls: 0, faxes: 0, calls_saved: 0, estimated_saving: [], is_estimate: true,
+      sentence: 'No faxes to this number have been sent together in the last 30 days.' },
+    agreement_text: 'This recipient has agreed to receive several documents in one call.' })),
 ];
 
 export const server = setupServer(...accessHandlers, ...consoleHandlers);

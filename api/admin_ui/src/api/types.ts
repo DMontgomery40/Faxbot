@@ -1,3 +1,4 @@
+import type { FaxTogetherSummary } from './batchingTypes';
 // TypeScript types for the admin API
 
 // Active operator fields consumed by Send and Plugins. The shell builds this
@@ -64,6 +65,8 @@ export interface FaxJob extends DeliveryMetadata {
   created_at: string;
   updated_at: string;
   file_name?: string;
+  // Present when the fax waited, or went, with other faxes to the same number.
+  together?: FaxTogetherSummary | null;
 }
 
 export interface DeliveryHistoryEvent {

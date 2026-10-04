@@ -7,7 +7,7 @@ Open **Tools → Delivery routes** in the Admin Console.
 ## What you see
 
 - **Spending** shows the last 30 days per route: faxes sent and delivered, billed minutes, what the carrier charged, an estimate for faxes it has not billed yet, and how many are still waiting for the carrier's bill. Calls received on your SIP trunk get their own card. See [Costs](#costs).
-- **Fax numbers** lists every number Faxbot has sent to, which routes reached it, how often each route delivered, and what the number cost.
+- **Fax numbers** lists every number Faxbot has sent to, which routes reached it, how often each route delivered, and what the number cost. A number's **Details** also has its [sending together](#sending-together) setting.
 - **Rate cards** hold the prices Faxbot uses for its estimates.
 - **Direct partners** are organizations that receive your documents straight into their Faxbot, with no fax call. See [Direct delivery](direct-delivery.md).
 
@@ -57,6 +57,47 @@ A provider that is not ready is skipped. A cloud provider needs its credentials.
 When a provider reports that a fax failed, Faxbot sends it again on the next route it has not tried yet. It does this at most twice per fax. Each retry is a new attempt on the same fax, and the fax history shows why it was retried. While another route remains, the fax status goes from `in_progress` back to `queued` and never shows `failed`.
 
 Faxbot never resends a fax whose outcome is unknown, for example when a provider stopped answering mid-request. That fax waits for confirmation from the provider, or from you.
+
+## Sending together
+
+Faxbot can hold short faxes to the same number for a few minutes and send them together in one call. This helps on a SIP trunk billed by the minute with a minimum. On Telnyx, for example, every call is billed at least one minute, so three one-page faxes sent separately cost three minutes but together cost about two.
+
+It is off for every number. Turn it on for one number in its **Details**, under **Sending together**. You must first tick **This recipient has agreed to receive several documents in one call.** Faxbot keeps a record of who turned it on or changed it, and when.
+
+- **Longest wait** (default 10 minutes) is how long a fax may wait for others.
+- **Most pages in one call** (default 30) counts the separator pages.
+- **Faxes from different senders may share a call** is off by default. While it is off, only faxes from the same person or API key go together.
+
+Faxbot holds a fax only when all of these are true:
+
+- the fax goes over Faxbot's own SIP trunk;
+- the trunk's rate card charges per call, or bills with a minimum of at least 30 seconds;
+- the fax fits in one call together with its separator page.
+
+On per-page and flat-plan routes, faxes go straight away, and the setting says why in one sentence. For example: "On HumbleFax's flat plan, sending together saves nothing, so faxes go straight away."
+
+A waiting fax goes when any of these happens:
+
+- its longest wait ends;
+- the next fax for that number would not fit in the call;
+- someone chooses **Send now** in Jobs, the **Send now** box on Send, or `faxbot send --now`. This takes the faxes already waiting for that number with it.
+
+One call carries the documents in the order they were accepted. Each document follows a separator page, for example "Document 2 of 3 · Faxbot 7f3a9c21 · 4 pages · from Front Desk". The reference is the sender's case reference when the fax belongs to one. Otherwise it is "Faxbot" and the first 8 characters of the fax's ID. Job Details shows the same reference.
+
+Each fax keeps its own record and its own result. The receiving machine confirms pages in order:
+
+- A fax whose separator and pages were all confirmed is delivered.
+- A fax the call never reached failed, as a single fax would. Faxbot may try it on the next route.
+- If the call failed after part of a fax was confirmed, that fax failed with a sentence saying how many of its pages were confirmed. Faxbot never sends it again by itself; a person decides.
+- If the call ended with no page count, every fax in it waits for a person, like any fax whose outcome is unknown.
+
+Faxbot does not send a shared call again automatically. If the SIP trunk is unavailable when the faxes are due, each fax goes on its own instead. A fax whose document cannot be read goes on its own; the others still go together.
+
+Job Details says "Sent in one call with 2 other faxes" and shows the fax's share of the call's charge. The charge is split by pages, each fax with its separator page. The number's **Details** shows how many calls were saved in the last 30 days and about how much money. That figure is an estimate: separate calls are priced from the rate card the way Faxbot estimates any fax, and compared with the call's reported charge, or with its estimate when no charge has been reported. In Spending, a shared call counts once.
+
+From the command line: `faxbot routing batching show|set|off NUMBER` (`set` takes `--recipient-agreed`, `--wait`, `--max-pages` and `--mixed-senders`), `faxbot send --now` and `faxbot jobs send-now FAX_ID`.
+
+Not yet confirmed on a live trunk or the local T.38 test line: tests so far use synthetic faxes.
 
 ## Costs
 
@@ -160,5 +201,8 @@ These routes need `settings:read`, or `settings:write` for changes:
 | GET | `/routing/costs?since=` | Spending by route and for received calls, with charged, estimated and waiting counts |
 | POST | `/routing/reconcile` | Ask the SIP trunk carrier now what each open call cost (`settings:write`) |
 | GET, PUT | `/routing/rate-cards` | Read or replace the rate cards |
+| GET, PUT, DELETE | `/batching/numbers/{number}` | Sending together for one number: its setting and history, the reason it saves money or not, and calls saved. PUT takes `enabled`, `recipient_agreed`, `max_wait_minutes`, `max_pages`, `mixed_senders` and `version` |
+
+Anyone who may send faxes can ask whether a number sends faxes together: `GET /batching/check?to=`. Anyone who may read a fax can see whether it is waiting or went with others, and its share of the charge: `GET /batching/faxes/{id}`. They can also send a waiting fax now: `POST /batching/faxes/{id}/send-now`. `POST /fax` takes an optional `send_now=true`.
 
 Anyone who may read a fax can read its cost: `GET /routing/faxes/{id}/cost` for a sent fax, `GET /routing/inbound/{id}/cost` for a received fax, and `GET /routing/inbound-costs?ids=` for up to 100 received faxes at once. Faxes the person cannot read are left out.
