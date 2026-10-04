@@ -40,6 +40,7 @@ received.command('recover')(fax.inbound_recover)
 received.command('import')(work.import_document)
 received.command('owners')(work.work_list)
 received.command('history')(work.work_show)
+received.command('counts')(work.received_counts)
 received.command('assign')(work.work_assign)
 received.command('acknowledge')(work.work_acknowledge)
 received.command('done')(work.work_done)
@@ -57,8 +58,10 @@ sent.command('list')(fax.jobs_list)
 sent.command('show')(fax.jobs_get)
 sent.command('pdf')(fax.jobs_pdf)
 sent.command('refresh')(fax.jobs_refresh)
-sent.command('history')(fax.jobs_history)
-sent.command('reconcile')(fax.jobs_reconcile)
+sent.command('evidence')(fax.jobs_history)
+sent.command('confirm-receipt')(fax.jobs_reconcile)
+sent.command('history', hidden=True)(fax.jobs_history)
+sent.command('reconcile', hidden=True)(fax.jobs_reconcile)
 sent.command('send-now')(fax.jobs_send_now)
 
 # -- numbers -------------------------------------------------------------------------
@@ -80,8 +83,8 @@ numbers.add_typer(email, name='email')
 
 # -- recipients ----------------------------------------------------------------------
 
-recipients = _group('The fax numbers you send to: how Faxbot sends to each, sending several faxes in one call, partners '
-                    'and case packets.')
+recipients = _group('Fax numbers you send to: routing, batching several faxes into one call, direct delivery partners and'
+                    ' case packets.')
 recipients.command('list')(delivery.routing_destinations)
 recipients.command('show')(delivery.routing_destination)
 recipients.command('set')(delivery.routing_update_destination)
@@ -109,7 +112,23 @@ providers.command('configure')(settings.providers_configure)
 providers.command('callbacks')(settings.providers_callbacks)
 providers.command('validate')(settings.providers_validate)
 providers.command('install')(settings.providers_install)
-providers.command('registry')(settings.providers_registry)
+registry = typer.Typer(help='Fax services you can add from the provider list, one at a time or several at once.',
+                       invoke_without_command=True)
+
+
+@registry.callback()
+def _registry(ctx: typer.Context):
+    # The older `faxbot providers registry`, with nothing after it, still lists them.
+    if ctx.invoked_subcommand is None:
+        settings.providers_registry()
+
+
+registry.command('list')(settings.providers_registry)
+registry.command('import')(settings.providers_import)
+providers.add_typer(registry, name='registry')
+efax = _group('eFax receiving: whether Faxbot is collecting your faxes from eFax.')
+efax.command('status')(settings.efax_status)
+providers.add_typer(efax, name='efax')
 providers.add_typer(trunk.trunk, name='trunk')
 
 # -- costs ---------------------------------------------------------------------------
@@ -119,6 +138,7 @@ costs = _group('What faxing costs you: spending by route, charges from your carr
 costs.command('spending')(delivery.routing_costs)
 costs.command('reconcile')(delivery.routing_reconcile)
 costs.command('fax')(delivery.routing_fax_cost)
+costs.command('received')(delivery.routing_received_costs)
 costs.command('rate-cards')(delivery.routing_rate_cards)
 costs.command('plans')(delivery.routing_plans)
 
@@ -195,7 +215,7 @@ def _moved():
             moved[(*old, name)] = (*new, (rename or {}).get(name, name))
 
     under(('jobs',), ('sent',), ('list', 'pdf', 'refresh', 'history', 'reconcile', 'send-now', 'get'),
-          {'get': 'show'})
+          {'get': 'show', 'history': 'evidence', 'reconcile': 'confirm-receipt'})
     under(('inbound',), ('received',), ('list', 'get', 'pdf', 'fetch', 'recover'), {'get': 'show'})
     moved[('inbound', 'simulate')] = ('system', 'diagnostics', 'test-fax')
     under(('work',), ('received',), ('list', 'show', 'assign', 'acknowledge', 'done', 'reopen', 'export'),
@@ -215,6 +235,7 @@ def _moved():
     under(('trunk',), ('providers', 'trunk'), ('status', 'apply', 'calls', 'mode', 'presets', 'use'))
     under(('settings',), ('system', 'settings'), ('get', 'set', 'validate', 'persist', 'export'))
     moved[('providers', 'config')] = ('providers', 'show')
+    moved[('providers', 'registry')] = ('providers', 'registry', 'list')
     moved[('health',)] = ('system', 'health')
     under(('diagnostics',), ('system', 'diagnostics'), ('run', 'database'))
     under(('pair',), ('access', 'pair'), ('new', 'device'))

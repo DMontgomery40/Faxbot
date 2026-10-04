@@ -95,7 +95,7 @@ Faxbot does not send a shared call again automatically. If the SIP trunk is unav
 
 Job Details says "Sent in one call with 2 other faxes" and shows the fax's share of the call's charge. The charge is split by pages, each fax with its separator page. The number's **Details** shows how many calls were saved in the last 30 days and about how much money. That figure is an estimate: separate calls are priced from the rate card the way Faxbot estimates any fax, and compared with the call's reported charge, or with its estimate when no charge has been reported. In Spending, a shared call counts once.
 
-From the command line: `faxbot routing batching show|set|off NUMBER` (`set` takes `--recipient-agreed`, `--wait`, `--max-pages` and `--mixed-senders`), `faxbot send --now` and `faxbot jobs send-now FAX_ID`.
+From the command line: `faxbot recipients together show|set|off NUMBER` (`set` takes `--recipient-agreed`, `--wait`, `--max-pages` and `--mixed-senders`), `faxbot send --now` and `faxbot sent send-now FAX_ID`.
 
 Tested on 4 October 2026 over a local T.38 test line between two Faxbot fax engines (`make native-proof`). One call carried two faxes, 5 pages including separators, in 39 seconds, and both were delivered with identical pages. A call ended after 27 seconds: the sender counted 2 confirmed pages, the first fax was delivered and the second failed. In an earlier cut, the receiver held 1 page while the sender counted 0, so the receiver can hold one page more than the sender saw confirmed. Not yet confirmed on a live trunk.
 
@@ -126,9 +126,11 @@ Faxbot finds calls it has no record of by reading the trunk's Telnyx records for
 From the command line:
 
 ```bash
-faxbot routing costs                 # spending per route and for received calls
-faxbot routing reconcile             # ask Telnyx now, instead of waiting for the next check
-faxbot routing fax-cost FAX_ID       # one sent fax; add --received for a received fax
+faxbot costs spending             # spending per route and for received calls
+faxbot costs reconcile            # ask Telnyx now, instead of waiting for the next check
+faxbot costs fax FAX_ID           # one sent fax
+faxbot costs received --all       # every received fax you can see; or one: faxbot costs received ID
+faxbot costs plans --in-use       # published plans for the services you send with that have no price yet
 ```
 
 If a call record with measured connected time is available for an attempt, Faxbot uses it instead of its own timing, which includes queueing and ringing.
@@ -149,7 +151,7 @@ Every time Faxbot starts, each provider you send or receive with that has never 
 | HumbleFax | $10 a month to send and receive unlimited faxes, no overage charges | [humblefax.com/faq](https://humblefax.com/faq) |
 | Your SIP trunk | the trunk carrier's per-minute prices in [What a call costs](../setup/sip-trunk.md#what-a-call-costs) | carrier pages |
 | Documo | no published fax API price; add your contracted rate | [documo.com/pricing](https://www.documo.com/pricing/) |
-| eFax | the API is priced by quote, so no card; **Rate cards** names eFax's cheapest published plan for your installation country and **Use a published plan as my estimate** adds it as your own card when you choose (`faxbot routing plans efax`) | [eFax](../setup/efax.md#prices) |
+| eFax | the API is priced by quote, so no card; **Rate cards** names eFax's cheapest published plan for your installation country and **Use a published plan as my estimate** adds it as your own card when you choose (`faxbot costs plans efax`) | [eFax](../setup/efax.md#prices) |
 
 ## Rate cards
 

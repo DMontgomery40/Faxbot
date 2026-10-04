@@ -14,7 +14,7 @@ If Faxbot restarts during these steps, it carries on with the same fax. A notifi
 
 ## Statuses
 
-The Inbox, `faxbot inbound list` and the API's `status_text` show one sentence for each state.
+The Inbox, `faxbot received list` and the API's `status_text` show one sentence for each state.
 
 | Status | Sentence | Meaning |
 | --- | --- | --- |
@@ -33,10 +33,10 @@ While a fax is waiting, **Download PDF** stays disabled and the email delivery c
 
 **Fetch again** asks Faxbot to try right away. It appears in the Inbox on waiting and not-received faxes, for people allowed to change provider settings (`providers:write`). Each request is recorded in the audit log.
 
-From the command line, use the received fax's ID (`faxbot inbound list --ids` shows it):
+From the command line, use the received fax's ID (`faxbot received list --ids` shows it):
 
 ```bash
-faxbot inbound fetch <received fax ID>
+faxbot received fetch <received fax ID>
 ```
 
 The API equivalent is `POST /inbound/{id}/fetch`. A fax that has already been received answers 409.
@@ -45,7 +45,7 @@ A provider sending the same notification again also makes Faxbot try again, even
 
 ## Test faxes
 
-**Add Test Fax** in the Inbox, or `faxbot inbound simulate`, creates a one-page PDF that reads "Test fax created in Faxbot on" and the date. The Inbox marks it **Test fax**, the CLI shows `Test fax  yes`, and the API sets `is_test` to `true`. Email delivery sends a test fax like any other, so you can check mailboxes and email delivery end to end.
+**Add Test Fax** in the Inbox, or `faxbot system diagnostics test-fax`, creates a one-page PDF that reads "Test fax created in Faxbot on" and the date. The Inbox marks it **Test fax**, the CLI shows `Test fax  yes`, and the API sets `is_test` to `true`. Email delivery sends a test fax like any other, so you can check mailboxes and email delivery end to end.
 
 ## How notifications are checked
 
@@ -76,7 +76,7 @@ When neither is set, Faxbot first looks the fax up in the configured project (`G
 
 The dialplan hands each received fax to `POST /_internal/asterisk/inbound` with the internal secret. You do not have to choose that secret: when receiving over the SIP trunk is possible and none is set, Faxbot creates one (saved as a setting by "system"), and it writes it to `/faxdata/asterisk/inbound.secret` (readable only by its owner) at every start and on **Apply and connect**, where Asterisk reads it. A value you set in Settings or as `ASTERISK_INBOUND_SECRET` in `.env` is used instead. The fax image must be inside Faxbot's data folder; Asterisk writes it to `/faxdata/inbound/`. Faxbot refuses paths outside that folder and paths that go through a symbolic link. A second report with the same call ID is the same fax.
 
-A hand-over that fails is never silent. Asterisk logs an ERROR line naming the call, and Recent calls, **Check trunk status** and the Dashboard say "A fax was received but could not be handed to Faxbot:" with the reason (no inbound secret yet, the secret was refused, receiving is turned off, the image could not be read, or Faxbot could not be reached). The image stays in `/faxdata/inbound/`. Every minute Faxbot looks there for images that have no import yet and brings them in through the same path, keyed on the call ID, so a late hand-over and a recovery are one fax. It waits until the call has ended, or until the image has not changed for 10 minutes, so a fax that is still arriving is never imported half-way. A recovered fax is marked as recovered, and its source time is the image file's modification time; the Inbox and `faxbot inbound list` show that time with "brought in later". A number the call did not report shows as Unknown, except that a recovered fax's To number is the trunk's fax number when the trunk has exactly one (the import records that it was inferred). To check at once, select **Bring in faxes that were received but not handed over** under Recent calls on the trunk screen, or run `faxbot inbound recover`.
+A hand-over that fails is never silent. Asterisk logs an ERROR line naming the call, and Recent calls, **Check trunk status** and the Dashboard say "A fax was received but could not be handed to Faxbot:" with the reason (no inbound secret yet, the secret was refused, receiving is turned off, the image could not be read, or Faxbot could not be reached). The image stays in `/faxdata/inbound/`. Every minute Faxbot looks there for images that have no import yet and brings them in through the same path, keyed on the call ID, so a late hand-over and a recovery are one fax. It waits until the call has ended, or until the image has not changed for 10 minutes, so a fax that is still arriving is never imported half-way. A recovered fax is marked as recovered, and its source time is the image file's modification time; the Inbox and `faxbot received list` show that time with "brought in later". A number the call did not report shows as Unknown, except that a recovered fax's To number is the trunk's fax number when the trunk has exactly one (the import records that it was inferred). To check at once, select **Bring in faxes that were received but not handed over** under Recent calls on the trunk screen, or run `faxbot received recover`.
 
 If Faxbot cannot convert the image to a PDF, the fax waits and the image stays in place. The next attempt starts again from that image.
 

@@ -23,9 +23,9 @@ _LOCATION = (
     ('database_url', '--database-url', 'DATABASE_URL', 'URL', 'Where the database is, if not the usual place (./faxbot.db, as the server uses).'),
     ('data_dir', '--data-dir', 'FAX_DATA_DIR', 'FOLDER', 'Where the data folder is, if not the usual place (./faxdata, as the server uses).'),
     ('key_file', '--key-file', 'FAXBOT_INSTALLATION_KEY_PATH', 'FILE',
-     'The installation key file, if not .configuration.key in the data folder.'),
+     'Installation encryption key file (default: .configuration.key in the data folder).'),
     ('direct_key_file', '--direct-key-file', 'FAXBOT_DIRECT_KEY_PATH', 'FILE',
-     'The partner delivery key file, if not .direct-identity.key in the data folder.'),
+     'Direct delivery signing key file (default: .direct-identity.key in the data folder).'),
 )
 
 
@@ -124,7 +124,7 @@ def admin_migrate():
 
 @admin.command('recover-owner')
 def admin_recover_owner(yes: bool = typer.Option(False, '--yes', '-y', help='Do not ask for confirmation.')):
-    """Get back in when no owner can sign in: Faxbot makes a new installation key and shows it once.
+    """Recover owner access when no owner can sign in: create a new installation key and show it once.
 
     Run it while Faxbot is stopped. Anything that used the old installation key stops working. Then start Faxbot and create an owner with faxbot access owner enroll.
     """

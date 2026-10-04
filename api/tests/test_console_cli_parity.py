@@ -84,16 +84,7 @@ AWAITING_CONSOLE = {
 }
 
 # Gaps still open in the command line. Builder M removes each entry with the command that closes it.
-AWAITING_CLI = {
-    ('GET', '/work/counts'): 'faxbot received counts',
-    ('GET', '/admin/inbound/efax'): 'faxbot providers efax status',
-    ('POST', '/admin/settings/reload'): 'faxbot system settings reload',
-    ('GET', '/batching/check'): 'faxbot recipients together check',
-    ('GET', '/routing/inbound-costs'): 'faxbot costs received --all',
-    ('GET', '/routing/fax-costs'): 'faxbot sent list: a cost column, as on Faxes → Sent',
-    ('GET', '/routing/published-plans/in-use'): 'faxbot costs plans --in-use',
-    ('POST', '/admin/plugins/http/import-manifests'): 'faxbot providers import',
-}
+AWAITING_CLI: dict = {}
 
 LISTS = {'NOT_OPERATOR': NOT_OPERATOR, 'CONSOLE_ONLY': CONSOLE_ONLY, 'CLI_ONLY': CLI_ONLY,
          'AWAITING_CONSOLE': AWAITING_CONSOLE, 'AWAITING_CLI': AWAITING_CLI}

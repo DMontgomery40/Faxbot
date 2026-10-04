@@ -6,7 +6,7 @@ import typer
 
 from .. import state
 from ..client import segment
-from ..errors import CliError
+from ..errors import CliError, EXIT_NOT_FOUND
 from ..output import local_time, parse_time
 from .fax import _report_saved, save_document
 
@@ -37,7 +37,16 @@ def duplicate_sentence(item):
 
 
 def _item(api, item_id):
-    return api.get('/work/' + segment(item_id))
+    """An owners-list item, given its own ID or the received fax's ID."""
+    try:
+        return api.get('/work/' + segment(item_id))
+    except CliError as failure:
+        if failure.status != 404:
+            raise
+    found = api.get('/work', params={'inbound_fax_id': item_id, 'limit': 1}).get('items', [])
+    if not found:
+        raise CliError("No received fax you can see has that ID. See faxbot received list --ids.", EXIT_NOT_FOUND)
+    return found[0]
 
 
 def _person(people, wanted, *, where):
@@ -81,12 +90,28 @@ def work_list(mine: bool = typer.Option(False, '--mine', help='Only items you ow
          for item in items], empty='No work items.'))
 
 
+COUNT_SENTENCES = (('unassigned', 'waiting for an owner'), ('mine', 'assigned to you and not done'),
+                   ('overdue', 'past their acknowledgement target'), ('open', 'open'),
+                   ('acknowledged', 'acknowledged'), ('done', 'done'))
+
+
+def received_counts():
+    """Count the received faxes you can see in each state, such as waiting for an owner or overdue."""
+    counts = state.api().get('/work/counts')
+
+    def human(out):
+        for key, words in COUNT_SENTENCES:
+            number = counts.get(key) or 0
+            out.line(f"{number} received {'fax is' if number == 1 else 'faxes are'} {words}.")
+    state.out().result(counts, human)
+
+
 @work.command('show')
-def work_show(item_id: str = typer.Argument(..., help="ID from 'faxbot received owners --ids'.")):
+def work_show(item_id: str = typer.Argument(..., help="A received fax's ID, from 'faxbot received list --ids' or 'faxbot received owners --ids'.")):
     """Show who has owned a received fax and everything that happened to it."""
     api = state.api()
     item = _item(api, item_id)
-    history = api.get(f'/work/{segment(item_id)}/history')
+    history = api.get(f"/work/{segment(item['id'])}/history")
 
     def human(out):
         out.fields(_fields(item))
@@ -98,53 +123,55 @@ def work_show(item_id: str = typer.Argument(..., help="ID from 'faxbot received 
 
 
 @work.command('assign')
-def work_assign(item_id: str = typer.Argument(..., help="ID from 'faxbot received owners --ids'."),
+def work_assign(item_id: str = typer.Argument(..., help="A received fax's ID, from 'faxbot received list --ids' or 'faxbot received owners --ids'."),
                 user: str = typer.Argument(..., help='The new owner: their login or name.')):
     """Give a received fax to an owner. They must already be able to see it."""
     api = state.api()
     item = _item(api, item_id)
-    people = api.get(f'/work/{segment(item_id)}/assignees').get('people', [])
+    people = api.get(f"/work/{segment(item['id'])}/assignees").get('people', [])
     person = _person(people, user, where='this document')
-    result = api.post(f'/work/{segment(item_id)}/assign', json={'principal_id': person['id'],
+    result = api.post(f"/work/{segment(item['id'])}/assign", json={'principal_id': person['id'],
                                                                 'version': item['version']})
     state.out().result(result, lambda out: out.line(state_sentence(result)))
 
 
 @work.command('acknowledge')
-def work_acknowledge(item_id: str = typer.Argument(..., help="ID from 'faxbot received owners --ids'.")):
+def work_acknowledge(item_id: str = typer.Argument(..., help="A received fax's ID, from 'faxbot received list --ids' or 'faxbot received owners --ids'.")):
     """Acknowledge a received fax you own."""
     api = state.api()
     item = _item(api, item_id)
-    result = api.post(f'/work/{segment(item_id)}/acknowledge', json={'version': item['version']})
+    result = api.post(f"/work/{segment(item['id'])}/acknowledge", json={'version': item['version']})
     state.out().result(result, lambda out: out.line(state_sentence(result)))
 
 
 @work.command('done')
-def work_done(item_id: str = typer.Argument(..., help="ID from 'faxbot received owners --ids'."),
+def work_done(item_id: str = typer.Argument(..., help="A received fax's ID, from 'faxbot received list --ids' or 'faxbot received owners --ids'."),
               note: str = typer.Option(..., '--note', help='What was done, up to 200 characters.')):
     """Mark a received fax done, with a short note."""
     api = state.api()
     item = _item(api, item_id)
-    result = api.post(f'/work/{segment(item_id)}/done', json={'note': note, 'version': item['version']})
+    result = api.post(f"/work/{segment(item['id'])}/done", json={'note': note, 'version': item['version']})
     state.out().result(result, lambda out: out.line(state_sentence(result)))
 
 
 @work.command('reopen')
-def work_reopen(item_id: str = typer.Argument(..., help="ID from 'faxbot received owners --ids'.")):
+def work_reopen(item_id: str = typer.Argument(..., help="A received fax's ID, from 'faxbot received list --ids' or 'faxbot received owners --ids'.")):
     """Reopen a received fax marked done. Its owner acknowledges it again."""
     api = state.api()
     item = _item(api, item_id)
-    result = api.post(f'/work/{segment(item_id)}/reopen', json={'version': item['version']})
+    result = api.post(f"/work/{segment(item['id'])}/reopen", json={'version': item['version']})
     state.out().result(result, lambda out: out.line(state_sentence(result)))
 
 
 @work.command('export')
-def work_export(item_id: str = typer.Argument(..., help="ID from 'faxbot received owners --ids'."),
+def work_export(item_id: str = typer.Argument(..., help="A received fax's ID, from 'faxbot received list --ids' or 'faxbot received owners --ids'."),
                 output: str = typer.Option(None, '--output', '-o', help="Zip file to write. Use '-' for standard "
                                                                         'output.'),
                 force: bool = typer.Option(False, '--force', help='Replace the file if it exists.')):
     """Download a received fax's record as a zip file: its history and, if you may read documents, the fax itself."""
-    response = state.api().get(f'/work/{segment(item_id)}/export', raw=True, headers={'Accept': 'application/zip'})
+    api = state.api()
+    response = api.get(f"/work/{segment(_item(api, item_id)['id'])}/export", raw=True,
+                       headers={'Accept': 'application/zip'})
     _report_saved(save_document(response, output, f'work-{item_id}-evidence.zip', force), len(response.content))
 
 
@@ -155,10 +182,10 @@ def work_settings(acknowledge_hours: int = typer.Option(None, '--acknowledge-hou
                                                              'deadline.'),
                   mailbox: str = typer.Option(None, '--mailbox', help='Change this mailbox, by name.'),
                   hours: int = typer.Option(None, '--hours', min=0, max=8760,
-                                            help="With --mailbox: this mailbox's target in hours (0 for no target)."),
+                                            help="With --mailbox: this mailbox's acknowledgement target in hours (0 for none)."),
                   installation_target: bool = typer.Option(False, '--use-installation-target',
-                                                           help="With --mailbox: use the installation's target."),
-                  backup: str = typer.Option(None, '--backup', help='With --mailbox: who takes over missed items.'),
+                                                           help='With --mailbox: use the installation-wide acknowledgement target for this mailbox.'),
+                  backup: str = typer.Option(None, '--backup', help='With --mailbox: the backup person who takes over faxes not acknowledged in time.'),
                   no_backup: bool = typer.Option(False, '--no-backup', help='With --mailbox: remove the backup.')):
     """Show or change how soon received faxes should be acknowledged, and who covers missed ones. New faxes use the targets in place when they arrive."""
     api = state.api()
@@ -208,7 +235,7 @@ def work_settings(acknowledge_hours: int = typer.Option(None, '--acknowledge-hou
 
 def import_document(file: Path = typer.Argument(..., exists=True, dir_okay=False, readable=True,
                                                 help='The PDF to import.'),
-                    source: str = typer.Option(..., '--source', help='The system it comes from, for example '
+                    source: str = typer.Option(..., '--source', help='Name of the source system, for example '
                                                                      'case-system.'),
                     operation_id: str = typer.Option(..., '--id', help="The document's ID in that system. "
                                                                        'Importing the same ID again does not '
@@ -220,7 +247,7 @@ def import_document(file: Path = typer.Argument(..., exists=True, dir_okay=False
                     to_number: str = typer.Option(None, '--to', help='The fax number it was sent to; decides the '
                                                                      'mailbox.'),
                     from_number: str = typer.Option(None, '--from', help='The fax number it came from.'),
-                    pages: int = typer.Option(None, '--pages', min=1, help='Pages, as that system reported.')):
+                    pages: int = typer.Option(None, '--pages', min=1, help='Page count, as the source system reported it.')):
     """Import a PDF from another system as if it were a received fax."""
     manifest = {key: value for key, value in {
         'source_system': source, 'operation_id': operation_id, 'revision': revision,

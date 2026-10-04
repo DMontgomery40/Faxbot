@@ -33,7 +33,7 @@ Both organizations do these steps, each for the other.
 
 Faxbot only talks to partners on the public Internet. When you add a partner, and again before every request to it, Faxbot looks up the address on the partner's card. If it points to this computer, a private network (such as 10.x, 192.168.x or an IPv6 unique-local address), a link-local or cloud metadata address, or a multicast or unspecified address, Faxbot refuses with one sentence and sends nothing. Requests go to the address Faxbot checked, so a later change to the partner's DNS cannot redirect them.
 
-For partners on a network you control, such as two installations on the same VPN, an owner can turn the check off with `DIRECT_ALLOW_PRIVATE_PEERS=true` (`faxbot settings set direct_allow_private_peers=true`). It is off by default.
+For partners on a network you control, such as two installations on the same VPN, an owner can turn the check off with `DIRECT_ALLOW_PRIVATE_PEERS=true` (`faxbot system settings set direct_allow_private_peers=true`). It is off by default.
 
 The code proves that whoever holds the partner's key also receives faxes at the partner's number. Codes expire after 7 days, and five wrong codes close it; send a new code to try again.
 

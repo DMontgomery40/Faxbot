@@ -46,7 +46,7 @@ def _status_lines(out, result):
 
 @trunk.command('status')
 def trunk_status():
-    """Check the phone line: whether the carrier accepts Faxbot, Faxbot's internet address and the last call."""
+    """Check the SIP trunk: registration with the carrier, Faxbot's public IP address, and the last call."""
     result = state.api().get('/admin/sip/status')
     state.out().result(result, lambda out: _status_lines(out, result))
 
@@ -76,7 +76,7 @@ def _connect(api, wait, timeout):
 
 @trunk.command('apply')
 def trunk_apply(wait: bool = typer.Option(True, '--wait/--no-wait',
-                                          help='Wait until the phone line connects, then show its check.'),
+                                          help='Wait until the SIP trunk registers, then show the trunk check.'),
                 timeout: int = typer.Option(60, '--timeout', min=5, max=600, help='Seconds to wait.')):
     """Connect the saved phone line settings. Faxbot restarts its fax engine to load them once no call is in progress, or tells you how to restart it yourself."""
     applied, status = _connect(state.api(), wait, timeout)
@@ -111,7 +111,7 @@ def trunk_calls(limit: int = typer.Option(10, '--limit', min=1, max=200, help='H
 @trunk.command('mode')
 def trunk_mode(mode: str = typer.Argument(..., metavar='t38|audio',
                                           help='t38 (recommended), or audio when T.38 faxes fail on your line.')):
-    """Choose how new fax calls send pages, T.38 (the fax standard) or audio when T.38 does not work, and reconnect the phone line."""
+    """Choose how new fax calls are sent, T.38 (fax over IP) or audio when T.38 fails, then reconnect the trunk."""
     if mode not in ('t38', 'audio'):
         raise typer.BadParameter('Use t38 or audio.', param_hint='MODE')
     api = state.api()
@@ -182,19 +182,19 @@ def local_date(day):
 
 
 @trunk.command('use')
-def trunk_use(preset: str = typer.Argument(..., metavar='PRESET', help='Your carrier or phone system, as listed by faxbot providers trunk presets.'),
+def trunk_use(preset: str = typer.Argument(..., metavar='PRESET', help='Carrier or phone system preset, for example telnyx (see faxbot providers trunk presets).'),
               host: str = typer.Option(None, '--host', help="The carrier's server address, or your phone system's "
                                                              "address (IP Office, or Aura Session Manager)."),
               port: int = typer.Option(None, '--port', min=1, max=65535, help="The carrier's port, when not the usual one."),
               transport: str = typer.Option(None, '--transport', help='How Faxbot connects to the line: udp, tcp or tls (encrypted), where the preset offers it.'),
               number_format: str = typer.Option(None, '--number-format', metavar='e164|local',
-                                                help='e164 sends +44...; local sends the number as a phone at '
-                                                     'your installation dials it.'),
+                                                help='How numbers are dialed: e164 (international format, +44...) or '
+                                                     'local (as a phone at your site dials them).'),
               prefix: str = typer.Option(None, '--prefix', help='Outside-line digits before a number dialled '
                                                                  'as a phone here dials it, such as 9.')):
-    """Choose your carrier or phone system for the phone line and save its settings. Then connect it with faxbot providers trunk apply.
+    """Choose a carrier or phone system preset for the SIP trunk and save its settings; then connect it with faxbot providers trunk apply.
 
-    A phone system knows Faxbot by its address, so it needs no username or password.
+    A phone system recognizes Faxbot by its IP address, so it needs no username or password.
     """
     api = state.api()
     catalog = {item['id']: item for item in api.get('/admin/sip/presets').get('presets') or []}

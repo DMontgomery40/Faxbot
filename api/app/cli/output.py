@@ -57,6 +57,22 @@ def money(amounts):
     return ', '.join(f"{item['amount']} {item['currency']}" for item in amounts)
 
 
+def cost_amount(cost):
+    """A cost column's short amount: what was charged, or the estimate marked as one, as the console shows it."""
+    state = (cost or {}).get('state')
+    if not cost or state == 'none':
+        return '-'
+    if state == 'reported':
+        return money(cost.get('reported_cost'))
+    if state == 'partial':
+        return f"{money(cost.get('reported_cost'))} charged so far"
+    if state == 'included':
+        return 'In your plan'
+    if state == 'unmatched':
+        return 'Unknown'
+    return f"{money(cost['estimated_cost'])} estimate" if cost.get('estimated_cost') else 'Not reported yet'
+
+
 class Output:
     def __init__(self, *, json_mode=False, quiet=False):
         self.json_mode = json_mode

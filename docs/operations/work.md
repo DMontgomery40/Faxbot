@@ -14,7 +14,7 @@ Every received document gets one work item once Faxbot holds the document itself
 
 The item sits in the mailbox the document was routed to by its fax number. A document that matched no routing rule is in no mailbox; only people with access on everything see it.
 
-A test fax created from the console or with `faxbot inbound simulate` becomes an item too, marked **Test fax**, so you can try the queue without a real fax.
+A test fax created from the console or with `faxbot system diagnostics test-fax` becomes an item too, marked **Test fax**, so you can try the queue without a real fax.
 
 When two documents have identical bytes, each keeps its own item, because they are separate arrivals. Each shows "Same document as the one received …" with the other's time.
 
@@ -28,7 +28,7 @@ Each mailbox can have a backup person. If an item is not acknowledged by its tar
 
 The acknowledgement target is your team's operational target, not a legal deadline. Set it in hours:
 
-- **Installation target**: in the Work screen's settings, or with `faxbot work settings --acknowledge-hours 24`. The setting is `WORK_ACKNOWLEDGE_HOURS`; `0` (the default) sets no target.
+- **Installation target**: in the Work screen's settings, or with `faxbot numbers mailboxes target --acknowledge-hours 24`. The setting is `WORK_ACKNOWLEDGE_HOURS`; `0` (the default) sets no target.
 - **Mailbox target**: overrides the installation target for one mailbox. `0` means no target for that mailbox.
 
 The clock starts when the document became available: when Faxbot acquired the document, or when the fax arrived if it was stored before acquisition records existed. Faxbot works out the due time once, when the item is created. Changing a target applies to documents that arrive afterwards. Restarts, repeated provider notifications and duplicate documents never restart the clock.
@@ -73,7 +73,7 @@ curl -X POST https://fax.example.com/imports \
   -F 'manifest={"source_system":"case-system","operation_id":"case-41","to_number":"+15550100001","source_received_at":"2026-10-03T14:05:00Z"}'
 ```
 
-Or from the command line: `faxbot import referral.pdf --source case-system --id case-41 --to +15550100001`.
+Or from the command line: `faxbot received import referral.pdf --source case-system --id case-41 --to +15550100001`.
 
 | Manifest field | Required | Meaning |
 | --- | --- | --- |
