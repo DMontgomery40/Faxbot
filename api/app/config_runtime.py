@@ -3,6 +3,7 @@ from contextlib import contextmanager
 from contextvars import copy_context
 from pathlib import Path
 import asyncio
+import logging
 
 import anyio
 import sqlalchemy as sa
@@ -128,6 +129,8 @@ class ConfigurationRuntime:
                     or Path(snapshot.active.values.fax_data_dir).absolute() != directory.absolute()):
                 raise ConfigurationBootstrapError('Deployment storage locations do not match this installation; use the maintenance transfer workflow.')
             if self.lifecycle.can_promote:
+                # Before any other write: a write saves every setting and ends the adoption.
+                snapshot = self._adopt_promoted_environment(snapshot)
                 snapshot = self._apply_environment_credentials(snapshot)
                 snapshot = self._create_engine_password(snapshot, new_installation=initialized)
             self.snapshot = snapshot
@@ -138,6 +141,27 @@ class ConfigurationRuntime:
         except BaseException:
             self.lifecycle.close()
             raise
+
+    def _adopt_promoted_environment(self, snapshot):
+        """Settings once read only from the environment keep their variable after an upgrade.
+
+        A saved configuration from before a setting became a configuration value
+        takes the variable once, as one revision by "environment". A value that is
+        not valid is left out with a warning, so the upgrade still starts.
+        """
+        supplied = ConfigurationValues.environment_adoptions(self.environment, snapshot.desired.values)
+        changes = {}
+        for name, (variable, value) in supplied.items():
+            try:
+                snapshot.desired.values.with_patch({name: value})
+            except ConfigurationValueError:
+                logging.getLogger(__name__).warning(
+                    '%s in the environment is not valid; Faxbot kept its saved setting.', variable)
+                continue
+            changes[name] = value
+        if not changes:
+            return snapshot
+        return self.manager.apply_environment(snapshot, changes)
 
     def _apply_environment_credentials(self, snapshot):
         """Credentials in the environment are the values in force: record any that changed.

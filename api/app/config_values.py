@@ -5,6 +5,7 @@ aliases live on these fields so callers do not maintain competing field maps.
 """
 from collections.abc import Mapping
 import re
+from urllib.parse import urlsplit
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, PrivateAttr, ValidationError, field_validator
 
@@ -28,6 +29,25 @@ ENVIRONMENT_MANAGED_REFUSAL = "This key is set in .env. Change it there, then ru
 # Fax numbers in settings are saved in E.164; national input uses the country.
 _NUMBER_FIELDS = frozenset({"direct_fax_number", "sip_trunk_caller_id", "sip_trunk_dids",
                             "signalwire_fax_from_e164", "efax_caller_id"})
+
+# Read straight from the environment before they became configuration values. A saved
+# configuration from before then takes each variable once, at the next start (config_runtime).
+PROMOTED_FROM_ENVIRONMENT = ("sip_public_address_check_minutes", "enable_s3_diagnostics",
+                             "mobile_local_base", "docs_base_url")
+
+
+def _web_address(value) -> bool:
+    if not (type(value) is str and 0 < len(value) <= 2048
+            and all(33 <= ord(character) < 127 for character in value)
+            and not any(character in value for character in '\\<>"\'')):
+        return False
+    try:
+        parts = urlsplit(value)
+        return (parts.scheme in {"http", "https"} and bool(parts.hostname)
+                and parts.username is None and parts.password is None
+                and not parts.query and not parts.fragment and parts.port != 0)
+    except ValueError:
+        return False
 
 
 class ConfigurationValues(BaseModel):
@@ -82,6 +102,9 @@ class ConfigurationValues(BaseModel):
     # Public address the carrier should send signaling and media to when Asterisk is behind NAT.
     sip_external_address: str = Field('', validation_alias='SIP_EXTERNAL_ADDRESS',
                                       pattern=r'^(?:[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?)?$')
+    # How often Faxbot checks its internet address again for the trunk, in minutes; 0 turns the check off.
+    sip_public_address_check_minutes: int = Field(5, validation_alias='SIP_PUBLIC_ADDRESS_CHECK_MINUTES',
+                                                  ge=0, le=1440)
     # Read-only Telnyx API v2 key: Faxbot reads what each trunk call was charged. Never used to place calls.
     telnyx_api_key: str = Field('', validation_alias='TELNYX_API_KEY', repr=False, json_schema_extra={'secret': True},
                                 pattern=r'^[!-~]{0,256}$')
@@ -158,6 +181,8 @@ class ConfigurationValues(BaseModel):
     s3_region: str = Field('', validation_alias='S3_REGION')
     s3_endpoint_url: str = Field('', validation_alias='S3_ENDPOINT_URL')
     s3_kms_key_id: str = Field('', validation_alias='S3_KMS_KEY_ID')
+    # Diagnostics also ask the S3 bucket whether Faxbot can reach it.
+    enable_s3_diagnostics: bool = Field(False, validation_alias='ENABLE_S3_DIAGNOSTICS')
     inbound_list_rpm: int = Field(30, validation_alias='INBOUND_LIST_RPM', ge=0)
     inbound_get_rpm: int = Field(60, validation_alias='INBOUND_GET_RPM', ge=0)
     admin_allow_restart: bool = Field(False, validation_alias='ADMIN_ALLOW_RESTART')
@@ -201,6 +226,10 @@ class ConfigurationValues(BaseModel):
     # Work queue: the team's operational target for acknowledging a received
     # document, in hours from when it arrived. 0 sets no target. Not a legal deadline.
     work_acknowledge_hours: int = Field(0, validation_alias='WORK_ACKNOWLEDGE_HOURS', ge=0, le=8760)
+    # The address paired phones use on the installation's own network; empty offers none.
+    mobile_local_base: str = Field('', validation_alias='MOBILE_LOCAL_BASE')
+    # Where the console's help links point.
+    docs_base_url: str = Field('https://docs.faxbot.net/latest/', validation_alias='DOCS_BASE_URL')
 
     _explicit_keys: frozenset[str] = PrivateAttr(default_factory=frozenset)
 
@@ -217,6 +246,17 @@ class ConfigurationValues(BaseModel):
             value = value.strip().upper()
             if value not in SUPPORTED_COUNTRIES:
                 raise ValueError("unsupported country")
+        return value
+
+    @field_validator("docs_base_url", "mobile_local_base")
+    @classmethod
+    def require_web_address(cls, value, info):
+        # The console's help links and the address paired phones use are base addresses:
+        # http or https with a host, no credentials, query or fragment (as access.context checks).
+        if value == "" and info.field_name == "mobile_local_base":
+            return value
+        if not _web_address(value):
+            raise ValueError("invalid web address")
         return value
 
     @classmethod
@@ -269,6 +309,22 @@ class ConfigurationValues(BaseModel):
                 if isinstance(value, str) and value != "":
                     result[name] = (key, value)
                     break
+        return result
+
+    @classmethod
+    def environment_adoptions(cls, environment: Mapping[str, str],
+                              saved: "ConfigurationValues") -> dict[str, tuple[str, str]]:
+        """Promoted settings the environment supplies that the saved configuration predates.
+
+        Returns {field: (variable, value)}. A configuration saved since a setting was
+        promoted carries it, so its variable is never taken again: the console and
+        the command line own the value from then on.
+        """
+        result = {}
+        for name in PROMOTED_FROM_ENVIRONMENT:
+            key = cls.model_fields[name].validation_alias
+            if key in environment and key not in saved._explicit_keys:
+                result[name] = (key, environment[key])
         return result
 
     def to_environment(self, *, redact_secrets: bool = False) -> dict[str, str]:

@@ -112,7 +112,7 @@ async def lifespan(application: FastAPI):
         application.state.configuration_runtime = runtime
         application.state.credential_transport = CredentialTransport(os.environ)
         application.state.access_runtime = await run_lifecycle_step(lambda: AccessRuntime(
-            runtime.manager.store, docs_base=os.getenv('DOCS_BASE_URL', 'https://docs.faxbot.net/latest/')))
+            runtime.manager.store, docs_base=runtime.candidate.values.docs_base_url))
         # Inbound faxes stored without an access resource are placed in the unassigned inbox.
         await run_lifecycle_step(application.state.access_runtime.inbound.backfill)
         with runtime.frame(runtime.candidate):
@@ -139,7 +139,10 @@ async def lifespan(application: FastAPI):
                         RoutedTransport(CapturedTransport(delivery, runtime, ami=ami_client))))
                     tasks.append(asyncio.create_task(worker.run(), name='faxbot-outbound-worker'))
                     tasks.append(asyncio.create_task(OutboundPoller(delivery).run(), name='faxbot-outbound-poller'))
-                    tasks.append(asyncio.create_task(watch_public_address(), name='faxbot-public-address'))
+                    # The task's frame keeps the startup values; the watcher reads the current ones.
+                    tasks.append(asyncio.create_task(watch_public_address(
+                        values_source=lambda: runtime.manager.store.read().active.values),
+                        name='faxbot-public-address'))
                     yield
             finally:
                 for task in tasks:
@@ -721,7 +724,7 @@ def get_admin_config(request: Request, identity=Depends(require_identity)):
         "phaxio_verify_signature": values.phaxio_verify_signature,
         "persisted_settings_enabled": values.enable_persisted_settings,
         "branding": {
-            "docs_base": access.context.docs_base,
+            "docs_base": values.docs_base_url,
             "logo_path": "/admin/ui/faxbot_full_logo.png",
         },
         "mcp": {
@@ -1698,7 +1701,7 @@ def _mobile_base_urls() -> Dict[str, Optional[str]]:
     if (_TUNNEL_STATE.get("enabled") and str(_TUNNEL_STATE.get("provider") or "").lower() == "cloudflare"
             and not _hipaa_posture_enabled()):
         tunnel = _TUNNEL_STATE.get("public_url") or None
-    return {"local": os.getenv("MOBILE_LOCAL_BASE") or None, "tunnel": tunnel,
+    return {"local": settings.mobile_local_base or None, "tunnel": tunnel,
             "public": settings.public_api_url or None}
 
 
@@ -2048,7 +2051,7 @@ def run_diagnostics(request: Request):
     if settings.storage_backend.lower() == "s3":
         checks["storage"].update(bucket_set=bool(settings.s3_bucket),
             region_set=bool(settings.s3_region), kms_enabled=bool(settings.s3_kms_key_id))
-        if storage_required and settings.s3_bucket and os.getenv("ENABLE_S3_DIAGNOSTICS", "false").lower() == "true":
+        if storage_required and settings.s3_bucket and settings.enable_s3_diagnostics:
             try:
                 import boto3
                 from botocore.config import Config

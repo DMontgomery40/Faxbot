@@ -392,7 +392,10 @@ def test_invalid_docs_base_fails_with_fixed_nonsecret_error(url):
 
 @pytest.mark.parametrize('url', ['http://localhost:8080/docs/', 'https://docs.example.invalid/latest/'])
 def test_safe_docs_base_is_passed_without_fetching_or_exposing_configuration(world, url):
-    assert world.snapshot(docs_base=url)['branding'] == {
+    # The documentation address is a configuration value (DOCS_BASE_URL at first start), read live.
+    world.configuration.apply(world.initial, ConfigurationValues.from_environment({'DOCS_BASE_URL': url}),
+                              restart_required=False, actor='synthetic-internal-fixture')
+    assert world.snapshot()['branding'] == {
         'docs_base': url, 'logo_path': '/admin/ui/faxbot_full_logo.png',
     }
 

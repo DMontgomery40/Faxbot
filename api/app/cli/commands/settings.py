@@ -76,6 +76,21 @@ def _value(raw):
     return raw
 
 
+def _request_names():
+    """Each setting's name in a settings change, by its own name and by that name.
+
+    Settings are accepted by their configuration names too (fax_backend is sent as
+    backend). The server converts text to numbers and yes/no itself, so values of
+    known settings are sent as typed: a fax number such as 3035551234 stays text.
+    """
+    from ...config_values import ConfigurationValues
+    names = {}
+    for name, field in ConfigurationValues.model_fields.items():
+        sent = (field.json_schema_extra or {}).get('patch_name', name)
+        names[name] = names[sent] = sent
+    return names
+
+
 @settings.command('set')
 def settings_set(assignments: list[str] = typer.Argument(None, metavar='NAME=VALUE...',
                                                          help='Settings to change, for example max_file_size_mb=20 '
@@ -87,13 +102,15 @@ def settings_set(assignments: list[str] = typer.Argument(None, metavar='NAME=VAL
                                                                     'number conversion).')):
     """Change settings. Faxbot checks the whole result before saving it."""
     changes = {}
+    known = _request_names()
     for item in assignments or []:
         name, separator, raw = item.partition('=')
         if not separator or not name.strip():
             raise CliError(f"Write each setting as NAME=VALUE; '{item}' has no '='.")
-        changes[name.strip()] = raw if as_text else _value(raw)
+        name = name.strip()
+        changes[known.get(name, name)] = raw if as_text or name in known else _value(raw)
     for name in secret or []:
-        changes[name] = typer.prompt(f'Value for {name}', hide_input=True, confirmation_prompt=True)
+        changes[known.get(name, name)] = typer.prompt(f'Value for {name}', hide_input=True, confirmation_prompt=True)
     if not changes:
         raise CliError('Nothing to change. Give NAME=VALUE pairs or --secret NAME.')
     api = state.api()
