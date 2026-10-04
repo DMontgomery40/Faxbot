@@ -85,7 +85,8 @@ export function DestinationDialog({ client, number, canWrite, onClose, onSaved }
             {detail.recommended_routes.map((route, index) => (
               <ListItem key={route.route} disableGutters>
                 <ListItemText
-                  primary={`${index + 1}. ${route.label}${route.estimated_cost_one_page ? ` · about ${formatMoney(route.estimated_cost_one_page)} for one page` : ''}`}
+                  primary={`${index + 1}. ${route.label}${route.included_in_plan ? ' · included in your plan'
+                    : route.estimated_cost_one_page ? ` · about ${formatMoney(route.estimated_cost_one_page)} for one page` : ' · cost unknown'}`}
                   secondary={route.explanation} />
               </ListItem>
             ))}

@@ -41,10 +41,12 @@ import type {
   DirectPartner,
   EmailConnector,
   EmailConnectorInput,
+  FaxCost,
   IntakeCounts,
   IntakeItem,
-  ProviderCosts,
   RateCard,
+  ReconcileResult,
+  RouteCostsResponse,
 } from './deliveryTypes';
 import type {
   ImportManifest, ImportResult, WorkAssignee, WorkCounts, WorkEvent, WorkItem, WorkSettings, WorkView,
@@ -897,8 +899,26 @@ export class AdminAPIClient {
     return this.json(`/routing/destinations/${id(number)}`, { method: 'PATCH', body: JSON.stringify(patch) });
   }
 
-  async getRouteCosts(): Promise<{ since: string; providers: ProviderCosts[] }> {
+  async getRouteCosts(): Promise<RouteCostsResponse> {
     return this.json('/routing/costs');
+  }
+
+  // Ask the SIP trunk carrier now what each open call cost; never changes a delivery.
+  async reconcileCharges(): Promise<ReconcileResult> {
+    return this.json('/routing/reconcile', { method: 'POST', body: '{}' });
+  }
+
+  async getFaxCost(jobId: string): Promise<FaxCost> {
+    return this.json(`/routing/faxes/${id(jobId)}/cost`);
+  }
+
+  async getInboundCost(inboundId: string): Promise<FaxCost> {
+    return this.json(`/routing/inbound/${id(inboundId)}/cost`);
+  }
+
+  // Costs for several received faxes at once; faxes this person cannot read are left out.
+  async getInboundCosts(inboundIds: string[]): Promise<{ costs: Record<string, FaxCost> }> {
+    return this.json(`/routing/inbound-costs${query({ ids: inboundIds.join(',') })}`);
   }
 
   async listRateCards(): Promise<{ cards: RateCard[] }> {

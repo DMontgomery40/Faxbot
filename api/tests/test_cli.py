@@ -643,6 +643,34 @@ def test_routing_destinations_costs_and_rate_cards(cli, tmp_path):
     assert cli.json('routing', 'rate-cards')['cards'][0]['label'] == 'Phaxio list price'
     bad = cli('routing', 'destination', 'not-a-number')
     assert bad.exit_code == 9
+    human = cli('routing', 'costs')
+    assert human.exit_code == 0 and 'No faxes sent in this period.' in human.stdout
+    refused = cli('routing', 'reconcile')
+    assert refused.exit_code != 0
+    assert 'Faxbot needs a Telnyx API key to read call charges.' in refused.stdout + refused.stderr
+    assert cli('routing', 'fax-cost', '0' * 32).exit_code != 0
+
+
+@pytest.fixture
+def telnyx_cli(monkeypatch, tmp_path):
+    for client in _serve(monkeypatch, tmp_path, TELNYX_API_KEY='KEYsynthetic-cli', SIP_TRUNK_PRESET='telnyx'):
+        yield Cli(client)
+
+
+def test_routing_reconcile_asks_the_carrier_and_costs_show_charges(telnyx_cli, monkeypatch):
+    from app.routing import http as routing_http
+    from api.tests.test_carrier_charges import FakeTelnyx
+    sources = []
+    monkeypatch.setattr(routing_http, 'carrier_source', lambda key: sources.append(key()) or FakeTelnyx([]))
+    result = telnyx_cli('routing', 'reconcile')
+    assert result.exit_code == 0, (result.stdout, result.stderr)
+    assert result.stdout.strip() == 'No calls are waiting for a charge.'
+    assert sources == ['KEYsynthetic-cli'] and 'KEYsynthetic-cli' not in result.stdout
+    assert telnyx_cli.json('routing', 'reconcile')['checked'] == 0
+    costs = telnyx_cli.json('routing', 'costs')
+    assert costs['carrier_charges'] == {'carrier': 'Telnyx', 'supported': True, 'readable': True}
+    human = telnyx_cli('routing', 'costs')
+    assert 'call charges appear once' not in human.stdout
 
 
 def test_intake_connectors_items_and_test_email(cli):

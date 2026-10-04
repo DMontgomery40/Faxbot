@@ -1857,7 +1857,9 @@ $ faxbot routing [OPTIONS] COMMAND [ARGS]...
 * `destinations`: List destinations Faxbot knows about, with...
 * `destination`: Show one destination: its settings, the...
 * `update-destination`: Change a destination&#x27;s name, notes,...
-* `costs`: Show fax attempts and costs per provider:...
+* `costs`: Show what faxing cost per route: carrier...
+* `reconcile`: Ask the SIP trunk carrier now what each...
+* `fax-cost`: Show what one fax cost: the carrier&#x27;s...
 * `rate-cards`: Show the prices Faxbot uses to estimate...
 
 ### `faxbot routing destinations`
@@ -1916,7 +1918,7 @@ $ faxbot routing update-destination [OPTIONS] {number}
 
 ### `faxbot routing costs`
 
-Show fax attempts and costs per provider: Faxbot&#x27;s estimate, the provider&#x27;s report and settled charges.
+Show what faxing cost per route: carrier charges, estimates for faxes not billed yet, and what is waiting.
 
 **Usage**:
 
@@ -1927,6 +1929,39 @@ $ faxbot routing costs [OPTIONS]
 **Options**:
 
 * `--since <str>`: Start date, for example 2026-09-01. Default: the last 30 days.
+* `--help`: Show this message and exit.
+
+### `faxbot routing reconcile`
+
+Ask the SIP trunk carrier now what each open call cost. Delivery results never change.
+
+**Usage**:
+
+```console
+$ faxbot routing reconcile [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+### `faxbot routing fax-cost`
+
+Show what one fax cost: the carrier&#x27;s charge, or why it is not known yet.
+
+**Usage**:
+
+```console
+$ faxbot routing fax-cost [OPTIONS] {fax_id}
+```
+
+**Arguments**:
+
+* `fax_id`: Fax ID from &#x27;faxbot jobs&#x27; or, with --received, from &#x27;faxbot inbound list&#x27;.  [required]
+
+**Options**:
+
+* `--received`: The fax is a received fax.
 * `--help`: Show this message and exit.
 
 ### `faxbot routing rate-cards`

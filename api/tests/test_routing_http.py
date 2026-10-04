@@ -229,6 +229,11 @@ def test_a_received_fax_cost_is_read_with_the_fax(telnyx_client):
     assert [(item['carrier'], item['calls'], item['reported_cost']) for item in received] == [
         ('Telnyx', 1, [{'currency': 'USD', 'amount': '0.0032'}])]
     assert telnyx_client.get('/routing/inbound/missing/cost', headers=ADMIN).status_code == 404
+    batch = telnyx_client.get('/routing/inbound-costs', headers=ADMIN, params={'ids': 'inbound-1,missing,inbound-1'})
+    assert batch.status_code == 200, batch.text
+    assert {key: value['summary'] for key, value in batch.json()['costs'].items()} == {
+        'inbound-1': 'Telnyx charged $0.0032 for this call.'}
+    assert telnyx_client.get('/routing/inbound-costs', params={'ids': 'inbound-1'}).status_code == 401
 
 
 def test_recommendations_never_call_an_unknown_cost_the_cheapest(client):

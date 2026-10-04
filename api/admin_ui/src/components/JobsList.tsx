@@ -33,6 +33,7 @@ import {
 } from '@mui/material';
 import { Refresh as RefreshIcon } from '@mui/icons-material';
 import AdminAPIClient from '../api/client';
+import { FaxCostItem } from './delivery/FaxCost';
 import type { FaxJob, OperatorDelivery, DeliveryHistoryEvent } from '../api/types';
 import type { DirectDeliveryRecord } from '../api/deliveryTypes';
 import { providerLabel } from '../providerLabels';
@@ -644,6 +645,7 @@ function JobsList({ client, openJobId, onOpened }: JobsListProps) {
                   secondary={detailJob.pages || 'Unknown'}
                 />
               </ListItem>
+              <FaxCostItem client={client} jobId={detailJob.id} />
               <Divider />
               <ListItem>
                 <ListItemText

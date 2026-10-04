@@ -333,6 +333,27 @@ async def fax_cost(job_id: str, request: Request, identity=Depends(require_ident
     return _cost_view(await _call(lambda: spending.job(job_id)))
 
 
+@router.get('/inbound-costs')
+async def inbound_costs(request: Request, ids: str = Query(default='', max_length=4200),
+                        identity=Depends(require_identity)):
+    """Costs for up to 100 received faxes at once; faxes this person cannot read are left out."""
+    from ..access.fax_resources import FaxAccessError
+    wanted = list(dict.fromkeys(item.strip() for item in ids.split(',') if item.strip()))[:100]
+    runtime = request.app.state.access_runtime
+    spending = _spending(request)
+
+    def read():
+        costs = {}
+        for inbound_id in wanted:
+            try:
+                private_operation(lambda: runtime.inbound_queries.item(identity.actor, inbound_id))()
+            except FaxAccessError:
+                continue  # not visible to this person: left out, never explained
+            costs[inbound_id] = _cost_view(spending.inbound(inbound_id))
+        return costs
+    return {'costs': await _call(read)}
+
+
 @router.get('/inbound/{inbound_id}/cost')
 async def inbound_cost(inbound_id: str, request: Request, identity=Depends(require_identity)):
     """What the call that brought in one received fax cost, for anyone who may read that fax."""
