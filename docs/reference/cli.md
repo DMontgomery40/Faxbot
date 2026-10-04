@@ -32,6 +32,7 @@ $ faxbot [OPTIONS] COMMAND [ARGS]...
 * `status`: Show where a sent fax is now.
 * `me`: Show who this API key belongs to and what...
 * `health`: Check that the server answers and whether...
+* `import`: Import a PDF from another system into the...
 * `restart`: Restart the Faxbot server process, when...
 * `jobs`: Sent faxes: list them, read details,...
 * `inbound`: Received faxes: list them, read details...
@@ -55,6 +56,7 @@ $ faxbot [OPTIONS] COMMAND [ARGS]...
 * `intake`: The intake queue: received documents being...
 * `direct`: Direct delivery: send faxes to verified...
 * `cases`: Case packets: send only the documents a...
+* `work`: The work queue: received documents with an...
 * `logs`: The activity log: sign-ins, faxes, pairing...
 * `tunnel`: Remote access tunnels (Cloudflare,...
 * `actions`: Approved maintenance actions on the server...
@@ -126,6 +128,31 @@ $ faxbot health [OPTIONS]
 
 **Options**:
 
+* `--help`: Show this message and exit.
+
+## `faxbot import`
+
+Import a PDF from another system into the work queue, like a received fax.
+
+**Usage**:
+
+```console
+$ faxbot import [OPTIONS] {file}
+```
+
+**Arguments**:
+
+* `file`: The PDF to import.  [required]
+
+**Options**:
+
+* `--source <str>`: The system it comes from, for example case-system.  [required]
+* `--id <str>`: The document&#x27;s ID in that system. Importing the same ID again does not create a second document.  [required]
+* `--revision <str>`: A new version of a document already imported under this ID.
+* `--received-at <str>`: When that system received it, for example 2026-10-03T14:05:00Z.
+* `--to <str>`: The fax number it was sent to; decides the mailbox.
+* `--from <str>`: The fax number it came from.
+* `--pages <int range>`: Pages, as that system reported.  [x&gt;=1]
 * `--help`: Show this message and exit.
 
 ## `faxbot restart`
@@ -2217,6 +2244,183 @@ $ faxbot cases send [OPTIONS] {case_id} {to} {files}...
 
 * `--title <str>`: Title for each document, in the same order. Default: the file name.
 * `--preview`: Show what would be sent without sending.
+* `--help`: Show this message and exit.
+
+## `faxbot work`
+
+The work queue: received documents with an owner, an acknowledgement target and a history.
+
+**Usage**:
+
+```console
+$ faxbot work [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `list`: List the work items you can see: open...
+* `show`: Show one work item and its history.
+* `assign`: Give an item to an owner.
+* `acknowledge`: Acknowledge an item you own.
+* `done`: Mark an item done, with a short note.
+* `reopen`: Reopen a done item.
+* `export`: Download an item&#x27;s evidence: manifest,...
+* `settings`: Show or change acknowledgement targets and...
+
+### `faxbot work list`
+
+List the work items you can see: open first, soonest target first.
+
+**Usage**:
+
+```console
+$ faxbot work list [OPTIONS]
+```
+
+**Options**:
+
+* `--mine`: Only items you own that are not done.
+* `--unassigned`: Only open items without an owner.
+* `--overdue`: Only open items past their target.
+* `--mailbox <str>`: Only items in this mailbox.
+* `--limit <int range>`: How many items to show.  [default: 100; 1&lt;=x&lt;=200]
+* `--ids`: Also show item IDs, for the other work commands.
+* `--help`: Show this message and exit.
+
+### `faxbot work show`
+
+Show one work item and its history.
+
+**Usage**:
+
+```console
+$ faxbot work show [OPTIONS] {item_id}
+```
+
+**Arguments**:
+
+* `item_id`: Item ID, from &#x27;faxbot work list --ids&#x27;.  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+### `faxbot work assign`
+
+Give an item to an owner. They must already be able to see the document.
+
+**Usage**:
+
+```console
+$ faxbot work assign [OPTIONS] {item_id} {user}
+```
+
+**Arguments**:
+
+* `item_id`: Item ID.  [required]
+* `user`: The new owner: their login or name.  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+### `faxbot work acknowledge`
+
+Acknowledge an item you own.
+
+**Usage**:
+
+```console
+$ faxbot work acknowledge [OPTIONS] {item_id}
+```
+
+**Arguments**:
+
+* `item_id`: Item ID.  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+### `faxbot work done`
+
+Mark an item done, with a short note.
+
+**Usage**:
+
+```console
+$ faxbot work done [OPTIONS] {item_id}
+```
+
+**Arguments**:
+
+* `item_id`: Item ID.  [required]
+
+**Options**:
+
+* `--note <str>`: What was done, up to 200 characters.  [required]
+* `--help`: Show this message and exit.
+
+### `faxbot work reopen`
+
+Reopen a done item. Its owner acknowledges it again.
+
+**Usage**:
+
+```console
+$ faxbot work reopen [OPTIONS] {item_id}
+```
+
+**Arguments**:
+
+* `item_id`: Item ID.  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+### `faxbot work export`
+
+Download an item&#x27;s evidence: manifest, history and, if you may read documents, the original.
+
+**Usage**:
+
+```console
+$ faxbot work export [OPTIONS] {item_id}
+```
+
+**Arguments**:
+
+* `item_id`: Item ID.  [required]
+
+**Options**:
+
+* `-o, --output <str>`: Zip file to write. Use &#x27;-&#x27; for standard output.
+* `--force`: Replace the file if it exists.
+* `--help`: Show this message and exit.
+
+### `faxbot work settings`
+
+Show or change acknowledgement targets and backup people. New items use the targets in place then.
+
+**Usage**:
+
+```console
+$ faxbot work settings [OPTIONS]
+```
+
+**Options**:
+
+* `--acknowledge-hours <int range>`: The installation&#x27;s acknowledgement target in hours (0 for none). An operational target, not a legal deadline.  [0&lt;=x&lt;=8760]
+* `--mailbox <str>`: Change this mailbox, by name.
+* `--hours <int range>`: With --mailbox: this mailbox&#x27;s target in hours (0 for none).  [0&lt;=x&lt;=8760]
+* `--use-installation-target`: With --mailbox: follow the installation target.
+* `--backup <str>`: With --mailbox: who takes over missed items.
+* `--no-backup`: With --mailbox: remove the backup.
 * `--help`: Show this message and exit.
 
 ## `faxbot logs`

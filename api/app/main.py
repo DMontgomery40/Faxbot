@@ -83,6 +83,7 @@ from .routing.http import router as routing_router
 from .intake.http import router as intake_router
 from .direct.http import router as direct_router
 from .cases.http import router as cases_router
+from .work.http import imports_router, router as work_router
 from .routing.transport import RoutedTransport
 
 
@@ -164,6 +165,8 @@ app.include_router(routing_router)
 app.include_router(intake_router)
 app.include_router(direct_router)
 app.include_router(cases_router)
+app.include_router(work_router)
+app.include_router(imports_router)
 
 
 async def _configuration_error_handler(request, exc):

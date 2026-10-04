@@ -43,6 +43,8 @@ def _permission_group(permission):
     prefix = permission.split(':', 1)[0]
     if prefix in {'fax', 'inbound', 'host', 'audit'}:
         return prefix
+    if prefix == 'work':
+        return 'inbound'  # work on received documents sits with them
     if prefix == 'mailboxes':
         return 'mailbox'
     if prefix in {'settings', 'providers', 'diagnostics', 'logs', 'tunnels'}:

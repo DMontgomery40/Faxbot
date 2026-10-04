@@ -1,0 +1,130 @@
+"""faxbot work and faxbot import against the real application, in process over HTTPS."""
+from datetime import datetime, timedelta
+import hashlib
+import json
+import uuid
+import zipfile
+
+import pytest
+
+import app.main as main_module
+from app.work.store import WorkStore
+from api.tests.test_cli import BOOTSTRAP, ORIGIN, Cli, _serve, pdf
+from api.tests.test_access_management_http import COOKIE, PASSWORD, _session_token
+
+
+KEY = {'X-API-Key': BOOTSTRAP}
+
+
+@pytest.fixture
+def cli(monkeypatch, tmp_path):
+    for client in _serve(monkeypatch, tmp_path):
+        yield Cli(client)
+
+
+def policy(client):
+    return client.get('/auth/me', headers=KEY).json()['policy_version']
+
+
+def ready_user(client, user_login, display_name, role='role_fax_operator', resource='installation'):
+    """A user who has set their own password and holds a role, so they can own work."""
+    created = client.post('/access/users', headers=KEY, json={'login': user_login, 'display_name': display_name,
+                                                              'enabled': True, 'expected_policy_version': policy(client)})
+    assert created.status_code == 200, created.text
+    user = created.json()['user']
+    roles = {role['id']: role for role in client.get('/access/roles', headers=KEY).json()['items']}
+    version = client.get(f"/access/users/{user['id']}", headers=KEY).json()['version']
+    granted = client.post('/access/assignments', headers=KEY, json={
+        'subject': {'kind': 'principal', 'id': user['id'], 'version': version},
+        'role': {'id': role, 'version': roles[role]['version']}, 'resource_id': resource,
+        'expected_policy_version': policy(client)})
+    assert granted.status_code == 200, granted.text
+    origin = {'Origin': ORIGIN}
+    temporary = created.json()['temporary_password']
+    client.cookies.clear()
+    signed_in = client.post('/auth/login', json={'login': user_login, 'password': temporary}, headers=origin)
+    assert signed_in.status_code == 200, signed_in.text
+    client.cookies.clear()
+    cookie = {'Cookie': f'{COOKIE}={_session_token(signed_in)}'}
+    csrf = client.get('/auth/me', headers=cookie).json()['csrf_token']
+    changed = client.post('/auth/password', json={'current_password': temporary, 'password': PASSWORD},
+                          headers={**cookie, **origin, 'X-CSRF-Token': csrf})
+    assert changed.status_code == 200, changed.text
+    client.cookies.clear()
+    return user
+
+
+def receive(tmp_path, to_number, text='Synthetic referral'):
+    identity = uuid.uuid4().hex
+    path = pdf(tmp_path / f'{identity}.pdf', text)
+    content = path.read_bytes()
+    moment = datetime.utcnow() - timedelta(minutes=5)
+    main_module.app.state.access_runtime.inbound.accept(dict(
+        id=identity, from_number='+15559990000', to_number=to_number, status='received', backend='sip', pages=1,
+        size_bytes=len(content), sha256=hashlib.sha256(content).hexdigest(), pdf_path=str(path),
+        created_at=moment, received_at=moment, updated_at=moment), country='US')
+    return identity
+
+
+def feed(hours):
+    engine = main_module.app.state.configuration_runtime.manager.store.engine
+    WorkStore(engine).feed(installation_hours=hours)
+
+
+def test_work_commands_from_target_to_export(cli, tmp_path):
+    saved = cli('work', 'settings', '--acknowledge-hours', '24')
+    assert saved.exit_code == 0, saved.stdout + saved.stderr
+    assert "Installation target: 24 hours. This is your team's operational target, not a legal deadline." in saved.stdout
+    ready_user(cli.client, 'dana', 'Dana Example')
+    inbound_id = receive(tmp_path, '+15550100001')
+    feed(cli.json('work', 'settings')['acknowledge_hours'])
+    listing = cli('work', 'list')
+    assert listing.exit_code == 0 and 'Waiting for an owner.' in listing.stdout
+    (item,) = cli.json('work', 'list')['items']
+    assert item['inbound_fax_id'] == inbound_id and item['id'] not in listing.stdout
+    assert item['id'] in cli('work', 'list', '--ids').stdout
+    shown = cli('work', 'show', item['id'])
+    assert 'Acknowledge within 24 hours of the document arriving (installation setting)' in shown.stdout
+    assert 'The document arrived.' in shown.stdout
+    nobody = cli('work', 'assign', item['id'], 'nobody')
+    assert nobody.exit_code != 0 and 'nobody cannot see this document, or there is no such person. People who can: dana.' in nobody.stderr + nobody.stdout
+    assigned = cli('work', 'assign', item['id'], 'dana')
+    assert assigned.exit_code == 0 and 'Assigned to Dana Example; acknowledge by ' in assigned.stdout
+    refused = cli('work', 'acknowledge', item['id'])
+    assert refused.exit_code != 0 and 'Only the owner can acknowledge this item.' in refused.stderr + refused.stdout
+    done = cli('work', 'done', item['id'], '--note', 'Filed in the case system')
+    assert done.exit_code == 0 and 'Done: Filed in the case system.' in done.stdout
+    assert cli('work', 'reopen', item['id']).exit_code == 0
+    assert cli.json('work', 'list', '--mine')['items'] == []
+    target = tmp_path / 'evidence.zip'
+    exported = cli('work', 'export', item['id'], '-o', target)
+    assert exported.exit_code == 0 and target.exists()
+    with zipfile.ZipFile(target) as archive:
+        assert set(archive.namelist()) == {'manifest.json', 'original.pdf', 'history.txt'}
+        manifest = json.loads(archive.read('manifest.json'))
+    assert [event['kind'] for event in manifest['history']] == ['received', 'assigned', 'done', 'reopened']
+    again = cli('work', 'export', item['id'], '-o', target)
+    assert again.exit_code != 0 and 'already exists' in again.stderr + again.stdout
+
+
+def test_work_settings_for_a_mailbox(cli):
+    created = cli.client.post('/access/mailboxes', headers=KEY, json={
+        'label': 'Front Desk', 'enabled': True, 'expected_policy_version': policy(cli.client)})
+    assert created.status_code == 200, created.text
+    ready_user(cli.client, 'sam', 'Sam Example', resource=created.json()['mailbox']['resource_id'])
+    changed = cli('work', 'settings', '--mailbox', 'front desk', '--hours', '4', '--backup', 'sam')
+    assert changed.exit_code == 0, changed.stdout + changed.stderr
+    assert 'Saved: Front Desk.' in changed.stdout and '4 hours' in changed.stdout and 'Sam Example' in changed.stdout
+    row = cli.json('work', 'settings')['mailboxes'][0]
+    assert row['acknowledge_hours'] == 4 and row['backup']['name'] == 'Sam Example'
+    cleared = cli.json('work', 'settings', '--mailbox', 'Front Desk', '--use-installation-target', '--no-backup')
+    assert cleared['mailboxes'][0]['acknowledge_hours'] is None and cleared['mailboxes'][0]['backup'] is None
+    missing = cli('work', 'settings', '--hours', '4')
+    assert missing.exit_code != 0 and 'Add --mailbox' in missing.stderr + missing.stdout
+
+
+def test_import_command_reports_the_servers_sentence(cli, tmp_path):
+    text = tmp_path / 'note.pdf'
+    text.write_bytes(b'not a pdf at all')
+    refused = cli('import', text, '--source', 'case-system', '--id', 'op-1')
+    assert refused.exit_code != 0 and 'The file is not a PDF.' in refused.stderr + refused.stdout
