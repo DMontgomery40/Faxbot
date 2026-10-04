@@ -537,7 +537,8 @@ def test_a_recovered_fax_without_numbers_is_matched_by_time_alone_when_unique(le
     installation, routes, carriers = ledger
     _numberless_fax(routes, 'fax-r1', at(14, 26))
     _numberless_fax(routes, 'fax-later', at(40))  # far from any record
-    CarrierReconciler(carriers, routes, FakeTelnyx([received_c()]), numbers=lambda: (OURS,)).run_now(now=NOW)
+    result = CarrierReconciler(carriers, routes, FakeTelnyx([received_c()]), numbers=lambda: (OURS,)).run_now(now=NOW)
+    assert result.as_dict()['unrecorded_calls'] == 1 and result.as_dict()['unrecorded_matched_to_faxes'] == 1
     [row] = carriers.unrecorded_in_effect()
     assert row['inbound_fax_id'] == 'fax-r1'
     spending = Spending(routes, carriers)

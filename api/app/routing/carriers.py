@@ -415,11 +415,12 @@ class Sweep:
     ambiguous: int = 0
     unavailable: bool = False
     unrecorded: int = 0
+    unrecorded_attached: int = 0
 
     def as_dict(self):
         return {'checked': self.checked, 'matched': self.matched, 'charges_recorded': self.recorded,
                 'waiting': self.waiting, 'ambiguous': self.ambiguous, 'carrier_unavailable': self.unavailable,
-                'unrecorded_calls': self.unrecorded}
+                'unrecorded_calls': self.unrecorded, 'unrecorded_matched_to_faxes': self.unrecorded_attached}
 
 
 class CarrierReconciler:
@@ -474,6 +475,7 @@ class CarrierReconciler:
         if not total.unavailable:
             unrecorded = self.sweep_unrecorded(now=now)
             total.unrecorded, total.unavailable = unrecorded.unrecorded, unrecorded.unavailable
+            total.unrecorded_attached = unrecorded.unrecorded_attached
         return total
 
     def _ours(self, record):
@@ -532,6 +534,11 @@ class CarrierReconciler:
             self.store.record_unrecorded(record, provider_id=self.provider_id, inbound_fax_id=fax_id,
                                          effective_at=now, now=now)
             result.unrecorded += 1
+        if alone:
+            # Attachments are kept once made, so read back which of these records now name a fax.
+            swept = {record.id for record in alone}
+            result.unrecorded_attached = sum(1 for row in self.store.unrecorded_in_effect()
+                                             if row['record_id'] in swept and row['inbound_fax_id'] is not None)
         return result
 
     def _back_off(self, error, now):

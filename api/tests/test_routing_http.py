@@ -288,3 +288,16 @@ def test_listed_rate_cards_save_back_unchanged(client):
                        json={'cards': [{key: value for key, value in card.items() if key != 'id'} for card in listed]})
     assert saved.status_code == 200, saved.text
     assert [card['id'] for card in saved.json()['cards']] == [card['id'] for card in listed]  # no new versions
+
+
+def test_the_check_now_summary_splits_unrecorded_calls_like_the_spending_card():
+    from app.routing.http import _reconcile_summary
+    base = {'checked': 4, 'matched': 4, 'charges_recorded': 0, 'waiting': 0, 'ambiguous': 0,
+            'carrier_unavailable': False}
+    assert _reconcile_summary({**base, 'unrecorded_calls': 1, 'unrecorded_matched_to_faxes': 1}) == (
+        'Checked 4 calls: 0 new charges recorded. 1 call reached Faxbot without a call record; its fax is in the Inbox.')
+    assert _reconcile_summary({**base, 'unrecorded_calls': 3, 'unrecorded_matched_to_faxes': 1}) == (
+        'Checked 4 calls: 0 new charges recorded. Telnyx billed 2 calls Faxbot has no record of. '
+        '1 call reached Faxbot without a call record; its fax is in the Inbox.')
+    assert _reconcile_summary({**base, 'unrecorded_calls': 0}) == 'Checked 4 calls: 0 new charges recorded.'
+
