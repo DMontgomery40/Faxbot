@@ -382,6 +382,7 @@ export interface InboundFax {
   is_test?: boolean;
   retry_at?: string | null;
   problem?: string | null;
+  can_fetch_again?: boolean;
 }
 
 // Tunnel types

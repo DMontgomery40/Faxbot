@@ -46,22 +46,35 @@ function clockTime(value: string | null | undefined): string | null {
 
 // One chip and at most one sentence per received fax. The retry time is shown
 // in the viewer's own time zone rather than the server's.
-export function inboundFaxStatus(fax: Pick<InboundFax, 'status' | 'status_text' | 'retry_at' | 'is_test'>): InboundFaxStatus {
+export function inboundFaxStatus(fax: Pick<InboundFax, 'status' | 'status_text' | 'retry_at' | 'is_test' | 'can_fetch_again'>): InboundFaxStatus {
   const status = (fax.status || '').toLowerCase();
   const sentence = fax.status_text || null;
+  // The server says whether there is a source to fetch from; older servers did not.
+  const fetchable = fax.can_fetch_again ?? true;
   if (status === 'waiting') {
     const retry = clockTime(fax.retry_at);
     return {
       label: 'Waiting for the document',
       detail: retry ? `The document could not be fetched; Faxbot will try again at ${retry}.` : (sentence ?? 'Waiting for the document.'),
-      tone: 'info', hasDocument: false, canFetchAgain: true,
+      tone: 'info', hasDocument: false, canFetchAgain: fetchable,
     };
   }
   if (status === 'failed') {
-    return { label: 'Not received', detail: sentence, tone: 'error', hasDocument: false, canFetchAgain: true };
+    return { label: 'Not received', detail: sentence, tone: 'error', hasDocument: false, canFetchAgain: fetchable };
   }
   if (fax.is_test) return { label: 'Test fax', detail: null, tone: 'default', hasDocument: true, canFetchAgain: false };
   return { label: 'Received', detail: sentence === 'Received.' ? null : sentence, tone: 'success', hasDocument: true, canFetchAgain: false };
+}
+
+// The provider a fax came through, in words people use.
+const PROVIDER_NAMES: Record<string, string> = {
+  sip: 'SIP trunk', phaxio: 'Phaxio', sinch: 'Sinch', signalwire: 'SignalWire', documo: 'Documo',
+  humblefax: 'HumbleFax', freeswitch: 'FreeSWITCH',
+};
+
+export function providerName(backend: string | null | undefined): string {
+  if (!backend) return '-';
+  return PROVIDER_NAMES[backend.toLowerCase()] ?? backend;
 }
 
 // Whether an enabled email connector covers this fax number now: one for the

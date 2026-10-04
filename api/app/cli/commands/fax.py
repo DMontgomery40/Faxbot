@@ -205,10 +205,15 @@ def _document(item):
     return ', '.join(part for part in parts if part) or '-'
 
 
+PROVIDER_NAMES = {'sip': 'SIP trunk', 'phaxio': 'Phaxio', 'sinch': 'Sinch', 'signalwire': 'SignalWire',
+                  'documo': 'Documo', 'humblefax': 'HumbleFax', 'freeswitch': 'FreeSWITCH'}
+
+
 def _inbound_fields(item):
     return [('Received fax ID', item.get('id')), ('From', item.get('fr')), ('To', item.get('to')),
             ('Status', _inbound_status(item)), ('Problem', item.get('problem')), ('Mailbox', item.get('mailbox')),
-            ('Provider', item.get('backend')), ('Provider fax ID', item.get('provider_fax_id')),
+            ('Received through', PROVIDER_NAMES.get(item.get('backend'), item.get('backend'))),
+            ('Provider fax ID', item.get('provider_fax_id')),
             ('Sent', local_time(item.get('source_received_at'))),
             ('Received', local_time(item.get('received_at') or item.get('created_at'))),
             ('Document', _document(item)), ('Test fax', yes_no(bool(item.get('is_test'))))]

@@ -25,7 +25,7 @@ The Inbox, `faxbot inbound list` and the API's `status_text` show one sentence f
 | Received | This fax arrived earlier and is kept as received. | The provider later sent different content for the same fax. Faxbot kept the first copy and recorded the conflict. |
 | Test fax | (none) | A test fax created in Faxbot. |
 
-After a failed attempt, Faxbot waits 1, 2, 4, 8, 16 and 32 minutes, then tries once an hour for 24 hours. In the API, `status` is `waiting`, `received` or `failed`, and `retry_at` gives the time of the next attempt.
+After a failed attempt, Faxbot waits 1, 2, 4, 8, 16 and 32 minutes, then tries once an hour for 24 hours. In the API, `status` is `waiting`, `received` or `failed`, `retry_at` gives the time of the next attempt, and `can_fetch_again` says whether **Fetch again** applies.
 
 While a fax is waiting, **Download PDF** stays disabled and the email delivery column shows **Waiting for the document**. Downloading through the API returns 404 with the message "The document has not been received yet."
 
@@ -78,6 +78,8 @@ The dialplan reports each received fax to `POST /_internal/asterisk/inbound` wit
 
 If Faxbot cannot convert the image to a PDF, the fax waits and the image stays in place. The next attempt starts again from that image.
 
+The provided Docker setup shares one `/faxdata` folder between Asterisk and Faxbot, with `FAX_DATA_DIR=/faxdata`. If you run Faxbot with a different data folder, Asterisk's `/faxdata/inbound/` must be inside it. Otherwise Faxbot refuses every received image, and those faxes never appear in the Inbox even though the images stay on disk.
+
 ## What Faxbot never does
 
 - It never requests an address a notification supplies, such as a `file_url` field.
@@ -106,6 +108,8 @@ For each received fax, Faxbot keeps:
 - **The notification.** A copy of at most 8 KB that records how it was checked. Signatures, credentials and file contents are left out.
 
 Stored records are never rewritten to change a received document.
+
+Earlier versions stored a fixed stand-in PDF when a document could not be fetched, and for test faxes. Faxbot now shows those faxes as **Not received**. It does not offer them for download or email, and it leaves the stored rows as they are.
 
 ## Not yet checked against live providers
 

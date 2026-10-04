@@ -43,7 +43,7 @@ import { docsLink } from '../docsLinks';
 import type { InboundFax } from '../api/types';
 import type { EmailConnector, IntakeItem } from '../api/deliveryTypes';
 import { parseServerTime } from '../api/time';
-import { DeliveryStatusLine, DirectDeliveries, emailDeliveryApplies, inboundFaxStatus, isNewFax } from './delivery/InboxDelivery';
+import { DeliveryStatusLine, DirectDeliveries, emailDeliveryApplies, inboundFaxStatus, isNewFax, providerName } from './delivery/InboxDelivery';
 import type { DeliveryTone } from './delivery/InboxDelivery';
 import { DeliveryError, Notice } from './delivery/shared';
 import type { AdminDestination } from '../navigation';
@@ -287,14 +287,9 @@ function Inbound({ client, docsBase, inboundEnabled, onNavigate, permissions }: 
           <Stack spacing={2}>
             {/* Header */}
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-              <Box>
-                <Typography variant="subtitle2" fontWeight={600}>
-                  Fax ID
-                </Typography>
-                <Typography variant="caption" color="text.secondary" fontFamily="monospace">
-                  {fax.id.slice(0, 8)}...
-                </Typography>
-              </Box>
+              <Typography variant="subtitle2" fontWeight={600}>
+                Received through {providerName(fax.backend)}
+              </Typography>
               <FaxStatus fax={fax} />
             </Box>
 
@@ -666,11 +661,10 @@ same => n,System(curl -s -X POST -H "Content-Type: application/json" -H "X-Inter
                 <Table>
                   <TableHead>
                     <TableRow>
-                      <TableCell>ID</TableCell>
                       <TableCell>From</TableCell>
                       <TableCell>To</TableCell>
                       <TableCell>Status</TableCell>
-                      <TableCell>Backend</TableCell>
+                      <TableCell>Received through</TableCell>
                       <TableCell>Pages</TableCell>
                       <TableCell>Received</TableCell>
                       {deliveries !== null && <TableCell>Email delivery</TableCell>}
@@ -680,11 +674,6 @@ same => n,System(curl -s -X POST -H "Content-Type: application/json" -H "X-Inter
                   <TableBody>
                     {faxes.map((fax) => (
                       <TableRow key={fax.id} hover>
-                        <TableCell>
-                          <Typography variant="body2" fontFamily="monospace">
-                            {fax.id.slice(0, 8)}...
-                          </Typography>
-                        </TableCell>
                         <TableCell>
                           <Typography variant="body2" fontFamily="monospace">
                             {maskPhoneNumber(fax.fr)}
@@ -700,7 +689,7 @@ same => n,System(curl -s -X POST -H "Content-Type: application/json" -H "X-Inter
                         </TableCell>
                         <TableCell>
                           <Typography variant="body2">
-                            {fax.backend}
+                            {providerName(fax.backend)}
                           </Typography>
                         </TableCell>
                         <TableCell>

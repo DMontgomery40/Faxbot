@@ -4,7 +4,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import { http, HttpResponse } from 'msw';
 import AdminAPIClient from '../api/client';
 import Inbound from '../components/Inbound';
-import { emailDeliveryApplies, inboundFaxStatus, inboxDeliveryStatus } from '../components/delivery/InboxDelivery';
+import { emailDeliveryApplies, inboundFaxStatus, inboxDeliveryStatus, providerName } from '../components/delivery/InboxDelivery';
 import { visibleTools } from '../navigation';
 import { formatServerTime, parseServerTime, toServerTime } from '../api/time';
 import type { EmailConnector, IntakeItem } from '../api/deliveryTypes';
@@ -184,6 +184,12 @@ describe('Received fax status', () => {
       .toMatchObject({ label: 'Test fax', hasDocument: true });
     // Faxes recorded before acquisition records keep their provider's status word.
     expect(inboundFaxStatus({ status: 'SUCCESS' })).toMatchObject({ label: 'Received', hasDocument: true });
+    // An older fax that never got its document has nothing to fetch from.
+    expect(inboundFaxStatus({ status: 'failed', can_fetch_again: false,
+      status_text: 'Faxbot never received the document for this fax; ask the sender to send it again.' }))
+      .toMatchObject({ label: 'Not received', canFetchAgain: false });
+    expect([providerName('sip'), providerName('phaxio'), providerName('sinch'), providerName(undefined)])
+      .toEqual(['SIP trunk', 'Phaxio', 'Sinch', '-']);
   });
 
   it('offers no delivery retry while no email delivery covers the number', () => {
@@ -201,7 +207,8 @@ describe('Received fax status', () => {
     const fetches: string[] = [];
     server.use(
       http.get('/inbound', () => HttpResponse.json([
-        { ...fax('fax-waiting', '+15550108888'), status: 'waiting', pages: null, status_text: 'Waiting for the document from Phaxio.' },
+        { ...fax('fax-waiting', '+15550108888'), status: 'waiting', pages: null, can_fetch_again: true,
+          status_text: 'Waiting for the document from the SIP trunk.' },
         { ...fax('fax-test', '+15550109999'), is_test: true, status_text: 'A test fax created in Faxbot.' },
       ])),
       http.get('/admin/inbound/callbacks', () => HttpResponse.json({ callbacks: [] })),
@@ -213,7 +220,11 @@ describe('Received fax status', () => {
     );
     render(<Inbound client={client()} inboundEnabled permissions={new Set([...operator, 'providers:write'])} />);
     const waiting = await rowFor('+15550108888');
-    expect(within(waiting).getByText('Waiting for the document from Phaxio.')).toBeTruthy();
+    expect(within(waiting).getByText('Waiting for the document from the SIP trunk.')).toBeTruthy();
+    expect(within(waiting).getByText('SIP trunk')).toBeTruthy();
+    // No record IDs or raw provider words in the table.
+    expect(screen.queryByRole('columnheader', { name: 'ID' })).toBeNull();
+    expect(screen.queryByText(/fax-wait|^sip$/)).toBeNull();
     expect(within(waiting).getAllByText('Waiting for the document')).toHaveLength(2);
     expect((within(waiting).getByRole('button', { name: `Download the fax from ${masked('+15550108888')}` }) as HTMLButtonElement).disabled).toBe(true);
     expect(within(waiting).queryByRole('button', { name: /Retry delivery/ })).toBeNull();
@@ -228,7 +239,7 @@ describe('Received fax status', () => {
   it('offers Fetch again only to people who can change providers', async () => {
     server.use(
       http.get('/inbound', () => HttpResponse.json([{ ...fax('fax-failed', '+15550108888'), status: 'failed',
-        status_text: 'Faxbot stopped trying to fetch this document; select Fetch again.' }])),
+        can_fetch_again: true, status_text: 'Faxbot stopped trying to fetch this document; select Fetch again.' }])),
       http.get('/admin/inbound/callbacks', () => HttpResponse.json({ callbacks: [] })),
     );
     render(<Inbound client={client()} inboundEnabled permissions={operator} />);
