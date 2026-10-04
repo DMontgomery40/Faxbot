@@ -1,7 +1,8 @@
 // Email delivery status for received documents, shown in the Inbox: one plain
 // line per fax, and a retry when a delivery did not go through.
 import { Box, Button, Card, CardContent, Paper, Stack, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Typography } from '@mui/material';
-import type { IntakeItem } from '../../api/deliveryTypes';
+import type { EmailConnector, IntakeItem } from '../../api/deliveryTypes';
+import type { InboundFax } from '../../api/types';
 import { formatServerTime, parseServerTime } from '../../api/time';
 import { StatusChip, useSmallScreens } from '../access/AccessViews';
 
@@ -28,7 +29,49 @@ export function isNewFax(receivedAt: string | null | undefined, now = Date.now()
   return received !== null && now - received.getTime() < PICKUP_WINDOW_MS;
 }
 
-export function inboxDeliveryStatus(item: IntakeItem | undefined, isNew = true): InboxDeliveryStatus | null {
+export interface InboundFaxStatus {
+  label: string;
+  detail: string | null;
+  tone: DeliveryTone;
+  // The real document is stored and can be downloaded and emailed.
+  hasDocument: boolean;
+  // Faxbot can be asked to fetch the document again.
+  canFetchAgain: boolean;
+}
+
+function clockTime(value: string | null | undefined): string | null {
+  const date = parseServerTime(value);
+  return date ? date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : null;
+}
+
+// One chip and at most one sentence per received fax. The retry time is shown
+// in the viewer's own time zone rather than the server's.
+export function inboundFaxStatus(fax: Pick<InboundFax, 'status' | 'status_text' | 'retry_at' | 'is_test'>): InboundFaxStatus {
+  const status = (fax.status || '').toLowerCase();
+  const sentence = fax.status_text || null;
+  if (status === 'waiting') {
+    const retry = clockTime(fax.retry_at);
+    return {
+      label: 'Waiting for the document',
+      detail: retry ? `The document could not be fetched; Faxbot will try again at ${retry}.` : (sentence ?? 'Waiting for the document.'),
+      tone: 'info', hasDocument: false, canFetchAgain: true,
+    };
+  }
+  if (status === 'failed') {
+    return { label: 'Not received', detail: sentence, tone: 'error', hasDocument: false, canFetchAgain: true };
+  }
+  if (fax.is_test) return { label: 'Test fax', detail: null, tone: 'default', hasDocument: true, canFetchAgain: false };
+  return { label: 'Received', detail: sentence === 'Received.' ? null : sentence, tone: 'success', hasDocument: true, canFetchAgain: false };
+}
+
+// Whether an enabled email connector covers this fax number now: one for the
+// exact number, or one for every number.
+export function emailDeliveryApplies(connectors: EmailConnector[] | null, number: string | null | undefined): boolean {
+  if (connectors === null) return true;
+  return connectors.some((connector) => connector.enabled && (connector.match_number === null || connector.match_number === number));
+}
+
+export function inboxDeliveryStatus(item: IntakeItem | undefined, isNew = true, emailApplies = true): InboxDeliveryStatus | null {
   if (!item) return isNew ? { label: 'Waiting for email delivery', detail: null, tone: 'info', retry: false } : null;
   const reason = GENERIC.has(item.status) ? null : item.status;
   if (item.state === 'delivered') {
@@ -38,22 +81,27 @@ export function inboxDeliveryStatus(item: IntakeItem | undefined, isNew = true):
   }
   if (item.state === 'failed') return { label: 'Not delivered', detail: reason, tone: 'error', retry: true };
   if (item.state === 'sending') return { label: 'Waiting for email delivery', detail: null, tone: 'info', retry: false };
-  // Once email delivery is set up for the number, Retry delivery sends it.
+  // Once email delivery is set up for the number, Retry delivery sends it;
+  // until then there is nothing to retry.
   if (item.status === NO_EMAIL_DELIVERY && !item.next_attempt_at) {
-    return { label: 'No email delivery set up for this number', detail: null, tone: 'default', retry: item.needs_action };
+    return { label: 'No email delivery set up for this number', detail: null, tone: 'default', retry: item.needs_action && emailApplies };
   }
   return { label: 'Waiting for email delivery', detail: reason, tone: item.needs_action ? 'warning' : 'info', retry: item.needs_action };
 }
 
-export function DeliveryStatusLine({ item, canRetry, busy, onRetry, label, isNew = true }: {
+export function DeliveryStatusLine({ item, canRetry, busy, onRetry, label, isNew = true, emailApplies = true, documentPending = false }: {
   item: IntakeItem | undefined;
   canRetry: boolean;
   busy: boolean;
   onRetry: (item: IntakeItem) => void;
   label: string;
   isNew?: boolean;
+  emailApplies?: boolean;
+  // The fax's document has not arrived, so email delivery waits for it.
+  documentPending?: boolean;
 }) {
-  const status = inboxDeliveryStatus(item, isNew);
+  if (documentPending) return <StatusChip label="Waiting for the document" tone="default" />;
+  const status = inboxDeliveryStatus(item, isNew, emailApplies);
   if (!status) return <Typography variant="body2" color="text.secondary">-</Typography>;
   return (
     <Box>

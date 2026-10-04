@@ -656,6 +656,11 @@ export class AdminAPIClient {
     return this.json('/inbound');
   }
 
+  // Ask Faxbot to fetch a received fax's document again now.
+  async fetchInboundAgain(inboundId: string): Promise<InboundFax> {
+    return this.json(`/inbound/${id(inboundId)}/fetch`, { method: 'POST', body: '{}' });
+  }
+
   async downloadInboundPdf(inboundId: string): Promise<Blob> {
     const res = await this.send(`/inbound/${id(inboundId)}/pdf`);
     if (!res.ok) throw new Error(`Download failed: ${res.status}`);
