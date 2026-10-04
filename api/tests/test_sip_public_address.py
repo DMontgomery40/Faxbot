@@ -34,9 +34,18 @@ def run_helper(tmp_path, record, *, local_net='172.18.0.0/16', text=None):
     info = tmp_path / 'public-address'
     if record is not None:
         info.write_text(record if isinstance(record, str) else json.dumps(record) + '\n')
-    environment = {'PATH': '/usr/bin:/bin', 'FAXBOT_PUBLIC_ADDRESS_FILE': str(info), 'FAXBOT_LOCAL_NET': local_net}
-    result = subprocess.run(['bash', str(HELPER), str(conf)], env=environment, capture_output=True, text=True,
-                            timeout=30)
+    # Only the tools the helper needs, so the host cannot answer for it: with an empty
+    # FAXBOT_LOCAL_NET the helper asks `ip route` for the subnet when `ip` exists (it
+    # does on Linux, not on macOS), and "no subnet known" must mean exactly that here.
+    tools = tmp_path / 'bin'
+    tools.mkdir(exist_ok=True)
+    for tool in ('sed', 'grep', 'head', 'awk', 'mktemp', 'mv'):
+        found = shutil.which(tool)
+        assert found, f'{tool} is not installed.'
+        (tools / tool).symlink_to(found)
+    environment = {'PATH': str(tools), 'FAXBOT_PUBLIC_ADDRESS_FILE': str(info), 'FAXBOT_LOCAL_NET': local_net}
+    result = subprocess.run([shutil.which('bash'), str(HELPER), str(conf)], env=environment, capture_output=True,
+                            text=True, timeout=30)
     assert result.returncode == 0, result.stderr
     applied = tmp_path / 'public-address.applied'
     return conf.read_text(), applied.read_text().strip() if applied.exists() else None
