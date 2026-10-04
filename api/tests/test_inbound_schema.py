@@ -7,13 +7,14 @@ import sqlalchemy as sa
 from api.app import schema, schema_inbound
 from api.tests.test_schema import database, snapshot
 from api.tests.test_access_schema import at_revision
+from api.tests.test_work_schema import without_work_catalogue
 
 
 NOW = datetime(2026, 10, 3, 12)
 
 
 def test_inbound_imports_are_head_after_sip_call_records():
-    assert schema.HEAD == schema_inbound.REVISION == '0010_inbound_imports'
+    assert schema.INBOUND == schema_inbound.REVISION == '0010_inbound_imports'
     assert schema.SIP == '0009_sip_call_records'
     assert schema_inbound.TABLES <= schema.STRICT_TABLES
 
@@ -37,7 +38,7 @@ def test_0010_upgrade_preserves_0009_state_and_validates_frozen_shape(database):
     assert after['inbound_imports'] == []
     for name, rows in before.items():
         if name != 'alembic_version':
-            assert after[name] == rows, name
+            assert without_work_catalogue(name, after[name]) == rows, name
     metadata = schema_inbound.frozen_metadata(dialect=database.dialect.name)
     table = metadata.tables['inbound_imports']
     with database.connect() as connection:
