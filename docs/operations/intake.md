@@ -4,6 +4,8 @@ Every document Faxbot receives, by fax or by [direct delivery](direct-delivery.m
 
 In the Admin Console, the **Inbox** shows each received fax with its email delivery, and **Settings** holds the email delivery setup. Select **Email delivery settings** at the top of the Inbox to go there.
 
+Email delivery is not acknowledgement: to give each received document an owner who acknowledges it, see [Work](work.md).
+
 ## Delivery status in the Inbox
 
 Each received fax shows one of these in its **Email delivery** column (a line on each card on phones):

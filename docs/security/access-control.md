@@ -24,9 +24,9 @@ A role is a named set of permissions. Faxbot includes six built-in roles that ca
 | --- | --- | --- |
 | **Owner** | Full control of the installation | Everything, including the host terminal, restarts, host actions and owner recovery. |
 | **Administrator** | Running the installation day to day | Everything except the host terminal, restarts, host actions and owner recovery. |
-| **Fax Operator** | Sending and handling faxes | Send faxes, see sent faxes and their documents, refresh their status, and see received faxes and their documents. |
-| **Fax Viewer** | Reading faxes only | See sent faxes and their documents, and see received faxes and their documents. |
-| **Auditor** | Reviewing activity | Read the security audit, and see sent and received fax details without opening documents. |
+| **Fax Operator** | Sending and handling faxes | Send faxes, see sent faxes and their documents, refresh their status, see received faxes and their documents, and own, assign and complete work on them. |
+| **Fax Viewer** | Reading faxes only | See sent faxes and their documents, see received faxes and their documents, and see the work queue. |
+| **Auditor** | Reviewing activity | Read the security audit, see sent and received fax details and the work queue without opening documents, and export work evidence without the original document. |
 | **Host Operator** | Looking after the server | Use the host terminal, restart Faxbot, run approved host actions, and read diagnostics and settings. |
 
 On the **Roles** screen, people with `roles:manage` can also create custom roles from any mix of permissions.
@@ -51,6 +51,10 @@ On the **Roles** screen, people with `roles:manage` can also create custom roles
 | | `sessions:read`, `sessions:revoke` | See, or end, other people's sessions |
 | | `owner:recover` | Create owners and make owner-only changes |
 | Mailboxes | `mailboxes:read`, `mailboxes:manage` | See, or change, mailboxes and fax number routing |
+| Work | `work:read` | See the work queue for received documents, their history and counts |
+| | `work:manage` | Assign, reassign, mark done and reopen work |
+| | `work:export` | Export an item's evidence; the original document also needs `inbound:document` |
+| | `work:import` | Import documents from another system; an integration key can carry it |
 | Configuration | `settings:read`, `settings:write` | See, or change, installation settings |
 | | `providers:read`, `providers:write` | See, or change, fax provider settings |
 | | `providers:install` | Install provider plugins |
@@ -74,6 +78,8 @@ A role does nothing until you give it to someone. On the **Access** screen, **Gi
 - **Where**: everything in the installation, one mailbox, or one person's own faxes.
 
 Access given on everything covers every fax and mailbox. Access on a mailbox covers only the faxes received into it. Access on a person's own faxes covers the faxes that person sends.
+
+Work permissions follow the received document: `work:read`, `work:manage` and `work:export` on a mailbox cover the work for faxes received into it. Assigning work never gives access; an owner must already see the document. See [Work](../operations/work.md).
 
 Each person sends faxes from their own space, so anyone who should send needs a role with `fax:send` either on everything or on their own faxes.
 

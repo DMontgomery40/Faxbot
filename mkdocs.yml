@@ -165,6 +165,7 @@ nav:
     - Overview: operations/index.md
     - Delivery routes: operations/delivery-routes.md
     - Intake: operations/intake.md
+    - Work: operations/work.md
     - Direct delivery: operations/direct-delivery.md
     - Tools:
       - Terminal: terminal.md
