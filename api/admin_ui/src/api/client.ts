@@ -104,6 +104,13 @@ export function normalizeFaxDestination(number: string): string {
   return number.replace(/[\s\-\(\)]/g, '');
 }
 
+// The installation does not allow restarting Faxbot from the console (ADMIN_ALLOW_RESTART is off).
+export class RestartNotAllowed extends Error {
+  constructor() {
+    super("API process restart from this console is disabled for this installation. Use the installation's deployment manager to restart the service.");
+  }
+}
+
 export class AdminAPIError extends Error {
   constructor(readonly status: number, statusText: string, readonly detail: string | null = null) {
     super(`API Error: ${status} ${statusText}`);
@@ -295,7 +302,7 @@ export class AdminAPIClient {
       if (path === '/admin/restart' && response.status === 403) {
         // Decode only this fixed refusal; arbitrary error details stay opaque.
         if (await readDetail(response) === 'Restart not allowed') {
-          throw new Error("API process restart from this console is disabled for this installation. Use the installation's deployment manager to restart the service.");
+          throw new RestartNotAllowed();
         }
       }
       if (extras.manifestValidation && (response.status === 400 || response.status === 409)) {
