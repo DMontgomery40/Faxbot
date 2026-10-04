@@ -62,6 +62,7 @@ CONVERTED = {
     ("POST", "/admin/terminal/ticket"): ("host:terminal", True),
     ("GET", "/admin/inbound/callbacks"): ("providers:read", False),
     ("POST", "/admin/inbound/simulate"): ("providers:write", False),
+    ("POST", "/inbound/{inbound_id}/fetch"): ("providers:write", True),
     ("POST", "/admin/diagnostics/run"): ("diagnostics:read", False),
     ("POST", "/admin/settings/persist"): ("owner:recover", True),
 }

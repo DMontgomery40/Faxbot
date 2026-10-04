@@ -83,6 +83,7 @@ from .routing.http import router as routing_router
 from .intake.http import router as intake_router
 from .direct.http import router as direct_router
 from .cases.http import router as cases_router
+from .inbound.http import router as inbound_router
 from .routing.transport import RoutedTransport
 
 
@@ -164,6 +165,7 @@ app.include_router(routing_router)
 app.include_router(intake_router)
 app.include_router(direct_router)
 app.include_router(cases_router)
+app.include_router(inbound_router)
 
 
 async def _configuration_error_handler(request, exc):
@@ -1714,55 +1716,40 @@ class SimulateInboundIn(BaseModel):
     status: Optional[str] = "received"
 
 
-@app.post("/admin/inbound/simulate", dependencies=[Depends(require_permission('providers:write'))],
-          responses=_PERMISSION_RESPONSES)
-def admin_inbound_simulate(payload: SimulateInboundIn):
+@app.post("/admin/inbound/simulate", responses=_PERMISSION_RESPONSES)
+async def admin_inbound_simulate(payload: SimulateInboundIn, request: Request,
+                                 identity=Depends(require_permission('providers:write'))):
+    """Add a test fax with a real one-page PDF; it is marked as a test everywhere."""
     if not settings.inbound_enabled:
         raise HTTPException(400, detail="Inbound not enabled")
-    backend = (payload.backend or settings.fax_backend).lower()
-    job_id = uuid.uuid4().hex
-    data_dir = settings.fax_data_dir
-    ensure_dir(data_dir)
-    # Create a tiny placeholder PDF
-    pdf_path = os.path.join(data_dir, f"{job_id}.pdf")
-    with open(pdf_path, "wb") as f:
-        f.write(b"%PDF-1.4\n% inbound simulation\n%%EOF")
-    size_bytes = os.path.getsize(pdf_path)
-    sha256_hex = hashlib.sha256(b"%PDF-1.4\n% inbound simulation\n%%EOF").hexdigest()
-    storage = get_storage()
-    stored_uri = storage.put_pdf(pdf_path, f"{job_id}.pdf")
-    try:
-        if stored_uri.startswith("s3://") and os.path.exists(pdf_path):
-            os.remove(pdf_path)
-    except Exception:
-        pass
-    pdf_token = secrets.token_urlsafe(32)
-    expires_at = datetime.utcnow() + timedelta(minutes=max(1, settings.inbound_token_ttl_minutes))
-    retention_until = datetime.utcnow() + timedelta(days=settings.inbound_retention_days) if settings.inbound_retention_days > 0 else None
+    from .inbound.acquisition import account_identity, store_document
+    from .conversion import txt_to_pdf
+    service = getattr(request.app.state, "inbound_acquisition", None)
+    if service is None:
+        raise HTTPException(503, detail="Receiving faxes is not ready yet; try again shortly.")
+    backend = (payload.backend or settings.fax_backend).lower()[:20]
 
-    now = datetime.utcnow()
-    _accept_inbound(dict(
-        id=job_id,
-        from_number=payload.fr,
-        to_number=payload.to,
-        status=payload.status or "received",
-        backend=backend,
-        inbound_backend=active_inbound(),
-        provider_sid=None,
-        pages=payload.pages,
-        size_bytes=size_bytes,
-        sha256=sha256_hex,
-        pdf_path=stored_uri,
-        tiff_path=None,
-        retention_until=retention_until,
-        pdf_token=pdf_token,
-        pdf_token_expires_at=expires_at,
-        created_at=now,
-        received_at=now,
-        updated_at=now,
-    ))
-    audit_event("inbound_received", job_id=job_id, backend=backend)
-    return {"id": job_id, "status": "ok"}
+    def create():
+        moment = datetime.now().astimezone()
+        with tempfile.TemporaryDirectory() as folder:
+            text = os.path.join(folder, "test-fax.txt")
+            document = os.path.join(folder, "test-fax.pdf")
+            with open(text, "w", encoding="utf-8") as handle:
+                handle.write(f"Test fax created in Faxbot on {moment.strftime('%B %d, %Y at %H:%M')}.\n")
+            txt_to_pdf(text, document)
+            with open(document, "rb") as handle:
+                data = handle.read()
+        begun = service.store.begin(
+            source="test", account=account_identity("test", identity.actor.principal_id),
+            operation_id=uuid.uuid4().hex, backend=backend, inbound_backend=active_inbound(),
+            to_number=payload.to, from_number=payload.fr, reported_pages=1,
+            report={"created_by": "simulate"}, schedule=False, country=settings.fax_default_country)
+        artifact = store_document(data, begun.inbound_fax_id, provider="Faxbot")
+        service.store.complete(begun.import_id, artifact_path=artifact.path, digest=artifact.digest,
+                               size=artifact.size, pages=artifact.pages, media_type=artifact.media_type)
+        return begun.inbound_fax_id
+    inbound_id = await run_lifecycle_step(private_operation(create))
+    return {"id": inbound_id, "status": "ok"}
 
 
 @app.get("/admin/fax-jobs")
@@ -2555,51 +2542,36 @@ async def phaxio_callback(request: Request):
     return await _receive_outbound_callback(request, 'phaxio')
 
 
-# ===== Inbound receiving (MVP scaffolding) =====
-from .db import InboundFax  # type: ignore
-from .conversion import tiff_to_pdf  # type: ignore
+# ===== Inbound receiving: notifications and fetching live in inbound/http.py =====
 
 
 class InboundFaxOut(BaseModel):
     id: str
     fr: Optional[str] = None
     to: Optional[str] = None
+    # waiting (the document has not been fetched yet), received, or failed.
     status: str
     backend: str
     pages: Optional[int] = None
     size_bytes: Optional[int] = None
     created_at: Optional[datetime] = None
+    # When Faxbot recorded the fax; the provider's own time is source_received_at.
     received_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     mailbox: Optional[str] = None
+    status_text: Optional[str] = None
+    source_received_at: Optional[datetime] = None
+    provider_fax_id: Optional[str] = None
+    sha256: Optional[str] = None
+    is_test: bool = False
+    retry_at: Optional[datetime] = None
+    problem: Optional[str] = None
 
 
-def _accept_inbound(values: dict) -> None:
-    """Store one received fax with its access resource and audit in one transaction.
-
-    It lands in the mailbox its number routes to, else the unassigned inbox.
-    """
-    service = getattr(app.state, "access_runtime", None)
-    if service is None:
-        raise AccessUnavailableError()
-    private_operation(service.inbound.accept)(values, country=settings.fax_default_country)
-
-
-def _forget_inbound_event(event_id: str) -> None:
-    """Let the provider retry a fax whose storage failed after its dedupe event."""
-    try:
-        from .db import InboundEvent  # type: ignore
-        with SessionLocal() as db:
-            db.query(InboundEvent).filter(InboundEvent.id == event_id).delete()
-            db.commit()
-    except Exception:
-        pass
-
-
-def _inbound_pdf_response(inbound_id: str, pdf_path: Optional[str], method: str):
+def _inbound_pdf_response(inbound_id: str, pdf_path: Optional[str], method: str, status: Optional[str] = "received"):
     pdf_path = str(pdf_path or "")
-    if not pdf_path:
-        raise HTTPException(404, detail="PDF file not found")
+    if status != "received" or not pdf_path:
+        raise HTTPException(404, detail="The document has not been received yet.")
     no_store = {"Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache", "Expires": "0"}
     if pdf_path.startswith("s3://"):
         stream, name = get_storage().get_pdf_stream(pdf_path)
@@ -2658,344 +2630,15 @@ async def get_inbound_pdf(inbound_id: str, request: Request, token: Optional[str
         identity.actor, inbound_id)))
     if settings.inbound_get_rpm:
         _enforce_rate_limit({'key_id': identity.actor.replay_scope}, "/inbound/{id}/pdf", settings.inbound_get_rpm)
-    return _inbound_pdf_response(inbound_id, document["pdf_path"], "api_key" if identity.source == "key" else "session")
+    return _inbound_pdf_response(inbound_id, document["pdf_path"], "api_key" if identity.source == "key" else "session",
+                                 _document_status(document.get("status")))
 
 
-@app.post("/_internal/asterisk/inbound")
-def asterisk_inbound(payload: dict, x_internal_secret: Optional[str] = Header(default=None)):
-    if not settings.inbound_enabled:
-        raise HTTPException(404, detail="Inbound not enabled")
-    # Gate by active inbound backend (allow when not explicitly set for backward compatibility)
-    if os.getenv("FAX_INBOUND_BACKEND") and active_inbound() != "sip":
-        audit_event("inbound_route_blocked", route="/_internal/asterisk/inbound", active_inbound=active_inbound(), inbound_enabled=settings.inbound_enabled)
-        raise HTTPException(404, detail="Inbound route not active for current backend")
-    if not settings.asterisk_inbound_secret:
-        raise HTTPException(401, detail="Internal secret not configured")
-    if x_internal_secret != settings.asterisk_inbound_secret:
-        raise HTTPException(401, detail="Invalid internal secret")
-    try:
-        tiff_path = str(payload.get("tiff_path"))
-        to_number = (payload.get("to_number") or "").strip() or None
-        from_number = (payload.get("from_number") or "").strip() or None
-        faxstatus = (payload.get("faxstatus") or "").strip() or None
-        faxpages = payload.get("faxpages")
-        uniqueid = str(payload.get("uniqueid") or "")
-        if not tiff_path or not os.path.exists(tiff_path):
-            raise HTTPException(400, detail="TIFF path invalid")
-    except Exception:
-        raise HTTPException(400, detail="Invalid payload")
-
-    job_id = uuid.uuid4().hex
-    data_dir = settings.fax_data_dir
-    ensure_dir(data_dir)
-    pdf_path = os.path.join(data_dir, f"{job_id}.pdf")
-
-    pages, _ = tiff_to_pdf(tiff_path, pdf_path)
-    import hashlib as _hl
-    try:
-        with open(pdf_path, "rb") as f:
-            content = f.read()
-        size_bytes = len(content)
-        sha256 = _hl.sha256(content).hexdigest()
-    except Exception:
-        size_bytes = None
-        sha256 = None
-
-    # Upload to configured storage (local path preserved or uploaded to S3)
-    storage = get_storage()
-    object_name = f"{job_id}.pdf"
-    stored_uri = storage.put_pdf(pdf_path, object_name)
-    try:
-        if stored_uri.startswith("s3://") and os.path.exists(pdf_path):
-            os.remove(pdf_path)
-    except Exception:
-        pass
-
-    pdf_token = secrets.token_urlsafe(32)
-    expires_at = datetime.utcnow() + timedelta(minutes=max(1, settings.inbound_token_ttl_minutes))
-    retention_until = None
-    if settings.inbound_retention_days and settings.inbound_retention_days > 0:
-        retention_until = datetime.utcnow() + timedelta(days=settings.inbound_retention_days)
-
-    now = datetime.utcnow()
-    _accept_inbound(dict(
-        id=job_id,
-        from_number=from_number,
-        to_number=to_number,
-        status=faxstatus or "received",
-        backend="sip",
-        inbound_backend=active_inbound(),
-        provider_sid=uniqueid or None,
-        pages=int(faxpages) if faxpages else pages,
-        size_bytes=size_bytes,
-        sha256=sha256,
-        pdf_path=stored_uri,
-        tiff_path=tiff_path,
-        retention_until=retention_until,
-        pdf_token=pdf_token,
-        pdf_token_expires_at=expires_at,
-        created_at=now,
-        received_at=now,
-        updated_at=now,
-    ))
-    if isinstance(payload.get("call"), dict):  # optional trunk call details from the inbound dialplan
-        sip_calls.record_inbound_call(_configuration_manager().store.engine, payload["call"], call_id=uniqueid or job_id,
-                                      inbound_fax_id=job_id, preset=settings.sip_trunk_preset, fax_status=faxstatus)
-    audit_event("inbound_received", job_id=job_id, backend="sip")
-    return {"id": job_id, "status": "ok"}
+def _document_status(status: Optional[str]) -> str:
+    """Rows from before acquisition records kept provider statuses; only waiting/failed lack a document."""
+    return "missing" if status in ("waiting", "failed") else "received"
 
 
-@app.post("/phaxio-inbound")
-async def phaxio_inbound(request: Request):
-    if not settings.inbound_enabled:
-        raise HTTPException(404, detail="Inbound not enabled")
-    if os.getenv("FAX_INBOUND_BACKEND") and active_inbound() != "phaxio":
-        audit_event("inbound_route_blocked", route="/phaxio-inbound", active_inbound=active_inbound(), inbound_enabled=settings.inbound_enabled)
-        raise HTTPException(404, detail="Inbound route not active for current backend")
-    raw = await request.body()
-    if settings.phaxio_inbound_verify_signature:
-        provided = request.headers.get("X-Phaxio-Signature") or request.headers.get("X-Phaxio-Signature-SHA256")
-        if not provided:
-            raise HTTPException(401, detail="Missing Phaxio signature")
-        secret = (settings.phaxio_api_secret or "").encode()
-        if not secret:
-            raise HTTPException(401, detail="Phaxio secret not configured")
-        digest = hmac.new(secret, raw, hashlib.sha256).hexdigest()
-        if not hmac.compare_digest(digest, (provided or "").strip().lower()):
-            raise HTTPException(401, detail="Invalid Phaxio signature")
-
-    # Parse form or JSON
-    try:
-        form = await request.form()
-        data = dict(form)
-    except Exception:
-        try:
-            data = await request.json()
-        except Exception:
-            data = {}
-
-    # Extract fields robustly
-    def get_nested(d, *keys):
-        for k in keys:
-            if k in d:
-                return d[k]
-        return None
-
-    provider_sid = get_nested(data, "fax[id]", "id", "fax_id", "faxId")
-    from_number = get_nested(data, "fax[from]", "from", "from_number")
-    to_number = get_nested(data, "fax[to]", "to", "to_number")
-    pages = get_nested(data, "fax[num_pages]", "num_pages", "pages")
-    status = get_nested(data, "fax[status]", "status") or "received"
-    file_url = get_nested(data, "file_url", "media_url", "pdf_url")
-
-    if not provider_sid:
-        # Accept and ignore if no provider id to avoid retries storm
-        return {"status": "ignored"}
-
-    # Idempotency: unique (provider_sid, event_type)
-    with SessionLocal() as db:
-        from .db import InboundEvent  # type: ignore
-        evt = InboundEvent(id=uuid.uuid4().hex, provider_sid=str(provider_sid), event_type="phaxio-inbound", created_at=datetime.utcnow())
-        try:
-            db.add(evt)
-            db.commit()
-        except Exception:
-            # Duplicate → ignore
-            db.rollback()
-            return {"status": "ok"}
-
-    # Fetch PDF if URL provided
-    pdf_bytes: Optional[bytes] = None
-    if file_url:
-        try:
-            import httpx
-            auth = None
-            if settings.phaxio_api_key and settings.phaxio_api_secret:
-                auth = (settings.phaxio_api_key, settings.phaxio_api_secret)
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                resp = await client.get(str(file_url), auth=auth)
-                if resp.status_code == 200 and (resp.headers.get("content-type", "").startswith("application/pdf") or True):
-                    pdf_bytes = resp.content
-        except Exception:
-            pdf_bytes = None
-
-    job_id = uuid.uuid4().hex
-    data_dir = settings.fax_data_dir
-    ensure_dir(data_dir)
-    local_pdf = os.path.join(data_dir, f"{job_id}.pdf")
-    if pdf_bytes is None:
-        # Minimal placeholder PDF so record exists; operators can re-fetch if needed
-        with open(local_pdf, "wb") as f:
-            f.write(b"%PDF-1.4\n% placeholder inbound\n%%EOF")
-        size_bytes = len(b"%PDF-1.4\n% placeholder inbound\n%%EOF")
-        pages_int = None
-        sha256_hex = hashlib.sha256(b"%PDF-1.4\n% placeholder inbound\n%%EOF").hexdigest()
-    else:
-        with open(local_pdf, "wb") as f:
-            f.write(pdf_bytes)
-        size_bytes = len(pdf_bytes)
-        pages_int = None
-        sha256_hex = hashlib.sha256(pdf_bytes).hexdigest()
-
-    storage = get_storage()
-    stored_uri = storage.put_pdf(local_pdf, f"{job_id}.pdf")
-    try:
-        if stored_uri.startswith("s3://") and os.path.exists(local_pdf):
-            os.remove(local_pdf)
-    except Exception:
-        pass
-
-    pdf_token = secrets.token_urlsafe(32)
-    expires_at = datetime.utcnow() + timedelta(minutes=max(1, settings.inbound_token_ttl_minutes))
-    retention_until = datetime.utcnow() + timedelta(days=settings.inbound_retention_days) if settings.inbound_retention_days > 0 else None
-
-    now = datetime.utcnow()
-    values = dict(
-        id=job_id,
-        from_number=(str(from_number) if from_number else None),
-        to_number=(str(to_number) if to_number else None),
-        status=str(status),
-        backend="phaxio",
-        provider_sid=str(provider_sid),
-        pages=int(pages) if pages else pages_int,
-        size_bytes=size_bytes,
-        sha256=sha256_hex,
-        pdf_path=stored_uri,
-        tiff_path=None,
-        retention_until=retention_until,
-        pdf_token=pdf_token,
-        pdf_token_expires_at=expires_at,
-        created_at=now,
-        received_at=now,
-        updated_at=now,
-    )
-    try:
-        await run_lifecycle_step(lambda: _accept_inbound(values))
-    except Exception:
-        _forget_inbound_event(evt.id)
-        raise
-    audit_event("inbound_received", job_id=job_id, backend="phaxio")
-    return {"status": "ok"}
-
-
-@app.post("/sinch-inbound")
-async def sinch_inbound(request: Request):
-    if not settings.inbound_enabled:
-        raise HTTPException(404, detail="Inbound not enabled")
-    if os.getenv("FAX_INBOUND_BACKEND") and active_inbound() != "sinch":
-        audit_event("inbound_route_blocked", route="/sinch-inbound", active_inbound=active_inbound(), inbound_enabled=settings.inbound_enabled)
-        raise HTTPException(404, detail="Inbound route not active for current backend")
-    raw = await request.body()
-    # Verify Basic if configured
-    if settings.sinch_inbound_basic_user:
-        auth = request.headers.get("Authorization", "")
-        import base64
-        ok = False
-        if auth.startswith("Basic "):
-            try:
-                dec = base64.b64decode(auth.split(" ", 1)[1]).decode()
-                user, _, pwd = dec.partition(":")
-                ok = (user == settings.sinch_inbound_basic_user and pwd == settings.sinch_inbound_basic_pass)
-            except Exception:
-                ok = False
-        if not ok:
-            raise HTTPException(401, detail="Invalid basic auth")
-    # Verify HMAC if configured
-    if settings.sinch_inbound_hmac_secret:
-        provided = request.headers.get("X-Sinch-Signature", "")
-        secret = settings.sinch_inbound_hmac_secret.encode()
-        digest = hmac.new(secret, raw, hashlib.sha256).hexdigest()
-        if not hmac.compare_digest(digest, (provided or "").strip().lower()):
-            raise HTTPException(401, detail="Invalid signature")
-
-    try:
-        data = await request.json()
-    except Exception:
-        data = {}
-
-    provider_sid = data.get("id") or data.get("fax_id")
-    from_number = data.get("from") or data.get("from_number")
-    to_number = data.get("to") or data.get("to_number")
-    pages = data.get("num_pages") or data.get("pages")
-    status = data.get("status") or "received"
-    file_url = data.get("file_url") or data.get("media_url")
-
-    if not provider_sid:
-        return {"status": "ignored"}
-
-    with SessionLocal() as db:
-        from .db import InboundEvent  # type: ignore
-        evt = InboundEvent(id=uuid.uuid4().hex, provider_sid=str(provider_sid), event_type="sinch-inbound", created_at=datetime.utcnow())
-        try:
-            db.add(evt)
-            db.commit()
-        except Exception:
-            db.rollback()
-            return {"status": "ok"}
-
-    pdf_bytes: Optional[bytes] = None
-    if file_url:
-        try:
-            import httpx
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                resp = await client.get(str(file_url))
-                if resp.status_code == 200:
-                    pdf_bytes = resp.content
-        except Exception:
-            pdf_bytes = None
-
-    job_id = uuid.uuid4().hex
-    data_dir = settings.fax_data_dir
-    ensure_dir(data_dir)
-    local_pdf = os.path.join(data_dir, f"{job_id}.pdf")
-    if pdf_bytes is None:
-        with open(local_pdf, "wb") as f:
-            f.write(b"%PDF-1.4\n% placeholder inbound\n%%EOF")
-        size_bytes = len(b"%PDF-1.4\n% placeholder inbound\n%%EOF")
-        pages_int = None
-        sha256_hex = hashlib.sha256(b"%PDF-1.4\n% placeholder inbound\n%%EOF").hexdigest()
-    else:
-        with open(local_pdf, "wb") as f:
-            f.write(pdf_bytes)
-        size_bytes = len(pdf_bytes)
-        pages_int = None
-        sha256_hex = hashlib.sha256(pdf_bytes).hexdigest()
-
-    storage = get_storage()
-    stored_uri = storage.put_pdf(local_pdf, f"{job_id}.pdf")
-
-    pdf_token = secrets.token_urlsafe(32)
-    expires_at = datetime.utcnow() + timedelta(minutes=max(1, settings.inbound_token_ttl_minutes))
-    retention_until = datetime.utcnow() + timedelta(days=settings.inbound_retention_days) if settings.inbound_retention_days > 0 else None
-
-    now = datetime.utcnow()
-    values = dict(
-        id=job_id,
-        from_number=(str(from_number) if from_number else None),
-        to_number=(str(to_number) if to_number else None),
-        status=str(status),
-        backend="sinch",
-        inbound_backend=active_inbound(),
-        provider_sid=str(provider_sid),
-        pages=int(pages) if pages else pages_int,
-        size_bytes=size_bytes,
-        sha256=sha256_hex,
-        pdf_path=stored_uri,
-        tiff_path=None,
-        retention_until=retention_until,
-        pdf_token=pdf_token,
-        pdf_token_expires_at=expires_at,
-        created_at=now,
-        received_at=now,
-        updated_at=now,
-    )
-    try:
-        await run_lifecycle_step(lambda: _accept_inbound(values))
-    except Exception:
-        _forget_inbound_event(evt.id)
-        raise
-    audit_event("inbound_received", job_id=job_id, backend="sinch")
-    return {"status": "ok"}
 # ===== Global error logging =====
 @app.exception_handler(HTTPException)
 async def _handle_http_exc(request: Request, exc: HTTPException):

@@ -36,14 +36,16 @@ def _decode(value: bytes | bytearray, charset: str) -> str:
 
 
 class _Budget:
-    def __init__(self):
+    def __init__(self, max_body_bytes=MAX_BODY_BYTES, max_file_bytes=MAX_PART_BYTES):
         self.used = 0
+        self.max_body_bytes, self.max_file_bytes = max_body_bytes, max_file_bytes
 
     def add(self, name: str, value: str | bytes):
         name_size = len(name.encode('utf-8'))
         value_size = len(value.encode('utf-8')) if isinstance(value, str) else len(value)
         size = name_size + value_size
-        if max(name_size, value_size) > MAX_PART_BYTES or self.used + size > MAX_BODY_BYTES:
+        limit = self.max_file_bytes if isinstance(value, bytes) else MAX_PART_BYTES
+        if name_size > MAX_PART_BYTES or value_size > limit or self.used + size > self.max_body_bytes:
             raise CallbackFormError(413) from None
         self.used += size
 
@@ -139,7 +141,8 @@ class _StrictMultipartParser(MultiPartParser):
             self.uploads.append(self._current_part.file)
 
     def on_part_data(self, data, start, end):
-        if self.part_bytes + end - start > MAX_PART_BYTES:
+        limit = self.budget.max_file_bytes if self._current_part.file is not None else MAX_PART_BYTES
+        if self.part_bytes + end - start > limit:
             raise CallbackFormError(413) from None
         self.part_bytes += end - start
         super().on_part_data(data, start, end)
@@ -164,13 +167,16 @@ async def _chunks(body):
     yield b''
 
 
-async def read_callback_form(request) -> tuple[list[tuple[str, str]], list[tuple[str, bytes]]]:
+async def read_callback_form(request, *, max_body_bytes=MAX_BODY_BYTES,
+                             max_file_bytes=MAX_PART_BYTES) -> tuple[list[tuple[str, str]], list[tuple[str, bytes]]]:
     """Read URLencoded/multipart forms; duplicate and blank order is retained.
 
     Actual raw bytes, not Content-Length, govern the 2MiB limit. Fields/files
     are limited to 100/4, each part/result to 1MiB and total decoded results to
     2MiB. Multipart headers are capped at 8KiB per part. Temporary uploads are
     closed synchronously in finally, including incomplete parts/cancellation.
+    Received-fax notifications raise the body and file-part limits (only those)
+    because a provider may attach the document itself.
     """
     parser = None
     try:
@@ -189,10 +195,10 @@ async def read_callback_form(request) -> tuple[list[tuple[str, str]], list[tuple
                 raise CallbackFormError(400) from None
         body = bytearray()
         async for chunk in request.stream():
-            if len(body) + len(chunk) > MAX_BODY_BYTES:
+            if len(body) + len(chunk) > max_body_bytes:
                 raise CallbackFormError(413) from None
             body.extend(chunk)
-        budget = _Budget()
+        budget = _Budget(max_body_bytes, max_file_bytes)
         if media.lower() == b'application/x-www-form-urlencoded':
             parser = _StrictFormParser(request.headers, _chunks(body), charset, budget)
             await parser.parse()
@@ -204,7 +210,7 @@ async def read_callback_form(request) -> tuple[list[tuple[str, str]], list[tuple
         fields, files = [], []
         for name, value in form.multi_items():
             if isinstance(value, UploadFile):
-                content = await value.read(MAX_PART_BYTES + 1)
+                content = await value.read(max_file_bytes + 1)
                 budget.add(name, content)
                 files.append((name, content))
             else:
