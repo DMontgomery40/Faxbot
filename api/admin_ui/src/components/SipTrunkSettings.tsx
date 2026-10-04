@@ -212,6 +212,23 @@ function SipTrunkSettings({ client, showCalls = true }: SipTrunkSettingsProps) {
     }
   };
 
+  // Offered after a T.38 call carried no fax data; Faxbot never changes the mode by itself.
+  const useAudioFax = async () => {
+    setBusy(true);
+    try {
+      await client.updateSettings({ expected_revision_id: revision, sip_t38_enabled: false });
+      await client.applySipTrunk();
+      setStatus(null);
+      setNotice({ severity: 'success',
+        text: 'Saved for Asterisk. Restart the Asterisk service to send and receive new faxes as audio.' });
+      await load();
+    } catch (error) {
+      setNotice({ severity: 'error', text: failure(error, 'Audio fax could not be turned on. Try again.') });
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const statusSeverity = status?.message === 'The trunk is ready.' ? 'success'
     : status && (status.registration === 'rejected' || status.reachability === 'unreachable'
       || (!!status.ports_text && status.ports_text === status.message)) ? 'error' : 'info';
@@ -368,6 +385,16 @@ function SipTrunkSettings({ client, showCalls = true }: SipTrunkSettingsProps) {
                 <Typography variant="body2">
                   {`Last call${status.last_call_at ? `, ${when(status.last_call_at)}` : ''}: ${status.last_call_text}`}
                 </Typography>
+              )}
+              {status.suggest_audio && (
+                <Box sx={{ mt: 1 }}>
+                  <Typography variant="body2">
+                    Audio fax may still work when T.38 data cannot come back through your network.
+                  </Typography>
+                  <Button size="small" variant="outlined" sx={{ mt: 1 }} onClick={useAudioFax} disabled={busy}>
+                    Use audio fax for new calls
+                  </Button>
+                </Box>
               )}
             </>
           )}

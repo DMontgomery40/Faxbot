@@ -50,3 +50,23 @@ def trunk_calls(limit: int = typer.Option(10, '--limit', min=1, max=200, help='H
                  call.get('summary') or ''] for call in result.get('items') or []]
         out.table(['Time', 'Direction', 'Number', 'What happened'], rows, empty='No calls yet.')
     state.out().result(result, human)
+
+
+@trunk.command('mode')
+def trunk_mode(mode: str = typer.Argument(..., metavar='t38|audio',
+                                          help='t38 (recommended) or audio, for when T.38 data cannot come back.')):
+    """Choose T.38 or audio fax for new calls, save it for Asterisk, and say what to restart."""
+    if mode not in ('t38', 'audio'):
+        raise typer.BadParameter('Use t38 or audio.', param_hint='MODE')
+    api = state.api()
+    current = api.get('/admin/settings')
+    saved = api.put('/admin/settings', json={'sip_t38_enabled': mode == 't38',
+                                             'expected_revision_id': current['_meta']['desired_revision_id']})
+    applied = api.post('/admin/sip/apply')
+    result = {'mode': mode, 'changed': bool(saved.get('changed')), 'applied': bool(applied.get('ok'))}
+
+    def human(out):
+        kind = 'T.38' if mode == 't38' else 'audio'
+        out.line(f'New calls use {kind} fax once you restart the Asterisk service.' if result['changed']
+                 else f'The trunk already uses {kind} fax.')
+    state.out().result(result, human)

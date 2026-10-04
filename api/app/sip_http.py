@@ -260,7 +260,8 @@ async def status(request: Request, identity=Depends(require_permission('provider
     if configured:
         summary['advertised_address'] = await run_lifecycle_step(lambda: sip_trunk.applied_public_address(values)) or None
     message = _message(summary, asterisk, applied, ports_text, transport)
-    if changed and ports_text != BEHIND_ROUTER:
+    if (changed and ports_text != BEHIND_ROUTER and asterisk['connected'] and asterisk['permission']
+            and asterisk['registration'] != 'rejected'):
         message = ADDRESS_CHANGED
     return {
         **summary, 'applied': applied, 'asterisk_connected': asterisk['connected'],
@@ -276,6 +277,9 @@ async def status(request: Request, identity=Depends(require_permission('provider
         'ports_text': ports_text,
         'last_call_text': last['summary'] if last else None,
         'last_call_at': last['started_at'] if last else None,
+        'last_call_verdict': last['verdict'] if last else None,
+        # After a T.38 call carried no fax data, audio fax is the next thing to try (the owner decides).
+        'suggest_audio': bool(last and last['verdict'] == 'no_t38_data_back' and values.sip_t38_enabled),
         'address_changed': bool(changed),
         'message': message,
     }

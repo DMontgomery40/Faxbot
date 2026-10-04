@@ -208,6 +208,35 @@ describe('SIP trunk settings', () => {
     expect(screen.getByLabelText(/Internet address/).getAttribute('placeholder')).toBe('Automatic');
   });
 
+  it('offers audio fax for new calls after a T.38 call carried no fax data, and saves then applies it', async () => {
+    const writes: Array<Record<string, unknown>> = [];
+    let applied = 0;
+    server.use(
+      http.get('/admin/sip/presets', () => HttpResponse.json({ presets: PRESETS })),
+      http.get('/admin/settings', () => HttpResponse.json(settings())),
+      http.get('/admin/sip/calls', () => HttpResponse.json({ items: [], next_cursor: null })),
+      http.get('/admin/sip/status', () => HttpResponse.json({ configured: true, applied: true,
+        asterisk_connected: true, registration: 'registered', registration_text: "The carrier accepted Faxbot's registration over TLS.",
+        reachability: 'reachable', reachability_text: "The carrier answered Faxbot's check in 38 ms.",
+        last_call_text: 'The call connected but no fax data came back from the carrier.',
+        last_call_verdict: 'no_t38_data_back', suggest_audio: true, message: 'The trunk is ready.' })),
+      http.put('/admin/settings', async ({ request }) => {
+        writes.push(await request.json() as Record<string, unknown>);
+        return HttpResponse.json({ ok: true, changed: true, _meta: { active_revision_id: 'rev-2',
+          desired_revision_id: 'rev-2', generation: 2, apply_state: 'applied', restart_recommended: false } });
+      }),
+      http.post('/admin/sip/apply', () => { applied += 1; return HttpResponse.json({ ok: true, message: 'Saved.' }); }),
+    );
+    render(<SipTrunkSettings client={client()} />);
+    await screen.findByText('A password is saved.');
+    fireEvent.click(screen.getByRole('button', { name: 'Check trunk status' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Use audio fax for new calls' }));
+    expect(await screen.findByText('Saved for Asterisk. Restart the Asterisk service to send and receive new faxes as audio.'))
+      .toBeTruthy();
+    expect(writes).toEqual([{ expected_revision_id: 'rev-1', sip_t38_enabled: false }]);
+    expect(applied).toBe(1);
+  });
+
   it('shows the missing fields the server names when applying fails', async () => {
     server.use(
       http.get('/admin/sip/presets', () => HttpResponse.json({ presets: PRESETS })),

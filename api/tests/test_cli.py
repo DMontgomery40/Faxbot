@@ -566,3 +566,11 @@ def test_trunk_status_and_calls_read_as_plain_sentences(trunk_cli):
     assert calls.exit_code == 0 and 'What happened' in calls.stdout and '+13035550100' in calls.stdout
     assert trunk_cli.json('trunk', 'calls')['items'][0]['verdict'] == 'no_t38_data_back'
     assert trunk_cli('trunk', 'calls', '--direction', 'sideways').exit_code != 0
+    # After that verdict, the owner can switch new calls to audio fax and back.
+    assert trunk_cli.json('trunk', 'status')['suggest_audio'] is True
+    audio = trunk_cli('trunk', 'mode', 'audio')
+    assert audio.exit_code == 0 and 'New calls use audio fax once you restart the Asterisk service.' in audio.stdout
+    assert trunk_cli.json('trunk', 'status')['t38'] is False
+    assert 'already uses audio fax' in trunk_cli('trunk', 'mode', 'audio').stdout
+    assert trunk_cli.json('trunk', 'mode', 't38') == {'mode': 't38', 'changed': True, 'applied': True}
+    assert trunk_cli('trunk', 'mode', 'fast').exit_code != 0

@@ -82,7 +82,7 @@ def test_status_without_a_trunk_says_so_in_one_sentence(bare_client):
                     'reachability_text': 'Faxbot cannot tell yet whether the carrier answers.',
                     'round_trip_ms': None, 'internet_address': None, 'behind_router': None, 'port_numbers': None,
                     'public_address_text': None, 'ports_text': None, 'last_call_text': None, 'last_call_at': None,
-                    'address_changed': False,
+                    'address_changed': False, 'last_call_verdict': None, 'suggest_audio': False,
                     'message': 'No SIP trunk is set up. Choose your carrier to start.'}
 
 
@@ -209,6 +209,8 @@ def test_status_shows_the_newest_call_in_one_sentence(client):
     body = client.get('/admin/sip/status', headers=ADMIN).json()
     assert body['last_call_text'] == 'A fax call from +13035550100 came in, but no fax data arrived from the carrier.'
     assert body['last_call_at'].endswith('Z')
+    # T.38 carried nothing back, so the screen offers audio fax for new calls; it never switches by itself.
+    assert body['last_call_verdict'] == 'no_t38_data_back' and body['suggest_audio'] is True
     calls = client.get('/admin/sip/calls', headers=ADMIN).json()['items']
     assert calls[0]['verdict'] == 'no_t38_data_back' and calls[0]['summary'] == body['last_call_text']
 
@@ -275,7 +277,7 @@ def test_console_save_then_apply_writes_the_new_trunk(bare_client, isolated_inst
 
 
 def test_apply_records_the_internet_address_and_status_says_when_asterisk_needs_a_restart(
-        client, isolated_installation, network):
+        client, isolated_installation, network, monkeypatch):
     folder = os.path.join(isolated_installation['FAX_DATA_DIR'], 'asterisk')
     network['result'] = stun.Probe(public_ip='198.51.100.7', local_ip='172.18.0.5', local_port=40000,
                                    mapped=(('a', 40000), ('b', 40000)))
@@ -290,6 +292,13 @@ def test_apply_records_the_internet_address_and_status_says_when_asterisk_needs_
     assert body['public_address_text'] == ("Faxbot's internet address is 198.51.100.7, and your network keeps "
                                            "port numbers, so Telnyx is told exactly where to send fax data.")
     # The router got a new address; Asterisk still advertises the old one until it restarts.
+    async def registered(fields, *, collect=False):
+        if fields['Action'] == 'PJSIPShowRegistrationsOutbound':
+            return ({'response': 'Success', 'value': '', 'message': ''},
+                    [{'ObjectName': 'trunk-registration', 'Status': 'Registered', 'Transport': 'transport-tls'}])
+        return {'response': 'Success', 'value': 'NOT_INUSE', 'message': ''}, []
+    monkeypatch.setattr(ami_client, 'status_query', registered)
+    monkeypatch.setattr(ami_client._connected, 'is_set', lambda: True)
     network['result'] = stun.Probe(public_ip='198.51.100.9', local_ip='172.18.0.5', local_port=40000,
                                    mapped=(('a', 40000), ('b', 40000)))
     sip_http._probes.clear()

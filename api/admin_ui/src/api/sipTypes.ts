@@ -71,6 +71,9 @@ export interface SipTrunkStatus {
   // The address Asterisk advertised at its last start, and whether that is out of date.
   advertised_address?: string | null;
   address_changed?: boolean;
+  last_call_verdict?: string | null;
+  // True after a T.38 call carried no fax data while T.38 is on: offer audio fax for new calls.
+  suggest_audio?: boolean;
   message: string;
 }
 

@@ -107,6 +107,10 @@ Encryption also hides the call setup from router features that rewrite it (often
 
 This works with carriers that send their media back to wherever Faxbot's packets come from, which Telnyx does for audio. Whether Telnyx does the same for T.38 data is settled by your first test fax. When a carrier does not, the call connects but no fax data arrives, and Faxbot says so on that call: "The call connected but no fax data came back from the carrier." In that case, run Faxbot's fax engine on a host with a public address, or use a cloud fax provider.
 
+### When T.38 data does not come back: audio fax
+
+If a call switched to T.38 and Faxbot says "The call connected but no fax data came back from the carrier.", the carrier is not sending T.38 data back to Faxbot's path, though it may still do so for audio. **Check trunk status** then offers **Use audio fax for new calls** (or run `faxbot trunk mode audio`). It turns off **Use T.38 fax over IP**, applies the trunk, and asks you to restart the Asterisk service. New calls then stay audio: Faxbot declines the carrier's switch to T.38 and sends at up to 9600 bit/s with error correction, which survives a voice path better. Faxbot never changes this by itself and never resends the failed fax; send it again when you are ready. `faxbot trunk mode t38` switches back. With Telnyx you can also set **T.38 fax re-invite initiated by** to **Disabled** for audio fax.
+
 ### Server IP sign-in needs a public host
 
 A carrier that signs in by IP address (AnveoDirect, or Telnyx and Flowroute set to IP sign-in) sends calls to a fixed public address, which a router does not pass on. When Faxbot sees it is behind a router, **Apply to Asterisk** refuses that sign-in with "Your Faxbot runs behind a router, so sign in with a username and password; server IP sign-in needs a public address." Use it only on a host with its own public address, and start Compose with the public override, which publishes SIP and one 32-port media range that Asterisk then uses exactly:

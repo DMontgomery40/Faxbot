@@ -1728,6 +1728,7 @@ $ faxbot trunk [OPTIONS] COMMAND [ARGS]...
 
 * `status`: Check the trunk: registration, the...
 * `calls`: List recent trunk calls, newest first,...
+* `mode`: Choose T.38 or audio fax for new calls,...
 
 ### `faxbot trunk status`
 
@@ -1757,6 +1758,24 @@ $ faxbot trunk calls [OPTIONS]
 
 * `--limit <int range>`: How many calls to show, newest first.  [default: 10; 1&lt;=x&lt;=200]
 * `--direction <str>`: Only outbound or inbound calls.
+* `--help`: Show this message and exit.
+
+### `faxbot trunk mode`
+
+Choose T.38 or audio fax for new calls, save it for Asterisk, and say what to restart.
+
+**Usage**:
+
+```console
+$ faxbot trunk mode [OPTIONS] {t38|audio}
+```
+
+**Arguments**:
+
+* `t38|audio`: t38 (recommended) or audio, for when T.38 data cannot come back.  [required]
+
+**Options**:
+
 * `--help`: Show this message and exit.
 
 ## `faxbot routing`
