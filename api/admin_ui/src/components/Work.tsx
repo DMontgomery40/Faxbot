@@ -46,6 +46,9 @@ function stateColor(item: WorkItem): 'default' | 'warning' | 'error' | 'success'
   return 'info';
 }
 
+// The Inbox's own sentence for a document that has not arrived (status_text) is shown as written.
+type WaitingFax = InboundFax & { status_text?: string | null };
+
 export interface WorkProps {
   client: AdminAPIClient;
   permissions: ReadonlySet<string>;
@@ -57,7 +60,7 @@ export default function Work({ client, permissions }: WorkProps) {
   const [view, setView] = useState<WorkView>('all');
   const [items, setItems] = useState<WorkItem[] | null>(null);
   const [counts, setCounts] = useState<WorkCounts | null>(null);
-  const [waiting, setWaiting] = useState<InboundFax[]>([]);
+  const [waiting, setWaiting] = useState<WaitingFax[]>([]);
   const [error, setError] = useState<unknown>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [selected, setSelected] = useState<WorkItem | null>(null);
@@ -77,7 +80,7 @@ export default function Work({ client, permissions }: WorkProps) {
     }
     try {
       const inbound = await client.listInbound();
-      setWaiting(inbound.filter((fax) => fax.status === 'waiting' || fax.status === 'failed'));
+      setWaiting((inbound as WaitingFax[]).filter((fax) => fax.status === 'waiting' || fax.status === 'failed'));
     } catch {
       setWaiting([]);  // Received faxes are not listed for this person or inbound is off.
     }
@@ -240,7 +243,7 @@ export default function Work({ client, permissions }: WorkProps) {
                   <TableCell>From {maskNumber(fax.fr)}</TableCell>
                   <TableCell>To {maskNumber(fax.to)}</TableCell>
                   <TableCell>{formatServerTime(fax.received_at)}</TableCell>
-                  <TableCell>{fax.status === 'failed' ? 'The document could not be fetched.' : 'Waiting for the document.'}</TableCell>
+                  <TableCell>{fax.status_text || (fax.status === 'failed' ? 'Not received.' : 'Waiting for the document.')}</TableCell>
                 </TableRow>
               ))}
             </TableBody>

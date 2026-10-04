@@ -15,6 +15,7 @@ from ..access.route_policy import authorize, require_permission
 from ..config_runtime import run_lifecycle_step
 from ..routing.background import installation_engine, lifespan_tasks, repeat
 from ..routing.database import DeliveryStoreError
+from ..inbound.acquisition import AcquisitionError, InvalidDocument
 from .export import EvidenceExport
 from .imports import (ImportConflict, ImportInputError, ImportUnavailable, discard, parse_manifest,
                       spool_upload, store_document, validate_document)
@@ -200,11 +201,37 @@ imports_router = APIRouter(prefix='/imports', tags=['Work'])
 
 
 def record_import(request, actor, manifest, path, digest, size):
-    """Validate, store and acquire one imported document; return (status, import id, inbound id).
+    """Acquire one validated document through the inbound acquisition store.
 
-    Thin seam over the inbound acquisition store, wired once it is available.
+    Returns (status, import id, inbound fax id): ``received`` for a new document,
+    ``duplicate`` when this identity already holds these bytes. Different bytes
+    under the same identity raise ImportConflict; the first document is kept.
     """
-    raise ImportUnavailable()
+    from ..inbound.acquisition import ImportStore, account_identity, discard as discard_artifact, store_document
+    values = request.scope['faxbot.configuration'].active.values
+    store = ImportStore(request.app.state.access_runtime.inbound)
+    begun = store.begin(source='import', account=account_identity('import', actor.principal_id),
+                        operation_id=manifest.operation_id, revision=manifest.revision, backend='import',
+                        to_number=manifest.to_number, from_number=manifest.from_number,
+                        reported_pages=manifest.pages, report=manifest.report(),
+                        source_received_at=manifest.source_received_at, artifact_digest=digest, schedule=False,
+                        country=values.fax_default_country)
+    if begun.conflict:
+        raise ImportConflict(CONFLICT)
+    if begun.state in ('received', 'conflict'):
+        return 'duplicate', begun.import_id, begun.inbound_fax_id
+    with open(path, 'rb') as handle:
+        data = handle.read()
+    artifact = store_document(data, begun.inbound_fax_id, provider='The import')
+    completion = store.complete(begun.import_id, artifact_path=artifact.path, digest=artifact.digest,
+                                size=artifact.size, pages=artifact.pages, media_type=artifact.media_type)
+    discard_artifact(artifact, completion)
+    if completion.state == 'conflict':
+        raise ImportConflict(CONFLICT)
+    return ('received' if completion.stored else 'duplicate'), begun.import_id, begun.inbound_fax_id
+
+
+CONFLICT = 'A different document was already imported with this operation id and revision; the first one is kept.'
 
 
 @imports_router.post('', summary='Import a document from another system into the work queue',
@@ -232,8 +259,11 @@ async def create_import(request: Request, file: UploadFile | None = File(default
     except ImportInputError as error:
         raise HTTPException(400, detail=str(error)) from None
     except ImportConflict as error:
-        raise HTTPException(409, detail=str(error) or 'A different document was already imported with this '
-                                                      'operation id and revision.') from None
+        raise HTTPException(409, detail=str(error) or CONFLICT) from None
     except ImportUnavailable:
         raise HTTPException(503, detail='Imports are not available on this installation yet.') from None
+    except InvalidDocument as error:
+        raise HTTPException(400, detail=str(error)) from None
+    except AcquisitionError as error:
+        raise HTTPException(503, detail=str(error)) from None
     return {'import_id': import_id, 'inbound_id': inbound_id, 'status': status}

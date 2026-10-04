@@ -51,7 +51,8 @@ function queue(items: WorkItem[], calls: Array<[string, unknown]> = []) {
     http.get('/work', () => HttpResponse.json({ items })),
     http.get('/work/counts', () => HttpResponse.json({ open: 2, acknowledged: 0, done: 0, unassigned: 1, mine: 1, overdue: 0 })),
     http.get('/inbound', () => HttpResponse.json([
-      { id: 'late', fr: '+15550108888', to: '+15550100001', status: 'waiting', backend: 'phaxio', received_at: '2026-10-03T11:00:00' },
+      { id: 'late', fr: '+15550108888', to: '+15550100001', status: 'waiting', backend: 'phaxio', received_at: '2026-10-03T11:00:00',
+        status_text: 'Waiting for the document from Phaxio.' },
       { id: 'here', fr: '+15550107777', to: '+15550100001', status: 'received', backend: 'phaxio', received_at: '2026-10-03T11:00:00' },
     ])),
     http.get('/work/settings', () => HttpResponse.json({ acknowledge_hours: 24, mailboxes: [
@@ -85,7 +86,7 @@ describe('Work screen', () => {
     expect(screen.getByRole('button', { name: 'Mine (1)' })).toBeTruthy();
     const waiting = screen.getByRole('table', { name: 'Waiting for documents' });
     expect(within(waiting).getAllByRole('row')).toHaveLength(1);
-    expect(within(waiting).getByText('Waiting for the document.')).toBeTruthy();
+    expect(within(waiting).getByText('Waiting for the document from Phaxio.')).toBeTruthy();
     expect(screen.queryByText('Acknowledgement targets')).toBeNull();  // no settings:read
     expect(screen.queryByText(/[0-9a-f]{32}/)).toBeNull();
   });

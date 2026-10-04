@@ -266,3 +266,36 @@ def test_import_requires_the_import_permission(client):
     assert denied.status_code == 403
     importer = key(['work:import'])  # an integration key can carry the import scope
     assert _import(client, pdf('import'), {'operation_id': 'op-1'}, headers=importer).status_code == 400
+
+
+def test_import_routes_by_number_replays_as_duplicate_and_refuses_different_bytes(client):
+    front = mailbox(client, 'Front Desk', '+15550100001')
+    content = pdf('Imported referral')
+    manifest = {'source_system': 'case-system', 'operation_id': 'case-41', 'to_number': '(555) 010-0001',
+                'from_number': '+15559990000', 'source_received_at': '2026-10-03T09:30:00-05:00', 'pages': 1}
+    first = _import(client, content, manifest)
+    assert first.status_code == 200, first.text
+    body = first.json()
+    assert body['status'] == 'received' and set(body) == {'import_id', 'inbound_id', 'status'}
+    fax = client.get(f"/inbound/{body['inbound_id']}", headers=B).json()
+    assert fax['mailbox'] == 'Front Desk' and fax['status'] == 'received' and fax['to'] == '+15550100001'
+    replay = _import(client, content, manifest)
+    assert replay.status_code == 200 and replay.json() == {**body, 'status': 'duplicate'}
+    conflict = _import(client, pdf('Different bytes, same identity'), manifest)
+    assert conflict.status_code == 409
+    assert conflict.json()['detail'].startswith('A different document was already imported with this operation id')
+    revised = _import(client, pdf('Corrected referral'), {**manifest, 'revision': '2'})
+    assert revised.status_code == 200 and revised.json()['inbound_id'] != body['inbound_id']
+    assert feed(4) == 2
+    item = item_of(client, body['inbound_id'])
+    assert item['mailbox'] == 'Front Desk' and item['state_text'] == 'Waiting for an owner.'
+    files = _export(client.get(f"/work/{item['id']}/export", headers=B))
+    manifest_out = json.loads(files['manifest.json'])
+    (acquisition,) = manifest_out['acquisition']
+    assert acquisition['source'] == 'import' and acquisition['operation_id'] == 'case-41'
+    assert acquisition['source_received_at'] == '2026-10-03T14:30:00Z'
+    assert acquisition['provider_report']['source_system'] == 'case-system'
+    assert hashlib.sha256(files['original.pdf']).hexdigest() == hashlib.sha256(content).hexdigest()
+    assert 'No provider receipt was retained for this fax.' not in manifest_out['missing']
+    with engine().connect() as connection:
+        assert connection.execute(sa.text('SELECT COUNT(*) FROM inbound_faxes')).scalar_one() == 2

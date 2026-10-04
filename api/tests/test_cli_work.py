@@ -128,3 +128,12 @@ def test_import_command_reports_the_servers_sentence(cli, tmp_path):
     text.write_bytes(b'not a pdf at all')
     refused = cli('import', text, '--source', 'case-system', '--id', 'op-1')
     assert refused.exit_code != 0 and 'The file is not a PDF.' in refused.stderr + refused.stdout
+
+
+def test_import_command_imports_once_and_reports_a_replay(cli, tmp_path):
+    document = pdf(tmp_path / 'referral.pdf', 'Imported from the case system')
+    first = cli('import', document, '--source', 'case-system', '--id', 'case-7', '--to', '+15550100001',
+                '--received-at', '2026-10-03T14:05:00Z')
+    assert first.exit_code == 0 and 'Document imported.' in first.stdout, first.stdout + first.stderr
+    again = cli.json('import', document, '--source', 'case-system', '--id', 'case-7', '--to', '+15550100001')
+    assert again['status'] == 'duplicate'
