@@ -145,7 +145,8 @@ Checked items are implemented in the current source checkout. Unchecked items ar
 ### Next
 
 - [ ] Live confirmation of SIP Call-ID matching in both directions and of the hourly check for calls Faxbot has no record of; charges from other trunk carriers.
-- [ ] A Setup Wizard that takes an operator from nothing to a working fax: providers per direction saved as they go, trunk applied and checked without a host shell, no hand-made secrets between Faxbot's own containers, and an optional test fax.
+- [ ] eFax for sending and receiving (US, UK and Australia) through its business API.
+- [ ] Live combined call over a real trunk for sending together, and live automatic audio switching after a failed T.38 call.
 - [ ] Live sign-off of the Avaya IP Office, Avaya Aura, BT One Voice, Gamma and Telstra SIP Connect presets on real systems.
 - [ ] SSLFax through an optional HylaFAX+ engine for peers that already support it, with normal-fax fallback; the [isolated experiment](docs/operations/delivery-routes.md#sslfax) is the starting point.
 
