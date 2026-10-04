@@ -539,19 +539,20 @@ function JobsList({ client, openJobId, onOpened }: JobsListProps) {
                           {job.pages || '-'}
                         </Typography>
                       </TableCell>
-                      <TableCell sx={{ maxWidth: 200, display: { xs: 'none', lg: 'table-cell' } }}>
+                      <TableCell sx={{ minWidth: 200, maxWidth: 320, display: { xs: 'none', lg: 'table-cell' } }}>
                         {job.error && (
+                          // The whole sentence, wrapped between words; never cut mid-word.
                           <Typography
                             variant="caption"
                             color="error"
+                            data-testid="job-error"
                             sx={{
                               display: 'block',
-                              overflow: 'hidden',
-                              textOverflow: 'ellipsis',
-                              whiteSpace: 'nowrap',
+                              whiteSpace: 'normal',
+                              overflowWrap: 'normal',
+                              wordBreak: 'normal',
                               fontSize: { xs: '0.6rem', sm: '0.75rem' }
                             }}
-                            title={job.error}
                           >
                             {job.error}
                           </Typography>

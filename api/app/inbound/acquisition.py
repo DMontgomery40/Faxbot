@@ -215,7 +215,17 @@ def describe(row, record, *, now=None):
             'sha256': row.get('sha256') if state in ('received', 'conflict') else None,
             'is_test': source == 'test', 'retry_at': retry_at,
             'problem': record['last_error'] if state != 'received' else None,
-            'can_fetch_again': source in FETCHABLE and state in ('pending', 'failed')}
+            'can_fetch_again': source in FETCHABLE and state in ('pending', 'failed'),
+            'recovered': _recovered(record)}
+
+
+def _recovered(record):
+    """Whether Faxbot brought this fax in later from an image the fax engine could not hand over."""
+    try:
+        report = json.loads(record.get('report') or '{}')
+    except (TypeError, ValueError):
+        return False
+    return isinstance(report, dict) and report.get('recovered') is True
 
 
 def _settings():

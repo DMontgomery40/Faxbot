@@ -113,6 +113,18 @@ describe('Jobs list wording', () => {
     expect(within(dialog).getByText('SIP trunk (Asterisk)')).toBeTruthy();
   });
 
+  it('shows the whole error sentence, wrapped between words', async () => {
+    const sentence = 'The call connected but no fax data came back from the carrier.';
+    server.use(http.get('/admin/fax-jobs', () => HttpResponse.json({ total: 1, jobs: [{ ...job('failed'), error: sentence }] })));
+    render(<JobsList client={client()} />);
+    const error = await screen.findByTestId('job-error');
+    expect(error.textContent).toBe(sentence);
+    expect(error.getAttribute('title')).toBeNull();
+    const style = window.getComputedStyle(error);
+    expect(style.whiteSpace).not.toBe('nowrap');
+    expect(style.textOverflow).not.toBe('ellipsis');
+  });
+
   it('opens the fax Send just queued', async () => {
     jobServer('ready', delivery('ready', 'att-1', false, []), () => HttpResponse.json({ deliveries: [] }));
     const opened = vi.fn();

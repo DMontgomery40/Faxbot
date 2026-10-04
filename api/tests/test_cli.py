@@ -50,6 +50,9 @@ def _serve(monkeypatch, tmp_path, **extra):
         'PUBLIC_API_URL': ORIGIN,
         'FAXBOT_CONSOLE_ORIGINS': ORIGIN,
         'MAX_REQUESTS_PER_MINUTE': '0',
+        # The per-minute inbound buckets are process-wide, so earlier test files could use them up.
+        'INBOUND_LIST_RPM': '0',
+        'INBOUND_GET_RPM': '0',
         'ENABLE_PERSISTED_SETTINGS': 'false',
         'ENABLE_MCP_SSE': 'false',
         'ENABLE_MCP_HTTP': 'false',

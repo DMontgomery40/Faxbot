@@ -198,6 +198,29 @@ def test_recovery_waits_while_receiving_over_the_trunk_is_off(database, tmp_path
     assert _rows(database, 'inbound_imports') == []
 
 
+@pytest.mark.parametrize(('dids', 'expected'), [('+15555550199', '+15555550199'), ('+15555550199,+15555550198', None)])
+def test_a_recovered_fax_takes_the_trunks_only_fax_number_and_says_it_was_inferred(database, tmp_path, dids, expected):
+    """The live recovered fax showed **** for To; with one number on the trunk, that is where it arrived."""
+    from api.tests.test_inbound_access import InboundWorld
+    from app.inbound.acquisition import describe
+    world = InboundWorld(database)
+    store = ImportStore(world.inbound, clock=lambda: NOW)
+    data = tmp_path / 'faxdata'
+    tiff(data / 'inbound' / '1791083644.1.tiff', modified=NOW - timedelta(hours=3))
+    values = _values(data, SIP_TRUNK_DIDS=dids)
+    with use_configuration(values):
+        assert len(sip_handover.recover(store, database, values, now=NOW).imported) == 1
+    [record] = _rows(database, 'inbound_imports')
+    [fax] = _rows(database, 'inbound_faxes')
+    report = json.loads(record['report'])
+    assert fax['to_number'] == expected and fax['from_number'] is None
+    assert ('to_number' in report) == (expected is not None)
+    if expected:
+        assert report['to_number'] == 'inferred from the only fax number on the trunk'
+    shown = describe(fax, record)
+    assert shown['recovered'] is True and shown['source_received_at'] == NOW - timedelta(hours=3)
+
+
 def _rows(engine, name):
     with engine.connect() as connection:
         table = sa.Table(name, sa.MetaData(), autoload_with=connection)
@@ -208,6 +231,8 @@ def _rows(engine, name):
 def _client(monkeypatch, **extra):
     for name, value in {'REQUIRE_API_KEY': 'true', 'API_KEY': BOOTSTRAP, 'PUBLIC_API_URL': 'https://testserver',
                         'MAX_REQUESTS_PER_MINUTE': '0', 'FAXBOT_CONSOLE_ORIGINS': 'https://testserver',
+                        # Process-wide per-minute buckets are shared with other test files; stay out of them.
+                        'INBOUND_LIST_RPM': '0', 'INBOUND_GET_RPM': '0',
                         **extra}.items():
         monkeypatch.setenv(name, value)
     monkeypatch.setattr(inbound_http, 'AUTOMATIC', False)
@@ -272,7 +297,9 @@ def test_recover_brings_in_an_orphan_from_the_console_and_the_cli(isolated_insta
         assert first.status_code == 200, first.text
         assert first.json() == {'found': 1, 'imported': 1, 'waiting': 0, 'message': 'Brought in 1 received fax.'}
         [fax] = client.get('/inbound', headers=ADMIN).json()
-        assert fax['status'] == 'received' and fax['backend'] == 'sip'
+        assert fax['status'] == 'received' and fax['backend'] == 'sip' and fax['recovered'] is True
+        assert fax['source_received_at'] < fax['received_at']  # arrived hours before it was brought in
+        assert client.get(f"/inbound/{fax['id']}", headers=ADMIN).json()['recovered'] is True
         again = client.post('/admin/inbound/recover', headers=ADMIN, json={})
         assert again.json()['message'] == 'No received faxes are waiting to be brought in.'
         reader = client.post('/admin/api-keys', headers=ADMIN, json={'name': 'reader', 'scopes': ['inbound:list']})
@@ -298,3 +325,39 @@ def test_cli_recover_prints_the_plain_result(monkeypatch):
     result = CliRunner().invoke(cli, ['inbound', 'recover'])
     assert result.exit_code == 0, result.output
     assert result.output.strip() == 'Brought in 1 received fax.'
+
+
+def test_cli_shows_when_a_recovered_fax_arrived_and_unknown_numbers_in_words(monkeypatch):
+    from typer.testing import CliRunner
+    from app.cli import state
+    from app.cli.main import app as cli
+    from app.cli.output import local_time
+    item = {'id': 'f' * 32, 'fr': None, 'to': None, 'status': 'received', 'status_text': 'Received.', 'pages': 1,
+            'backend': 'sip', 'mailbox': None, 'source_received_at': '2026-10-04T03:14:00',
+            'received_at': '2026-10-04T03:48:00', 'recovered': True}
+
+    class FakeApi:
+        def get(self, path, params=None):
+            return [item] if path == '/inbound' else item
+    monkeypatch.setattr(state, 'api', lambda: FakeApi())
+    arrived = local_time('2026-10-04T03:14:00') + ' (brought in later)'
+    listing = CliRunner().invoke(cli, ['inbound', 'list'], env={'COLUMNS': '200'})
+    assert listing.exit_code == 0, listing.output
+    assert 'Unknown' in listing.output and arrived in listing.output
+    detail = CliRunner().invoke(cli, ['inbound', 'get', 'f' * 32], env={'COLUMNS': '200'})
+    assert detail.exit_code == 0, detail.output
+    assert arrived in detail.output and local_time('2026-10-04T03:48:00') in detail.output
+
+
+def test_sip_receiving_shows_one_status_line_instead_of_an_internal_url(isolated_installation, monkeypatch):
+    with _client(monkeypatch, FAX_BACKEND='sip', INBOUND_ENABLED='true') as client:
+        status = client.get('/admin/inbound/callbacks', headers=ADMIN).json()
+        assert status == {'backend': 'sip', 'callbacks': [],
+                          'receiving': {'ready': True, 'message': 'Receiving over your SIP trunk: ready.'}}
+        from app.sip_calls import SipCallRecords
+        SipCallRecords(main.app.state.configuration_runtime.manager.store.engine).record_inbound_event({
+            'UniqueID': '1791083644.1', 'Status': 'SUCCESS', 'Answered': '1791083644', 'Handover': 'refused'})
+        failed = client.get('/admin/inbound/callbacks', headers=ADMIN).json()['receiving']
+        assert failed == {'ready': False, 'message': "A fax was received but could not be handed to Faxbot: Faxbot "
+                                                     "refused the fax engine's inbound secret; select Apply to Asterisk."}
+        assert '_internal' not in client.get('/admin/inbound/callbacks', headers=ADMIN).text

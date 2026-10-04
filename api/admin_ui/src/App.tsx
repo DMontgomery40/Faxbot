@@ -344,7 +344,8 @@ function ConsoleShell({ client, me, initialContext, onSignOut, onIdentityChanged
         openSettings('keys');
         break;
       case 'email':
-        setSettingsFocus('email');
+      case 'trunk':
+        setSettingsFocus(destination);
         openSettings('settings');
         break;
       case 'diagnostics':
