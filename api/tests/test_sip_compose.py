@@ -110,3 +110,60 @@ def test_asterisk_starts_without_errors_and_keeps_every_fax_module():
                  'statsd.conf', 'aeap.conf', 'websocket_client.conf', 'chan_websocket.conf', 'ari.conf'):
         assert (etc / name).is_file(), name
     assert 'astkeydir=/var/lib/asterisk\n' in (etc / 'asterisk.conf').read_text()
+
+
+# A phone system on the local network: SIP and a small media range, published on the LAN address only.
+
+PHONE_SYSTEM = ROOT / 'docker-compose.phone-system.yml'
+
+
+def test_phone_system_override_publishes_sip_and_one_small_range_on_the_lan_address_only():
+    asterisk = yaml.safe_load(PHONE_SYSTEM.read_text())['services']['asterisk']
+    entries = [str(entry) for entry in asterisk['ports']]
+    assert len(entries) == 3
+    for entry in entries:
+        # Every port is bound to the address the operator gives, never to every interface.
+        assert entry.startswith('${FAXBOT_LAN_ADDRESS:?'), entry
+    assert entries[0].endswith(':5060:5060/udp') and entries[1].endswith(':5060:5060/tcp')
+    assert entries[2].endswith(':${FAXBOT_MEDIA_PORTS:-4000-4019}:${FAXBOT_MEDIA_PORTS:-4000-4019}/udp')
+    environment = dict(item.split('=', 1) for item in asterisk['environment'])
+    # Asterisk uses exactly the published range; only this file tells it the phone system address.
+    assert environment['FAXBOT_MEDIA_PORTS'] == '${FAXBOT_MEDIA_PORTS:-4000-4019}'
+    assert environment['FAXBOT_PHONE_SYSTEM_ADDRESS'].startswith('${FAXBOT_LAN_ADDRESS:?')
+    assert _width('4000-4019') == 20
+
+
+def _phone_system_config(extra):
+    import os
+    environment = {key: value for key, value in os.environ.items()
+                   if not key.startswith('FAXBOT_') and key != 'COMPOSE_FILE'}
+    # An empty env file: a .env in the checkout must not supply the LAN address (output is parsed, never printed).
+    command = ['docker', 'compose', '-p', 'faxbot-phone-system-check', '--env-file', os.devnull,
+               '-f', 'docker-compose.yml', '-f', 'docker-compose.phone-system.yml', 'config', '--format', 'json']
+    return subprocess.run(command, cwd=ROOT, capture_output=True, text=True, timeout=60,
+                          env={**environment, **extra})
+
+
+@pytest.mark.skipif(shutil.which('docker') is None, reason='The docker command is not installed.')
+def test_docker_compose_config_binds_every_phone_system_port_to_the_lan_address():
+    result = _phone_system_config({'FAXBOT_LAN_ADDRESS': '192.0.2.20'})
+    assert result.returncode == 0, 'docker compose config failed'
+    services = json.loads(result.stdout)['services']
+    ports = services['asterisk']['ports']
+    assert {port.get('host_ip') for port in ports} == {'192.0.2.20'}
+    assert sorted((int(port['published']), port['protocol']) for port in ports) == sorted(
+        [(5060, 'udp'), (5060, 'tcp')] + [(number, 'udp') for number in range(4000, 4020)])
+    assert services['asterisk']['environment']['FAXBOT_PHONE_SYSTEM_ADDRESS'] == '192.0.2.20'
+    assert services['asterisk']['restart'] == 'unless-stopped'
+    # The operator can widen the range; Asterisk refuses more than 100 ports at start (test_asterisk_start).
+    wider = _phone_system_config({'FAXBOT_LAN_ADDRESS': '192.0.2.20', 'FAXBOT_MEDIA_PORTS': '4000-4049'})
+    assert wider.returncode == 0
+    wider_ports = json.loads(wider.stdout)['services']['asterisk']['ports']
+    assert len(wider_ports) == 52 and json.loads(wider.stdout)['services']['asterisk']['environment'][
+        'FAXBOT_MEDIA_PORTS'] == '4000-4049'
+
+
+@pytest.mark.skipif(shutil.which('docker') is None, reason='The docker command is not installed.')
+def test_docker_compose_refuses_the_phone_system_file_without_a_lan_address():
+    result = _phone_system_config({})
+    assert result.returncode != 0 and 'FAXBOT_LAN_ADDRESS' in result.stderr

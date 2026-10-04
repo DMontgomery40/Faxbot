@@ -3,6 +3,7 @@
 The script runs here with its directories pointed at a temporary folder and a
 stand-in for the asterisk binary, so no container is needed.
 """
+import json
 from pathlib import Path
 import os
 import shutil
@@ -152,3 +153,80 @@ def test_an_unusable_login_file_is_refused_without_echoing_it(tmp_path):
     result, _, _ = start(tmp_path)
     assert result.returncode != 0
     assert 'Unsupported AMI configuration syntax' in result.stderr and 'bad;secret' not in result.stderr
+
+
+# -- a phone system on the local network (docker-compose.phone-system.yml) -------------------------
+
+def _phone_system_trunk(tmp_path):
+    """The trunk Faxbot renders for Avaya IP Office, as Asterisk finds it in the shared folder."""
+    from app import sip_trunk
+    from app.config_values import ConfigurationValues
+    values = ConfigurationValues.from_environment({
+        'SIP_TRUNK_PRESET': 'avaya-ipoffice', 'SIP_TRUNK_AUTH': 'ip', 'SIP_TRUNK_HOST': '192.168.10.5',
+        'FAX_DEFAULT_COUNTRY': 'GB'})
+    text = sip_trunk.render_pjsip(values)
+    shared = tmp_path / 'data' / 'asterisk'
+    shared.mkdir(parents=True, exist_ok=True)
+    (shared / 'pjsip.conf').write_text(text)
+    # The image ships these two; start.sh narrows them to the published range.
+    (tmp_path / 'etc').mkdir(exist_ok=True)
+    for name in ('rtp.conf', 'udptl.conf'):
+        shutil.copy(ROOT / 'asterisk' / 'etc' / 'asterisk' / name, tmp_path / 'etc' / name)
+    return text
+
+
+def test_a_published_phone_system_address_is_what_asterisk_names_and_what_faxbot_shows(tmp_path):
+    text = _phone_system_trunk(tmp_path)
+    result, etc, shared = start(tmp_path, FAXBOT_PHONE_SYSTEM_ADDRESS='192.168.10.20', FAXBOT_MEDIA_PORTS='4000-4019')
+    assert result.returncode == 0, result.stderr
+    loaded = (etc / 'pjsip.conf').read_text()
+    assert 'external_media_address=192.168.10.20\nexternal_signaling_address=192.168.10.20\n' in loaded
+    assert '@FAXBOT_' not in loaded and 'local_net' not in loaded
+    # Faxbot compares its settings with the file as it was before the address was filled in.
+    assert (shared / 'pjsip.conf.started').read_text() == text
+    assert json.loads((shared / 'lan-address').read_text()) == {
+        'address': '192.168.10.20', 'sip_port': 5060, 'media_ports': '4000-4019'}
+    assert oct((shared / 'lan-address').stat().st_mode & 0o777) == '0o600'
+    # A third of the range for T.38, the rest for audio: exactly the published ports.
+    udptl, rtp = (etc / 'udptl.conf').read_text(), (etc / 'rtp.conf').read_text()
+    assert 'udptlstart=4000\n' in udptl and 'udptlend=4005\n' in udptl
+    assert 'rtpstart=4006\n' in rtp and 'rtpend=4019\n' in rtp
+
+
+def test_without_the_phone_system_file_asterisk_names_its_own_address_and_faxbot_shows_none(tmp_path):
+    _phone_system_trunk(tmp_path)
+    shared = tmp_path / 'data' / 'asterisk'
+    (shared / 'lan-address').write_text('{"address": "192.168.10.20", "sip_port": 5060, "media_ports": "4000-4019"}')
+    # FAXBOT_LAN_ADDRESS from .env reaches the container even without the file; only the file publishes it.
+    result, etc, shared = start(tmp_path, FAXBOT_LAN_ADDRESS='192.168.10.20')
+    assert result.returncode == 0, result.stderr
+    loaded = (etc / 'pjsip.conf').read_text()
+    assert '@FAXBOT_' not in loaded and 'external_media_address' not in loaded
+    assert not (shared / 'lan-address').exists()
+
+
+@pytest.mark.parametrize('environment,message', [
+    ({'FAXBOT_PHONE_SYSTEM_ADDRESS': '192.168.10.300', 'FAXBOT_MEDIA_PORTS': '4000-4019'},
+     'Unsupported phone system address'),
+    ({'FAXBOT_PHONE_SYSTEM_ADDRESS': '192.168.10.20/s/x/', 'FAXBOT_MEDIA_PORTS': '4000-4019'},
+     'Unsupported phone system address'),
+    ({'FAXBOT_PHONE_SYSTEM_ADDRESS': 'pbx.example.net', 'FAXBOT_MEDIA_PORTS': '4000-4019'},
+     'Unsupported phone system address'),
+    # A phone system install publishes at most 100 media ports.
+    ({'FAXBOT_PHONE_SYSTEM_ADDRESS': '192.168.10.20', 'FAXBOT_MEDIA_PORTS': '4000-4100'},
+     'Unsupported media port range'),
+    ({'FAXBOT_PHONE_SYSTEM_ADDRESS': '192.168.10.20'}, 'Unsupported media port range'),
+])
+def test_an_unusable_phone_system_address_or_range_stops_asterisk_before_it_loads(tmp_path, environment, message):
+    _phone_system_trunk(tmp_path)
+    result, etc, shared = start(tmp_path, **environment)
+    assert result.returncode != 0 and message in result.stderr
+    assert not (etc / 'pjsip.conf').exists() and not (shared / 'lan-address').exists()
+
+
+def test_one_hundred_media_ports_is_the_largest_phone_system_range(tmp_path):
+    _phone_system_trunk(tmp_path)
+    result, etc, shared = start(tmp_path, FAXBOT_PHONE_SYSTEM_ADDRESS='10.1.2.3', FAXBOT_MEDIA_PORTS='5000-5099')
+    assert result.returncode == 0, result.stderr
+    assert json.loads((shared / 'lan-address').read_text())['media_ports'] == '5000-5099'
+    assert 'udptlend=5032\n' in (etc / 'udptl.conf').read_text()

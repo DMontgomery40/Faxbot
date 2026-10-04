@@ -863,3 +863,28 @@ def test_trunk_status_and_calls_read_as_plain_sentences(trunk_cli):
     assert applied.exit_code == 0, applied.stdout
     assert 'Saved for Asterisk. Restart the Asterisk service to use these settings.' in applied.stdout
     assert trunk_cli.json('trunk', 'apply', '--no-wait')['engine'] == 'manual'
+
+
+def test_trunk_presets_and_use_cover_phone_systems_and_uk_and_australian_carriers(trunk_cli):
+    listing = trunk_cli('trunk', 'presets')
+    assert listing.exit_code == 0, listing.stdout
+    for text in ('avaya-ipoffice', 'avaya-aura', 'gamma', 'bt-one-voice', 'telstra-sip-connect', 'Phone system'):
+        assert text in listing.stdout, text
+    detail = trunk_cli('trunk', 'presets', 'avaya-ipoffice')
+    assert detail.exit_code == 0 and 'What your Avaya IP Office administrator sets:' in detail.stdout
+    assert '1. System, LAN1 (or LAN2), VoIP: tick SIP Trunks Enable.' in detail.stdout
+    assert trunk_cli.json('trunk', 'presets', 'avaya-aura')['sources'][0]['read_on'] == '2026-10-03'
+    assert trunk_cli('trunk', 'presets', 'nope').exit_code != 0
+    # Choosing a phone system switches to sign-in by address; no username or password is asked for.
+    used = trunk_cli('trunk', 'use', 'avaya-ipoffice', '--host', '192.168.10.5', '--number-format', 'local',
+                     '--prefix', '9')
+    assert used.exit_code == 0, used.stdout
+    assert "Saved Avaya IP Office as the trunk's phone system. Run faxbot trunk apply to connect it." in used.stdout
+    status = trunk_cli.json('trunk', 'status')
+    assert (status['kind'], status['auth'], status['host'], status['dial_format'], status['dial_prefix']) == (
+        'phone_system', 'ip', '192.168.10.5', 'local', '9')
+    human = trunk_cli('trunk', 'status').stdout
+    assert 'Phone system' in human and 'Avaya IP Office' in human and 'Internet address' not in human
+    assert trunk_cli('trunk', 'use', 'avaya-ipoffice', '--transport', 'tls').exit_code != 0
+    assert trunk_cli('trunk', 'use', 'telnyx', '--number-format', 'local').exit_code != 0
+    assert trunk_cli.json('trunk', 'use', 'gamma', '--host', '192.0.2.40') == {'preset': 'gamma', 'changed': True}

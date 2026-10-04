@@ -7,6 +7,8 @@ screen can say it in one sentence:
   failed fax is never sent again; only new calls use audio fax.
 - ``network``: a new Telnyx trunk on a network that changes port numbers,
   where Telnyx's T.38 data was seen not to come back.
+- ``carrier``: a new trunk with a carrier that turns T.38 into audio fax inside
+  its own network (BT One Voice), so audio fax is what reaches the far end.
 
 A person's own choice (the switch, "Try T.38 again", ``faxbot trunk mode``)
 is recorded as ``chosen`` and is never overridden by the network rule. The
@@ -37,6 +39,7 @@ def t38_timeout(text) -> bool:
     return bool(_T38_TIMEOUT.search(str(text or '')))
 
 NETWORK = 'network'
+CARRIER = 'carrier'
 CHOSEN = 'chosen'
 
 
@@ -105,7 +108,7 @@ def derive(values, records=None):
     return None
 
 
-def off_sentence(reason, day=''):
+def off_sentence(reason, day='', carrier=''):
     """One sentence for why new calls use audio fax; ``day`` is the date in the reader's own words."""
     if reason == NO_DATA_BACK:
         return (f'Off: {"on " + day + " " if day else ""}a T.38 fax got no fax data back on this network, '
@@ -113,6 +116,8 @@ def off_sentence(reason, day=''):
     if reason == NETWORK:
         return ('Off: your network changes port numbers, and Telnyx\'s T.38 fax data does not come back through '
                 'such networks, so Faxbot uses audio fax.')
+    if reason == CARRIER:
+        return f'Off: {carrier or "your carrier"} turns T.38 into audio fax inside its network, so Faxbot uses audio fax.'
     return None
 
 
@@ -123,7 +128,20 @@ def reason_for(values, records=None):
     record = read(values) or derive(values, records)
     if record and record['mode'] == 'audio' and record.get('reason') in (NO_DATA_BACK, NETWORK):
         return {'reason': record['reason'], 'at': record.get('at')}
+    if record and record['mode'] == 'audio' and record.get('reason') == CARRIER and _carrier_prefers_audio(values):
+        return {'reason': CARRIER, 'at': record.get('at')}
     return None
+
+
+def _carrier_prefers_audio(values):
+    preset = sip_trunk.PRESETS.get(values.sip_trunk_preset)
+    return bool(preset and preset.audio_by_default)
+
+
+def carrier_prefers_audio(values, *, has_calls):
+    """A new trunk with a carrier that turns T.38 into audio itself starts with audio fax."""
+    return bool(_carrier_prefers_audio(values) and values.sip_t38_enabled and read(values) is None
+                and not has_calls)
 
 
 def reconcile(values):

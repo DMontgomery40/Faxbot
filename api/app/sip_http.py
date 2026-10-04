@@ -62,7 +62,16 @@ def _rejected_text(preset):
     return _REJECTED_BY_CARRIER.get(preset, REJECTED_GENERIC)
 
 
+def _phone_system(preset):
+    """Whether this preset is a phone system on the local network rather than a carrier."""
+    found = sip_trunk.PRESETS.get(preset or '')
+    return bool(found and found.phone_system)
+
+
 def _registration_text(registration, transport, preset=None):
+    if registration == 'not_used' and _phone_system(preset):
+        return ('Faxbot and your phone system recognise each other by address, so there is no registration'
+                + (f'; calls use {_TRANSPORT_NAMES[transport]}.' if transport else '.'))
     if registration == 'rejected':
         return _rejected_text(preset)
     if registration == 'registered' and transport:
@@ -76,6 +85,54 @@ def _registration_text(registration, transport, preset=None):
 BEHIND_ROUTER = ('Your Faxbot runs behind a router, so sign in with a username and password; '
                  'server IP sign-in needs a public address.')
 NO_PORTS = 'No ports need to be opened or forwarded.'
+
+# A phone system on the local network reaches Faxbot where docker-compose.phone-system.yml publishes it.
+PHONE_SYSTEM_COMMAND = 'docker compose -f docker-compose.yml -f docker-compose.phone-system.yml up -d'
+PHONE_SYSTEM_SETTING = 'FAXBOT_LAN_ADDRESS'
+LAN_NOT_STARTED = 'Your phone system cannot reach Faxbot yet, because Faxbot is not published on your local network.'
+LAN_HIDDEN = ('Faxbot runs in Docker Desktop or Colima here, which hide your phone system\'s address from Faxbot, '
+              'so the phone system cannot connect; run Faxbot on a Linux computer to connect a phone system.')
+# Docker Desktop and Colima give containers these names; Docker Engine on Linux does not.
+DESKTOP_HOST_NAMES = ('host.docker.internal', 'host.lima.internal')
+_desktop = {}
+
+
+def lan_text(record):
+    """What to give the phone system's administrator, in one sentence."""
+    return (f'Give your phone system administrator this address: {record["address"]}, port 5060 (UDP or TCP), '
+            f'and media ports {record["media_first"]}\u2013{record["media_last"]}, enough for '
+            f'{record["faxes_at_once"]} {"fax" if record["faxes_at_once"] == 1 else "faxes"} at once.')
+
+
+def _desktop_docker():
+    import socket
+    for name in DESKTOP_HOST_NAMES:
+        try:
+            socket.getaddrinfo(name, None)
+            return True
+        except OSError:
+            continue
+    return False
+
+
+async def address_hidden():
+    """True when Faxbot runs in Docker Desktop or Colima, whose published ports replace the sender's address."""
+    if 'value' not in _desktop:
+        try:
+            _desktop['value'] = bool(await asyncio.wait_for(asyncio.to_thread(_desktop_docker), 3))
+        except Exception:
+            return False
+    return _desktop['value']
+
+
+def _phone_system_reach(values, managed, hidden):
+    """(record, sentence) for how a phone system reaches Faxbot; (None, None) when Faxbot cannot tell."""
+    record = sip_trunk.read_lan_address(values)
+    if hidden:
+        return record, LAN_HIDDEN
+    if record:
+        return record, lan_text(record)
+    return None, (LAN_NOT_STARTED if managed else None)
 # One STUN probe serves status checks for a minute; Apply always probes again.
 _PROBE_SECONDS = 60
 _probes = {}
@@ -286,14 +343,18 @@ def _summary(values):
     except sip_trunk.TrunkConfigurationError as error:
         trunk, missing = None, list(error.fields)
     return {
-        'configured': True, 'preset': preset.id, 'preset_label': preset.label, 'auth': values.sip_trunk_auth,
+        'configured': True, 'preset': preset.id, 'preset_label': preset.label, 'kind': preset.kind,
+        'auth': values.sip_trunk_auth,
         'host': trunk.host if trunk else (values.sip_trunk_host or preset.host),
         'port': trunk.port if trunk else None, 'transport': trunk.transport if trunk else None,
         'missing': missing, 'caller_id_set': bool(values.sip_trunk_caller_id),
         'dids': list(values.sip_trunk_did_list), 't38': values.sip_t38_enabled,
         'fax_preference': values.sip_fax_preference_header,
-        'public_address': values.sip_external_address or None,
-        'public_address_source': 'typed' if values.sip_external_address else None,
+        'public_address': (values.sip_external_address or None) if not preset.phone_system else None,
+        'public_address_source': 'typed' if values.sip_external_address and not preset.phone_system else None,
+        'codecs': list(trunk.codecs) if trunk else None,
+        'dial_format': trunk.dial_format if trunk else None,
+        'dial_prefix': trunk.dial_prefix if trunk else '',
     }
 
 
@@ -347,11 +408,18 @@ async def _asterisk_status(values):
     return result
 
 
-def _reachability_text(asterisk):
+_PHONE_REACHABILITY_TEXT = {
+    'reachable': 'The phone system answers Faxbot\'s checks.',
+    'unreachable': 'The phone system does not answer Faxbot\'s checks.',
+    'unknown': 'Faxbot cannot tell yet whether the phone system answers.',
+}
+
+
+def _reachability_text(asterisk, phone=False):
     milliseconds = asterisk.get('round_trip_ms')
     if asterisk['reachability'] == 'reachable' and milliseconds:
-        return f'The carrier answered Faxbot\'s check in {milliseconds} ms.'
-    return _REACHABILITY_TEXT[asterisk['reachability']]
+        return f'The {"phone system" if phone else "carrier"} answered Faxbot\'s check in {milliseconds} ms.'
+    return (_PHONE_REACHABILITY_TEXT if phone else _REACHABILITY_TEXT)[asterisk['reachability']]
 
 
 def _message(summary, asterisk, applied, ports_text=None, transport=None, *, managed=False, in_use=True,
@@ -360,8 +428,9 @@ def _message(summary, asterisk, applied, ports_text=None, transport=None, *, man
         return NO_TRUNK
     if summary['missing']:
         return TRUNK_INCOMPLETE
-    if ports_text == BEHIND_ROUTER:
-        return BEHIND_ROUTER
+    if ports_text in (BEHIND_ROUTER, LAN_HIDDEN, LAN_NOT_STARTED):
+        return ports_text
+    phone = summary.get('kind') == sip_trunk.PHONE_SYSTEM
     if restarting:
         return RESTARTING
     if not applied:
@@ -380,10 +449,10 @@ def _message(summary, asterisk, applied, ports_text=None, transport=None, *, man
                     'failing, so switch Transport to TCP and apply again.')
         return _REGISTRATION_TEXT['not_registered']
     if asterisk['reachability'] == 'unreachable':
-        return _REACHABILITY_TEXT['unreachable']
+        return (_PHONE_REACHABILITY_TEXT if phone else _REACHABILITY_TEXT)['unreachable']
     if asterisk['reachability'] == 'reachable':
         return 'The trunk is ready.'
-    return 'Faxbot is connected to Asterisk; the carrier has not answered a check yet.'
+    return f'Faxbot is connected to Asterisk; the {"phone system" if phone else "carrier"} has not answered a check yet.'
 
 
 @router.get('/presets')
@@ -402,20 +471,26 @@ async def status(request: Request, identity=Depends(require_permission('provider
     asterisk = (await _asterisk_status(values) if configured
                 else {'connected': False, 'registration': 'unknown', 'reachability': 'unknown', 'permission': True,
                       'transport': None})
-    network = await probe_network(values.sip_trunk_preset) if configured else None
+    phone = configured and summary.get('kind') == sip_trunk.PHONE_SYSTEM
+    # A phone system is reached on the local network: no internet address to look up.
+    network = await probe_network(values.sip_trunk_preset) if configured and not phone else None
     carrier = summary.get('preset_label') if configured and summary.get('preset') != 'custom' else 'the carrier'
-    ports_text = _ports_text(values, network) if configured else None
+    ports_text = _ports_text(values, network) if configured and not phone else None
     last = await run_lifecycle_step(lambda: _last_call(_records(request))) if configured else None
     # IP authentication has no registration; its calls use the trunk's transport.
     transport = asterisk['transport'] or (summary.get('transport') if asterisk['registration'] == 'not_used' else None)
     changed = configured and applied and await run_lifecycle_step(lambda: _address_changed(values, network))
     managed = configured and await run_lifecycle_step(lambda: sip_trunk.engine_managed(values))
+    lan = None
+    if phone:
+        hidden = bool(managed and await address_hidden())
+        lan, ports_text = await run_lifecycle_step(lambda: _phone_system_reach(values, managed, hidden))
     in_use = bool(managed and await run_lifecycle_step(lambda: sip_trunk.engine_uses_current(values)))
     restarting = bool(configured and _restarting())
     handover = await run_lifecycle_step(lambda: _handover(values, managed, last)) if configured else None
     observed = await run_lifecycle_step(lambda: _observed(_records(request))) if configured else None
     off = await run_lifecycle_step(lambda: sip_fax_mode.reason_for(values, _records(request))) if configured else None
-    if configured:
+    if configured and not phone:
         summary['advertised_address'] = await run_lifecycle_step(lambda: sip_trunk.applied_public_address(values)) or None
     message = _message(summary, asterisk, applied, ports_text, transport, managed=managed, in_use=in_use,
                        restarting=restarting)
@@ -430,13 +505,19 @@ async def status(request: Request, identity=Depends(require_permission('provider
         'registration': asterisk['registration'], 'registration_transport': transport,
         'registration_text': _registration_text(asterisk['registration'], transport, summary.get('preset')),
         'reachability': asterisk['reachability'],
-        'reachability_text': _reachability_text(asterisk),
+        'reachability_text': _reachability_text(asterisk, phone),
         'round_trip_ms': asterisk.get('round_trip_ms'),
         'internet_address': network.public_ip if network else None,
         'behind_router': network.behind_nat if network else None,
         'port_numbers': network.ports if network else None,
         'public_address_text': (_address_text(summary, network, carrier, observed, not values.sip_t38_enabled)
-                                if configured else None),
+                                if configured and not phone else None),
+        # A phone system: where it reaches Faxbot on the local network ({address, sip_port, media_ports,
+        # faxes_at_once}), or None while Faxbot is not published there (then the command that publishes it).
+        'phone_system': ({key: lan[key] for key in ('address', 'sip_port', 'media_ports', 'faxes_at_once')}
+                         if lan else None),
+        'phone_system_command': PHONE_SYSTEM_COMMAND if phone and ports_text == LAN_NOT_STARTED else None,
+        'phone_system_setting': PHONE_SYSTEM_SETTING if phone and ports_text == LAN_NOT_STARTED else None,
         # Why new calls use audio fax when Faxbot chose it ({reason, at}); None when T.38 is on or a person chose.
         't38_off_reason': off['reason'] if off else None,
         't38_off_at': off['at'] if off else None,
@@ -472,7 +553,8 @@ async def apply(request: Request, identity=Depends(require_permission('providers
     if not sip_trunk.configured(values):
         raise HTTPException(400, detail='Choose a carrier before applying trunk settings.')
     network = None
-    if not values.sip_external_address:
+    phone = _phone_system(values.sip_trunk_preset)
+    if not values.sip_external_address and not phone:
         network = await probe_network(values.sip_trunk_preset, fresh=True)
         # A carrier that signs in by address sends calls to a fixed public address, which a router does not pass on.
         if values.sip_trunk_auth == 'ip' and network and network.behind_nat:
@@ -484,6 +566,9 @@ async def apply(request: Request, identity=Depends(require_permission('providers
     if sip_fax_mode.network_prefers_audio(values, network, has_calls=has_calls):
         # A new Telnyx trunk on a network that changes port numbers: T.38 data was seen not to come back there.
         values = await run_lifecycle_step(lambda: _audio_for_network(runtime))
+    elif sip_fax_mode.carrier_prefers_audio(values, has_calls=has_calls):
+        # A new trunk with a carrier that turns T.38 into audio fax inside its own network.
+        values = await run_lifecycle_step(lambda: _audio_for_network(runtime, sip_fax_mode.CARRIER))
     else:
         await run_lifecycle_step(lambda: sip_fax_mode.reconcile(values))
     try:
@@ -493,7 +578,7 @@ async def apply(request: Request, identity=Depends(require_permission('providers
         if values.ami_password not in ('', 'changeme'):
             # The manager login Faxbot uses now, for an Asterisk that has none yet or an older one.
             await run_lifecycle_step(lambda: sip_trunk.write_manager_credentials(values))
-        if not values.sip_external_address:
+        if not values.sip_external_address and not phone:
             # What Asterisk advertises at its next start (only on a network that keeps port numbers).
             await run_lifecycle_step(lambda: sip_trunk.write_public_address(values, network))
     except sip_trunk.TrunkConfigurationError as error:
@@ -506,11 +591,11 @@ async def apply(request: Request, identity=Depends(require_permission('providers
     return await _load_into_engine(values)
 
 
-def _audio_for_network(runtime):
+def _audio_for_network(runtime, reason=sip_fax_mode.NETWORK):
     snapshot = runtime.manager.store.read()
     runtime.manager.patch(snapshot, {'sip_t38_enabled': False}, actor='system')
     values = runtime.manager.store.read().active.values
-    sip_fax_mode.write(values, 'audio', sip_fax_mode.NETWORK)
+    sip_fax_mode.write(values, 'audio', reason)
     return values
 
 
@@ -584,7 +669,8 @@ async def watch_public_address(*, minutes=None, values_source=None):
         await asyncio.sleep(minutes * 60)
         try:
             values = (values_source or configuration_values)()
-            if not sip_trunk.configured(values) or values.sip_external_address:
+            if (not sip_trunk.configured(values) or values.sip_external_address
+                    or _phone_system(values.sip_trunk_preset)):
                 continue
             network = await probe_network(values.sip_trunk_preset, fresh=True)
             if network and network.public_ip:

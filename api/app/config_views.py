@@ -140,6 +140,8 @@ def project_admin_settings(snapshot: ConfigurationSnapshot, pending_fields: Iter
                 't38_enabled': values.sip_t38_enabled,
                 'fax_preference_header': values.sip_fax_preference_header,
                 'codecs': values.sip_trunk_codecs,
+                'dial_format': values.sip_trunk_dial_format,
+                'dial_prefix': values.sip_trunk_dial_prefix,
                 'external_address': values.sip_external_address,
                 # Why Faxbot chose audio fax for new calls ('no_data_back' or 'network'), and when; else None.
                 **_audio_reason(values),

@@ -38,12 +38,14 @@ test-local:
 ui-build:
 	cd api/admin_ui && npm ci --no-audit --no-fund && npm run build
 
-# T.38 loopback proof: two Faxbot Asterisk containers exchange a two-page fax.
-# Needs Docker; DOCKER_CONTEXT defaults to colima-faxbot-refresh.
+# T.38 loopback proof: two Faxbot Asterisk containers exchange a two-page fax,
+# and a stand-in phone system on a local network faxes with Faxbot both ways.
+# Needs Docker; DOCKER_CONTEXT defaults to colima-faxbot-refresh. FAXBOT_NATIVE_IMAGE
+# and FAXBOT_ROUTER_IMAGE name already-built images to use instead of building them.
 DOCKER_CONTEXT ?= colima-faxbot-refresh
 .PHONY: native-proof
 native-proof:
-	cd api && mkdir -p faxdata && FAXBOT_NATIVE_PROOF=1 FAXBOT_DOCKER_CONTEXT=$(DOCKER_CONTEXT) FAX_DISABLED=true FAX_DATA_DIR=./faxdata DATABASE_URL='sqlite:///./test_faxbot_ci.db' $(abspath $(VENV))/bin/python -m pytest -q -s -p no:cacheprovider -m native tests/test_t38_loopback.py
+	cd api && mkdir -p faxdata && FAXBOT_NATIVE_PROOF=1 FAXBOT_DOCKER_CONTEXT=$(DOCKER_CONTEXT) FAX_DISABLED=true FAX_DATA_DIR=./faxdata DATABASE_URL='sqlite:///./test_faxbot_ci.db' $(abspath $(VENV))/bin/python -m pytest -q -s -p no:cacheprovider -m native tests/test_t38_loopback.py tests/test_phone_system_loopback.py
 
 # The faxbot command line from this checkout, for example: make cli ARGS="health"
 # Paths in ARGS stay relative to where make runs. See docs/operations/cli.md.

@@ -11,6 +11,9 @@ from fastapi.testclient import TestClient
 from app import main, sip_calls, sip_http, sip_trunk, stun
 from app.ami import ami_client
 
+# The real lookup, before the autouse fixture below replaces it for every other test.
+_DESKTOP_DOCKER = sip_http._desktop_docker
+
 
 BOOTSTRAP = 'synthetic-sip-bootstrap'
 ADMIN = {'X-API-Key': BOOTSTRAP}
@@ -43,6 +46,9 @@ def network(monkeypatch):
         return seen['result']
     monkeypatch.setattr(stun, 'probe', probe)
     monkeypatch.setattr(sip_http, '_probes', {})
+    # Nor does any test look up Docker Desktop's host names; the phone system tests say which host they mean.
+    monkeypatch.setattr(sip_http, '_desktop_docker', lambda: False)
+    monkeypatch.setattr(sip_http, '_desktop', {})
     return seen
 
 
@@ -68,7 +74,8 @@ def test_presets_list_documented_carriers_with_dated_sources(client):
     response = client.get('/admin/sip/presets', headers=ADMIN)
     assert response.status_code == 200
     presets = {preset['id']: preset for preset in response.json()['presets']}
-    assert set(presets) == {'telnyx', 'signalwire', 'sinch', 'anveo', 'flowroute', 'custom'}
+    assert set(presets) == {'telnyx', 'signalwire', 'sinch', 'anveo', 'flowroute', 'gamma', 'bt-one-voice',
+                            'telstra-sip-connect', 'avaya-ipoffice', 'avaya-aura', 'custom'}
     assert presets['anveo']['auth_modes'] == ['ip'] and presets['signalwire']['needs_host'] is True
     assert all(source['read_on'] == '2026-10-03' for preset in presets.values() for source in preset['sources'])
 
@@ -85,6 +92,7 @@ def test_status_without_a_trunk_says_so_in_one_sentence(bare_client):
                     'address_changed': False, 'last_call_verdict': None, 'suggest_audio': False,
                     'engine_managed': False, 'engine_restarting': False, 'in_use': False,
                     'handover_ready': None, 'handover_text': None, 't38_off_reason': None, 't38_off_at': None,
+                    'phone_system': None, 'phone_system_command': None, 'phone_system_setting': None,
                     'message': 'No SIP trunk is set up. Choose your carrier to start.'}
 
 
@@ -529,3 +537,120 @@ def test_the_telnyx_preset_names_the_connection_password_and_no_inbound_transpor
     assert "SIP connection's password (connection → Authentication and routing), not your Telnyx account password" in text
     assert 'inbound SIP transport' not in text and 'set the connection' not in text
     assert 'Enable T.38 Fax Gateway' in telnyx['t38'] and 'T.38 fax re-invite initiated by' in telnyx['t38']
+
+
+# A phone system on the local network (Avaya IP Office or Aura) ------------------------------------------
+
+AVAYA = {'SIP_TRUNK_PRESET': 'avaya-ipoffice', 'SIP_TRUNK_AUTH': 'ip', 'SIP_TRUNK_HOST': '192.168.10.5',
+         'SIP_TRUNK_CALLER_ID': '+442079460000', 'SIP_TRUNK_DIDS': '+442079460001', 'FAX_DEFAULT_COUNTRY': 'GB',
+         'SIP_TRUNK_DIAL_FORMAT': 'local', 'SIP_TRUNK_DIAL_PREFIX': '9'}
+LAN_RECORD = '{"address": "192.168.10.20", "sip_port": 5060, "media_ports": "4000-4019"}\n'
+
+
+@pytest.fixture
+def phone_client(isolated_installation, monkeypatch):
+    with _client(monkeypatch, AVAYA) as client:
+        yield client
+
+
+def test_a_phone_system_behind_a_router_is_applied_without_any_internet_check(phone_client, isolated_installation,
+                                                                             network):
+    """A PBX on the local network is reached there: no STUN probe, no public address, no router refusal."""
+    response = phone_client.post('/admin/sip/apply', headers=ADMIN)
+    assert response.status_code == 200, response.text
+    folder = os.path.join(isolated_installation['FAX_DATA_DIR'], 'asterisk')
+    rendered = open(os.path.join(folder, 'pjsip.conf')).read()
+    assert 'external_media_address=@FAXBOT_LAN_ADDRESS@' in rendered and 'match=192.168.10.5' in rendered
+    assert not os.path.exists(os.path.join(folder, 'public-address'))
+    body = phone_client.get('/admin/sip/status', headers=ADMIN).json()
+    assert network['servers'] == []
+    assert body['kind'] == 'phone_system' and body['preset_label'] == 'Avaya IP Office'
+    assert body['internet_address'] is None and body['public_address_text'] is None
+    assert body['codecs'] == ['alaw', 'ulaw'] and body['dial_format'] == 'local' and body['dial_prefix'] == '9'
+    # An Asterisk this install does not manage: Faxbot cannot tell how the phone system reaches it.
+    assert body['ports_text'] is None and body['phone_system'] is None and body['phone_system_command'] is None
+    assert body['reachability_text'] == 'Faxbot cannot tell yet whether the phone system answers.'
+    assert 'carrier' not in json.dumps({key: body[key] for key in ('message', 'reachability_text')})
+
+
+def test_a_managed_phone_system_install_says_how_to_publish_faxbot_then_what_to_give_the_administrator(
+        phone_client, engine, monkeypatch):
+    before = phone_client.get('/admin/sip/status', headers=ADMIN).json()
+    assert before['message'] == ('Your phone system cannot reach Faxbot yet, because Faxbot is not published on '
+                                 'your local network.')
+    assert before['phone_system_command'] == ('docker compose -f docker-compose.yml '
+                                              '-f docker-compose.phone-system.yml up -d')
+    assert before['phone_system_setting'] == 'FAXBOT_LAN_ADDRESS' and before['phone_system'] is None
+    # Docker Compose started Asterisk with docker-compose.phone-system.yml, and Faxbot applied the trunk.
+    with open(os.path.join(engine.folder, 'lan-address'), 'w') as record:
+        record.write(LAN_RECORD)
+    phone_client.post('/admin/sip/apply', headers=ADMIN)
+    with open(os.path.join(engine.folder, 'pjsip.conf')) as source, \
+            open(os.path.join(engine.folder, 'pjsip.conf.started'), 'w') as copy:
+        copy.write(source.read())
+    monkeypatch.setattr(ami_client, 'connected_at', sip_http._restart['at'] + 1)
+    after = phone_client.get('/admin/sip/status', headers=ADMIN).json()
+    assert after['phone_system'] == {'address': '192.168.10.20', 'sip_port': 5060, 'media_ports': '4000-4019',
+                                     'faxes_at_once': 6}
+    assert after['ports_text'] == ('Give your phone system administrator this address: 192.168.10.20, port 5060 '
+                                   '(UDP or TCP), and media ports 4000\u20134019, enough for 6 faxes at once.')
+    assert after['phone_system_command'] is None
+    # IP-authenticated peer: no registration, reachability from Asterisk's checks of the phone system.
+    assert (after['registration'], after['reachability'], after['in_use']) == ('not_used', 'reachable', True)
+    assert after['registration_text'] == ('Faxbot and your phone system recognise each other by address, so there '
+                                          'is no registration; calls use UDP.')
+    assert after['reachability_text'] == "The phone system answers Faxbot's checks."
+    assert after['message'] == 'The trunk is ready.'
+    assert 'PJSIPShowRegistrationsOutbound' not in engine.actions
+
+
+def test_docker_desktop_or_colima_is_named_because_it_hides_the_phone_system_address(phone_client, engine,
+                                                                                      monkeypatch):
+    with open(os.path.join(engine.folder, 'lan-address'), 'w') as record:
+        record.write(LAN_RECORD)
+    monkeypatch.setattr(sip_http, '_desktop_docker', lambda: True)
+    body = phone_client.get('/admin/sip/status', headers=ADMIN).json()
+    hidden = ("Faxbot runs in Docker Desktop or Colima here, which hide your phone system's address from Faxbot, "
+              "so the phone system cannot connect; run Faxbot on a Linux computer to connect a phone system.")
+    assert body['message'] == hidden and body['ports_text'] == hidden
+    assert body['phone_system']['address'] == '192.168.10.20'
+
+
+def test_the_lookup_for_docker_desktop_names_is_done_once_and_never_raises(monkeypatch):
+    seen = []
+
+    def lookup(name, *_):
+        seen.append(name)
+        raise OSError('not found')
+    monkeypatch.setattr(sip_http, '_desktop', {})
+    monkeypatch.setattr(sip_http, '_desktop_docker', _DESKTOP_DOCKER)
+    import socket
+    monkeypatch.setattr(socket, 'getaddrinfo', lookup)
+    assert asyncio.run(sip_http.address_hidden()) is False
+    assert asyncio.run(sip_http.address_hidden()) is False
+    assert seen == ['host.docker.internal', 'host.lima.internal']
+
+
+def test_bt_one_voice_starts_with_audio_fax_and_says_why(isolated_installation, monkeypatch, network):
+    network['result'] = stun.Probe(public_ip='198.51.100.7', local_ip='198.51.100.7', local_port=40000,
+                                   mapped=(('a', 40000),))
+    environment = {'SIP_TRUNK_PRESET': 'bt-one-voice', 'SIP_TRUNK_AUTH': 'ip', 'SIP_TRUNK_HOST': '192.0.2.50',
+                   'SIP_TRUNK_CALLER_ID': '+442079460000', 'FAX_DEFAULT_COUNTRY': 'GB'}
+    with _client(monkeypatch, environment) as client:
+        assert client.post('/admin/sip/apply', headers=ADMIN).status_code == 200
+        settings = client.get('/admin/settings', headers=ADMIN).json()
+        assert settings['sip']['trunk']['t38_enabled'] is False
+        assert settings['sip']['trunk']['t38_off_reason'] == 'carrier'
+        body = client.get('/admin/sip/status', headers=ADMIN).json()
+        assert body['t38_off_reason'] == 'carrier'
+        from app.sip_fax_mode import off_sentence
+        assert off_sentence('carrier', carrier=body['preset_label']) == (
+            'Off: BT One Voice turns T.38 into audio fax inside its network, so Faxbot uses audio fax.')
+        # Turning T.38 back on is a person's choice, which Faxbot keeps.
+        current = client.get('/admin/settings', headers=ADMIN).json()
+        saved = client.put('/admin/settings', headers=ADMIN, json={
+            'sip_t38_enabled': True, 'expected_revision_id': current['_meta']['desired_revision_id']})
+        assert saved.status_code == 200, saved.text
+        assert client.post('/admin/sip/apply', headers=ADMIN).status_code == 200
+        again = client.get('/admin/settings', headers=ADMIN).json()['sip']['trunk']
+        assert again['t38_enabled'] is True and again['t38_off_reason'] is None
