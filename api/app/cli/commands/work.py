@@ -45,7 +45,10 @@ def _item(api, item_id):
             raise
     found = api.get('/work', params={'inbound_fax_id': item_id, 'limit': 1}).get('items', [])
     if not found:
-        raise CliError("No received fax you can see has that ID. See faxbot received list --ids.", EXIT_NOT_FOUND)
+        from .fax import RECEIVED_NOT_FOUND, received_exists
+        if received_exists(api, item_id):
+            raise CliError('This received fax is not in the owners list yet. Try again in a minute.', EXIT_NOT_FOUND)
+        raise CliError(RECEIVED_NOT_FOUND, EXIT_NOT_FOUND)
     return found[0]
 
 
