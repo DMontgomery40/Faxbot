@@ -87,6 +87,9 @@ from .cases.http import router as cases_router
 from .inbound.http import router as inbound_router
 from .work.http import imports_router, router as work_router
 from .routing.transport import RoutedTransport
+from .batching.http import router as batching_router, summaries as batching_summaries
+from .batching.transport import BatchingTransport
+from .batching import acceptance as batching_acceptance, results as batching_results
 import logging
 
 # How long startup gives Asterisk to accept Faxbot's manager login before the
@@ -132,7 +135,8 @@ async def lifespan(application: FastAPI):
                         await stack.enter_async_context(mount.app.router.lifespan_context(mount.app))
                     await run_lifecycle_step(runtime.publish_ready)
                     delivery = OutboundStore(runtime.manager.store)
-                    worker = OutboundWorker(delivery, RoutedTransport(CapturedTransport(delivery, runtime, ami=ami_client)))
+                    worker = OutboundWorker(delivery, BatchingTransport(
+                        RoutedTransport(CapturedTransport(delivery, runtime, ami=ami_client))))
                     tasks.append(asyncio.create_task(worker.run(), name='faxbot-outbound-worker'))
                     tasks.append(asyncio.create_task(OutboundPoller(delivery).run(), name='faxbot-outbound-poller'))
                     tasks.append(asyncio.create_task(watch_public_address(), name='faxbot-public-address'))
@@ -181,6 +185,7 @@ app.include_router(cases_router)
 app.include_router(inbound_router)
 app.include_router(work_router)
 app.include_router(imports_router)
+app.include_router(batching_router)
 
 
 async def _configuration_error_handler(request, exc):
@@ -471,6 +476,9 @@ def _handle_fax_result(event):
     fields = {str(key).lower(): value for key, value in event.items()}
     job_id, attempt = fields.get('jobid'), fields.get('attemptid')
     try:
+        # A call that carried several faxes gives each its own outcome from the confirmed pages.
+        if batching_results.apply_fax_result(_deliveries(), event, failure_sentence=sip_calls.result_summary(event)):
+            return
         status = fields.get('status', '')
         _observe_native(job_id, attempt, status, 'sip', event_key='ami-result:' + str(status),
                         error=sip_calls.result_summary(event))
@@ -486,6 +494,9 @@ def _handle_originate_response(event):
     if len(parts) != 3 or parts[0] != 'faxbot':
         return
     try:
+        if batching_results.apply_originate_failure(_deliveries(), event,
+                                                    failure_sentence=sip_calls.originate_summary(event)):
+            return
         _observe_native(parts[1], parts[2], 'failed', 'sip', event_key='ami-originate-failure',
                         error=sip_calls.originate_summary(event))
     except Exception:
@@ -1832,13 +1843,18 @@ async def list_admin_jobs(
 ):
     page = await run_lifecycle_step(private_operation(lambda: access_runtime(request).queries.page(
         identity.actor, status=status, backend=backend, limit=limit, offset=offset)))
-    return {'total': page['total'], 'jobs': [_admin_fax_view(row) for row in page['jobs']]}
+    together = await run_lifecycle_step(lambda: batching_summaries(
+        _configuration_manager().store.engine, [row['id'] for row in page['jobs']]))
+    return {'total': page['total'], 'jobs': [{**_admin_fax_view(row), 'together': together.get(row['id'])}
+                                             for row in page['jobs']]}
 
 
 @app.get("/admin/fax-jobs/{job_id}")
 async def get_admin_job(job_id: str, request: Request, identity=Depends(require_identity)):
     row = await run_lifecycle_step(private_operation(lambda: access_runtime(request).queries.job(identity.actor, job_id)))
-    return {**_admin_fax_view(row), 'provider_sid': row['provider_sid'], 'file_name': row['file_name']}
+    together = await run_lifecycle_step(lambda: batching_summaries(_configuration_manager().store.engine, [job_id]))
+    return {**_admin_fax_view(row), 'provider_sid': row['provider_sid'], 'file_name': row['file_name'],
+            'together': together.get(job_id)}
 
 
 def _admin_fax_view(row):
@@ -2201,6 +2217,8 @@ def persist_settings(payload: PersistSettingsIn):
 @app.post("/fax", response_model=FaxJobOut, status_code=202)
 async def send_fax(request: Request, to: str = Form(...), file: UploadFile = File(...),
                    queue_only: bool = Form(False),
+                   send_now: bool = Form(False, description='Send at once even when this number sends faxes '
+                                                            'together; faxes waiting for it go in the same call.'),
                    idempotency_key: Optional[str] = Header(default=None, alias='Idempotency-Key',
                        description='Optional key for replaying the same fax request; 1 to 128 printable ASCII characters without spaces.'),
                    identity=Depends(require_identity)):
@@ -2283,6 +2301,14 @@ async def send_fax(request: Request, to: str = Form(...), file: UploadFile = Fil
         raise HTTPException(error.status_code, detail=str(error)) from None
     pdf_path = prepared.pdf_path
     tiff_path = prepared.tiff_path or ""
+    hold = None
+    try:
+        hold = await run_lifecycle_step(lambda: batching_acceptance.hold_plan(
+            manager.store.engine, revision, profile, destination=destination, pages=prepared.pages,
+            actor=identity.actor, send_now=send_now))
+    except Exception:
+        # Sending together is optional: without a usable answer the fax goes straight away.
+        logging.getLogger(__name__).warning('Sending together is unavailable; the fax goes straight away.')
 
     # One transaction accepts the row and its immutable account/profile binding.
     try:
@@ -2296,7 +2322,8 @@ async def send_fax(request: Request, to: str = Form(...), file: UploadFile = Fil
             'id': job_id, 'to_number': destination, 'file_name': prepared.original_name,
             'tiff_path': tiff_path, 'status': 'queued', 'pages': prepared.pages,
             'created_at': accepted_at, 'updated_at': accepted_at,
-        }, request_identity=request_identity))
+        }, request_identity=request_identity, also=None if hold is None else batching_acceptance.recorder(
+            manager.store.engine, job_id, hold, identity.actor)))
     except IdempotentReplay as replay:
         prepared.cleanup()
         return await run_lifecycle_step(private_operation(lambda: _accepted_job_response(access, identity.actor, replay.job_id)))
@@ -2501,6 +2528,13 @@ def _cleanup_outbound_documents(cutoff):
                     path.unlink(missing_ok=True)
             except (OSError, HTTPException, ConfigurationStoreError):
                 audit_event('outbound_retention_requires_attention', job_id=identity)
+    # A shared call's image copies its faxes' pages; it is normally removed when the call ends.
+    try:
+        for path in Path(settings.fax_data_dir).glob('batch-*.tiff'):
+            if not path.is_symlink() and datetime.utcfromtimestamp(path.stat().st_mtime) < cutoff:
+                path.unlink(missing_ok=True)
+    except OSError:
+        audit_event('outbound_retention_requires_attention')
 
 
 async def _cleanup_once():

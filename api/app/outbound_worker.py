@@ -35,6 +35,18 @@ class PreparationFailure(RuntimeError):
         super().__init__('Fax preparation failed before submission.')
 
 
+class BatchSplit(RuntimeError):
+    """A shared call cannot go as planned; nothing was sent and no fax failed.
+
+    ``separate`` names the faxes that go on their own from now on; None means
+    every fax in the call. The others wait again and form a new call.
+    """
+
+    def __init__(self, separate=None):
+        self.separate = frozenset(separate) if separate is not None else None
+        super().__init__('The shared call was split before anything was sent.')
+
+
 class OutboundWorker:
     def __init__(self, store, transport, *, interval=1.0, submission_timeout=90.0):
         if interval <= 0 or submission_timeout <= 0:
@@ -80,6 +92,11 @@ class OutboundWorker:
                 raise
             category = error.category
             await run_lifecycle_step(lambda: self.store.fail_preparation(claim, category=category))
+        except BatchSplit as split:
+            if not preparing:
+                raise
+            separate = split.separate
+            await run_lifecycle_step(lambda: self.store.split_batch(claim, separate=separate))
         return True
 
     async def run(self):

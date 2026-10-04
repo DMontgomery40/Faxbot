@@ -100,6 +100,12 @@ class CapturedTransport:
         tiff = root / (claim.job_id + '.tiff') if configuration.traits.get('requires_tiff') is True else None
         if any(path.is_symlink() or not path.is_file() for path in (pdf, tiff) if path is not None):
             raise PreparationFailure('artifact_unavailable')
+        if claim.members:
+            if pid != 'sip' or configuration.manifest is not None:
+                raise PreparationFailure('preparation_failed')
+            # One call carries every fax in the claim: separator pages and each fax's own image.
+            from .batching.transport import call_image
+            tiff = await run_lifecycle_step(lambda: call_image(self.store, root, claim))
         from .routing.numbers import InvalidNumber, accepted_destination
         try:
             # Every adapter below receives this canonical number and only formats it.

@@ -1,0 +1,82 @@
+"""What a shared call cost each fax, and what sending together saved a number (an estimate).
+
+Reads the delivery-route ledger only through ``RouteStore`` read functions. The
+call's charge is on the attempt that placed it: the carrier's reported amount
+when there is one, otherwise Faxbot's rate-card estimate from the measured call.
+"""
+from datetime import timedelta
+
+from ..routing.costs import estimate_cost, money_text
+from ..routing.database import utcnow
+from .store import call_members, calls_to
+
+
+WINDOW_DAYS = 30
+
+
+def call_charge(routes, batch_id):
+    """``(micros, currency, basis)`` for the call ``batch_id`` placed, or None while it is unknown."""
+    row = routes.decision(batch_id)
+    if row is None or row['outcome'] in ('pending', 'cancelled'):
+        return None
+    if row['reported_cost_micros'] is not None and row['reported_currency']:
+        return row['reported_cost_micros'], row['reported_currency'], 'reported'
+    if row['estimated_cost_micros'] is not None and row['currency']:
+        return row['estimated_cost_micros'], row['currency'], 'estimated'
+    return None
+
+
+def share(routes, engine, member):
+    """This fax's share of its call's charge, split by pages (each fax with its separator page)."""
+    if member is None or member['state'] != 'together' or not member['batch_id']:
+        return None
+    charge = call_charge(routes, member['batch_id'])
+    if charge is None:
+        return None
+    micros, currency, basis = charge
+    members = call_members(engine, member['batch_id'])
+    total = sum(row['pages'] + 1 for row in members)
+    if not total:
+        return None
+    part = (micros * (member['pages'] + 1) + total // 2) // total
+    estimate = '' if basis == 'reported' else ' (estimate)'
+    return {'amount_micros': part, 'call_micros': micros, 'currency': currency, 'basis': basis,
+            'sentence': f"Its share of the call's charge, split by pages: {money_text(part, currency)} "
+                        f'of {money_text(micros, currency)}{estimate}.'}
+
+
+def savings(routes, engine, number, *, now=None, days=WINDOW_DAYS):
+    """Calls saved and the estimated money saved by sending together to ``number`` in the last ``days``.
+
+    Separate calls are priced with the SIP trunk's rate card the way Faxbot
+    estimates any fax (setup plus time per page, with the card's minimum and
+    rounding); the shared call at its reported charge, or its rate-card cost.
+    """
+    calls = calls_to(engine, number, (now or utcnow()) - timedelta(days=days))
+    card = routes.card_for('sip')
+    result = {'calls': 0, 'faxes': 0, 'calls_saved': 0, 'saved': {}, 'priced_calls': 0}
+    for batch_id, members in calls.items():
+        charge = call_charge(routes, batch_id)
+        if charge is None:
+            continue
+        result['calls'] += 1
+        result['faxes'] += len(members)
+        result['calls_saved'] += len(members) - 1
+        micros, currency, _ = charge
+        if card is None or card.currency != currency:
+            continue
+        separate = sum(estimate_cost(card, member['pages']) for member in members)
+        result['priced_calls'] += 1
+        result['saved'][currency] = result['saved'].get(currency, 0) + max(0, separate - micros)
+    return result
+
+
+def savings_sentence(result):
+    if not result['calls']:
+        return 'No faxes to this number have been sent together in the last 30 days.'
+    calls = '1 call' if result['calls_saved'] == 1 else f"{result['calls_saved']} calls"
+    faxes = f"{result['faxes']} faxes in {result['calls']} call" + ('' if result['calls'] == 1 else 's')
+    money = ' + '.join(money_text(micros, currency) for currency, micros in sorted(result['saved'].items()))
+    if money:
+        return f'Last 30 days: {faxes}, {calls} saved, about {money} saved (estimate).'
+    return f'Last 30 days: {faxes}, {calls} saved.'
