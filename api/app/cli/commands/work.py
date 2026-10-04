@@ -14,11 +14,6 @@ work = typer.Typer(help='The work queue: received documents with an owner, an ac
                         'history.', no_args_is_help=True)
 
 
-def register(app):
-    app.add_typer(work, name='work')
-    app.command('import')(import_document)
-
-
 def short_time(value):
     """3 Oct 14:05 in the local time zone."""
     moment = parse_time(value)
@@ -69,8 +64,8 @@ def work_list(mine: bool = typer.Option(False, '--mine', help='Only items you ow
               overdue: bool = typer.Option(False, '--overdue', help='Only open items past their target.'),
               mailbox: str = typer.Option(None, '--mailbox', help='Only items in this mailbox.'),
               limit: int = typer.Option(100, '--limit', min=1, max=200, help='How many items to show.'),
-              ids: bool = typer.Option(False, '--ids', help='Also show item IDs, for the other work commands.')):
-    """List the work items you can see: open first, soonest target first."""
+              ids: bool = typer.Option(False, '--ids', help='Also show item IDs, for assign, acknowledge, done, reopen, history and export.')):
+    """List received faxes with their owner and state: open ones first, soonest target first."""
     chosen = [name for name, flag in (('mine', mine), ('unassigned', unassigned), ('overdue', overdue)) if flag]
     if len(chosen) > 1:
         raise CliError('Choose one of --mine, --unassigned or --overdue.')
@@ -87,8 +82,8 @@ def work_list(mine: bool = typer.Option(False, '--mine', help='Only items you ow
 
 
 @work.command('show')
-def work_show(item_id: str = typer.Argument(..., help="Item ID, from 'faxbot work list --ids'.")):
-    """Show one work item and its history."""
+def work_show(item_id: str = typer.Argument(..., help="ID from 'faxbot received owners --ids'.")):
+    """Show who has owned a received fax and everything that happened to it."""
     api = state.api()
     item = _item(api, item_id)
     history = api.get(f'/work/{segment(item_id)}/history')
@@ -103,9 +98,9 @@ def work_show(item_id: str = typer.Argument(..., help="Item ID, from 'faxbot wor
 
 
 @work.command('assign')
-def work_assign(item_id: str = typer.Argument(..., help='Item ID.'),
+def work_assign(item_id: str = typer.Argument(..., help="ID from 'faxbot received owners --ids'."),
                 user: str = typer.Argument(..., help='The new owner: their login or name.')):
-    """Give an item to an owner. They must already be able to see the document."""
+    """Give a received fax to an owner. They must already be able to see it."""
     api = state.api()
     item = _item(api, item_id)
     people = api.get(f'/work/{segment(item_id)}/assignees').get('people', [])
@@ -116,8 +111,8 @@ def work_assign(item_id: str = typer.Argument(..., help='Item ID.'),
 
 
 @work.command('acknowledge')
-def work_acknowledge(item_id: str = typer.Argument(..., help='Item ID.')):
-    """Acknowledge an item you own."""
+def work_acknowledge(item_id: str = typer.Argument(..., help="ID from 'faxbot received owners --ids'.")):
+    """Acknowledge a received fax you own."""
     api = state.api()
     item = _item(api, item_id)
     result = api.post(f'/work/{segment(item_id)}/acknowledge', json={'version': item['version']})
@@ -125,9 +120,9 @@ def work_acknowledge(item_id: str = typer.Argument(..., help='Item ID.')):
 
 
 @work.command('done')
-def work_done(item_id: str = typer.Argument(..., help='Item ID.'),
+def work_done(item_id: str = typer.Argument(..., help="ID from 'faxbot received owners --ids'."),
               note: str = typer.Option(..., '--note', help='What was done, up to 200 characters.')):
-    """Mark an item done, with a short note."""
+    """Mark a received fax done, with a short note."""
     api = state.api()
     item = _item(api, item_id)
     result = api.post(f'/work/{segment(item_id)}/done', json={'note': note, 'version': item['version']})
@@ -135,8 +130,8 @@ def work_done(item_id: str = typer.Argument(..., help='Item ID.'),
 
 
 @work.command('reopen')
-def work_reopen(item_id: str = typer.Argument(..., help='Item ID.')):
-    """Reopen a done item. Its owner acknowledges it again."""
+def work_reopen(item_id: str = typer.Argument(..., help="ID from 'faxbot received owners --ids'.")):
+    """Reopen a received fax marked done. Its owner acknowledges it again."""
     api = state.api()
     item = _item(api, item_id)
     result = api.post(f'/work/{segment(item_id)}/reopen', json={'version': item['version']})
@@ -144,11 +139,11 @@ def work_reopen(item_id: str = typer.Argument(..., help='Item ID.')):
 
 
 @work.command('export')
-def work_export(item_id: str = typer.Argument(..., help='Item ID.'),
+def work_export(item_id: str = typer.Argument(..., help="ID from 'faxbot received owners --ids'."),
                 output: str = typer.Option(None, '--output', '-o', help="Zip file to write. Use '-' for standard "
                                                                         'output.'),
                 force: bool = typer.Option(False, '--force', help='Replace the file if it exists.')):
-    """Download an item's evidence: manifest, history and, if you may read documents, the original."""
+    """Download a received fax's record as a zip file: its history and, if you may read documents, the fax itself."""
     response = state.api().get(f'/work/{segment(item_id)}/export', raw=True, headers={'Accept': 'application/zip'})
     _report_saved(save_document(response, output, f'work-{item_id}-evidence.zip', force), len(response.content))
 
@@ -160,12 +155,12 @@ def work_settings(acknowledge_hours: int = typer.Option(None, '--acknowledge-hou
                                                              'deadline.'),
                   mailbox: str = typer.Option(None, '--mailbox', help='Change this mailbox, by name.'),
                   hours: int = typer.Option(None, '--hours', min=0, max=8760,
-                                            help="With --mailbox: this mailbox's target in hours (0 for none)."),
+                                            help="With --mailbox: this mailbox's target in hours (0 for no target)."),
                   installation_target: bool = typer.Option(False, '--use-installation-target',
-                                                           help='With --mailbox: follow the installation target.'),
+                                                           help="With --mailbox: use the installation's target."),
                   backup: str = typer.Option(None, '--backup', help='With --mailbox: who takes over missed items.'),
                   no_backup: bool = typer.Option(False, '--no-backup', help='With --mailbox: remove the backup.')):
-    """Show or change acknowledgement targets and backup people. New items use the targets in place then."""
+    """Show or change how soon received faxes should be acknowledged, and who covers missed ones. New faxes use the targets in place when they arrive."""
     api = state.api()
     changed = []
     if acknowledge_hours is not None:
@@ -226,7 +221,7 @@ def import_document(file: Path = typer.Argument(..., exists=True, dir_okay=False
                                                                      'mailbox.'),
                     from_number: str = typer.Option(None, '--from', help='The fax number it came from.'),
                     pages: int = typer.Option(None, '--pages', min=1, help='Pages, as that system reported.')):
-    """Import a PDF from another system into the work queue, like a received fax."""
+    """Import a PDF from another system as if it were a received fax."""
     manifest = {key: value for key, value in {
         'source_system': source, 'operation_id': operation_id, 'revision': revision,
         'source_received_at': received_at, 'to_number': to_number, 'from_number': from_number,

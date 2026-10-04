@@ -118,39 +118,115 @@ def pdf(path, text='Synthetic case document'):
 
 def restricted_key(cli, name='Front desk scanner', role='Fax operator', permissions=('fax:send', 'fax:read')):
     """An integration holding one role and a key limited to some of it."""
-    assert cli('integrations', 'add', name).exit_code == 0
-    assert cli('access', 'grant', name, role).exit_code == 0
-    created = cli.json('keys', 'create', '--for', name, *[part for p in permissions for part in ('-p', p)],
+    assert cli('access', 'integrations', 'add', name).exit_code == 0
+    assert cli('access', 'grants', 'add', name, role).exit_code == 0
+    created = cli.json('access', 'keys', 'create', '--for', name, *[part for p in permissions for part in ('-p', p)],
                        '--name', name + ' key')
     return created['key']['id'], created['token']
 
 
 # -- global behaviour ------------------------------------------------------------------
 
-def test_help_lists_every_command_group_without_starting_the_server():
-    result = CliRunner().invoke(cli_app, ['--help'], env={'COLUMNS': '200'})
-    assert result.exit_code == 0
+# Every command path the command line had at 611e80ea, before it took the console's eight areas (2026-10-04).
+OLDER_PATHS = (
+    'access grant|access list|access revoke|actions list|actions run|admin backup|admin migrate|'
+    'admin recover-owner|admin restore|admin status|audit list|cases documents|cases send|config remove|'
+    'config set-profile|config show|config use|diagnostics database|diagnostics run|direct card|direct deliveries|'
+    'direct peers add|direct peers challenge|direct peers confirm|direct peers list|direct peers revoke|groups add|'
+    'groups get|groups list|groups members add|groups members remove|groups update|health|import|inbound fetch|'
+    'inbound get|inbound list|inbound pdf|inbound recover|inbound simulate|intake connectors add|'
+    'intake connectors list|intake connectors remove|intake connectors test|intake connectors update|intake items|'
+    'intake retry|integrations add|integrations list|jobs get|jobs history|jobs list|jobs pdf|jobs reconcile|'
+    'jobs refresh|jobs send-now|keys approve|keys create|keys list|keys revoke|keys rotate|keys update|logs list|'
+    'logs tail|mailboxes add|mailboxes list|mailboxes update|me|numbers add|numbers list|numbers update|'
+    'owner enroll|pair device|pair new|providers callbacks|providers config|providers configure|providers install|'
+    'providers list|providers registry|providers status|providers validate|resources list|restart|roles add|'
+    'roles get|roles list|roles permissions|roles update|routing batching off|routing batching set|'
+    'routing batching show|routing costs|routing destination|routing destinations|routing fax-cost|routing plans|'
+    'routing rate-cards|routing reconcile|routing update-destination|send|sessions list|sessions revoke|'
+    'settings export|settings get|settings persist|settings set|settings validate|status|trunk apply|trunk calls|'
+    'trunk mode|trunk presets|trunk status|trunk use|tunnel set|tunnel status|tunnel test|users add|users get|'
+    'users list|users reset-password|users update|work acknowledge|work assign|work done|work export|work list|'
+    'work reopen|work settings|work show'
+).split('|')
+
+
+def _commands(typer_app, prefix=(), hidden=False):
+    """{path: (callback, hidden)} for every command under a Typer app, hidden ones included."""
+    found = {}
+    for info in typer_app.registered_commands:
+        found[(*prefix, info.name)] = (info.callback, hidden or info.hidden)
+    for info in typer_app.registered_groups:
+        found.update(_commands(info.typer_instance, (*prefix, info.name), hidden or info.hidden))
+    return found
+
+
+def _original(callback):
+    return getattr(callback, '__wrapped__', callback)
+
+
+def _plain(text):
     # Hosted CI forces colour, so compare the help text without escape codes.
-    plain = re.sub(r'\x1b\[[0-9;]*m', '', result.stdout)
-    for group in ('send', 'status', 'jobs', 'inbound', 'users', 'integrations', 'groups', 'roles', 'access',
-                  'resources', 'keys', 'sessions', 'mailboxes', 'numbers', 'audit', 'settings', 'providers',
-                  'routing', 'intake', 'direct', 'cases', 'pair', 'owner', 'health', 'diagnostics', 'me',
-                  'config', 'admin', 'trunk'):
-        assert f' {group} ' in plain
+    return re.sub(r'\x1b\[[0-9;]*m', '', text)
+
+
+def test_help_lists_send_status_and_the_eight_areas_without_starting_the_server():
+    import typer.main
+    from app.cli.nouns import NOUNS
+    assert NOUNS == ('received', 'sent', 'numbers', 'recipients', 'providers', 'costs', 'access', 'system')
+    root = typer.main.get_command(cli_app)
+    assert [name for name, command in root.commands.items() if not command.hidden] == ['send', 'status', *NOUNS]
+    result = CliRunner().invoke(cli_app, ['--help'], env={'COLUMNS': '200'})
+    plain = _plain(result.stdout)
+    assert result.exit_code == 0 and ' received ' in plain and ' system ' in plain
+    assert ' jobs ' not in plain and ' admin ' not in plain and ' config ' not in plain
+    for noun in NOUNS:
+        shown = CliRunner().invoke(cli_app, [noun, '--help'], env={'COLUMNS': '200'})
+        assert shown.exit_code == 0 and 'Usage: faxbot ' + noun in _plain(shown.stdout)
+
+
+def test_every_older_command_still_runs_the_same_command_as_its_new_home():
+    from app.cli.nouns import MOVED
+    commands = _commands(cli_app)
+    older = [tuple(path.split()) for path in OLDER_PATHS]
+    assert len(older) == 131 and set(MOVED) <= set(older)
+    for path in older:
+        home = MOVED.get(path, path)
+        assert path in commands, f"faxbot {' '.join(path)} no longer resolves"
+        assert home in commands and not commands[home][1], f"faxbot {' '.join(home)} is not shown in help"
+        assert _original(commands[path][0]) is _original(commands[home][0]), ' '.join(path)
+        # Through the command framework as a person types it, hidden or not.
+        typed = CliRunner().invoke(cli_app, [*path, '--help'], env={'COLUMNS': '200'})
+        assert typed.exit_code == 0, (path, typed.stdout, typed.stderr)
+    # Every command shown in help is an older command's home or new in this shape.
+    shown = {path for path, (_, hidden) in commands.items() if not hidden}
+    assert {MOVED.get(path, path) for path in older} <= shown
+
+
+def test_older_commands_still_work_against_the_server(cli, tmp_path):
+    note = tmp_path / 'note.txt'
+    note.write_text('Synthetic older-name fax\n')
+    sent = cli.json('send', '+15551230009', note, '--queue')
+    assert cli.json('jobs', 'list') == cli.json('sent', 'list')
+    assert cli.json('jobs', 'get', sent['id'])['id'] == cli.json('sent', 'show', sent['id'])['id'] == sent['id']
+    assert cli.json('settings', 'get')['limits'] == cli.json('system', 'settings', 'get')['limits']
+    assert cli.json('routing', 'destinations') == cli.json('recipients', 'list')
+    assert cli.json('me') == cli.json('access', 'me')
+    assert cli.json('mailboxes', 'list') == cli.json('numbers', 'mailboxes', 'list')
 
 
 def test_me_health_and_errors_map_to_plain_sentences(cli):
-    me = cli.json('me')
+    me = cli.json('access', 'me')
     assert me['principal']['kind'] == 'bootstrap' and 'owner:recover' in me['permissions']
-    human = cli('me')
+    human = cli('access', 'me')
     assert human.exit_code == 0 and 'installation key' in human.stdout
-    health = cli('--json', 'health', key=None)
+    health = cli('--json', 'system', 'health', key=None)
     assert json.loads(health.stdout)['live'] == {'status': 'ok'}
     assert health.exit_code in (0, 1)
 
-    missing = cli('me', key=None)
+    missing = cli('access', 'me', key=None)
     assert missing.exit_code == 3 and missing.stderr.startswith('No API key.')
-    wrong = cli('me', key='fbk_live_000000000000_synthetic')
+    wrong = cli('access', 'me', key='fbk_live_000000000000_synthetic')
     assert wrong.exit_code == 3
     assert wrong.stderr.strip() == ('Faxbot did not accept the API key. Check --key, FAXBOT_API_KEY or your saved '
                                     'profile.')
@@ -178,21 +254,21 @@ def test_send_status_jobs_and_documents(cli, tmp_path):
     assert human.exit_code == 0 and 'Fax accepted.' in human.stdout and 'faxbot status' in human.stdout
 
     assert cli.json('status', sent['id'])['id'] == sent['id']
-    listing = cli.json('jobs', 'list')
+    listing = cli.json('sent', 'list')
     assert listing['total'] == 2 and all(job['to_number'].startswith('*') for job in listing['jobs'])
-    table = cli('jobs', 'list')
+    table = cli('sent', 'list')
     assert table.exit_code == 0 and sent['id'] not in table.stdout and '+15551230001' not in table.stdout
-    assert sent['id'] in cli('jobs', 'list', '--ids').stdout
-    assert cli.json('jobs', 'get', sent['id'])['id'] == sent['id']
-    history = cli.json('jobs', 'history', sent['id'])
+    assert sent['id'] in cli('sent', 'list', '--ids').stdout
+    assert cli.json('sent', 'show', sent['id'])['id'] == sent['id']
+    history = cli.json('sent', 'history', sent['id'])
     assert history['state'] == 'held'
 
     target = tmp_path / 'downloaded.pdf'
-    saved = cli.json('jobs', 'pdf', sent['id'], '-o', target)
+    saved = cli.json('sent', 'pdf', sent['id'], '-o', target)
     assert saved['saved_to'] == str(target) and target.read_bytes().startswith(b'%PDF')
-    refused = cli('jobs', 'pdf', sent['id'], '-o', target)
+    refused = cli('sent', 'pdf', sent['id'], '-o', target)
     assert refused.exit_code == 1 and 'already exists' in refused.stderr
-    unconfirmed = cli('jobs', 'reconcile', sent['id'], '--provider-fax-id', 'abc123')
+    unconfirmed = cli('sent', 'reconcile', sent['id'], '--provider-fax-id', 'abc123')
     assert unconfirmed.exit_code == 1 and '--confirm-original-account' in unconfirmed.stderr
 
 
@@ -206,128 +282,128 @@ def test_sending_is_refused_for_a_key_without_permission(cli, tmp_path):
 
 
 def test_received_faxes_simulate_list_get_and_download(cli, tmp_path):
-    inbound_id = cli.json('inbound', 'simulate', '--from', '+15559990000', '--to', '+15551112222')['id']
-    items = cli.json('inbound', 'list')
+    inbound_id = cli.json('system', 'diagnostics', 'test-fax', '--from', '+15559990000', '--to', '+15551112222')['id']
+    items = cli.json('received', 'list')
     assert [item['id'] for item in items] == [inbound_id]
-    assert inbound_id not in cli('inbound', 'list').stdout and inbound_id in cli('inbound', 'list', '--ids').stdout
-    assert cli.json('inbound', 'get', inbound_id)['to'] == '+15551112222'
+    assert inbound_id not in cli('received', 'list').stdout and inbound_id in cli('received', 'list', '--ids').stdout
+    assert cli.json('received', 'show', inbound_id)['to'] == '+15551112222'
     target = tmp_path / 'received.pdf'
-    cli.json('inbound', 'pdf', inbound_id, '--output', target)
+    cli.json('received', 'pdf', inbound_id, '--output', target)
     assert target.read_bytes().startswith(b'%PDF')
-    listing = cli('inbound', 'list').stdout
+    listing = cli('received', 'list').stdout
     assert 'Status' in listing and 'A test fax created in Faxbot.' in listing
-    detail = cli('inbound', 'get', inbound_id).stdout
-    digest = cli.json('inbound', 'get', inbound_id)['sha256']
+    detail = cli('received', 'show', inbound_id).stdout
+    digest = cli.json('received', 'show', inbound_id)['sha256']
     assert f'SHA-256 {digest[:12]}…' in detail and digest not in detail
     assert re.search(r'Document\s+1 page, ', detail) and re.search(r'Test fax\s+yes', detail)
     assert 'Provider fax ID' in detail and re.search(r'Sent\s+-', detail)
-    received = cli('inbound', 'fetch', inbound_id)
+    received = cli('received', 'fetch', inbound_id)
     assert received.exit_code == 6 and received.stderr.strip() == 'Faxbot has nothing to fetch for this fax.'
     _, token = restricted_key(cli, 'Sender', role='Fax operator', permissions=('fax:send',))
-    hidden = cli('inbound', 'get', inbound_id, key=token)
+    hidden = cli('received', 'show', inbound_id, key=token)
     assert hidden.exit_code == 5
 
 
 # -- access management -----------------------------------------------------------------
 
 def test_users_groups_roles_access_mailboxes_numbers_audit_and_sessions(cli, server):
-    added = cli.json('users', 'add', 'alice', '--name', 'Alice Example')
+    added = cli.json('access', 'users', 'add', 'alice', '--name', 'Alice Example')
     assert added['user']['login'] == 'alice' and len(added['temporary_password']) >= 20
-    human = cli('users', 'add', 'bob', '--name', 'Bob Example')
+    human = cli('access', 'users', 'add', 'bob', '--name', 'Bob Example')
     assert human.exit_code == 0 and 'Temporary password (shown only once): ' in human.stdout
-    users = cli.json('users', 'list', '--kind', 'user')
+    users = cli.json('access', 'users', 'list', '--kind', 'user')
     assert {item['login'] for item in users} == {'alice', 'bob'}
-    table = cli('users', 'list')
+    table = cli('access', 'users', 'list')
     assert 'Alice Example' in table.stdout and added['user']['id'] not in table.stdout
-    with_ids = cli('users', 'list', '--ids')
+    with_ids = cli('access', 'users', 'list', '--ids')
     assert added['user']['id'] in with_ids.stdout
-    assert cli.json('users', 'get', 'alice')['display_name'] == 'Alice Example'
-    assert cli.json('users', 'update', 'Alice Example', '--name', 'Alice Smith')['user']['display_name'] == 'Alice Smith'
-    reset = cli.json('users', 'reset-password', 'alice')
+    assert cli.json('access', 'users', 'show', 'alice')['display_name'] == 'Alice Example'
+    assert cli.json('access', 'users', 'update', 'Alice Example', '--name', 'Alice Smith')['user']['display_name'] == 'Alice Smith'
+    reset = cli.json('access', 'users', 'reset-password', 'alice')
     assert reset['temporary_password'] != added['temporary_password']
-    nothing = cli('users', 'update', 'alice')
+    nothing = cli('access', 'users', 'update', 'alice')
     assert nothing.exit_code == 1 and nothing.stderr.startswith('Nothing to change.')
 
-    assert cli.json('integrations', 'add', 'Lab printer')['integration']['kind'] == 'integration'
-    assert [item['display_name'] for item in cli.json('integrations', 'list')] == ['Lab printer']
+    assert cli.json('access', 'integrations', 'add', 'Lab printer')['integration']['kind'] == 'integration'
+    assert [item['display_name'] for item in cli.json('access', 'integrations', 'list')] == ['Lab printer']
 
-    assert cli.json('groups', 'add', 'Front desk', '--description', 'Reception staff')['group']['name'] == 'Front desk'
-    cli.json('groups', 'update', 'Front desk', '--description', 'Reception')
-    cli.json('groups', 'members', 'add', 'Front desk', 'alice')
-    group = cli.json('groups', 'get', 'Front desk')
+    assert cli.json('access', 'groups', 'add', 'Front desk', '--description', 'Reception staff')['group']['name'] == 'Front desk'
+    cli.json('access', 'groups', 'update', 'Front desk', '--description', 'Reception')
+    cli.json('access', 'groups', 'members', 'add', 'Front desk', 'alice')
+    group = cli.json('access', 'groups', 'show', 'Front desk')
     assert [member['display_name'] for member in group['members']] == ['Alice Smith']
-    cli.json('groups', 'members', 'remove', 'Front desk', 'alice')
-    assert cli.json('groups', 'get', 'Front desk')['members'] == []
-    assert any(item['name'] == 'Front desk' for item in cli.json('groups', 'list'))
+    cli.json('access', 'groups', 'members', 'remove', 'Front desk', 'alice')
+    assert cli.json('access', 'groups', 'show', 'Front desk')['members'] == []
+    assert any(item['name'] == 'Front desk' for item in cli.json('access', 'groups', 'list'))
 
-    catalogue = cli.json('roles', 'permissions')
+    catalogue = cli.json('access', 'roles', 'permissions')
     assert any(item['permission'] == 'fax:send' for item in catalogue)
-    role = cli.json('roles', 'add', 'Senders', '-p', 'fax:send', '-p', 'fax:read')['role']
+    role = cli.json('access', 'roles', 'add', 'Senders', '-p', 'fax:send', '-p', 'fax:read')['role']
     assert role['permissions'] == ['fax:read', 'fax:send']
-    updated = cli.json('roles', 'update', 'Senders', '--add', 'fax:document', '--remove', 'fax:read')['role']
+    updated = cli.json('access', 'roles', 'update', 'Senders', '--add', 'fax:document', '--remove', 'fax:read')['role']
     assert updated['permissions'] == ['fax:document', 'fax:send']
-    assert cli.json('roles', 'get', 'senders')['name'] == 'Senders'
-    assert any(item['name'] == 'Owner' for item in cli.json('roles', 'list'))
+    assert cli.json('access', 'roles', 'show', 'senders')['name'] == 'Senders'
+    assert any(item['name'] == 'Owner' for item in cli.json('access', 'roles', 'list'))
 
-    cli.json('mailboxes', 'add', 'Billing')
-    cli.json('mailboxes', 'update', 'Billing', '--name', 'Billing office')
-    assert [item['label'] for item in cli.json('mailboxes', 'list')] == ['Billing office']
+    cli.json('numbers', 'mailboxes', 'add', 'Billing')
+    cli.json('numbers', 'mailboxes', 'update', 'Billing', '--name', 'Billing office')
+    assert [item['label'] for item in cli.json('numbers', 'mailboxes', 'list')] == ['Billing office']
     cli.json('numbers', 'add', '+15550100002', '--mailbox', 'Billing office')
     cli.json('numbers', 'update', '+1 555 010 0002', '--number', '+15550100003')
     assert [item['to_number'] for item in cli.json('numbers', 'list')] == ['+15550100003']
 
-    granted = cli.json('access', 'grant', 'group:Front desk', 'Senders', '--on', 'mailbox:Billing office')
+    granted = cli.json('access', 'grants', 'add', 'group:Front desk', 'Senders', '--on', 'mailbox:Billing office')
     assert granted['assignment']['resource']['name'] == 'Billing office'
-    listing = cli.json('access', 'list', '--who', 'Front desk')
+    listing = cli.json('access', 'grants', 'list', '--who', 'Front desk')
     assert [(item['role']['name'], item['resource']['name']) for item in listing] == [('Senders', 'Billing office')]
-    cli.json('access', 'revoke', 'Front desk', 'Senders', '--on', 'mailbox:Billing office')
-    assert cli.json('access', 'list', '--who', 'Front desk') == []
-    missing = cli('access', 'revoke', 'Front desk', 'Senders', '--on', 'mailbox:Billing office')
+    cli.json('access', 'grants', 'remove', 'Front desk', 'Senders', '--on', 'mailbox:Billing office')
+    assert cli.json('access', 'grants', 'list', '--who', 'Front desk') == []
+    missing = cli('access', 'grants', 'remove', 'Front desk', 'Senders', '--on', 'mailbox:Billing office')
     assert missing.exit_code == 1 and 'does not have Senders' in missing.stderr
-    places = cli.json('resources', 'list')
+    places = cli.json('access', 'resources', 'list')
     assert {item['kind'] for item in places} >= {'installation', 'mailbox', 'personal'}
 
-    audit = cli.json('audit', 'list', '--limit', '5')
+    audit = cli.json('system', 'audit', '--limit', '5')
     assert len(audit) == 5 and audit[0]['operation']
 
-    assert cli.json('sessions', 'list', '--for', 'alice') == []
+    assert cli.json('access', 'sessions', 'list', '--for', 'alice') == []
     login = server.post('/auth/login', json={'login': 'alice', 'password': reset['temporary_password']},
                         headers={'Origin': ORIGIN})
     assert login.status_code == 200, login.text
     server.cookies.clear()
-    sessions = cli.json('sessions', 'list', '--for', 'alice')
+    sessions = cli.json('access', 'sessions', 'list', '--for', 'alice')
     assert len(sessions) == 1 and sessions[0]['source_kind'] == 'password'
-    assert sessions[0]['session_id'] not in cli('sessions', 'list', '--for', 'alice').stdout
-    assert cli.json('sessions', 'revoke', sessions[0]['session_id'])['changed'] is True
-    assert cli.json('sessions', 'list', '--for', 'alice')[0]['revoked_at'] is not None
+    assert sessions[0]['session_id'] not in cli('access', 'sessions', 'list', '--for', 'alice').stdout
+    assert cli.json('access', 'sessions', 'revoke', sessions[0]['session_id'])['changed'] is True
+    assert cli.json('access', 'sessions', 'list', '--for', 'alice')[0]['revoked_at'] is not None
 
 
 def test_names_from_the_server_are_printed_exactly(cli):
     name = 'Desk [a] [/] x :warning:'
-    cli.json('users', 'add', 'desk', '--name', name)
-    cli.json('groups', 'add', 'Night [b] shift')
-    cli.json('groups', 'members', 'add', 'Night [b] shift', 'desk')
+    cli.json('access', 'users', 'add', 'desk', '--name', name)
+    cli.json('access', 'groups', 'add', 'Night [b] shift')
+    cli.json('access', 'groups', 'members', 'add', 'Night [b] shift', 'desk')
     for args in (('users', 'list'), ('users', 'get', 'desk'), ('groups', 'get', 'Night [b] shift')):
         result = cli(*args)
         assert result.exit_code == 0, (args, result.stderr)
         assert name in result.stdout, args
-    assert 'Night [b] shift' in cli('groups', 'list').stdout
+    assert 'Night [b] shift' in cli('access', 'groups', 'list').stdout
 
 
 def test_management_is_refused_without_permission_and_after_policy_change(cli):
     _, token = restricted_key(cli)
-    denied = cli('audit', 'list', key=token)
+    denied = cli('system', 'audit', key=token)
     assert denied.exit_code == 4 and denied.stderr.strip() == 'This API key is not allowed to do that.'
-    refused = cli('groups', 'add', 'Night shift', key=token)
+    refused = cli('access', 'groups', 'add', 'Night shift', key=token)
     assert refused.exit_code == 4
 
 
 def test_a_key_whose_owner_has_a_temporary_password_says_so(cli, tmp_path):
-    assert cli('users', 'add', 'sam', '--name', 'Sam Sender').exit_code == 0
-    assert cli('access', 'grant', 'sam', 'Fax operator').exit_code == 0
-    token = cli.json('keys', 'create', '--for', 'sam', '-p', 'fax:send', '-p', 'fax:read', '--name', 'Sam key')['token']
+    assert cli('access', 'users', 'add', 'sam', '--name', 'Sam Sender').exit_code == 0
+    assert cli('access', 'grants', 'add', 'sam', 'Fax operator').exit_code == 0
+    token = cli.json('access', 'keys', 'create', '--for', 'sam', '-p', 'fax:send', '-p', 'fax:read', '--name', 'Sam key')['token']
     sentence = 'The owner of this key must set a new password before it can be used.'
-    listed = cli('jobs', 'list', key=token)
+    listed = cli('sent', 'list', key=token)
     assert listed.exit_code == 4 and listed.stderr.strip() == sentence
     note = tmp_path / 'note.txt'
     note.write_text('Synthetic\n')
@@ -340,23 +416,23 @@ def test_a_key_whose_owner_has_a_temporary_password_says_so(cli, tmp_path):
 def test_keys_create_rotate_revoke_and_quiet_reveal(cli):
     key_id, token = restricted_key(cli, 'Scanner')
     assert token.startswith('fbk_live_' + key_id)
-    assert cli.json('me', key=token)['principal']['display_name'] == 'Scanner'
-    assert [item['id'] for item in cli.json('keys', 'list', '--for', 'Scanner')] == [key_id]
-    cli.json('keys', 'update', key_id, '--note', 'On the reception desk', '--expires', '2099-01-31')
-    rotated = cli('--quiet', 'keys', 'rotate', key_id)
+    assert cli.json('access', 'me', key=token)['principal']['display_name'] == 'Scanner'
+    assert [item['id'] for item in cli.json('access', 'keys', 'list', '--for', 'Scanner')] == [key_id]
+    cli.json('access', 'keys', 'update', key_id, '--note', 'On the reception desk', '--expires', '2099-01-31')
+    rotated = cli('--quiet', 'access', 'keys', 'rotate', key_id)
     assert rotated.exit_code == 0
     new_token = rotated.stdout.strip()
     assert new_token.startswith('fbk_live_' + key_id) and new_token != token
-    assert cli('me', key=token).exit_code == 3
-    assert cli.json('me', key=new_token)['principal']['display_name'] == 'Scanner'
-    cli.json('keys', 'revoke', key_id)
-    assert cli('me', key=new_token).exit_code == 3
-    listed = cli('keys', 'list')
+    assert cli('access', 'me', key=token).exit_code == 3
+    assert cli.json('access', 'me', key=new_token)['principal']['display_name'] == 'Scanner'
+    cli.json('access', 'keys', 'revoke', key_id)
+    assert cli('access', 'me', key=new_token).exit_code == 3
+    listed = cli('access', 'keys', 'list')
     assert 'revoked' in listed.stdout and new_token not in listed.stdout
 
 
 def test_owner_enroll_with_the_installation_key(cli, server):
-    result = cli('owner', 'enroll', '--login', 'olivia', '--name', 'Olivia Owner')
+    result = cli('access', 'owner', 'enroll', '--login', 'olivia', '--name', 'Olivia Owner')
     assert result.exit_code == 0, result.stderr
     assert 'Temporary password (shown only once): ' in result.stdout and 'faxbot' not in result.stderr
     password = result.stdout.split('Temporary password (shown only once): ')[1].split()[0]
@@ -368,22 +444,22 @@ def test_owner_enroll_with_the_installation_key(cli, server):
 # -- settings, providers, diagnostics, pairing ---------------------------------------------
 
 def test_settings_get_set_validate_export(cli, monkeypatch):
-    current = cli.json('settings', 'get')
+    current = cli.json('system', 'settings', 'get')
     assert current['backend']['type'] == 'phaxio'
-    limits = cli.json('settings', 'get', 'limits')
+    limits = cli.json('system', 'settings', 'get', 'limits')
     assert set(limits) == {'limits'}
-    assert cli('settings', 'get', 'nonsense').exit_code == 5
-    saved = cli.json('settings', 'set', 'max_file_size_mb=7')
+    assert cli('system', 'settings', 'get', 'nonsense').exit_code == 5
+    saved = cli.json('system', 'settings', 'set', 'max_file_size_mb=7')
     assert saved['ok'] is True and saved['changed'] is True
-    assert cli.json('settings', 'get', 'limits')['limits']['max_file_size_mb'] == 7
-    unchanged = cli('settings', 'set', 'max_file_size_mb=7')
+    assert cli.json('system', 'settings', 'get', 'limits')['limits']['max_file_size_mb'] == 7
+    unchanged = cli('system', 'settings', 'set', 'max_file_size_mb=7')
     assert unchanged.exit_code == 0 and 'Nothing changed' in unchanged.stdout
-    rejected = cli('settings', 'set', 'max_file_size_mb=lots')
+    rejected = cli('system', 'settings', 'set', 'max_file_size_mb=lots')
     assert rejected.exit_code == 9 and 'max_file_size_mb' in rejected.stderr
-    exported = cli('settings', 'export')
+    exported = cli('system', 'settings', 'export')
     assert exported.exit_code == 0 and 'MAX_FILE_SIZE_MB=7' in exported.stdout and BOOTSTRAP not in exported.stdout
     monkeypatch.setenv('SINCH_PROJECT_ID', 'synthetic-project')
-    validated = cli.json('settings', 'validate', 'sinch')
+    validated = cli.json('system', 'settings', 'validate', 'sinch')
     assert validated['checks']['auth'] is False
 
 
@@ -392,44 +468,44 @@ def test_providers_diagnostics_and_status(cli):
     assert providers['outbound'] == 'phaxio'
     status = cli.json('providers', 'status')
     assert status['backend'] == 'phaxio' and 'jobs' in status
-    diagnostics = cli.json('diagnostics', 'run')
+    diagnostics = cli.json('system', 'diagnostics', 'run')
     assert 'summary' in diagnostics
-    human = cli('diagnostics', 'run')
+    human = cli('system', 'diagnostics', 'run')
     assert human.exit_code == 0 and 'Healthy' in human.stdout
 
 
 def test_pairing_a_device_and_reusing_the_code(cli):
-    issued = cli.json('pair', 'new')
+    issued = cli.json('access', 'pair', 'new')
     assert len(issued['code']) == 6 and issued['code'].isdigit()
-    paired = cli.json('pair', 'device', issued['code'], '--device-name', 'Test phone', key=None)
+    paired = cli.json('access', 'pair', 'device', issued['code'], '--device-name', 'Test phone', key=None)
     assert paired['token'].startswith('fbk_live_')
-    assert cli.json('me', key=paired['token'])['principal']['display_name'] == 'Device: Test phone'
-    again = cli('pair', 'device', issued['code'], key=None)
+    assert cli.json('access', 'me', key=paired['token'])['principal']['display_name'] == 'Device: Test phone'
+    again = cli('access', 'pair', 'device', issued['code'], key=None)
     assert again.exit_code == 4
     assert again.stderr.strip() == 'This pairing code did not work. Create a new code in the console and try again.'
-    saved = cli.json('pair', 'device', cli.json('pair', 'new')['code'], '--save-profile', 'phone', key=None)
+    saved = cli.json('access', 'pair', 'device', cli.json('access', 'pair', 'new')['code'], '--save-profile', 'phone', key=None)
     assert saved['saved_profile'] == 'phone' and 'token' not in saved
     as_phone = cli('--profile', 'phone', '--json', 'me', key=None, url=None)
     assert as_phone.exit_code == 0 and json.loads(as_phone.stdout)['principal']['kind'] == 'integration'
 
 
 def test_logs_tunnel_actions_restart_and_database(cli):
-    logs = cli.json('logs', 'list', '--limit', '5')
+    logs = cli.json('system', 'logs', 'list', '--limit', '5')
     assert 'items' in logs and logs['count'] <= 5
-    tail = cli('logs', 'tail')
+    tail = cli('system', 'logs', 'tail')
     assert tail.exit_code == 9 and tail.stderr.strip() == ('The server does not keep an activity log file. Set '
                                                            'AUDIT_LOG_FILE to keep one.')
-    assert cli.json('tunnel', 'status')['enabled'] is False
-    assert cli.json('actions', 'list') == {'enabled': False, 'items': []}
-    unconfirmed = cli('--json', 'restart')
+    assert cli.json('system', 'tunnel', 'status')['enabled'] is False
+    assert cli.json('system', 'actions', 'list') == {'enabled': False, 'items': []}
+    unconfirmed = cli('--json', 'system', 'restart')
     assert unconfirmed.exit_code == 1 and 'Add --yes' in json.loads(unconfirmed.stdout)['error']['message']
-    refused = cli('restart', '--yes')
+    refused = cli('system', 'restart', '--yes')
     assert refused.exit_code == 4 and 'ADMIN_ALLOW_RESTART' in refused.stderr
-    database = cli.json('diagnostics', 'database')
+    database = cli.json('system', 'diagnostics', 'database')
     assert database['engine'] == 'sqlite' and database['connected'] is True
     callbacks = cli.json('providers', 'callbacks')
     assert callbacks['backend'] == 'phaxio' and callbacks['callbacks'][0]['url'].endswith('/phaxio-inbound')
-    turned_off = cli('providers', 'config', 'phaxio')
+    turned_off = cli('providers', 'show', 'phaxio')
     assert turned_off.exit_code == 5
     assert turned_off.stderr.strip() == 'Provider plugins are turned off on this installation.'
 
@@ -437,11 +513,11 @@ def test_logs_tunnel_actions_restart_and_database(cli):
 # -- global options after the subcommand ------------------------------------------------------
 
 def test_global_options_are_accepted_before_or_after_the_subcommand(cli, tmp_path):
-    inbound_id = cli.json('inbound', 'simulate', '--from', '+15559990000', '--to', '+15551112222')['id']
+    inbound_id = cli.json('system', 'diagnostics', 'test-fax', '--from', '+15559990000', '--to', '+15551112222')['id']
     before = cli.runner.invoke(cli_app, ['--url', ORIGIN, '--key', BOOTSTRAP, '--json', 'inbound', 'list'],
                                obj={'client_factory': lambda address, timeout: (cli.client, False)})
-    after = cli('inbound', 'list', '--json', '--url', ORIGIN, '--key', BOOTSTRAP, url=None, key=None)
-    equals = cli('inbound', 'list', '--json', f'--url={ORIGIN}', f'--key={BOOTSTRAP}', url=None, key=None)
+    after = cli('received', 'list', '--json', '--url', ORIGIN, '--key', BOOTSTRAP, url=None, key=None)
+    equals = cli('received', 'list', '--json', f'--url={ORIGIN}', f'--key={BOOTSTRAP}', url=None, key=None)
     for result in (before, after, equals):
         assert result.exit_code == 0, result.stderr
         assert [item['id'] for item in json.loads(result.stdout)] == [inbound_id]
@@ -449,28 +525,28 @@ def test_global_options_are_accepted_before_or_after_the_subcommand(cli, tmp_pat
     # --quiet / -q after the subcommand prints only the secret shown once.
     key_id, token = restricted_key(cli, 'Scanner')
     for flag in ('--quiet', '-q'):
-        rotated = cli('keys', 'rotate', key_id, flag)
+        rotated = cli('access', 'keys', 'rotate', key_id, flag)
         assert rotated.exit_code == 0 and rotated.stdout.strip().startswith('fbk_live_' + key_id)
         assert len(rotated.stdout.strip().splitlines()) == 1
 
     # --profile after the subcommand selects the saved profile.
-    saved = cli('config', 'set-profile', 'clinic', '--key-stdin', '--no-use', input=BOOTSTRAP + '\n', key=None)
+    saved = cli('system', 'profiles', 'save', 'clinic', '--key-stdin', '--no-use', input=BOOTSTRAP + '\n', key=None)
     assert saved.exit_code == 0, saved.stderr
-    me = cli('me', '--profile', 'clinic', '--json', url=None, key=None)
+    me = cli('access', 'me', '--profile', 'clinic', '--json', url=None, key=None)
     assert me.exit_code == 0, me.stderr
     assert json.loads(me.stdout)['principal']['kind'] == 'bootstrap'
 
     # An option the subcommand defines itself stays with it: set-profile --url is the profile's address.
-    remote = cli('config', 'set-profile', 'remote', '--url', 'https://fax.example.test', '--no-key', '--no-use',
+    remote = cli('system', 'profiles', 'save', 'remote', '--url', 'https://fax.example.test', '--no-key', '--no-use',
                  '--json', key=None)
     assert remote.exit_code == 0, remote.stderr
     assert json.loads(remote.stdout)['url'] == 'https://fax.example.test'
 
     # Option values are never taken for global options, and --help still works after a subcommand.
-    noted = cli('keys', 'update', key_id, '--note', '--json')
+    noted = cli('access', 'keys', 'update', key_id, '--note', '--json')
     assert noted.exit_code == 0 and not noted.stdout.lstrip().startswith('{')
-    assert [item['note'] for item in cli.json('keys', 'list') if item['id'] == key_id] == ['--json']
-    helped = cli('inbound', 'list', '--help', url=None, key=None)
+    assert [item['note'] for item in cli.json('access', 'keys', 'list') if item['id'] == key_id] == ['--json']
+    helped = cli('received', 'list', '--help', url=None, key=None)
     assert helped.exit_code == 0 and 'Usage' in helped.stdout
 
 
@@ -524,15 +600,15 @@ def test_keys_approve_turns_a_key_waiting_for_review_into_a_working_key(cli):
     with store.engine.begin() as connection:
         connection.execute(sa.text("UPDATE access_key_bindings SET state = 'pending_review' WHERE id = "
                                    "(SELECT id FROM api_keys WHERE key_id = :key)"), {'key': key_id})
-    assert cli('me', key=token).exit_code == 3
-    listed = cli('keys', 'list')
+    assert cli('access', 'me', key=token).exit_code == 3
+    listed = cli('access', 'keys', 'list')
     assert 'needs review' in listed.stdout
-    approved = cli('keys', 'approve', key_id, '--for', 'Old script', '-p', 'fax:read')
+    approved = cli('access', 'keys', 'approve', key_id, '--for', 'Old script', '-p', 'fax:read')
     assert approved.exit_code == 0, approved.stderr
     assert approved.stdout.strip() == 'API key Old script key approved.'
     assert key_id not in approved.stdout
-    assert cli.json('me', key=token)['principal']['display_name'] == 'Old script'
-    assert [item.get('pending_review') for item in cli.json('keys', 'list') if item['id'] == key_id] == [False]
+    assert cli.json('access', 'me', key=token)['principal']['display_name'] == 'Old script'
+    assert [item.get('pending_review') for item in cli.json('access', 'keys', 'list') if item['id'] == key_id] == [False]
 
 
 def test_jobs_reconcile_records_the_provider_id_without_sending():
@@ -540,7 +616,7 @@ def test_jobs_reconcile_records_the_provider_id_without_sending():
         ('GET', '/admin/fax-jobs/job-1'): (200, {'id': 'job-1', 'delivery_version': 4}),
         ('POST', '/admin/fax-jobs/job-1/reconcile'): (200, {'id': 'job-1', 'state': 'submitted'}),
     })
-    result = recorder('jobs', 'reconcile', 'job-1', '--provider-fax-id', 'PX-881', '--confirm-original-account')
+    result = recorder('sent', 'reconcile', 'job-1', '--provider-fax-id', 'PX-881', '--confirm-original-account')
     assert result.exit_code == 0, result.stderr
     assert result.stdout.strip() == 'Provider fax ID recorded. Faxbot will follow this fax with the provider.'
     assert recorder.requests == [
@@ -555,12 +631,12 @@ def test_tunnel_test_and_restart_send_one_request_and_print_one_sentence():
         ('POST', '/admin/tunnel/test'): (200, {'ok': True, 'message': 'OK', 'target': 'fax.example.test:443/health'}),
         ('POST', '/admin/restart'): (200, {'ok': True}),
     })
-    tested = recorder('tunnel', 'test')
+    tested = recorder('system', 'tunnel', 'test')
     assert tested.exit_code == 0 and tested.stdout.strip() == 'Reachable at fax.example.test:443/health: OK'
-    restarted = recorder('restart', '--yes')
+    restarted = recorder('system', 'restart', '--yes')
     assert restarted.exit_code == 0
     assert restarted.stdout.strip() == 'Faxbot is restarting. Its service manager starts it again.'
-    declined = recorder('restart', input='n\n')
+    declined = recorder('system', 'restart', input='n\n')
     assert declined.exit_code == 1
     assert [(method, path) for method, path, _, _ in recorder.requests] == [
         ('POST', '/admin/tunnel/test'), ('POST', '/admin/restart')]
@@ -568,12 +644,12 @@ def test_tunnel_test_and_restart_send_one_request_and_print_one_sentence():
 
 def test_actions_run_executes_an_approved_action(cli, monkeypatch):
     monkeypatch.setenv('ENABLE_ADMIN_EXEC', 'true')
-    assert 'python_version' in [item['id'] for item in cli.json('actions', 'list')['items']]
-    ran = cli.json('actions', 'run', 'python_version')
+    assert 'python_version' in [item['id'] for item in cli.json('system', 'actions', 'list')['items']]
+    ran = cli.json('system', 'actions', 'run', 'python_version')
     assert ran['ok'] is True and ran['code'] == 0 and sys.version.split()[0] in ran['stdout']
-    human = cli('actions', 'run', 'python_version')
+    human = cli('system', 'actions', 'run', 'python_version')
     assert human.exit_code == 0 and human.stdout.startswith('Finished. (exit code 0)')
-    unknown = cli('actions', 'run', 'rm_everything')
+    unknown = cli('system', 'actions', 'run', 'rm_everything')
     assert unknown.exit_code == 5
 
 
@@ -581,7 +657,7 @@ def test_settings_persist_writes_the_private_recovery_file(monkeypatch, tmp_path
     target = tmp_path / 'recovery' / 'faxbot.env'
     for client in _serve(monkeypatch, tmp_path, PERSISTED_ENV_PATH=str(target)):
         cli = Cli(client)
-        result = cli('settings', 'persist')
+        result = cli('system', 'settings', 'persist')
         assert result.exit_code == 0, result.stderr
         assert result.stdout.strip() == f'Settings written to {target} on the server.'
         assert stat.S_IMODE(target.stat().st_mode) == 0o600
@@ -589,7 +665,7 @@ def test_settings_persist_writes_the_private_recovery_file(monkeypatch, tmp_path
         assert 'MAX_FILE_SIZE_MB=' in written and f'API_KEY={BOOTSTRAP}' in written
         assert BOOTSTRAP not in result.stdout + result.stderr
         _, token = restricted_key(cli, 'Helper', role='Administrator', permissions=('settings:read',))
-        assert cli('settings', 'persist', key=token).exit_code == 4
+        assert cli('system', 'settings', 'persist', key=token).exit_code == 4
 
 
 def test_providers_validate_and_install_an_http_manifest(plugins_cli, tmp_path):
@@ -617,12 +693,12 @@ def test_provider_plugins_list_config_and_configure(plugins_cli):
     cli = plugins_cli
     providers = cli.json('providers', 'list')
     assert any(item['id'] == 'phaxio' and item['enabled'] for item in providers)
-    shown = cli.json('providers', 'config', 'phaxio')
+    shown = cli.json('providers', 'show', 'phaxio')
     assert shown['enabled'] is True and set(shown['settings']) >= {'api_key', 'callback_url'}
     saved = cli('providers', 'configure', 'phaxio', '--secret', 'api_key', input='synthetic-phaxio-key\n' * 2)
     assert saved.exit_code == 0, saved.stderr
     assert 'synthetic-phaxio-key' not in saved.stdout
-    masked = cli.json('providers', 'config', 'phaxio')['settings']['api_key']
+    masked = cli.json('providers', 'show', 'phaxio')['settings']['api_key']
     assert masked and 'synthetic-phaxio-key' not in masked
     assert isinstance(cli.json('providers', 'registry'), dict)
 
@@ -630,48 +706,48 @@ def test_provider_plugins_list_config_and_configure(plugins_cli):
 # -- routing, intake, direct delivery, cases ------------------------------------------------
 
 def test_routing_destinations_costs_and_rate_cards(cli, tmp_path):
-    assert cli.json('routing', 'destinations')['destinations'] == []
-    updated = cli.json('routing', 'update-destination', '+15551230001', '--name', 'County records',
+    assert cli.json('recipients', 'list')['destinations'] == []
+    updated = cli.json('recipients', 'set', '+15551230001', '--name', 'County records',
                        '--accepts-references')
     assert updated['display_name'] == 'County records' and updated['accepts_references'] is True
-    view = cli.json('routing', 'destination', '+15551230001')
+    view = cli.json('recipients', 'show', '+15551230001')
     assert view['display_name'] == 'County records'
-    assert cli('routing', 'destination', '+15551230001').exit_code == 0
-    assert 'providers' in cli.json('routing', 'costs')
+    assert cli('recipients', 'show', '+15551230001').exit_code == 0
+    assert 'providers' in cli.json('costs', 'spending')
     cards = tmp_path / 'cards.json'
     cards.write_text(json.dumps({'cards': [{'provider_id': 'phaxio', 'label': 'Phaxio list price',
                                             'per_page': '0.07', 'captured_on': '2026-10-01T00:00:00'}]}))
-    replaced = cli.json('routing', 'rate-cards', '--replace', cards)
+    replaced = cli.json('costs', 'rate-cards', '--replace', cards)
     assert [card['per_page'] for card in replaced['cards']] == ['0.07']
-    assert cli.json('routing', 'rate-cards')['cards'][0]['label'] == 'Phaxio list price'
-    bad = cli('routing', 'destination', 'not-a-number')
+    assert cli.json('costs', 'rate-cards')['cards'][0]['label'] == 'Phaxio list price'
+    bad = cli('recipients', 'show', 'not-a-number')
     assert bad.exit_code == 9
-    human = cli('routing', 'costs')
+    human = cli('costs', 'spending')
     assert human.exit_code == 0 and 'No faxes sent in this period.' in human.stdout
-    refused = cli('routing', 'reconcile')
+    refused = cli('costs', 'reconcile')
     assert refused.exit_code != 0
     assert 'Faxbot needs a Telnyx API key to read call charges.' in refused.stdout + refused.stderr
-    assert cli('routing', 'fax-cost', '0' * 32).exit_code != 0
+    assert cli('costs', 'fax', '0' * 32).exit_code != 0
 
 
 def test_routing_batching_show_set_off_and_send_now(cli, tmp_path):
-    off = cli.json('routing', 'batching', 'show', '+15551230001')
+    off = cli.json('recipients', 'together', 'show', '+15551230001')
     assert off['enabled'] is False and off['max_wait_minutes'] == 10
-    refused = cli('routing', 'batching', 'set', '+15551230001')
+    refused = cli('recipients', 'together', 'set', '+15551230001')
     assert refused.exit_code != 0 and 'recipient agreed' in refused.stderr
-    on = cli.json('routing', 'batching', 'set', '+15551230001', '--recipient-agreed', '--wait', '5',
+    on = cli.json('recipients', 'together', 'set', '+15551230001', '--recipient-agreed', '--wait', '5',
                   '--max-pages', '12', '--mixed-senders')
     assert on['enabled'] is True and on['max_wait_minutes'] == 5 and on['max_pages'] == 12 and on['mixed_senders']
-    human = cli('routing', 'batching', 'show', '+15551230001')
+    human = cli('recipients', 'together', 'show', '+15551230001')
     assert human.exit_code == 0 and 'Recipient agreement recorded by' in human.stdout
     assert 'No faxes to this number have been sent together' in human.stdout
-    gone = cli('routing', 'batching', 'off', '+15551230001')
+    gone = cli('recipients', 'together', 'off', '+15551230001')
     assert gone.exit_code == 0 and 'Off: faxes to this number go straight away.' in gone.stdout
     note = tmp_path / 'note.txt'
     note.write_text('Synthetic command line fax\n')
     sent = cli.json('send', '+15551230001', note, '--queue', '--now')
     assert sent['status'] == 'queued'
-    waiting = cli('jobs', 'send-now', sent['id'])
+    waiting = cli('sent', 'send-now', sent['id'])
     assert waiting.exit_code != 0 and 'not waiting' in waiting.stderr
 
 
@@ -686,14 +762,14 @@ def test_routing_reconcile_asks_the_carrier_and_costs_show_charges(telnyx_cli, m
     from api.tests.test_carrier_charges import FakeTelnyx
     sources = []
     monkeypatch.setattr(routing_http, 'carrier_source', lambda key: sources.append(key()) or FakeTelnyx([]))
-    result = telnyx_cli('routing', 'reconcile')
+    result = telnyx_cli('costs', 'reconcile')
     assert result.exit_code == 0, (result.stdout, result.stderr)
     assert result.stdout.strip() == 'No calls are waiting for a charge.'
     assert sources == ['KEYsynthetic-cli'] and 'KEYsynthetic-cli' not in result.stdout
-    assert telnyx_cli.json('routing', 'reconcile')['checked'] == 0
-    costs = telnyx_cli.json('routing', 'costs')
+    assert telnyx_cli.json('costs', 'reconcile')['checked'] == 0
+    costs = telnyx_cli.json('costs', 'spending')
     assert costs['carrier_charges'] == {'carrier': 'Telnyx', 'supported': True, 'readable': True}
-    human = telnyx_cli('routing', 'costs')
+    human = telnyx_cli('costs', 'spending')
     assert 'call charges appear once' not in human.stdout
     # A Telnyx record of a call Faxbot never recorded is shown, included in Charged, and in the total.
     from datetime import datetime, timedelta
@@ -707,43 +783,43 @@ def test_routing_reconcile_asks_the_carrier_and_costs_show_charges(telnyx_cli, m
             called='+13035550100', started_at=moment, answered_at=moment, finished_at=moment + timedelta(seconds=25),
             amount_micros=3200, raw_amount='0.0032', currency='USD', billed_seconds=60, call_seconds=25,
             effective_at=moment, observed_at=moment, applied=1, created_at=moment))
-    human = telnyx_cli('routing', 'costs')
+    human = telnyx_cli('costs', 'spending')
     assert 'Telnyx billed 1 call Faxbot has no record of: 0.0032 USD. It is included in Charged.' in human.stdout
     assert 'Total: 0.0032 USD' in human.stdout
 
 
 def test_intake_connectors_items_and_test_email(cli):
-    added = cli.json('intake', 'connectors', 'add', 'Front desk email', '--host', '127.0.0.1', '--port', '9',
+    added = cli.json('numbers', 'email', 'connectors', 'add', 'Front desk email', '--host', '127.0.0.1', '--port', '9',
                      '--security', 'none', '--from', 'fax@clinic.example', '--to', 'desk@clinic.example')
     assert added['has_password'] is False
-    assert [item['name'] for item in cli.json('intake', 'connectors', 'list')] == ['Front desk email']
-    tested = cli('--json', 'intake', 'connectors', 'test', 'Front desk email')
+    assert [item['name'] for item in cli.json('numbers', 'email', 'connectors', 'list')] == ['Front desk email']
+    tested = cli('--json', 'numbers', 'email', 'connectors', 'test', 'Front desk email')
     assert tested.exit_code == 1 and json.loads(tested.stdout)['ok'] is False
-    assert cli.json('intake', 'items')['items'] == []
-    updated = cli.json('intake', 'connectors', 'update', 'Front desk email', '--name', 'Desk email', '--disable')
+    assert cli.json('received', 'deliveries', 'list')['items'] == []
+    updated = cli.json('numbers', 'email', 'connectors', 'update', 'Front desk email', '--name', 'Desk email', '--disable')
     assert updated['name'] == 'Desk email' and updated['enabled'] is False and updated['version'] == 2
-    cli.json('intake', 'connectors', 'update', 'Desk email', '--name', 'Front desk email', '--enable')
-    assert cli('intake', 'retry', 'missing-item').exit_code in (5, 6, 9)
-    cli.json('intake', 'connectors', 'remove', 'Front desk email')
-    assert cli.json('intake', 'connectors', 'list') == []
+    cli.json('numbers', 'email', 'connectors', 'update', 'Desk email', '--name', 'Front desk email', '--enable')
+    assert cli('received', 'deliveries', 'retry', 'missing-item').exit_code in (5, 6, 9)
+    cli.json('numbers', 'email', 'connectors', 'remove', 'Front desk email')
+    assert cli.json('numbers', 'email', 'connectors', 'list') == []
 
 
 def test_only_owners_allow_direct_partners_on_private_networks(cli, tmp_path):
     from app.direct.crypto import Identity, card
-    saved = cli.json('settings', 'set', 'direct_allow_private_peers=false')
+    saved = cli.json('system', 'settings', 'set', 'direct_allow_private_peers=false')
     assert saved['changed'] is True
-    assert cli.json('settings', 'get', 'direct')['direct']['allow_private_peers'] is False
+    assert cli.json('system', 'settings', 'get', 'direct')['direct']['allow_private_peers'] is False
     local = tmp_path / 'local.json'
     local.write_text(json.dumps(card(Identity.generate(), organization='Basement server', fax_number='+15550007778',
                                      endpoint='https://127.0.0.1:8443')))
-    refused = cli('direct', 'peers', 'add', local)
+    refused = cli('recipients', 'partners', 'add', local)
     assert refused.exit_code == 6
     assert refused.stderr.strip() == ("The partner's address points to a private or local network, which direct "
                                       'delivery refuses unless DIRECT_ALLOW_PRIVATE_PEERS is turned on.')
     _, token = restricted_key(cli, 'Settings helper', role='Administrator', permissions=('settings:read', 'settings:write'))
-    assert cli('settings', 'set', 'direct_allow_private_peers=true', key=token).exit_code == 4
-    cli.json('settings', 'set', 'direct_allow_private_peers=true')
-    assert cli.json('direct', 'peers', 'add', local)['endpoint'] == 'https://127.0.0.1:8443'
+    assert cli('system', 'settings', 'set', 'direct_allow_private_peers=true', key=token).exit_code == 4
+    cli.json('system', 'settings', 'set', 'direct_allow_private_peers=true')
+    assert cli.json('recipients', 'partners', 'add', local)['endpoint'] == 'https://127.0.0.1:8443'
 
 
 def test_direct_card_peers_challenge_and_confirm(cli, tmp_path):
@@ -754,57 +830,57 @@ def test_direct_card_peers_challenge_and_confirm(cli, tmp_path):
             assert url == 'https://valley.example/direct/verifications'
             return 200, {'verified': True}
 
-    own = cli.json('direct', 'card')['card']
+    own = cli.json('recipients', 'partners', 'card')['card']
     assert own['organization'] == 'County Clinic'
     partner = tmp_path / 'valley.json'
     partner.write_text(json.dumps(card(Identity.generate(), organization='Valley Hospital',
                                        fax_number='+15550007777', endpoint='https://valley.example')))
-    enrolled = cli.json('direct', 'peers', 'add', partner)
+    enrolled = cli.json('recipients', 'partners', 'add', partner)
     assert enrolled['state'] == 'pending'
-    assert [item['organization'] for item in cli.json('direct', 'peers', 'list')] == ['Valley Hospital']
-    challenged = cli.json('direct', 'peers', 'challenge', 'Valley Hospital')
+    assert [item['organization'] for item in cli.json('recipients', 'partners', 'list')] == ['Valley Hospital']
+    challenged = cli.json('recipients', 'partners', 'challenge', 'Valley Hospital')
     assert challenged['code_sent'] is True and challenged['fax_id']
     main_module.app.state.direct_http = Partner()
-    confirmed = cli.json('direct', 'peers', 'confirm', '+1 555 000 7777', '1234 5678')
+    confirmed = cli.json('recipients', 'partners', 'confirm', '+1 555 000 7777', '1234 5678')
     assert confirmed == {'confirmed': True, 'detail': 'The partner confirmed the code.'}
-    assert cli.json('direct', 'deliveries') == []
-    revoked = cli.json('direct', 'peers', 'revoke', 'Valley Hospital')
+    assert cli.json('recipients', 'partners', 'deliveries') == []
+    revoked = cli.json('recipients', 'partners', 'revoke', 'Valley Hospital')
     assert revoked['state'] == 'revoked'
 
 
 def test_case_packet_preview_send_and_documents(cli, tmp_path):
     first, second = pdf(tmp_path / 'referral.pdf', 'Referral'), pdf(tmp_path / 'labs.pdf', 'Labs')
-    preview = cli.json('cases', 'send', 'CASE-1', '+15551230009', first, second, '--title', 'Referral',
+    preview = cli.json('recipients', 'cases', 'send', 'CASE-1', '+15551230009', first, second, '--title', 'Referral',
                        '--title', 'Lab results', '--preview')
     assert preview['fax_id'] is None and [item['title'] for item in preview['documents']] == ['Referral', 'Lab results']
-    sent = cli.json('cases', 'send', 'CASE-1', '+15551230009', first)
+    sent = cli.json('recipients', 'cases', 'send', 'CASE-1', '+15551230009', first)
     assert sent['fax_id']
-    documents = cli.json('cases', 'documents', 'CASE-1', '--to', '+15551230009')
+    documents = cli.json('recipients', 'cases', 'documents', 'CASE-1', '--to', '+15551230009')
     assert [item['title'] for item in documents['documents']] == ['referral']
-    human = cli('cases', 'documents', 'CASE-1', '--to', '+15551230009')
+    human = cli('recipients', 'cases', 'documents', 'CASE-1', '--to', '+15551230009')
     assert human.exit_code == 0 and 'referral' in human.stdout
 
 
 # -- profiles --------------------------------------------------------------------------------
 
 def test_profiles_keep_the_key_private_and_are_used_by_default(cli, tmp_path):
-    saved = cli('config', 'set-profile', 'clinic', '--key-stdin', input=BOOTSTRAP + '\n', key=None)
+    saved = cli('system', 'profiles', 'save', 'clinic', '--key-stdin', input=BOOTSTRAP + '\n', key=None)
     assert saved.exit_code == 0, saved.stderr
     path = tmp_path / 'cli-config' / 'config.toml'
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
     assert stat.S_IMODE(path.parent.stat().st_mode) == 0o700
-    shown = cli('config', 'show', key=None)
+    shown = cli('system', 'profiles', 'list', key=None)
     assert 'clinic' in shown.stdout and BOOTSTRAP not in shown.stdout
-    me = cli('--json', 'me', key=None, url=None)
+    me = cli('--json', 'access', 'me', key=None, url=None)
     assert me.exit_code == 0 and json.loads(me.stdout)['principal']['kind'] == 'bootstrap'
-    prompted = cli('config', 'set-profile', 'other', '--no-use', input='\n', key=None)
+    prompted = cli('system', 'profiles', 'save', 'other', '--no-use', input='\n', key=None)
     assert prompted.exit_code == 0 and BOOTSTRAP not in prompted.stdout
-    assert cli.json('config', 'show', key=None)['profiles'][1] == {'profile': 'other', 'url': ORIGIN,
+    assert cli.json('system', 'profiles', 'list', key=None)['profiles'][1] == {'profile': 'other', 'url': ORIGIN,
                                                                    'key_saved': False, 'default': False}
-    cli.json('config', 'remove', 'other', key=None)
-    elsewhere = cli('me', key=None, url='https://elsewhere.example')
+    cli.json('system', 'profiles', 'remove', 'other', key=None)
+    elsewhere = cli('access', 'me', key=None, url='https://elsewhere.example')
     assert elsewhere.exit_code == 3 and elsewhere.stderr.startswith('No API key.')
-    trailing = cli('--json', 'me', key=None, url=ORIGIN + '/')
+    trailing = cli('--json', 'access', 'me', key=None, url=ORIGIN + '/')
     assert trailing.exit_code == 0
     unknown = cli('--profile', 'missing', 'me', key=None)
     assert unknown.exit_code == 1 and "no saved profile named 'missing'" in unknown.stderr
@@ -842,7 +918,7 @@ def test_trunk_status_and_calls_read_as_plain_sentences(trunk_cli):
         'UniqueID': '1791075343.12', 'Caller': '+13035550100', 'DID': '+15555550100', 'Status': 'FAILED',
         'Error': 'Timed out waiting for initial communication', 'Pages': '0', 'Mode': 'T38', 'Answered': '1791075343',
         'Ended': '1791075357'})
-    status = trunk_cli('trunk', 'status')
+    status = trunk_cli('providers', 'trunk', 'status')
     assert status.exit_code == 0, status.stdout
     for sentence in ('Apply these settings to Asterisk, then restart the Asterisk service.',
                      'Encrypted (TLS)', '198.51.100.7', 'No ports need to be opened or forwarded.',
@@ -852,60 +928,61 @@ def test_trunk_status_and_calls_read_as_plain_sentences(trunk_cli):
                      'A fax call from +13035550100 came in, but no fax data arrived from the carrier.'):
         assert sentence in status.stdout, sentence
     assert 'synthetic-Trunk-Pass' not in status.stdout and 'no_t38' not in status.stdout
-    assert trunk_cli.json('trunk', 'status')['behind_router'] is True
-    calls = trunk_cli('trunk', 'calls', '--direction', 'inbound')
+    assert trunk_cli.json('providers', 'trunk', 'status')['behind_router'] is True
+    calls = trunk_cli('providers', 'trunk', 'calls', '--direction', 'inbound')
     assert calls.exit_code == 0 and 'What happened' in calls.stdout and '+13035550100' in calls.stdout
-    assert trunk_cli.json('trunk', 'calls')['items'][0]['verdict'] == 'no_t38_data_back'
-    assert trunk_cli('trunk', 'calls', '--direction', 'sideways').exit_code != 0
+    assert trunk_cli.json('providers', 'trunk', 'calls')['items'][0]['verdict'] == 'no_t38_data_back'
+    assert trunk_cli('providers', 'trunk', 'calls', '--direction', 'sideways').exit_code != 0
     # After that verdict, the owner can switch new calls to audio fax and back.
-    assert trunk_cli.json('trunk', 'status')['suggest_audio'] is True
-    assert 'Audio fax may work for new calls: run faxbot trunk mode audio.' in trunk_cli('trunk', 'status').stdout
-    audio = trunk_cli('trunk', 'mode', 'audio')
+    assert trunk_cli.json('providers', 'trunk', 'status')['suggest_audio'] is True
+    assert 'Audio fax may work for new calls: run faxbot providers trunk mode audio.' in \
+        trunk_cli('providers', 'trunk', 'status').stdout
+    audio = trunk_cli('providers', 'trunk', 'mode', 'audio')
     assert audio.exit_code == 0 and 'New calls use audio fax once you restart the Asterisk service.' in audio.stdout
-    assert trunk_cli.json('trunk', 'status')['t38'] is False
-    assert 'already uses audio fax' in trunk_cli('trunk', 'mode', 'audio').stdout
-    assert trunk_cli.json('trunk', 'mode', 't38') == {
+    assert trunk_cli.json('providers', 'trunk', 'status')['t38'] is False
+    assert 'already uses audio fax' in trunk_cli('providers', 'trunk', 'mode', 'audio').stdout
+    assert trunk_cli.json('providers', 'trunk', 'mode', 't38') == {
         'mode': 't38', 'changed': True, 'applied': True, 'engine': 'manual',
         'message': 'Saved for Asterisk. Restart the Asterisk service to use these settings.'}
-    assert trunk_cli('trunk', 'mode', 'fast').exit_code != 0
+    assert trunk_cli('providers', 'trunk', 'mode', 'fast').exit_code != 0
     # When Faxbot chose audio fax itself, status says why and how to try T.38 again.
     from app import sip_fax_mode
-    assert trunk_cli('trunk', 'mode', 'audio').exit_code == 0
+    assert trunk_cli('providers', 'trunk', 'mode', 'audio').exit_code == 0
     values = trunk_cli.client.app.state.configuration_runtime.manager.store.read().active.values
     sip_fax_mode.write(values, 'audio', sip_fax_mode.NO_DATA_BACK)
-    status = trunk_cli('trunk', 'status').stdout
+    status = trunk_cli('providers', 'trunk', 'status').stdout
     assert 'a T.38 fax got no fax data back on this network, so Faxbot uses audio fax.' in status
-    assert 'To try T.38 again, run faxbot trunk mode t38.' in status
+    assert 'To try T.38 again, run faxbot providers trunk mode t38.' in status
     # Provider names read the same as in the console.
-    health = trunk_cli('health')
+    health = trunk_cli('system', 'health')
     assert 'Phaxio' in health.stdout and ' phaxio' not in health.stdout
     # Apply writes the trunk for Asterisk; this test install manages no Asterisk, so it says what to restart.
-    applied = trunk_cli('trunk', 'apply')
+    applied = trunk_cli('providers', 'trunk', 'apply')
     assert applied.exit_code == 0, applied.stdout
     assert 'Saved for Asterisk. Restart the Asterisk service to use these settings.' in applied.stdout
-    assert trunk_cli.json('trunk', 'apply', '--no-wait')['engine'] == 'manual'
+    assert trunk_cli.json('providers', 'trunk', 'apply', '--no-wait')['engine'] == 'manual'
 
 
 def test_trunk_presets_and_use_cover_phone_systems_and_uk_and_australian_carriers(trunk_cli):
-    listing = trunk_cli('trunk', 'presets')
+    listing = trunk_cli('providers', 'trunk', 'presets')
     assert listing.exit_code == 0, listing.stdout
     for text in ('avaya-ipoffice', 'avaya-aura', 'gamma', 'bt-one-voice', 'telstra-sip-connect', 'Phone system'):
         assert text in listing.stdout, text
-    detail = trunk_cli('trunk', 'presets', 'avaya-ipoffice')
+    detail = trunk_cli('providers', 'trunk', 'presets', 'avaya-ipoffice')
     assert detail.exit_code == 0 and 'What your Avaya IP Office administrator sets:' in detail.stdout
     assert '1. System, LAN1 (or LAN2), VoIP: tick SIP Trunks Enable.' in detail.stdout
-    assert trunk_cli.json('trunk', 'presets', 'avaya-aura')['sources'][0]['read_on'] == '2026-10-03'
-    assert trunk_cli('trunk', 'presets', 'nope').exit_code != 0
+    assert trunk_cli.json('providers', 'trunk', 'presets', 'avaya-aura')['sources'][0]['read_on'] == '2026-10-03'
+    assert trunk_cli('providers', 'trunk', 'presets', 'nope').exit_code != 0
     # Choosing a phone system switches to sign-in by address; no username or password is asked for.
-    used = trunk_cli('trunk', 'use', 'avaya-ipoffice', '--host', '192.168.10.5', '--number-format', 'local',
+    used = trunk_cli('providers', 'trunk', 'use', 'avaya-ipoffice', '--host', '192.168.10.5', '--number-format', 'local',
                      '--prefix', '9')
     assert used.exit_code == 0, used.stdout
-    assert "Saved Avaya IP Office as the trunk's phone system. Run faxbot trunk apply to connect it." in used.stdout
-    status = trunk_cli.json('trunk', 'status')
+    assert "Saved Avaya IP Office as the trunk's phone system. Run faxbot providers trunk apply to connect it." in used.stdout
+    status = trunk_cli.json('providers', 'trunk', 'status')
     assert (status['kind'], status['auth'], status['host'], status['dial_format'], status['dial_prefix']) == (
         'phone_system', 'ip', '192.168.10.5', 'local', '9')
-    human = trunk_cli('trunk', 'status').stdout
+    human = trunk_cli('providers', 'trunk', 'status').stdout
     assert 'Phone system' in human and 'Avaya IP Office' in human and 'Internet address' not in human
-    assert trunk_cli('trunk', 'use', 'avaya-ipoffice', '--transport', 'tls').exit_code != 0
-    assert trunk_cli('trunk', 'use', 'telnyx', '--number-format', 'local').exit_code != 0
-    assert trunk_cli.json('trunk', 'use', 'gamma', '--host', '192.0.2.40') == {'preset': 'gamma', 'changed': True}
+    assert trunk_cli('providers', 'trunk', 'use', 'avaya-ipoffice', '--transport', 'tls').exit_code != 0
+    assert trunk_cli('providers', 'trunk', 'use', 'telnyx', '--number-format', 'local').exit_code != 0
+    assert trunk_cli.json('providers', 'trunk', 'use', 'gamma', '--host', '192.0.2.40') == {'preset': 'gamma', 'changed': True}

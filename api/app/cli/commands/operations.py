@@ -7,16 +7,9 @@ from .. import state
 from ..errors import CliError
 from ..output import local_time
 
-logs = typer.Typer(help='The activity log: sign-ins, faxes, pairing and terminal use.', no_args_is_help=True)
-tunnel = typer.Typer(help='Remote access tunnels (Cloudflare, WireGuard or Tailscale).', no_args_is_help=True)
-actions = typer.Typer(help='Approved maintenance actions on the server computer.', no_args_is_help=True)
-
-
-def register(app):
-    app.add_typer(logs, name='logs')
-    app.add_typer(tunnel, name='tunnel')
-    app.add_typer(actions, name='actions')
-    app.command('restart')(restart)
+logs = typer.Typer(help='The activity log: sign-ins, faxes, phone pairing and terminal use.', no_args_is_help=True)
+tunnel = typer.Typer(help='Remote access: reach Faxbot from outside your office network.', no_args_is_help=True)
+actions = typer.Typer(help='Maintenance tasks this server lets you run.', no_args_is_help=True)
 
 
 def _log_rows(items):
@@ -35,7 +28,7 @@ def logs_list(search: str = typer.Option(None, '--search', help='Only entries co
               event: str = typer.Option(None, '--event', help='Only this kind of entry, for example job_created.'),
               since: str = typer.Option(None, '--since', help='Only entries after this time, for example 2026-10-01.'),
               limit: int = typer.Option(200, '--limit', min=1, help='How many entries to show.')):
-    """Show recent activity log entries kept by the running server."""
+    """Show recent activity log entries."""
     result = state.api().get('/admin/logs', params={'q': search, 'event': event, 'since': since, 'limit': limit})
     state.out().result(result, lambda out: out.table(['When', 'Event', 'Details'], _log_rows(result.get('items', [])),
                                                      empty='No log entries.'))
@@ -45,7 +38,7 @@ def logs_list(search: str = typer.Option(None, '--search', help='Only entries co
 def logs_tail(search: str = typer.Option(None, '--search', help='Only lines containing this text.'),
               event: str = typer.Option(None, '--event', help='Only this kind of entry.'),
               lines: int = typer.Option(200, '--lines', min=1, max=20000, help='How many of the last lines to show.')):
-    """Show the end of the activity log file (when the server writes one)."""
+    """Show the end of the activity log file, when Faxbot writes one."""
     result = state.api().get('/admin/logs/tail', params={'q': search, 'event': event, 'lines': lines})
 
     def human(out):
@@ -62,13 +55,13 @@ def _tunnel_fields(result):
 
 @tunnel.command('status')
 def tunnel_status():
-    """Show the remote access tunnel."""
+    """Show whether remote access is on and working."""
     result = state.api().get('/admin/tunnel/status')
     state.out().result(result, lambda out: out.fields(_tunnel_fields(result)))
 
 
 @tunnel.command('set')
-def tunnel_set(provider: str = typer.Argument(..., help='none, cloudflare, wireguard or tailscale.'),
+def tunnel_set(provider: str = typer.Argument(..., help='How Faxbot is reached from outside: none, cloudflare, wireguard or tailscale.'),
                disable: bool = typer.Option(False, '--disable', help='Save the settings but keep the tunnel off.'),
                cloudflare_domain: str = typer.Option(None, '--cloudflare-domain', help='Custom domain (Cloudflare).'),
                wireguard_endpoint: str = typer.Option(None, '--wireguard-endpoint', help='Server endpoint (WireGuard).'),
@@ -78,7 +71,10 @@ def tunnel_set(provider: str = typer.Argument(..., help='none, cloudflare, wireg
                                                                                            'address (WireGuard).'),
                wireguard_dns: str = typer.Option(None, '--wireguard-dns', help='DNS server (WireGuard).'),
                tailscale_hostname: str = typer.Option(None, '--tailscale-hostname', help='Host name (Tailscale).')):
-    """Choose and configure the remote access tunnel. A Tailscale auth key is read from TAILSCALE_AUTH_KEY."""
+    """Choose how Faxbot is reached from outside your office, and turn it on or off.
+
+    For Tailscale, set TAILSCALE_AUTH_KEY to its sign-in key before you run this.
+    """
     body = {'enabled': provider != 'none' and not disable, 'provider': provider,
             'cloudflare_custom_domain': cloudflare_domain, 'wireguard_endpoint': wireguard_endpoint,
             'wireguard_server_public_key': wireguard_public_key, 'wireguard_client_ip': wireguard_client_ip,
@@ -90,7 +86,7 @@ def tunnel_set(provider: str = typer.Argument(..., help='none, cloudflare, wireg
 
 @tunnel.command('test')
 def tunnel_test():
-    """Check that the server can be reached at its public address."""
+    """Check that Faxbot can be reached at its public address."""
     result = state.api().post('/admin/tunnel/test')
     state.out().result(result, lambda out: out.line(('Reachable' if result.get('ok') else 'Not reachable')
                                                     + (f" at {result['target']}" if result.get('target') else '')
@@ -101,7 +97,7 @@ def tunnel_test():
 
 @actions.command('list')
 def actions_list():
-    """List the approved maintenance actions this server allows."""
+    """List the maintenance tasks this server lets you run."""
     result = state.api().get('/admin/actions')
 
     def human(out):
@@ -114,8 +110,8 @@ def actions_list():
 
 
 @actions.command('run')
-def actions_run(action: str = typer.Argument(..., help="Action from 'faxbot actions list'.")):
-    """Run an approved maintenance action and show its output."""
+def actions_run(action: str = typer.Argument(..., help="Action from 'faxbot system actions list'.")):
+    """Run a maintenance task this server allows and show what it printed."""
     result = state.api().post('/admin/actions/run', json={'id': action})
 
     def human(out):
@@ -129,7 +125,7 @@ def actions_run(action: str = typer.Argument(..., help="Action from 'faxbot acti
 
 
 def restart(yes: bool = typer.Option(False, '--yes', '-y', help='Do not ask for confirmation.')):
-    """Restart the Faxbot server process, when the installation allows it."""
+    """Restart Faxbot, when the installation allows it."""
     if not yes:
         if state.out().json_mode or state.out().quiet:
             raise CliError('Add --yes to confirm when using --json or --quiet.')

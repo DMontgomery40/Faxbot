@@ -33,13 +33,6 @@ STATE_TEXT = {
 }
 
 
-def register(app):
-    app.command('send')(send)
-    app.command('status')(status)
-    app.add_typer(jobs, name='jobs')
-    app.add_typer(inbound, name='inbound')
-
-
 def _fax_fields(job):
     return [('Fax ID', job.get('id')), ('To', job.get('to') or job.get('to_number')), ('Status', job.get('status')),
             ('Delivery', STATE_TEXT.get(job.get('delivery_state'), job.get('delivery_state'))),
@@ -86,7 +79,7 @@ def _together_line(view):
         return None
     if view['state'] == 'waiting':
         until = local_time(view.get('waiting_until'))
-        return f'Waiting to go with other faxes to this number until {until}. To send it now: faxbot jobs send-now ID'
+        return f'Waiting to go with other faxes to this number until {until}. To send it now: faxbot sent send-now ID'
     if view['state'] == 'together':
         share = (view.get('share') or {}).get('sentence')
         return view['sentence'] + (' ' + share if share else '')
@@ -113,7 +106,7 @@ def jobs_list(status_filter: str = typer.Option(None, '--status', help='Only fax
               provider: str = typer.Option(None, '--provider', help='Only faxes sent through this provider.'),
               limit: int = typer.Option(50, '--limit', min=1, max=100, help='How many faxes to show.'),
               offset: int = typer.Option(0, '--offset', min=0, help='Skip this many of the newest faxes.'),
-              ids: bool = typer.Option(False, '--ids', help='Also show fax IDs, for jobs get, pdf and refresh.')):
+              ids: bool = typer.Option(False, '--ids', help='Also show fax IDs, for faxbot sent show, pdf and refresh.')):
     """List sent faxes, newest first. Fax numbers are partly hidden."""
     page = state.api().get('/admin/fax-jobs', params={'status': status_filter, 'backend': provider,
                                                       'limit': limit, 'offset': offset})
@@ -215,7 +208,7 @@ def jobs_reconcile(fax_id: str = typer.Argument(..., help='Fax ID.'),
                    confirm: bool = typer.Option(False, '--confirm-original-account',
                                                 help='Confirm you found this ID in the same provider account that '
                                                      'accepted the fax.')):
-    """Record the provider's fax ID for a fax whose delivery is uncertain. This never sends it again."""
+    """For a fax whose delivery is uncertain, record the ID the fax service gave it. This never sends it again."""
     if not confirm:
         raise CliError('Check the fax in the provider account that accepted it, then add '
                        '--confirm-original-account.')
@@ -234,7 +227,7 @@ def _inbound_status(item):
     if item.get('status') == 'waiting' and retry is not None:
         return f"The document could not be fetched; Faxbot will try again at {retry.astimezone().strftime('%H:%M')}."
     if item.get('status') == 'failed':
-        return 'Faxbot stopped trying to fetch this document; run faxbot inbound fetch to try again.'
+        return 'Faxbot stopped trying to fetch this document; run faxbot received fetch to try again.'
     return item.get('status_text') or 'Received.'
 
 
@@ -289,7 +282,7 @@ def inbound_list(to_number: str = typer.Option(None, '--to', help='Only faxes se
                  status_filter: str = typer.Option(None, '--status', help='Only faxes with this status: waiting, '
                                                                           'received or failed.'),
                  mailbox: str = typer.Option(None, '--mailbox', help='Only faxes in this mailbox.'),
-                 ids: bool = typer.Option(False, '--ids', help='Also show received fax IDs, for inbound get and pdf.')):
+                 ids: bool = typer.Option(False, '--ids', help='Also show received fax IDs, for faxbot received show and pdf.')):
     """List received faxes you can see."""
     items = state.api().get('/inbound', params={'to_number': to_number, 'status': status_filter, 'mailbox': mailbox})
 
@@ -326,19 +319,19 @@ def inbound_fetch(inbound_id: str = typer.Argument(..., help='Received fax ID.')
     """Ask Faxbot to fetch a received fax's document again now."""
     item = state.api().post(f'/inbound/{segment(inbound_id)}/fetch', json={})
     state.out().result(item, lambda out: out.line('Faxbot will fetch the document shortly. Check on it with: '
-                                                  f'faxbot inbound get {inbound_id}'))
+                                                  f'faxbot received show {inbound_id}'))
 
 
 @inbound.command('recover')
 def inbound_recover():
-    """Bring in faxes the SIP trunk received but could not hand to Faxbot (Faxbot also does this every minute)."""
+    """Bring in received faxes that reached the phone line but were not handed to Faxbot. Faxbot also does this every minute."""
     result = state.api().post('/admin/inbound/recover', json={})
     state.out().result(result, lambda out: out.line(result['message']))
 
 
 @inbound.command('simulate')
 def inbound_simulate(from_number: str = typer.Option('+15550000000', '--from', help='Sender fax number to show.'),
-                     to_number: str = typer.Option(None, '--to', help='Your fax number it arrived on.'),
+                     to_number: str = typer.Option(None, '--to', help='Which of your fax numbers it should seem sent to.'),
                      pages: int = typer.Option(1, '--pages', min=1, help='Ignored; a test fax always has one page.',
                                                hidden=True)):
     """Add a test fax with a real one-page document, marked as a test, to check mailboxes and email delivery."""

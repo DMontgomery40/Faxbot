@@ -7,17 +7,13 @@ from .. import state
 from ..errors import CliError
 from ..output import local_time, parse_time
 
-trunk = typer.Typer(help="Faxbot's own SIP trunk to a carrier or to your phone system: presets, status, "
-                         "network and recent calls.", no_args_is_help=True)
+trunk = typer.Typer(help='Your own phone line for faxing, to a phone carrier or to your phone system: presets, status and '
+                         'recent calls.', no_args_is_help=True)
 
 TRANSPORTS = {'tls': 'Encrypted (TLS)', 'tcp': 'TCP', 'udp': 'UDP'}
 KINDS = {'carrier': 'Carrier', 'phone_system': 'Phone system'}
 SIGN_IN = {'registration': 'Username and password', 'ip': 'IP address'}
 NUMBER_FORMATS = {'e164': '+ and country code', 'local': 'As a phone here dials it'}
-
-
-def register(app):
-    app.add_typer(trunk, name='trunk')
 
 
 def _status_lines(out, result):
@@ -39,18 +35,18 @@ def _status_lines(out, result):
     if result.get('last_call_text'):
         out.line(f"Last call ({local_time(result.get('last_call_at'))}): {result['last_call_text']}")
     if result.get('suggest_audio'):
-        out.line('Audio fax may work for new calls: run faxbot trunk mode audio.')
+        out.line('Audio fax may work for new calls: run faxbot providers trunk mode audio.')
     if result.get('t38_off_reason'):
         from ...sip_fax_mode import off_sentence
         moment = parse_time(result.get('t38_off_at'))
         day = moment.astimezone().strftime('%-d %B') if moment else ''
         out.line(off_sentence(result['t38_off_reason'], day, carrier=result.get('preset_label') or ''))
-        out.line('To try T.38 again, run faxbot trunk mode t38.')
+        out.line('To try T.38 again, run faxbot providers trunk mode t38.')
 
 
 @trunk.command('status')
 def trunk_status():
-    """Check the trunk: registration, the carrier's answer, Faxbot's internet address and the last call."""
+    """Check the phone line: whether the carrier accepts Faxbot, Faxbot's internet address and the last call."""
     result = state.api().get('/admin/sip/status')
     state.out().result(result, lambda out: _status_lines(out, result))
 
@@ -80,13 +76,9 @@ def _connect(api, wait, timeout):
 
 @trunk.command('apply')
 def trunk_apply(wait: bool = typer.Option(True, '--wait/--no-wait',
-                                          help='Wait for Asterisk and the carrier, then show the trunk check.'),
+                                          help='Wait until the phone line connects, then show its check.'),
                 timeout: int = typer.Option(60, '--timeout', min=5, max=600, help='Seconds to wait.')):
-    """Write the saved trunk for Asterisk and connect it.
-
-    In the Docker Compose install Faxbot restarts Asterisk to load the trunk,
-    once no call is up; elsewhere it says to restart the Asterisk service.
-    """
+    """Connect the saved phone line settings. Faxbot restarts its fax engine to load them once no call is in progress, or tells you how to restart it yourself."""
     applied, status = _connect(state.api(), wait, timeout)
     result = {**applied, 'status': status}
 
@@ -100,7 +92,7 @@ def trunk_apply(wait: bool = typer.Option(True, '--wait/--no-wait',
 @trunk.command('calls')
 def trunk_calls(limit: int = typer.Option(10, '--limit', min=1, max=200, help='How many calls to show, newest first.'),
                 direction: str = typer.Option(None, '--direction', help='Only outbound or inbound calls.')):
-    """List recent trunk calls, newest first, each with one sentence about what happened."""
+    """List recent calls on the phone line, newest first, each with one sentence about what happened."""
     params = {'limit': limit}
     if direction:
         if direction not in ('outbound', 'inbound'):
@@ -118,8 +110,8 @@ def trunk_calls(limit: int = typer.Option(10, '--limit', min=1, max=200, help='H
 
 @trunk.command('mode')
 def trunk_mode(mode: str = typer.Argument(..., metavar='t38|audio',
-                                          help='t38 (recommended) or audio, for when T.38 data cannot come back.')):
-    """Choose T.38 or audio fax for new calls and connect the trunk with it."""
+                                          help='t38 (recommended), or audio when T.38 faxes fail on your line.')):
+    """Choose how new fax calls send pages, T.38 (the fax standard) or audio when T.38 does not work, and reconnect the phone line."""
     if mode not in ('t38', 'audio'):
         raise typer.BadParameter('Use t38 or audio.', param_hint='MODE')
     api = state.api()
@@ -144,16 +136,13 @@ def trunk_mode(mode: str = typer.Argument(..., metavar='t38|audio',
 @trunk.command('presets')
 def trunk_presets(preset: str = typer.Argument(None, metavar='[PRESET]',
                                                help='Show one preset in full, for example avaya-ipoffice.')):
-    """List the carriers and phone systems Faxbot has settings for, or show one with its sources.
-
-    A phone system preset also lists what its administrator sets, in order.
-    """
+    """List the carriers and phone systems Faxbot knows the settings for, or show one with where each setting comes from. For a phone system it also lists, in order, what its administrator sets."""
     result = state.api().get('/admin/sip/presets')
     items = result.get('presets') or []
     if preset:
         chosen = next((item for item in items if item['id'] == preset), None)
         if chosen is None:
-            raise CliError(f"No preset is called '{preset}'. Run faxbot trunk presets to list them.")
+            raise CliError(f"No preset is called '{preset}'. Run faxbot providers trunk presets to list them.")
 
         def detail(out):
             out.fields([('Preset', chosen['id']), ('Name', chosen['label']), ('Kind', KINDS[chosen['kind']]),
@@ -193,26 +182,25 @@ def local_date(day):
 
 
 @trunk.command('use')
-def trunk_use(preset: str = typer.Argument(..., metavar='PRESET', help='A preset from faxbot trunk presets.'),
-              host: str = typer.Option(None, '--host', help="The carrier's SIP server, or your phone system's "
+def trunk_use(preset: str = typer.Argument(..., metavar='PRESET', help='Your carrier or phone system, as listed by faxbot providers trunk presets.'),
+              host: str = typer.Option(None, '--host', help="The carrier's server address, or your phone system's "
                                                              "address (IP Office, or Aura Session Manager)."),
-              port: int = typer.Option(None, '--port', min=1, max=65535, help='SIP port, when not the default.'),
-              transport: str = typer.Option(None, '--transport', help='udp, tcp or tls, where the preset offers it.'),
+              port: int = typer.Option(None, '--port', min=1, max=65535, help="The carrier's port, when not the usual one."),
+              transport: str = typer.Option(None, '--transport', help='How Faxbot connects to the line: udp, tcp or tls (encrypted), where the preset offers it.'),
               number_format: str = typer.Option(None, '--number-format', metavar='e164|local',
                                                 help='e164 sends +44...; local sends the number as a phone at '
                                                      'your installation dials it.'),
               prefix: str = typer.Option(None, '--prefix', help='Outside-line digits before a number dialled '
                                                                  'as a phone here dials it, such as 9.')):
-    """Choose a carrier or phone system for the trunk and save its settings; then run faxbot trunk apply.
+    """Choose your carrier or phone system for the phone line and save its settings. Then connect it with faxbot providers trunk apply.
 
-    For a phone system, Faxbot and the phone system recognise each other by address, so no username or
-    password is needed.
+    A phone system knows Faxbot by its address, so it needs no username or password.
     """
     api = state.api()
     catalog = {item['id']: item for item in api.get('/admin/sip/presets').get('presets') or []}
     chosen = catalog.get(preset)
     if chosen is None:
-        raise CliError(f"No preset is called '{preset}'. Run faxbot trunk presets to list them.")
+        raise CliError(f"No preset is called '{preset}'. Run faxbot providers trunk presets to list them.")
     current = api.get('/admin/settings')
     saved = (current.get('sip') or {}).get('trunk') or {}
     changes = {'sip_trunk_preset': preset}
@@ -238,5 +226,5 @@ def trunk_use(preset: str = typer.Argument(..., metavar='PRESET', help='A preset
 
     def human(out):
         kind = 'phone system' if chosen['kind'] == 'phone_system' else 'carrier'
-        out.line(f"Saved {chosen['label']} as the trunk's {kind}. Run faxbot trunk apply to connect it.")
+        out.line(f"Saved {chosen['label']} as the trunk's {kind}. Run faxbot providers trunk apply to connect it.")
     state.out().result({'preset': preset, 'changed': bool(result.get('changed'))}, human)

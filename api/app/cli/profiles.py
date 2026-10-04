@@ -105,7 +105,7 @@ def select(document, requested):
     if requested:
         check_name(requested)
         if requested not in profiles:
-            raise CliError(f"There is no saved profile named '{requested}'. See 'faxbot config show'.")
+            raise CliError(f"There is no saved profile named '{requested}'. See 'faxbot system profiles list'.")
         return requested, profiles[requested]
     for name in (document.get('default_profile'), 'default'):
         if name and name in profiles:

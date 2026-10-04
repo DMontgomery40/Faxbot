@@ -1,6 +1,6 @@
 """Every configuration value can be set from the command line and has a place in the console.
 
-Each field of ConfigurationValues is accepted by `faxbot settings set` and its
+Each field of ConfigurationValues is accepted by `faxbot system settings set` and its
 name appears in the console source (api/admin_ui/src, tests and mocks
 excluded), unless READ_ONLY_OR_ENV says why not. AWAITING_CONSOLE holds the
 fields the console has not placed yet: whoever places one removes its entry in
@@ -116,11 +116,11 @@ def test_the_command_line_sets_every_setting(cli):
         value = getattr(values, name)
         typed = ('true' if value else 'false') if isinstance(value, bool) else str(value)
         assignments.append(f'{name}={written.get(_variable(field), typed)}')
-    result = cli('--json', 'settings', 'set', *assignments)
+    result = cli('--json', 'system', 'settings', 'set', *assignments)
     assert result.exit_code == 0, result.stdout + result.stderr
 
     # Text that looks like a number stays text: a caller ID, an outside-line prefix.
-    typed = cli('settings', 'set', 'fs_caller_id_number=3035551234', 'sip_trunk_dial_prefix=9',
+    typed = cli('system', 'settings', 'set', 'fs_caller_id_number=3035551234', 'sip_trunk_dial_prefix=9',
                 'fax_backend=phaxio', 'max_file_size_mb=12', 'fax_disabled=yes')
     assert typed.exit_code == 0, typed.stdout + typed.stderr
     saved = _store(cli).read().desired.values

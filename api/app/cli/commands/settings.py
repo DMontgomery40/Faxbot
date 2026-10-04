@@ -12,19 +12,11 @@ def _provider(identity):
     """A provider's one plain name for people; JSON output keeps the id."""
     return provider_label(identity) if identity else None
 
-settings = typer.Typer(help='Installation settings. Secrets are always shown masked.', no_args_is_help=True)
+settings = typer.Typer(help='Every Faxbot setting: show, change, check and save them. Passwords and keys are never shown.', no_args_is_help=True)
 providers = typer.Typer(help='Fax providers: which are installed and whether the active one is ready.',
                         no_args_is_help=True)
 diagnostics = typer.Typer(help='Check the installation without sending a fax.', no_args_is_help=True)
-pair = typer.Typer(help='Pair the Faxbot iPhone app (or a script acting as a phone).', no_args_is_help=True)
-
-
-def register(app):
-    app.add_typer(settings, name='settings')
-    app.add_typer(providers, name='providers')
-    app.command('health')(health)
-    app.add_typer(diagnostics, name='diagnostics')
-    app.add_typer(pair, name='pair')
+pair = typer.Typer(help='Pair the Faxbot iPhone app with this installation.', no_args_is_help=True)
 
 
 def _flatten(prefix, value, rows):
@@ -37,13 +29,13 @@ def _flatten(prefix, value, rows):
 
 @settings.command('get')
 def settings_get(section: str = typer.Argument(None, help='Only this section, for example limits or inbound.')):
-    """Show the installation settings, including changes waiting for a restart."""
+    """Show the settings, including changes waiting for a restart."""
     current = state.api().get('/admin/settings')
     meta = current.get('_meta', {})
     shown = current
     if section:
         if section not in current or section == '_meta':
-            raise CliError(f"There is no settings section named '{section}'. Run 'faxbot settings get' to see them.",
+            raise CliError(f"There is no settings section named '{section}'. Run 'faxbot system settings get' to see them.",
                            EXIT_NOT_FOUND)
         shown = {section: current[section]}
 
@@ -98,9 +90,8 @@ def settings_set(assignments: list[str] = typer.Argument(None, metavar='NAME=VAL
                  secret: list[str] = typer.Option(None, '--secret', metavar='NAME',
                                                   help='Ask for this setting without showing what you type, for '
                                                        'passwords and provider keys. Repeat for more.'),
-                 as_text: bool = typer.Option(False, '--text', help='Keep every value as text (no true/false or '
-                                                                    'number conversion).')):
-    """Change settings. Faxbot checks the whole result before saving it."""
+                 as_text: bool = typer.Option(False, '--text', help='Send every value exactly as typed.')):
+    """Change settings by name, for example max_file_size_mb=20. Faxbot checks the result before saving it."""
     changes = {}
     known = _request_names()
     for item in assignments or []:
@@ -138,14 +129,10 @@ VALIDATE_FIELDS = (('phaxio_api_key', 'PHAXIO_API_KEY'), ('phaxio_api_secret', '
 
 @settings.command('validate')
 def settings_validate(backend: str = typer.Argument(..., help='Provider to check: phaxio, sinch, efax or sip.'),
-                      ami_port: int = typer.Option(None, '--ami-port', help='Asterisk manager port (sip).')):
-    """Check provider credentials without saving them or sending a fax.
+                      ami_port: int = typer.Option(None, '--ami-port', help="For sip only: the port of Faxbot's fax engine, if not the usual one.")):
+    """Check a provider's sign-in details without saving them or sending a fax.
 
-    Credentials are read from the environment so they stay out of your shell
-    history: PHAXIO_API_KEY, PHAXIO_API_SECRET, SINCH_PROJECT_ID, SINCH_API_KEY,
-    SINCH_API_SECRET, AMI_HOST, AMI_USERNAME, AMI_PASSWORD, EFAX_APP_ID, EFAX_API_KEY
-    and EFAX_USER_ID. Checking eFax keys can sign in to eFax again, which ends the
-    sign-in Faxbot was using; Faxbot then signs in again by itself.
+    Faxbot reads them from these variables on this computer, so they stay out of your command history: PHAXIO_API_KEY, PHAXIO_API_SECRET, SINCH_PROJECT_ID, SINCH_API_KEY, SINCH_API_SECRET, AMI_HOST, AMI_USERNAME, AMI_PASSWORD, EFAX_APP_ID, EFAX_API_KEY and EFAX_USER_ID. Checking eFax details can end the sign-in Faxbot was using; Faxbot signs in again by itself.
     """
     import os
     body = {'backend': backend}
@@ -165,14 +152,14 @@ def settings_validate(backend: str = typer.Argument(..., help='Provider to check
 
 @settings.command('persist')
 def settings_persist():
-    """Write the full settings, including secrets, to the installation's private recovery file. Owners only."""
+    """Save every setting, passwords and keys included, to the installation's private recovery file for restoring later. Owners only."""
     result = state.api().post('/admin/settings/persist', json={})
     state.out().result(result, lambda out: out.line(f"Settings written to {result.get('path')} on the server."))
 
 
 @settings.command('export')
 def settings_export():
-    """Print the settings as environment lines. Secrets are replaced with ***."""
+    """Print every setting, one per line, as it would appear in a settings file. Passwords and keys are shown as ***."""
     result = state.api().get('/admin/settings/export')
 
     def human(out):
@@ -185,7 +172,7 @@ def settings_export():
 
 @providers.command('list')
 def providers_list():
-    """List installed fax and storage providers and which ones are in use."""
+    """List the fax and storage providers installed, and which ones are in use."""
     api = state.api()
     try:
         items = api.get('/plugins')['items']
@@ -221,7 +208,7 @@ def providers_callbacks():
 @providers.command('config')
 def providers_config(provider: str = typer.Argument(..., help="Provider from 'faxbot providers list'."),
                      role: str = typer.Option(None, '--role', help='outbound, inbound or storage.')):
-    """Show a provider's settings. Secrets are masked."""
+    """Show a provider's settings. Passwords and keys are hidden."""
     result = state.api().get(f'/plugins/{segment(provider)}/config', params={'role': role})
 
     def human(out):
@@ -270,7 +257,7 @@ def providers_configure(provider: str = typer.Argument(..., help="Provider from 
 
 @providers.command('registry')
 def providers_registry():
-    """List providers available to install from the provider registry."""
+    """List the providers you can add from Faxbot's provider list."""
     result = state.api().get('/plugin-registry')
     items = result.get('items', []) if isinstance(result, dict) else []
     state.out().result(result, lambda out: out.table(['Provider', 'Name', 'Description'],
@@ -289,16 +276,16 @@ def _manifest(path):
 
 
 @providers.command('validate')
-def providers_validate(manifest: str = typer.Argument(..., help='HTTP provider manifest (JSON file).')):
-    """Check an HTTP provider manifest without installing it or sending anything."""
+def providers_validate(manifest: str = typer.Argument(..., help='The file that describes the fax service (JSON).')):
+    """Check the file that describes a fax service before you add it. Nothing is installed or sent."""
     result = state.api().post('/admin/plugins/http/validate', json={'manifest': _manifest(manifest), 'render_only': True})
     state.out().result(result, lambda out: out.line('The manifest is valid.' if result.get('ok', True)
                                                     else 'The manifest has problems: ' + text(result.get('error'))))
 
 
 @providers.command('install')
-def providers_install(manifest: str = typer.Argument(..., help='HTTP provider manifest (JSON file).')):
-    """Install an HTTP provider from its manifest."""
+def providers_install(manifest: str = typer.Argument(..., help='The file that describes the fax service (JSON).')):
+    """Add a fax service that Faxbot does not include, from the file that describes it."""
     result = state.api().post('/admin/plugins/http/install', json={'manifest': _manifest(manifest)})
     state.out().result(result, lambda out: out.line(f"Provider {result.get('id')} installed. Configure it with "
                                                     f"faxbot providers configure {result.get('id')}."))
@@ -320,7 +307,7 @@ def providers_status():
 
 
 def health():
-    """Check that the server answers and whether it is ready to send faxes (exit code 1 when not). No key needed."""
+    """Check that Faxbot answers and is ready to send faxes. No key is needed. For scripts, the command ends with exit code 1 when Faxbot is not ready."""
     api = state.api()
     live = api.get('/health', auth=False)
     ready = api.get('/health/ready', auth=False, allow=(503,))
@@ -343,7 +330,7 @@ def health():
 
 @diagnostics.command('database')
 def diagnostics_database():
-    """Show whether the database answers and how many records you can see."""
+    """Show whether Faxbot can reach its database, and how many records you can see."""
     result = state.api().get('/admin/db-status')
 
     def human(out):
@@ -390,7 +377,7 @@ def pair_device(code: str = typer.Argument(..., help='The six-digit pairing code
                 device_name: str = typer.Option('Command line', '--device-name', help='Name the key is listed under.'),
                 save_profile: str = typer.Option(None, '--save-profile', metavar='NAME',
                                                  help='Save the new key in this profile instead of printing it.')):
-    """Do what the phone does with a pairing code: exchange it for the device's own API key."""
+    """Pair as if this computer were a phone, to test pairing: enter a pairing code and get the phone's own key."""
     api = state.api()
     result = api.post('/mobile/pair', auth=False, json={'code': code, 'device_name': device_name})
     out = state.out()
