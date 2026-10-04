@@ -217,6 +217,7 @@ def project_admin_settings(snapshot: ConfigurationSnapshot, pending_fields: Iter
             's3_diagnostics': values.enable_s3_diagnostics,
         },
         'database': _database_view(values.database_url),
+        'installation': {'time_zone': values.time_zone},
         'mobile': {'local_base': values.mobile_local_base},
         'developer': {'docs_base_url': values.docs_base_url},
         'numbers': {

@@ -184,7 +184,8 @@ def parse_source_time(value):
 
 
 def _clock_text(moment):
-    return moment.replace(tzinfo=timezone.utc).astimezone().strftime('%H:%M')
+    from .. import people_time
+    return people_time.clock(moment)
 
 
 def describe(row, record, *, now=None):

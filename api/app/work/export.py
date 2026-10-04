@@ -175,10 +175,10 @@ class EvidenceExport:
         }
         document = json.dumps(manifest, indent=2, sort_keys=True, ensure_ascii=False).encode('utf-8') + b'\n'
         manifest_digest = hashlib.sha256(document).hexdigest()
-        lines = [f"Evidence for a document that arrived {text.utc_text(row['available_at'])}.",
-                 f"Exported by {names.get(actor.principal_id) or 'an unnamed account'} on {text.utc_text(now)}.",
+        lines = [f"Evidence for a document that arrived {text.time_text(row['available_at'])}.",
+                 f"Exported by {names.get(actor.principal_id) or 'an unnamed account'} on {text.time_text(now)}.",
                  '']
-        lines += [f"{text.utc_text(event['occurred_at'])}  {text.event_text(event['kind'], json.loads(event['details'] or '{}'))}"
+        lines += [f"{text.time_text(event['occurred_at'])}  {text.event_text(event['kind'], json.loads(event['details'] or '{}'))}"
                   for event in events]
         if missing:
             lines += ['', 'Not included or not recorded:'] + [f'- {item}' for item in missing]

@@ -54,7 +54,7 @@ Only the owner can acknowledge. The owner, or anyone who manages work on that do
 
 - `manifest.json`: the item, the document's size, page count and SHA-256 digest, how Faxbot acquired it (source, account, the source's operation ID and revision, the time the source reported, the time Faxbot imported and acquired it, and the source's own report), email deliveries with the addresses they went to and when, and the ownership and deadline history.
 - `original.pdf`: the document as Faxbot acquired it. It is included only when you may also open documents (`inbound:document`) on that item.
-- `history.txt`: one sentence per event, with times in UTC.
+- `history.txt`: one sentence per event, with times in the installation's time zone (UTC when none is set).
 
 The manifest names what is missing instead of leaving it out silently, for example "No provider receipt was retained for this fax.", "The original document is no longer stored." or "The original document was withheld because you do not have permission to read documents."
 
