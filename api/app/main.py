@@ -2877,8 +2877,13 @@ def update_plugin_config(plugin_id: str, payload: UpdatePluginConfigIn, request:
     if isinstance(payload.settings, dict):
         from .config_plugin_fields import PLUGIN_FIELDS
         mapping = PLUGIN_FIELDS.get(plugin_id.lower(), {})
-        _refuse_environment_managed(expected, {mapping[key]: value for key, value in payload.settings.items()
-                                               if key in mapping})
+        if payload.settings:
+            changes = {mapping[key]: value for key, value in payload.settings.items() if key in mapping}
+        else:
+            # Empty settings reset every provider field to its default (see _patch_plugin_values).
+            defaults = ConfigurationValues.from_environment({})
+            changes = {name: getattr(defaults, name) for name in mapping.values()}
+        _refuse_environment_managed(expected, changes)
     snapshot = _configuration_manager().patch_plugin_authorized(expected, plugin_id.lower(),
         settings=payload.settings, enabled=payload.enabled, role=payload.role,
         principal=identity.actor, control=access.control)
