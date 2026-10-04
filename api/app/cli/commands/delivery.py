@@ -10,7 +10,7 @@ import typer
 from .. import state
 from ..client import segment
 from ..errors import CliError
-from ..output import local_time, money, text
+from ..output import cost_amount, local_time, money, text
 
 routing = typer.Typer(help='Delivery routes, destinations, fax costs and rate cards.', no_args_is_help=True)
 intake = typer.Typer(help='The intake queue: received documents being delivered to email and other places.',
@@ -194,7 +194,7 @@ def routing_fax_cost(fax_id: str = typer.Argument(..., help="Fax ID from 'faxbot
 
 def _received_cost_rows(costs, items):
     return [[item.get('fr') or 'Unknown', local_time(item.get('received_at') or item.get('created_at')),
-             (costs.get(item['id']) or {}).get('summary') or 'No call record for this fax.'] for item in items]
+             cost_amount(costs.get(item['id']))] for item in items]
 
 
 @routing.command('received')

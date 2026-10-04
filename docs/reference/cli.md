@@ -438,7 +438,7 @@ $ faxbot sent [OPTIONS] COMMAND [ARGS]...
 
 **Commands**:
 
-* `list`: List sent faxes, newest first.
+* `list`: List sent faxes, newest first, with what...
 * `show`: Show one sent fax.
 * `pdf`: Download the document of a sent fax.
 * `refresh`: Ask the provider for the latest status of...
@@ -448,7 +448,7 @@ $ faxbot sent [OPTIONS] COMMAND [ARGS]...
 
 ### `faxbot sent list`
 
-List sent faxes, newest first. Fax numbers are partly hidden.
+List sent faxes, newest first, with what each cost. Fax numbers are partly hidden.
 
 **Usage**:
 

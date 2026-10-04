@@ -266,6 +266,8 @@ def test_send_status_jobs_and_documents(cli, tmp_path):
     assert cli.json('status', sent['id'])['id'] == sent['id']
     listing = cli.json('sent', 'list')
     assert listing['total'] == 2 and all(job['to_number'].startswith('*') for job in listing['jobs'])
+    assert set(listing['costs']) <= {job['id'] for job in listing['jobs']}
+    assert 'Cost' in cli('sent', 'list').stdout
     table = cli('sent', 'list')
     assert table.exit_code == 0 and sent['id'] not in table.stdout and '+15551230001' not in table.stdout
     assert sent['id'] in cli('sent', 'list', '--ids').stdout

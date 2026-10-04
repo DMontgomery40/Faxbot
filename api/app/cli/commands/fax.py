@@ -7,7 +7,7 @@ import typer
 from .. import state
 from ..client import segment
 from ..errors import CliError
-from ..output import local_time, parse_time, yes_no
+from ..output import cost_amount, local_time, parse_time, yes_no
 from ...provider_labels import provider_label
 
 
@@ -107,14 +107,23 @@ def jobs_list(status_filter: str = typer.Option(None, '--status', help='Only fax
               limit: int = typer.Option(50, '--limit', min=1, max=100, help='How many faxes to show.'),
               offset: int = typer.Option(0, '--offset', min=0, help='Skip this many of the newest faxes.'),
               ids: bool = typer.Option(False, '--ids', help="Also show each fax's ID, to use with faxbot sent show, pdf and refresh.")):
-    """List sent faxes, newest first. Fax numbers are partly hidden."""
-    page = state.api().get('/admin/fax-jobs', params={'status': status_filter, 'backend': provider,
-                                                      'limit': limit, 'offset': offset})
+    """List sent faxes, newest first, with what each cost. Fax numbers are partly hidden."""
+    api = state.api()
+    page = api.get('/admin/fax-jobs', params={'status': status_filter, 'backend': provider,
+                                              'limit': limit, 'offset': offset})
+    costs = {}
+    if page['jobs']:
+        try:
+            costs = api.get('/routing/fax-costs', params={'ids': ','.join(job['id'] for job in page['jobs'])})['costs']
+        except CliError:
+            costs = {}  # the list still shows without its cost column's amounts
+    page = {**page, 'costs': costs}
 
     def human(out):
-        out.table((['Fax ID'] if ids else []) + ['To', 'Status', 'Pages', 'Provider', 'Accepted'],
+        out.table((['Fax ID'] if ids else []) + ['To', 'Status', 'Pages', 'Provider', 'Cost', 'Accepted'],
                   [([job['id']] if ids else []) + [job['to_number'], job['status'], job['pages'], _provider(job['backend']),
-                                                   local_time(job['created_at'])] for job in page['jobs']],
+                                                   cost_amount(costs.get(job['id'])), local_time(job['created_at'])]
+                   for job in page['jobs']],
                   empty='No sent faxes.')
         if page['total'] > offset + len(page['jobs']):
             out.line(f"Showing {len(page['jobs'])} of {page['total']}. Use --offset to see more.")
