@@ -151,6 +151,11 @@ def test_numbers_list_shows_every_carried_number_like_your_numbers(numbers_cli):
     assert rows['+15555550101']['mailbox'] is None and rows['+15555550101']['email'] == 'Not emailed'
     assert [item['name'] for item in rows['+13035550197']['providers']] == ['HumbleFax']
     assert rows['+15555550101']['providers'] == [{'provider': 'sip', 'name': 'Carrier trunk', 'in_use': False}]
+    # The keys rule rows always had stay, so scripts reading them keep working.
+    assert (rows['+15555550100']['to_number'], rows['+15555550100']['mailbox_label']) == ('+15555550100', 'Front desk')
+    assert rows['+15555550100']['id'] and rows['+15555550100']['mailbox_id'] and rows['+15555550100']['version']
+    assert (rows['+15555550101']['to_number'], rows['+15555550101']['mailbox_label'], rows['+15555550101']['id']) == \
+        ('+15555550101', None, None)
     table = cli('numbers', 'list').stdout
     assert 'Carrier trunk (not in use now)' in table and 'No mailbox: received faxes are visible' in table
     assert '3035551234' not in table and 'FreeSWITCH' not in table
