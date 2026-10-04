@@ -26,7 +26,7 @@ This README describes the current source checkout. Published packages and deploy
 
 ## What Faxbot does
 
-- **Send and receive faxes.** Prepare PDF, TXT, and supported TIFF documents, track outbound jobs, and organize received faxes in mailboxes. Uncertain submissions wait for confirmation instead of being blindly sent again.
+- **Send and receive faxes.** Prepare PDF, TXT, and supported TIFF documents, track outbound jobs, and organize received faxes in mailboxes. Uncertain submissions wait for confirmation instead of being blindly sent again. A received fax shows as waiting until Faxbot has fetched and checked its real document; see [receiving faxes](docs/operations/receiving.md).
 - **Choose providers independently.** Use separate outbound and inbound providers. Built-in adapters cover Phaxio, Sinch, Documo, HumbleFax, SignalWire, SIP/Asterisk, and FreeSWITCH; supported operations vary by provider. Additional HTTP providers can use manifests. See [provider setup](docs/setup/index.md) and [the plugin registry](docs/plugins/registry.md).
 - **Fax through your own SIP carrier.** Connect a carrier SIP trunk (Telnyx first; SignalWire, Sinch, AnveoDirect, Flowroute or another) to the built-in Asterisk engine, fax over T.38 by the minute with no per-page fee, and keep a record of every call. See [SIP trunk setup](docs/setup/sip-trunk.md).
 - **Choose delivery routes and track spending.** Configure additional outbound routes, rate cards, and destination preferences. Faxbot uses price estimates and delivery history to rank routes, records each attempt, and reconciles reported SignalWire charges separately from delivery status. Unknown charges stay unknown. See [delivery routes](docs/operations/delivery-routes.md).
@@ -131,7 +131,7 @@ Checked items are implemented in the current source checkout. Unchecked items ar
 
 Future work will extend Faxbot from document delivery into accountable correspondence across industries. Build on existing access controls and delivery infrastructure, retaining separate inbound and outbound providers. The [enterprise architecture](planning/enterprise-correspondence.md) maps implemented foundations, partial capabilities and proposed interfaces. This direction does not expand Phase 1 or the four fixes above.
 
-- [ ] **E0 — Trustworthy acquisition:** recover incomplete imports, validate authentic artifacts and preserve source identity, receipt time and document provenance.
+- [x] **E0 — Trustworthy acquisition:** a received fax is recorded only from a checked notification and waits until its real document has arrived. It resumes after a restart or a repeated notification, and keeps its provider fax ID, account, receipt time and document digest. See [receiving faxes](docs/operations/receiving.md).
 - [ ] **E1 — Smallest useful workflow:** one generic import, a mailbox-scoped owned queue, acknowledgement deadlines and an evidence export. Transport delivery and business acknowledgement remain separate.
 - [ ] **E2 — Protected workflows:** a shared versioned policy foundation, exact-action approvals, verified recipient/purpose/channel policies, configurable retention and legal holds across managed copies.
 - [ ] **E3 — Templates and guided setup:** optional, source-backed jurisdiction/industry templates; organization, mailbox and workflow settings; explained suggestions and visible missing requirements. Prioritize UK, Australian and US healthcare and other regulated workflows without shipping unverified legal defaults.

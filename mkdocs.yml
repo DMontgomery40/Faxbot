@@ -163,6 +163,7 @@ nav:
     - Command line: operations/cli.md
     - Overview: operations/index.md
     - Delivery routes: operations/delivery-routes.md
+    - Receiving faxes: operations/receiving.md
     - Intake: operations/intake.md
     - Direct delivery: operations/direct-delivery.md
     - Tools:
