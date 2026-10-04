@@ -232,14 +232,8 @@ function SipTrunkSettings({ client, showCalls = true }: SipTrunkSettingsProps) {
             {preset.notes.map((note) => <Typography key={note} variant="body2">{note}</Typography>)}
             {preset.t38 && <Typography variant="body2">{preset.t38}</Typography>}
             {preset.sources.length > 0 && (
-              <Typography variant="body2" color="text.secondary">
-                Carrier documentation, read {preset.sources[0].read_on}:{' '}
-                {preset.sources.map((source, index) => (
-                  <span key={source.url}>
-                    {index > 0 && ', '}
-                    <Link href={source.url} target="_blank" rel="noreferrer">{new URL(source.url).hostname}</Link>
-                  </span>
-                ))}
+              <Typography variant="body2">
+                <Link href={preset.sources[0].url} target="_blank" rel="noreferrer">{preset.label} documentation</Link>
               </Typography>
             )}
           </Box>

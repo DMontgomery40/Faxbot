@@ -282,6 +282,8 @@ def test_wrong_keys_and_missing_table_fail_without_backend_context(database):
     _, admission = modules()
     from api.tests.test_access_schema import at_revision
     at_revision(database, '0005_access_control')
+    from api.tests.test_work_schema import add_work_catalogue
+    add_work_catalogue(database)  # current catalogue, still without the admission table
     store = AccessStore(database)
     for key in (None, True, '', bytearray(32), BytesSubclass(KEY), b'x' * 31,
                 b'x' * 33, b'x' * 1_000_000):

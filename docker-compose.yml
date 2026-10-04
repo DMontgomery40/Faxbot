@@ -1,12 +1,12 @@
-version: "3.9"
-
 services:
   api:
     build:
       context: .
       dockerfile: ./api/Dockerfile
+    # Settings for a new installation's first start. Optional: without it Faxbot starts with defaults.
     env_file:
-      - ./.env
+      - path: ./.env
+        required: false
     environment:
       - FAX_DATA_DIR=/faxdata
       - ENABLE_LOCAL_ADMIN=true
@@ -28,7 +28,8 @@ services:
       context: ./asterisk
       dockerfile: Dockerfile
     env_file:
-      - ./.env
+      - path: ./.env
+        required: false
     environment:
       - TZ=${TZ:-UTC}
     volumes:
@@ -40,15 +41,21 @@ services:
       - "4000-4999:4000-4999/udp" # UDPTL for T.38
 
   # Optional: Faxbot MCP Server for AI integration
+  # Each MCP client sends its own Faxbot API key with every request, so the MCP
+  # services get no Faxbot key. Values come from .env next to this file when set.
   faxbot-mcp:
     build:
       context: ./node_mcp
       dockerfile: Dockerfile
-    env_file:
-      - ./.env
     environment:
       - FAX_API_URL=http://api:8080
-      - API_KEY=${API_KEY}
+      - MCP_ALLOWED_HOSTS=${MCP_ALLOWED_HOSTS:-}
+      - MCP_ALLOWED_ORIGINS=${MCP_ALLOWED_ORIGINS:-}
+      - OAUTH_ISSUER=${OAUTH_ISSUER:-}
+      - OAUTH_AUDIENCE=${OAUTH_AUDIENCE:-}
+      - OAUTH_JWKS_URL=${OAUTH_JWKS_URL:-}
+      - MCP_OAUTH_SUBJECT_KEYS_FILE=${MCP_OAUTH_SUBJECT_KEYS_FILE:-}
+      - MCP_RESOURCE_URL=${MCP_RESOURCE_URL:-}
     depends_on:
       - api
     ports:
@@ -58,18 +65,20 @@ services:
     stdin_open: true
     tty: true
 
+  # Python MCP over SSE, only for older clients that cannot use Streamable HTTP.
   faxbot-mcp-py-sse:
     build:
       context: ./python_mcp
       dockerfile: Dockerfile.sse
-    env_file:
-      - ./.env
     environment:
       - FAX_API_URL=http://api:8080
-      - API_KEY=${API_KEY}
-      - OAUTH_ISSUER=${OAUTH_ISSUER}
-      - OAUTH_AUDIENCE=${OAUTH_AUDIENCE}
-      - OAUTH_JWKS_URL=${OAUTH_JWKS_URL}
+      - MCP_ALLOWED_HOSTS=${MCP_ALLOWED_HOSTS:-}
+      - MCP_ALLOWED_ORIGINS=${MCP_ALLOWED_ORIGINS:-}
+      - OAUTH_ISSUER=${OAUTH_ISSUER:-}
+      - OAUTH_AUDIENCE=${OAUTH_AUDIENCE:-}
+      - OAUTH_JWKS_URL=${OAUTH_JWKS_URL:-}
+      - MCP_OAUTH_SUBJECT_KEYS_FILE=${MCP_OAUTH_SUBJECT_KEYS_FILE:-}
+      - MCP_RESOURCE_URL=${MCP_RESOURCE_URL:-}
     depends_on:
       - api
     ports:

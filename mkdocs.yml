@@ -134,6 +134,7 @@ markdown_extensions:
       emoji_generator: !!python/name:material.extensions.emoji.to_svg
 nav:
   - Home: index.md
+  - Release notes: release-notes.md
   - Getting started:
     - Overview: getting-started.md
     - Contributing: https://github.com/DMontgomery40/Faxbot/blob/main/CONTRIBUTING.md

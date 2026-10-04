@@ -54,6 +54,8 @@ def test_every_preset_has_a_golden_case_and_every_carrier_cites_dated_sources():
     for preset in sip_trunk.PRESETS.values():
         if preset.id != 'custom':
             assert preset.sources, preset.id
+            # The console links the first source as the carrier's documentation page.
+            assert not preset.sources[0].url.endswith('.json'), preset.id
         for source in preset.sources:
             assert source.url.startswith('https://') and source.read_on == '2026-10-03'
         assert set(preset.codecs) <= {'ulaw', 'alaw'}
