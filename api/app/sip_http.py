@@ -83,34 +83,51 @@ _UNTESTED = 'the first test fax shows whether it does.'
 
 
 def _observed(records):
-    """What calls have shown about T.38 on this network: 'no_t38_data_back', 'fax_ok' or None."""
+    """What recent calls have shown on this network, or None before any fax went through or failed.
+
+    ``t38_failed``: the newest T.38 call got no fax data back; ``t38_ok``: it
+    went through; ``audio_ok``: a fax sent or received as audio went through.
+    """
     try:
         items = records.page(limit=50)['items'] if records else []
     except (SipCallRecordError, ValueError):
         return None
+    found = {'t38_failed': False, 't38_ok': False, 'audio_ok': False}
+    newest_t38 = True
     for item in items:
-        if item.get('verdict') == 'no_t38_data_back':
-            return 'no_t38_data_back'
-        if item.get('verdict') in ('sent', 'received'):
-            return 'fax_ok'
-    return None
+        went_through = item.get('verdict') in ('sent', 'received')
+        if item.get('t38') == 'yes':
+            if newest_t38:
+                found['t38_failed'] = item.get('verdict') == 'no_t38_data_back'
+                found['t38_ok'] = went_through
+            newest_t38 = False
+        elif went_through:
+            found['audio_ok'] = True
+    return found if any(found.values()) else None
 
 
 def _address_text(summary, network, carrier, observed=None, audio=False):
     """Faxbot's internet address in use and how the network treats it, in one sentence.
 
-    Once a call has shown whether the carrier follows Faxbot's packets, the
-    sentence says what it showed instead of waiting for the first test fax.
+    Once calls have shown whether the carrier follows Faxbot's packets, the
+    sentence says what they showed instead of waiting for the first test fax:
+    audio and T.38 can differ (a carrier may follow audio packets but not
+    T.38 ones), so both are named when both were seen.
     """
     text = _network_text(summary, network, carrier)
     if not text.endswith(_UNTESTED) or observed is None:
         return text
     lead = text[:-len(_UNTESTED)].rstrip(' ,;').removesuffix(', and')
-    if observed == 'fax_ok':
-        return f'{lead}, and a fax that went through shows it does.'
-    lead = lead.removesuffix(f", so {carrier} has to follow Faxbot's packets")
-    return (f'{lead}, and the last T.38 fax got no fax data back, so {carrier} does not follow Faxbot\'s T.38 packets '
-            f'on this network{"; audio fax is in use" if audio else ""}.')
+    bare = lead.removesuffix(f", so {carrier} has to follow Faxbot's packets")
+    if observed['t38_failed'] and observed['audio_ok']:
+        return (f"{bare}, and {carrier} follows Faxbot's audio packets (a fax went through) but not its T.38 packets"
+                f"{', so Faxbot uses audio fax' if audio else ''}.")
+    if observed['t38_failed']:
+        return (f'{bare}, and the last T.38 fax got no fax data back, so {carrier} does not follow Faxbot\'s T.38 '
+                f'packets on this network{"; audio fax is in use" if audio else ""}.')
+    if observed['t38_ok']:
+        return f'{lead}, and a T.38 fax that went through shows it does.'
+    return f'{lead}, and a fax that went through shows it does.'
 
 
 def _network_text(summary, network, carrier):

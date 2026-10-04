@@ -22,7 +22,7 @@ Carrier names are accepted too: `HUMBLEFAX_API_ACCESS_KEY` and `HUMBLEFAX_API_SE
 
 ## Provider directions and disabled sending
 
-The default provider, the outbound override and the inbound override are separate choices. An empty override uses the default provider. Choosing an inbound provider does not turn receiving on; use its own switch. Providers installed from a manifest are configured in **Tools → Plugins**.
+**Fax providers** offers the same two choices as the Setup Wizard: **Sending** and **Receiving**, each a provider or **No provider**, with each provider shown by its one name (for example **SIP trunk (Asterisk)**). Choosing a receiving provider turns receiving on, and **No provider** turns it off. Faxbot needs a sending provider whenever it receives, so Settings asks for one before saving receiving on its own. "In use" shows what sends and receives right now; a change that waits for a restart shows **Restart now**. The Dashboard's configuration card names the same two. Providers installed from a manifest are configured in **Tools → Plugins**.
 
 **Disable outbound fax sending** keeps accepting new faxes but holds them instead of sending. Turning sending back on never sends held faxes automatically, and pausing cannot recall a fax that is already being sent. Read [Test Mode](../setup/test-mode.md) before testing.
 

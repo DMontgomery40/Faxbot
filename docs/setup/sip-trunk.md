@@ -27,7 +27,7 @@ A Telnyx trial account can only call verified numbers until you upgrade it.
 | How Faxbot signs in | Username and password |
 | Server | Leave empty to use `sip.telnyx.com` |
 | Port | Leave empty to use 5061 |
-| Transport | Leave as the default, **Encrypted (recommended)**. Choose **TCP** if the encrypted connection fails, and **UDP (older)** only as a last resort |
+| Transport | Leave as the default, **Default: Encrypted (TLS)**. Choose **TCP** if the encrypted connection fails, and **UDP (older)** only as a last resort |
 | Username and password | The connection's credentials |
 | Caller ID | Your Telnyx number in international format, such as `+17205550100` |
 | Fax numbers on this trunk | The same number, in the same format |
@@ -66,7 +66,7 @@ Carrier pages used for the presets:
 ## Set it up
 
 1. In the console, open the **Setup Wizard**, choose **SIP trunk (Asterisk)** for sending, receiving or both, and select **Next**. The first time, select **Restart now** when Setup asks. The next step shows the trunk form; **Settings** shows the same form under **Carrier SIP trunk**.
-2. Choose your carrier and how Faxbot signs in. Fill in the server if the carrier asks for one, then the username and password.
+2. Choose your carrier and how Faxbot signs in. The screen says which directions the trunk carries; a trunk that only receives needs no caller ID. Server, port and transport show the carrier's values in force (for example `sip.telnyx.com`, `5061`, **Default: Encrypted (TLS)**) until you type your own. Fill in the server if the carrier asks for one, then the username and password.
 3. Enter your caller ID and the fax numbers the carrier sends to this trunk.
 4. Select **Apply and connect**. Faxbot saves what you typed, writes the trunk for Asterisk, restarts Asterisk to load it and keeps checking ("Checking the carrier…") until the carrier answers Faxbot's check, for up to a minute, then shows the trunk check on the same screen: the transport Faxbot registered over, how quickly the carrier answers its checks, Faxbot's internet address and "No ports need to be opened or forwarded." From the command line, `faxbot trunk apply` does the same.
    When Asterisk already runs exactly these settings, nothing restarts and the result says "Saved. Asterisk already uses these settings." Until a trunk is set up for each direction that uses it, Faxbot's readiness and the Dashboard say "No SIP trunk is set up. Choose your carrier to start." (or "Some trunk settings are missing.").

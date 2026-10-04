@@ -30,7 +30,7 @@ import {
   useTheme,
 } from '@mui/material';
 import AdminAPIClient, { AdminAPIError, isForbidden } from '../api/client';
-import type { NumberFormat, SettingsPatch } from '../api/types';
+import type { NumberFormat, Settings, SettingsPatch } from '../api/types';
 import type { SipCallRecord, SipPreset, SipTrunkSettings as TrunkValues, SipTrunkStatus } from '../api/sipTypes';
 import SecretInput from './common/SecretInput';
 import EnvSetField, { environmentManaged } from './common/EnvSetField';
@@ -64,9 +64,26 @@ const EMPTY: TrunkValues = {
 
 // Plain names for the signaling transport; encrypted is the default for carriers that offer it.
 const TRANSPORT_TEXT: Record<string, string> = {
-  tls: 'Encrypted (recommended)',
+  tls: 'Encrypted (TLS)',
   tcp: 'TCP',
   udp: 'UDP (older)',
+};
+const DEFAULT_PORTS: Record<string, number> = { udp: 5060, tcp: 5060, tls: 5061 };
+
+// Which directions the trunk carries, from the saved provider choice.
+type TrunkUse = { sends: boolean; receives: boolean };
+
+function trunkUse(settings: Settings): TrunkUse {
+  const sending = settings.hybrid?.outbound_backend ?? settings.backend.type;
+  const receiving = settings.hybrid?.inbound_backend ?? settings.backend.type;
+  const routes = String(settings.routing?.outbound_routes ?? '').split(',').map((route) => route.trim());
+  return { sends: sending === 'sip' || routes.includes('sip'), receives: !!settings.inbound.enabled && receiving === 'sip' };
+}
+
+const INTRO: Record<string, string> = {
+  both: 'Send and receive faxes with Faxbot\'s own fax engine over your carrier account.',
+  receives: 'Receive faxes with Faxbot\'s own fax engine over your carrier account.',
+  sends: 'Send faxes with Faxbot\'s own fax engine over your carrier account.',
 };
 
 const RESULT_TEXT: Record<SipCallRecord['disposition'], string> = {
@@ -138,6 +155,7 @@ function SipTrunkSettings({ client, showCalls = true, revision: sharedRevision, 
   const [callsNote, setCallsNote] = useState<string | null>(null);
   const [numberFormat, setNumberFormat] = useState<NumberFormat | null>(null);
   const [passwordInEnv, setPasswordInEnv] = useState(false);
+  const [use, setUse] = useState<TrunkUse | null>(null);
   const [connecting, setConnecting] = useState(false);
   const [handover, setHandover] = useState<{ ready: boolean; text: string } | null>(null);
   const alive = useRef(true);
@@ -159,6 +177,7 @@ function SipTrunkSettings({ client, showCalls = true, revision: sharedRevision, 
       setRevision(settings._meta?.desired_revision_id);
       setPasswordInEnv(environmentManaged(settings).has('sip_trunk_password'));
       setNumberFormat(settingsNumberFormat(settings));
+      setUse(settings.backend && settings.inbound ? trunkUse(settings) : null);
     } catch (error) {
       setNotice({ severity: 'error', text: failure(error, 'Trunk settings could not be loaded. Try again.') });
     }
@@ -363,13 +382,16 @@ function SipTrunkSettings({ client, showCalls = true, revision: sharedRevision, 
     : status && (status.registration === 'rejected' || status.reachability === 'unreachable'
       || (!!status.ports_text && status.ports_text === status.message)) ? 'error' : 'info';
   const needsHost = !!preset && (preset.needs_host || preset.id === 'custom');
+  const sends = use ? use.sends : true;
+  const transportInForce = form.transport || preset?.transport || 'udp';
+  const portInForce = preset ? (transportInForce === preset.transport ? preset.port : DEFAULT_PORTS[transportInForce]) : 5060;
   const prefixLogin = !!preset?.ip_dial_prefix && form.auth === 'ip';
 
   return (
     <Stack spacing={2} data-testid="sip-trunk-settings">
       <Typography variant="h6">Carrier SIP trunk</Typography>
       <Typography variant="body2" color="text.secondary">
-        Send and receive faxes with Faxbot's own fax engine over your carrier account. Your carrier bills these calls by the minute.
+        {`${INTRO[use?.sends && !use.receives ? 'sends' : use?.receives && !use.sends ? 'receives' : 'both']} Your carrier bills these calls by the minute.`}
       </Typography>
 
       <FormControl fullWidth size="small">
@@ -408,17 +430,18 @@ function SipTrunkSettings({ client, showCalls = true, revision: sharedRevision, 
 
           <Stack direction={narrow ? 'column' : 'row'} spacing={2}>
             <TextField size="small" fullWidth label="Server" value={form.host}
-              required={needsHost} placeholder={preset.host || 'sip.example.com'}
+              required={needsHost} placeholder={preset.host || 'sip.example.com'} InputLabelProps={{ shrink: true }}
               helperText={needsHost ? 'The SIP server name your carrier gave you.' : `Leave empty to use ${preset.host}.`}
               onChange={(event) => update('host', event.target.value.trim())} />
             <TextField size="small" label="Port" type="number" value={form.port || ''}
-              placeholder={String(preset.port)} sx={{ minWidth: 120 }}
+              placeholder={String(portInForce)} sx={{ minWidth: 120 }} InputLabelProps={{ shrink: true }}
+              helperText={form.port ? undefined : `Leave empty to use ${portInForce}.`}
               onChange={(event) => update('port', Number(event.target.value) || 0)} />
-            <FormControl size="small" sx={{ minWidth: 140 }}>
-              <InputLabel id="sip-transport-label">Transport</InputLabel>
-              <Select labelId="sip-transport-label" label="Transport" value={form.transport}
+            <FormControl size="small" sx={{ minWidth: 180 }}>
+              <InputLabel id="sip-transport-label" shrink>Transport</InputLabel>
+              <Select labelId="sip-transport-label" label="Transport" value={form.transport} displayEmpty notched
                 onChange={(event) => update('transport', String(event.target.value))}>
-                <MenuItem value="">{`Default (${TRANSPORT_TEXT[preset.transport] ?? preset.transport.toUpperCase()})`}</MenuItem>
+                <MenuItem value="">{`Default: ${TRANSPORT_TEXT[preset.transport] ?? preset.transport.toUpperCase()}`}</MenuItem>
                 <MenuItem value="tls">{TRANSPORT_TEXT.tls}</MenuItem>
                 <MenuItem value="tcp">{TRANSPORT_TEXT.tcp}</MenuItem>
                 <MenuItem value="udp">{TRANSPORT_TEXT.udp}</MenuItem>
@@ -452,9 +475,11 @@ function SipTrunkSettings({ client, showCalls = true, revision: sharedRevision, 
               : 'Leave empty: Faxbot finds its internet address itself and needs no open ports. Enter one only to override it.'}
             onChange={(event) => update('external_address', event.target.value.trim())} />
 
-          <TextField size="small" fullWidth label="Caller ID" value={form.caller_id} required type="tel"
-            placeholder={numberPlaceholder(numberFormat)}
-            helperText="A number your carrier has assigned to you or verified for you. Faxbot never sends any other number."
+          <TextField size="small" fullWidth label={sends ? 'Caller ID' : 'Caller ID (optional)'} value={form.caller_id}
+            required={sends} type="tel" placeholder={numberPlaceholder(numberFormat)}
+            helperText={sends
+              ? 'A number your carrier has assigned to you or verified for you. Faxbot never sends any other number.'
+              : 'Needed only when the trunk sends faxes: a number your carrier has assigned to you or verified for you.'}
             onChange={(event) => update('caller_id', event.target.value)} />
 
           <Box>

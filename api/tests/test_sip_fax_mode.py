@@ -168,3 +168,34 @@ def test_a_t38_fax_that_went_through_since_leaves_no_derived_reason(client, netw
     assert client.post('/admin/sip/apply', headers=ADMIN).status_code == 200
     values = runtime.manager.store.read().active.values
     assert sip_fax_mode.read(values)['reason'] == 'chosen'
+
+
+class _Calls:
+    def __init__(self, *items):
+        self.items = list(items)
+
+    def page(self, **_):
+        return {'items': self.items, 'next_cursor': None}
+
+
+@pytest.mark.parametrize('calls, audio, sentence', [
+    # Tonight's install: T.38 got no data back, then an audio fax went through.
+    ((({'t38': 'no', 'verdict': 'sent'}), {'t38': 'yes', 'verdict': 'no_t38_data_back'}), True,
+     "Faxbot's internet address is 198.51.100.7; your network changes port numbers, and Telnyx follows Faxbot's "
+     "audio packets (a fax went through) but not its T.38 packets, so Faxbot uses audio fax."),
+    (({'t38': 'yes', 'verdict': 'no_t38_data_back'},), False,
+     "Faxbot's internet address is 198.51.100.7; your network changes port numbers, and the last T.38 fax got no fax "
+     "data back, so Telnyx does not follow Faxbot's T.38 packets on this network."),
+    (({'t38': 'yes', 'verdict': 'received'}, {'t38': 'yes', 'verdict': 'no_t38_data_back'}), False,
+     "Faxbot's internet address is 198.51.100.7; your network changes port numbers, so Telnyx has to follow Faxbot's "
+     "packets, and a T.38 fax that went through shows it does."),
+    (({'t38': 'no', 'verdict': 'received'},), False,
+     "Faxbot's internet address is 198.51.100.7; your network changes port numbers, so Telnyx has to follow Faxbot's "
+     "packets, and a fax that went through shows it does."),
+    ((), False,
+     "Faxbot's internet address is 198.51.100.7; your network changes port numbers, so Telnyx has to follow Faxbot's "
+     "packets, and the first test fax shows whether it does."),
+])
+def test_the_internet_address_sentence_says_what_calls_have_shown(calls, audio, sentence):
+    observed = sip_http._observed(_Calls(*calls))
+    assert sip_http._address_text({}, CHANGES_PORTS, 'Telnyx', observed, audio) == sentence

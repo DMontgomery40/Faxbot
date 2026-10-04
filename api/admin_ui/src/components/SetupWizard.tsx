@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useId, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Accordion, AccordionDetails, AccordionSummary, Box, Card, CardContent, Typography, Stepper, Step, StepLabel, Button,
-  TextField, FormControl, InputLabel, Select, MenuItem, Alert, CircularProgress, Grid, Paper, Chip, Switch,
+  TextField, Alert, CircularProgress, Grid, Paper, Chip, Switch,
   FormControlLabel, Link,
 } from '@mui/material';
 import { ExpandMore as ExpandMoreIcon } from '@mui/icons-material';
@@ -14,7 +14,8 @@ import EnvSetField, { environmentManaged } from './common/EnvSetField';
 import RestartNotice, { RESTARTED } from './common/RestartFaxbot';
 import SipTrunkSettings from './SipTrunkSettings';
 import { COUNTRY_HELP, CountryField } from './common/numbers';
-import { BUILTIN_PROVIDERS, NO_PROVIDER_LABEL, RECEIVING_PROVIDERS, directionSummary, providerLabel } from '../providerLabels';
+import { directionSummary, providerLabel } from '../providerLabels';
+import ProviderDirectionFields, { directionPatch, directionProblem, loadedDirections } from './common/ProviderDirections';
 
 interface SetupWizardProps {
   client: AdminAPIClient;
@@ -80,21 +81,13 @@ const PROVIDER_PENDING = new Set(['fax_backend', 'outbound_backend', 'inbound_ba
 const isMask = (value: FormValue) => typeof value === 'string' && /^\*+$/.test(value);
 const errorText = (error: unknown, fallback: string) => error instanceof Error ? error.message : fallback;
 
-// What sends and what receives faxes now, from the loaded settings.
-function directions(data: Settings) {
-  const fallback = data.backend.type || '';
-  const sending = data.hybrid ? data.hybrid.outbound_backend ?? fallback : fallback;
-  const receiving = data.inbound.enabled ? (data.hybrid ? data.hybrid.inbound_backend ?? fallback : fallback) : '';
-  return { sending: sending || '', receiving: receiving || '' };
-}
-
 // The settings patch names, copied from the loaded settings. Sending and
 // receiving are the wizard's own two choices; they are saved as the provider
 // settings Faxbot stores. The baseline includes masks so unrelated edits never
 // submit stored secrets.
 function editorValues(data: Settings): WizardConfig {
   return {
-    ...directions(data),
+    ...loadedDirections(data),
     enforce_public_https: data.security.enforce_https,
     audit_log_enabled: data.security.audit_enabled,
     public_api_url: data.security.public_api_url,
@@ -140,30 +133,7 @@ function stepFields(step: number, data: Settings | null): string[] {
   return [];
 }
 
-// The stored provider settings for a sending/receiving choice: sending is the
-// default provider, receiving is an override only when it differs.
-function providerPatch(sending: string, receiving: string, data: Settings): SettingsPatch {
-  const current = {
-    backend: data.backend.type || '',
-    outbound_backend: data.hybrid?.outbound_override ?? '',
-    inbound_backend: data.hybrid?.inbound_override ?? '',
-    inbound_enabled: data.inbound.enabled,
-  };
-  const wanted = {
-    backend: sending,
-    outbound_backend: '',
-    inbound_backend: receiving ? (receiving === sending ? '' : receiving) : current.inbound_backend,
-    inbound_enabled: !!receiving,
-  };
-  const patch: SettingsPatch = {};
-  for (const [name, value] of Object.entries(wanted)) {
-    if (current[name as keyof typeof current] !== value) patch[name] = value;
-  }
-  return patch;
-}
-
 function SetupWizard({ client, onDone, docsBase, canRestart = true }: SetupWizardProps) {
-  const fieldId = useId();
   const [activeStep, setActiveStep] = useState(0);
   const [settings, setSettings] = useState<Settings | null>(null);
   const [config, setConfig] = useState<WizardConfig>({});
@@ -307,14 +277,6 @@ function SetupWizard({ client, onDone, docsBase, canRestart = true }: SetupWizar
   const label = (id: string) => providerLabel(id, pluginNames.get(id));
   const manifest = (id: string) => providers.some(provider => provider.id === id && provider.source === 'manifest');
   const builtin = (id: string) => !!credentialFields[id] && !manifest(id) && (!settings?.features?.v3_plugins || catalogReady);
-  const choices = (forReceiving: boolean) => {
-    const ids = [...BUILTIN_PROVIDERS, ...providers.map(provider => provider.id).filter(id => !BUILTIN_PROVIDERS.includes(id))];
-    for (const id of [config.sending, config.receiving, baseline.sending, baseline.receiving]) {
-      if (typeof id === 'string' && id && !ids.includes(id)) ids.push(id);
-    }
-    return ids.filter(id => !forReceiving || RECEIVING_PROVIDERS.has(id) || id === config.receiving ||
-      providers.some(provider => provider.id === id && provider.categories?.includes('inbound')));
-  };
 
   // Ref fencing takes effect synchronously, before React renders busy controls.
   const beginAction = () => {
@@ -385,8 +347,9 @@ function SetupWizard({ client, onDone, docsBase, canRestart = true }: SetupWizar
       patch[field] = value;
     }
     if (step === 0 && settings && (sending !== baseline.sending || receiving !== baseline.receiving)) {
-      if (!sending && receiving) return 'Choose a provider for sending as well; Faxbot needs one even when it mainly receives.';
-      Object.assign(patch, providerPatch(sending, receiving, settings));
+      const problem = directionProblem({ sending, receiving });
+      if (problem) return problem;
+      Object.assign(patch, directionPatch({ sending, receiving }, settings));
     }
     return patch;
   };
@@ -579,18 +542,6 @@ function SetupWizard({ client, onDone, docsBase, canRestart = true }: SetupWizar
     </Box>
   );
 
-  const providerControl = (field: 'sending' | 'receiving', title: string) => (
-    <FormControl fullWidth sx={{ mt: 2 }}>
-      <InputLabel id={`${fieldId}-${field}-label`} shrink>{title}</InputLabel>
-      <Select id={`${fieldId}-${field}`} labelId={`${fieldId}-${field}-label`} displayEmpty
-        value={String(config[field] ?? '')} disabled={!canEdit} label={title}
-        onChange={event => handleConfigChange(field, String(event.target.value))}>
-        <MenuItem value="">{NO_PROVIDER_LABEL}</MenuItem>
-        {choices(field === 'receiving').map(id => <MenuItem key={id} value={id}>{label(id)}</MenuItem>)}
-      </Select>
-    </FormControl>
-  );
-
   const field = (spec: CredentialField) => (
     <Grid item xs={12} key={spec.key}>
       {spec.secret && environmentManaged(settings).has(spec.key) ? <EnvSetField fullWidth label={spec.label} /> :
@@ -672,11 +623,13 @@ function SetupWizard({ client, onDone, docsBase, canRestart = true }: SetupWizar
   const renderStepContent = () => {
     if (activeStep === 0) return <Box>
       <Typography variant="h6">Choose Providers</Typography>
-      {providerControl('sending', 'Sending')}
-      {providerControl('receiving', 'Receiving')}
-      {sending || receiving ? <Typography sx={{ mt: 2 }}>{directionSummary(sending, receiving)}</Typography>
-        : <Alert severity="warning" sx={{ mt: 2 }} data-testid="no-provider">No fax provider set up yet. <Link href={docsLink('providers', docsBase)} target="_blank" rel="noreferrer">Provider setup</Link></Alert>}
-      {!sending && receiving && <Alert severity="info" sx={{ mt: 1 }}>Choose a provider for sending as well; Faxbot needs one even when it mainly receives.</Alert>}
+      <ProviderDirectionFields value={{ sending, receiving }} disabled={!canEdit} plugins={providers}
+        saved={{ sending: String(baseline.sending ?? ''), receiving: String(baseline.receiving ?? '') }}
+        onChange={next => {
+          if (next.sending !== sending) handleConfigChange('sending', next.sending);
+          if (next.receiving !== receiving) handleConfigChange('receiving', next.receiving);
+        }} />
+      {!sending && !receiving && <Alert severity="warning" sx={{ mt: 2 }} data-testid="no-provider">No fax provider set up yet. <Link href={docsLink('providers', docsBase)} target="_blank" rel="noreferrer">Provider setup</Link></Alert>}
       <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>Next saves these choices.</Typography>
       {settings?.numbers && <Box sx={{ mt: 3 }}>
         <CountryField label="Installation country" helperText={COUNTRY_HELP} disabled={!canEdit}

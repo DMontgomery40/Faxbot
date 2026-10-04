@@ -218,7 +218,7 @@ describe('SIP trunk settings', () => {
     fireEvent.mouseDown(screen.getByLabelText('Transport'));
     const options = await screen.findAllByRole('option');
     expect(options.map((option) => option.textContent)).toEqual(
-      ['Default (Encrypted (recommended))', 'Encrypted (recommended)', 'TCP', 'UDP (older)']);
+      ['Default: Encrypted (TLS)', 'Encrypted (TLS)', 'TCP', 'UDP (older)']);
     expect(screen.getByLabelText(/Internet address/).getAttribute('placeholder')).toBe('Automatic');
   });
 
@@ -347,6 +347,37 @@ describe('SIP trunk settings', () => {
     expect(writes).toEqual([{ expected_revision_id: 'rev-1', sip_t38_enabled: true }]);
     await waitFor(() => expect(screen.queryByTestId('t38-off-reason')).toBeNull());
     expect(screen.getByRole('checkbox', { name: 'Use T.38 fax over IP (recommended)' })).toBeTruthy();
+  });
+
+  it('shows the server, port and transport in force when the carrier defaults are used', async () => {
+    server.use(
+      http.get('/admin/sip/presets', () => HttpResponse.json({ presets: [{ ...PRESETS[0], port: 5061, transport: 'tls' }] })),
+      http.get('/admin/settings', () => HttpResponse.json(settings())),
+      http.get('/admin/sip/calls', () => HttpResponse.json({ items: [], next_cursor: null })),
+    );
+    render(<SipTrunkSettings client={client()} />);
+    await screen.findByText('A password is saved.');
+    expect(screen.getByLabelText('Server').getAttribute('placeholder')).toBe('sip.telnyx.com');
+    expect(screen.getByText('Leave empty to use sip.telnyx.com.')).toBeTruthy();
+    expect(screen.getByLabelText('Port').getAttribute('placeholder')).toBe('5061');
+    expect(screen.getByText('Leave empty to use 5061.')).toBeTruthy();
+    expect(screen.getByLabelText('Transport').textContent).toBe('Default: Encrypted (TLS)');
+  });
+
+  it('matches the directions the trunk carries: a receiving-only trunk needs no caller ID', async () => {
+    const receivingOnly = { ...settings(), backend: { type: 'humblefax', disabled: false },
+      hybrid: { outbound_backend: 'humblefax', inbound_backend: 'sip', outbound_override: '', inbound_override: 'sip' },
+      inbound: { enabled: true }, routing: { outbound_routes: '', min_success_percent: 80 } };
+    server.use(
+      http.get('/admin/sip/presets', () => HttpResponse.json({ presets: PRESETS })),
+      http.get('/admin/settings', () => HttpResponse.json(receivingOnly)),
+      http.get('/admin/sip/calls', () => HttpResponse.json({ items: [], next_cursor: null })),
+    );
+    render(<SipTrunkSettings client={client()} />);
+    expect(await screen.findByText(/^Receive faxes with Faxbot's own fax engine over your carrier account\./)).toBeTruthy();
+    const caller = screen.getByLabelText('Caller ID (optional)') as HTMLInputElement;
+    expect(caller.required).toBe(false);
+    expect(screen.queryByText(/^Send and receive faxes/)).toBeNull();
   });
 
   it('says so in one sentence when a call keeps Asterisk from restarting', async () => {
