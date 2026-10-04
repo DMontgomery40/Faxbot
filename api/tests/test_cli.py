@@ -310,6 +310,21 @@ def test_management_is_refused_without_permission_and_after_policy_change(cli):
     assert refused.exit_code == 4
 
 
+def test_a_key_whose_owner_has_a_temporary_password_says_so(cli, tmp_path):
+    assert cli('users', 'add', 'sam', '--name', 'Sam Sender').exit_code == 0
+    assert cli('access', 'grant', 'sam', 'Fax operator').exit_code == 0
+    token = cli.json('keys', 'create', '--for', 'sam', '-p', 'fax:send', '-p', 'fax:read', '--name', 'Sam key')['token']
+    sentence = 'The owner of this key must set a new password before it can be used.'
+    listed = cli('jobs', 'list', key=token)
+    assert listed.exit_code == 4 and listed.stderr.strip() == sentence
+    note = tmp_path / 'note.txt'
+    note.write_text('Synthetic\n')
+    sent = cli('send', '+15551230001', note, '--queue', key=token)
+    assert sent.exit_code == 4 and sent.stderr.strip() == sentence
+    response = cli.client.get('/admin/fax-jobs', headers={'X-API-Key': token})
+    assert response.status_code == 403 and response.json() == {'detail': sentence}
+
+
 def test_keys_create_rotate_revoke_and_quiet_reveal(cli):
     key_id, token = restricted_key(cli, 'Scanner')
     assert token.startswith('fbk_live_' + key_id)
