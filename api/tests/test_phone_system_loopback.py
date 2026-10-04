@@ -25,6 +25,10 @@ system received the dialled string 9 + the national number, Faxbot identified
 the phone system's INVITE by its own address, and Faxbot's container address
 never appears anywhere in what the phone system received (Via, Contact, SDP
 o= and c=): the only address Faxbot names is the LAN address.
+
+The UK and Australian carrier presets (Gamma, BT One Voice as audio fax,
+Telstra SIP Connect registering over TCP) fax both ways the same way, each
+rendered exactly as Faxbot writes it, with a second Asterisk as the carrier.
 """
 import json
 import os
@@ -37,8 +41,9 @@ import pytest
 
 from app import ami, sip_trunk
 from app.config_values import ConfigurationValues
-from tests.test_t38_loopback import (AMI_PASSWORD, AMI_USER, CAPTURE, ROUTER_DOCKERFILE, SECRET, Docker,
-                                     _ami_originate, _interface_for, never_latch, proof_pages, wait_booted)
+from tests.test_t38_loopback import (AMI_PASSWORD, AMI_USER, CAPTURE, ROUTER_DOCKERFILE, SECRET, TRUNK_PASSWORD,
+                                     TRUNK_USER, Docker, _ami_originate, _interface_for, carrier_conf, never_latch,
+                                     proof_pages, wait_booted)
 
 
 pytestmark = [
@@ -239,3 +244,104 @@ def test_a_phone_system_on_the_local_network_faxes_with_faxbot_both_ways(tmp_pat
     # Faxbot dialled the outside number the way a phone in the UK does, after the outside-line prefix.
     assert evidence['to_phone_system']['to_number'] == OUTSIDE_DIALLED
     assert evidence['from_phone_system']['to_number'] == FAXBOT_NUMBER
+
+
+# UK and Australian carrier presets -------------------------------------------------------------------
+#
+# Faxbot's side is each preset exactly as Faxbot renders it; a second Asterisk stands in for the carrier
+# on one --internal network: Gamma and BT One Voice recognise Faxbot by address (BT as audio fax, the
+# mode a new BT trunk starts in), and Telstra SIP Connect is a registrar Faxbot signs in to over TCP.
+
+CARRIER_CASES = {
+    'gamma': {'country': 'GB', 'number': '+441632960123', 'ours': '+442079460001', 't38': True},
+    'bt-one-voice': {'country': 'GB', 'number': '+441632960123', 'ours': '+442079460001', 't38': False},
+    'telstra-sip-connect': {'country': 'AU', 'number': '+61255501234', 'ours': '+61255509876', 't38': True},
+}
+
+
+def carrier_preset_exchange(tmp_path, preset):
+    case = CARRIER_CASES[preset]
+    docker = Docker()
+    image = os.environ.get('FAXBOT_NATIVE_IMAGE') or 'faxbot-native:t38-proof'
+    if not os.environ.get('FAXBOT_NATIVE_IMAGE'):
+        docker.run('build', '--quiet', '--tag', image, str(ROOT / 'asterisk'), timeout=3600)
+    try:
+        docker.network = docker.prefix
+        docker.run('network', 'create', '--internal', '--label', 'com.faxbot.scope=t38-proof', docker.network)
+        capture = docker.start('api', 'python:3.11-slim', 'python', '-c', CAPTURE)
+        faxbot = docker.start('faxbot', image, 'infinity', entrypoint='sleep')
+        carrier = docker.start('carrier', image, 'infinity', entrypoint='sleep')
+        faxbot_address, carrier_address, api = (docker.address(item) for item in (faxbot, carrier, capture))
+        t38 = 'true' if case['t38'] else 'false'
+        common = {'SIP_TRUNK_PRESET': preset, 'SIP_TRUNK_HOST': carrier_address, 'FAX_DEFAULT_COUNTRY': case['country'],
+                  'SIP_TRUNK_CALLER_ID': case['ours'], 'SIP_TRUNK_DIDS': case['ours'], 'SIP_T38_ENABLED': t38,
+                  'FAX_HEADER': 'Faxbot carrier preset proof'}
+        if preset == 'telstra-sip-connect':
+            faxbot_values = ConfigurationValues.from_environment({
+                **common, 'SIP_TRUNK_USERNAME': TRUNK_USER, 'SIP_TRUNK_PASSWORD': TRUNK_PASSWORD})
+            carrier_text = carrier_conf(faxbot_address, latches=True)
+        else:
+            faxbot_values = ConfigurationValues.from_environment({**common, 'SIP_TRUNK_AUTH': 'ip'})
+            carrier_text = sip_trunk.render_pjsip(_pbx_values(faxbot_address, t38=case['t38']))
+        carrier_values = ConfigurationValues.from_environment({
+            'SIP_TRUNK_PRESET': 'custom', 'SIP_TRUNK_AUTH': 'ip', 'SIP_TRUNK_HOST': faxbot_address,
+            'SIP_TRUNK_CALLER_ID': case['number'], 'SIP_T38_ENABLED': t38})
+        for container, text in ((faxbot, sip_trunk.render_pjsip(faxbot_values)), (carrier, carrier_text)):
+            rendered = tmp_path / f'{container}.conf'
+            rendered.write_text(text)
+            docker.run('exec', container, 'mkdir', '-p', '/faxdata/asterisk', '/faxdata/outbound')
+            docker.run('cp', str(rendered), f'{container}:/faxdata/asterisk/pjsip.conf')
+            docker.run('exec', '--detach', '--env', f'ASTERISK_AMI_USERNAME={AMI_USER}',
+                       '--env', f'ASTERISK_AMI_PASSWORD={AMI_PASSWORD}', '--env', f'ASTERISK_INBOUND_SECRET={SECRET}',
+                       '--env', f'FAXBOT_API_URL=http://{api}:8080', container,
+                       'sh', '-c', '/start.sh > /tmp/asterisk.log 2>&1')
+        wait_booted(docker, faxbot)
+        wait_booted(docker, carrier)
+        registered, registration = None, None
+        if preset == 'telstra-sip-connect':
+            # The registration's server URI names the transport (sip:<carrier>:5060;transport=tcp).
+            deadline = time.monotonic() + 60
+            while time.monotonic() < deadline and not registered:
+                listing = docker.asterisk(faxbot, 'pjsip show registrations')
+                registration = next((' '.join(line.split()) for line in listing.splitlines()
+                                     if 'trunk-registration/' in line), None)
+                registered = bool(registration and 'Registered' in registration and 'transport=tcp' in registration)
+                time.sleep(1)
+        sent = tmp_path / 'proof.tiff'
+        pages = proof_pages()
+        pages[0].save(sent, save_all=True, append_images=pages[1:], compression='group4', dpi=(204, 196))
+        results = {}
+        for direction, sender, values, number in (('sent', faxbot, faxbot_values, case['number']),
+                                                  ('received', carrier, carrier_values, case['ours'])):
+            docker.run('cp', str(sent), f'{sender}:/faxdata/outbound/proof.tiff')
+            docker.run('exec', capture, 'rm', '-f', '/tmp/capture.json', check=False)
+            fields = ami.originate_fields_for(values, uuid.uuid4().hex, number, '/faxdata/outbound/proof.tiff',
+                                              attempt_id=uuid.uuid4().hex)
+            result = _ami_originate(docker, sender, fields) or {}
+            captured, deadline = None, time.monotonic() + 30
+            while time.monotonic() < deadline and captured is None:
+                probe = docker.read(capture, '/tmp/capture.json')
+                captured = json.loads(probe) if probe.strip() else None
+                if captured is None:
+                    time.sleep(1)
+            body = (captured or {}).get('body') or {}
+            results[direction] = {'sender_status': result.get('Status'), 'sender_pages': result.get('Pages'),
+                                  'mode': result.get('Mode'), 'receiver_status': body.get('faxstatus'),
+                                  'receiver_pages': body.get('faxpages'), 'to_number': body.get('to_number')}
+        return {'registered_over_tcp': registered, 'registration': registration, 'results': results}
+    finally:
+        docker.close()
+
+
+@pytest.mark.parametrize('preset', sorted(CARRIER_CASES))
+def test_uk_and_australian_carrier_presets_fax_both_ways_as_rendered(tmp_path, preset):
+    outcome = carrier_preset_exchange(tmp_path, preset)
+    print(f'\nCARRIER_PRESET_{preset.upper().replace("-", "_")}_EVIDENCE ' + json.dumps(outcome, indent=2))
+    case = CARRIER_CASES[preset]
+    expected_mode = 'T38' if case['t38'] else 'audio'
+    if preset == 'telstra-sip-connect':
+        assert outcome['registered_over_tcp'] is True
+    for direction, number in (('sent', case['number']), ('received', case['ours'])):
+        item = outcome['results'][direction]
+        assert (item['sender_status'], item['sender_pages'], item['mode']) == ('SUCCESS', '2', expected_mode), item
+        assert (item['receiver_status'], item['receiver_pages'], item['to_number']) == ('SUCCESS', 2, number), item

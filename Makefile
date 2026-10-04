@@ -39,7 +39,8 @@ ui-build:
 	cd api/admin_ui && npm ci --no-audit --no-fund && npm run build
 
 # T.38 loopback proof: two Faxbot Asterisk containers exchange a two-page fax,
-# and a stand-in phone system on a local network faxes with Faxbot both ways.
+# a stand-in phone system on a local network faxes with Faxbot both ways, and
+# the UK and Australian carrier presets fax both ways as Faxbot renders them.
 # Needs Docker; DOCKER_CONTEXT defaults to colima-faxbot-refresh. FAXBOT_NATIVE_IMAGE
 # and FAXBOT_ROUTER_IMAGE name already-built images to use instead of building them.
 DOCKER_CONTEXT ?= colima-faxbot-refresh
