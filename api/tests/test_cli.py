@@ -837,6 +837,9 @@ def test_trunk_status_and_calls_read_as_plain_sentences(trunk_cli):
     status = trunk_cli('trunk', 'status').stdout
     assert 'a T.38 fax got no fax data back on this network, so Faxbot uses audio fax.' in status
     assert 'To try T.38 again, run faxbot trunk mode t38.' in status
+    # Provider names read the same as in the console.
+    health = trunk_cli('health')
+    assert 'Phaxio' in health.stdout and ' phaxio' not in health.stdout
     # Apply writes the trunk for Asterisk; this test install manages no Asterisk, so it says what to restart.
     applied = trunk_cli('trunk', 'apply')
     assert applied.exit_code == 0, applied.stdout

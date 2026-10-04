@@ -686,7 +686,7 @@ function SetupWizard({ client, onDone, docsBase, canRestart = true }: SetupWizar
         ? <Alert severity="info" sx={{ mb: 2 }}>Restart Faxbot first; then you can send and receive a test fax here.</Alert>
         : <Box sx={{ mb: 2 }}><WizardTestFax client={client} sending={sending} receiving={receiving}
           numbers={(settings.sip as { trunk?: { dids?: string[] } }).trunk?.dids ?? []}
-          numberFormat={settingsNumberFormat(settings)} /></Box>)}
+          numberFormat={settingsNumberFormat(settings)} installation={settings.direct?.organization} /></Box>)}
       <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
         <Button variant="outlined" onClick={exportSettings} disabled={changedFields.length > 0}>Export .env Template</Button>
       </Box>

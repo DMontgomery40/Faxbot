@@ -134,6 +134,9 @@ def network_prefers_audio(values, network, *, has_calls):
 
 _runtime = None
 _pending: set = set()
+# How often and how long Faxbot waits for calls to end before Asterisk loads audio fax.
+BUSY_RETRY_SECONDS = 5
+BUSY_WAIT_SECONDS = 120
 
 
 def _on_fax_event(event):
@@ -197,7 +200,15 @@ async def switch_to_audio(runtime, reason):
         except Exception:
             pass
         from .sip_http import _load_into_engine
-        return await _load_into_engine(values)
+        # The event arrives from the call's hangup handler, while its channel still
+        # exists: wait for it (and any other call) to end before restarting Asterisk.
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + BUSY_WAIT_SECONDS
+        result = await _load_into_engine(values)
+        while result.get('engine') == 'busy' and loop.time() < deadline:
+            await asyncio.sleep(BUSY_RETRY_SECONDS)
+            result = await _load_into_engine(values)
+        return result
     except Exception:
         logging.getLogger(__name__).warning('Faxbot could not switch new calls to audio fax.')
         return None

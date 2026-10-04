@@ -10,6 +10,11 @@ from ..errors import CliError
 from ..output import local_time, parse_time, yes_no
 from ...provider_labels import provider_label
 
+
+def _provider(identity):
+    """A provider's one plain name for people; JSON output keeps the id."""
+    return provider_label(identity) if identity else None
+
 jobs = typer.Typer(help='Sent faxes: list them, read details, download documents and check status.',
                    no_args_is_help=True)
 inbound = typer.Typer(help='Received faxes: list them, read details, download documents and fetch them again.',
@@ -38,7 +43,7 @@ def register(app):
 def _fax_fields(job):
     return [('Fax ID', job.get('id')), ('To', job.get('to') or job.get('to_number')), ('Status', job.get('status')),
             ('Delivery', STATE_TEXT.get(job.get('delivery_state'), job.get('delivery_state'))),
-            ('Pages', job.get('pages')), ('Provider', job.get('backend')),
+            ('Pages', job.get('pages')), ('Provider', _provider(job.get('backend'))),
             ('Provider fax ID', job.get('provider_sid')), ('Problem', job.get('error')),
             ('Accepted', local_time(job.get('created_at'))), ('Updated', local_time(job.get('updated_at')))]
 
@@ -86,7 +91,7 @@ def jobs_list(status_filter: str = typer.Option(None, '--status', help='Only fax
 
     def human(out):
         out.table((['Fax ID'] if ids else []) + ['To', 'Status', 'Pages', 'Provider', 'Accepted'],
-                  [([job['id']] if ids else []) + [job['to_number'], job['status'], job['pages'], job['backend'],
+                  [([job['id']] if ids else []) + [job['to_number'], job['status'], job['pages'], _provider(job['backend']),
                                                    local_time(job['created_at'])] for job in page['jobs']],
                   empty='No sent faxes.')
         if page['total'] > offset + len(page['jobs']):
@@ -148,7 +153,7 @@ def jobs_history(fax_id: str = typer.Argument(..., help='Fax ID.')):
     def human(out):
         attempt = history.get('attempt') or {}
         out.fields([('Delivery', STATE_TEXT.get(history.get('state'), history.get('state'))),
-                    ('Provider', history.get('provider_id')), ('Provider fax ID', attempt.get('provider_sid')),
+                    ('Provider', _provider(history.get('provider_id'))), ('Provider fax ID', attempt.get('provider_sid')),
                     ('Submitted', local_time(attempt.get('submitted_at'))),
                     ('Finished', local_time(attempt.get('completed_at'))),
                     ('Can record provider fax ID', history.get('can_bind_provider_identity')),
@@ -211,7 +216,7 @@ def _document(item):
 def _inbound_fields(item):
     return [('Received fax ID', item.get('id')), ('From', item.get('fr')), ('To', item.get('to')),
             ('Status', _inbound_status(item)), ('Problem', item.get('problem')), ('Mailbox', item.get('mailbox')),
-            ('Received through', provider_label(item.get('backend')) if item.get('backend') else None),
+            ('Received through', _provider(item.get('backend'))),
             ('Provider fax ID', item.get('provider_fax_id')),
             ('Sent', local_time(item.get('source_received_at'))),
             ('Received', local_time(item.get('received_at') or item.get('created_at'))),

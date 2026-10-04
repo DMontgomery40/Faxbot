@@ -4,6 +4,7 @@ import AdminAPIClient, { FaxRefusedError } from '../api/client';
 import type { FaxJob, NumberFormat } from '../api/types';
 import { numberPlaceholder } from './common/numbers';
 import { providerLabel } from '../providerLabels';
+import { testPagePdf } from './testPage';
 
 // The optional last step of the Setup Wizard: one test fax the person asks
 // for (never sent by itself, never sent again), followed live; and a wait for
@@ -16,6 +17,8 @@ interface WizardTestFaxProps {
   // The trunk's fax numbers, when the SIP trunk receives.
   numbers: string[];
   numberFormat?: NumberFormat | null;
+  // The installation's name for the test page, when one is set.
+  installation?: string | null;
   pollMs?: number;
   sendWaitMs?: number;
   receiveWaitMs?: number;
@@ -23,14 +26,6 @@ interface WizardTestFaxProps {
 
 type Notice = { severity: 'success' | 'info' | 'warning' | 'error'; text: string };
 
-// One page Faxbot turns into a fax.
-export const TEST_PAGE = [
-  'Faxbot test page',
-  '',
-  'This one-page fax was sent from the Faxbot Setup Wizard to check that sending works.',
-  'No reply is needed.',
-  '',
-].join('\n');
 
 const IN_PROGRESS = new Set(['queued', 'ready', 'preparing', 'submitting', 'in_progress', 'sending', 'pending']);
 
@@ -53,7 +48,7 @@ export function testOutcome(job: FaxJob): Notice | null {
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-export default function WizardTestFax({ client, sending, receiving, numbers, numberFormat, pollMs = 2000,
+export default function WizardTestFax({ client, sending, receiving, numbers, numberFormat, installation, pollMs = 2000,
   sendWaitMs = 300000, receiveWaitMs = 300000 }: WizardTestFaxProps) {
   const [number, setNumber] = useState('');
   const [sendingNow, setSendingNow] = useState(false);
@@ -90,7 +85,11 @@ export default function WizardTestFax({ client, sending, receiving, numbers, num
     setAudio(null);
     setProgress('Sending the test fax…');
     try {
-      const file = new File([TEST_PAGE], 'faxbot-test-page.txt', { type: 'text/plain' });
+      const page = testPagePdf({
+        sentAt: new Date().toLocaleString(undefined, { dateStyle: 'long', timeStyle: 'long' }),
+        installation, provider: providerLabel(sending), destination,
+      });
+      const file = new File([page], 'faxbot-test-page.pdf', { type: 'application/pdf' });
       // One key per request: the server never makes a second fax from it.
       const key = typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
       const accepted = await client.sendFax(destination, file, { idempotencyKey: key });
@@ -117,7 +116,9 @@ export default function WizardTestFax({ client, sending, receiving, numbers, num
           setOutcome({ severity: 'info', text: 'The test fax is still on its way; follow it in Jobs.' });
           return;
         }
-        setProgress(stateOf(job) === 'in_progress' ? 'The call is in progress…' : 'Sending the test fax…');
+        const through = job.backend || sending;
+        setProgress(stateOf(job) !== 'in_progress' ? 'Sending the test fax…'
+          : through === 'sip' ? 'The call is in progress…' : `${providerLabel(through)} is sending the test page…`);
       }
     } catch (error) {
       if (!alive.current) return;
