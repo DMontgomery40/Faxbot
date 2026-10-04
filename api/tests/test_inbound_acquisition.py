@@ -321,11 +321,8 @@ def test_same_fax_id_under_two_accounts_is_two_records(isolated_installation, mo
     fields = phaxio_fields(9005)
     with client() as http:
         assert post_phaxio(http, fields).json() == {'status': 'ok'}
-        current = http.get('/admin/settings', headers=ADMIN).json()
-        saved = http.put('/admin/settings', headers=ADMIN, json={
-            'expected_revision_id': current['_meta']['desired_revision_id'],
-            'phaxio_api_key': 'synthetic-phaxio-key-two'})
-        assert saved.status_code == 200, saved.text
+    # The key comes from the environment, so the second account is set there and read at the next start.
+    monkeypatch.setenv('PHAXIO_API_KEY', 'synthetic-phaxio-key-two')
     with client() as http:
         assert post_phaxio(http, fields).json() == {'status': 'ok'}
         assert post_phaxio(http, fields).json() == {'status': 'ok'}
