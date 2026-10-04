@@ -80,6 +80,7 @@ class RouteStore:
         self.peers = tables['direct_peers']
         self.attempts = tables['outbound_attempts']
         self.jobs = tables['fax_jobs']
+        self._members = None
 
     # Rate cards -----------------------------------------------------------
     @staticmethod
@@ -279,8 +280,30 @@ class RouteStore:
             row = connection.execute(sa.select(self.costs).where(self.costs.c.id == attempt_id)).mappings().one_or_none()
             return dict(row) if row is not None else None
 
+    def rides_in_another_call(self, attempt_id=None):
+        """Attempts that rode in another attempt's call (faxes sent together); that call carries their cost.
+
+        With ``attempt_id``, whether that attempt did; otherwise a subquery of
+        all of them, or None before the sending-together tables exist.
+        """
+        if self._members is None:
+            try:
+                self._members = reflect(self.engine, ('outbound_batch_members',))['outbound_batch_members']
+            except DeliveryStoreError:
+                return False if attempt_id is not None else None
+        m = self._members
+        riders = sa.select(m.c.attempt_id).where(m.c.attempt_id.is_not(None), m.c.batch_id.is_not(None),
+                                                 m.c.attempt_id != m.c.batch_id)
+        if attempt_id is None:
+            return riders
+        with read_connection(self.engine) as connection:
+            return connection.execute(riders.where(m.c.attempt_id == attempt_id)).first() is not None
+
     def pending_captures(self, *, limit=100):
         a, j, c = self.attempts, self.jobs, self.costs
+        # A fax that rode in another fax's call is never costed on its own: the call is counted once, on the
+        # attempt that placed it, so its cost row keeps no outcome of its own and no reliability sample.
+        riders = self.rides_in_another_call()
         finished = sa.or_(a.c.completed_at.is_not(None), a.c.phase == 'uncertain')
         stale = sa.or_(c.c.id.is_(None), c.c.outcome == 'pending',
                        sa.and_(c.c.outcome == 'uncertain', a.c.phase != 'uncertain'))
@@ -288,7 +311,8 @@ class RouteStore:
                            j.c.to_number, j.c.pages, j.c.backend, c.c.id.label('decision'),
                            c.c.provider_id.label('decided_provider'), c.c.provider_sid.label('decided_sid'))
                  .select_from(a.join(j, j.c.id == a.c.job_id).outerjoin(c, c.c.id == a.c.id))
-                 .where(a.c.submitted_at.is_not(None), a.c.phase.in_(tuple(OUTCOMES)), finished, stale)
+                 .where(a.c.submitted_at.is_not(None), a.c.phase.in_(tuple(OUTCOMES)), finished, stale,
+                        *(() if riders is None else (a.c.id.not_in(riders),)))
                  .order_by(a.c.created_at, a.c.id).limit(limit))
         with read_connection(self.engine) as connection:
             rows = connection.execute(query).mappings().all()

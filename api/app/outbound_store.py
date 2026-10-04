@@ -23,10 +23,14 @@ _EVENT_KINDS = frozenset({'accepted', 'legacy_migrated', 'binding_unavailable',
     'held_acceptance_restored', 'claimed', 'dispatch_paused', 'submission_authorized',
     'submission_uncertain', 'preparation_failed', 'preparation_expired',
     'provider_observation_refused', 'terminal_conflict', 'late_observation',
-    'provider_observed', 'operator_identity_bound', 'route_assigned', 'route_fallback'})
+    'provider_observed', 'operator_identity_bound', 'route_assigned', 'route_fallback',
+    'sent_together', 'batch_split'})
 _CATEGORIES = frozenset({'transport_ambiguous', 'response_unusable', 'submission_cancelled',
     'worker_lost', 'artifact_unavailable', 'provider_unavailable', 'preparation_failed',
-    'profile_mismatch', 'sid_mismatch', 'provider_failed', 'partner_not_received'})
+    'profile_mismatch', 'sid_mismatch', 'provider_failed', 'partner_not_received',
+    'partly_sent', 'pages_unconfirmed'})
+# A fax in a shared call whose pages were only partly confirmed: failed, never resent automatically.
+NO_FALLBACK_CATEGORIES = frozenset({'partly_sent'})
 _ROUTE = re.compile(r'[a-z0-9][a-z0-9_.-]{0,63}', re.ASCII)
 
 
@@ -85,6 +89,13 @@ class DispatchClaim:
     owner: str
     token: str
     expires_at: datetime
+    # Faxes sharing this claim's one call, in call order with this claim first;
+    # empty for a fax sent on its own. Each keeps its own attempt and lease.
+    members: tuple = ()
+
+    @property
+    def everyone(self):
+        return self.members or (self,)
 
 
 @dataclass(frozen=True)
@@ -121,6 +132,14 @@ class OutboundStore:
         self.deliveries = configuration.delivery_tables['outbound_deliveries']
         self.attempts = configuration.delivery_tables['outbound_attempts']
         self.events = configuration.delivery_tables['outbound_events']
+        self._batch_tables = None
+
+    def _batching(self, connection):
+        """Reflected sending-together tables (``batching.store``), read through the open transaction on first use."""
+        if self._batch_tables is None:
+            from .batching.store import tables
+            self._batch_tables = tables(self.configuration.engine, connection)
+        return self._batch_tables
 
     def get(self, job_id):
         with self.configuration.engine.connect() as connection:
@@ -404,79 +423,163 @@ class OutboundStore:
             now = datetime.utcnow() if now is None else now
             if not self._enabled(connection):
                 return None
+            together = self._claim_together_on(connection, owner, now, lease_seconds)
+            if together is not None:
+                return together
+            from .batching.store import waiting_ids
+            # A fax waiting to go with others is claimed only with its group.
             row = connection.execute(sa.select(self.deliveries).where(
-                self.deliveries.c.state == 'ready', self.deliveries.c.dispatch_mode == 'normal'
+                self.deliveries.c.state == 'ready', self.deliveries.c.dispatch_mode == 'normal',
+                self.deliveries.c.id.not_in(waiting_ids(self._batching(connection)))
             ).order_by(self.deliveries.c.created_at, self.deliveries.c.id).limit(1)).mappings().one_or_none()
             if row is None:
                 return None
-            binding = connection.execute(sa.select(self.configuration.job_bindings).where(
-                self.configuration.job_bindings.c.id == row['id'])).mappings().one_or_none()
-            if binding is None:
-                self._update(connection, row, now, state='reconciliation_required')
-                _event(connection, self.events, row['id'], 'binding_unavailable', now)
-                return None
-            revision, profile = self.configuration._outbound_context(connection, row['id'])
-            if revision.values.fax_disabled:
-                self._update(connection, row, now, dispatch_mode='held', state='held')
-                _event(connection, self.events, row['id'], 'held_acceptance_restored', now)
-                return None
-            sequence = connection.scalar(sa.select(sa.func.max(self.attempts.c.sequence)).where(
-                self.attempts.c.job_id == row['id'])) or 0
-            attempt, token = uuid4().hex, uuid4().hex
-            expiry = now + timedelta(seconds=lease_seconds)
-            connection.execute(self.attempts.insert().values(id=attempt, job_id=row['id'],
-                sequence=sequence + 1, profile_id=profile.id, phase='preparing', created_at=now))
-            self._update(connection, row, now, state='preparing', attempt_id=attempt,
-                claim_owner=owner, claim_token=token, claim_expires_at=expiry)
-            _event(connection, self.events, row['id'], 'claimed', now, attempt_id=attempt)
-            return DispatchClaim(row['id'], attempt, profile.id, owner, token, expiry)
+            return self._claim_row_on(connection, row, owner, now, lease_seconds)
+
+    def _claim_row_on(self, connection, row, owner, now, lease_seconds):
+        binding = connection.execute(sa.select(self.configuration.job_bindings).where(
+            self.configuration.job_bindings.c.id == row['id'])).mappings().one_or_none()
+        if binding is None:
+            self._update(connection, row, now, state='reconciliation_required')
+            _event(connection, self.events, row['id'], 'binding_unavailable', now)
+            return None
+        revision, profile = self.configuration._outbound_context(connection, row['id'])
+        if revision.values.fax_disabled:
+            self._update(connection, row, now, dispatch_mode='held', state='held')
+            _event(connection, self.events, row['id'], 'held_acceptance_restored', now)
+            return None
+        sequence = connection.scalar(sa.select(sa.func.max(self.attempts.c.sequence)).where(
+            self.attempts.c.job_id == row['id'])) or 0
+        attempt, token = uuid4().hex, uuid4().hex
+        expiry = now + timedelta(seconds=lease_seconds)
+        connection.execute(self.attempts.insert().values(id=attempt, job_id=row['id'],
+            sequence=sequence + 1, profile_id=profile.id, phase='preparing', created_at=now))
+        self._update(connection, row, now, state='preparing', attempt_id=attempt,
+            claim_owner=owner, claim_token=token, claim_expires_at=expiry)
+        _event(connection, self.events, row['id'], 'claimed', now, attempt_id=attempt)
+        return DispatchClaim(row['id'], attempt, profile.id, owner, token, expiry)
+
+    def _claim_together_on(self, connection, owner, now, lease_seconds):
+        """Claim the first due group of waiting faxes as one call; a group of one goes on its own."""
+        from .batching import store as batching
+        t = self._batching(connection)
+        group = batching.due_group_on(connection, t, now)
+        if group is None:
+            return None
+        claims, joined = [], []
+        for member in group:
+            claim = self._claim_row_on(connection, self._row(connection, member['id']), owner, now, lease_seconds)
+            if claim is None:
+                batching.separate_on(connection, t, member['id'], now)
+                continue
+            claims.append(claim)
+            joined.append(member)
+        if len(claims) <= 1:
+            for claim in claims:
+                batching.separate_on(connection, t, claim.job_id, now)
+            return claims[0] if claims else None
+        batching.join_on(connection, t, claims, joined, now)
+        for claim in claims:
+            _event(connection, self.events, claim.job_id, 'sent_together', now, attempt_id=claim.attempt_id)
+        return replace(claims[0], members=tuple(claims))
+
+    def split_batch(self, claim, *, separate=None, now=None):
+        """Undo a shared call before anything was sent; no fax is failed here.
+
+        ``separate`` names the faxes that go on their own from now on (None:
+        every fax); the others wait again and form a new call at once.
+        """
+        from .batching import store as batching
+        now = now or datetime.utcnow()
+        with self.configuration._locked() as connection:
+            t = self._batching(connection)
+            for member in claim.everyone:
+                row = self._row(connection, member.job_id)
+                if not self._owns(row, member) or row['state'] != 'preparing':
+                    continue
+                connection.execute(self.attempts.update().where(self.attempts.c.id == member.attempt_id).values(
+                    phase='abandoned', completed_at=now))
+                self._update(connection, row, now, state='ready', claim_owner=None, claim_token=None,
+                             claim_expires_at=None)
+                _event(connection, self.events, member.job_id, 'batch_split', now, attempt_id=member.attempt_id)
+                if separate is None or member.job_id in separate:
+                    batching.separate_on(connection, t, member.job_id, now)
+                else:
+                    batching.return_to_waiting_on(connection, t, member.job_id, member.attempt_id, now)
+
+    def urge(self, job_id, *, now=None):
+        """Mark a waiting fax "Send now": it and the faxes waiting with it go at the next claim."""
+        from .batching.store import urge_on
+        with self.configuration._locked() as connection:
+            return urge_on(connection, self._batching(connection), job_id, now or datetime.utcnow())
 
     @staticmethod
     def _owns(row, claim):
         return row is not None and row['attempt_id'] == claim.attempt_id and row['claim_owner'] == claim.owner and row['claim_token'] == claim.token
 
     def begin_submission(self, claim, *, now=None):
+        """The durable marker; for a shared call, every fax in it at once or none."""
         with self.configuration._locked() as connection:
             now = datetime.utcnow() if now is None else now
-            row = self._row(connection, claim.job_id)
-            if (not self._owns(row, claim) or row['state'] != 'preparing'
-                    or row['claim_expires_at'] is None or row['claim_expires_at'] <= now):
+            everyone = claim.everyone
+            rows = [self._row(connection, member.job_id) for member in everyone]
+            if any(not self._owns(row, member) or row['state'] != 'preparing'
+                   or row['claim_expires_at'] is None or row['claim_expires_at'] <= now
+                   for row, member in zip(rows, everyone)):
                 return False
             if not self._enabled(connection):
-                connection.execute(self.attempts.update().where(self.attempts.c.id == claim.attempt_id).values(
-                    phase='abandoned', completed_at=now))
-                self._update(connection, row, now, state='ready', claim_owner=None, claim_token=None, claim_expires_at=None)
-                _event(connection, self.events, claim.job_id, 'dispatch_paused', now, attempt_id=claim.attempt_id)
+                from .batching.store import return_to_waiting_on
+                for row, member in zip(rows, everyone):
+                    connection.execute(self.attempts.update().where(self.attempts.c.id == member.attempt_id).values(
+                        phase='abandoned', completed_at=now))
+                    self._update(connection, row, now, state='ready', claim_owner=None, claim_token=None,
+                                 claim_expires_at=None)
+                    _event(connection, self.events, member.job_id, 'dispatch_paused', now, attempt_id=member.attempt_id)
+                    if claim.members:
+                        return_to_waiting_on(connection, self._batching(connection), member.job_id, member.attempt_id, now)
                 return False
-            self._update(connection, row, now, state='submitting')
-            connection.execute(self.attempts.update().where(self.attempts.c.id == claim.attempt_id).values(
-                phase='submitting', submitted_at=now))
-            _event(connection, self.events, claim.job_id, 'submission_authorized', now, attempt_id=claim.attempt_id)
+            for row, member in zip(rows, everyone):
+                self._update(connection, row, now, state='submitting')
+                connection.execute(self.attempts.update().where(self.attempts.c.id == member.attempt_id).values(
+                    phase='submitting', submitted_at=now))
+                _event(connection, self.events, member.job_id, 'submission_authorized', now,
+                       attempt_id=member.attempt_id)
             return True
 
     def record_uncertain(self, claim, *, category='transport_ambiguous', now=None):
         if category not in {'transport_ambiguous', 'response_unusable', 'submission_cancelled', 'worker_lost'}:
             raise ValueError('Invalid delivery uncertainty category.')
         now = now or datetime.utcnow()
+        shared = bool(claim.members)
         with self.configuration._locked() as connection:
-            row = self._row(connection, claim.job_id)
-            if not self._owns(row, claim):
-                raise DeliveryConflict('Submission failure belongs to an obsolete attempt.')
-            if row['state'] in TERMINAL:
-                return False
-            if row['state'] not in {'submitting', 'reconciliation_required'}:
-                raise DeliveryConflict('No external submission was authorized for this attempt.')
-            self._update(connection, row, now, state='reconciliation_required', claim_expires_at=None)
-            connection.execute(self.attempts.update().where(self.attempts.c.id == claim.attempt_id).values(
-                phase='uncertain', error_category=category))
-            _event(connection, self.events, claim.job_id, 'submission_uncertain', now,
-                attempt_id=claim.attempt_id, details={'category': category})
-            return True
+            changed = False
+            for member in claim.everyone:
+                row = self._row(connection, member.job_id)
+                if not self._owns(row, member):
+                    if shared:
+                        continue
+                    raise DeliveryConflict('Submission failure belongs to an obsolete attempt.')
+                if row['state'] in TERMINAL:
+                    continue
+                if row['state'] not in {'submitting', 'reconciliation_required'}:
+                    if shared:
+                        continue
+                    raise DeliveryConflict('No external submission was authorized for this attempt.')
+                self._update(connection, row, now, state='reconciliation_required', claim_expires_at=None)
+                connection.execute(self.attempts.update().where(self.attempts.c.id == member.attempt_id).values(
+                    phase='uncertain', error_category=category))
+                _event(connection, self.events, member.job_id, 'submission_uncertain', now,
+                    attempt_id=member.attempt_id, details={'category': category})
+                changed = True
+            return changed
 
     def fail_preparation(self, claim, *, category, now=None):
         if category not in {'artifact_unavailable', 'provider_unavailable', 'preparation_failed'}:
             raise ValueError('Invalid delivery preparation category.')
         now = now or datetime.utcnow()
+        if claim.members:
+            # Nothing was sent: every fax in the shared call goes on its own instead.
+            return self.split_batch(claim, now=now)
         with self.configuration._locked() as connection:
             row = self._row(connection, claim.job_id)
             if not self._owns(row, claim) or row['state'] != 'preparing':
@@ -505,6 +608,10 @@ class OutboundStore:
                     completed_at=now if preparing else None))
                 _event(connection, self.events, row['id'], 'preparation_expired' if preparing else 'submission_uncertain', now,
                     attempt_id=row['attempt_id'])
+                if preparing:
+                    # A shared call that was never placed: its faxes wait again and form a new call.
+                    from .batching.store import return_to_waiting_on
+                    return_to_waiting_on(connection, self._batching(connection), row['id'], row['attempt_id'], now)
             return len(rows)
 
     def _refuse_observation(self, connection, row, *, attempt_id, category, message, now, event_key):
@@ -519,9 +626,11 @@ class OutboundStore:
         return _ObservationRefusal(message)
 
     def _observe(self, connection, row, *, attempt_id, profile_id, provider_sid, status, now, event_key=None,
-                 error=None):
+                 error=None, error_category=None):
         if status not in OBSERVED:
             raise DeliveryConflict('Provider status requires reconciliation.')
+        if error_category is not None and (error_category not in NO_FALLBACK_CATEGORIES or status != 'failed'):
+            raise DeliveryConflict('Provider failure category requires reconciliation.')
         if (provider_sid is not None and (not isinstance(provider_sid, str) or not provider_sid
                 or len(provider_sid) > 100 or any(ord(char) < 32 for char in provider_sid))):
             raise DeliveryConflict('Provider identity requires reconciliation.')
@@ -554,9 +663,10 @@ class OutboundStore:
             return False
         final_sid = provider_sid or attempt['provider_sid']
         connection.execute(self.attempts.update().where(self.attempts.c.id == attempt_id).values(
-            phase=status, provider_sid=final_sid, error_category=None,
+            phase=status, provider_sid=final_sid, error_category=error_category,
             completed_at=now if status in TERMINAL else None))
-        if status == 'failed' and self._fallback_due(connection, row, attempt_id):
+        # A categorized failure (part of the fax may have arrived) waits for a person, never another route.
+        if status == 'failed' and error_category is None and self._fallback_due(connection, row, attempt_id):
             # The next route takes over in this same transaction, so the fax
             # never reads as failed while another route remains.
             self._update(connection, row, now, state='ready', attempt_id=None, claim_owner=None,
@@ -574,38 +684,76 @@ class OutboundStore:
     def record_receipt(self, claim, *, provider_sid, status, now=None):
         now = now or datetime.utcnow()
         with self.configuration._locked() as connection:
-            row = self._row(connection, claim.job_id)
-            if not self._owns(row, claim):
-                raise DeliveryConflict('Submission acknowledgement belongs to an obsolete attempt.')
-            profile_id = claim.profile_id
-            attempt_profile = connection.scalar(sa.select(self.attempts.c.profile_id).where(
-                self.attempts.c.id == claim.attempt_id))
-            if attempt_profile != profile_id:
-                # Only assign_route changes an attempt away from the fax's accepted
-                # account. The worker's original claim then reports for that route.
-                _, accepted = self.configuration._outbound_context(connection, claim.job_id)
-                if profile_id == accepted.id:
-                    profile_id = attempt_profile
-            result = self._observe(connection, row, attempt_id=claim.attempt_id, profile_id=profile_id,
-                provider_sid=provider_sid, status=status, now=now)
-        if isinstance(result, _ObservationRefusal):
-            raise DeliveryConflict(result.message)
-        return result
+            results = []
+            for member in claim.everyone:
+                row = self._row(connection, member.job_id)
+                if not self._owns(row, member):
+                    raise DeliveryConflict('Submission acknowledgement belongs to an obsolete attempt.')
+                profile_id = member.profile_id
+                attempt_profile = connection.scalar(sa.select(self.attempts.c.profile_id).where(
+                    self.attempts.c.id == member.attempt_id))
+                if attempt_profile != profile_id:
+                    # Only assign_route changes an attempt away from the fax's accepted
+                    # account. The worker's original claim then reports for that route.
+                    _, accepted = self.configuration._outbound_context(connection, member.job_id)
+                    if profile_id == accepted.id:
+                        profile_id = attempt_profile
+                # A shared SIP call identifies each fax by its own job, as a single SIP fax does.
+                results.append(self._observe(connection, row, attempt_id=member.attempt_id, profile_id=profile_id,
+                    provider_sid=member.job_id if claim.members else provider_sid, status=status, now=now))
+        for result in results:
+            if isinstance(result, _ObservationRefusal):
+                raise DeliveryConflict(result.message)
+        return results[0]
 
-    def observe(self, job_id, *, attempt_id, profile_id, provider_sid, status, event_key, now=None, error=None):
+    def observe(self, job_id, *, attempt_id, profile_id, provider_sid, status, event_key, now=None, error=None,
+                error_category=None):
         """Call only after the transport owner authenticates the bounded event.
 
         ``error`` is one plain sentence shown with a final failure, never provider text.
+        ``error_category`` (``partly_sent``) marks a failure that waits for a person: no route fallback.
         """
         if not isinstance(event_key, str) or not event_key or len(event_key) > 512:
             raise DeliveryConflict('Invalid provider event identity.')
         with self.configuration._locked() as connection:
             result = self._observe(connection, self._row(connection, job_id), attempt_id=attempt_id,
                 profile_id=profile_id, provider_sid=provider_sid, status=status,
-                event_key=event_key, now=now or datetime.utcnow(), error=error)
+                event_key=event_key, now=now or datetime.utcnow(), error=error, error_category=error_category)
         if isinstance(result, _ObservationRefusal):
             raise DeliveryConflict(result.message)
         return result
+
+    def record_unconfirmed(self, job_id, *, attempt_id, profile_id, event_key, category='pages_unconfirmed',
+                           now=None):
+        """A shared call ended without a confirmed page count: this fax may have arrived.
+
+        The fax waits for a person, exactly like an unacknowledged submission;
+        nothing is sent again. A repeated report has no further effect.
+        """
+        if category != 'pages_unconfirmed' or not isinstance(event_key, str) or not event_key or len(event_key) > 512:
+            raise DeliveryConflict('Invalid provider event identity.')
+        now = now or datetime.utcnow()
+        with self.configuration._locked() as connection:
+            row = self._row(connection, job_id)
+            attempt = connection.execute(sa.select(self.attempts).where(
+                self.attempts.c.id == attempt_id)).mappings().one_or_none()
+            if (row is None or row['attempt_id'] != attempt_id or attempt is None or attempt['job_id'] != job_id
+                    or attempt['submitted_at'] is None or attempt['profile_id'] != profile_id):
+                raise DeliveryConflict('Provider observation does not match a submitted attempt.')
+            dedupe = hashlib.sha256(event_key.encode()).hexdigest()
+            if connection.execute(sa.select(self.events.c.id).where(
+                    self.events.c.job_id == job_id, self.events.c.dedupe_key == dedupe)).first():
+                return False
+            if row['state'] in TERMINAL:
+                _event(connection, self.events, job_id, 'late_observation', now, attempt_id=attempt_id,
+                       details={'category': category}, dedupe_key=dedupe)
+                return False
+            self._update(connection, row, now, state='reconciliation_required', claim_expires_at=None)
+            connection.execute(self.attempts.update().where(self.attempts.c.id == attempt_id).values(
+                phase='uncertain', error_category=category))
+            _event(connection, self.events, job_id, 'submission_uncertain', now, attempt_id=attempt_id,
+                   details={'category': category}, dedupe_key=dedupe)
+            return True
 
     def _fallback_due(self, connection, row, attempt_id):
         """Ask the installed route policy, within the fallback limit, whether another route remains."""

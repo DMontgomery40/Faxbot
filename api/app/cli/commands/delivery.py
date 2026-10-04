@@ -23,7 +23,12 @@ cases = typer.Typer(help='Case packets: send only the documents a recipient has 
                     no_args_is_help=True)
 
 
+batching = typer.Typer(help='Send short faxes to the same number together in one call, where the recipient agreed '
+                            'and it saves money.', no_args_is_help=True)
+
+
 def register(app):
+    routing.add_typer(batching, name='batching')
     app.add_typer(routing, name='routing')
     intake.add_typer(connectors, name='connectors')
     app.add_typer(intake, name='intake')
@@ -214,6 +219,62 @@ def routing_rate_cards(replace: str = typer.Option(None, '--replace', metavar='F
           (f"{card['monthly_fee']}, faxes included" if card.get('included_in_plan') else card.get('monthly_fee')) or '-',
           f"{card['billing_increment_seconds']} s", card['currency'], card['captured_on']]
          for card in result.get('cards', [])], empty='No rate cards.'))
+
+
+# -- routing batching --------------------------------------------------------------------
+
+def _batching_human(view):
+    def human(out):
+        agreement = view.get('agreement') or {}
+        out.line(view['state_sentence'])
+        out.line(view['route_sentence'])
+        out.fields([('Fax number', view['number']), ('Sending together', 'on' if view['enabled'] else 'off'),
+                    ('Longest wait', f"{view['max_wait_minutes']} minutes"),
+                    ('Most pages in one call', view['max_pages']),
+                    ('Different senders may share a call', view['mixed_senders']),
+                    ('Recipient agreement recorded by', agreement.get('by')),
+                    ('Recorded', local_time(agreement.get('at')) if agreement else None)])
+        out.line(view['savings']['sentence'])
+    return human
+
+
+@batching.command('show')
+def batching_show(number: str = typer.Argument(..., help='Fax number.')):
+    """Show whether faxes to a number are sent together, why it saves money or not, and what it saved."""
+    view = state.api().get('/batching/numbers/' + segment(number))
+    state.out().result(view, _batching_human(view))
+
+
+@batching.command('set')
+def batching_set(number: str = typer.Argument(..., help='Fax number.'),
+                 recipient_agreed: bool = typer.Option(False, '--recipient-agreed',
+                     help='Record that this recipient has agreed to receive several documents in one call. '
+                          'Needed to turn sending together on.'),
+                 wait: int = typer.Option(None, '--wait', min=1, max=60, metavar='MINUTES',
+                                          help='Longest time a fax waits for others (default 10).'),
+                 max_pages: int = typer.Option(None, '--max-pages', min=2, max=200,
+                                               help='Most pages one call carries, separator pages included (default 30).'),
+                 mixed_senders: bool = typer.Option(None, '--mixed-senders/--same-sender-only',
+                     help='Whether faxes from different people or API keys may share a call (default: no).')):
+    """Turn sending together on for a number, or change its settings."""
+    api = state.api()
+    current = api.get('/batching/numbers/' + segment(number))
+    body = {'enabled': True, 'recipient_agreed': recipient_agreed, 'version': current.get('version', 0)}
+    if wait is not None:
+        body['max_wait_minutes'] = wait
+    if max_pages is not None:
+        body['max_pages'] = max_pages
+    if mixed_senders is not None:
+        body['mixed_senders'] = mixed_senders
+    view = api.put('/batching/numbers/' + segment(number), json=body)
+    state.out().result(view, _batching_human(view))
+
+
+@batching.command('off')
+def batching_off(number: str = typer.Argument(..., help='Fax number.')):
+    """Turn sending together off for a number; faxes waiting for it go straight away."""
+    view = state.api().delete('/batching/numbers/' + segment(number))
+    state.out().result(view, lambda out: out.line(view['state_sentence']))
 
 
 # -- intake ------------------------------------------------------------------------------

@@ -23,6 +23,12 @@ optionally --random so ports change; the router image is built from Debian
 with iptables and needs internet access to build). Faxbot registers through it
 to a stand-in carrier that is also a registrar, and faxes go both ways over the
 registered flow.
+
+Sending together: two faxes waiting for one number are claimed as one call
+through the real delivery store, their combined image (separator pages and
+each fax's own pages) is sent over T.38, and the sender's real FaxResult is
+applied to both faxes. A second call is cut part-way to record what the
+sender's confirmed page count (FAXPAGES) was and which fax it delivered.
 """
 import base64
 import hashlib
@@ -242,8 +248,13 @@ def never_latch(text):
     return text.replace('rtp_symmetric=yes', 'rtp_symmetric=no').replace('t38_udptl_nat=yes', 't38_udptl_nat=no')
 
 
-def exchange(tmp_path, *, sender_edit=None, receiver_edit=None, receiver_events=False, wait_for_receiver=60):
-    """Send the two proof pages from one container to the other and collect what each side saw."""
+def exchange(tmp_path, *, sender_edit=None, receiver_edit=None, receiver_events=False, wait_for_receiver=60,
+             fax_image=None, identity=None, hang_up_after=None):
+    """Send the two proof pages from one container to the other and collect what each side saw.
+
+    ``fax_image`` sends that fax image instead, under ``identity`` (job, attempt);
+    ``hang_up_after`` makes the sender hang up that many seconds after the call is placed.
+    """
     docker = Docker()
     image = os.environ.get('FAXBOT_NATIVE_IMAGE') or 'faxbot-native:t38-proof'
     if not os.environ.get('FAXBOT_NATIVE_IMAGE'):
@@ -293,11 +304,14 @@ def exchange(tmp_path, *, sender_edit=None, receiver_edit=None, receiver_events=
                 time.sleep(0.5)
 
         sent = tmp_path / 'proof.tiff'
-        pages = proof_pages()
-        pages[0].save(sent, save_all=True, append_images=pages[1:], compression='group4', dpi=(204, 196))
+        if fax_image is None:
+            pages = proof_pages()
+            pages[0].save(sent, save_all=True, append_images=pages[1:], compression='group4', dpi=(204, 196))
+        else:
+            sent.write_bytes(Path(fax_image).read_bytes())
         docker.run('cp', str(sent), f'{sender}:/faxdata/outbound/proof.tiff')
 
-        job, attempt = uuid.uuid4().hex, uuid.uuid4().hex
+        job, attempt = identity or (uuid.uuid4().hex, uuid.uuid4().hex)
         values = trunk_values(addresses['receiver'], SIP_FAX_PREFERENCE_HEADER='true',
                               FAX_LOCAL_STATION_ID='+15555550100', FAX_HEADER='Faxbot proof')
         fields = ami.originate_fields_for(values, job, DID, '/faxdata/outbound/proof.tiff', attempt_id=attempt)
@@ -305,6 +319,10 @@ def exchange(tmp_path, *, sender_edit=None, receiver_edit=None, receiver_events=
                    f'Secret: {AMI_PASSWORD}\r\nEvents: call,user\r\n\r\n'
                    + ''.join(f'{key}: {value}\r\n' for key, value in fields.items()) + '\r\n')
         submitted = time.time()
+        if hang_up_after is not None:
+            # The sender ends the call part-way, the way a dropped line would.
+            docker.run('exec', '--detach', sender, 'sh', '-c',
+                       f'sleep {hang_up_after}; asterisk -rx "channel request hangup all"')
         session = docker.run('exec', '--interactive', sender, 'bash', '-c', AMI_SESSION,
                              input_text=actions, check=False, timeout=300)
         finished = time.time()
@@ -700,3 +718,119 @@ def test_a_port_changing_router_and_a_carrier_that_never_latches_carry_no_fax_da
     assert outcome['registered']
     assert not _delivered(outcome, 'sent')
     assert evidence['sent']['sender_verdict'] in sip_calls.NO_DATA_VERDICTS
+
+
+# -- Sending together: one call carries two faxes, each gets its own outcome ---------------
+
+def _together_installation(tmp_path):
+    """A SIP installation with two faxes waiting for one number, claimed as one call."""
+    from datetime import datetime, timedelta
+    from app.schema import create_database_engine, upgrade_schema
+    from app.config_store import ConfigurationStore
+    from app.config_profiles import ProviderConfiguration
+    from app.outbound_store import OutboundStore
+    from app.routing.costs import RateCard
+    from app.routing.store import RouteStore
+    from app.batching import store as batching
+    data = tmp_path / 'faxdata'
+    data.mkdir()
+    engine = create_database_engine('sqlite:///' + str(tmp_path / 'installation.db'))
+    upgrade_schema(engine)
+    configuration = ConfigurationStore(engine, tmp_path / 'installation.key')
+    values = ConfigurationValues.from_environment({'FAX_BACKEND': 'sip', 'FAX_DISABLED': 'false',
+                                                   'FAX_DATA_DIR': str(data)})
+    snapshot = configuration.initialize(values, actor='proof', providers={
+        'outbound': ProviderConfiguration('sip', traits={'requires_tiff': True})})
+    RouteStore(engine, sip_preset=lambda: '').replace_cards([RateCard(
+        None, 'sip', 'outbound', 'Proof trunk', 'USD', 5000, 0, 0, 60, 60, None, datetime(2026, 10, 3))])
+    batching.BatchingSettings(engine).save(DID, enabled=True, recipient_agreed=True, actor='principal:proof')
+    pages = proof_pages()
+    documents = [(uuid.uuid4().hex, pages[:1]), (uuid.uuid4().hex, pages)]
+    accepted = datetime.utcnow() - timedelta(minutes=11)
+    for number, (job_id, job_pages) in enumerate(documents):
+        job_pages[0].save(data / (job_id + '.tiff'), save_all=True, append_images=job_pages[1:],
+                          compression='group4', dpi=(204, 196))
+        at = accepted + timedelta(seconds=number)
+        with configuration._locked() as connection:
+            configuration._accept_outbound_on(connection, snapshot.active, {
+                'id': job_id, 'to_number': DID, 'file_name': 'proof.pdf', 'tiff_path': '', 'status': 'queued',
+                'pages': len(job_pages), 'created_at': at, 'updated_at': at})
+            batching.hold_on(connection, batching.tables(engine, connection), job_id,
+                             batching.HoldPlan(DID, 'key:proof', 'Proof Desk', len(job_pages), False, 600), at)
+    delivery = OutboundStore(configuration)
+    claim = delivery.claim('proof-worker')
+    assert [member.job_id for member in claim.members] == [job_id for job_id, _ in documents]
+    return delivery, claim, data, [job_id for job_id, _ in documents]
+
+
+def _send_together(tmp_path, **options):
+    """Claim two waiting faxes as one call, send its image over T.38, and apply the sender's result."""
+    from app.batching import results
+    from app.batching.transport import call_image
+    delivery, claim, data, jobs = _together_installation(tmp_path)
+    image = call_image(delivery, data, claim)
+    assert delivery.begin_submission(claim)
+    delivery.record_receipt(claim, provider_sid=claim.job_id, status='in_progress')
+    outcome = exchange(tmp_path, fax_image=image, identity=(claim.job_id, claim.attempt_id), **options)
+    assert outcome['result']['JobID'] == claim.job_id and outcome['result']['AttemptID'] == claim.attempt_id
+    applied = results.apply_fax_result(delivery, outcome['result'], failure_sentence=sip_calls.result_summary(
+        outcome['result']))
+    assert applied is True
+    states = [delivery.get(job)['state'] for job in jobs]
+    attempts = [delivery.get(job)['attempt_id'] for job in jobs]
+    with delivery.configuration.engine.connect() as connection:
+        import sqlalchemy as sa
+        categories = [connection.scalar(sa.select(delivery.attempts.c.error_category).where(
+            delivery.attempts.c.id == attempt)) for attempt in attempts]
+    return outcome, states, categories
+
+
+def test_one_call_carries_two_faxes_over_t38_and_each_gets_its_own_outcome(tmp_path):
+    outcome, states, categories = _send_together(tmp_path)
+    result, captured = outcome['result'], outcome['captured']
+    assert captured is not None, 'Receiver did not report the fax'
+    sent, received = outcome['sent'], outcome['received']
+    sent_heights, received_heights = page_heights(sent), page_heights(received)
+    header_rows = received_heights[0] - sent_heights[0]
+    evidence = {
+        'image': outcome['image'],
+        'sender_result': {key: result.get(key) for key in ('Status', 'Error', 'Pages', 'Mode', 'Cause')},
+        'receiver_report': {key: captured['body'].get(key) for key in ('faxstatus', 'faxpages')},
+        'connected_seconds': int(result['Ended']) - int(result['Answered']),
+        'pages_in_call': len(sent_heights),
+        'outcomes': states, 'categories': categories,
+    }
+    print('\nSEND_TOGETHER_EVIDENCE ' + json.dumps(evidence, indent=2))
+    # Separator, document one (1 page), separator, document two (2 pages).
+    assert len(sent_heights) == len(received_heights) == 5
+    assert result['Status'] == 'SUCCESS' and result['Pages'] == '5' and result['Mode'] == 'T38'
+    assert captured['body']['faxpages'] == 5
+    assert [page['body_sha256'] for page in page_digests(received, skip_rows=header_rows)] == [
+        page['body_sha256'] for page in page_digests(sent)]
+    assert states == ['success', 'success'] and categories == [None, None]
+
+
+def test_a_shared_call_cut_part_way_delivers_only_the_confirmed_faxes(tmp_path):
+    """FAXPAGES on a cut call: the sender's count of pages the receiving machine confirmed."""
+    # 27 seconds ends the call after the first fax and its separator on the proof machine (2 pages confirmed).
+    seconds = float(os.environ.get('FAXBOT_PROOF_CUT_SECONDS', '27'))
+    outcome, states, categories = _send_together(tmp_path, hang_up_after=seconds, wait_for_receiver=20)
+    result = outcome['result']
+    report = (outcome['captured'] or {}).get('body', {}) if outcome['captured'] else {}
+    confirmed = int(result.get('Pages') or 0)
+    evidence = {
+        'hang_up_after_seconds': seconds,
+        'sender_result': {key: result.get(key) for key in ('Status', 'Error', 'Pages', 'Mode', 'Cause')},
+        'receiver_report': {key: report.get(key) for key in ('faxstatus', 'faxpages')} if report else None,
+        'outcomes': states, 'categories': categories,
+    }
+    print('\nSEND_TOGETHER_CUT_EVIDENCE ' + json.dumps(evidence, indent=2))
+    assert result['Status'] != 'SUCCESS' and confirmed < 5
+    # Pages 1-2 are the first fax with its separator; pages 3-5 the second.
+    expected = ['success' if confirmed >= 2 else 'failed', 'failed']
+    assert states == expected
+    second = 'partly_sent' if confirmed >= 3 else None
+    assert categories == [None if confirmed >= 2 else ('partly_sent' if confirmed >= 1 else None), second]
+    if report.get('faxpages') is not None:
+        # The receiver may hold one page more than the sender saw confirmed, never fewer.
+        assert confirmed <= int(report['faxpages']) <= confirmed + 1

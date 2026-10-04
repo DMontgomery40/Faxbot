@@ -34,6 +34,7 @@ import {
 import { Refresh as RefreshIcon } from '@mui/icons-material';
 import AdminAPIClient from '../api/client';
 import { FaxCostItem } from './delivery/FaxCost';
+import { FaxTogetherItem, togetherLine } from './delivery/SendingTogether';
 import type { FaxJob, OperatorDelivery, DeliveryHistoryEvent } from '../api/types';
 import type { DirectDeliveryRecord } from '../api/deliveryTypes';
 import { providerLabel } from '../providerLabels';
@@ -89,6 +90,8 @@ const eventLabels: Record<string, string> = {
   dispatch_paused: 'Sending paused',
   submission_authorized: 'Sending to provider',
   submission_uncertain: 'Provider response unclear',
+  sent_together: 'Going in one call with other faxes to this number',
+  batch_split: 'Going on its own instead of with other faxes',
   preparation_failed: 'Could not prepare fax',
   preparation_expired: 'Preparation timed out',
   provider_observation_refused: 'Provider update ignored',
@@ -112,6 +115,8 @@ const categoryLabels: Record<string, string> = {
   sid_mismatch: 'Provider fax ID did not match',
   provider_failed: 'The provider reported that the fax failed',
   partner_not_received: 'The direct delivery partner did not receive it',
+  partly_sent: 'Part of this fax may have arrived before the call failed',
+  pages_unconfirmed: 'The call ended without confirming which pages arrived',
 };
 
 // How a fax went by direct delivery, from the partner's answer. The direct
@@ -523,6 +528,8 @@ function JobsList({ client, openJobId, onOpened }: JobsListProps) {
                         {deliveryNotice(job) && <Typography variant="caption" display="block" sx={{ mt: 0.5 }}>
                           {deliveryNotice(job)}
                         </Typography>}
+                        {togetherLine(job.together) && <Typography variant="caption" display="block" sx={{ mt: 0.5 }}
+                          data-testid="job-together">{togetherLine(job.together)}</Typography>}
                       </TableCell>
                       <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }}>
                         <Typography variant="body2" sx={{ fontSize: { xs: '0.7rem', sm: '0.875rem' } }}>
@@ -647,6 +654,7 @@ function JobsList({ client, openJobId, onOpened }: JobsListProps) {
                 />
               </ListItem>
               <FaxCostItem client={client} jobId={detailJob.id} />
+              <FaxTogetherItem client={client} jobId={detailJob.id} together={detailJob.together} onChanged={() => void fetchJobs()} />
               <Divider />
               <ListItem>
                 <ListItemText

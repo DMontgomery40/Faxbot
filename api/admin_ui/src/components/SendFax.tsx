@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Box,
   Typography,
@@ -7,6 +7,8 @@ import {
   CircularProgress,
   Stack,
   Fade,
+  Checkbox,
+  FormControlLabel,
   Grow,
   useTheme,
   useMediaQuery,
@@ -27,6 +29,7 @@ import {
 } from './common/ResponsiveFormFields';
 import { clearPendingSend, loadPendingSend, savePendingSend, sendFingerprint } from './sendIntent';
 import { countryName, numberHint, numberPlaceholder } from './common/numbers';
+import type { BatchingCheck } from '../api/batchingTypes';
 
 interface SendFaxProps {
   client: AdminAPIClient;
@@ -100,6 +103,22 @@ function SendFax({ client, config, configLoading, configError, onOpenJob }: Send
   const [resuming, setResuming] = useState(false);
   const submittingRef = useRef(false);
 
+  // A number that sends faxes together offers "Send now" (go at once, taking the faxes waiting for it).
+  const [together, setTogether] = useState<BatchingCheck | null>(null);
+  const [sendNow, setSendNow] = useState(false);
+  useEffect(() => {
+    setTogether(null);
+    setSendNow(false);
+    if (!/\d{3}/.test(toNumber)) return undefined;
+    let live = true;
+    const timer = window.setTimeout(() => {
+      client.checkBatching(toNumber)
+        .then((answer) => { if (live) setTogether(answer.sends_together ? answer : null); })
+        .catch(() => undefined);
+    }, 400);
+    return () => { live = false; window.clearTimeout(timer); };
+  }, [client, toNumber]);
+
   // Validation states
   const [toNumberError, setToNumberError] = useState(false);
   const [fileError, setFileError] = useState<string | null>(null);
@@ -171,7 +190,7 @@ function SendFax({ client, config, configLoading, configError, onOpenJob }: Send
       savePendingSend({ key: intent.key, fingerprint: intent.fingerprint, queueOnly: intent.queueOnly,
         maxFileSizeBytes: intent.maxFileSizeBytes, createdAt: intent.createdAt });
       const response = await client.sendFax(intent.destination, intent.file,
-        { queueOnly: intent.queueOnly, idempotencyKey: intent.key });
+        { queueOnly: intent.queueOnly, idempotencyKey: intent.key, sendNow: together !== null && sendNow });
       const state = (response.delivery_state || response.status).toLowerCase();
       const to = typeof response.to === 'string' && response.to ? response.to : undefined;
       setResult({
@@ -281,6 +300,16 @@ function SendFax({ client, config, configLoading, configError, onOpenJob }: Send
                   errorMessage={fileError ?? undefined}
                   icon={<DocumentIcon />}
                 />
+
+                {together && (
+                  <Box data-testid="send-now">
+                    <Typography variant="body2" color="text.secondary">{together.sentence}</Typography>
+                    <FormControlLabel
+                      control={<Checkbox checked={sendNow} onChange={(e) => setSendNow(e.target.checked)}
+                        disabled={!configReady || loading} />}
+                      label="Send now (faxes already waiting for this number go in the same call)" />
+                  </Box>
+                )}
 
                 <Box sx={{ 
                   display: 'flex', 

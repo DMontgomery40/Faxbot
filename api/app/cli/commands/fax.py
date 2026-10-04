@@ -56,20 +56,49 @@ def send(to: str = typer.Argument(..., help='Fax number to send to, for example 
                                          'sending is turned off (test mode).'),
          idempotency_key: str = typer.Option(None, '--idempotency-key', metavar='KEY',
                                              help='Your own reference for this fax. Sending again with the same '
-                                                  'reference returns the first fax instead of sending twice.')):
+                                                  'reference returns the first fax instead of sending twice.'),
+         now: bool = typer.Option(False, '--now',
+                                  help='Send at once even when this number sends faxes together; faxes waiting '
+                                       'for it go in the same call.')):
     """Send a fax. Faxbot accepts it and sends it in the background."""
     api = state.api()
     headers = {'Idempotency-Key': idempotency_key} if idempotency_key else None
     content_type = _TYPES.get(file.suffix.lower(), 'application/octet-stream')
+    data = {'to': to, 'queue_only': 'true' if queue else 'false'}
+    if now:
+        data['send_now'] = 'true'
     with file.open('rb') as handle:
-        job = api.post('/fax', data={'to': to, 'queue_only': 'true' if queue else 'false'},
-                       files={'file': (file.name, handle, content_type)}, headers=headers)
+        job = api.post('/fax', data=data, files={'file': (file.name, handle, content_type)}, headers=headers)
+    waiting = _together(api, job['id'])
 
     def human(out):
         out.line('Fax accepted.')
         out.fields(_fax_fields(job))
+        if waiting:
+            out.line(waiting)
         out.line(f"Check on it with: faxbot status {job['id']}")
     state.out().result(job, human)
+
+
+def _together_line(view):
+    """One sentence for a fax that waits, or went, with other faxes to the same number."""
+    if not view or not view.get('state'):
+        return None
+    if view['state'] == 'waiting':
+        until = local_time(view.get('waiting_until'))
+        return f'Waiting to go with other faxes to this number until {until}. To send it now: faxbot jobs send-now ID'
+    if view['state'] == 'together':
+        share = (view.get('share') or {}).get('sentence')
+        return view['sentence'] + (' ' + share if share else '')
+    return None
+
+
+def _together(api, fax_id):
+    """Best effort: a sender may not be allowed to read the fax back."""
+    try:
+        return _together_line(api.get('/batching/faxes/' + segment(fax_id)))
+    except CliError:
+        return None
 
 
 def status(fax_id: str = typer.Argument(..., help='Fax ID shown when the fax was sent.')):
@@ -102,8 +131,24 @@ def jobs_list(status_filter: str = typer.Option(None, '--status', help='Only fax
 @jobs.command('get')
 def jobs_get(fax_id: str = typer.Argument(..., help='Fax ID.')):
     """Show one sent fax."""
-    job = state.api().get('/admin/fax-jobs/' + segment(fax_id))
-    state.out().result(job, lambda out: out.fields(_fax_fields(job)))
+    api = state.api()
+    job = api.get('/admin/fax-jobs/' + segment(fax_id))
+    together = job.get('together') or {}
+    line = _together(api, fax_id) if together else None
+
+    def human(out):
+        out.fields(_fax_fields(job) + ([('Reference on its separator page', together.get('reference'))]
+                                       if together.get('state') == 'together' else []))
+        if line:
+            out.line(line)
+    state.out().result(job, human)
+
+
+@jobs.command('send-now')
+def jobs_send_now(fax_id: str = typer.Argument(..., help='Fax ID of a fax waiting to go with others.')):
+    """Send a waiting fax now; the faxes waiting with it go in the same call."""
+    view = state.api().post(f'/batching/faxes/{segment(fax_id)}/send-now')
+    state.out().result(view, lambda out: out.line('Sending now, together with the faxes waiting with it.'))
 
 
 def save_document(response, output, default_name, force):

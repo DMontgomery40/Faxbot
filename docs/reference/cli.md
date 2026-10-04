@@ -83,6 +83,7 @@ $ faxbot send [OPTIONS] {to} {file}
 
 * `--queue`: Accept the fax without sending it. Faxbot allows this only while sending is turned off (test mode).
 * `--idempotency-key KEY`: Your own reference for this fax. Sending again with the same reference returns the first fax instead of sending twice.
+* `--now`: Send at once even when this number sends faxes together; faxes waiting for it go in the same call.
 * `--help`: Show this message and exit.
 
 ## `faxbot status`
@@ -189,6 +190,7 @@ $ faxbot jobs [OPTIONS] COMMAND [ARGS]...
 
 * `list`: List sent faxes, newest first.
 * `get`: Show one sent fax.
+* `send-now`: Send a waiting fax now; the faxes waiting...
 * `pdf`: Download the document of a sent fax.
 * `refresh`: Ask the provider for the latest status of...
 * `history`: Show the delivery history of a sent fax.
@@ -226,6 +228,24 @@ $ faxbot jobs get [OPTIONS] {fax_id}
 **Arguments**:
 
 * `fax_id`: Fax ID.  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+### `faxbot jobs send-now`
+
+Send a waiting fax now; the faxes waiting with it go in the same call.
+
+**Usage**:
+
+```console
+$ faxbot jobs send-now [OPTIONS] {fax_id}
+```
+
+**Arguments**:
+
+* `fax_id`: Fax ID of a fax waiting to go with others.  [required]
 
 **Options**:
 
@@ -1881,6 +1901,7 @@ $ faxbot routing [OPTIONS] COMMAND [ARGS]...
 * `reconcile`: Ask the SIP trunk carrier now what each...
 * `fax-cost`: Show what one fax cost: the carrier&#x27;s...
 * `rate-cards`: Show the prices Faxbot uses to estimate...
+* `batching`: Send short faxes to the same number...
 
 ### `faxbot routing destinations`
 
@@ -1997,6 +2018,84 @@ $ faxbot routing rate-cards [OPTIONS]
 **Options**:
 
 * `--replace FILE`: Replace all rate cards with the cards in this JSON file ({&quot;cards&quot;: [...]}, or &#x27;-&#x27; for standard input).
+* `--help`: Show this message and exit.
+
+### `faxbot routing batching`
+
+Send short faxes to the same number together in one call, where the recipient agreed and it saves money.
+
+**Usage**:
+
+```console
+$ faxbot routing batching [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `show`: Show whether faxes to a number are sent...
+* `set`: Turn sending together on for a number, or...
+* `off`: Turn sending together off for a number;...
+
+#### `faxbot routing batching show`
+
+Show whether faxes to a number are sent together, why it saves money or not, and what it saved.
+
+**Usage**:
+
+```console
+$ faxbot routing batching show [OPTIONS] {number}
+```
+
+**Arguments**:
+
+* `number`: Fax number.  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+#### `faxbot routing batching set`
+
+Turn sending together on for a number, or change its settings.
+
+**Usage**:
+
+```console
+$ faxbot routing batching set [OPTIONS] {number}
+```
+
+**Arguments**:
+
+* `number`: Fax number.  [required]
+
+**Options**:
+
+* `--recipient-agreed`: Record that this recipient has agreed to receive several documents in one call. Needed to turn sending together on.
+* `--wait MINUTES`: Longest time a fax waits for others (default 10).  [1&lt;=x&lt;=60]
+* `--max-pages <int range>`: Most pages one call carries, separator pages included (default 30).  [2&lt;=x&lt;=200]
+* `--mixed-senders / --same-sender-only`: Whether faxes from different people or API keys may share a call (default: no).
+* `--help`: Show this message and exit.
+
+#### `faxbot routing batching off`
+
+Turn sending together off for a number; faxes waiting for it go straight away.
+
+**Usage**:
+
+```console
+$ faxbot routing batching off [OPTIONS] {number}
+```
+
+**Arguments**:
+
+* `number`: Fax number.  [required]
+
+**Options**:
+
 * `--help`: Show this message and exit.
 
 ## `faxbot intake`

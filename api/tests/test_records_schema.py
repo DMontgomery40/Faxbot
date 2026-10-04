@@ -13,7 +13,7 @@ NOW = datetime(2026, 10, 3, 12)
 
 
 def test_carrier_records_are_head_after_carrier_charges():
-    assert schema.HEAD == schema_records.REVISION == '0013_carrier_records'
+    assert schema.RECORDS == schema_records.REVISION == '0013_carrier_records'
     assert schema.CHARGES == '0012_carrier_charges'
     assert schema_records.TABLES <= schema.STRICT_TABLES
 

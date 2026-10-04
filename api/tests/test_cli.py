@@ -654,6 +654,27 @@ def test_routing_destinations_costs_and_rate_cards(cli, tmp_path):
     assert cli('routing', 'fax-cost', '0' * 32).exit_code != 0
 
 
+def test_routing_batching_show_set_off_and_send_now(cli, tmp_path):
+    off = cli.json('routing', 'batching', 'show', '+15551230001')
+    assert off['enabled'] is False and off['max_wait_minutes'] == 10
+    refused = cli('routing', 'batching', 'set', '+15551230001')
+    assert refused.exit_code != 0 and 'recipient agreed' in refused.stderr
+    on = cli.json('routing', 'batching', 'set', '+15551230001', '--recipient-agreed', '--wait', '5',
+                  '--max-pages', '12', '--mixed-senders')
+    assert on['enabled'] is True and on['max_wait_minutes'] == 5 and on['max_pages'] == 12 and on['mixed_senders']
+    human = cli('routing', 'batching', 'show', '+15551230001')
+    assert human.exit_code == 0 and 'Recipient agreement recorded by' in human.stdout
+    assert 'No faxes to this number have been sent together' in human.stdout
+    gone = cli('routing', 'batching', 'off', '+15551230001')
+    assert gone.exit_code == 0 and 'Off: faxes to this number go straight away.' in gone.stdout
+    note = tmp_path / 'note.txt'
+    note.write_text('Synthetic command line fax\n')
+    sent = cli.json('send', '+15551230001', note, '--queue', '--now')
+    assert sent['status'] == 'queued'
+    waiting = cli('jobs', 'send-now', sent['id'])
+    assert waiting.exit_code != 0 and 'not waiting' in waiting.stderr
+
+
 @pytest.fixture
 def telnyx_cli(monkeypatch, tmp_path):
     for client in _serve(monkeypatch, tmp_path, TELNYX_API_KEY='KEYsynthetic-cli', SIP_TRUNK_PRESET='telnyx'):

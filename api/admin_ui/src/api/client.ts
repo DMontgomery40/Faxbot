@@ -1,4 +1,5 @@
 import type { SipApplyResult, SipCallPage, SipPreset, SipTrunkStatus } from './sipTypes';
+import type { BatchingCheck, BatchingNumber, BatchingSave, FaxTogether } from './batchingTypes';
 import type {
   HealthStatus,
   FaxJob,
@@ -771,11 +772,13 @@ export class AdminAPIClient {
     return result;
   }
 
-  async sendFax(to: string, file: File, options: { queueOnly?: boolean; idempotencyKey?: string } = {}): Promise<FaxSendResult> {
+  async sendFax(to: string, file: File, options: { queueOnly?: boolean; idempotencyKey?: string; sendNow?: boolean } = {}): Promise<FaxSendResult> {
     const formData = new FormData();
     formData.append('to', normalizeFaxDestination(to));
     formData.append('file', file);
     if (options.queueOnly) formData.append('queue_only', 'true');
+    // Only for a number that sends faxes together: go at once, taking the faxes waiting for it.
+    if (options.sendNow) formData.append('send_now', 'true');
 
     const res = await this.send('/fax', {
       method: 'POST',
@@ -922,6 +925,31 @@ export class AdminAPIClient {
 
   async getFaxCost(jobId: string): Promise<FaxCost> {
     return this.json(`/routing/faxes/${id(jobId)}/cost`);
+  }
+
+  // Sending short faxes to the same number together in one call.
+  async getBatching(number: string): Promise<BatchingNumber> {
+    return this.json(`/batching/numbers/${id(number)}`);
+  }
+
+  async saveBatching(number: string, body: BatchingSave): Promise<BatchingNumber> {
+    return this.json(`/batching/numbers/${id(number)}`, { method: 'PUT', body: JSON.stringify(body) });
+  }
+
+  async turnOffBatching(number: string): Promise<BatchingNumber> {
+    return this.json(`/batching/numbers/${id(number)}`, { method: 'DELETE' });
+  }
+
+  async checkBatching(to: string): Promise<BatchingCheck> {
+    return this.json(`/batching/check${query({ to: normalizeFaxDestination(to) })}`);
+  }
+
+  async getFaxTogether(jobId: string): Promise<FaxTogether> {
+    return this.json(`/batching/faxes/${id(jobId)}`);
+  }
+
+  async sendWaitingFaxNow(jobId: string): Promise<FaxTogether> {
+    return this.json(`/batching/faxes/${id(jobId)}/send-now`, { method: 'POST', body: '{}' });
   }
 
   async getInboundCost(inboundId: string): Promise<FaxCost> {

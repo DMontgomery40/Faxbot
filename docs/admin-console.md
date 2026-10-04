@@ -74,7 +74,7 @@ The **Restart now** button in the Settings restart message and the Diagnostics *
 - `POST /admin/settings/reload` only reads durable state
 - `POST /admin/settings/persist` writes a recovery file; it does not become the authoritative settings store
 - Jobs table uses admin‑scoped endpoints (`/admin/fax-jobs*`) with masked phone numbers
-- Jobs lists each fax by its number, state and provider name (for example **SIP trunk (Asterisk)**); the job ID appears only in Job Details, where it can be copied. After a send, the confirmation names the number ("Fax queued for +12015550123.") and **Follow it in Jobs** opens that fax's details.
+- Jobs lists each fax by its number, state and provider name (for example **SIP trunk (Asterisk)**); the job ID appears only in Job Details, where it can be copied. A fax waiting to go with other faxes to its number says "Waiting to go with other faxes to this number until 10:40 PM"; its details offer **Send now**. A fax that went in one call with others says so, shows the reference on its separator page and its share of the call's charge. Send shows a **Send now** box only for a number that sends faxes together. See [sending together](operations/delivery-routes.md#sending-together). After a send, the confirmation names the number ("Fax queued for +12015550123.") and **Follow it in Jobs** opens that fax's details.
 
 ## Inbound Controls (v2)
 
