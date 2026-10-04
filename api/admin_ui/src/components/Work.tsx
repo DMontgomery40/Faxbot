@@ -188,6 +188,7 @@ export default function Work({ client, permissions }: WorkProps) {
             <Card key={item.id} variant="outlined" onClick={() => setSelected(item)} sx={{ cursor: 'pointer' }}>
               <CardContent>
                 <Chip size="small" color={stateColor(item)} label={workStateSentence(item)} sx={{ mb: 1, maxWidth: '100%' }} />
+                {item.is_test && <Chip size="small" variant="outlined" label="Test fax" sx={{ mb: 1, ml: 1 }} />}
                 <Typography variant="body2">From {maskNumber(item.from_number)} · {where(item)}</Typography>
                 <Typography variant="caption" color="text.secondary">Arrived {formatServerTime(item.available_at)}</Typography>
                 {duplicateSentence(item) && <Typography variant="caption" display="block">{duplicateSentence(item)}</Typography>}
@@ -220,6 +221,7 @@ export default function Work({ client, permissions }: WorkProps) {
                   <TableCell>{item.due_at ? formatServerTime(item.due_at) : '-'}</TableCell>
                   <TableCell>
                     <Chip size="small" color={stateColor(item)} label={workStateSentence(item)} />
+                    {item.is_test && <Chip size="small" variant="outlined" label="Test fax" sx={{ ml: 1 }} />}
                     {duplicateSentence(item) && <Typography variant="caption" display="block">{duplicateSentence(item)}</Typography>}
                   </TableCell>
                   <TableCell align="right">{actions(item)}</TableCell>

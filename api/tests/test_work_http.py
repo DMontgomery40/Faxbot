@@ -325,3 +325,11 @@ def test_the_running_service_feeds_received_documents_into_the_queue(monkeypatch
                 time.sleep(0.5)
         assert [item['inbound_fax_id'] for item in items] == [fax]
         assert items[0]['due_hours'] == 6 and items[0]['due_source'] == 'installation'
+
+
+def test_a_simulated_test_fax_is_marked_as_a_test_in_the_queue(client):
+    simulated = client.post('/admin/inbound/simulate', headers=B, json={'fr': '+15550000000', 'to': '+15550100001'})
+    assert simulated.status_code == 200, simulated.text
+    feed()
+    (item,) = client.get('/work', headers=B).json()['items']
+    assert item['is_test'] is True and item['inbound_fax_id'] == simulated.json()['id']

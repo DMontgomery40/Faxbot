@@ -98,7 +98,7 @@ def test_received_document_becomes_one_owned_item_through_its_lifecycle(ww):
     view = ww.service.detail(admin, item['id'])
     assert view['state_text'] == 'Waiting for an owner.' and view['mailbox'] == 'Front Desk'
     assert view['due_text'] == 'Acknowledge within 24 hours of the document arriving (installation setting)'
-    assert view['actions'] == ['assign', 'done', 'export', 'document']
+    assert view['actions'] == ['assign', 'done', 'export', 'document'] and view['is_test'] is False
     assert [person['name'] for person in ww.service.assignees(admin, item['id'])] == ['admin', 'dana']
 
     assigned = ww.service.assign(admin, item['id'], 'dana', version=1)

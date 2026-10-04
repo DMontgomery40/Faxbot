@@ -71,7 +71,10 @@ class WorkService:
     def _rows(self):
         items, inbound, resources, mailboxes = (self.store.items, self.store.inbound, self.store.resources,
                                                 self.store.mailboxes)
-        return (sa.select(*items.c, inbound.c.from_number, inbound.c.to_number, inbound.c.pages,
+        imports = self.store.imports
+        test = sa.exists(sa.select(1).where(imports.c.inbound_fax_id == items.c.inbound_fax_id,
+                                            imports.c.source == 'test'))
+        return (sa.select(*items.c, inbound.c.from_number, inbound.c.to_number, inbound.c.pages, test.label('is_test'),
                           inbound.c.status.label('document_status'), inbound.c.sha256,
                           inbound.c.received_at.label('document_received_at'),
                           mailboxes.c.label.label('mailbox'), resources.c.id.label('resource_id'))
@@ -147,6 +150,7 @@ class WorkService:
                 'escalated_at': row['escalated_at'], 'done_at': row['done_at'], 'done_by': names.get(row['done_by']),
                 'done_note': row['done_note'], 'duplicate_of': duplicates.get(row['id']), 'is_mine': mine,
                 'overdue': row['state'] == 'open' and row['due_at'] is not None and now > row['due_at'],
+                'is_test': bool(row['is_test']),
                 'version': row['version'], 'actions': actions,
             }
             if detail:

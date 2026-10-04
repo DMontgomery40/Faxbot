@@ -71,7 +71,7 @@ function queue(items: WorkItem[], calls: Array<[string, unknown]> = []) {
 describe('Work screen', () => {
   it('offers only the actions the server allows and lists documents still waiting', async () => {
     queue([
-      item({ id: 'open', actions: ['assign', 'done', 'export', 'document'] }),
+      item({ id: 'open', actions: ['assign', 'done', 'export', 'document'], is_test: true }),
       item({ id: 'mine', from_number: '+15550102222', state_key: 'assigned', state_text: 'Assigned to Dana.',
         owner: { id: 'dana', name: 'Dana' }, is_mine: true, actions: ['acknowledge'] }),
     ]);
@@ -79,6 +79,8 @@ describe('Work screen', () => {
     const table = await screen.findByRole('table', { name: 'Work items' });
     const rows = within(table).getAllByRole('row').slice(1);
     expect(within(rows[0]).getByRole('button', { name: 'Assign' })).toBeTruthy();
+    expect(within(rows[0]).getByText('Test fax')).toBeTruthy();
+    expect(within(rows[1]).queryByText('Test fax')).toBeNull();
     expect(within(rows[0]).getByRole('button', { name: 'Export' })).toBeTruthy();
     expect(within(rows[0]).queryByRole('button', { name: 'Acknowledge' })).toBeNull();
     expect(within(rows[1]).getByRole('button', { name: 'Acknowledge' })).toBeTruthy();

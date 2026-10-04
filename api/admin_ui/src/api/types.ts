@@ -579,6 +579,7 @@ export interface WorkItem {
   duplicate_of: { id: string; available_at: string } | null;
   is_mine: boolean;
   overdue: boolean;
+  is_test?: boolean;
   version: number;
   actions: WorkAction[];
   owner_can_see?: boolean | null;
