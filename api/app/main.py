@@ -750,6 +750,7 @@ def get_admin_config(request: Request, identity=Depends(require_identity)):
             "signalwire": bool(values.signalwire_space_url and values.signalwire_project_id and values.signalwire_api_token),
             "documo": bool(values.documo_api_key),
             "humblefax": bool(values.humblefax_access_key and values.humblefax_secret_key),
+            "efax": bool(values.efax_app_id and values.efax_api_key and values.efax_user_id),
             "sip_ami_configured": bool(values.ami_username and values.ami_password),
             "sip_ami_password_default": (values.ami_password == "changeme"),
         },
@@ -2805,6 +2806,15 @@ def _installed_plugins(snapshot=None) -> list[dict[str, Any]]:
         "categories": ["outbound"],
         "capabilities": ["send", "get_status"],
         "enabled": (current == "humblefax"),
+        "configurable": True,
+    })
+    items.append({
+        "id": "efax",
+        "name": "eFax",
+        "version": "1.0.0",
+        "categories": ["outbound"],
+        "capabilities": ["send", "get_status"],
+        "enabled": (current == "efax"),
         "configurable": True,
     })
     items.append({

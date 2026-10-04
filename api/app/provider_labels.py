@@ -10,6 +10,7 @@ PROVIDER_LABELS = {
     'signalwire': 'SignalWire',
     'documo': 'Documo',
     'humblefax': 'HumbleFax',
+    'efax': 'eFax',
     'sip': 'SIP trunk (Asterisk)',
     'freeswitch': 'SIP trunk (FreeSWITCH)',
 }

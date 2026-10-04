@@ -55,6 +55,15 @@
       "learn_more": "https://docs.faxbot.net/latest/setup/humblefax/"
     },
     {
+      "id": "efax",
+      "name": "eFax",
+      "version": "1.0.0",
+      "categories": ["outbound"],
+      "capabilities": ["send", "get_status"],
+      "description": "Cloud fax through the eFax Enterprise API (eFax Corporate) in the US, UK and Australia, with original-account status polling.",
+      "learn_more": "https://docs.faxbot.net/latest/setup/efax/"
+    },
+    {
       "id": "sip",
       "name": "SIP trunk (Asterisk)",
       "version": "1.0.0",

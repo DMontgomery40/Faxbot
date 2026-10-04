@@ -27,7 +27,7 @@ ENVIRONMENT_MANAGED_REFUSAL = "This key is set in .env. Change it there, then ru
 
 # Fax numbers in settings are saved in E.164; national input uses the country.
 _NUMBER_FIELDS = frozenset({"direct_fax_number", "sip_trunk_caller_id", "sip_trunk_dids",
-                            "signalwire_fax_from_e164"})
+                            "signalwire_fax_from_e164", "efax_caller_id"})
 
 
 class ConfigurationValues(BaseModel):
@@ -107,6 +107,19 @@ class ConfigurationValues(BaseModel):
     humblefax_secret_key: str = Field('', validation_alias=AliasChoices('HUMBLEFAX_SECRET_KEY', 'HUMBLEFAX_API_SECRET_KEY'),
                                       repr=False, json_schema_extra={'secret': True})
     humblefax_from_number: str = Field('', validation_alias='HUMBLEFAX_FROM_NUMBER', pattern=r'^(?:\+1[2-9][0-9]{9}|1?[2-9][0-9]{9})?$')
+    # eFax Enterprise API (eFax Corporate): the app ID, API key and user ID from eFax's welcome email.
+    efax_app_id: str = Field('', validation_alias='EFAX_APP_ID', repr=False, json_schema_extra={'secret': True},
+                             pattern=r'^[!-9;-~]{0,256}$')
+    efax_api_key: str = Field('', validation_alias='EFAX_API_KEY', repr=False, json_schema_extra={'secret': True},
+                              pattern=r'^[!-~]{0,256}$')
+    efax_user_id: str = Field('', validation_alias='EFAX_USER_ID', repr=False, json_schema_extra={'secret': True},
+                              pattern=r'^[!-~]{0,256}$')
+    # The eFax number recipients see (custom_CallerID) and the station name on each page (custom_CSID).
+    efax_caller_id: str = Field('', validation_alias='EFAX_CALLER_ID', pattern=r'^(?:\+[1-9][0-9]{6,14})?$')
+    efax_csid: str = Field('', validation_alias='EFAX_CSID', pattern=r'^[ -~]{0,20}$')
+    # How often Faxbot asks eFax for received faxes, and whether it deletes each one from eFax once stored.
+    efax_poll_seconds: int = Field(60, validation_alias='EFAX_POLL_SECONDS', ge=30, le=3600)
+    efax_delete_after_download: bool = Field(False, validation_alias='EFAX_DELETE_AFTER_DOWNLOAD')
     fax_header: str = Field('Faxbot', validation_alias='FAX_HEADER')
     fax_station_id: str = Field('+10000000000', validation_alias='FAX_LOCAL_STATION_ID')
     # Installation country (ISO 3166 alpha-2, such as US or GB) for fax numbers

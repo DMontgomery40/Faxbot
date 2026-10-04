@@ -39,6 +39,8 @@ _PROVIDER_FIELDS = frozenset({
     'signalwire_status_poll_seconds',
     'documo_api_key', 'documo_base_url', 'documo_use_sandbox',
     'humblefax_access_key', 'humblefax_secret_key', 'humblefax_from_number',
+    'efax_app_id', 'efax_api_key', 'efax_user_id', 'efax_caller_id', 'efax_csid', 'efax_poll_seconds',
+    'efax_delete_after_download',
     'outbound_routes', 'direct_delivery_enabled', 'direct_organization', 'direct_fax_number',
     'intake_email_enabled', 'intake_smtp_host', 'intake_smtp_port', 'intake_smtp_security',
     'intake_smtp_username', 'intake_smtp_password', 'intake_email_from', 'intake_email_to',

@@ -197,7 +197,7 @@ class OutboundStore:
         configuration = profile.configuration
         manifest = configuration.manifest
         supported = ('get_status' in manifest.get('actions', {}) if manifest is not None
-                     else configuration.provider_id in {'phaxio', 'signalwire', 'sinch', 'documo', 'humblefax'})
+                     else configuration.provider_id in {'phaxio', 'signalwire', 'sinch', 'documo', 'humblefax', 'efax'})
         if not supported:
             return 'This provider cannot look up fax status; check the fax in your provider account.'
         return None
@@ -223,7 +223,7 @@ class OutboundStore:
         if reason is not None:
             raise DeliveryConflict(reason)
         documo_uuid = (profile.configuration.manifest is None
-                       and profile.configuration.provider_id == 'documo')
+                       and profile.configuration.provider_id in {'documo', 'efax'})
         if documo_uuid:
             if re.fullmatch(r'[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}', provider_sid) is None:
                 raise ValueError('Invalid provider identity reconciliation input.')
