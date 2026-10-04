@@ -16,6 +16,8 @@ export interface HealthStatus {
   timestamp: string;
   backend: string;
   backend_healthy: boolean;
+  // One plain reason when sending cannot work, such as the fax engine refusing Faxbot's login.
+  backend_message?: string | null;
   jobs: {
     queued: number;
     in_progress: number;

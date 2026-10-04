@@ -22,7 +22,7 @@ Installed plugin and trait metadata are shown as structured values. This invento
 - **Open Settings** to review desired settings, apply explicit changes using the loaded revision, and inspect active versus pending state. Editing environment files does not update an initialized canonical store.
 - **Open Send** to choose a document and a destination you control. Held mode creates durable work without dispatch. Real mode can submit to the active provider when sending is enabled. Follow the resulting job and verify the received document to establish delivery.
 - **Copy JSON** copies the diagnostic result. **Download JSON** requests a browser download; verify that the browser saved it.
-- **Restart API** requests one process to exit, only when the installation allows it. The response confirms acceptance of that request, not a completed restart. A process manager must start it again. Pending configuration activation requires every API worker to stop and the installation to restart; verify active/desired identity afterward.
+- **Restart API** asks Faxbot to stop, only when the installation allows it; the reply confirms the request, not a completed restart. With Docker Compose the `api` service starts again by itself (`restart: unless-stopped`), usually within a few seconds; elsewhere your process manager must start it again. Where several API processes run, a pending settings change waits until every one of them has stopped and started again.
 
 See the [Diagnostics Matrix](diagnostics-matrix.md) for follow-up actions, [Settings](settings.md) for configuration, and [Deployment](../deployment.md) for host preparation.
 

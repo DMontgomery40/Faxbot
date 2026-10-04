@@ -27,7 +27,7 @@ from .db import init_db, SessionLocal, FaxJob
 from .models import FaxJobOut
 from .conversion import ensure_dir
 from .documents import prepare_upload, UploadPreparationError
-from .ami import ami_client
+from .ami import ami_client, ENGINE_UNREACHABLE
 from . import sip_calls
 from .sip_http import router as sip_router, watch_public_address
 from .phaxio_service import get_phaxio_service
@@ -87,6 +87,11 @@ from .cases.http import router as cases_router
 from .inbound.http import router as inbound_router
 from .work.http import imports_router, router as work_router
 from .routing.transport import RoutedTransport
+import logging
+
+# How long startup gives Asterisk to accept Faxbot's manager login before the
+# worker starts; a refused login ends the wait at once.
+AMI_STARTUP_WAIT_SECONDS = 10.0
 
 
 @asynccontextmanager
@@ -115,7 +120,10 @@ async def lifespan(application: FastAPI):
                     ami_client.on_originate_response(_handle_originate_response)
                     sip_calls.attach(ami_client, runtime.manager.store.engine)
                     tasks.append(asyncio.create_task(ami_client.connect(), name="faxbot-ami-connect"))
-                    await asyncio.wait_for(ami_client._connected.wait(), timeout=10)
+                    # Start without the fax engine rather than lock people out of the
+                    # console that fixes it; the client keeps retrying in the background.
+                    if not await ami_client.settle(AMI_STARTUP_WAIT_SECONDS):
+                        logging.getLogger(__name__).warning(ami_client.engine_message())
                 async with AsyncExitStack() as stack:
                     _mount_enabled_mcp(application, mounts)
                     for mount in mounts:
@@ -557,15 +565,12 @@ def _readiness_status(request: Request):
         backend_warnings.append("Ghostscript (gs) not installed — required for fax file processing")
 
     # AMI connection (only when required by traits)
-    ami_connected = False
-    try:
-        from .ami import ami_client as _ac  # type: ignore
-        ami_connected = bool(getattr(_ac, "_connected").is_set())  # type: ignore[union-attr]
-    except Exception:
-        ami_connected = False
+    ami_connected = bool(ami_client._connected.is_set())
 
     # Required traits for readiness
     ami_required = providerHasTrait("any", "requires_ami")
+    # One plain reason when the fax engine is missing: no provider, or Faxbot cannot sign in or reach it.
+    message = NO_PROVIDER if not ob else (ami_client.engine_message() if ami_required else None)
     storage_required = settings.inbound_enabled and providerHasTrait("inbound", "needs_storage")
     ready = bool(
         db_ok and gs_installed and outbound_ok and inbound_ok and
@@ -593,7 +598,7 @@ def _readiness_status(request: Request):
             },
             "warnings": backend_warnings,
             "storage_error": storage_error,
-            **({"message": NO_PROVIDER} if not ob else {}),
+            **({"message": message} if message else {}),
         }
 
 
@@ -973,6 +978,8 @@ async def get_health_status(request: Request):
             "timestamp": now.isoformat() + 'Z',
             "backend": readiness['backend'],
             "backend_healthy": readiness['status'] == 'ready',
+            # One plain reason when sending cannot work, such as the fax engine refusing Faxbot's login.
+            "backend_message": readiness.get('message'),
             "jobs": jobs,
             "inbound_enabled": settings.inbound_enabled,
             "api_keys_configured": bool(settings.api_key) or db_key_present,
@@ -2081,13 +2088,14 @@ def run_diagnostics(request: Request):
             outcomes[section][key] = "not_applicable"
         else:
             outcomes[section][key] = "pass" if value is True else "fail"
-            if value is not True:
+            if value is not True and message not in critical:
                 critical.append(message)
 
+    engine = ami_client.engine_message() or ENGINE_UNREACHABLE
     required("outbound", "backend_config", "Active outbound provider is not locally configured. Review the active provider in Settings.")
-    required("outbound", "ami_connected", "Active outbound provider requires an Asterisk AMI connection.")
+    required("outbound", "ami_connected", engine)
     required("inbound", "backend_config", "Active receiving provider is not locally configured. Review inbound settings.", applicable=settings.inbound_enabled)
-    required("inbound", "ami_connected", "Active receiving provider requires an Asterisk AMI connection.", applicable=settings.inbound_enabled)
+    required("inbound", "ami_connected", engine, applicable=settings.inbound_enabled)
     for direction in ("outbound", "inbound"):
         if "ami_password_not_default" in checks[direction]:
             required(direction, "ami_password_not_default",
@@ -2244,6 +2252,10 @@ async def send_fax(request: Request, to: str = Form(...), file: UploadFile = Fil
             service_from_profile(profile)
         except ProviderExecutionError:
             raise HTTPException(400, detail="Selected provider has no supported outbound adapter.") from None
+    elif ob == 'sip' and not revision.values.fax_disabled and not ami_client._connected.is_set():
+        # A fax accepted now would fail before it is sent; refuse it with the reason instead.
+        # Held test faxes are never sent, so they are still accepted.
+        raise HTTPException(503, detail=ami_client.engine_message())
     job_id = uuid.uuid4().hex
     requires_tiff = ((not use_manifest and ob in {'sip', 'freeswitch'})
                      or profile.configuration.traits.get('requires_tiff', False) is True)

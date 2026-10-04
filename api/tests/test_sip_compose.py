@@ -57,6 +57,22 @@ def test_docker_compose_config_for_the_default_install_publishes_no_media_range(
     assert all(int(port.get('published', 0)) not in range(4000, 5000) for _, port in published), published
 
 
+@pytest.mark.parametrize('name', ['api', 'asterisk'])
+def test_services_start_again_after_any_exit(name):
+    """Restart API exits with code 0; only "always" or "unless-stopped" bring that process back."""
+    service = yaml.safe_load((ROOT / 'docker-compose.yml').read_text())['services'][name]
+    assert service.get('restart') == 'unless-stopped'
+
+
+@pytest.mark.skipif(shutil.which('docker') is None, reason='The docker command is not installed.')
+def test_docker_compose_config_keeps_the_restart_policy():
+    result = subprocess.run(['docker', 'compose', '-f', 'docker-compose.yml', '-f', 'docker-compose.public.yml',
+                             'config', '--format', 'json'], cwd=ROOT, capture_output=True, text=True, timeout=60)
+    assert result.returncode == 0, result.stderr[-500:]
+    services = json.loads(result.stdout)['services']
+    assert {services[name].get('restart') for name in ('api', 'asterisk')} == {'unless-stopped'}
+
+
 def test_public_override_publishes_one_narrow_range_that_asterisk_uses():
     asterisk = yaml.safe_load((ROOT / 'docker-compose.public.yml').read_text())['services']['asterisk']
     ranges = [port_range for port_range, protocol in _published(asterisk) if _width(port_range) > 1]

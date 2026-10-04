@@ -208,4 +208,14 @@ describe('Send follows the installation country', () => {
     expect(screen.queryByText(/HTTP/)).toBeNull();
     expect(window.sessionStorage.getItem('faxbot_pending_send')).toBeNull();
   });
+
+  it('says why a fax was refused when Faxbot cannot sign in to its fax engine', async () => {
+    const detail = "Faxbot can't sign in to its fax engine. Check that the Asterisk manager password matches.";
+    server.use(http.post('/fax', () => HttpResponse.json({ detail }, { status: 503 })));
+    openFor(us);
+    await send('2015550123', document());
+    expect(await screen.findByText(detail)).toBeTruthy();
+    expect(screen.queryByText(/HTTP|Check Jobs/)).toBeNull();
+    expect(window.sessionStorage.getItem('faxbot_pending_send')).toBeNull();
+  });
 });

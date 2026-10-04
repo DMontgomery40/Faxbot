@@ -157,6 +157,8 @@ function Settings({ client, canWrite = false, focus, onFocused }: SettingsProps)
   const [lastGeneratedSecret, setLastGeneratedSecret] = useState<string>('');
   const [needsReload, setNeedsReload] = useState(false);
   const [saveResult, setSaveResult] = useState<ConfigurationWriteResult | null>(null);
+  // Why sending cannot work right now, such as the fax engine refusing Faxbot's login.
+  const [engineMessage, setEngineMessage] = useState<string | null>(null);
   const actionFence = useRef(false);
   const requestEpoch = useRef(0);
   const desiredRevision = needsReload ? undefined : settings?._meta?.desired_revision_id;
@@ -306,6 +308,10 @@ function Settings({ client, canWrite = false, focus, onFocused }: SettingsProps)
         const cfg = await client.getConfig();
         if (epoch === requestEpoch.current) setDocsBase(cfg?.branding?.docs_base || DEFAULT_DOCS_BASE);
       } catch { /* Settings remain usable when branding is unavailable. */ }
+      try {
+        const message = await client.getFaxEngineMessage();
+        if (epoch === requestEpoch.current) setEngineMessage(message);
+      } catch { /* Readiness is optional here; Diagnostics shows it in full. */ }
     } catch (err) {
       if (epoch === requestEpoch.current) setError(err instanceof Error ? err.message : 'Failed to fetch settings');
     } finally {
@@ -411,6 +417,11 @@ function Settings({ client, canWrite = false, focus, onFocused }: SettingsProps)
       {error && (
         <Alert severity="error" sx={{ mb: 3 }}>
           {error}
+        </Alert>
+      )}
+      {engineMessage && (
+        <Alert severity="error" sx={{ mb: 3 }} data-testid="engine-message">
+          {engineMessage}
         </Alert>
       )}
       {settings && needsReload && !loading && !error ? (

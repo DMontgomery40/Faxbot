@@ -517,3 +517,22 @@ describe('Settings email delivery', () => {
     }
   });
 });
+
+describe('Settings when Faxbot cannot reach its fax engine', () => {
+  const sentence = "Faxbot can't sign in to its fax engine. Check that the Asterisk manager password matches.";
+
+  it('says so in one sentence at the top', async () => {
+    settingsHandlers(settingsFixture());
+    server.use(http.get('/health/ready', () => HttpResponse.json({ status: 'not_ready', message: sentence }, { status: 503 })));
+    render(<Settings client={client()} />);
+    expect((await screen.findByTestId('engine-message')).textContent).toBe(sentence);
+  });
+
+  it('shows nothing for other readiness reasons', async () => {
+    settingsHandlers(settingsFixture());
+    server.use(http.get('/health/ready', () => HttpResponse.json({ status: 'not_ready', message: 'Something unexpected.' }, { status: 503 })));
+    render(<Settings client={client()} />);
+    await screen.findByText('Security Settings');
+    expect(screen.queryByTestId('engine-message')).toBeNull();
+  });
+});

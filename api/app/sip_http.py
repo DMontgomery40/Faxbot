@@ -11,6 +11,7 @@ from .access.route_policy import require_permission
 from .config import configuration_values
 from .config_runtime import run_lifecycle_step
 from . import sip_trunk, stun
+from .ami import ENGINE_UNREACHABLE
 from .sip_calls import SipCallRecordError, SipCallRecords
 
 
@@ -167,6 +168,7 @@ async def _asterisk_status(values):
     result = {'connected': bool(ami_client._connected.is_set()), 'registration': 'unknown',
               'reachability': 'unknown', 'permission': True, 'transport': None}
     if not result['connected']:
+        result['engine_message'] = ami_client.engine_message()
         return result
     try:
         if values.sip_trunk_auth == 'registration':
@@ -217,7 +219,7 @@ def _message(summary, asterisk, applied, ports_text=None, transport=None):
     if not applied:
         return 'Apply these settings to Asterisk, then restart the Asterisk service.'
     if not asterisk['connected']:
-        return 'Faxbot is not connected to Asterisk.'
+        return asterisk.get('engine_message') or ENGINE_UNREACHABLE
     if not asterisk['permission']:
         return 'Asterisk does not let Faxbot read trunk status. Restart the Asterisk service to update its access.'
     if asterisk['registration'] == 'rejected':

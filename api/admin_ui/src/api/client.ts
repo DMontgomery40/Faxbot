@@ -124,6 +124,14 @@ export function plainRefusal(error: unknown): string | null {
 // The server refused a fax before accepting it, so nothing was sent.
 export class FaxRefusedError extends Error {}
 
+// Faxbot's fixed sentences for a missing connection to its fax engine (Asterisk).
+export const FAX_ENGINE_SENTENCES = new Set([
+  "Faxbot can't sign in to its fax engine. Check that the Asterisk manager password matches.",
+  "Faxbot can't reach its fax engine. Check that the Asterisk service is running.",
+  'Faxbot is still connecting to its fax engine.',
+  'Faxbot connects to its fax engine when the SIP trunk is the provider in use.',
+]);
+
 export function configurationWriteRejected(error: unknown): boolean {
   return error instanceof AdminAPIError && [400, 401, 403, 404, 409, 413, 422].includes(error.status);
 }
@@ -588,6 +596,14 @@ export class AdminAPIClient {
     return this.json('/admin/health-status');
   }
 
+  // The fax engine sentence from public readiness (it answers 503 while not ready), or null.
+  async getFaxEngineMessage(): Promise<string | null> {
+    const res = await this.send('/health/ready', {}, { quiet401: true });
+    if (res.status !== 200 && res.status !== 503) return null;
+    const body = await res.json().catch(() => null);
+    return typeof body?.message === 'string' && FAX_ENGINE_SENTENCES.has(body.message) ? body.message : null;
+  }
+
   // MCP
   async getMcpConfig(): Promise<any> {
     return this.json('/admin/config');
@@ -744,6 +760,8 @@ export class AdminAPIClient {
         throw new FaxRefusedError(sentence ?? 'The fax was not accepted; check the number and the document, then try again.');
       }
       if (res.status === 503 && typeof detail === 'string') {
+        // Refused before acceptance because the fax engine is not connected; nothing was sent.
+        if (FAX_ENGINE_SENTENCES.has(detail)) throw new FaxRefusedError(detail);
         const uncertain = /^Fax acceptance is uncertain\. Retain job ([a-f0-9]{32}) for reconciliation\.$/.exec(detail);
         if (uncertain) {
           throw new Error(`Acceptance is uncertain. Check job ${uncertain[1]} in Jobs before starting another request.`);

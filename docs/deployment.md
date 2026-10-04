@@ -23,6 +23,7 @@ Configuration and activation
 - Environment variables and the legacy plugin JSON file are read once, when a new installation starts for the first time, except credentials: provider keys, passwords and secrets in `.env` are read at every start and are the values in force (see [Credentials from .env](admin-console/settings.md#credentials-from-env)). Keep container ports, mounts and telephony service settings in the deployment configuration. With Docker Compose, `.env` is optional.
 - On an existing installation, change settings on the admin console's Settings screen and apply.
 - When Settings asks for a restart, stop every API process and start the installation again, then load Settings to confirm nothing is pending. Restarting one process while others keep running, or using the reload button, is not enough.
+- The Compose file restarts the `api` and `asterisk` services after any exit (`restart: unless-stopped`) until you stop them with `docker compose stop` or `down`.
 - Back up the database, the installation key file and stored documents together; the exported `.env` template is not a backup. See [Back up and restore](#back-up-and-restore).
 
 Public URL and TLS

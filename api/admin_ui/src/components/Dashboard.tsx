@@ -275,6 +275,11 @@ function Dashboard({ client, onNavigate }: DashboardProps) {
                 <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
                   {health.backend ? `Outbound provider: ${health.backend}` : 'No fax provider set up yet.'}
                 </Typography>
+                {health.backend && health.backend_message && (
+                  <Typography variant="body2" color="error" sx={{ mt: 1 }} data-testid="engine-message">
+                    {health.backend_message}
+                  </Typography>
+                )}
               </CardContent>
               </Card>
             </Tooltip>

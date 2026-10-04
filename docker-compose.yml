@@ -3,6 +3,9 @@ services:
     build:
       context: .
       dockerfile: ./api/Dockerfile
+    # Start again after any exit, including Restart API in the console (it exits
+    # with code 0), until someone stops the service on purpose.
+    restart: unless-stopped
     # Settings for a new installation's first start. Optional: without it Faxbot starts with defaults.
     env_file:
       - path: ./.env
@@ -27,6 +30,7 @@ services:
     build:
       context: ./asterisk
       dockerfile: Dockerfile
+    restart: unless-stopped
     env_file:
       - path: ./.env
         required: false
