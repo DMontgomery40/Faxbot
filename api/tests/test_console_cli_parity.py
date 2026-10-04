@@ -79,8 +79,6 @@ CLI_ONLY: dict = {}
 AWAITING_CONSOLE = {
     ('GET', '/access/audit'): 'System → Audit log',
     ('GET', '/admin/db-status'): 'System → Diagnostics: database status',
-    ('GET', '/admin/fax-jobs/{job_id}/delivery'): 'Faxes → Sent: delivery attempts and evidence',
-    ('POST', '/admin/fax-jobs/{job_id}/reconcile'): 'Faxes → Sent: Confirm receipt for an uncertain fax',
     ('GET', '/cases/{case_id}/documents'): 'Recipients → Case packets',
     ('POST', '/cases/{case_id}/faxes'): 'Recipients → Case packets',
 }
@@ -92,6 +90,7 @@ AWAITING_CLI = {
     ('POST', '/admin/settings/reload'): 'faxbot system settings reload',
     ('GET', '/batching/check'): 'faxbot recipients together check',
     ('GET', '/routing/inbound-costs'): 'faxbot costs received --all',
+    ('GET', '/routing/fax-costs'): 'faxbot sent list: a cost column, as on Faxes → Sent',
     ('GET', '/routing/published-plans/in-use'): 'faxbot costs plans --in-use',
     ('POST', '/admin/plugins/http/import-manifests'): 'faxbot providers import',
 }
