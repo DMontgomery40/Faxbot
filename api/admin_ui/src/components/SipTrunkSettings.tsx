@@ -67,6 +67,7 @@ const EMPTY: TrunkValues = {
   preset: '', auth: 'registration', host: '', port: 0, transport: '', username: '', password: '',
   password_set: false, outbound_proxy: '', caller_id: '', dids: [], t38_enabled: true,
   fax_preference_header: true, codecs: '', external_address: '', dial_format: '', dial_prefix: '',
+  public_address_check_minutes: 5,
 };
 
 // What the phone system section shows: how the phone system reaches Faxbot, from the trunk check.
@@ -288,6 +289,7 @@ function SipTrunkSettings({ client, showCalls = true, revision: sharedRevision, 
       ['t38_enabled', 'sip_t38_enabled'], ['fax_preference_header', 'sip_fax_preference_header'],
       ['external_address', 'sip_external_address'], ['codecs', 'sip_trunk_codecs'],
       ['dial_format', 'sip_trunk_dial_format'], ['dial_prefix', 'sip_trunk_dial_prefix'],
+      ['public_address_check_minutes', 'sip_public_address_check_minutes'],
     ];
     // The caller ID keeps its spaces while typed and is trimmed when saved.
     const current: TrunkValues = { ...form, caller_id: form.caller_id.trim() };
@@ -568,6 +570,16 @@ function SipTrunkSettings({ client, showCalls = true, revision: sharedRevision, 
               ? `Automatic: Faxbot found ${status.internet_address}. Enter an address only to override it.`
               : 'Leave empty: Faxbot finds its internet address itself and needs no open ports. Enter one only to override it.'}
             onChange={(event) => update('external_address', event.target.value.trim())} />}
+
+          {/* Only an address Faxbot finds itself is checked again. */}
+          {!phone && !form.external_address && (
+            <TextField size="small" label="Check the internet address every … minutes" type="number"
+              value={form.public_address_check_minutes ?? 5} sx={{ maxWidth: 360 }}
+              inputProps={{ min: 0, max: 1440 }}
+              helperText="How often Faxbot checks whether your internet address changed. Enter 0 to stop checking."
+              onChange={(event) => update('public_address_check_minutes',
+                Math.min(1440, Math.max(0, Math.round(Number(event.target.value) || 0))))} />
+          )}
 
           {(phone || preset.codecs_by_country) && (
             <FormControl size="small" fullWidth>

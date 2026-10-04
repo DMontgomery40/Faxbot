@@ -220,6 +220,10 @@ def project_admin_settings(snapshot: ConfigurationSnapshot, pending_fields: Iter
         'installation': {'time_zone': values.time_zone},
         'mobile': {'local_base': values.mobile_local_base},
         'developer': {'docs_base_url': values.docs_base_url},
+        # Whether the console may restart Faxbot (it exits and its service manager starts it again).
+        'restart': {'allowed': values.admin_allow_restart},
+        # Where provider plugin files are read from; shown read-only.
+        'plugin_files': {'providers_dir': values.providers_dir, 'plugin_registry_path': values.plugin_registry_path},
         'numbers': {
             'default_country': values.fax_default_country,
             'example': number_example(values.fax_default_country),

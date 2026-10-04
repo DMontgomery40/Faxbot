@@ -99,6 +99,25 @@ def estimate_cost(card, pages):
     return attempt_cost(card, seconds=seconds, pages=pages, delivered=True)
 
 
+def rate_text(card):
+    """A card's price in its own units: "$0.005 a minute, at least 1 minute", "$0.07 a page".
+
+    None for a flat plan or a card that charges nothing per fax.
+    """
+    if card is None or card.flat_plan:
+        return None
+    parts = []
+    if card.per_call_micros:
+        parts.append(f'{money_text(card.per_call_micros, card.currency)} a call')
+    if card.per_minute_micros:
+        least = billed_seconds(card, 1)
+        floor = (f'{least // 60} minute' + ('' if least == 60 else 's')) if least % 60 == 0 else f'{least} seconds'
+        parts.append(f'{money_text(card.per_minute_micros, card.currency)} a minute, at least {floor}')
+    if card.per_page_micros:
+        parts.append(f'{money_text(card.per_page_micros, card.currency)} a page')
+    return ' plus '.join(parts) or None
+
+
 def parse_amount(value, *, whole_digits=3):
     """Decimal text such as "0.0095" to micros; at most six decimal places."""
     if isinstance(value, bool):

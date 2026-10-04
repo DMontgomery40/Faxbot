@@ -44,7 +44,7 @@ import TunnelSettings from './TunnelSettings';
 import SipTrunkSettings from './SipTrunkSettings';
 import EfaxSettings, { efaxEditorValues } from './EfaxSettings';
 import { COUNTRY_HELP, CountryField, countryName, internationalHint, settingsNumberFormat } from './common/numbers';
-import { PROVIDER_LABELS, directionSummary, providerLabel } from '../providerLabels';
+import { BUILTIN_PROVIDERS, PROVIDER_LABELS, RECEIVING_PROVIDERS, directionSummary, providerLabel } from '../providerLabels';
 import ProviderDirectionFields, { directionFields, directionProblem, loadedDirections } from './common/ProviderDirections';
 
 interface SettingsProps {
@@ -63,10 +63,11 @@ interface SettingsProps {
 
 // The parts of the settings document a console page can show on its own.
 export type SettingsSection =
-  | 'providers' | 'features' | 'inbound' | 'routes'
+  | 'providers' | 'inbound' | 'routes'
   | 'phaxio' | 'sinch' | 'documo' | 'humblefax' | 'efax' | 'trunk' | 'signalwire' | 'freeswitch'
   | 'direct' | 'intake' | 'email'
-  | 'security' | 'tunnel' | 'storage' | 'advanced' | 'backup' | 'mcp' | 'identity';
+  | 'security' | 'tunnel' | 'storage' | 'advanced' | 'backup' | 'mcp' | 'identity'
+  | 'plugins' | 'diagnostics' | 'phones' | 'developer';
 
 // One sentence on a provider's own page: whether Faxbot uses it now. The trunk is
 // named by its carrier ("Telnyx") once one is chosen.
@@ -95,6 +96,13 @@ const FIELD_RANGES: Record<string, { min: number; max: number; message: string }
   intake_smtp_port: { min: 1, max: 65535, message: 'Enter an email server port from 1 to 65535.' },
 };
 
+// Files Faxbot reads its settings and plugins from, shown read-only in System > Developer.
+const READ_ONLY_FILES: Array<{ field: string; label: string; value: (data: SettingsType) => string | undefined }> = [
+  { field: 'persisted_env_path', label: 'Recovery .env file', value: (data) => data.persisted?.path },
+  { field: 'providers_dir', label: 'Provider plugin folder', value: (data) => data.plugin_files?.providers_dir },
+  { field: 'plugin_registry_path', label: 'Plugin registry file', value: (data) => data.plugin_files?.plugin_registry_path },
+];
+
 // Each control starts with the loaded settings, including redacted secrets.
 // Comparing against this snapshot prevents unrelated edits from writing masks,
 // defaults, inactive provider selections, or the opaque database URL.
@@ -111,6 +119,11 @@ function editorValues(data: SettingsType): SettingsForm {
     audit_log_syslog: data.audit?.syslog ?? false,
     audit_log_syslog_address: data.audit?.syslog_address ?? '',
     enable_persisted_settings: data.persisted?.enabled ?? false,
+    admin_allow_restart: data.restart?.allowed ?? false,
+    enable_s3_diagnostics: data.storage.s3_diagnostics ?? false,
+    mobile_local_base: data.mobile?.local_base ?? '',
+    docs_base_url: data.developer?.docs_base_url ?? '',
+    telnyx_api_key: data.sip.telnyx_api_key ?? '',
     feature_v3_plugins: data.features?.v3_plugins ?? false,
     feature_plugin_install: data.features?.plugin_install ?? false,
     fax_disabled: data.backend.disabled,
@@ -241,6 +254,8 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
   const providerSelected = (provider: string) => effectiveOutbound === provider || effectiveInbound === provider;
   // A provider's own page shows its settings whether or not it is in use, with one sentence saying which.
   const providerShown = (provider: string, section: SettingsSection) => (sections ? sections.includes(section) : providerSelected(provider));
+  // On a provider's own page its name is already the page title, so its section is the account.
+  const providerTitle = (name: string) => (sections ? 'Account' : name);
   const providerStatus = (provider: string) => (sections && settings ? (
     <Typography variant="body2" sx={{ mb: 2 }} data-testid="provider-use">
       {providerUseSentence(provider, loadedDirections(settings))}
@@ -351,6 +366,36 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
       showCurrentValue={!pendingRestart}
     />
   );
+
+  const switchField = (label: string, field: string, helperText: string,
+    options: { inverted?: boolean; disabled?: boolean } = {}) => {
+    const value = Boolean(form[field]);
+    return (
+      <Box sx={{ px: 2 }} data-testid={`switch-${field}`}>
+        <FormControlLabel
+          control={<Switch checked={options.inverted ? !value : value} disabled={options.disabled}
+            onChange={(event) => handleForm(field, options.inverted ? !event.target.checked : event.target.checked)} />}
+          label={label} />
+        {helperText && <Typography variant="body2" color="text.secondary" sx={{ ml: 6 }}>{helperText}</Typography>}
+      </Box>
+    );
+  };
+  const readOnlyField = (label: string, field: string, value: string | undefined) => (
+    <ResponsiveSettingItem key={field} icon={<StorageIcon />} label={label} value={value ?? ''}
+      editValue={value || 'Not set'} helperText="Read only. Changing it is a planned maintenance task." showCurrentValue={false} />
+  );
+  // Receiving goes through the receiving provider chosen in the Setup wizard; some providers only send.
+  const receiver = String(effectiveInbound || '');
+  const receiverName = receiver ? providerLabel(receiver) : '';
+  const receiverCanReceive = !!receiver && (!BUILTIN_PROVIDERS.includes(receiver) || RECEIVING_PROVIDERS.has(receiver));
+  const receivingSentence = !receiver
+    ? 'No provider receives faxes yet. To receive, choose Add or change a provider.'
+    : !receiverCanReceive
+      // While receiving is on, the warning below says what to do.
+      ? (form.inbound_enabled ? '' : `${receiverName} cannot receive faxes. To receive, choose Add or change a provider.`)
+      : form.inbound_enabled
+        ? `Faxes arrive through ${receiverName}.`
+        : `Turn this on to receive faxes through ${receiverName}.`;
 
   const fetchSettings = async () => {
     if (actionFence.current) return;
@@ -639,15 +684,9 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
               </Typography>
             )}
 
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 1 }}>
-              <Chip
-                label={settings.backend.disabled ? 'Fax sending is off' : 'Fax sending is on'}
-                color={settings.backend.disabled ? 'error' : 'success'}
-                size="small"
-                variant="outlined"
-                sx={{ borderRadius: 1 }}
-              />
-            </Box>
+            {switchField('Sending is on', 'fax_disabled',
+              'Off: Faxbot stops sending. Faxes submitted while sending is off stay on hold after you turn it back on.',
+              { inverted: true })}
             {settings.numbers && (
               <ResponsiveSettingItem
                 icon={<PublicIcon />}
@@ -746,8 +785,8 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
           {/* Backend-Specific Configuration */}
           {providerShown('phaxio', 'phaxio') && (
                   <ResponsiveSettingSection
-                    title="PHAXIO Configuration"
-                    subtitle="Configure your Phaxio API credentials and settings"
+                    title={providerTitle('Phaxio')}
+                    subtitle="Your Phaxio account"
                   >
                     {providerStatus('phaxio')}
                     <Box sx={{ display: 'flex', gap: 1, mb: 2, flexWrap: 'wrap' }}>
@@ -817,7 +856,7 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
                 )}
 
                 {providerShown('sinch', 'sinch') && (
-                  <ResponsiveSettingSection title="Sinch Configuration" subtitle="Configure your Sinch fax endpoint and credentials">
+                  <ResponsiveSettingSection title={providerTitle('Sinch')} subtitle="Your Sinch account">
                     {providerStatus('sinch')}
                     {textField('Sinch Project ID', 'sinch_project_id')}
                     {textField('Sinch Base URL', 'sinch_base_url', 'Leave empty to use the standard Sinch endpoint.')}
@@ -828,8 +867,8 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
 
                 {providerShown('documo', 'documo') && (
                   <ResponsiveSettingSection
-                    title="Documo Configuration"
-                    subtitle="Configure your Documo API settings"
+                    title={providerTitle('Documo')}
+                    subtitle="Your Documo account"
                   >
                     {providerStatus('documo')}
                     <ResponsiveSettingItem
@@ -865,8 +904,8 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
 
                 {providerShown('humblefax', 'humblefax') && (
                   <ResponsiveSettingSection
-                    title="HumbleFax Configuration"
-                    subtitle="Configure your HumbleFax API keys"
+                    title={providerTitle('HumbleFax')}
+                    subtitle="Your HumbleFax account"
                   >
                     {providerStatus('humblefax')}
                     <ResponsiveSettingItem
@@ -898,7 +937,7 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
                 )}
 
                 {providerShown('efax', 'efax') && (
-                  <ResponsiveSettingSection title="eFax" subtitle="Your eFax Enterprise API account">
+                  <ResponsiveSettingSection title={providerTitle('eFax')} subtitle="Your eFax Enterprise API account">
                     {providerStatus('efax')}
                     <EfaxSettings values={form} onChange={handleForm} settings={settings} disabled={!canEdit}
                       receives={effectiveInbound === 'efax' && !!form.inbound_enabled} docsHref={docsLink('efax', docsBase)}
@@ -927,6 +966,22 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
                     />
                     )}
                     <Box id={SIP_TRUNK_SECTION}><SipTrunkSettings client={client} presetChosenElsewhere={Boolean(sections)} /></Box>
+                    {((settings.sip as { trunk?: { preset?: string } }).trunk?.preset === 'telnyx' || settings.sip.telnyx_api_key_set) && (
+                      <Box sx={{ mt: 2 }} data-testid="telnyx-key">
+                        <ResponsiveSettingItem
+                          icon={getStatusIcon(!!settings.sip.telnyx_api_key_set)}
+                          label="Key for reading Telnyx charges"
+                          value={settings.sip.telnyx_api_key_set ? 'Saved' : ''}
+                          editValue={form.telnyx_api_key ?? ''}
+                          helperText="Optional. With it, Faxbot shows what Telnyx charged for each call."
+                          placeholder="Telnyx API key"
+                          onChange={(value) => handleForm('telnyx_api_key', value)}
+                          type="password"
+                          showCurrentValue={!pendingRestart && !!settings.sip.telnyx_api_key_set}
+                          {...envField('telnyx_api_key')}
+                        />
+                      </Box>
+                    )}
                     {sections && (
                       <Accordion disableGutters variant="outlined" sx={{ mt: 2 }} data-testid="fax-engine-connection">
                         <AccordionSummary expandIcon={<ExpandMoreIcon />}>
@@ -944,76 +999,17 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
                   </ResponsiveSettingSection>
                 )}
 
-          {/* Feature Flags */}
-          {shows('features') && (
+          {/* Provider plugins (System > Developer) */}
+          {shows('plugins') && (
           <ResponsiveFormSection
-            title="Feature Flags"
-            subtitle="Optional features; some take effect after a restart."
+            title="Plugin settings"
+            subtitle="Provider plugins installed on this server; changes take effect after a restart."
             icon={<SettingsIcon />}
           >
-            <Stack spacing={2}>
-              <FormControlLabel
-                control={
-                  <Switch
-                    checked={Boolean(form.feature_v3_plugins ?? settings?.features?.v3_plugins ?? false)}
-                    onChange={(e) => handleForm('feature_v3_plugins', e.target.checked)}
-                    sx={{ '& .MuiSwitch-thumb': { width: 20, height: 20 } }}
-                  />
-                }
-                label="Enable v3 Plugin System"
-                sx={{ alignItems: 'flex-start', '& .MuiFormControlLabel-label': { mt: 0.5 } }}
-              />
-              <Typography variant="caption" color="text.secondary" sx={{ ml: 4, mb: 1 }}>
-                Activates the new modular plugin architecture for fax providers
-              </Typography>
-              
-              <FormControlLabel
-                control={
-                  <Switch
-                    checked={Boolean(form.fax_disabled ?? settings?.backend?.disabled ?? false)}
-                    onChange={(e) => handleForm('fax_disabled', e.target.checked)}
-                    sx={{ '& .MuiSwitch-thumb': { width: 20, height: 20 } }}
-                  />
-                }
-                label="Disable outbound fax sending"
-                sx={{ alignItems: 'flex-start', '& .MuiFormControlLabel-label': { mt: 0.5 } }}
-              />
-              <Typography variant="caption" color="text.secondary" sx={{ ml: 4, mb: 1 }}>
-                Stops sending; faxes submitted while sending is off stay on hold after you turn it back on.
-              </Typography>
-              
-              <FormControlLabel
-                control={
-                  <Switch
-                    checked={Boolean(form.inbound_enabled ?? settings?.inbound?.enabled ?? false)}
-                    onChange={(e) => handleForm('inbound_enabled', e.target.checked)}
-                    sx={{ '& .MuiSwitch-thumb': { width: 20, height: 20 } }}
-                  />
-                }
-                label="Enable Inbound Fax Receiving"
-                sx={{ alignItems: 'flex-start', '& .MuiFormControlLabel-label': { mt: 0.5 } }}
-              />
-              <Typography variant="caption" color="text.secondary" sx={{ ml: 4, mb: 1 }}>
-                Allow receiving faxes (requires additional configuration based on backend)
-              </Typography>
-
-              <FormControlLabel
-                control={
-                  <Switch
-                    checked={Boolean(form.feature_plugin_install ?? settings?.features?.plugin_install ?? false)}
-                    onChange={(e) => handleForm('feature_plugin_install', e.target.checked)}
-                    disabled
-                    sx={{ '& .MuiSwitch-thumb': { width: 20, height: 20 } }}
-                  />
-                }
-                label="Allow Remote Plugin Installation (Advanced)"
-                sx={{ alignItems: 'flex-start', '& .MuiFormControlLabel-label': { mt: 0.5 } }}
-              />
-              <Typography variant="caption" color="text.secondary" sx={{ ml: 4 }}>
-                Disabled by default for security. Enable only in trusted environments.
-              </Typography>
-            </Stack>
-
+            {switchField('Use provider plugins', 'feature_v3_plugins',
+              'Lets Faxbot send and receive through provider plugins installed on this server.')}
+            {switchField('Allow remote plugin installation (advanced)', 'feature_plugin_install',
+              'Off by default for security. Turn on only in trusted environments.', { disabled: true })}
           </ResponsiveFormSection>
           )}
 
@@ -1024,20 +1020,8 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
             subtitle="Configure inbound fax receiving and storage settings"
             icon={<CheckCircleIcon />}
           >
-            <ResponsiveSettingItem
-              icon={settings.inbound?.enabled ? <CheckCircleIcon color="success" /> : <WarningIcon color="warning" />}
-              label="Enable Inbound"
-              value={settings.inbound?.enabled ? 'Enabled' : 'Disabled'}
-              editValue={form.inbound_enabled ?? settings.inbound?.enabled ?? false}
-              helperText="Allow receiving faxes (requires additional configuration based on backend)"
-              onChange={(value) => handleForm('inbound_enabled', value === 'true')}
-              type="select"
-              options={[
-                { value: 'true', label: 'Enabled' },
-                { value: 'false', label: 'Disabled' }
-              ]}
-              showCurrentValue={!pendingRestart}
-            />
+            {switchField('Receiving is on', 'inbound_enabled', receivingSentence,
+              { disabled: !form.inbound_enabled && !receiverCanReceive })}
             {effectiveInbound === 'humblefax' && Boolean(form.inbound_enabled) && (
               <Alert severity="warning">
                 HumbleFax cannot receive faxes, so Faxbot will not save receiving with it; choose another inbound provider or turn receiving off.
@@ -1153,8 +1137,8 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
           {/* SignalWire (cloud) */}
           {providerShown('signalwire', 'signalwire') && (
             <ResponsiveFormSection
-              title="SignalWire Configuration"
-              subtitle="Configure your SignalWire fax settings"
+              title={providerTitle('SignalWire')}
+              subtitle="Your SignalWire account"
               icon={<CloudIcon />}
             >
               {providerStatus('signalwire')}
@@ -1218,6 +1202,9 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
                 <CardContent>
                   <Typography variant="h6" gutterBottom>FreeSWITCH</Typography>
                   {providerStatus('freeswitch')}
+                  {settings.fs?.problem && (
+                    <Alert severity="warning" sx={{ mb: 2 }} data-testid="freeswitch-problem">{settings.fs.problem}</Alert>
+                  )}
                   {textField('ESL Host', 'fs_esl_host', 'FreeSWITCH ESL host on the private network.')}
                   {textField('ESL Port', 'fs_esl_port', 'FreeSWITCH ESL port.', 'number')}
                   {textField('ESL Password', 'fs_esl_password', 'Leave unchanged to keep the saved password, or clear it to remove it.', 'password')}
@@ -1476,6 +1463,32 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
                 </Alert>
               </Stack>
             </ResponsiveFormSection>
+          )}
+
+          {/* System > Diagnostics */}
+          {shows('diagnostics') && (
+          <ResponsiveFormSection title="Diagnostics options" icon={<SettingsIcon />}>
+            {switchField('Also check the S3 bucket', 'enable_s3_diagnostics',
+              'When on, Diagnostics also make sure Faxbot can reach the online storage that holds your faxes.')}
+            {switchField('Allow restarting Faxbot from here', 'admin_allow_restart',
+              'Turn this on only if Faxbot starts again by itself after it stops. Ask whoever installed Faxbot if you are not sure.')}
+          </ResponsiveFormSection>
+          )}
+
+          {/* Access > Keys & phones */}
+          {shows('phones') && (
+          <ResponsiveFormSection title="Phones on your network" icon={<PublicIcon />}>
+            {textField('Address phones use on your network', 'mobile_local_base',
+              "Enter this computer's address on your office network, for phones there to use. Leave it empty if phones connect only over the internet.")}
+          </ResponsiveFormSection>
+          )}
+
+          {/* System > Developer */}
+          {shows('developer') && (
+          <ResponsiveFormSection title="Developer settings" subtitle="Help links and the files Faxbot reads." icon={<SettingsIcon />}>
+            {textField('Documentation address', 'docs_base_url', 'Where help links in the console point.')}
+            {READ_ONLY_FILES.map(({ field, label, value }) => readOnlyField(label, field, value(settings)))}
+          </ResponsiveFormSection>
           )}
         </Stack>
         </Box>

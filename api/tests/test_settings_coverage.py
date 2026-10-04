@@ -38,18 +38,7 @@ READ_ONLY_OR_ENV = {
 }
 
 # Settings the console has not placed yet, with the home the map gives them. Builder L shrinks this.
-AWAITING_CONSOLE = {
-    'telnyx_api_key': 'Providers → Carrier trunk: Telnyx charges key',
-    'admin_allow_restart': 'System → Diagnostics: Restart Faxbot',
-    'persisted_env_path': 'System → Storage & retention: settings file',
-    'providers_dir': 'System → Developer → Provider plugins',
-    'plugin_registry_path': 'System → Developer → Provider plugins',
-    'sip_public_address_check_minutes': 'Providers → Carrier trunk: check the internet address every … minutes',
-    'enable_s3_diagnostics': 'System → Diagnostics: also check the S3 bucket',
-    'mobile_local_base': 'Access → Keys & phones: address phones use on your network',
-    'docs_base_url': 'System → Developer: documentation address',
-    'time_zone': "System → Setup and the Setup wizard: the installation's time zone",
-}
+AWAITING_CONSOLE: dict = {}
 
 PROMOTED = {'sip_public_address_check_minutes': 'SIP_PUBLIC_ADDRESS_CHECK_MINUTES',
             'enable_s3_diagnostics': 'ENABLE_S3_DIAGNOSTICS', 'mobile_local_base': 'MOBILE_LOCAL_BASE',

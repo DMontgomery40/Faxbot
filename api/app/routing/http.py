@@ -16,7 +16,7 @@ from .spending import CARRIER_PRESETS, Spending
 from .telnyx import TelnyxDetailRecords
 from .fallback import FallbackPolicy, FallbackScheduler
 from .seed import load_cards
-from .costs import InvalidRateCard, RateCard, format_amount, parse_amount, plan_fee_text
+from .costs import InvalidRateCard, RateCard, estimate_cost, format_amount, parse_amount, plan_fee_text, rate_text
 from .database import DeliveryStoreError, utcnow
 from .numbers import InvalidNumber, normalize_number
 from .plan import RoutePlanner, explain, extra_routes, route_label
@@ -206,26 +206,37 @@ async def list_destinations(request: Request):
                              for number in numbers]}
 
 
-def _recommendation(store, number, revision, bound):
+def _recommendation(store, number, revision, bound, pages=1):
+    """Routes in the order the next fax of ``pages`` pages would try them, each with its estimate.
+
+    ``rate`` words each card by its own unit ("$0.005 a minute, at least 1 minute"),
+    so a per-minute carrier is never described as charging by the page.
+    """
     if revision is None or bound is None:
         return []
     planner = RoutePlanner(store, direct_ready=lambda: True)
-    plan = planner.plan(to_number=number, bound=bound, values=revision.values, pages=1, alternates=True)
+    plan = planner.plan(to_number=number, bound=bound, values=revision.values, pages=pages, alternates=True)
     def plan_fee(card):
         if card is None or not card.flat_plan:
             return None
         return {'currency': card.currency, 'amount': format_amount(card.monthly_fee_micros)}
+
+    def money(card, micros):
+        return None if card is None or micros is None else {'currency': card.currency, 'amount': format_amount(micros)}
     return [{'route': choice.route.key, 'label': route_label(choice.route.key), 'reason': choice.reason,
              'explanation': explain(choice),
-             'estimated_cost_one_page': None if choice.estimated_cost_micros is None else
-             {'currency': choice.route.card.currency, 'amount': format_amount(choice.estimated_cost_micros)},
+             'estimated_cost_one_page': money(choice.route.card, None if choice.route.card is None
+                                               else estimate_cost(choice.route.card, 1)),
+             # This fax: setup plus typical seconds a page, rounded the way the card bills.
+             'pages': pages, 'estimated_cost': money(choice.route.card, choice.estimated_cost_micros),
+             'rate': rate_text(choice.route.card),
              'included_in_plan': plan_fee(choice.route.card) is not None,
              'monthly_fee': plan_fee(choice.route.card)}
             for choice in plan.choices]
 
 
 @router.get('/destinations/{number}', dependencies=[Depends(require_permission('settings:read'))])
-async def get_destination(number: str, request: Request):
+async def get_destination(number: str, request: Request, pages: int = Query(default=1, ge=1, le=1000)):
     number = _number(number, request)
     store = _store(request)
     revision, bound = await run_lifecycle_step(lambda: _active(request))
@@ -233,7 +244,7 @@ async def get_destination(number: str, request: Request):
     def read():
         rows, evidence = store.destination_evidence(number=number)
         peer = store.verified_peer(number)
-        return rows, evidence, peer, _recommendation(store, number, revision, bound)
+        return rows, evidence, peer, _recommendation(store, number, revision, bound, pages)
     rows, evidence, peer, recommended = await _call(read)
     view = _destination_view(number, rows.get(number), evidence.get(number, {}))
     view['direct_partner'] = None if peer is None else {'organization': peer['organization'], 'verified': True}
@@ -445,6 +456,25 @@ async def fax_costs(request: Request, ids: str = Query(default='', max_length=42
             costs[job_id] = _cost_view(spending.job(job_id))
         return costs
     return {'costs': await _call(read)}
+
+
+def _saving_view(part):
+    """One kind of saving: always an estimate, money as amounts per currency."""
+    return {**{key: value for key, value in part.items() if key != 'saved'}, 'estimate': True,
+            'saved': _money(part['saved'])}
+
+
+@router.get('/savings', dependencies=[Depends(require_permission('settings:read'))])
+async def savings(request: Request, days: int = Query(default=WINDOW_DAYS, ge=1, le=366)):
+    """What sending together, direct delivery and case packets saved in the last ``days`` (estimates)."""
+    from .savings import SENTENCE, savings as count_savings
+    store = _store(request)
+    result = await _call(lambda: count_savings(store, store.engine, days=days))
+    return {'days': result['days'], 'since': result['since'], 'estimate': True, 'sentence': SENTENCE,
+            'total_saved': _money(result['total']),
+            'sending_together': _saving_view(result['sending_together']),
+            'direct_delivery': _saving_view(result['direct_delivery']),
+            'case_packets': _saving_view(result['case_packets'])}
 
 
 @router.get('/inbound/{inbound_id}/cost')

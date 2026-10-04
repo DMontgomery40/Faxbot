@@ -244,3 +244,35 @@ describe('Setup Wizard and the SIP trunk form', () => {
     expect(writes).toEqual([]);
   });
 });
+
+describe('Setup Wizard time zone', () => {
+  it('chooses the office time zone on the first step and saves it when moving on', async () => {
+    const writes = await start(settingsFixture((data) => {
+      withDirections(data, 'phaxio', 'phaxio');
+      data.installation = { time_zone: '' };
+    }));
+    const zone = within(screen.getByTestId('time-zone'));
+    expect(zone.getByText("Choose your office's time zone so the times in fax emails match your clocks.")).toBeTruthy();
+    const input = zone.getByLabelText('Time zone');
+    fireEvent.change(input, { target: { value: 'America/Den' } });
+    fireEvent.click(await screen.findByRole('option', { name: 'America/Denver' }));
+    next();
+    await screen.findByText('Connect Providers', { selector: 'h6' });
+    expect(writes).toEqual([{ expected_revision_id: 'rev-a', time_zone: 'America/Denver' }]);
+  });
+
+  it('shows the server sentence when it refuses a zone', async () => {
+    await start(settingsFixture((data) => {
+      withDirections(data, 'phaxio', 'phaxio');
+      data.installation = { time_zone: 'America/Denver' };
+    }));
+    server.use(http.put('/admin/settings', () => HttpResponse.json(
+      { detail: 'Choose a time zone from the list, such as America/Denver.' }, { status: 400 })));
+    const input = within(screen.getByTestId('time-zone')).getByLabelText('Time zone') as HTMLInputElement;
+    expect(input.value).toBe('America/Denver');
+    fireEvent.change(input, { target: { value: 'Europe/Lon' } });
+    fireEvent.click(await screen.findByRole('option', { name: 'Europe/London' }));
+    next();
+    expect(await screen.findByText(/^Choose a time zone from the list, such as America\/Denver\./)).toBeTruthy();
+  });
+});

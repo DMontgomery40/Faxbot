@@ -59,12 +59,13 @@ def check_case_id(value):
 
 
 class CaseLedger:
-    TABLES = ('case_documents', 'delivery_destinations', 'outbound_deliveries')
+    TABLES = ('case_documents', 'case_packet_sends', 'delivery_destinations', 'outbound_deliveries')
 
     def __init__(self, engine):
         self.engine = engine
         tables = reflect(engine, self.TABLES)
         self.documents = tables['case_documents']
+        self.sends = tables['case_packet_sends']
         self.destinations = tables['delivery_destinations']
         self.deliveries = tables['outbound_deliveries']
 
@@ -84,6 +85,32 @@ class CaseLedger:
             return [dict(row) for row in connection.execute(sa.select(self.documents).where(
                 self.documents.c.case_id == case_id, self.documents.c.recipient == recipient).order_by(
                 self.documents.c.created_at, self.documents.c.first_page, self.documents.c.id)).mappings()]
+
+    def recent(self, limit=50):
+        """The newest cases sent packets, one row per case and recipient, newest first.
+
+        Read only: a document counts as accepted the way ``_settle`` decides it
+        (already marked, or the fax that carried it finished successfully).
+        """
+        d, o, destinations = self.documents, self.deliveries, self.destinations
+        accepted = sa.case((d.c.accepted_at.is_not(None), 1), (o.c.state == 'success', 1), else_=0)
+        last_sent = sa.func.max(sa.func.coalesce(o.c.created_at, d.c.created_at))
+        query = (sa.select(d.c.case_id, d.c.recipient, sa.func.count(d.c.id).label('documents'),
+                           sa.func.sum(accepted).label('accepted'), sa.func.sum(d.c.page_count).label('pages'),
+                           last_sent.label('last_sent_at'))
+                 .select_from(d.outerjoin(o, o.c.id == d.c.source_job_id))
+                 .group_by(d.c.case_id, d.c.recipient)
+                 .order_by(last_sent.desc(), d.c.case_id, d.c.recipient).limit(limit))
+        with read_connection(self.engine) as connection:
+            rows = connection.execute(query).mappings().all()
+            numbers = sorted({row['recipient'] for row in rows})
+            allowed = set(connection.execute(sa.select(destinations.c.phone_number).where(
+                destinations.c.phone_number.in_(numbers), destinations.c.accepts_references == 1)).scalars()
+            ) if numbers else set()
+        return [{'case_id': row['case_id'], 'recipient': row['recipient'], 'documents': int(row['documents']),
+                 'accepted': int(row['accepted'] or 0), 'pages': int(row['pages'] or 0),
+                 'last_sent_at': row['last_sent_at'], 'accepts_references': row['recipient'] in allowed}
+                for row in rows]
 
     def references_allowed(self, recipient):
         with read_connection(self.engine) as connection:
@@ -111,6 +138,11 @@ class CaseLedger:
         """Remember what this fax carries; acceptance follows its delivery."""
         now = utcnow()
         with write_transaction(self.engine) as connection:
+            # What this packet left out, so its savings can be counted later.
+            connection.execute(self.sends.insert().values(
+                id=job_id, case_id=case_id, recipient=recipient, pages_sent=plan.pages,
+                pages_left_out=sum(entry['page_count'] for entry in plan.referenced),
+                documents_left_out=len(plan.referenced), created_at=now))
             page = 2 if plan.referenced else 1
             for document in plan.included:
                 existing = connection.execute(sa.select(self.documents).where(

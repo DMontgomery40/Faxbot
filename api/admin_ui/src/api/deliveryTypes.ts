@@ -35,6 +35,11 @@ export interface RecommendedRoute {
   reason: string;
   explanation: string;
   estimated_cost_one_page: Money | null;
+  // The estimate for a fax of `pages` pages (setup plus typical time a page, rounded as the card bills).
+  pages?: number;
+  estimated_cost?: Money | null;
+  // The card's price in its own units, such as "$0.005 a minute, at least 1 minute" or "$0.07 a page".
+  rate?: string | null;
   // A flat monthly plan: faxes are included and nothing is charged per fax.
   included_in_plan?: boolean;
   monthly_fee?: Money | null;
@@ -294,4 +299,42 @@ export interface CasePacket {
   pages_saved: number;
   documents: Array<{ title: string; pages: number; status: 'included' | 'referenced' }>;
   fax_id: string | null;
+}
+
+// GET /cases: the newest cases this installation sent packets for, one row per recipient.
+export interface CaseSummary {
+  case_id: string;
+  to: string;
+  documents: number;
+  // Documents the recipient has (the fax that carried them finished).
+  accepted: number;
+  pages: number;
+  last_sent_at: string | null;
+  accepts_references: boolean;
+}
+
+// GET /routing/savings: what sending together, direct delivery and case packets saved. Always estimates.
+interface SavingPart {
+  estimate: true;
+  saved: Money[];
+  sentence: string;
+}
+
+export interface Savings {
+  days: number;
+  since: string;
+  estimate: true;
+  sentence: string;
+  total_saved: Money[];
+  sending_together: SavingPart & {
+    numbers: number; calls: number; faxes: number; calls_saved: number; priced_calls: number;
+  };
+  direct_delivery: SavingPart & {
+    faxes: number; calls_avoided: number; pages: number; priced: number; in_plan: number; unpriced: number;
+  };
+  case_packets: SavingPart & {
+    counted_from: string | null; earlier_not_counted: boolean; counted_from_sentence: string | null;
+    packets: number; documents_left_out: number; pages_not_resent: number; pages_saved: number;
+    priced: number; in_plan: number; unpriced: number;
+  };
 }

@@ -1,7 +1,7 @@
 // A send keeps its Idempotency-Key across a reload, so retrying after a lost
 // answer cannot send the fax twice.
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import AdminAPIClient from '../api/client';
 import SendFax from '../components/SendFax';
@@ -234,23 +234,40 @@ describe('Send follows the installation country', () => {
 });
 
 describe('Before sending', () => {
-  it('shows the route Faxbot will use for the number and what one page is estimated to cost', async () => {
+  it('words a per-minute and a per-page route by their own units, and estimates this document once its pages are known', async () => {
     const asked: string[] = [];
-    server.use(http.get('/routing/destinations/:number', ({ params }) => {
-      asked.push(String(params.number));
+    let card = { label: 'Telnyx', rate: '$0.005 a minute, at least 1 minute', one: '0.005', two: '0.01' };
+    server.use(http.get('/routing/destinations/:number', ({ params, request }) => {
+      const pages = Number(new URL(request.url).searchParams.get('pages') ?? '1');
+      asked.push(`${params.number} ${pages}`);
       return HttpResponse.json({ number: params.number, display_name: null, notes: null, preferred_route: null,
         accepts_references: false, version: 0, routes: [], estimated_cost_30_days: [], direct_partner: null, available_routes: [],
-        recommended_routes: [{ route: 'phaxio', label: 'Phaxio', reason: 'cheapest',
+        recommended_routes: [{ route: 'sip', label: card.label, reason: 'cheapest',
           explanation: 'Faxbot picks the cheapest route that works reliably.',
-          estimated_cost_one_page: { currency: 'USD', amount: '0.07' }, included_in_plan: false, monthly_fee: null }] });
+          estimated_cost_one_page: { currency: 'USD', amount: card.one }, pages,
+          estimated_cost: { currency: 'USD', amount: pages === 2 ? card.two : card.one }, rate: card.rate,
+          included_in_plan: false, monthly_fee: null }] });
     }));
-    openSend();
+    const view = openSend();
     fireEvent.change(screen.getByRole('textbox', { name: /Destination Number/ }), { target: { value: '+12025550123' } });
     const route = await screen.findByTestId('send-route', {}, { timeout: 2000 });
-    expect(route.textContent).toContain('Faxbot will send it through Phaxio.');
+    expect(route.textContent).toContain('Faxbot will send it through Telnyx.');
     expect(route.textContent).toContain('Faxbot picks the cheapest route that works reliably.');
-    expect(route.textContent).toContain('Estimated cost: $0.07 a page.');
-    expect(asked).toEqual(['+12025550123']);
+    // Without a document, the price in the carrier's own unit: never "a page" for a per-minute carrier.
+    expect(screen.getByTestId('send-cost').textContent).toBe('About $0.005 a minute, at least 1 minute.');
+    const twoPages = new File(['%PDF-1.4\n1 0 obj << /Type /Page >> endobj\n2 0 obj << /Type /Page >> endobj\n'
+      + '3 0 obj << /Type /Pages /Count 2 >> endobj\n'], 'two.pdf', { type: 'application/pdf' });
+    fireEvent.change(window.document.querySelector('input[type="file"]') as HTMLInputElement, { target: { files: [twoPages] } });
+    await waitFor(() => expect(screen.getByTestId('send-cost').textContent)
+      .toBe('About $0.01 for this 2-page fax ($0.005 a minute, at least 1 minute).'), { timeout: 2000 });
+    expect(asked).toEqual(['+12025550123 1', '+12025550123 2']);
+    view.unmount();
+    card = { label: 'Phaxio', rate: '$0.07 a page', one: '0.07', two: '0.14' };
+    openSend();
+    fireEvent.change(screen.getByRole('textbox', { name: /Destination Number/ }), { target: { value: '+12025550123' } });
+    fireEvent.change(window.document.querySelector('input[type="file"]') as HTMLInputElement, { target: { files: [twoPages] } });
+    await waitFor(() => expect(screen.getByTestId('send-cost').textContent)
+      .toBe('About $0.14 for this 2-page fax ($0.07 a page).'), { timeout: 2000 });
     expect(screen.getByRole('heading', { name: 'Send a fax' })).toBeTruthy();
   });
 

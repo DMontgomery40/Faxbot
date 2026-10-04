@@ -1,7 +1,7 @@
 // Recipients → Case packets: for one case and one recipient, which documents they
 // already hold, and sending a packet that leaves those out (a one-page index
 // lists them instead, when the recipient accepts that).
-import { useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   Alert, Box, Button, Chip, CircularProgress, IconButton, Paper, Stack, Table, TableBody, TableCell, TableContainer,
   TableHead, TableRow, TextField, Tooltip, Typography,
@@ -9,7 +9,7 @@ import {
 import DeleteIcon from '@mui/icons-material/Delete';
 import UploadFileIcon from '@mui/icons-material/UploadFile';
 import AdminAPIClient from '../../api/client';
-import type { CaseDocuments, CasePacket } from '../../api/deliveryTypes';
+import type { CaseDocuments, CasePacket, CaseSummary } from '../../api/deliveryTypes';
 import { formatServerTime } from '../../api/time';
 import type { AdminDestination } from '../../navigation';
 import { ScreenHeader } from '../access/AccessViews';
@@ -43,15 +43,27 @@ export default function CasePackets({ client, canSend, canWrite, onNavigate }: {
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState<'look' | 'preview' | 'send' | null>(null);
   const [details, setDetails] = useState<string | null>(null);
+  // The newest cases this installation sent packets for; null until loaded or when they could not be read.
+  const [cases, setCases] = useState<CaseSummary[] | null>(null);
 
   const ready = Boolean(caseId.trim() && to.trim());
 
-  const lookUp = async () => {
+  const loadCases = useCallback(async () => {
+    try {
+      setCases((await client.listCases()).cases);
+    } catch {
+      setCases(null);
+    }
+  }, [client]);
+
+  useEffect(() => { void loadCases(); }, [loadCases]);
+
+  const lookUp = async (reference = caseId.trim(), recipient = to.trim()) => {
     setBusy('look');
     setError(null);
     setSent(null);
     try {
-      setHeld(await client.getCaseDocuments(caseId.trim(), to.trim()));
+      setHeld(await client.getCaseDocuments(reference, recipient));
     } catch (failure) {
       setHeld(null);
       setError(failure);
@@ -91,6 +103,7 @@ export default function CasePackets({ client, canSend, canWrite, onNavigate }: {
       setPlan(null);
       setDrafts([]);
       setHeld(await client.getCaseDocuments(caseId.trim(), to.trim()).catch(() => held));
+      void loadCases();
     } catch (failure) {
       setError(failure instanceof TypeError ? new Error(UNCONFIRMED) : failure);
     } finally {
@@ -221,6 +234,49 @@ export default function CasePackets({ client, canSend, canWrite, onNavigate }: {
                 ? `, and ${pagesText(sent.pages_saved)} left out because the recipient already has them` : ''}.
             </Alert>
           )}
+        </Box>
+      )}
+
+      {cases && cases.length > 0 && (
+        <Box component="section" sx={{ mt: 4 }} data-testid="recent-cases">
+          <Typography variant="h6" component="h2" sx={{ mb: 1 }}>Recent cases</Typography>
+          <TableContainer component={Paper} sx={{ borderRadius: 2 }}>
+            <Table size="small" aria-label="Recent cases">
+              <TableHead>
+                <TableRow>
+                  <TableCell>Case</TableCell>
+                  <TableCell>Recipient</TableCell>
+                  <TableCell>Documents</TableCell>
+                  <TableCell>Pages</TableCell>
+                  <TableCell>Last sent</TableCell>
+                  <TableCell />
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {cases.map((item) => (
+                  <TableRow key={`${item.case_id} ${item.to}`}>
+                    <TableCell>{item.case_id}</TableCell>
+                    <TableCell>{item.to}</TableCell>
+                    <TableCell>{`${item.documents} sent, ${item.accepted} received`}</TableCell>
+                    <TableCell>{item.pages}</TableCell>
+                    <TableCell>{formatServerTime(item.last_sent_at)}</TableCell>
+                    <TableCell>
+                      <Button size="small" disabled={busy !== null}
+                        aria-label={`Open case ${item.case_id} for ${item.to}`}
+                        onClick={() => {
+                          setCaseId(item.case_id);
+                          setTo(item.to);
+                          changed();
+                          void lookUp(item.case_id, item.to);
+                        }}>
+                        Open
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </TableContainer>
         </Box>
       )}
 

@@ -50,6 +50,8 @@ export interface SipTrunkSettings {
   fax_preference_header: boolean;
   codecs: string;
   external_address: string;
+  // How often Faxbot checks its internet address again, in minutes; 0 turns the check off.
+  public_address_check_minutes?: number;
   // 'e164' or 'local' (as a phone at the installation dials it); '' is the preset's own.
   dial_format?: string;
   // Outside-line digits before a number dialled the local way, such as 9.

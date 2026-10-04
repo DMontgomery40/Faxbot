@@ -160,6 +160,8 @@ export interface Settings {
     access_key: string;
     secret_key: string;
     from_number: string;
+    // The fax numbers on the HumbleFax account, read from HumbleFax.
+    account_numbers?: string[];
     configured: boolean;
   };
   efax?: {
@@ -202,6 +204,9 @@ export interface Settings {
     ami_password_shared?: boolean;
     station_id: string;
     configured: boolean;
+    // A key Faxbot uses only to read what Telnyx charged for each trunk call.
+    telnyx_api_key?: string;
+    telnyx_api_key_set?: boolean;
   };
   fs?: {
     esl_host?: string;
@@ -209,6 +214,8 @@ export interface Settings {
     esl_password?: string;
     gateway_name?: string;
     caller_id_number?: string;
+    // Why FreeSWITCH cannot send yet, in a sentence; null when nothing is missing.
+    problem?: string | null;
     t38_enable?: boolean;
   };
   security: {
@@ -226,6 +233,8 @@ export interface Settings {
     s3_prefix?: string;
     s3_endpoint_url?: string;
     s3_kms_key_id?: string;
+    // Diagnostics also check that Faxbot can reach the S3 bucket.
+    s3_diagnostics?: boolean;
   };
   database?: {
     url: string;
@@ -273,6 +282,16 @@ export interface Settings {
     syslog_address: string;
   };
   persisted?: { enabled: boolean; path: string };
+  // The installation's time zone (an IANA name such as America/Denver); '' when none is set.
+  installation?: { time_zone: string };
+  // The address paired phones use on the installation's own network.
+  mobile?: { local_base: string };
+  // Where the console's help links point.
+  developer?: { docs_base_url: string };
+  // Whether the console may restart Faxbot.
+  restart?: { allowed: boolean };
+  // Where provider plugin files are read from (read only).
+  plugin_files?: { providers_dir: string; plugin_registry_path: string };
   mcp?: {
     sse_enabled: boolean;
     sse_path: string;

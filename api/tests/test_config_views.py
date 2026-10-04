@@ -208,6 +208,9 @@ def test_editor_has_omitted_provider_and_resource_settings_and_preserves_false_z
         'require_oauth': False, 'oauth': {'issuer': '', 'audience': 'audience', 'jwks_url': 'https://issuer.example.invalid/jwks'},
     }
     assert view['features'] == {'v3_plugins': False, 'fax_disabled': False, 'inbound_enabled': False, 'plugin_install': False}
+    assert view['restart'] == {'allowed': False}
+    assert set(view['plugin_files']) == {'providers_dir', 'plugin_registry_path'}
+    assert view['plugin_files']['plugin_registry_path'].endswith('plugin_registry.json')
     assert view['storage'] == {
         'backend': 'local', 's3_bucket': 'complete-bucket', 's3_prefix': '', 's3_region': 'us-east-1',
         's3_endpoint_url': 'https://storage.example.invalid', 's3_kms_key_id': 'kms-key-identifier', 's3_kms_enabled': True,

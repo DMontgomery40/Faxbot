@@ -98,3 +98,41 @@ def test_case_inputs_and_permissions(client):
     assert send(client, [('Letter', pdf('Letter'))], headers=reader).status_code == 403
     assert client.get('/cases/claim-2026-117/documents', headers=reader,
                       params={'to': '+12025550123'}).status_code == 403
+
+
+def test_recent_cases_list_each_recipient_and_delivered_packets_count_the_pages_left_out(client):
+    assert client.get('/cases', headers=ADMIN).json() == {'cases': []}
+    record = pdf('Medical record', pages=40)
+    first = send(client, [('Medical record', record), ('Cover letter', pdf('Cover letter'))])
+
+    def listed():
+        response = client.get('/cases', headers=ADMIN)
+        assert response.status_code == 200, response.text
+        return [(case['case_id'], case['to'], case['documents'], case['accepted'], case['pages'],
+                 case['accepts_references']) for case in response.json()['cases']]
+    assert listed() == [('claim-2026-117', '+12025550123', 2, 0, 41, False)]
+    finish(first.json()['fax_id'])
+    # Accepted as soon as the fax finished, without anyone opening the case first.
+    assert listed() == [('claim-2026-117', '+12025550123', 2, 2, 41, False)]
+    client.patch('/routing/destinations/+12025550123', headers=ADMIN, json={'accepts_references': True})
+    second = send(client, [('Medical record', record), ('New labs', pdf('New labs', pages=4))])
+    assert client.get('/routing/savings', headers=ADMIN).json()['case_packets']['packets'] == 0  # not delivered yet
+    finish(second.json()['fax_id'])
+    assert listed() == [('claim-2026-117', '+12025550123', 3, 3, 45, True)]
+    packets = client.get('/routing/savings', headers=ADMIN).json()['case_packets']
+    assert (packets['packets'], packets['documents_left_out'], packets['pages_not_resent'], packets['pages_saved']) == (
+        1, 1, 40, 39)
+    assert packets['estimate'] is True and packets['priced'] + packets['in_plan'] + packets['unpriced'] == 1
+    assert packets['earlier_not_counted'] is False and packets['counted_from_sentence'] is None
+    assert packets['sentence'].startswith('1 case packet left out 1 document the recipient already had: 39 pages')
+    # A packet sent before Faxbot recorded what packets leave out is not counted, and the count says from when.
+    engine = main.app.state.configuration_runtime.manager.store.engine
+    with engine.begin() as connection:
+        connection.execute(sa.text('DELETE FROM case_packet_sends WHERE id = :id'), {'id': first.json()['fax_id']})
+    packets = client.get('/routing/savings', headers=ADMIN).json()['case_packets']
+    assert packets['earlier_not_counted'] is True and packets['packets'] == 1
+    assert packets['counted_from_sentence'].startswith('Counted from ')
+    assert packets['counted_from_sentence'].endswith(', when Faxbot started recording what each packet left out.')
+    reader = scoped_key(client, ['fax:read'])
+    assert client.get('/cases', headers=reader).status_code == 403
+    assert client.get('/cases', headers=ADMIN, params={'limit': 0}).status_code == 422

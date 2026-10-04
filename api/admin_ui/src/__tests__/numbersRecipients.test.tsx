@@ -11,6 +11,7 @@ import DeliveryRoutes from '../components/DeliveryRoutes';
 import CasePackets from '../components/delivery/CasePackets';
 import type { Settings as SettingsType } from '../api/types';
 import { backend, server } from '../test/server';
+import { setProviderNames } from '../providerLabels';
 import { receipt, settingsFixture, withDirections } from '../test/settingsFixture';
 
 const keyClient = () => new AdminAPIClient({ kind: 'key', key: 'synthetic-key' });
@@ -223,5 +224,48 @@ describe('Case packets', () => {
     render(<CasePackets client={keyClient()} canSend={false} canWrite={false} />);
     await lookUp();
     expect(screen.queryByTestId('case-send')).toBeNull();
+  });
+});
+
+describe('Your numbers from the HumbleFax account', () => {
+  it('lists every number HumbleFax reports for the account once, with the trunk named by its carrier', () => {
+    const data = settingsFixture((value) => {
+      withDirections(value, 'humblefax', 'sip');
+      value.sip.trunk = { dids: ['+17208565062'] };
+      value.humblefax.from_number = '3034265097';
+      value.humblefax.account_numbers = ['+13034265097', '+13035550142'];
+    });
+    setProviderNames({ sip: 'Telnyx' });
+    const carried = carriedNumbers(data as unknown as SettingsType);
+    expect(carried.map((entry) => [entry.number, entry.label, entry.inUse])).toEqual([
+      ['+17208565062', 'Telnyx', true], ['+13034265097', 'HumbleFax', true], ['+13035550142', 'HumbleFax', true]]);
+  });
+});
+
+describe('Recent case packets', () => {
+  it('lists the cases this installation sent packets for and opens one with Look up', async () => {
+    server.use(
+      http.get('/cases', () => HttpResponse.json({ cases: [{ case_id: 'case-7', to: '+15550100001', documents: 3, accepted: 2,
+        pages: 45, last_sent_at: '2026-10-04T15:00:00', accepts_references: true }] })),
+      http.get('/cases/:caseId/documents', ({ params }) => HttpResponse.json({ case_id: params.caseId, to: '+15550100001',
+        accepts_references: true, documents: [] })),
+    );
+    render(<CasePackets client={keyClient()} canSend={false} canWrite={false} />);
+    const list = await screen.findByTestId('recent-cases');
+    const row = within(list).getByText('case-7').closest('tr') as HTMLElement;
+    expect(within(row).getByText('+15550100001')).toBeTruthy();
+    expect(within(row).getByText('3 sent, 2 received')).toBeTruthy();
+    expect(within(row).getByText('45')).toBeTruthy();
+    fireEvent.click(within(row).getByRole('button', { name: 'Open case case-7 for +15550100001' }));
+    expect(await screen.findByTestId('case-documents')).toBeTruthy();
+    expect((screen.getByLabelText('Case reference') as HTMLInputElement).value).toBe('case-7');
+    expect(screen.getByRole('button', { name: 'Look up' })).toBeTruthy();
+  });
+
+  it('shows no list before any packet was sent', async () => {
+    render(<CasePackets client={keyClient()} canSend={false} canWrite={false} />);
+    expect(await screen.findByRole('button', { name: 'Look up' })).toBeTruthy();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(screen.queryByTestId('recent-cases')).toBeNull();
   });
 });

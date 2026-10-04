@@ -381,11 +381,32 @@ describe('Settings authentication and receiving', () => {
       data.inbound.enabled = true;
     }));
     render(<Settings client={client()} />);
-    const warning = /HumbleFax cannot receive faxes/;
+    const warning = /HumbleFax cannot receive faxes, so Faxbot will not save receiving with it/;
     expect(await screen.findByText(warning)).toBeTruthy();
     const inbound = await section('Inbound Receiving');
-    fireEvent.change(within(inbound).getByLabelText('Enable Inbound'), { target: { value: 'false' } });
+    fireEvent.click(within(inbound).getByLabelText('Receiving is on'));
     await waitFor(() => expect(screen.queryByText(warning)).toBeNull());
+    // Off, it cannot be turned on again with a provider that only sends.
+    expect(within(inbound).getByText('HumbleFax cannot receive faxes. To receive, choose Add or change a provider.')).toBeTruthy();
+    expect((within(inbound).getByLabelText('Receiving is on') as HTMLInputElement).disabled).toBe(true);
+  });
+
+  it('turns receiving off and on again with one switch, keeping the trunk as the receiving provider', async () => {
+    const writes = settingsHandlers(settingsFixture((data) => {
+      data.backend.type = 'humblefax';
+      data.hybrid = { outbound_backend: 'humblefax', inbound_backend: 'sip', outbound_override: '', inbound_override: 'sip' };
+      data.inbound.enabled = false;
+    }));
+    render(<Settings client={client()} sections={['providers', 'inbound', 'routes']} canWrite />);
+    const inbound = await section('Inbound Receiving');
+    expect(within(inbound).getByText('Turn this on to receive faxes through Carrier trunk.')).toBeTruthy();
+    expect(screen.queryByText('Enable Inbound Fax Receiving')).toBeNull();
+    expect(screen.queryByText('Feature Flags')).toBeNull();
+    fireEvent.click(within(inbound).getByLabelText('Receiving is on'));
+    expect(within(inbound).getByText('Faxes arrive through Carrier trunk.')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Apply settings' }));
+    await waitFor(() => expect(writes).toHaveLength(1));
+    expect(writes[0]).toEqual({ expected_revision_id: expect.any(String), inbound_enabled: true });
   });
 
   it('does not warn when another provider receives', async () => {
@@ -670,5 +691,59 @@ describe('Settings when Faxbot cannot reach its fax engine', () => {
     render(<Settings client={client()} />);
     await screen.findByText('Security Settings');
     expect(screen.queryByTestId('engine-message')).toBeNull();
+  });
+});
+
+describe('Settings placed on their own pages', () => {
+  it('turns on the S3 check and console restarts on Diagnostics', async () => {
+    const writes = settingsHandlers(settingsFixture((data) => {
+      data.storage.s3_diagnostics = false;
+      data.restart = { allowed: false };
+    }));
+    render(<Settings client={client()} sections={['diagnostics']} canWrite />);
+    fireEvent.click(await screen.findByLabelText('Also check the S3 bucket'));
+    fireEvent.click(screen.getByLabelText('Allow restarting Faxbot from here'));
+    fireEvent.click(screen.getByRole('button', { name: 'Apply settings' }));
+    await waitFor(() => expect(writes).toHaveLength(1));
+    expect(writes[0]).toEqual({ expected_revision_id: expect.any(String), enable_s3_diagnostics: true, admin_allow_restart: true });
+  });
+
+  it('sets the address phones use on the local network on Keys & phones', async () => {
+    const writes = settingsHandlers(settingsFixture((data) => { data.mobile = { local_base: '' }; }));
+    render(<Settings client={client()} sections={['phones']} canWrite />);
+    expect(await screen.findByText('Address phones use on your network')).toBeTruthy();
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'http://192.0.2.20:8080' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Apply settings' }));
+    await waitFor(() => expect(writes).toHaveLength(1));
+    expect(writes[0]).toEqual({ expected_revision_id: expect.any(String), mobile_local_base: 'http://192.0.2.20:8080' });
+  });
+
+  it('shows the documentation address and the files Faxbot reads in Developer', async () => {
+    settingsHandlers(settingsFixture((data) => {
+      data.developer = { docs_base_url: 'https://docs.faxbot.net/latest/' };
+      data.persisted = { enabled: false, path: '/faxdata/operator.env' };
+      data.plugin_files = { providers_dir: '/app/config/providers', plugin_registry_path: '/app/config/plugin_registry.json' };
+    }));
+    render(<Settings client={client()} sections={['developer']} />);
+    expect(await screen.findByText('Documentation address')).toBeTruthy();
+    expect(screen.getByDisplayValue('https://docs.faxbot.net/latest/')).toBeTruthy();
+    for (const path of ['/faxdata/operator.env', '/app/config/providers', '/app/config/plugin_registry.json']) {
+      expect(screen.getByDisplayValue(path)).toBeTruthy();
+    }
+  });
+
+  it('keeps the plugin switches on Provider plugins, not on In use', async () => {
+    const writes = settingsHandlers(settingsFixture());
+    const { unmount } = render(<Settings client={client()} sections={['providers', 'inbound', 'routes']} />);
+    await section('Inbound Receiving');
+    expect(screen.queryByText('Use provider plugins')).toBeNull();
+    expect(screen.getByLabelText('Sending is on')).toBeTruthy();
+    unmount();
+    render(<Settings client={client()} sections={['plugins']} title="Provider plugins" canWrite />);
+    fireEvent.click(await screen.findByLabelText('Use provider plugins'));
+    expect((screen.getByLabelText('Allow remote plugin installation (advanced)') as HTMLInputElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Apply settings' }));
+    await waitFor(() => expect(writes).toHaveLength(1));
+    expect(writes[0]).toEqual({ expected_revision_id: expect.any(String), feature_v3_plugins: true });
   });
 });

@@ -23,6 +23,8 @@ import RouterIcon from '@mui/icons-material/Router';
 import PaidIcon from '@mui/icons-material/Paid';
 import ReceiptLongIcon from '@mui/icons-material/ReceiptLong';
 import PriceChangeIcon from '@mui/icons-material/PriceChange';
+import SavingsIcon from '@mui/icons-material/Savings';
+import LightbulbIcon from '@mui/icons-material/Lightbulb';
 import LockOpenIcon from '@mui/icons-material/LockOpen';
 import PersonIcon from '@mui/icons-material/Person';
 import GroupsIcon from '@mui/icons-material/Groups';
@@ -59,6 +61,8 @@ import Received, { readFilter } from './components/Received';
 import ReceivingAddresses from './components/delivery/ReceivingAddresses';
 import ProvidersInUse from './components/ProvidersInUse';
 import CasePackets from './components/delivery/CasePackets';
+import Savings from './components/delivery/Savings';
+import Recommendations from './components/delivery/Recommendations';
 import WorkSettingsPanel from './components/work/WorkSettingsPanel';
 import Terminal from './components/Terminal';
 import ScriptsTests from './components/ScriptsTests';
@@ -258,7 +262,7 @@ export const NAVIGATION: NavArea[] = [
           <>
             <Typography variant="h4" component="h1" sx={{ mb: 2 }}>In use</Typography>
             <ProvidersInUse context={ctx.context} canChange={ctx.permissions.has('settings:write')} onNavigate={ctx.navigate} />
-            {settingsPage(['providers', 'features', 'inbound', 'routes'])(ctx)}
+            {settingsPage(['providers', 'inbound', 'routes'])(ctx)}
             {ctx.permissions.has('providers:read') && <ReceivingAddresses client={ctx.client} />}
           </>) },
       providerPage('humblefax', 'HumbleFax', 'humblefax', 'humblefax'),
@@ -283,6 +287,10 @@ export const NAVIGATION: NavArea[] = [
         render: (ctx) => <DeliveryRoutes client={ctx.client} canWrite={ctx.permissions.has('settings:write')} section="spending" /> },
       { id: 'prices', label: 'Prices & plans', icon: <PriceChangeIcon />, gate: { anyOf: SETTINGS_READ },
         render: (ctx) => <DeliveryRoutes client={ctx.client} canWrite={ctx.permissions.has('settings:write')} section="rates" /> },
+      { id: 'savings', label: 'Savings', icon: <SavingsIcon />, gate: { anyOf: SETTINGS_READ },
+        render: (ctx) => <Savings client={ctx.client} /> },
+      { id: 'recommendations', label: 'Recommendations', icon: <LightbulbIcon />, gate: { anyOf: SETTINGS_READ },
+        render: () => <Recommendations /> },
     ],
   },
   {
@@ -297,8 +305,13 @@ export const NAVIGATION: NavArea[] = [
       { id: 'who', label: 'Who has access', icon: <LockOpenIcon />, gate: { anyOf: ['grants:read', 'grants:manage'] },
         render: (ctx) => <ResourceAccess client={ctx.client} me={ctx.me} section="assignments" /> },
       { id: 'keys', label: 'Keys & phones', icon: <VpnKeyIcon />, gate: { anyOf: ['keys:manage'] },
-        render: (ctx) => <ApiKeys client={ctx.client} me={ctx.me} onlyMine={ctx.params.get('mine') === '1'}
-          onShowAll={() => ctx.navigate('access/keys')} /> },
+        render: (ctx) => (
+          <>
+            <ApiKeys client={ctx.client} me={ctx.me} onlyMine={ctx.params.get('mine') === '1'}
+              onShowAll={() => ctx.navigate('access/keys')} />
+            {ctx.permissions.has('settings:read') && <Box sx={{ mt: 4 }}>{settingsPage(['phones'])(ctx)}</Box>}
+          </>
+        ) },
       // Everyone can see and end their own sessions.
       { id: 'sessions', label: 'Sessions', icon: <DevicesIcon />, gate: {},
         render: (ctx) => <Sessions client={ctx.client} me={ctx.me} /> },
@@ -316,11 +329,20 @@ export const NAVIGATION: NavArea[] = [
       { id: 'remote', label: 'Remote access', icon: <PublicIcon />, gate: { anyOf: SETTINGS_READ },
         render: settingsPage(['tunnel'], 'Remote access') },
       { id: 'diagnostics', label: 'Diagnostics', icon: <AssessmentIcon />, gate: { anyOf: ['diagnostics:read'] }, refreshContext: true,
-        render: (ctx) => whenContextReady(ctx, <Diagnostics client={ctx.client} onNavigate={ctx.navigate} docsBase={ctx.docsBase} />) },
+        render: (ctx) => whenContextReady(ctx,
+          <>
+            <Diagnostics client={ctx.client} onNavigate={ctx.navigate} docsBase={ctx.docsBase} />
+            {ctx.permissions.has('settings:read') && <Box sx={{ mt: 4 }}>{settingsPage(['diagnostics'])(ctx)}</Box>}
+          </>) },
       { id: 'logs', label: 'Logs', icon: <DescriptionIcon />, gate: { anyOf: ['logs:read'] },
         render: (ctx) => <Logs client={ctx.client} /> },
       { id: 'api', label: 'API & SDKs', icon: <ApiIcon />, gate: OVERVIEW_GATE, group: 'Developer',
-        render: (ctx) => <DeveloperOverview client={ctx.client} /> },
+        render: (ctx) => (
+          <>
+            <DeveloperOverview client={ctx.client} />
+            {ctx.permissions.has('settings:read') && <Box sx={{ mt: 4 }}>{settingsPage(['developer'])(ctx)}</Box>}
+          </>
+        ) },
       { id: 'assistants', label: 'AI assistants', icon: <SmartToyIcon />, gate: { anyOf: SETTINGS_READ }, group: 'Developer',
         render: (ctx) => (
           <>
@@ -334,10 +356,19 @@ export const NAVIGATION: NavArea[] = [
       { id: 'scripts', label: 'Scripts & checks', icon: <ScienceIcon />, gate: { anyOf: ['providers:write'] }, group: 'Developer',
         refreshContext: true,
         render: (ctx) => whenContextReady(ctx, <ScriptsTests client={ctx.client} onNavigate={ctx.navigate} docsBase={ctx.docsBase} />) },
-      { id: 'plugins', label: 'Provider plugins', icon: <ExtensionIcon />, gate: { anyOf: ['providers:read'], plugins: true },
+      // Always listed, so plugins can be turned on here; the installed plugins show once they are on.
+      { id: 'plugins', label: 'Provider plugins', icon: <ExtensionIcon />, gate: { anyOf: ['providers:read', 'settings:read'] },
         group: 'Developer', refreshContext: true,
-        render: (ctx) => whenContextReady(ctx, <Plugins client={ctx.client} config={ctx.adminConfig} configLoading={ctx.contextLoading}
-          configError={ctx.contextError} onNavigate={ctx.navigate} />) },
+        render: (ctx) => whenContextReady(ctx,
+          <>
+            {ctx.permissions.has('settings:read') && settingsPage(['plugins'], 'Provider plugins')(ctx)}
+            {ctx.context.provider_view?.plugins_enabled && ctx.permissions.has('providers:read') && (
+              <Box sx={{ mt: 4 }}>
+                <Plugins client={ctx.client} config={ctx.adminConfig} configLoading={ctx.contextLoading}
+                  configError={ctx.contextError} onNavigate={ctx.navigate} />
+              </Box>
+            )}
+          </>) },
     ],
   },
 ];
