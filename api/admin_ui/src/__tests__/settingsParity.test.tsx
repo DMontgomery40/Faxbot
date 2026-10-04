@@ -76,7 +76,7 @@ describe('Settings delivery routes', () => {
     render(<Settings client={client()} />);
     const routes = within(await section('Delivery routes')).getByRole('list', { name: 'Extra outbound routes' });
     expect(within(routes).getAllByRole('listitem').map((item) => item.textContent)).toEqual([
-      expect.stringContaining('1. SIP trunk (Asterisk)'), expect.stringContaining('2. HumbleFax'),
+      expect.stringContaining('1. Carrier trunk'), expect.stringContaining('2. HumbleFax'),
     ]);
     expect((screen.getByRole('button', { name: 'Apply settings' }) as HTMLButtonElement).disabled).toBe(true);
   });
@@ -86,10 +86,10 @@ describe('Settings delivery routes', () => {
     render(<Settings client={client()} />);
     const routes = await section('Delivery routes');
     fireEvent.click(within(routes).getByRole('button', { name: 'Move HumbleFax up' }));
-    fireEvent.click(within(routes).getByRole('button', { name: 'Remove SIP trunk (Asterisk)' }));
+    fireEvent.click(within(routes).getByRole('button', { name: 'Remove Carrier trunk' }));
     // The outbound provider itself and unconfigured providers are not offered.
     const add = within(routes).getByLabelText('Add a route');
-    expect([...add.querySelectorAll('option')].map((option) => option.textContent)).toEqual(['Choose a provider…', 'SIP trunk (Asterisk)']);
+    expect([...add.querySelectorAll('option')].map((option) => option.textContent)).toEqual(['Choose a provider…', 'Carrier trunk']);
     fireEvent.change(add, { target: { value: 'sip' } });
     fireEvent.change(within(routes).getByLabelText('Minimum delivery rate (%)'), { target: { value: '90' } });
     apply();
@@ -182,8 +182,8 @@ describe('Provider names', () => {
     server.use(http.get('/admin/sip/presets', () => HttpResponse.json({ presets: [] })));
     render(<Settings client={client()} />);
     const backend = await section('Fax providers');
-    expect(within(backend).getByText('In use: Sending: SIP trunk (Asterisk) · Receiving: Phaxio')).toBeTruthy();
-    expect(within(backend).getByRole('combobox', { name: 'Sending' }).textContent).toBe('SIP trunk (Asterisk)');
+    expect(within(backend).getByText('In use: Sending: Carrier trunk · Receiving: Phaxio')).toBeTruthy();
+    expect(within(backend).getByRole('combobox', { name: 'Sending' }).textContent).toBe('Carrier trunk');
     expect(within(backend).getByRole('combobox', { name: 'Receiving' }).textContent).toBe('Phaxio');
     expect(backend.textContent).not.toMatch(/\b(sip|phaxio|sinch|signalwire|documo|humblefax|freeswitch)\b|PHAXIO|SIP\/Asterisk|Inherit|Default Provider/);
   });
@@ -196,7 +196,7 @@ describe('Provider names', () => {
     fireEvent.mouseDown(within(backend).getByRole('combobox', { name: 'Sending' }));
     fireEvent.click(within(await screen.findByRole('listbox')).getByRole('option', { name: 'HumbleFax' }));
     fireEvent.mouseDown(within(backend).getByRole('combobox', { name: 'Receiving' }));
-    fireEvent.click(within(await screen.findByRole('listbox')).getByRole('option', { name: 'SIP trunk (Asterisk)' }));
+    fireEvent.click(within(await screen.findByRole('listbox')).getByRole('option', { name: 'Carrier trunk' }));
     apply();
     await screen.findByText(/Settings saved\./);
     expect(writes[0]).toEqual({ expected_revision_id: 'rev-a', backend: 'humblefax', inbound_backend: 'sip', inbound_enabled: true });

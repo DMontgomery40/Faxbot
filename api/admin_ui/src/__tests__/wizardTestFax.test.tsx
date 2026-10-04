@@ -57,7 +57,7 @@ describe('Setup Wizard test fax', () => {
     });
     expect(page.startsWith('%PDF-1.4')).toBe(true);
     expect(page).toContain('(Faxbot test page) Tj');
-    expect(page).toContain('(Sent through SIP trunk \\(Asterisk\\) to +15555550123) Tj');
+    expect(page).toContain('(Sent through Carrier trunk to +15555550123) Tj');
   });
 
   it('after a T.38 call with no fax data back, says Faxbot uses audio fax now and never sends again by itself', async () => {

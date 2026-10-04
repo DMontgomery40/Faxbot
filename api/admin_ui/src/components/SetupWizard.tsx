@@ -9,6 +9,7 @@ import AdminAPIClient, { configurationWriteRejected, plainRefusal } from '../api
 import { DeliveryWizardFields, deliveryEditorValues } from './delivery/DeliverySettings';
 import { docsLink } from '../docsLinks';
 import type { ConfigurationWriteResult, Settings, SettingsPatch, ValidationResult } from '../api/types';
+import type { SipPreset } from '../api/sipTypes';
 import SecretInput from './common/SecretInput';
 import EnvSetField, { environmentManaged } from './common/EnvSetField';
 import RestartNotice, { RESTARTED } from './common/RestartFaxbot';
@@ -92,6 +93,8 @@ const errorText = (error: unknown, fallback: string) => error instanceof Error ?
 function editorValues(data: Settings): WizardConfig {
   return {
     ...loadedDirections(data),
+    // The trunk's carrier or phone system, chosen with the providers on the first step.
+    sip_trunk_preset: (data.sip as { trunk?: { preset?: string } }).trunk?.preset ?? '',
     enforce_public_https: data.security.enforce_https,
     audit_log_enabled: data.security.audit_enabled,
     public_api_url: data.security.public_api_url,
@@ -128,7 +131,7 @@ function editorValues(data: Settings): WizardConfig {
 
 // Which wizard fields each step saves when the person leaves it.
 function stepFields(step: number, data: Settings | null): string[] {
-  if (step === 0) return [...PROVIDER_FIELDS, 'fax_default_country'];
+  if (step === 0) return [...PROVIDER_FIELDS, 'fax_default_country', 'sip_trunk_preset'];
   if (step === 1) {
     return ['public_api_url', 'phaxio_verify_signature', 'documo_use_sandbox', STATION_FIELD.key,
       ...Object.values(credentialFields).flat().map(field => field.key), ...amiFields.map(field => field.key),
@@ -149,6 +152,8 @@ function SetupWizard({ client, onDone, docsBase, canRestart = true }: SetupWizar
   const [loadError, setLoadError] = useState<string | null>(null);
   const [needsReload, setNeedsReload] = useState(false);
   const [providers, setProviders] = useState<Provider[]>([]);
+  // Carriers and phone systems the trunk can connect to, each by name.
+  const [trunkChoices, setTrunkChoices] = useState<SipPreset[] | null>(null);
   const [catalogReady, setCatalogReady] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [saveResult, setSaveResult] = useState<ConfigurationWriteResult | null>(null);
@@ -212,8 +217,9 @@ function SetupWizard({ client, onDone, docsBase, canRestart = true }: SetupWizar
     setLoadError(null);
     setNotice(null);
     setNeedsReload(true);
-    const [desired, catalog] = await Promise.allSettled([client.getSettings(), client.listPlugins()]);
+    const [desired, catalog, presets] = await Promise.allSettled([client.getSettings(), client.listPlugins(), client.getSipPresets()]);
     if (epoch !== requestEpoch.current) return;
+    setTrunkChoices(presets.status === 'fulfilled' ? presets.value.presets : null);
     if (catalog.status === 'fulfilled') {
       setProviders((Array.isArray(catalog.value.items) ? catalog.value.items : []).filter((item: Provider) =>
         typeof item.id === 'string' && item.categories?.includes('outbound')));
@@ -280,7 +286,10 @@ function SetupWizard({ client, onDone, docsBase, canRestart = true }: SetupWizar
   }, [loadSettings]);
 
   const pluginNames = new Map(providers.map(provider => [provider.id, provider.name]));
-  const label = (id: string) => providerLabel(id, pluginNames.get(id));
+  // The trunk is named by the carrier or phone system chosen on the first step.
+  const label = (id: string) => (id === 'sip' && trunkChoices?.find((choice) => choice.id === config.sip_trunk_preset)
+    ? (config.sip_trunk_preset === 'custom' ? 'Your carrier' : trunkChoices.find((choice) => choice.id === config.sip_trunk_preset)!.label)
+    : providerLabel(id, pluginNames.get(id)));
   const manifest = (id: string) => providers.some(provider => provider.id === id && provider.source === 'manifest');
   const builtin = (id: string) => !!credentialFields[id] && !manifest(id) && (!settings?.features?.v3_plugins || catalogReady);
 
@@ -351,6 +360,15 @@ function SetupWizard({ client, onDone, docsBase, canRestart = true }: SetupWizar
         return `${NUMERIC_FIELDS[field]} must be a positive whole number${field !== 'pdf_token_ttl_minutes' ? ' no greater than 65535' : ''}.`;
       }
       patch[field] = value;
+    }
+    // The trunk's carrier is saved only when the trunk sends or receives.
+    const trunkInUse = sending === 'sip' || receiving === 'sip';
+    if (step === 0 && !trunkInUse) delete patch.sip_trunk_preset;
+    if (step === 0 && settings && trunkInUse && config.sip_trunk_preset !== baseline.sip_trunk_preset) {
+      const chosen = trunkChoices?.find((choice) => choice.id === config.sip_trunk_preset);
+      const auth = (settings.sip as { trunk?: { auth?: string } }).trunk?.auth ?? '';
+      Object.assign(patch, { sip_trunk_host: '', sip_trunk_transport: '', sip_trunk_dial_format: '',
+        ...(chosen && !chosen.auth_modes.includes(auth as 'ip') ? { sip_trunk_auth: chosen.auth_modes[0] } : {}) });
     }
     if (step === 0 && settings && (sending !== baseline.sending || receiving !== baseline.receiving)) {
       const problem = directionProblem({ sending, receiving });
@@ -606,6 +624,7 @@ function SetupWizard({ client, onDone, docsBase, canRestart = true }: SetupWizar
         </Box>}
         {id === 'sip' && <>
           <SipTrunkSettings client={client} showCalls={false} revision={desiredRevision} onSaved={rebase}
+            presetChosenElsewhere={Boolean(config.sip_trunk_preset)}
             onDirtyChange={setTrunkDirty} showReceiving={roles.receives} />
           {roles.sends && <Grid container spacing={2} sx={{ mt: 1 }}>{field(STATION_FIELD)}</Grid>}
           <Accordion disableGutters variant="outlined" sx={{ mt: 2 }}>
@@ -632,6 +651,9 @@ function SetupWizard({ client, onDone, docsBase, canRestart = true }: SetupWizar
     if (activeStep === 0) return <Box>
       <Typography variant="h6">Choose Providers</Typography>
       <ProviderDirectionFields value={{ sending, receiving }} disabled={!canEdit} plugins={providers}
+        trunk={trunkChoices} preset={String(config.sip_trunk_preset ?? '')}
+        onPresetChange={(preset) => handleConfigChange('sip_trunk_preset', preset)}
+        country={String(config.fax_default_country ?? settings?.numbers?.default_country ?? '')}
         saved={{ sending: String(baseline.sending ?? ''), receiving: String(baseline.receiving ?? '') }}
         onChange={next => {
           if (next.sending !== sending) handleConfigChange('sending', next.sending);

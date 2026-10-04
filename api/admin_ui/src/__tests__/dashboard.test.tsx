@@ -22,7 +22,7 @@ describe('Dashboard delivery cards', () => {
   it('shows spending by provider, email delivery counts and verified partners, each opening its screen', async () => {
     server.use(
       http.get('/routing/costs', () => HttpResponse.json({ since: '2026-09-03T00:00:00', providers: [
-        provider('sip', 'SIP trunk (Asterisk)', '1.25'), provider('phaxio', 'Phaxio', '3.50'),
+        provider('sip', 'Carrier trunk', '1.25'), provider('phaxio', 'Phaxio', '3.50'),
       ] })),
       http.get('/intake/items', () => HttpResponse.json({ items: [], counts: { received: 2, sending: 1, delivered: 40, failed: 1 } })),
       http.get('/direct/peers', () => HttpResponse.json({ peers: [peer('a', 'verified'), peer('b', 'verified'), peer('c', 'pending'), peer('d', 'revoked')] })),
@@ -31,7 +31,7 @@ describe('Dashboard delivery cards', () => {
     render(<Dashboard client={client()} onNavigate={navigate} />);
 
     const spending = await screen.findByRole('button', { name: 'Spending, last 30 days' });
-    expect(spending.textContent).toContain('SIP trunk (Asterisk)$1.25');
+    expect(spending.textContent).toContain('Carrier trunk$1.25');
     expect(spending.textContent).toContain('Phaxio$3.50');
     expect(spending.textContent).toContain('Total$4.75');
 
@@ -126,7 +126,7 @@ describe('Dashboard providers', () => {
       inbound: { enabled: true }, storage: { backend: 'local' } })));
     render(<Dashboard client={client()} />);
     expect((await screen.findByTestId('config-sending')).textContent).toBe('HumbleFax');
-    expect(screen.getByTestId('config-receiving').textContent).toBe('SIP trunk (Asterisk)');
+    expect(screen.getByTestId('config-receiving').textContent).toBe('Carrier trunk');
     expect(screen.queryByText('Default provider')).toBeNull();
   });
 });
@@ -168,8 +168,8 @@ describe('Overview', () => {
       http.get('/work/counts', () => HttpResponse.json({ open: 4, acknowledged: 0, done: 0, unassigned: 2, mine: 0, overdue: 1 })),
       http.get('/intake/items', () => HttpResponse.json({ items: [], counts: { received: 0, sending: 0, delivered: 5, failed: 4 } })),
       http.get('/routing/costs', () => HttpResponse.json({ since: '2026-09-03T00:00:00',
-        providers: [{ ...provider('sip', 'SIP trunk (Asterisk)', '1.00'), unrecorded_calls: 2 }],
-        received: [{ provider_id: 'sip', label: 'SIP trunk (Asterisk)', carrier: 'Telnyx', calls: 1, faxes: 1, billed_minutes: 1,
+        providers: [{ ...provider('sip', 'Carrier trunk', '1.00'), unrecorded_calls: 2 }],
+        received: [{ provider_id: 'sip', label: 'Carrier trunk', carrier: 'Telnyx', calls: 1, faxes: 1, billed_minutes: 1,
           estimated_cost: [], reported_cost: [], calls_with_reported_cost: 1, calls_without_reported_cost: 0,
           estimated_cost_not_reported: [], awaiting_carrier_bill: 0, unmatched_charges: 0, unrecorded_calls: 1 }] })),
     );

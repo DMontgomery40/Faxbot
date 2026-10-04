@@ -37,7 +37,7 @@ describe('the navigation table', () => {
     expect(areas.map((area) => area.label)).toEqual(
       ['Overview', 'Faxes', 'Numbers', 'Recipients', 'Providers', 'Costs', 'Access', 'System']);
     expect(pagesOf(areas, 'providers')).toEqual(
-      ['sending', 'humblefax', 'efax', 'phaxio', 'sinch', 'signalwire', 'documo', 'trunk', 'freeswitch']);
+      ['sending', 'humblefax', 'efax', 'phaxio', 'sinch', 'signalwire', 'documo', 'trunk', 'freeswitch', 'change']);
     const system = areas.find((area) => area.id === 'system')!;
     expect(system.pages.filter((page) => page.group === 'Developer').map((page) => page.label))
       .toEqual(['API & SDKs', 'AI assistants', 'Terminal', 'Scripts & checks', 'Provider plugins']);
@@ -190,6 +190,7 @@ describe('the console shell', () => {
     const opened: string[] = [];
     for (const area of areas) {
       for (const page of area.pages) {
+        if (page.link) continue;  // Add or change a provider opens the Setup wizard
         const address = pageAddress(area.id, page.id);
         act(() => { window.location.hash = address; });
         await waitFor(() => expect(window.location.hash).toBe(address));
@@ -307,7 +308,7 @@ describe('a page that shows part of the settings', () => {
     unmount();
     render(<Settings client={keyClient()} sections={['sinch']} title="Sinch" />);
     expect((await screen.findByTestId('provider-use')).textContent)
-      .toBe('Faxbot does not use Sinch now. To use it, choose it under Sending & receiving.');
+      .toBe('Faxbot does not use Sinch now. To use it, choose Add or change a provider.');
     expect(screen.getByText('Sinch Project ID')).toBeTruthy();
   });
 

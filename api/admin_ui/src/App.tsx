@@ -20,11 +20,13 @@ import NavPanel from './components/shell/NavPanel';
 import PageBreadcrumbs from './components/shell/PageBreadcrumbs';
 import UserMenu from './components/shell/UserMenu';
 import { ThemeProvider } from './theme/ThemeContext';
+import { setProviderNames } from './providerLabels';
 import {
   destinationAddress,
   pageAddress,
   parseAddress,
   resolveAddress,
+  providersInUse,
   visibleNavigation,
   type AdminDestination,
   type NavArea,
@@ -214,6 +216,8 @@ function ConsoleShell({ client, me, initialContext, onSignOut, onIdentityChanged
   const isMobile = useMediaQuery(muiTheme.breakpoints.down('md'));
 
   const [context, setContext] = useState<ConsoleContext>(initialContext);
+  // Every screen names the trunk by its carrier, from the context in hand.
+  setProviderNames(context.provider_names);
   const [mobileOpen, setMobileOpen] = useState(false);
   // A fax Send just queued, opened in Sent when the person follows it.
   const [jobToOpen, setJobToOpen] = useState<string | null>(null);
@@ -221,8 +225,8 @@ function ConsoleShell({ client, me, initialContext, onSignOut, onIdentityChanged
   const permissions = useMemo(() => new Set(me.permissions), [me.permissions]);
   const pluginsEnabled = Boolean(context.provider_view?.plugins_enabled);
   const visible = useMemo(
-    () => visibleNavigation(permissions, context.navigation, { pluginsEnabled }),
-    [permissions, context.navigation, pluginsEnabled],
+    () => visibleNavigation(permissions, context.navigation, { pluginsEnabled, providersInUse: providersInUse(context) }),
+    [permissions, context, pluginsEnabled],
   );
 
   const [hash, setAddress] = useAddress();

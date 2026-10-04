@@ -36,8 +36,13 @@ export function sentCost(provider: ProviderCosts): string {
   return formatMoneyList(total);
 }
 
+// "Received through Telnyx"; the carrier is added only when it is not already the name.
 export function receivedLabel(entry: ReceivedCosts): string {
-  return `Received on your ${providerLabel(entry.provider_id)}${entry.carrier ? ` · ${entry.carrier}` : ''}`;
+  return `Received through ${withCarrier(providerLabel(entry.provider_id), entry.carrier)}`;
+}
+
+export function withCarrier(name: string, carrier: string | null | undefined): string {
+  return carrier && carrier !== name ? `${name} · ${carrier}` : name;
 }
 
 export function receivedCost(entry: ReceivedCosts): string {

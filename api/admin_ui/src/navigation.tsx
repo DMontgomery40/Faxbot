@@ -3,7 +3,7 @@
 // address of its own (#/<area>/<page>) so Back, Forward, reload and links work.
 // Visibility here is a display hint only; the server checks every request again.
 import type { ReactElement, ReactNode } from 'react';
-import { Alert, Box } from '@mui/material';
+import { Alert, Box, Typography } from '@mui/material';
 import FolderCopyIcon from '@mui/icons-material/FolderCopy';
 import DashboardIcon from '@mui/icons-material/Dashboard';
 import FaxIcon from '@mui/icons-material/Fax';
@@ -41,8 +41,10 @@ import SmartToyIcon from '@mui/icons-material/SmartToy';
 import TerminalIcon from '@mui/icons-material/Terminal';
 import ScienceIcon from '@mui/icons-material/Science';
 import ExtensionIcon from '@mui/icons-material/Extension';
+import AddCircleOutlineIcon from '@mui/icons-material/AddCircleOutline';
 import type AdminAPIClient from './api/client';
 import type { AdminConfig, AuthMe, ConsoleContext } from './api/types';
+import { providerLabel } from './providerLabels';
 import Dashboard from './components/Dashboard';
 import SetupWizard from './components/SetupWizard';
 import JobsList from './components/JobsList';
@@ -55,6 +57,7 @@ import Logs from './components/Logs';
 import SendFax from './components/SendFax';
 import Received, { readFilter } from './components/Received';
 import ReceivingAddresses from './components/delivery/ReceivingAddresses';
+import ProvidersInUse from './components/ProvidersInUse';
 import CasePackets from './components/delivery/CasePackets';
 import WorkSettingsPanel from './components/work/WorkSettingsPanel';
 import Terminal from './components/Terminal';
@@ -132,7 +135,15 @@ export interface PageContext {
 export interface NavPage {
   id: string;
   label: string;
+  // A name that depends on the installation, such as the trunk's carrier ("Telnyx").
+  labelFor?: () => string;
   icon: ReactElement;
+  // The provider this page sets up; it is listed in the panel only while that provider is in use.
+  provider?: string;
+  // An entry that opens another page, such as Add or change a provider (the Setup wizard).
+  link?: AdminDestination;
+  // False for a page that keeps its address but is not listed in the panel.
+  inPanel?: boolean;
   gate: Gate;
   // Pages listed together under a heading inside their area, such as Developer.
   group?: string;
@@ -170,8 +181,9 @@ function sendFax(ctx: PageContext): (() => void) | undefined {
   return ctx.context.navigation.send ? () => ctx.navigate('faxes/send') : undefined;
 }
 
-function providerPage(id: string, label: string, section: SettingsSection, icon: ReactElement = <CloudIcon />): NavPage {
-  return { id, label, icon, gate: { anyOf: SETTINGS_READ }, render: settingsPage([section], label) };
+function providerPage(id: string, label: string, section: SettingsSection, provider: string,
+  icon: ReactElement = <CloudIcon />): NavPage {
+  return { id, label, icon, provider, gate: { anyOf: SETTINGS_READ }, render: settingsPage([section], label) };
 }
 
 export const NAVIGATION: NavArea[] = [
@@ -241,21 +253,27 @@ export const NAVIGATION: NavArea[] = [
   {
     id: 'providers', label: 'Providers', icon: <CloudIcon />,
     pages: [
-      { id: 'sending', label: 'Sending & receiving', icon: <SwapHorizIcon />, gate: { anyOf: SETTINGS_READ },
-        render: (ctx) => (
+      { id: 'sending', label: 'In use', icon: <SwapHorizIcon />, gate: { anyOf: SETTINGS_READ }, refreshContext: true,
+        render: (ctx) => whenContextReady(ctx,
           <>
-            {settingsPage(['providers', 'features', 'inbound', 'routes'], 'Sending & receiving')(ctx)}
+            <Typography variant="h4" component="h1" sx={{ mb: 2 }}>In use</Typography>
+            <ProvidersInUse context={ctx.context} canChange={ctx.permissions.has('settings:write')} onNavigate={ctx.navigate} />
+            {settingsPage(['providers', 'features', 'inbound', 'routes'])(ctx)}
             {ctx.permissions.has('providers:read') && <ReceivingAddresses client={ctx.client} />}
-          </>
-        ) },
-      providerPage('humblefax', 'HumbleFax', 'humblefax'),
-      providerPage('efax', 'eFax', 'efax'),
-      providerPage('phaxio', 'Phaxio', 'phaxio'),
-      providerPage('sinch', 'Sinch', 'sinch'),
-      providerPage('signalwire', 'SignalWire', 'signalwire'),
-      providerPage('documo', 'Documo', 'documo'),
-      providerPage('trunk', 'Carrier trunk', 'trunk', <SettingsPhoneIcon />),
-      providerPage('freeswitch', 'FreeSWITCH (advanced)', 'freeswitch', <RouterIcon />),
+          </>) },
+      providerPage('humblefax', 'HumbleFax', 'humblefax', 'humblefax'),
+      providerPage('efax', 'eFax', 'efax', 'efax'),
+      providerPage('phaxio', 'Phaxio', 'phaxio', 'phaxio'),
+      providerPage('sinch', 'Sinch', 'sinch', 'sinch'),
+      providerPage('signalwire', 'SignalWire', 'signalwire', 'signalwire'),
+      providerPage('documo', 'Documo', 'documo', 'documo'),
+      // Titled by its carrier or phone system ("Telnyx", "Avaya IP Office").
+      { id: 'trunk', label: 'Carrier trunk', labelFor: () => providerLabel('sip'), icon: <SettingsPhoneIcon />, provider: 'sip',
+        gate: { anyOf: SETTINGS_READ }, render: (ctx) => settingsPage(['trunk'], providerLabel('sip'))(ctx) },
+      providerPage('freeswitch', 'FreeSWITCH (advanced)', 'freeswitch', 'freeswitch', <RouterIcon />),
+      // Choosing or changing providers happens in the Setup wizard.
+      { id: 'change', label: 'Add or change a provider', icon: <AddCircleOutlineIcon />, link: 'system/setup',
+        gate: { anyOf: ['settings:write'] }, render: () => null },
     ],
   },
   {
@@ -336,10 +354,24 @@ export function pageVisible(gate: Gate, permissions: ReadonlySet<string>, naviga
 
 // The areas and pages this person may see, in menu order; an area with no
 // visible page is left out.
+// Providers this installation uses (sending, receiving, extra routes); null when this person may not see them.
+export function providersInUse(context: Pick<ConsoleContext, 'provider_view'>): string[] | null {
+  const view = context.provider_view;
+  if (!view) return null;
+  return [...new Set([view.active_outbound, view.active_inbound, ...(view.extra_routes ?? [])].filter(Boolean))];
+}
+
 export function visibleNavigation(permissions: ReadonlySet<string>, navigation: ConsoleNavigation,
-  options: { pluginsEnabled: boolean }): NavArea[] {
+  options: { pluginsEnabled: boolean; providersInUse?: string[] | null }): NavArea[] {
+  // A provider page leaves the panel while its provider is not in use; its address still opens it.
+  const inUse = options.providersInUse ?? null;
+  const shown = (page: NavPage): NavPage => ({
+    ...page,
+    label: page.labelFor ? page.labelFor() : page.label,
+    inPanel: !page.provider || inUse === null || inUse.includes(page.provider),
+  });
   return NAVIGATION
-    .map((area) => ({ ...area, pages: area.pages.filter((page) => pageVisible(page.gate, permissions, navigation, options)) }))
+    .map((area) => ({ ...area, pages: area.pages.filter((page) => pageVisible(page.gate, permissions, navigation, options)).map(shown) }))
     .filter((area) => area.pages.length > 0);
 }
 
@@ -384,6 +416,8 @@ export function resolveAddress(visible: NavArea[], requested: ParsedAddress | nu
   const area = parsed ? visible.find((candidate) => candidate.id === parsed.area) : undefined;
   if (area) {
     const requested = parsed?.page ? area.pages.find((page) => page.id === parsed.page) : undefined;
+    // An entry that opens another page, such as Add or change a provider.
+    if (requested?.link) return resolveAddress(visible, parseAddress(destinationAddress(requested.link)));
     if (requested || !parsed?.page || singlePage(area.id)) {
       const page = requested ?? area.pages[0];
       const keepParams = requested || singlePage(area.id);

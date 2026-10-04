@@ -1,5 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import {
+  Accordion,
+  AccordionDetails,
+  AccordionSummary,
   Box,
   Card,
   CardContent,
@@ -27,6 +30,7 @@ import {
   Error as ErrorIcon,
   Settings as SettingsIcon,
   Public as PublicIcon,
+  ExpandMore as ExpandMoreIcon,
 } from '@mui/icons-material';
 import AdminAPIClient, { configurationWriteRejected, isForbidden, plainRefusal } from '../api/client';
 import { DELIVERY_SECTIONS, DeliverySettingsSections, EMAIL_DELIVERY_SECTION, deliveryEditorValues, type DeliverySection } from './delivery/DeliverySettings';
@@ -40,7 +44,7 @@ import TunnelSettings from './TunnelSettings';
 import SipTrunkSettings from './SipTrunkSettings';
 import EfaxSettings, { efaxEditorValues } from './EfaxSettings';
 import { COUNTRY_HELP, CountryField, countryName, internationalHint, settingsNumberFormat } from './common/numbers';
-import { directionSummary, providerLabel } from '../providerLabels';
+import { PROVIDER_LABELS, directionSummary, providerLabel } from '../providerLabels';
 import ProviderDirectionFields, { directionFields, directionProblem, loadedDirections } from './common/ProviderDirections';
 
 interface SettingsProps {
@@ -64,17 +68,17 @@ export type SettingsSection =
   | 'direct' | 'intake' | 'email'
   | 'security' | 'tunnel' | 'storage' | 'advanced' | 'backup' | 'mcp' | 'identity';
 
-const PROVIDER_NAMES: Record<string, string> = { sip: 'your phone carrier', freeswitch: 'FreeSWITCH' };
-
-// One sentence on a provider's own page: whether Faxbot uses it now.
+// One sentence on a provider's own page: whether Faxbot uses it now. The trunk is
+// named by its carrier ("Telnyx") once one is chosen.
 export function providerUseSentence(provider: string, directions: { sending: string; receiving: string }): string {
-  const name = PROVIDER_NAMES[provider] ?? providerLabel(provider);
+  const label = providerLabel(provider);
+  const name = provider === 'sip' && label === PROVIDER_LABELS.sip ? 'your phone carrier' : label;
   const sends = directions.sending === provider;
   const receives = directions.receiving === provider;
   if (sends && receives) return `Faxbot sends and receives faxes through ${name}.`;
   if (sends) return `Faxbot sends faxes through ${name}.`;
   if (receives) return `Faxbot receives faxes through ${name}.`;
-  return `Faxbot does not use ${name} now. To use it, choose it under Sending & receiving.`;
+  return `Faxbot does not use ${name} now. To use it, choose Add or change a provider.`;
 }
 
 type FormValue = string | number | boolean;
@@ -435,6 +439,97 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
     );
   };
 
+  // The fax engine's manager connection and the secret it sends with each received fax.
+  const amiFields = () => settings && (
+    <>
+                    <ResponsiveSettingItem
+                      icon={getStatusIcon(!!settings.sip.ami_host)}
+                      label="AMI Host"
+                      value={settings.sip.ami_host || ''}
+                      editValue={form.ami_host ?? ''}
+                      helperText='Asterisk service hostname on your private network (e.g., docker compose service name "asterisk").'
+                      placeholder="For example, asterisk"
+                      onChange={(value) => handleForm('ami_host', value)}
+                      showCurrentValue={!pendingRestart && (!!settings.sip.ami_host)}
+                    />
+                    
+                    {textField('AMI Port', 'ami_port', '', 'number')}
+                    {textField('AMI Username', 'ami_username')}
+                    <ResponsiveSettingItem
+                      icon={settings.sip.ami_password_is_default ? <WarningIcon color="warning" /> : <CheckCircleIcon color="success" />}
+                      label="AMI Password"
+                      value={settings.sip.ami_password_is_default ? 'Using default (insecure)' : 'Custom password set'}
+                      editValue={form.ami_password ?? ''}
+                      helperText="Must match Asterisk manager.conf and must not be the default; never expose port 5038 publicly."
+                      placeholder="Enter a new password"
+                      onChange={(value) => handleForm('ami_password', value)}
+                      type="password"
+                      showCurrentValue={!pendingRestart && (!settings.sip.ami_password_is_default)}
+                      {...envField('ami_password')}
+                    />
+    </>
+  );
+  const inboundSecret = () => settings && (
+              <Box sx={{ mt: 2 }}>
+                <ResponsiveSettingItem
+                  icon={<SecurityIcon />}
+                  label="Asterisk Inbound Secret"
+                  value={lastGeneratedSecret ? 'New secret (copy below)' : (settings.inbound.sip?.configured ? 'Configured' : 'Not configured')}
+                  editValue={form.asterisk_inbound_secret ?? ''}
+                  helperText="Shared secret your Asterisk dialplan sends when posting inbound faxes to Faxbot; keep it private."
+                  onChange={(value) => handleForm('asterisk_inbound_secret', value)}
+                  placeholder="Shared secret"
+                  type="password"
+                  showCurrentValue={false}
+                  {...envField('asterisk_inbound_secret')}
+                />
+                <Box sx={{ display: 'flex', gap: 1, mt: 1, flexWrap: 'wrap' }}>
+                  <Button 
+                    size="small" 
+                    variant="outlined"
+                    onClick={async () => {
+                      try {
+                        const bytes = new Uint8Array(32);
+                        const cryptoObj: any = (typeof window !== 'undefined') ? (window as any).crypto : undefined;
+                        if (cryptoObj && typeof cryptoObj.getRandomValues === 'function') {
+                          cryptoObj.getRandomValues(bytes);
+                        } else {
+                          throw new Error('This browser can’t generate a secure secret.');
+                        }
+                        const b64 = btoa(String.fromCharCode(...Array.from(bytes))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+                        setLastGeneratedSecret(b64);
+                        handleForm('asterisk_inbound_secret', b64);
+                        setSnack('New secret generated. Apply settings to save it.');
+                      } catch(e:any){ setError(e?.message||'Failed to generate secret'); }
+                    }}
+                    sx={{ borderRadius: 1 }}
+                  >
+                    Generate
+                  </Button>
+                  <Button 
+                    size="small" 
+                    variant="outlined"
+                    onClick={async () => {
+                      const toCopy = String(form.asterisk_inbound_secret || lastGeneratedSecret || '').trim();
+                      if (!toCopy || toCopy === loadedForm.asterisk_inbound_secret) return;
+                      try { await navigator.clipboard.writeText(toCopy); setSnack('Copied'); } catch {}
+                    }} 
+                    disabled={!form.asterisk_inbound_secret || form.asterisk_inbound_secret === loadedForm.asterisk_inbound_secret}
+                    sx={{ borderRadius: 1 }}
+                  >
+                    Copy
+                  </Button>
+                </Box>
+                {lastGeneratedSecret && (
+                  <Alert severity="success" sx={{ mt: 2, borderRadius: 2 }}>
+                    <Typography variant="body2">
+                      New secret (copy now): <code>{lastGeneratedSecret}</code>
+                    </Typography>
+                  </Alert>
+                )}
+              </Box>
+  );
+
   return (
     <Box>
       <Box display="flex" justifyContent={sections && !title ? 'flex-end' : 'space-between'} alignItems="center" mb={3}>
@@ -517,6 +612,8 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
             subtitle="Which provider sends your faxes and which receives them"
             icon={<CloudIcon />}
           >
+            {/* On the console's In use page the providers are listed above, and changed in the Setup wizard. */}
+            {!sections && (
             <Box sx={{ px: 2 }} data-testid="provider-directions">
               <ProviderDirectionFields value={providerChoice} disabled={!canEdit} saved={loadedDirections(settings)}
                 onChange={(next) => {
@@ -529,6 +626,7 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
                 </Typography>
               )}
             </Box>
+            )}
             {!effectiveOutbound && (
               <Typography variant="body2" sx={{ px: 2 }} data-testid="no-provider">
                 No fax provider set up yet.{' '}
@@ -810,36 +908,11 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
 
                 {providerShown('sip', 'trunk') && (
                   <ResponsiveSettingSection
-                    title="SIP / Asterisk Configuration"
-                    subtitle="Configure your Asterisk AMI connection settings"
+                    title={sections ? 'Settings' : 'SIP / Asterisk Configuration'}
+                    subtitle={sections ? 'Your fax line, its numbers and how Faxbot connects to it.' : 'Configure your Asterisk AMI connection settings'}
                   >
                     {providerStatus('sip')}
-                    <ResponsiveSettingItem
-                      icon={getStatusIcon(!!settings.sip.ami_host)}
-                      label="AMI Host"
-                      value={settings.sip.ami_host || ''}
-                      editValue={form.ami_host ?? ''}
-                      helperText='Asterisk service hostname on your private network (e.g., docker compose service name "asterisk").'
-                      placeholder="For example, asterisk"
-                      onChange={(value) => handleForm('ami_host', value)}
-                      showCurrentValue={!pendingRestart && (!!settings.sip.ami_host)}
-                    />
-                    
-                    {textField('AMI Port', 'ami_port', '', 'number')}
-                    {textField('AMI Username', 'ami_username')}
-                    <ResponsiveSettingItem
-                      icon={settings.sip.ami_password_is_default ? <WarningIcon color="warning" /> : <CheckCircleIcon color="success" />}
-                      label="AMI Password"
-                      value={settings.sip.ami_password_is_default ? 'Using default (insecure)' : 'Custom password set'}
-                      editValue={form.ami_password ?? ''}
-                      helperText="Must match Asterisk manager.conf and must not be the default; never expose port 5038 publicly."
-                      placeholder="Enter a new password"
-                      onChange={(value) => handleForm('ami_password', value)}
-                      type="password"
-                      showCurrentValue={!pendingRestart && (!settings.sip.ami_password_is_default)}
-                      {...envField('ami_password')}
-                    />
-                    
+                    {!sections && amiFields()}
                     {/* On the console's own pages the station ID is under Numbers, Sender identity. */}
                     {!sections && (
                     <ResponsiveSettingItem
@@ -853,7 +926,21 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
                       showCurrentValue={!pendingRestart && (!!settings.sip.station_id)}
                     />
                     )}
-                    <Box id={SIP_TRUNK_SECTION}><SipTrunkSettings client={client} /></Box>
+                    <Box id={SIP_TRUNK_SECTION}><SipTrunkSettings client={client} presetChosenElsewhere={Boolean(sections)} /></Box>
+                    {sections && (
+                      <Accordion disableGutters variant="outlined" sx={{ mt: 2 }} data-testid="fax-engine-connection">
+                        <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+                          <Typography>Fax engine connection (advanced)</Typography>
+                        </AccordionSummary>
+                        <AccordionDetails>
+                          <Typography variant="body2" sx={{ mb: 2 }}>
+                            Faxbot sets this up itself. Change it only if you run your own fax engine.
+                          </Typography>
+                          {amiFields()}
+                          {inboundSecret()}
+                        </AccordionDetails>
+                      </Accordion>
+                    )}
                   </ResponsiveSettingSection>
                 )}
 
@@ -981,66 +1068,8 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
               showCurrentValue={!pendingRestart}
             />
 
-            {effectiveInbound === 'sip' && (
-              <Box sx={{ mt: 2 }}>
-                <ResponsiveSettingItem
-                  icon={<SecurityIcon />}
-                  label="Asterisk Inbound Secret"
-                  value={lastGeneratedSecret ? 'New secret (copy below)' : (settings.inbound.sip?.configured ? 'Configured' : 'Not configured')}
-                  editValue={form.asterisk_inbound_secret ?? ''}
-                  helperText="Shared secret your Asterisk dialplan sends when posting inbound faxes to Faxbot; keep it private."
-                  onChange={(value) => handleForm('asterisk_inbound_secret', value)}
-                  placeholder="Shared secret"
-                  type="password"
-                  showCurrentValue={false}
-                  {...envField('asterisk_inbound_secret')}
-                />
-                <Box sx={{ display: 'flex', gap: 1, mt: 1, flexWrap: 'wrap' }}>
-                  <Button 
-                    size="small" 
-                    variant="outlined"
-                    onClick={async () => {
-                      try {
-                        const bytes = new Uint8Array(32);
-                        const cryptoObj: any = (typeof window !== 'undefined') ? (window as any).crypto : undefined;
-                        if (cryptoObj && typeof cryptoObj.getRandomValues === 'function') {
-                          cryptoObj.getRandomValues(bytes);
-                        } else {
-                          throw new Error('This browser can’t generate a secure secret.');
-                        }
-                        const b64 = btoa(String.fromCharCode(...Array.from(bytes))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
-                        setLastGeneratedSecret(b64);
-                        handleForm('asterisk_inbound_secret', b64);
-                        setSnack('New secret generated. Apply settings to save it.');
-                      } catch(e:any){ setError(e?.message||'Failed to generate secret'); }
-                    }}
-                    sx={{ borderRadius: 1 }}
-                  >
-                    Generate
-                  </Button>
-                  <Button 
-                    size="small" 
-                    variant="outlined"
-                    onClick={async () => {
-                      const toCopy = String(form.asterisk_inbound_secret || lastGeneratedSecret || '').trim();
-                      if (!toCopy || toCopy === loadedForm.asterisk_inbound_secret) return;
-                      try { await navigator.clipboard.writeText(toCopy); setSnack('Copied'); } catch {}
-                    }} 
-                    disabled={!form.asterisk_inbound_secret || form.asterisk_inbound_secret === loadedForm.asterisk_inbound_secret}
-                    sx={{ borderRadius: 1 }}
-                  >
-                    Copy
-                  </Button>
-                </Box>
-                {lastGeneratedSecret && (
-                  <Alert severity="success" sx={{ mt: 2, borderRadius: 2 }}>
-                    <Typography variant="body2">
-                      New secret (copy now): <code>{lastGeneratedSecret}</code>
-                    </Typography>
-                  </Alert>
-                )}
-              </Box>
-            )}
+            {/* On the console's own pages this secret is in the trunk's fax engine connection box. */}
+            {effectiveInbound === 'sip' && !sections && inboundSecret()}
 
             {effectiveInbound === 'phaxio' && (
               <ResponsiveSettingItem

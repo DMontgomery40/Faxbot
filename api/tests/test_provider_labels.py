@@ -18,7 +18,7 @@ def _console_labels():
 
 def test_console_and_server_use_the_same_names():
     assert _console_labels() == PROVIDER_LABELS
-    assert PROVIDER_LABELS['sip'] == 'SIP trunk (Asterisk)'
+    assert PROVIDER_LABELS['sip'] == 'Carrier trunk'
 
 
 def test_built_in_plugins_are_listed_under_the_same_names():
@@ -29,8 +29,24 @@ def test_built_in_plugins_are_listed_under_the_same_names():
 
 
 def test_routes_and_unknown_providers():
-    assert route_label('sip') == 'SIP trunk (Asterisk)'
     assert route_label('direct') == 'Direct delivery'
     assert provider_label('') == 'No provider'
-    assert provider_label('SIP') == 'SIP trunk (Asterisk)'
     assert provider_label('acme-fax', 'Acme Fax') == 'Acme Fax'
+    assert provider_label('freeswitch') == 'FreeSWITCH'
+
+
+def test_the_trunk_is_named_after_its_carrier_or_phone_system(monkeypatch):
+    """Never the fax engine's name: the carrier or phone system the trunk connects to."""
+    from app import config
+    from app.config_values import ConfigurationValues
+    from app.provider_labels import trunk_name
+    from app.sip_trunk import PRESETS
+    assert trunk_name('telnyx') == 'Telnyx'
+    assert trunk_name('avaya-ipoffice') == 'Avaya IP Office'
+    assert trunk_name('bt-one-voice') == 'BT One Voice'
+    assert trunk_name('custom') == 'Your carrier'
+    assert trunk_name('') == 'Carrier trunk'
+    assert all(trunk_name(preset) for preset in PRESETS)
+    values = ConfigurationValues.from_environment({'SIP_TRUNK_PRESET': 'gamma'})
+    monkeypatch.setattr(config, 'configuration_values', lambda: values)
+    assert provider_label('SIP') == 'Gamma' and route_label('sip') == 'Gamma'

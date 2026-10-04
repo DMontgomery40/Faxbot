@@ -295,6 +295,9 @@ class ConsoleProviderResponse(AuthOutput):
     install_enabled: bool
     active_outbound: str
     active_inbound: str
+    # Further sending routes after the outbound provider, and the trunk's carrier or phone system preset.
+    extra_routes: list[str] = []
+    trunk_preset: str = ''
 
 
 class ConsoleContextResponse(AuthOutput):
@@ -307,6 +310,8 @@ class ConsoleContextResponse(AuthOutput):
     inbound_enabled: bool | None
     branding: ConsoleBrandingResponse
     provider_view: ConsoleProviderResponse | None
+    # Names that depend on this installation, such as the carrier the trunk connects to ({'sip': 'Telnyx'}).
+    provider_names: dict[str, str] = {}
 
 
 class AuthSessionSummaryResponse(AuthOutput):

@@ -121,7 +121,10 @@ function createState() {
     numberExample: '(201) 555-0123',
     resolveNumber: ((value: string) => value) as (value: string) => string | null,
     // The provider hints in /auth/context, and whether sign-in still needs a first owner.
-    providerView: null as null | { plugins_enabled: boolean; install_enabled: boolean; active_outbound: string; active_inbound: string },
+    providerView: null as null | { plugins_enabled: boolean; install_enabled: boolean; active_outbound: string; active_inbound: string;
+      extra_routes?: string[]; trunk_preset?: string },
+    // Names the installation gives its providers, such as the trunk's carrier.
+    providerNames: {} as Record<string, string>,
     firstOwner: false,
   };
 }
@@ -294,6 +297,7 @@ const accessHandlers = [
     inbound_enabled: true,
     branding: { docs_base: 'https://docs.faxbot.net/latest/', logo_path: '/admin/ui/faxbot_full_logo.png' },
     provider_view: s().providerView,
+    provider_names: s().providerNames,
   })),
   http.get('/auth/setup', () => json({ first_owner: s().firstOwner })),
   guarded('post', '/auth/logout', () => {

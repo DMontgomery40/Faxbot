@@ -57,6 +57,8 @@ interface SipTrunkSettingsProps {
   // How often and how long Apply and connect checks the trunk after a restart.
   pollMs?: number;
   waitMs?: number;
+  // The carrier or phone system was chosen in the Setup wizard: name it instead of offering every one.
+  presetChosenElsewhere?: boolean;
 }
 
 type Notice = { severity: 'success' | 'info' | 'warning' | 'error'; text: string } | null;
@@ -166,7 +168,7 @@ export function audioReason(reason: string | null | undefined, at?: string | nul
 }
 
 function SipTrunkSettings({ client, showCalls = true, revision: sharedRevision, onSaved, onDirtyChange,
-  showReceiving = false, pollMs = 2000, waitMs = 60000 }: SipTrunkSettingsProps) {
+  showReceiving = false, pollMs = 2000, waitMs = 60000, presetChosenElsewhere = false }: SipTrunkSettingsProps) {
   const theme = useTheme();
   const narrow = useMediaQuery(theme.breakpoints.down('md'));
   const [presets, setPresets] = useState<SipPreset[]>([]);
@@ -452,6 +454,12 @@ function SipTrunkSettings({ client, showCalls = true, revision: sharedRevision, 
           : `${INTRO[directions]} Your carrier bills these calls by the minute.`}
       </Typography>
 
+      {presetChosenElsewhere && preset ? (
+        <Typography variant="body2" data-testid="sip-preset-chosen">
+          {phone ? `Phone system: ${preset.label}.` : `Carrier: ${preset.id === 'custom' ? 'your own carrier' : preset.label}.`}
+          {' '}To use another, choose Add or change a provider.
+        </Typography>
+      ) : (
       <FormControl fullWidth size="small">
         <InputLabel id="sip-preset-label">Carrier</InputLabel>
         <Select labelId="sip-preset-label" label="Carrier" value={form.preset}
@@ -463,6 +471,7 @@ function SipTrunkSettings({ client, showCalls = true, revision: sharedRevision, 
           {phoneSystems.map((item) => <MenuItem key={item.id} value={item.id}>{item.label}</MenuItem>)}
         </Select>
       </FormControl>
+      )}
 
       {preset && (
         <>

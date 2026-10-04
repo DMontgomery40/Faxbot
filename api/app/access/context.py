@@ -10,6 +10,7 @@ from urllib.parse import urlsplit
 import sqlalchemy as sa
 
 from ..config_store import ConfigurationNotInitialized, ConfigurationStoreError
+from ..provider_labels import trunk_name
 from ..routing.numbers import number_example
 from .types import InvalidTransactionError, ResourceRef
 
@@ -108,5 +109,9 @@ class ConsoleContext:
                     'install_enabled': values.feature_plugin_install,
                     'active_outbound': values.effective_outbound,
                     'active_inbound': values.effective_inbound,
+                    'extra_routes': [route for route in values.outbound_route_providers if route != values.effective_outbound],
+                    'trunk_preset': values.sip_trunk_preset,
                 } if 'providers:read' in permissions else None,
+                # The trunk is shown by its carrier's name on every screen that names a provider.
+                'provider_names': {'sip': trunk_name(values.sip_trunk_preset)},
             }

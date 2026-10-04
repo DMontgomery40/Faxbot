@@ -21,7 +21,7 @@ const client = () => new AdminAPIClient({ kind: 'key', key: 'synthetic-key' });
 const destination = {
   number: '+12025550123', display_name: 'County clinic', notes: null, preferred_route: null, accepts_references: false,
   version: 3, estimated_cost_30_days: [{ currency: 'USD', amount: '1.25' }],
-  routes: [{ route: 'sip', label: 'SIP trunk (Asterisk)', attempts: 10, successes: 9, failures: 1, uncertain: 0,
+  routes: [{ route: 'sip', label: 'Carrier trunk', attempts: 10, successes: 9, failures: 1, uncertain: 0,
     success_percent: 90, estimated_cost_30_days: [{ currency: 'USD', amount: '1.25' }], reported_cost_30_days: [],
     last_attempt_at: '2026-10-03T12:00:00' }],
 };
@@ -32,14 +32,14 @@ function routingHandlers(record: (request: Request) => Promise<void>) {
     http.get('/routing/destinations/:number', () => HttpResponse.json({
       ...destination, direct_partner: null,
       recommended_routes: [
-        { route: 'sip', label: 'SIP trunk (Asterisk)', reason: 'cheapest', explanation: 'The cheapest route that works reliably for this number.', estimated_cost_one_page: { currency: 'USD', amount: '0.005' } },
+        { route: 'sip', label: 'Carrier trunk', reason: 'cheapest', explanation: 'The cheapest route that works reliably for this number.', estimated_cost_one_page: { currency: 'USD', amount: '0.005' } },
         { route: 'phaxio', label: 'Phaxio', reason: 'alternative', explanation: 'Used if the routes above it are unavailable.', estimated_cost_one_page: { currency: 'USD', amount: '0.07' } },
       ],
-      available_routes: [{ route: 'phaxio', label: 'Phaxio' }, { route: 'sip', label: 'SIP trunk (Asterisk)' }],
+      available_routes: [{ route: 'phaxio', label: 'Phaxio' }, { route: 'sip', label: 'Carrier trunk' }],
     })),
     http.patch('/routing/destinations/:number', async ({ request }) => { await record(request); return HttpResponse.json(destination); }),
     http.get('/routing/costs', () => HttpResponse.json({ since: '2026-09-03T00:00:00', providers: [
-      { provider_id: 'sip', label: 'SIP trunk (Asterisk)', attempts: 10, successes: 9, failures: 1, uncertain: 0,
+      { provider_id: 'sip', label: 'Carrier trunk', attempts: 10, successes: 9, failures: 1, uncertain: 0,
         billed_minutes: 33, billed_pages: 120, estimated_cost: [{ currency: 'USD', amount: '1.25' }], reported_cost: [],
         settled_cost: [], attempts_without_reported_cost: 10 },
     ] })),

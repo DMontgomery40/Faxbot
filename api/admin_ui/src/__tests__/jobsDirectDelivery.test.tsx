@@ -105,12 +105,12 @@ describe('Jobs list wording', () => {
     );
     render(<JobsList client={client()} />);
     const table = (await screen.findByText('+15550100001')).closest('table') as HTMLElement;
-    expect(within(table).getByText('SIP trunk (Asterisk)')).toBeTruthy();
+    expect(within(table).getByText('Carrier trunk')).toBeTruthy();
     expect(within(table).queryByText(/^sip$|Backend|Job ID|[0-9a-f]{8}\.\.\./)).toBeNull();
     fireEvent.click(within(table).getByText('+15550100001'));
     const dialog = await screen.findByRole('dialog', { name: 'Fax details' });
     expect(within(dialog).getByText(JOB)).toBeTruthy();
-    expect(within(dialog).getByText('SIP trunk (Asterisk)')).toBeTruthy();
+    expect(within(dialog).getByText('Carrier trunk')).toBeTruthy();
   });
 
   it('shows the whole error sentence, wrapped between words', async () => {
@@ -131,7 +131,7 @@ describe('Jobs list wording', () => {
     ]), provider_id: 'sip', profile_id: 'bd26f4bd-011a-4e14-9d1f-052975afafa4' };
     jobServer('reconciliation_required', detail, () => HttpResponse.json({ deliveries: [] }));
     const dialog = await openJob();
-    expect(within(dialog).getByText('Original provider').closest('li')?.textContent).toContain('SIP trunk (Asterisk)');
+    expect(within(dialog).getByText('Original provider').closest('li')?.textContent).toContain('Carrier trunk');
     expect(within(dialog).queryByText(/Original Provider Account|bd26f4bd|principal:|Operator:/)).toBeNull();
     expect(within(dialog).getByText(/Provider fax ID: FAX-123/)).toBeTruthy();
   });
@@ -169,7 +169,7 @@ describe('Sent', () => {
       expect(screen.getByRole('columnheader', { name })).toBeTruthy();
     }
     const charged = (await screen.findByText('$0.005')).closest('tr') as HTMLElement;
-    expect(within(charged).getByText('SIP trunk (Asterisk)')).toBeTruthy();
+    expect(within(charged).getByText('Carrier trunk')).toBeTruthy();
     expect(within(charged).getByText('$0.005').getAttribute('title')).toBe('Telnyx charged $0.005 for this call.');
     const estimated = (await screen.findByText('$0.07 estimate')).closest('tr') as HTMLElement;
     expect(within(estimated).getByText('+15550100002')).toBeTruthy();

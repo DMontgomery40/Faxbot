@@ -6,7 +6,7 @@ import AdminAPIClient from '../../api/client';
 import type { CarrierChargeStatus, Money, ProviderCosts, ReceivedCosts } from '../../api/deliveryTypes';
 import { providerLabel } from '../../providerLabels';
 import { DeliveryError, Notice, formatMinutes, formatMoney, formatMoneyList } from './shared';
-import { NO_PUBLISHED_PRICE, receivedCost, receivedLabel, sentCost } from './spendingSummary';
+import { NO_PUBLISHED_PRICE, receivedCost, receivedLabel, sentCost, withCarrier } from './spendingSummary';
 import { usePublishedPlans } from './RateCards';
 import type { PublishedPlans } from '../../api/deliveryTypes';
 
@@ -84,7 +84,7 @@ function SentCard({ provider, published }: { provider: ProviderCosts; published?
   return (
     <Card variant="outlined" sx={{ borderRadius: 2, height: '100%' }}>
       <CardContent>
-        <Typography variant="subtitle1">{provider.carrier ? `${name} · ${provider.carrier}` : name}</Typography>
+        <Typography variant="subtitle1">{withCarrier(name, provider.carrier)}</Typography>
         <Typography variant="h5" component="p" sx={{ mt: 1 }}>{top.amount}</Typography>
         {top.caption && <Typography variant="caption" color="text.secondary">{top.caption}</Typography>}
 
