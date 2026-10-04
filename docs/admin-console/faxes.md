@@ -6,7 +6,7 @@
 
 People who handle faxes can **Assign** a fax, **Acknowledge** it and download its evidence; the download is recorded in the fax's history. Received reads at most 200 work items at a time.
 
-The receiving line says how faxes reach Faxbot. Over your own carrier line it says "Received faxes reach Faxbot: ready." or what stops them, with a button to the carrier's page; Phaxio and Sinch show the address to enter in their consoles. See [Receiving](../operations/intake.md).
+The receiving line says how faxes reach Faxbot. Over your own carrier line it says "Received faxes reach Faxbot: ready." or what stops them, with a button to the carrier's page; Phaxio and Sinch show the address to enter in their consoles. See [receiving](../setup/sip-trunk.md) for your own line, and [email delivery](../operations/intake.md).
 
 ## Sent
 

@@ -100,7 +100,7 @@ type SettingsForm = Record<string, FormValue>;
 // The trunk section, opened from the Inbox receiving status.
 const SIP_TRUNK_SECTION = 'sip-trunk';
 
-const ENV_IMPORT_HELP = 'When Faxbot starts with an empty database, it takes its settings from the recovery copy saved under Storage & retention.';
+const ENV_IMPORT_HELP = 'Decided where Faxbot is installed, not here: when it is on, a fresh installation takes its settings from the recovery copy saved under Storage & retention.';
 
 // Limits checked before saving, so a value the server would refuse gets a plain sentence.
 const FIELD_RANGES: Record<string, { min: number; max: number; message: string }> = {
@@ -778,20 +778,13 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
             />
             
             
+            {/* enable_persisted_settings is read from the environment when a new installation first starts. */}
             <ResponsiveSettingItem
-              icon={settings.persisted?.enabled ? <CheckCircleIcon color="success" /> : <WarningIcon color="warning" />}
+              icon={<StorageIcon />}
               label="Restore from the recovery copy on a fresh start"
-              value={settings.persisted?.enabled ? 'On' : 'Off'}
-              editValue={form.enable_persisted_settings ?? settings.persisted?.enabled ?? false}
-              helperText={withOwnerNote('enable_persisted_settings', ENV_IMPORT_HELP)}
-              onChange={(value) => handleForm('enable_persisted_settings', value === 'true')}
-              type="select"
-              options={[
-                { value: 'true', label: 'Enabled' },
-                { value: 'false', label: 'Disabled' }
-              ]}
-              showCurrentValue={!pendingRestart}
-              disabled={locked('enable_persisted_settings')}
+              editValue={settings.persisted?.enabled ? 'On' : 'Off'}
+              helperText={ENV_IMPORT_HELP}
+              showCurrentValue={false}
             />
             {textField("This server's public address", 'public_api_url', 'The address people and fax services use to reach Faxbot, such as https://fax.example.com.')}
             <DeploymentRows settings={settings}

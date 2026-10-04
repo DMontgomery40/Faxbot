@@ -138,6 +138,32 @@ function CheckValue({ value }: { value: DiagnosticsValue }) {
   );
 }
 
+// Each section and check by its plain name; an unknown one is made readable.
+export const CHECK_NAMES: Record<string, string> = {
+  outbound: 'Sending', inbound: 'Receiving', system: 'This server', storage: 'Storage', security: 'Security',
+  plugins: 'Provider plugins', backend: 'Provider', backend_config: 'Provider settings complete',
+  configuration_ready: 'Settings ready', ami_connected: 'Fax engine connected', ami_connection: 'Fax engine connected',
+  requires_ami: 'Needs the fax engine', sending_disabled: 'Sending turned off', enabled: 'Turned on',
+  ami_password_not_default: 'Fax engine password changed from the default',
+  ami_password_secure: 'Fax engine password changed from the default',
+  asterisk_secret_set: 'Fax engine secret for received faxes set', inbound_verification: 'Received faxes checked',
+  retention_days: 'Days received faxes are kept', db: 'Database', database_connected: 'Database reachable',
+  ghostscript: 'Document converter (Ghostscript)', fax_data_dir: 'Fax data folder',
+  fax_data_writable: 'Fax data folder can be written', temp_dir_writable: 'Temporary folder can be written',
+  type: 'Kind', needs_storage: 'Storage needed', required_for_active_inbound: 'Needed for receiving',
+  bucket: 'Bucket', bucket_set: 'Bucket set', accessible: 'Bucket reachable', error: 'Problem',
+  enforce_https: 'HTTPS required for document links', audit_logging: 'Events recorded', rate_limiting: 'Request limits on',
+  pdf_token_ttl: 'Document links for fax services last (minutes)', max_attempts: 'Most tries per fax',
+  v3_enabled: 'Provider plugins on', plugin_install_enabled: 'Remote plugin installation allowed',
+  active_outbound: 'Plugin that sends', installed: 'Installed plugins', manifests: 'Plugin files',
+  traits_schema: 'Plugin descriptions', allowed_keys: 'Allowed keys', allowed_domains: 'Allowed domains',
+  inspection_error: 'Problem reading plugins', storage_error: 'Storage problem', warnings: 'Warnings',
+};
+
+export function checkName(name: string): string {
+  return CHECK_NAMES[name] ?? name.replace(/_/g, ' ').replace(/^\w/, (letter) => letter.toUpperCase());
+}
+
 function Diagnostics({ client, onNavigate, docsBase }: DiagnosticsProps) {
   const [diagnostics, setDiagnostics] = useState<DiagnosticsResult | null>(null);
   const [loading, setLoading] = useState(false);
@@ -230,7 +256,7 @@ function Diagnostics({ client, onNavigate, docsBase }: DiagnosticsProps) {
     setExpandedSections(prev => prev.includes(section) ? prev.filter(s => s !== section) : [...prev, section]);
   };
 
-  const displayName = (name: string) => name.replace(/_/g, ' ').replace(/\b\w/g, letter => letter.toUpperCase());
+  const displayName = checkName;
 
   const getHelpDocs = (section: string) => {
     const docs = [{ text: 'Settings guide', href: docsLink('storage', docsBase) }];

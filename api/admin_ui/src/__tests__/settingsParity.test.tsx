@@ -893,6 +893,7 @@ describe('Owner-only settings everywhere', () => {
     unmount();
     render(<Settings client={client()} sections={['security', 'storage', 'advanced']} canWrite isOwner={false} />);
     await screen.findByText('Require HTTPS for document links');
-    expect(screen.getAllByText(/Only the owner of this installation can change this\.$/).length).toBeGreaterThanOrEqual(5);
+    // HTTPS for document links and the three request limits; the recovery-copy row is read-only for everyone.
+    expect(screen.getAllByText(/Only the owner of this installation can change this\.$/).length).toBeGreaterThanOrEqual(4);
   });
 });

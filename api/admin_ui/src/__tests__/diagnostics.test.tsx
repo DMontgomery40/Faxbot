@@ -60,3 +60,17 @@ describe('Diagnostics', () => {
     expect(JSON.stringify(copied)).not.toMatch(/revision|generation|7f1c2a9e/);
   });
 });
+
+describe('Diagnostics check names', () => {
+  it('names each check in plain words, never by its code', async () => {
+    server.use(http.post('/admin/diagnostics/run', () => HttpResponse.json({ ...result, checks: {
+      ...result.checks, inbound: { ami_password_not_default: true, asterisk_secret_set: true, requires_ami: true } },
+    check_outcomes: { ...result.check_outcomes, inbound: { ami_password_not_default: 'pass', asterisk_secret_set: 'pass' } } })));
+    render(<Diagnostics client={client()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Run Diagnostics' }));
+    expect(await screen.findByText('Fax engine password changed from the default')).toBeTruthy();
+    expect(screen.getByText('Document links for fax services last (minutes)')).toBeTruthy();
+    expect(screen.getAllByText('Needs the fax engine').length).toBeGreaterThan(0);
+    expect(document.body.textContent).not.toMatch(/\bAmi\b|Pdf Token Ttl|Requires Ami/);
+  });
+});

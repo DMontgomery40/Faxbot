@@ -225,6 +225,9 @@ describe('Names follow a saved provider change', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Apply settings' }));
     await waitFor(() => expect(within(list).getByRole('link', { name: 'Telnyx' })).toBeTruthy());
     expect(within(list).queryByRole('link', { name: 'Telstra SIP Connect' })).toBeNull();
+    // The page the lead saw: the In use list names the new carrier too, without a reload.
+    expect(within(screen.getByTestId('providers-in-use')).getByText(/Telnyx/)).toBeTruthy();
+    expect(screen.queryByText(/Telstra SIP Connect/)).toBeNull();
   });
 
   it('does not read the context again for a save that changes nothing it shows', async () => {

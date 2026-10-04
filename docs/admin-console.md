@@ -55,6 +55,10 @@ Settings pages show what is saved and change it with **Apply settings**. Some ch
 
 Settings only the owner may change are shown, but disabled, to everyone else, with "Only the owner of this installation can change this." Settings set when Faxbot was installed (environment-only settings) are shown read-only where they matter, with "Set when Faxbot started" or "Not set"; a secret's value is never shown.
 
+## When the console does not load
+
+The console is served when the deployment sets `ENABLE_LOCAL_ADMIN=true` and the built console is at `/app/admin_ui/dist` in the container (`api/admin_ui/dist` locally). Those are deployment settings, not console settings. Storage credentials for S3 come from the server's own environment or role; the console never stores or shows them. Where several API processes run, a change that waits for a restart needs every process stopped and started again.
+
 ## The command line
 
 `faxbot`, the command line, follows the same eight areas: `faxbot received`, `sent`, `numbers`, `recipients`, `providers`, `costs`, `access` and `system`. See the [command line reference](reference/cli.md).
