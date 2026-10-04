@@ -9,6 +9,7 @@ import re
 
 import sqlalchemy as sa
 
+from .costs import plan_fee_text
 from .database import read_connection
 from .policy import DIRECT, RouteCandidate, RouteChoice, RoutePolicy
 from .store import destination_key
@@ -36,7 +37,8 @@ def route_label(key):
 def explain(choice):
     """One sentence saying what decided this route."""
     if choice.reason == 'included':
-        return f'Included in your {route_label(choice.route.key)} plan.'
+        card = choice.route.card
+        return f'Included in your {route_label(choice.route.key)} plan ({plan_fee_text(card.monthly_fee_micros, card.currency)} a month).'
     if choice.reason == 'unknown_cost':
         return ('Your outbound fax provider; its cost is unknown.' if choice.route.bound
                 else 'First in your list of routes; its cost is unknown.')

@@ -74,7 +74,15 @@ export interface ProviderCosts {
   estimated_cost_not_reported?: Money[];
   awaiting_carrier_bill?: number;
   unmatched_charges?: number;
-  plan?: { label: string; monthly_fee: Money } | null;
+  plan?: { label: string; monthly_fee: Money; monthly_fee_text?: string; period_fee?: Money; period_days?: number } | null;
+  // False when the provider has no rate card and nothing was reported: no published price.
+  priced?: boolean;
+  // Carrier records Faxbot has no call record of: already inside the charged total, counted here too.
+  unrecorded_calls?: number;
+  unrecorded_cost?: Money[];
+  unrecorded_matched_to_faxes?: number;
+  // Charges, estimates for faxes not billed yet, and any plan fee for the period.
+  total_cost?: Money[];
 }
 
 export interface ReceivedCosts {
@@ -91,6 +99,12 @@ export interface ReceivedCosts {
   estimated_cost_not_reported: Money[];
   awaiting_carrier_bill: number;
   unmatched_charges: number;
+  // Carrier records Faxbot has no call record of: already inside the charged total, counted here too.
+  unrecorded_calls?: number;
+  unrecorded_cost?: Money[];
+  unrecorded_matched_to_faxes?: number;
+  // Charges, estimates for faxes not billed yet, and any plan fee for the period.
+  total_cost?: Money[];
 }
 
 export interface CarrierChargeStatus {
@@ -104,6 +118,7 @@ export interface RouteCostsResponse {
   providers: ProviderCosts[];
   received?: ReceivedCosts[];
   carrier_charges?: CarrierChargeStatus;
+  total_cost?: Money[];
 }
 
 // One fax's cost: what the carrier charged, or why it is not known yet.

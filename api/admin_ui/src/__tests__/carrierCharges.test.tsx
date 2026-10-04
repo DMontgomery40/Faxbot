@@ -4,9 +4,11 @@ import { describe, expect, it } from 'vitest';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import AdminAPIClient from '../api/client';
+import Dashboard from '../components/Dashboard';
 import DeliveryRoutes from '../components/DeliveryRoutes';
 import Inbound from '../components/Inbound';
 import JobsList from '../components/JobsList';
+import { localToday } from '../components/delivery/RateCards';
 import { server } from '../test/server';
 
 const client = () => new AdminAPIClient({ kind: 'key', key: 'synthetic-key' });
@@ -16,18 +18,27 @@ const sip = {
   provider_id: 'sip', label: 'SIP trunk (Asterisk)', carrier: 'Telnyx', attempts: 3, successes: 2, failures: 1, uncertain: 0,
   billed_minutes: 4, billed_pages: 4, estimated_cost: [usd('0.02')], reported_cost: [usd('0.015')], settled_cost: [],
   attempts_without_reported_cost: 1, attempts_with_reported_cost: 2, estimated_cost_not_reported: [usd('0.005')],
-  awaiting_carrier_bill: 1, unmatched_charges: 0, plan: null,
+  awaiting_carrier_bill: 1, unmatched_charges: 0, plan: null, priced: true, total_cost: [usd('0.02')],
+  unrecorded_calls: 0, unrecorded_cost: [], unrecorded_matched_to_faxes: 0,
 };
 const humblefax = {
   provider_id: 'humblefax', label: 'HumbleFax', carrier: null, attempts: 2, successes: 2, failures: 0, uncertain: 0,
   billed_minutes: 0, billed_pages: 3, estimated_cost: [usd('0.00')], reported_cost: [], settled_cost: [],
   attempts_without_reported_cost: 2, attempts_with_reported_cost: 0, estimated_cost_not_reported: [usd('0.00')],
-  awaiting_carrier_bill: 0, unmatched_charges: 0, plan: { label: 'HumbleFax', monthly_fee: usd('10.00') },
+  awaiting_carrier_bill: 0, unmatched_charges: 0, priced: true, total_cost: [usd('10.00')],
+  plan: { label: 'HumbleFax', monthly_fee: usd('10.00'), monthly_fee_text: '$10', period_fee: usd('10.00'), period_days: 30 },
+};
+const documo = {
+  provider_id: 'documo', label: 'Documo', carrier: null, attempts: 1, successes: 1, failures: 0, uncertain: 0,
+  billed_minutes: 0, billed_pages: 1, estimated_cost: [], reported_cost: [], settled_cost: [],
+  attempts_without_reported_cost: 1, attempts_with_reported_cost: 0, estimated_cost_not_reported: [],
+  awaiting_carrier_bill: 0, unmatched_charges: 0, plan: null, priced: false, total_cost: [],
 };
 const received = {
   provider_id: 'sip', label: 'SIP trunk (Asterisk)', carrier: 'Telnyx', calls: 3, faxes: 2, billed_minutes: 3,
   estimated_cost: [usd('0.0096')], reported_cost: [usd('0.0064')], calls_with_reported_cost: 2, calls_without_reported_cost: 1,
   estimated_cost_not_reported: [usd('0.0032')], awaiting_carrier_bill: 0, unmatched_charges: 1,
+  unrecorded_calls: 1, unrecorded_cost: [usd('0.0032')], unrecorded_matched_to_faxes: 1, total_cost: [usd('0.0128')],
 };
 
 function routes(costs: Record<string, unknown>, posts: unknown[] = []) {
@@ -50,29 +61,30 @@ describe('Delivery routes spending', () => {
       carrier_charges: { carrier: 'Telnyx', supported: true, readable: true } });
     render(<DeliveryRoutes client={client()} canWrite />);
     const sent = (await screen.findByText('SIP trunk (Asterisk) · Telnyx')).closest('.MuiCard-root') as HTMLElement;
-    expect(within(sent).getByText('$0.015')).toBeTruthy();
-    expect(within(sent).getByText('charged')).toBeTruthy();
+    expect(within(sent).getByText('$0.02')).toBeTruthy();
+    expect(within(sent).getByText('charged and estimated')).toBeTruthy();
     expect(within(sent).getByText('Telnyx charged $0.015 for 2 faxes.')).toBeTruthy();
     expect(within(sent).getByText('Estimated $0.005 for 1 fax not billed yet.')).toBeTruthy();
     expect(within(sent).getByText('1 fax waiting for the Telnyx bill.')).toBeTruthy();
     expect(sent.textContent).not.toMatch(/faxs/);
     expect(within(sent).getByText(/3 faxes, 2 delivered, 4 minutes, 4 pages/)).toBeTruthy();
     const plan = (await screen.findByText('HumbleFax')).closest('.MuiCard-root') as HTMLElement;
-    expect(within(plan).getByText('Included in your plan')).toBeTruthy();
-    expect(within(plan).getByText('HumbleFax plan: $10.00 a month, faxes included.')).toBeTruthy();
+    expect(within(plan).getByText('Included in your HumbleFax plan ($10 a month)')).toBeTruthy();
+    expect(within(plan).getByText(/Counted in the total: \$10\.00 for these 30 days/)).toBeTruthy();
     expect(within(plan).queryByText(/not billed yet/)).toBeNull();
     const inbound = screen.getByText('Received on your SIP trunk (Asterisk) · Telnyx').closest('.MuiCard-root') as HTMLElement;
     expect(within(inbound).getByText('Telnyx charged $0.0064 for 2 calls.')).toBeTruthy();
     expect(within(inbound).getByText('1 call could not be matched to one Telnyx record, so its cost is unknown.')).toBeTruthy();
     expect(within(inbound).getByText(/3 calls, 2 faxes received, 3 minutes/)).toBeTruthy();
+    expect(within(inbound).getByText('Telnyx billed 1 call Faxbot has no record of: $0.0032; it matched a received fax.')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Check Telnyx charges now' }));
     expect(await screen.findByText('Checked 4 calls: 4 new charges recorded.')).toBeTruthy();
     expect(posts).toHaveLength(1);
   });
 
   it('says how to turn on charges instead of offering a check without a key', async () => {
-    routes({ providers: [{ ...sip, carrier: null, reported_cost: [], attempts_with_reported_cost: 0 }], received: [],
-      carrier_charges: { carrier: 'Telnyx', supported: true, readable: false } });
+    routes({ providers: [{ ...sip, carrier: null, reported_cost: [], attempts_with_reported_cost: 0, total_cost: [usd('0.02')],
+      attempts_without_reported_cost: 3 }], received: [], carrier_charges: { carrier: 'Telnyx', supported: true, readable: false } });
     render(<DeliveryRoutes client={client()} canWrite />);
     expect(await screen.findByText('Telnyx call charges appear here once a Telnyx API key is added to .env.')).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Check Telnyx charges now' })).toBeNull();
@@ -116,10 +128,16 @@ describe('Delivery routes spending', () => {
     );
     render(<DeliveryRoutes client={client()} canWrite />);
     expect(await screen.findByText('$10.00 a month, faxes included')).toBeTruthy();
+    expect(screen.getByText('Flat monthly fee')).toBeTruthy();  // not Whole minutes
     fireEvent.click(screen.getByRole('button', { name: 'Add rate card' }));
     const dialog = await screen.findByRole('dialog', { name: 'Add rate card' });
     fireEvent.change(within(dialog).getByLabelText('Name'), { target: { value: 'Plan' } });
+    expect(within(dialog).getByLabelText('Billing')).toBeTruthy();
     fireEvent.change(within(dialog).getByLabelText('Monthly plan fee (USD)'), { target: { value: '25' } });
+    // Only a monthly fee: billing increments do not apply, so they are not asked for.
+    expect(within(dialog).queryByLabelText('Billing')).toBeNull();
+    expect(within(dialog).queryByLabelText('Minimum seconds')).toBeNull();
+    expect((within(dialog).getByLabelText('Advertised on') as HTMLInputElement).value).toBe(localToday());
     fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(saved).toHaveLength(1));
     const cards = (saved[0] as { cards: Array<Record<string, unknown>> }).cards;
@@ -187,3 +205,43 @@ describe('Inbox cost', () => {
     expect(asked).toEqual([]);
   });
 });
+
+describe('One reading of spending', () => {
+  it('shows the same lines and total on the Dashboard as in Tools, from one response', async () => {
+    const costs = { since: '2026-09-03T00:00:00', providers: [sip, humblefax, documo], received: [received],
+      carrier_charges: { carrier: 'Telnyx', supported: true, readable: true },
+      total_cost: [usd('10.0328')] };
+    routes(costs);
+    server.use(http.get('/routing/costs', () => HttpResponse.json(costs)));
+    const { unmount } = render(<DeliveryRoutes client={client()} canWrite={false} />);
+    const tools = [
+      (await screen.findByText('SIP trunk (Asterisk) · Telnyx')).closest('.MuiCard-root')?.textContent ?? '',
+      screen.getByText('HumbleFax').closest('.MuiCard-root')?.textContent ?? '',
+      screen.getByText('Documo').closest('.MuiCard-root')?.textContent ?? '',
+      screen.getByText('Received on your SIP trunk (Asterisk) · Telnyx').closest('.MuiCard-root')?.textContent ?? '',
+    ];
+    unmount();
+    render(<Dashboard client={client()} onNavigate={() => undefined} />);
+    const card = await screen.findByRole('button', { name: 'Spending, last 30 days' });
+    const expected = [
+      ['SIP trunk (Asterisk)', '$0.02'],
+      ['HumbleFax', 'Included in your HumbleFax plan ($10 a month)'],
+      ['Documo', 'No published price; add your rate'],
+      ['Received on your SIP trunk (Asterisk) · Telnyx', '$0.0128'],
+    ];
+    expected.forEach(([label, value], index) => {
+      expect(card.textContent).toContain(label + value);
+      expect(tools[index]).toContain(value);  // the Tools card shows the very same phrase
+    });
+    expect(card.textContent).toContain('Total$10.03');
+    expect(card.textContent).not.toContain('No price set');
+  });
+});
+
+describe('Rate card dates', () => {
+  it('defaults the advertised date to the viewer local date, not the UTC date', () => {
+    expect(localToday(new Date(2026, 9, 3, 22, 40))).toBe('2026-10-03');
+    expect(localToday(new Date(2026, 0, 1, 0, 5))).toBe('2026-01-01');
+  });
+});
+

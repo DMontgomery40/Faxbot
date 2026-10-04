@@ -73,7 +73,12 @@ Spending adds up charges where they exist and estimates only for faxes without o
 - what the carrier charged, for how many faxes;
 - the estimate for faxes not billed yet;
 - how many are waiting for the carrier's bill;
-- how many could not be matched to exactly one carrier record (their cost stays unknown).
+- how many could not be matched to exactly one carrier record (their cost stays unknown);
+- calls the carrier billed that Faxbot has no record of, for example a received fax whose hand-over failed before Faxbot recorded its call. Their charge is part of the charged total and is listed on its own line, such as "Telnyx billed 1 call Faxbot has no record of: $0.0032."
+
+The Dashboard's **Spending, last 30 days** card reads the same figures: one line per sending route, one for calls received on the SIP trunk, and the total. A provider with no published price and no rate card reads "No published price; add your rate".
+
+Faxbot finds calls it has no record of by reading the trunk's Telnyx records for the last two days once an hour. It only counts priced records on the trunk's own numbers (its fax numbers and caller ID) that are not within five minutes of any call Faxbot recorded with the same numbers. When exactly one fax received over the trunk, with no call record, has the same called number and was received within 45 seconds of the call's end, the charge is shown on that fax in the Inbox. For a fax brought in later, Faxbot uses the time the trunk received it.
 
 **Job Details** shows one fax's cost, for example "Telnyx charged $0.005 for this call." or "Cost not reported yet." The Inbox shows the same line for each received fax under **Received through**.
 
@@ -89,9 +94,20 @@ If a call record with measured connected time is available for an attempt, Faxbo
 
 ### Flat monthly plans
 
-Some providers charge a monthly fee and nothing per fax. Give that provider a rate card with a **Monthly plan fee** and leave the per-minute, per-page and per-call prices at 0. Faxbot then shows its faxes as included in your plan, not as an unknown cost, and ranks the route as costing nothing extra per fax. The fee itself is shared by all faxes and is never added to one fax.
+Some providers charge a monthly fee and nothing per fax. Give that provider a rate card with a **Monthly plan fee** and leave the per-minute, per-page and per-call prices at 0. Faxbot then shows the route as "Included in your HumbleFax plan ($10 a month)" in Spending, on the Dashboard and in route recommendations, and ranks it as costing nothing extra per fax. The fee is never added to one fax. In spending totals the fee counts once per 30 days, pro-rated by day for other periods.
 
-The shipped starting cards include the HumbleFax unlimited plan: the HumbleFax homepage, read on 2026-10-03, states "Unlimited Faxing $10 / month" with no monthly page limits. Starting cards only load into an installation that has no rate cards yet; add the plan in **Rate cards** otherwise.
+### Published prices Faxbot ships
+
+Every time Faxbot starts, each provider you send or receive with that has never had a rate card gets the card below, marked with its advertised date and source. You can edit or remove it like any other card. Faxbot records the addition in the audit log, and a card you removed or replaced is never added back. Prices were read on 2026-10-03 from each provider's own pages:
+
+| Provider | Price | Source |
+| --- | --- | --- |
+| Phaxio, sending and receiving (US and Canada) | 7 cents per page; 5 cents from 50,000 pages a month, 4 cents from 100,000; numbers $2 a month | [phaxio.com/pricing](https://www.phaxio.com/pricing/), [phaxio.com](https://www.phaxio.com/) |
+| Sinch Fax API, sending and receiving | $0.045 per page | [sinch.com/voice/fax-api](https://sinch.com/voice/fax-api/) |
+| SignalWire Fax, sending and receiving | $0.0095 per minute (48 contiguous states and Canada); no billing increment published, so whole minutes are assumed | [signalwire.com/pricing/fax](https://signalwire.com/pricing/fax) |
+| HumbleFax | $10 a month to send and receive unlimited faxes, no overage charges | [humblefax.com/faq](https://humblefax.com/faq) |
+| Your SIP trunk | the trunk carrier's per-minute prices in [What a call costs](../setup/sip-trunk.md#what-a-call-costs) | carrier pages |
+| Documo | no published fax API price; add your contracted rate | [documo.com/pricing](https://www.documo.com/pricing/) |
 
 ## Rate cards
 

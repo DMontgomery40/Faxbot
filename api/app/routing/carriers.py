@@ -12,6 +12,12 @@ A record belongs to a call when:
    learn is compared by the caller's number alone, never by time alone. Anything else is ambiguous: it stays unmatched and is
    counted, never guessed.
 
+Priced records on the trunk's own numbers that fit no Faxbot call at all (for
+example a received fax whose hand-over failed before its call was recorded)
+are kept in ``carrier_records`` so spending is not under-reported. One is
+attached to a received fax only when exactly one fax received over the trunk
+fits it by called number and time, and that fax fits no other such record.
+
 Charges are append-only observations (``carrier_charges``): a repeated report
 has one effect, a different amount reported later supersedes the earlier one
 with both kept, and a report dated before the one in effect is kept as
@@ -39,6 +45,12 @@ FIRST_RETRY = timedelta(minutes=5)
 LONGEST_RETRY = timedelta(hours=6)
 BUCKET = timedelta(hours=6)
 MARGIN = timedelta(minutes=10)
+# Records that fit no call: the trunk's last two days, checked hourly; a record
+# within five minutes of any Faxbot call with its numbers is never called unrecorded.
+UNRECORDED_WINDOW = timedelta(days=2)
+UNRECORDED_EVERY = timedelta(hours=1)
+UNRECORDED_GRACE = timedelta(minutes=15)
+NEAR_A_CALL = timedelta(minutes=5)
 OPEN_STATES = ('waiting', 'ambiguous', 'matched')
 CARRIER_LABELS = {'telnyx': 'Telnyx', 'signalwire': 'SignalWire'}
 
@@ -150,7 +162,8 @@ def match_records(targets, calls, records, *, attached=None, holding=(), toleran
 
 
 class CarrierChargeStore:
-    TABLES = ('sip_call_records', 'carrier_charges', 'carrier_call_checks')
+    TABLES = ('sip_call_records', 'carrier_charges', 'carrier_call_checks', 'carrier_records', 'inbound_faxes',
+              'inbound_imports')
 
     def __init__(self, engine):
         self.engine = engine
@@ -158,6 +171,9 @@ class CarrierChargeStore:
         self.calls = tables['sip_call_records']
         self.charges = tables['carrier_charges']
         self.checks = tables['carrier_call_checks']
+        self.records = tables['carrier_records']
+        self.faxes = tables['inbound_faxes']
+        self.imports = tables['inbound_imports']
 
     @staticmethod
     def view(row):
@@ -183,10 +199,12 @@ class CarrierChargeStore:
             return [dict(row) for row in connection.execute(query).mappings()]
 
     def calls_between(self, start, end, preset):
-        """Every call on this trunk overlapping ``[start, end)``: all of them compete for records."""
+        """Every call on this trunk (any trunk when ``preset`` is None) overlapping ``[start, end)``."""
         calls = self.calls
-        query = sa.select(calls).where(calls.c.trunk_preset == preset, calls.c.started_at < end,
+        query = sa.select(calls).where(calls.c.started_at < end,
                                        sa.or_(calls.c.ended_at.is_(None), calls.c.ended_at >= start))
+        if preset is not None:
+            query = query.where(calls.c.trunk_preset == preset)
         with read_connection(self.engine) as connection:
             return [dict(row) for row in connection.execute(query).mappings()]
 
@@ -293,6 +311,86 @@ class CarrierChargeStore:
                 charges.c.call_record_id == call_id).order_by(charges.c.record_id, charges.c.version)).mappings()]
 
 
+    # Records that fit no call ------------------------------------------------
+    def charged_record_ids(self, record_ids):
+        """Carrier record ids already held against a Faxbot call."""
+        charges = self.charges
+        with read_connection(self.engine) as connection:
+            return set(connection.execute(sa.select(charges.c.record_id).where(
+                charges.c.record_id.in_(tuple(record_ids) or ('',)))).scalars())
+
+    def received_faxes(self, start, end):
+        """Faxes received over the SIP trunk between ``start`` and ``end`` that no call record names.
+
+        Their time is the source's receipt time when the fax was brought in later, else when it was received.
+        """
+        faxes, imports, calls = self.faxes, self.imports, self.calls
+        received = sa.func.coalesce(imports.c.source_received_at, faxes.c.received_at, faxes.c.created_at)
+        named = sa.select(calls.c.job_id).where(calls.c.direction == 'inbound', calls.c.job_id.is_not(None))
+        query = (sa.select(faxes.c.id, faxes.c.to_number, received.label('received'))
+                 .select_from(faxes.outerjoin(imports, imports.c.inbound_fax_id == faxes.c.id))
+                 .where(faxes.c.backend == 'sip', faxes.c.id.not_in(named), received >= start, received < end))
+        with read_connection(self.engine) as connection:
+            return [dict(row) for row in connection.execute(query).mappings()]
+
+    def record_unrecorded(self, record, *, provider_id, inbound_fax_id, effective_at, now=None):
+        """Keep one priced record that fits no call; ``new``, ``duplicate``, ``corrected`` or ``older``.
+
+        A received fax once attached stays attached; a later sweep never detaches it.
+        """
+        if record.amount_micros is None:
+            raise ValueError('Only a priced record can be kept.')
+        now = now or utcnow()
+        table = self.records
+        with write_transaction(self.engine) as connection:
+            rows = connection.execute(sa.select(table).where(
+                table.c.provider_id == provider_id, table.c.record_id == record.id)
+                .order_by(table.c.version)).mappings().all()
+            current = next((row for row in reversed(rows) if row['applied']), None)
+            if current is not None and inbound_fax_id is None:
+                inbound_fax_id = current['inbound_fax_id']
+            content = (record.amount_micros, record.currency, record.billed_seconds, inbound_fax_id)
+            same = lambda row: (row['amount_micros'], row['currency'], row['billed_seconds'],
+                                row['inbound_fax_id']) == content
+            values = dict(provider_id=provider_id, record_id=record.id, version=len(rows) + 1,
+                          direction=record.direction, calling=(record.cli or '')[:32] or None,
+                          called=(record.cld or '')[:32] or None, started_at=record.started_at,
+                          answered_at=record.answered_at, finished_at=record.finished_at,
+                          amount_micros=record.amount_micros, raw_amount=record.raw_amount, currency=record.currency,
+                          billed_seconds=record.billed_seconds, call_seconds=record.call_seconds,
+                          inbound_fax_id=inbound_fax_id, effective_at=effective_at, observed_at=now, created_at=now)
+            if current is not None and same(current):
+                return 'duplicate'
+            if current is not None and effective_at <= current['effective_at']:
+                if any(same(row) and row['effective_at'] == effective_at for row in rows):
+                    return 'duplicate'
+                connection.execute(table.insert().values(id=uuid4().hex, supersedes_id=None, applied=0, **values))
+                return 'older'
+            connection.execute(table.insert().values(
+                id=uuid4().hex, supersedes_id=current['id'] if current is not None else None, applied=1, **values))
+            return 'new' if current is None else 'corrected'
+
+    def unrecorded_in_effect(self, *, since=None, inbound_fax_ids=None, connection=None):
+        """The version in effect of each kept record, leaving out any a Faxbot call now holds."""
+        table, charges = self.records, self.charges
+
+        def read(conn):
+            query = sa.select(table).where(table.c.applied == 1,
+                                           table.c.record_id.not_in(sa.select(charges.c.record_id)))
+            if since is not None:
+                query = query.where(table.c.started_at >= since)
+            if inbound_fax_ids is not None:
+                query = query.where(table.c.inbound_fax_id.in_(tuple(inbound_fax_ids) or ('',)))
+            latest = {}
+            for row in conn.execute(query.order_by(table.c.provider_id, table.c.record_id, table.c.version)).mappings():
+                latest[(row['provider_id'], row['record_id'])] = dict(row)
+            return list(latest.values())
+        if connection is not None:
+            return read(connection)
+        with read_connection(self.engine) as conn:
+            return read(conn)
+
+
 @dataclass
 class Sweep:
     checked: int = 0
@@ -301,10 +399,12 @@ class Sweep:
     waiting: int = 0
     ambiguous: int = 0
     unavailable: bool = False
+    unrecorded: int = 0
 
     def as_dict(self):
         return {'checked': self.checked, 'matched': self.matched, 'charges_recorded': self.recorded,
-                'waiting': self.waiting, 'ambiguous': self.ambiguous, 'carrier_unavailable': self.unavailable}
+                'waiting': self.waiting, 'ambiguous': self.ambiguous, 'carrier_unavailable': self.unavailable,
+                'unrecorded_calls': self.unrecorded}
 
 
 class CarrierReconciler:
@@ -319,11 +419,14 @@ class CarrierReconciler:
     """
 
     def __init__(self, store, routes, source, *, preset='telnyx', settle_after=SETTLE_AFTER, give_up=GIVE_UP,
-                 tolerance=TOLERANCE):
+                 tolerance=TOLERANCE, numbers=None):
+        """``numbers()`` lists the trunk's own fax numbers (its DIDs and caller ID)."""
         self.store, self.routes, self.source = store, routes, source
         self.preset, self.settle_after, self.give_up, self.tolerance = preset, settle_after, give_up, tolerance
+        self.numbers = numbers or (lambda: ())
         self.paused_until = None
         self.pause = timedelta(minutes=1)
+        self.unrecorded_next = None
 
     @property
     def provider_id(self):
@@ -336,7 +439,9 @@ class CarrierReconciler:
         now = now or utcnow()
         if self.paused_until is not None and now < self.paused_until:
             return False
-        self.sweep(now=now)
+        result = self.sweep(now=now)
+        if not result.unavailable and (self.unrecorded_next is None or now >= self.unrecorded_next):
+            self.sweep_unrecorded(now=now)
         return False
 
     def run_now(self, *, now=None, windows=10):
@@ -351,7 +456,74 @@ class CarrierReconciler:
             total.unavailable = total.unavailable or result.unavailable
             if result.unavailable or result.checked == 0:
                 break
+        if not total.unavailable:
+            unrecorded = self.sweep_unrecorded(now=now)
+            total.unrecorded, total.unavailable = unrecorded.unrecorded, unrecorded.unavailable
         return total
+
+    def _ours(self, record):
+        mine = record.cld if record.direction == 'inbound' else record.cli
+        try:
+            numbers = list(self.numbers() or ())
+        except Exception:
+            return False
+        return any(same_number(mine, number) for number in numbers)
+
+    def sweep_unrecorded(self, *, now=None):
+        """Keep the trunk's priced records from the last two days that fit no Faxbot call."""
+        now = now or utcnow()
+        result = Sweep()
+        self.unrecorded_next = now + UNRECORDED_EVERY
+        try:
+            if not list(self.numbers() or ()):
+                return result  # without the trunk's numbers no record can be shown to be this trunk's
+        except Exception:
+            return result
+        start, end = now - UNRECORDED_WINDOW, now - UNRECORDED_GRACE
+        try:
+            records, complete = self.source.fetch(start, end)
+        except Exception as error:
+            self._back_off(error, now)
+            result.unavailable = True
+            return result
+        if not complete:
+            # Without every record of the window, a record cannot be shown to fit no call.
+            logging.getLogger(__name__).warning('Too many carrier records to check for calls Faxbot did not record.')
+            return result
+        calls = [self.store.view(row) for row in self.store.calls_between(start - MARGIN, end + MARGIN, None)]
+        charged = self.store.charged_record_ids([record.id for record in records])
+        alone = []
+        for record in records:
+            if not record.amount_micros or record.id in charged or not self._ours(record):
+                continue  # unpriced, zero, already held, or not on this trunk's numbers
+            if any(call.sip_call_id and call.sip_call_id == record.sip_call_id for call in calls):
+                continue
+            if any(fits(call, record, NEAR_A_CALL) for call in calls):
+                continue  # Faxbot has a call that may be this one; the normal match decides
+            alone.append(record)
+        faxes = self.store.received_faxes(start - timedelta(hours=1), end + timedelta(hours=1))
+        fitting = {record.id: [fax['id'] for fax in faxes if same_number(fax['to_number'], record.cld)
+                               and _near(fax['received'], record.finished_at, self.tolerance)]
+                   for record in alone if record.direction == 'inbound'}
+        claims = {}
+        for found in fitting.values():
+            for fax_id in found:
+                claims[fax_id] = claims.get(fax_id, 0) + 1
+        for record in alone:
+            found = fitting.get(record.id, [])
+            fax_id = found[0] if len(found) == 1 and claims[found[0]] == 1 else None
+            self.store.record_unrecorded(record, provider_id=self.provider_id, inbound_fax_id=fax_id,
+                                         effective_at=now, now=now)
+            result.unrecorded += 1
+        return result
+
+    def _back_off(self, error, now):
+        # One minute, doubling while failures continue, at most an hour; at least
+        # five minutes when the carrier asked Faxbot to slow down.
+        self.pause = timedelta(minutes=1) if self.paused_until is None else min(self.pause * 2, timedelta(hours=1))
+        wait = max(self.pause, timedelta(minutes=5)) if isinstance(error, CarrierRateLimited) else self.pause
+        self.paused_until = now + wait
+        logging.getLogger(__name__).warning('Carrier call charges could not be read; Faxbot will ask again later.')
 
     def sweep(self, *, now=None, force=False, skip=None):
         now = now or utcnow()
@@ -368,12 +540,7 @@ class CarrierReconciler:
         try:
             records, complete = self.source.fetch(start, end)
         except Exception as error:
-            # Back off: one minute, doubling while failures continue, at most an hour; at least
-            # five minutes when the carrier asked Faxbot to slow down.
-            self.pause = timedelta(minutes=1) if self.paused_until is None else min(self.pause * 2, timedelta(hours=1))
-            wait = max(self.pause, timedelta(minutes=5)) if isinstance(error, CarrierRateLimited) else self.pause
-            self.paused_until = now + wait
-            logging.getLogger(__name__).warning('Carrier call charges could not be read; Faxbot will ask again later.')
+            self._back_off(error, now)
             result.unavailable = True
             return result
         self.paused_until, self.pause = None, timedelta(minutes=1)

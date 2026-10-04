@@ -22,10 +22,11 @@ import {
 import { IconButton } from '@mui/material';
 import AdminAPIClient, { AdminAPIError, isNotAvailable } from '../api/client';
 import type { HealthStatus } from '../api/types';
-import type { DirectPartner, IntakeCounts, Money, ProviderCosts } from '../api/deliveryTypes';
+import type { DirectPartner, IntakeCounts, RouteCostsResponse } from '../api/deliveryTypes';
 import type { SipCallRecord } from '../api/sipTypes';
 import type { AdminDestination } from '../navigation';
-import { formatMoney, formatMoneyList } from './delivery/shared';
+import { formatMoneyList } from './delivery/shared';
+import { NO_PUBLISHED_PRICE, spendingLines, spendingTotal } from './delivery/spendingSummary';
 import { providerLabel } from '../providerLabels';
 
 type CardData<T> = { kind: 'loading' } | { kind: 'ready'; data: T } | { kind: 'denied' | 'unavailable' | 'error' };
@@ -54,15 +55,6 @@ const CARD_TEXT = {
   unavailable: 'Not available on this server.',
   error: 'Could not load this. Select Refresh to try again.',
 };
-
-// Totals per currency; amounts are decimal strings.
-function totalCost(providers: ProviderCosts[]): Money[] {
-  const totals = new Map<string, number>();
-  for (const provider of providers) {
-    for (const cost of provider.estimated_cost) totals.set(cost.currency, (totals.get(cost.currency) ?? 0) + Number(cost.amount));
-  }
-  return [...totals].map(([currency, amount]) => ({ currency, amount: amount.toFixed(4) }));
-}
 
 const clickableCardSx = {
   cursor: 'pointer',
@@ -131,7 +123,7 @@ function Dashboard({ client, onNavigate, canSetUp = false }: DashboardProps) {
   const [justApplied, setJustApplied] = useState<boolean>(false);
   const [cfg, setCfg] = useState<any | null>(null);
   const [plugins, setPlugins] = useState<any[] | null>(null);
-  const [spending, setSpending] = useState<CardData<ProviderCosts[]>>({ kind: 'loading' });
+  const [spending, setSpending] = useState<CardData<RouteCostsResponse>>({ kind: 'loading' });
   const [intake, setIntake] = useState<CardData<IntakeCounts>>({ kind: 'loading' });
   const [partners, setPartners] = useState<CardData<DirectPartner[]>>({ kind: 'loading' });
   const [missedCall, setMissedCall] = useState<string | null>(null);
@@ -139,7 +131,7 @@ function Dashboard({ client, onNavigate, canSetUp = false }: DashboardProps) {
   // Delivery cards load on entry and on Refresh, not on every health poll.
   const fetchDelivery = async () => {
     const [costs, queue, peers, calls] = await Promise.all([
-      settle(client.getRouteCosts().then((result) => result.providers)),
+      settle(client.getRouteCosts()),
       settle(client.listIntakeItems({ limit: 1 }).then((result) => result.counts)),
       settle(client.listDirectPartners().then((result) => result.peers)),
       settle(client.listSipCalls({ limit: 20, direction: 'inbound' }).then((result) => result.items)),
@@ -436,16 +428,18 @@ function Dashboard({ client, onNavigate, canSetUp = false }: DashboardProps) {
           {/* Spending by provider, last 30 days */}
           <Grid item xs={12} sm={6} lg={4}>
             <DeliveryCard title="Spending, last 30 days" hint="Click to view delivery routes" data={spending} onOpen={() => onNavigate?.('routes')}>
-              {(providers) => providers.length === 0 ? (
-                <Typography variant="body2" color="text.secondary">No faxes sent in the last 30 days.</Typography>
-              ) : (
-                <Box display="flex" flexDirection="column" gap={1}>
-                  {providers.map((provider) => (
-                    <Line key={provider.provider_id} label={provider.label} value={formatMoneyList(provider.estimated_cost, 'No price set')} />
-                  ))}
-                  {providers.length > 1 && <Line label="Total" value={totalCost(providers).map(formatMoney).join(' + ') || 'No price set'} />}
-                </Box>
-              )}
+              {(costs) => {
+                // The same reading of spending as Tools → Delivery routes (spendingSummary).
+                const lines = spendingLines(costs);
+                return lines.length === 0 ? (
+                  <Typography variant="body2" color="text.secondary">No faxes sent or received in the last 30 days.</Typography>
+                ) : (
+                  <Box display="flex" flexDirection="column" gap={1}>
+                    {lines.map((line) => <Line key={line.key} label={line.label} value={line.value} />)}
+                    {lines.length > 1 && <Line label="Total" value={formatMoneyList(spendingTotal(costs), NO_PUBLISHED_PRICE)} />}
+                  </Box>
+                );
+              }}
             </DeliveryCard>
           </Grid>
 

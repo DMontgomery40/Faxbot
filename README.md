@@ -118,7 +118,7 @@ Checked items are implemented in the current source checkout. Unchecked items ar
 - [x] Durable outbound jobs, uncertain-outcome handling, server-side idempotency, and held test jobs.
 - [x] Users, groups, roles, scoped keys, sessions, mailbox access, and single-use mobile pairing.
 - [x] Cost-aware route selection, versioned rate cards, attempt costs, and separate reconciliation of reported SignalWire charges.
-- [x] Telnyx charges for every trunk call, sent and received: matched by SIP Call-ID or by a unique number-and-time match (ambiguous records stay unmatched and are counted), kept with corrections and never changing delivery; shown per route in Spending, in Job Details and in the Inbox, and with `faxbot routing costs`, `reconcile` and `fax-cost`. Route recommendations never call an unknown cost the cheapest, and a flat plan reads "Included in your HumbleFax plan." (Tested with synthetic Telnyx records shaped like the live calls; live charges not yet observed in the console. Matching by the captured SIP Call-ID is not yet confirmed against Telnyx records.)
+- [x] Telnyx charges for every trunk call, sent and received: matched by SIP Call-ID or by a unique number-and-time match (ambiguous records stay unmatched and are counted), kept with corrections and never changing delivery; shown per route in Spending, in Job Details and in the Inbox, and with `faxbot routing costs`, `reconcile` and `fax-cost`. Calls Telnyx billed that Faxbot has no record of (such as a received fax whose hand-over failed) count in spending on their own line and attach to the received fax when exactly one matches. Route recommendations never call an unknown cost the cheapest; a flat plan reads "Included in your HumbleFax plan ($10 a month)." and counts its fee once per 30 days. Each provider in use gets its published price (Phaxio, Sinch, SignalWire, HumbleFax, SIP trunk carriers; read 2026-10-03) as an editable rate card on start, and the Dashboard reads the same spending as Tools. (Live on 3 October 2026: the sent calls' $0.01 and $0.005 and a received call's $0.0032 showed against the right faxes. Matching by the captured SIP Call-ID and the unrecorded-call sweep are tested with synthetic records only.)
 - [x] Shared intake queue and SMTP email delivery, with console management.
 - [x] Enrolled direct partners, encrypted original-PDF delivery, signed receipts, and controlled fax fallback.
 - [x] Recipient-approved case packets, accepted-document history, and preview through the API.
@@ -140,7 +140,7 @@ Checked items are implemented in the current source checkout. Unchecked items ar
 
 ### Next
 
-- [ ] Live confirmation of Telnyx charges in the console against the faxes of 3 October 2026, and of SIP Call-ID matching in both directions; charges from other trunk carriers.
+- [ ] Live confirmation of SIP Call-ID matching in both directions and of the hourly check for calls Faxbot has no record of; charges from other trunk carriers.
 - [ ] A Setup Wizard that takes an operator from nothing to a working fax: providers per direction saved as they go, trunk applied and checked without a host shell, no hand-made secrets between Faxbot's own containers, and an optional test fax.
 - [ ] SSLFax through an optional HylaFAX+ engine for peers that already support it, with normal-fax fallback; the [isolated experiment](docs/operations/delivery-routes.md#sslfax) is the starting point.
 
