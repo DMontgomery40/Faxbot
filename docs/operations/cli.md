@@ -120,7 +120,7 @@ docker compose start api
 
 ### Status and upgrade
 
-- `faxbot admin status` shows the database schema version, whether settings changes are waiting for a restart, whether an installation key is set, and how many users, owners, keys, sessions and faxes there are. It never shows secrets.
+- `faxbot admin status` shows whether the database is up to date, whether settings changes are waiting for a restart, whether an installation key is set, and how many users, owners, keys, sessions and faxes there are. It never shows secrets.
 - `faxbot admin migrate` upgrades the database to this version of Faxbot through the same locked upgrade the server runs at start.
 
 ### Recover owner access

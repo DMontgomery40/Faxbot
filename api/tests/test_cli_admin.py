@@ -127,13 +127,26 @@ def test_status_and_migrate_on_an_existing_and_a_new_database(installation, monk
                                        'key_file_found': True}
     assert BOOTSTRAP not in json.dumps(status) and 'sqlite:///' not in json.dumps(status)
     human = installation.admin('status')
-    assert human.exit_code == 0 and 'Schema up to date' in human.stdout
+    assert human.exit_code == 0 and 'Database up to date' in human.stdout
+    assert HEAD not in human.stdout, 'revisions appear only in --json output'
     assert installation.admin_json('migrate') == {'before': HEAD, 'after': HEAD, 'current': True, 'changed': False}
+    unchanged = installation.admin('migrate')
+    assert unchanged.exit_code == 0 and unchanged.stdout.strip() == 'The database is up to date.'
 
     fresh = tmp_path / 'fresh'
     (fresh / 'faxdata').mkdir(parents=True)
     monkeypatch.setenv('DATABASE_URL', f"sqlite:///{fresh / 'new.db'}")
     monkeypatch.setenv('FAX_DATA_DIR', str(fresh / 'faxdata'))
+    waiting = installation.admin('status')
+    assert waiting.exit_code == 0 and HEAD not in waiting.stdout
+    assert waiting.stdout.strip().endswith('The database needs an upgrade; run faxbot admin migrate before starting '
+                                           'Faxbot.')
+    upgraded = installation.admin('migrate')
+    assert upgraded.exit_code == 0 and upgraded.stdout.strip() == 'Database upgraded.'
+    fresher = tmp_path / 'fresher'
+    (fresher / 'faxdata').mkdir(parents=True)
+    monkeypatch.setenv('DATABASE_URL', f"sqlite:///{fresher / 'new.db'}")
+    monkeypatch.setenv('FAX_DATA_DIR', str(fresher / 'faxdata'))
     migrated = installation.admin_json('migrate')
     assert migrated == {'before': None, 'after': HEAD, 'current': True, 'changed': True}
     empty = installation.admin_json('status')

@@ -501,7 +501,8 @@ def test_keys_approve_turns_a_key_waiting_for_review_into_a_working_key(cli):
     assert 'needs review' in listed.stdout
     approved = cli('keys', 'approve', key_id, '--for', 'Old script', '-p', 'fax:read')
     assert approved.exit_code == 0, approved.stderr
-    assert approved.stdout.strip().endswith('approved.')
+    assert approved.stdout.strip() == 'API key Old script key approved.'
+    assert key_id not in approved.stdout
     assert cli.json('me', key=token)['principal']['display_name'] == 'Old script'
     assert [item.get('pending_review') for item in cli.json('keys', 'list') if item['id'] == key_id] == [False]
 
