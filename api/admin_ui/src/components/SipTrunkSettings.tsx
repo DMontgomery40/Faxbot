@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   Box,
@@ -6,6 +6,7 @@ import {
   Card,
   CardContent,
   Chip,
+  CircularProgress,
   Fade,
   FormControl,
   FormControlLabel,
@@ -46,6 +47,9 @@ interface SipTrunkSettingsProps {
   onSaved?: () => void | Promise<void>;
   // Whether the form has changes that are not saved yet.
   onDirtyChange?: (dirty: boolean) => void;
+  // How often and how long Apply and connect checks the trunk after a restart.
+  pollMs?: number;
+  waitMs?: number;
 }
 
 type Notice = { severity: 'success' | 'info' | 'warning' | 'error'; text: string } | null;
@@ -94,7 +98,14 @@ function failure(error: unknown, fallback: string): string {
   return fallback;
 }
 
-function SipTrunkSettings({ client, showCalls = true, revision: sharedRevision, onSaved, onDirtyChange }: SipTrunkSettingsProps) {
+// Asterisk answered again after the restart and the carrier has accepted or refused Faxbot.
+function settled(status: SipTrunkStatus): boolean {
+  return !status.engine_restarting && status.asterisk_connected
+    && ['registered', 'rejected', 'not_used'].includes(status.registration);
+}
+
+function SipTrunkSettings({ client, showCalls = true, revision: sharedRevision, onSaved, onDirtyChange,
+  pollMs = 2000, waitMs = 90000 }: SipTrunkSettingsProps) {
   const theme = useTheme();
   const narrow = useMediaQuery(theme.breakpoints.down('md'));
   const [presets, setPresets] = useState<SipPreset[]>([]);
@@ -110,6 +121,9 @@ function SipTrunkSettings({ client, showCalls = true, revision: sharedRevision, 
   const [callsNote, setCallsNote] = useState<string | null>(null);
   const [numberFormat, setNumberFormat] = useState<NumberFormat | null>(null);
   const [passwordInEnv, setPasswordInEnv] = useState(false);
+  const [connecting, setConnecting] = useState(false);
+  const alive = useRef(true);
+  useEffect(() => () => { alive.current = false; }, []);
 
   const preset = useMemo(() => presets.find((item) => item.id === form.preset), [presets, form.preset]);
   const expectedRevision = sharedRevision ?? revision;
@@ -166,7 +180,8 @@ function SipTrunkSettings({ client, showCalls = true, revision: sharedRevision, 
     setDidEntry('');
   };
 
-  const save = async () => {
+  // Save what changed in the form; true when nothing typed is left unsaved.
+  const saveForm = async (quiet = false): Promise<boolean> => {
     const patch: SettingsPatch = { expected_revision_id: expectedRevision };
     const fields: Array<[keyof TrunkValues, string]> = [
       ['preset', 'sip_trunk_preset'], ['auth', 'sip_trunk_auth'], ['host', 'sip_trunk_host'],
@@ -183,36 +198,83 @@ function SipTrunkSettings({ client, showCalls = true, revision: sharedRevision, 
     if (form.dids.join(',') !== saved.dids.join(',')) patch.sip_trunk_dids = form.dids.join(',');
     if (form.password) patch.sip_trunk_password = form.password;
     if (Object.keys(patch).length === 1) {
-      setNotice({ severity: 'info', text: 'Nothing to save.' });
-      return;
+      if (!quiet) setNotice({ severity: 'info', text: 'Nothing to save.' });
+      return true;
     }
-    setBusy(true);
     try {
       const result = await client.updateSettings(patch);
-      setNotice({
-        severity: 'success',
-        text: result._meta.apply_state === 'pending_restart'
-          ? 'Saved. Restart Faxbot, then apply the trunk to Asterisk.'
-          : 'Saved. Apply the trunk to Asterisk to use it.',
-      });
+      if (!quiet) {
+        setNotice({
+          severity: 'success',
+          text: result._meta.apply_state === 'pending_restart'
+            ? 'Saved. Restart Faxbot, then select Apply and connect.'
+            : 'Saved. Select Apply and connect to use it.',
+        });
+      }
       await load();
       await onSaved?.();
+      return true;
     } catch (error) {
       setNotice({ severity: 'error', text: failure(error, 'The trunk settings could not be saved. Try again.') });
+      return false;
+    }
+  };
+
+  const save = async () => {
+    setBusy(true);
+    try {
+      await saveForm();
     } finally {
       setBusy(false);
     }
   };
 
-  const apply = async () => {
+  // Check the trunk until Asterisk is back and the carrier has answered, or the wait ends.
+  const waitForTrunk = async () => {
+    const started = Date.now();
+    let latest: SipTrunkStatus | null = null;
+    while (alive.current) {
+      try {
+        latest = await client.getSipStatus();
+      } catch {
+        latest = null;
+      }
+      if ((latest && settled(latest)) || Date.now() - started >= waitMs) break;
+      await new Promise((resolve) => setTimeout(resolve, pollMs));
+    }
+    return latest;
+  };
+
+  // Write the trunk for Asterisk, let Faxbot restart Asterisk when needed, then show the trunk check.
+  const connect = async (savedText?: string) => {
+    const result = await client.applySipTrunk();
+    if (result.engine === 'restarting' || result.engine === 'current') {
+      setConnecting(true);
+      setNotice({ severity: 'info', text: result.engine === 'restarting'
+        ? 'Asterisk is restarting to use these settings. Checking the trunk…' : 'Checking the trunk…' });
+      const latest = await waitForTrunk();
+      if (!alive.current) return;
+      setConnecting(false);
+      setNotice(savedText ? { severity: 'success', text: savedText } : null);
+      if (latest) setStatus(latest);
+      else setNotice({ severity: 'error', text: 'Trunk status is not available right now.' });
+      return;
+    }
+    setNotice({ severity: result.engine === 'manual' || !result.engine ? 'success' : 'warning', text: result.message });
+  };
+
+  const applyAndConnect = async () => {
     setBusy(true);
+    setStatus(null);
     try {
-      const result = await client.applySipTrunk();
-      setNotice({ severity: 'success', text: result.message });
+      if (await saveForm(true)) await connect();
     } catch (error) {
       setNotice({ severity: 'error', text: failure(error, 'The trunk could not be applied to Asterisk. Try again.') });
     } finally {
-      setBusy(false);
+      if (alive.current) {
+        setConnecting(false);
+        setBusy(false);
+      }
     }
   };
 
@@ -232,16 +294,17 @@ function SipTrunkSettings({ client, showCalls = true, revision: sharedRevision, 
     setBusy(true);
     try {
       await client.updateSettings({ expected_revision_id: expectedRevision, sip_t38_enabled: false });
-      await client.applySipTrunk();
       setStatus(null);
-      setNotice({ severity: 'success',
-        text: 'Saved for Asterisk. Restart the Asterisk service to send and receive new faxes as audio.' });
       await load();
       await onSaved?.();
+      await connect('New calls send and receive faxes as audio.');
     } catch (error) {
       setNotice({ severity: 'error', text: failure(error, 'Audio fax could not be turned on. Try again.') });
     } finally {
-      setBusy(false);
+      if (alive.current) {
+        setConnecting(false);
+        setBusy(false);
+      }
     }
   };
 
@@ -376,7 +439,8 @@ function SipTrunkSettings({ client, showCalls = true, revision: sharedRevision, 
 
       <Stack direction={narrow ? 'column' : 'row'} spacing={1}>
         <Button variant="contained" onClick={save} disabled={busy}>Save trunk settings</Button>
-        <Button variant="outlined" onClick={apply} disabled={busy || !saved.preset}>Apply to Asterisk</Button>
+        <Button variant="outlined" onClick={applyAndConnect} disabled={busy || !(saved.preset || form.preset)}
+          startIcon={connecting ? <CircularProgress size={16} color="inherit" /> : undefined}>Apply and connect</Button>
         <Button variant="outlined" onClick={checkStatus} disabled={busy}>Check trunk status</Button>
       </Stack>
 

@@ -1787,8 +1787,9 @@ $ faxbot trunk [OPTIONS] COMMAND [ARGS]...
 **Commands**:
 
 * `status`: Check the trunk: registration, the...
+* `apply`: Write the saved trunk for Asterisk and...
 * `calls`: List recent trunk calls, newest first,...
-* `mode`: Choose T.38 or audio fax for new calls,...
+* `mode`: Choose T.38 or audio fax for new calls and...
 
 ### `faxbot trunk status`
 
@@ -1802,6 +1803,25 @@ $ faxbot trunk status [OPTIONS]
 
 **Options**:
 
+* `--help`: Show this message and exit.
+
+### `faxbot trunk apply`
+
+Write the saved trunk for Asterisk and connect it.
+
+In the Docker Compose install Faxbot restarts Asterisk to load the trunk,
+once no call is up; elsewhere it says to restart the Asterisk service.
+
+**Usage**:
+
+```console
+$ faxbot trunk apply [OPTIONS]
+```
+
+**Options**:
+
+* `--wait / --no-wait`: Wait for Asterisk and the carrier, then show the trunk check.  [default: wait]
+* `--timeout <int range>`: Seconds to wait.  [default: 90; 5&lt;=x&lt;=600]
 * `--help`: Show this message and exit.
 
 ### `faxbot trunk calls`
@@ -1822,7 +1842,7 @@ $ faxbot trunk calls [OPTIONS]
 
 ### `faxbot trunk mode`
 
-Choose T.38 or audio fax for new calls, save it for Asterisk, and say what to restart.
+Choose T.38 or audio fax for new calls and connect the trunk with it.
 
 **Usage**:
 

@@ -7,7 +7,7 @@ Use the active provider and revision shown in [Diagnostics](diagnostics.md) when
 | Active outbound configuration fails | Open Settings and inspect the active provider's required fields. For a custom manifest, inspect its configured adapter in Plugins. Credentials for an unused default provider do not repair the active adapter. |
 | Required Asterisk AMI connection fails | Verify the active AMI host, port, username, password and Asterisk service. A connection check is not fax-delivery proof. |
 | Native Asterisk password is empty or default | Set a non-default AMI password in both the Asterisk service and the desired provider settings; inspect activation status. |
-| Native Asterisk inbound secret is absent | Select **Apply to Asterisk** on the trunk screen (or restart Faxbot); Faxbot creates the secret and writes it for Asterisk. |
+| Native Asterisk inbound secret is absent | Select **Apply and connect** on the trunk screen (or restart Faxbot); Faxbot creates the secret and writes it for Asterisk. |
 | Ghostscript fails | Install `gs` in the API runtime and rerun Diagnostics. Document processing requires it. |
 | Fax data directory is absent or unwritable | Check the configured installation path, mount and service-user permissions. Moving installation storage requires the maintenance workflow. |
 | Temporary directory is unwritable | Check runtime temporary-directory permissions and available storage. |

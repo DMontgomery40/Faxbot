@@ -33,7 +33,7 @@ A Telnyx trial account can only call verified numbers until you upgrade it.
 | Fax numbers on this trunk | The same number, in the same format |
 | Use T.38 fax over IP | On |
 
-Faxbot registers with Telnyx using these credentials. Registration is what lets Telnyx deliver incoming faxes to Faxbot, so keep the username and password filled in even if you only receive. Then select **Save trunk settings**, **Apply to Asterisk**, restart the Asterisk service, and select **Check trunk status**.
+Faxbot registers with Telnyx using these credentials. Registration is what lets Telnyx deliver incoming faxes to Faxbot, so keep the username and password filled in even if you only receive. Then select **Apply and connect**; Faxbot saves the form, restarts Asterisk with the trunk and shows the trunk check.
 
 ## Choose a carrier
 
@@ -68,8 +68,16 @@ Carrier pages used for the presets:
 1. In the console, open the **Setup Wizard**, choose **SIP trunk (Asterisk)** for sending, receiving or both, and select **Next**. The first time, select **Restart now** when Setup asks. The next step shows the trunk form; **Settings** shows the same form under **Carrier SIP trunk**.
 2. Choose your carrier and how Faxbot signs in. Fill in the server if the carrier asks for one, then the username and password.
 3. Enter your caller ID and the fax numbers the carrier sends to this trunk.
-4. Select **Save trunk settings**, then **Apply to Asterisk**, then restart the Asterisk service (for example `docker compose restart asterisk`).
-5. Select **Check trunk status**. "The trunk is ready." means the carrier accepted Faxbot and answers its checks. The same check from the command line is `faxbot trunk status`.
+4. Select **Apply and connect**. Faxbot saves what you typed, writes the trunk for Asterisk, restarts Asterisk to load it and waits until the carrier answers, then shows the trunk check on the same screen: the transport Faxbot registered over, how quickly the carrier answers its checks, Faxbot's internet address and "No ports need to be opened or forwarded." From the command line, `faxbot trunk apply` does the same.
+5. **Check trunk status** repeats the check at any time. "The trunk is ready." means the carrier accepted Faxbot and answers its checks. The same check from the command line is `faxbot trunk status`.
+
+### What Apply and connect does with Asterisk
+
+In the Docker Compose install, Asterisk shares Faxbot's data folder and Docker starts it again whenever it stops, so Faxbot restarts it to load the trunk; nothing has to be typed on the server. Faxbot restarts it only when it is not already running exactly these settings, and only when no call is up: during a call, Apply and connect says "Saved. A call is in progress, so Asterisk keeps its current settings until you apply again after it ends." and changes nothing else. Faxbot restarts rather than reloads because a running Asterisk never reloads its transport settings (protocol, port, internet address), and a password change alone does not make it register again.
+
+When Asterisk runs elsewhere and does not share Faxbot's data folder, Apply and connect writes the files and says "Saved for Asterisk. Restart the Asterisk service to use these settings." An Asterisk set up before this release may answer "Asterisk does not let Faxbot restart it yet"; restart the Asterisk service once and Faxbot can restart it from then on.
+
+The behaviour rests on Asterisk 22 itself (read 2026-10-04 UTC): the manager `Command` action needs the `command` permission and `CoreShowChannels` the `system` or `reporting` permission (`main/manager.c`); `core stop gracefully` "Causes Asterisk to not accept new calls, and exit when all active calls have terminated normally" (`main/asterisk.c`); a transport is "not fully reloadable, not reloading: protocol, bind, TLS ..." unless `allow_reload` is set (`res/res_pjsip/config_transport.c`); and an outbound registration registers again on reload only when the registration itself changed (`res/res_pjsip_outbound_registration.c`), all at https://github.com/asterisk/asterisk/tree/22 . The actions are described at https://docs.asterisk.org/Asterisk_22_Documentation/API_Documentation/AMI_Actions/Command/ and https://docs.asterisk.org/Asterisk_22_Documentation/API_Documentation/AMI_Actions/PJSIPRegister/ .
 
 **Check trunk status** answers in one sentence per line:
 
@@ -101,7 +109,7 @@ Asterisk reads the trunk when it starts. Faxbot writes it to `asterisk/pjsip.con
 
 With username and password sign-in you do not open, publish or forward any port, and the default Docker Compose file publishes none. Asterisk registers with the carrier over one encrypted connection (TLS on port 5061 for Telnyx) and keeps it alive with a keepalive every 30 seconds and a carrier check every 30 seconds (every 25 seconds over UDP, with registration renewed every two minutes, inside common router timeouts). The carrier sends incoming calls back over that connection. On every call Asterisk sends the first audio and T.38 packets itself, and a small audio keepalive every two seconds when nothing else is sent, so your router lets the carrier's answer back in on the same path. Leave **Internet address** empty; it is only an override for a host whose address you want to state yourself. If you enter one that differs from what Faxbot sees, **Check trunk status** says so.
 
-Faxbot learns its internet address with STUN when you select **Apply to Asterisk**, and again every five minutes (`SIP_PUBLIC_ADDRESS_CHECK_MINUTES`; `0` turns the repeat off). It tells the carrier that address only when your network keeps port numbers, because then the address and port are exactly right and the call does not depend on the carrier following Faxbot's packets. When your network changes port numbers, a public address with the wrong port would mislead the carrier, so Faxbot leaves it out and the carrier follows Faxbot's packets instead. Asterisk picks the address up when it starts; if your internet address changes later, **Check trunk status** says "Your internet address changed. Restart the Asterisk service so the carrier gets the new address."
+Faxbot learns its internet address with STUN when you select **Apply and connect**, and again every five minutes (`SIP_PUBLIC_ADDRESS_CHECK_MINUTES`; `0` turns the repeat off). It tells the carrier that address only when your network keeps port numbers, because then the address and port are exactly right and the call does not depend on the carrier following Faxbot's packets. When your network changes port numbers, a public address with the wrong port would mislead the carrier, so Faxbot leaves it out and the carrier follows Faxbot's packets instead. Asterisk picks the address up when it starts; if your internet address changes later, **Check trunk status** says "Your internet address changed. Select Apply and connect so the carrier gets the new address." (or, for an Asterisk Faxbot does not manage, to restart the Asterisk service).
 
 Encryption also hides the call setup from router features that rewrite it (often called SIP ALG). If **Check trunk status** keeps saying Faxbot is not registered over the encrypted connection, switch **Transport** to TCP, apply again and restart Asterisk.
 
@@ -109,11 +117,11 @@ This works with carriers that send their media back to wherever Faxbot's packets
 
 ### When T.38 data does not come back: audio fax
 
-If a call switched to T.38 and Faxbot says "The call connected but no fax data came back from the carrier.", the carrier is not sending T.38 data back to Faxbot's path, though it may still do so for audio. **Check trunk status** then offers **Use audio fax for new calls** (or run `faxbot trunk mode audio`). It turns off **Use T.38 fax over IP**, applies the trunk, and asks you to restart the Asterisk service. New calls then stay audio: Faxbot declines the carrier's switch to T.38 and sends at up to 9600 bit/s with error correction, which survives a voice path better. Faxbot never changes this by itself and never resends the failed fax; send it again when you are ready. `faxbot trunk mode t38` switches back. With Telnyx you can also set **T.38 fax re-invite initiated by** to **Disabled** for audio fax.
+If a call switched to T.38 and Faxbot says "The call connected but no fax data came back from the carrier.", the carrier is not sending T.38 data back to Faxbot's path, though it may still do so for audio. **Check trunk status** then offers **Use audio fax for new calls** (or run `faxbot trunk mode audio`). It turns off **Use T.38 fax over IP** and connects the trunk again, which restarts Asterisk when no call is up. New calls then stay audio: Faxbot declines the carrier's switch to T.38 and sends at up to 9600 bit/s with error correction, which survives a voice path better. Faxbot never changes this by itself and never resends the failed fax; send it again when you are ready. `faxbot trunk mode t38` switches back. With Telnyx you can also set **T.38 fax re-invite initiated by** to **Disabled** for audio fax.
 
 ### Server IP sign-in needs a public host
 
-A carrier that signs in by IP address (AnveoDirect, or Telnyx and Flowroute set to IP sign-in) sends calls to a fixed public address, which a router does not pass on. When Faxbot sees it is behind a router, **Apply to Asterisk** refuses that sign-in with "Your Faxbot runs behind a router, so sign in with a username and password; server IP sign-in needs a public address." Use it only on a host with its own public address, and start Compose with the public override, which publishes SIP and one 32-port media range that Asterisk then uses exactly:
+A carrier that signs in by IP address (AnveoDirect, or Telnyx and Flowroute set to IP sign-in) sends calls to a fixed public address, which a router does not pass on. When Faxbot sees it is behind a router, **Apply and connect** refuses that sign-in with "Your Faxbot runs behind a router, so sign in with a username and password; server IP sign-in needs a public address." Use it only on a host with its own public address, and start Compose with the public override, which publishes SIP and one 32-port media range that Asterisk then uses exactly:
 
 ```
 docker compose -f docker-compose.yml -f docker-compose.public.yml up -d
@@ -121,7 +129,7 @@ docker compose -f docker-compose.yml -f docker-compose.public.yml up -d
 
 See [Asterisk and SIP](sip-asterisk.md#carriers-that-sign-in-by-ip-address) for the ports. Keep the Asterisk manager port, 5038, private.
 
-**Apply to Asterisk** also writes the inbound secret Asterisk sends with each received fax. Faxbot creates that secret when none is set, so there is nothing to choose; a secret set in **Inbound Receiving** or as `ASTERISK_INBOUND_SECRET` in `.env` is used instead. If a received fax cannot be handed to Faxbot, Recent calls says why and Faxbot brings the fax in once the cause is fixed (see [Receiving faxes](../operations/receiving.md#asterisk)).
+**Apply and connect** also writes the inbound secret Asterisk sends with each received fax. Faxbot creates that secret when none is set, so there is nothing to choose; a secret set in **Inbound Receiving** or as `ASTERISK_INBOUND_SECRET` in `.env` is used instead. If a received fax cannot be handed to Faxbot, Recent calls says why and Faxbot brings the fax in once the cause is fixed (see [Receiving faxes](../operations/receiving.md#asterisk)).
 
 ## T.38
 

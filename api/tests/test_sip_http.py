@@ -83,6 +83,7 @@ def test_status_without_a_trunk_says_so_in_one_sentence(bare_client):
                     'round_trip_ms': None, 'internet_address': None, 'behind_router': None, 'port_numbers': None,
                     'public_address_text': None, 'ports_text': None, 'last_call_text': None, 'last_call_at': None,
                     'address_changed': False, 'last_call_verdict': None, 'suggest_audio': False,
+                    'engine_managed': False, 'engine_restarting': False, 'in_use': False,
                     'message': 'No SIP trunk is set up. Choose your carrier to start.'}
 
 
@@ -328,3 +329,126 @@ async def test_the_address_watcher_records_a_new_address_and_ignores_unanswered_
     finally:
         task.cancel()
     assert await sip_http.watch_public_address(minutes=0) is None
+
+
+# Apply and connect: when Asterisk shares Faxbot's data folder (the Compose
+# install), Apply restarts it once no call is up, and status follows the restart.
+
+class FakeEngine:
+    """Answers Faxbot's manager actions the way Asterisk 22 does; records what was asked."""
+
+    def __init__(self, calls_up=0, may_command=True):
+        self.calls_up, self.may_command = calls_up, may_command
+        self.actions = []
+        self.folder = None
+
+    async def status_query(self, fields, *, collect=False):
+        self.actions.append(fields['Command'] if fields['Action'] == 'Command' else fields['Action'])
+        if fields['Action'] == 'CoreShowChannels':
+            return {'response': 'Success', 'value': '', 'message': 'Channels will follow'}, [
+                {'Uniqueid': f'1700000000.{index}'} for index in range(self.calls_up)]
+        if fields['Action'] == 'Command':
+            if not self.may_command:
+                return {'response': 'Error', 'value': '', 'message': 'Permission denied'}, []
+            # Asterisk exits inside the command, so the reply never arrives.
+            raise ConnectionError('AMI connection closed')
+        if fields['Action'] == 'PJSIPShowRegistrationsOutbound':
+            return ({'response': 'Success', 'value': '', 'message': ''},
+                    [{'ObjectName': 'trunk-registration', 'Status': 'Registered', 'Transport': 'transport-tls'}])
+        return {'response': 'Success', 'value': 'NOT_INUSE', 'message': ''}, []
+
+
+@pytest.fixture
+def engine(monkeypatch, isolated_installation):
+    """An Asterisk that started from Faxbot's data folder and is connected."""
+    folder = os.path.join(isolated_installation['FAX_DATA_DIR'], 'asterisk')
+    os.makedirs(folder, exist_ok=True)
+    with open(os.path.join(folder, 'engine-started'), 'w') as marker:
+        marker.write('1700000000\n')
+    fake = FakeEngine()
+    fake.folder = folder
+    monkeypatch.setattr(ami_client, 'status_query', fake.status_query)
+    monkeypatch.setattr(ami_client._connected, 'is_set', lambda: True)
+    monkeypatch.setattr(ami_client, 'connected_at', 1.0)
+    monkeypatch.setattr(sip_http, '_restart', {'at': None})
+    return fake
+
+
+def _asterisk_started_with_current_files(folder):
+    """What asterisk/start.sh and faxbot-public-address record when Asterisk loads the trunk."""
+    with open(os.path.join(folder, 'pjsip.conf')) as source, open(os.path.join(folder, 'pjsip.conf.started'), 'w') as copy:
+        copy.write(source.read())
+    record = json.loads(open(os.path.join(folder, 'public-address')).read())
+    with open(os.path.join(folder, 'public-address.applied'), 'w') as applied:
+        applied.write((record['ip'] + '\n') if record['ports_preserved'] else '')
+
+
+def test_apply_and_connect_restarts_a_managed_asterisk_once_no_call_is_up(client, engine, monkeypatch):
+    before = client.get('/admin/sip/status', headers=ADMIN).json()
+    assert before['engine_managed'] is True
+    assert before['message'] == 'Select Apply and connect so Asterisk uses these settings.'
+    engine.actions.clear()
+    applied = client.post('/admin/sip/apply', headers=ADMIN).json()
+    assert applied == {'ok': True, 'engine': 'restarting', 'message': 'Asterisk is restarting to use the new settings.'}
+    assert engine.actions == ['CoreShowChannels', 'core stop gracefully']
+    # Until Faxbot logs in to the restarted Asterisk, status says it is restarting.
+    during = client.get('/admin/sip/status', headers=ADMIN).json()
+    assert during['engine_restarting'] is True
+    assert during['message'] == 'Asterisk is restarting to use the new settings.'
+    # Asterisk started again from the files Faxbot wrote, and Faxbot logged in again.
+    _asterisk_started_with_current_files(engine.folder)
+    monkeypatch.setattr(ami_client, 'connected_at', sip_http._restart['at'] + 1)
+    after = client.get('/admin/sip/status', headers=ADMIN).json()
+    assert (after['engine_restarting'], after['in_use'], after['registration']) == (False, True, 'registered')
+    assert after['message'] == 'The trunk is ready.'
+    assert 'Restart the Asterisk service' not in json.dumps(after)
+    # Applying the same settings again restarts nothing.
+    engine.actions.clear()
+    again = client.post('/admin/sip/apply', headers=ADMIN).json()
+    assert again == {'ok': True, 'engine': 'current', 'message': 'Saved. Asterisk already uses these settings.'}
+    assert engine.actions == []
+
+
+def test_apply_and_connect_waits_for_calls_in_progress(client, engine):
+    engine.calls_up = 1
+    applied = client.post('/admin/sip/apply', headers=ADMIN).json()
+    assert applied['engine'] == 'busy'
+    assert applied['message'] == ('Saved. A call is in progress, so Asterisk keeps its current settings until you '
+                                  'apply again after it ends.')
+    assert engine.actions == ['CoreShowChannels']
+    status = client.get('/admin/sip/status', headers=ADMIN).json()
+    assert status['message'] == 'Asterisk still uses earlier trunk settings; select Apply and connect to load these.'
+
+
+def test_apply_and_connect_says_what_to_do_once_when_asterisk_refuses_the_restart(client, engine):
+    engine.may_command = False
+    applied = client.post('/admin/sip/apply', headers=ADMIN).json()
+    assert applied['engine'] == 'not_allowed'
+    assert applied['message'] == ('Saved. Asterisk does not let Faxbot restart it yet; restart the Asterisk service '
+                                  'once, and Apply and connect restarts it from then on.')
+
+
+def test_apply_and_connect_without_a_manager_connection_keeps_the_files_for_the_next_start(client, engine,
+                                                                                          monkeypatch):
+    monkeypatch.setattr(ami_client._connected, 'is_set', lambda: False)
+    monkeypatch.setattr(ami_client, '_connection_task', object())
+    monkeypatch.setattr(ami_client, 'problem', 'unreachable')
+    applied = client.post('/admin/sip/apply', headers=ADMIN).json()
+    assert applied['engine'] == 'not_connected'
+    assert applied['message'] == "Saved. Faxbot can't reach its fax engine. Check that the Asterisk service is running."
+    assert engine.actions == []
+    assert os.path.exists(os.path.join(engine.folder, 'pjsip.conf'))
+
+
+def test_an_asterisk_this_install_does_not_manage_keeps_the_manual_sentence(client, monkeypatch):
+    actions = []
+
+    async def status_query(fields, *, collect=False):
+        actions.append(fields['Action'])
+        return {'response': 'Success', 'value': '', 'message': ''}, []
+    monkeypatch.setattr(ami_client, 'status_query', status_query)
+    monkeypatch.setattr(ami_client._connected, 'is_set', lambda: True)
+    applied = client.post('/admin/sip/apply', headers=ADMIN).json()
+    assert applied == {'ok': True, 'engine': 'manual',
+                       'message': 'Saved for Asterisk. Restart the Asterisk service to use these settings.'}
+    assert 'CoreShowChannels' not in actions

@@ -95,6 +95,30 @@ def _address_text(summary, network, carrier):
 
 
 ADDRESS_CHANGED = 'Your internet address changed. Restart the Asterisk service so the carrier gets the new address.'
+ADDRESS_CHANGED_MANAGED = 'Your internet address changed. Select Apply and connect so the carrier gets the new address.'
+APPLY_MANUAL = 'Apply these settings to Asterisk, then restart the Asterisk service.'
+APPLY_MANAGED = 'Select Apply and connect so Asterisk uses these settings.'
+NOT_LOADED = 'Asterisk still uses earlier trunk settings; select Apply and connect to load these.'
+RESTARTING = 'Asterisk is restarting to use the new settings.'
+SAVED_MANUAL = 'Saved for Asterisk. Restart the Asterisk service to use these settings.'
+SAVED_CURRENT = 'Saved. Asterisk already uses these settings.'
+SAVED_BUSY = 'Saved. A call is in progress, so Asterisk keeps its current settings until you apply again after it ends.'
+SAVED_NOT_ALLOWED = ('Saved. Asterisk does not let Faxbot restart it yet; restart the Asterisk service once, '
+                     'and Apply and connect restarts it from then on.')
+# Faxbot asked Asterisk to restart at this time.monotonic(); a restart that takes
+# longer than this is no longer reported as in progress.
+_RESTART_SECONDS = 120
+_restart = {'at': None}
+
+
+def _restarting():
+    """True from Faxbot's restart request until Faxbot has logged in to the restarted Asterisk."""
+    from .ami import ami_client
+    at = _restart['at']
+    if at is None or time.monotonic() - at > _RESTART_SECONDS:
+        return False
+    return not (ami_client._connected.is_set() and ami_client.connected_at is not None
+                and ami_client.connected_at > at)
 
 
 def _address_changed(values, network):
@@ -216,19 +240,24 @@ def _reachability_text(asterisk):
     return _REACHABILITY_TEXT[asterisk['reachability']]
 
 
-def _message(summary, asterisk, applied, ports_text=None, transport=None):
+def _message(summary, asterisk, applied, ports_text=None, transport=None, *, managed=False, in_use=True,
+             restarting=False):
     if not summary.get('configured'):
         return 'No SIP trunk is set up. Choose your carrier to start.'
     if summary['missing']:
         return 'Some trunk settings are missing.'
     if ports_text == BEHIND_ROUTER:
         return BEHIND_ROUTER
+    if restarting:
+        return RESTARTING
     if not applied:
-        return 'Apply these settings to Asterisk, then restart the Asterisk service.'
+        return APPLY_MANAGED if managed else APPLY_MANUAL
     if not asterisk['connected']:
         return asterisk.get('engine_message') or ENGINE_UNREACHABLE
     if not asterisk['permission']:
         return 'Asterisk does not let Faxbot read trunk status. Restart the Asterisk service to update its access.'
+    if managed and not in_use:
+        return NOT_LOADED
     if asterisk['registration'] == 'rejected':
         return _REGISTRATION_TEXT['rejected']
     if asterisk['registration'] == 'not_registered':
@@ -266,12 +295,16 @@ async def status(request: Request, identity=Depends(require_permission('provider
     # IP authentication has no registration; its calls use the trunk's transport.
     transport = asterisk['transport'] or (summary.get('transport') if asterisk['registration'] == 'not_used' else None)
     changed = configured and applied and await run_lifecycle_step(lambda: _address_changed(values, network))
+    managed = configured and await run_lifecycle_step(lambda: sip_trunk.engine_managed(values))
+    in_use = bool(managed and await run_lifecycle_step(lambda: sip_trunk.engine_uses_current(values)))
+    restarting = bool(configured and _restarting())
     if configured:
         summary['advertised_address'] = await run_lifecycle_step(lambda: sip_trunk.applied_public_address(values)) or None
-    message = _message(summary, asterisk, applied, ports_text, transport)
-    if (changed and ports_text != BEHIND_ROUTER and asterisk['connected'] and asterisk['permission']
+    message = _message(summary, asterisk, applied, ports_text, transport, managed=managed, in_use=in_use,
+                       restarting=restarting)
+    if (changed and not restarting and ports_text != BEHIND_ROUTER and asterisk['connected'] and asterisk['permission']
             and asterisk['registration'] != 'rejected'):
-        message = ADDRESS_CHANGED
+        message = ADDRESS_CHANGED_MANAGED if managed else ADDRESS_CHANGED
     if last and last['verdict'] == NOT_HANDED_OVER:
         # A received fax waits outside Faxbot; that matters more than any trunk detail.
         message = last['summary']
@@ -293,6 +326,10 @@ async def status(request: Request, identity=Depends(require_permission('provider
         # After a T.38 call carried no fax data, audio fax is the next thing to try (the owner decides).
         'suggest_audio': bool(last and last['verdict'] == 'no_t38_data_back' and values.sip_t38_enabled),
         'address_changed': bool(changed),
+        # Asterisk shares Faxbot's data folder (the Compose install), so Apply and connect restarts it.
+        'engine_managed': bool(managed),
+        'engine_restarting': restarting,
+        'in_use': in_use,
         'message': message,
     }
 
@@ -330,7 +367,41 @@ async def apply(request: Request, identity=Depends(require_permission('providers
         raise HTTPException(500, detail='Faxbot could not save the trunk settings for Asterisk.') from None
     except (AcquisitionError, ConfigurationStoreError):
         raise HTTPException(503, detail='Faxbot could not save an inbound secret for the fax engine. Try again.') from None
-    return {'ok': True, 'message': 'Saved for Asterisk. Restart the Asterisk service to use these settings.'}
+    return await _load_into_engine(values)
+
+
+async def _load_into_engine(values):
+    """Have Asterisk use the files just written: restart it when it shares Faxbot's data folder.
+
+    Transports (protocol, bind, external addresses) never reload in a running
+    Asterisk, so a restart is the one way that always loads every setting. The
+    restart waits until no call is up and happens only when Asterisk is not
+    already running exactly these settings.
+    """
+    from .ami import ami_client
+    if not await run_lifecycle_step(lambda: sip_trunk.engine_managed(values)):
+        return {'ok': True, 'engine': 'manual', 'message': SAVED_MANUAL}
+    if await run_lifecycle_step(lambda: sip_trunk.engine_uses_current(values)) and not _restarting():
+        return {'ok': True, 'engine': 'current', 'message': SAVED_CURRENT}
+    if not ami_client._connected.is_set():
+        return {'ok': True, 'engine': 'not_connected',
+                'message': 'Saved. ' + (ami_client.engine_message() or ENGINE_UNREACHABLE)}
+    try:
+        if await ami_client.active_calls():
+            return {'ok': True, 'engine': 'busy', 'message': SAVED_BUSY}
+        if not await ami_client.stop_gracefully():
+            return {'ok': True, 'engine': 'not_allowed', 'message': SAVED_NOT_ALLOWED}
+    except PermissionError:
+        return {'ok': True, 'engine': 'not_allowed', 'message': SAVED_NOT_ALLOWED}
+    except (ConnectionError, TimeoutError):
+        return {'ok': True, 'engine': 'not_connected', 'message': 'Saved. ' + ENGINE_UNREACHABLE}
+    _restart['at'] = time.monotonic()
+    try:
+        from .audit import audit_event
+        audit_event('sip_engine_restart', backend='sip')
+    except Exception:
+        pass
+    return {'ok': True, 'engine': 'restarting', 'message': RESTARTING}
 
 
 @router.get('/calls')

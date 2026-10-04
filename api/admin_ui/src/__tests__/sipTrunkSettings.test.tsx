@@ -71,7 +71,7 @@ describe('SIP trunk settings', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Add' }));
     fireEvent.click(screen.getByRole('checkbox', { name: 'Mark outgoing calls as fax when they start' }));
     fireEvent.click(screen.getByRole('button', { name: 'Save trunk settings' }));
-    expect(await screen.findByText('Saved. Apply the trunk to Asterisk to use it.')).toBeTruthy();
+    expect(await screen.findByText('Saved. Select Apply and connect to use it.')).toBeTruthy();
     expect(writes).toEqual([{ expected_revision_id: 'rev-1', sip_fax_preference_header: true,
       sip_trunk_dids: '+15555550100,+15555550101' }]);
   });
@@ -103,7 +103,7 @@ describe('SIP trunk settings', () => {
       fireEvent.click(screen.getByRole('button', { name: 'Add' }));
     }
     fireEvent.click(screen.getByRole('button', { name: 'Save trunk settings' }));
-    expect(await screen.findByText('Saved. Apply the trunk to Asterisk to use it.')).toBeTruthy();
+    expect(await screen.findByText('Saved. Select Apply and connect to use it.')).toBeTruthy();
     expect(writes).toEqual([{ expected_revision_id: 'rev-1', sip_trunk_caller_id: '01782 684953',
       sip_trunk_dids: '01782 684953,01782 684954' }]);
     expect(await screen.findByText('+441782684954')).toBeTruthy();
@@ -170,12 +170,12 @@ describe('SIP trunk settings', () => {
     expect(screen.queryByLabelText('Password')).toBeNull();
   });
 
-  it('applies to Asterisk and reports trunk status in plain sentences', async () => {
+  it('says to restart Asterisk by hand when this install does not manage it, and reports trunk status in plain sentences', async () => {
     server.use(
       http.get('/admin/sip/presets', () => HttpResponse.json({ presets: PRESETS })),
       http.get('/admin/settings', () => HttpResponse.json(settings())),
       http.get('/admin/sip/calls', () => HttpResponse.json({ items: [], next_cursor: null })),
-      http.post('/admin/sip/apply', () => HttpResponse.json({ ok: true,
+      http.post('/admin/sip/apply', () => HttpResponse.json({ ok: true, engine: 'manual',
         message: 'Saved for Asterisk. Restart the Asterisk service to use these settings.' })),
       http.get('/admin/sip/status', () => HttpResponse.json({ configured: true, applied: true,
         asterisk_connected: true, registration: 'registered', registration_transport: 'tls',
@@ -189,7 +189,7 @@ describe('SIP trunk settings', () => {
     );
     render(<SipTrunkSettings client={client()} />);
     await screen.findByText('A password is saved.');
-    fireEvent.click(screen.getByRole('button', { name: 'Apply to Asterisk' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Apply and connect' }));
     expect(await screen.findByText('Saved for Asterisk. Restart the Asterisk service to use these settings.')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Check trunk status' }));
     const status = await screen.findByTestId('sip-trunk-status');
@@ -213,7 +213,7 @@ describe('SIP trunk settings', () => {
     );
     render(<SipTrunkSettings client={client()} />);
     await screen.findByRole('radio', { name: 'Server IP address' });
-    fireEvent.click(screen.getByRole('button', { name: 'Apply to Asterisk' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Apply and connect' }));
     expect(await screen.findByText(detail)).toBeTruthy();
     fireEvent.mouseDown(screen.getByLabelText('Transport'));
     const options = await screen.findAllByRole('option');
@@ -222,7 +222,7 @@ describe('SIP trunk settings', () => {
     expect(screen.getByLabelText(/Internet address/).getAttribute('placeholder')).toBe('Automatic');
   });
 
-  it('offers audio fax for new calls after a T.38 call carried no fax data, and saves then applies it', async () => {
+  it('offers audio fax for new calls after a T.38 call carried no fax data, saves it and connects again', async () => {
     const writes: Array<Record<string, unknown>> = [];
     let applied = 0;
     server.use(
@@ -233,22 +233,84 @@ describe('SIP trunk settings', () => {
         asterisk_connected: true, registration: 'registered', registration_text: "The carrier accepted Faxbot's registration over TLS.",
         reachability: 'reachable', reachability_text: "The carrier answered Faxbot's check in 38 ms.",
         last_call_text: 'The call connected but no fax data came back from the carrier.',
-        last_call_verdict: 'no_t38_data_back', suggest_audio: true, message: 'The trunk is ready.' })),
+        last_call_verdict: 'no_t38_data_back', suggest_audio: writes.length === 0, message: 'The trunk is ready.' })),
       http.put('/admin/settings', async ({ request }) => {
         writes.push(await request.json() as Record<string, unknown>);
         return HttpResponse.json({ ok: true, changed: true, _meta: { active_revision_id: 'rev-2',
           desired_revision_id: 'rev-2', generation: 2, apply_state: 'applied', restart_recommended: false } });
       }),
-      http.post('/admin/sip/apply', () => { applied += 1; return HttpResponse.json({ ok: true, message: 'Saved.' }); }),
+      http.post('/admin/sip/apply', () => {
+        applied += 1;
+        return HttpResponse.json({ ok: true, engine: 'restarting', message: 'Asterisk is restarting to use the new settings.' });
+      }),
     );
-    render(<SipTrunkSettings client={client()} />);
+    render(<SipTrunkSettings client={client()} pollMs={5} />);
     await screen.findByText('A password is saved.');
     fireEvent.click(screen.getByRole('button', { name: 'Check trunk status' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Use audio fax for new calls' }));
-    expect(await screen.findByText('Saved for Asterisk. Restart the Asterisk service to send and receive new faxes as audio.'))
-      .toBeTruthy();
+    expect(await screen.findByText('New calls send and receive faxes as audio.')).toBeTruthy();
+    expect(within(await screen.findByTestId('sip-trunk-status')).getByText('The trunk is ready.')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Use audio fax for new calls' })).toBeNull();
     expect(writes).toEqual([{ expected_revision_id: 'rev-1', sip_t38_enabled: false }]);
     expect(applied).toBe(1);
+    expect(document.body.textContent).not.toMatch(/Restart the Asterisk service/);
+  });
+
+  it('saves what was typed, restarts Asterisk, waits for it and shows the trunk check on the same screen', async () => {
+    const order: string[] = [];
+    const statuses = [
+      { engine_restarting: true, asterisk_connected: false, registration: 'unknown', message: 'Asterisk is restarting to use the new settings.' },
+      { engine_restarting: false, asterisk_connected: true, registration: 'not_registered', message: 'Faxbot is not registered with the carrier yet.' },
+      { engine_restarting: false, asterisk_connected: true, registration: 'registered', registration_transport: 'tls',
+        registration_text: "The carrier accepted Faxbot's registration over TLS.", reachability: 'reachable',
+        reachability_text: "The carrier answered Faxbot's check in 38 ms.", internet_address: '198.51.100.7',
+        public_address_text: "Faxbot's internet address is 198.51.100.7; your network changes port numbers, so Telnyx has to follow Faxbot's packets, and the first test fax shows whether it does.",
+        ports_text: 'No ports need to be opened or forwarded.', message: 'The trunk is ready.' },
+    ];
+    server.use(
+      http.get('/admin/sip/presets', () => HttpResponse.json({ presets: PRESETS })),
+      http.get('/admin/settings', () => HttpResponse.json(settings())),
+      http.get('/admin/sip/calls', () => HttpResponse.json({ items: [], next_cursor: null })),
+      http.put('/admin/settings', () => {
+        order.push('save');
+        return HttpResponse.json({ ok: true, changed: true, _meta: { active_revision_id: 'rev-2',
+          desired_revision_id: 'rev-2', generation: 2, apply_state: 'applied', restart_recommended: false } });
+      }),
+      http.post('/admin/sip/apply', () => {
+        order.push('apply');
+        return HttpResponse.json({ ok: true, engine: 'restarting', message: 'Asterisk is restarting to use the new settings.' });
+      }),
+      http.get('/admin/sip/status', () => {
+        order.push('status');
+        return HttpResponse.json({ configured: true, applied: true, reachability: 'unknown', reachability_text: '',
+          ...(statuses.shift() ?? statuses[statuses.length - 1]) });
+      }),
+    );
+    render(<SipTrunkSettings client={client()} pollMs={5} />);
+    await screen.findByText('A password is saved.');
+    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'connection-password' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Apply and connect' }));
+    const status = await screen.findByTestId('sip-trunk-status');
+    expect(within(status).getByText('The trunk is ready.')).toBeTruthy();
+    expect(within(status).getByText("The carrier accepted Faxbot's registration over TLS.")).toBeTruthy();
+    expect(within(status).getByText('No ports need to be opened or forwarded.')).toBeTruthy();
+    expect(order).toEqual(['save', 'apply', 'status', 'status', 'status']);
+    expect(document.body.textContent).not.toMatch(/Restart the Asterisk service/);
+  });
+
+  it('says so in one sentence when a call keeps Asterisk from restarting', async () => {
+    const busy = 'Saved. A call is in progress, so Asterisk keeps its current settings until you apply again after it ends.';
+    server.use(
+      http.get('/admin/sip/presets', () => HttpResponse.json({ presets: PRESETS })),
+      http.get('/admin/settings', () => HttpResponse.json(settings())),
+      http.get('/admin/sip/calls', () => HttpResponse.json({ items: [], next_cursor: null })),
+      http.post('/admin/sip/apply', () => HttpResponse.json({ ok: true, engine: 'busy', message: busy })),
+    );
+    render(<SipTrunkSettings client={client()} />);
+    await screen.findByText('A password is saved.');
+    fireEvent.click(screen.getByRole('button', { name: 'Apply and connect' }));
+    expect(await screen.findByText(busy)).toBeTruthy();
+    expect(screen.queryByTestId('sip-trunk-status')).toBeNull();
   });
 
   it('shows the missing fields the server names when applying fails', async () => {
@@ -261,7 +323,7 @@ describe('SIP trunk settings', () => {
     );
     render(<SipTrunkSettings client={client()} />);
     await screen.findByText('Not saved yet.');
-    fireEvent.click(screen.getByRole('button', { name: 'Apply to Asterisk' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Apply and connect' }));
     expect(await screen.findByText('Fill in the password before applying.')).toBeTruthy();
   });
 

@@ -74,6 +74,21 @@ export interface SipTrunkStatus {
   last_call_verdict?: string | null;
   // True after a T.38 call carried no fax data while T.38 is on: offer audio fax for new calls.
   suggest_audio?: boolean;
+  // Asterisk shares Faxbot's data folder, so Apply and connect restarts it.
+  engine_managed?: boolean;
+  // Faxbot asked Asterisk to restart and has not logged in to it again yet.
+  engine_restarting?: boolean;
+  // The running Asterisk loaded exactly the current trunk settings.
+  in_use?: boolean;
+  message: string;
+}
+
+// What Apply and connect did with the fax engine after saving its files.
+export type SipEngineAction = 'restarting' | 'current' | 'busy' | 'manual' | 'not_connected' | 'not_allowed';
+
+export interface SipApplyResult {
+  ok: true;
+  engine?: SipEngineAction;
   message: string;
 }
 

@@ -177,7 +177,7 @@ describe('Setup Wizard and the SIP trunk form', () => {
     fireEvent.change(await screen.findByLabelText('Add a number'), { target: { value: '+12025550123' } });
     fireEvent.click(screen.getByRole('button', { name: 'Add' }));
     fireEvent.click(screen.getByRole('button', { name: 'Save trunk settings' }));
-    await screen.findByText('Saved. Apply the trunk to Asterisk to use it.');
+    await screen.findByText('Saved. Select Apply and connect to use it.');
     expect(writes[0]).toEqual({ expected_revision_id: 'rev-a', sip_trunk_dids: '+12025550123' });
     await waitFor(() => expect((screen.getByLabelText('Fax station ID') as HTMLInputElement).value).toBe('+12025550111'));
     next();

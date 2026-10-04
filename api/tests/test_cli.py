@@ -795,5 +795,12 @@ def test_trunk_status_and_calls_read_as_plain_sentences(trunk_cli):
     assert audio.exit_code == 0 and 'New calls use audio fax once you restart the Asterisk service.' in audio.stdout
     assert trunk_cli.json('trunk', 'status')['t38'] is False
     assert 'already uses audio fax' in trunk_cli('trunk', 'mode', 'audio').stdout
-    assert trunk_cli.json('trunk', 'mode', 't38') == {'mode': 't38', 'changed': True, 'applied': True}
+    assert trunk_cli.json('trunk', 'mode', 't38') == {
+        'mode': 't38', 'changed': True, 'applied': True, 'engine': 'manual',
+        'message': 'Saved for Asterisk. Restart the Asterisk service to use these settings.'}
     assert trunk_cli('trunk', 'mode', 'fast').exit_code != 0
+    # Apply writes the trunk for Asterisk; this test install manages no Asterisk, so it says what to restart.
+    applied = trunk_cli('trunk', 'apply')
+    assert applied.exit_code == 0, applied.stdout
+    assert 'Saved for Asterisk. Restart the Asterisk service to use these settings.' in applied.stdout
+    assert trunk_cli.json('trunk', 'apply', '--no-wait')['engine'] == 'manual'

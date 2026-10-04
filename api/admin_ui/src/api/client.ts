@@ -1,4 +1,4 @@
-import type { SipCallPage, SipPreset, SipTrunkStatus } from './sipTypes';
+import type { SipApplyResult, SipCallPage, SipPreset, SipTrunkStatus } from './sipTypes';
 import type {
   HealthStatus,
   FaxJob,
@@ -596,7 +596,7 @@ export class AdminAPIClient {
     return this.json('/admin/sip/status');
   }
 
-  async applySipTrunk(): Promise<{ ok: true; message: string }> {
+  async applySipTrunk(): Promise<SipApplyResult> {
     return this.json('/admin/sip/apply', { method: 'POST' });
   }
 
