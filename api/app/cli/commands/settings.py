@@ -3,7 +3,7 @@ import typer
 
 from .. import profiles, state
 from ..client import segment
-from ..errors import CliError, EXIT_NOT_FOUND
+from ..errors import CliError, EXIT_CONFLICT, EXIT_NOT_FOUND
 from ..output import local_time, text
 
 settings = typer.Typer(help='Installation settings. Secrets are always shown masked.', no_args_is_help=True)
@@ -41,10 +41,17 @@ def settings_get(section: str = typer.Argument(None, help='Only this section, fo
                            EXIT_NOT_FOUND)
         shown = {section: current[section]}
 
+    managed = set(meta.get('env_managed') or [])
+
     def human(out):
         rows = []
         _flatten('', {key: value for key, value in shown.items() if key != '_meta'}, rows)
+        for row in rows:
+            if row[0].replace('.', '_') in managed:
+                row[1] = 'set in .env'
         out.table(['Setting', 'Value'], rows)
+        if managed:
+            out.line('Set in .env (change them there and restart Faxbot): ' + ', '.join(sorted(managed)))
         if not (current.get('backend') or {}).get('type') and (not section or section in {'backend', 'hybrid'}):
             out.line('No fax provider set up yet.')
         if meta.get('apply_state') == 'pending_restart':
@@ -85,6 +92,8 @@ def settings_set(assignments: list[str] = typer.Argument(None, metavar='NAME=VAL
         raise CliError('Nothing to change. Give NAME=VALUE pairs or --secret NAME.')
     api = state.api()
     current = api.get('/admin/settings')
+    if set(changes) & set(current.get('_meta', {}).get('env_managed') or []):
+        raise CliError('This key is set in .env. Change it there and restart Faxbot.', EXIT_CONFLICT)
     result = api.put('/admin/settings', json={**changes, 'expected_revision_id': current['_meta']['desired_revision_id']})
 
     def human(out):

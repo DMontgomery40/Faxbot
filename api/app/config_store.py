@@ -603,6 +603,31 @@ class ConfigurationStore:
                 generation=current.generation + 1, updated_at=now))
             return self._snapshot(connection, cipher, self._head(connection))
 
+    def apply_environment(self, expected, values, *, restart_required, providers, plugins, fields):
+        """Record credentials the environment supplies at startup as one revision by "environment".
+
+        Startup calls this before serving; there is no HTTP route. The audit row,
+        committed in the same transaction, names the settings and never a value.
+        """
+        candidates = self._provider_candidates(providers)
+        plugin_document = ConfigurationDocument(plugins) if plugins is not None else None
+        with self._locked() as connection:
+            before = self.access_store.lock_on(connection)
+            current, cipher = self._checked_current_on(connection, expected)
+            now = _utc_now()
+            result = self._write_candidate_on(connection, current, cipher, values, restart_required=restart_required,
+                actor='environment', candidates=candidates,
+                plugin_document=plugin_document or current.desired.plugins, now=now)
+            if result.generation == current.generation:
+                return result
+            after = self.access_store.require_lock_on(connection)
+            self._audit_configuration_on(connection, (None, None, None), 'configuration.environment', before, after,
+                False, {'source': 'environment', 'settings': sorted(fields),
+                        'configuration_generation_before': current.generation,
+                        'configuration_generation_after': result.generation,
+                        'pending_restart': result.pending is not None}, now)
+            return result
+
     def recover_bootstrap(self, secret: str):
         """Stopped-installation owner recovery: one new revision carrying a fresh bootstrap secret.
 

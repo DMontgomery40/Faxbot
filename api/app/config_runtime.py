@@ -14,6 +14,7 @@ from .config_activation import ConfigurationManager, ConfigurationActivationErro
 from .config_bootstrap import load_bootstrap_configuration, ConfigurationBootstrapError
 from .config_lifecycle import InstallationLifecycle
 from .config_store import ConfigurationStore, ConfigurationNotInitialized
+from .config_values import ConfigurationValues, ConfigurationValueError
 
 
 async def run_lifecycle_step(operation):
@@ -89,6 +90,8 @@ class ConfigurationRuntime:
         self.snapshot = None
         self.candidate = None
         self.serving = False
+        # Settings whose value comes from the environment at every start (names only).
+        self.env_managed = frozenset(ConfigurationValues.environment_credentials(self.environment))
 
     def prepare(self):
         """Called in the actual worker, before preparing any long-lived resources."""
@@ -122,6 +125,8 @@ class ConfigurationRuntime:
             if (snapshot.active.values.database_url != self.locations.database_url
                     or Path(snapshot.active.values.fax_data_dir).absolute() != directory.absolute()):
                 raise ConfigurationBootstrapError('Deployment storage locations do not match this installation; use the maintenance transfer workflow.')
+            if self.lifecycle.can_promote:
+                snapshot = self._apply_environment_credentials(snapshot)
             self.snapshot = snapshot
             self.candidate = snapshot.desired if self.lifecycle.can_promote else snapshot.active
             self._check_telephony_drain()
@@ -129,6 +134,24 @@ class ConfigurationRuntime:
         except BaseException:
             self.lifecycle.close()
             raise
+
+    def _apply_environment_credentials(self, snapshot):
+        """Credentials in the environment are the values in force: record any that changed.
+
+        Runs at startup before serving, under the installation's startup ownership.
+        Unchanged values add no revision; a removed variable leaves the stored value.
+        """
+        supplied = ConfigurationValues.environment_credentials(self.environment)
+        desired = snapshot.desired.values
+        changes = {name: value for name, (_, value) in supplied.items() if getattr(desired, name) != value}
+        if not changes:
+            return snapshot
+        try:
+            return self.manager.apply_environment(snapshot, changes)
+        except ConfigurationValueError:
+            variables = ', '.join(sorted(supplied[name][0] for name in changes))
+            raise ConfigurationBootstrapError(
+                f'A credential set in the environment is not valid ({variables}); fix it in .env and restart Faxbot.') from None
 
     def _require_stopped_schema_upgrade(self):
         """Mixed old/new delivery writers cannot coexist during a migration."""

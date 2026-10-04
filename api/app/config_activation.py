@@ -212,6 +212,14 @@ class ConfigurationManager:
             state['roles']['inbound']['enabled'] = values.inbound_enabled
         return values, state
 
+    def apply_environment(self, expected, changes):
+        """Credentials the environment supplies at startup (config_runtime); never an HTTP path."""
+        values, state = self._patch_values(expected, changes)
+        catalog = self._catalog_for(expected, values)
+        profiles, restart = self._prepare_apply(expected, values, state, catalog)
+        return self.store.apply_environment(expected, values, restart_required=restart, providers=profiles,
+                                            plugins=state, fields=tuple(changes))
+
     def patch(self, expected, changes, *, actor):
         """Trusted internal edit; human adapters use patch_authorized."""
         values, state = self._patch_values(expected, changes)

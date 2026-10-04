@@ -25,7 +25,7 @@ def test_editor_projects_whole_desired_candidate_and_identifies_pending_restart(
     assert view['mcp']['http_enabled'] is True
     assert view['_meta'] == {
         'active_revision_id': 'active-revision', 'desired_revision_id': 'desired-revision',
-        'generation': 7, 'apply_state': 'pending_restart', 'pending_fields': ['enable_mcp_http'],
+        'generation': 7, 'apply_state': 'pending_restart', 'pending_fields': ['enable_mcp_http'], 'env_managed': [],
     }
     assert frame.active.values.fax_backend == 'phaxio'
     assert frame.active.values.fax_disabled is True
@@ -62,7 +62,7 @@ def test_hybrid_effective_and_raw_selection_come_from_values_not_process_environ
     assert view['hybrid'] == expected
     assert view['_meta'] == {
         'active_revision_id': 'active-revision', 'desired_revision_id': 'active-revision',
-        'generation': 7, 'apply_state': 'applied', 'pending_fields': [],
+        'generation': 7, 'apply_state': 'applied', 'pending_fields': [], 'env_managed': [],
     }
     assert os.environ == before
 

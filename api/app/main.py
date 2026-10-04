@@ -49,7 +49,7 @@ from .config_paths import (
 from .signalwire_service import get_signalwire_service
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, create_model
-from .config_values import ConfigurationValues, ConfigurationValueError
+from .config_values import ENVIRONMENT_MANAGED_REFUSAL, ConfigurationValues, ConfigurationValueError
 from .config_views import project_admin_settings
 from .config_activation import ConfigurationActivationError
 from .config_store import ConfigurationConflict, ConfigurationStoreError, ConfigurationCommitUncertain, UnboundProviderProfile
@@ -736,8 +736,23 @@ def _configuration_manager():
     return runtime.manager
 
 
+def _environment_managed():
+    runtime = getattr(app.state, 'configuration_runtime', None)
+    return getattr(runtime, 'env_managed', frozenset())
+
+
+def _refuse_environment_managed(expected, changes):
+    """A credential set in the environment is changed there, never through the API; nothing applies."""
+    managed = _environment_managed()
+    current = expected.desired.values
+    if any(name in managed and value is not None and value != getattr(current, name)
+           for name, value in changes.items()):
+        raise HTTPException(409, detail=ENVIRONMENT_MANAGED_REFUSAL)
+
+
 def _settings_view(snapshot):
-    return project_admin_settings(snapshot, _configuration_manager().pending_fields(snapshot))
+    return project_admin_settings(snapshot, _configuration_manager().pending_fields(snapshot),
+                                  env_managed=_environment_managed())
 
 
 @app.get("/admin/settings", responses={**_CONFIGURATION_READ_RESPONSES, **_CONFIGURATION_VALIDATION_RESPONSES})
@@ -887,6 +902,7 @@ def update_admin_settings(payload: UpdateSettingsRequest, request: Request, iden
     access = access_runtime(request)
     access.configuration_access.prepare_settings_write(identity.actor, expected, payload.expected_revision_id)
     changes = payload.model_dump(exclude_unset=True, exclude={'expected_revision_id'})
+    _refuse_environment_managed(expected, changes)
     snapshot = manager.patch_authorized(expected, changes, principal=identity.actor, control=access.control)
     return configuration_write_receipt(expected, snapshot)
 
@@ -2858,6 +2874,11 @@ def update_plugin_config(plugin_id: str, payload: UpdatePluginConfigIn, request:
     expected = request.scope['faxbot.configuration']
     access = access_runtime(request)
     access.configuration_access.prepare_provider_write(identity.actor, expected, payload.expected_revision_id)
+    if isinstance(payload.settings, dict):
+        from .config_plugin_fields import PLUGIN_FIELDS
+        mapping = PLUGIN_FIELDS.get(plugin_id.lower(), {})
+        _refuse_environment_managed(expected, {mapping[key]: value for key, value in payload.settings.items()
+                                               if key in mapping})
     snapshot = _configuration_manager().patch_plugin_authorized(expected, plugin_id.lower(),
         settings=payload.settings, enabled=payload.enabled, role=payload.role,
         principal=identity.actor, control=access.control)

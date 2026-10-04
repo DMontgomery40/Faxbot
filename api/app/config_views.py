@@ -33,7 +33,8 @@ def _database_view(url: str) -> dict[str, Any]:
     }
 
 
-def project_admin_settings(snapshot: ConfigurationSnapshot, pending_fields: Iterable[str] = ()) -> dict[str, Any]:
+def project_admin_settings(snapshot: ConfigurationSnapshot, pending_fields: Iterable[str] = (),
+                           env_managed: Iterable[str] = ()) -> dict[str, Any]:
     """Retain the legacy nested shape while exposing desired/active identity.
 
     Callers can add existing change hints to the returned ``_meta`` dictionary.
@@ -220,5 +221,7 @@ def project_admin_settings(snapshot: ConfigurationSnapshot, pending_fields: Iter
             'generation': snapshot.generation,
             'apply_state': 'pending_restart' if snapshot.pending is not None else 'applied',
             'pending_fields': list(pending_fields),
+            # Settings whose value comes from the environment (.env) at every start; names only.
+            'env_managed': sorted(env_managed),
         },
     }
