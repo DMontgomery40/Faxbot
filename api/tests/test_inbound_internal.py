@@ -23,6 +23,15 @@ def _asterisk(client, tiff, to_number="+15551234567", uniqueid="abc123"):
     return r.json()["id"]
 
 
+def _received_tiff(data_dir):
+    """Asterisk writes received images inside the Faxbot data folder (/faxdata/inbound)."""
+    folder = data_dir / "inbound"
+    folder.mkdir(parents=True, exist_ok=True)
+    tiff = folder / "in.tiff"
+    Image.new("1", (20, 10), 1).save(tiff, format="TIFF")
+    return tiff
+
+
 def _key(client, scopes):
     r = client.post(
         "/admin/api-keys",
@@ -42,8 +51,7 @@ def test_internal_asterisk_inbound_flow(isolated_installation, monkeypatch, tmp_
     monkeypatch.setenv("API_KEY", "bootstrap_admin_only")
 
     # Use a real bounded TIFF that the converter can validate and preserve.
-    tiff = tmp_path / "in.tiff"
-    Image.new("1", (20, 10), 1).save(tiff, format="TIFF")
+    tiff = _received_tiff(tmp_path / "faxdata_inb")
 
     # API keys authenticate over any transport; this mirrors a LAN client over plain HTTP.
     with TestClient(app, base_url="http://testserver") as client:
@@ -82,8 +90,7 @@ def test_inbound_download_token_is_bounded_and_never_anonymous_otherwise(isolate
     monkeypatch.setenv("ASTERISK_INBOUND_SECRET", "sekret")
     monkeypatch.setenv("FAX_DATA_DIR", str(tmp_path / "faxdata_tok"))
     monkeypatch.setenv("REQUIRE_API_KEY", "false")
-    tiff = tmp_path / "in.tiff"
-    Image.new("1", (20, 10), 1).save(tiff, format="TIFF")
+    tiff = _received_tiff(tmp_path / "faxdata_tok")
     with TestClient(app, base_url="http://testserver") as client:
         inbound_id = _asterisk(client, tiff, uniqueid="tok")
         engine = sa.create_engine(isolated_installation["DATABASE_URL"])
@@ -110,8 +117,7 @@ def test_trunk_call_details_add_one_call_record_without_changing_the_fax(isolate
     monkeypatch.setenv("ASTERISK_INBOUND_SECRET", "sekret")
     monkeypatch.setenv("FAX_DATA_DIR", str(tmp_path / "faxdata_call"))
     monkeypatch.setenv("SIP_TRUNK_PRESET", "telnyx")
-    tiff = tmp_path / "in.tiff"
-    Image.new("1", (20, 10), 1).save(tiff, format="TIFF")
+    tiff = _received_tiff(tmp_path / "faxdata_call")
     call = {"did": "+15555550199", "caller": "+15555550100", "started_at": 1791049108,
             "answered_at": 1791049108, "ended_at": 1791049134, "pages": 2, "t38": True,
             "remote_station_id_b64": "KzE1NTU1NTUwMTAw"}
@@ -120,9 +126,9 @@ def test_trunk_call_details_add_one_call_record_without_changing_the_fax(isolate
                    "faxstatus": "SUCCESS", "faxpages": 2, "uniqueid": "1791049108.4", "call": call}
         first = client.post("/_internal/asterisk/inbound", headers={"X-Internal-Secret": "sekret"}, json=payload)
         assert first.status_code == 200, first.text
-        # A repeated report of the same Asterisk call stores the fax but not a second call.
+        # A repeated report of the same Asterisk call is the same fax and the same call.
         again = client.post("/_internal/asterisk/inbound", headers={"X-Internal-Secret": "sekret"}, json=payload)
-        assert again.status_code == 200
+        assert again.status_code == 200 and again.json()["id"] == first.json()["id"]
         plain = _asterisk(client, tiff, uniqueid="no-call-details")
         engine = sa.create_engine(isolated_installation["DATABASE_URL"])
         try:
@@ -137,5 +143,6 @@ def test_trunk_call_details_add_one_call_record_without_changing_the_fax(isolate
             engine.dispose()
         assert rows == [("inbound", "1791049108.4", first.json()["id"], "+15555550199", "+15555550100", 26,
                          "yes", 2, "telnyx", "+15555550100")]
-        assert tuple(fax) == ("+15555550199", 2, "SUCCESS")
+        # The fax status says the document is here; Asterisk's own status stays in the import report.
+        assert tuple(fax) == ("+15555550199", 1, "received")
         assert tuple(plain_fax) == ("+15551234567",)
