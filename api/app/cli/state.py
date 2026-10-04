@@ -16,6 +16,7 @@ class State:
     out: Output
     client_factory: object = None
     admin_options: dict = field(default_factory=dict)
+    home_currency: str | None = None
     _api: Api | None = field(default=None, repr=False)
 
     def api(self):

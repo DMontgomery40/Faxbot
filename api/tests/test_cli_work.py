@@ -177,7 +177,13 @@ def test_received_commands_take_either_id_and_count_by_state(cli, tmp_path):
     assert (counts['open'], counts['unassigned'], counts['done']) == (1, 0, 0)
     human = cli('received', 'counts').stdout
     assert '0 received faxes are waiting for an owner.' in human and '1 received fax is open.' in human
-    missing = cli('received', 'history', '0' * 32)
-    assert missing.exit_code == 5 and missing.stderr.strip() == ('No received fax you can see has that ID. '
-                                                                 'See faxbot received list --ids.')
-    assert cli('received', 'show', '0' * 32).exit_code == 5
+    # An ID neither list knows gives the same sentence in every received command.
+    for command in (('show',), ('pdf',), ('fetch',), ('history',), ('assign', None), ('acknowledge',),
+                    ('done', None), ('reopen',), ('export',)):
+        name, *rest = command
+        extra = {'assign': ['dana'], 'done': ['--note', 'x']}.get(name, [])
+        missing = cli('received', name, 'not-a-real-id', *extra)
+        assert missing.exit_code == 5, (name, missing.stdout, missing.stderr)
+        assert missing.stderr.strip() == 'No received fax you can see has that ID. See faxbot received list --ids.', name
+    missing = cli('costs', 'received', 'not-a-real-id')
+    assert missing.exit_code == 5 and missing.stderr.strip().startswith('No received fax you can see has that ID.')

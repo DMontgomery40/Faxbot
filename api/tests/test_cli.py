@@ -268,6 +268,11 @@ def test_send_status_jobs_and_documents(cli, tmp_path):
     assert listing['total'] == 2 and all(job['to_number'].startswith('*') for job in listing['jobs'])
     assert set(listing['costs']) <= {job['id'] for job in listing['jobs']}
     assert 'Cost' in cli('sent', 'list').stdout
+    # The console's words for each state, never the raw value.
+    table = cli('sent', 'list').stdout
+    assert 'Held test fax' in table and ' held ' not in table and 'queued' not in table
+    shown = cli('status', sent['id']).stdout
+    assert 'Held test fax' in shown and 'This test fax is held and will not be sent.' in shown
     table = cli('sent', 'list')
     assert table.exit_code == 0 and sent['id'] not in table.stdout and '+15551230001' not in table.stdout
     assert sent['id'] in cli('sent', 'list', '--ids').stdout
@@ -816,8 +821,8 @@ def test_routing_reconcile_asks_the_carrier_and_costs_show_charges(telnyx_cli, m
             amount_micros=3200, raw_amount='0.0032', currency='USD', billed_seconds=60, call_seconds=25,
             effective_at=moment, observed_at=moment, applied=1, created_at=moment))
     human = telnyx_cli('costs', 'spending')
-    assert 'Telnyx billed 1 call Faxbot has no record of: 0.0032 USD. It is included in Charged.' in human.stdout
-    assert 'Total: 0.0032 USD' in human.stdout
+    assert 'Telnyx billed 1 call Faxbot has no record of: $0.0032. It is included in Charged.' in human.stdout
+    assert 'Total: $0.0032' in human.stdout
 
 
 def test_intake_connectors_items_and_test_email(cli):
@@ -1055,3 +1060,31 @@ def test_costs_of_received_faxes_and_published_plans_in_use(cli):
     assert refused.exit_code == 1 and refused.stderr.strip() == 'Name a provider, such as efax, or add --in-use.'
     efax = cli.json('costs', 'plans', 'efax')
     assert efax['plans'] and efax['sentence']
+
+
+def test_money_reads_as_the_console_shows_it(monkeypatch):
+    from app.cli import output
+    usd = lambda amount: {'currency': 'USD', 'amount': amount}
+    assert [output.money_amount(usd(value), 'USD') for value in ('0.005', '0.0032', '1.5', '0.07', '0', '10')] == \
+        ['$0.005', '$0.0032', '$1.50', '$0.07', '$0.00', '$10.00']
+    assert output.money_amount({'currency': 'EUR', 'amount': '0.005'}, 'USD') == '0.005 EUR'
+    assert output.money_amount({'currency': 'GBP', 'amount': '0.07'}, 'GBP') == '£0.07'
+    assert output.money_amount({'currency': 'USD', 'amount': '0.0025'}, 'GBP') == '0.0025 USD'
+    monkeypatch.setattr(output, 'home_currency', lambda: 'USD')
+    assert output.cost_amount({'state': 'estimated', 'estimated_cost': [usd('0.0025')]}) == '$0.0025 estimate'
+    assert output.cost_amount({'state': 'reported', 'reported_cost': [usd('0.005')]}) == '$0.005'
+    assert output.cost_amount({'state': 'included'}) == 'In your plan'
+    assert output.money([usd('0.005'), {'currency': 'EUR', 'amount': '0.01'}]) == '$0.005 + 0.01 EUR'
+
+
+def test_a_recovered_fax_shows_when_it_arrived_and_that_it_was_brought_in_later():
+    from app.cli.commands.fax import arrived, status_label
+    from app.cli.output import local_time
+    recovered = {'source_received_at': '2026-10-04T03:14:26', 'received_at': '2026-10-04T03:48:00', 'recovered': True}
+    assert arrived(recovered) == local_time('2026-10-04T03:14:26') + ' · brought in later'
+    assert arrived({'received_at': '2026-10-04T03:48:00'}) == local_time('2026-10-04T03:48:00')
+    assert [status_label({'delivery_state': state}) for state in ('success', 'failed', 'in_progress',
+                                                                  'reconciliation_required', 'held')] == \
+        ['Delivered', 'Failed', 'In progress', 'Needs review', 'Held test fax']
+    assert status_label({'delivery_state': 'ready', 'together': {'state': 'waiting'}}) == 'Waiting to go with other faxes'
+    assert status_label({'status': 'SUCCESS'}) == 'Delivered'

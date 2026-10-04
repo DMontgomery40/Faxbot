@@ -340,7 +340,7 @@ def test_cli_shows_when_a_recovered_fax_arrived_and_unknown_numbers_in_words(mon
         def get(self, path, params=None):
             return [item] if path == '/inbound' else item
     monkeypatch.setattr(state, 'api', lambda: FakeApi())
-    arrived = local_time('2026-10-04T03:14:00') + ' (brought in later)'
+    arrived = local_time('2026-10-04T03:14:00') + ' · brought in later'
     listing = CliRunner().invoke(cli, ['inbound', 'list'], env={'COLUMNS': '200'})
     assert listing.exit_code == 0, listing.output
     assert 'Unknown' in listing.output and arrived in listing.output

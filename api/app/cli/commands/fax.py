@@ -6,7 +6,7 @@ import typer
 
 from .. import state
 from ..client import segment
-from ..errors import CliError
+from ..errors import CliError, EXIT_NOT_FOUND
 from ..output import cost_amount, local_time, parse_time, yes_no
 from ...provider_labels import provider_label
 
@@ -22,20 +22,52 @@ inbound = typer.Typer(help='Received faxes: list them, read details, download do
 
 _TYPES = {'.pdf': 'application/pdf', '.txt': 'text/plain'}
 
-STATE_TEXT = {
-    'held': 'Held: sending is turned off, so it will not be sent.',
-    'ready': 'Waiting to be sent.',
-    'in_progress': 'Being sent.',
-    'reconciliation_required': 'Needs checking with the provider before anything else happens.',
-    'succeeded': 'Delivered.',
-    'failed': 'Not delivered.',
-    'abandoned': 'Stopped without delivery.',
-}
+# The console's words for each delivery state and event (JobsList.tsx).
+STATUS_LABELS = {'held': 'Held test fax', 'ready': 'Ready to send', 'preparing': 'Preparing', 'submitting': 'Sending',
+                 'in_progress': 'In progress', 'reconciliation_required': 'Needs review', 'success': 'Delivered',
+                 'failed': 'Failed', 'cancelled': 'Cancelled'}
+EVENT_LABELS = {
+    'accepted': 'Fax accepted', 'legacy_migrated': 'Imported from an earlier version',
+    'binding_unavailable': 'Original provider account unavailable', 'held_acceptance_restored': 'Held test fax restored',
+    'claimed': 'Preparing to send', 'dispatch_paused': 'Sending paused', 'submission_authorized': 'Sending to provider',
+    'submission_uncertain': 'Provider response unclear',
+    'sent_together': 'Going in one call with other faxes to this number',
+    'batch_split': 'Going on its own instead of with other faxes', 'preparation_failed': 'Could not prepare fax',
+    'preparation_expired': 'Preparation timed out', 'provider_observation_refused': 'Provider update ignored',
+    'terminal_conflict': 'Conflicting provider update ignored', 'late_observation': 'Late provider update',
+    'provider_observed': 'Provider status update', 'operator_identity_bound': 'Receipt confirmed with the provider fax ID',
+    'route_assigned': 'Route chosen', 'route_fallback': 'Trying the next route'}
+RECEIVED_NOT_FOUND = 'No received fax you can see has that ID. See faxbot received list --ids.'
+
+
+def _label(state):
+    state = (state or '').lower()
+    return STATUS_LABELS.get(state) or state.replace('_', ' ').capitalize() or '-'
+
+
+def status_label(job):
+    """A sent fax's state in the console's words; a fax waiting to go with others says so."""
+    state = (job.get('delivery_state') or job.get('status') or '').lower()
+    if (job.get('together') or {}).get('state') == 'waiting' and state not in {'success', 'failed', 'cancelled'}:
+        return 'Waiting to go with other faxes'
+    return _label(state)
+
+
+def delivery_notice(job):
+    """The console's sentence under the state, when there is one."""
+    state = (job.get('delivery_state') or job.get('status') or '').lower()
+    if state == 'held' or job.get('dispatch_mode') == 'held':
+        return 'This test fax is held and will not be sent.'
+    if state == 'reconciliation_required':
+        return ('Imported fax with no delivery record; check your provider account for the outcome.'
+                if job.get('dispatch_mode') == 'legacy' else
+                "Delivery couldn't be confirmed; check your provider account and confirm receipt instead of resending.")
+    return None
 
 
 def _fax_fields(job):
-    return [('Fax ID', job.get('id')), ('To', job.get('to') or job.get('to_number')), ('Status', job.get('status')),
-            ('Delivery', STATE_TEXT.get(job.get('delivery_state'), job.get('delivery_state'))),
+    return [('Fax ID', job.get('id')), ('To', job.get('to') or job.get('to_number')), ('Status', status_label(job)),
+            *([('Delivery', delivery_notice(job))] if delivery_notice(job) else []),
             ('Pages', job.get('pages')), ('Provider', _provider(job.get('backend'))),
             ('Provider fax ID', job.get('provider_sid')), ('Problem', job.get('error')),
             ('Accepted', local_time(job.get('created_at'))), ('Updated', local_time(job.get('updated_at')))]
@@ -121,7 +153,7 @@ def jobs_list(status_filter: str = typer.Option(None, '--status', help='Only fax
 
     def human(out):
         out.table((['Fax ID'] if ids else []) + ['To', 'Status', 'Pages', 'Provider', 'Cost', 'Accepted'],
-                  [([job['id']] if ids else []) + [job['to_number'], job['status'], job['pages'], _provider(job['backend']),
+                  [([job['id']] if ids else []) + [job['to_number'], status_label(job), job['pages'], _provider(job['backend']),
                                                    cost_amount(costs.get(job['id'])), local_time(job['created_at'])]
                    for job in page['jobs']],
                   empty='No sent faxes.')
@@ -199,7 +231,7 @@ def jobs_history(fax_id: str = typer.Argument(..., help="Fax ID, from 'faxbot se
 
     def human(out):
         attempt = history.get('attempt') or {}
-        out.fields([('Delivery', STATE_TEXT.get(history.get('state'), history.get('state'))),
+        out.fields([('Status', _label(history.get('state'))),
                     ('Provider', _provider(history.get('provider_id'))), ('Provider fax ID', attempt.get('provider_sid')),
                     ('Submitted', local_time(attempt.get('submitted_at'))),
                     ('Finished', local_time(attempt.get('completed_at')))])
@@ -209,7 +241,8 @@ def jobs_history(fax_id: str = typer.Argument(..., help="Fax ID, from 'faxbot se
                          f'{fax_id} --provider-fax-id ID --confirm-original-account')
             elif history.get('bind_refusal_reason'):
                 out.line(history['bind_refusal_reason'])
-        out.table(['When', 'Event'], [[local_time(event['created_at']), event['kind'].replace('_', ' ')]
+        out.table(['When', 'Event'], [[local_time(event['created_at']),
+                                       EVENT_LABELS.get(event['kind'], event['kind'].replace('_', ' ').capitalize())]
                                       for event in history.get('events', [])], empty='No delivery events yet.')
     state.out().result(history, human)
 
@@ -264,10 +297,10 @@ def _document(item):
 
 
 
-def _arrived(item):
+def arrived(item):
     """When the fax arrived (the provider's time when known), marked when Faxbot brought it in later."""
     when = local_time(item.get('source_received_at') or item.get('received_at') or item.get('created_at'))
-    return f'{when} (brought in later)' if item.get('recovered') else when
+    return f'{when} · brought in later' if item.get('recovered') else when
 
 
 def _inbound_fields(item):
@@ -277,7 +310,7 @@ def _inbound_fields(item):
             ('Received through', _provider(item.get('backend'))),
             ('Provider fax ID', item.get('provider_fax_id')),
             ('Sent', local_time(item.get('source_received_at'))),
-            ('Received', _arrived(item)),
+            ('Received', arrived(item)),
             *([('Brought in', local_time(item.get('received_at')))] if item.get('recovered') else []),
             ('Document', _document(item)), ('Test fax', yes_no(bool(item.get('is_test')))),
             *([('Provider copy', item['provider_note'])] if item.get('provider_note') else [])]
@@ -304,7 +337,7 @@ def inbound_list(to_number: str = typer.Option(None, '--to', help='Only faxes se
             (['Received fax ID'] if ids else []) + ['From', 'To', 'Status', 'Pages', 'Mailbox', 'Received'],
             [([item['id']] if ids else []) + [item.get('fr') or 'Unknown', item.get('to') or 'Unknown',
                                               _inbound_status(item), item.get('pages'), item.get('mailbox'),
-                                              _arrived(item)]
+                                              arrived(item)]
              for item in items], empty='No received faxes.')
         for sentence in _provider_copies(items):
             out.line(sentence)
@@ -326,10 +359,23 @@ def received_id(api, given, request):
         try:
             fax_id = api.get('/work/' + segment(given)).get('inbound_fax_id')
         except CliError:
-            raise failure from None
-        if not fax_id or fax_id == given:
-            raise
-        return request(fax_id)
+            fax_id = None
+        if fax_id and fax_id != given:
+            return request(fax_id)
+        if not received_exists(api, given):
+            raise CliError(RECEIVED_NOT_FOUND, EXIT_NOT_FOUND) from None
+        raise failure  # the fax exists; its own answer (such as a document not stored yet) stands
+
+
+def received_exists(api, fax_id):
+    """Whether this person can see a received fax with this ID."""
+    try:
+        api.get('/inbound/' + segment(fax_id))
+    except CliError as failure:
+        if failure.status in (403, 404):
+            return False
+        raise
+    return True
 
 
 @inbound.command('get')

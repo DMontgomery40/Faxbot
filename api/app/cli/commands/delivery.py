@@ -193,8 +193,8 @@ def routing_fax_cost(fax_id: str = typer.Argument(..., help="Fax ID from 'faxbot
 
 
 def _received_cost_rows(costs, items):
-    return [[item.get('fr') or 'Unknown', local_time(item.get('received_at') or item.get('created_at')),
-             cost_amount(costs.get(item['id']))] for item in items]
+    from .fax import arrived
+    return [[item.get('fr') or 'Unknown', arrived(item), cost_amount(costs.get(item['id']))] for item in items]
 
 
 @routing.command('received')
@@ -315,8 +315,10 @@ def _read_on(value):
 
 
 def _plan_row(plan):
-    fee = f"{plan['currency']} {plan['monthly_fee']} a month" if plan.get('monthly_fee') else 'By quote'
-    extra = f"{plan['currency']} {plan['overage_per_page']}" if plan.get('overage_per_page') else '-'
+    fee = (f"{money([{'currency': plan['currency'], 'amount': plan['monthly_fee']}])} a month"
+           if plan.get('monthly_fee') else 'By quote')
+    extra = money([{'currency': plan['currency'], 'amount': plan['overage_per_page']}]) \
+        if plan.get('overage_per_page') else '-'
     return [plan.get('label'), plan.get('country') or '-', fee, plan.get('includes') or '-', extra,
             plan.get('source_url') or '-', _read_on(plan.get('advertised_on'))]
 
