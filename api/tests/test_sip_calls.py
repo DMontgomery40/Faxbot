@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 import pytest
 import sqlalchemy as sa
 
-from api.app import schema, schema_sip
+from api.app import schema, schema_charges, schema_sip
 # The fake AMI peer fixtures bind settings through the ``app`` package.
 from app import sip_calls
 from app.config import use_configuration
@@ -36,8 +36,11 @@ def test_0009_upgrade_preserves_0008_state_and_validates_frozen_shape(database):
     for name, rows in before.items():
         if name != 'alembic_version':
             assert without_work_catalogue(name, after[name]) == rows, name
-    metadata = schema_sip.frozen_metadata(dialect=database.dialect.name)
+    # Later revisions add the SIP Call-ID column and its index to this table.
+    metadata = schema_charges.frozen_metadata(dialect=database.dialect.name)
     table = metadata.tables['sip_call_records']
+    later = {(name, columns, unique) for name, owner, columns, unique in schema_charges.INDEXES
+             if owner == 'sip_call_records'}
     with database.connect() as connection:
         assert schema.validate_schema(connection, require_version=True) == schema.HEAD
         inspector = sa.inspect(connection)
@@ -46,7 +49,7 @@ def test_0009_upgrade_preserves_0008_state_and_validates_frozen_shape(database):
             c.name for c in table.constraints if isinstance(c, sa.CheckConstraint)}
         assert {(i['name'], tuple(i['column_names']), bool(i['unique']))
                 for i in inspector.get_indexes('sip_call_records')} == {
-            (name, columns, unique) for name, columns, unique in schema_sip.INDEXES}
+            (name, columns, unique) for name, columns, unique in schema_sip.INDEXES} | later
         columns = {c['name']: c for c in inspector.get_columns('sip_call_records')}
         assert set(columns) == {column.name for column in table.columns}
         assert not columns['disposition']['nullable'] and columns['answered_at']['nullable']
