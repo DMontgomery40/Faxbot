@@ -246,6 +246,8 @@ export class AdminAPIClient {
   // Last access policy version seen from /auth/me or a management reply.
   policyVersion: number | null = null;
   private policyRefresh: Promise<void> | null = null;
+  // Told the setting names of each saved change, or none after Faxbot restarts.
+  private settingsListeners = new Set<(changed: string[]) => void>();
 
   constructor(credential: ClientCredential = { kind: 'session', csrf: null }, options: ClientOptions = {}) {
     this.baseURL = window.location.origin;
@@ -591,7 +593,20 @@ export class AdminAPIClient {
 
   async updateSettings(settings: SettingsPatch): Promise<ConfigurationWriteResult> {
     const res = await this.fetch('/admin/settings', { method: 'PUT', body: JSON.stringify(settings) });
-    return configurationResult(await res.json());
+    const result = configurationResult(await res.json());
+    this.announceSettingsChanged(Object.keys(settings).filter((name) => name !== 'expected_revision_id'));
+    return result;
+  }
+
+  // Listen for saved settings changes; returns the function that stops listening.
+  onSettingsChanged(listener: (changed: string[]) => void): () => void {
+    this.settingsListeners.add(listener);
+    return () => { this.settingsListeners.delete(listener); };
+  }
+
+  // Settings changed: these names were saved, or none when Faxbot is back from a restart.
+  announceSettingsChanged(changed: string[] = []): void {
+    for (const listener of [...this.settingsListeners]) listener(changed);
   }
 
   async reloadSettings(): Promise<Settings> {

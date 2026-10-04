@@ -36,7 +36,7 @@ type Provider = { id: string; name: string; source?: string; categories?: string
 type InboundCallbacks = { backend: string; callbacks: Array<{ name: string; url: string }> };
 type CredentialField = { key: string; label: string; secret?: boolean; number?: boolean; helper?: string };
 
-const STEPS = ['Choose Providers', 'Connect Providers', 'Security Settings', 'Delivery Options', 'Finish'];
+const STEPS = ['Choose Providers', 'Connect Providers', 'Security', 'Delivery Options', 'Finish'];
 
 const credentialFields: Record<string, CredentialField[]> = {
   phaxio: [
@@ -694,7 +694,7 @@ function SetupWizard({ client, onDone, docsBase, canRestart = true }: SetupWizar
     }
 
     if (activeStep === 2) return <Box>
-      <Typography variant="h6" gutterBottom>Security Settings</Typography>
+      <Typography variant="h6" gutterBottom>Security</Typography>
       <Alert severity="info" sx={{ mb: 2 }}>Authentication: required. Every request needs a signed-in person or an API key; manage them in Keys and Users.</Alert>
       <Grid container spacing={2}>
         {[

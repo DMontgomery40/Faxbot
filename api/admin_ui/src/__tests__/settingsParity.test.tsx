@@ -234,7 +234,7 @@ describe('Plain wording on provider and security settings', () => {
         data.inbound.enabled = true;
       }));
       const { container } = render(<Settings client={client()} />);
-      await screen.findByText('Security Settings');
+      await screen.findByText('How people sign in and how this server is reached.');
       for (const input of Array.from(container.querySelectorAll('input, textarea'))) {
         expect(input.getAttribute('placeholder') ?? '').not.toMatch(ENV_NAME);
       }
@@ -525,7 +525,7 @@ describe('Installation country', () => {
     await screen.findByText('Connect Providers', { selector: 'h6' });
     expect(writes).toEqual([{ expected_revision_id: 'rev-a', fax_default_country: 'GB' }]);
     next();
-    await screen.findByText('Security Settings', { selector: 'h6' });
+    await screen.findByText('Security', { selector: 'h6' });
     next();
     await screen.findByText('Delivery Options', { selector: 'h6' });
     fireEvent.change(screen.getByLabelText('Our fax number'), { target: { value: '01782 684953' } });
@@ -694,7 +694,7 @@ describe('Settings when Faxbot cannot reach its fax engine', () => {
     settingsHandlers(settingsFixture());
     server.use(http.get('/health/ready', () => HttpResponse.json({ status: 'not_ready', message: 'Something unexpected.' }, { status: 503 })));
     render(<Settings client={client()} />);
-    await screen.findByText('Security Settings');
+    await screen.findByText('How people sign in and how this server is reached.');
     expect(screen.queryByTestId('engine-message')).toBeNull();
   });
 });
@@ -816,7 +816,8 @@ describe('System, milestone 5', () => {
     expect(within(rows).getByText('Console served by this installation')).toBeTruthy();
     expect(within(rows).getByDisplayValue('On')).toBeTruthy();
     expect(within(rows).getByDisplayValue('Not set')).toBeTruthy();
-    expect(within(rows).getAllByText('Set in .env.')).toHaveLength(2);
+    expect(within(rows).getAllByText('Set when Faxbot started.')).toHaveLength(2);
+    expect(within(rows).getByText('Not set: signing in needs HTTPS.')).toBeTruthy();
     // Variable names are for Developer pages only.
     expect(within(rows).queryByText(/FAXBOT_|ENABLE_/)).toBeNull();
     expect(screen.queryByText('Audit Logging')).toBeNull();
@@ -829,8 +830,10 @@ describe('System, milestone 5', () => {
     render(<Settings client={client()} sections={['mcp']} />);
     const rows = await screen.findByTestId('deployment-rows');
     expect(within(rows).getByDisplayValue('3001')).toBeTruthy();
-    expect(within(rows).getByText('Set in .env. (MCP_WS_API_KEY)')).toBeTruthy();
-    expect(within(rows).getByDisplayValue('Set in .env')).toBeTruthy();
+    expect(within(rows).getByText('Set when Faxbot started. (MCP_WS_API_KEY)')).toBeTruthy();
+    expect(within(rows).getByDisplayValue('Set')).toBeTruthy();
+    // A setting that is not set names the default the assistant server then uses.
+    expect(within(rows).getByText('Not set: port 3004. (MCP_WS_PORT)')).toBeTruthy();
     expect(document.body.textContent).not.toContain('hidden');
   });
 

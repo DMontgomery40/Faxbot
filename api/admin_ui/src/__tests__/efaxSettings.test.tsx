@@ -76,7 +76,7 @@ describe('eFax in the Setup Wizard', () => {
     fireEvent.click(screen.getByRole('checkbox', { name: 'Delete each fax from eFax once Faxbot has stored it' }));
     expect(screen.getByText('eFax keeps no copy after Faxbot stores a fax.')).toBeTruthy();
     next();
-    await screen.findByText('Security Settings', { selector: 'h6' });
+    await screen.findByText('Security', { selector: 'h6' });
     expect(writes[1]).toEqual({ expected_revision_id: 'rev-2', efax_app_id: 'synthetic-app', efax_api_key: 'synthetic-key-value',
       efax_user_id: 'synthetic-user', efax_caller_id: '+13235551212', efax_csid: 'Front desk', efax_poll_seconds: 300,
       efax_delete_after_download: true });
@@ -127,7 +127,7 @@ describe('eFax in Settings', () => {
   it('is not shown when eFax is neither sending nor receiving', async () => {
     backend(settingsFixture());
     render(<Settings client={client()} />);
-    await screen.findByText('Security Settings');
+    await screen.findByText('How people sign in and how this server is reached.');
     expect(screen.queryByTestId('efax-settings')).toBeNull();
   });
 

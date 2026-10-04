@@ -749,8 +749,8 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
           {/* Security Settings */}
           {shows('security') && (
           <ResponsiveFormSection
-            title="Security Settings"
-            subtitle="Configure authentication, HTTPS, and audit logging"
+            title="Security"
+            subtitle="How people sign in and how this server is reached."
             icon={<SecurityIcon />}
           >
             <ResponsiveSettingItem

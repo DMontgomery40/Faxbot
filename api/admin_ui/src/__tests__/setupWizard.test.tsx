@@ -227,7 +227,7 @@ describe('Setup Wizard and the SIP trunk form', () => {
     expect(writes[0]).toEqual({ expected_revision_id: 'rev-a', sip_trunk_dids: '+12025550123' });
     await waitFor(() => expect((screen.getByLabelText('Fax station ID') as HTMLInputElement).value).toBe('+12025550111'));
     next();
-    await screen.findByText('Security Settings', { selector: 'h6' });
+    await screen.findByText('Security', { selector: 'h6' });
     // The step saves with the revision the trunk save produced.
     expect(writes[1]).toEqual({ expected_revision_id: 'rev-2', fax_station_id: '+12025550111' });
   });

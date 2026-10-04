@@ -62,6 +62,8 @@ export function useRestartFaxbot(client: AdminAPIClient, options: RestartOptions
       if (!serving) {
         wentAway = true;
       } else if (wentAway || elapsed >= settleMs) {
+        // Faxbot now uses the saved settings: everything that shows them reads them again.
+        client.announceSettingsChanged();
         try {
           await back.current?.();
         } catch {
