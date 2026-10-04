@@ -115,7 +115,7 @@ def test_answered_fax_call_records_times_seconds_media_pages_and_station(records
         'started_at': '2026-10-03T12:00:00Z', 'answered_at': '2026-10-03T12:00:08Z',
         'ended_at': '2026-10-03T12:01:13Z', 'disposition': 'answered', 'connected_seconds': 65, 't38': 'yes',
         'pages': 2, 'fax_status': 'SUCCESS', 'remote_station_id': '+15555550199', 'error_cause': None,
-        'fax_preference': True}
+        'fax_preference': True, 'verdict': 'sent', 'summary': 'Sent: 2 pages confirmed by the receiving machine.'}
     assert records.connected_seconds_for(ATTEMPT) == 65
 
 
@@ -144,7 +144,7 @@ def test_failed_fax_after_answer_keeps_audio_mode_and_a_plain_cause(records):
                               now=NOW + timedelta(seconds=74))
     [record] = records.for_attempt(ATTEMPT)
     assert record['t38'] == 'no' and record['fax_status'] == 'FAILED' and record['pages'] == 0
-    assert record['error_cause'] == 'NO_DATA (cause 16)' and record['disposition'] == 'answered'
+    assert record['error_cause'] == 'remote_fax_failed: NO_DATA (cause 16)' and record['disposition'] == 'answered'
 
 
 def test_late_originate_success_never_reopens_a_finished_call(records):
@@ -250,3 +250,129 @@ def test_route_cost_capture_uses_the_measured_connected_seconds(records):
     assert recorder._observed(SimpleNamespace(attempt_id=ATTEMPT, phase='success')) == 65
     assert recorder._observed(SimpleNamespace(attempt_id=ATTEMPT, phase='uncertain')) is None
     assert recorder._observed(SimpleNamespace(attempt_id='f' * 32, phase='failed')) is None
+
+
+# Verdicts: why a connected call delivered no fax -------------------------------
+
+def _b64(text):
+    import base64
+    return base64.b64encode(text.encode()).decode()
+
+
+ANSWERED = {'Answered': str(_epoch(NOW + timedelta(seconds=8))), 'Ended': str(_epoch(NOW + timedelta(seconds=40)))}
+
+
+@pytest.mark.parametrize('event,expected', [
+    # The loopback proof's carrier that never followed Faxbot's packets: T.38, nothing back, it hung up first.
+    ({'Status': 'FAILED', 'Error': 'The call dropped prematurely', 'Pages': '0', 'Mode': 'T38', 'RtpRx': '0'},
+     'no_t38_data_back'),
+    ({'Status': 'FAILED', 'Error64': _b64('Timed out waiting for the first message'), 'Pages': '0', 'Mode': 'T38'},
+     'no_t38_data_back'),
+    # The received side of the same proof, when its own DIS went unanswered first.
+    ({'Status': 'FAILED', 'Error64': _b64('Disconnected after permitted retries'), 'Pages': '0', 'Mode': 'T38'},
+     'no_t38_data_back'),
+    ({'Status': 'FAILED', 'Error': 'HANGUP', 'Pages': '0', 'Mode': ''}, 'no_fax_data_back'),
+    # Audio counts are decisive only when the call ended in audio.
+    ({'Status': 'FAILED', 'Error': 'HANGUP', 'Pages': '0', 'Mode': 'audio', 'RtpTx': '812', 'RtpRx': '0'},
+     'no_media_back'),
+    ({'Status': 'FAILED', 'Error': 'Timed out waiting for initial communication', 'Pages': '0', 'Mode': 'audio',
+      'RtpRx': '1500'}, 'no_fax_answer'),
+    # A far end that answered as a fax machine: the network carried the call.
+    ({'Status': 'FAILED', 'Error64': _b64('Received no response to DCS or TCF'), 'Pages': '0', 'Mode': 'T38'},
+     'remote_fax_failed'),
+    ({'Status': 'FAILED', 'Error': 'HANGUP', 'Pages': '0', 'Mode': 'T38', 'Station64': 'KzE1NTU1NTUwMTk5'},
+     'remote_fax_failed'),
+    ({'Status': 'FAILED', 'Error': 'HANGUP', 'Pages': '1', 'Mode': 'T38'}, 'remote_fax_failed'),
+    ({'Status': 'SUCCESS', 'Error': 'HANGUP', 'Pages': '2', 'Mode': 'T38'}, None),
+])
+def test_verdict_names_why_a_connected_call_delivered_no_fax(event, expected):
+    assert sip_calls.verdict({**ANSWERED, **event}) == expected
+
+
+def test_a_call_that_was_never_answered_has_no_fax_verdict():
+    assert sip_calls.verdict({'Status': 'FAILED', 'Error': 'HANGUP', 'Pages': '0'}) is None
+
+
+def test_engine_reasons_with_commas_arrive_whole_through_base64():
+    reason = 'Timer T2 expired while waiting for NSS, DCS or MCF'
+    event = {**ANSWERED, 'Status': 'FAILED', 'Error': 'Timer T2 expired while waiting for NSS',
+             'Error64': _b64(reason), 'Pages': '0', 'Mode': 'T38', 'Station64': 'KzE1NTU1NTUwMTk5', 'Cause': '16'}
+    assert sip_calls.result_summary(event) == f'The other fax machine answered but the fax failed: {reason}.'
+    assert len(sip_calls._error_cause(event)) <= 64
+
+
+def test_no_fax_data_is_stored_as_a_verdict_and_read_back_as_one_sentence(records):
+    records.record_submission(submission(), now=NOW)
+    records.record_fax_result(fax_result(Status='FAILED', Error='The call dropped prematurely', Pages='0',
+                                         Station64='', Mode='T38', RtpRx='0'), now=NOW + timedelta(seconds=74))
+    [record] = records.for_attempt(ATTEMPT)
+    assert record['error_cause'] == 'no_t38_data_back: The call dropped prematurely (cause 16)'
+    assert record['verdict'] == 'no_t38_data_back'
+    assert record['summary'] == 'The call connected but no fax data came back from the carrier.'
+    assert record['disposition'] == 'answered' and record['pages'] == 0
+
+
+@pytest.mark.parametrize('reason,sentence', [
+    ('5', 'The number was busy.'), ('3', 'Nobody answered the call.'),
+    ('8', 'The carrier network was too busy to connect the call.'), ('0', 'The call did not connect.')])
+def test_calls_that_never_connected_read_as_one_sentence(records, reason, sentence):
+    records.record_submission(submission(), now=NOW)
+    event = {'Response': 'Failure', 'Reason': reason, 'ActionID': f'faxbot:{JOB}:{ATTEMPT}'}
+    records.record_originate_response(event, now=NOW + timedelta(seconds=30))
+    [record] = records.for_attempt(ATTEMPT)
+    assert record['summary'] == sentence == sip_calls.originate_summary(event) and record['verdict'] is None
+    assert sip_calls.originate_summary({**event, 'Response': 'Success'}) is None
+
+
+def test_sent_and_received_calls_read_as_confirmed_pages(records):
+    records.record_submission(submission(), now=NOW)
+    records.record_fax_result(fax_result(), now=NOW + timedelta(seconds=74))
+    [record] = records.for_attempt(ATTEMPT)
+    assert (record['verdict'], record['summary']) == ('sent', 'Sent: 2 pages confirmed by the receiving machine.')
+    call = {'did': '+15555550199', 'caller': '+15555550100', 'answered_at': _epoch(NOW), 'pages': 1, 't38': True}
+    records.record_inbound(call, call_id='1791049108.9', inbound_fax_id='f' * 32, fax_status='SUCCESS')
+    [received] = records.page(direction='inbound')['items']
+    assert (received['verdict'], received['summary']) == ('received', 'Received: 1 page.')
+
+
+def inbound_call(**extra):
+    return {'Event': 'UserEvent', 'UserEvent': 'FaxInboundCall', 'DID': '+15555550199', 'Caller': '+13035550100',
+            'Status': 'FAILED', 'Error64': _b64('The call dropped prematurely'), 'Pages': '0', 'Mode': 'T38',
+            'Station64': '', 'Started': str(_epoch(NOW)), 'Answered': str(_epoch(NOW)),
+            'Ended': str(_epoch(NOW + timedelta(seconds=14))), 'UniqueID': '1791075343.12', 'Cause': '16',
+            'RtpTx': '', 'RtpRx': '', **extra}
+
+
+def test_a_received_call_that_left_no_image_still_has_a_record(records):
+    first = records.record_inbound_event(inbound_call(), preset='telnyx', now=NOW + timedelta(seconds=15))
+    assert records.record_inbound_event(inbound_call(), preset='telnyx') == first
+    [record] = records.page(direction='inbound')['items']
+    assert (record['job_id'], record['caller'], record['did'], record['connected_seconds'], record['t38'],
+            record['trunk_preset'], record['verdict']) == (
+        None, '+13035550100', '+15555550199', 14, 'yes', 'telnyx', 'no_t38_data_back')
+    assert record['summary'] == 'A fax call from +13035550100 came in, but no fax data arrived from the carrier.'
+    assert sip_calls.inbound_summary(inbound_call()) == record['summary']
+
+
+def test_a_received_call_with_other_endings_reads_as_no_pages(records):
+    records.record_inbound_event(inbound_call(UniqueID='1.1', Station64='KzE1NTU1NTUwMTk5'))
+    records.record_inbound_event(inbound_call(UniqueID='1.2', Answered='', Caller='<script>'))
+    sentences = sorted(row['summary'] for row in records.page()['items'])
+    assert sentences == ['A fax call from +13035550100 came in, but no pages arrived.',
+                         'The caller hung up before Faxbot answered.']
+    assert records.record_inbound_event(inbound_call(UniqueID='bad id;')) is None
+
+
+@pytest.mark.asyncio
+async def test_inbound_call_events_flow_from_the_manager_connection_into_records(records, monkeypatch):
+    from api.tests.test_native_submission import connected_stream
+    async with connected_stream(monkeypatch) as (client, writer):
+        sip_calls.attach(client, records.engine)
+        try:
+            frame = ''.join(f'{key}: {value}\r\n' for key, value in inbound_call().items()) + '\r\n'
+            client.reader.feed_data(frame.encode())
+            await asyncio.sleep(0.05)
+        finally:
+            sip_calls.detach()
+    [record] = records.page(direction='inbound')['items']
+    assert record['verdict'] == 'no_t38_data_back' and record['caller'] == '+13035550100'

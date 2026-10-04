@@ -10,7 +10,7 @@ import typer
 from typer.core import TyperGroup
 
 from . import profiles, state
-from .commands import access, admin, delivery, fax, operations, settings, setup
+from .commands import access, admin, delivery, fax, operations, settings, setup, trunk
 from .errors import CliError
 from .output import Output, error
 from .state import State
@@ -87,6 +87,7 @@ def main(
 fax.register(app)
 access.register(app)
 settings.register(app)
+trunk.register(app)
 delivery.register(app)
 operations.register(app)
 setup.register(app)

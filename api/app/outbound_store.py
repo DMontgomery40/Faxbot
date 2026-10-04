@@ -518,7 +518,8 @@ class OutboundStore:
                 attempt_id=attempt_id, details={'category': category}, dedupe_key=dedupe)
         return _ObservationRefusal(message)
 
-    def _observe(self, connection, row, *, attempt_id, profile_id, provider_sid, status, now, event_key=None):
+    def _observe(self, connection, row, *, attempt_id, profile_id, provider_sid, status, now, event_key=None,
+                 error=None):
         if status not in OBSERVED:
             raise DeliveryConflict('Provider status requires reconciliation.')
         if (provider_sid is not None and (not isinstance(provider_sid, str) or not provider_sid
@@ -567,7 +568,7 @@ class OutboundStore:
             return True
         self._update(connection, row, now, state=status, claim_expires_at=None)
         connection.execute(self.configuration.jobs.update().where(self.configuration.jobs.c.id == row['id']).values(
-            status=status, provider_sid=final_sid, error=None, updated_at=now))
+            status=status, provider_sid=final_sid, error=error if status == 'failed' else None, updated_at=now))
         return True
 
     def record_receipt(self, claim, *, provider_sid, status, now=None):
@@ -591,14 +592,17 @@ class OutboundStore:
             raise DeliveryConflict(result.message)
         return result
 
-    def observe(self, job_id, *, attempt_id, profile_id, provider_sid, status, event_key, now=None):
-        """Call only after the transport owner authenticates the bounded event."""
+    def observe(self, job_id, *, attempt_id, profile_id, provider_sid, status, event_key, now=None, error=None):
+        """Call only after the transport owner authenticates the bounded event.
+
+        ``error`` is one plain sentence shown with a final failure, never provider text.
+        """
         if not isinstance(event_key, str) or not event_key or len(event_key) > 512:
             raise DeliveryConflict('Invalid provider event identity.')
         with self.configuration._locked() as connection:
             result = self._observe(connection, self._row(connection, job_id), attempt_id=attempt_id,
                 profile_id=profile_id, provider_sid=provider_sid, status=status,
-                event_key=event_key, now=now or datetime.utcnow())
+                event_key=event_key, now=now or datetime.utcnow(), error=error)
         if isinstance(result, _ObservationRefusal):
             raise DeliveryConflict(result.message)
         return result

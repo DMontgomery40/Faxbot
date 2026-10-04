@@ -7,7 +7,7 @@ from datetime import datetime
 import pytest
 from fastapi.testclient import TestClient
 
-from app import main, sip_calls
+from app import main, sip_calls, sip_http, stun
 from app.ami import ami_client
 
 
@@ -24,6 +24,25 @@ def _client(monkeypatch, extra):
         monkeypatch.setenv(name, value)
     monkeypatch.setenv('FAXBOT_CONSOLE_ORIGINS', 'https://testserver')
     return TestClient(main.app, base_url='https://testserver', headers={'Origin': 'https://testserver'})
+
+
+# What STUN shows from behind an ordinary router: a public address that is not
+# the container's own, with port numbers changed on the way out.
+ROUTER = stun.Probe(public_ip='198.51.100.7', local_ip='172.18.0.5', local_port=40000,
+                    mapped=(('stun.telnyx.com:3478', 61001), ('stun.cloudflare.com:3478', 61002)))
+
+
+@pytest.fixture(autouse=True)
+def network(monkeypatch):
+    """No test reaches the internet: the STUN probe answers from this fixture."""
+    seen = {'result': ROUTER, 'servers': []}
+
+    def probe(servers, **_):
+        seen['servers'].append(tuple(servers))
+        return seen['result']
+    monkeypatch.setattr(stun, 'probe', probe)
+    monkeypatch.setattr(sip_http, '_probes', {})
+    return seen
 
 
 @pytest.fixture
@@ -56,9 +75,12 @@ def test_presets_list_documented_carriers_with_dated_sources(client):
 def test_status_without_a_trunk_says_so_in_one_sentence(bare_client):
     body = bare_client.get('/admin/sip/status', headers=ADMIN).json()
     assert body == {'configured': False, 'applied': False, 'asterisk_connected': False,
-                    'registration': 'unknown', 'registration_text': 'Registration status is not available.',
+                    'registration': 'unknown', 'registration_transport': None,
+                    'registration_text': 'Registration status is not available.',
                     'reachability': 'unknown',
                     'reachability_text': 'Faxbot cannot tell yet whether the carrier answers.',
+                    'round_trip_ms': None, 'internet_address': None, 'behind_router': None, 'port_numbers': None,
+                    'public_address_text': None, 'ports_text': None, 'last_call_text': None, 'last_call_at': None,
                     'message': 'No SIP trunk is set up. Choose your carrier to start.'}
 
 
@@ -92,7 +114,10 @@ def test_status_reports_registration_and_reachability_from_asterisk(client, monk
         calls.append(fields)
         if fields['Action'] == 'PJSIPShowRegistrationsOutbound':
             return ({'response': 'Success', 'value': '', 'message': ''},
-                    [{'ObjectName': 'trunk-registration', 'Status': 'Registered'}])
+                    [{'ObjectName': 'trunk-registration', 'Status': 'Registered', 'Transport': 'transport-tls'}])
+        if fields['Action'] == 'PJSIPShowContacts':
+            return ({'response': 'Success', 'value': '', 'message': ''},
+                    [{'ObjectName': 'trunk-aor@@1f2e3d', 'Status': 'Reachable', 'RoundtripUsec': '38412'}])
         return {'response': 'Success', 'value': 'NOT_INUSE', 'message': ''}, []
 
     client.post('/admin/sip/apply', headers=ADMIN)
@@ -102,7 +127,17 @@ def test_status_reports_registration_and_reachability_from_asterisk(client, monk
     assert (body['registration'], body['reachability'], body['message']) == ('registered', 'reachable',
                                                                              'The trunk is ready.')
     assert calls == [{'Action': 'PJSIPShowRegistrationsOutbound'},
-                     {'Action': 'Getvar', 'Variable': 'DEVICE_STATE(PJSIP/trunk-endpoint)'}]
+                     {'Action': 'Getvar', 'Variable': 'DEVICE_STATE(PJSIP/trunk-endpoint)'},
+                     {'Action': 'PJSIPShowContacts'}]
+    # The transport Asterisk registered over, the check round trip and the address in use, in plain words.
+    assert body['registration_transport'] == 'tls' and body['transport'] == 'tls'
+    assert body['registration_text'] == "The carrier accepted Faxbot's registration over TLS."
+    assert body['reachability_text'] == "The carrier answered Faxbot's check in 38 ms."
+    assert body['internet_address'] == '198.51.100.7' and body['behind_router'] is True
+    assert body['public_address_text'] == ("Faxbot's internet address is 198.51.100.7; your network changes port "
+                                           "numbers, so Telnyx has to follow Faxbot's packets, and the first test "
+                                           "fax shows whether it does.")
+    assert body['ports_text'] == 'No ports need to be opened or forwarded.'
 
     async def rejected(fields, *, collect=False):
         if fields['Action'] == 'PJSIPShowRegistrationsOutbound':
@@ -115,6 +150,65 @@ def test_status_reports_registration_and_reachability_from_asterisk(client, monk
     assert body['registration'] == 'rejected'
     assert body['message'] == ('Asterisk does not let Faxbot read trunk status. '
                                'Restart the Asterisk service to update its access.')
+
+
+def test_status_names_the_address_and_port_behavior_stun_finds(client, network):
+    client.post('/admin/sip/apply', headers=ADMIN)
+    network['result'] = stun.Probe(public_ip='198.51.100.7', local_ip='172.18.0.5', local_port=40000,
+                                   mapped=(('a', 40000), ('b', 40000)))
+    sip_http._probes.clear()
+    body = client.get('/admin/sip/status', headers=ADMIN).json()
+    assert body['port_numbers'] == 'preserved'
+    assert body['public_address_text'] == ("Faxbot's internet address is 198.51.100.7, "
+                                           "and your network keeps port numbers.")
+    network['result'] = stun.Probe(public_ip=None, local_ip=None, local_port=40000, mapped=(('a', None),))
+    sip_http._probes.clear()
+    body = client.get('/admin/sip/status', headers=ADMIN).json()
+    assert body['internet_address'] is None and body['behind_router'] is None
+    assert body['public_address_text'] == ("Faxbot could not learn its internet address, so Telnyx must follow "
+                                           "Faxbot's packets; the first test fax shows whether it does.")
+    assert network['servers'][0] == ('stun.telnyx.com:3478', 'stun.cloudflare.com:3478')
+
+
+def test_a_typed_address_that_differs_from_stun_is_called_out(isolated_installation, monkeypatch):
+    with _client(monkeypatch, {**TRUNK, 'SIP_EXTERNAL_ADDRESS': '203.0.113.10'}) as client:
+        body = client.get('/admin/sip/status', headers=ADMIN).json()
+    assert body['public_address'] == '203.0.113.10'
+    assert body['public_address_text'] == ('The address you entered differs from the one Faxbot sees from the '
+                                           'internet (198.51.100.7).')
+
+
+def test_server_ip_sign_in_behind_a_router_is_refused_in_one_sentence(isolated_installation, monkeypatch, network):
+    refusal = ('Your Faxbot runs behind a router, so sign in with a username and password; '
+               'server IP sign-in needs a public address.')
+    with _client(monkeypatch, {**TRUNK, 'SIP_TRUNK_AUTH': 'ip'}) as client:
+        response = client.post('/admin/sip/apply', headers=ADMIN)
+        assert response.status_code == 400 and response.json()['detail'] == refusal
+        status = client.get('/admin/sip/status', headers=ADMIN).json()
+        assert status['message'] == refusal and status['ports_text'] == refusal
+        assert status['registration_text'] == 'Registration status is not available.'
+        # On a host with its own public address, the same sign-in is applied.
+        network['result'] = stun.Probe(public_ip='198.51.100.7', local_ip='198.51.100.7', local_port=40000,
+                                       mapped=(('a', 40000),))
+        assert client.post('/admin/sip/apply', headers=ADMIN).status_code == 200
+        sip_http._probes.clear()
+        status = client.get('/admin/sip/status', headers=ADMIN).json()
+        assert status['ports_text'] is None and status['message'] != refusal
+        assert status['public_address_text'] == ("Faxbot's internet address is 198.51.100.7, "
+                                                 "and Faxbot is not behind a router.")
+
+
+def test_status_shows_the_newest_call_in_one_sentence(client):
+    engine = client.app.state.configuration_runtime.manager.store.engine
+    records = sip_calls.SipCallRecords(engine)
+    records.record_inbound_event({'UniqueID': '1791075343.12', 'Caller': '+13035550100', 'DID': '+15555550100',
+                                  'Status': 'FAILED', 'Error': 'The call dropped prematurely', 'Pages': '0',
+                                  'Mode': 'T38', 'Answered': '1791075343', 'Ended': '1791075357'})
+    body = client.get('/admin/sip/status', headers=ADMIN).json()
+    assert body['last_call_text'] == 'A fax call from +13035550100 came in, but no fax data arrived from the carrier.'
+    assert body['last_call_at'].endswith('Z')
+    calls = client.get('/admin/sip/calls', headers=ADMIN).json()['items']
+    assert calls[0]['verdict'] == 'no_t38_data_back' and calls[0]['summary'] == body['last_call_text']
 
 
 def test_apply_with_missing_settings_names_fields_only(isolated_installation, monkeypatch):

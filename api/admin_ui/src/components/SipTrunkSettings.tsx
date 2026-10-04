@@ -48,6 +48,13 @@ const EMPTY: TrunkValues = {
   fax_preference_header: false, codecs: '', external_address: '',
 };
 
+// Plain names for the signaling transport; encrypted is the default for carriers that offer it.
+const TRANSPORT_TEXT: Record<string, string> = {
+  tls: 'Encrypted (recommended)',
+  tcp: 'TCP',
+  udp: 'UDP (older)',
+};
+
 const RESULT_TEXT: Record<SipCallRecord['disposition'], string> = {
   answered: 'Answered',
   busy: 'Busy',
@@ -206,7 +213,8 @@ function SipTrunkSettings({ client, showCalls = true }: SipTrunkSettingsProps) {
   };
 
   const statusSeverity = status?.message === 'The trunk is ready.' ? 'success'
-    : status && (status.registration === 'rejected' || status.reachability === 'unreachable') ? 'error' : 'info';
+    : status && (status.registration === 'rejected' || status.reachability === 'unreachable'
+      || (!!status.ports_text && status.ports_text === status.message)) ? 'error' : 'info';
   const needsHost = !!preset && (preset.needs_host || preset.id === 'custom');
   const prefixLogin = !!preset?.ip_dial_prefix && form.auth === 'ip';
 
@@ -263,10 +271,10 @@ function SipTrunkSettings({ client, showCalls = true }: SipTrunkSettingsProps) {
               <InputLabel id="sip-transport-label">Transport</InputLabel>
               <Select labelId="sip-transport-label" label="Transport" value={form.transport}
                 onChange={(event) => update('transport', String(event.target.value))}>
-                <MenuItem value="">{`Default (${preset.transport.toUpperCase()})`}</MenuItem>
-                <MenuItem value="udp">UDP</MenuItem>
-                <MenuItem value="tcp">TCP</MenuItem>
-                <MenuItem value="tls">TLS</MenuItem>
+                <MenuItem value="">{`Default (${TRANSPORT_TEXT[preset.transport] ?? preset.transport.toUpperCase()})`}</MenuItem>
+                <MenuItem value="tls">{TRANSPORT_TEXT.tls}</MenuItem>
+                <MenuItem value="tcp">{TRANSPORT_TEXT.tcp}</MenuItem>
+                <MenuItem value="udp">{TRANSPORT_TEXT.udp}</MenuItem>
               </Select>
             </FormControl>
           </Stack>
@@ -289,9 +297,9 @@ function SipTrunkSettings({ client, showCalls = true }: SipTrunkSettingsProps) {
             helperText="Only if your carrier asks for one."
             onChange={(event) => update('outbound_proxy', event.target.value.trim())} />
 
-          <TextField size="small" fullWidth label="Public IP address (optional)" value={form.external_address}
-            placeholder="203.0.113.10"
-            helperText="Only if Asterisk is behind a router or firewall: the address your carrier should send calls and fax data to."
+          <TextField size="small" fullWidth label="Internet address (optional)" value={form.external_address}
+            placeholder="Automatic"
+            helperText="Leave empty: Faxbot finds its internet address itself and needs no open ports. Enter one only to override it."
             onChange={(event) => update('external_address', event.target.value.trim())} />
 
           <TextField size="small" fullWidth label="Caller ID" value={form.caller_id} required type="tel"
@@ -349,6 +357,18 @@ function SipTrunkSettings({ client, showCalls = true }: SipTrunkSettingsProps) {
               <Typography variant="body2">{status.reachability_text}</Typography>
             </>
           )}
+          {status?.configured && (
+            <>
+              {status.public_address_text && <Typography variant="body2">{status.public_address_text}</Typography>}
+              {status.ports_text && status.ports_text !== status.message
+                && <Typography variant="body2">{status.ports_text}</Typography>}
+              {status.last_call_text && (
+                <Typography variant="body2">
+                  {`Last call${status.last_call_at ? `, ${when(status.last_call_at)}` : ''}: ${status.last_call_text}`}
+                </Typography>
+              )}
+            </>
+          )}
         </Alert>
       </Fade>
 
@@ -369,6 +389,7 @@ function SipTrunkSettings({ client, showCalls = true }: SipTrunkSettingsProps) {
                     <Typography variant="body2">
                       {RESULT_TEXT[call.disposition]}, {connectedTime(call.connected_seconds)}, {call.pages ?? 0} pages, T.38 {call.t38 === 'yes' ? 'yes' : call.t38 === 'no' ? 'no' : 'not known'}
                     </Typography>
+                    {call.summary && <Typography variant="body2">{call.summary}</Typography>}
                   </CardContent>
                 </Card>
               ))}
@@ -384,6 +405,7 @@ function SipTrunkSettings({ client, showCalls = true }: SipTrunkSettingsProps) {
                   <TableCell>Connected</TableCell>
                   <TableCell>Pages</TableCell>
                   <TableCell>T.38</TableCell>
+                  <TableCell>What happened</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
@@ -396,6 +418,7 @@ function SipTrunkSettings({ client, showCalls = true }: SipTrunkSettingsProps) {
                     <TableCell>{connectedTime(call.connected_seconds)}</TableCell>
                     <TableCell>{call.pages ?? '—'}</TableCell>
                     <TableCell>{call.t38 === 'yes' ? 'Yes' : call.t38 === 'no' ? 'No' : 'Not known'}</TableCell>
+                    <TableCell>{call.summary ?? ''}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>

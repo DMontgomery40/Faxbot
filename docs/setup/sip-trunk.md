@@ -15,6 +15,7 @@ Telnyx documents T.38 fax on its SIP connections, so it is the carrier to start 
 3. Under the connection's codecs, keep only **G.711 U** and **G.711 A**.
 4. Set **T.38 fax re-invite initiated by** to **Telnyx**. When you send a fax, Telnyx switches the call to T.38 as soon as the receiving machine answers. Faxbot also works with **Customer**, but then it waits about ten seconds before switching the call itself. This option does not affect faxes you receive: Faxbot switches those calls to T.38 itself.
 5. Buy or port a number, assign it to the connection, and turn on **Enable T.38 Fax Gateway** for that number.
+6. Under the connection's inbound settings, set **SIP Transport Protocol** to **TLS**, the same encrypted connection Faxbot registers over, so Telnyx sends incoming calls down it. Leave **Encrypted Media (SRTP)** off: Telnyx does not support it with T.38.
 
 A Telnyx trial account can only call verified numbers until you upgrade it.
 
@@ -25,8 +26,8 @@ A Telnyx trial account can only call verified numbers until you upgrade it.
 | Carrier | Telnyx |
 | How Faxbot signs in | Username and password |
 | Server | Leave empty to use `sip.telnyx.com` |
-| Port | Leave empty to use 5060 |
-| Transport | Leave as the default, UDP |
+| Port | Leave empty to use 5061 |
+| Transport | Leave as the default, **Encrypted (recommended)**. Choose **TCP** if the encrypted connection fails, and **UDP (older)** only as a last resort |
 | Username and password | The connection's credentials |
 | Caller ID | Your Telnyx number in international format, such as `+17205550100` |
 | Fax numbers on this trunk | The same number, in the same format |
@@ -68,7 +69,14 @@ Carrier pages used for the presets:
 2. Choose your carrier and how Faxbot signs in. Fill in the server if the carrier asks for one, then the username and password.
 3. Enter your caller ID and the fax numbers the carrier sends to this trunk.
 4. Select **Save trunk settings**, then **Apply to Asterisk**, then restart the Asterisk service (for example `docker compose restart asterisk`).
-5. Select **Check trunk status**. "The trunk is ready." means the carrier accepted Faxbot and answers its checks.
+5. Select **Check trunk status**. "The trunk is ready." means the carrier accepted Faxbot and answers its checks. The same check from the command line is `faxbot trunk status`.
+
+**Check trunk status** answers in one sentence per line:
+
+- how the carrier answered, for example "The carrier accepted Faxbot's registration over TLS." and "The carrier answered Faxbot's check in 38 ms.";
+- Faxbot's internet address, which it learns itself with STUN (from the carrier's STUN server when there is one, compared with a second public STUN server), and whether your network keeps or changes port numbers on the way out;
+- "No ports need to be opened or forwarded." for username and password sign-in;
+- the newest call, in the same sentence Recent calls shows.
 
 If you manage settings with an environment file instead of the console, set the `SIP_TRUNK_*` values below and run `docker compose run --rm api python -m app.sip_trunk write`, then restart Asterisk.
 
@@ -84,19 +92,21 @@ If you manage settings with an environment file instead of the console, set the 
 | `SIP_T38_ENABLED` | `true` by default |
 | `SIP_FAX_PREFERENCE_HEADER` | `false` by default; see below |
 | `SIP_TRUNK_CODECS` | `ulaw`, `alaw` or both; leave empty for the preset |
-| `SIP_EXTERNAL_ADDRESS` | Your public IP address, only when Asterisk is behind a router or firewall |
+| `SIP_EXTERNAL_ADDRESS` | Leave empty: Faxbot finds its internet address itself. Only an override for a host whose public address you want to state |
 
 Asterisk reads the trunk when it starts. Faxbot writes it to `asterisk/pjsip.conf` inside the shared fax data folder; while that file exists it replaces the older `SIP_USERNAME`, `SIP_PASSWORD` and `SIP_SERVER` settings.
 
 ### Behind a router: nothing to open
 
-With username and password sign-in you do not open, publish or forward any port, and the default Docker Compose file publishes none. Asterisk registers with the carrier and keeps that connection alive, and the carrier sends incoming calls back over it. On every call Asterisk sends the first audio and T.38 packets itself, so your router lets the carrier's answer back in on the same path. Leave **Public IP address** empty; it is only an override for a host whose address you want to state yourself.
+With username and password sign-in you do not open, publish or forward any port, and the default Docker Compose file publishes none. Asterisk registers with the carrier over one encrypted connection (TLS on port 5061 for Telnyx) and keeps it alive with a keepalive every 30 seconds and a carrier check every 30 seconds (every 25 seconds over UDP, with registration renewed every two minutes, inside common router timeouts). The carrier sends incoming calls back over that connection. On every call Asterisk sends the first audio and T.38 packets itself, and a small audio keepalive every two seconds when nothing else is sent, so your router lets the carrier's answer back in on the same path. Leave **Internet address** empty; it is only an override for a host whose address you want to state yourself. If you enter one that differs from what Faxbot sees, **Check trunk status** says so.
+
+Encryption also hides the call setup from router features that rewrite it (often called SIP ALG). If **Check trunk status** keeps saying Faxbot is not registered over the encrypted connection, switch **Transport** to TCP, apply again and restart Asterisk.
 
 This works with carriers that send their media back to wherever Faxbot's packets come from, which Telnyx does for audio. Whether Telnyx does the same for T.38 data is settled by your first test fax. When a carrier does not, the call connects but no fax data arrives, and Faxbot says so on that call: "The call connected but no fax data came back from the carrier." In that case, run Faxbot's fax engine on a host with a public address, or use a cloud fax provider.
 
 ### Server IP sign-in needs a public host
 
-A carrier that signs in by IP address (AnveoDirect, or Telnyx and Flowroute set to IP sign-in) sends calls to a fixed public address, which a router does not pass on. Use it only on a host with its own public address, and start Compose with the public override, which publishes SIP and one 32-port media range that Asterisk then uses exactly:
+A carrier that signs in by IP address (AnveoDirect, or Telnyx and Flowroute set to IP sign-in) sends calls to a fixed public address, which a router does not pass on. When Faxbot sees it is behind a router, **Apply to Asterisk** refuses that sign-in with "Your Faxbot runs behind a router, so sign in with a username and password; server IP sign-in needs a public address." Use it only on a host with its own public address, and start Compose with the public override, which publishes SIP and one 32-port media range that Asterisk then uses exactly:
 
 ```
 docker compose -f docker-compose.yml -f docker-compose.public.yml up -d
@@ -155,8 +165,20 @@ For every call on the trunk Faxbot keeps a call record:
 - when the call started, was answered and ended, and the connected seconds;
 - the result: answered, busy, network busy, no answer, failed, or not known yet;
 - whether the call used T.38, how many pages moved, and the other machine's station ID;
-- the reason a call or fax failed.
+- the reason a call or fax failed, and one sentence about what happened.
 
 A call whose outcome Faxbot cannot confirm stays "not known yet" and is never sent again automatically.
 
-**Recent calls** under the trunk settings lists them, newest first. Delivery routes use the connected seconds to estimate what each fax cost.
+**Recent calls** under the trunk settings lists them, newest first, with that sentence (`faxbot trunk calls` prints the same list). When a fax over the trunk fails, **Jobs** shows the same sentence for that fax. The sentences you may see:
+
+| Sentence | What it means |
+| --- | --- |
+| Sent: 2 pages confirmed by the receiving machine. / Received: 2 pages. | The fax went through. |
+| The call connected but no fax data came back from the carrier. | The carrier never sent fax data back to Faxbot's path; the network, not the other fax machine, failed. This is the pattern of a carrier that does not follow Faxbot's packets. |
+| The call connected but no sound came back from the carrier. | The call stayed audio and not one audio packet arrived. |
+| The call connected but the other end did not answer as a fax machine. | Sound came back, but no fax signal: often a person or a voice line answered. |
+| The other fax machine answered but the fax failed: … | The network worked; the fax machines did not finish. The reason is the fax engine's own. |
+| A fax call from +1 303 … came in, but no pages arrived. | Someone called your fax number and no page was received, so the Inbox has nothing; the Dashboard's inbound card names the newest such call from the last day. |
+| The number was busy. / Nobody answered the call. | The call never connected. |
+
+Faxbot tells "no fax data came back" apart from a fax failure by the result of the call: no page and no station ID from the other machine, and either no audio packet at all or a fax engine ending that means nothing ever arrived (a first-message timeout, or the other side hanging up first). After a switch to T.38, Asterisk no longer counts audio packets, so only the fax engine's ending decides. Delivery routes use the connected seconds to estimate what each fax cost.

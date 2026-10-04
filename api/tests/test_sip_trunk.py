@@ -15,6 +15,10 @@ PASSWORD = 'synthetic-Trunk-Pass!42'
 CASES = {
     'telnyx-registration': {'SIP_TRUNK_PRESET': 'telnyx', 'SIP_TRUNK_USERNAME': 'faxbotuser',
                             'SIP_TRUNK_PASSWORD': PASSWORD},
+    'telnyx-registration-tcp': {'SIP_TRUNK_PRESET': 'telnyx', 'SIP_TRUNK_USERNAME': 'faxbotuser',
+                                'SIP_TRUNK_PASSWORD': PASSWORD, 'SIP_TRUNK_TRANSPORT': 'tcp'},
+    'telnyx-registration-udp': {'SIP_TRUNK_PRESET': 'telnyx', 'SIP_TRUNK_USERNAME': 'faxbotuser',
+                                'SIP_TRUNK_PASSWORD': PASSWORD, 'SIP_TRUNK_TRANSPORT': 'udp'},
     'telnyx-ip': {'SIP_TRUNK_PRESET': 'telnyx', 'SIP_TRUNK_AUTH': 'ip'},
     'signalwire-registration': {'SIP_TRUNK_PRESET': 'signalwire', 'SIP_TRUNK_HOST': 'example.sip.signalwire.com',
                                 'SIP_TRUNK_USERNAME': 'faxbot', 'SIP_TRUNK_PASSWORD': PASSWORD},

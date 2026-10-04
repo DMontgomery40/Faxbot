@@ -131,7 +131,7 @@ def test_help_lists_every_command_group_without_starting_the_server():
     for group in ('send', 'status', 'jobs', 'inbound', 'users', 'integrations', 'groups', 'roles', 'access',
                   'resources', 'keys', 'sessions', 'mailboxes', 'numbers', 'audit', 'settings', 'providers',
                   'routing', 'intake', 'direct', 'cases', 'pair', 'owner', 'health', 'diagnostics', 'me',
-                  'config', 'admin'):
+                  'config', 'admin', 'trunk'):
         assert f' {group} ' in plain
 
 
@@ -530,3 +530,39 @@ def test_committed_command_reference_is_current():
                                capture_output=True, text=True, timeout=60, check=True).stdout
     committed = (REPO_ROOT / 'docs/reference/cli.md').read_text(encoding='utf-8')
     assert generated == committed, 'Run make cli-docs and commit docs/reference/cli.md.'
+
+
+# -- carrier SIP trunk -----------------------------------------------------------------
+
+@pytest.fixture
+def trunk_cli(monkeypatch, tmp_path):
+    from app import sip_http, stun
+    monkeypatch.setattr(stun, 'probe', lambda servers, **_: stun.Probe(
+        public_ip='198.51.100.7', local_ip='172.18.0.5', local_port=40000,
+        mapped=(('stun.telnyx.com:3478', 61001), ('stun.cloudflare.com:3478', 61002))))
+    monkeypatch.setattr(sip_http, '_probes', {})
+    for client in _serve(monkeypatch, tmp_path, SIP_TRUNK_PRESET='telnyx', SIP_TRUNK_USERNAME='faxbotuser',
+                         SIP_TRUNK_PASSWORD='synthetic-Trunk-Pass!42', SIP_TRUNK_CALLER_ID='+15555550100'):
+        yield Cli(client)
+
+
+def test_trunk_status_and_calls_read_as_plain_sentences(trunk_cli):
+    from app import sip_calls
+    engine = trunk_cli.client.app.state.configuration_runtime.manager.store.engine
+    sip_calls.SipCallRecords(engine).record_inbound_event({
+        'UniqueID': '1791075343.12', 'Caller': '+13035550100', 'DID': '+15555550100', 'Status': 'FAILED',
+        'Error': 'The call dropped prematurely', 'Pages': '0', 'Mode': 'T38', 'Answered': '1791075343',
+        'Ended': '1791075357'})
+    status = trunk_cli('trunk', 'status')
+    assert status.exit_code == 0, status.stdout
+    for sentence in ('Apply these settings to Asterisk, then restart the Asterisk service.',
+                     'Encrypted (TLS)', '198.51.100.7', 'No ports need to be opened or forwarded.',
+                     "your network changes port numbers, so Telnyx has to follow Faxbot's packets",
+                     'A fax call from +13035550100 came in, but no fax data arrived from the carrier.'):
+        assert sentence in status.stdout, sentence
+    assert 'synthetic-Trunk-Pass' not in status.stdout and 'no_t38' not in status.stdout
+    assert trunk_cli.json('trunk', 'status')['behind_router'] is True
+    calls = trunk_cli('trunk', 'calls', '--direction', 'inbound')
+    assert calls.exit_code == 0 and 'What happened' in calls.stdout and '+13035550100' in calls.stdout
+    assert trunk_cli.json('trunk', 'calls')['items'][0]['verdict'] == 'no_t38_data_back'
+    assert trunk_cli('trunk', 'calls', '--direction', 'sideways').exit_code != 0

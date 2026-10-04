@@ -60,6 +60,31 @@ describe('Dashboard delivery cards', () => {
     expect(navigate).not.toHaveBeenCalled();
   });
 
+  it('names a received trunk call from the last day that left no fax', async () => {
+    const recent = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    const old = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
+    const call = (id: string, startedAt: string, jobId: string | null, summary: string) => ({
+      id, direction: 'inbound', job_id: jobId, attempt_id: null, trunk_preset: 'telnyx', did: '+15555550100',
+      caller: '+13035550100', called: '+15555550100', started_at: startedAt, answered_at: startedAt, ended_at: startedAt,
+      disposition: 'answered', connected_seconds: 14, t38: 'yes', pages: 0, fax_status: 'FAILED',
+      remote_station_id: null, error_cause: null, fax_preference: false, verdict: null, summary });
+    server.use(http.get('/admin/sip/calls', () => HttpResponse.json({ items: [
+      call('stored', recent, 'f'.repeat(32), 'Received: 2 pages.'),
+      call('missed', recent, null, 'A fax call from +13035550100 came in, but no pages arrived.'),
+      call('older', old, null, 'A fax call from +13035550199 came in, but no fax data arrived from the carrier.'),
+    ], next_cursor: null })));
+    render(<Dashboard client={client()} />);
+    expect((await screen.findByTestId('missed-inbound-call')).textContent)
+      .toBe('A fax call from +13035550100 came in, but no pages arrived.');
+  });
+
+  it('says nothing about trunk calls when there was no missed call or no access to call history', async () => {
+    server.use(http.get('/admin/sip/calls', () => HttpResponse.json({ detail: 'Forbidden' }, { status: 403 })));
+    render(<Dashboard client={client()} />);
+    expect(await screen.findByText('Inbound Fax')).toBeTruthy();
+    expect(screen.queryByTestId('missed-inbound-call')).toBeNull();
+  });
+
   it('says plainly when nothing was sent', async () => {
     render(<Dashboard client={client()} />);
     expect(await screen.findByText('No faxes sent in the last 30 days.')).toBeTruthy();

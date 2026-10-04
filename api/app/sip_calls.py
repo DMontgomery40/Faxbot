@@ -35,9 +35,175 @@ COLUMNS = ('id', 'direction', 'job_id', 'attempt_id', 'trunk_preset', 'did', 'ca
            'answered_at', 'ended_at', 'disposition', 'connected_seconds', 't38', 'pages', 'fax_status',
            'remote_station_id', 'error_cause', 'fax_preference')
 
+NO_FAX_DATA = 'The call connected but no fax data came back from the carrier.'
+NO_SOUND = 'The call connected but no sound came back from the carrier.'
+NOT_A_FAX = 'The call connected but the other end did not answer as a fax machine.'
+# Verdicts for an answered call that delivered no fax. The no-data ones mean the
+# network path failed; the other two mean the network carried the call.
+NO_DATA_VERDICTS = frozenset({'no_media_back', 'no_t38_data_back', 'no_fax_data_back'})
+VERDICTS = NO_DATA_VERDICTS | {'no_fax_answer', 'remote_fax_failed'}
+# Fax engine endings that mean the far end never sent one fax message: spandsp's
+# T0 and T1 timers run only until the first message arrives, res_fax's TIMEOUT
+# means nothing moved in either direction, and a hang-up or an unanswered
+# repeated command counts only with no page and no remote station either. In
+# the loopback proof, against a carrier that never followed Faxbot's packets, a
+# sent fax ended "The call dropped prematurely" (the carrier hung up first) and
+# a received one ended either that way or "Disconnected after permitted
+# retries" (Faxbot's own DIS went unanswered three times), depending on timing.
+_NO_MESSAGE_ERRORS = frozenset({
+    'timed out waiting for initial communication', 'timed out waiting for the first message',
+    'timeout', 'hangup', 'channel_hangup', 'the call dropped prematurely', 'remote channel hungup',
+    'disconnected after permitted retries'})
+_DISPOSITION_TEXT = {
+    'busy': 'The number was busy.',
+    'no_answer': 'Nobody answered the call.',
+    'congestion': 'The carrier network was too busy to connect the call.',
+    'failed': 'The call did not connect.',
+    'ambiguous': 'Faxbot does not know yet how this call ended.',
+}
+_UNFINISHED = 'The call connected but the fax did not finish.'
+
 
 class SipCallRecordError(RuntimeError):
     """Sanitized storage failure; never includes SQL or values."""
+
+
+def _decoded(encoded, plain=''):
+    """Base64 text from the dialplan, falling back to the plain field; printable characters only."""
+    text = str(plain or '')
+    if encoded:
+        try:
+            text = base64.b64decode(str(encoded), validate=True).decode('utf-8', 'replace')
+        except (binascii.Error, ValueError):
+            pass
+    return ''.join(character for character in text if character.isprintable()).strip()
+
+
+def _count(value):
+    """An audio packet count, or None when Asterisk could not count (after a T.38 switch)."""
+    text = str(value or '').strip()
+    return int(text) if text.isdigit() and len(text) <= 9 else None
+
+
+def _reason(event):
+    """The fax engine's own words for how the call ended."""
+    return _decoded(event.get('Error64'), event.get('Error')) or _decoded(event.get('Status64'))
+
+
+def verdict(event):
+    """Why a connected fax call delivered nothing, from a FaxResult or FaxInboundCall event.
+
+    None for a call that was not answered or whose fax went through. Packet
+    counts are trusted only when the call ended in audio: after a T.38 switch
+    Asterisk no longer has the audio counters, so the T.38 verdict comes from
+    the mode, the pages and the fax engine's reason.
+    """
+    if not str(event.get('Answered') or '').strip():
+        return None
+    if str(event.get('Status') or '').strip().upper() == 'SUCCESS':
+        return None
+    if (_pages(event.get('Pages')) or 0) > 0 or _station(event.get('Station64')):
+        return 'remote_fax_failed'
+    mode = str(event.get('Mode') or '').strip().lower()
+    received = _count(event.get('RtpRx')) if mode != 't38' else None
+    reasons = {_decoded(event.get('Error64'), event.get('Error')).lower(), _decoded(event.get('Status64')).lower()}
+    if received == 0:
+        return 'no_media_back'
+    if received is not None:
+        # Sound came back, so the network path works; the far end sent no fax signal.
+        return 'no_fax_answer' if reasons & _NO_MESSAGE_ERRORS else 'remote_fax_failed'
+    if reasons & _NO_MESSAGE_ERRORS:
+        return 'no_t38_data_back' if mode == 't38' else 'no_fax_data_back'
+    return 'remote_fax_failed'
+
+
+def _error_cause(event):
+    """What error_cause stores for a failed call: the verdict, the engine's words, the hang-up cause."""
+    error = re.sub(r'[^A-Za-z0-9 _.,-]', '', _reason(event))
+    cause = str(event.get('Cause') or '').strip()
+    suffix = f' (cause {cause})' if cause.isdigit() and len(cause) <= 3 else ''
+    found = verdict(event)
+    prefix = found + ': ' if found else ''
+    room = 64 - len(prefix) - len(suffix)
+    return prefix + (error or 'fax failed')[:room].rstrip() + suffix
+
+
+def _sentence(found, reason=''):
+    if found == 'no_media_back':
+        return NO_SOUND
+    if found in NO_DATA_VERDICTS:
+        return NO_FAX_DATA
+    if found == 'no_fax_answer':
+        return NOT_A_FAX
+    if found == 'remote_fax_failed':
+        reason = reason.strip().rstrip('.')
+        return (f'The other fax machine answered but the fax failed: {reason}.' if reason
+                else 'The other fax machine answered but the fax failed.')
+    return _UNFINISHED
+
+
+def _pages_text(pages):
+    return '1 page' if pages == 1 else f'{pages} pages'
+
+
+def result_summary(event):
+    """One plain sentence for a finished outbound fax call, or None when the fax went through."""
+    if str(event.get('Status') or '').strip().upper() == 'SUCCESS':
+        return None
+    return _sentence(verdict(event), _reason(event)[:60])
+
+
+def _no_pages(caller, found):
+    """A received call that left no fax image, named by its caller."""
+    who = f'A fax call from {caller}' if caller else 'A fax call'
+    if found in NO_DATA_VERDICTS:
+        return f'{who} came in, but no fax data arrived from the carrier.'
+    return f'{who} came in, but no pages arrived.'
+
+
+def inbound_summary(event):
+    """One plain sentence for a received call that left no fax image."""
+    if not str(event.get('Answered') or '').strip():
+        return 'The caller hung up before Faxbot answered.'
+    return _no_pages(_number(event.get('Caller')), verdict(event))
+
+
+def originate_summary(event):
+    """One plain sentence for a call that never connected, or None when it did."""
+    if str(event.get('Response') or '').strip().lower() != 'failure':
+        return None
+    disposition = _REASONS.get(str(event.get('Reason') or '').strip(), 'failed')
+    return _DISPOSITION_TEXT['failed' if disposition == 'answered' else disposition]
+
+
+def stored_verdict(record):
+    """The verdict a stored call record carries: sent, received, a failure verdict, or None."""
+    if record['disposition'] == 'answered' and record['fax_status'] == 'SUCCESS':
+        return 'sent' if record['direction'] == 'outbound' else 'received'
+    code = (record['error_cause'] or '').split(':', 1)[0]
+    return code if code in VERDICTS else None
+
+
+def call_summary(record):
+    """One plain sentence for a stored call record (public field names)."""
+    disposition = record['disposition']
+    if disposition == 'failed' and record['direction'] == 'inbound':
+        return 'The caller hung up before Faxbot answered.'
+    if disposition != 'answered':
+        return _DISPOSITION_TEXT[disposition]
+    found = stored_verdict(record)
+    if record['direction'] == 'inbound' and record['job_id'] is None and found != 'received':
+        return _no_pages(record['caller'], found)
+    if found == 'sent':
+        return f'Sent: {_pages_text(record["pages"] or 0)} confirmed by the receiving machine.'
+    if found == 'received':
+        return f'Received: {_pages_text(record["pages"] or 0)}.'
+    if found:
+        reason = (record['error_cause'] or '').split(':', 1)[1]
+        return _sentence(found, re.sub(r' \(cause [0-9]+\)$', '', reason.strip()))
+    if record['ended_at'] is None:
+        return 'The call connected and the fax is still in progress.'
+    return _UNFINISHED
 
 
 def utcnow():
@@ -201,12 +367,7 @@ class SipCallRecords:
         now = now or utcnow()
         answered, ended = _epoch(event.get('Answered')), _epoch(event.get('Ended')) or now
         status = re.sub(r'[^A-Z_]', '', str(event.get('Status') or '').upper())[:16] or None
-        error = re.sub(r'[^A-Za-z0-9 _.-]', '', str(event.get('Error') or ''))[:40]
-        cause = str(event.get('Cause') or '').strip()
-        if status == 'SUCCESS':
-            error_cause = None
-        else:
-            error_cause = (error or 'fax failed') + (f' (cause {cause})' if cause.isdigit() else '')
+        error_cause = None if status == 'SUCCESS' else _error_cause(event)
 
         def apply(connection, table):
             row = self._outbound_row(connection, table, job_id, attempt_id, now)
@@ -241,8 +402,32 @@ class SipCallRecords:
             'remote_station_id': _station(call.get('remote_station_id_b64')), 'error_cause': None,
             'fax_preference': 0, 'created_at': now, 'updated_at': now}
 
+        return self._insert_inbound(record)
+
+    def record_inbound_event(self, event, *, preset=None, now=None):
+        """A received call that left no fax image (the FaxInboundCall manager event)."""
+        call_id = str(event.get('UniqueID') or '').strip()
+        if not _CALL.fullmatch(call_id):
+            return None
+        now = now or utcnow()
+        started, answered = _epoch(event.get('Started')), _epoch(event.get('Answered'))
+        ended = _epoch(event.get('Ended')) or now
+        did, caller = _number(event.get('DID')), _number(event.get('Caller'))
+        status = re.sub(r'[^A-Z_]', '', str(event.get('Status') or '').upper())[:16] or None
+        record = {
+            'id': uuid4().hex, 'direction': 'inbound', 'call_id': call_id, 'job_id': None, 'attempt_id': None,
+            'trunk_preset': str(preset or '')[:32] or None, 'did': did, 'caller': caller, 'called': did,
+            'started_at': started or answered or now, 'answered_at': answered, 'ended_at': ended,
+            'disposition': 'answered' if answered else 'failed', 'connected_seconds': _seconds(answered, ended),
+            't38': _t38(event.get('Mode')), 'pages': _pages(event.get('Pages')), 'fax_status': status,
+            'remote_station_id': _station(event.get('Station64')),
+            'error_cause': _error_cause(event) if answered else 'caller hung up before answer',
+            'fax_preference': 0, 'created_at': now, 'updated_at': now}
+        return self._insert_inbound(record)
+
+    def _insert_inbound(self, record):
         def apply(connection, table):
-            existing = self._find(connection, table, 'inbound', call_id)
+            existing = self._find(connection, table, 'inbound', record['call_id'])
             if existing is not None:
                 return existing['id']
             connection.execute(table.insert().values(**record))
@@ -257,7 +442,14 @@ class SipCallRecords:
         for name in ('started_at', 'answered_at', 'ended_at'):
             result[name] = _iso(result[name])
         result['fax_preference'] = bool(result['fax_preference'])
+        result['verdict'] = stored_verdict(result)
+        result['summary'] = call_summary(result)
         return result
+
+    def latest(self):
+        """The newest call record, or None when there are none yet."""
+        items = self.page(limit=1)['items']
+        return items[0] if items else None
 
     def for_attempt(self, attempt_id):
         """Call records for one outbound attempt (normally one), oldest first."""
@@ -331,6 +523,24 @@ _on_originate_response = _safely('record_originate_response')
 _on_fax_result = _safely('record_fax_result')
 
 
+def _active_preset():
+    try:
+        from .config import configuration_values
+        return configuration_values().sip_trunk_preset or None
+    except Exception:
+        return None
+
+
+def _on_inbound_call(event):
+    records = _current
+    if records is None:
+        return
+    try:
+        records.record_inbound_event(event, preset=_active_preset())
+    except Exception:
+        logging.getLogger(__name__).warning('A SIP call record could not be saved.')
+
+
 def attach(ami_client, engine):
     """Record calls from this AMI client into ``engine``; safe to call on every start."""
     global _current
@@ -338,6 +548,7 @@ def attach(ami_client, engine):
     ami_client.on_submission(_on_submission)
     ami_client.on_originate_response(_on_originate_response)
     ami_client.on_fax_result(_on_fax_result)
+    ami_client.on_inbound_call(_on_inbound_call)
     return _current
 
 

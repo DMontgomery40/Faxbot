@@ -120,6 +120,7 @@ Checked items are implemented in the current source checkout. Unchecked items ar
 - [x] Recipient-approved case packets, accepted-document history, and preview through the API.
 - [x] Carrier SIP trunk presets with T.38, per-call records, and native faxes priced by the trunk carrier (proven in a loopback; live carrier call pending).
 - [x] Fax over a SIP trunk from behind a router with no published or forwarded ports: Asterisk starts every flow itself (proven in a loopback; live carrier call pending).
+- [x] Encrypted trunk registration by default, Faxbot's internet address found by STUN, and one plain sentence per trunk call (for example "no fax data came back from the carrier") in Recent calls, Jobs, the Dashboard and `faxbot trunk`.
 - [x] `faxbot` command line covering the product, with stopped-server owner recovery, backup, restore, and database upgrades.
 - [x] One E.164 destination per fax, read for the installation country (UK and US), stored on the job, with versioned idempotent replays.
 - [x] No blank TXT page from a final line break; one-bit TIFF pages stay one-bit in generated PDFs.
