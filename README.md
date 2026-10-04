@@ -95,6 +95,7 @@ The iOS companion connects to your Faxbot server to send faxes and check status.
 
 ## Documentation and development
 
+- [Release notes](docs/release-notes.md), including the [upgrade steps](docs/deployment.md#upgrade-an-installation).
 - [Getting started](docs/getting-started.md), [deployment](docs/deployment.md), and [provider setup](docs/setup/index.md).
 - [API reference](docs/api.md), [access and sign-in API](docs/reference/access-api.md), and [reference overview](docs/reference/index.md).
 - [Authentication](docs/security/authentication.md), [access control](docs/security/access-control.md), and [security](docs/security/index.md).

@@ -8,6 +8,7 @@ Guidance for securing MCP transports and webhooks when running Faxbot in product
 - Streamable HTTP (Node and Python MCP)
   - Ports: 3001 (Node), 3004 (Python), or built into the API at `/mcp/http/mcp` with `ENABLE_MCP_HTTP=true`.
   - Each client sends its own Faxbot API key as `Authorization: Bearer <key>` or `X-API-Key`, and the server uses it for that client's requests. Give each client its own key with only the permissions it needs. Requests without a key are refused.
+  - The server built into the API follows the same rule: it never uses the installation key (`API_KEY`) for tool calls. Its host, origin and OAuth settings come from the API's environment, not from Settings.
   - For OAuth, set `OAUTH_ISSUER`, `OAUTH_AUDIENCE`, optionally `OAUTH_JWKS_URL`, and map token subjects to Faxbot keys in `MCP_OAUTH_SUBJECT_KEYS_FILE`.
   - Set `MCP_ALLOWED_HOSTS` to your public host names. Browser origins are refused unless listed in `MCP_ALLOWED_ORIGINS`.
   - Run behind TLS via a reverse proxy; add IP allowlists and rate limits where appropriate.

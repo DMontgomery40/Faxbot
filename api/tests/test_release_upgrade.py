@@ -269,6 +269,11 @@ def test_previous_release_upgrades_with_rows_documents_and_keys(previous_release
     assert status['configuration'] is None
     assert {name: status['counts'][name] for name in ('sent_faxes', 'received_faxes', 'api_keys', 'mailboxes')} == {
         'sent_faxes': 2, 'received_faxes': 2, 'api_keys': 4, 'mailboxes': 1}
+    # The previous release has no installation key yet, so faxbot admin backup cannot cover it:
+    # the upgrade runbook copies the database and data folder by hand before migrating.
+    early = installation._invoke(['--url', NOBODY, 'admin', 'backup', installation.root / 'too-early'])
+    assert early.exit_code == 5 and 'installation key file' in early.stderr
+    assert not (installation.root / 'too-early').exists()
 
     assert installation.admin_json('migrate') == {'before': None, 'after': HEAD, 'current': True, 'changed': True}
     assert installation.admin_json('migrate')['changed'] is False
