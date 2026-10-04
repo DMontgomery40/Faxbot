@@ -319,7 +319,9 @@ async def costs(request: Request, since: datetime | None = Query(default=None)):
 def _unrecorded_view(entry):
     """Carrier records Faxbot has no call record of: already in the charged total, counted here too."""
     return {'unrecorded_calls': entry.get('unrecorded', 0), 'unrecorded_cost': _money(entry.get('unrecorded_micros', {})),
-            'unrecorded_matched_to_faxes': entry.get('unrecorded_attached', 0)}
+            'unrecorded_matched_to_faxes': entry.get('unrecorded_attached', 0),
+            # The part of unrecorded_cost not matched to a received fax: calls Faxbot has no record of at all.
+            'unrecorded_unmatched_cost': _money(entry.get('unrecorded_unattached_micros', {}))}
 
 
 def _spending(request):
@@ -345,9 +347,14 @@ NO_TELNYX_KEY = ('Faxbot needs a Telnyx API key to read call charges. Add TELNYX
 
 
 def _reconcile_summary(result):
-    unrecorded = result.get('unrecorded_calls', 0)
-    extra = (f" Telnyx billed {unrecorded} {'call' if unrecorded == 1 else 'calls'} Faxbot has no record of."
-             if unrecorded else '')
+    # The same split as the Spending card: a record matched to a received fax is not "no record of".
+    attached = result.get('unrecorded_matched_to_faxes', 0)
+    unattached = result.get('unrecorded_calls', 0) - attached
+    extra = (f" Telnyx billed {unattached} {'call' if unattached == 1 else 'calls'} Faxbot has no record of."
+             if unattached else '')
+    if attached:
+        extra += (f" {attached} {'call' if attached == 1 else 'calls'} reached Faxbot without a call record; "
+                  f"{'its fax is' if attached == 1 else 'their faxes are'} in the Inbox.")
     if result['carrier_unavailable'] and not result['checked']:
         return 'Telnyx could not be reached; Faxbot will ask again later.'
     if not result['checked']:

@@ -130,12 +130,16 @@ def _not_billed(item, unreported):
 def _unrecorded_lines(out, items):
     for item in items:
         calls = item.get('unrecorded_calls') or 0
-        if calls:
-            who = item.get('carrier') or 'Your carrier'
-            matched = item.get('unrecorded_matched_to_faxes') or 0
-            note = f"; {matched} matched a received fax" if matched else ''
-            out.line(f"{who} billed {calls} {'call' if calls == 1 else 'calls'} Faxbot has no record of: "
-                     f"{money(item.get('unrecorded_cost'))}{note}. It is included in Charged.")
+        matched = item.get('unrecorded_matched_to_faxes') or 0
+        who = item.get('carrier') or 'Your carrier'
+        if calls - matched:
+            unmatched = calls - matched
+            out.line(f"{who} billed {unmatched} {'call' if unmatched == 1 else 'calls'} Faxbot has no record of: "
+                     f"{money(item.get('unrecorded_unmatched_cost') or item.get('unrecorded_cost'))}. "
+                     "It is included in Charged.")
+        if matched:
+            out.line(f"{matched} {'call' if matched == 1 else 'calls'} reached Faxbot without a call record; "
+                     f"{'its fax is' if matched == 1 else 'their faxes are'} in the Inbox. Included in Charged.")
 
 
 @routing.command('costs')
