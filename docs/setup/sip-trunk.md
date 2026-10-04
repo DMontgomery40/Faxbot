@@ -93,12 +93,15 @@ If you manage settings with an environment file instead of the console, set the 
 | `SIP_FAX_PREFERENCE_HEADER` | `false` by default; see below |
 | `SIP_TRUNK_CODECS` | `ulaw`, `alaw` or both; leave empty for the preset |
 | `SIP_EXTERNAL_ADDRESS` | Leave empty: Faxbot finds its internet address itself. Only an override for a host whose public address you want to state |
+| `SIP_PUBLIC_ADDRESS_CHECK_MINUTES` | How often Faxbot checks its internet address again; `5` by default, `0` turns it off |
 
 Asterisk reads the trunk when it starts. Faxbot writes it to `asterisk/pjsip.conf` inside the shared fax data folder; while that file exists it replaces the older `SIP_USERNAME`, `SIP_PASSWORD` and `SIP_SERVER` settings.
 
 ### Behind a router: nothing to open
 
 With username and password sign-in you do not open, publish or forward any port, and the default Docker Compose file publishes none. Asterisk registers with the carrier over one encrypted connection (TLS on port 5061 for Telnyx) and keeps it alive with a keepalive every 30 seconds and a carrier check every 30 seconds (every 25 seconds over UDP, with registration renewed every two minutes, inside common router timeouts). The carrier sends incoming calls back over that connection. On every call Asterisk sends the first audio and T.38 packets itself, and a small audio keepalive every two seconds when nothing else is sent, so your router lets the carrier's answer back in on the same path. Leave **Internet address** empty; it is only an override for a host whose address you want to state yourself. If you enter one that differs from what Faxbot sees, **Check trunk status** says so.
+
+Faxbot learns its internet address with STUN when you select **Apply to Asterisk**, and again every five minutes (`SIP_PUBLIC_ADDRESS_CHECK_MINUTES`; `0` turns the repeat off). It tells the carrier that address only when your network keeps port numbers, because then the address and port are exactly right and the call does not depend on the carrier following Faxbot's packets. When your network changes port numbers, a public address with the wrong port would mislead the carrier, so Faxbot leaves it out and the carrier follows Faxbot's packets instead. Asterisk picks the address up when it starts; if your internet address changes later, **Check trunk status** says "Your internet address changed. Restart the Asterisk service so the carrier gets the new address."
 
 Encryption also hides the call setup from router features that rewrite it (often called SIP ALG). If **Check trunk status** keeps saying Faxbot is not registered over the encrypted connection, switch **Transport** to TCP, apply again and restart Asterisk.
 

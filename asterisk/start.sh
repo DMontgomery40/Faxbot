@@ -53,6 +53,8 @@ if [ -f "$trunk_conf" ] && [ ! -L "$trunk_conf" ]; then
   temporary=$(mktemp "$out_dir/.pjsip.conf.XXXXXX")
   cat "$trunk_conf" > "$temporary"
   mv -f "$temporary" "$out_dir/pjsip.conf"
+  # The internet address Faxbot found, or no address lines at all (no network call here).
+  /usr/local/bin/faxbot-public-address "$out_dir/pjsip.conf"
 elif [ -n "${SIP_USERNAME:-}${SIP_PASSWORD:-}${SIP_SERVER:-}" ]; then
   [ -n "${SIP_USERNAME:-}" ] && [ -n "${SIP_PASSWORD:-}" ] && [ -n "${SIP_SERVER:-}" ] \
     || refuse 'Incomplete SIP configuration'

@@ -68,6 +68,9 @@ export interface SipTrunkStatus {
   ports_text?: string | null;
   last_call_text?: string | null;
   last_call_at?: string | null;
+  // The address Asterisk advertised at its last start, and whether that is out of date.
+  advertised_address?: string | null;
+  address_changed?: boolean;
   message: string;
 }
 

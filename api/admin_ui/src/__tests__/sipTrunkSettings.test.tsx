@@ -184,6 +184,7 @@ describe('SIP trunk settings', () => {
     expect(within(status).getByText("The carrier answered Faxbot's check in 38 ms.")).toBeTruthy();
     expect(within(status).getByText(/^Faxbot's internet address is 198.51.100.7; your network changes port numbers/)).toBeTruthy();
     expect(within(status).getByText('No ports need to be opened or forwarded.')).toBeTruthy();
+    expect(screen.getByText('Automatic: Faxbot found 198.51.100.7. Enter an address only to override it.')).toBeTruthy();
     expect(within(status).getByText(/^Last call, .*: The call connected but no fax data came back from the carrier\.$/)).toBeTruthy();
     expect(status.textContent).not.toMatch(/registered|reachable[^.]|no_t38|tls[^.]/);
   });

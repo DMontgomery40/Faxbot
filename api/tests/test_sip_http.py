@@ -1,4 +1,5 @@
 """SIP trunk administration over the real HTTPS stack and access policy."""
+import asyncio
 import json
 import os
 import stat
@@ -7,7 +8,7 @@ from datetime import datetime
 import pytest
 from fastapi.testclient import TestClient
 
-from app import main, sip_calls, sip_http, stun
+from app import main, sip_calls, sip_http, sip_trunk, stun
 from app.ami import ami_client
 
 
@@ -81,6 +82,7 @@ def test_status_without_a_trunk_says_so_in_one_sentence(bare_client):
                     'reachability_text': 'Faxbot cannot tell yet whether the carrier answers.',
                     'round_trip_ms': None, 'internet_address': None, 'behind_router': None, 'port_numbers': None,
                     'public_address_text': None, 'ports_text': None, 'last_call_text': None, 'last_call_at': None,
+                    'address_changed': False,
                     'message': 'No SIP trunk is set up. Choose your carrier to start.'}
 
 
@@ -270,3 +272,50 @@ def test_console_save_then_apply_writes_the_new_trunk(bare_client, isolated_inst
     assert view['preset'] == 'flowroute' and view['password'] == '***' and view['fax_preference_header'] is True
     status = bare_client.get('/admin/sip/status', headers=ADMIN).json()
     assert status['applied'] is True and status['dids'] == ['+15555550100']
+
+
+def test_apply_records_the_internet_address_and_status_says_when_asterisk_needs_a_restart(
+        client, isolated_installation, network):
+    folder = os.path.join(isolated_installation['FAX_DATA_DIR'], 'asterisk')
+    network['result'] = stun.Probe(public_ip='198.51.100.7', local_ip='172.18.0.5', local_port=40000,
+                                   mapped=(('a', 40000), ('b', 40000)))
+    assert client.post('/admin/sip/apply', headers=ADMIN).status_code == 200
+    assert json.loads(open(os.path.join(folder, 'public-address')).read())['ports_preserved'] is True
+    assert '@FAXBOT_PUBLIC_ADDRESS@' in open(os.path.join(folder, 'pjsip.conf')).read()
+    # Asterisk started and advertised the address it was given.
+    open(os.path.join(folder, 'public-address.applied'), 'w').write('198.51.100.7\n')
+    sip_http._probes.clear()
+    body = client.get('/admin/sip/status', headers=ADMIN).json()
+    assert body['address_changed'] is False and body['advertised_address'] == '198.51.100.7'
+    assert body['public_address_text'] == ("Faxbot's internet address is 198.51.100.7, and your network keeps "
+                                           "port numbers, so Telnyx is told exactly where to send fax data.")
+    # The router got a new address; Asterisk still advertises the old one until it restarts.
+    network['result'] = stun.Probe(public_ip='198.51.100.9', local_ip='172.18.0.5', local_port=40000,
+                                   mapped=(('a', 40000), ('b', 40000)))
+    sip_http._probes.clear()
+    body = client.get('/admin/sip/status', headers=ADMIN).json()
+    assert body['address_changed'] is True
+    assert body['message'] == ('Your internet address changed. Restart the Asterisk service so the carrier '
+                               'gets the new address.')
+
+
+@pytest.mark.asyncio
+async def test_the_address_watcher_records_a_new_address_and_ignores_unanswered_probes(isolated_installation,
+                                                                                    network, tmp_path):
+    from app.config_values import ConfigurationValues
+    settings = ConfigurationValues.from_environment({**TRUNK, 'FAX_DATA_DIR': str(tmp_path)})
+    network['result'] = stun.Probe(public_ip='198.51.100.9', local_ip='172.18.0.5', local_port=40000,
+                                   mapped=(('a', 40000), ('b', 40000)))
+    task = asyncio.create_task(sip_http.watch_public_address(minutes=0.001, values_source=lambda: settings))
+    try:
+        for _ in range(100):
+            await asyncio.sleep(0.02)
+            if sip_trunk.read_public_address(settings):
+                break
+        assert sip_trunk.read_public_address(settings)['ip'] == '198.51.100.9'
+        network['result'] = stun.Probe(public_ip=None, local_ip=None, local_port=40000, mapped=(('a', None),))
+        await asyncio.sleep(0.2)
+        assert sip_trunk.read_public_address(settings)['ip'] == '198.51.100.9'
+    finally:
+        task.cancel()
+    assert await sip_http.watch_public_address(minutes=0) is None

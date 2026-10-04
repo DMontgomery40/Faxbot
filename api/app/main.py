@@ -28,7 +28,7 @@ from .conversion import ensure_dir
 from .documents import prepare_upload, UploadPreparationError
 from .ami import ami_client
 from . import sip_calls
-from .sip_http import router as sip_router
+from .sip_http import router as sip_router, watch_public_address
 from .phaxio_service import get_phaxio_service
 from .sinch_service import get_sinch_service
 from .signalwire_service import get_signalwire_service
@@ -123,6 +123,7 @@ async def lifespan(application: FastAPI):
                     worker = OutboundWorker(delivery, RoutedTransport(CapturedTransport(delivery, runtime, ami=ami_client)))
                     tasks.append(asyncio.create_task(worker.run(), name='faxbot-outbound-worker'))
                     tasks.append(asyncio.create_task(OutboundPoller(delivery).run(), name='faxbot-outbound-poller'))
+                    tasks.append(asyncio.create_task(watch_public_address(), name='faxbot-public-address'))
                     yield
             finally:
                 for task in tasks:

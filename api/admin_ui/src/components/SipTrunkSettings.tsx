@@ -299,7 +299,9 @@ function SipTrunkSettings({ client, showCalls = true }: SipTrunkSettingsProps) {
 
           <TextField size="small" fullWidth label="Internet address (optional)" value={form.external_address}
             placeholder="Automatic"
-            helperText="Leave empty: Faxbot finds its internet address itself and needs no open ports. Enter one only to override it."
+            helperText={status?.internet_address && !form.external_address
+              ? `Automatic: Faxbot found ${status.internet_address}. Enter an address only to override it.`
+              : 'Leave empty: Faxbot finds its internet address itself and needs no open ports. Enter one only to override it.'}
             onChange={(event) => update('external_address', event.target.value.trim())} />
 
           <TextField size="small" fullWidth label="Caller ID" value={form.caller_id} required type="tel"

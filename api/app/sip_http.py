@@ -1,6 +1,8 @@
 """Administrative HTTP surface for the SIP trunk: presets, status, apply and recent calls."""
 import asyncio
 import hashlib
+import logging
+import os
 import time
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -81,7 +83,25 @@ def _address_text(summary, network, carrier):
             return ('The address you entered differs from the one Faxbot sees from the internet '
                     f'({network.public_ip}).')
         return f'Faxbot tells {carrier} to send calls and fax data to {typed}, the address you entered.'
+    if (network and network.public_ip and network.ports == 'preserved' and network.behind_nat
+            and summary.get('advertised_address') == network.public_ip):
+        return (f'Faxbot\'s internet address is {network.public_ip}, and your network keeps port numbers, '
+                f'so {carrier} is told exactly where to send fax data.')
     return stun.address_sentence(network, carrier=carrier)
+
+
+ADDRESS_CHANGED = 'Your internet address changed. Restart the Asterisk service so the carrier gets the new address.'
+
+
+def _address_changed(values, network):
+    """True when Asterisk advertises an address that is no longer Faxbot's, or should now advertise one."""
+    if values.sip_external_address or network is None or network.public_ip is None:
+        return False
+    applied = sip_trunk.applied_public_address(values)
+    if applied is None:
+        return False
+    wanted = network.public_ip if network.ports == 'preserved' else ''
+    return applied != wanted
 
 
 def _ports_text(values, network):
@@ -236,6 +256,12 @@ async def status(request: Request, identity=Depends(require_permission('provider
     last = await run_lifecycle_step(lambda: _last_call(_records(request))) if configured else None
     # IP authentication has no registration; its calls use the trunk's transport.
     transport = asterisk['transport'] or (summary.get('transport') if asterisk['registration'] == 'not_used' else None)
+    changed = configured and applied and await run_lifecycle_step(lambda: _address_changed(values, network))
+    if configured:
+        summary['advertised_address'] = await run_lifecycle_step(lambda: sip_trunk.applied_public_address(values)) or None
+    message = _message(summary, asterisk, applied, ports_text, transport)
+    if changed and ports_text != BEHIND_ROUTER:
+        message = ADDRESS_CHANGED
     return {
         **summary, 'applied': applied, 'asterisk_connected': asterisk['connected'],
         'registration': asterisk['registration'], 'registration_transport': transport,
@@ -250,7 +276,8 @@ async def status(request: Request, identity=Depends(require_permission('provider
         'ports_text': ports_text,
         'last_call_text': last['summary'] if last else None,
         'last_call_at': last['started_at'] if last else None,
-        'message': _message(summary, asterisk, applied, ports_text, transport),
+        'address_changed': bool(changed),
+        'message': message,
     }
 
 
@@ -267,13 +294,17 @@ async def apply(identity=Depends(require_permission('providers:write'))):
     values = configuration_values()
     if not sip_trunk.configured(values):
         raise HTTPException(400, detail='Choose a carrier before applying trunk settings.')
-    if values.sip_trunk_auth == 'ip' and not values.sip_external_address:
-        # A carrier that signs in by address sends calls to a fixed public address, which a router does not pass on.
+    network = None
+    if not values.sip_external_address:
         network = await probe_network(values.sip_trunk_preset, fresh=True)
-        if network and network.behind_nat:
+        # A carrier that signs in by address sends calls to a fixed public address, which a router does not pass on.
+        if values.sip_trunk_auth == 'ip' and network and network.behind_nat:
             raise HTTPException(400, detail=BEHIND_ROUTER)
     try:
         await run_lifecycle_step(lambda: sip_trunk.write_asterisk_configuration(values))
+        if not values.sip_external_address:
+            # What Asterisk advertises at its next start (only on a network that keeps port numbers).
+            await run_lifecycle_step(lambda: sip_trunk.write_public_address(values, network))
     except sip_trunk.TrunkConfigurationError as error:
         names = ', '.join(_FIELD_NAMES.get(field, 'trunk settings') for field in error.fields)
         raise HTTPException(400, detail=f'Fill in the {names} before applying.')
@@ -295,3 +326,35 @@ async def calls(request: Request, cursor: str | None = Query(default=None, max_l
         raise HTTPException(400, detail='That page of calls is not available.') from None
     except SipCallRecordError:
         raise HTTPException(503, detail='Call records are not available right now.') from None
+
+
+def _check_minutes():
+    try:
+        return max(0, int(os.environ.get('SIP_PUBLIC_ADDRESS_CHECK_MINUTES', '5')))
+    except ValueError:
+        return 5
+
+
+async def watch_public_address(*, minutes=None, values_source=None):
+    """Probe again every few minutes and record a changed internet address for Asterisk's next start.
+
+    SIP_PUBLIC_ADDRESS_CHECK_MINUTES (default 5, 0 turns it off) sets the pace.
+    A probe that finds no address leaves the record alone; Check trunk status
+    says when Asterisk needs a restart to advertise the new address.
+    """
+    minutes = _check_minutes() if minutes is None else minutes
+    if minutes <= 0:
+        return
+    while True:
+        await asyncio.sleep(minutes * 60)
+        try:
+            values = (values_source or configuration_values)()
+            if not sip_trunk.configured(values) or values.sip_external_address:
+                continue
+            network = await probe_network(values.sip_trunk_preset, fresh=True)
+            if network and network.public_ip:
+                await run_lifecycle_step(lambda: sip_trunk.write_public_address(values, network))
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logging.getLogger(__name__).warning('Faxbot could not check its internet address.')

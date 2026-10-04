@@ -150,6 +150,9 @@ PRESETS: dict[str, TrunkPreset] = {preset.id: preset for preset in (
 )}
 
 _DEFAULT_PORTS = {'udp': 5060, 'tcp': 5060, 'tls': 5061}
+# Placeholders asterisk/bin/faxbot-public-address replaces at every Asterisk start.
+PUBLIC_ADDRESS = '@FAXBOT_PUBLIC_ADDRESS@'
+LOCAL_NET = '@FAXBOT_LOCAL_NET@'
 PRIVATE_NETWORKS = ('10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', '127.0.0.0/8')
 _DIGITS = re.compile(r'\+?[0-9]{3,20}', re.ASCII)
 
@@ -252,6 +255,12 @@ def _transport_section(trunk: Trunk):
         lines += [f'external_media_address={trunk.external_address}',
                   f'external_signaling_address={trunk.external_address}',
                   *(f'local_net={network}' for network in PRIVATE_NETWORKS)]
+    else:
+        # Nobody typed an address: the Asterisk container fills these in at
+        # start from what Faxbot's STUN probe found (only on a network that
+        # keeps port numbers, with its own subnet as local_net), or removes them.
+        lines += [f'external_media_address={PUBLIC_ADDRESS}', f'external_signaling_address={PUBLIC_ADDRESS}',
+                  f'local_net={LOCAL_NET}']
     return name, lines
 
 
@@ -323,6 +332,46 @@ def configuration_path(values) -> Path:
 
 def secret_path(values) -> Path:
     return Path(values.fax_data_dir) / 'asterisk' / 'inbound.secret'
+
+
+def public_address_path(values) -> Path:
+    """What Faxbot's STUN probe found, read by the Asterisk container at start."""
+    return Path(values.fax_data_dir) / 'asterisk' / 'public-address'
+
+
+def write_public_address(values, probe) -> bool:
+    """Record the probe for the next Asterisk start; True when the advertised address would change.
+
+    Asterisk advertises the address only when the network keeps port numbers,
+    so a probe without that is recorded with ``ports_preserved`` false.
+    """
+    import json
+    path = public_address_path(values)
+    record = {'ip': probe.public_ip if probe else None,
+              'ports_preserved': bool(probe and probe.public_ip and probe.ports == 'preserved'),
+              'probed_at': int(probe.probed_at) if probe else None}
+    before = read_public_address(values)
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    _write_private(path, json.dumps(record) + '\n')
+    advertised = lambda item: item.get('ip') if item and item.get('ports_preserved') else None  # noqa: E731
+    return advertised(before) != advertised(record)
+
+
+def read_public_address(values):
+    """The recorded probe, or None."""
+    import json
+    try:
+        return json.loads(public_address_path(values).read_text())
+    except (OSError, ValueError):
+        return None
+
+
+def applied_public_address(values):
+    """The address Asterisk advertised when it last started: an address, '' for none, None if unknown."""
+    try:
+        return (public_address_path(values).with_name('public-address.applied')).read_text().strip()
+    except OSError:
+        return None
 
 
 def write_asterisk_configuration(values) -> Path:

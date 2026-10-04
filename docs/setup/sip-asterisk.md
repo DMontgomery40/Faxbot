@@ -23,7 +23,7 @@
 Faxbot behaves like a phone behind a router, not like a server:
 
 - **Signaling.** Asterisk registers with the carrier using your SIP username and password, over one encrypted (TLS) connection by default, and keeps that connection alive with keepalives and regular carrier checks. The carrier sends incoming calls back over the same connection, so nothing has to reach in.
-- **Address.** Faxbot learns its own internet address with STUN; nobody types it. **Check trunk status** shows the address and whether your network keeps or changes port numbers.
+- **Address.** Faxbot learns its own internet address with STUN; nobody types it. **Check trunk status** shows the address and whether your network keeps or changes port numbers. When it keeps them, Asterisk advertises that exact address from its next start, with its own container subnet as the local network (the image includes `iproute2` to read it); when it changes them, Asterisk advertises nothing extra and the carrier follows Faxbot's packets.
 - **Fax data.** On every call, in both directions, Asterisk sends the first audio and T.38 packets itself. Your router then lets the carrier's answer back in on the same path. Carriers built for this (Telnyx is one) send their media wherever Faxbot's packets come from.
 - **Docker.** The default `docker-compose.yml` publishes no SIP or media port. Inside the container Asterisk uses UDP 4000 to 4499 for T.38 and 4500 to 4999 for audio, but only for packets it starts. The manager port, 5038, stays private on the Compose network.
 

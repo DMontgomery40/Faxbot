@@ -70,7 +70,7 @@ LABEL org.opencontainers.image.title="Faxbot Asterisk" \
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-       bash ca-certificates gettext-base dumb-init tzdata curl netcat-openbsd procps \
+       bash ca-certificates gettext-base dumb-init tzdata curl netcat-openbsd procps iproute2 \
        libedit2 libjansson4 libsqlite3-0 libuuid1 libxml2 libssl3t64 libncurses6 \
        libspandsp2t64 libtiff6 libsrtp2-1 libunbound8 \
     && rm -rf /var/lib/apt/lists/*
@@ -81,10 +81,10 @@ WORKDIR /etc/asterisk
 
 COPY etc/asterisk/ /etc/asterisk/
 COPY start.sh /start.sh
-COPY bin/faxbot-inbound-notify /usr/local/bin/faxbot-inbound-notify
-RUN chmod +x /start.sh /usr/local/bin/faxbot-inbound-notify \
+COPY bin/faxbot-inbound-notify bin/faxbot-public-address /usr/local/bin/
+RUN chmod +x /start.sh /usr/local/bin/faxbot-inbound-notify /usr/local/bin/faxbot-public-address \
     && mkdir -p /var/run/asterisk /var/log/asterisk /var/lib/asterisk /var/spool/asterisk /faxdata \
-    && test -x /usr/bin/envsubst
+    && test -x /usr/bin/envsubst && test -x /usr/bin/ip
 
 VOLUME ["/faxdata"]
 
