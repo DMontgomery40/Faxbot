@@ -34,7 +34,7 @@ $ faxbot [OPTIONS] COMMAND [ARGS]...
 * `health`: Check that the server answers and whether...
 * `restart`: Restart the Faxbot server process, when...
 * `jobs`: Sent faxes: list them, read details,...
-* `inbound`: Received faxes: list them, read details...
+* `inbound`: Received faxes: list them, read details,...
 * `owner`: Create an owner with the installation key.
 * `users`: People who sign in to Faxbot, and...
 * `integrations`: Integrations: identities for apps and...
@@ -281,7 +281,7 @@ $ faxbot jobs reconcile [OPTIONS] {fax_id}
 
 ## `faxbot inbound`
 
-Received faxes: list them, read details and download documents.
+Received faxes: list them, read details, download documents and fetch them again.
 
 **Usage**:
 
@@ -298,7 +298,8 @@ $ faxbot inbound [OPTIONS] COMMAND [ARGS]...
 * `list`: List received faxes you can see.
 * `get`: Show one received fax.
 * `pdf`: Download the document of a received fax.
-* `simulate`: Add a test received fax with a placeholder...
+* `fetch`: Ask Faxbot to fetch a received fax&#x27;s...
+* `simulate`: Add a test fax with a real one-page...
 
 ### `faxbot inbound list`
 
@@ -313,7 +314,7 @@ $ faxbot inbound list [OPTIONS]
 **Options**:
 
 * `--to <str>`: Only faxes sent to this number.
-* `--status <str>`: Only faxes with this status.
+* `--status <str>`: Only faxes with this status: waiting, received or failed.
 * `--mailbox <str>`: Only faxes in this mailbox.
 * `--ids`: Also show received fax IDs, for inbound get and pdf.
 * `--help`: Show this message and exit.
@@ -356,9 +357,27 @@ $ faxbot inbound pdf [OPTIONS] {inbound_id}
 * `--force`: Replace the file if it exists.
 * `--help`: Show this message and exit.
 
+### `faxbot inbound fetch`
+
+Ask Faxbot to fetch a received fax&#x27;s document again now.
+
+**Usage**:
+
+```console
+$ faxbot inbound fetch [OPTIONS] {inbound_id}
+```
+
+**Arguments**:
+
+* `inbound_id`: Received fax ID.  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
 ### `faxbot inbound simulate`
 
-Add a test received fax with a placeholder document, to check mailboxes and delivery.
+Add a test fax with a real one-page document, marked as a test, to check mailboxes and email delivery.
 
 **Usage**:
 
@@ -370,7 +389,6 @@ $ faxbot inbound simulate [OPTIONS]
 
 * `--from <str>`: Sender fax number to show.  [default: +15550000000]
 * `--to <str>`: Your fax number it arrived on.
-* `--pages <int range>`: Number of pages to show.  [default: 1; x&gt;=1]
 * `--help`: Show this message and exit.
 
 ## `faxbot owner`
