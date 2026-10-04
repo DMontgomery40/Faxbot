@@ -163,6 +163,9 @@ class ConfigurationValues(BaseModel):
     direct_delivery_enabled: bool = Field(False, validation_alias='DIRECT_DELIVERY_ENABLED')
     direct_organization: str = Field('', validation_alias='DIRECT_ORGANIZATION')
     direct_fax_number: str = Field('', validation_alias='DIRECT_FAX_NUMBER')
+    # Work queue: the team's operational target for acknowledging a received
+    # document, in hours from when it arrived. 0 sets no target. Not a legal deadline.
+    work_acknowledge_hours: int = Field(0, validation_alias='WORK_ACKNOWLEDGE_HOURS', ge=0, le=8760)
 
     _explicit_keys: frozenset[str] = PrivateAttr(default_factory=frozenset)
 

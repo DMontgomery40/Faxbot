@@ -12,6 +12,7 @@ from app.config import use_configuration
 from app.config_values import ConfigurationValues
 from api.tests.test_schema import database, snapshot
 from api.tests.test_access_schema import at_revision
+from api.tests.test_work_schema import without_work_catalogue
 
 
 JOB = '0123456789abcdef0123456789abcdef'
@@ -34,7 +35,7 @@ def test_0009_upgrade_preserves_0008_state_and_validates_frozen_shape(database):
     assert after['sip_call_records'] == []
     for name, rows in before.items():
         if name != 'alembic_version':
-            assert after[name] == rows, name
+            assert without_work_catalogue(name, after[name]) == rows, name
     metadata = schema_sip.frozen_metadata(dialect=database.dialect.name)
     table = metadata.tables['sip_call_records']
     with database.connect() as connection:
