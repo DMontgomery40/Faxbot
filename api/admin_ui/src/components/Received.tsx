@@ -538,9 +538,9 @@ export default function Received({
       {!receiving && (
         <Alert severity="info" sx={{ mb: 3, borderRadius: 2 }}
           action={onNavigate && permissions?.has('settings:read') && (
-            <Button color="inherit" onClick={() => onNavigate('providers/sending')}>Open Sending & receiving</Button>
+            <Button color="inherit" onClick={() => onNavigate('providers/sending')}>Open Providers</Button>
           )}>
-          Receiving faxes is turned off. Turn it on under Providers, Sending & receiving.
+          Receiving faxes is turned off. Turn it on under Providers, In use.
         </Alert>
       )}
 

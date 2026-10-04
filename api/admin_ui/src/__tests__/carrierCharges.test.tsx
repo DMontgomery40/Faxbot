@@ -15,7 +15,7 @@ const client = () => new AdminAPIClient({ kind: 'key', key: 'synthetic-key' });
 const usd = (amount: string) => ({ currency: 'USD', amount });
 
 const sip = {
-  provider_id: 'sip', label: 'SIP trunk (Asterisk)', carrier: 'Telnyx', attempts: 3, successes: 2, failures: 1, uncertain: 0,
+  provider_id: 'sip', label: 'Carrier trunk', carrier: 'Telnyx', attempts: 3, successes: 2, failures: 1, uncertain: 0,
   billed_minutes: 4, billed_pages: 4, estimated_cost: [usd('0.02')], reported_cost: [usd('0.015')], settled_cost: [],
   attempts_without_reported_cost: 1, attempts_with_reported_cost: 2, estimated_cost_not_reported: [usd('0.005')],
   awaiting_carrier_bill: 1, unmatched_charges: 0, plan: null, priced: true, total_cost: [usd('0.02')],
@@ -35,7 +35,7 @@ const documo = {
   awaiting_carrier_bill: 0, unmatched_charges: 0, plan: null, priced: false, total_cost: [],
 };
 const received = {
-  provider_id: 'sip', label: 'SIP trunk (Asterisk)', carrier: 'Telnyx', calls: 3, faxes: 2, billed_minutes: 3,
+  provider_id: 'sip', label: 'Carrier trunk', carrier: 'Telnyx', calls: 3, faxes: 2, billed_minutes: 3,
   estimated_cost: [usd('0.0096')], reported_cost: [usd('0.0064')], calls_with_reported_cost: 2, calls_without_reported_cost: 1,
   estimated_cost_not_reported: [usd('0.0032')], awaiting_carrier_bill: 0, unmatched_charges: 1,
   unrecorded_calls: 2, unrecorded_cost: [usd('0.0064')], unrecorded_matched_to_faxes: 1,
@@ -61,7 +61,7 @@ describe('Delivery routes spending', () => {
     const posts = routes({ providers: [sip, humblefax], received: [received],
       carrier_charges: { carrier: 'Telnyx', supported: true, readable: true } });
     render(<DeliveryRoutes client={client()} canWrite />);
-    const sent = (await screen.findByText('SIP trunk (Asterisk) · Telnyx')).closest('.MuiCard-root') as HTMLElement;
+    const sent = (await screen.findByText('Carrier trunk · Telnyx')).closest('.MuiCard-root') as HTMLElement;
     expect(within(sent).getByText('$0.02')).toBeTruthy();
     expect(within(sent).getByText('charged and estimated')).toBeTruthy();
     expect(within(sent).getByText('Telnyx charged $0.015 for 2 faxes.')).toBeTruthy();
@@ -73,7 +73,7 @@ describe('Delivery routes spending', () => {
     expect(within(plan).getByText('Included in your HumbleFax plan ($10 a month)')).toBeTruthy();
     expect(within(plan).getByText(/Counted in the total: \$10\.00 for these 30 days/)).toBeTruthy();
     expect(within(plan).queryByText(/not billed yet/)).toBeNull();
-    const inbound = screen.getByText('Received on your SIP trunk (Asterisk) · Telnyx').closest('.MuiCard-root') as HTMLElement;
+    const inbound = screen.getByText('Received through Carrier trunk · Telnyx').closest('.MuiCard-root') as HTMLElement;
     expect(within(inbound).getByText('Telnyx charged $0.0064 for 4 calls, 2 without a Faxbot call record.')).toBeTruthy();
     expect(within(inbound).getByText('1 call could not be matched to one Telnyx record, so its cost is unknown.')).toBeTruthy();
     expect(within(inbound).getByText(/5 calls, 3 faxes received, 3 minutes/)).toBeTruthy();
@@ -217,19 +217,19 @@ describe('One reading of spending', () => {
     server.use(http.get('/routing/costs', () => HttpResponse.json(costs)));
     const { unmount } = render(<DeliveryRoutes client={client()} canWrite={false} />);
     const tools = [
-      (await screen.findByText('SIP trunk (Asterisk) · Telnyx')).closest('.MuiCard-root')?.textContent ?? '',
+      (await screen.findByText('Carrier trunk · Telnyx')).closest('.MuiCard-root')?.textContent ?? '',
       screen.getByText('HumbleFax').closest('.MuiCard-root')?.textContent ?? '',
       screen.getByText('Documo').closest('.MuiCard-root')?.textContent ?? '',
-      screen.getByText('Received on your SIP trunk (Asterisk) · Telnyx').closest('.MuiCard-root')?.textContent ?? '',
+      screen.getByText('Received through Carrier trunk · Telnyx').closest('.MuiCard-root')?.textContent ?? '',
     ];
     unmount();
     render(<Dashboard client={client()} onNavigate={() => undefined} />);
     const card = await screen.findByRole('button', { name: 'Spending, last 30 days' });
     const expected = [
-      ['SIP trunk (Asterisk)', '$0.02'],
+      ['Carrier trunk', '$0.02'],
       ['HumbleFax', 'Included in your HumbleFax plan ($10 a month)'],
       ['Documo', 'No published price; add your rate'],
-      ['Received on your SIP trunk (Asterisk) · Telnyx', '$0.0128'],
+      ['Received through Carrier trunk · Telnyx', '$0.0128'],
     ];
     expected.forEach(([label, value], index) => {
       expect(card.textContent).toContain(label + value);

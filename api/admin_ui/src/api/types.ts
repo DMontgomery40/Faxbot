@@ -457,7 +457,13 @@ export interface ConsoleContext {
   send: { fax_disabled: boolean; max_file_size_mb: number; default_country?: string; number_example?: string } | null;
   inbound_enabled: boolean | null;
   branding: { docs_base: string; logo_path: string };
-  provider_view: { plugins_enabled: boolean; install_enabled: boolean; active_outbound: string; active_inbound: string } | null;
+  provider_view: {
+    plugins_enabled: boolean; install_enabled: boolean; active_outbound: string; active_inbound: string;
+    // Further sending routes, and the carrier or phone system preset the trunk uses.
+    extra_routes?: string[]; trunk_preset?: string;
+  } | null;
+  // Names this installation gives its providers, such as the trunk's carrier ({ sip: 'Telnyx' }).
+  provider_names?: Record<string, string>;
 }
 
 export interface Page<T> {

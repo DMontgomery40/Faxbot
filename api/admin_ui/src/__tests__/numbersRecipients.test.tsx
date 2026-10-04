@@ -109,7 +109,7 @@ describe('Sender identity', () => {
     expect(writes[0]).toMatchObject({ fax_header: 'Valley Clinic' });
     unmount();
     render(<Settings client={keyClient()} sections={['trunk']} title="Carrier trunk" />);
-    expect(await screen.findByText('SIP / Asterisk Configuration')).toBeTruthy();
+    expect(await screen.findByText('Fax engine connection (advanced)')).toBeTruthy();
     expect(screen.queryByText('Station ID')).toBeNull();
   });
 });

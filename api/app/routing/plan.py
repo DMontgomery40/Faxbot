@@ -13,7 +13,7 @@ from .costs import plan_fee_text
 from .database import read_connection
 from .policy import DIRECT, RouteCandidate, RouteChoice, RoutePolicy
 from .store import destination_key
-from ..provider_labels import PROVIDER_LABELS
+from ..provider_labels import PROVIDER_LABELS, trunk_name
 
 
 MIN_ATTEMPTS = 3
@@ -31,6 +31,9 @@ REASON_TEXT = {
 
 
 def route_label(key):
+    # The trunk is named after the carrier or phone system it connects to.
+    if key == 'sip':
+        return trunk_name()
     return LABELS.get(key, key)
 
 

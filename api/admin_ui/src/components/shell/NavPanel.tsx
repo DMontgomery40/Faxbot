@@ -5,7 +5,7 @@ import type React from 'react';
 import { Box, Collapse, List, ListItemButton, ListItemIcon, ListItemText, ListSubheader } from '@mui/material';
 import ExpandLessIcon from '@mui/icons-material/ExpandLess';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
-import { pageAddress, type NavArea, type NavPage } from '../../navigation';
+import { destinationAddress, pageAddress, type NavArea, type NavPage } from '../../navigation';
 
 interface NavPanelProps {
   areas: NavArea[];
@@ -32,7 +32,8 @@ export default function NavPanel({ areas, currentArea, currentPage, onNavigate, 
   const link = (area: NavArea, page: NavPage, nested: boolean, label = page.label, icon = page.icon) => {
     const selected = area.id === currentArea && page.id === currentPage;
     return (
-      <ListItemButton key={`${area.id}/${page.id}`} component="a" href={pageAddress(area.id, page.id)} selected={selected}
+      <ListItemButton key={`${area.id}/${page.id}`} component="a" selected={selected}
+        href={page.link ? destinationAddress(page.link) : pageAddress(area.id, page.id)}
         aria-current={selected ? 'page' : undefined}
         onClick={(event: React.MouseEvent) => {
           if (!plainClick(event)) return;
@@ -56,7 +57,9 @@ export default function NavPanel({ areas, currentArea, currentPage, onNavigate, 
             if (area.pages.length === 1 && area.pages[0].id === area.id) return link(area, area.pages[0], false, area.label, area.icon);
             const expanded = Boolean(open[area.id]);
             const holdsCurrent = area.id === currentArea;
-            const groups = [...new Set(area.pages.map((page) => page.group ?? ''))];
+            // Pages that keep their address but are not listed (providers not in use) stay out of the panel.
+            const listed = area.pages.filter((page) => page.inPanel !== false);
+            const groups = [...new Set(listed.map((page) => page.group ?? ''))];
             return (
               <Fragment key={area.id}>
                 <ListItemButton onClick={() => setOpen((previous) => ({ ...previous, [area.id]: !expanded }))}
@@ -75,7 +78,7 @@ export default function NavPanel({ areas, currentArea, currentPage, onNavigate, 
                             {group}
                           </ListSubheader>
                         )}
-                        {area.pages.filter((page) => (page.group ?? '') === group).map((page) => link(area, page, true))}
+                        {listed.filter((page) => (page.group ?? '') === group).map((page) => link(area, page, true))}
                       </Fragment>
                     ))}
                   </List>

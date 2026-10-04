@@ -20,7 +20,7 @@
     },
     {
       "id": "freeswitch",
-      "name": "SIP trunk (FreeSWITCH)",
+      "name": "FreeSWITCH",
       "version": "1.0.0",
       "categories": ["outbound"],
       "capabilities": ["send"],
@@ -65,7 +65,7 @@
     },
     {
       "id": "sip",
-      "name": "SIP trunk (Asterisk)",
+      "name": "Carrier trunk",
       "version": "1.0.0",
       "categories": ["outbound"],
       "capabilities": ["send", "get_status"],

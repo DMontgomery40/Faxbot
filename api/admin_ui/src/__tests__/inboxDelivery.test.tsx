@@ -191,7 +191,7 @@ describe('Received fax status', () => {
       status_text: 'Faxbot never received the document for this fax; ask the sender to send it again.' }))
       .toMatchObject({ label: 'Not received', canFetchAgain: false });
     expect([providerName('sip'), providerName('phaxio'), providerName('sinch'), providerName(undefined)])
-      .toEqual(['SIP trunk (Asterisk)', 'Phaxio', 'Sinch', '-']);
+      .toEqual(['Carrier trunk', 'Phaxio', 'Sinch', '-']);
   });
 
   it('offers no delivery retry while no email delivery covers the number', () => {
@@ -223,7 +223,7 @@ describe('Received fax status', () => {
     render(<Received client={client()} inboundEnabled permissions={new Set([...operator, 'providers:write'])} />);
     const waiting = await rowFor('+15550108888');
     expect(within(waiting).getByText('Waiting for the document from the SIP trunk.')).toBeTruthy();
-    expect(within(waiting).getByText('SIP trunk (Asterisk)')).toBeTruthy();
+    expect(within(waiting).getByText('Carrier trunk')).toBeTruthy();
     // No record IDs or raw provider words in the table.
     expect(screen.queryByRole('columnheader', { name: 'ID' })).toBeNull();
     expect(screen.queryByText(/fax-wait|^sip$/)).toBeNull();
@@ -345,12 +345,12 @@ describe('How received faxes reach Faxbot', () => {
   it('says in one sentence where to turn receiving on when it is off', async () => {
     const navigate = vi.fn();
     render(<Received client={client()} inboundEnabled={false} onNavigate={navigate} permissions={new Set(['inbound:list', 'settings:read'])} />);
-    expect(await screen.findByText('Receiving faxes is turned off. Turn it on under Providers, Sending & receiving.')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Open Sending & receiving' }));
+    expect(await screen.findByText('Receiving faxes is turned off. Turn it on under Providers, In use.')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Open Providers' }));
     expect(navigate).toHaveBeenCalledWith('providers/sending');
   });
 
-  it('lists the addresses to give the receiving provider on Sending & receiving', async () => {
+  it('lists the addresses to give the receiving provider on In use', async () => {
     server.use(http.get('/admin/inbound/callbacks', () => HttpResponse.json({ backend: 'phaxio',
       callbacks: [{ name: 'Phaxio inbound', url: 'https://fax.example/phaxio-inbound' }] })));
     render(<ReceivingAddresses client={client()} />);

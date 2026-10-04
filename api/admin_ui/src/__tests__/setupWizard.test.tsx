@@ -9,7 +9,8 @@ import { receipt, settingsFixture, withDirections } from '../test/settingsFixtur
 type Json = Record<string, any>;
 
 const client = () => new AdminAPIClient({ kind: 'key', key: 'synthetic-key' });
-const RAW_IDS = /\b(sip|phaxio|sinch|signalwire|documo|humblefax|freeswitch)\b/;
+// Provider ids on their own; a host name such as sip.telnyx.com is fine.
+const RAW_IDS = /\b(sip|phaxio|sinch|signalwire|documo|humblefax|freeswitch)\b(?!\.)/;
 const PRESETS = [{ id: 'telnyx', label: 'Telnyx', host: 'sip.telnyx.com', port: 5061, transport: 'tls',
   auth_modes: ['registration', 'ip'], codecs: ['ulaw', 'alaw'], needs_host: false, ip_dial_prefix: false, t38: '',
   notes: [], sources: [] }];
@@ -42,6 +43,7 @@ function backend(data: Json) {
         withDirections(data, sending, enabled ? (override || sending) : '');
       }
       if ('fax_station_id' in body) data.sip.station_id = body.fax_station_id;
+      if ('sip_trunk_preset' in body) data.sip.trunk = { ...(data.sip.trunk ?? {}), preset: body.sip_trunk_preset };
       if ('sip_trunk_dids' in body) data.sip.trunk = { ...(data.sip.trunk ?? {}), dids: String(body.sip_trunk_dids).split(',') };
       revision += 1;
       const pending = providers && [data.hybrid.outbound_backend, data.hybrid.inbound_backend].includes('sip');
@@ -61,8 +63,9 @@ async function choose(name: 'Sending' | 'Receiving', option: string) {
 
 const next = () => fireEvent.click(screen.getByRole('button', { name: 'Next' }));
 
-async function start(data: Json) {
+async function start(data: Json, presets: Json[] = PRESETS) {
   const writes = backend(data);
+  server.use(http.get('/admin/sip/presets', () => HttpResponse.json({ presets })));
   render(<SetupWizard client={client()} />);
   await screen.findByText('Choose Providers', { selector: 'h6' });
   return writes;
@@ -88,12 +91,12 @@ describe('Setup Wizard providers for sending and receiving', () => {
   it('saves the SIP trunk for both directions when moving on, then asks for a restart', async () => {
     const data = settingsFixture();
     const writes = await start(data);
-    await choose('Sending', 'SIP trunk (Asterisk)');
-    await choose('Receiving', 'SIP trunk (Asterisk)');
-    expect(screen.getByText('Sending: SIP trunk (Asterisk) · Receiving: SIP trunk (Asterisk)')).toBeTruthy();
+    await choose('Sending', 'Telnyx');
+    await choose('Receiving', 'Telnyx');
+    expect(screen.getByText('Sending: Telnyx · Receiving: Telnyx')).toBeTruthy();
     next();
     await screen.findByText('Connect Providers', { selector: 'h6' });
-    expect(writes).toEqual([{ expected_revision_id: 'rev-a', backend: 'sip', inbound_enabled: true }]);
+    expect(writes).toEqual([{ expected_revision_id: 'rev-a', backend: 'sip', inbound_enabled: true, sip_trunk_preset: 'telnyx', sip_trunk_host: '', sip_trunk_transport: '', sip_trunk_dial_format: '', sip_trunk_auth: 'registration' }]);
     expect(screen.getByTestId('restart-notice').textContent).toContain('Restart Faxbot to start using these providers.');
     // Restart now: Faxbot goes away, answers again, and this step says the restart worked.
     const answers = [false, true];
@@ -108,7 +111,7 @@ describe('Setup Wizard providers for sending and receiving', () => {
     expect(await screen.findByText('Faxbot restarted and is using the saved settings.', {}, { timeout: 5000 })).toBeTruthy();
     expect(screen.queryByTestId('restart-notice')).toBeNull();
     expect(screen.getByText('Connect Providers', { selector: 'h6' })).toBeTruthy();
-    expect(sectionHeadings()).toEqual(['For sending and receiving: SIP trunk (Asterisk)']);
+    expect(sectionHeadings()).toEqual(['For sending and receiving: Telnyx']);
     expect(await screen.findByTestId('sip-trunk-settings')).toBeTruthy();
     expect(screen.getByLabelText('Fax station ID')).toBeTruthy();
     // The fax engine connection is Faxbot's own business, out of the normal path.
@@ -118,18 +121,18 @@ describe('Setup Wizard providers for sending and receiving', () => {
     // Back shows the saved choice, not a draft.
     fireEvent.click(screen.getByRole('button', { name: 'Back' }));
     await screen.findByText('Choose Providers', { selector: 'h6' });
-    expect(screen.getByRole('combobox', { name: 'Sending' }).textContent).toBe('SIP trunk (Asterisk)');
+    expect(screen.getByRole('combobox', { name: 'Sending' }).textContent).toBe('Telnyx');
     expect(writes).toHaveLength(1);
   });
 
   it('sends through a cloud provider and receives over the SIP trunk', async () => {
     const writes = await start(settingsFixture());
     await choose('Sending', 'HumbleFax');
-    await choose('Receiving', 'SIP trunk (Asterisk)');
+    await choose('Receiving', 'Telnyx');
     next();
     await screen.findByText('Connect Providers', { selector: 'h6' });
-    expect(writes).toEqual([{ expected_revision_id: 'rev-a', backend: 'humblefax', inbound_backend: 'sip', inbound_enabled: true }]);
-    expect(sectionHeadings()).toEqual(['For sending: HumbleFax', 'For receiving: SIP trunk (Asterisk)']);
+    expect(writes).toEqual([{ expected_revision_id: 'rev-a', backend: 'humblefax', inbound_backend: 'sip', inbound_enabled: true, sip_trunk_preset: 'telnyx', sip_trunk_host: '', sip_trunk_transport: '', sip_trunk_dial_format: '', sip_trunk_auth: 'registration' }]);
+    expect(sectionHeadings()).toEqual(['For sending: HumbleFax', 'For receiving: Telnyx']);
     // The trunk section, its Apply and the fax engine settings stay when sending uses another provider.
     expect(await screen.findByTestId('sip-trunk-settings')).toBeTruthy();
     expect(screen.getByText('Advanced: fax engine connection')).toBeTruthy();
@@ -143,12 +146,12 @@ describe('Setup Wizard providers for sending and receiving', () => {
 
   it('sends over the SIP trunk and receives through a cloud provider', async () => {
     const writes = await start(settingsFixture());
-    await choose('Sending', 'SIP trunk (Asterisk)');
+    await choose('Sending', 'Telnyx');
     await choose('Receiving', 'Phaxio');
     next();
     await screen.findByText('Connect Providers', { selector: 'h6' });
-    expect(writes).toEqual([{ expected_revision_id: 'rev-a', backend: 'sip', inbound_backend: 'phaxio', inbound_enabled: true }]);
-    expect(sectionHeadings()).toEqual(['For sending: SIP trunk (Asterisk)', 'For receiving: Phaxio']);
+    expect(writes).toEqual([{ expected_revision_id: 'rev-a', backend: 'sip', inbound_backend: 'phaxio', inbound_enabled: true, sip_trunk_preset: 'telnyx', sip_trunk_host: '', sip_trunk_transport: '', sip_trunk_dial_format: '', sip_trunk_auth: 'registration' }]);
+    expect(sectionHeadings()).toEqual(['For sending: Telnyx', 'For receiving: Phaxio']);
     expect(await screen.findByTestId('sip-trunk-settings')).toBeTruthy();
     expect(screen.getByLabelText('Fax station ID')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Show callback details' })).toBeTruthy();
@@ -165,7 +168,7 @@ describe('Setup Wizard providers for sending and receiving', () => {
     expect(writes).toEqual([]);
     fireEvent.click(screen.getByRole('button', { name: 'Back' }));
     await screen.findByText('Choose Providers', { selector: 'h6' });
-    await choose('Receiving', 'SIP trunk (Asterisk)');
+    await choose('Receiving', 'Telnyx');
     next();
     expect(await screen.findAllByText('Choose a provider for sending as well; Faxbot needs one even when it mainly receives.'))
       .toHaveLength(2);
@@ -174,11 +177,31 @@ describe('Setup Wizard providers for sending and receiving', () => {
     expect(document.body.textContent).not.toMatch(RAW_IDS);
   });
 
+  it('sets the trunk to a phone system in one step and shows its own guidance next', async () => {
+    const avaya = { ...PRESETS[0], id: 'avaya-ipoffice', label: 'Avaya IP Office', host: '', kind: 'phone_system', auth_modes: ['ip'],
+      notes: ['Faxbot connects to IP Office as a SIP line on your local network; IP Office keeps its own carrier lines.'],
+      admin_steps: ['System, LAN1 (or LAN2), VoIP: tick SIP Trunks Enable.'] };
+    const writes = await start(settingsFixture((data) => { data.numbers = { default_country: 'GB',
+      example: { national: '0121 234 5678', international: '+44 121 234 5678' }, supported_countries: ['US', 'GB', 'AU'] }; }), [...PRESETS, avaya]);
+    fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Sending' }));
+    const names = within(await screen.findByRole('listbox')).getAllByRole('option').map((option) => option.textContent);
+    expect(names).toEqual(expect.arrayContaining(['Your phone system', 'Avaya IP Office', 'Advanced', 'FreeSWITCH']));
+    fireEvent.click(within(screen.getByRole('listbox')).getByRole('option', { name: 'Avaya IP Office' }));
+    expect(screen.getByText(/^Sending: Avaya IP Office · Receiving: /)).toBeTruthy();
+    next();
+    await screen.findByText('Connect Providers', { selector: 'h6' });
+    expect(writes[0]).toMatchObject({ backend: 'sip', sip_trunk_preset: 'avaya-ipoffice', sip_trunk_auth: 'ip', sip_trunk_host: '' });
+    expect(sectionHeadings()).toContain('For sending: Avaya IP Office');
+    expect((await screen.findByTestId('sip-preset-chosen')).textContent).toContain('Phone system: Avaya IP Office.');
+    expect(screen.getByText('Faxbot connects to IP Office as a SIP line on your local network; IP Office keeps its own carrier lines.')).toBeTruthy();
+  });
+
   it('offers only providers that can receive faxes for receiving', async () => {
     await start(settingsFixture());
     fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Receiving' }));
     const names = within(await screen.findByRole('listbox')).getAllByRole('option').map((option) => option.textContent);
-    expect(names).toEqual(['No provider', 'Phaxio', 'Sinch', 'eFax', 'SIP trunk (Asterisk)']);
+    expect(names).toEqual(['No provider', 'Fax services', 'eFax', 'Phaxio', 'Sinch Fax',
+      'Your own fax line through a carrier', 'Telnyx']);
   });
 });
 

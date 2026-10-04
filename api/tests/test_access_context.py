@@ -74,6 +74,7 @@ def test_unassigned_identity_has_only_closed_safe_context(world):
         'send': None, 'inbound_enabled': None,
         'branding': {'docs_base': 'https://docs.faxbot.net/latest/', 'logo_path': '/admin/ui/faxbot_full_logo.png'},
         'provider_view': None,
+        'provider_names': {'sip': 'Carrier trunk'},
     }
 
 
@@ -217,9 +218,9 @@ def test_provider_read_projection_is_closed_and_never_exposes_private_configurat
     result = world.snapshot()
     assert result['permissions'] == ['providers:read']
     assert result['provider_view'] == {'plugins_enabled': True, 'install_enabled': False,
-        'active_outbound': 'phaxio', 'active_inbound': 'sinch'}
+        'active_outbound': 'phaxio', 'active_inbound': 'sinch', 'extra_routes': [], 'trunk_preset': ''}
     assert set(result) == {'policy_version', 'active_revision_id', 'generation', 'permissions',
-        'navigation', 'send', 'inbound_enabled', 'branding', 'provider_view'}
+        'navigation', 'send', 'inbound_enabled', 'branding', 'provider_view', 'provider_names'}
     encoded = json.dumps(result)
     for private in ('synthetic-', 'private-', 'alice', 'mailbox', 'environment', 'profiles',
                     'api_key', 'callback', 'database_url', 'desired_revision', 'installation_id'):
@@ -250,7 +251,7 @@ def test_pending_configuration_does_not_supply_active_context(world):
                               'default_country': 'US', 'number_example': '(201) 555-0123'}
     assert result['inbound_enabled'] is True
     assert result['provider_view'] == {'plugins_enabled': True, 'install_enabled': False,
-        'active_outbound': 'phaxio', 'active_inbound': 'sinch'}
+        'active_outbound': 'phaxio', 'active_inbound': 'sinch', 'extra_routes': [], 'trunk_preset': ''}
 
 
 def test_ordinary_active_configuration_edit_is_reflected_without_cached_authority(world):
