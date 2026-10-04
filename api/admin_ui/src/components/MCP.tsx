@@ -210,9 +210,9 @@ function MCP({ client }: MCPProps) {
               <FormControlLabel control={<Switch checked={requireOAuth} onChange={(e) => setRequireOAuth(e.target.checked)} />} label="Require OAuth (JWT)" />
               {requireOAuth && (
                 <Box sx={{ display: 'grid', gridTemplateColumns: '1fr', gap: 2, mt: 2 }}>
-                  <TextField label="Issuer (OAUTH_ISSUER)" value={issuer} onChange={(e) => setIssuer(e.target.value)} fullWidth size="small" />
-                  <TextField label="Audience (OAUTH_AUDIENCE)" value={audience} onChange={(e) => setAudience(e.target.value)} fullWidth size="small" />
-                  <TextField label="JWKS URL (OAUTH_JWKS_URL)" value={jwks} onChange={(e) => setJwks(e.target.value)} fullWidth size="small" />
+                  <TextField label="Issuer" value={issuer} onChange={(e) => setIssuer(e.target.value)} fullWidth size="small" />
+                  <TextField label="Audience" value={audience} onChange={(e) => setAudience(e.target.value)} fullWidth size="small" />
+                  <TextField label="JWKS URL" value={jwks} onChange={(e) => setJwks(e.target.value)} fullWidth size="small" />
                 </Box>
               )}
               </Box>
