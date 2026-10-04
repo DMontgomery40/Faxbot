@@ -352,6 +352,18 @@ export class AdminAPIClient {
     return new AdminAPIClient().json('/auth/key-login', { method: 'POST', body: JSON.stringify({ api_key: apiKey }) }, { quiet401: true });
   }
 
+  // Public: whether this installation still has no owner, so sign-in asks for the installation key first.
+  static async needsFirstOwner(): Promise<boolean> {
+    try {
+      const res = await fetch(`${window.location.origin}/auth/setup`, { credentials: 'same-origin', cache: 'no-store' });
+      if (!res.ok) return false;
+      const body = await res.json();
+      return body?.first_owner === true;
+    } catch {
+      return false;
+    }
+  }
+
   async me(extras: { quiet401?: boolean } = {}): Promise<AuthMe> {
     const me = await this.json<AuthMe>('/auth/me', {}, extras);
     if (this.credential.kind === 'session') {

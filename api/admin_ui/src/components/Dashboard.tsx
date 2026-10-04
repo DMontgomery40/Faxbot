@@ -115,9 +115,11 @@ function Line({ label, value, color }: { label: string; value: React.ReactNode; 
 interface DashboardProps {
   client: AdminAPIClient;
   onNavigate?: (destination: AdminDestination) => void;
+  // May this account open the Setup Wizard (settings:write)?
+  canSetUp?: boolean;
 }
 
-function Dashboard({ client, onNavigate }: DashboardProps) {
+function Dashboard({ client, onNavigate, canSetUp = false }: DashboardProps) {
   const theme = useTheme();
   const warningTextColor = theme.palette.mode === 'light'
     ? darken(theme.palette.warning.light, 0.6)
@@ -275,6 +277,12 @@ function Dashboard({ client, onNavigate }: DashboardProps) {
                 <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
                   {health.backend ? `Outbound provider: ${health.backend}` : 'No fax provider set up yet.'}
                 </Typography>
+                {!health.backend && canSetUp && onNavigate && (
+                  <Button variant="contained" size="small" sx={{ mt: 1.5 }}
+                    onClick={(event) => { event.stopPropagation(); onNavigate('setup'); }}>
+                    Set up a fax provider
+                  </Button>
+                )}
                 {health.backend && health.backend_message && (
                   <Typography variant="body2" color="error" sx={{ mt: 1 }} data-testid="engine-message">
                     {health.backend_message}

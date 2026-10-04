@@ -154,3 +154,41 @@ describe('API client credentials', () => {
     await waitFor(() => expect(requests).toHaveLength(2));
   });
 });
+
+describe('A new installation with no owner yet', () => {
+  const FIRST = 'This installation has no owner yet: sign in with the installation key (API_KEY in .env) to create the first owner.';
+
+  it('asks for the installation key first and says why', async () => {
+    backend.state.firstOwner = true;
+    render(<App />);
+    expect((await screen.findByTestId('first-owner')).textContent).toBe(FIRST);
+    expect(screen.getByLabelText('Installation key')).toBeTruthy();
+    expect(screen.queryByLabelText('Username')).toBeNull();
+    type('Installation key', 'bootstrap-secret');
+    fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+    expect(await screen.findByText(/No owner account exists yet/)).toBeTruthy();
+  });
+
+  it('is the usual sign-in once an owner exists', async () => {
+    render(<App />);
+    await screen.findByRole('heading', { name: 'Sign in' });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(screen.getByLabelText('Username')).toBeTruthy();
+    expect(screen.queryByTestId('first-owner')).toBeNull();
+  });
+
+  it('ends creating the first owner at Setup when no fax provider is set up', async () => {
+    backend.state.firstOwner = true;
+    backend.state.providerView = { plugins_enabled: false, install_enabled: false, active_outbound: '', active_inbound: '' };
+    render(<App />);
+    await screen.findByLabelText('Installation key');
+    type('Installation key', 'bootstrap-secret');
+    fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Create the first owner' }));
+    type('Username', 'owner');
+    type('Display name', 'Olive Owner');
+    fireEvent.click(screen.getByRole('button', { name: 'Create owner' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Done' }));
+    expect(await screen.findByRole('heading', { name: 'Setup Wizard' })).toBeTruthy();
+  });
+});

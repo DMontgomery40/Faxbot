@@ -1,5 +1,5 @@
 // 'email' opens Settings at the email delivery settings; 'routes' opens Tools, Delivery routes.
-export type AdminDestination = 'send' | 'jobs' | 'inbox' | 'settings' | 'keys' | 'diagnostics' | 'routes' | 'email' | 'trunk';
+export type AdminDestination = 'send' | 'jobs' | 'inbox' | 'settings' | 'keys' | 'diagnostics' | 'routes' | 'email' | 'trunk' | 'setup';
 
 export type TopTab = 'dashboard' | 'send' | 'jobs' | 'inbox' | 'work' | 'settings' | 'tools';
 export type SettingsTab = 'setup' | 'settings' | 'keys' | 'users' | 'groups' | 'roles' | 'access' | 'sessions' | 'mcp';
