@@ -8,7 +8,7 @@ Settings shows and changes the installation's saved configuration. Some changes 
 2. Change only the fields you mean to update. Hidden secrets stay as they are unless you type a replacement or clear the field.
 3. Click **Apply settings**. Only the fields you changed are sent.
 4. Read the result. The message says whether the change is already in use or waits for a restart.
-5. If it waits for a restart, stop every Faxbot API process and start the installation again, then click **Load Settings** to confirm the restart message is gone. Restarting one process while others keep running is not enough.
+5. If it waits for a restart, select **Restart now** in the restart message. Faxbot stops, Docker Compose starts it again, and the screen loads the settings again and says "Faxbot restarted and is using the saved settings." The button appears when your role may restart Faxbot (`host:restart`) and the installation allows it (`ADMIN_ALLOW_RESTART`); otherwise the message says to run `docker compose restart api` on the server. Where several API processes run, stop every one of them and start the installation again; restarting one process while others keep running is not enough.
 
 If someone else saved settings after you loaded them, Faxbot refuses your save and keeps your edits on the screen. Click **Load Settings**, review the current values, and apply again. If the console cannot confirm whether a save went through, load settings before trying again; the console never retries a save on its own.
 

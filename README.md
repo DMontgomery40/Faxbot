@@ -64,7 +64,7 @@ Screens follow the signed-in user's permissions and provider capabilities. See t
 
 Health checks are available at `/health` and `/health/ready`. Readiness does not prove that a fax has been delivered. Faxbot starts even when it cannot sign in to its fax engine (Asterisk): readiness, the dashboard and Settings give the reason in one sentence, sends are refused with it, and Faxbot keeps trying. The Compose file restarts the `api` and `asterisk` services after any exit, including **Restart API** in the console.
 
-Credentials in `.env` (provider keys, passwords and secrets) are read at every start and are the values in force; the console shows them as **Set in .env** and they are changed there, followed by `docker compose up -d` (a plain `docker compose restart` keeps the old values). `API_KEY` (the installation key) is read only at the first start, and other settings are managed in the console after that. Follow any requested restart and confirm the active settings before transmitting. [Held test jobs](docs/setup/test-mode.md) remain held when sending is enabled later.
+Credentials in `.env` (provider keys, passwords and secrets) are read at every start and are the values in force; the console shows them as **Set in .env** and they are changed there, followed by `docker compose up -d` (a plain `docker compose restart` keeps the old values). `API_KEY` (the installation key) is read only at the first start, and other settings are managed in the console after that. Follow any requested restart (Settings offers **Restart now**) and confirm the active settings before transmitting. [Held test jobs](docs/setup/test-mode.md) remain held when sending is enabled later.
 
 ## SDKs and AI assistants
 
@@ -121,8 +121,8 @@ Checked items are implemented in the current source checkout. Unchecked items ar
 - [x] Shared intake queue and SMTP email delivery, with console management.
 - [x] Enrolled direct partners, encrypted original-PDF delivery, signed receipts, and controlled fax fallback.
 - [x] Recipient-approved case packets, accepted-document history, and preview through the API.
-- [x] Carrier SIP trunk presets with T.38, per-call records, and native faxes priced by the trunk carrier (proven in a loopback; live carrier call pending).
-- [x] Fax over a SIP trunk from behind a router with no published or forwarded ports: Asterisk registers and starts every flow itself (proven in loopback and router tests in both directions; live carrier call pending), with audio fax for new calls one click away when T.38 data cannot come back.
+- [x] Carrier SIP trunk presets with T.38, per-call records, and native faxes priced by the trunk carrier. Proven live over Telnyx on 3 October 2026: a two-page fax sent to a cloud fax line and a fax received back, both configured entirely in the console.
+- [x] Fax over a SIP trunk from behind a router with no published or forwarded ports: Asterisk registers and starts every flow itself, with audio fax for new calls one click away when T.38 data cannot come back. Proven live in both directions from behind a home router in audio mode; over Telnyx, T.38 data did not come back through a router that changes port numbers.
 - [x] Encrypted trunk registration by default, Faxbot's internet address found by STUN, and one plain sentence per trunk call (for example "no fax data came back from the carrier") in Recent calls, Jobs, the Dashboard and `faxbot trunk`.
 - [x] `faxbot` command line covering the product, with stopped-server owner recovery, backup, restore, and database upgrades.
 - [x] One E.164 destination per fax, read for the installation country (UK and US), stored on the job, with versioned idempotent replays.
@@ -136,6 +136,9 @@ Checked items are implemented in the current source checkout. Unchecked items ar
 
 ### Next
 
+- [ ] Real carrier charges for every trunk fax, starting with Telnyx, shown against each fax and route next to the estimate; honest route recommendations when a cost is unknown or included in a flat plan.
+- [ ] A Setup Wizard that takes an operator from nothing to a working fax: providers per direction saved as they go, trunk applied and checked without a host shell, no hand-made secrets between Faxbot's own containers, and an optional test fax.
+- [ ] SSLFax through an optional HylaFAX+ engine for peers that already support it, with normal-fax fallback; the [isolated experiment](docs/operations/delivery-routes.md#sslfax) is the starting point.
 
 ### Proposed enterprise foundation
 
@@ -156,7 +159,13 @@ Enterprise software acceptance uses synthetic/local tests. Live customer end-to-
 - [ ] Destination-level scheduling and verified same-installation delivery, guided by actual traffic and retry costs.
 - [ ] Additional intake connectors, including watched folders and email ingestion, through the proposed enterprise import contract; specific vendor integrations follow demonstrated needs.
 - [ ] Measure fax negotiation, lossless compression, and error-correction choices before enabling adaptive transport behavior.
-- [ ] Evaluate a supported SSLFax integration using the [isolated HylaFAX+ experiment](docs/operations/delivery-routes.md#sslfax); Faxbot does not currently offer SSLFax.
+- [ ] Batch faxes to the same number within a short per-number window, with an urgency bypass, so short faxes share one call.
+- [ ] Cost per delivered fax for each destination, from every attempt's negotiated speed, error correction, duration and real charge, and route choice based on it rather than on rate cards alone.
+- [ ] Notice fax for enrolled partners whose intake needs a fax event: the original goes by the encrypted direct route and one opaque notice page goes by fax.
+- [ ] Receiving-side savings from real call history: which numbers should share a channel pool and which stay metered, quiet numbers, and trunk consolidation.
+- [ ] Resend only the missing pages to an enrolled partner after a broken call, with the document assembled whole on the receiving side.
+- [ ] Assemble a packet from a recipient's own checklist, and send once to an organization that distributes internally, only where the recipient agrees.
+- [ ] Reuse templates and unchanged pages between enrolled partners by content fingerprint, sending only what the other side does not already hold.
 - [ ] Prove T.38 Internet Aware Fax interoperability on compatible endpoints before offering it as a transport.
 - [ ] Evaluate SIP routing preferences, inbound channel pooling, and existing plan entitlements against real account costs and delivery reliability.
 - [ ] Explore automatic partner discovery only with a verified number, organization, and inbox binding.

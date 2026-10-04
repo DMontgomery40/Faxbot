@@ -131,6 +131,9 @@ export function plainRefusal(error: unknown): string | null {
 // The server refused a fax before accepting it, so nothing was sent.
 export class FaxRefusedError extends Error {}
 
+// The server's fixed refusal for plugin routes while provider plugins are turned off.
+const PLUGINS_TURNED_OFF = 'v3 plugins feature disabled';
+
 // Faxbot's fixed sentences for a missing connection to its fax engine (Asterisk).
 export const FAX_ENGINE_SENTENCES = new Set([
   "Faxbot can't sign in to its fax engine. Check that the Asterisk manager password matches.",
@@ -797,7 +800,13 @@ export class AdminAPIClient {
 
   // v3 Plugins (feature-gated)
   async listPlugins(): Promise<{ items: any[] }> {
-    return this.json('/plugins');
+    try {
+      return await this.json('/plugins');
+    } catch (error) {
+      // With provider plugins turned off (the default) there are simply no installed plugins to list.
+      if (error instanceof AdminAPIError && error.status === 404 && error.detail === PLUGINS_TURNED_OFF) return { items: [] };
+      throw error;
+    }
   }
 
   async getPluginConfig(pluginId: string, role?: PluginRole): Promise<PluginConfiguration> {

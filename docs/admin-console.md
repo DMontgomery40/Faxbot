@@ -52,7 +52,7 @@ Setup Wizard and Settings load canonical desired values and the revision they ed
 
 A redacted export is a desired template, not persistence or a complete backup. Settings can write a private recovery environment file; it does not promote pending settings. Preserve the database, installation encryption key and document artifacts for recovery. Environment and legacy JSON inputs bootstrap an installation without canonical state; subsequent `.env` edits do not override its saved revision. See [Settings](admin-console/settings.md) and [Setup](admin-console/setup-wizard.md).
 
-The optional Diagnostics **Restart API** action stops the API process when restarts are allowed. With Docker Compose the `api` service starts again by itself (`restart: unless-stopped`). Where several API processes run, arrange an installation-wide stop and start through the process manager instead.
+The **Restart now** button in the Settings restart message and the Diagnostics **Restart API** action stop the API process when restarts are allowed. With Docker Compose the `api` service starts again by itself (`restart: unless-stopped`). Where several API processes run, arrange an installation-wide stop and start through the process manager instead.
 
 ## Storage (S3)
 
@@ -74,6 +74,7 @@ The optional Diagnostics **Restart API** action stops the API process when resta
 - `POST /admin/settings/reload` only reads durable state
 - `POST /admin/settings/persist` writes a recovery file; it does not become the authoritative settings store
 - Jobs table uses admin‑scoped endpoints (`/admin/fax-jobs*`) with masked phone numbers
+- Jobs lists each fax by its number, state and provider name (for example **SIP trunk (Asterisk)**); the job ID appears only in Job Details, where it can be copied. After a send, the confirmation names the number ("Fax queued for +12015550123.") and **Follow it in Jobs** opens that fax's details.
 
 ## Inbound Controls (v2)
 
