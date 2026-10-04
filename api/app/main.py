@@ -1674,7 +1674,7 @@ def admin_inbound_callbacks():
             "name": "Phaxio Inbound",
             "url": f"{base}/phaxio-inbound",
             "verify_signature": settings.phaxio_inbound_verify_signature,
-            "notes": "Configure in Phaxio console → Inbound settings. Enable HMAC verification if policy requires.",
+            "notes": "Set this as the receive callback URL in Phaxio. Faxbot checks Phaxio's signature with the Callback Token.",
         })
     elif backend == "sinch":
         out["callbacks"].append({
@@ -1684,7 +1684,7 @@ def admin_inbound_callbacks():
                 "basic": bool(settings.sinch_inbound_basic_user),
                 "hmac": bool(settings.sinch_inbound_hmac_secret),
             },
-            "notes": "Set webhook in Sinch Fax console. Optionally use Basic and/or HMAC.",
+            "notes": "Set this as the incoming fax webhook in Sinch. Without basic auth, Faxbot confirms each fax with Sinch first.",
         })
     elif backend == "signalwire":
         out["callbacks"].append({
@@ -2570,8 +2570,10 @@ class InboundFaxOut(BaseModel):
 
 def _inbound_pdf_response(inbound_id: str, pdf_path: Optional[str], method: str, status: Optional[str] = "received"):
     pdf_path = str(pdf_path or "")
-    if status != "received" or not pdf_path:
+    if status != "received":
         raise HTTPException(404, detail="The document has not been received yet.")
+    if not pdf_path:
+        raise HTTPException(404, detail="PDF file not found")
     no_store = {"Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache", "Expires": "0"}
     if pdf_path.startswith("s3://"):
         stream, name = get_storage().get_pdf_stream(pdf_path)
