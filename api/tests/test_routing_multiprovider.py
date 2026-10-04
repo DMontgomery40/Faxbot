@@ -335,3 +335,55 @@ def test_asterisk_connects_for_sip_as_provider_or_as_an_extra_route(environment,
     values = ConfigurationValues.from_environment({'FAX_DISABLED': 'false', **environment})
     with use_configuration(values):
         assert main._ami_required() is expected
+
+
+_NATIVE_NO_DATA = {'Event': 'UserEvent', 'UserEvent': 'FaxResult', 'Status': 'FAILED',
+                   'Error': 'The call dropped prematurely', 'Pages': '0', 'Mode': 'T38', 'Station64': '',
+                   'Answered': '1791075343', 'Ended': '1791075367', 'Cause': '16'}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('handler,event,state,sentence', [
+    ('_handle_fax_result', _NATIVE_NO_DATA, 'failed',
+     'The call connected but no fax data came back from the carrier.'),
+    ('_handle_fax_result', {**_NATIVE_NO_DATA, 'Error': 'Received no response to DCS or TCF',
+                            'Station64': 'KzE1NTU1NTUwMTk5'}, 'failed',
+     'The other fax machine answered but the fax did not finish.'),
+    ('_handle_originate_response', {'Event': 'OriginateResponse', 'Response': 'Failure', 'Reason': '5'}, 'failed',
+     'The number was busy.'),
+    ('_handle_fax_result', {**_NATIVE_NO_DATA, 'Status': 'SUCCESS', 'Pages': '2'}, 'success', None),
+])
+async def test_native_trunk_result_explains_a_failed_fax_in_one_sentence(database, tmp_path, monkeypatch,
+                                                                        handler, event, state, sentence):
+    """Jobs show why a fax over Faxbot's own trunk failed, instead of a bare failure."""
+    from api.app import main
+    upgrade_schema(database)
+    configuration = ConfigurationStore(database, tmp_path / 'installation.key')
+    data = tmp_path / 'faxdata'
+    data.mkdir()
+    values = ConfigurationValues.from_environment({**ENVIRONMENT, 'FAX_OUTBOUND_ROUTES': 'sip',
+                                                   'FAX_DATA_DIR': str(data)})
+    phaxio = ProviderConfiguration('phaxio', credentials={'api_key': 'k', 'api_secret': 's'})
+    snapshot = configuration.initialize(values, actor='test', providers={'outbound': phaxio})
+    delivery, routes = OutboundStore(configuration), RouteStore(database)
+    routes.replace_cards([card('phaxio', page='0.07'), card('sip', minute='0.005')])
+    job = accept((configuration, delivery, routes, snapshot))
+    write_pdf(data / (job + '.pdf'), pages=1)
+
+    class Ami:
+        _connected = asyncio.Event()
+    Ami._connected.set()
+    inner = Inner(delivery, [SubmissionReceipt(job, 'in_progress')])
+    inner.ami = Ami()
+    await OutboundWorker(delivery, RoutedTransport(inner)).step()
+    attempt = delivery.get(job)['attempt_id']
+    monkeypatch.setattr(main, '_deliveries', lambda: delivery)
+    monkeypatch.setattr(OutboundStore, 'fallback_policy', None)
+    fields = {**event, 'JobID': job, 'AttemptID': attempt, 'ActionID': f'faxbot:{job}:{attempt}'}
+    getattr(main, handler)(fields)
+    assert delivery.get(job)['state'] == state
+    with database.connect() as connection:
+        row = connection.execute(sa.select(configuration.jobs).where(configuration.jobs.c.id == job)).mappings().one()
+    assert (row['status'], row['error']) == (state, sentence)
+    # Jobs read the error through the same sanitizer; the sentence comes back whole.
+    assert main.sanitize_error(row['error']) == sentence

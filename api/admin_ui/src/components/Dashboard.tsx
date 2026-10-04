@@ -23,10 +23,21 @@ import { IconButton } from '@mui/material';
 import AdminAPIClient, { AdminAPIError, isNotAvailable } from '../api/client';
 import type { HealthStatus } from '../api/types';
 import type { DirectPartner, IntakeCounts, Money, ProviderCosts } from '../api/deliveryTypes';
+import type { SipCallRecord } from '../api/sipTypes';
 import type { AdminDestination } from '../navigation';
 import { formatMoney, formatMoneyList } from './delivery/shared';
 
 type CardData<T> = { kind: 'loading' } | { kind: 'ready'; data: T } | { kind: 'denied' | 'unavailable' | 'error' };
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+// A received trunk call that left no fax image never reaches the Inbox; the
+// newest one from the last day is named on the inbound card instead.
+export function missedInboundCall(calls: SipCallRecord[], now: number = Date.now()): string | null {
+  const missed = calls.find((call) => call.direction === 'inbound' && call.job_id === null && call.summary
+    && now - new Date(call.started_at).getTime() < DAY_MS);
+  return missed?.summary ?? null;
+}
 
 async function settle<T>(request: Promise<T>): Promise<CardData<T>> {
   try {
@@ -120,17 +131,20 @@ function Dashboard({ client, onNavigate }: DashboardProps) {
   const [spending, setSpending] = useState<CardData<ProviderCosts[]>>({ kind: 'loading' });
   const [intake, setIntake] = useState<CardData<IntakeCounts>>({ kind: 'loading' });
   const [partners, setPartners] = useState<CardData<DirectPartner[]>>({ kind: 'loading' });
+  const [missedCall, setMissedCall] = useState<string | null>(null);
 
   // Delivery cards load on entry and on Refresh, not on every health poll.
   const fetchDelivery = async () => {
-    const [costs, queue, peers] = await Promise.all([
+    const [costs, queue, peers, calls] = await Promise.all([
       settle(client.getRouteCosts().then((result) => result.providers)),
       settle(client.listIntakeItems({ limit: 1 }).then((result) => result.counts)),
       settle(client.listDirectPartners().then((result) => result.peers)),
+      settle(client.listSipCalls({ limit: 20, direction: 'inbound' }).then((result) => result.items)),
     ]);
     setSpending(costs);
     setIntake(queue);
     setPartners(peers);
+    setMissedCall(calls.kind === 'ready' ? missedInboundCall(calls.data) : null);
   };
 
   const fetchHealth = async () => {
@@ -357,6 +371,11 @@ function Dashboard({ client, onNavigate }: DashboardProps) {
                     variant="outlined"
                     sx={{ color: health.inbound_enabled ? undefined : warningTextColor }}
                   />
+                  {missedCall && (
+                    <Typography variant="body2" sx={{ mt: 1, color: warningTextColor }} data-testid="missed-inbound-call">
+                      {missedCall}
+                    </Typography>
+                  )}
                 </CardContent>
               </Card>
             </Tooltip>

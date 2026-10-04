@@ -29,11 +29,20 @@ const CALLS = {
       caller: '+15555550100', called: '+15555550123', started_at: '2026-10-03T12:00:00Z',
       answered_at: '2026-10-03T12:00:08Z', ended_at: '2026-10-03T12:01:13Z', disposition: 'answered',
       connected_seconds: 65, t38: 'yes', pages: 2, fax_status: 'SUCCESS', remote_station_id: null,
-      error_cause: null, fax_preference: false },
+      error_cause: null, fax_preference: false, verdict: 'sent',
+      summary: 'Sent: 2 pages confirmed by the receiving machine.' },
     { id: 'c2', direction: 'inbound', job_id: 'f', attempt_id: null, trunk_preset: 'telnyx', did: '+15555550100',
       caller: '+15555550199', called: '+15555550100', started_at: '2026-10-03T11:00:00Z', answered_at: null,
       ended_at: null, disposition: 'busy', connected_seconds: 0, t38: 'unknown', pages: null, fax_status: null,
-      remote_station_id: null, error_cause: 'busy', fax_preference: false },
+      remote_station_id: null, error_cause: 'busy', fax_preference: false, verdict: null,
+      summary: 'The number was busy.' },
+    { id: 'c3', direction: 'inbound', job_id: null, attempt_id: null, trunk_preset: 'telnyx', did: '+15555550100',
+      caller: '+13035550100', called: '+15555550100', started_at: '2026-10-03T10:00:00Z',
+      answered_at: '2026-10-03T10:00:00Z', ended_at: '2026-10-03T10:00:14Z', disposition: 'answered',
+      connected_seconds: 14, t38: 'yes', pages: 0, fax_status: 'FAILED', remote_station_id: null,
+      error_cause: 'no_t38_data_back: The call dropped prematurely (cause 16)', fax_preference: false,
+      verdict: 'no_t38_data_back',
+      summary: 'A fax call from +13035550100 came in, but no fax data arrived from the carrier.' },
   ],
   next_cursor: 'older',
 };
@@ -169,9 +178,14 @@ describe('SIP trunk settings', () => {
       http.post('/admin/sip/apply', () => HttpResponse.json({ ok: true,
         message: 'Saved for Asterisk. Restart the Asterisk service to use these settings.' })),
       http.get('/admin/sip/status', () => HttpResponse.json({ configured: true, applied: true,
-        asterisk_connected: true, registration: 'registered',
-        registration_text: "The carrier accepted Faxbot's registration.", reachability: 'reachable',
-        reachability_text: "The carrier answers Faxbot's checks.", message: 'The trunk is ready.' })),
+        asterisk_connected: true, registration: 'registered', registration_transport: 'tls',
+        registration_text: "The carrier accepted Faxbot's registration over TLS.", reachability: 'reachable',
+        reachability_text: "The carrier answered Faxbot's check in 38 ms.", round_trip_ms: 38,
+        internet_address: '198.51.100.7', behind_router: true, port_numbers: 'changes',
+        public_address_text: "Faxbot's internet address is 198.51.100.7; your network changes port numbers, so Telnyx has to follow Faxbot's packets, and the first test fax shows whether it does.",
+        ports_text: 'No ports need to be opened or forwarded.',
+        last_call_text: 'The call connected but no fax data came back from the carrier.',
+        last_call_at: '2026-10-03T12:00:00Z', message: 'The trunk is ready.' })),
     );
     render(<SipTrunkSettings client={client()} />);
     await screen.findByText('A password is saved.');
@@ -180,8 +194,61 @@ describe('SIP trunk settings', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Check trunk status' }));
     const status = await screen.findByTestId('sip-trunk-status');
     expect(within(status).getByText('The trunk is ready.')).toBeTruthy();
-    expect(within(status).getByText("The carrier accepted Faxbot's registration.")).toBeTruthy();
-    expect(status.textContent).not.toMatch(/registered|reachable[^.]/);
+    expect(within(status).getByText("The carrier accepted Faxbot's registration over TLS.")).toBeTruthy();
+    expect(within(status).getByText("The carrier answered Faxbot's check in 38 ms.")).toBeTruthy();
+    expect(within(status).getByText(/^Faxbot's internet address is 198.51.100.7; your network changes port numbers/)).toBeTruthy();
+    expect(within(status).getByText('No ports need to be opened or forwarded.')).toBeTruthy();
+    expect(screen.getByText('Automatic: Faxbot found 198.51.100.7. Enter an address only to override it.')).toBeTruthy();
+    expect(within(status).getByText(/^Last call, .*: The call connected but no fax data came back from the carrier\.$/)).toBeTruthy();
+    expect(status.textContent).not.toMatch(/registered|reachable[^.]|no_t38|tls[^.]/);
+  });
+
+  it('refuses server IP sign-in behind a router in one sentence and names the transports plainly', async () => {
+    const detail = 'Your Faxbot runs behind a router, so sign in with a username and password; server IP sign-in needs a public address.';
+    server.use(
+      http.get('/admin/sip/presets', () => HttpResponse.json({ presets: [{ ...PRESETS[0], port: 5061, transport: 'tls' }] })),
+      http.get('/admin/settings', () => HttpResponse.json(settings({ auth: 'ip' }))),
+      http.get('/admin/sip/calls', () => HttpResponse.json({ items: [], next_cursor: null })),
+      http.post('/admin/sip/apply', () => HttpResponse.json({ detail }, { status: 400 })),
+    );
+    render(<SipTrunkSettings client={client()} />);
+    await screen.findByRole('radio', { name: 'Server IP address' });
+    fireEvent.click(screen.getByRole('button', { name: 'Apply to Asterisk' }));
+    expect(await screen.findByText(detail)).toBeTruthy();
+    fireEvent.mouseDown(screen.getByLabelText('Transport'));
+    const options = await screen.findAllByRole('option');
+    expect(options.map((option) => option.textContent)).toEqual(
+      ['Default (Encrypted (recommended))', 'Encrypted (recommended)', 'TCP', 'UDP (older)']);
+    expect(screen.getByLabelText(/Internet address/).getAttribute('placeholder')).toBe('Automatic');
+  });
+
+  it('offers audio fax for new calls after a T.38 call carried no fax data, and saves then applies it', async () => {
+    const writes: Array<Record<string, unknown>> = [];
+    let applied = 0;
+    server.use(
+      http.get('/admin/sip/presets', () => HttpResponse.json({ presets: PRESETS })),
+      http.get('/admin/settings', () => HttpResponse.json(settings())),
+      http.get('/admin/sip/calls', () => HttpResponse.json({ items: [], next_cursor: null })),
+      http.get('/admin/sip/status', () => HttpResponse.json({ configured: true, applied: true,
+        asterisk_connected: true, registration: 'registered', registration_text: "The carrier accepted Faxbot's registration over TLS.",
+        reachability: 'reachable', reachability_text: "The carrier answered Faxbot's check in 38 ms.",
+        last_call_text: 'The call connected but no fax data came back from the carrier.',
+        last_call_verdict: 'no_t38_data_back', suggest_audio: true, message: 'The trunk is ready.' })),
+      http.put('/admin/settings', async ({ request }) => {
+        writes.push(await request.json() as Record<string, unknown>);
+        return HttpResponse.json({ ok: true, changed: true, _meta: { active_revision_id: 'rev-2',
+          desired_revision_id: 'rev-2', generation: 2, apply_state: 'applied', restart_recommended: false } });
+      }),
+      http.post('/admin/sip/apply', () => { applied += 1; return HttpResponse.json({ ok: true, message: 'Saved.' }); }),
+    );
+    render(<SipTrunkSettings client={client()} />);
+    await screen.findByText('A password is saved.');
+    fireEvent.click(screen.getByRole('button', { name: 'Check trunk status' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Use audio fax for new calls' }));
+    expect(await screen.findByText('Saved for Asterisk. Restart the Asterisk service to send and receive new faxes as audio.'))
+      .toBeTruthy();
+    expect(writes).toEqual([{ expected_revision_id: 'rev-1', sip_t38_enabled: false }]);
+    expect(applied).toBe(1);
   });
 
   it('shows the missing fields the server names when applying fails', async () => {
@@ -218,6 +285,10 @@ describe('SIP trunk settings', () => {
     expect(within(rows[2]).getByText('Received')).toBeTruthy();
     expect(within(rows[2]).getByText('Busy')).toBeTruthy();
     expect(within(rows[2]).getByText('Not known')).toBeTruthy();
+    expect(within(rows[1]).getByText('Sent: 2 pages confirmed by the receiving machine.')).toBeTruthy();
+    expect(within(rows[3]).getByText('A fax call from +13035550100 came in, but no fax data arrived from the carrier.'))
+      .toBeTruthy();
+    expect(table.textContent).not.toContain('no_t38_data_back');
     fireEvent.click(screen.getByRole('button', { name: 'Show older calls' }));
     await waitFor(() => expect(cursors).toEqual([null, 'older']));
   });

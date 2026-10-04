@@ -29,7 +29,7 @@ from .conversion import ensure_dir
 from .documents import prepare_upload, UploadPreparationError
 from .ami import ami_client
 from . import sip_calls
-from .sip_http import router as sip_router
+from .sip_http import router as sip_router, watch_public_address
 from .phaxio_service import get_phaxio_service
 from .sinch_service import get_sinch_service
 from .signalwire_service import get_signalwire_service
@@ -125,6 +125,7 @@ async def lifespan(application: FastAPI):
                     worker = OutboundWorker(delivery, RoutedTransport(CapturedTransport(delivery, runtime, ami=ami_client)))
                     tasks.append(asyncio.create_task(worker.run(), name='faxbot-outbound-worker'))
                     tasks.append(asyncio.create_task(OutboundPoller(delivery).run(), name='faxbot-outbound-poller'))
+                    tasks.append(asyncio.create_task(watch_public_address(), name='faxbot-public-address'))
                     yield
             finally:
                 for task in tasks:
@@ -436,7 +437,7 @@ def _deliveries():
     return OutboundStore(_configuration_manager().store)
 
 
-def _observe_native(job_id, attempt_id, status, provider, *, event_key, secret=None):
+def _observe_native(job_id, attempt_id, status, provider, *, event_key, secret=None, error=None):
     if (not isinstance(job_id, str) or re.fullmatch('[a-f0-9]{32}', job_id) is None
             or not isinstance(attempt_id, str) or re.fullmatch('[a-f0-9]{32}', attempt_id) is None):
         raise DeliveryConflict('Native result has no verified attempt identity.')
@@ -452,7 +453,8 @@ def _observe_native(job_id, attempt_id, status, provider, *, event_key, secret=N
     # The authenticated job/attempt locator binds this event; never overwrite
     # the create acknowledgement's SID with a channel UUID.
     return delivery.observe(job_id, attempt_id=attempt_id, profile_id=profile.id,
-        provider_sid=job_id if provider == 'sip' else None, status=normalize_status(status), event_key=attempt_id + ':' + event_key)
+        provider_sid=job_id if provider == 'sip' else None, status=normalize_status(status), event_key=attempt_id + ':' + event_key,
+        error=error)
 
 
 def _handle_fax_result(event):
@@ -460,7 +462,8 @@ def _handle_fax_result(event):
     job_id, attempt = fields.get('jobid'), fields.get('attemptid')
     try:
         status = fields.get('status', '')
-        _observe_native(job_id, attempt, status, 'sip', event_key='ami-result:' + str(status))
+        _observe_native(job_id, attempt, status, 'sip', event_key='ami-result:' + str(status),
+                        error=sip_calls.result_summary(event))
     except Exception:
         audit_event('native_result_requires_reconciliation', provider='sip')
 
@@ -473,7 +476,8 @@ def _handle_originate_response(event):
     if len(parts) != 3 or parts[0] != 'faxbot':
         return
     try:
-        _observe_native(parts[1], parts[2], 'failed', 'sip', event_key='ami-originate-failure')
+        _observe_native(parts[1], parts[2], 'failed', 'sip', event_key='ami-originate-failure',
+                        error=sip_calls.originate_summary(event))
     except Exception:
         audit_event('native_result_requires_reconciliation', provider='sip')
 

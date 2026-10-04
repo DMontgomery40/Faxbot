@@ -69,7 +69,9 @@ class TrunkPreset:
 
 PRESETS: dict[str, TrunkPreset] = {preset.id: preset for preset in (
     TrunkPreset(
-        id='telnyx', label='Telnyx', host='sip.telnyx.com', port=5060, transport='udp',
+        # Encrypted signaling by default: one outbound connection that home-router
+        # SIP helpers cannot rewrite, and Telnyx sends incoming calls down it.
+        id='telnyx', label='Telnyx', host='sip.telnyx.com', port=5061, transport='tls',
         auth_modes=('registration', 'ip'), codecs=('ulaw', 'alaw'), dial_format='e164',
         signaling_addresses=('192.76.120.10', '64.16.250.10'),
         t38=('In the Telnyx portal, turn on "Enable T.38 Fax Gateway" for each number, and set the connection '
@@ -78,6 +80,8 @@ PRESETS: dict[str, TrunkPreset] = {preset.id: preset for preset in (
              'Faxbot waits about ten seconds before switching the call itself. For faxes you receive, Faxbot '
              'switches the call to T.38 whichever option you choose.'),
         notes=('Telnyx accepts credentials (registration) or IP address authentication.',
+               'Faxbot connects to Telnyx over an encrypted connection by default. In the Telnyx portal, set the '
+               'connection\'s inbound SIP transport to TLS as well.',
                'The caller ID must be a number on your Telnyx account or one Telnyx has verified.',
                'The US signaling addresses are 192.76.120.10 and 64.16.250.10.',
                'Choose an outbound voice profile for the connection so it can place calls.',
@@ -146,6 +150,9 @@ PRESETS: dict[str, TrunkPreset] = {preset.id: preset for preset in (
 )}
 
 _DEFAULT_PORTS = {'udp': 5060, 'tcp': 5060, 'tls': 5061}
+# Placeholders asterisk/bin/faxbot-public-address replaces at every Asterisk start.
+PUBLIC_ADDRESS = '@FAXBOT_PUBLIC_ADDRESS@'
+LOCAL_NET = '@FAXBOT_LOCAL_NET@'
 PRIVATE_NETWORKS = ('10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', '127.0.0.0/8')
 _DIGITS = re.compile(r'\+?[0-9]{3,20}', re.ASCII)
 
@@ -237,12 +244,23 @@ def _transport_section(trunk: Trunk):
                   'ca_list_file=/etc/ssl/certs/ca-certificates.crt', 'verify_server=yes']
     else:
         lines.append('bind=0.0.0.0:5060')
+    if trunk.transport != 'udp':
+        # Keep the one outbound connection (and every NAT mapping on its way)
+        # alive, and notice quickly when a router drops it silently.
+        lines += ['tcp_keepalive_enable=yes', 'tcp_keepalive_idle_time=30',
+                  'tcp_keepalive_interval_time=10', 'tcp_keepalive_probe_count=3']
     if trunk.external_address:
         # Behind NAT, advertise the public address to the carrier; private
         # networks (including Docker's) keep their own addresses.
         lines += [f'external_media_address={trunk.external_address}',
                   f'external_signaling_address={trunk.external_address}',
                   *(f'local_net={network}' for network in PRIVATE_NETWORKS)]
+    else:
+        # Nobody typed an address: the Asterisk container fills these in at
+        # start from what Faxbot's STUN probe found (only on a network that
+        # keeps port numbers, with its own subnet as local_net), or removes them.
+        lines += [f'external_media_address={PUBLIC_ADDRESS}', f'external_signaling_address={PUBLIC_ADDRESS}',
+                  f'local_net={LOCAL_NET}']
     return name, lines
 
 
@@ -259,12 +277,17 @@ def render_pjsip(values) -> str:
     preset = trunk.preset
     transport, transport_lines = _transport_section(trunk)
     registration = trunk.auth == 'registration'
+    udp = trunk.transport == 'udp'
     lines = [
         f'; Faxbot SIP trunk for {preset.label}, written by Faxbot from its settings.',
         '; Change the trunk in Faxbot settings; edits to this file are replaced.',
-        '[global]', 'type=global', 'user_agent=Faxbot-Asterisk', '',
+        # Every flow starts from Faxbot's side and is kept alive from it, so no
+        # router port has to be opened: keepalives on the TCP/TLS connection,
+        # carrier checks every 25 s on UDP (under common 30 s NAT timeouts).
+        '[global]', 'type=global', 'user_agent=Faxbot-Asterisk', 'keep_alive_interval=30', '',
         *transport_lines, '',
-        '[trunk-aor]', 'type=aor', f'contact={_uri(trunk)}', 'qualify_frequency=60', '',
+        '[trunk-aor]', 'type=aor', f'contact={_uri(trunk)}', f'qualify_frequency={25 if udp else 30}',
+        'qualify_timeout=3.0', '',
     ]
     if registration:
         lines += ['[trunk-auth]', 'type=auth', 'auth_type=userpass',
@@ -277,8 +300,11 @@ def render_pjsip(values) -> str:
         lines += ['t38_udptl=yes', 't38_udptl_ec=redundancy', 't38_udptl_maxdatagram=400', 't38_udptl_nat=yes']
     else:
         lines.append('t38_udptl=no')
+    # Answer media where the carrier's packets come from, reuse the signaling
+    # connection for requests within a call, and send a packet every two
+    # seconds when no audio flows so the router keeps the media path open.
     lines += ['rtp_symmetric=yes', 'force_rport=yes', 'rewrite_contact=yes', 'direct_media=no',
-              'send_pai=yes', f'from_domain={trunk.host}']
+              'rtp_keepalive=2', 'send_pai=yes', f'from_domain={trunk.host}']
     if trunk.outbound_proxy:
         lines.append(f'outbound_proxy=sip:{trunk.outbound_proxy}\\;lr')
     lines.append('')
@@ -289,7 +315,10 @@ def render_pjsip(values) -> str:
         lines += ['[trunk-registration]', 'type=registration', f'transport={transport}',
                   'outbound_auth=trunk-auth', f'server_uri={_uri(trunk)}',
                   f'client_uri={_uri(trunk, trunk.username)}', f'contact_user={trunk.username}',
-                  'retry_interval=60', 'forbidden_retry_interval=600', 'expiration=300',
+                  # Re-register often enough to refresh a UDP mapping; never give up
+                  # on an unattended fax server (max_retries=0 would mean no retries).
+                  f'expiration={120 if udp else 300}', 'retry_interval=60', 'forbidden_retry_interval=600',
+                  'fatal_retry_interval=120', 'max_retries=10000', 'auth_rejection_permanent=no',
                   'line=yes', f'endpoint={ENDPOINT}']
         if trunk.outbound_proxy:
             lines.append(f'outbound_proxy=sip:{trunk.outbound_proxy}\\;lr')
@@ -303,6 +332,46 @@ def configuration_path(values) -> Path:
 
 def secret_path(values) -> Path:
     return Path(values.fax_data_dir) / 'asterisk' / 'inbound.secret'
+
+
+def public_address_path(values) -> Path:
+    """What Faxbot's STUN probe found, read by the Asterisk container at start."""
+    return Path(values.fax_data_dir) / 'asterisk' / 'public-address'
+
+
+def write_public_address(values, probe) -> bool:
+    """Record the probe for the next Asterisk start; True when the advertised address would change.
+
+    Asterisk advertises the address only when the network keeps port numbers,
+    so a probe without that is recorded with ``ports_preserved`` false.
+    """
+    import json
+    path = public_address_path(values)
+    record = {'ip': probe.public_ip if probe else None,
+              'ports_preserved': bool(probe and probe.public_ip and probe.ports == 'preserved'),
+              'probed_at': int(probe.probed_at) if probe else None}
+    before = read_public_address(values)
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    _write_private(path, json.dumps(record) + '\n')
+    advertised = lambda item: item.get('ip') if item and item.get('ports_preserved') else None  # noqa: E731
+    return advertised(before) != advertised(record)
+
+
+def read_public_address(values):
+    """The recorded probe, or None."""
+    import json
+    try:
+        return json.loads(public_address_path(values).read_text())
+    except (OSError, ValueError):
+        return None
+
+
+def applied_public_address(values):
+    """The address Asterisk advertised when it last started: an address, '' for none, None if unknown."""
+    try:
+        return (public_address_path(values).with_name('public-address.applied')).read_text().strip()
+    except OSError:
+        return None
 
 
 def write_asterisk_configuration(values) -> Path:
@@ -356,12 +425,21 @@ def preset_catalog():
 
 
 def main(argv=None):
-    """``python -m app.sip_trunk write``: render from this process's settings."""
+    """``python -m app.sip_trunk write`` renders from this process's settings;
+    ``probe`` prints what STUN shows about this network as JSON and one sentence."""
+    import json
     import sys
     from .config_values import ConfigurationValues, ConfigurationValueError
+    from . import stun
     arguments = list(sys.argv[1:] if argv is None else argv)
+    if arguments == ['probe']:
+        preset = os.environ.get('SIP_TRUNK_PRESET', '')
+        result = stun.probe(stun.servers_for(preset))
+        label = PRESETS[preset].label if preset in PRESETS and preset != 'custom' else 'the carrier'
+        print(json.dumps({**result.as_dict(), 'text': stun.address_sentence(result, carrier=label)}, indent=2))
+        return 0
     if arguments != ['write']:
-        print('Usage: python -m app.sip_trunk write', file=sys.stderr)
+        print('Usage: python -m app.sip_trunk write|probe', file=sys.stderr)
         return 2
     try:
         values = ConfigurationValues.from_environment(os.environ)

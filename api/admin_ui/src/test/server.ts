@@ -588,6 +588,8 @@ const consoleHandlers = [
   http.get('/intake/connectors', () => json({ connectors: [] })),
   http.get('/direct/peers', () => json({ peers: [] })),
   http.get('/direct/deliveries', () => json({ deliveries: [] })),
+  // SIP trunk call history (the Dashboard names a received call that left no fax).
+  http.get('/admin/sip/calls', () => json({ items: [], next_cursor: null })),
 ];
 
 export const server = setupServer(...accessHandlers, ...consoleHandlers);

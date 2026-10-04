@@ -1,0 +1,44 @@
+#!/bin/bash
+# Fill in or remove the internet address lines of a rendered pjsip.conf.
+#
+# Faxbot renders the transport with @FAXBOT_PUBLIC_ADDRESS@ and @FAXBOT_LOCAL_NET@
+# when nobody typed an address, and writes what STUN found to
+# <fax data>/asterisk/public-address as one line of JSON. Only an IPv4 address
+# on a network that keeps port numbers is advertised ("exact or nothing"): with
+# changed ports, a public address with the wrong port would mislead the carrier,
+# while the container's own address makes it follow Faxbot's packets. local_net
+# is this container's own subnet. No network call is made here, so every start
+# is deterministic. The address used is recorded next to the file, so Faxbot
+# can tell when the internet address changed after Asterisk started.
+#
+# Usage: faxbot-public-address <pjsip.conf>
+set -euo pipefail
+umask 077
+
+conf=$1
+info=${FAXBOT_PUBLIC_ADDRESS_FILE:-/faxdata/asterisk/public-address}
+applied=${info}.applied
+[ -f "$conf" ] || exit 0
+grep -q '@FAXBOT_PUBLIC_ADDRESS@\|@FAXBOT_LOCAL_NET@' "$conf" || exit 0
+
+octet='(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])'
+address='' preserved=''
+if [ -f "$info" ] && [ ! -L "$info" ]; then
+  address=$(sed -n 's/.*"ip": *"\([0-9.]*\)".*/\1/p' "$info" | head -n 1)
+  grep -q '"ports_preserved": *true' "$info" && preserved=yes
+fi
+local_net=${FAXBOT_LOCAL_NET:-}
+if [ -z "$local_net" ] && command -v ip >/dev/null 2>&1; then
+  local_net=$(ip -o -4 route show scope link 2>/dev/null | awk '{print $1; exit}')
+fi
+
+temporary=$(mktemp "${conf}.XXXXXX")
+if [[ "$address" =~ ^$octet\.$octet\.$octet\.$octet$ ]] && [ -n "$preserved" ] \
+    && [[ "$local_net" =~ ^$octet\.$octet\.$octet\.$octet/([0-9]|[12][0-9]|3[0-2])$ ]]; then
+  sed -e "s|@FAXBOT_PUBLIC_ADDRESS@|$address|g" -e "s|@FAXBOT_LOCAL_NET@|$local_net|g" "$conf" > "$temporary"
+  printf '%s\n' "$address" > "$applied.tmp" && mv -f "$applied.tmp" "$applied" 2>/dev/null || true
+else
+  sed -e '/@FAXBOT_PUBLIC_ADDRESS@/d' -e '/@FAXBOT_LOCAL_NET@/d' "$conf" > "$temporary"
+  : > "$applied.tmp" && mv -f "$applied.tmp" "$applied" 2>/dev/null || true
+fi
+mv -f "$temporary" "$conf"

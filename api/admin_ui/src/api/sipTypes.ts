@@ -57,6 +57,23 @@ export interface SipTrunkStatus {
   registration_text: string;
   reachability: SipReachability;
   reachability_text: string;
+  // The transport Asterisk registered over (or, for IP sign-in, the trunk's transport).
+  registration_transport?: 'udp' | 'tcp' | 'tls' | null;
+  round_trip_ms?: number | null;
+  // What STUN shows from Faxbot's network; one plain sentence each.
+  internet_address?: string | null;
+  behind_router?: boolean | null;
+  port_numbers?: 'preserved' | 'consistent' | 'changes' | null;
+  public_address_text?: string | null;
+  ports_text?: string | null;
+  last_call_text?: string | null;
+  last_call_at?: string | null;
+  // The address Asterisk advertised at its last start, and whether that is out of date.
+  advertised_address?: string | null;
+  address_changed?: boolean;
+  last_call_verdict?: string | null;
+  // True after a T.38 call carried no fax data while T.38 is on: offer audio fax for new calls.
+  suggest_audio?: boolean;
   message: string;
 }
 
@@ -82,6 +99,10 @@ export interface SipCallRecord {
   remote_station_id: string | null;
   error_cause: string | null;
   fax_preference: boolean;
+  // sent, received, or why a connected call delivered nothing (no_t38_data_back, ...).
+  verdict?: string | null;
+  // One plain sentence for this call.
+  summary?: string;
 }
 
 export interface SipCallPage {

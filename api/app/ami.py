@@ -16,7 +16,8 @@ AMI_MAX_LINE_BYTES = 1024
 # status reply (notably AuthDetail events, which carry the SIP password) is
 # dropped as it is read and never stored, returned or logged.
 STATUS_EVENT_FIELDS = {
-    "outboundregistrationdetail": ("ObjectName", "Status", "ServerUri", "NextReg"),
+    "outboundregistrationdetail": ("ObjectName", "Status", "ServerUri", "NextReg", "Transport"),
+    "contactlist": ("ObjectName", "Status", "RoundtripUsec"),
 }
 
 
@@ -307,6 +308,8 @@ class AMIClient:
             event == "userevent" and fields.get("userevent", "").lower() == "faxresult"
         ):
             self._emit("FaxResult", msg)
+        elif event == "userevent" and fields.get("userevent", "").lower() == "faxinboundcall":
+            self._emit("FaxInboundCall", msg)
 
     @staticmethod
     def _collect(query, msg: Dict[str, str], fields: Dict[str, str]):
@@ -434,6 +437,10 @@ class AMIClient:
 
     def on_submission(self, cb: Callable[[Dict[str, str]], None]):
         self._listen("Submission", cb)
+
+    def on_inbound_call(self, cb: Callable[[Dict[str, str]], None]):
+        """A received call that left no fax image (the dialplan's FaxInboundCall event)."""
+        self._listen("FaxInboundCall", cb)
 
 
 ami_client = AMIClient()

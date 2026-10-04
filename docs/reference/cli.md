@@ -52,6 +52,7 @@ $ faxbot [OPTIONS] COMMAND [ARGS]...
 * `providers`: Fax providers: which are installed and...
 * `diagnostics`: Check the installation without sending a fax.
 * `pair`: Pair the Faxbot iPhone app (or a script...
+* `trunk`: Faxbot&#x27;s own carrier SIP trunk: status,...
 * `routing`: Delivery routes, destinations, fax costs...
 * `intake`: The intake queue: received documents being...
 * `direct`: Direct delivery: send faxes to verified...
@@ -1752,6 +1753,74 @@ $ faxbot pair device [OPTIONS] {code}
 
 * `--device-name <str>`: Name the key is listed under.  [default: Command line]
 * `--save-profile NAME`: Save the new key in this profile instead of printing it.
+* `--help`: Show this message and exit.
+
+## `faxbot trunk`
+
+Faxbot&#x27;s own carrier SIP trunk: status, network and recent calls.
+
+**Usage**:
+
+```console
+$ faxbot trunk [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `status`: Check the trunk: registration, the...
+* `calls`: List recent trunk calls, newest first,...
+* `mode`: Choose T.38 or audio fax for new calls,...
+
+### `faxbot trunk status`
+
+Check the trunk: registration, the carrier&#x27;s answer, Faxbot&#x27;s internet address and the last call.
+
+**Usage**:
+
+```console
+$ faxbot trunk status [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+### `faxbot trunk calls`
+
+List recent trunk calls, newest first, each with one sentence about what happened.
+
+**Usage**:
+
+```console
+$ faxbot trunk calls [OPTIONS]
+```
+
+**Options**:
+
+* `--limit <int range>`: How many calls to show, newest first.  [default: 10; 1&lt;=x&lt;=200]
+* `--direction <str>`: Only outbound or inbound calls.
+* `--help`: Show this message and exit.
+
+### `faxbot trunk mode`
+
+Choose T.38 or audio fax for new calls, save it for Asterisk, and say what to restart.
+
+**Usage**:
+
+```console
+$ faxbot trunk mode [OPTIONS] {t38|audio}
+```
+
+**Arguments**:
+
+* `t38|audio`: t38 (recommended) or audio, for when T.38 data cannot come back.  [required]
+
+**Options**:
+
 * `--help`: Show this message and exit.
 
 ## `faxbot routing`

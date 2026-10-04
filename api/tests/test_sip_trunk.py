@@ -15,6 +15,10 @@ PASSWORD = 'synthetic-Trunk-Pass!42'
 CASES = {
     'telnyx-registration': {'SIP_TRUNK_PRESET': 'telnyx', 'SIP_TRUNK_USERNAME': 'faxbotuser',
                             'SIP_TRUNK_PASSWORD': PASSWORD},
+    'telnyx-registration-tcp': {'SIP_TRUNK_PRESET': 'telnyx', 'SIP_TRUNK_USERNAME': 'faxbotuser',
+                                'SIP_TRUNK_PASSWORD': PASSWORD, 'SIP_TRUNK_TRANSPORT': 'tcp'},
+    'telnyx-registration-udp': {'SIP_TRUNK_PRESET': 'telnyx', 'SIP_TRUNK_USERNAME': 'faxbotuser',
+                                'SIP_TRUNK_PASSWORD': PASSWORD, 'SIP_TRUNK_TRANSPORT': 'udp'},
     'telnyx-ip': {'SIP_TRUNK_PRESET': 'telnyx', 'SIP_TRUNK_AUTH': 'ip'},
     'signalwire-registration': {'SIP_TRUNK_PRESET': 'signalwire', 'SIP_TRUNK_HOST': 'example.sip.signalwire.com',
                                 'SIP_TRUNK_USERNAME': 'faxbot', 'SIP_TRUNK_PASSWORD': PASSWORD},
@@ -151,7 +155,11 @@ def test_public_address_is_advertised_only_outside_private_networks():
     rendered = sip_trunk.render_pjsip(values(CASES['telnyx-registration-nat']))
     assert 'external_media_address=203.0.113.10\nexternal_signaling_address=203.0.113.10\n' in rendered
     assert 'local_net=172.16.0.0/12' in rendered and 'local_net=10.0.0.0/8' in rendered
-    assert 'external_' not in sip_trunk.render_pjsip(values(CASES['telnyx-registration']))
+    # Nobody typed an address: Asterisk fills in what STUN found at start, or drops the lines.
+    automatic = sip_trunk.render_pjsip(values(CASES['telnyx-registration']))
+    assert ('external_media_address=@FAXBOT_PUBLIC_ADDRESS@\nexternal_signaling_address=@FAXBOT_PUBLIC_ADDRESS@\n'
+            'local_net=@FAXBOT_LOCAL_NET@\n') in automatic
+    assert '203.0.113' not in automatic and 'local_net=172.16.0.0/12' not in automatic
     with pytest.raises(Exception):
         values({'SIP_EXTERNAL_ADDRESS': '203.0.113.10;evil'})
 
