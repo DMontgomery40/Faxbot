@@ -10,7 +10,7 @@ import typer
 from typer.core import TyperGroup
 
 from . import profiles, state
-from .commands import access, admin, delivery, fax, operations, settings, setup, trunk, work
+from . import nouns
 from .errors import CliError
 from .output import Output, error
 from .state import State
@@ -38,8 +38,8 @@ def _option_table(command, ctx):
 def hoist_global_options(root, ctx, args):
     """Move global options written after a subcommand to just before it.
 
-    `faxbot inbound list --json` then means `faxbot --json inbound list`. An option
-    the subcommand defines itself (config set-profile --url) stays with it, option
+    `faxbot received list --json` then means `faxbot --json received list`. An option
+    the subcommand defines itself (system profiles save --url) stays with it, option
     values are never mistaken for options, and nothing after `--` moves.
     """
     globals_table = {name: value for param in root.get_params(ctx) if param.name in GLOBAL_OPTIONS
@@ -85,7 +85,7 @@ class FaxbotGroup(TyperGroup):
     """Report expected failures as one plain sentence; never print tracebacks or local values."""
 
     def parse_args(self, ctx, args):
-        # Global options are also accepted after the subcommand: faxbot inbound list --json.
+        # Global options are also accepted after the subcommand: faxbot received list --json.
         return super().parse_args(ctx, hoist_global_options(self, ctx, args))
 
     def invoke(self, ctx):
@@ -109,9 +109,9 @@ def _json_mode(ctx):
 
 app = typer.Typer(
     name='faxbot', cls=FaxbotGroup, no_args_is_help=True, pretty_exceptions_enable=False,
-    help='Send and receive faxes and run a Faxbot installation from the command line.\n\n'
-         'Commands talk to a running Faxbot server with an API key. The admin commands work on a '
-         'stopped installation on this computer.',
+    help='Send and receive faxes and look after your Faxbot installation from the command line. Commands work '
+         'with a running Faxbot server and use your key. The system status, migrate, recover-owner, backup and'
+         ' restore commands work on this computer while Faxbot is stopped.',
     context_settings={'help_option_names': ['-h', '--help']},
 )
 
@@ -129,13 +129,13 @@ def main(
                             help='Faxbot server address, for example https://fax.example.com. '
                                  'Defaults to your saved profile, then http://localhost:8080.'),
     key: str = typer.Option(None, '--key', envvar='FAXBOT_API_KEY', metavar='API_KEY', show_default=False,
-                            help='API key to use. Defaults to your saved profile. Prefer the environment '
-                                 'variable or a profile so the key stays out of your shell history.'),
+                            help='The key to use. Defaults to the key in your saved profile. A profile or '
+                                 'FAXBOT_API_KEY keeps the key out of your command history.'),
     profile: str = typer.Option(None, '--profile', envvar='FAXBOT_PROFILE', metavar='NAME',
-                                help='Saved profile to use (see faxbot config).'),
+                                help='Saved profile to use (see faxbot system profiles).'),
     json_output: bool = typer.Option(False, '--json', help='Print results as JSON, for scripts.'),
     quiet: bool = typer.Option(False, '--quiet', '-q',
-                               help='Print nothing on success, except secrets shown only once.'),
+                               help='Print nothing when a command works, except keys and passwords shown only once.'),
     version: bool = typer.Option(False, '--version', callback=_version, is_eager=True,
                                  help='Show the version and exit.'),
 ):
@@ -151,15 +151,7 @@ def main(
                                      client_factory=supplied.get('client_factory')))
 
 
-fax.register(app)
-access.register(app)
-settings.register(app)
-trunk.register(app)
-delivery.register(app)
-work.register(app)
-operations.register(app)
-setup.register(app)
-admin.register(app)
+nouns.register(app)
 
 
 def run():

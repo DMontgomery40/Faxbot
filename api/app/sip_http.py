@@ -650,27 +650,44 @@ async def calls(request: Request, cursor: str | None = Query(default=None, max_l
         raise HTTPException(503, detail='Call records are not available right now.') from None
 
 
-def _check_minutes():
-    try:
-        return max(0, int(os.environ.get('SIP_PUBLIC_ADDRESS_CHECK_MINUTES', '5')))
-    except ValueError:
-        return 5
+# With the check turned off, look again this often for the setting to change.
+_IDLE_CHECK_MINUTES = 1
+
+
+async def _current_values(values_source):
+    """The installation's current values; a store read runs off the event loop."""
+    if values_source is None:
+        return configuration_values()
+    return await run_lifecycle_step(values_source)
 
 
 async def watch_public_address(*, minutes=None, values_source=None):
     """Probe again every few minutes and record a changed internet address for Asterisk's next start.
 
-    SIP_PUBLIC_ADDRESS_CHECK_MINUTES (default 5, 0 turns it off) sets the pace.
+    The trunk setting sip_public_address_check_minutes (5 by default, 0 turns the
+    check off) sets the pace and is read again before every wait, so a change
+    applies from the next check. ``minutes`` fixes the pace instead (tests).
     A probe that finds no address leaves the record alone; Check trunk status
     says when Asterisk needs a restart to advertise the new address.
     """
-    minutes = _check_minutes() if minutes is None else minutes
-    if minutes <= 0:
+    if minutes is not None and minutes <= 0:
         return
     while True:
-        await asyncio.sleep(minutes * 60)
+        pace = minutes
+        if pace is None:
+            try:
+                pace = (await _current_values(values_source)).sip_public_address_check_minutes
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                pace = 0
+        await asyncio.sleep((pace if pace > 0 else _IDLE_CHECK_MINUTES) * 60)
+        if pace <= 0:
+            continue
         try:
-            values = (values_source or configuration_values)()
+            values = await _current_values(values_source)
+            if minutes is None and values.sip_public_address_check_minutes <= 0:
+                continue
             if (not sip_trunk.configured(values) or values.sip_external_address
                     or _phone_system(values.sip_trunk_preset)):
                 continue

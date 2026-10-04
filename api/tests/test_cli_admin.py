@@ -1,4 +1,4 @@
-"""faxbot admin on temporary installations: recovery, backup and restore, upgrade and status.
+"""faxbot system on stopped installations: recovery, backup and restore, upgrade and status.
 
 Each test creates a real installation by starting the application once, stops
 it, then runs the local commands against its database and files. A server
@@ -65,7 +65,7 @@ class Installation:
     def admin(self, *args, input=None, client=None):
         """A local admin command; the server address points where nothing listens unless client is given."""
         obj = {'client_factory': (lambda address, timeout: (client, False))} if client is not None else None
-        return self.runner.invoke(cli_app, ['--url', ORIGIN if client is not None else NOBODY, 'admin',
+        return self.runner.invoke(cli_app, ['--url', ORIGIN if client is not None else NOBODY, 'system',
                                             *[str(arg) for arg in args]], input=input, obj=obj)
 
     def remote(self, client, *args, key=BOOTSTRAP):
@@ -79,7 +79,7 @@ class Installation:
         return json.loads(result.stdout)
 
     def admin_json(self, *args):
-        result = self.runner.invoke(cli_app, ['--url', NOBODY, '--json', 'admin', *[str(arg) for arg in args]])
+        result = self.runner.invoke(cli_app, ['--url', NOBODY, '--json', 'system', *[str(arg) for arg in args]])
         assert result.exit_code == 0, (result.stdout, result.stderr)
         return json.loads(result.stdout)
 
@@ -139,7 +139,7 @@ def test_status_and_migrate_on_an_existing_and_a_new_database(installation, monk
     monkeypatch.setenv('FAX_DATA_DIR', str(fresh / 'faxdata'))
     waiting = installation.admin('status')
     assert waiting.exit_code == 0 and HEAD not in waiting.stdout
-    assert waiting.stdout.strip().endswith('The database needs an upgrade; run faxbot admin migrate before starting '
+    assert waiting.stdout.strip().endswith('The database needs an upgrade; run faxbot system migrate before starting '
                                            'Faxbot.')
     upgraded = installation.admin('migrate')
     assert upgraded.exit_code == 0 and upgraded.stdout.strip() == 'Database upgraded.'
@@ -151,8 +151,8 @@ def test_status_and_migrate_on_an_existing_and_a_new_database(installation, monk
     assert migrated == {'before': None, 'after': HEAD, 'current': True, 'changed': True}
     empty = installation.admin_json('status')
     assert empty['configuration'] is None and empty['counts']['sent_faxes'] == 0
-    missing = installation.runner.invoke(cli_app, ['--url', NOBODY, 'admin', '--data-dir', str(tmp_path / 'nope'),
-                                                   'status'])
+    missing = installation.runner.invoke(cli_app, ['--url', NOBODY, 'system', 'status', '--data-dir',
+                                                   str(tmp_path / 'nope')])
     assert missing.exit_code == 5 and 'There is no Faxbot data folder' in missing.stderr
 
 
@@ -160,7 +160,7 @@ def test_status_and_migrate_on_an_existing_and_a_new_database(installation, monk
 
 def test_recover_owner_then_enroll_an_owner_and_sign_in(installation):
     with installation.serve() as client:
-        first = installation.remote(client, 'owner', 'enroll', '--login', 'olivia', '--name', 'Olivia Owner')
+        first = installation.remote(client, 'access', 'owner', 'enroll', '--login', 'olivia', '--name', 'Olivia Owner')
         assert first.exit_code == 0, first.stderr
         browser = client.post('/auth/key-login', json={'api_key': BOOTSTRAP}, headers={'Origin': ORIGIN})
         assert browser.status_code == 200
@@ -168,7 +168,7 @@ def test_recover_owner_then_enroll_an_owner_and_sign_in(installation):
         client.cookies.clear()
         assert bootstrap_session
 
-    refused = installation.runner.invoke(cli_app, ['--url', NOBODY, '--json', 'admin', 'recover-owner'])
+    refused = installation.runner.invoke(cli_app, ['--url', NOBODY, '--json', 'system', 'recover-owner'])
     assert refused.exit_code == 1 and 'Add --yes' in json.loads(refused.stdout)['error']['message']
     declined = installation.admin('recover-owner', input='n\n')
     assert declined.exit_code == 1
@@ -179,18 +179,18 @@ def test_recover_owner_then_enroll_an_owner_and_sign_in(installation):
     assert 'faxbot' in recovered.stdout and 'owner enroll' in recovered.stdout
 
     with installation.serve() as client:
-        assert installation.remote(client, 'me').exit_code == 3
-        me = installation.remote_json(client, 'me', key=secret)
+        assert installation.remote(client, 'access', 'me').exit_code == 3
+        me = installation.remote_json(client, 'access', 'me', key=secret)
         assert me['principal']['kind'] == 'bootstrap'
         stale = client.get('/auth/me', headers={'Cookie': f'__Host-faxbot_session={bootstrap_session}'})
         assert stale.status_code == 401
-        enrolled = installation.remote_json(client, 'owner', 'enroll', '--login', 'rescue', '--name', 'Rescue Owner',
+        enrolled = installation.remote_json(client, 'access', 'owner', 'enroll', '--login', 'rescue', '--name', 'Rescue Owner',
                                             key=secret)
         signed_in = client.post('/auth/login', json={'login': 'rescue', 'password': enrolled['temporary_password']},
                                 headers={'Origin': ORIGIN})
         assert signed_in.status_code == 200 and signed_in.json()['password_change_required'] is True
         client.cookies.clear()
-        audit = installation.remote_json(client, 'audit', 'list', '--operation', 'owner.recover', key=secret)
+        audit = installation.remote_json(client, 'system', 'audit', '--operation', 'owner.recover', key=secret)
         assert len(audit) == 1 and audit[0]['actor'] is None and audit[0]['outcome'] == 'allowed'
         assert audit[0]['details']['source'] == 'host_terminal'
         assert secret not in json.dumps(audit)
@@ -200,15 +200,15 @@ def test_recover_owner_then_enroll_an_owner_and_sign_in(installation):
 
 def test_recovery_with_settings_waiting_for_a_restart_takes_effect_at_the_next_start(installation):
     with installation.serve() as client:
-        staged = installation.remote_json(client, 'settings', 'set', 'artifact_ttl_days=9')
+        staged = installation.remote_json(client, 'system', 'settings', 'set', 'artifact_ttl_days=9')
         assert staged['_meta']['apply_state'] == 'pending_restart'
     recovered = installation.admin_json('recover-owner', '--yes')
     assert recovered['active_after_restart'] is True
     secret = recovered['installation_key']
     with installation.serve() as client:
-        assert installation.remote(client, 'me').exit_code == 3
-        assert installation.remote_json(client, 'me', key=secret)['principal']['kind'] == 'bootstrap'
-        limits = installation.remote_json(client, 'settings', 'get', 'limits', key=secret)['limits']
+        assert installation.remote(client, 'access', 'me').exit_code == 3
+        assert installation.remote_json(client, 'access', 'me', key=secret)['principal']['kind'] == 'bootstrap'
+        limits = installation.remote_json(client, 'system', 'settings', 'get', 'limits', key=secret)['limits']
         assert limits['artifact_ttl_days'] == 9
 
 
@@ -228,7 +228,7 @@ def _tree(root):
 def test_backup_and_restore_round_trip_on_sqlite(installation, tmp_path):
     with installation.serve() as client:
         sent = _send(installation, client, tmp_path)
-        card = installation.remote_json(client, 'direct', 'card')['card']
+        card = installation.remote_json(client, 'recipients', 'partners', 'card')['card']
     data_dir = Path(installation.environment['FAX_DATA_DIR'])
     database = installation.root / 'installation.db'
     original = {'data': _tree(data_dir), 'key': (installation.root / 'installation.key').read_bytes(),
@@ -265,12 +265,12 @@ def test_backup_and_restore_round_trip_on_sqlite(installation, tmp_path):
     assert stat.S_IMODE((installation.root / 'installation.key').stat().st_mode) == 0o600
 
     with installation.serve() as client:
-        jobs = installation.remote_json(client, 'jobs', 'list')
+        jobs = installation.remote_json(client, 'sent', 'list')
         assert [job['id'] for job in jobs['jobs']] == [sent['id']]
         target = tmp_path / 'after-restore.pdf'
-        installation.remote_json(client, 'jobs', 'pdf', sent['id'], '-o', target)
+        installation.remote_json(client, 'sent', 'pdf', sent['id'], '-o', target)
         assert target.read_bytes().startswith(b'%PDF')
-        assert installation.remote_json(client, 'direct', 'card')['card'] == card
+        assert installation.remote_json(client, 'recipients', 'partners', 'card')['card'] == card
 
     forced = installation.admin_json('restore', folder, '--force')
     assert forced['data_files'] == made['data_files']
@@ -283,13 +283,15 @@ def test_restore_refuses_a_backup_that_does_not_match_its_manifest(installation,
     target = folder / 'keys' / 'installation.key'
     content = target.read_bytes()
     target.write_bytes(content[:-1] + (b'A' if content[-1:] != b'A' else b'B'))
-    tampered = installation.runner.invoke(cli_app, ['--url', NOBODY, 'admin', '--data-dir', str(empty / 'data'),
+    tampered = installation.runner.invoke(cli_app, ['--url', NOBODY, 'system', 'restore', str(folder),
+                                                    '--data-dir', str(empty / 'data'),
                                                     '--database-url', f"sqlite:///{empty / 'db.sqlite'}",
-                                                    '--key-file', str(empty / 'key'), 'restore', str(folder)])
+                                                    '--key-file', str(empty / 'key')])
     assert tampered.exit_code == 1 and 'does not match its manifest' in tampered.stderr
     target.write_bytes(content)
     (folder / 'data' / 'extra.txt').parent.mkdir(exist_ok=True)
     (folder / 'data' / 'extra.txt').write_text('added later')
+    # The older faxbot admin, with these options before the command, still works.
     added = installation.runner.invoke(cli_app, ['--url', NOBODY, 'admin', '--data-dir', str(empty / 'data'),
                                                  '--database-url', f"sqlite:///{empty / 'db.sqlite'}",
                                                  '--key-file', str(empty / 'key'), 'restore', str(folder)])
@@ -325,7 +327,7 @@ def test_postgresql_status_migrate_backup_and_restore(postgres_url, monkeypatch,
     assert installation.admin_json('migrate')['after'] == HEAD
     with installation.serve() as client:
         sent = _send(installation, client, tmp_path)
-        enrolled = installation.remote_json(client, 'owner', 'enroll', '--login', 'pat', '--name', 'Pat Owner')
+        enrolled = installation.remote_json(client, 'access', 'owner', 'enroll', '--login', 'pat', '--name', 'Pat Owner')
     status = installation.admin_json('status')
     assert status['database'].startswith('PostgreSQL database') and status['counts']['owners'] == 1
     assert 'faxbot_ci_synthetic' not in json.dumps(status) and 'Aa_' not in json.dumps(status)
@@ -354,12 +356,12 @@ def test_postgresql_status_migrate_backup_and_restore(postgres_url, monkeypatch,
     restored = installation.admin_json('restore', folder)
     assert restored['data_files'] == made['data_files']
     with installation.serve() as client:
-        assert [job['id'] for job in installation.remote_json(client, 'jobs', 'list')['jobs']] == [sent['id']]
+        assert [job['id'] for job in installation.remote_json(client, 'sent', 'list')['jobs']] == [sent['id']]
         signed_in = client.post('/auth/login', json={'login': 'pat', 'password': enrolled['temporary_password']},
                                 headers={'Origin': ORIGIN})
         assert signed_in.status_code == 200
         client.cookies.clear()
         # New rows still get fresh identifiers after the restore.
-        installation.remote_json(client, 'users', 'add', 'sam', '--name', 'Sam')
+        installation.remote_json(client, 'access', 'users', 'add', 'sam', '--name', 'Sam')
     forced = installation.admin_json('restore', folder, '--force')
     assert forced['data_files'] == made['data_files']

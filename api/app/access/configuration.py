@@ -30,7 +30,7 @@ _PROVIDER_FIELDS = frozenset({
     'sip_trunk_username', 'sip_trunk_password', 'sip_trunk_outbound_proxy', 'sip_trunk_caller_id',
     'sip_trunk_dids', 'sip_t38_enabled', 'sip_fax_preference_header', 'sip_trunk_codecs',
     'sip_trunk_dial_format', 'sip_trunk_dial_prefix',
-    'sip_external_address', 'telnyx_api_key',
+    'sip_external_address', 'sip_public_address_check_minutes', 'telnyx_api_key',
     'phaxio_api_key', 'phaxio_api_secret', 'phaxio_callback_token',
     'phaxio_status_callback_url',
     'sinch_base_url', 'sinch_project_id', 'sinch_api_key', 'sinch_api_secret',
@@ -48,8 +48,10 @@ _PROVIDER_FIELDS = frozenset({
     'inbound_enabled', 'asterisk_inbound_secret', 'sinch_inbound_basic_user',
     'sinch_inbound_basic_pass', 'sinch_inbound_hmac_secret',
     'storage_backend', 's3_bucket', 's3_prefix', 's3_region', 's3_endpoint_url',
-    's3_kms_key_id',
+    's3_kms_key_id', 'enable_s3_diagnostics',
 })
+# Owner-protected like public_api_url: mobile_local_base is where paired phones send
+# their keys, and docs_base_url is where the console's help links send people.
 
 
 @dataclass(frozen=True)

@@ -155,6 +155,7 @@ def project_admin_settings(snapshot: ConfigurationSnapshot, pending_fields: Iter
                 'dial_format': values.sip_trunk_dial_format,
                 'dial_prefix': values.sip_trunk_dial_prefix,
                 'external_address': values.sip_external_address,
+                'public_address_check_minutes': values.sip_public_address_check_minutes,
                 # Why Faxbot chose audio fax for new calls ('no_data_back' or 'network'), and when; else None.
                 **_audio_reason(values),
             },
@@ -199,8 +200,11 @@ def project_admin_settings(snapshot: ConfigurationSnapshot, pending_fields: Iter
             's3_endpoint_url': values.s3_endpoint_url,
             's3_kms_key_id': values.s3_kms_key_id,
             's3_kms_enabled': bool(values.s3_kms_key_id),
+            's3_diagnostics': values.enable_s3_diagnostics,
         },
         'database': _database_view(values.database_url),
+        'mobile': {'local_base': values.mobile_local_base},
+        'developer': {'docs_base_url': values.docs_base_url},
         'numbers': {
             'default_country': values.fax_default_country,
             'example': number_example(values.fax_default_country),

@@ -10,18 +10,14 @@ config = typer.Typer(help='Save server addresses and API keys as profiles, so yo
                      no_args_is_help=True)
 
 
-def register(app):
-    app.add_typer(config, name='config')
-
-
 @config.command('set-profile')
 def set_profile(name: str = typer.Argument('default', help='Profile name.'),
                 url: str = typer.Option(None, '--url', help='Server address for this profile. Default: the address in '
                                                             'use now.'),
-                key_stdin: bool = typer.Option(False, '--key-stdin', help='Read the API key from standard input.'),
+                key_stdin: bool = typer.Option(False, '--key-stdin', help='Read the key from standard input instead of asking for it.'),
                 no_key: bool = typer.Option(False, '--no-key', help='Save the address only.'),
                 use: bool = typer.Option(True, '--use/--no-use', help='Make this the default profile.')):
-    """Save a profile. You are asked for the API key without it being shown."""
+    """Save a server address and key as a profile. You are asked for the key without it being shown."""
     profiles.check_name(name)
     if key_stdin and no_key:
         raise CliError('Choose --key-stdin or --no-key, not both.')
@@ -58,7 +54,7 @@ def show():
     result = {'path': str(profiles.config_path()), 'profiles': rows, 'in_use': state.current().profile}
     state.out().result(result, lambda out: (out.table(['Profile', 'Server', 'Key saved', 'Default'],
         [[row['profile'], row['url'], row['key_saved'], row['default']] for row in rows],
-        empty="No saved profiles. Save one with 'faxbot config set-profile'."), out.line(f"File: {result['path']}")))
+        empty="No saved profiles. Save one with 'faxbot system profiles save'."), out.line(f"File: {result['path']}")))
 
 
 @config.command('use')

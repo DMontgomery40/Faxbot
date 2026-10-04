@@ -73,38 +73,38 @@ def feed(hours):
 
 
 def test_work_commands_from_target_to_export(cli, tmp_path):
-    saved = cli('work', 'settings', '--acknowledge-hours', '24')
+    saved = cli('numbers', 'mailboxes', 'target', '--acknowledge-hours', '24')
     assert saved.exit_code == 0, saved.stdout + saved.stderr
     assert "Installation target: 24 hours. This is your team's operational target, not a legal deadline." in saved.stdout
     ready_user(cli.client, 'dana', 'Dana Example')
     inbound_id = receive(tmp_path, '+15550100001')
-    feed(cli.json('work', 'settings')['acknowledge_hours'])
-    listing = cli('work', 'list')
+    feed(cli.json('numbers', 'mailboxes', 'target')['acknowledge_hours'])
+    listing = cli('received', 'owners')
     assert listing.exit_code == 0 and 'Waiting for an owner.' in listing.stdout
-    (item,) = cli.json('work', 'list')['items']
+    (item,) = cli.json('received', 'owners')['items']
     assert item['inbound_fax_id'] == inbound_id and item['id'] not in listing.stdout
-    assert item['id'] in cli('work', 'list', '--ids').stdout
-    shown = cli('work', 'show', item['id'])
+    assert item['id'] in cli('received', 'owners', '--ids').stdout
+    shown = cli('received', 'history', item['id'])
     assert 'Acknowledge within 24 hours of the document arriving (installation setting)' in shown.stdout
     assert 'The document arrived.' in shown.stdout
-    nobody = cli('work', 'assign', item['id'], 'nobody')
+    nobody = cli('received', 'assign', item['id'], 'nobody')
     assert nobody.exit_code != 0 and 'nobody cannot see this document, or there is no such person. People who can: dana.' in nobody.stderr + nobody.stdout
-    assigned = cli('work', 'assign', item['id'], 'dana')
+    assigned = cli('received', 'assign', item['id'], 'dana')
     assert assigned.exit_code == 0 and 'Assigned to Dana Example; acknowledge by ' in assigned.stdout
-    refused = cli('work', 'acknowledge', item['id'])
+    refused = cli('received', 'acknowledge', item['id'])
     assert refused.exit_code != 0 and 'Only the owner can acknowledge this item.' in refused.stderr + refused.stdout
-    done = cli('work', 'done', item['id'], '--note', 'Filed in the case system')
+    done = cli('received', 'done', item['id'], '--note', 'Filed in the case system')
     assert done.exit_code == 0 and 'Done: Filed in the case system.' in done.stdout
-    assert cli('work', 'reopen', item['id']).exit_code == 0
-    assert cli.json('work', 'list', '--mine')['items'] == []
+    assert cli('received', 'reopen', item['id']).exit_code == 0
+    assert cli.json('received', 'owners', '--mine')['items'] == []
     target = tmp_path / 'evidence.zip'
-    exported = cli('work', 'export', item['id'], '-o', target)
+    exported = cli('received', 'export', item['id'], '-o', target)
     assert exported.exit_code == 0 and target.exists()
     with zipfile.ZipFile(target) as archive:
         assert set(archive.namelist()) == {'manifest.json', 'original.pdf', 'history.txt'}
         manifest = json.loads(archive.read('manifest.json'))
     assert [event['kind'] for event in manifest['history']] == ['received', 'assigned', 'done', 'reopened']
-    again = cli('work', 'export', item['id'], '-o', target)
+    again = cli('received', 'export', item['id'], '-o', target)
     assert again.exit_code != 0 and 'already exists' in again.stderr + again.stdout
 
 
@@ -113,45 +113,45 @@ def test_work_settings_for_a_mailbox(cli):
         'label': 'Front Desk', 'enabled': True, 'expected_policy_version': policy(cli.client)})
     assert created.status_code == 200, created.text
     ready_user(cli.client, 'sam', 'Sam Example', resource=created.json()['mailbox']['resource_id'])
-    changed = cli('work', 'settings', '--mailbox', 'front desk', '--hours', '4', '--backup', 'sam')
+    changed = cli('numbers', 'mailboxes', 'target', '--mailbox', 'front desk', '--hours', '4', '--backup', 'sam')
     assert changed.exit_code == 0, changed.stdout + changed.stderr
     assert 'Saved: Front Desk.' in changed.stdout and '4 hours' in changed.stdout and 'Sam Example' in changed.stdout
-    row = cli.json('work', 'settings')['mailboxes'][0]
+    row = cli.json('numbers', 'mailboxes', 'target')['mailboxes'][0]
     assert row['acknowledge_hours'] == 4 and row['backup']['name'] == 'Sam Example'
-    cleared = cli.json('work', 'settings', '--mailbox', 'Front Desk', '--use-installation-target', '--no-backup')
+    cleared = cli.json('numbers', 'mailboxes', 'target', '--mailbox', 'Front Desk', '--use-installation-target', '--no-backup')
     assert cleared['mailboxes'][0]['acknowledge_hours'] is None and cleared['mailboxes'][0]['backup'] is None
-    missing = cli('work', 'settings', '--hours', '4')
+    missing = cli('numbers', 'mailboxes', 'target', '--hours', '4')
     assert missing.exit_code != 0 and 'Add --mailbox' in missing.stderr + missing.stdout
 
 
 def test_import_command_reports_the_servers_sentence(cli, tmp_path):
     text = tmp_path / 'note.pdf'
     text.write_bytes(b'not a pdf at all')
-    refused = cli('import', text, '--source', 'case-system', '--id', 'op-1')
+    refused = cli('received', 'import', text, '--source', 'case-system', '--id', 'op-1')
     assert refused.exit_code != 0 and 'The file is not a PDF.' in refused.stderr + refused.stdout
 
 
 def test_import_command_imports_once_and_reports_a_replay(cli, tmp_path):
     document = pdf(tmp_path / 'referral.pdf', 'Imported from the case system')
-    first = cli('import', document, '--source', 'case-system', '--id', 'case-7', '--to', '+15550100001',
+    first = cli('received', 'import', document, '--source', 'case-system', '--id', 'case-7', '--to', '+15550100001',
                 '--received-at', '2026-10-03T14:05:00Z')
     assert first.exit_code == 0 and 'Document imported.' in first.stdout, first.stdout + first.stderr
-    again = cli.json('import', document, '--source', 'case-system', '--id', 'case-7', '--to', '+15550100001')
+    again = cli.json('received', 'import', document, '--source', 'case-system', '--id', 'case-7', '--to', '+15550100001')
     assert again['status'] == 'duplicate'
 
 
 def test_a_user_runs_work_commands_with_their_own_key(cli, tmp_path):
     ready_user(cli.client, 'dana', 'Dana Example')
-    created = cli.json('keys', 'create', '--for', 'dana', '-p', 'work:read', '-p', 'inbound:read',
+    created = cli.json('access', 'keys', 'create', '--for', 'dana', '-p', 'work:read', '-p', 'inbound:read',
                        '--name', 'Dana laptop')
     dana = created['token']
     receive(tmp_path, '+15550100001')
     feed(0)
-    (item,) = cli.json('work', 'list')['items']
-    assert cli('work', 'assign', item['id'], 'dana').exit_code == 0
-    mine = cli.json('work', 'list', '--mine', key=dana)['items']
+    (item,) = cli.json('received', 'owners')['items']
+    assert cli('received', 'assign', item['id'], 'dana').exit_code == 0
+    mine = cli.json('received', 'owners', '--mine', key=dana)['items']
     assert [entry['id'] for entry in mine] == [item['id']]
-    acknowledged = cli('work', 'acknowledge', item['id'], key=dana)
+    acknowledged = cli('received', 'acknowledge', item['id'], key=dana)
     assert acknowledged.exit_code == 0 and 'Acknowledged by Dana Example.' in acknowledged.stdout
-    refused = cli('work', 'reopen', item['id'], key=dana)  # the key carries no work:manage
+    refused = cli('received', 'reopen', item['id'], key=dana)  # the key carries no work:manage
     assert refused.exit_code != 0

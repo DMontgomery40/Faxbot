@@ -211,6 +211,7 @@ def test_editor_has_omitted_provider_and_resource_settings_and_preserves_false_z
     assert view['storage'] == {
         'backend': 'local', 's3_bucket': 'complete-bucket', 's3_prefix': '', 's3_region': 'us-east-1',
         's3_endpoint_url': 'https://storage.example.invalid', 's3_kms_key_id': 'kms-key-identifier', 's3_kms_enabled': True,
+        's3_diagnostics': False,
     }
     assert view['inbound']['enabled'] is False
     assert view['inbound']['retention_days'] == 0

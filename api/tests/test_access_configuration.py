@@ -84,7 +84,7 @@ def test_every_sip_trunk_setting_is_a_provider_setting():
                      'sip_trunk_transport', 'sip_trunk_username', 'sip_trunk_password',
                      'sip_trunk_outbound_proxy', 'sip_trunk_caller_id', 'sip_trunk_dids', 'sip_t38_enabled',
                      'sip_fax_preference_header', 'sip_trunk_codecs', 'sip_trunk_dial_format',
-                     'sip_trunk_dial_prefix', 'sip_external_address'}
+                     'sip_trunk_dial_prefix', 'sip_external_address', 'sip_public_address_check_minutes'}
     assert trunk <= _PROVIDER_FIELDS
 
 

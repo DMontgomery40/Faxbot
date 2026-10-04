@@ -102,7 +102,7 @@ class ConsoleContext:
                          'number_example': number_example(values.fax_default_country)['national'],
                          } if send else None,
                 'inbound_enabled': values.inbound_enabled if inbox else None,
-                'branding': {'docs_base': self.docs_base, 'logo_path': '/admin/ui/faxbot_full_logo.png'},
+                'branding': {'docs_base': values.docs_base_url, 'logo_path': '/admin/ui/faxbot_full_logo.png'},
                 'provider_view': {
                     'plugins_enabled': values.feature_v3_plugins,
                     'install_enabled': values.feature_plugin_install,
