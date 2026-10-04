@@ -39,7 +39,8 @@ import { ResponsiveTextField, ResponsiveFormSection } from './common/ResponsiveF
 import TunnelSettings from './TunnelSettings';
 import SipTrunkSettings from './SipTrunkSettings';
 import { COUNTRY_HELP, CountryField, countryName, internationalHint, settingsNumberFormat } from './common/numbers';
-import { BUILTIN_PROVIDERS, RECEIVING_PROVIDERS, providerLabel } from '../providerLabels';
+import { directionSummary } from '../providerLabels';
+import ProviderDirectionFields, { directionFields, directionProblem, loadedDirections } from './common/ProviderDirections';
 
 interface SettingsProps {
   client: AdminAPIClient;
@@ -197,6 +198,11 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
     ),
   } : {});
   const effectiveInbound = form.inbound_backend || form.backend || loadedInbound;
+  // Sending and Receiving, as the Setup Wizard shows them.
+  const providerChoice = {
+    sending: String(form.outbound_backend || form.backend || ''),
+    receiving: form.inbound_enabled ? String(form.inbound_backend || form.backend || '') : '',
+  };
   const providerSelected = (provider: string) => effectiveOutbound === provider || effectiveInbound === provider;
   const changedFields = Object.keys(form).filter((field) => form[field] !== loadedForm[field]);
 
@@ -222,6 +228,8 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
       setLoading(true);
       setError(null);
       setSnack(null);
+      const problem = directionProblem(providerChoice);
+      if (problem) throw new Error(problem);
       const patch: SettingsPatch = { expected_revision_id: desiredRevision };
       for (const field of changedFields) {
         const value = form[field];
@@ -459,40 +467,24 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
         <Box>
         <Box component="fieldset" disabled={!canEdit} sx={{ border: 0, m: 0, p: 0, minWidth: 0 }}>
         <Stack spacing={3}>
-          {/* Backend Configuration */}
+          {/* Fax providers: the same two choices as the Setup Wizard */}
           <ResponsiveFormSection
-            title="Backend Configuration"
-            subtitle="Choose the default provider and optional outbound and inbound overrides"
+            title="Fax providers"
+            subtitle="Which provider sends your faxes and which receives them"
             icon={<CloudIcon />}
           >
-            <ResponsiveSettingItem
-              icon={<CloudIcon />}
-              label="Default Provider"
-              value={settings.backend.type ? providerLabel(settings.backend.type) : 'Not set up'}
-              editValue={form.backend ?? settings.backend.type}
-              onChange={(value) => handleForm('backend', value)}
-              helperText="Used for sending and receiving unless an override is set below."
-              type="select"
-              options={[
-                { value: '', label: 'No provider' },
-                ...BUILTIN_PROVIDERS.map((value) => ({ value, label: providerLabel(value) })),
-              ]}
-              showCurrentValue={!pendingRestart}
-            />
-            <ResponsiveSettingItem
-              icon={<CloudIcon />}
-              label="Outbound Provider"
-              value={loadedOutbound ? providerLabel(loadedOutbound) : 'Not set up'}
-              editValue={form.outbound_backend ?? ''}
-              helperText="Provider used to send faxes."
-              onChange={(value) => handleForm('outbound_backend', value)}
-              type="select"
-              options={[
-                { value: '', label: form.backend ? `Inherit default provider (${providerLabel(String(form.backend))})` : 'Inherit default provider (none yet)' },
-                ...BUILTIN_PROVIDERS.map((value) => ({ value, label: providerLabel(value) })),
-              ]}
-              showCurrentValue={!pendingRestart}
-            />
+            <Box sx={{ px: 2 }} data-testid="provider-directions">
+              <ProviderDirectionFields value={providerChoice} disabled={!canEdit} saved={loadedDirections(settings)}
+                onChange={(next) => {
+                  if (!canEdit || actionFence.current) return;
+                  setForm((prev) => ({ ...prev, ...directionFields(next, settings) }));
+                }} />
+              {!pendingRestart && (
+                <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                  {`In use: ${directionSummary(loadedDirections(settings).sending, loadedDirections(settings).receiving)}`}
+                </Typography>
+              )}
+            </Box>
             {!effectiveOutbound && (
               <Typography variant="body2" sx={{ px: 2 }} data-testid="no-provider">
                 No fax provider set up yet.{' '}
@@ -505,29 +497,6 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
               </Typography>
             )}
 
-            <ResponsiveSettingItem
-              icon={<CloudIcon />}
-              label="Inbound Provider"
-              value={loadedInbound ? providerLabel(loadedInbound) : 'Not set up'}
-              editValue={form.inbound_backend ?? ''}
-              helperText="Provider used to receive faxes: the SIP trunk (Asterisk) for your own phone line, or a cloud provider."
-              onChange={(value) => handleForm('inbound_backend', value)}
-              type="select"
-              options={[
-                { value: '', label: form.backend ? `Inherit default provider (${providerLabel(String(form.backend))})` : 'Inherit default provider (none yet)' },
-                ...[...RECEIVING_PROVIDERS].map((value) => ({ value, label: providerLabel(value) })),
-              ]}
-              showCurrentValue={!pendingRestart}
-            />
-            {form.inbound_backend === '' && (
-              <Chip
-                label={`Inbound uses the default provider (${providerLabel(String(form.backend))}).`}
-                color="info"
-                size="small"
-                variant="outlined"
-                sx={{ mt: 1, borderRadius: 1 }}
-              />
-            )}
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 1 }}>
               <Chip
                 label={settings.backend.disabled ? 'Fax sending is off' : 'Fax sending is on'}

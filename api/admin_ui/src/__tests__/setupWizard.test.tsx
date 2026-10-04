@@ -23,6 +23,11 @@ function backend(data: Json) {
     http.get('/admin/settings', () => HttpResponse.json(data)),
     http.get('/plugins', () => HttpResponse.json({ items: [] })),
     http.get('/admin/sip/presets', () => HttpResponse.json({ presets: PRESETS })),
+    http.get('/admin/sip/status', () => HttpResponse.json({ configured: false, applied: false, asterisk_connected: false,
+      registration: 'unknown', reachability: 'unknown', registration_text: '', reachability_text: '',
+      handover_ready: data.inbound.enabled && data.hybrid.inbound_backend === 'sip' ? true : null,
+      handover_text: data.inbound.enabled && data.hybrid.inbound_backend === 'sip' ? 'Received faxes reach Faxbot: ready.' : null,
+      message: 'No SIP trunk is set up. Choose your carrier to start.' })),
     http.put('/admin/settings', async ({ request }) => {
       const body = await request.json() as Json;
       writes.push(body);
@@ -81,7 +86,8 @@ describe('Setup Wizard providers for sending and receiving', () => {
   });
 
   it('saves the SIP trunk for both directions when moving on, then asks for a restart', async () => {
-    const writes = await start(settingsFixture());
+    const data = settingsFixture();
+    const writes = await start(data);
     await choose('Sending', 'SIP trunk (Asterisk)');
     await choose('Receiving', 'SIP trunk (Asterisk)');
     expect(screen.getByText('Sending: SIP trunk (Asterisk) · Receiving: SIP trunk (Asterisk)')).toBeTruthy();
@@ -89,7 +95,19 @@ describe('Setup Wizard providers for sending and receiving', () => {
     await screen.findByText('Connect Providers', { selector: 'h6' });
     expect(writes).toEqual([{ expected_revision_id: 'rev-a', backend: 'sip', inbound_enabled: true }]);
     expect(screen.getByTestId('restart-notice').textContent).toContain('Restart Faxbot to start using these providers.');
-    expect(screen.getByRole('button', { name: 'Restart now' })).toBeTruthy();
+    // Restart now: Faxbot goes away, answers again, and this step says the restart worked.
+    const answers = [false, true];
+    server.use(
+      http.post('/admin/restart', () => {
+        data._meta = { ...data._meta, active_revision_id: data._meta.desired_revision_id, apply_state: 'applied', pending_fields: [] };
+        return HttpResponse.json({ ok: true });
+      }),
+      http.get('/health', () => (answers.shift() ?? true) ? HttpResponse.json({ status: 'ok' }) : HttpResponse.error()),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Restart now' }));
+    expect(await screen.findByText('Faxbot restarted and is using the saved settings.', {}, { timeout: 5000 })).toBeTruthy();
+    expect(screen.queryByTestId('restart-notice')).toBeNull();
+    expect(screen.getByText('Connect Providers', { selector: 'h6' })).toBeTruthy();
     expect(sectionHeadings()).toEqual(['For sending and receiving: SIP trunk (Asterisk)']);
     expect(await screen.findByTestId('sip-trunk-settings')).toBeTruthy();
     expect(screen.getByLabelText('Fax station ID')).toBeTruthy();
@@ -117,6 +135,9 @@ describe('Setup Wizard providers for sending and receiving', () => {
     expect(screen.getByText('Advanced: fax engine connection')).toBeTruthy();
     expect(screen.queryByLabelText('Fax station ID')).toBeNull();
     expect(screen.getByLabelText('Access Key')).toBeTruthy();
+    // The inbound secret is Faxbot's own business: the step says whether received faxes reach Faxbot.
+    expect((await screen.findByTestId('sip-handover')).textContent).toBe('Received faxes reach Faxbot: ready.');
+    expect(screen.queryByLabelText(/inbound secret|Asterisk secret/i)).toBeNull();
     expect(document.body.textContent).not.toMatch(RAW_IDS);
   });
 
@@ -131,6 +152,8 @@ describe('Setup Wizard providers for sending and receiving', () => {
     expect(await screen.findByTestId('sip-trunk-settings')).toBeTruthy();
     expect(screen.getByLabelText('Fax station ID')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Show callback details' })).toBeTruthy();
+    // The trunk only sends here, so nothing is said about received faxes.
+    expect(screen.queryByTestId('sip-handover')).toBeNull();
     expect(document.body.textContent).not.toMatch(RAW_IDS);
   });
 
@@ -177,7 +200,7 @@ describe('Setup Wizard and the SIP trunk form', () => {
     fireEvent.change(await screen.findByLabelText('Add a number'), { target: { value: '+12025550123' } });
     fireEvent.click(screen.getByRole('button', { name: 'Add' }));
     fireEvent.click(screen.getByRole('button', { name: 'Save trunk settings' }));
-    await screen.findByText('Saved. Apply the trunk to Asterisk to use it.');
+    await screen.findByText('Saved. Select Apply and connect to use it.');
     expect(writes[0]).toEqual({ expected_revision_id: 'rev-a', sip_trunk_dids: '+12025550123' });
     await waitFor(() => expect((screen.getByLabelText('Fax station ID') as HTMLInputElement).value).toBe('+12025550111'));
     next();

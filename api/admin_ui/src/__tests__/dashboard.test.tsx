@@ -101,6 +101,18 @@ describe('Dashboard delivery cards', () => {
   });
 });
 
+describe('Dashboard providers', () => {
+  it('names what sends and what receives faxes, the same way as System Status', async () => {
+    server.use(http.get('/admin/config', () => HttpResponse.json({ backend: 'humblefax',
+      hybrid: { outbound: 'humblefax', inbound: 'sip', outbound_explicit: false, inbound_explicit: true },
+      inbound: { enabled: true }, storage: { backend: 'local' } })));
+    render(<Dashboard client={client()} />);
+    expect((await screen.findByTestId('config-sending')).textContent).toBe('HumbleFax');
+    expect(screen.getByTestId('config-receiving').textContent).toBe('SIP trunk (Asterisk)');
+    expect(screen.queryByText('Default provider')).toBeNull();
+  });
+});
+
 describe('Dashboard authentication', () => {
   it('states authentication is required and never that it is optional', async () => {
     render(<Dashboard client={client()} />);

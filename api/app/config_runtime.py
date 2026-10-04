@@ -107,9 +107,11 @@ class ConfigurationRuntime:
             key_path = self.environment.get('FAXBOT_INSTALLATION_KEY_PATH') or str(directory / '.configuration.key')
             store = ConfigurationStore(db.engine, key_path)
             self.manager = ConfigurationManager(store)
+            initialized = False
             try:
                 snapshot = store.read()
             except ConfigurationNotInitialized:
+                initialized = True
                 imported = load_bootstrap_configuration(
                     self.environment, earlier_release=earlier_schema or _earlier_release_records(db.engine))
                 # The deployment must locate its store and lock/key directory
@@ -127,9 +129,11 @@ class ConfigurationRuntime:
                 raise ConfigurationBootstrapError('Deployment storage locations do not match this installation; use the maintenance transfer workflow.')
             if self.lifecycle.can_promote:
                 snapshot = self._apply_environment_credentials(snapshot)
+                snapshot = self._create_engine_password(snapshot, new_installation=initialized)
             self.snapshot = snapshot
             self.candidate = snapshot.desired if self.lifecycle.can_promote else snapshot.active
             self._check_telephony_drain()
+            self._share_engine_credentials()
             return self
         except BaseException:
             self.lifecycle.close()
@@ -152,6 +156,55 @@ class ConfigurationRuntime:
             variables = ', '.join(sorted(supplied[name][0] for name in changes))
             raise ConfigurationBootstrapError(
                 f'A credential set in the environment is not valid ({variables}); fix it in .env, then run docker compose up -d.') from None
+
+    def _uses_engine(self, revision):
+        """Whether this revision connects to Faxbot's fax engine (Asterisk) over its manager port."""
+        from .config_activation import _routes_need_ami
+        store = self.manager.store
+        return (any(store.read_profile(identity).configuration.traits.get('requires_ami') is True
+                    for _, identity in revision.profiles)
+                or _routes_need_ami(revision.values, self.manager.catalog_loader(revision.values)))
+
+    def _create_engine_password(self, snapshot, *, new_installation):
+        """Create the Asterisk manager password the first time the SIP trunk comes into use.
+
+        The password is plumbing between Faxbot's own two containers, so nobody
+        has to type it twice. It is created once, as a setting saved by
+        "system", only while the stored password is still the shipped default,
+        only when no ASTERISK_AMI_PASSWORD is set in the environment (that
+        value always wins), and only when the fax engine connection is new: on
+        a new installation, or when the running settings did not use Asterisk
+        yet. An installation already connected to an Asterisk of its own keeps
+        its password. It takes effect in this same start, before Faxbot
+        connects, and is written for Asterisk by _share_engine_credentials.
+        """
+        import secrets
+        desired = snapshot.desired
+        if ('ami_password' in self.env_managed or desired.values.ami_password not in ('', 'changeme')
+                or not self._uses_engine(desired)):
+            return snapshot
+        if not new_installation and self._uses_engine(snapshot.active):
+            return snapshot
+        try:
+            result = self.manager.patch(snapshot, {'ami_password': secrets.token_urlsafe(24)}, actor='system')
+        except (ConfigurationActivationError, ConfigurationValueError):
+            return snapshot
+        try:
+            from .audit import audit_event
+            audit_event('engine_password_created', backend='sip')
+        except Exception:
+            pass
+        return result
+
+    def _share_engine_credentials(self):
+        """Write the manager login for the Asterisk container when this start connects to it."""
+        from . import sip_trunk
+        try:
+            if self._uses_engine(self.candidate):
+                sip_trunk.write_manager_credentials(self.candidate.values)
+        except OSError:
+            import logging
+            logging.getLogger(__name__).warning('Faxbot could not write the fax engine login for Asterisk.')
 
     def _require_stopped_schema_upgrade(self):
         """Mixed old/new delivery writers cannot coexist during a migration."""

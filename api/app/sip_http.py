@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from .access.route_policy import require_permission
 from .config import configuration_values
 from .config_runtime import run_lifecycle_step
-from . import sip_trunk, stun
+from . import sip_fax_mode, sip_trunk, stun
 from .ami import ENGINE_UNREACHABLE
 from .config_store import ConfigurationStoreError
 from .inbound.acquisition import AcquisitionError
@@ -79,8 +79,58 @@ async def probe_network(preset, *, fresh=False):
     return result
 
 
-def _address_text(summary, network, carrier):
-    """Faxbot's internet address in use and how the network treats it, in one sentence."""
+_UNTESTED = 'the first test fax shows whether it does.'
+
+
+def _observed(records):
+    """What recent calls have shown on this network, or None before any fax went through or failed.
+
+    ``t38_failed``: the newest T.38 call got no fax data back; ``t38_ok``: it
+    went through; ``audio_ok``: a fax sent or received as audio went through.
+    """
+    try:
+        items = records.page(limit=50)['items'] if records else []
+    except (SipCallRecordError, ValueError):
+        return None
+    found = {'t38_failed': False, 't38_ok': False, 'audio_ok': False}
+    newest_t38 = True
+    for item in items:
+        went_through = item.get('verdict') in ('sent', 'received')
+        if item.get('t38') == 'yes':
+            if newest_t38:
+                found['t38_failed'] = item.get('verdict') == 'no_t38_data_back'
+                found['t38_ok'] = went_through
+            newest_t38 = False
+        elif went_through:
+            found['audio_ok'] = True
+    return found if any(found.values()) else None
+
+
+def _address_text(summary, network, carrier, observed=None, audio=False):
+    """Faxbot's internet address in use and how the network treats it, in one sentence.
+
+    Once calls have shown whether the carrier follows Faxbot's packets, the
+    sentence says what they showed instead of waiting for the first test fax:
+    audio and T.38 can differ (a carrier may follow audio packets but not
+    T.38 ones), so both are named when both were seen.
+    """
+    text = _network_text(summary, network, carrier)
+    if not text.endswith(_UNTESTED) or observed is None:
+        return text
+    lead = text[:-len(_UNTESTED)].rstrip(' ,;').removesuffix(', and')
+    bare = lead.removesuffix(f", so {carrier} has to follow Faxbot's packets")
+    if observed['t38_failed'] and observed['audio_ok']:
+        return (f"{bare}, and {carrier} follows Faxbot's audio packets (a fax went through) but not its T.38 packets"
+                f"{', so Faxbot uses audio fax' if audio else ''}.")
+    if observed['t38_failed']:
+        return (f'{bare}, and the last T.38 fax got no fax data back, so {carrier} does not follow Faxbot\'s T.38 '
+                f'packets on this network{"; audio fax is in use" if audio else ""}.')
+    if observed['t38_ok']:
+        return f'{lead}, and a T.38 fax that went through shows it does.'
+    return f'{lead}, and a fax that went through shows it does.'
+
+
+def _network_text(summary, network, carrier):
     typed = summary.get('public_address')
     if typed:
         if network and network.public_ip and network.public_ip != typed:
@@ -95,6 +145,78 @@ def _address_text(summary, network, carrier):
 
 
 ADDRESS_CHANGED = 'Your internet address changed. Restart the Asterisk service so the carrier gets the new address.'
+ADDRESS_CHANGED_MANAGED = 'Your internet address changed. Select Apply and connect so the carrier gets the new address.'
+APPLY_MANUAL = 'Apply these settings to Asterisk, then restart the Asterisk service.'
+APPLY_MANAGED = 'Select Apply and connect so Asterisk uses these settings.'
+NOT_LOADED = 'Asterisk still uses earlier trunk settings; select Apply and connect to load these.'
+RESTARTING = 'Asterisk is restarting to use the new settings.'
+SAVED_MANUAL = 'Saved for Asterisk. Restart the Asterisk service to use these settings.'
+SAVED_CURRENT = 'Saved. Asterisk already uses these settings.'
+SAVED_BUSY = 'Saved. A call is in progress, so Asterisk keeps its current settings until you apply again after it ends.'
+SAVED_NOT_ALLOWED = ('Saved. Asterisk does not let Faxbot restart it yet; restart the Asterisk service once, '
+                     'and Apply and connect restarts it from then on.')
+# Faxbot asked Asterisk to restart at this time.monotonic(); a restart that takes
+# longer than this is no longer reported as in progress.
+_RESTART_SECONDS = 120
+_restart = {'at': None}
+
+
+HANDOVER_READY = 'Received faxes reach Faxbot: ready.'
+HANDOVER_MANAGED = 'Received faxes cannot reach Faxbot yet; select Apply and connect to connect them.'
+HANDOVER_MANUAL = ('Received faxes cannot reach Faxbot yet; apply these settings to Asterisk, '
+                   'then restart the Asterisk service.')
+
+
+def _handover(values, managed, last):
+    """Whether a fax received over the trunk can reach Faxbot, in one sentence; None when the trunk does not receive.
+
+    Asterisk reads the inbound secret from the shared folder for each received
+    fax, so the secret Faxbot keeps and the written file must agree.
+    """
+    if not (values.inbound_enabled and values.effective_inbound == 'sip'):
+        return None
+    if last and last['verdict'] == NOT_HANDED_OVER:
+        return {'ready': False, 'text': last['summary']}
+    secret = values.asterisk_inbound_secret
+    try:
+        written = bool(secret) and sip_trunk.secret_path(values).read_text(encoding='utf-8') == secret
+    except OSError:
+        written = False
+    if written:
+        return {'ready': True, 'text': HANDOVER_READY}
+    return {'ready': False, 'text': HANDOVER_MANAGED if managed else HANDOVER_MANUAL}
+
+
+NO_TRUNK = 'No SIP trunk is set up. Choose your carrier to start.'
+TRUNK_INCOMPLETE = 'Some trunk settings are missing.'
+
+
+def sip_trunk_message(values):
+    """Readiness: the sentence when a direction uses the SIP trunk and the trunk is not set up; else None.
+
+    An older install whose Asterisk container carries the trunk itself
+    (SIP_USERNAME/SIP_SERVER in its environment) counts as set up.
+    """
+    uses = values.effective_outbound == 'sip' or (values.inbound_enabled and values.effective_inbound == 'sip')
+    if not uses or os.environ.get('SIP_SERVER') or os.environ.get('SIP_USERNAME'):
+        return None
+    if not sip_trunk.configured(values):
+        return NO_TRUNK
+    try:
+        sip_trunk.effective_trunk(values, for_calls=values.effective_outbound == 'sip')
+    except sip_trunk.TrunkConfigurationError:
+        return TRUNK_INCOMPLETE
+    return None
+
+
+def _restarting():
+    """True from Faxbot's restart request until Faxbot has logged in to the restarted Asterisk."""
+    from .ami import ami_client
+    at = _restart['at']
+    if at is None or time.monotonic() - at > _RESTART_SECONDS:
+        return False
+    return not (ami_client._connected.is_set() and ami_client.connected_at is not None
+                and ami_client.connected_at > at)
 
 
 def _address_changed(values, network):
@@ -216,19 +338,24 @@ def _reachability_text(asterisk):
     return _REACHABILITY_TEXT[asterisk['reachability']]
 
 
-def _message(summary, asterisk, applied, ports_text=None, transport=None):
+def _message(summary, asterisk, applied, ports_text=None, transport=None, *, managed=False, in_use=True,
+             restarting=False):
     if not summary.get('configured'):
-        return 'No SIP trunk is set up. Choose your carrier to start.'
+        return NO_TRUNK
     if summary['missing']:
-        return 'Some trunk settings are missing.'
+        return TRUNK_INCOMPLETE
     if ports_text == BEHIND_ROUTER:
         return BEHIND_ROUTER
+    if restarting:
+        return RESTARTING
     if not applied:
-        return 'Apply these settings to Asterisk, then restart the Asterisk service.'
+        return APPLY_MANAGED if managed else APPLY_MANUAL
     if not asterisk['connected']:
         return asterisk.get('engine_message') or ENGINE_UNREACHABLE
     if not asterisk['permission']:
         return 'Asterisk does not let Faxbot read trunk status. Restart the Asterisk service to update its access.'
+    if managed and not in_use:
+        return NOT_LOADED
     if asterisk['registration'] == 'rejected':
         return _REGISTRATION_TEXT['rejected']
     if asterisk['registration'] == 'not_registered':
@@ -266,12 +393,19 @@ async def status(request: Request, identity=Depends(require_permission('provider
     # IP authentication has no registration; its calls use the trunk's transport.
     transport = asterisk['transport'] or (summary.get('transport') if asterisk['registration'] == 'not_used' else None)
     changed = configured and applied and await run_lifecycle_step(lambda: _address_changed(values, network))
+    managed = configured and await run_lifecycle_step(lambda: sip_trunk.engine_managed(values))
+    in_use = bool(managed and await run_lifecycle_step(lambda: sip_trunk.engine_uses_current(values)))
+    restarting = bool(configured and _restarting())
+    handover = await run_lifecycle_step(lambda: _handover(values, managed, last)) if configured else None
+    observed = await run_lifecycle_step(lambda: _observed(_records(request))) if configured else None
+    off = await run_lifecycle_step(lambda: sip_fax_mode.reason_for(values, _records(request))) if configured else None
     if configured:
         summary['advertised_address'] = await run_lifecycle_step(lambda: sip_trunk.applied_public_address(values)) or None
-    message = _message(summary, asterisk, applied, ports_text, transport)
-    if (changed and ports_text != BEHIND_ROUTER and asterisk['connected'] and asterisk['permission']
+    message = _message(summary, asterisk, applied, ports_text, transport, managed=managed, in_use=in_use,
+                       restarting=restarting)
+    if (changed and not restarting and ports_text != BEHIND_ROUTER and asterisk['connected'] and asterisk['permission']
             and asterisk['registration'] != 'rejected'):
-        message = ADDRESS_CHANGED
+        message = ADDRESS_CHANGED_MANAGED if managed else ADDRESS_CHANGED
     if last and last['verdict'] == NOT_HANDED_OVER:
         # A received fax waits outside Faxbot; that matters more than any trunk detail.
         message = last['summary']
@@ -285,7 +419,11 @@ async def status(request: Request, identity=Depends(require_permission('provider
         'internet_address': network.public_ip if network else None,
         'behind_router': network.behind_nat if network else None,
         'port_numbers': network.ports if network else None,
-        'public_address_text': _address_text(summary, network, carrier) if configured else None,
+        'public_address_text': (_address_text(summary, network, carrier, observed, not values.sip_t38_enabled)
+                                if configured else None),
+        # Why new calls use audio fax when Faxbot chose it ({reason, at}); None when T.38 is on or a person chose.
+        't38_off_reason': off['reason'] if off else None,
+        't38_off_at': off['at'] if off else None,
         'ports_text': ports_text,
         'last_call_text': last['summary'] if last else None,
         'last_call_at': last['started_at'] if last else None,
@@ -293,6 +431,13 @@ async def status(request: Request, identity=Depends(require_permission('provider
         # After a T.38 call carried no fax data, audio fax is the next thing to try (the owner decides).
         'suggest_audio': bool(last and last['verdict'] == 'no_t38_data_back' and values.sip_t38_enabled),
         'address_changed': bool(changed),
+        # Asterisk shares Faxbot's data folder (the Compose install), so Apply and connect restarts it.
+        'engine_managed': bool(managed),
+        'engine_restarting': restarting,
+        'in_use': in_use,
+        # Received faxes over the trunk: ready, or what keeps them from Faxbot (None when the trunk does not receive).
+        'handover_ready': handover['ready'] if handover else None,
+        'handover_text': handover['text'] if handover else None,
         'message': message,
     }
 
@@ -316,10 +461,22 @@ async def apply(request: Request, identity=Depends(require_permission('providers
         # A carrier that signs in by address sends calls to a fixed public address, which a router does not pass on.
         if values.sip_trunk_auth == 'ip' and network and network.behind_nat:
             raise HTTPException(400, detail=BEHIND_ROUTER)
+    runtime = _runtime(request)
+    # T.38 already off after a call that got no fax data back: that call is the reason, not a person's choice.
+    await run_lifecycle_step(lambda: sip_fax_mode.derive(values, _records(request)))
+    has_calls = await run_lifecycle_step(lambda: _last_call(_records(request)) is not None)
+    if sip_fax_mode.network_prefers_audio(values, network, has_calls=has_calls):
+        # A new Telnyx trunk on a network that changes port numbers: T.38 data was seen not to come back there.
+        values = await run_lifecycle_step(lambda: _audio_for_network(runtime))
+    else:
+        await run_lifecycle_step(lambda: sip_fax_mode.reconcile(values))
     try:
         # Received faxes reach Faxbot with this secret; Faxbot creates it when none is set.
         secret = await run_lifecycle_step(lambda: ensure_inbound_secret(_runtime(request).manager))
         await run_lifecycle_step(lambda: sip_trunk.write_asterisk_configuration(values, inbound_secret=secret))
+        if values.ami_password not in ('', 'changeme'):
+            # The manager login Faxbot uses now, for an Asterisk that has none yet or an older one.
+            await run_lifecycle_step(lambda: sip_trunk.write_manager_credentials(values))
         if not values.sip_external_address:
             # What Asterisk advertises at its next start (only on a network that keeps port numbers).
             await run_lifecycle_step(lambda: sip_trunk.write_public_address(values, network))
@@ -330,7 +487,49 @@ async def apply(request: Request, identity=Depends(require_permission('providers
         raise HTTPException(500, detail='Faxbot could not save the trunk settings for Asterisk.') from None
     except (AcquisitionError, ConfigurationStoreError):
         raise HTTPException(503, detail='Faxbot could not save an inbound secret for the fax engine. Try again.') from None
-    return {'ok': True, 'message': 'Saved for Asterisk. Restart the Asterisk service to use these settings.'}
+    return await _load_into_engine(values)
+
+
+def _audio_for_network(runtime):
+    snapshot = runtime.manager.store.read()
+    runtime.manager.patch(snapshot, {'sip_t38_enabled': False}, actor='system')
+    values = runtime.manager.store.read().active.values
+    sip_fax_mode.write(values, 'audio', sip_fax_mode.NETWORK)
+    return values
+
+
+async def _load_into_engine(values):
+    """Have Asterisk use the files just written: restart it when it shares Faxbot's data folder.
+
+    Transports (protocol, bind, external addresses) never reload in a running
+    Asterisk, so a restart is the one way that always loads every setting. The
+    restart waits until no call is up and happens only when Asterisk is not
+    already running exactly these settings.
+    """
+    from .ami import ami_client
+    if not await run_lifecycle_step(lambda: sip_trunk.engine_managed(values)):
+        return {'ok': True, 'engine': 'manual', 'message': SAVED_MANUAL}
+    if await run_lifecycle_step(lambda: sip_trunk.engine_uses_current(values)) and not _restarting():
+        return {'ok': True, 'engine': 'current', 'message': SAVED_CURRENT}
+    if not ami_client._connected.is_set():
+        return {'ok': True, 'engine': 'not_connected',
+                'message': 'Saved. ' + (ami_client.engine_message() or ENGINE_UNREACHABLE)}
+    try:
+        if await ami_client.active_calls():
+            return {'ok': True, 'engine': 'busy', 'message': SAVED_BUSY}
+        if not await ami_client.stop_gracefully():
+            return {'ok': True, 'engine': 'not_allowed', 'message': SAVED_NOT_ALLOWED}
+    except PermissionError:
+        return {'ok': True, 'engine': 'not_allowed', 'message': SAVED_NOT_ALLOWED}
+    except (ConnectionError, TimeoutError):
+        return {'ok': True, 'engine': 'not_connected', 'message': 'Saved. ' + ENGINE_UNREACHABLE}
+    _restart['at'] = time.monotonic()
+    try:
+        from .audit import audit_event
+        audit_event('sip_engine_restart', backend='sip')
+    except Exception:
+        pass
+    return {'ok': True, 'engine': 'restarting', 'message': RESTARTING}
 
 
 @router.get('/calls')

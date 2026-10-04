@@ -780,7 +780,11 @@ def test_trunk_call_uses_carrier_caller_id_number_format_and_separate_station_id
     assert fields["CallerID"] == "+15555550100"
     variables = _asterisk_variable_assignments(fields["Variable"])
     assert base64.b64decode(variables["FAXSTATION64"]).decode() == "+15555550111"
-    assert "PJSIP_HEADER(add,Accept-Contact)" not in variables
+    # The fax preference is on by default and can be turned off.
+    assert "PJSIP_HEADER(add,Accept-Contact)" in variables
+    plain = ami.originate_fields_for(_trunk(SIP_FAX_PREFERENCE_HEADER="false"), JOB, "+15555550123", "/fax/a.tif",
+                                     attempt_id=ATTEMPT)
+    assert "PJSIP_HEADER(add,Accept-Contact)" not in _asterisk_variable_assignments(plain["Variable"])
     flowroute = ami.originate_fields_for(
         _trunk(SIP_TRUNK_PRESET="flowroute", SIP_TRUNK_USERNAME="12345678"), JOB, "+15555550123",
         "/fax/a.tif", attempt_id=ATTEMPT)

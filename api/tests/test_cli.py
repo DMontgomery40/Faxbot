@@ -779,7 +779,9 @@ def test_trunk_status_and_calls_read_as_plain_sentences(trunk_cli):
     assert status.exit_code == 0, status.stdout
     for sentence in ('Apply these settings to Asterisk, then restart the Asterisk service.',
                      'Encrypted (TLS)', '198.51.100.7', 'No ports need to be opened or forwarded.',
-                     "your network changes port numbers, so Telnyx has to follow Faxbot's packets",
+                     # A call has shown what the first test fax would have: no T.38 data came back.
+                     "your network changes port numbers, and the last T.38 fax got no fax data back, so Telnyx "
+                     "does not follow Faxbot's T.38 packets on this network.",
                      'A fax call from +13035550100 came in, but no fax data arrived from the carrier.'):
         assert sentence in status.stdout, sentence
     assert 'synthetic-Trunk-Pass' not in status.stdout and 'no_t38' not in status.stdout
@@ -795,5 +797,20 @@ def test_trunk_status_and_calls_read_as_plain_sentences(trunk_cli):
     assert audio.exit_code == 0 and 'New calls use audio fax once you restart the Asterisk service.' in audio.stdout
     assert trunk_cli.json('trunk', 'status')['t38'] is False
     assert 'already uses audio fax' in trunk_cli('trunk', 'mode', 'audio').stdout
-    assert trunk_cli.json('trunk', 'mode', 't38') == {'mode': 't38', 'changed': True, 'applied': True}
+    assert trunk_cli.json('trunk', 'mode', 't38') == {
+        'mode': 't38', 'changed': True, 'applied': True, 'engine': 'manual',
+        'message': 'Saved for Asterisk. Restart the Asterisk service to use these settings.'}
     assert trunk_cli('trunk', 'mode', 'fast').exit_code != 0
+    # When Faxbot chose audio fax itself, status says why and how to try T.38 again.
+    from app import sip_fax_mode
+    assert trunk_cli('trunk', 'mode', 'audio').exit_code == 0
+    values = trunk_cli.client.app.state.configuration_runtime.manager.store.read().active.values
+    sip_fax_mode.write(values, 'audio', sip_fax_mode.NO_DATA_BACK)
+    status = trunk_cli('trunk', 'status').stdout
+    assert 'a T.38 fax got no fax data back on this network, so Faxbot uses audio fax.' in status
+    assert 'To try T.38 again, run faxbot trunk mode t38.' in status
+    # Apply writes the trunk for Asterisk; this test install manages no Asterisk, so it says what to restart.
+    applied = trunk_cli('trunk', 'apply')
+    assert applied.exit_code == 0, applied.stdout
+    assert 'Saved for Asterisk. Restart the Asterisk service to use these settings.' in applied.stdout
+    assert trunk_cli.json('trunk', 'apply', '--no-wait')['engine'] == 'manual'

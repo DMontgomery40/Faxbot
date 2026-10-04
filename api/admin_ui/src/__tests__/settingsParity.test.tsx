@@ -181,10 +181,39 @@ describe('Provider names', () => {
     }));
     server.use(http.get('/admin/sip/presets', () => HttpResponse.json({ presets: [] })));
     render(<Settings client={client()} />);
-    const backend = await section('Backend Configuration');
-    expect(within(backend).getAllByText('Current: SIP trunk (Asterisk)').length).toBeGreaterThan(0);
-    expect(within(backend).getByText('Current: Phaxio')).toBeTruthy();
-    expect(backend.textContent).not.toMatch(/\b(sip|phaxio|sinch|signalwire|documo|humblefax|freeswitch)\b|PHAXIO|SIP\/Asterisk/);
+    const backend = await section('Fax providers');
+    expect(within(backend).getByText('In use: Sending: SIP trunk (Asterisk) · Receiving: Phaxio')).toBeTruthy();
+    expect(within(backend).getByRole('combobox', { name: 'Sending' }).textContent).toBe('SIP trunk (Asterisk)');
+    expect(within(backend).getByRole('combobox', { name: 'Receiving' }).textContent).toBe('Phaxio');
+    expect(backend.textContent).not.toMatch(/\b(sip|phaxio|sinch|signalwire|documo|humblefax|freeswitch)\b|PHAXIO|SIP\/Asterisk|Inherit|Default Provider/);
+  });
+
+  it('saves the same two choices as the Setup Wizard', async () => {
+    const writes = settingsHandlers(settingsFixture());
+    server.use(http.get('/admin/sip/presets', () => HttpResponse.json({ presets: [] })));
+    render(<Settings client={client()} />);
+    const backend = await section('Fax providers');
+    fireEvent.mouseDown(within(backend).getByRole('combobox', { name: 'Sending' }));
+    fireEvent.click(within(await screen.findByRole('listbox')).getByRole('option', { name: 'HumbleFax' }));
+    fireEvent.mouseDown(within(backend).getByRole('combobox', { name: 'Receiving' }));
+    fireEvent.click(within(await screen.findByRole('listbox')).getByRole('option', { name: 'SIP trunk (Asterisk)' }));
+    apply();
+    await screen.findByText(/Settings saved\./);
+    expect(writes[0]).toEqual({ expected_revision_id: 'rev-a', backend: 'humblefax', inbound_backend: 'sip', inbound_enabled: true });
+  });
+
+  it('refuses receiving without a sending provider in one sentence', async () => {
+    const writes = settingsHandlers(settingsFixture());
+    render(<Settings client={client()} />);
+    const backend = await section('Fax providers');
+    fireEvent.mouseDown(within(backend).getByRole('combobox', { name: 'Sending' }));
+    fireEvent.click(within(await screen.findByRole('listbox')).getByRole('option', { name: 'No provider' }));
+    fireEvent.mouseDown(within(backend).getByRole('combobox', { name: 'Receiving' }));
+    fireEvent.click(within(await screen.findByRole('listbox')).getByRole('option', { name: 'Phaxio' }));
+    apply();
+    expect((await screen.findAllByText('Choose a provider for sending as well; Faxbot needs one even when it mainly receives.')).length)
+      .toBeGreaterThan(0);
+    expect(writes).toEqual([]);
   });
 });
 
@@ -276,7 +305,7 @@ describe('Settings outbound provider limits', () => {
   it('says nothing about countries for other outbound providers', async () => {
     settingsHandlers(settingsFixture());
     render(<Settings client={client()} />);
-    await screen.findAllByText('Outbound Provider');
+    await section('Fax providers');
     expect(screen.queryByTestId('humblefax-countries')).toBeNull();
   });
 });

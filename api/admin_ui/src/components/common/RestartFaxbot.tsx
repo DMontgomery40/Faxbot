@@ -9,11 +9,12 @@ import AdminAPIClient, { RestartNotAllowed, isForbidden } from '../../api/client
 export type RestartPhase = 'idle' | 'requesting' | 'waiting' | 'back' | 'not_allowed' | 'failed' | 'slow';
 
 export const RESTART_BY_HAND = 'Run docker compose restart api on the server.';
+export const RESTARTED = 'Faxbot restarted and is using the saved settings.';
 
 const PHASE_TEXT: Partial<Record<RestartPhase, string>> = {
   requesting: 'Restarting Faxbot…',
   waiting: 'Restarting Faxbot…',
-  back: 'Faxbot restarted and is using the saved settings.',
+  back: RESTARTED,
   not_allowed: `Restarting from the console is turned off here. ${RESTART_BY_HAND}`,
   failed: `Faxbot could not be restarted from here. ${RESTART_BY_HAND}`,
   slow: 'Faxbot has not come back yet. Check the server, then reload this page.',

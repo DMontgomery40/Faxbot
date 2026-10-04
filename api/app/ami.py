@@ -3,6 +3,7 @@ import base64
 import contextlib
 import logging
 import re
+import time
 from typing import Dict, List, Optional, Callable
 from uuid import uuid4
 from .config import settings
@@ -18,6 +19,8 @@ AMI_MAX_LINE_BYTES = 1024
 STATUS_EVENT_FIELDS = {
     "outboundregistrationdetail": ("ObjectName", "Status", "ServerUri", "NextReg", "Transport"),
     "contactlist": ("ObjectName", "Status", "RoundtripUsec"),
+    # Only counted: whether any call is up before Faxbot restarts Asterisk.
+    "coreshowchannel": ("Uniqueid",),
 }
 # One plain sentence for each state of Faxbot's connection to its fax engine
 # (Asterisk). Readiness, the dashboard, diagnostics, trunk status and a refused
@@ -201,6 +204,9 @@ class AMIClient:
         # Why the last connection attempt failed ("login_rejected" or
         # "unreachable"); None after a successful login or before any attempt.
         self.problem: Optional[str] = None
+        # When the current connection logged in (time.monotonic), so a restart
+        # Faxbot asked for can tell the new connection from the old one.
+        self.connected_at: Optional[float] = None
 
     def engine_message(self) -> Optional[str]:
         """The plain sentence for a missing connection, or None while connected."""
@@ -257,6 +263,7 @@ class AMIClient:
                     settings.ami_password,
                 )
                 self.problem = None
+                self.connected_at = time.monotonic()
                 self._connected.set()
                 delay = 1.0
                 await self._read_loop()
@@ -402,6 +409,29 @@ class AMIClient:
             for key in ("response", "done"):
                 if not query[key].done():
                     query[key].cancel()
+
+    async def active_calls(self) -> int:
+        """How many channels (calls) Asterisk has up now; raises ConnectionError or TimeoutError."""
+        response, events = await self.status_query({"Action": "CoreShowChannels"}, collect=True)
+        if response["response"].lower() != "success":
+            raise PermissionError("AMI channel list refused")
+        return len(events)
+
+    async def stop_gracefully(self) -> bool:
+        """Ask Asterisk to stop once no call is up; Docker starts it again and it reloads its files.
+
+        True when Asterisk accepted or began stopping (the connection may close
+        before any reply); False when the manager account may not run commands.
+        """
+        try:
+            response, _ = await self.status_query({"Action": "Command", "Command": "core stop gracefully"})
+        except (ConnectionError, TimeoutError):
+            return True
+        if response["response"].lower() == "success":
+            return True
+        if "permission" in response["message"].lower():
+            return False
+        raise ConnectionError("AMI command failed")
 
     def _emit(self, name: str, msg: Dict[str, str]):
         for cb in list(self._listeners.get(name, ())):
