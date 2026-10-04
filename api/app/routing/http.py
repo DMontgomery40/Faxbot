@@ -387,6 +387,8 @@ class RateCardIn(BaseModel):
     source_url: str | None = Field(default=None, max_length=512)
     captured_on: datetime
     monthly_fee: str | int | None = None
+    # Shown by GET; accepted and ignored so a listed card can be saved back unchanged.
+    included_in_plan: bool | None = None
 
 
 class RateCardsIn(BaseModel):

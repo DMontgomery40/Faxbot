@@ -277,3 +277,14 @@ def test_recommendations_never_call_an_unknown_cost_the_cheapest(client):
     assert first['monthly_fee'] == {'currency': 'USD', 'amount': '10.00'} and first['included_in_plan'] is True
     too_much = client.put('/routing/rate-cards', headers=ADMIN, json={'cards': [{**plan, 'monthly_fee': '5000'}]})
     assert too_much.status_code == 400
+
+
+
+def test_listed_rate_cards_save_back_unchanged(client):
+    """The console and `faxbot routing rate-cards --replace` send back what GET listed, minus ids."""
+    listed = client.get('/routing/rate-cards', headers=ADMIN).json()['cards']
+    assert any(card['included_in_plan'] for card in listed)  # the shipped HumbleFax plan
+    saved = client.put('/routing/rate-cards', headers=ADMIN,
+                       json={'cards': [{key: value for key, value in card.items() if key != 'id'} for card in listed]})
+    assert saved.status_code == 200, saved.text
+    assert [card['id'] for card in saved.json()['cards']] == [card['id'] for card in listed]  # no new versions
