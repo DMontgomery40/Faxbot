@@ -496,3 +496,36 @@ def test_readiness_waits_for_a_trunk_on_each_direction_that_uses_it(isolated_ins
             'expected_revision_id': current['_meta']['desired_revision_id'], 'sip_trunk_password': PASSWORD,
             'sip_trunk_caller_id': '+15555550100'})
         assert 'message' not in client.get('/health/ready').json()
+
+
+def test_a_refused_registration_names_the_password_the_carrier_wants(client, monkeypatch):
+    async def rejected(fields, *, collect=False):
+        if fields['Action'] == 'PJSIPShowRegistrationsOutbound':
+            return ({'response': 'Success', 'value': '', 'message': ''},
+                    [{'ObjectName': 'trunk-registration', 'Status': 'Rejected', 'Transport': 'transport-tls'}])
+        return {'response': 'Success', 'value': 'UNAVAILABLE', 'message': ''}, []
+
+    client.post('/admin/sip/apply', headers=ADMIN)
+    monkeypatch.setattr(ami_client, 'status_query', rejected)
+    monkeypatch.setattr(ami_client._connected, 'is_set', lambda: True)
+    body = client.get('/admin/sip/status', headers=ADMIN).json()
+    telnyx = ("Telnyx refused the username or password. Use the SIP connection's password, "
+              'not your Telnyx account password.')
+    assert body['message'] == telnyx and body['registration_text'] == telnyx
+    # Another carrier gets the same advice in its own words.
+    current = client.get('/admin/settings', headers=ADMIN).json()
+    assert client.put('/admin/settings', headers=ADMIN, json={
+        'expected_revision_id': current['_meta']['desired_revision_id'], 'sip_trunk_preset': 'custom',
+        'sip_trunk_host': 'sip.example.net'}).status_code == 200
+    assert client.post('/admin/sip/apply', headers=ADMIN).status_code == 200
+    assert client.get('/admin/sip/status', headers=ADMIN).json()['message'] == (
+        'The carrier refused the username or password. Use the SIP credentials the carrier gave for this trunk, '
+        'not your account login.')
+
+
+def test_the_telnyx_preset_names_the_connection_password_and_no_inbound_transport():
+    telnyx = next(preset for preset in sip_trunk.preset_catalog() if preset['id'] == 'telnyx')
+    text = ' '.join(telnyx['notes']) + ' ' + telnyx['t38']
+    assert "SIP connection's password (connection → Authentication and routing), not your Telnyx account password" in text
+    assert 'inbound SIP transport' not in text and 'set the connection' not in text
+    assert 'Enable T.38 Fax Gateway' in telnyx['t38'] and 'T.38 fax re-invite initiated by' in telnyx['t38']

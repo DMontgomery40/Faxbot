@@ -74,16 +74,13 @@ PRESETS: dict[str, TrunkPreset] = {preset.id: preset for preset in (
         id='telnyx', label='Telnyx', host='sip.telnyx.com', port=5061, transport='tls',
         auth_modes=('registration', 'ip'), codecs=('ulaw', 'alaw'), dial_format='e164',
         signaling_addresses=('192.76.120.10', '64.16.250.10'),
-        t38=('In the Telnyx portal, turn on "Enable T.38 Fax Gateway" for each number, and set the connection '
-             'option "T.38 fax re-invite initiated by" to Telnyx. For faxes you send, Telnyx then switches the '
-             'call to T.38 as soon as the receiving machine answers. Faxbot also works with Customer, but then '
-             'Faxbot waits about ten seconds before switching the call itself. For faxes you receive, Faxbot '
-             'switches the call to T.38 whichever option you choose.'),
-        notes=('Telnyx accepts credentials (registration) or IP address authentication.',
-               'Faxbot connects to Telnyx over an encrypted connection by default. In the Telnyx portal, set the '
-               'connection\'s inbound SIP transport to TLS as well.',
+        t38=('In the Telnyx portal, turn on "Enable T.38 Fax Gateway" for each number and set '
+             '"T.38 fax re-invite initiated by" to Telnyx.'),
+        notes=('Use a credential connection, and enter the SIP connection\'s password (connection → Authentication '
+               'and routing), not your Telnyx account password.',
+               'Telnyx sends incoming calls down the encrypted connection Faxbot registers over; there is no '
+               'inbound transport to set for a credential connection.',
                'The caller ID must be a number on your Telnyx account or one Telnyx has verified.',
-               'The US signaling addresses are 192.76.120.10 and 64.16.250.10.',
                'Choose an outbound voice profile for the connection so it can place calls.',
                'Keep only the G.711 U and G.711 A codecs on the connection.'),
         # The first source is the page the console links as the carrier's documentation.

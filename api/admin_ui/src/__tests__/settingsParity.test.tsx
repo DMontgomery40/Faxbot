@@ -426,6 +426,9 @@ describe('Setup Wizard delivery options', () => {
     await screen.findByText('Settings saved.');
     expect(await screen.findByText('Finish', { selector: 'h6' })).toBeTruthy();
     expect(writes).toEqual([{ expected_revision_id: 'rev-a', direct_fax_number: '+12025550199', intake_email_enabled: true, intake_smtp_port: 465 }]);
+    // The last step offers one test fax, sent only when asked; this installation does not receive.
+    expect(screen.getByText('Send a test fax (optional)')).toBeTruthy();
+    expect(screen.queryByText('Receive a test fax (optional)')).toBeNull();
   });
 });
 

@@ -86,6 +86,9 @@ export interface SipTrunkStatus {
   // Whether a fax received over the trunk can reach Faxbot, in one sentence; null when the trunk does not receive.
   handover_ready?: boolean | null;
   handover_text?: string | null;
+  // Why Faxbot chose audio fax for new calls ('no_data_back' or 'network'), and when; null otherwise.
+  t38_off_reason?: string | null;
+  t38_off_at?: string | null;
   message: string;
 }
 

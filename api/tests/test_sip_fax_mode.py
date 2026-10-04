@@ -199,3 +199,30 @@ class _Calls:
 def test_the_internet_address_sentence_says_what_calls_have_shown(calls, audio, sentence):
     observed = sip_http._observed(_Calls(*calls))
     assert sip_http._address_text({}, CHANGES_PORTS, 'Telnyx', observed, audio) == sentence
+
+
+def test_the_switch_waits_for_the_failed_call_to_hang_up_then_restarts_asterisk_once(client, network, monkeypatch):
+    """The result arrives from the call's hangup handler while its channel still exists."""
+    import os
+    network['result'] = KEEPS_PORTS
+    assert client.post('/admin/sip/apply', headers=ADMIN).status_code == 200
+    runtime = client.app.state.configuration_runtime
+    values = runtime.manager.store.read().active.values
+    open(os.path.join(values.fax_data_dir, 'asterisk', 'engine-started'), 'w').write('1700000000\n')
+    channels = [1, 1, 0]
+    actions = []
+
+    async def status_query(fields, *, collect=False):
+        actions.append(fields.get('Command') or fields['Action'])
+        if fields['Action'] == 'CoreShowChannels':
+            up = channels.pop(0) if channels else 0
+            return {'response': 'Success', 'value': '', 'message': ''}, [{'Uniqueid': '1.1'}] * up
+        raise ConnectionError('AMI connection closed')  # Asterisk exits inside "core stop gracefully"
+    monkeypatch.setattr(ami_client, 'status_query', status_query)
+    monkeypatch.setattr(ami_client._connected, 'is_set', lambda: True)
+    monkeypatch.setattr(sip_http, '_restart', {'at': None})
+    monkeypatch.setattr(sip_fax_mode, 'BUSY_RETRY_SECONDS', 0.01)
+    result = asyncio.run(sip_fax_mode.switch_to_audio(runtime, sip_fax_mode.NO_DATA_BACK))
+    assert result['engine'] == 'restarting'
+    assert actions == ['CoreShowChannels', 'CoreShowChannels', 'CoreShowChannels', 'core stop gracefully']
+    assert _t38(client) is False

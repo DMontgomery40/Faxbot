@@ -10,12 +10,12 @@ Telnyx documents T.38 fax on its SIP connections, so it is the carrier to start 
 
 ### In the Telnyx portal
 
-1. Create a SIP connection that uses **credentials** for authentication. Note its username and password.
+1. Create a SIP connection that uses **credentials** for authentication. Note its username and password: Faxbot needs the **SIP connection's** password (connection → **Authentication and routing**), not your Telnyx account password. A wrong one shows as "Telnyx refused the username or password. Use the SIP connection's password, not your Telnyx account password." in **Check trunk status**.
 2. Give the connection an **outbound voice profile** so it can place calls.
 3. Under the connection's codecs, keep only **G.711 U** and **G.711 A**.
 4. Set **T.38 fax re-invite initiated by** to **Telnyx**. When you send a fax, Telnyx switches the call to T.38 as soon as the receiving machine answers. Faxbot also works with **Customer**, but then it waits about ten seconds before switching the call itself. This option does not affect faxes you receive: Faxbot switches those calls to T.38 itself.
 5. Buy or port a number, assign it to the connection, and turn on **Enable T.38 Fax Gateway** for that number.
-6. Under the connection's inbound settings, set **SIP Transport Protocol** to **TLS**, the same encrypted connection Faxbot registers over, so Telnyx sends incoming calls down it. Leave **Encrypted Media (SRTP)** off: Telnyx does not support it with T.38.
+6. Leave **Encrypted Media (SRTP)** off: Telnyx does not support it with T.38. A credential connection has no inbound transport to choose: Telnyx sends incoming calls down the encrypted connection Faxbot registers over.
 
 A Telnyx trial account can only call verified numbers until you upgrade it.
 
@@ -28,7 +28,7 @@ A Telnyx trial account can only call verified numbers until you upgrade it.
 | Server | Leave empty to use `sip.telnyx.com` |
 | Port | Leave empty to use 5061 |
 | Transport | Leave as the default, **Default: Encrypted (TLS)**. Choose **TCP** if the encrypted connection fails, and **UDP (older)** only as a last resort |
-| Username and password | The connection's credentials |
+| Username and password | The SIP connection's credentials (connection → Authentication and routing), not your Telnyx account login |
 | Caller ID | Your Telnyx number in international format, such as `+17205550100` |
 | Fax numbers on this trunk | The same number, in the same format |
 | Use T.38 fax over IP | On |

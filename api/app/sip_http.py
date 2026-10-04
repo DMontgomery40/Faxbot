@@ -49,7 +49,22 @@ def _transport_from_section(name):
     return transport if name.startswith('transport-') and transport in _TRANSPORT_NAMES else None
 
 
-def _registration_text(registration, transport):
+# A rejected registration after authentication (401/403): say which password the carrier wants.
+_REJECTED_BY_CARRIER = {
+    'telnyx': ('Telnyx refused the username or password. Use the SIP connection\'s password, '
+               'not your Telnyx account password.'),
+}
+REJECTED_GENERIC = ('The carrier refused the username or password. Use the SIP credentials the carrier gave for '
+                    'this trunk, not your account login.')
+
+
+def _rejected_text(preset):
+    return _REJECTED_BY_CARRIER.get(preset, REJECTED_GENERIC)
+
+
+def _registration_text(registration, transport, preset=None):
+    if registration == 'rejected':
+        return _rejected_text(preset)
     if registration == 'registered' and transport:
         return f"The carrier accepted Faxbot's registration over {_TRANSPORT_NAMES[transport]}."
     if registration == 'not_used' and transport:
@@ -357,7 +372,7 @@ def _message(summary, asterisk, applied, ports_text=None, transport=None, *, man
     if managed and not in_use:
         return NOT_LOADED
     if asterisk['registration'] == 'rejected':
-        return _REGISTRATION_TEXT['rejected']
+        return _rejected_text(summary.get('preset'))
     if asterisk['registration'] == 'not_registered':
         if (transport or summary.get('transport')) == 'tls':
             return ('Faxbot is not registered with the carrier yet; if this lasts, the encrypted connection may be '
@@ -412,7 +427,7 @@ async def status(request: Request, identity=Depends(require_permission('provider
     return {
         **summary, 'applied': applied, 'asterisk_connected': asterisk['connected'],
         'registration': asterisk['registration'], 'registration_transport': transport,
-        'registration_text': _registration_text(asterisk['registration'], transport),
+        'registration_text': _registration_text(asterisk['registration'], transport, summary.get('preset')),
         'reachability': asterisk['reachability'],
         'reachability_text': _reachability_text(asterisk),
         'round_trip_ms': asterisk.get('round_trip_ms'),

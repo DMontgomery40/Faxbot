@@ -5,6 +5,12 @@ from .. import profiles, state
 from ..client import segment
 from ..errors import CliError, EXIT_CONFLICT, EXIT_NOT_FOUND
 from ..output import local_time, text
+from ...provider_labels import provider_label
+
+
+def _provider(identity):
+    """A provider's one plain name for people; JSON output keeps the id."""
+    return provider_label(identity) if identity else None
 
 settings = typer.Typer(help='Installation settings. Secrets are always shown masked.', no_args_is_help=True)
 providers = typer.Typer(help='Fax providers: which are installed and whether the active one is ready.',
@@ -172,7 +178,8 @@ def providers_list():
                    'configured': config.get('backend_configured', {})}
 
         def fallback(out):
-            out.fields([('Sending provider', hybrid.get('outbound')), ('Receiving provider', hybrid.get('inbound')),
+            out.fields([('Sending provider', _provider(hybrid.get('outbound'))),
+                        ('Receiving provider', _provider(hybrid.get('inbound'))),
                         ('Credentials saved for', [name for name, ok in summary['configured'].items()
                                                    if ok is True and not name.endswith('_default')])])
         state.out().result(summary, fallback)
@@ -283,7 +290,7 @@ def providers_status():
     result = state.api().get('/admin/health-status')
 
     def human(out):
-        out.fields([('Provider', result.get('backend')), ('Ready', result.get('backend_healthy')),
+        out.fields([('Provider', _provider(result.get('backend'))), ('Ready', result.get('backend_healthy')),
                     ('Receiving faxes', result.get('inbound_enabled')), ('API keys set up', result.get('api_keys_configured')),
                     ('Checked', local_time(result.get('timestamp')))])
         jobs = result.get('jobs')
@@ -303,7 +310,7 @@ def health():
         checks = (ready or {}).get('checks', {})
         out.fields([('Server', api.url), ('Answering', (live or {}).get('status') == 'ok'),
                     ('Ready to send', (ready or {}).get('status') == 'ready'),
-                    ('Provider', (ready or {}).get('backend')), ('Database', checks.get('db')),
+                    ('Provider', _provider((ready or {}).get('backend'))), ('Database', checks.get('db')),
                     ('Ghostscript', checks.get('ghostscript'))])
         for warning in (ready or {}).get('warnings') or []:
             out.line('Warning: ' + warning)
