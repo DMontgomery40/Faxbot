@@ -181,6 +181,9 @@ def project_admin_settings(snapshot: ConfigurationSnapshot, pending_fields: Iter
             'email_to': values.intake_email_to,
             'email_subject': values.intake_email_subject,
         },
+        'work': {
+            'acknowledge_hours': values.work_acknowledge_hours,
+        },
         'direct': {
             'enabled': values.direct_delivery_enabled,
             'organization': values.direct_organization,
