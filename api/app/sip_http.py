@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from .access.route_policy import require_permission
 from .config import configuration_values
 from .config_runtime import run_lifecycle_step
-from . import sip_fax_mode, sip_network, sip_trunk, stun
+from . import sip_fax_mode, sip_network, sip_trunk, stun, telnyx_t38
 from .ami import ENGINE_UNREACHABLE
 from .config_store import ConfigurationStoreError
 from .inbound.acquisition import AcquisitionError
@@ -517,6 +517,7 @@ async def status(request: Request, identity=Depends(require_permission('provider
     if configured and not phone:
         summary['advertised_address'] = await run_lifecycle_step(lambda: sip_trunk.applied_public_address(values)) or None
     network_report = await run_lifecycle_step(lambda: sip_network.report(values)) if configured else None
+    telnyx_report = await run_lifecycle_step(lambda: telnyx_t38.report(values)) if configured else None
     # The fast fax service (SSL Fax engine): its state and one sentence.
     from . import hylafax_engine
     from .ami import ami_client
@@ -574,6 +575,8 @@ async def status(request: Request, identity=Depends(require_permission('provider
         # The last network check for fax over IP: open, blocked or unknown, and its one sentence.
         'network_t38': network_report['t38'] if network_report and network_report['applies'] else None,
         'network_text': network_report['text'] if network_report and network_report['applies'] else None,
+        # Whether Telnyx accepts fax over IP (T.38) on the trunk's numbers (the last check), or None.
+        'telnyx_t38': telnyx_report if telnyx_report and telnyx_report['applies'] else None,
         # The fast fax service: running, starting, not_set_up or stopped, and its sentence (None outside Compose).
         'engine_state': engine_state,
         'engine_text': engine_text,
@@ -646,7 +649,16 @@ async def apply(request: Request, identity=Depends(require_permission('providers
     from .ami import ami_client
     await run_lifecycle_step(lambda: hylafax_engine.clear_engine_t38(values))
     await hylafax_engine.sync_engine_t38(values, ami_client)
+    await _check_telnyx(values)
     return await _load_into_engine(values)
+
+
+async def _check_telnyx(values):
+    """Read Telnyx's T.38 settings for the trunk numbers (GETs only); a failure never stops the caller."""
+    try:
+        await run_lifecycle_step(lambda: telnyx_t38.check(values))
+    except Exception:
+        logging.getLogger(__name__).warning('Faxbot could not check fax over IP (T.38) at Telnyx.')
 
 
 def _set_t38(runtime, enabled, reason, network=None):
@@ -744,9 +756,38 @@ async def check_network_again(request: Request, identity=Depends(require_permiss
     runtime = _runtime(request)
     outcome = await sip_network.run_check(runtime, _records(request), fresh=True) or {}
     values = await run_lifecycle_step(lambda: runtime.manager.store.read().active.values)
+    await _check_telnyx(values)
     body = await run_lifecycle_step(lambda: sip_network.report(values))
     engine = outcome.get('engine')
     return {**body, 'switched': outcome.get('switched'), 'engine_message': engine.get('message') if engine else None}
+
+
+@router.get('/telnyx')
+async def telnyx_check(identity=Depends(require_permission('providers:read'))):
+    """Whether Telnyx accepts fax over IP (T.38) on the trunk's numbers, from the last check."""
+    values = configuration_values()
+    return await run_lifecycle_step(lambda: telnyx_t38.report(values))
+
+
+@router.post('/telnyx/numbers/{number}/t38')
+async def telnyx_turn_on_t38(number: str, identity=Depends(require_permission('providers:write', audit=True))):
+    """Turn on Telnyx's T.38 fax gateway for one trunk number, then read it back; changes nothing else.
+
+    The audit row names the number (it is in the request path).
+    """
+    values = configuration_values()
+    if not telnyx_t38.applies(values):
+        raise HTTPException(400, detail='Add a Telnyx API key to the Telnyx trunk before changing Telnyx settings.')
+    if number not in values.sip_trunk_did_list:
+        raise HTTPException(404, detail='That number is not one of this trunk\'s fax numbers.')
+    outcome, _ = await run_lifecycle_step(lambda: telnyx_t38.enable(values, number))
+    try:
+        from .audit import audit_event
+        audit_event('telnyx_t38_gateway', backend='sip', number=number, outcome=outcome)
+    except Exception:
+        pass
+    body = await run_lifecycle_step(lambda: telnyx_t38.report(values))
+    return {**body, 'outcome': outcome, 'message': telnyx_t38.outcome_sentence(outcome, number)}
 
 
 # With the check turned off, look again this often for the setting to change.

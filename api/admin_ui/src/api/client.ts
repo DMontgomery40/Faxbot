@@ -1,5 +1,5 @@
 import type { RecipientFaxLimits, SipApplyResult, SipCallPage, SipPreset, SipTrunkStatus } from './sipTypes';
-import type { SipNetworkReport } from './networkTypes';
+import type { SipNetworkReport, TelnyxT38Report } from './networkTypes';
 import type { BatchingCheck, BatchingNumber, BatchingSave, FaxTogether } from './batchingTypes';
 import type {
   HealthStatus,
@@ -654,6 +654,15 @@ class AdminAPIClient {
 
   async checkSipNetwork(): Promise<SipNetworkReport> {
     return this.json('/admin/sip/network/check', { method: 'POST' });
+  }
+
+  // Telnyx's fax over IP (T.38) setting on each trunk number, and turning it on for one number.
+  async getTelnyxT38(): Promise<TelnyxT38Report> {
+    return this.json('/admin/sip/telnyx');
+  }
+
+  async turnOnTelnyxT38(number: string): Promise<TelnyxT38Report> {
+    return this.json(`/admin/sip/telnyx/numbers/${encodeURIComponent(number)}/t38`, { method: 'POST' });
   }
 
   // Bring in faxes the SIP trunk received but could not hand to Faxbot.

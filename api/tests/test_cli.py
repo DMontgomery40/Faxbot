@@ -986,6 +986,36 @@ def test_trunk_status_and_calls_read_as_plain_sentences(trunk_cli):
     assert trunk_cli.json('providers', 'trunk', 'apply', '--no-wait')['engine'] == 'manual'
 
 
+def test_trunk_telnyx_shows_t38_per_number_and_turns_it_on_for_one(monkeypatch, tmp_path):
+    import httpx
+    from app import sip_http, stun, telnyx_t38
+    from api.tests.test_telnyx_t38 import FIRST, KEY, FakeTelnyx
+    fake = FakeTelnyx()
+    monkeypatch.setattr(telnyx_t38, 'TRANSPORT', httpx.MockTransport(fake))
+    monkeypatch.setattr(stun, 'probe', lambda servers, **_: None)
+    monkeypatch.setattr(sip_http, '_probes', {})
+    for client in _serve(monkeypatch, tmp_path, SIP_TRUNK_PRESET='telnyx', SIP_TRUNK_USERNAME='faxbotuser',
+                         SIP_TRUNK_PASSWORD='synthetic-Trunk-Pass!42', SIP_TRUNK_CALLER_ID=FIRST,
+                         SIP_TRUNK_DIDS=f'{FIRST},+15555550101', TELNYX_API_KEY=KEY):
+        cli = Cli(client)
+        values = client.app.state.configuration_runtime.manager.store.read().active.values
+        telnyx_t38.check(values)
+        shown = cli('providers', 'trunk', 'telnyx', 'status')
+        assert shown.exit_code == 0, shown.stdout
+        for sentence in ('Telnyx has fax over IP (T.38) turned off for +1 555-555-0100, so received faxes there arrive',
+                         '+1 555-555-0100', 'Off', '+1 555-555-0101', 'On'):
+            assert sentence in shown.stdout, sentence
+        status = cli('providers', 'trunk', 'status').stdout
+        assert 'Telnyx has fax over IP (T.38) turned off for +1 555-555-0100' in status
+        assert 'To turn it on, run faxbot providers trunk telnyx t38-on followed by the number.' in status
+        turned = cli('providers', 'trunk', 'telnyx', 't38-on', FIRST)
+        assert turned.exit_code == 0, turned.stdout
+        assert 'Telnyx now has fax over IP (T.38) turned on for +1 555-555-0100.' in turned.stdout
+        assert cli.json('providers', 'trunk', 'telnyx', 'status')['ready'] is True
+        assert [request.method for request in fake.requests].count('PATCH') == 1
+        assert cli('providers', 'trunk', 'telnyx', 't38-on', '+15555550199').exit_code != 0
+
+
 def test_trunk_network_says_whether_t38_can_come_back_and_what_to_do(trunk_cli, monkeypatch):
     from app import sip_network
     from app.sip_network import Discovery

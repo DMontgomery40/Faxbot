@@ -42,6 +42,7 @@ import EnvSetField, { environmentManaged } from './common/EnvSetField';
 import { numberHint, numberPlaceholder, settingsNumberFormat } from './common/numbers';
 import InboundRecovery from './InboundRecovery';
 import NetworkForFax from './NetworkForFax';
+import TelnyxT38 from './TelnyxT38';
 import FaxSettings from './FaxSettings';
 
 interface SipTrunkSettingsProps {
@@ -701,6 +702,7 @@ function SipTrunkSettings({ client, showCalls = true, revision: sharedRevision, 
       )}
 
       {!phone && saved.preset && <NetworkForFax client={client} onChanged={load} refresh={status} />}
+      {saved.preset === 'telnyx' && <TelnyxT38 client={client} refresh={status} />}
 
       <Stack direction={narrow ? 'column' : 'row'} spacing={1}>
         <Button variant="contained" onClick={save} disabled={busy}>Save trunk settings</Button>
