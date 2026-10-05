@@ -971,7 +971,7 @@ $ faxbot recipients set [OPTIONS] {number}
 
 * `--name <str>`: A name for this destination.
 * `--notes <str>`: Notes for your team.
-* `--preferred-route <str>`: Route to use first, as listed by &#x27;faxbot recipients show&#x27;. Use &#x27;automatic&#x27; to let Faxbot choose.
+* `--preferred-route <str>`: Route to use first, as listed by &#x27;faxbot recipients show&#x27;. Use &#x27;automatic&#x27; for the cheapest reliable route.
 * `--accepts-references / --no-references`: Whether this recipient accepts case packets that reference documents they already received instead of resending them.
 * `--help`: Show this message and exit.
 

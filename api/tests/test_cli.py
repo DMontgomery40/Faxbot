@@ -750,6 +750,12 @@ def test_routing_destinations_costs_and_rate_cards(cli, tmp_path):
     view = cli.json('recipients', 'show', '+15551230001')
     assert view['display_name'] == 'County records'
     assert cli('recipients', 'show', '+15551230001').exit_code == 0
+    # The console's words: the preferred way to send, and what a case packet sends.
+    shown = cli('recipients', 'show', '+15551230001').stdout
+    assert re.search(r'Preferred way to send\s+Cheapest reliable', shown) and 'automatic' not in shown
+    assert re.search(r'Case packets\s+Takes a one-page list instead', shown) and 'Accepts references' not in shown
+    listed = cli('recipients', 'list').stdout
+    assert 'Cheapest reliable' in listed and 'Takes a one-page list instead' in listed
     assert 'providers' in cli.json('costs', 'spending')
     cards = tmp_path / 'cards.json'
     cards.write_text(json.dumps({'cards': [{'provider_id': 'phaxio', 'label': 'Phaxio list price',
@@ -1109,3 +1115,29 @@ def test_a_recovered_fax_shows_when_it_arrived_and_that_it_was_brought_in_later(
         ['Delivered', 'Failed', 'In progress', 'Needs review', 'Held test fax']
     assert status_label({'delivery_state': 'ready', 'together': {'state': 'waiting'}}) == 'Waiting to go with other faxes'
     assert status_label({'status': 'SUCCESS'}) == 'Delivered'
+
+
+def test_route_and_spending_words_match_the_console(monkeypatch):
+    from app.cli import output
+    from app.cli.commands import delivery
+    monkeypatch.setattr(output, 'home_currency', lambda: 'USD')
+    monkeypatch.setattr(delivery, 'money', output.money)
+    plan = {'included_in_plan': True, 'monthly_fee': {'currency': 'USD', 'amount': '10'}, 'rate': None}
+    assert delivery._route_rate(plan) == '$10.00 a month, faxes included'
+    assert delivery._route_rate({'rate': '$0.005 a minute'}) == '$0.005 a minute'
+    assert delivery._route_rate({}) == 'No price set'
+    assert delivery.preferred_text({}) == 'Cheapest reliable'
+    assert delivery.preferred_text({'preferred_route': 'direct'}) == 'Direct delivery'
+    assert delivery.preferred_text({'preferred_route': 'sip', 'routes': [{'route': 'sip', 'label': 'Carrier trunk'}]}) \
+        == 'Carrier trunk'
+    assert delivery.references_text(False) == 'Full documents'
+
+    class Lines:
+        def __init__(self):
+            self.lines = []
+
+        def line(self, text):
+            self.lines.append(text)
+    out = Lines()
+    delivery._unrecorded_lines(out, [{'unrecorded_calls': 1, 'unrecorded_matched_to_faxes': 1}])
+    assert out.lines == ['1 call reached Faxbot without a call record; its fax is in Received. Included in Charged.']
