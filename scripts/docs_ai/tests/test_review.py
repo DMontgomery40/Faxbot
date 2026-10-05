@@ -73,7 +73,8 @@ def test_the_prompt_asks_an_independent_reviewer_to_check_claims_against_the_cod
                         'Never change docs/generated/, docs/architecture/, README.md, planning/',
                         '.github/ workflows', 'Never open .env files', '.local-handoff/', 'research/',
                         'where the CODE itself looks wrong', 'a setting that has no effect',
-                        '```diff', '```findings', 'or the single word none'):
+                        '```diff', '```findings', 'or the single word none',
+                        'Write the diff exactly as `git diff` prints it', 'Do not use the apply_patch format'):
         assert instruction in prompt, instruction
     assert 'api/app/ports.py' in prompt and 'docs/guide.md' in prompt
     # The same prompt goes to Codex and to OpenRouter; only OpenRouter's system message names its tools.
@@ -202,6 +203,15 @@ def test_findings_are_read_from_their_own_block(autopilot):
     assert autopilot.extract_findings(DIFF) is None
     assert autopilot.extract_diff(REPLY) == DIFF
     assert autopilot.extract_diff('```diff\n```\n```findings\n- a.py:1 --- looks odd.\n```') is None
+
+
+def test_code_fences_inside_the_docs_diff_do_not_cut_the_diff_short(autopilot):
+    """Seen in the first audit: a page's own ```sh fence ended the diff block, and most of the patch was lost."""
+    diff = ('diff --git a/docs/guide.md b/docs/guide.md\n--- a/docs/guide.md\n+++ b/docs/guide.md\n'
+            '@@ -1,5 +1,5 @@\n Run:\n \n ```sh\n-old command\n+new command\n ```\n')
+    reply = f'```diff\n{diff}```\n\n```findings\n- api/app/x.py:3 Says ```sh where it means text.\n```\n'
+    assert autopilot.extract_diff(reply) == diff
+    assert autopilot.extract_findings(reply) == ['api/app/x.py:3 Says ```sh where it means text.']
 
 
 def _run(repository, reply, *arguments):

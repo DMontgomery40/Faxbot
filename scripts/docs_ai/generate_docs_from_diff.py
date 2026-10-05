@@ -483,15 +483,26 @@ def call_llm(prompt: str, provider: str) -> str:
 
 # -- the reply: a docs patch and findings ------------------------------------------------------------------
 
+# A reply's fenced block ends only at a line that is exactly ``` (column 0). Inside a diff, the docs' own
+# code fences always carry a diff prefix (" ```", "+```", "-```"), so they never end the block early.
+_BLOCK = re.compile(r'^```([A-Za-z]*)[ \t]*\n(.*?)^```[ \t]*$', re.M | re.S)
+
+
+def _blocks(text):
+    return [(kind.lower(), body) for kind, body in _BLOCK.findall(text or '')]
+
+
 def extract_diff(text: str) -> Optional[str]:
     """The unified diff in a model reply, without Markdown fences; None when there is none."""
     start = re.compile(r'^(diff --git |--- )', re.M)
-    text = re.sub(r'```findings[ \t]*\n.*?```', '', text or '', flags=re.S)
-    for block in re.findall(r'```[A-Za-z]*[ \t]*\n(.*?)```', text, re.S):
+    blocks = [body for kind, body in _blocks(text) if kind != 'findings']
+    for block in blocks:
         if start.search(block):
             text = block
             break
-    match = start.search(text or '')
+    else:
+        text = _BLOCK.sub('', text or '') if blocks or '```findings' in (text or '') else (text or '')
+    match = start.search(text)
     if match is None:
         return None
     diff = text[match.start():]
@@ -500,10 +511,10 @@ def extract_diff(text: str) -> Optional[str]:
 
 def extract_findings(text: str):
     """The findings lines in a model reply ([] for "none"), or None when the reply has no findings block."""
-    block = re.search(r'```findings[ \t]*\n(.*?)```', text or '', re.S)
-    if block is None:
+    found = [body for kind, body in _blocks(text) if kind == 'findings']
+    if not found:
         return None
-    lines = [re.sub(r'^[-*]\s+', '', line.strip()) for line in block.group(1).splitlines() if line.strip()]
+    lines = [re.sub(r'^[-*]\s+', '', line.strip()) for line in found[0].splitlines() if line.strip()]
     return [] if [line.lower().rstrip('.') for line in lines] in ([], ['none']) else lines
 
 
