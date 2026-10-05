@@ -41,7 +41,7 @@ def after_lock_wait(configuration, monkeypatch, operation, *, deadline=None):
 def test_expired_preparation_cannot_receive_grant_after_lock_wait(installation, monkeypatch):
     configuration, delivery, _ = installation
     identity = accept(installation)
-    claim = delivery.claim('worker', lease_seconds=1)
+    claim = delivery.claim('worker', lease_seconds=3)
     with pytest.raises(DeliveryConflict, match='lease is no longer current'):
         after_lock_wait(configuration, monkeypatch,
             lambda: delivery.grant_pdf(claim, url='http://localhost/synthetic.pdf', token='synthetic',
@@ -55,7 +55,7 @@ def test_expired_preparation_cannot_receive_grant_after_lock_wait(installation, 
 def test_expired_preparation_cannot_authorize_submission_after_lock_wait(installation, monkeypatch):
     configuration, delivery, _ = installation
     identity = accept(installation)
-    claim = delivery.claim('worker', lease_seconds=1)
+    claim = delivery.claim('worker', lease_seconds=3)
     assert after_lock_wait(configuration, monkeypatch,
         lambda: delivery.begin_submission(claim), deadline=claim.expires_at) is False
     assert delivery.get(identity)['state'] == 'preparing'
@@ -75,7 +75,7 @@ def test_new_claim_has_live_lease_after_lock_wait(installation, monkeypatch):
 def test_recovery_considers_leases_expiring_during_lock_wait(installation, monkeypatch, state):
     configuration, delivery, _ = installation
     identity = accept(installation)
-    claim = delivery.claim('worker', lease_seconds=1)
+    claim = delivery.claim('worker', lease_seconds=3)
     if state == 'submitting':
         assert delivery.begin_submission(claim)
     assert after_lock_wait(configuration, monkeypatch, delivery.recover_expired, deadline=claim.expires_at) == 1

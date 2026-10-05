@@ -1529,6 +1529,7 @@ $ faxbot providers trunk [OPTIONS] COMMAND [ARGS]...
 * `presets`: List the carriers and phone systems Faxbot...
 * `use`: Choose a carrier or phone system preset...
 * `network`: Whether fax over IP (T.38) works on the...
+* `telnyx`: Telnyx settings for fax over IP (T.38) on...
 
 #### `faxbot providers trunk status`
 
@@ -1698,6 +1699,57 @@ $ faxbot providers trunk network router-ports [OPTIONS] {on|off}
 **Arguments**:
 
 * `on|off`: on lets Faxbot open its fax ports on your router; off stops it and closes any it opened.  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+#### `faxbot providers trunk telnyx`
+
+Telnyx settings for fax over IP (T.38) on your trunk numbers.
+
+**Usage**:
+
+```console
+$ faxbot providers trunk telnyx [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `status`: Show whether Telnyx has fax over IP (T.38)...
+* `t38-on`: Turn on fax over IP (T.38) at Telnyx for...
+
+##### `faxbot providers trunk telnyx status`
+
+Show whether Telnyx has fax over IP (T.38) turned on for each trunk number, from the last check.
+
+**Usage**:
+
+```console
+$ faxbot providers trunk telnyx status [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+##### `faxbot providers trunk telnyx t38-on`
+
+Turn on fax over IP (T.38) at Telnyx for one trunk number. Only that setting changes.
+
+**Usage**:
+
+```console
+$ faxbot providers trunk telnyx t38-on [OPTIONS] {NUMBER}
+```
+
+**Arguments**:
+
+* `NUMBER`: The trunk number, for example +17208565062.  [required]
 
 **Options**:
 

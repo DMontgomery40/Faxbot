@@ -32,6 +32,14 @@ def _status_lines(out, result):
             out.line(result[key])
     if result.get('engine_audio'):
         out.line('To try T.38 again, run faxbot providers trunk apply.')
+    telnyx = result.get('telnyx_t38') or {}
+    for entry in telnyx.get('numbers') or []:
+        if entry.get('state') != 'on':
+            out.line(entry['text'])
+    for text in telnyx.get('connection_texts') or []:
+        out.line(text)
+    if any(entry.get('fixable') for entry in telnyx.get('numbers') or []):
+        out.line('To turn it on, run faxbot providers trunk telnyx t38-on followed by the number.')
     if result.get('network_t38') == 'blocked':
         out.line('If the network check shows a problem, run faxbot providers trunk network status to see how to fix it.')
     if result.get('phone_system_command'):
@@ -200,6 +208,43 @@ def network_router_ports(choice: str = typer.Argument(..., metavar='on|off',
                                      'expected_revision_id': current['_meta']['desired_revision_id']})
     result = api.post('/admin/sip/network/check')
     state.out().result(result, lambda out: _network_lines(out, result))
+
+
+telnyx = typer.Typer(help='Telnyx settings for fax over IP (T.38) on your trunk numbers.', no_args_is_help=True)
+trunk.add_typer(telnyx, name='telnyx')
+
+
+def _telnyx_lines(out, result):
+    if not result.get('applies'):
+        out.line('This needs the Telnyx trunk with a Telnyx API key (the key Faxbot also uses for call charges).')
+        return
+    if result.get('message'):
+        out.line(result['message'])
+    out.line(result.get('text') or '')
+    rows = [[entry['display'], {'on': 'On', 'off': 'Off'}.get(entry['state'], 'Not known'), entry['text']]
+            for entry in result.get('numbers') or []]
+    if rows:
+        out.table(['Number', 'Fax over IP (T.38)', 'What Telnyx shows'], rows, empty='')
+    for text in result.get('connection_texts') or []:
+        out.line(text)
+    if result.get('checked_at'):
+        out.fields([('Checked', local_time(result.get('checked_at')))])
+
+
+@telnyx.command('status')
+def telnyx_status():
+    """Show whether Telnyx has fax over IP (T.38) turned on for each trunk number, from the last check."""
+    result = state.api().get('/admin/sip/telnyx')
+    state.out().result(result, lambda out: _telnyx_lines(out, result))
+
+
+@telnyx.command('t38-on')
+def telnyx_t38_on(number: str = typer.Argument(..., metavar='NUMBER',
+                                               help='The trunk number, for example +17208565062.')):
+    """Turn on fax over IP (T.38) at Telnyx for one trunk number. Only that setting changes."""
+    from urllib.parse import quote
+    result = state.api().post(f'/admin/sip/telnyx/numbers/{quote(number.strip(), safe="")}/t38')
+    state.out().result(result, lambda out: _telnyx_lines(out, result))
 
 
 @trunk.command('presets')

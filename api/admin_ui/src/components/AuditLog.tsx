@@ -57,6 +57,7 @@ export const AUDIT_ACTIONS: Record<string, string> = {
   'capability.issue': 'Made a one-time code',
   'capability.consume': 'Used a one-time code',
   'host.restart': 'Restarted Faxbot',
+  'telnyx.t38_gateway': 'Turned on T.38 at Telnyx',
   'host.terminal': 'Opened the terminal',
   'host.actions': 'Ran a server action',
   'access.retire_permissions': 'Removed permissions that no longer do anything',
@@ -70,8 +71,22 @@ export function auditAction(operation: string): string {
 }
 
 // One entry's action. The terminal records two: asking to open it, then each session it starts.
+// A change to Telnyx's T.38 setting names the number and what Telnyx did.
+const TELNYX_T38_RESULTS: Record<string, string> = {
+  turned_on: 'Turned on T.38 at Telnyx for {number}',
+  still_off: 'Tried to turn on T.38 at Telnyx for {number}; Telnyx still shows it off',
+  refused: 'Tried to turn on T.38 at Telnyx for {number}; Telnyx refused the change',
+  not_found: 'Tried to turn on T.38 at Telnyx for {number}; the number is not on the Telnyx account',
+  unreachable: 'Tried to turn on T.38 at Telnyx for {number}; Telnyx could not be reached',
+};
+
 export function entryAction(entry: Pick<AuditEntry, 'operation' | 'details'>): string {
   if (entry.operation === 'host.terminal' && entry.details?.session !== 'started') return 'Asked for access to the server terminal';
+  if (entry.operation === 'telnyx.t38_gateway') {
+    const number = String(entry.details?.shown ?? entry.details?.number ?? 'a number');
+    const template = TELNYX_T38_RESULTS[String(entry.details?.result)] ?? 'Tried to turn on T.38 at Telnyx for {number}';
+    return template.replace('{number}', number);
+  }
   return auditAction(entry.operation);
 }
 

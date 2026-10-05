@@ -12,7 +12,7 @@ Cloud providers must reach your Faxbot API to fetch PDFs and deliver callbacks. 
 
 1. Start your tunnel to `http://localhost:8080`
 2. Copy the generated HTTPS URL
-3. In the Admin Console Setup Wizard (Phaxio/SignalWire) or **Settings → Backends**, paste the URL when prompted
+3. In **System → Setup**, enter the URL in **This server's public address**. You can also set it under **System → Security → This server's public address**.
 4. Review each provider’s explicit callback URL or its empty-value default derived from Public API URL. Apply with the loaded desired revision and inspect active/pending status. Complete an installation-wide stop/start when pending, then confirm active identity.
 5. Inspect Diagnostics configuration checks and perform a controlled provider check separately. A configured URL or local presence check does not prove provider reachability, signed callback receipt or document delivery.
 
@@ -23,4 +23,4 @@ Cloud providers must reach your Faxbot API to fetch PDFs and deliver callbacks. 
 - Keep provider-specific signing secrets enabled (Phaxio, Sinch, SignalWire)
 - Treat tunnel URLs as temporary; move to a proper domain before enabling PHI traffic
 
-Need inbound receiving? Pair this guide with **Settings → Storage** to ensure PDFs are stored in encrypted buckets (S3/SSE-KMS or MinIO with TLS).
+For inbound faxes, configure storage under **System → Storage & retention**. S3-compatible storage is available, and you can enter an S3 KMS key ID there. Confirm encryption and TLS settings with your storage provider; Faxbot does not ensure that a bucket or endpoint is encrypted.

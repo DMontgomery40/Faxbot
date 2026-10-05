@@ -37,3 +37,27 @@ export interface SipNetworkReport {
   switched?: 't38' | 'audio' | null;
   engine_message?: string | null;
 }
+
+// Whether Telnyx accepts fax over IP (T.38) on each trunk number (/admin/sip/telnyx), from the last check.
+export interface TelnyxT38Number {
+  number: string;
+  // The number as people read it, for example +1 720-856-5062.
+  display: string;
+  state: 'on' | 'off' | 'not_found' | 'unreadable' | 'unavailable';
+  text: string;
+  // Off at Telnyx: the trunk page offers a button that turns it on for this number.
+  fixable: boolean;
+}
+
+export interface TelnyxT38Report {
+  // False unless the trunk is Telnyx, has numbers and has a Telnyx API key.
+  applies: boolean;
+  checked_at?: string | null;
+  numbers: TelnyxT38Number[];
+  connection_texts: string[];
+  text: string | null;
+  ready?: boolean;
+  // After turning it on for a number: what Telnyx shows now, in one sentence.
+  outcome?: 'on' | 'not_on' | 'refused' | 'not_found' | 'unavailable';
+  message?: string;
+}

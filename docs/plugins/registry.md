@@ -1,7 +1,7 @@
 
 # Curated Plugin Registry
 
-The Plugins tab uses these discovery endpoints when `FEATURE_V3_PLUGINS=true`.
+The Plugins tab is a legacy feature. Faxbot plans to remove provider plugins in the next release. Set up built-in providers in **System → Setup**.
 
 [:material-puzzle-outline: Provider Setup](../setup/index.md){ .md-button }
 [:material-http: Manifest Installation](#manifest-installation){ .md-button }
@@ -21,18 +21,13 @@ The Plugins tab uses these discovery endpoints when `FEATURE_V3_PLUGINS=true`.
 :material-content-save-cog: `PUT /plugins/{id}/config`
 : Save only the fields you changed, with the `expected_revision_id` from the last read. `_meta.apply_state` in the reply says whether the change is already in use or waits for a restart.
 
-:material-database-search: `GET /plugin-registry`
-: Serve the curated registry JSON for UI search
-
 ---
 
 ## Configuration and permissions
 
-Environment variables and the `FAXBOT_CONFIG_PATH` JSON file are read once, when a new installation starts for the first time. After that, Faxbot keeps provider settings in its database, and later edits to those files are not imported. See [the first-start file format](config-file.md).
+Provider configuration is stored in Faxbot's installation settings. The `FAXBOT_CONFIG_PATH` JSON file is a legacy bootstrap input; see [the file format](config-file.md).
 
-Reading provider configuration and the curated `/plugin-registry` catalog needs `providers:read`. Saving provider configuration needs `providers:write`, and installing or importing manifests needs `providers:install`. See [Access Control](../security/access-control.md). The registry catalog is discovery data, not a credential or settings store.
-
-Read a provider's configuration before editing it, and leave hidden secrets unchanged unless you are replacing them. A 409 reply means someone else saved first; read again and review before retrying. Some changes take effect only after Faxbot restarts; stop every API process and start the installation again. Faxes that were already accepted keep using the provider settings they were accepted with.
+Faxes already accepted keep using the provider settings they were accepted with.
 
 ---
 
@@ -64,8 +59,6 @@ Installing or importing adds provider definitions; choosing a provider and enter
 - `/plugins` returns 404 → turn on v3 plugins in Settings and restart if Faxbot asks for it.
 - `/plugins` returns 403 → your account needs `providers:read`; see [Access Control](../security/access-control.md).
 - A save is refused with 409 → someone else saved first. Read the configuration again and review it before retrying.
-
----
 
 ## Quick examples
 
