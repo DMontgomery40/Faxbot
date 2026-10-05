@@ -977,3 +977,15 @@ def test_an_empty_station_id_is_the_trunk_caller_id_and_none_without_a_trunk():
     assert _asterisk_variable_assignments(legacy["Variable"])["FAXSTATION64"] == ""
     assert ConfigurationValues.from_environment({}).fax_station_id == ""
 
+
+
+def test_every_trunk_fax_falls_back_to_audio_when_the_carrier_refuses_t38():
+    """T.38 first, then audio on the same call: SendFAX and ReceiveFAX on the trunk carry option f.
+
+    Without it a refused T.38 re-INVITE aborts the fax ("Audio FAX not allowed ... aborting"), which
+    turned every HumbleFax call to the Telnyx number away on 2026-10-04 once T.38 came back on.
+    """
+    text = (Path(__file__).resolve().parents[2] / "asterisk/etc/asterisk/extensions.conf").read_text()
+    calls = re.findall(r"(SendFAX|ReceiveFAX)\(\$\{[A-Z0-9_]+\}(?:,([a-zA-Z]*))?\)", text)
+    trunk = [(app, options) for app, options in calls if app == "ReceiveFAX" or "z" in options]
+    assert trunk and all("f" in options for _, options in trunk), calls
