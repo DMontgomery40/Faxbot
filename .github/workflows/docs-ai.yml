@@ -101,7 +101,8 @@ jobs:
         uses: peter-evans/create-pull-request@v6
         with:
           branch: docs/ai-update-${{ github.run_id }}
-          base: main
+          # The branch the proposal ran on (main, or an integration branch such as feat/enterprise).
+          base: ${{ github.ref_name }}
           add-paths: docs/**
           commit-message: 'docs: propose instructional updates @codex review'
           title: 'docs: proposed instructional updates'
