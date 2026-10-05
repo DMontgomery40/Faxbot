@@ -4,6 +4,13 @@ Faxbot is one self-hosted fax product: a FastAPI backend, React Admin Console, p
 
 The future enterprise direction adds accountable correspondence: reusable intake, ownership, deadlines, approvals, recipient policy, evidence and retention, with optional templates and guided administration. This is documented future work; preserve the current Phase 1 and four-fix implementation scope.
 
+## Who reads what Faxbot writes
+
+- At a company running Faxbot, staff never open the console or the docs; they get their faxes by email. Everyone who reads the console, the `faxbot` command line and the docs is the administrator who set Faxbot up and handles its exceptions, usually the same person who runs its server, network and provider accounts.
+- Speak to that person directly and tell them what to set and where ("In your phone system, send fax calls to 192.168.1.20, port 5060"). Never write "ask your administrator", "give this to your administrator", "ask whoever installed Faxbot" or anything else that treats the reader as someone without access. The reader is that person.
+- Name another party only when real companies really do have one: the fax carrier or provider, a partner who manages an Avaya or BT phone system, the recipient's fax machine. Even then, give the reader the exact settings to check or pass on.
+- Keep developer material (API internals, revision IDs, plugin manifests, environment variables) in developer reference pages, out of operator guides and screens.
+
 ## Start here
 
 - [Planning sources](planning/README.md) are maintained outside the generated documentation tree. Keep enterprise requirements in `planning/enterprise-correspondence.md`; the old `docs/architecture/` page is a pointer. Do not use legacy migration/mirror scripts for routine updates or target planning with generated patches.
