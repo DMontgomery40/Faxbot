@@ -574,8 +574,8 @@ describe('SIP trunk to a phone system', () => {
   });
 
   it('says what to give the administrator once published, and names Docker Desktop or Colima', async () => {
-    const given = 'Give your phone system administrator this address: 192.168.10.20, port 5060 (UDP or TCP), '
-      + 'and media ports 4000–4019, enough for 6 faxes at once.';
+    const given = 'In your phone system, send fax calls to 192.168.10.20, port 5060 (UDP or TCP), '
+      + 'with media ports 4000–4019: enough for 6 faxes at once.';
     let status: Record<string, unknown> = phoneStatus({ ports_text: given, message: 'The trunk is ready.',
       phone_system: { address: '192.168.10.20', sip_port: 5060, media_ports: '4000-4019', faxes_at_once: 6 },
       phone_system_command: null, phone_system_setting: null });

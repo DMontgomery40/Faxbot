@@ -1525,7 +1525,7 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
               ['enable_s3_diagnostics', 'Also check the S3 bucket',
                 'When on, Diagnostics also make sure Faxbot can reach the online storage that holds your faxes.'],
               ['admin_allow_restart', 'Allow restarting Faxbot from here',
-                'Turn this on only if Faxbot starts again by itself after it stops. Ask whoever installed Faxbot if you are not sure.'],
+                'Turn this on only if Faxbot starts again by itself after it stops. Docker Compose installs do; elsewhere, check your service manager.'],
             ].map(([field, label, help]) => (
               <Box key={field} sx={{ mb: 2 }}>
                 {switchField(label, field, help)}

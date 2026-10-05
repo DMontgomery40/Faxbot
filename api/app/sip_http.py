@@ -98,9 +98,9 @@ _desktop = {}
 
 
 def lan_text(record):
-    """What to give the phone system's administrator, in one sentence."""
-    return (f'Give your phone system administrator this address: {record["address"]}, port 5060 (UDP or TCP), '
-            f'and media ports {record["media_first"]}\u2013{record["media_last"]}, enough for '
+    """What to set in the phone system so it sends fax calls to Faxbot, in one sentence."""
+    return (f'In your phone system, send fax calls to {record["address"]}, port 5060 (UDP or TCP), '
+            f'with media ports {record["media_first"]}\u2013{record["media_last"]}: enough for '
             f'{record["faxes_at_once"]} {"fax" if record["faxes_at_once"] == 1 else "faxes"} at once.')
 
 
