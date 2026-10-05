@@ -17,32 +17,27 @@ For "is everything working", use [Diagnostics](../admin-console/diagnostics.md).
 ## Auth and API basics
 
 - `scripts/run-uvicorn-dev.sh`
-    - Starts the API from your working tree (no Docker). Accepts `PORT` (default 8080). Good for rapid iteration.
+    - Starts the API from your working tree (no Docker) on `127.0.0.1` with sending turned off. Accepts `PORT` (default 8080).
 - `scripts/smoke-auth.sh`
-    - Creates a venv, installs API deps, and runs a minimal auth smoke test with pytest.
+    - Runs the API key tests with the repository's virtual environment; no server needed.
 - `scripts/curl-auth-demo.sh`
-    - Hits a running API; mints a DB key via admin endpoint, sends a TXT/PDF fax, then fetches job status.
+    - Against a running Faxbot with sending turned off: creates a send/read key, queues a one-page fax, reads its status and revokes the key. It sends the fax as queue-only, so Faxbot refuses it when sending is on; it never places a call. Needs `API_KEY` (an admin key) and `FAX_API_URL`.
 
 ## Send and status helpers
 
 - `scripts/send-fax.sh "<+15551234567>" /abs/path/file.pdf|.txt`
-    - Posts PDF or TXT to `/fax` with a Faxbot API key from `FAXBOT_API_KEY`, or from `API_KEY` in the repository `.env` when `FAXBOT_API_KEY` is not set. It stops with a message if neither is set. `FAX_API_URL` in `.env` sets the server address. A returned job ID means the fax was accepted, not delivered.
+    - Posts PDF or TXT to `/fax` with a Faxbot API key from `FAXBOT_API_KEY`, or from `API_KEY` in the repository `.env` when `FAXBOT_API_KEY` is not set. It stops with a message if neither is set. `FAX_API_URL` sets the server address. With sending on, this sends a real fax. A returned job ID means the fax was accepted, not delivered.
 - `scripts/get-status.sh <job_id>`
     - Reads `/fax/{id}` with the same key and address rules and prints JSON with `jq`. Reading a job does not send or retry it.
 
-## Inbound helpers
+## Received-fax helpers
 
-- `scripts/bootstrap-inbound.sh`
-    - Legacy bootstrap helper: edits `.env`, starts Compose and invokes the internal inbound smoke. It does not change settings on an existing installation. Configure inbound handling, the internal secret and authentication in Settings first; a synthetic smoke record is not proof of provider receipt or a usable inbound PDF.
-- `scripts/inbound-internal-smoke.sh`
-    - Posts a simulated internal Asterisk inbound event, lists `/inbound`, and downloads `/inbound/{id}/pdf` using a freshly minted read token.
-- `scripts/e2e-inbound-sip.sh`
-    - Checks health and Asterisk registration, mints an inbound read token, watches `/inbound` for a new item after you fax to your DID, and downloads the PDF when available.
+Both use `API_KEY` (an admin key) and `FAX_API_URL`, create a read-only key for received faxes and revoke it when they finish.
 
-## Cloud ingress (Phaxio) helper
-
-- `scripts/setup-phaxio-tunnel.sh`
-    - Legacy bootstrap helper: starts a tunnel, edits `.env` (`PUBLIC_API_URL`, `PHAXIO_CALLBACK_URL`, `FAX_BACKEND=phaxio`) and stops/restarts Compose. It does not change an existing installation. For an existing installation, start the tunnel manually and apply its URL in Settings as described in [the Phaxio delivery check](phaxio-e2e-test.md).
+- `scripts/inbound-smoke.sh` (`make inbound-smoke`)
+    - Adds a test fax (no call), reads it with the read-only key and downloads its PDF, checking that it is a PDF.
+- `scripts/inbound-watch.sh` (`make inbound-e2e`)
+    - Shows the carrier trunk's status when a trunk receives, then waits for the next fax you send to one of your numbers (`WAIT_MINUTES`, default 10) and downloads its PDF.
 
 ## Environment and terminal helpers
 

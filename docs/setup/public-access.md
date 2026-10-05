@@ -7,7 +7,6 @@ Cloud providers must reach your Faxbot API to fetch PDFs and deliver callbacks. 
 
 - **Cloudflare Tunnel** (`cloudflared`): supplies a public HTTPS URL; quick-tunnel URLs are temporary.
 - **ngrok**: fast for demos; remember to lock scopes and rotate URLs frequently
-- Legacy bootstrap helper: `scripts/setup-phaxio-tunnel.sh` starts a tunnel, edits repository `.env` and stops/restarts Compose. It does not patch canonical settings on an existing installation; use the manual steps below.
 
 ## Manual steps
 

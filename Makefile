@@ -81,11 +81,13 @@ alembic-revision:
 	@echo "Use: DATABASE_URL=... alembic -c api/alembic.ini revision -m 'message' --autogenerate"
 
 # Inbound helpers
+# Add a test fax and download its PDF through the public API (no call).
 inbound-smoke:
-	API_KEY=$${API_KEY} ASTERISK_INBOUND_SECRET=$${ASTERISK_INBOUND_SECRET} ./scripts/inbound-internal-smoke.sh
+	API_KEY=$${API_KEY} ./scripts/inbound-smoke.sh
 
+# Wait for the next real fax to arrive and download its PDF.
 inbound-e2e:
-	API_KEY=$${API_KEY} ./scripts/e2e-inbound-sip.sh
+	API_KEY=$${API_KEY} ./scripts/inbound-watch.sh
 
 # MCP-specific commands (2025 Standards)
 mcp-install:

@@ -23,7 +23,6 @@ The [old architecture location](../docs/architecture/2026-10-03-enterprise-corre
 
 The current workflows do not invoke the following migration tools:
 
-- [Jekyll migration](../scripts/migrate-docs-from-jekyll.sh) uses `rsync --delete` against the entire `docs/` destination. It can replace or delete architecture files inside that tree. Its destination-branch comment is not an enforced guard.
 - [Branch mirror](../scripts/docs_tools/mirror_from_branch.py) overwrites a fixed set of operator guides and can restore historical pages that have since been archived.
 - [Markdown cleanup](../scripts/docs_tools/cleanup_mkdocs_content.py) rewrites matching content recursively under its supplied directory. Giving it the repository root includes planning and ignored research/archive files.
 

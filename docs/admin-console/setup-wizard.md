@@ -25,7 +25,7 @@ Setup shows one section for each provider in use, headed **For sending: …** an
 
 Save or undo changes in the fax line form before you move on; Setup does not leave the step while the form has unsaved changes. The trunk form and Setup share one saved version of the settings, so saving one never makes the other refuse a save.
 
-**This server's public address** appears when a cloud provider is in use. It is a setting, not a tunnel launcher. Start a tunnel yourself, paste its address here or in Settings, then move on. The older `setup-phaxio-tunnel.sh` script only edits the `.env` file used when a new installation first starts; it does not change an existing installation. See [Public Access](../setup/public-access.md).
+**This server's public address** appears when a cloud provider is in use. It is a setting, not a tunnel launcher. Start a tunnel yourself, paste its address here or in Settings, then move on. See [Public Access](../setup/public-access.md).
 
 **Check these credentials** (Phaxio and Sinch) only uses explicit, unmasked values. Sinch's check tests presence, not authentication. These checks do not send a fax or verify inbound document readiness.
 
