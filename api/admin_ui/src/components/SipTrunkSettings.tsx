@@ -162,8 +162,8 @@ export function audioReason(reason: string | null | undefined, at?: string | nul
   }
   if (reason === 'network') {
     return carrier === 'Telnyx'
-      ? "Off: your network changes port numbers, so Telnyx's T.38 fax data cannot come back; Faxbot uses audio fax until the network is fixed."
-      : 'Off: your network changes port numbers, so T.38 fax data most likely cannot come back; Faxbot uses audio fax until the network is fixed.';
+      ? 'Off: your network changes port numbers, so fax over IP (T.38) cannot work; Faxbot sends audio fax until the network is fixed.'
+      : 'Off: your network changes port numbers, so fax over IP (T.38) most likely cannot work; Faxbot sends audio fax until the network is fixed.';
   }
   if (reason === 'carrier') {
     return `Off: ${carrier || 'your carrier'} turns T.38 into audio fax inside its network, so Faxbot uses audio fax.`;

@@ -179,7 +179,7 @@ def _observed(records):
     return found if any(found.values()) else None
 
 
-def _address_text(summary, network, carrier, observed=None, audio=False, blocked=False):
+def _address_text(summary, network, carrier, observed=None, audio=False, blocked=False, mapped=False):
     """Faxbot's internet address in use and how the network treats it, in one sentence.
 
     Once calls have shown whether the carrier follows Faxbot's packets, the
@@ -189,7 +189,7 @@ def _address_text(summary, network, carrier, observed=None, audio=False, blocked
     already says T.38 data cannot come back (``blocked``), its own sentence
     says so, and this one keeps to the address and what calls showed.
     """
-    text = _network_text(summary, network, carrier)
+    text = _network_text(summary, network, carrier, mapped)
     if not text.endswith(_UNTESTED) or (observed is None and not blocked):
         return text
     lead = text[:-len(_UNTESTED)].rstrip(' ,;').removesuffix(', and')
@@ -209,7 +209,7 @@ def _address_text(summary, network, carrier, observed=None, audio=False, blocked
     return f'{lead}, and a fax that went through shows it does.'
 
 
-def _network_text(summary, network, carrier):
+def _network_text(summary, network, carrier, mapped=False):
     typed = summary.get('public_address')
     if typed:
         if network and network.public_ip and network.public_ip != typed:
@@ -220,6 +220,10 @@ def _network_text(summary, network, carrier):
             and summary.get('advertised_address') == network.public_ip):
         return (f'Faxbot\'s internet address is {network.public_ip}, and your network keeps port numbers, '
                 f'so {carrier} is told exactly where to send fax data.')
+    if mapped and network and network.public_ip:
+        # Faxbot opened its fax ports on the router (sip_network): the address and ports are exact.
+        return (f"Faxbot's internet address is {network.public_ip}, and your router passes Faxbot's fax ports "
+                f'through, so {carrier} is told exactly where to send fax data.')
     return stun.address_sentence(network, carrier=carrier)
 
 
@@ -305,7 +309,10 @@ def _address_changed(values, network):
     applied = sip_trunk.applied_public_address(values)
     if applied is None:
         return False
-    wanted = network.public_ip if network.ports == 'preserved' else ''
+    # Ports the router opened 1:1 make the address exact, although the probe still sees ports change.
+    record = sip_trunk.read_public_address(values) or {}
+    opened = bool(record.get('router_ports') and record.get('ip') == network.public_ip)
+    wanted = network.public_ip if network.ports == 'preserved' or opened else ''
     return applied != wanted
 
 
@@ -321,7 +328,8 @@ def _ports_text(values, network):
             return None
         return BEHIND_ROUTER if network and network.behind_nat else None
     check = sip_network.read_check(values)
-    forwards = check and check['t38'] != sip_network.OPEN and check.get('why') != 'no_address'
+    forwards = check and ((check['t38'] != sip_network.OPEN and check.get('why') != 'no_address')
+                          or check.get('why') in ('router_mapped', 'forwarded'))
     return None if forwards else NO_PORTS
 
 
@@ -528,6 +536,7 @@ async def status(request: Request, identity=Depends(require_permission('provider
         'behind_router': network.behind_nat if network else None,
         'port_numbers': network.ports if network else None,
         'public_address_text': (_address_text(summary, network, carrier, observed, not values.sip_t38_enabled,
+                                              mapped=bool(network_report and network_report.get('why') == 'router_mapped'),
                                               blocked=bool(network_report and network_report['t38'] == 'blocked'
                                                            and network and network.public_ip
                                                            and network.ports != 'preserved'))
@@ -577,7 +586,7 @@ async def apply(request: Request, identity=Depends(require_permission('providers
     values = configuration_values()
     if not sip_trunk.configured(values):
         raise HTTPException(400, detail='Choose a carrier before applying trunk settings.')
-    network = None
+    network, exact = None, None
     phone = _phone_system(values.sip_trunk_preset)
     if not phone:
         network = await probe_network(values.sip_trunk_preset, fresh=True)
@@ -597,9 +606,11 @@ async def apply(request: Request, identity=Depends(require_permission('providers
         before = await run_lifecycle_step(lambda: sip_network.previous_verdict(values))
         await run_lifecycle_step(lambda: sip_fax_mode.reconcile(values, network=before))
         found = await sip_network.discover(fresh=True)
-        check, previous = await run_lifecycle_step(lambda: sip_network.record_check(values, network, found, records))
+        mapping = await run_lifecycle_step(lambda: sip_network.map_ports(values, network, found))
+        check = await run_lifecycle_step(lambda: sip_network.record_check(values, network, found, records, mapping))
+        exact = True if check['why'] == 'router_mapped' else None
         decision = await run_lifecycle_step(lambda: sip_fax_mode.network_decision(
-            values, check['t38'], previous=previous, records=records))
+            values, check['t38'], previous=check['changed_from'], records=records))
         if decision:
             values = await run_lifecycle_step(lambda: _set_t38(runtime, decision == 't38', sip_fax_mode.NETWORK,
                                                                check['t38']))
@@ -614,7 +625,7 @@ async def apply(request: Request, identity=Depends(require_permission('providers
             await run_lifecycle_step(lambda: sip_trunk.write_manager_credentials(values))
         if not values.sip_external_address and not phone:
             # What Asterisk advertises at its next start (only on a network that keeps port numbers).
-            await run_lifecycle_step(lambda: sip_trunk.write_public_address(values, network))
+            await run_lifecycle_step(lambda: sip_trunk.write_public_address(values, network, exact=exact))
     except sip_trunk.TrunkConfigurationError as error:
         names = ', '.join(_FIELD_NAMES.get(field, 'trunk settings') for field in error.fields)
         raise HTTPException(400, detail=f'Fill in the {names} before applying.')
@@ -747,7 +758,7 @@ async def watch_public_address(*, minutes=None, values_source=None, runtime=None
             if not sip_trunk.configured(values) or _phone_system(values.sip_trunk_preset):
                 continue
             if runtime is not None:
-                await sip_network.run_check(runtime)
+                await sip_network.run_check(runtime, unattended=True)
                 continue
             if values.sip_external_address:
                 continue

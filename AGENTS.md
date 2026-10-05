@@ -48,6 +48,7 @@ The future enterprise direction adds accountable correspondence: reusable intake
 - Update affected operator/API/client documentation and links alongside the README. Add new documentation pages to `mkdocs.yml` when appropriate. Update this guide when the project direction or important entry points change.
 - Keep the roadmap in the README as the shared status source; do not create a competing roadmap. Research ideas, synthetic benchmark results, and advertised prices must not become claims of shipped behavior or measured financial savings.
 - Before reporting completion, check that capability descriptions, roadmap status, examples, and links agree with the code. Summarize relevant validation and any remaining limitations.
+- Write documentation (MkDocs pages, the README, `planning/` and internal notes) about 80% of the way to ASD-STE100 Simplified Technical English: short sentences, active voice, and one term for one thing, used the same way everywhere. Relax the vocabulary rules where they make an explanation awkward. Keep technical precision, and say plainly what is unverified or uncertain.
 
 ## Engineering boundaries
 

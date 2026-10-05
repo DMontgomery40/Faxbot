@@ -38,6 +38,12 @@ def _valid_actor(actor):
     return isinstance(actor, str) and (actor in {'admin', 'development'} or _ACTOR.fullmatch(actor) is not None)
 
 
+def _failure_sentences():
+    """Provider adapters' own failure sentences, the only reasons history shows."""
+    from .humblefax_service import FAILURE_SENTENCES
+    return FAILURE_SENTENCES
+
+
 def _safe_event_details(encoded):
     """Expose only known structured evidence, never arbitrary history content."""
     if not isinstance(encoded, str) or len(encoded) > 4096:
@@ -58,6 +64,7 @@ def _safe_event_details(encoded):
                 or (name == 'actor' and _valid_actor(value))
                 or (name == 'provider_sid' and _PROVIDER_SID.fullmatch(value) is not None)
                 or (name == 'route' and _ROUTE.fullmatch(value) is not None)
+                or (name == 'reason' and value in _failure_sentences())
                 or (name == 'legacy_status' and re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9 _.-]{0,127}', value, re.ASCII))):
             result[name] = value
     return result
@@ -673,8 +680,9 @@ class OutboundStore:
                          claim_token=None, claim_expires_at=None, next_poll_at=None)
             connection.execute(self.configuration.jobs.update().where(self.configuration.jobs.c.id == row['id']).values(
                 status='queued', provider_sid=final_sid, error=None, updated_at=now))
+            # The adapter's plain sentence for why this route failed, kept with the move to the next route.
             _event(connection, self.events, row['id'], 'route_fallback', now, attempt_id=attempt_id,
-                   details={'category': 'provider_failed'})
+                   details={'category': 'provider_failed', **({'reason': error} if isinstance(error, str) else {})})
             return True
         self._update(connection, row, now, state=status, claim_expires_at=None)
         connection.execute(self.configuration.jobs.update().where(self.configuration.jobs.c.id == row['id']).values(

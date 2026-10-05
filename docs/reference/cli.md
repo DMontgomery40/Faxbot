@@ -1668,6 +1668,7 @@ $ faxbot providers trunk network [OPTIONS] COMMAND [ARGS]...
 
 * `status`: Show whether fax over IP (T.38) works on...
 * `check`: Run the network check again now; new calls...
+* `router-ports`: Let Faxbot open its fax ports on your...
 
 ##### `faxbot providers trunk network status`
 
@@ -1692,6 +1693,24 @@ Run the network check again now; new calls use fax over IP only when it works.
 ```console
 $ faxbot providers trunk network check [OPTIONS]
 ```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+##### `faxbot providers trunk network router-ports`
+
+Let Faxbot open its fax ports on your router (on, the default) or not (off), then check the network again.
+
+**Usage**:
+
+```console
+$ faxbot providers trunk network router-ports [OPTIONS] {on|off}
+```
+
+**Arguments**:
+
+* `on|off`: on lets Faxbot open its fax ports on your router; off stops it and closes any it opened.  [required]
 
 **Options**:
 

@@ -82,6 +82,26 @@ describe('Dashboard delivery cards', () => {
       .toBe('A fax call from +13035550100 came in, but no pages arrived.');
   });
 
+  it('needs attention while Faxbot keeps fax over IP off because of the network, and opens the trunk page', async () => {
+    const opened: string[] = [];
+    const report = { applies: true, checked: true, t38: 'blocked', text: 'synthetic', t38_enabled: false,
+      action: 'turned_off', action_at: '2026-10-05T03:50:00Z' };
+    server.use(http.get('/admin/sip/network', () => HttpResponse.json(report)));
+    render(<Dashboard client={client()} onNavigate={(page) => { opened.push(page); }} />);
+    const item = await screen.findByTestId('attention-t38-network');
+    expect(item.textContent).toContain('One network change would let faxes go over the internet; faxes still go through meanwhile');
+    fireEvent.click(item);
+    expect(opened).toEqual(['providers/trunk']);
+  });
+
+  it('has no network item when someone chose audio fax or the network allows fax over IP', async () => {
+    server.use(http.get('/admin/sip/network', () => HttpResponse.json({ applies: true, checked: true, t38: 'open',
+      text: 'synthetic', t38_enabled: false, action: null, action_at: null })));
+    render(<Dashboard client={client()} />);
+    expect(await screen.findByText('Inbound Fax')).toBeTruthy();
+    expect(screen.queryByTestId('attention-t38-network')).toBeNull();
+  });
+
   it('says nothing about trunk calls when there was no missed call or no access to call history', async () => {
     server.use(http.get('/admin/sip/calls', () => HttpResponse.json({ detail: 'Forbidden' }, { status: 403 })));
     render(<Dashboard client={client()} />);

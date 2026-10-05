@@ -52,6 +52,8 @@ export interface SipTrunkSettings {
   external_address: string;
   // How often Faxbot checks its internet address again, in minutes; 0 turns the check off.
   public_address_check_minutes?: number;
+  // May Faxbot open its published fax ports on the router (sip_router_ports)?
+  router_ports?: boolean;
   // 'e164' or 'local' (as a phone at the installation dials it); '' is the preset's own.
   dial_format?: string;
   // Outside-line digits before a number dialled the local way, such as 9.

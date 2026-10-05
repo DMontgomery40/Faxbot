@@ -152,8 +152,8 @@ def test_status_reports_registration_and_reachability_from_asterisk(client, monk
     # T.38, the address sentence keeps to the address, and "no ports to open" is not claimed.
     assert body['public_address_text'] == "Faxbot's internet address is 198.51.100.7; your network changes port numbers."
     assert body['network_t38'] == 'blocked'
-    assert body['network_text'] == ('Your network changes port numbers, and Telnyx does not follow such changes for '
-                                    'T.38 fax data, so it cannot come back to Faxbot.')
+    assert body['network_text'] == ('Fax over IP (T.38) cannot work here: your network changes port numbers, which '
+                                    'Telnyx cannot handle for fax over IP.')
     assert body['ports_text'] is None
 
     async def rejected(fields, *, collect=False):

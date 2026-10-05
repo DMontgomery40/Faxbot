@@ -266,8 +266,14 @@ class Spending:
             calls = self._outbound_calls(connection, mine)
             reported = self._reported_charges(connection, mine)
             # The route of an attempt still in progress, known as soon as Faxbot chose it.
-            pending = connection.execute(sa.select(c.c.provider_id).where(mine, c.c.outcome == 'pending').order_by(
-                c.c.created_at.desc(), c.c.id.desc()).limit(1)).scalar()
+            pending_row = connection.execute(sa.select(c.c.provider_id, c.c.route).where(
+                mine, c.c.outcome == 'pending').order_by(c.c.created_at.desc(), c.c.id.desc()).limit(1)).first()
+            pending = pending_row.provider_id if pending_row else None
+            # The route each attempt of this fax used, in order (a shared call's share is not this fax's route).
+            used = [row.route for row in connection.execute(sa.select(c.c.route).where(c.c.job_id == job_id).order_by(
+                c.c.created_at, c.c.id)).all() if row.route]
+        routes = [route for index, route in enumerate(used) if index == 0 or route != used[index - 1]]
+        where = {'route': routes[-1] if routes else None, 'routes': routes}
         rows = []
         for row in found:
             share = shares.get(row['id'])
@@ -281,8 +287,8 @@ class Spending:
                 # A fax through a flat plan costs nothing more, whatever happens to the call.
                 fee = plan_fee_text(card.monthly_fee_micros, card.currency)
                 return {'state': 'included', 'summary': f'Included in your {route_label(pending)} plan ({fee} a month).',
-                        'reported_cost': {}, 'estimated_cost': {}, 'attempts': 0}
-            return {'state': 'none', 'summary': None, 'reported_cost': {}, 'estimated_cost': {}, 'attempts': 0}
+                        'reported_cost': {}, 'estimated_cost': {}, 'attempts': 0, **where}
+            return {'state': 'none', 'summary': None, 'reported_cost': {}, 'estimated_cost': {}, 'attempts': 0, **where}
         reported_total, estimated_total, carriers = {}, {}, set()
         waiting = unmatched = done = 0
         for row in rows:
@@ -325,7 +331,7 @@ class Spending:
             else:
                 summary, state = 'Cost not reported yet.', 'waiting'
         return {'state': state, 'summary': summary, 'reported_cost': reported_total,
-                'estimated_cost': estimated_total, 'attempts': len(rows)}
+                'estimated_cost': estimated_total, 'attempts': len(rows), **where}
 
     def inbound(self, inbound_id):
         """The carrier's charge for the call that brought in one received fax."""

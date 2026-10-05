@@ -82,6 +82,7 @@ export interface DeliveryHistoryEvent {
     provider_sid?: string;
     legacy_status?: string;
     route?: string;
+    reason?: string;
   };
 }
 

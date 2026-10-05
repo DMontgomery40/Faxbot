@@ -125,13 +125,13 @@ describe('Jobs list wording', () => {
     expect(style.textOverflow).not.toBe('ellipsis');
   });
 
-  it('names the original provider in words and shows no internal account or sign-in IDs', async () => {
+  it('names the latest attempt\'s provider in words and shows no internal account or sign-in IDs', async () => {
     const detail = { ...delivery('reconciliation_required', 'att-1', true, [
       event('e1', 'att-1', 'provider_identity_bound', { actor: 'principal:bd26f4bd-011a-4e14-9d1f-052975afafa4', provider_sid: 'FAX-123' }),
     ]), provider_id: 'sip', profile_id: 'bd26f4bd-011a-4e14-9d1f-052975afafa4' };
     jobServer('reconciliation_required', detail, () => HttpResponse.json({ deliveries: [] }));
     const dialog = await openJob();
-    expect(within(dialog).getByText('Original provider').closest('li')?.textContent).toContain('Carrier trunk');
+    expect(within(dialog).getByText('Provider of the latest attempt').closest('li')?.textContent).toContain('Carrier trunk');
     expect(within(dialog).queryByText(/Original Provider Account|bd26f4bd|principal:|Operator:/)).toBeNull();
     expect(within(dialog).getByText(/Provider fax ID: FAX-123/)).toBeTruthy();
   });
@@ -158,7 +158,8 @@ describe('Sent', () => {
         expect(new URL(request.url).searchParams.get('ids')).toBe(`${JOB},${OTHER}`);
         return HttpResponse.json({ costs: {
           [JOB]: { state: 'reported', summary: 'Telnyx charged $0.005 for this call.', reported_cost: [{ currency: 'USD', amount: '0.005' }], estimated_cost: [] },
-          [OTHER]: { state: 'waiting', summary: 'Cost not reported yet.', reported_cost: [], estimated_cost: [{ currency: 'USD', amount: '0.07' }] },
+          [OTHER]: { state: 'waiting', summary: 'Cost not reported yet.', reported_cost: [], estimated_cost: [{ currency: 'USD', amount: '0.07' }],
+            route: 'signalwire', routes: ['phaxio', 'signalwire'] },
         } });
       }),
     );
@@ -173,6 +174,8 @@ describe('Sent', () => {
     expect(within(charged).getByText('$0.005').getAttribute('title')).toBe('Telnyx charged $0.005 for this call.');
     const estimated = (await screen.findByText('$0.07 estimate')).closest('tr') as HTMLElement;
     expect(within(estimated).getByText('+15550100002')).toBeTruthy();
+    // The route that carried the fax, not the provider it was first accepted for.
+    expect(within(estimated).getByText('SignalWire (after Phaxio)')).toBeTruthy();
     expect(screen.getByText('2 faxes')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Send a fax' }));
     expect(send).toHaveBeenCalledTimes(1);

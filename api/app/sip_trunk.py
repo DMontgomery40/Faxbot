@@ -569,17 +569,22 @@ def public_address_path(values) -> Path:
     return Path(values.fax_data_dir) / 'asterisk' / 'public-address'
 
 
-def write_public_address(values, probe) -> bool:
+def write_public_address(values, probe, *, exact=None) -> bool:
     """Record the probe for the next Asterisk start; True when the advertised address would change.
 
     Asterisk advertises the address only when the network keeps port numbers,
     so a probe without that is recorded with ``ports_preserved`` false.
+    ``exact`` True says the address and port numbers are exact anyway, because
+    the router opened Faxbot's fax ports to the same numbers (sip_network).
     """
     import json
     path = public_address_path(values)
+    preserved = bool(probe and probe.public_ip and probe.ports == 'preserved')
     record = {'ip': probe.public_ip if probe else None,
-              'ports_preserved': bool(probe and probe.public_ip and probe.ports == 'preserved'),
+              'ports_preserved': bool(probe and probe.public_ip and (preserved or exact)),
               'probed_at': int(probe.probed_at) if probe else None}
+    if exact and not preserved and record['ports_preserved']:
+        record['router_ports'] = True
     before = read_public_address(values)
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     _write_private(path, json.dumps(record) + '\n')

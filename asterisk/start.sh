@@ -94,6 +94,18 @@ else
   rm -f "$lan_record"
 fi
 
+# Only a Compose override that publishes the media range on this computer sets
+# FAXBOT_MEDIA_PORTS (docker-compose.fax-ports.yml, .public.yml, .phone-system.yml).
+# The record tells Faxbot its fax ports can be forwarded or opened on the router.
+media_record=$shared/media-ports
+if [ -n "${FAXBOT_MEDIA_PORTS:-}" ]; then
+  temporary=$(mktemp "$shared/.media-ports.XXXXXX")
+  printf '{"media_ports": "%s-%s"}\n' "$first" "$last" > "$temporary"
+  mv -f "$temporary" "$media_record"
+else
+  rm -f "$media_record"
+fi
+
 # Faxbot writes this file from its SIP trunk settings (console "Apply to
 # Asterisk" or "python -m app.sip_trunk write"); it replaces the older
 # SIP_USERNAME/SIP_PASSWORD/SIP_SERVER settings when present.

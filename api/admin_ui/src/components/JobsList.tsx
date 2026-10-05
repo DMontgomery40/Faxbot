@@ -36,7 +36,7 @@ import AdminAPIClient from '../api/client';
 import { FaxCostItem, costAmount, useFaxCosts } from './delivery/FaxCost';
 import { FaxTogetherItem, togetherLine } from './delivery/SendingTogether';
 import type { FaxJob, OperatorDelivery, DeliveryHistoryEvent } from '../api/types';
-import type { DirectDeliveryRecord } from '../api/deliveryTypes';
+import type { DirectDeliveryRecord, FaxCost } from '../api/deliveryTypes';
 import { providerLabel } from '../providerLabels';
 
 
@@ -151,6 +151,7 @@ function eventDetails(event: DeliveryHistoryEvent): string {
   const details = event.details;
   return [
     details.category && categoryLabels[details.category],
+    details.reason,
     details.status && `Status: ${statusLabel(details.status)}`,
     details.dispatch_mode && `Sending mode: ${statusLabel(details.dispatch_mode)}`,
     // details.actor is an internal sign-in ID, so it is not shown.
@@ -161,6 +162,19 @@ function eventDetails(event: DeliveryHistoryEvent): string {
 }
 
 interface DetailSelection { jobId: string }
+
+function routeName(route: string): string {
+  return route === 'direct' ? 'Direct delivery' : providerLabel(route);
+}
+
+// The route that carried the fax (its latest attempt), and any route tried before it.
+export function routeText(backend: string, cost?: FaxCost | null): string {
+  const routes = cost?.routes ?? [];
+  if (!routes.length) return providerLabel(backend);
+  const last = routeName(routes[routes.length - 1]);
+  const earlier = routes.slice(0, -1).map(routeName);
+  return earlier.length ? `${last} (after ${earlier.join(', ')})` : last;
+}
 
 function JobsList({ client, openJobId, onOpened, onSendFax }: JobsListProps) {
   const [jobs, setJobs] = useState<FaxJob[]>([]);
@@ -568,7 +582,7 @@ function JobsList({ client, openJobId, onOpened, onSendFax }: JobsListProps) {
                       </TableCell>
                       <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }}>
                         <Typography variant="body2" sx={{ fontSize: { xs: '0.7rem', sm: '0.875rem' } }}>
-                          {providerLabel(job.backend)}
+                          {routeText(job.backend, costs.get(job.id))}
                         </Typography>
                       </TableCell>
                       <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }}>
@@ -665,7 +679,7 @@ function JobsList({ client, openJobId, onOpened, onSendFax }: JobsListProps) {
               <ListItem>
                 <ListItemText
                   primary="Route"
-                  secondary={providerLabel(detailJob.backend)}
+                  secondary={routeText(detailJob.backend, costs.get(detailJob.id))}
                 />
               </ListItem>
               <Divider />
@@ -730,7 +744,7 @@ function JobsList({ client, openJobId, onOpened, onSendFax }: JobsListProps) {
             {direct && <Alert severity={direct.severity} sx={{ mb: 2 }}>{direct.text}</Alert>}
             <List dense>
               {/* The account is kept by ID in the API; there is no name to show for it here. */}
-              <ListItem><ListItemText primary="Original provider"
+              <ListItem><ListItemText primary="Provider of the latest attempt"
                 secondary={delivery.provider_id ? providerLabel(delivery.provider_id) : 'Unavailable'} /></ListItem>
             </List>
             <Typography variant="subtitle1" component="h3" sx={{ mt: 2 }}>Latest attempt</Typography>

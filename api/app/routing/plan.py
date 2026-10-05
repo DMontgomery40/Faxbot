@@ -54,6 +54,12 @@ def extra_routes(values, bound):
             if identity not in {bound, DIRECT} and re.fullmatch(r'[a-z0-9][a-z0-9_.-]{0,63}', identity)]
 
 
+def _trunk_numbers(values):
+    """The numbers the carrier sends to this installation's trunk, as destination keys."""
+    country = getattr(values, 'fax_default_country', 'US')
+    return {destination_key(number, country) for number in getattr(values, 'sip_trunk_did_list', ())}
+
+
 @dataclass(frozen=True)
 class RoutePlan:
     destination: str
@@ -91,6 +97,10 @@ class RoutePlanner:
             if peer is not None:
                 candidates.insert(0, RouteCandidate(DIRECT, 'direct', DIRECT, None, peer_id=peer['id']))
         candidates = [candidate for candidate in candidates if candidate.key not in set(exclude)]
+        if destination in _trunk_numbers(values):
+            # One of the trunk's own numbers: an extra route over that trunk only calls itself back
+            # (seen live on 2026-10-04 when a fallback faxed the Telnyx number over the Telnyx trunk).
+            candidates = [candidate for candidate in candidates if candidate.bound or candidate.key != 'sip']
         row = self.store.get_destination(destination)
         policy = RoutePolicy(min_success_percent=values.route_min_success_percent, min_attempts=MIN_ATTEMPTS)
         choices = policy.order(candidates, stats=self.store.route_stats(destination),
