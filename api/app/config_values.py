@@ -127,6 +127,22 @@ class ConfigurationValues(BaseModel):
     sip_trunk_dids: str = Field('', validation_alias='SIP_TRUNK_DIDS',
                                 pattern=r'^(?:\+[1-9][0-9]{6,14}(?:\s*,\s*\+[1-9][0-9]{6,14}){0,99})?$')
     sip_t38_enabled: bool = Field(True, validation_alias='SIP_T38_ENABLED')
+    # Fax settings, as other fax servers offer them (both of Faxbot's fax engines; see sip_trunk.fax_options).
+    # T.38 error correction: redundant copies of each packet (recommended), forward error correction, or none.
+    sip_t38_error_correction: str = Field('redundancy', validation_alias='SIP_T38_ERROR_CORRECTION',
+                                          pattern=r'^(?:redundancy|fec|none)$')
+    sip_t38_max_datagram: int = Field(400, validation_alias='SIP_T38_MAX_DATAGRAM', ge=100, le=1400)
+    # Highest fax speed in bit/s; audio calls never go above 9600, which survives a voice path better.
+    sip_fax_max_rate: int = Field(14400, validation_alias='SIP_FAX_MAX_RATE')
+    sip_fax_ecm: bool = Field(True, validation_alias='SIP_FAX_ECM')
+    # The best compression Faxbot may agree with the other machine (mh < mr < mmr < jbig).
+    sip_fax_compression: str = Field('jbig', validation_alias='SIP_FAX_COMPRESSION', pattern=r'^(?:mh|mr|mmr|jbig)$')
+    sip_fax_fine: bool = Field(True, validation_alias='SIP_FAX_FINE')
+    # SSL Fax engine (HylaFAX+): offered on every call; fax lines at once; the receiving listener's port,
+    # used only when docker-compose.sslfax.yml publishes it.
+    sip_sslfax_enabled: bool = Field(True, validation_alias='SIP_SSLFAX_ENABLED')
+    sip_fax_lines: int = Field(2, validation_alias='SIP_FAX_LINES', ge=1, le=8)
+    sip_sslfax_listener_port: int = Field(10443, validation_alias='SIP_SSLFAX_LISTENER_PORT', ge=1024, le=65535)
     # On by default: the RFC 6913 Accept-Contact preference only (never Require), which carriers may ignore.
     sip_fax_preference_header: bool = Field(True, validation_alias='SIP_FAX_PREFERENCE_HEADER')
     sip_trunk_codecs: str = Field('', validation_alias='SIP_TRUNK_CODECS', pattern=r'^(?:(?:ulaw|alaw)(?:,(?:ulaw|alaw))?)?$')
@@ -286,6 +302,13 @@ class ConfigurationValues(BaseModel):
             value = value.strip().upper()
             if value not in SUPPORTED_COUNTRIES:
                 raise ValueError("unsupported country")
+        return value
+
+    @field_validator("sip_fax_max_rate")
+    @classmethod
+    def require_fax_rate(cls, value):
+        if value not in (14400, 9600, 7200, 4800):
+            raise ValueError("fax speed must be 14400, 9600, 7200 or 4800")
         return value
 
     @field_validator("time_zone")

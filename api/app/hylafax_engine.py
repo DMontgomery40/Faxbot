@@ -65,6 +65,10 @@ NOT_SET_UP = "Faxbot's fast fax service starts when you select Apply and connect
 LINES_NOT_READY = "Faxbot's fast fax service is still starting, so this fax was sent as an ordinary fax."
 ASTERISK_NOT_CURRENT = ("Faxbot's fast fax service is waiting for the phone connection to restart, "
                         'so this fax was sent as an ordinary fax.')
+# Engine states for the trunk page and System diagnostics.
+STOPPED = "Faxbot's fast fax service is not running, so faxes are sent the ordinary way."
+STARTING = "Faxbot's fast fax service is still starting."
+WAITING_FOR_RESTART = "Faxbot's fast fax service is waiting for the phone connection to restart."
 
 _TAG = re.compile(r'[1-9][0-9]{15}', re.ASCII)
 _HEX32 = re.compile(r'[a-f0-9]{32}', re.ASCII)
@@ -183,16 +187,40 @@ def _station(values) -> tuple[str, str]:
     return station, re.sub(r'[^0-9]', '', caller)[:20]
 
 
-def render_engine_conf(values, engine_secret: dict, *, inbound_secret: str, lines=None, listener: str = '',
-                       sslfax: bool = True, asterisk_host=None, api_url=None) -> str:
+def listener_address(values) -> str:
+    """The receiving listener to advertise: the internet address Faxbot found and the listener port, or ''.
+
+    The engine uses it only when docker-compose.sslfax.yml publishes that port;
+    an address alone does not prove anyone outside can reach it.
+    """
+    from . import sip_trunk
+    if not getattr(values, 'sip_sslfax_enabled', True):
+        return ''
+    try:
+        record = sip_trunk.read_public_address(values) or {}
+    except Exception:
+        record = {}
+    address = str(values.sip_external_address or record.get('ip') or '').strip()
+    if not re.fullmatch(r'[A-Za-z0-9.-]{1,253}', address):
+        return ''
+    return f'{address}:{sip_trunk.fax_options(values).listener_port}'
+
+
+def render_engine_conf(values, engine_secret: dict, *, inbound_secret: str, lines=None, listener=None,
+                       sslfax=None, asterisk_host=None, api_url=None) -> str:
     """The engine container's settings (hylafax/entrypoint.sh checks every value again)."""
-    lines = lines or line_count(values)
+    from . import sip_trunk
+    options = sip_trunk.fax_options(values)
+    lines = lines or options.lines
+    sslfax = options.sslfax if sslfax is None else sslfax
+    listener = listener_address(values) if listener is None else listener
     station, number = _station(values)
     codec = _codecs(values)[0]
     if listener and not re.fullmatch(r'[A-Za-z0-9.-]{1,253}:[0-9]{1,5}', listener):
         raise ValueError('Unsupported SSL Fax listener address')
     if not re.fullmatch(r'[A-Za-z0-9_-]{16,256}', inbound_secret or ''):
         raise ValueError('Unsupported inbound secret for the fax engine')
+    t38 = bool(getattr(values, 'sip_t38_enabled', True))
     pairs = [
         ('lines', str(lines)),
         ('asterisk_host', asterisk_host or values.ami_host),
@@ -204,6 +232,10 @@ def render_engine_conf(values, engine_secret: dict, *, inbound_secret: str, line
         ('codec', codec),
         ('sslfax', 'yes' if sslfax else 'no'),
         ('sslfax_listener', listener if sslfax else ''),
+        # Fax settings: highest speed on this trunk (9600 when calls stay audio), error correction, compression.
+        ('max_rate', str(options.rate_for(t38=t38))),
+        ('ecm', 'yes' if options.ecm else 'no'),
+        ('compression', options.compression),
         ('api_url', api_url or ENGINE_API_URL),
         ('inbound_secret', inbound_secret),
     ]
@@ -215,19 +247,50 @@ def render_engine_conf(values, engine_secret: dict, *, inbound_secret: str, line
     return header + ''.join(f'{key}={value}\n' for key, value in pairs)
 
 
+def options_path(values) -> Path:
+    return Path(values.fax_data_dir) / 'asterisk' / 'extensions-options.conf'
+
+
+def options_started_path(values) -> Path:
+    return Path(values.fax_data_dir) / 'asterisk' / 'extensions-options.conf.started'
+
+
+def render_options(values, *, lines=0) -> str:
+    """Asterisk's [faxbot-options]: receiving speed and error correction, and the engine's lines (0: none)."""
+    from . import sip_trunk
+    options = sip_trunk.fax_options(values)
+    out = ["; Written by Faxbot from its fax settings and the SSL Fax engine's lines. Apply replaces this file.",
+           '[faxbot-options]',
+           f'exten => s,1,Set(FAXBOT_IN_RATE={options.rate_for(t38=True)})',
+           f' same => n,Set(FAXBOT_IN_AUDIO_RATE={options.rate_for(t38=False)})',
+           f' same => n,Set(FAXBOT_IN_ECM={"yes" if options.ecm else "no"})']
+    if lines:
+        out += [' same => n,Set(FAXBOT_ENGINE_DID=${FILTER(0123456789,${FAXBOT_DID})})',
+                ' same => n,Set(FAXBOT_ENGINE_DID=${IF($["${FAXBOT_ENGINE_DID}" = ""]?s:${FAXBOT_ENGINE_DID})})',
+                ' same => n,Set(FAXBOT_ENGINE_LINES=' + '&'.join(
+                    f'IAX2/{LINE_PEER.format(number)}/${{FAXBOT_ENGINE_DID}}' for number in range(1, lines + 1)) + ')']
+    else:
+        out.append(' same => n,Set(FAXBOT_ENGINE_LINES=)')
+    out.append(' same => n,Return()')
+    return '\n'.join(out) + '\n'
+
+
 def write_engine_files(values, inbound_secret: str | None):
     """Write the engine settings and Asterisk's IAX peers next to the trunk files (both mode 0600).
 
     Without an inbound secret the engine could not report results, so both
     files are removed and the engine waits; Faxbot's built-in engine places calls.
     """
-    if not inbound_secret:
+    def without_engine():
         for path in (engine_conf_path(values), iax_path(values)):
             try:
                 path.unlink()
             except FileNotFoundError:
                 pass
+        _write_private(options_path(values), render_options(values))
         return None
+    if not inbound_secret:
+        return without_engine()
     lines = line_count(values)
     engine_secret = engine_secrets(values, lines=lines)
     try:
@@ -236,8 +299,9 @@ def write_engine_files(values, inbound_secret: str | None):
         # An inbound secret the engine cannot carry (set by hand with other characters):
         # the engine stays not set up and Faxbot's built-in engine places every call.
         logging.getLogger(__name__).warning('The SSL Fax engine was not set up: its settings could not be written.')
-        return None
+        return without_engine()
     _write_private(iax_path(values), render_iax(values, engine_secret, lines=lines))
+    _write_private(options_path(values), render_options(values, lines=lines))
     _write_private(engine_conf_path(values), text)
     return engine_conf_path(values)
 
@@ -251,8 +315,14 @@ def asterisk_loaded_lines(values) -> bool:
 
 
 def iax_current(values) -> bool:
-    """For Apply: True when no IAX peers were written yet or Asterisk loaded the ones written."""
-    return not iax_path(values).is_file() or asterisk_loaded_lines(values)
+    """For Apply: Asterisk loaded the engine's lines and the fax options Faxbot wrote last (or none were written)."""
+    def loaded(path, started):
+        try:
+            return not path.is_file() or started.read_bytes() == path.read_bytes()
+        except OSError:
+            return False
+    return (loaded(iax_path(values), iax_started_path(values))
+            and loaded(options_path(values), options_started_path(values)))
 
 
 @dataclass(frozen=True)
@@ -281,6 +351,53 @@ class EngineChoice:
     reason: str = ''
 
 
+@dataclass(frozen=True)
+class CallSettings:
+    """One call's ladder and limits: T.38 first (when the trunk and the network allow it), speed, ECM."""
+    t38: bool
+    max_rate: int
+    ecm: bool
+    fine: bool
+    compression: str
+
+
+def try_t38(values) -> bool:
+    """Whether this call tries T.38 before audio: the trunk's switch, and the network check when it can tell.
+
+    The network check (sip_network.network_allows_t38) says False only when the
+    carrier's T.38 data cannot come back through this network; None (cannot
+    tell) still tries T.38, and a call that got no T.38 data back moves new
+    calls to audio by itself.
+    """
+    if not getattr(values, 'sip_t38_enabled', True):
+        return False
+    try:
+        from .sip_network import network_allows_t38
+        return network_allows_t38(values) is not False
+    except Exception:
+        return True
+
+
+def call_settings(values, number, *, recipient=None) -> CallSettings:
+    """The settings for one call to ``number``; ``recipient`` is that number's own limits, when set."""
+    from . import sip_trunk
+    options = sip_trunk.fax_options(values)
+    t38 = try_t38(values)
+    override = (recipient or {}).get('max_rate')
+    ecm = (recipient or {}).get('ecm')
+    return CallSettings(t38=t38, max_rate=options.rate_for(t38=t38, override=override),
+                        ecm=options.ecm if ecm is None else bool(ecm), fine=options.fine,
+                        compression=options.compression)
+
+
+def recipient_limits(engine, number):
+    """A number's own fax limits (Recipients, Details), or None; never raises."""
+    if engine is None:
+        return None
+    from . import hylafax_records
+    return hylafax_records.safely(hylafax_records.records_for(engine).recipient_settings, number)
+
+
 async def choose(values, *, members=False, ami=None) -> EngineChoice:
     """Which engine places this call, and why when it is the built-in one. No call is placed here."""
     if members:
@@ -303,13 +420,48 @@ async def choose(values, *, members=False, ami=None) -> EngineChoice:
     return EngineChoice('hylafax')
 
 
+async def engine_summary(values, ami=None) -> tuple[str, str]:
+    """(state, one sentence) for the trunk page, System diagnostics and the command line.
+
+    States: running, starting, not_set_up, stopped.
+    """
+    if not engine_conf_path(values).is_file():
+        return 'not_set_up', NOT_SET_UP
+    status = read_status(values)
+    if status.state in ('absent', 'failed'):
+        return 'stopped', status.reason if status.state == 'failed' and status.reason else STOPPED
+    if status.state != 'running':
+        return 'starting', status.reason or STARTING
+    if not asterisk_loaded_lines(values):
+        return 'starting', WAITING_FOR_RESTART
+    ready = 0
+    if ami is not None:
+        try:
+            ready = await ami.iax_lines_ready(LINE_PEER.format(''))
+        except (ConnectionError, TimeoutError, PermissionError):
+            ready = 0
+    if ready < 1:
+        return 'starting', STARTING
+    lines = f'{ready} fax line' + ('' if ready == 1 else 's')
+    sentence = (f"Faxbot's fast fax service is running on {lines} and sends pages faster "
+                'when the other fax machine allows it.')
+    if not getattr(values, 'sip_sslfax_enabled', True):
+        sentence = f"Faxbot's fast fax service is running on {lines}; faster pages are turned off."
+    elif status.listener:
+        sentence += ' Fax machines that call Faxbot can also send their pages faster.'
+    return 'running', sentence
+
+
 def new_tag() -> str:
     """A one-time numeric call tag: what the engine dials, never a phone number (16 digits)."""
     return str(secrets.randbelow(9 * 10 ** 15) + 10 ** 15)
 
 
-def call_plan(fields: dict, job_id: str, attempt_id: str) -> str:
-    """The plan Asterisk reads for a tag, from the same Originate fields the built-in engine uses."""
+def call_plan(fields: dict, job_id: str, attempt_id: str, *, t38: bool = True) -> str:
+    """The plan Asterisk reads for a tag, from the same Originate fields the built-in engine uses.
+
+    The sixth field says whether this call may use T.38 (1) or stays audio (0).
+    """
     from .ami import FAX_PREFERENCE_VARIABLE
     channel = fields['Channel']
     match = re.fullmatch(r'PJSIP/((?:[0-9]{4,16}\*)?\+?[0-9]{3,20})@trunk-endpoint', channel)
@@ -319,7 +471,7 @@ def call_plan(fields: dict, job_id: str, attempt_id: str) -> str:
     if not _HEX32.fullmatch(job_id) or not _HEX32.fullmatch(attempt_id):
         raise ValueError('Unsupported engine call plan')
     preference = '1' if FAX_PREFERENCE_VARIABLE in fields.get('Variable', '') else '0'
-    return f'{match.group(1)}/{caller}/{job_id}/{attempt_id}/{preference}'
+    return f'{match.group(1)}/{caller}/{job_id}/{attempt_id}/{preference}/{"1" if t38 else "0"}'
 
 
 # Job submission (hfaxd's client protocol, FTP-like) -------------------------------------------------
@@ -335,6 +487,8 @@ class PreparedJob:
     engine_job: str = ''
     tag: str = ''
     submitted: bool = False
+    # The call record's first fields (as the built-in engine's Submission event), set by prepare_job.
+    submission: dict = field(default_factory=dict, repr=False)
 
     def submit(self) -> str:
         # Marked first: once submission may have reached the engine the job is
@@ -371,7 +525,12 @@ def _quote(value: str) -> str:
     return f'"{value}"'
 
 
+_RATE_CODES = {4800: 1, 7200: 2, 9600: 3, 14400: 5}
+_DATA_FORMATS = {'mh': 'G31D', 'mr': 'G32D', 'mmr': 'G4', 'jbig': 'JBIG'}
+
+
 def create_job(values, *, tag: str, job_id: str, attempt_id: str, tiff_path: str, header: str = '',
+               settings: CallSettings | None = None,
                host=None, port=SUBMIT_PORT, timeout=SUBMIT_TIMEOUT_SECONDS) -> PreparedJob:
     """Upload the fax image and create (not submit) one job that dials ``tag`` once (blocking)."""
     if not _TAG.fullmatch(tag) or not _HEX32.fullmatch(job_id) or not _HEX32.fullmatch(attempt_id):
@@ -402,12 +561,17 @@ def create_job(values, *, tag: str, job_id: str, attempt_id: str, tiff_path: str
             'JPARM MAXTRIES 1',
             f'JPARM LASTTIME {LAST_TIME}',
             f'JPARM NOTIFY {_quote("DONE+REQUEUE")}',
-            'JPARM VRES 196',
-            'JPARM USESSLFAX YES',
+            f'JPARM VRES {196 if settings is None or settings.fine else 98}',
+            f'JPARM USESSLFAX {"NO" if not getattr(values, "sip_sslfax_enabled", True) else "YES"}',
             f'JPARM DOCUMENT {document}',
         ]
         # The header line on each page, as the built-in engine prints it; none when Faxbot's is empty.
         # HylaFAX reads % as a format code, so a literal % is doubled.
+        if settings is not None:
+            # This call's highest speed (code 0-5), error correction and best compression.
+            commands += [f'JPARM BEGBR {_RATE_CODES[settings.max_rate]}',
+                         f'JPARM USEECM {"YES" if settings.ecm else "NO"}',
+                         f'JPARM DATAFORMAT {_quote(_DATA_FORMATS[settings.compression])}']
         if header:
             commands += [f'JPARM TAGLINE {_quote(header[:100].replace("%", "%%"))}', 'JPARM USETAGLINE YES']
         else:
@@ -424,19 +588,24 @@ def create_job(values, *, tag: str, job_id: str, attempt_id: str, tiff_path: str
         raise EngineError('Faxbot could not reach the SSL Fax engine.') from None
 
 
-async def prepare_job(values, ami, *, job_id, attempt_id, dest, tiff_path) -> PreparedJob:
+async def prepare_job(values, ami, *, job_id, attempt_id, dest, tiff_path, settings=None) -> PreparedJob:
     """Store the call plan in Asterisk and create the engine job; nothing is dialed yet."""
-    from .ami import originate_fields_for
+    from .ami import FAX_PREFERENCE_VARIABLE, originate_fields_for
+    settings = settings or call_settings(values, dest)
     fields = originate_fields_for(values, job_id, dest, tiff_path, attempt_id=attempt_id)
     tag = new_tag()
-    plan = call_plan(fields, job_id, attempt_id)
+    plan = call_plan(fields, job_id, attempt_id, t38=settings.t38)
     await ami.db_put(ENGINE_FAMILY, tag, plan)
     try:
-        return await asyncio.to_thread(create_job, values, tag=tag, job_id=job_id, attempt_id=attempt_id,
-                                       tiff_path=tiff_path, header=values.fax_header or '')
+        job = await asyncio.to_thread(create_job, values, tag=tag, job_id=job_id, attempt_id=attempt_id,
+                                      tiff_path=tiff_path, header=values.fax_header or '', settings=settings)
     except BaseException:
         await forget_plan(ami, tag)
         raise
+    job.submission = {'JobID': job_id, 'AttemptID': attempt_id, 'Called': dest, 'CallerID': fields['CallerID'],
+                      'Preset': values.sip_trunk_preset or '',
+                      'FaxPreference': 'yes' if FAX_PREFERENCE_VARIABLE in fields['Variable'] else 'no'}
+    return job
 
 
 async def forget_plan(ami, tag):
@@ -522,6 +691,23 @@ def result_outcome(payload: dict) -> tuple[str, str | None, str | None]:
                 return 'failed', failure_sentence(status_text, pages), 'partly_sent'
             return 'failed', failure_sentence(status_text, 0), None
     return UNCERTAIN, None, None
+
+
+def record_inbound_engine(engine, payload, *, call_key, inbound_fax_id, number):
+    """A fax the SSL Fax engine received: its engine record and SSL Fax observation (evidence only)."""
+    details = payload.get('engine') if isinstance(payload, dict) else None
+    if not isinstance(details, dict) or details.get('engine') != 'hylafax':
+        return None
+    from . import hylafax_records
+    values = {'engine_ref': details.get('engine_ref'), 'sslfax': details.get('sslfax') is True,
+              'sslfax_offered': details.get('sslfax_offered') if isinstance(details.get('sslfax_offered'), bool)
+              else None,
+              'transfer_seconds': details.get('transfer_seconds'), 'session_seconds': details.get('session_seconds'),
+              'signal_rate': _text64(details, 'signal_rate_b64', 32),
+              'data_format': _text64(details, 'data_format_b64', 32)}
+    records = hylafax_records.records_for(engine)
+    return hylafax_records.safely(records.record_result, direction='inbound', call_key=call_key, details=values,
+                                  job_id=inbound_fax_id, number=number)
 
 
 def engine_reachable(host=None, port=SUBMIT_PORT, timeout=2.0) -> bool:

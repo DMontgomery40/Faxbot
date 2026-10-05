@@ -326,6 +326,53 @@ def configured(values) -> bool:
     return bool(getattr(values, 'sip_trunk_preset', ''))
 
 
+# Fax settings shared by both fax engines (the built-in one and the SSL Fax engine).
+FAX_RATES = (14400, 9600, 7200, 4800)
+AUDIO_MAX_RATE = 9600
+COMPRESSIONS = ('mh', 'mr', 'mmr', 'jbig')
+
+
+@dataclass(frozen=True)
+class FaxOptions:
+    t38_error_correction: str = 'redundancy'
+    t38_max_datagram: int = 400
+    max_rate: int = 14400
+    ecm: bool = True
+    compression: str = 'jbig'
+    fine: bool = True
+    sslfax: bool = True
+    lines: int = 2
+    listener_port: int = 10443
+
+    def rate_for(self, *, t38: bool, override=None) -> int:
+        """The highest speed for one call: the setting, a recipient's own limit, and 9600 on audio calls."""
+        rate = self.max_rate if override is None else min(self.max_rate, override)
+        return rate if t38 else min(rate, AUDIO_MAX_RATE)
+
+
+def fax_options(values) -> FaxOptions:
+    """The fax settings in effect; anything missing or out of range falls back to the recommended value."""
+    defaults = FaxOptions()
+
+    def pick(name, allowed, default):
+        value = getattr(values, name, default)
+        return value if value in allowed else default
+    ec = pick('sip_t38_error_correction', ('redundancy', 'fec', 'none'), defaults.t38_error_correction)
+    datagram = getattr(values, 'sip_t38_max_datagram', defaults.t38_max_datagram)
+    lines = getattr(values, 'sip_fax_lines', defaults.lines)
+    port = getattr(values, 'sip_sslfax_listener_port', defaults.listener_port)
+    return FaxOptions(
+        t38_error_correction=ec,
+        t38_max_datagram=datagram if isinstance(datagram, int) and 100 <= datagram <= 1400 else defaults.t38_max_datagram,
+        max_rate=pick('sip_fax_max_rate', FAX_RATES, defaults.max_rate),
+        ecm=bool(getattr(values, 'sip_fax_ecm', True)),
+        compression=pick('sip_fax_compression', COMPRESSIONS, defaults.compression),
+        fine=bool(getattr(values, 'sip_fax_fine', True)),
+        sslfax=bool(getattr(values, 'sip_sslfax_enabled', True)),
+        lines=lines if isinstance(lines, int) and 1 <= lines <= 8 else defaults.lines,
+        listener_port=port if isinstance(port, int) and 1024 <= port <= 65535 else defaults.listener_port)
+
+
 def effective_trunk(values, *, for_calls=False) -> Trunk:
     """Apply preset defaults and check completeness; raises with field names only.
 
@@ -477,7 +524,10 @@ def render_pjsip(values) -> str:
         lines.append('outbound_auth=trunk-auth')
     lines += [f'context={INBOUND_CONTEXT}', 'disallow=all', 'allow=' + ','.join(trunk.codecs)]
     if trunk.t38:
-        lines += ['t38_udptl=yes', 't38_udptl_ec=redundancy', 't38_udptl_maxdatagram=400', 't38_udptl_nat=yes']
+        # Fax settings: T.38 error correction and the largest packet the carrier accepts.
+        options = fax_options(values)
+        lines += ['t38_udptl=yes', f't38_udptl_ec={options.t38_error_correction}',
+                  f't38_udptl_maxdatagram={options.t38_max_datagram}', 't38_udptl_nat=yes']
     else:
         lines.append('t38_udptl=no')
     # Answer media where the carrier's packets come from, reuse the signaling

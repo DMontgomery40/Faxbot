@@ -104,6 +104,9 @@ def test_asterisk_must_have_loaded_the_lines_before_the_trunk_counts_as_current(
     assert not sip_trunk.engine_uses_current(values)
     (shared / 'iax.conf.started').write_bytes((shared / 'iax.conf').read_bytes())
     assert hylafax_engine.asterisk_loaded_lines(values)
+    # The fax options for received calls (and the engine's lines) must be loaded too.
+    assert not hylafax_engine.iax_current(values)
+    (shared / 'extensions-options.conf.started').write_bytes((shared / 'extensions-options.conf').read_bytes())
     assert hylafax_engine.iax_current(values)
 
 
@@ -134,12 +137,14 @@ def test_call_plan_carries_the_carrier_number_caller_id_and_preference(tmp_path)
     values = trunk_values(tmp_path, SIP_FAX_PREFERENCE_HEADER='true')
     fields = ami.originate_fields_for(values, JOB, '+15555550199', '/faxdata/x.tiff', attempt_id=ATTEMPT)
     plan = hylafax_engine.call_plan(fields, JOB, ATTEMPT)
-    dial, caller, job, attempt, preference = plan.split('/')
+    dial, caller, job, attempt, preference, t38 = plan.split('/')
+    assert t38 == '1'
+    assert hylafax_engine.call_plan(fields, JOB, ATTEMPT, t38=False).endswith('/1/0')
     assert fields['Channel'] == f'PJSIP/{dial}@trunk-endpoint'
     assert caller == '+15555550100' and (job, attempt, preference) == (JOB, ATTEMPT, '1')
     fields_off = ami.originate_fields_for(trunk_values(tmp_path, SIP_FAX_PREFERENCE_HEADER='false'), JOB,
                                           '+15555550199', '/faxdata/x.tiff', attempt_id=ATTEMPT)
-    assert hylafax_engine.call_plan(fields_off, JOB, ATTEMPT).endswith('/0')
+    assert hylafax_engine.call_plan(fields_off, JOB, ATTEMPT).endswith('/0/1')
     with pytest.raises(ValueError):
         hylafax_engine.call_plan({**fields, 'Channel': 'PJSIP/1/2@trunk-endpoint'}, JOB, ATTEMPT)
     with pytest.raises(ValueError):

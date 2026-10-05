@@ -169,10 +169,12 @@ def test_written_configuration_is_private_and_replaced_atomically(tmp_path):
     sip_trunk.write_asterisk_configuration(configured)
     assert path.read_text() != 'stale'
     # The SSL Fax engine's fax lines (iax.conf) are written with the trunk.
-    assert sorted(item.name for item in path.parent.iterdir()) == ['iax.conf', 'inbound.secret', 'pjsip.conf']
+    assert sorted(item.name for item in path.parent.iterdir()) == [
+        'extensions-options.conf', 'iax.conf', 'inbound.secret', 'pjsip.conf']
     # Clearing the inbound secret in Faxbot removes the copy Asterisk reads, and the engine's lines.
     sip_trunk.write_asterisk_configuration(values({**CASES['telnyx-registration'], 'FAX_DATA_DIR': str(tmp_path)}))
-    assert sorted(item.name for item in path.parent.iterdir()) == ['pjsip.conf']
+    # The fax options for received calls stay (the built-in engine uses them); the engine's lines go.
+    assert sorted(item.name for item in path.parent.iterdir()) == ['extensions-options.conf', 'pjsip.conf']
 
 
 def test_public_address_is_advertised_only_outside_private_networks():

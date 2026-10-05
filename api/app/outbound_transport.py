@@ -57,6 +57,19 @@ class PreparedSubmission:
     # A SIP trunk fax the SSL Fax engine (HylaFAX+) places: its job, created
     # and waiting for submission; None when Faxbot's built-in engine places it.
     engine_job: object = field(default=None, repr=False)
+    # Which engine places a SIP trunk fax and why, and this call's T.38 rung, speed and ECM.
+    engine_choice: object = field(default=None, repr=False)
+    call: object = field(default=None, repr=False)
+    records: object = field(default=None, repr=False)
+
+    def _record_engine(self):
+        """The engine record for this attempt; evidence only, never stops the fax."""
+        if self.engine_choice is None or self.records is None:
+            return
+        from . import hylafax_records
+        hylafax_records.safely(self.records.record_call, direction='outbound', call_key=self.claim.attempt_id,
+                               job_id=self.claim.job_id, engine=self.engine_choice.engine,
+                               reason=self.engine_choice.reason or None, number=self.job['to_number'])
 
     async def submit(self):
         configuration = self.profile.configuration
@@ -80,12 +93,18 @@ class PreparedSubmission:
             # The attempt identity is eFax's client_reference_id, so a person can find this fax there.
             return _receipt(await self.service.send_fax_file(to, self.pdf_path, reference=self.claim.attempt_id))
         if pid == 'sip' and self.engine_job is not None:
+            await asyncio.to_thread(self._record_engine)
+            # The call record starts now, as for the built-in engine's calls.
+            emit = getattr(self.ami, '_emit', None)
+            if emit is not None and self.engine_job.submission:
+                emit('Submission', self.engine_job.submission)
             # The engine dials once; a lost answer here leaves the fax uncertain, never sent again.
             await asyncio.to_thread(self.engine_job.submit)
             return SubmissionReceipt(self.claim.job_id, 'in_progress')
         if pid == 'sip':
+            await asyncio.to_thread(self._record_engine)
             await self.ami.originate_sendfax(self.claim.job_id, to, self.tiff_path,
-                attempt_id=self.claim.attempt_id)
+                attempt_id=self.claim.attempt_id, call=self.call)
             return SubmissionReceipt(self.claim.job_id, 'in_progress')
         if pid == 'freeswitch':
             from .freeswitch_service import originate_txfax
@@ -200,36 +219,41 @@ class CapturedTransport:
                     expires_at=datetime.utcnow() + timedelta(minutes=values.pdf_token_ttl_minutes)))
             except ValueError:
                 raise PreparationFailure('provider_unavailable') from None
-        engine_job = None
+        engine_job = choice = call = records = None
         if manifest is None and pid == 'sip':
-            engine_job = await self._prepare_engine(values, claim, job, tiff)
+            engine_job, choice, call, records = await self._prepare_engine(values, claim, job, tiff)
         try:
             with self.runtime.frame(revision):
                 yield PreparedSubmission(claim, profile, job, str(pdf), str(tiff) if tiff else None,
-                                         service, media_url, self.ami, engine_job)
+                                         service, media_url, self.ami, engine_job, choice, call, records)
         finally:
             if engine_job is not None:
                 await self._finish_engine(engine_job)
 
     async def _prepare_engine(self, values, claim, job, tiff):
-        """The SSL Fax engine's job for this trunk fax, or None for Faxbot's built-in engine.
+        """(engine job or None, engine choice, call settings, engine records) for this trunk fax.
 
         Runs before the durable marker: the call plan and the engine job exist,
         nothing is dialed. When the engine cannot take the job the built-in
-        engine places the call, and the log says why.
+        engine places the call; the attempt's engine record says why.
         """
-        from . import hylafax_engine
+        from . import hylafax_engine, hylafax_records
+        engine = getattr(getattr(self.store, 'configuration', None), 'engine', None)
+        records = hylafax_records.records_for(engine) if engine is not None else None
+        recipient = await asyncio.to_thread(hylafax_engine.recipient_limits, engine, job['to_number'])
+        call = hylafax_engine.call_settings(values, job['to_number'], recipient=recipient)
         choice = await hylafax_engine.choose(values, members=bool(claim.members), ami=self.ami)
         if choice.engine == 'hylafax':
             try:
-                return await hylafax_engine.prepare_job(values, self.ami, job_id=claim.job_id,
-                    attempt_id=claim.attempt_id, dest=job['to_number'], tiff_path=str(tiff))
+                engine_job = await hylafax_engine.prepare_job(values, self.ami, job_id=claim.job_id,
+                    attempt_id=claim.attempt_id, dest=job['to_number'], tiff_path=str(tiff), settings=call)
+                return engine_job, choice, call, records
             except (hylafax_engine.EngineError, ConnectionError, TimeoutError, OSError):
                 choice = hylafax_engine.EngineChoice('builtin', hylafax_engine.NOT_RUNNING)
             except ValueError:
                 raise PreparationFailure('preparation_failed') from None
         logging.getLogger(__name__).info('Fax %s: %s', claim.job_id, choice.reason)
-        return None
+        return None, choice, call, records
 
     async def _finish_engine(self, engine_job):
         """Close the engine session; a job that was never submitted is removed with its call plan."""

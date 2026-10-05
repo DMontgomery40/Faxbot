@@ -73,6 +73,8 @@ def prepare_originate_fields(
     station_id: Optional[str] = None,
     dial: Optional[str] = None,
     fax_preference: bool = False,
+    max_rate: Optional[int] = None,
+    ecm: Optional[bool] = None,
 ) -> Dict[str, str]:
     """Prepare one direct PJSIP call before a durable marker or any I/O.
 
@@ -119,6 +121,13 @@ def prepare_originate_fields(
     variables = {"JOBID": job_id, "FAXFILE": tiff_path, **metadata}
     if attempt_id is not None:
         variables["FAXATTEMPT"] = attempt_id
+    # This call's highest speed and error correction (fax settings and the recipient's own limits).
+    if max_rate is not None:
+        if max_rate not in (14400, 9600, 7200, 4800):
+            raise ValueError("Unsupported AMI fax speed")
+        variables["FAXBOT_MAXRATE"] = str(max_rate)
+    if ecm is not None:
+        variables["FAXBOT_ECM"] = "yes" if ecm else "no"
     assignments = [f"{key}={value}" for key, value in variables.items()]
     if fax_preference:
         assignments.append(FAX_PREFERENCE_VARIABLE)
@@ -139,7 +148,7 @@ def prepare_originate_fields(
     return fields
 
 
-def originate_fields_for(values, job_id, dest, tiff_path, *, attempt_id=None):
+def originate_fields_for(values, job_id, dest, tiff_path, *, attempt_id=None, call=None):
     """The exact Originate fields for these settings; preflight and submission share it.
 
     With a configured SIP trunk the call carries the carrier-authorized caller
@@ -147,16 +156,18 @@ def originate_fields_for(values, job_id, dest, tiff_path, *, attempt_id=None):
     (ValueError naming fields only) when the trunk cannot place calls. Without
     one, the call carries the station ID as before; an empty station ID sends none.
     An empty station ID on a trunk call means the trunk's caller ID.
+    ``call`` (hylafax_engine.CallSettings) adds this call's speed and error correction.
     """
     from . import sip_trunk
+    limits = {} if call is None else {"max_rate": call.max_rate, "ecm": call.ecm}
     if not sip_trunk.configured(values):
         return prepare_originate_fields(job_id, dest, tiff_path, caller_id=values.fax_station_id,
-                                        header=values.fax_header, attempt_id=attempt_id)
+                                        header=values.fax_header, attempt_id=attempt_id, **limits)
     trunk = sip_trunk.effective_trunk(values, for_calls=True)
     return prepare_originate_fields(
         job_id, dest, tiff_path, caller_id=trunk.caller_id, header=values.fax_header,
         attempt_id=attempt_id, station_id=values.fax_station_id or None,
-        dial=sip_trunk.dial_number(trunk, dest), fax_preference=trunk.fax_preference)
+        dial=sip_trunk.dial_number(trunk, dest), fax_preference=trunk.fax_preference, **limits)
 
 
 async def _login(
@@ -366,6 +377,8 @@ class AMIClient:
             self._emit("FaxResult", msg)
         elif event == "userevent" and fields.get("userevent", "").lower() == "faxinboundcall":
             self._emit("FaxInboundCall", msg)
+        elif event == "userevent" and fields.get("userevent", "").lower() == "faxenginecall":
+            self._emit("FaxEngineCall", msg)
 
     @staticmethod
     def _collect(query, msg: Dict[str, str], fields: Dict[str, str]):
@@ -512,13 +525,14 @@ class AMIClient:
         tiff_path: str,
         *,
         attempt_id: Optional[str] = None,
+        call=None,
     ):
         """Await acceptance of one Originate action; acceptance is not delivery.
 
         Submission listeners hear about the call after validation and before
         the action is written, so an unacknowledged call still leaves a record.
         """
-        fields = originate_fields_for(settings, job_id, dest, tiff_path, attempt_id=attempt_id)
+        fields = originate_fields_for(settings, job_id, dest, tiff_path, attempt_id=attempt_id, call=call)
         self._emit("Submission", {
             "JobID": job_id, "AttemptID": attempt_id or "", "Called": dest,
             "CallerID": fields["CallerID"], "Preset": settings.sip_trunk_preset or "",
@@ -534,6 +548,10 @@ class AMIClient:
 
     def on_submission(self, cb: Callable[[Dict[str, str]], None]):
         self._listen("Submission", cb)
+
+    def on_engine_call(self, cb: Callable[[Dict[str, str]], None]):
+        """A trunk call the SSL Fax engine placed or answered (the dialplan's FaxEngineCall event)."""
+        self._listen("FaxEngineCall", cb)
 
     def on_inbound_call(self, cb: Callable[[Dict[str, str]], None]):
         """A received call that left no fax image (the dialplan's FaxInboundCall event)."""

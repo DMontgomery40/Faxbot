@@ -488,6 +488,10 @@ def asterisk_inbound(request: Request, payload: dict = Body(...),
         engine, _ = installation_engine(request.app)
         sip_calls.record_inbound_call(engine, call, call_id=uniqueid, inbound_fax_id=begun.inbound_fax_id,
                                       preset=settings.sip_trunk_preset, fax_status=faxstatus)
+        # Received by the SSL Fax engine: what SSL Fax did on this call.
+        from ..hylafax_engine import record_inbound_engine
+        record_inbound_engine(engine, payload, call_key=uniqueid, inbound_fax_id=begun.inbound_fax_id,
+                              number=text('from_number'))
     return {'id': begun.inbound_fax_id, 'status': 'ok'}
 
 

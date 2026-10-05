@@ -159,7 +159,12 @@ def test_ami_dedicated_dialplan_has_one_send_and_one_terminal_hangup_observation
         "Hangup",
         "UserEvent",
         "Return",
+        "Gosub",
     }
+    # The only subroutine is the base64 helper, which itself only sets variables.
+    assert all("Gosub(faxbot-b64,s,1(" in line for line in send + terminal if ",Gosub(" in line)
+    helper = contexts["faxbot-b64"]
+    assert all(re.search(r",(Set|GotoIf|Return)\(", line) for line in helper if not line.startswith("#"))
     assert applications.count("SendFAX") == 1
     assert sum("UserEvent(FaxResult," in line for line in send) == 0
     assert sum("UserEvent(FaxResult," in line for line in terminal) == 1
@@ -877,14 +882,18 @@ def test_outbound_result_reports_answer_end_media_and_remote_station_without_new
     send, terminal = _context_lines("faxbot-send"), _context_lines("faxbot-result")
     assert send[1] == "same => n,Set(FAXBOT_ANSWERED=${EPOCH})"
     event = next(line for line in terminal if "UserEvent(FaxResult," in line)
-    for field in ("Mode:${FAXMODE}", "Station64:${BASE64_ENCODE(${REMOTESTATIONID})}",
+    assert "same => n(emit),Gosub(faxbot-b64,s,1(FAXBOT_STATION64,REMOTESTATIONID))" in terminal
+    for field in ("Mode:${FAXMODE}", "Station64:${FAXBOT_STATION64}",
                   "Answered:${FAXBOT_ANSWERED}", "Ended:${EPOCH}", "Cause:${HANGUPCAUSE}"):
         assert field in event
 
 
 def test_the_sip_call_id_is_captured_encoded_for_every_call_report():
     """The carrier bills each call under its SIP Call-ID; every call report carries it, base64 encoded."""
-    capture = 'Set(FAXBOT_CALLID64=${BASE64_ENCODE(${CHANNEL(pjsip,call-id)})})'
+    # Read once, then encoded by the helper (an empty Call-ID stays empty without a warning).
+    capture = 'Gosub(faxbot-b64,s,1(FAXBOT_CALLID64,FAXBOT_CALLID))'
+    assert sum('Set(FAXBOT_CALLID=${CHANNEL(pjsip,call-id)})' in line
+               for line in _context_lines("faxbot-send") + _context_lines("faxbot-inbound-receive")) == 2
     send, terminal = _context_lines("faxbot-send"), _context_lines("faxbot-result")
     receive, done = _context_lines("faxbot-inbound-receive"), _context_lines("faxbot-inbound-done")
     assert sum(capture in line for line in send) == 1 and sum(capture in line for line in receive) == 1

@@ -29,6 +29,8 @@ _PROVIDER_FIELDS = frozenset({
     'sip_trunk_preset', 'sip_trunk_auth', 'sip_trunk_host', 'sip_trunk_port', 'sip_trunk_transport',
     'sip_trunk_username', 'sip_trunk_password', 'sip_trunk_outbound_proxy', 'sip_trunk_caller_id',
     'sip_trunk_dids', 'sip_t38_enabled', 'sip_fax_preference_header', 'sip_trunk_codecs',
+    'sip_t38_error_correction', 'sip_t38_max_datagram', 'sip_fax_max_rate', 'sip_fax_ecm', 'sip_fax_compression',
+    'sip_fax_fine', 'sip_sslfax_enabled', 'sip_fax_lines', 'sip_sslfax_listener_port',
     'sip_trunk_dial_format', 'sip_trunk_dial_prefix',
     'sip_external_address', 'sip_public_address_check_minutes', 'telnyx_api_key',
     'phaxio_api_key', 'phaxio_api_secret', 'phaxio_callback_token',

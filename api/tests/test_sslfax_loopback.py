@@ -176,8 +176,13 @@ exten => _[+0-9].,1,NoOp(carrier: call for ${EXTEN} to the peer)
  same => n,Hangup()
 exten => s,1,Goto(faxbot-inbound,5555550199,1)
 
+; The peer's own fax line places calls to Faxbot (the inbound proof).
 [faxbot-engine-out]
-exten => _X.,1,Hangup(21)
+exten => _X.,1,Set(CALLERID(all)=<+15555550199>)
+ same => n,GotoIf($["@GATEWAY@" != "yes"]?dial)
+ same => n,Set(FAXOPT(gateway)=yes)
+ same => n(dial),Dial(PJSIP/+${EXTEN}@trunk-endpoint,60)
+ same => n,Hangup()
 '''
 
 LOGGER = '[general]\ndateformat=%F %T\n\n[logfiles]\nconsole => notice,warning,error,verbose\n'
@@ -264,7 +269,8 @@ except (urllib.error.URLError, OSError) as error:
     return reply
 
 
-def bring_up(tmp_path, label, made, *, faxbot_t38, carrier_gateway, peer_listener, peer_sslfax=True):
+def bring_up(tmp_path, label, made, *, faxbot_t38, carrier_gateway, peer_listener, peer_sslfax=True,
+             carrier_t38=None):
     """Start the whole loopback; returns (docker, context dict). ``made`` collects it for cleanup at once."""
     docker = Docker(label)
     made.append(docker)
@@ -293,6 +299,7 @@ def bring_up(tmp_path, label, made, *, faxbot_t38, carrier_gateway, peer_listene
         'SIP_TRUNK_CALLER_ID': FAXBOT_NUMBER, 'SIP_TRUNK_DIDS': FAXBOT_NUMBER,
         'SIP_T38_ENABLED': 'true' if faxbot_t38 else 'false', 'SIP_FAX_PREFERENCE_HEADER': 'true',
         'ASTERISK_AMI_HOST': 'asterisk', 'ASTERISK_INBOUND_SECRET': inbound_secret, 'SIP_PUBLIC_ADDRESS_CHECK_MINUTES': '0',
+        'INBOUND_ENABLED': 'true',
         **ami_env,
     }
     api_container = docker.create('api', images['api'], env=api_env, volumes=[(faxdata, '/faxdata')], alias='api')
@@ -301,7 +308,9 @@ def bring_up(tmp_path, label, made, *, faxbot_t38, carrier_gateway, peer_listene
     carrier_values = ConfigurationValues.from_environment({
         'FAX_DATA_DIR': str(tmp_path / 'carrier'), 'SIP_TRUNK_PRESET': 'custom', 'SIP_TRUNK_AUTH': 'ip',
         'SIP_TRUNK_HOST': ADDRESS['asterisk'], 'SIP_TRUNK_CALLER_ID': PEER_NUMBER, 'SIP_TRUNK_DIDS': PEER_NUMBER,
-        'SIP_T38_ENABLED': 'true' if carrier_gateway else 'false', 'ASTERISK_INBOUND_SECRET': inbound_secret})
+        # The carrier's T.38: with its gateway on, or off so it refuses every T.38 request (case e, inbound).
+        'SIP_T38_ENABLED': 'true' if (carrier_gateway if carrier_t38 is None else carrier_t38) else 'false',
+        'ASTERISK_INBOUND_SECRET': inbound_secret})
     peer_secrets = hylafax_engine.engine_secrets(carrier_values, lines=1)
     carrier = docker.create('carrier', images['native'], env={'ASTERISK_AMI_USERNAME': ami_user,
                                                              'ASTERISK_AMI_PASSWORD': ami_password})
@@ -317,7 +326,8 @@ def bring_up(tmp_path, label, made, *, faxbot_t38, carrier_gateway, peer_listene
     docker.run('restart', carrier)
 
     # The peer: one fax line on the carrier; its listener (or none) as the case needs.
-    peer = docker.create('peer', images['engine'])
+    # The peer's listener is published (as docker-compose.sslfax.yml would) when the case gives it one.
+    peer = docker.create('peer', images['engine'], env={'FAXBOT_SSLFAX_PUBLISHED_PORT': str(LISTENER_PORT)})
     peer_conf = hylafax_engine.render_engine_conf(
         carrier_values, peer_secrets, inbound_secret=inbound_secret, lines=1, listener=peer_listener,
         sslfax=peer_sslfax, asterisk_host=ADDRESS['carrier'], api_url='http://198.51.100.250:8080')
@@ -474,6 +484,7 @@ def evidence(outcome):
                            if 'SSL Fax' in line or 'internet fax' in line][:12],
         'document_transfer': transfer[-1:] if transfer else [],
         'engine_call': {key: outcome['engine_call'].get(key) for key in ('JobID', 'AttemptID', 'Gateway', 'T38',
+                                                                         'T38Session',
                                                                          'Answered', 'Ended', 'Cause', 'CallID64')}
         if outcome['engine_call'] else None,
         'faxbot_sip': sip_evidence(outcome['asterisk_log']),
@@ -497,6 +508,50 @@ def loopback(tmp_path):
     if os.environ.get('FAXBOT_PROOF_KEEP') != '1':
         for docker in made:
             docker.close()
+
+
+DB_QUERY = r'''
+import json, sqlite3, sys
+db = sqlite3.connect('/faxdata/faxbot.db')
+db.row_factory = sqlite3.Row
+out = {}
+for name, query in json.loads(sys.stdin.read()).items():
+    out[name] = [dict(row) for row in db.execute(query)]
+print(json.dumps(out, default=str))
+'''
+
+
+def database(context, **queries):
+    """Rows from Faxbot's own database (read-only queries, run inside the API container)."""
+    result = context['docker'].run('exec', '--interactive', context['api'], 'python', '-c', DB_QUERY,
+                                   input_text=json.dumps(queries))
+    return json.loads(result.stdout.strip().splitlines()[-1])
+
+
+def records(context, job_id):
+    rows = database(
+        context,
+        call=f"SELECT disposition, connected_seconds, t38, pages, fax_status, sip_call_id, called "
+             f"FROM sip_call_records WHERE job_id = '{job_id}' AND direction = 'outbound'",
+        engine=f"SELECT engine, reason, sslfax, sslfax_offered, transfer_seconds, session_seconds, signal_rate, "
+               f"data_format, number FROM fax_engine_calls WHERE job_id = '{job_id}'",
+        accepts=f"SELECT number, accepts, direction FROM sslfax_observations "
+                f"WHERE source IN (SELECT engine_ref FROM fax_engine_calls WHERE job_id = '{job_id}')")
+    return {name: (values[0] if values else None) for name, values in rows.items()}
+
+
+def assert_recorded(context, outcome, proof, *, t38, sslfax):
+    """The per-call record (Call-ID, connected seconds, T.38) and the engine record exist and agree."""
+    found = records(context, outcome['job']['id'])
+    proof['records'] = found
+    call, engine = found['call'], found['engine']
+    assert call and call['disposition'] == 'answered' and call['fax_status'] == 'SUCCESS', found
+    assert call['sip_call_id'] and call['connected_seconds'] and call['pages'] == PAGES, found
+    assert call['t38'] == ('yes' if t38 else 'no'), found
+    assert engine and engine['engine'] == 'hylafax' and engine['sslfax'] == int(sslfax), found
+    assert engine['transfer_seconds'] is not None and engine['number'] == PEER_NUMBER, found
+    assert found['accepts'] and found['accepts']['number'] == PEER_NUMBER, found
+    return found
 
 
 def assert_delivered(outcome, proof):
@@ -523,6 +578,7 @@ def test_a_sslfax_over_an_audio_call(tmp_path, loopback):
     # Audio end to end, and the RFC 6913 fax preference reaches the carrier exactly.
     assert proof['faxbot_sip']['t38_offers'] == proof['faxbot_sip']['t38_answers'] == 0, proof
     assert proof['carrier_sip']['accept_contact'] == ['*;+sip.fax="t38"'], proof
+    assert_recorded(context, outcome, proof, t38=False, sslfax=True)
 
 
 def test_b_sslfax_attempt_across_the_t38_gateways(tmp_path, loopback):
@@ -538,6 +594,9 @@ def test_b_sslfax_attempt_across_the_t38_gateways(tmp_path, loopback):
     assert proof['faxbot_sip']['t38_offers'] >= 1 and proof['faxbot_sip']['t38_answers'] >= 1, proof
     # Finding (2026-10-04): SSL Fax negotiation survives two Asterisk T.38 gateways.
     assert proof['received_info'].get('SignalRate') == 'SSL Fax', proof
+    # The gateway ran a T.38 fax session (its number); the trunk is back to audio by hang-up.
+    assert int(proof['engine_call']['T38Session'] or 0) > 0, proof
+    assert_recorded(context, outcome, proof, t38=True, sslfax=True)
 
 
 def test_c_an_unreachable_listener_falls_back_to_an_ordinary_fax(tmp_path, loopback):
@@ -549,6 +608,9 @@ def test_c_an_unreachable_listener_falls_back_to_an_ordinary_fax(tmp_path, loopb
     assert proof['received_info'].get('SignalRate') != 'SSL Fax', proof
     assert any('Timeout waiting for SSL Fax connect' in line or 'SSL Fax connection failed' in line
                for line in proof['faxbot_ssl_lines']), proof
+    found = assert_recorded(context, outcome, proof, t38=False, sslfax=False)
+    # The other machine offered SSL Fax (it named its listener); it still counts as accepting it.
+    assert found['engine']['sslfax_offered'] == 1 and found['accepts']['accepts'] == 1, found
 
 
 def test_c2_a_private_listener_address_is_refused_and_the_fax_still_goes(tmp_path, loopback):
@@ -559,3 +621,90 @@ def test_c2_a_private_listener_address_is_refused_and_the_fax_still_goes(tmp_pat
     assert_delivered(outcome, proof)
     assert proof['received_info'].get('SignalRate') != 'SSL Fax', proof
     assert any('Refusing SSL Fax host' in line for line in proof['faxbot_ssl_lines']), proof
+    assert_recorded(context, outcome, proof, t38=False, sslfax=False)
+
+
+def test_d_t38_to_a_machine_without_sslfax(tmp_path, loopback):
+    """T.38 on the trunk to an ordinary fax machine: no SSL Fax, T.38 end to end, and Faxbot learns that."""
+    context = loopback('d', faxbot_t38=True, carrier_gateway=True, peer_listener='', peer_sslfax=False)
+    outcome = send_and_collect(tmp_path, context)
+    proof = evidence(outcome)
+    print('\nSSLFAX_PROOF_D ' + json.dumps(proof, indent=2))
+    assert_delivered(outcome, proof)
+    assert proof['received_info'].get('SignalRate') != 'SSL Fax', proof
+    assert proof['engine_call']['Gateway'] == 'yes' and int(proof['engine_call']['T38Session'] or 0) > 0, proof
+    found = assert_recorded(context, outcome, proof, t38=True, sslfax=False)
+    assert found['engine']['sslfax_offered'] == 0 and found['accepts']['accepts'] == 0, found
+
+
+def test_e_a_refused_t38_request_goes_on_as_audio(tmp_path, loopback):
+    """Faxbot asks for T.38 and the carrier refuses: the same call goes on as audio, never aborted."""
+    context = loopback('e', faxbot_t38=True, carrier_gateway=False, carrier_t38=False,
+                       peer_listener=f'{ADDRESS["peer"]}:{LISTENER_PORT}')
+    outcome = send_and_collect(tmp_path, context)
+    proof = evidence(outcome)
+    print('\nSSLFAX_PROOF_E ' + json.dumps(proof, indent=2))
+    assert_delivered(outcome, proof)
+    assert proof['engine_call']['Gateway'] == 'yes', proof
+    # Faxbot asked for T.38 and nobody accepted; the call went on as audio.
+    assert proof['faxbot_sip']['t38_offers'] >= 1 and proof['faxbot_sip']['t38_answers'] == 0, proof
+    assert proof['engine_call']['T38'] in ('REJECTED', 'DISABLED'), proof
+    assert_recorded(context, outcome, proof, t38=False, sslfax=True)
+
+
+PEER_DOCUMENT = r"""%!PS-Adobe-3.0
+%%Pages: 2
+%%Page: 1 1
+/Helvetica-Bold findfont 40 scalefont setfont 72 700 moveto (INBOUND PROOF PAGE 1) show
+newpath 72 200 moveto 300 200 lineto 300 500 lineto 72 500 lineto closepath fill showpage
+%%Page: 2 2
+/Helvetica-Bold findfont 40 scalefont setfont 72 700 moveto (INBOUND PROOF PAGE 2) show
+newpath 72 200 moveto 450 200 lineto 450 400 lineto 72 400 lineto closepath fill showpage
+%%EOF
+"""
+
+
+def test_inbound_a_fax_through_the_engine_reaches_received(tmp_path, loopback):
+    """The peer faxes Faxbot's number. Faxbot asks for T.38, the carrier refuses (as Telnyx did on
+    2026-10-04), the call goes on as audio, the engine receives over SSL Fax (as the client of the
+    peer's listener) and hands the fax to Faxbot's Received with its numbers and call record."""
+    context = loopback('in', faxbot_t38=True, carrier_gateway=False, carrier_t38=False,
+                       peer_listener=f'{ADDRESS["peer"]}:{LISTENER_PORT}')
+    docker = context['docker']
+    docker.put(context['peer'], '/tmp/inbound.ps', PEER_DOCUMENT)
+    sent = docker.run('exec', context['peer'], 'sendfax', '-n', '-d', FAXBOT_NUMBER.lstrip('+'), '/tmp/inbound.ps',
+                      check=False)
+    assert sent.returncode == 0, sent.stderr
+
+    def arrived():
+        rows = database(context, fax="SELECT id, from_number, to_number, pages FROM inbound_faxes")['fax']
+        return rows or None
+    faxes = wait_for(arrived, 240, 'the fax in Received')
+    time.sleep(3)
+    rows = database(
+        context,
+        call="SELECT call_id, did, caller, disposition, connected_seconds, t38, pages, job_id, sip_call_id "
+             "FROM sip_call_records WHERE direction = 'inbound'",
+        engine="SELECT engine, sslfax, sslfax_offered, transfer_seconds, number, call_key, job_id "
+               "FROM fax_engine_calls WHERE direction = 'inbound'",
+        accepts="SELECT number, accepts, direction FROM sslfax_observations WHERE direction = 'inbound'")
+    log = session_logs(docker, context['engine'])
+    engine_logs = docker.run('logs', context['engine'], check=False)
+    proof = {'faxes': faxes, **rows,
+             'engine_ssl_lines': [line.split(']: ', 1)[-1] for line in log.splitlines()
+                                  if 'SSL Fax' in line or 'internet fax' in line][:10],
+             'handover_log': [line for line in (engine_logs.stdout + engine_logs.stderr).splitlines()
+                              if 'handover' in line][-4:],
+             'faxbot_sip': sip_evidence(docker.run('logs', context['asterisk'], check=False).stdout)}
+    print('\nSSLFAX_PROOF_INBOUND ' + json.dumps(proof, indent=2, default=str))
+    fax = faxes[0]
+    assert fax['from_number'] == PEER_NUMBER and fax['to_number'] == FAXBOT_NUMBER, proof
+    assert fax['pages'] == 2, proof
+    call = proof['call'][0]
+    assert call['call_id'].startswith('engine.') and call['job_id'] == fax['id'], proof
+    assert call['disposition'] == 'answered' and call['sip_call_id'] and call['connected_seconds'], proof
+    assert call['t38'] == 'no', proof  # refused by the carrier: audio on the same call
+    engine = proof['engine'][0]
+    assert engine['engine'] == 'hylafax' and engine['sslfax'] == 1 and engine['number'] == PEER_NUMBER, proof
+    assert proof['accepts'] and proof['accepts'][0]['accepts'] == 1, proof
+    assert not passcodes(log), proof

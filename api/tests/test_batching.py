@@ -42,7 +42,7 @@ class Ami:
             self._connected.set()
         self.calls = []
 
-    async def originate_sendfax(self, job_id, dest, tiff_path, *, attempt_id=None):
+    async def originate_sendfax(self, job_id, dest, tiff_path, *, attempt_id=None, call=None):
         self.calls.append((job_id, dest, tiff_path, attempt_id))
 
 
