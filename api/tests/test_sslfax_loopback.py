@@ -773,7 +773,10 @@ def test_f_a_restart_mid_call_leaves_the_fax_uncertain_and_never_resends_it(tmp_
         found = rows['delivery'][0]['state'] if rows['delivery'] else None
         return found if found not in (None, 'ready', 'preparing', 'submitting', 'in_progress') else None
     final = wait_for(state, 240, 'the fax to leave in progress')
-    time.sleep(20)
+    # The interrupted call ends when the other machine gives up; then nothing dials this fax again.
+    wait_for(lambda: 'faxbot-line' not in docker.asterisk(context['asterisk'], 'core show channels concise'), 240,
+             'the interrupted call to end')
+    time.sleep(30)
     events = database(context, kinds=f"SELECT kind FROM outbound_events WHERE job_id = '{job_id}' "
                                      f"ORDER BY created_at")
     attempts = database(context, n=f"SELECT COUNT(*) AS n FROM outbound_attempts WHERE job_id = '{job_id}'")
