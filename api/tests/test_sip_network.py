@@ -427,7 +427,7 @@ def test_system_diagnostics_shows_the_network_check(monkeypatch, tmp_path):
     [blocked] = asyncio.run(report.network_for_fax(context))
     assert (blocked.status, blocked.fix_page) == (report.ATTENTION, 'providers/trunk')
     assert blocked.sentence == ('Your network needs one change so faxes can go over the internet. The carrier page '
-                                'shows what to do.')
+                                'shows what to do. Faxes still go through meanwhile.')
     assert blocked.title == 'Faxing over the internet'
     monkeypatch.setattr(report, '_uses_trunk', lambda request: False)
     assert asyncio.run(report.network_for_fax(context)) == []
@@ -572,6 +572,29 @@ def test_faxbot_opens_its_fax_ports_on_the_router_advertises_them_and_closes_the
     assert body['router_text'] == 'Faxbot does not ask your router to open ports, because that is turned off.'
     assert not sip_network.lease_path(_values(client)).exists()
     assert sip_trunk.read_public_address(_values(client))['ports_preserved'] is False
+
+
+def test_trunk_status_agrees_when_the_router_opened_or_the_person_forwarded_the_fax_ports(
+        client, network, stand_in_router):
+    network['row'] = LINUX_LAN_CHANGES
+    _publish_fax_ports(client)
+    assert client.post('/admin/sip/apply', headers=ADMIN).status_code == 200
+    # Asterisk restarted and names the internet address with the opened ports.
+    sip_trunk.public_address_path(_values(client)).with_name('public-address.applied').write_text('198.51.100.7\n')
+    sip_http._probes.clear()
+    status = client.get('/admin/sip/status', headers=ADMIN).json()
+    assert (status['network_t38'], status['address_changed'], status['ports_text']) == (OPEN, False, None)
+    assert status['public_address_text'] == ("Faxbot's internet address is 198.51.100.7, and your router passes Faxbot's "
+                                             'fax ports through, so Telnyx is told exactly where to send fax data.')
+    assert 'internet address changed' not in status['message']
+    # The person forwards the ports instead and enters the address.
+    _put(client, sip_external_address='198.51.100.7')
+    network['row'] = DESKTOP_MAC
+    assert client.post('/admin/sip/apply', headers=ADMIN).status_code == 200
+    status = client.get('/admin/sip/status', headers=ADMIN).json()
+    assert (status['network_t38'], status['address_changed'], status['ports_text']) == (OPEN, False, None)
+    assert status['public_address_text'] == ('Faxbot tells Telnyx to send calls and fax data to 198.51.100.7, the '
+                                             'address you entered.')
 
 
 def test_a_router_that_refuses_or_sits_behind_another_router_gets_the_forward_to_do(client, network, stand_in_router):

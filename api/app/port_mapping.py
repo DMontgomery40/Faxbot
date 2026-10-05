@@ -310,17 +310,23 @@ class Router:
             if in_container is None else in_container
         self.client = client or client_address() or (None if container else _local_toward(gateway))
 
-    def _release(self, method, ports, *, nonce=b'', control='', service=''):
+    def _release(self, method, ports, *, nonce=b'', control='', service='', client=None):
+        """Delete each mapping; a router that stops answering is not asked about the rest."""
+        client = client or self.client
         for port in ports:
             try:
                 if method == 'pcp':
-                    pcp_map(self.gateway, self.client, port, 0, 0, nonce, port=self.port, send=self.send)
+                    answer = pcp_map(self.gateway, client, port, 0, 0, nonce, port=self.port, send=self.send)
                 elif method == 'natpmp':
-                    natpmp_map(self.gateway, port, 0, 0, port=self.port, send=self.send)
+                    answer = natpmp_map(self.gateway, port, 0, 0, port=self.port, send=self.send)
                 else:
-                    upnp_unmap(control, service, port, post=self.http)
-            except Refused:
+                    answer = upnp_unmap(control, service, port, post=self.http) or True
+            except Refused as refused:
+                if refused.reason == 'upnp_no_answer':
+                    return
                 continue
+            if answer is None:
+                return
 
     def _pcp(self, first, last, lifetime):
         if not self.client:
@@ -426,7 +432,7 @@ class Router:
     def close(self, lease):
         """Ask the router to close every port of ``lease``; never raises."""
         try:
-            self._release(lease.method, range(lease.first, lease.last + 1),
-                          nonce=bytes.fromhex(lease.nonce or ''), control=lease.control_url, service=lease.service)
+            self._release(lease.method, range(lease.first, lease.last + 1), nonce=bytes.fromhex(lease.nonce or ''),
+                          control=lease.control_url, service=lease.service, client=lease.client or None)
         except Exception:
             pass

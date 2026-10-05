@@ -89,7 +89,7 @@ describe('Dashboard delivery cards', () => {
     server.use(http.get('/admin/sip/network', () => HttpResponse.json(report)));
     render(<Dashboard client={client()} onNavigate={(page) => { opened.push(page); }} />);
     const item = await screen.findByTestId('attention-t38-network');
-    expect(item.textContent).toContain('Your network needs one change so faxes can go over the internet');
+    expect(item.textContent).toContain('One network change would let faxes go over the internet; faxes still go through meanwhile');
     fireEvent.click(item);
     expect(opened).toEqual(['providers/trunk']);
   });

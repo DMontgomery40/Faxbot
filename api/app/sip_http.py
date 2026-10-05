@@ -179,7 +179,7 @@ def _observed(records):
     return found if any(found.values()) else None
 
 
-def _address_text(summary, network, carrier, observed=None, audio=False, blocked=False):
+def _address_text(summary, network, carrier, observed=None, audio=False, blocked=False, mapped=False):
     """Faxbot's internet address in use and how the network treats it, in one sentence.
 
     Once calls have shown whether the carrier follows Faxbot's packets, the
@@ -189,7 +189,7 @@ def _address_text(summary, network, carrier, observed=None, audio=False, blocked
     already says T.38 data cannot come back (``blocked``), its own sentence
     says so, and this one keeps to the address and what calls showed.
     """
-    text = _network_text(summary, network, carrier)
+    text = _network_text(summary, network, carrier, mapped)
     if not text.endswith(_UNTESTED) or (observed is None and not blocked):
         return text
     lead = text[:-len(_UNTESTED)].rstrip(' ,;').removesuffix(', and')
@@ -209,7 +209,7 @@ def _address_text(summary, network, carrier, observed=None, audio=False, blocked
     return f'{lead}, and a fax that went through shows it does.'
 
 
-def _network_text(summary, network, carrier):
+def _network_text(summary, network, carrier, mapped=False):
     typed = summary.get('public_address')
     if typed:
         if network and network.public_ip and network.public_ip != typed:
@@ -220,6 +220,10 @@ def _network_text(summary, network, carrier):
             and summary.get('advertised_address') == network.public_ip):
         return (f'Faxbot\'s internet address is {network.public_ip}, and your network keeps port numbers, '
                 f'so {carrier} is told exactly where to send fax data.')
+    if mapped and network and network.public_ip:
+        # Faxbot opened its fax ports on the router (sip_network): the address and ports are exact.
+        return (f"Faxbot's internet address is {network.public_ip}, and your router passes Faxbot's fax ports "
+                f'through, so {carrier} is told exactly where to send fax data.')
     return stun.address_sentence(network, carrier=carrier)
 
 
@@ -305,7 +309,10 @@ def _address_changed(values, network):
     applied = sip_trunk.applied_public_address(values)
     if applied is None:
         return False
-    wanted = network.public_ip if network.ports == 'preserved' else ''
+    # Ports the router opened 1:1 make the address exact, although the probe still sees ports change.
+    record = sip_trunk.read_public_address(values) or {}
+    opened = bool(record.get('router_ports') and record.get('ip') == network.public_ip)
+    wanted = network.public_ip if network.ports == 'preserved' or opened else ''
     return applied != wanted
 
 
@@ -321,7 +328,8 @@ def _ports_text(values, network):
             return None
         return BEHIND_ROUTER if network and network.behind_nat else None
     check = sip_network.read_check(values)
-    forwards = check and check['t38'] != sip_network.OPEN and check.get('why') != 'no_address'
+    forwards = check and ((check['t38'] != sip_network.OPEN and check.get('why') != 'no_address')
+                          or check.get('why') in ('router_mapped', 'forwarded'))
     return None if forwards else NO_PORTS
 
 
@@ -528,6 +536,7 @@ async def status(request: Request, identity=Depends(require_permission('provider
         'behind_router': network.behind_nat if network else None,
         'port_numbers': network.ports if network else None,
         'public_address_text': (_address_text(summary, network, carrier, observed, not values.sip_t38_enabled,
+                                              mapped=bool(network_report and network_report.get('why') == 'router_mapped'),
                                               blocked=bool(network_report and network_report['t38'] == 'blocked'
                                                            and network and network.public_ip
                                                            and network.ports != 'preserved'))

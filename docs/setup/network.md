@@ -32,7 +32,7 @@ The check runs inside Faxbot, which shares its way to the internet with the fax 
 - whether your internet provider shares one internet address among customers (carrier-grade NAT, seen as an address in 100.64.0.0/10 on the way out or a router whose own internet address differs from the one the internet sees);
 - where Faxbot runs: Docker on a Mac through Colima (on its own private network, the Mac's shared network or directly on your local network), Docker Desktop on a Mac or Windows, a computer on your local network, a cloud server, or a server with its own internet address. It reads facts about the machine and the first routers on the way out, and changes nothing.
 
-**System → Diagnostics** shows the same check as "Faxing over the internet", and the **Overview** lists "Your network needs one change so faxes can go over the internet" while Faxbot keeps T.38 off because of the network.
+**System → Diagnostics** shows the same check as "Faxing over the internet", and the **Overview** lists "One network change would let faxes go over the internet; faxes still go through meanwhile" while Faxbot keeps T.38 off because of the network.
 
 ## What Faxbot does by itself
 

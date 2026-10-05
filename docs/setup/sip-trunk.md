@@ -145,6 +145,7 @@ If you manage settings with an environment file instead of the console, set the 
 | `SIP_TRUNK_DIAL_FORMAT` | `e164` (`+441632960123`) or `local` (`01632960123`, as a phone at the installation dials it), where the preset offers the choice |
 | `SIP_TRUNK_DIAL_PREFIX` | Up to four digits before a number dialled the local way, such as `9` for a phone system's outside line |
 | `SIP_EXTERNAL_ADDRESS` | Leave empty: Faxbot finds its internet address itself. Only an override for a host whose public address you want to state |
+| `SIP_ROUTER_PORTS` | `true` by default: Faxbot may open its published fax ports on your router (see [Network for fax over IP](network.md)); `false` stops it and closes any it opened |
 | `SIP_PUBLIC_ADDRESS_CHECK_MINUTES` | How often Faxbot checks its internet address again; `5` by default, `0` turns it off. Read at the first start; after that it is a setting (see below) |
 
 Asterisk reads the trunk when it starts. Faxbot writes it to `asterisk/pjsip.conf` inside the shared fax data folder; while that file exists it replaces the older `SIP_USERNAME`, `SIP_PASSWORD` and `SIP_SERVER` settings.

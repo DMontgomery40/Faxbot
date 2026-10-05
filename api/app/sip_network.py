@@ -549,8 +549,13 @@ def close_router_ports(values):
     lease = read_lease(values)
     if lease is None:
         return False
+    def quick(payload, address, **options):
+        return port_mapping.exchange(payload, address, **{**options, 'tries': 1, 'wait': 0.3})
+
+    def brief(method, url, body=None, headers=None):
+        return port_mapping._http(method, url, body, headers, timeout=0.5)
     try:
-        port_mapping.Router(lease.gateway).close(lease)
+        port_mapping.Router(lease.gateway, send=quick, http=brief, client=lease.client or None).close(lease)
     finally:
         _keep_lease(values, None)
     return True
@@ -574,7 +579,8 @@ NOT_CHECKED = 'Faxbot has not checked this network yet.'
 # For the Overview and System diagnostics, read by an office administrator; the trunk page has the details.
 OFFICE_TEXT = {
     OPEN: 'Your network is ready for faxing over the internet.',
-    BLOCKED: 'Your network needs one change so faxes can go over the internet. The carrier page shows what to do.',
+    BLOCKED: ('Your network needs one change so faxes can go over the internet. The carrier page shows what to do. '
+              'Faxes still go through meanwhile.'),
     UNKNOWN: 'Faxbot cannot tell yet whether your network is ready for faxing over the internet. Faxes still go through.',
 }
 PHONE_SYSTEM_TEXT = 'Your phone system is on your local network, so fax over IP needs no network check.'

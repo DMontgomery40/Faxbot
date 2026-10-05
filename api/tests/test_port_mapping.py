@@ -9,6 +9,7 @@ import re
 import socket
 import struct
 import threading
+import time
 
 import pytest
 
@@ -292,3 +293,17 @@ def test_a_lease_survives_a_restart_as_a_record():
     assert Lease.from_dict({'method': 'pcp'}) is None
     with pytest.raises(Refused):
         port_mapping.natpmp_external('127.0.0.1', send=lambda *a, **k: struct.pack('!BBHI4s', 0, 128, 3, 0, b'\0' * 4))
+
+
+def test_closing_uses_the_lease_own_address_and_stops_when_the_router_is_gone(router):
+    fake = router()
+    lease, _ = client_for(fake).open(4000, 4002)
+    # At stop FAXBOT_LAN_ADDRESS may be gone: the lease remembers the address PCP needs.
+    Router('127.0.0.1', port=fake.port, in_container=True).close(lease)
+    assert fake.mappings == {}
+    fake.close()
+    started = time.monotonic()
+    Router('127.0.0.1', port=fake.port, in_container=True,
+           send=lambda payload, address, **kw: port_mapping.exchange(payload, address, **{**kw, 'tries': 1,
+                                                                                      'wait': 0.1})).close(lease)
+    assert time.monotonic() - started < 1  # the first unanswered delete ends it

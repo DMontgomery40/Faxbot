@@ -157,7 +157,8 @@ export function attentionItems({ health, work, intake, costs, network, canSetUp 
   }
   if (network?.kind === 'ready' && network.data.applies && network.data.action === 'turned_off'
     && !network.data.t38_enabled) {
-    items.push({ key: 't38-network', label: 'Your network needs one change so faxes can go over the internet', count: null,
+    items.push({ key: 't38-network', label: 'One network change would let faxes go over the internet; faxes still go through meanwhile',
+      count: null,
       destination: 'providers/trunk' });
   }
   return items;
