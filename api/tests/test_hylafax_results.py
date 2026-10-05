@@ -448,10 +448,11 @@ def test_asterisk_sends_t38_first_when_a_t38_stream_starts():
                  '#define FAXBOT_SPANDSP_FLAG_INDICATOR 0x100'):
         assert step in gateway and step in replay, step
     assert '+\tfaxbot_end_empty_preamble(s, p);\n \tif ((f->samples = t38_gateway_tx(' in gateway
-    # One NOTICE line per T.38 stream, with packet counts from UDPTL.
-    assert '+	.session_end = t38_session_end,' in patch and 'ast_udptl_get_counts(media->udptl, &sent, &received);' in patch
-    counts = (ROOT / 'asterisk' / 'patches' / '0003-udptl-packet-counts.patch').read_text()
-    assert '+			s->faxbot_sent++;' in counts and '+	udptl->faxbot_received++;' in counts
+    # One NOTICE line per T.38 stream at session end, with the packets counted in res_pjsip_t38's own
+    # read and write callbacks (so it holds after the call switched back to audio).
+    assert '+\t.session_end = t38_session_end,' in patch
+    assert patch.count('+\tfaxbot_t38_count(session, ') == 2
+    assert not (ROOT / 'asterisk' / 'patches' / '0003-udptl-packet-counts.patch').exists()
     dockerfile = (ROOT / 'asterisk' / 'Dockerfile').read_text()
     applied = dockerfile.index('patch -p1 --forward')
     assert dockerfile.index('COPY patches/ /usr/src/patches/') < applied < dockerfile.index('RUN ./configure')

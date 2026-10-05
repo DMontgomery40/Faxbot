@@ -12,9 +12,9 @@ per T.38 stream: a session refresh (session timers) applies the same stream
 again mid-call, and no indicator may interrupt a page.
 
 When the session ends, one NOTICE line says where the opening packets went,
-how many UDPTL packets were sent and received (0003), and whether a T.38
-gateway engaged (0002), so a failed T.38 call explains itself without a
-packet capture.
+how many T.38 packets the session sent and received (counted in this
+module's read and write callbacks), and whether a T.38 gateway engaged
+(0002), so a failed T.38 call explains itself without a packet capture.
 
 --- a/res/res_pjsip_t38.c
 +++ b/res/res_pjsip_t38.c
@@ -36,7 +36,7 @@ packet capture.
  /*! \brief T.38 state information */
  struct t38_state {
  	/*! \brief Current state */
-@@ -67,6 +71,10 @@
+@@ -67,6 +71,13 @@
  	pj_timer_entry timer;
  	/*! Preserved media state for when T.38 ends */
  	struct ast_sip_session_media_state *media_state;
@@ -44,63 +44,59 @@ packet capture.
 +	struct ast_udptl *opened;
 +	/*! Faxbot: where the opening packets went, for the line logged at the end of the session */
 +	struct ast_sockaddr opened_to;
++	/*! Faxbot: T.38 packets this session sent and received, over all its T.38 streams */
++	int faxbot_sent;
++	int faxbot_received;
  };
  
  /*! \brief Destructor for T.38 state information */
-@@ -135,6 +143,11 @@
- 
- 	if (old_state == new_state) {
+@@ -137,6 +148,11 @@
  		return;
-+	}
-+
+ 	}
+ 
 +	if (new_state != T38_ENABLED) {
 +		/* Faxbot: the next T.38 stream sends its opening packets again. */
 +		state->opened = NULL;
- 	}
- 
++	}
++
  	session->t38state = new_state;
-@@ -732,11 +745,53 @@
+ 	ast_debug(2, "T.38 state changed to '%u' from '%u' on channel '%s'\n",
+ 		new_state, old_state,
+@@ -732,11 +748,46 @@
  }
  
  /*! \brief Supplement for adding framehook to session channel */
 +/*!
 + * \brief Faxbot: one NOTICE line per T.38 stream when its session ends.
 + *
-+ * Where the opening packets went, the UDPTL packets sent and received, and
-+ * whether a T.38 gateway engaged (res_fax_spandsp sets FAXBOT_T38_GATEWAY on
-+ * the T.38 channel when it starts one), so a failed T.38 call explains itself.
++ * Where the opening packets went, the T.38 packets sent (opening packets
++ * included) and received over the session's T.38 streams, counted in this
++ * module's own read and write callbacks, and whether a T.38 gateway engaged
++ * (res_fax_spandsp sets FAXBOT_T38_GATEWAY on the T.38 channel when it starts
++ * one), so a failed T.38 call explains itself.
 + */
 +static void t38_session_end(struct ast_sip_session *session)
 +{
 +	RAII_VAR(struct ast_datastore *, datastore, ast_sip_session_get_datastore(session, "t38"), ao2_cleanup);
 +	struct t38_state *state = datastore ? datastore->data : NULL;
-+	struct ast_sip_session_media *media = NULL;
-+	unsigned int sent = 0, received = 0;
 +	const char *gateway = NULL;
-+	char opened[AST_SOCKADDR_BUFLEN] = "nowhere";
++	char opened[AST_SOCKADDR_BUFLEN];
 +
-+	if (!state || !state->opened) {
-+		return;
++	if (!state || ast_sockaddr_isnull(&state->opened_to)) {
++		return;	/* no T.38 stream in this session */
 +	}
-+	if (session->active_media_state) {
-+		media = session->active_media_state->default_session[AST_MEDIA_TYPE_IMAGE];
-+	}
-+	if (media && media->udptl) {
-+		ast_udptl_get_counts(media->udptl, &sent, &received);
-+	}
-+	if (!ast_sockaddr_isnull(&state->opened_to)) {
-+		ast_copy_string(opened, ast_sockaddr_stringify(&state->opened_to), sizeof(opened));
-+	}
++	ast_copy_string(opened, ast_sockaddr_stringify(&state->opened_to), sizeof(opened));
 +	if (session->channel) {
 +		ast_channel_lock(session->channel);
 +		gateway = pbx_builtin_getvar_helper(session->channel, "FAXBOT_T38_GATEWAY");
-+		ast_log(LOG_NOTICE, "Faxbot T.38 on %s: %d opening packets to %s; %u packets sent, %u received; "
-+			"T.38 gateway %s\n", ast_channel_name(session->channel), FAXBOT_T38_OPENING_PACKETS, opened, sent,
-+			received, gateway ? gateway : "not engaged (none, or Asterisk's own fax engine)");
++		ast_log(LOG_NOTICE, "Faxbot T.38 on %s: %d opening packets to %s; %d packets sent, %d received; "
++			"T.38 gateway %s\n", ast_channel_name(session->channel), FAXBOT_T38_OPENING_PACKETS, opened,
++			state->faxbot_sent, state->faxbot_received,
++			gateway ? gateway : "not engaged (none, or Asterisk's own fax engine)");
 +		ast_channel_unlock(session->channel);
 +	} else {
-+		ast_log(LOG_NOTICE, "Faxbot T.38: %d opening packets to %s; %u packets sent, %u received\n",
-+			FAXBOT_T38_OPENING_PACKETS, opened, sent, received);
++		ast_log(LOG_NOTICE, "Faxbot T.38: %d opening packets to %s; %d packets sent, %d received\n",
++			FAXBOT_T38_OPENING_PACKETS, opened, state->faxbot_sent, state->faxbot_received);
 +	}
 +}
 +
@@ -113,7 +109,33 @@ packet capture.
  };
  
  /*! \brief Parse a T.38 image stream and store the attribute information */
-@@ -1026,6 +1081,34 @@
+@@ -1008,6 +1059,17 @@
+ 	return 1;
+ }
+ 
++/*! \brief Faxbot: count one T.38 packet sent (1) or received (0) for the line logged at session end */
++static void faxbot_t38_count(struct ast_sip_session *session, int sent)
++{
++	RAII_VAR(struct ast_datastore *, datastore, ast_sip_session_get_datastore(session, "t38"), ao2_cleanup);
++	struct t38_state *state = datastore ? datastore->data : NULL;
++
++	if (state) {
++		ast_atomic_fetchadd_int(sent ? &state->faxbot_sent : &state->faxbot_received, 1);
++	}
++}
++
+ static struct ast_frame *media_session_udptl_read_callback(struct ast_sip_session *session, struct ast_sip_session_media *session_media)
+ {
+ 	struct ast_frame *frame;
+@@ -1016,6 +1078,7 @@
+ 		return &ast_null_frame;
+ 	}
+ 
++	faxbot_t38_count(session, 0);
+ 	frame = ast_udptl_read(session_media->udptl);
+ 	if (!frame) {
+ 		return NULL;
+@@ -1026,12 +1089,41 @@
  	return frame;
  }
  
@@ -148,7 +170,14 @@ packet capture.
  static int media_session_udptl_write_callback(struct ast_sip_session *session, struct ast_sip_session_media *session_media, struct ast_frame *frame)
  {
  	if (!session_media->udptl) {
-@@ -1072,6 +1155,14 @@
+ 		return 0;
+ 	}
+ 
++	faxbot_t38_count(session, 1);
+ 	return ast_udptl_write(session_media->udptl, frame);
+ }
+ 
+@@ -1072,6 +1164,15 @@
  	ast_sip_session_media_add_read_callback(session, session_media, ast_udptl_fd(session_media->udptl),
  		media_session_udptl_read_callback);
  
@@ -158,6 +187,7 @@ packet capture.
 +		state->opened = session_media->udptl;
 +		ast_udptl_get_peer(session_media->udptl, &state->opened_to);
 +		faxbot_t38_open_pinhole(session_media->udptl);
++		ast_atomic_fetchadd_int(&state->faxbot_sent, FAXBOT_T38_OPENING_PACKETS);
 +	}
 +
  	return 0;
