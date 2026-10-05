@@ -83,7 +83,13 @@ def routing_destination(number: str = typer.Argument(..., help='Fax number.'),
                         pages: int = typer.Option(1, '--pages', min=1, max=1000,
                                                   help='Estimate the cost of a fax this many pages long.')):
     """Show one number you fax: its settings, how faxes to it went, and how Faxbot would send now."""
-    view = state.api().get('/routing/destinations/' + segment(number), params={'pages': pages})
+    api = state.api()
+    view = api.get('/routing/destinations/' + segment(number), params={'pages': pages})
+    from .sslfax import limits_fields
+    try:
+        limits = api.get('/routing/destinations/' + segment(number) + '/fax-limits')
+    except CliError:
+        limits = None
 
     def human(out):
         partner = view.get('direct_partner') or {}
@@ -91,7 +97,8 @@ def routing_destination(number: str = typer.Argument(..., help='Fax number.'),
                     ('Preferred way to send', preferred_text(view)),
                     ('Case packets', references_text(view.get('accepts_references'))),
                     ('Direct partner', partner.get('organization')),
-                    ('Available routes', [item['label'] for item in view.get('available_routes', [])])])
+                    ('Available routes', [item['label'] for item in view.get('available_routes', [])]),
+                    *(limits_fields(limits) if limits else [])])
         out.table(['Route', 'Attempts', 'Delivered', 'Failed', 'Success', 'Estimated cost', 'Last used'],
                   _route_rows(view.get('routes', [])), empty='No faxes sent to this number in the last 30 days.')
         out.table(['Faxbot would choose', 'Why', 'Rate', f"Estimated cost, {pages} {'page' if pages == 1 else 'pages'}"],
@@ -249,11 +256,11 @@ def routing_received_costs(fax_id: str = typer.Argument(None, help="Received fax
 
 
 SAVING_PARTS = (('sending_together', 'Sending together'), ('direct_delivery', 'Direct delivery'),
-                ('case_packets', 'Case packets'))
+                ('case_packets', 'Case packets'), ('sslfax', 'Faster pages'))
 
 
 def routing_savings(days: int = typer.Option(30, '--days', min=1, max=366, help='How many days back to count.')):
-    """Show how much money Faxbot saved by batching faxes to the same number, delivering directly to partners, and leaving out documents a recipient already has. All figures are estimates."""
+    """Show how much money Faxbot saved by batching faxes to the same number, delivering directly to partners, leaving out documents a recipient already has, and sending pages faster. All figures are estimates."""
     result = state.api().get('/routing/savings', params={'days': days})
 
     def human(out):

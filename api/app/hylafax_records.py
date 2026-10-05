@@ -218,6 +218,120 @@ class FaxEngineRecords:
         return self._write(apply)
 
 
+    # Screens --------------------------------------------------------------
+
+    def sent_detail(self, job_id):
+        """The engine line for Sent details: {'engine', 'sslfax', 'sentence'} for the fax's newest call, or None."""
+        if not _ID.fullmatch(str(job_id or '')):
+            return None
+        calls = self._table('fax_engine_calls')
+        try:
+            records = sa.Table('sip_call_records', sa.MetaData(), autoload_with=self.engine)
+        except sa.exc.SQLAlchemyError:
+            raise EngineRecordError('Fax engine records are unavailable.') from None
+
+        def read(connection):
+            row = connection.execute(sa.select(calls).where(calls.c.direction == 'outbound', calls.c.job_id == job_id)
+                                     .order_by(calls.c.created_at.desc(), calls.c.id.desc()).limit(1)).mappings().first()
+            if row is None:
+                return None, None
+            pages = connection.execute(sa.select(records.c.pages).where(
+                records.c.direction == 'outbound', records.c.call_id == row['call_key'])).scalar()
+            return row, pages
+        row, pages = self._read(read)
+        if row is None:
+            return None
+        sentence = None
+        if row['engine'] == 'builtin':
+            sentence = row['reason']
+        elif row['sslfax'] == 1 and row['transfer_seconds'] is not None and pages:
+            sentence = sslfax_sentence(row['transfer_seconds'], pages)
+        return {'engine': row['engine'], 'sslfax': None if row['sslfax'] is None else bool(row['sslfax']),
+                'sentence': sentence}
+
+    def recipient_detail(self, number):
+        """Recipients, Details: whether the number takes SSL Fax (and since when) and its own fax limits."""
+        accepts = self.accepts_sslfax(number)
+        limits = self.recipient_settings(number)
+        return {'accepts_sslfax': accepts['accepts'] if accepts else None,
+                'accepts_sslfax_at': accepts['observed_at'] if accepts else None,
+                'max_rate': (limits or {}).get('max_rate'), 'ecm': (limits or {}).get('ecm')}
+
+
+# A page over an ordinary fax call takes about this long at 14,400 bit/s (measured on 2026-10-03:
+# six pages in 50 s); SSL Fax sends a page in about a second.
+ORDINARY_SECONDS_PER_PAGE = 8
+
+
+def ordinary_seconds(pages):
+    return ORDINARY_SECONDS_PER_PAGE * max(1, pages)
+
+
+def sslfax_sentence(transfer_seconds, pages):
+    return (f'The pages were sent faster during the call: {transfer_seconds} seconds instead of about '
+            f'{ordinary_seconds(pages)}.')
+
+
+def sslfax_savings(routes, engine, *, since, days):
+    """What faxes that went over SSL Fax saved on the line, priced with the trunk carrier's own billing.
+
+    Always an estimate: the same fax's ordinary call is the measured call with
+    the measured page transfer replaced by about eight seconds a page. A
+    carrier that bills whole minutes often charges a short fax the same either way.
+    """
+    from .routing.costs import attempt_cost
+    from .routing.database import reflect
+    tables = reflect(engine, ('fax_engine_calls', 'sip_call_records'))
+    calls, records = tables['fax_engine_calls'], tables['sip_call_records']
+    with engine.connect() as connection:
+        rows = connection.execute(sa.select(
+            calls.c.direction, calls.c.transfer_seconds, records.c.connected_seconds, records.c.pages,
+        ).join(records, sa.and_(records.c.direction == calls.c.direction, records.c.call_id == calls.c.call_key))
+            .where(calls.c.sslfax == 1, calls.c.created_at >= since)).all()
+    result = {'faxes': 0, 'seconds_saved': 0, 'priced': 0, 'in_plan': 0, 'unpriced': 0, 'saved': {},
+              'same_cost': 0}
+    cards = {}
+    for row in rows:
+        if row.connected_seconds is None or row.transfer_seconds is None or not row.pages:
+            continue
+        actual = row.connected_seconds
+        ordinary = max(actual, actual - row.transfer_seconds + ordinary_seconds(row.pages))
+        result['faxes'] += 1
+        result['seconds_saved'] += ordinary - actual
+        if row.direction not in cards:
+            cards[row.direction] = routes.card_for('sip', row.direction)
+        card = cards[row.direction]
+        if card is None:
+            result['unpriced'] += 1
+        elif card.flat_plan:
+            result['in_plan'] += 1
+        else:
+            result['priced'] += 1
+            saved = (attempt_cost(card, seconds=ordinary, pages=row.pages, delivered=True)
+                     - attempt_cost(card, seconds=actual, pages=row.pages, delivered=True))
+            if saved > 0:
+                result['saved'][card.currency] = result['saved'].get(card.currency, 0) + saved
+            else:
+                result['same_cost'] += 1
+    result['sentence'] = savings_sentence(result, days)
+    return result
+
+
+def savings_sentence(result, days):
+    from .routing.costs import money_text
+    count = result['faxes']
+    if not count:
+        return f'No fax in the last {days} days had its pages sent faster.'
+    minutes = max(1, round(result['seconds_saved'] / 60))
+    sentence = (f"{count} {'fax' if count == 1 else 'faxes'} had {'its' if count == 1 else 'their'} pages sent "
+                f"faster: about {minutes} {'minute' if minutes == 1 else 'minutes'} less on the phone")
+    money = ' + '.join(money_text(micros, currency) for currency, micros in sorted(result['saved'].items()))
+    sentence += f' and about {money} saved.' if money else '.'
+    if result['same_cost'] and result['same_cost'] == result['priced']:
+        sentence += ' Your carrier charges whole minutes, so ' + ('it' if count == 1 else 'they') + ' cost the same.'
+    return sentence
+
+
 def records_for(engine):
     return FaxEngineRecords(engine)
 

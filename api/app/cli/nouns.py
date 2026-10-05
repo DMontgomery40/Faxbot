@@ -9,7 +9,7 @@ with its home; the reference page and the tests are generated from it.
 """
 import typer
 
-from .commands import access, admin, delivery, fax, operations, settings, setup, trunk, work
+from .commands import access, admin, delivery, fax, operations, settings, setup, sslfax, trunk, work
 
 NOUNS = ('received', 'sent', 'numbers', 'recipients', 'providers', 'costs', 'access', 'system')
 
@@ -88,6 +88,7 @@ recipients = _group('Fax numbers you send to: routing, batching several faxes in
 recipients.command('list')(delivery.routing_destinations)
 recipients.command('show')(delivery.routing_destination)
 recipients.command('set')(delivery.routing_update_destination)
+recipients.command('limits')(sslfax.recipient_limits)
 recipients.add_typer(delivery.batching, name='together')
 partners = _group('Partners: other offices running Faxbot, which get your faxes over the internet instead of a phone '
                   'call.')

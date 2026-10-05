@@ -1836,8 +1836,12 @@ async def list_admin_jobs(
 async def get_admin_job(job_id: str, request: Request, identity=Depends(require_identity)):
     row = await run_lifecycle_step(private_operation(lambda: access_runtime(request).queries.job(identity.actor, job_id)))
     together = await run_lifecycle_step(lambda: batching_summaries(_configuration_manager().store.engine, [job_id]))
+    # Over the SIP trunk: which fax engine carried it, and SSL Fax's line or the built-in engine's reason.
+    from .hylafax_records import records_for, safely
+    fax_engine = await run_lifecycle_step(
+        lambda: safely(records_for(_configuration_manager().store.engine).sent_detail, job_id))
     return {**_admin_fax_view(row), 'provider_sid': row['provider_sid'], 'file_name': row['file_name'],
-            'together': together.get(job_id)}
+            'together': together.get(job_id), 'fax_engine': fax_engine}
 
 
 def _admin_fax_view(row):

@@ -67,6 +67,7 @@ export default function Savings({ client }: { client: AdminAPIClient }) {
           <Part title="Direct delivery" sentence={data.direct_delivery.sentence} testId="savings-direct" />
           <Part title="Case packets" sentence={data.case_packets.sentence} note={countedFromSentence(data.case_packets)}
             testId="savings-packets" />
+          {data.sslfax && <Part title="Faster pages" sentence={data.sslfax.sentence} testId="savings-sslfax" />}
         </Stack>
       )}
     </Box>

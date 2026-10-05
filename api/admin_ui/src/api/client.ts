@@ -1,4 +1,4 @@
-import type { SipApplyResult, SipCallPage, SipPreset, SipTrunkStatus } from './sipTypes';
+import type { RecipientFaxLimits, SipApplyResult, SipCallPage, SipPreset, SipTrunkStatus } from './sipTypes';
 import type { SipNetworkReport } from './networkTypes';
 import type { BatchingCheck, BatchingNumber, BatchingSave, FaxTogether } from './batchingTypes';
 import type {
@@ -1000,6 +1000,15 @@ class AdminAPIClient {
   // Costs for several sent faxes at once, for the Sent list; faxes this person cannot read are left out.
   async getFaxCosts(jobIds: string[]): Promise<{ costs: Record<string, FaxCost> }> {
     return this.json(`/routing/fax-costs${query({ ids: jobIds.join(',') })}`);
+  }
+
+  // One fax machine's own limits (highest speed, error correction) and whether it takes SSL Fax.
+  async getFaxLimits(number: string): Promise<RecipientFaxLimits> {
+    return this.json(`/routing/destinations/${id(number)}/fax-limits`);
+  }
+
+  async saveFaxLimits(number: string, body: { max_rate: number | null; ecm: boolean | null }): Promise<RecipientFaxLimits> {
+    return this.json(`/routing/destinations/${id(number)}/fax-limits`, { method: 'PUT', body: JSON.stringify(body) });
   }
 
   // Sending short faxes to the same number together in one call.

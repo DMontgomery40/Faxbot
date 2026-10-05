@@ -18,9 +18,11 @@ import hmac
 import re
 from typing import Optional
 
-from fastapi import APIRouter, Body, Header, HTTPException, Request
+from fastapi import APIRouter, Body, Depends, Header, HTTPException, Request
+from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
 from . import hylafax_engine
+from .access.route_policy import require_permission
 from .config import settings
 from .config_runtime import run_lifecycle_step
 
@@ -87,6 +89,74 @@ def _audio_switch_check(row, payload, status):
     sip_fax_mode._on_fax_event({
         'Answered': '1', 'Status': 'FAILED', 'Pages': '0', 'Mode': 'T38',
         'Error64': base64.b64encode(b'timed out waiting for initial communication').decode()})
+
+
+# Recipients, Details: one fax machine's own limits, and whether it takes SSL Fax -------------------
+
+class FaxLimits(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    # None: the installation's own fax settings apply.
+    max_rate: Optional[int] = Field(default=None)
+    ecm: Optional[StrictBool] = None
+
+
+def _recipient_number(value, request):
+    from .routing.numbers import InvalidNumber, normalize_number
+    country = request.scope['faxbot.configuration'].active.values.fax_default_country
+    try:
+        return normalize_number(value, country=country)
+    except InvalidNumber as error:
+        raise HTTPException(400, detail=str(error)) from None
+
+
+def recipient_view(engine, number):
+    """The Recipients, Details panel: numbers, sentences and limits; dates in ISO for the console to format."""
+    from . import hylafax_records
+    detail = hylafax_records.records_for(engine).recipient_detail(number)
+    accepts = detail['accepts_sslfax']
+    sentence = (None if accepts is None else
+                'This fax machine can take pages faster, so faxes to it are quicker.' if accepts else
+                'This fax machine cannot take pages faster, so faxes to it go the usual way.')
+    return {'number': number, **detail, 'sslfax_sentence': sentence}
+
+
+def _engine_for(request):
+    from .routing.background import installation_engine
+    engine, _ = installation_engine(request.app)
+    return engine
+
+
+@router.get('/routing/destinations/{number}/fax-limits', dependencies=[Depends(require_permission('settings:read'))])
+async def get_fax_limits(number: str, request: Request):
+    from . import hylafax_records
+    target = _recipient_number(number, request)
+    try:
+        return await run_lifecycle_step(lambda: recipient_view(_engine_for(request), target))
+    except hylafax_records.EngineRecordError:
+        raise HTTPException(503, detail='Fax limits are unavailable. Try again.') from None
+
+
+@router.put('/routing/destinations/{number}/fax-limits')
+async def put_fax_limits(number: str, payload: FaxLimits, request: Request,
+                         identity=Depends(require_permission('settings:write'))):
+    from . import hylafax_records
+    target = _recipient_number(number, request)
+    actor = getattr(getattr(identity, 'actor', None), 'principal_id', None) or 'settings'
+
+    def save():
+        engine = _engine_for(request)
+        hylafax_records.records_for(engine).set_recipient_settings(
+            target, max_rate=payload.max_rate, ecm=payload.ecm, actor=str(actor))
+        return recipient_view(engine, target)
+    try:
+        result = await run_lifecycle_step(save)
+    except ValueError as error:
+        raise HTTPException(400, detail=str(error)) from None
+    except hylafax_records.EngineRecordError:
+        raise HTTPException(503, detail='Fax limits could not be saved. Try again.') from None
+    from .audit import audit_event
+    audit_event('recipient_fax_limits', number=target, max_rate=payload.max_rate, ecm=payload.ecm)
+    return result
 
 
 @router.post('/_internal/hylafax/result')

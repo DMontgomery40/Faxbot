@@ -185,6 +185,9 @@ def jobs_get(fax_id: str = typer.Argument(..., help='Fax ID.')):
                                        if together.get('state') == 'together' else []))
         if line:
             out.line(line)
+        # Over the SIP trunk: SSL Fax's line, or why the built-in fax engine carried it.
+        if (job.get('fax_engine') or {}).get('sentence'):
+            out.line(job['fax_engine']['sentence'])
     state.out().result(job, human)
 
 

@@ -689,6 +689,11 @@ function JobsList({ client, openJobId, onOpened, onSendFax }: JobsListProps) {
                   secondary={detailJob.pages || 'Unknown'}
                 />
               </ListItem>
+              {detailJob.fax_engine?.sentence && (
+                <ListItem data-testid="job-fax-engine">
+                  <ListItemText primary="How the pages went" secondary={detailJob.fax_engine.sentence} />
+                </ListItem>
+              )}
               <FaxCostItem client={client} jobId={detailJob.id} />
               <FaxTogetherItem client={client} jobId={detailJob.id} together={detailJob.together} onChanged={() => void fetchJobs()} />
               <Divider />

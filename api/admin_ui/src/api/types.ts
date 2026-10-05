@@ -67,6 +67,8 @@ export interface FaxJob extends DeliveryMetadata {
   file_name?: string;
   // Present when the fax waited, or went, with other faxes to the same number.
   together?: FaxTogetherSummary | null;
+  // Over the SIP trunk: which fax engine carried it, and SSL Fax's line or the built-in engine's reason.
+  fax_engine?: { engine: 'hylafax' | 'builtin'; sslfax: boolean | null; sentence: string | null } | null;
 }
 
 export interface DeliveryHistoryEvent {

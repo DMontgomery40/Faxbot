@@ -517,6 +517,11 @@ async def status(request: Request, identity=Depends(require_permission('provider
     if configured and not phone:
         summary['advertised_address'] = await run_lifecycle_step(lambda: sip_trunk.applied_public_address(values)) or None
     network_report = await run_lifecycle_step(lambda: sip_network.report(values)) if configured else None
+    # The fast fax service (SSL Fax engine): its state and one sentence.
+    from . import hylafax_engine
+    from .ami import ami_client
+    engine_state, engine_text = (await hylafax_engine.engine_summary(values, ami_client)
+                                 if configured and managed else (None, None))
     message = _message(summary, asterisk, applied, ports_text, transport, managed=managed, in_use=in_use,
                        restarting=restarting)
     if (changed and not restarting and ports_text != BEHIND_ROUTER and asterisk['connected'] and asterisk['permission']
@@ -569,6 +574,9 @@ async def status(request: Request, identity=Depends(require_permission('provider
         # The last network check for fax over IP: open, blocked or unknown, and its one sentence.
         'network_t38': network_report['t38'] if network_report and network_report['applies'] else None,
         'network_text': network_report['text'] if network_report and network_report['applies'] else None,
+        # The fast fax service: running, starting, not_set_up or stopped, and its sentence (None outside Compose).
+        'engine_state': engine_state,
+        'engine_text': engine_text,
         'message': message,
     }
 

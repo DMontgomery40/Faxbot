@@ -474,7 +474,8 @@ async def savings(request: Request, days: int = Query(default=WINDOW_DAYS, ge=1,
             'total_saved': _money(result['total']),
             'sending_together': _saving_view(result['sending_together']),
             'direct_delivery': _saving_view(result['direct_delivery']),
-            'case_packets': _saving_view(result['case_packets'])}
+            'case_packets': _saving_view(result['case_packets']),
+            'sslfax': _saving_view(result['sslfax'])}
 
 
 @router.get('/inbound/{inbound_id}/cost')

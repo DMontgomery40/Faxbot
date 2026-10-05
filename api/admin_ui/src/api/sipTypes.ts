@@ -34,6 +34,16 @@ export interface SipPreset {
   admin_steps?: string[];
 }
 
+// Recipients, Details: one fax machine's own limits and whether it takes SSL Fax (learned from calls).
+export interface RecipientFaxLimits {
+  number: string;
+  accepts_sslfax: boolean | null;
+  accepts_sslfax_at: string | null;
+  max_rate: number | null;
+  ecm: boolean | null;
+  sslfax_sentence: string | null;
+}
+
 export interface SipTrunkSettings {
   preset: string;
   auth: SipAuthMode;
@@ -117,6 +127,9 @@ export interface SipTrunkStatus {
   // Whether a fax received over the trunk can reach Faxbot, in one sentence; null when the trunk does not receive.
   handover_ready?: boolean | null;
   handover_text?: string | null;
+  // The fast fax service (SSL Fax engine): its state and one sentence; null outside the Compose install.
+  engine_state?: 'running' | 'starting' | 'not_set_up' | 'stopped' | null;
+  engine_text?: string | null;
   // Why Faxbot chose audio fax for new calls ('no_data_back' or 'network'), and when; null otherwise.
   t38_off_reason?: string | null;
   t38_off_at?: string | null;
