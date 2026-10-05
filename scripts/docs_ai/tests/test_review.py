@@ -200,6 +200,8 @@ def test_findings_are_read_from_their_own_block(autopilot):
     assert autopilot.extract_findings(REPLY) == ['api/app/ports.py:2 The error says 4000 but the code uses 5000.']
     assert autopilot.extract_findings('```findings\nnone\n```') == []
     assert autopilot.extract_findings('```findings\n- None.\n```') == []
+    # Seen in the audit demonstration: real findings followed by a stray "none".
+    assert autopilot.extract_findings('```findings\n- a.py:1 Real.\n- none\n```') == ['a.py:1 Real.']
     assert autopilot.extract_findings(DIFF) is None
     assert autopilot.extract_diff(REPLY) == DIFF
     assert autopilot.extract_diff('```diff\n```\n```findings\n- a.py:1 --- looks odd.\n```') is None

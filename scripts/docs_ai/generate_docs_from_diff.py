@@ -515,7 +515,8 @@ def extract_findings(text: str):
     if not found:
         return None
     lines = [re.sub(r'^[-*]\s+', '', line.strip()) for line in found[0].splitlines() if line.strip()]
-    return [] if [line.lower().rstrip('.') for line in lines] in ([], ['none']) else lines
+    # "none" means no findings, also when a model writes it after real ones.
+    return [line for line in lines if line.lower().rstrip('.') != 'none']
 
 
 _HUNK = re.compile(r'^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@(.*)$')
@@ -745,7 +746,7 @@ def run_audit(provider, patterns, batch_size):
     accepted, failed = [], 0
     for number, batch in enumerate(batches, 1):
         print(f'Batch {number} of {len(batches)}: {", ".join(batch)}', flush=True)
-        lines, note = [f'{page}: not in mkdocs.yml nav.' for page in batch if page in missing], ''
+        lines, note = [f'{page}: not in mkdocs.yml nav.' for page in batch if page in missing], 'No page changes proposed.'
         try:
             reply = call_llm(audit_prompt(batch, pages_all, missing, head), provider)
             found = extract_findings(reply)
