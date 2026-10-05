@@ -380,6 +380,24 @@ def test_check_again_needs_a_carrier_and_write_access(isolated_installation, mon
         assert client.post('/admin/sip/network/check', headers=key).status_code == 403
 
 
+def test_system_diagnostics_shows_the_network_check(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+    from app import config, diagnostics_report as report
+    settings = values(FAX_DATA_DIR=str(tmp_path))
+    monkeypatch.setattr(report, '_uses_trunk', lambda request: True)
+    monkeypatch.setattr(config, 'configuration_values', lambda: settings)
+    context = SimpleNamespace(request=None, identity=None)
+    [waiting] = asyncio.run(report.network_for_fax(context))
+    assert (waiting.id, waiting.section, waiting.status, waiting.sentence) == (
+        'engine.network', 'engine', report.OK, 'Faxbot has not checked this network yet.')
+    sip_network.write_check(settings, sip_network.assess(settings, COLIMA_USER[1], COLIMA_USER[0]))
+    [blocked] = asyncio.run(report.network_for_fax(context))
+    assert (blocked.status, blocked.fix_page) == (report.ATTENTION, 'providers/trunk')
+    assert blocked.sentence.startswith('Your network changes port numbers, and Telnyx does not follow')
+    monkeypatch.setattr(report, '_uses_trunk', lambda request: False)
+    assert asyncio.run(report.network_for_fax(context)) == []
+
+
 # -- when the check runs ---------------------------------------------------------------------------------------
 
 def test_the_start_check_waits_and_is_skipped_by_tests_unless_asked(client, network):
