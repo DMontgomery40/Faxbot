@@ -73,3 +73,4 @@ site/
 mkdocs-docs-plan.md
 mkdocs-docs-llm.patch
 mkdocs-docs-llm.rejected.patch
+mkdocs-docs-findings.md

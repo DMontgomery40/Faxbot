@@ -76,6 +76,13 @@ docs-propose:
 	@test -n "$(BASE)" || { echo "Set BASE to the previous commit, for example: make docs-propose BASE=HEAD~1"; exit 2; }
 	$(abspath $(VENV))/bin/python scripts/docs_ai/generate_docs_from_diff.py --base "$(BASE)" --llm codex $(if $(APPLY),--apply,)
 
+# Docs Autopilot audit: check maintained pages against the current code (no base), a few pages per Codex call.
+#   make docs-audit [PAGES='docs/setup/sip-asterisk.md docs/plugins/*.md']
+# Writes mkdocs-docs-findings.md, and mkdocs-docs-llm.patch when a validated change is proposed. Nothing is committed.
+.PHONY: docs-audit
+docs-audit:
+	$(abspath $(VENV))/bin/python scripts/docs_ai/generate_docs_from_diff.py --audit --llm codex $(if $(PAGES),--pages "$(PAGES)",)
+
 # Alembic helpers (run locally)
 alembic-upgrade:
 	DATABASE_URL=$${DATABASE_URL:-sqlite:///./faxbot.db} alembic -c api/alembic.ini upgrade head

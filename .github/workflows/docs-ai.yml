@@ -68,11 +68,15 @@ jobs:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
         run: |
           python scripts/docs_ai/generate_docs_from_diff.py --base "$BASE_REF" --llm openrouter
-          python scripts/docs_ai/validate_doc_patch.py mkdocs-docs-llm.patch
+          # Findings without a docs patch are a result too; a patch is validated again here.
+          if [ -f mkdocs-docs-llm.patch ]; then python scripts/docs_ai/validate_doc_patch.py mkdocs-docs-llm.patch; fi
+          cat mkdocs-docs-findings.md >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         with:
           name: docs-autopilot-proposal-${{ github.run_id }}
-          path: mkdocs-docs-llm.patch
+          path: |
+            mkdocs-docs-findings.md
+            mkdocs-docs-llm.patch
           if-no-files-found: error
   open-proposal:
     needs: propose-llm
@@ -93,11 +97,18 @@ jobs:
           name: docs-autopilot-proposal-${{ github.run_id }}
           path: ${{ runner.temp }}/proposal
       - name: Validate again and stage the proposal
+        id: stage
         run: |
+          if [ ! -f "$RUNNER_TEMP/proposal/mkdocs-docs-llm.patch" ]; then
+            echo "No documentation patch; the findings are in the proposal run's summary and artifact."
+            exit 0
+          fi
           python scripts/docs_ai/validate_doc_patch.py "$RUNNER_TEMP/proposal/mkdocs-docs-llm.patch"
           git apply --index "$RUNNER_TEMP/proposal/mkdocs-docs-llm.patch"
           python scripts/docs_ai/validate_doc_patch.py --staged
+          echo "patch=yes" >> "$GITHUB_OUTPUT"
       - name: Create reviewed proposal against main
+        if: steps.stage.outputs.patch == 'yes'
         uses: peter-evans/create-pull-request@v6
         with:
           branch: docs/ai-update-${{ github.run_id }}
@@ -106,4 +117,5 @@ jobs:
           add-paths: docs/**
           commit-message: 'docs: propose instructional updates @codex review'
           title: 'docs: proposed instructional updates'
-          body: 'Optional Docs Autopilot proposal. Generated source references remain deterministic; review this prose before merging.'
+          # The findings: where Docs Autopilot thinks the code itself is wrong or inconsistent.
+          body-path: ${{ runner.temp }}/proposal/mkdocs-docs-findings.md
