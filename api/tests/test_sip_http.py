@@ -94,7 +94,7 @@ def test_status_without_a_trunk_says_so_in_one_sentence(bare_client):
                     'handover_ready': None, 'handover_text': None, 't38_off_reason': None, 't38_off_at': None,
                     'phone_system': None, 'phone_system_command': None, 'phone_system_setting': None,
                     'phone_system_hidden': False, 'network_t38': None, 'network_text': None, 'telnyx_t38': None,
-                    'engine_state': None, 'engine_text': None,
+                    'engine_state': None, 'engine_text': None, 'engine_audio': False,
                     'message': 'No SIP trunk is set up. Choose your carrier to start.'}
 
 

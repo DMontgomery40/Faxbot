@@ -31,6 +31,9 @@ RUN curl --fail --location --retry 3 --output asterisk.tar.gz \
     && printf '%s\n' '04b2eb1f0f01aa0ad1945b167171843448a51aa6b7c3e806496d434f13a112b7  /usr/src/download-cache/pjproject-2.17.tar.bz2' | sha256sum --check --strict
 
 WORKDIR /usr/src/asterisk-22.11.0
+# Faxbot's own changes to Asterisk, each explained at the top of its file.
+COPY patches/ /usr/src/patches/
+RUN for change in /usr/src/patches/*.patch; do patch -p1 --forward < "$change" || exit 1; done
 RUN ./configure --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var \
        --with-pjproject-bundled --with-spandsp \
     && make menuselect.makeopts \

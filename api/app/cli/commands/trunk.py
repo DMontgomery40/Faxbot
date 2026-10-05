@@ -30,6 +30,8 @@ def _status_lines(out, result):
                 'engine_text'):
         if result.get(key) and result.get(key) != result.get('message'):
             out.line(result[key])
+    if result.get('engine_audio'):
+        out.line('To try T.38 again, run faxbot providers trunk apply.')
     telnyx = result.get('telnyx_t38') or {}
     for entry in telnyx.get('numbers') or []:
         if entry.get('state') != 'on':

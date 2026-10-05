@@ -395,8 +395,11 @@ async def ssl_fax_engine(context: Context) -> list[Finding]:
     from . import hylafax_engine
     from .ami import ami_client
     from .config import configuration_values
-    state, sentence = await hylafax_engine.engine_summary(configuration_values(), ami_client)
+    values = configuration_values()
+    state, sentence = await hylafax_engine.engine_summary(values, ami_client)
     status = {'running': OK, 'starting': ATTENTION, 'not_set_up': OFF}.get(state, PROBLEM)
+    if status == OK and hylafax_engine.engine_audio(values):
+        status = ATTENTION  # on audio fax on its own; Apply and connect on the trunk page tries T.38 again
     fix = None if status in (OK, OFF) else 'Open carrier trunk'
     return [Finding('engine.sslfax', 'engine', 'Fast fax service', status, sentence, fix,
                     'providers/trunk' if fix else None)]

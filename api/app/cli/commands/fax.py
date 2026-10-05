@@ -74,12 +74,39 @@ def _route_text(job, cost):
     return names[-1] + (f" (after {', '.join(names[:-1])})" if len(names) > 1 else '')
 
 
-def _fax_fields(job):
+def _fax_fields(job, route=None):
+    """``route``: ('Planned route' or 'Provider', its name), or None until Faxbot has chosen one. The fax's own
+    provider setting is not shown: Faxbot picks each fax's route when it sends it."""
     return [('Fax ID', job.get('id')), ('To', job.get('to') or job.get('to_number')), ('Status', status_label(job)),
             *([('Delivery', delivery_notice(job))] if delivery_notice(job) else []),
-            ('Pages', job.get('pages')), ('Provider', _provider(job.get('backend'))),
+            ('Pages', job.get('pages')), *([route] if route and route[1] else []),
             ('Provider fax ID', job.get('provider_sid')), ('Problem', job.get('error')),
             ('Accepted', local_time(job.get('created_at'))), ('Updated', local_time(job.get('updated_at')))]
+
+
+def _planned_route(api, job):
+    """('Planned route', the route Faxbot would try first for this number), or None when Faxbot cannot say
+    or this key may not read routes."""
+    number = job.get('to_number') or job.get('to')
+    if not number:
+        return None
+    try:
+        plan = api.get('/routing/destinations/' + segment(number), params={'pages': job.get('pages') or 1})
+    except CliError:
+        return None
+    routes = plan.get('recommended_routes') or []
+    return ('Planned route', routes[0].get('label')) if routes else None
+
+
+def _assigned_route(api, job):
+    """('Provider', the route that carried or is carrying the fax), or None before Faxbot assigned one."""
+    try:
+        cost = api.get('/routing/faxes/' + segment(job['id']) + '/cost')
+    except (CliError, KeyError):
+        return None
+    if not (cost or {}).get('routes'):
+        return None
+    return ('Provider', _route_text(job, cost))
 
 
 def send(to: str = typer.Argument(..., help='Fax number to send to, for example +15551234567.'),
@@ -104,10 +131,11 @@ def send(to: str = typer.Argument(..., help='Fax number to send to, for example 
     with file.open('rb') as handle:
         job = api.post('/fax', data=data, files={'file': (file.name, handle, content_type)}, headers=headers)
     waiting = _together(api, job['id'])
+    route = _planned_route(api, job)
 
     def human(out):
         out.line('Fax accepted.')
-        out.fields(_fax_fields(job))
+        out.fields(_fax_fields(job, route))
         if waiting:
             out.line(waiting)
         out.line(f"Check on it with: faxbot status {job['id']}")
@@ -137,8 +165,10 @@ def _together(api, fax_id):
 
 def status(fax_id: str = typer.Argument(..., help='Fax ID shown when the fax was sent.')):
     """Show where a sent fax is now."""
-    job = state.api().get('/fax/' + segment(fax_id))
-    state.out().result(job, lambda out: out.fields(_fax_fields(job)))
+    api = state.api()
+    job = api.get('/fax/' + segment(fax_id))
+    route = _assigned_route(api, job)
+    state.out().result(job, lambda out: out.fields(_fax_fields(job, route)))
 
 
 @jobs.command('list')

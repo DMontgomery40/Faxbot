@@ -1,0 +1,87 @@
+Faxbot: send T.38 first when a T.38 stream starts.
+
+On 5 October 2026, over Telnyx, Telnyx re-invited Faxbot to T.38, Asterisk
+agreed, and no UDPTL packet left Faxbot in either direction for the whole
+call (pjsip logger and udptl debug on). Faxbot's router keeps port numbers
+but forwards none, so the carrier's T.38 data was dropped until Faxbot sent
+from its UDPTL port first, and the SSL Fax engine's T.38 gateway had nothing
+to relay: its calling fax machine waits silently for the answer. Three T.38
+no-signal indicators sent as soon as the stream is applied open the path, in
+both call directions and for both of Faxbot's fax engines. They are sent once
+per T.38 stream: a session refresh (session timers) applies the same stream
+again mid-call, and no indicator may interrupt a page.
+
+--- a/res/res_pjsip_t38.c
++++ b/res/res_pjsip_t38.c
+@@ -67,6 +67,8 @@
+ 	pj_timer_entry timer;
+ 	/*! Preserved media state for when T.38 ends */
+ 	struct ast_sip_session_media_state *media_state;
++	/*! Faxbot: the T.38 stream that already sent its opening packets (compared, never used) */
++	struct ast_udptl *opened;
+ };
+ 
+ /*! \brief Destructor for T.38 state information */
+@@ -137,6 +139,11 @@
+ 		return;
+ 	}
+ 
++	if (new_state != T38_ENABLED) {
++		/* Faxbot: the next T.38 stream sends its opening packets again. */
++		state->opened = NULL;
++	}
++
+ 	session->t38state = new_state;
+ 	ast_debug(2, "T.38 state changed to '%u' from '%u' on channel '%s'\n",
+ 		new_state, old_state,
+@@ -1024,6 +1031,36 @@
+ 	frame->stream_num = session_media->stream_num;
+ 
+ 	return frame;
++}
++
++/*!
++ * \brief How many T.38 "no signal" indicators to send when a T.38 stream starts (Faxbot).
++ *
++ * A router that keeps port numbers but forwards none (most home and office
++ * routers) drops the far end's UDPTL until this side has sent one packet from
++ * its UDPTL port to the far end's address. When the far end answers first and
++ * this side only relays (a T.38 gateway in front of a calling fax machine that
++ * waits silently for the answer), neither side ever sends: the call stays
++ * silent until both give up. res_fax_spandsp sends the same indicators when a
++ * gateway starts, but that is before the stream is up, so chan_pjsip drops
++ * them. A "no signal" indicator (IFP 0x00) is valid at any time in T.38.
++ */
++#define FAXBOT_T38_OPENING_PACKETS 3
++
++static void faxbot_t38_open_pinhole(struct ast_udptl *udptl)
++{
++	static const unsigned char no_signal[1] = { 0x00 };
++	struct ast_frame frame = {
++		.frametype = AST_FRAME_MODEM,
++		.subclass.integer = AST_MODEM_T38,
++		.src = "res_pjsip_t38",
++	};
++	int i;
++
++	AST_FRAME_SET_BUFFER(&frame, (void *) no_signal, 0, sizeof(no_signal));
++	for (i = 0; i < FAXBOT_T38_OPENING_PACKETS; i++) {
++		ast_udptl_write(udptl, &frame);
++	}
+ }
+ 
+ static int media_session_udptl_write_callback(struct ast_sip_session *session, struct ast_sip_session_media *session_media, struct ast_frame *frame)
+@@ -1072,6 +1109,13 @@
+ 	ast_sip_session_media_add_read_callback(session, session_media, ast_udptl_fd(session_media->udptl),
+ 		media_session_udptl_read_callback);
+ 
++	/* Faxbot: send first, so a router that keeps ports lets the far end's T.38 data in. Once per T.38
++	 * stream: a session refresh applies the same stream again, and no indicator may interrupt a page. */
++	if (remote_stream->desc.port && state->opened != session_media->udptl) {
++		state->opened = session_media->udptl;
++		faxbot_t38_open_pinhole(session_media->udptl);
++	}
++
+ 	return 0;
+ }
+ 

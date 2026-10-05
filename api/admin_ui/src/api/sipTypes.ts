@@ -130,6 +130,8 @@ export interface SipTrunkStatus {
   // The fast fax service (SSL Fax engine): its state and one sentence; null outside the Compose install.
   engine_state?: 'running' | 'starting' | 'not_set_up' | 'stopped' | null;
   engine_text?: string | null;
+  // The engine went to audio fax on its own after a T.38 call that heard no fax machine.
+  engine_audio?: boolean;
   // Why Faxbot chose audio fax for new calls ('no_data_back' or 'network'), and when; null otherwise.
   t38_off_reason?: string | null;
   t38_off_at?: string | null;
