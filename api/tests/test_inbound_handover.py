@@ -322,7 +322,7 @@ def test_cli_recover_prints_the_plain_result(monkeypatch):
             assert path == '/admin/inbound/recover'
             return {'found': 1, 'imported': 1, 'waiting': 0, 'message': 'Brought in 1 received fax.'}
     monkeypatch.setattr(state, 'api', lambda: FakeApi())
-    result = CliRunner().invoke(cli, ['inbound', 'recover'])
+    result = CliRunner().invoke(cli, ['received', 'recover'])
     assert result.exit_code == 0, result.output
     assert result.output.strip() == 'Brought in 1 received fax.'
 
@@ -341,10 +341,10 @@ def test_cli_shows_when_a_recovered_fax_arrived_and_unknown_numbers_in_words(mon
             return [item] if path == '/inbound' else item
     monkeypatch.setattr(state, 'api', lambda: FakeApi())
     arrived = local_time('2026-10-04T03:14:00') + ' · brought in later'
-    listing = CliRunner().invoke(cli, ['inbound', 'list'], env={'COLUMNS': '200'})
+    listing = CliRunner().invoke(cli, ['received', 'list'], env={'COLUMNS': '200'})
     assert listing.exit_code == 0, listing.output
     assert 'Unknown' in listing.output and arrived in listing.output
-    detail = CliRunner().invoke(cli, ['inbound', 'get', 'f' * 32], env={'COLUMNS': '200'})
+    detail = CliRunner().invoke(cli, ['received', 'show', 'f' * 32], env={'COLUMNS': '200'})
     assert detail.exit_code == 0, detail.output
     assert arrived in detail.output and local_time('2026-10-04T03:48:00') in detail.output
 

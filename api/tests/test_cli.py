@@ -664,6 +664,11 @@ def test_providers_show_and_configure_work_on_a_default_install(cli):
     assert unknown.exit_code == 1 and unknown.stderr.strip() == (
         "Phaxio has no setting named 'colour'. Run 'faxbot providers show phaxio' to see them.")
     assert cli('providers', 'configure', 'phaxio', '--enable').exit_code == 1
+    assert cli('providers', 'configure', 'phaxio', '--role', 'inbound').exit_code == 1
+    chosen = cli('providers', 'configure', 'phaxio', '--enable', '--role', 'inbound')
+    assert chosen.exit_code == 0, chosen.stderr
+    assert cli.json('providers', 'show', 'phaxio', '--role', 'inbound')['in_use'] == {'inbound': True}
+    assert cli.json('system', 'settings', 'get', 'hybrid')['hybrid']['inbound_override'] == 'phaxio'
     missing = cli('providers', 'show', 'interfax')
     assert missing.exit_code == 5 and 'faxbot providers list' in missing.stderr
     assert cli.client.get('/plugins', headers={'X-API-Key': BOOTSTRAP}).status_code == 404
