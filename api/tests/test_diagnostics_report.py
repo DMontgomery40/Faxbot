@@ -338,3 +338,20 @@ def test_endpoint_reply_keeps_only_the_contact_status():
                    'RoundtripUsec': '1000', 'EndpointName': 'trunk-endpoint'}):
         AMIClient._collect(query, event, {key.lower(): value for key, value in event.items()})
     assert query['events'] == [{'URI': 'sip:sip.example.com', 'Status': 'Reachable', 'RoundtripUsec': '1000'}]
+
+
+
+@pytest.mark.parametrize('bucket, check, reachable, status', [
+    ('', True, True, PROBLEM),
+    ('faxes', False, True, ATTENTION),
+    ('faxes', True, True, OK),
+    ('faxes', True, False, PROBLEM),
+])
+def test_online_storage_is_checked_only_when_asked_and_never_assumed(monkeypatch, bucket, check, reachable, status):
+    """Docs Autopilot finding (2026-10-05): a configured bucket was reported as working without any check."""
+    monkeypatch.setattr(report, '_s3_reachable', lambda settings: reachable)
+    settings = SimpleNamespace(s3_bucket=bucket, enable_s3_diagnostics=check)
+    finding = report._storage_finding(settings)
+    assert finding.status == status
+    if status == ATTENTION:
+        assert 'has not checked' in finding.sentence

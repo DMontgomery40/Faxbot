@@ -518,12 +518,41 @@ async def server(context: Context) -> list[Finding]:
     main = _main()
     settings = main.settings
     if settings.storage_backend.lower() == 's3':
-        ready = bool(settings.s3_bucket)
-        findings.append(Finding('server.storage', 'server', 'Online storage', OK if ready else PROBLEM,
-                                'Received faxes are kept in online storage.' if ready
-                                else 'Online storage is turned on but not finished. Finish it in Storage & retention.',
-                                None if ready else 'Open Storage & retention', None if ready else 'system/storage'))
+        findings.append(await _blocking(_storage_finding, settings))
     return findings
+
+
+def _s3_reachable(settings):
+    """True when Faxbot can reach the bucket (a read-only HEAD request), False when it cannot."""
+    import boto3
+    from botocore.config import Config
+    client = boto3.client('s3', region_name=settings.s3_region or None, endpoint_url=settings.s3_endpoint_url or None,
+                          config=Config(signature_version='s3v4', connect_timeout=3, read_timeout=3,
+                                        retries={'max_attempts': 0}))
+    try:
+        client.head_bucket(Bucket=settings.s3_bucket)
+        return True
+    except Exception:
+        return False
+
+
+def _storage_finding(settings):
+    """Online storage: finished or not, and reachable when the bucket check is turned on."""
+    page = 'system/storage'
+    if not settings.s3_bucket:
+        return Finding('server.storage', 'server', 'Online storage', PROBLEM,
+                       'Online storage is turned on but not finished. Finish it in Storage & retention.',
+                       'Open Storage & retention', page)
+    if not settings.enable_s3_diagnostics:
+        return Finding('server.storage', 'server', 'Online storage', ATTENTION,
+                       'Received faxes go to online storage, but Faxbot has not checked that it can reach it. '
+                       'Turn on Also check the S3 bucket below.', None, None)
+    if _s3_reachable(settings):
+        return Finding('server.storage', 'server', 'Online storage', OK,
+                       'Faxbot can reach the online storage that keeps received faxes.')
+    return Finding('server.storage', 'server', 'Online storage', PROBLEM,
+                   'Faxbot cannot reach the online storage that keeps received faxes. Check the bucket name, region '
+                   'and access keys in Storage & retention.', 'Open Storage & retention', page)
 
 
 @check('security')
