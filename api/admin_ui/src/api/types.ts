@@ -379,6 +379,24 @@ export interface PluginConfigurationPatch {
   settings?: Record<string, unknown>;
 }
 
+// Diagnostics report (/admin/diagnostics/report): one sentence and at most one fix per check.
+export type DiagnosticsStatus = 'ok' | 'attention' | 'problem' | 'off';
+export interface DiagnosticsFinding {
+  id: string;
+  section: string;
+  title: string;
+  status: DiagnosticsStatus;
+  sentence: string;
+  fix: { label: string; page: string | null } | null;
+}
+export interface DiagnosticsReport {
+  checked_at: string | null;
+  checked_at_text: string;
+  status: DiagnosticsStatus | null;
+  summary: string | null;
+  sections: Array<{ id: string; title: string; checks: DiagnosticsFinding[] }>;
+}
+
 export type DiagnosticsValue = string | number | boolean | null | DiagnosticsValue[] | { [key: string]: DiagnosticsValue };
 export type DiagnosticsOutcome = 'pass' | 'fail' | 'warning' | 'info' | 'not_applicable';
 

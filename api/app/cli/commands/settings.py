@@ -407,22 +407,50 @@ def diagnostics_database():
     state.out().result(result, human)
 
 
+_DIAGNOSTICS_WORDS = {'ok': 'Working', 'attention': 'Needs attention', 'problem': 'Not working', 'off': 'Not in use'}
+
+
+def _print_report(result):
+    def human(out):
+        if not result.get('checked_at'):
+            out.line('Diagnostics have not run yet. Run: faxbot system diagnostics run')
+            return
+        out.line(f"{result.get('summary')} (checked {result.get('checked_at_text')})")
+        for section in result.get('sections') or []:
+            out.line('')
+            out.line(section['title'])
+            for item in section['checks']:
+                line = f"  {_DIAGNOSTICS_WORDS.get(item['status'], item['status'])}: {item['title']}. {item['sentence']}"
+                if item.get('fix'):
+                    line += f" ({item['fix']['label']} in the console.)"
+                out.line(line)
+    state.out().result(result, human)
+
+
 @diagnostics.command('run')
 def diagnostics_run():
-    """Run the installation checks and list anything that needs attention."""
-    result = state.api().post('/admin/diagnostics/run')
+    """Check sending, receiving, the fax engine, this server and security now. Sends nothing, changes nothing."""
+    _print_report(state.api().post('/admin/diagnostics/report'))
+
+
+@diagnostics.command('show')
+def diagnostics_show():
+    """Show the last diagnostics results without checking again."""
+    _print_report(state.api().get('/admin/diagnostics/report'))
+
+
+@diagnostics.command('engine')
+def diagnostics_engine(view: str = typer.Argument(..., metavar='VIEW',
+                                                 help='registrations, contacts, calls or faxes.')):
+    """List what the fax engine reports now: trunk sign-ins, checked addresses, calls or faxes."""
+    result = state.api().get(f'/admin/diagnostics/engine/{view}')
 
     def human(out):
-        summary = result.get('summary', {})
-        out.fields([('Healthy', summary.get('healthy'))])
-        for issue in summary.get('critical_issues') or []:
-            out.line('Problem: ' + str(issue))
-        for warning in summary.get('warnings') or []:
-            out.line('Warning: ' + str(warning))
-        rows = [[f'{section} {name}'.replace('_', ' '), outcome]
-                for section, values in (result.get('check_outcomes') or {}).items()
-                for name, outcome in values.items() if outcome in {'pass', 'fail', 'warning'}]
-        out.table(['Check', 'Result'], rows, empty='No checks ran.')
+        out.line(result['title'])
+        if result['rows']:
+            out.table(result['columns'], result['rows'])
+        if result.get('message'):
+            out.line(result['message'])
     state.out().result(result, human)
 
 
