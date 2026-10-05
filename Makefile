@@ -48,6 +48,16 @@ DOCKER_CONTEXT ?= colima-faxbot-refresh
 native-proof:
 	cd api && mkdir -p faxdata && FAXBOT_NATIVE_PROOF=1 FAXBOT_DOCKER_CONTEXT=$(DOCKER_CONTEXT) FAX_DISABLED=true FAX_DATA_DIR=./faxdata DATABASE_URL='sqlite:///./test_faxbot_ci.db' $(abspath $(VENV))/bin/python -m pytest -q -s -p no:cacheprovider -m native tests/test_t38_loopback.py tests/test_phone_system_loopback.py
 
+# SSL Fax loopback proof, through Faxbot's own API: Faxbot (API, Asterisk and the
+# HylaFAX+ engine) sends to a stand-in carrier Asterisk and a peer engine on a
+# private network, over SSL Fax on an audio call, across two T.38 gateways, and
+# falling back to an ordinary fax when the peer's listener cannot be reached or
+# names a private address. Needs Docker; never runs in CI. FAXBOT_NATIVE_IMAGE,
+# FAXBOT_ENGINE_IMAGE and FAXBOT_API_IMAGE name already-built images to use.
+.PHONY: sslfax-proof
+sslfax-proof:
+	cd api && mkdir -p faxdata && FAXBOT_SSLFAX_PROOF=1 FAXBOT_DOCKER_CONTEXT=$(DOCKER_CONTEXT) FAX_DISABLED=true FAX_DATA_DIR=./faxdata DATABASE_URL='sqlite:///./test_faxbot_ci.db' $(abspath $(VENV))/bin/python -m pytest -q -s -p no:cacheprovider -m native tests/test_sslfax_loopback.py $(PYTEST_ARGS)
+
 # The faxbot command line from this checkout, for example: make cli ARGS="health"
 # Paths in ARGS stay relative to where make runs. See docs/operations/cli.md.
 .PHONY: cli cli-docs

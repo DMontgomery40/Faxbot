@@ -61,6 +61,24 @@ def test_each_start_records_the_trunk_it_loaded_and_that_faxbot_manages_it(tmp_p
     assert (shared / 'engine-started').read_text().strip().isdigit()
 
 
+def test_the_ssl_fax_engine_lines_are_loaded_and_recorded_or_iax_stays_on_loopback(tmp_path):
+    shared = tmp_path / 'data' / 'asterisk'
+    shared.mkdir(parents=True)
+    # Without Faxbot's lines, chan_iax2 accepts no peer and listens on loopback only.
+    (shared / 'iax.conf.started').write_text('stale')
+    result, etc, shared = start(tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert 'bindaddr=127.0.0.1' in (etc / 'iax.conf').read_text() and 'type=friend' not in (etc / 'iax.conf').read_text()
+    assert not (shared / 'iax.conf.started').exists()
+    # With them, Asterisk loads exactly what Faxbot wrote and records it for Faxbot to compare.
+    lines = '[general]\nbindport=4569\n\n[faxbot-line1]\ntype=friend\nsecret=synthetic0123456789abcdef\n'
+    (shared / 'iax.conf').write_text(lines)
+    result, etc, shared = start(tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert (etc / 'iax.conf').read_text() == lines == (shared / 'iax.conf.started').read_text()
+    assert oct((shared / 'iax.conf.started').stat().st_mode & 0o777) == '0o600'
+
+
 def test_a_start_without_a_faxbot_trunk_leaves_no_stale_copy(tmp_path):
     shared = tmp_path / 'data' / 'asterisk'
     shared.mkdir(parents=True)

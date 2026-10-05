@@ -21,6 +21,8 @@ STATUS_EVENT_FIELDS = {
     "contactlist": ("ObjectName", "Status", "RoundtripUsec"),
     # Only counted: whether any call is up before Faxbot restarts Asterisk.
     "coreshowchannel": ("Uniqueid",),
+    # The SSL Fax engine's IAX lines and whether each answers Asterisk's checks.
+    "peerentry": ("ObjectName", "Status"),
 }
 # One plain sentence for each state of Faxbot's connection to its fax engine
 # (Asterisk). Readiness, the dashboard, diagnostics, trunk status and a refused
@@ -417,6 +419,24 @@ class AMIClient:
         if response["response"].lower() != "success":
             raise PermissionError("AMI channel list refused")
         return len(events)
+
+    async def iax_lines_ready(self, prefix: str) -> int:
+        """How many IAX peers named ``prefix``* are registered and answer Asterisk's checks."""
+        response, events = await self.status_query({"Action": "IAXpeerlist"}, collect=True)
+        if response["response"].lower() != "success":
+            raise PermissionError("AMI peer list refused")
+        return sum(1 for event in events if str(event.get("ObjectName", "")).startswith(prefix)
+                   and str(event.get("Status", "")).upper().startswith("OK"))
+
+    async def db_put(self, family: str, key: str, value: str):
+        """Store one value in Asterisk's database (the SSL Fax engine's call plans); raises when not stored."""
+        await self._send_action({"Action": "DBPut", "ActionID": "faxbot-db:" + uuid4().hex,
+                                 "Family": family, "Key": key, "Val": value})
+
+    async def db_del(self, family: str, key: str):
+        """Remove one value from Asterisk's database; raises when Asterisk did not confirm."""
+        await self._send_action({"Action": "DBDel", "ActionID": "faxbot-db:" + uuid4().hex,
+                                 "Family": family, "Key": key})
 
     async def stop_gracefully(self) -> bool:
         """Ask Asterisk to stop once no call is up; Docker starts it again and it reloads its files.

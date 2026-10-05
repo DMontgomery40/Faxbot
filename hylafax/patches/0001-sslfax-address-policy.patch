@@ -1,0 +1,227 @@
+diff -ruN a/faxd/Class1Recv.c++ b/faxd/Class1Recv.c++
+--- a/faxd/Class1Recv.c++	2026-10-04 21:29:45
++++ b/faxd/Class1Recv.c++	2026-10-04 21:30:42
+@@ -42,6 +42,7 @@
+ #include "Sys.h"
+ #include "config.h"
+ #include "FaxParams.h"
++#include "sslfaxpolicy.h"
+ 
+ extern timeval operator-(timeval src1, timeval src2);
+ 
+@@ -518,6 +519,7 @@
+     if (!isSSLFax && useSSLFax && remoteCSAType == 0x40 && remoteCSAinfo.length()) {
+ 	protoTrace("Connecting to %s for SSL Fax transmission.", (const char*) remoteCSAinfo);
+ 	SSLFax sslfax;
++	SSLFax::setOwnListener(conf.class1SSLFaxInfo);
+ 	sslFaxProcess = sslfax.startClient(remoteCSAinfo, sslFaxPasscode, rtcRev, conf.class1SSLFaxServerTimeout);
+ 	if (sslFaxProcess.emsg != "") protoTrace("SSL Fax: \"%s\"", (const char*) sslFaxProcess.emsg);
+ 	if (!sslFaxProcess.server) {
+@@ -560,7 +562,9 @@
+ 	    {
+ 		fxStr s;
+ 		decodeCSA(s, frame);
+-		protoTrace("REMOTE TSA \"%s\", type 0x%X", (const char*) s, remoteCSAType);
++		char shown[160];
++		sslFaxShown((const char*) s, shown, sizeof (shown));
++		protoTrace("REMOTE TSA \"%s\", type 0x%X", shown, remoteCSAType);
+ 		if (remoteCSAType == 0x40 && s.length() > 6 && strncmp((const char*) s, "ssl://", 6) == 0) {
+ 		    // Looks like this is an SSL Fax sender.
+ 		    if (conf.class1SSLFaxSupport) useSSLFax = true;
+diff -ruN a/faxd/Class1Send.c++ b/faxd/Class1Send.c++
+--- a/faxd/Class1Send.c++	2026-10-04 21:29:45
++++ b/faxd/Class1Send.c++	2026-10-04 21:30:42
+@@ -37,6 +37,7 @@
+ #include "t.30.h"
+ #include "itufaxicc.h"
+ #include "FaxRequest.h"
++#include "sslfaxpolicy.h"
+ 
+ /*
+  * Force the tty into a known flow control state.
+@@ -525,6 +526,7 @@
+ 	if (!suppressSSLFax && !isSSLFax && useSSLFax && remoteCSAType == 0x40 && remoteCSAinfo.length()) {
+ 	    protoTrace("Connecting to %s for SSL Fax transmission.", (const char*) remoteCSAinfo);
+ 	    SSLFax sslfax;
++	    SSLFax::setOwnListener(conf.class1SSLFaxInfo);
+ 	    sslFaxProcess = sslfax.startClient(remoteCSAinfo, sslFaxPasscode, rtcRev, conf.class1SSLFaxServerTimeout);
+ 	    if (sslFaxProcess.emsg != "") protoTrace("SSL Fax: \"%s\"", (const char*) sslFaxProcess.emsg);
+ 	    if (!sslFaxProcess.server) {
+@@ -1254,7 +1256,9 @@
+ 			{
+ 			    fxStr s;
+ 			    decodeCSA(s, frame);
+-			    protoTrace("REMOTE CSA \"%s\", type 0x%X", (const char*) s, remoteCSAType);
++			    char shown[160];
++			    sslFaxShown((const char*) s, shown, sizeof (shown));
++			    protoTrace("REMOTE CSA \"%s\", type 0x%X", shown, remoteCSAType);
+ 			    if (remoteCSAType == 0x40 && s.length() > 6 && strncmp((const char*) s, "ssl://", 6) == 0) {
+ 				// Looks like this is an SSL Fax receiver.
+ 				if (!suppressSSLFax && conf.class1SSLFaxSupport) useSSLFax = true;
+diff -ruN a/faxd/sslfax.c++ b/faxd/sslfax.c++
+--- a/faxd/sslfax.c++	2026-10-04 21:29:45
++++ b/faxd/sslfax.c++	2026-10-04 21:30:42
+@@ -33,7 +33,17 @@
+ #include "sslfax.h"
+ #include "Sys.h"
+ #include "Socket.h"
++#include "sslfaxpolicy.h"
+ 
++// Faxbot: this engine's own listener (Class1SSLFaxInfo), the one address the
++// client may reach even when it is private; see sslfaxpolicy.h.
++static fxStr sslFaxOwnInfo;
++
++void SSLFax::setOwnListener(const fxStr& info)
++{
++    sslFaxOwnInfo = info;
++}
++
+ timeval currentTime() {
+     timeval curTime;
+     gettimeofday(&curTime, 0);
+@@ -90,6 +100,10 @@
+ 	emsg = fxStr::format("Can't open socket: %s", strerror(errno));
+ 	return 0;
+     }
++    // Faxbot: back-to-back calls must be able to bind again while the last
++    // connection is still in TIME_WAIT, or the next call silently falls back.
++    int reuse = 1;
++    (void) setsockopt(sd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof (reuse));
+ 
+     bzero (&addr, sizeof (addr));
+     addr.sin_family = AF_INET;
+@@ -126,16 +140,27 @@
+     return msg;
+ }
+ 
+-int OpenConnection(const char *hostname, uint16_t port, timeval start, long ms, fxStr& emsg)
++int OpenConnection(const char *hostname, uint16_t port, timeval start, long ms, fxStr& emsg, bool ownListener)
+ {
+     int sd;
+     struct hostent *host;
+     struct sockaddr_in addr;
++    uint32_t resolved;
+ 
+     if ((host = gethostbyname(hostname)) == NULL) {
+ 	emsg = fxStr::format("Problem with resolving host \"%s\".", hostname);
+ 	return 0;
+     }
++    // Faxbot: resolve once and check the very address that is connected to.
++    if (host->h_addrtype != AF_INET || host->h_length != 4 || host->h_addr == NULL) {
++	emsg = fxStr::format("Refusing SSL Fax host \"%s\": it has no usable IPv4 address.", hostname);
++	return 0;
++    }
++    memcpy(&resolved, host->h_addr, sizeof (resolved));
++    if (!ownListener && sslFaxRefusedAddress(ntohl(resolved))) {
++	emsg = fxStr::format("Refusing SSL Fax host \"%s\": it names a private, loopback, link-local or reserved address.", hostname);
++	return 0;
++    }
+     sd = socket(PF_INET, SOCK_STREAM, 0);
+     if (sd <= 1) {
+ 	emsg = fxStr::format("Can't open socket: %s", strerror(errno));
+@@ -149,7 +174,7 @@
+     bzero (&addr, sizeof (addr));
+     addr.sin_family = AF_INET;
+     addr.sin_port = htons (port);
+-    addr.sin_addr.s_addr = * (long*) (host->h_addr);
++    addr.sin_addr.s_addr = resolved;
+ 
+     if (connect(sd, (struct sockaddr*)&addr, sizeof (addr)) != 0) {
+ 	if (errno == EINPROGRESS) {
+@@ -498,7 +523,8 @@
+ 	return (sfp);
+     }
+     timeval start = currentTime();
+-    sfp.server = OpenConnection(host, portnum, start, ms, sfp.emsg);
++    sfp.server = OpenConnection(host, portnum, start, ms, sfp.emsg,
++	sslFaxOwnListener((const char*) info, (const char*) sslFaxOwnInfo));
+     if (sfp.emsg != "") {
+ 	cleanup(sfp);
+ 	return(sfp);
+diff -ruN a/faxd/sslfax.h b/faxd/sslfax.h
+--- a/faxd/sslfax.h	2026-10-04 21:29:45
++++ b/faxd/sslfax.h	2026-10-04 21:30:42
+@@ -58,6 +58,7 @@
+     SSLFaxProcess null();
+     SSLFaxProcess startServer(fxStr info, fxStr pemFile);
+     SSLFaxProcess startClient(fxStr info, fxStr passcode, const u_char* bitrev, long ms);
++    static void setOwnListener(const fxStr& info);	// Faxbot: see sslfaxpolicy.h
+     void acceptClient(SSLFaxProcess& sfp, fxStr passcode, int modemFd, long ms);
+     bool acceptClient1(SSLFaxProcess& sfp, long ms, bool sustain = false);
+     void acceptClient2(SSLFaxProcess& sfp, fxStr passcode, int modemFd, long ms, bool sustain = false);
+diff -ruN a/faxd/sslfaxpolicy.h b/faxd/sslfaxpolicy.h
+--- a/faxd/sslfaxpolicy.h	1969-12-31 17:00:00
++++ b/faxd/sslfaxpolicy.h	2026-10-04 21:29:57
+@@ -0,0 +1,72 @@
++/*
++ * Faxbot: where the SSL Fax client may connect, and how the advertised
++ * address is shown in logs.
++ *
++ * The far end of a fax call names the host and port to connect to (in its
++ * CSA or TSA frame). The client resolves that host once and refuses
++ * addresses no fax receiver on the internet uses: this network, private,
++ * shared (carrier NAT), loopback, link-local (including cloud metadata),
++ * IETF protocol, benchmarking, multicast and reserved ranges. The single
++ * exception is this engine's own listener (Class1SSLFaxInfo), compared as
++ * the exact advertised "host:port", so a fax the installation sends to
++ * itself can still use SSL Fax. There is no setting that turns the check off.
++ *
++ * The passcode in an advertised address is never written to a log.
++ */
++#ifndef _SSLFAXPOLICY_
++#define _SSLFAXPOLICY_
++
++#include <stdint.h>
++#include <stddef.h>
++#include <string.h>
++#include <strings.h>
++
++/* 1 when the IPv4 address (host byte order) is one an advertised SSL Fax host must never name. */
++static inline int sslFaxRefusedAddress(uint32_t a)
++{
++    if ((a & 0xFF000000u) == 0x00000000u) return 1;	/* 0.0.0.0/8 this network */
++    if ((a & 0xFF000000u) == 0x0A000000u) return 1;	/* 10.0.0.0/8 private */
++    if ((a & 0xFFC00000u) == 0x64400000u) return 1;	/* 100.64.0.0/10 shared address space */
++    if ((a & 0xFF000000u) == 0x7F000000u) return 1;	/* 127.0.0.0/8 loopback */
++    if ((a & 0xFFFF0000u) == 0xA9FE0000u) return 1;	/* 169.254.0.0/16 link-local, cloud metadata */
++    if ((a & 0xFFF00000u) == 0xAC100000u) return 1;	/* 172.16.0.0/12 private */
++    if ((a & 0xFFFFFF00u) == 0xC0000000u) return 1;	/* 192.0.0.0/24 IETF protocol assignments */
++    if ((a & 0xFFFF0000u) == 0xC0A80000u) return 1;	/* 192.168.0.0/16 private */
++    if ((a & 0xFFFE0000u) == 0xC6120000u) return 1;	/* 198.18.0.0/15 benchmarking */
++    if ((a & 0xF0000000u) == 0xE0000000u) return 1;	/* 224.0.0.0/4 multicast */
++    if ((a & 0xF0000000u) == 0xF0000000u) return 1;	/* 240.0.0.0/4 reserved, broadcast */
++    return 0;
++}
++
++/* 1 when the advertised "host:port" is exactly this engine's own listener. */
++static inline int sslFaxOwnListener(const char* advertised, const char* own)
++{
++    return advertised && own && *own && strcasecmp(advertised, own) == 0;
++}
++
++/*
++ * Copy an advertised address for a log line with any passcode hidden:
++ * "ssl://secret@host:port" becomes "ssl://(passcode hidden)@host:port".
++ */
++static inline void sslFaxShown(const char* in, char* out, size_t size)
++{
++    const char* hidden = "ssl://(passcode hidden)@";
++    if (!size) return;
++    out[0] = '\0';
++    if (!in) return;
++    if (strncmp(in, "ssl://", 6) == 0) {
++	const char* at = strrchr(in + 6, '@');
++	if (at) {
++	    size_t n = strlen(hidden);
++	    if (n >= size) n = size - 1;
++	    memcpy(out, hidden, n);
++	    out[n] = '\0';
++	    strncat(out, at + 1, size - n - 1);
++	    return;
++	}
++    }
++    strncpy(out, in, size - 1);
++    out[size - 1] = '\0';
++}
++
++#endif

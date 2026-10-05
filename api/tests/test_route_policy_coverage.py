@@ -26,6 +26,7 @@ OWN_AUTHENTICATION = {
     ("POST", "/efax-inbound"): "verified provider signal; starts a check of eFax, stores nothing",
     ("POST", "/_internal/asterisk/inbound"): "internal shared secret",
     ("POST", "/_internal/freeswitch/outbound_result"): "internal shared secret",
+    ("POST", "/_internal/hylafax/result"): "internal shared secret (the SSL Fax engine's job results)",
     ("POST", "/mobile/pair"): "single-use pairing code minted by a principal with tunnels:pair",
     ("WS", "/admin/terminal"): "single-use ticket from POST /admin/terminal/ticket; host:terminal rechecked while open",
     # Direct delivery partners carry no API key: each request is verified against

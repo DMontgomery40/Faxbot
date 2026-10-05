@@ -653,6 +653,9 @@ def engine_uses_current(values) -> bool:
         return False
     if started != expected:
         return False
+    from . import hylafax_engine
+    if not hylafax_engine.iax_current(values):
+        return False
     if PUBLIC_ADDRESS not in expected.decode():
         return True
     record = read_public_address(values) or {}
@@ -688,6 +691,9 @@ def write_asterisk_configuration(values, *, inbound_secret=None) -> Path:
             secret_path(values).unlink()
         except FileNotFoundError:
             pass
+    # The SSL Fax engine's settings and its fax lines for Asterisk (iax.conf).
+    from . import hylafax_engine
+    hylafax_engine.write_engine_files(values, secret)
     return target
 
 
