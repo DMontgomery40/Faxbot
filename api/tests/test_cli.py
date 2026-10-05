@@ -127,34 +127,6 @@ def restricted_key(cli, name='Front desk scanner', role='Fax operator', permissi
 
 # -- global behaviour ------------------------------------------------------------------
 
-# Every command path the command line had at 611e80ea, before it took the console's eight areas (2026-10-04).
-OLDER_PATHS = (
-    'access grant|access list|access revoke|actions list|actions run|admin backup|admin migrate|'
-    'admin recover-owner|admin restore|admin status|audit list|cases documents|cases send|config remove|'
-    'config set-profile|config show|config use|diagnostics database|diagnostics run|direct card|direct deliveries|'
-    'direct peers add|direct peers challenge|direct peers confirm|direct peers list|direct peers revoke|groups add|'
-    'groups get|groups list|groups members add|groups members remove|groups update|health|import|inbound fetch|'
-    'inbound get|inbound list|inbound pdf|inbound recover|inbound simulate|intake connectors add|'
-    'intake connectors list|intake connectors remove|intake connectors test|intake connectors update|intake items|'
-    'intake retry|integrations add|integrations list|jobs get|jobs history|jobs list|jobs pdf|jobs reconcile|'
-    'jobs refresh|jobs send-now|keys approve|keys create|keys list|keys revoke|keys rotate|keys update|logs list|'
-    'logs tail|mailboxes add|mailboxes list|mailboxes update|me|numbers add|numbers list|numbers update|'
-    'owner enroll|pair device|pair new|providers callbacks|providers config|providers configure|providers install|'
-    'providers list|providers registry|providers status|providers validate|resources list|restart|roles add|'
-    'roles get|roles list|roles permissions|roles update|routing batching off|routing batching set|'
-    'routing batching show|routing costs|routing destination|routing destinations|routing fax-cost|routing plans|'
-    'routing rate-cards|routing reconcile|routing update-destination|send|sessions list|sessions revoke|'
-    'settings export|settings get|settings persist|settings set|settings validate|status|trunk apply|trunk calls|'
-    'trunk mode|trunk presets|trunk status|trunk use|tunnel set|tunnel status|tunnel test|users add|users get|'
-    'users list|users reset-password|users update|work acknowledge|work assign|work done|work export|work list|'
-    'work reopen|work settings|work show'
-).split('|')
-
-
-# Older commands that are now groups: `faxbot providers registry` alone still lists the registry.
-NOW_GROUPS = {('providers', 'registry')}
-
-
 def _commands(typer_app, prefix=(), hidden=False):
     """{path: (callback, hidden)} for every command under a Typer app, hidden ones included."""
     found = {}
@@ -189,40 +161,16 @@ def test_help_lists_send_status_and_the_eight_areas_without_starting_the_server(
         assert shown.exit_code == 0 and 'Usage: faxbot ' + noun in _plain(shown.stdout)
 
 
-def test_every_older_command_still_runs_the_same_command_as_its_new_home():
-    from app.cli.nouns import MOVED
+def test_every_command_is_shown_in_help_and_the_older_names_are_gone():
     commands = _commands(cli_app)
-    older = [tuple(path.split()) for path in OLDER_PATHS]
-    assert len(older) == 131 and set(MOVED) <= set(older)
-    for path in older:
-        home = MOVED.get(path, path)
-        assert home in commands and not commands[home][1], f"faxbot {' '.join(home)} is not shown in help"
-        if path in NOW_GROUPS:  # an older command that became a group; with nothing after it, it runs its home
-            assert path not in commands
-        else:
-            assert path in commands, f"faxbot {' '.join(path)} no longer resolves"
-            assert _original(commands[path][0]) is _original(commands[home][0]), ' '.join(path)
-        # Through the command framework as a person types it, hidden or not.
-        typed = CliRunner().invoke(cli_app, [*path, '--help'], env={'COLUMNS': '200'})
-        assert typed.exit_code == 0, (path, typed.stdout, typed.stderr)
-    # Every command shown in help is an older command's home or new in this shape.
-    shown = {path for path, (_, hidden) in commands.items() if not hidden}
-    assert {MOVED.get(path, path) for path in older} <= shown
-    # Names used between the first and second release of this shape stay, hidden.
-    for interim, home in ((('sent', 'history'), ('sent', 'evidence')), (('sent', 'reconcile'), ('sent', 'confirm-receipt'))):
-        assert commands[interim][1] and _original(commands[interim][0]) is _original(commands[home][0])
-
-
-def test_older_commands_still_work_against_the_server(cli, tmp_path):
-    note = tmp_path / 'note.txt'
-    note.write_text('Synthetic older-name fax\n')
-    sent = cli.json('send', '+15551230009', note, '--queue')
-    assert cli.json('jobs', 'list') == cli.json('sent', 'list')
-    assert cli.json('jobs', 'get', sent['id'])['id'] == cli.json('sent', 'show', sent['id'])['id'] == sent['id']
-    assert cli.json('settings', 'get')['limits'] == cli.json('system', 'settings', 'get')['limits']
-    assert cli.json('routing', 'destinations') == cli.json('recipients', 'list')
-    assert cli.json('me') == cli.json('access', 'me')
-    assert cli.json('mailboxes', 'list') == cli.json('numbers', 'mailboxes', 'list')
+    assert [path for path, (_, hidden) in commands.items() if hidden] == []
+    # Names from before the console's eight areas, removed before the first tagged release that had them.
+    for older in (('jobs', 'list'), ('inbound', 'list'), ('settings', 'get'), ('admin', 'migrate'), ('health',),
+                  ('me',), ('tunnel', 'status'), ('actions', 'list'), ('sent', 'history'), ('sent', 'reconcile'),
+                  ('providers', 'config'), ('providers', 'registry'), ('access', 'grant')):
+        typed = CliRunner().invoke(cli_app, [*older, '--help'], env={'COLUMNS': '200'})
+        assert typed.exit_code == 2, older
+        assert older not in commands
 
 
 def test_me_health_and_errors_map_to_plain_sentences(cli):
@@ -246,7 +194,7 @@ def test_me_health_and_errors_map_to_plain_sentences(cli):
     assert as_json.exit_code == 5
     assert json.loads(as_json.stdout)['error'] == {'message': 'Fax not found.', 'exit_code': 5, 'status': 404,
                                                    'detail': 'Fax not found.'}
-    unreachable = CliRunner().invoke(cli_app, ['--url', 'http://127.0.0.1:9', '--key', 'x', 'me'])
+    unreachable = CliRunner().invoke(cli_app, ['--url', 'http://127.0.0.1:9', '--key', 'x', 'access', 'me'])
     assert unreachable.exit_code == 8 and 'Could not reach Faxbot at http://127.0.0.1:9' in unreachable.stderr
     assert 'Traceback' not in unreachable.stderr + unreachable.stdout
 
@@ -400,7 +348,8 @@ def test_names_from_the_server_are_printed_exactly(cli):
     cli.json('access', 'users', 'add', 'desk', '--name', name)
     cli.json('access', 'groups', 'add', 'Night [b] shift')
     cli.json('access', 'groups', 'members', 'add', 'Night [b] shift', 'desk')
-    for args in (('users', 'list'), ('users', 'get', 'desk'), ('groups', 'get', 'Night [b] shift')):
+    for args in (('access', 'users', 'list'), ('access', 'users', 'show', 'desk'),
+                 ('access', 'groups', 'show', 'Night [b] shift')):
         result = cli(*args)
         assert result.exit_code == 0, (args, result.stderr)
         assert name in result.stdout, args
@@ -509,18 +458,18 @@ def test_pairing_a_device_and_reusing_the_code(cli):
     assert again.stderr.strip() == 'This pairing code did not work. Create a new code in the console and try again.'
     saved = cli.json('access', 'pair', 'device', cli.json('access', 'pair', 'new')['code'], '--save-profile', 'phone', key=None)
     assert saved['saved_profile'] == 'phone' and 'token' not in saved
-    as_phone = cli('--profile', 'phone', '--json', 'me', key=None, url=None)
+    as_phone = cli('--profile', 'phone', '--json', 'access', 'me', key=None, url=None)
     assert as_phone.exit_code == 0 and json.loads(as_phone.stdout)['principal']['kind'] == 'integration'
 
 
-def test_logs_tunnel_actions_restart_and_database(cli):
+def test_logs_restart_and_database(cli):
     logs = cli.json('system', 'logs', 'list', '--limit', '5')
     assert 'items' in logs and logs['count'] <= 5
     tail = cli('system', 'logs', 'tail')
     assert tail.exit_code == 9 and tail.stderr.strip() == ('The server does not keep an activity log file. Set '
                                                            'AUDIT_LOG_FILE to keep one.')
-    assert cli.json('system', 'tunnel', 'status')['enabled'] is False
-    assert cli.json('system', 'actions', 'list') == {'enabled': False, 'items': []}
+    for gone in (('system', 'tunnel', 'status'), ('system', 'actions', 'list'), ('tunnel', 'status'), ('actions', 'list')):
+        assert cli(*gone).exit_code == 2, gone
     unconfirmed = cli('--json', 'system', 'restart')
     assert unconfirmed.exit_code == 1 and 'Add --yes' in json.loads(unconfirmed.stdout)['error']['message']
     refused = cli('system', 'restart', '--yes')
@@ -529,16 +478,15 @@ def test_logs_tunnel_actions_restart_and_database(cli):
     assert database['engine'] == 'sqlite' and database['connected'] is True
     callbacks = cli.json('providers', 'callbacks')
     assert callbacks['backend'] == 'phaxio' and callbacks['callbacks'][0]['url'].endswith('/phaxio-inbound')
-    turned_off = cli('providers', 'show', 'phaxio')
-    assert turned_off.exit_code == 5
-    assert turned_off.stderr.strip() == 'Provider plugins are turned off on this installation.'
+    # With provider plugins off, as on a default install, a provider's settings still show.
+    assert cli.json('providers', 'show', 'phaxio')['provider'] == 'phaxio'
 
 
 # -- global options after the subcommand ------------------------------------------------------
 
 def test_global_options_are_accepted_before_or_after_the_subcommand(cli, tmp_path):
     inbound_id = cli.json('system', 'diagnostics', 'test-fax', '--from', '+15559990000', '--to', '+15551112222')['id']
-    before = cli.runner.invoke(cli_app, ['--url', ORIGIN, '--key', BOOTSTRAP, '--json', 'inbound', 'list'],
+    before = cli.runner.invoke(cli_app, ['--url', ORIGIN, '--key', BOOTSTRAP, '--json', 'received', 'list'],
                                obj={'client_factory': lambda address, timeout: (cli.client, False)})
     after = cli('received', 'list', '--json', '--url', ORIGIN, '--key', BOOTSTRAP, url=None, key=None)
     equals = cli('received', 'list', '--json', f'--url={ORIGIN}', f'--key={BOOTSTRAP}', url=None, key=None)
@@ -581,15 +529,15 @@ def test_global_options_are_moved_only_from_after_the_subcommand():
     root = typer.main.get_command(cli_app)
     context = Context(root)
     cases = {
-        ('inbound', 'list', '--json'): ['--json', 'inbound', 'list'],
-        ('--url', 'A', 'jobs', 'list', '--url=B', '-q'): ['--url', 'A', '--url=B', '-q', 'jobs', 'list'],
-        ('me', '--profile', 'p', '--key', 'K'): ['--profile', 'p', '--key', 'K', 'me'],
-        ('admin', '--data-dir', 'D', 'status', '--json'): ['--json', 'admin', '--data-dir', 'D', 'status'],
-        ('config', 'set-profile', 'x', '--url', 'U', '--json'): ['--json', 'config', 'set-profile', 'x', '--url', 'U'],
-        ('keys', 'update', 'k', '--note', '--json'): ['keys', 'update', 'k', '--note', '--json'],
+        ('received', 'list', '--json'): ['--json', 'received', 'list'],
+        ('--url', 'A', 'sent', 'list', '--url=B', '-q'): ['--url', 'A', '--url=B', '-q', 'sent', 'list'],
+        ('access', 'me', '--profile', 'p', '--key', 'K'): ['--profile', 'p', '--key', 'K', 'access', 'me'],
+        ('system', 'status', '--data-dir', 'D', '--json'): ['--json', 'system', 'status', '--data-dir', 'D'],
+        ('system', 'profiles', 'save', 'x', '--url', 'U', '--json'): ['--json', 'system', 'profiles', 'save', 'x', '--url', 'U'],
+        ('access', 'keys', 'update', 'k', '--note', '--json'): ['access', 'keys', 'update', 'k', '--note', '--json'],
         ('send', '+15551230001', '--', '--json'): ['send', '+15551230001', '--', '--json'],
-        ('jobs', 'list', '--help'): ['jobs', 'list', '--help'],
-        ('--json', 'me'): ['--json', 'me'],
+        ('sent', 'list', '--help'): ['sent', 'list', '--help'],
+        ('--json', 'access', 'me'): ['--json', 'access', 'me'],
     }
     for given, expected in cases.items():
         assert hoist_global_options(root, context, list(given)) == expected, given
@@ -650,31 +598,14 @@ def test_jobs_reconcile_records_the_provider_id_without_sending():
     assert not any(path == '/fax' for _, path, _, _ in recorder.requests)
 
 
-def test_tunnel_test_and_restart_send_one_request_and_print_one_sentence():
-    recorder = Recorder({
-        ('POST', '/admin/tunnel/test'): (200, {'ok': True, 'message': 'OK', 'target': 'fax.example.test:443/health'}),
-        ('POST', '/admin/restart'): (200, {'ok': True}),
-    })
-    tested = recorder('system', 'tunnel', 'test')
-    assert tested.exit_code == 0 and tested.stdout.strip() == 'Reachable at fax.example.test:443/health: OK'
+def test_restart_sends_one_request_and_prints_one_sentence():
+    recorder = Recorder({('POST', '/admin/restart'): (200, {'ok': True})})
     restarted = recorder('system', 'restart', '--yes')
     assert restarted.exit_code == 0
     assert restarted.stdout.strip() == 'Faxbot is restarting. Its service manager starts it again.'
     declined = recorder('system', 'restart', input='n\n')
     assert declined.exit_code == 1
-    assert [(method, path) for method, path, _, _ in recorder.requests] == [
-        ('POST', '/admin/tunnel/test'), ('POST', '/admin/restart')]
-
-
-def test_actions_run_executes_an_approved_action(cli, monkeypatch):
-    monkeypatch.setenv('ENABLE_ADMIN_EXEC', 'true')
-    assert 'python_version' in [item['id'] for item in cli.json('system', 'actions', 'list')['items']]
-    ran = cli.json('system', 'actions', 'run', 'python_version')
-    assert ran['ok'] is True and ran['code'] == 0 and sys.version.split()[0] in ran['stdout']
-    human = cli('system', 'actions', 'run', 'python_version')
-    assert human.exit_code == 0 and human.stdout.startswith('Finished. (exit code 0)')
-    unknown = cli('system', 'actions', 'run', 'rm_everything')
-    assert unknown.exit_code == 5
+    assert [(method, path) for method, path, _, _ in recorder.requests] == [('POST', '/admin/restart')]
 
 
 def test_settings_persist_writes_the_private_recovery_file(monkeypatch, tmp_path):
@@ -713,29 +644,44 @@ def test_providers_validate_and_install_an_http_manifest(plugins_cli, tmp_path):
     assert refused.exit_code == 1 and refused.stderr.strip() == f'{broken} is not valid JSON.'
 
 
-def test_provider_plugins_list_config_and_configure(plugins_cli):
-    cli = plugins_cli
-    providers = cli.json('providers', 'list')
-    assert any(item['id'] == 'phaxio' and item['enabled'] for item in providers)
+def test_providers_show_and_configure_work_on_a_default_install(cli):
+    """They read and change the settings a default install serves; provider plugins stay off."""
     shown = cli.json('providers', 'show', 'phaxio')
-    assert shown['enabled'] is True and set(shown['settings']) >= {'api_key', 'callback_url'}
+    assert shown['provider'] == 'phaxio' and shown['in_use']['outbound'] is True and shown['in_use']['storage'] is False
+    assert {'api_key', 'api_secret', 'callback_url'} <= set(shown['settings'])
+    human = cli('providers', 'show', 'phaxio')
+    assert human.exit_code == 0 and 'Phaxio' in human.stdout and 'sending' in human.stdout
+    assert cli.json('providers', 'show', 'phaxio', '--role', 'storage')['in_use'] == {'storage': False}
     saved = cli('providers', 'configure', 'phaxio', '--secret', 'api_key', input='synthetic-phaxio-key\n' * 2)
     assert saved.exit_code == 0, saved.stderr
     assert 'synthetic-phaxio-key' not in saved.stdout
     masked = cli.json('providers', 'show', 'phaxio')['settings']['api_key']
     assert masked and 'synthetic-phaxio-key' not in masked
-    assert cli.json('providers', 'registry') == cli.json('providers', 'registry', 'list')
-    assert isinstance(cli.json('providers', 'registry', 'list'), dict)
+    address = 'https://fax.example.test/phaxio-callback'
+    assert cli('providers', 'configure', 'phaxio', f'callback_url={address}').exit_code == 0
+    assert cli.json('providers', 'show', 'phaxio')['settings']['callback_url'] == address
+    unknown = cli('providers', 'configure', 'phaxio', 'colour=blue')
+    assert unknown.exit_code == 1 and unknown.stderr.strip() == (
+        "Phaxio has no setting named 'colour'. Run 'faxbot providers show phaxio' to see them.")
+    assert cli('providers', 'configure', 'phaxio', '--enable').exit_code == 1
+    assert cli('providers', 'configure', 'phaxio', '--role', 'inbound').exit_code == 1
+    chosen = cli('providers', 'configure', 'phaxio', '--enable', '--role', 'inbound')
+    assert chosen.exit_code == 0, chosen.stderr
+    assert cli.json('providers', 'show', 'phaxio', '--role', 'inbound')['in_use'] == {'inbound': True}
+    assert cli.json('system', 'settings', 'get', 'hybrid')['hybrid']['inbound_override'] == 'phaxio'
+    missing = cli('providers', 'show', 'interfax')
+    assert missing.exit_code == 5 and 'faxbot providers list' in missing.stderr
+    assert cli.client.get('/plugins', headers={'X-API-Key': BOOTSTRAP}).status_code == 404
 
 
-def test_providers_registry_import_adds_several_descriptions(plugins_cli, tmp_path):
+def test_providers_import_adds_several_descriptions(plugins_cli, tmp_path):
     cli = plugins_cli
     batch = tmp_path / 'providers.json'
     batch.write_text(json.dumps({'items': [
         {'id': 'synthetic-one', 'name': 'Synthetic one', 'allowed_domains': ['one.invalid'],
          'actions': {'send_fax': {'url': 'https://one.invalid/send'}, 'get_status': {'url': 'https://one.invalid/s'}}},
         {'name': 'No id'}]}))
-    added = cli('providers', 'registry', 'import', batch)
+    added = cli('providers', 'import', batch)
     assert added.exit_code == 0, added.stderr
     assert 'Added the provider Synthetic one.' in added.stdout and 'Could not add one provider: ' in added.stdout
     assert any(item['id'] == 'synthetic-one' for item in cli.json('providers', 'list'))
@@ -744,7 +690,7 @@ def test_providers_registry_import_adds_several_descriptions(plugins_cli, tmp_pa
         {'id': 'synthetic-two', 'name': 'Synthetic two', 'allowed_domains': ['two.invalid'],
          'actions': {'send_fax': {'url': 'https://two.invalid/send'}, 'get_status': {'url': 'https://two.invalid/s'}}})
         + '\n```\n')
-    assert [item['id'] for item in cli.json('providers', 'registry', 'import', markdown)['imported']] == ['synthetic-two']
+    assert [item['id'] for item in cli.json('providers', 'import', markdown)['imported']] == ['synthetic-two']
 
 
 # -- routing, intake, direct delivery, cases ------------------------------------------------
@@ -953,7 +899,7 @@ def test_profiles_keep_the_key_private_and_are_used_by_default(cli, tmp_path):
     assert elsewhere.exit_code == 3 and elsewhere.stderr.startswith('No API key.')
     trailing = cli('--json', 'access', 'me', key=None, url=ORIGIN + '/')
     assert trailing.exit_code == 0
-    unknown = cli('--profile', 'missing', 'me', key=None)
+    unknown = cli('--profile', 'missing', 'access', 'me', key=None)
     assert unknown.exit_code == 1 and "no saved profile named 'missing'" in unknown.stderr
 
 
@@ -1058,7 +1004,7 @@ def test_trunk_network_says_whether_t38_can_come_back_and_what_to_do(trunk_cli, 
     report = trunk_cli.json('providers', 'trunk', 'network', 'status')
     assert (report['t38'], report['platform'], report['t38_enabled']) == ('blocked', 'colima_user', False)
     # The older `faxbot trunk` group still reaches it, and trunk status points here.
-    assert 'which Telnyx cannot handle' in trunk_cli('trunk', 'network', 'status').stdout
+    assert 'which Telnyx cannot handle' in trunk_cli('providers', 'trunk', 'network', 'status').stdout
     # Faxbot may open its fax ports on the router unless this is turned off.
     off = trunk_cli('providers', 'trunk', 'network', 'router-ports', 'off')
     assert off.exit_code == 0, off.stdout

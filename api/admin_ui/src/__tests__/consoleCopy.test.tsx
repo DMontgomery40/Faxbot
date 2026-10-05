@@ -194,7 +194,6 @@ describe('Inbox for people without provider access', () => {
     const added: unknown[] = [];
     server.use(
       http.get('/admin/settings', () => HttpResponse.json({ backend: { type: 'phaxio' }, inbound: { enabled: true } })),
-      http.get('/admin/actions', () => HttpResponse.json({ enabled: false, items: [] })),
       http.post('/admin/inbound/simulate', async ({ request }) => {
         added.push(await request.json());
         return HttpResponse.json({ id: 'test-1', status: 'received' });

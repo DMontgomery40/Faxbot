@@ -1329,11 +1329,11 @@ $ faxbot providers [OPTIONS] COMMAND [ARGS]...
 * `list`: List the fax and storage providers...
 * `status`: Show whether the active provider is ready...
 * `show`: Show a provider&#x27;s settings.
-* `configure`: Change a provider&#x27;s settings, or start or...
+* `configure`: Change a provider&#x27;s settings, or start...
 * `callbacks`: Show the addresses your receiving provider...
 * `validate`: Check the file that describes a fax...
 * `install`: Install a custom HTTP fax provider from...
-* `registry`: Fax services you can add from the provider...
+* `import`: Add several fax services at once from a...
 * `efax`: eFax receiving: whether Faxbot is...
 * `trunk`: Your own phone line for faxing, to a phone...
 
@@ -1381,12 +1381,12 @@ $ faxbot providers show [OPTIONS] {provider}
 
 **Options**:
 
-* `--role <str>`: outbound, inbound or storage.
+* `--role <str>`: Only say whether it is used for outbound (sending), inbound (receiving) or storage.
 * `--help`: Show this message and exit.
 
 ### `faxbot providers configure`
 
-Change a provider&#x27;s settings, or start or stop using it.
+Change a provider&#x27;s settings, or start using it for sending, receiving or storage.
 
 **Usage**:
 
@@ -1402,9 +1402,8 @@ $ faxbot providers configure [OPTIONS] {provider} [NAME=VALUE...]
 **Options**:
 
 * `--secret NAME`: Prompt for this setting&#x27;s value without echoing it, for passwords and keys. Repeat for more.
-* `--role <str>`: outbound, inbound or storage.
-* `--enable`: Make this provider active for the role.
-* `--disable`: Stop using this provider for the role.
+* `--role <str>`: With --enable: outbound (sending), inbound (receiving) or storage.
+* `--enable`: Use this provider for sending, receiving or storage (choose which with --role).
 * `--help`: Show this message and exit.
 
 ### `faxbot providers callbacks`
@@ -1457,47 +1456,14 @@ $ faxbot providers install [OPTIONS] {manifest}
 
 * `--help`: Show this message and exit.
 
-### `faxbot providers registry`
-
-Fax services you can add from the provider list, one at a time or several at once.
-
-**Usage**:
-
-```console
-$ faxbot providers registry [OPTIONS] COMMAND [ARGS]...
-```
-
-**Options**:
-
-* `--help`: Show this message and exit.
-
-**Commands**:
-
-* `list`: List the providers you can add from...
-* `import`: Add several fax services at once from a...
-
-#### `faxbot providers registry list`
-
-List the providers you can add from Faxbot&#x27;s provider list.
-
-**Usage**:
-
-```console
-$ faxbot providers registry list [OPTIONS]
-```
-
-**Options**:
-
-* `--help`: Show this message and exit.
-
-#### `faxbot providers registry import`
+### `faxbot providers import`
 
 Add several fax services at once from a file of their descriptions.
 
 **Usage**:
 
 ```console
-$ faxbot providers registry import [OPTIONS] {FILE}
+$ faxbot providers import [OPTIONS] {FILE}
 ```
 
 **Arguments**:
@@ -2754,7 +2720,7 @@ $ faxbot access owner enroll [OPTIONS]
 
 ## `faxbot system`
 
-Look after the installation: settings, checks, logs, remote access, the security log, backups and restarts.
+Look after the installation: settings, checks, logs, the security log, backups and restarts.
 
 **Usage**:
 
@@ -2779,8 +2745,6 @@ $ faxbot system [OPTIONS] COMMAND [ARGS]...
 * `settings`: Every Faxbot setting: show, change, check...
 * `diagnostics`: Check the installation without sending a fax.
 * `logs`: The activity log: sign-ins, faxes, phone...
-* `tunnel`: Remote access: reach Faxbot from outside...
-* `actions`: Maintenance tasks this server lets you run.
 * `profiles`: Server addresses and keys saved on this...
 
 ### `faxbot system health`
@@ -3210,132 +3174,6 @@ $ faxbot system logs tail [OPTIONS]
 * `--lines <int range>`: How many of the last lines to show.  [default: 200; 1&lt;=x&lt;=20000]
 * `--help`: Show this message and exit.
 
-### `faxbot system tunnel`
-
-Remote access: reach Faxbot from outside your office network.
-
-**Usage**:
-
-```console
-$ faxbot system tunnel [OPTIONS] COMMAND [ARGS]...
-```
-
-**Options**:
-
-* `--help`: Show this message and exit.
-
-**Commands**:
-
-* `status`: Show whether remote access is on and working.
-* `set`: Choose how Faxbot is reached from outside...
-* `test`: Check that Faxbot can be reached at its...
-
-#### `faxbot system tunnel status`
-
-Show whether remote access is on and working.
-
-**Usage**:
-
-```console
-$ faxbot system tunnel status [OPTIONS]
-```
-
-**Options**:
-
-* `--help`: Show this message and exit.
-
-#### `faxbot system tunnel set`
-
-Choose how Faxbot is reached from outside your office, and turn it on or off.
-
-For Tailscale, set TAILSCALE_AUTH_KEY to its sign-in key before you run this.
-
-**Usage**:
-
-```console
-$ faxbot system tunnel set [OPTIONS] {provider}
-```
-
-**Arguments**:
-
-* `provider`: Remote access method: none, cloudflare, wireguard or tailscale.  [required]
-
-**Options**:
-
-* `--disable`: Save the settings but keep the tunnel off.
-* `--cloudflare-domain <str>`: Custom domain (Cloudflare).
-* `--wireguard-endpoint <str>`: Server endpoint (WireGuard).
-* `--wireguard-public-key <str>`: Server&#x27;s public key (WireGuard).
-* `--wireguard-client-ip <str>`: This computer&#x27;s tunnel address (WireGuard).
-* `--wireguard-dns <str>`: DNS server (WireGuard).
-* `--tailscale-hostname <str>`: Tailscale only: the host name for this server.
-* `--help`: Show this message and exit.
-
-#### `faxbot system tunnel test`
-
-Check that Faxbot can be reached at its public address.
-
-**Usage**:
-
-```console
-$ faxbot system tunnel test [OPTIONS]
-```
-
-**Options**:
-
-* `--help`: Show this message and exit.
-
-### `faxbot system actions`
-
-Maintenance tasks this server lets you run.
-
-**Usage**:
-
-```console
-$ faxbot system actions [OPTIONS] COMMAND [ARGS]...
-```
-
-**Options**:
-
-* `--help`: Show this message and exit.
-
-**Commands**:
-
-* `list`: List the maintenance tasks this server...
-* `run`: Run a maintenance task this server allows...
-
-#### `faxbot system actions list`
-
-List the maintenance tasks this server lets you run.
-
-**Usage**:
-
-```console
-$ faxbot system actions list [OPTIONS]
-```
-
-**Options**:
-
-* `--help`: Show this message and exit.
-
-#### `faxbot system actions run`
-
-Run a maintenance task this server allows and show what it printed.
-
-**Usage**:
-
-```console
-$ faxbot system actions run [OPTIONS] {action}
-```
-
-**Arguments**:
-
-* `action`: Action from &#x27;faxbot system actions list&#x27;.  [required]
-
-**Options**:
-
-* `--help`: Show this message and exit.
-
 ### `faxbot system profiles`
 
 Server addresses and keys saved on this computer, so you do not have to type them each time.
@@ -3428,130 +3266,3 @@ $ faxbot system profiles remove [OPTIONS] {name}
 **Options**:
 
 * `--help`: Show this message and exit.
-
-## Older command names
-
-Commands from earlier versions still work but are not listed in help. Each one runs the command next to it.
-
-| Older command | Now |
-| --- | --- |
-| `faxbot access grant` | `faxbot access grants add` |
-| `faxbot access list` | `faxbot access grants list` |
-| `faxbot access revoke` | `faxbot access grants remove` |
-| `faxbot actions list` | `faxbot system actions list` |
-| `faxbot actions run` | `faxbot system actions run` |
-| `faxbot admin backup` | `faxbot system backup` |
-| `faxbot admin migrate` | `faxbot system migrate` |
-| `faxbot admin recover-owner` | `faxbot system recover-owner` |
-| `faxbot admin restore` | `faxbot system restore` |
-| `faxbot admin status` | `faxbot system status` |
-| `faxbot audit list` | `faxbot system audit` |
-| `faxbot cases documents` | `faxbot recipients cases documents` |
-| `faxbot cases send` | `faxbot recipients cases send` |
-| `faxbot config remove` | `faxbot system profiles remove` |
-| `faxbot config set-profile` | `faxbot system profiles save` |
-| `faxbot config show` | `faxbot system profiles list` |
-| `faxbot config use` | `faxbot system profiles use` |
-| `faxbot diagnostics database` | `faxbot system diagnostics database` |
-| `faxbot diagnostics run` | `faxbot system diagnostics run` |
-| `faxbot direct card` | `faxbot recipients partners card` |
-| `faxbot direct deliveries` | `faxbot recipients partners deliveries` |
-| `faxbot direct peers add` | `faxbot recipients partners add` |
-| `faxbot direct peers challenge` | `faxbot recipients partners challenge` |
-| `faxbot direct peers confirm` | `faxbot recipients partners confirm` |
-| `faxbot direct peers list` | `faxbot recipients partners list` |
-| `faxbot direct peers revoke` | `faxbot recipients partners revoke` |
-| `faxbot groups add` | `faxbot access groups add` |
-| `faxbot groups get` | `faxbot access groups show` |
-| `faxbot groups list` | `faxbot access groups list` |
-| `faxbot groups members add` | `faxbot access groups members add` |
-| `faxbot groups members remove` | `faxbot access groups members remove` |
-| `faxbot groups update` | `faxbot access groups update` |
-| `faxbot health` | `faxbot system health` |
-| `faxbot import` | `faxbot received import` |
-| `faxbot inbound fetch` | `faxbot received fetch` |
-| `faxbot inbound get` | `faxbot received show` |
-| `faxbot inbound list` | `faxbot received list` |
-| `faxbot inbound pdf` | `faxbot received pdf` |
-| `faxbot inbound recover` | `faxbot received recover` |
-| `faxbot inbound simulate` | `faxbot system diagnostics test-fax` |
-| `faxbot intake connectors add` | `faxbot numbers email connectors add` |
-| `faxbot intake connectors list` | `faxbot numbers email connectors list` |
-| `faxbot intake connectors remove` | `faxbot numbers email connectors remove` |
-| `faxbot intake connectors test` | `faxbot numbers email connectors test` |
-| `faxbot intake connectors update` | `faxbot numbers email connectors update` |
-| `faxbot intake items` | `faxbot received deliveries list` |
-| `faxbot intake retry` | `faxbot received deliveries retry` |
-| `faxbot integrations add` | `faxbot access integrations add` |
-| `faxbot integrations list` | `faxbot access integrations list` |
-| `faxbot jobs get` | `faxbot sent show` |
-| `faxbot jobs history` | `faxbot sent evidence` |
-| `faxbot jobs list` | `faxbot sent list` |
-| `faxbot jobs pdf` | `faxbot sent pdf` |
-| `faxbot jobs reconcile` | `faxbot sent confirm-receipt` |
-| `faxbot jobs refresh` | `faxbot sent refresh` |
-| `faxbot jobs send-now` | `faxbot sent send-now` |
-| `faxbot keys approve` | `faxbot access keys approve` |
-| `faxbot keys create` | `faxbot access keys create` |
-| `faxbot keys list` | `faxbot access keys list` |
-| `faxbot keys revoke` | `faxbot access keys revoke` |
-| `faxbot keys rotate` | `faxbot access keys rotate` |
-| `faxbot keys update` | `faxbot access keys update` |
-| `faxbot logs list` | `faxbot system logs list` |
-| `faxbot logs tail` | `faxbot system logs tail` |
-| `faxbot mailboxes add` | `faxbot numbers mailboxes add` |
-| `faxbot mailboxes list` | `faxbot numbers mailboxes list` |
-| `faxbot mailboxes update` | `faxbot numbers mailboxes update` |
-| `faxbot me` | `faxbot access me` |
-| `faxbot owner enroll` | `faxbot access owner enroll` |
-| `faxbot pair device` | `faxbot access pair device` |
-| `faxbot pair new` | `faxbot access pair new` |
-| `faxbot providers config` | `faxbot providers show` |
-| `faxbot providers registry` | `faxbot providers registry list` |
-| `faxbot resources list` | `faxbot access resources list` |
-| `faxbot restart` | `faxbot system restart` |
-| `faxbot roles add` | `faxbot access roles add` |
-| `faxbot roles get` | `faxbot access roles show` |
-| `faxbot roles list` | `faxbot access roles list` |
-| `faxbot roles permissions` | `faxbot access roles permissions` |
-| `faxbot roles update` | `faxbot access roles update` |
-| `faxbot routing batching off` | `faxbot recipients together off` |
-| `faxbot routing batching set` | `faxbot recipients together set` |
-| `faxbot routing batching show` | `faxbot recipients together show` |
-| `faxbot routing costs` | `faxbot costs spending` |
-| `faxbot routing destination` | `faxbot recipients show` |
-| `faxbot routing destinations` | `faxbot recipients list` |
-| `faxbot routing fax-cost` | `faxbot costs fax` |
-| `faxbot routing plans` | `faxbot costs plans` |
-| `faxbot routing rate-cards` | `faxbot costs rate-cards` |
-| `faxbot routing reconcile` | `faxbot costs reconcile` |
-| `faxbot routing update-destination` | `faxbot recipients set` |
-| `faxbot sessions list` | `faxbot access sessions list` |
-| `faxbot sessions revoke` | `faxbot access sessions revoke` |
-| `faxbot settings export` | `faxbot system settings export` |
-| `faxbot settings get` | `faxbot system settings get` |
-| `faxbot settings persist` | `faxbot system settings persist` |
-| `faxbot settings set` | `faxbot system settings set` |
-| `faxbot settings validate` | `faxbot system settings validate` |
-| `faxbot trunk apply` | `faxbot providers trunk apply` |
-| `faxbot trunk calls` | `faxbot providers trunk calls` |
-| `faxbot trunk mode` | `faxbot providers trunk mode` |
-| `faxbot trunk presets` | `faxbot providers trunk presets` |
-| `faxbot trunk status` | `faxbot providers trunk status` |
-| `faxbot trunk use` | `faxbot providers trunk use` |
-| `faxbot tunnel set` | `faxbot system tunnel set` |
-| `faxbot tunnel status` | `faxbot system tunnel status` |
-| `faxbot tunnel test` | `faxbot system tunnel test` |
-| `faxbot users add` | `faxbot access users add` |
-| `faxbot users get` | `faxbot access users show` |
-| `faxbot users list` | `faxbot access users list` |
-| `faxbot users reset-password` | `faxbot access users reset-password` |
-| `faxbot users update` | `faxbot access users update` |
-| `faxbot work acknowledge` | `faxbot received acknowledge` |
-| `faxbot work assign` | `faxbot received assign` |
-| `faxbot work done` | `faxbot received done` |
-| `faxbot work export` | `faxbot received export` |
-| `faxbot work list` | `faxbot received owners` |
-| `faxbot work reopen` | `faxbot received reopen` |
-| `faxbot work settings` | `faxbot numbers mailboxes target` |
-| `faxbot work show` | `faxbot received history` |

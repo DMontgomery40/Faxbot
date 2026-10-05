@@ -35,7 +35,7 @@ def configuration_schema():
             value.pop("examples", None)
             value["writeOnly"] = True
         # Factory-backed paths are intentionally not evaluated on the build host.
-        if name in {"FAXBOT_PROVIDERS_DIR", "FAXBOT_CONFIG_PATH", "PLUGIN_REGISTRY_PATH"}:
+        if name in {"FAXBOT_PROVIDERS_DIR", "FAXBOT_CONFIG_PATH"}:
             value.pop("default", None)
     return schema
 

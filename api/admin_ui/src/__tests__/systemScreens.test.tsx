@@ -7,7 +7,7 @@ import AdminAPIClient, { AdminAPIError } from '../api/client';
 import ImportDocument, { IMPORT_SENTENCE } from '../components/ImportDocument';
 import Received from '../components/Received';
 import Settings from '../components/Settings';
-import AuditLog, { auditAction } from '../components/AuditLog';
+import AuditLog, { auditAction, entryAction } from '../components/AuditLog';
 import DatabaseStatus from '../components/DatabaseStatus';
 import Logs, { parseQueryTokens } from '../components/Logs';
 import CasePackets from '../components/delivery/CasePackets';
@@ -79,6 +79,14 @@ describe('Audit log', () => {
   it('reads an action it does not know as words rather than a code', () => {
     expect(auditAction('host.restart')).toBe('Restarted Faxbot');
     expect(auditAction('new_thing.happened')).toBe('New thing happened');
+  });
+
+  it('tells asking to open the terminal from each session it started', () => {
+    expect(entryAction({ operation: 'host.terminal', details: { request: 'POST /admin/terminal/ticket' } }))
+      .toBe('Asked for access to the server terminal');
+    expect(entryAction({ operation: 'host.terminal', details: { request: 'WEBSOCKET /admin/terminal', session: 'started' } }))
+      .toBe('Opened the terminal');
+    expect(entryAction({ operation: 'host.restart', details: {} })).toBe('Restarted Faxbot');
   });
 });
 

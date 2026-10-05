@@ -273,7 +273,7 @@ def project_admin_settings(snapshot: ConfigurationSnapshot, pending_fields: Iter
         # Whether the console may restart Faxbot (it exits and its service manager starts it again).
         'restart': {'allowed': values.admin_allow_restart},
         # Where provider plugin files are read from; shown read-only.
-        'plugin_files': {'providers_dir': values.providers_dir, 'plugin_registry_path': values.plugin_registry_path},
+        'plugin_files': {'providers_dir': values.providers_dir},
         # Environment-only settings, shown read-only; never a secret's value.
         'deployment': deployment_view(environment or {}),
         # Settings only the owner may change; the console shows them disabled to everyone else.

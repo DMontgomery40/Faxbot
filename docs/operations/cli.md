@@ -19,9 +19,9 @@ Every command and option is listed in the [command line reference](../reference/
 | `faxbot providers` | Fax providers, their settings and your phone line (`faxbot providers trunk`) |
 | `faxbot costs` | Spending, carrier charges, prices and plans |
 | `faxbot access` | People, groups, roles, keys, sign-ins and paired phones |
-| `faxbot system` | Settings, checks, logs, remote access, the security log, profiles, backups and restarts |
+| `faxbot system` | Settings, checks, logs, the security log, profiles, backups and restarts |
 
-Commands from earlier versions, such as `faxbot jobs list` or `faxbot routing costs`, still work but are not listed in help; the reference ends with each one's new name.
+Command names from before these eight areas, such as `faxbot jobs list`, no longer work. The [release notes](../release-notes.md#renamed-commands) list the new name for each.
 
 ## Install
 

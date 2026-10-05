@@ -193,7 +193,8 @@ describe('Setup Wizard providers for sending and receiving', () => {
       example: { national: '0121 234 5678', international: '+44 121 234 5678' }, supported_countries: ['US', 'GB', 'AU'] }; }), [...PRESETS, avaya]);
     fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Sending' }));
     const names = within(await screen.findByRole('listbox')).getAllByRole('option').map((option) => option.textContent);
-    expect(names).toEqual(expect.arrayContaining(['Your phone system', 'Avaya IP Office', 'Advanced', 'FreeSWITCH']));
+    expect(names).toEqual(expect.arrayContaining(['Your phone system', 'Avaya IP Office']));
+    expect(names).not.toContain('FreeSWITCH');
     fireEvent.click(within(screen.getByRole('listbox')).getByRole('option', { name: 'Avaya IP Office' }));
     expect(screen.getByText(/^Sending: Avaya IP Office · Receiving: /)).toBeTruthy();
     next();

@@ -37,7 +37,7 @@ describe('the navigation table', () => {
     expect(areas.map((area) => area.label)).toEqual(
       ['Overview', 'Faxes', 'Numbers', 'Recipients', 'Providers', 'Costs', 'Access', 'System']);
     expect(pagesOf(areas, 'providers')).toEqual(
-      ['sending', 'humblefax', 'efax', 'phaxio', 'sinch', 'signalwire', 'documo', 'trunk', 'freeswitch', 'change']);
+      ['sending', 'humblefax', 'efax', 'phaxio', 'sinch', 'signalwire', 'documo', 'trunk', 'change']);
     const system = areas.find((area) => area.id === 'system')!;
     expect(system.pages.filter((page) => page.group === 'Developer').map((page) => page.label))
       .toEqual(['API & SDKs', 'AI assistants', 'Terminal', 'Scripts & checks', 'Provider plugins']);
@@ -64,7 +64,7 @@ describe('the navigation table', () => {
 
   it('follows each page permission as the old tabs did', () => {
     expect(pagesOf(visible(['diagnostics:read']), 'overview')).toEqual(['overview']);
-    expect(pagesOf(visible(['settings:read']), 'system')).toEqual(['security', 'storage', 'remote', 'api', 'assistants', 'plugins']);
+    expect(pagesOf(visible(['settings:read']), 'system')).toEqual(['security', 'storage', 'api', 'assistants', 'plugins']);
     expect(pagesOf(visible(['settings:write']), 'system')).toEqual(['setup']);
     expect(pagesOf(visible(['host:terminal', 'logs:read']), 'system')).toEqual(['logs', 'terminal']);
     expect(pagesOf(visible(['keys:manage']), 'access')).toEqual(['keys', 'sessions']);
@@ -184,7 +184,6 @@ describe('the console shell', () => {
     backend.state.providerView = { plugins_enabled: true, install_enabled: false, active_outbound: 'phaxio', active_inbound: '' };
     server.use(
       http.get('/admin/settings', () => HttpResponse.json(settingsFixture())),
-      http.get('/admin/tunnel/status', () => HttpResponse.json({ enabled: false, provider: 'none', status: 'disabled' })),
     );
     await signIn();
     const areas = visibleNavigation(everything, { send: true, jobs: true, inbox: true }, { pluginsEnabled: true });
@@ -204,7 +203,9 @@ describe('the console shell', () => {
         opened.push(`${area.id}/${page.id}`);
       }
     }
-    expect(opened).toHaveLength(42);
+    expect(opened).toHaveLength(40);
+    expect(opened).not.toContain('system/remote');
+    expect(opened).not.toContain('providers/freeswitch');
   }, 60000);
 
   it('keeps the old destination names working', async () => {

@@ -466,7 +466,7 @@ class CarrierReconciler:
         return False
 
     def run_now(self, *, now=None, windows=10):
-        """Check every open call now (``faxbot routing reconcile``), up to ``windows`` carrier windows."""
+        """Check every open call now (``faxbot costs reconcile``), up to ``windows`` carrier windows."""
         total = Sweep()
         now = now or utcnow()
         seen = set()

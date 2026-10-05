@@ -2,7 +2,6 @@
 import typer
 
 from .. import profiles, state
-from ..client import segment
 from ..errors import CliError, EXIT_CONFLICT, EXIT_NOT_FOUND
 from ..output import local_time, text
 from ...provider_labels import provider_label
@@ -218,16 +217,47 @@ def providers_callbacks():
         empty='The receiving provider needs no callback address.'))
 
 
+# A provider's section in the settings document, when it is not named after the provider.
+_SECTIONS = {'freeswitch': 'fs', 's3': 'storage', 'local': 'storage'}
+# What each role uses, as the setting that chooses it.
+_ROLES = {'outbound': 'outbound_backend', 'inbound': 'inbound_backend', 'storage': 'storage_backend'}
+
+
+def _provider_fields(provider):
+    """The provider's id and {its setting name: setting}; an unknown provider is a not-found error."""
+    from ...config_plugin_fields import PLUGIN_FIELDS
+    name = provider.strip().lower()
+    if name not in PLUGIN_FIELDS:
+        raise CliError(f"There is no provider named '{provider}'. Run 'faxbot providers list' to see them.",
+                       EXIT_NOT_FOUND)
+    return name, PLUGIN_FIELDS[name]
+
+
+def _in_use(current, name):
+    hybrid, storage = current.get('hybrid') or {}, current.get('storage') or {}
+    return {'outbound': hybrid.get('outbound_backend') == name, 'inbound': hybrid.get('inbound_backend') == name,
+            'storage': storage.get('backend') == name}
+
+
 @providers.command('config')
 def providers_config(provider: str = typer.Argument(..., help="Provider from 'faxbot providers list'."),
-                     role: str = typer.Option(None, '--role', help='outbound, inbound or storage.')):
+                     role: str = typer.Option(None, '--role', help='Only say whether it is used for outbound '
+                                                                   '(sending), inbound (receiving) or storage.')):
     """Show a provider's settings. Passwords and keys are hidden."""
-    result = state.api().get(f'/plugins/{segment(provider)}/config', params={'role': role})
+    name, _ = _provider_fields(provider)
+    if role is not None and role not in _ROLES:
+        raise CliError('Choose --role outbound, inbound or storage.')
+    current = state.api().get('/admin/settings')
+    used = _in_use(current, name)
+    result = {'provider': name, 'in_use': {role: used[role]} if role else used,
+              'settings': current.get(_SECTIONS.get(name, name)) or {}}
+    words = {'outbound': 'sending', 'inbound': 'receiving', 'storage': 'storage'}
 
     def human(out):
         rows = []
-        _flatten('', result.get('settings', {}), rows)
-        out.fields([('Provider', provider), ('Role', result.get('role')), ('In use', result.get('enabled'))])
+        _flatten('', result['settings'], rows)
+        roles = [words[item] for item, on in result['in_use'].items() if on]
+        out.fields([('Provider', _provider(name)), ('In use for', ', '.join(roles) if roles else 'nothing')])
         out.table(['Setting', 'Value'], rows, empty='This provider has no settings.')
     state.out().result(result, human)
 
@@ -238,43 +268,45 @@ def providers_configure(provider: str = typer.Argument(..., help="Provider from 
                                                                 help='Provider settings to change.'),
                         secret: list[str] = typer.Option(None, '--secret', metavar='NAME',
                                                          help="Prompt for this setting's value without echoing it, for passwords and keys. Repeat for more."),
-                        role: str = typer.Option(None, '--role', help='outbound, inbound or storage.'),
-                        enable: bool = typer.Option(False, '--enable', help='Make this provider active for the role.'),
-                        disable: bool = typer.Option(False, '--disable', help='Stop using this provider for the role.')):
-    """Change a provider's settings, or start or stop using it."""
-    if enable and disable:
-        raise CliError('Choose --enable or --disable, not both.')
+                        role: str = typer.Option(None, '--role', help='With --enable: outbound (sending), inbound '
+                                                                      '(receiving) or storage.'),
+                        enable: bool = typer.Option(False, '--enable', help='Use this provider for sending, receiving or storage '
+                                                                     '(choose which with --role).')):
+    """Change a provider's settings, or start using it for sending, receiving or storage."""
+    name, fields = _provider_fields(provider)
+    known = _request_names()
+
+    def setting(key):
+        target = fields.get(key) or (key if key in fields.values() else None)
+        if target is None:
+            raise CliError(f"{_provider(name)} has no setting named '{key}'. Run 'faxbot providers show {name}' "
+                           'to see them.')
+        return known.get(target, target)
+
     changes = {}
     for item in assignments or []:
-        name, separator, raw = item.partition('=')
-        if not separator or not name.strip():
+        key, separator, raw = item.partition('=')
+        if not separator or not key.strip():
             raise CliError(f"Write each setting as NAME=VALUE; '{item}' has no '='.")
-        changes[name.strip()] = _value(raw)
-    for name in secret or []:
-        changes[name] = typer.prompt(f'Value for {name}', hide_input=True, confirmation_prompt=True)
-    body = {'role': role}
-    if changes:
-        body['settings'] = changes
-    if enable or disable:
-        body['enabled'] = enable
-    if not changes and not (enable or disable):
-        raise CliError('Nothing to change. Give NAME=VALUE pairs, --secret NAME, --enable or --disable.')
+        changes[setting(key.strip())] = raw
+    for key in secret or []:
+        changes[setting(key)] = typer.prompt(f'Value for {key}', hide_input=True, confirmation_prompt=True)
+    if enable:
+        if role not in _ROLES:
+            raise CliError('Add --role outbound, inbound or storage to say what to use it for.')
+        changes[known.get(_ROLES[role], _ROLES[role])] = name
+    elif role is not None:
+        raise CliError('--role goes with --enable.')
+    if not changes:
+        raise CliError('Nothing to change. Give NAME=VALUE pairs, --secret NAME or --enable.')
     api = state.api()
-    current = api.get(f'/plugins/{segment(provider)}/config', params={'role': role})
-    result = api.put(f'/plugins/{segment(provider)}/config',
-                     json={**body, 'expected_revision_id': current['_meta']['desired_revision_id']})
+    current = api.get('/admin/settings')
+    if set(changes) & set(current.get('_meta', {}).get('env_managed') or []):
+        raise CliError('This key is set in .env. Change it there, then run docker compose up -d.', EXIT_CONFLICT)
+    result = api.put('/admin/settings', json={**changes, 'expected_revision_id': current['_meta']['desired_revision_id']})
     state.out().result(result, lambda out: out.line(
         'Nothing changed.' if not result.get('changed') else 'Saved. Restart Faxbot to apply it.'
         if result.get('_meta', {}).get('restart_recommended') else 'Saved and applied.'))
-
-
-@providers.command('registry')
-def providers_registry():
-    """List the providers you can add from Faxbot's provider list."""
-    result = state.api().get('/plugin-registry')
-    items = result.get('items', []) if isinstance(result, dict) else []
-    state.out().result(result, lambda out: out.table(['Provider', 'Name', 'Description'],
-        [[item.get('id'), item.get('name'), item.get('description')] for item in items], empty='The registry is empty.'))
 
 
 def efax_status():

@@ -19,7 +19,6 @@ import {
   ContentCopy as CopyIcon,
   MoveToInbox as InboundIcon,
   Router as EngineIcon,
-  Terminal as TerminalIcon,
   Link as LinkIcon,
 } from '@mui/icons-material';
 import AdminAPIClient from '../api/client';
@@ -44,7 +43,7 @@ type Callbacks = {
 type EngineResult = { title: string; columns: string[]; rows: string[][]; available: boolean; message: string | null };
 
 // Providers with their own setup guide.
-const GUIDES = ['phaxio', 'sinch', 'signalwire', 'documo', 'humblefax', 'efax', 'sip', 'freeswitch'] as const;
+const GUIDES = ['phaxio', 'sinch', 'signalwire', 'documo', 'humblefax', 'efax', 'sip'] as const;
 
 const ENGINE_VIEWS: Array<{ id: EngineView; label: string }> = [
   { id: 'registrations', label: 'Trunk sign-ins' },
@@ -52,15 +51,6 @@ const ENGINE_VIEWS: Array<{ id: EngineView; label: string }> = [
   { id: 'calls', label: 'Calls in progress' },
   { id: 'faxes', label: 'Faxes in progress' },
 ];
-
-function Output({ text }: { text: string }) {
-  return (
-    <Box component="pre" sx={{ m: 0, p: 1.5, bgcolor: 'action.hover', borderRadius: 1, fontFamily: 'monospace',
-      fontSize: '0.8rem', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', maxHeight: 320, overflow: 'auto' }}>
-      {text}
-    </Box>
-  );
-}
 
 const ScriptsTests: React.FC<Props> = ({ client, onNavigate, docsBase }) => {
   const [inboundEnabled, setInboundEnabled] = useState(false);
@@ -72,9 +62,6 @@ const ScriptsTests: React.FC<Props> = ({ client, onNavigate, docsBase }) => {
   const [engine, setEngine] = useState<EngineResult | null>(null);
   const [engineView, setEngineView] = useState<EngineView | null>(null);
   const [engineError, setEngineError] = useState('');
-  const [actions, setActions] = useState<Array<{ id: string; label: string }>>([]);
-  const [actionId, setActionId] = useState('');
-  const [actionText, setActionText] = useState('');
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState('');
 
@@ -85,10 +72,6 @@ const ScriptsTests: React.FC<Props> = ({ client, onNavigate, docsBase }) => {
         setInboundEnabled(Boolean((settings as any)?.inbound?.enabled));
       } catch { /* the cards below say what they need */ }
       try { setCallbacks(await client.getInboundCallbacks()); } catch { setCallbacks(null); }
-      try {
-        const listed = await client.listActions();
-        if (listed?.enabled && Array.isArray(listed.items)) setActions(listed.items.map((item) => ({ id: item.id, label: item.label })));
-      } catch { setActions([]); }
     })();
   }, [client]);
 
@@ -114,18 +97,6 @@ const ScriptsTests: React.FC<Props> = ({ client, onNavigate, docsBase }) => {
     } catch {
       setEngine(null);
       setEngineError('Faxbot could not ask its fax engine. Try again in a moment.');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const runAction = async (id: string) => {
-    setActionId(id); setBusy(true); setActionText('');
-    try {
-      const result = await client.runAction(id);
-      setActionText((result.stdout || '') + (result.stderr ? `\n${result.stderr}` : '') || 'No output.');
-    } catch (err) {
-      setActionText(err instanceof Error ? err.message : 'The check did not run.');
     } finally {
       setBusy(false);
     }
@@ -228,20 +199,6 @@ const ScriptsTests: React.FC<Props> = ({ client, onNavigate, docsBase }) => {
             {engine?.message && <Typography variant="body2" color="text.secondary">{engine.message}</Typography>}
           </Stack>
         </ResponsiveFormSection>
-
-        {actions.length > 0 && (
-          <ResponsiveFormSection title="Server checks" subtitle="Commands Faxbot runs on its own server, read-only" icon={<TerminalIcon />}>
-            <Stack spacing={2}>
-              <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-                {actions.map((action) => (
-                  <Button key={action.id} size="small" variant={actionId === action.id ? 'contained' : 'outlined'}
-                    disabled={busy} onClick={() => void runAction(action.id)}>{action.label}</Button>
-                ))}
-              </Box>
-              {actionId && (busy && !actionText ? <CircularProgress size={20} /> : actionText && <Output text={actionText} />)}
-            </Stack>
-          </ResponsiveFormSection>
-        )}
       </Stack>
     </Box>
   );

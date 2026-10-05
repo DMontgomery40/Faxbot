@@ -7,7 +7,7 @@ import sqlalchemy as sa
 from api.app import schema, schema_access, schema_authentication
 from api.tests.test_schema import database, snapshot
 from api.tests.test_access_schema import at_revision, add_key
-from api.tests.test_work_schema import without_work_catalogue
+from api.tests.test_work_schema import without_terminal_change, without_work_catalogue
 
 
 ADMISSION = '0006_auth_admission'
@@ -53,7 +53,8 @@ def test_real_0005_upgrade_preserves_existing_key_session_policy_and_audit(datab
     assert after['access_auth_buckets'] == []
     for name, rows in before.items():
         if name != 'alembic_version':
-            assert without_work_catalogue(name, after[name]) == rows, name
+            assert (without_terminal_change(name, without_work_catalogue(name, after[name]))
+                    == without_terminal_change(name, rows)), name
 
 
 def test_partial_admission_ddl_failure_rolls_back_version_and_tables(database, monkeypatch):

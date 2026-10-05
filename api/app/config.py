@@ -23,7 +23,7 @@ _bootstrap_values = None
 
 def bootstrap_locations(environment):
     return ConfigurationValues.from_environment({key: environment[key] for key in
-        ('DATABASE_URL', 'FAX_DATA_DIR', 'FAXBOT_PROVIDERS_DIR', 'PLUGIN_REGISTRY_PATH',
+        ('DATABASE_URL', 'FAX_DATA_DIR', 'FAXBOT_PROVIDERS_DIR',
          'FAXBOT_CONFIG_PATH') if key in environment})
 
 

@@ -551,8 +551,9 @@ def test_startup_without_the_fax_engine_still_serves_the_console(isolated_instal
             assert client.get('/admin/settings', headers=headers).status_code == 200
             health = client.get('/admin/health-status', headers=headers).json()
             assert health['backend_healthy'] is False and health['backend_message'] == expected
-            diagnostics = client.post('/admin/diagnostics/run', headers=headers).json()
-            assert diagnostics['summary']['critical_issues'].count(expected) == 1
+            report = client.post('/admin/diagnostics/report', headers=headers).json()
+            sentences = [check['sentence'] for section in report['sections'] for check in section['checks']]
+            assert sentences.count(expected) == 1
             sent = client.post('/fax', headers=headers, data={'to': '+15555550123'},
                                files={'file': ('synthetic.pdf', b'%PDF-1.4\n%%EOF\n', 'application/pdf')})
             assert sent.status_code == 503 and sent.json()['detail'] == expected

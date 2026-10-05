@@ -11,6 +11,7 @@ import sqlalchemy as sa
 from api.app import schema, schema_inbound, schema_inbound_sources
 from api.tests.test_schema import database, snapshot  # noqa: F401 - fixture
 from api.tests.test_access_schema import at_revision
+from api.tests.test_work_schema import without_terminal_change
 
 
 NOW = datetime(2026, 10, 3, 12, 30, 15)
@@ -89,7 +90,7 @@ def test_0015_upgrade_keeps_every_row_and_validates_the_frozen_shape(database):
     assert after['alembic_version'] == [{'version_num': schema.HEAD}]
     for name, rows in before.items():
         if name != 'alembic_version':
-            assert after[name] == rows, name
+            assert without_terminal_change(name, after[name]) == without_terminal_change(name, rows), name
     metadata = schema_inbound_sources.frozen_metadata(dialect=database.dialect.name)
     table = metadata.tables['inbound_imports']
     with database.connect() as connection:

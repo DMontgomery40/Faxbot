@@ -119,7 +119,6 @@ def test_bootstrap_and_provider_endpoint_fields_share_complete_redacted_projecti
         'PERSISTED_ENV_PATH': '/private/faxbot.env',
         'SINCH_BASE_URL': 'https://provider.example.invalid/v3',
         'FAXBOT_PROVIDERS_DIR': '/private/providers',
-        'PLUGIN_REGISTRY_PATH': '/private/registry.json',
         'PHAXIO_API_KEY': 'synthetic-secret-key',
         'DATABASE_URL': 'postgresql://operator:synthetic-password@db.invalid/faxbot',
     })
@@ -131,7 +130,6 @@ def test_bootstrap_and_provider_endpoint_fields_share_complete_redacted_projecti
     assert exported['DATABASE_URL'] == '***'
     assert exported['ENABLE_PERSISTED_SETTINGS'] == 'true'
     assert exported['FAXBOT_PROVIDERS_DIR'] == '/private/providers'
-    assert exported['PLUGIN_REGISTRY_PATH'] == '/private/registry.json'
     assert 'synthetic-secret-key' not in str(exported)
     assert 'synthetic-password' not in str(exported)
     assert {'ENABLE_PERSISTED_SETTINGS', 'PHAXIO_CALLBACK_URL', 'SINCH_BASE_URL'} <= values.environment_keys()

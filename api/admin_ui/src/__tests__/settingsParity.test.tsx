@@ -53,7 +53,6 @@ function settingsHandlers(data: Json, put: (body: Json) => Response | null = () 
   const writes: Json[] = [];
   server.use(
     http.get('/admin/settings', () => HttpResponse.json(data)),
-    http.get('/admin/tunnel/status', () => HttpResponse.json({ enabled: false, provider: 'none', status: 'disabled' })),
     http.put('/admin/settings', async ({ request }) => {
       const body = await request.json() as Json;
       writes.push(body);
@@ -650,7 +649,6 @@ describe('Settings pending restart', () => {
     let restarts = 0;
     server.use(
       http.get('/admin/settings', () => HttpResponse.json(loads++ === 0 ? pending() : settingsFixture())),
-      http.get('/admin/tunnel/status', () => HttpResponse.json({ enabled: false, provider: 'none', status: 'disabled' })),
       http.get('/direct/card', () => HttpResponse.json({ detail: 'Not ready.' }, { status: 409 })),
       http.get('/admin/config', () => HttpResponse.json({ allow_restart: true, branding: {} })),
       http.post('/admin/restart', () => { restarts += 1; return HttpResponse.json({ ok: true }); }),
@@ -771,14 +769,15 @@ describe('Settings placed on their own pages', () => {
     settingsHandlers(settingsFixture((data) => {
       data.developer = { docs_base_url: 'https://docs.faxbot.net/latest/' };
       data.persisted = { enabled: false, path: '/faxdata/operator.env' };
-      data.plugin_files = { providers_dir: '/app/config/providers', plugin_registry_path: '/app/config/plugin_registry.json' };
+      data.plugin_files = { providers_dir: '/app/config/providers' };
     }));
     render(<Settings client={client()} sections={['developer']} />);
     expect(await screen.findByText('Documentation address')).toBeTruthy();
     expect(screen.getByDisplayValue('https://docs.faxbot.net/latest/')).toBeTruthy();
-    for (const path of ['/faxdata/operator.env', '/app/config/providers', '/app/config/plugin_registry.json']) {
+    for (const path of ['/faxdata/operator.env', '/app/config/providers']) {
       expect(screen.getByDisplayValue(path)).toBeTruthy();
     }
+    expect(screen.queryByText('Plugin registry file')).toBeNull();
   });
 
   it('keeps the plugin switches on Provider plugins, not on In use', async () => {
@@ -850,6 +849,27 @@ describe('System, milestone 5', () => {
     const rows = await screen.findByTestId('deployment-rows');
     expect(within(rows).getByText('Where the installation key is kept')).toBeTruthy();
     expect(within(rows).getAllByText('Not set: Faxbot keeps it in its data folder.')).toHaveLength(2);
+  });
+
+  it('checks the bucket through the diagnostics report and says what it found', async () => {
+    settingsHandlers(settingsFixture((data) => {
+      data.storage = { ...data.storage, backend: 's3', s3_bucket: 'synthetic-bucket' };
+    }));
+    const report = (status: string, sentence: string) => ({ checked_at: null, checked_at_text: '', status, summary: null,
+      sections: [{ id: 'server', title: 'Server', checks: [
+        { id: 'server.storage', section: 'server', title: 'Online storage', status, sentence, fix: null }] }] });
+    let reply = report('ok', 'Faxbot can reach the online storage that keeps received faxes.');
+    let runs = 0;
+    server.use(http.post('/admin/diagnostics/report', () => { runs += 1; return HttpResponse.json(reply); }));
+    render(<Settings client={client()} sections={['storage', 'advanced', 'backup']} title="Storage & retention" />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Check the bucket' }));
+    expect(await screen.findByText('Faxbot can reach the online storage that keeps received faxes.')).toBeTruthy();
+    // The report's own wording points at Diagnostics' switch "below"; this page says where it is.
+    reply = report('attention', 'Received faxes go to online storage, but Faxbot has not checked that it can reach it. '
+      + 'Turn on Also check the S3 bucket below.');
+    fireEvent.click(screen.getByRole('button', { name: 'Check the bucket' }));
+    expect(await screen.findByText('Turn on Also check the S3 bucket under System → Diagnostics, then check again.')).toBeTruthy();
+    expect(runs).toBe(2);
   });
 
   it('words the receiving settings plainly', async () => {

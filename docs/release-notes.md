@@ -8,7 +8,7 @@ This release rebuilds Faxbot's backend, delivery and self-hosted administration.
 
 - **People sign in as themselves.** Users have their own username and password; apps, scanners and phones are integrations with their own API keys. Roles, groups and mailbox access decide what each may do, and the server checks every request. The installation key (`API_KEY`) creates the [first owner](security/access-control.md#create-the-first-owner) and recovers access; it is not for daily work. See [Access control](security/access-control.md).
 - **Console sessions need HTTPS.** Browser sign-in works over HTTPS or on the same computer. Plain HTTP works only when you set `FAXBOT_ALLOW_INSECURE_HTTP_SESSIONS=true` on a private network you control. API keys work over any connection. See [HTTPS and plain HTTP](security/authentication.md#https-and-plain-http).
-- **Settings live in the installation.** `.env` is read only when a new installation starts for the first time, except credentials. After that, change settings on the console's [Settings](admin-console/settings.md) screen or with `faxbot settings`. When a change waits for a restart, stop every API process, start again, and check that nothing is waiting.
+- **Settings live in the installation.** `.env` is read only when a new installation starts for the first time, except credentials. After that, change settings on the console's [Settings](admin-console/settings.md) screen or with `faxbot system settings`. When a change waits for a restart, stop every API process, start again, and check that nothing is waiting.
 - **Credentials from .env.** Provider keys, passwords and secrets in `.env` are read at every start and are the values in force; the console shows them as **Set in .env**. Carrier names such as `HUMBLEFAX_API_ACCESS_KEY` and `TELNYX_PASS` are accepted. See [Credentials from .env](admin-console/settings.md#credentials-from-env).
 - **Delivery routes and costs.** Add outbound routes, rate cards and destination preferences. Faxbot ranks routes by estimated price and delivery history, records each attempt, and keeps unknown charges unknown. See [Delivery routes](operations/delivery-routes.md).
 - **Intake and the Inbox.** Every received document goes into one intake queue, and email delivery sends the PDF to the inboxes staff already use. The console's **Inbox** shows each fax with its email delivery and a retry action. An uncertain email outcome waits for a person. See [Intake](operations/intake.md).
@@ -16,17 +16,44 @@ This release rebuilds Faxbot's backend, delivery and self-hosted administration.
 - **Your own SIP trunk.** Connect a carrier SIP trunk (Telnyx first) to the built-in Asterisk engine and fax over T.38, with a record of every call. A live carrier call has not been tested yet. See [SIP trunk](setup/sip-trunk.md).
 - **No provider until you choose one.** An upgraded installation that never set `FAX_BACKEND` keeps using Phaxio; a new installation starts with no provider until you choose one. Sending is refused with "No fax provider set up yet." until then.
 - **One destination per fax, in E.164.** Faxbot reads national numbers for the installation country (`FAX_DEFAULT_COUNTRY`, UK and US) and stores the full international number on the job.
-- **A command line for everything.** `faxbot` covers the console's tasks. With Faxbot stopped, `faxbot admin` shows the installation's state, upgrades its database, recovers owner access, and makes and restores backups. See [Command line](operations/cli.md).
+- **A command line for everything.** `faxbot` covers the console's tasks. With Faxbot stopped, `faxbot system status`, `migrate`, `recover-owner`, `backup` and `restore` show the installation's state, upgrades its database, recovers owner access, and makes and restores backups. See [Command line](operations/cli.md).
 - **Docker Compose.** `.env` is optional, so a new installation starts with defaults. The MCP containers no longer receive the installation key.
+- **The Terminal is for owners.** Only owners can use the console Terminal by default. Host Operators no longer can, unless an owner gives them a role that includes it (**Access → Roles**). The **Audit log** records every terminal session.
+- **Removed features.** The Remote access page and `faxbot system tunnel` never set up a tunnel, so they are gone. To reach Faxbot from outside your network, use your own domain or VPN. Phone pairing stays under **Access → Keys & phones**. The **Server checks** on Scripts & checks and `faxbot system actions` are gone; use the Terminal or Diagnostics instead. The provider list (`/plugin-registry` and `PLUGIN_REGISTRY_PATH`) is gone. If your settings still name `PLUGIN_REGISTRY_PATH`, Faxbot ignores it for one release. Setup and the console no longer offer FreeSWITCH, which could not run in the shipped Docker image.
+
+### Renamed commands
+
+Every `faxbot` command now sits under one of the console's eight areas, and the older names no longer work. Scripts that use an older name need the new one. The [command reference](reference/cli.md) lists every command.
+
+| Older command | Now |
+| --- | --- |
+| `faxbot jobs …` | `faxbot sent …`; `jobs get` is `sent show`, `jobs history` is `sent evidence`, `jobs reconcile` is `sent confirm-receipt` |
+| `faxbot inbound …` | `faxbot received …`; `inbound get` is `received show`, `inbound simulate` is `system diagnostics test-fax` |
+| `faxbot work …` | `faxbot received …`; `work list` is `received owners`, `work show` is `received history`, `work settings` is `numbers mailboxes target` |
+| `faxbot import` | `faxbot received import` |
+| `faxbot routing …` | `faxbot recipients list`, `show` and `set` for destinations, `recipients together` for sending together, and `faxbot costs spending`, `reconcile`, `fax`, `rate-cards` and `plans` |
+| `faxbot intake …` | `faxbot received deliveries list` and `retry`, and `faxbot numbers email connectors …` |
+| `faxbot direct …` | `faxbot recipients partners …` |
+| `faxbot cases …` | `faxbot recipients cases …` |
+| `faxbot trunk …` | `faxbot providers trunk …` |
+| `faxbot settings …`, `diagnostics …`, `logs …`, `health`, `restart` | `faxbot system settings …`, `system diagnostics …`, `system logs …`, `system health`, `system restart` |
+| `faxbot admin …` | `faxbot system status`, `migrate`, `recover-owner`, `backup` and `restore` |
+| `faxbot config …` | `faxbot system profiles …`; `config set-profile` is `system profiles save`, `config show` is `system profiles list` |
+| `faxbot me`, `users …`, `integrations …`, `groups …`, `roles …`, `keys …`, `sessions …`, `owner …`, `resources …`, `pair …` | `faxbot access …`; each `get` is `show` |
+| `faxbot access grant`, `access list`, `access revoke` | `faxbot access grants add`, `grants list`, `grants remove` |
+| `faxbot mailboxes …` | `faxbot numbers mailboxes …` |
+| `faxbot audit list` | `faxbot system audit` |
+| `faxbot providers config` | `faxbot providers show` |
+| `faxbot providers registry import` | `faxbot providers import` |
 
 ### For API clients
 
 - **Existing fax routes keep their contract.** `POST /fax`, `GET /fax/{id}`, `GET /inbound`, `GET /inbound/{id}`, `GET /inbound/{id}/pdf`, `GET /health` and `POST /mobile/pair` keep their fields. Jobs gain `delivery_state`, `dispatch_mode`, `delivery_version` and `reconciliation_reason`.
 - **New routes.** Sign-in (`/auth`), access management (`/access`), routes and costs (`/routing`), intake (`/intake`), direct delivery (`/direct`) and case packets (`/cases`). See the [API reference](api.md) and [Access and sign-in API](reference/access-api.md).
 - **Safe retries.** Send an `Idempotency-Key` header with `POST /fax`. The same key with the same number, document and queue setting returns the original fax instead of sending another; the same key with a different request is refused with 409.
-- **No automatic resend.** When Faxbot cannot tell whether a provider accepted a fax, the job waits for a person to check it (`faxbot jobs reconcile`). Faxbot never sends it again on its own.
+- **No automatic resend.** When Faxbot cannot tell whether a provider accepted a fax, the job waits for a person to check it (`faxbot sent confirm-receipt`). Faxbot never sends it again on its own.
 - **Received documents need `inbound:document`.** Keys from earlier releases with `inbound:read` still list and read received faxes, but they no longer open the PDF. Create a new key for apps that need documents.
-- **Unrestricted keys need review.** A key from an earlier release with every permission (`*`) does not work until an administrator approves it with an owner and a permission list (`faxbot keys approve`).
+- **Unrestricted keys need review.** A key from an earlier release with every permission (`*`) does not work until an administrator approves it with an owner and a permission list (`faxbot access keys approve`).
 
 ### For SDK users
 
@@ -43,9 +70,9 @@ This release rebuilds Faxbot's backend, delivery and self-hosted administration.
 
 1. Stop every Faxbot API process that uses the installation: all workers and all containers.
 2. Back up. An installation from an earlier release has no installation key yet, so copy its database and data folder yourself.
-3. Run `faxbot admin migrate` with the new version. An upgraded installation that never set `FAX_BACKEND` keeps using Phaxio; a new installation starts with no provider until you choose one.
+3. Run `faxbot system migrate` with the new version. An upgraded installation that never set `FAX_BACKEND` keeps using Phaxio; a new installation starts with no provider until you choose one.
 4. Start Faxbot, sign in with the installation key, and create the first owner.
 5. Approve or replace keys waiting for review, and issue new keys for apps that open received documents.
-6. Make a fresh backup with `faxbot admin backup`.
+6. Make a fresh backup with `faxbot system backup`.
 
 The steps, with Docker commands, are in [Upgrade an installation](deployment.md#upgrade-an-installation).

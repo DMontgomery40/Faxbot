@@ -13,7 +13,7 @@ from api.app.access.types import ResourceRef, StaleCredentialError
 from api.tests.test_schema import database, snapshot
 from api.tests.test_access_policy import World, NOW, ceiling, key_context
 from api.tests.test_access_schema import at_revision
-from api.tests.test_work_schema import without_work_catalogue
+from api.tests.test_work_schema import without_terminal_change, without_work_catalogue
 
 
 class CapabilityWorld(World):
@@ -188,7 +188,8 @@ def test_0007_upgrade_preserves_0006_state_and_validates_frozen_shape(database):
     assert after['access_capabilities'] == []
     for name, rows in before.items():
         if name != 'alembic_version':
-            assert without_work_catalogue(name, after[name]) == rows, name
+            assert (without_terminal_change(name, without_work_catalogue(name, after[name]))
+                    == without_terminal_change(name, rows)), name
     with database.connect() as connection:
         assert schema.validate_schema(connection, require_version=True) == schema.HEAD
         inspector = sa.inspect(connection)

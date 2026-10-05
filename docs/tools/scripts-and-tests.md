@@ -9,7 +9,6 @@ The helper scripts and core API tests below let you check Faxbot quickly. Some h
 - **Add a test fax** puts a one-page fax in **Received**, marked as a test everywhere. It goes through owners, mailbox rules and email delivery just like a real fax, but no call is made. Receiving has to be on.
 - **How the receiving provider reaches Faxbot** shows the address to give a provider that calls Faxbot when a fax arrives (Phaxio, Sinch, SignalWire, eFax notifications), with a copy button and a link to that provider's guide. With a carrier trunk it shows whether received faxes reach Faxbot, and for a provider Faxbot collects faxes from, such as HumbleFax, it tells you there is nothing to set.
 - **Fax engine** lists what Faxbot's own fax engine reports right now: trunk sign-ins, the addresses it checks, and calls and faxes in progress. The command line has the same lists: `faxbot system diagnostics engine registrations|contacts|calls|faxes`.
-- **Server checks** run read-only commands on Faxbot's server: the Python version, the document converter version and the files in the fax data folder. They only work when the installation allows them (`ENABLE_ADMIN_EXEC`); on the command line, use `faxbot system actions run <id>`.
 
 To see whether everything is working, use [Diagnostics](../admin-console/diagnostics.md).
 

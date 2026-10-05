@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import AdminAPIClient from '../api/client';
 import ScriptsTests from '../components/ScriptsTests';
@@ -8,13 +8,11 @@ import { settingsFixture } from '../test/settingsFixture';
 
 const client = () => new AdminAPIClient({ kind: 'key', key: 'synthetic-key' });
 
-function page(callbacks: object, { inbound = true, actions = true } = {}) {
+function page(callbacks: object, { inbound = true } = {}) {
   const settings = settingsFixture();
   server.use(
     http.get('/admin/settings', () => HttpResponse.json({ ...settings, inbound: { ...settings.inbound, enabled: inbound } })),
     http.get('/admin/inbound/callbacks', () => HttpResponse.json(callbacks)),
-    http.get('/admin/actions', () => HttpResponse.json(actions
-      ? { enabled: true, items: [{ id: 'python_version', label: 'Python version' }] } : { enabled: false, items: [] })),
   );
   const onNavigate = vi.fn();
   render(<ScriptsTests client={client()} onNavigate={onNavigate} />);
@@ -78,10 +76,10 @@ describe('Scripts & checks', () => {
     expect(await screen.findByText('No fax is in progress.')).toBeTruthy();
   });
 
-  it('runs a server check and shows its output', async () => {
-    server.use(http.post('/admin/actions/run', () => HttpResponse.json({ ok: true, id: 'python_version', code: 0, stdout: '3.11.9', stderr: '' })));
+  it('offers no server commands', async () => {
     page({ backend: 'sip', callbacks: [], receiving: { ready: true, message: 'Ready.' } });
-    fireEvent.click(await screen.findByRole('button', { name: 'Python version' }));
-    await waitFor(() => expect(screen.getByText('3.11.9')).toBeTruthy());
+    expect(await screen.findByText('Ready.')).toBeTruthy();
+    expect(screen.queryByText('Server checks')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Python version' })).toBeNull();
   });
 });

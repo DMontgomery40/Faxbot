@@ -39,8 +39,7 @@ def _configured_path(variable: str, filename: str) -> Path:
     values = managed_configuration_values()
     if values is not None:
         fields = {'FAXBOT_PROVIDERS_DIR': 'providers_dir',
-                  'FAXBOT_CONFIG_PATH': 'faxbot_config_path',
-                  'PLUGIN_REGISTRY_PATH': 'plugin_registry_path'}
+                  'FAXBOT_CONFIG_PATH': 'faxbot_config_path'}
         return Path(getattr(values, fields[variable])).absolute()
     override = os.getenv(variable)
     if override is not None:
@@ -58,15 +57,6 @@ def providers_dir() -> Path:
 
 def faxbot_config_path() -> Path:
     return _configured_path("FAXBOT_CONFIG_PATH", "faxbot.config.json")
-
-
-def plugin_registry_path() -> Path:
-    return _configured_path("PLUGIN_REGISTRY_PATH", "plugin_registry.json")
-
-
-def plugin_examples_path() -> Path:
-    # This resource is copied with the API module in the flattened image too.
-    return _APP_DIR / "api_plugins_list.md"
 
 
 def provider_manifest_path(provider_id: str) -> Path:

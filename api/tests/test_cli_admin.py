@@ -291,10 +291,11 @@ def test_restore_refuses_a_backup_that_does_not_match_its_manifest(installation,
     target.write_bytes(content)
     (folder / 'data' / 'extra.txt').parent.mkdir(exist_ok=True)
     (folder / 'data' / 'extra.txt').write_text('added later')
-    # The older faxbot admin, with these options before the command, still works.
-    added = installation.runner.invoke(cli_app, ['--url', NOBODY, 'admin', '--data-dir', str(empty / 'data'),
+    # A file added to the backup after it was made is refused too.
+    added = installation.runner.invoke(cli_app, ['--url', NOBODY, 'system', 'restore', str(folder),
+                                                 '--data-dir', str(empty / 'data'),
                                                  '--database-url', f"sqlite:///{empty / 'db.sqlite'}",
-                                                 '--key-file', str(empty / 'key'), 'restore', str(folder)])
+                                                 '--key-file', str(empty / 'key')])
     assert added.exit_code == 1 and 'files were added or removed' in added.stderr
     assert not (empty / 'db.sqlite').exists() and not (empty / 'key').exists()
 

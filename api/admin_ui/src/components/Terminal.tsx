@@ -142,7 +142,7 @@ const Terminal: React.FC<TerminalProps> = ({ client }) => {
     }
   }, [clearConnectionTimers]);
 
-  // This read-only endpoint reports whether administrative execution is enabled.
+  // The settings' environment-only view says whether this installation turns the terminal on.
   // Do not initialize a shell socket until the server grants that capability.
   useEffect(() => {
     let current = true;
@@ -153,14 +153,16 @@ const Terminal: React.FC<TerminalProps> = ({ client }) => {
       current = false;
       setAccess('error');
     }, 10000);
-    void client.listActions().then((result) => {
+    void client.getSettings().then((result) => {
       if (!current) return;
       window.clearTimeout(timeout);
-      setAccess(result.enabled === true ? 'enabled' : 'disabled');
+      const effective = result.deployment?.ENABLE_ADMIN_EXEC?.effective;
+      // Without that view, let the terminal ticket request decide.
+      setAccess(effective === false ? 'disabled' : 'enabled');
     }).catch((failure: unknown) => {
       if (!current) return;
       window.clearTimeout(timeout);
-      // The actions list has its own permission; when it is refused, let the
+      // Reading settings has its own permission; when it is refused, let the
       // terminal ticket request decide whether this account may connect.
       const refused = failure instanceof AdminAPIError && (failure.status === 401 || failure.status === 403);
       setAccess(refused ? 'enabled' : 'error');

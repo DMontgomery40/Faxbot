@@ -19,7 +19,6 @@ import HandshakeIcon from '@mui/icons-material/Handshake';
 import CloudIcon from '@mui/icons-material/Cloud';
 import SwapHorizIcon from '@mui/icons-material/SwapHoriz';
 import SettingsPhoneIcon from '@mui/icons-material/SettingsPhone';
-import RouterIcon from '@mui/icons-material/Router';
 import PaidIcon from '@mui/icons-material/Paid';
 import ReceiptLongIcon from '@mui/icons-material/ReceiptLong';
 import PriceChangeIcon from '@mui/icons-material/PriceChange';
@@ -35,7 +34,6 @@ import SettingsIcon from '@mui/icons-material/Settings';
 import HelpIcon from '@mui/icons-material/Help';
 import SecurityIcon from '@mui/icons-material/Security';
 import StorageIcon from '@mui/icons-material/Storage';
-import PublicIcon from '@mui/icons-material/Public';
 import AssessmentIcon from '@mui/icons-material/Assessment';
 import DescriptionIcon from '@mui/icons-material/Description';
 import FactCheckIcon from '@mui/icons-material/FactCheck';
@@ -282,7 +280,6 @@ export const NAVIGATION: NavArea[] = [
       // Titled by its carrier or phone system ("Telnyx", "Avaya IP Office").
       { id: 'trunk', label: 'Carrier trunk', labelFor: () => providerLabel('sip'), icon: <SettingsPhoneIcon />, provider: 'sip',
         gate: { anyOf: SETTINGS_READ }, render: (ctx) => settingsPage(['trunk'], providerLabel('sip'))(ctx) },
-      providerPage('freeswitch', 'FreeSWITCH (advanced)', 'freeswitch', 'freeswitch', <RouterIcon />),
       // Choosing or changing providers happens in the Setup wizard.
       { id: 'change', label: 'Add or change a provider', icon: <AddCircleOutlineIcon />, link: 'system/setup',
         gate: { anyOf: ['settings:write'] }, render: () => null },
@@ -335,8 +332,6 @@ export const NAVIGATION: NavArea[] = [
         render: settingsPage(['security'], 'Security') },
       { id: 'storage', label: 'Storage & retention', icon: <StorageIcon />, gate: { anyOf: SETTINGS_READ },
         render: settingsPage(['storage', 'advanced', 'backup'], 'Storage & retention') },
-      { id: 'remote', label: 'Remote access', icon: <PublicIcon />, gate: { anyOf: SETTINGS_READ },
-        render: settingsPage(['tunnel'], 'Remote access') },
       { id: 'audit', label: 'Audit log', icon: <FactCheckIcon />, gate: { anyOf: ['audit:read'] },
         render: (ctx) => (
           <>

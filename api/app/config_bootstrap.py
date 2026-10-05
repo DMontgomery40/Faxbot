@@ -115,7 +115,8 @@ def load_bootstrap_configuration(environment: Mapping[str, str], *,
             ('ENABLE_PERSISTED_SETTINGS', 'PERSISTED_ENV_PATH') if key in environment})
         merged = {key: value for key, value in environment.items() if key in ConfigurationValues.environment_keys()}
         if switches.enable_persisted_settings:
-            merged.update(read_environment(switches.persisted_env_path, allowed_keys=ConfigurationValues.environment_keys()))
+            merged.update(read_environment(switches.persisted_env_path,
+                                           allowed_keys=ConfigurationValues.accepted_environment_keys()))
         defaults = {'FAX_BACKEND': EARLIER_RELEASE_BACKEND} if earlier_release and 'FAX_BACKEND' not in merged else {}
         values = ConfigurationValues.from_environment({**merged, **defaults})
         text = read_configuration_text(values.faxbot_config_path, missing_ok=True)

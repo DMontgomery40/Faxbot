@@ -1,5 +1,4 @@
 """One name per fax provider, the same in the console, the command line and the plugin list."""
-import json
 from pathlib import Path
 import re
 
@@ -19,13 +18,6 @@ def _console_labels():
 def test_console_and_server_use_the_same_names():
     assert _console_labels() == PROVIDER_LABELS
     assert PROVIDER_LABELS['sip'] == 'Carrier trunk'
-
-
-def test_built_in_plugins_are_listed_under_the_same_names():
-    registry = json.loads((ROOT / 'config' / 'plugin_registry.json').read_text())
-    entries = registry['items']
-    names = {entry['id']: entry['name'] for entry in entries if entry['id'] in PROVIDER_LABELS}
-    assert names and all(name == PROVIDER_LABELS[identity] for identity, name in names.items())
 
 
 def test_routes_and_unknown_providers():

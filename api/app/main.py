@@ -8,7 +8,6 @@ from contextlib import AsyncExitStack, asynccontextmanager
 from datetime import datetime, timedelta, timezone
 import tempfile
 from typing import Optional, Any, List, Dict, Literal, cast
-import subprocess
 import time
 import sqlalchemy as sa
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Header, Depends, Query, Request, Response, WebSocket
@@ -21,13 +20,12 @@ from .config import (
     active_inbound,
     get_provider_traits,
     providerHasTrait,
-    providerTraitValue,
 )
 from .db import init_db, SessionLocal, FaxJob
 from .models import FaxJobOut
 from .conversion import ensure_dir
 from .documents import prepare_upload, UploadPreparationError
-from .ami import ami_client, ENGINE_UNREACHABLE
+from .ami import ami_client
 from . import sip_calls, sip_fax_mode, sip_network
 from .sip_http import router as sip_router, sip_trunk_message, watch_public_address
 from .hylafax_http import router as hylafax_router
@@ -45,7 +43,7 @@ from .audit import query_recent_logs
 from .storage import get_storage
 from .plugins.http_provider import HttpManifest, HttpProviderRuntime
 from .config_paths import (
-    InvalidProviderPath, plugin_examples_path,
+    InvalidProviderPath,
     provider_manifest_path, providers_dir,
 )
 from .signalwire_service import get_signalwire_service
@@ -634,7 +632,7 @@ def health_ready(request: Request):
 
 # Every protected route either declares its permission with require_permission
 # or authenticates with require_identity and checks permission on the resource.
-from .access.route_policy import authorize as authorize_operation, request_audit, require_permission  # noqa: E402
+from .access.route_policy import authorize as authorize_operation, require_permission  # noqa: E402
 
 
 class CreateAPIKeyIn(BaseModel):
@@ -1199,7 +1197,6 @@ async def validate_http_manifest(payload: ManifestValidateIn):
 class ImportManifestsIn(BaseModel):
     items: Optional[List[dict]] = None
     markdown: Optional[str] = None
-    source: Optional[str] = None  # 'repo_scrape' reads bundled API examples
 
 
 def _extract_json_blocks(md: str) -> List[dict]:
@@ -1230,19 +1227,12 @@ def _extract_json_blocks(md: str) -> List[dict]:
           dependencies=[Depends(require_permission('providers:install', audit=True))],
           responses={**_PERMISSION_RESPONSES, 404: _PUBLIC_DETAIL_RESPONSES[404]})
 def import_http_manifests(payload: ImportManifestsIn, request: Request):
-    """Bulk import provider manifests from JSON list or scraped markdown.
+    """Bulk import provider manifests from a JSON list or Markdown.
     For markdown, extracts JSON code fences and imports objects that look like manifests.
     """
     if not request.scope["faxbot.configuration"].active.values.feature_v3_plugins:
         return _plugins_disabled_response()
     candidates: List[dict] = []
-    if (payload.source or "").lower() == "repo_scrape" and not payload.items and not payload.markdown:
-        try:
-            scrape_path = plugin_examples_path()
-            with open(scrape_path, "r", encoding="utf-8") as f:
-                payload.markdown = f.read()
-        except Exception as e:
-            raise HTTPException(404, detail=f"Scrape file not found or unreadable: {e}")
     if payload.items:
         for it in payload.items:
             if isinstance(it, dict):
@@ -1318,245 +1308,12 @@ def admin_logs_tail(q: Optional[str] = None, event: Optional[str] = None, lines:
         raise HTTPException(500, detail=str(e))
 
 
-# ===== Admin actions (safe, allowlisted exec for UI) =====
-class ActionItem(BaseModel):
-    id: str
-    label: str
-    backend: Optional[List[str]] = None  # None or ["*"] means all
-
-
-_ACTIONS_REGISTRY: Dict[str, Dict[str, Any]] = {
-    # Safe, introspective commands only; never include secrets
-    "python_version": {
-        "label": "Python version",
-        "kind": "python",
-        "runner": lambda: {
-            "stdout": f"{os.sys.version}",
-            "stderr": "",
-            "code": 0,
-        },
-        "backend": ["*"]
-    },
-    "gs_version": {
-        "label": "Document converter version",
-        "kind": "shell",
-        "cmd": ["gs", "-v"],
-        "timeout": 10,
-        "backend": ["*"],
-    },
-    "list_faxdata": {
-        "label": "Files in the fax data folder",
-        "kind": "shell",
-        "cmd": ["ls", "-la", "/faxdata"],
-        "timeout": 5,
-        "backend": ["*"]
-    },
-}
-
-
 def _admin_exec_enabled() -> bool:
-    # Default enabled when local admin is on; can be disabled via env
+    # The console terminal: on when the console is served here, unless ENABLE_ADMIN_EXEC says otherwise.
     val = os.getenv("ENABLE_ADMIN_EXEC", None)
     if val is not None:
         return val.lower() in {"1", "true", "yes"}
     return os.getenv("ENABLE_LOCAL_ADMIN", "false").lower() in {"1","true","yes"}
-
-
-@app.get("/admin/actions", dependencies=[Depends(require_permission('host:actions', audit=True))],
-         responses=_PERMISSION_RESPONSES)
-def admin_actions_list():
-    if not _admin_exec_enabled():
-        return {"enabled": False, "items": []}
-    b = settings.fax_backend or ""
-    items: List[ActionItem] = []
-    for aid, meta in _ACTIONS_REGISTRY.items():
-        backends = meta.get("backend") or ["*"]
-        if "*" in backends or b in backends:
-            items.append(ActionItem(id=aid, label=meta.get("label") or aid, backend=backends))
-    return {"enabled": True, "items": [i.dict() for i in items]}
-
-
-class RunActionIn(BaseModel):
-    id: str
-
-
-@app.post("/admin/actions/run", responses=_PERMISSION_RESPONSES)
-def admin_actions_run(payload: RunActionIn, request: Request,
-                      identity=Depends(require_permission('host:actions', audit=True))):
-    if not _admin_exec_enabled():
-        raise HTTPException(403, detail="Admin exec is disabled. Set ENABLE_ADMIN_EXEC=true for local-only use.")
-    meta = _ACTIONS_REGISTRY.get(payload.id)
-    if not meta:
-        raise HTTPException(404, detail="Unknown action")
-    # Backend gate
-    backs = meta.get("backend") or ["*"]
-    if "*" not in backs and settings.fax_backend not in backs:
-        raise HTTPException(400, detail="Action not applicable for current backend")
-    # Recheck immediately before execution and record which action ran.
-    authorize_operation(access_runtime(request), identity.actor, 'host:actions',
-                        audit=request_audit(request, action=payload.id))
-    try:
-        if meta.get("kind") == "python":
-            res = meta.get("runner")()
-            return {"ok": True, "id": payload.id, **res}
-        elif meta.get("kind") == "shell":
-            cmd = meta.get("cmd")
-            if not isinstance(cmd, list) or not all(isinstance(x, str) for x in cmd):
-                raise ValueError("Invalid command spec")
-            timeout = int(meta.get("timeout", 20))
-            p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-            return {
-                "ok": p.returncode == 0,
-                "id": payload.id,
-                "code": p.returncode,
-                "stdout": p.stdout[-10000:],
-                "stderr": p.stderr[-4000:],
-            }
-        else:
-            raise ValueError("Unsupported action kind")
-    except subprocess.TimeoutExpired:
-        return {"ok": False, "id": payload.id, "code": 124, "stdout": "", "stderr": "Timed out"}
-    except Exception as e:
-        raise HTTPException(500, detail=str(e))
-
-
-# ===== VPN Tunnel endpoints (admin-only, UI-driven) =====
-class TunnelStatusOut(BaseModel):
-    enabled: bool
-    provider: str  # none|cloudflare|wireguard|tailscale
-    status: str    # disabled|connecting|connected|error
-    public_url: Optional[str] = None
-    local_ip: Optional[str] = None
-    last_checked: Optional[datetime] = None
-    error_message: Optional[str] = None
-
-
-class TunnelConfigIn(BaseModel):
-    enabled: bool = False
-    provider: str = "none"  # none|cloudflare|wireguard|tailscale
-    cloudflare_custom_domain: Optional[str] = None
-    wireguard_endpoint: Optional[str] = None
-    wireguard_server_public_key: Optional[str] = None
-    wireguard_client_ip: Optional[str] = None
-    wireguard_dns: Optional[str] = None
-    tailscale_auth_key: Optional[str] = None
-    tailscale_hostname: Optional[str] = None
-
-
-class TunnelTestOut(BaseModel):
-    ok: bool
-    message: Optional[str] = None
-    target: Optional[str] = None
-
-
-# In-memory state (non-persistent; UI persists a masked version in .env via existing settings persistence)
-_TUNNEL_STATE: Dict[str, Any] = {
-    "enabled": False,
-    "provider": "none",
-    "public_url": None,
-    "last_checked": None,
-    "error": None,
-}
-
-
-def _hipaa_posture_enabled() -> bool:
-    try:
-        return bool(settings.enforce_public_https and (settings.require_api_key or settings.api_key))
-    except Exception:
-        return False
-
-
-@app.get("/admin/tunnel/status", dependencies=[Depends(require_permission('tunnels:read'))],
-         responses=_PERMISSION_RESPONSES)
-def admin_tunnel_status() -> TunnelStatusOut:
-    # Compose a conservative status view; do not leak secrets
-    enabled = bool(_TUNNEL_STATE.get("enabled"))
-    provider = str(_TUNNEL_STATE.get("provider") or "none").lower()
-    public_url = _TUNNEL_STATE.get("public_url")
-    error = _TUNNEL_STATE.get("error")
-    # HIPAA posture disables Cloudflare quick tunnel
-    if provider == "cloudflare" and _hipaa_posture_enabled():
-        return TunnelStatusOut(
-            enabled=False,
-            provider="cloudflare",
-            status="error",
-            public_url=None,
-            error_message="Cloudflare Quick Tunnel is not HIPAA compliant. Use WireGuard or Tailscale.",
-            last_checked=datetime.utcnow(),
-        )
-    status = "disabled"
-    if enabled:
-        status = "connected" if (public_url and provider == "cloudflare") else "connecting"
-        if error:
-            status = "error"
-    # Derive a local IP hint best-effort
-    local_ip = None
-    try:
-        import socket
-        local_ip = socket.gethostbyname(socket.gethostname())
-    except Exception:
-        pass
-    return TunnelStatusOut(
-        enabled=enabled,
-        provider=provider,
-        status=status,
-        public_url=public_url if provider == "cloudflare" and not _hipaa_posture_enabled() else None,
-        local_ip=local_ip,
-        last_checked=datetime.utcnow(),
-        error_message=(str(error) if error else None),
-    )
-
-
-@app.post("/admin/tunnel/config", dependencies=[Depends(require_permission('tunnels:manage'))],
-          responses=_PERMISSION_RESPONSES)
-def admin_tunnel_config(payload: TunnelConfigIn) -> TunnelStatusOut:
-    # Validate provider
-    provider = (payload.provider or "none").lower()
-    if provider not in {"none", "cloudflare", "wireguard", "tailscale"}:
-        raise HTTPException(400, detail="Invalid provider")
-    # Enforce HIPAA posture
-    if provider == "cloudflare" and _hipaa_posture_enabled():
-        # Auto-disable and warn in status
-        _TUNNEL_STATE.update({
-            "enabled": False,
-            "provider": "cloudflare",
-            "public_url": None,
-            "error": "Cloudflare Quick Tunnel is not allowed in HIPAA posture",
-            "last_checked": datetime.utcnow(),
-        })
-        return admin_tunnel_status()
-    # Apply config safely (no secrets echoed)
-    _TUNNEL_STATE.update({
-        "enabled": bool(payload.enabled),
-        "provider": provider,
-        "error": None,
-        "last_checked": datetime.utcnow(),
-    })
-    # Reset derived URL on provider change
-    if provider != "cloudflare":
-        _TUNNEL_STATE["public_url"] = None
-    return admin_tunnel_status()
-
-
-@app.post("/admin/tunnel/test", dependencies=[Depends(require_permission('tunnels:read'))],
-          responses=_PERMISSION_RESPONSES)
-def admin_tunnel_test() -> TunnelTestOut:
-    # Perform a bounded local probe; do not reach out to public endpoints from here
-    try:
-        import http.client
-        from urllib.parse import urlparse as _up
-        url = settings.public_api_url or "http://localhost:8080"
-        p = _up(url)
-        host = p.hostname or "localhost"
-        port = p.port or (443 if p.scheme == "https" else 80)
-        path = "/health"
-        conn = http.client.HTTPSConnection(host, port, timeout=3) if p.scheme == "https" else http.client.HTTPConnection(host, port, timeout=3)
-        conn.request("GET", path)
-        resp = conn.getresponse()
-        ok = (resp.status == 200)
-        return TunnelTestOut(ok=ok, message=("OK" if ok else f"HTTP {resp.status}"), target=f"{host}:{port}{path}")
-    except Exception as e:
-        return TunnelTestOut(ok=False, message=str(e)[:120])
 
 
 # Mobile pairing. The console mints a six-digit, single-use code bound to its
@@ -1646,11 +1403,8 @@ def _issue_device_key(service, actor, device_name):
 
 
 def _mobile_base_urls() -> Dict[str, Optional[str]]:
-    tunnel = None
-    if (_TUNNEL_STATE.get("enabled") and str(_TUNNEL_STATE.get("provider") or "").lower() == "cloudflare"
-            and not _hipaa_posture_enabled()):
-        tunnel = _TUNNEL_STATE.get("public_url") or None
-    return {"local": settings.mobile_local_base or None, "tunnel": tunnel,
+    # "tunnel" stays in the paired app's contract; Faxbot runs no tunnel, so it is always empty.
+    return {"local": settings.mobile_local_base or None, "tunnel": None,
             "public": settings.public_api_url or None}
 
 
@@ -1913,242 +1667,6 @@ async def admin_refresh_job(job_id: str, request: Request, identity=Depends(requ
     except Exception:
         raise HTTPException(502, detail="Provider status is temporarily unavailable. This fax has not been resubmitted.") from None
     return await run_lifecycle_step(private_operation(lambda: _accepted_job_response(access_runtime(request), identity.actor, job_id)))
-
-
-@app.post("/admin/diagnostics/run", dependencies=[Depends(require_permission('diagnostics:read'))],
-          responses=_PERMISSION_RESPONSES)
-def run_diagnostics(request: Request):
-    """Inspect the active installation without submitting a fax.
-
-    Readiness shares the dashboard's captured-profile check. Individual values
-    remain available to older clients; explicit outcomes prevent feature flags
-    and metadata from being mistaken for failed tests.
-    """
-    snapshot = request.scope["faxbot.configuration"]
-    readiness = _readiness_status(request)
-    ob, ib = active_outbound(), active_inbound()
-    diag: dict[str, Any] = {
-        "timestamp": datetime.utcnow().isoformat(),
-        "backend": ob,
-        "default_backend": settings.fax_backend,
-        "outbound_backend": ob,
-        "inbound_backend": ib,
-        "configuration": {
-            "active_revision_id": snapshot.active.id,
-            "desired_revision_id": snapshot.desired.id,
-            "generation": snapshot.generation,
-            "pending_restart": snapshot.pending is not None,
-        },
-        "checks": {},
-        "check_outcomes": {},
-    }
-    checks = diag["checks"]
-    checks["outbound"] = {
-        **readiness["checks"]["outbound"],
-        "requires_ami": providerHasTrait("outbound", "requires_ami"),
-        "sending_disabled": settings.fax_disabled,
-    }
-    checks["inbound"] = {
-        **readiness["checks"]["inbound"],
-        "requires_ami": providerHasTrait("inbound", "requires_ami"),
-        "needs_storage": providerHasTrait("inbound", "needs_storage"),
-        "inbound_verification": providerTraitValue("inbound", "inbound_verification"),
-        "retention_days": settings.inbound_retention_days,
-    }
-    # Native SIP requirements apply to the captured adapter, never merely to
-    # a same-named manifest override or an unused default provider.
-    for direction in ("outbound", "inbound"):
-        if direction == "inbound" and not settings.inbound_enabled:
-            continue
-        profile_id = snapshot.active.profile_id(direction)
-        if profile_id is None:
-            continue
-        try:
-            profile = _configuration_manager().store.read_profile(profile_id).configuration
-        except (ConfigurationStoreError, ConfigurationSecretError, ValueError):
-            checks[direction]["backend_config"] = False
-            continue
-        if profile.provider_id == "sip" and profile.manifest is None:
-            checks[direction]["ami_password_not_default"] = bool(
-                profile.credentials.get("ami_password") and profile.credentials.get("ami_password") != "changeme")
-            if direction == "inbound":
-                checks[direction]["asterisk_secret_set"] = bool(profile.credentials.get("inbound_secret"))
-    system = {
-        "ghostscript": readiness["checks"]["ghostscript"],
-        "fax_data_dir": os.path.isdir(settings.fax_data_dir),
-        "fax_data_writable": False,
-        "database_connected": readiness["checks"]["db"],
-        "temp_dir_writable": False,
-    }
-    # These probes create and remove only their own temporary files.
-    try:
-        with tempfile.NamedTemporaryFile(dir=settings.fax_data_dir, prefix="faxbot-diagnostic-", delete=True) as probe:
-            probe.write(b"ok")
-            probe.flush()
-        system["fax_data_writable"] = True
-    except OSError:
-        pass
-    try:
-        with tempfile.NamedTemporaryFile(delete=True) as probe:
-            probe.write(b"ok")
-            probe.flush()
-        system["temp_dir_writable"] = True
-    except OSError:
-        pass
-    checks["system"] = system
-    storage_required = settings.inbound_enabled and providerHasTrait("inbound", "needs_storage")
-    checks["storage"] = {
-        "type": settings.storage_backend,
-        "required_for_active_inbound": storage_required,
-        "configuration_ready": readiness["checks"]["storage"],
-    }
-    if settings.storage_backend.lower() == "s3":
-        checks["storage"].update(bucket_set=bool(settings.s3_bucket),
-            region_set=bool(settings.s3_region), kms_enabled=bool(settings.s3_kms_key_id))
-        if storage_required and settings.s3_bucket and settings.enable_s3_diagnostics:
-            try:
-                import boto3
-                from botocore.config import Config
-                client = boto3.client("s3", region_name=settings.s3_region or None,
-                    endpoint_url=settings.s3_endpoint_url or None,
-                    config=Config(signature_version="s3v4", connect_timeout=3, read_timeout=3,
-                                  retries={"max_attempts": 0}))
-                client.head_bucket(Bucket=settings.s3_bucket)
-                checks["storage"]["accessible"] = True
-            except Exception:
-                checks["storage"]["accessible"] = False
-    checks["security"] = {
-        "enforce_https": settings.enforce_public_https,
-        "audit_logging": settings.audit_log_enabled,
-        "rate_limiting": settings.max_requests_per_minute > 0,
-        "pdf_token_ttl": settings.pdf_token_ttl_minutes,
-    }
-
-    # Plugins (v3) readiness
-    try:
-        plugins_info: dict[str, Any] = {
-            "v3_enabled": settings.feature_v3_plugins,
-            "plugin_install_enabled": settings.feature_plugin_install,
-            "active_outbound": ob,
-            "installed": 0,
-            "manifests": [],
-        }
-        issues_total = 0
-        if settings.feature_v3_plugins:
-            prov_dir = _providers_dir()
-            if os.path.isdir(prov_dir):
-                for pid in os.listdir(prov_dir):
-                    try:
-                        mpath = provider_manifest_path(pid)
-                        if not os.path.exists(mpath):
-                            continue
-                        with open(mpath, "r", encoding="utf-8") as f:
-                            mdata = json.load(f)
-                        man = HttpManifest.from_dict(mdata)
-                        actions = list((man.actions or {}).keys())
-                        issues: list[str] = []
-                        # Basic manifest checks
-                        if "send_fax" not in actions:
-                            issues.append("missing send_fax action")
-                        if not man.allowed_domains:
-                            issues.append("allowed_domains empty")
-                        # HTTPS check when enforcing HTTPS
-                        if settings.enforce_public_https:
-                            for name, act in (man.actions or {}).items():
-                                try:
-                                    pu = urlparse(act.url)
-                                    if pu.scheme == "http":
-                                        issues.append(f"action {name} uses http")
-                                except Exception:
-                                    issues.append(f"action {name} url invalid")
-                        plugins_info["manifests"].append({
-                            "id": man.id,
-                            "name": man.name,
-                            "actions": actions,
-                            "allowed_domains": man.allowed_domains,
-                            "issues": issues,
-                        })
-                        issues_total += len(issues)
-                    except Exception:
-                        plugins_info.setdefault("errors", []).append({"id": pid, "error": "Manifest cannot be inspected."})
-            plugins_info["installed"] = len(plugins_info["manifests"])  # type: ignore[index]
-        diag["checks"]["plugins"] = plugins_info
-    except Exception:
-        diag["checks"]["plugins"] = {"inspection_error": "Plugin metadata cannot be inspected."}
-
-    # Traits schema issues (expose unknown trait keys for CI visibility)
-    try:
-        from .config import CANONICAL_TRAIT_KEYS, get_traits_schema_issues
-        diag["checks"]["traits_schema"] = {
-            "allowed_keys": sorted(list(CANONICAL_TRAIT_KEYS)),
-            "issues": get_traits_schema_issues(),
-        }
-    except Exception:
-        pass
-
-    critical: list[str] = []
-    warnings: list[str] = []
-    outcomes = diag["check_outcomes"]
-    for section, values in checks.items():
-        outcomes[section] = {key: "info" for key in values}
-
-    def required(section, key, message, *, applicable=True):
-        value = checks[section].get(key)
-        if not applicable or value is None:
-            outcomes[section][key] = "not_applicable"
-        else:
-            outcomes[section][key] = "pass" if value is True else "fail"
-            if value is not True and message not in critical:
-                critical.append(message)
-
-    engine = ami_client.engine_message() or ENGINE_UNREACHABLE
-    required("outbound", "backend_config", "Active outbound provider is not locally configured. Review the active provider in Settings.")
-    required("outbound", "ami_connected", engine)
-    required("inbound", "backend_config", "Active receiving provider is not locally configured. Review inbound settings.", applicable=settings.inbound_enabled)
-    required("inbound", "ami_connected", engine, applicable=settings.inbound_enabled)
-    for direction in ("outbound", "inbound"):
-        if "ami_password_not_default" in checks[direction]:
-            required(direction, "ami_password_not_default",
-                     f"Active {direction} Asterisk provider requires a non-default AMI password. Review provider settings.")
-    if "asterisk_secret_set" in checks["inbound"]:
-        required("inbound", "asterisk_secret_set", "Active Asterisk receiving requires an inbound secret. Review provider settings.")
-    required("storage", "configuration_ready", "Active inbound storage is unavailable.", applicable=storage_required)
-    if "accessible" in checks["storage"]:
-        required("storage", "accessible", "Configured inbound S3 bucket could not be accessed.")
-    for key, message in {
-        "ghostscript": "Ghostscript is unavailable for document processing.",
-        "fax_data_dir": "The configured fax data directory is unavailable.",
-        "fax_data_writable": "The configured fax data directory is not writable.",
-        "database_connected": "The installation database is unavailable.",
-        "temp_dir_writable": "The temporary document directory is not writable.",
-    }.items():
-        required("system", key, message)
-    for key, message in {
-        "enforce_https": "Public HTTPS enforcement is disabled; review the installation's network configuration.",
-        "audit_logging": "Audit logging is disabled.",
-        "rate_limiting": "Application request rate limiting is disabled.",
-    }.items():
-        outcomes["security"][key] = "pass" if checks["security"][key] else "warning"
-        if not checks["security"][key]:
-            warnings.append(message)
-    plugins = checks.get("plugins", {})
-    for manifest in plugins.get("manifests", []):
-        for issue in manifest.get("issues", []):
-            warnings.append(f"Installed plugin {manifest['id']}: {issue}")
-    if plugins.get("errors") or plugins.get("inspection_error"):
-        warnings.append("Some installed plugin metadata could not be inspected.")
-        outcomes["plugins"]["errors" if plugins.get("errors") else "inspection_error"] = "warning"
-    if checks.get("traits_schema", {}).get("issues"):
-        outcomes["traits_schema"]["issues"] = "warning"
-        warnings.append("Provider trait metadata has schema issues.")
-    if snapshot.pending is not None:
-        warnings.append("Desired settings are pending a full installation restart; diagnostics describe the active revision.")
-    diag["summary"] = {
-        "healthy": readiness["status"] == "ready" and not critical,
-        "critical_issues": critical,
-        "warnings": warnings,
-    }
-    return diag
 
 
 @app.get("/admin/settings/export", responses={**_CONFIGURATION_READ_RESPONSES, **_CONFIGURATION_VALIDATION_RESPONSES})
@@ -2973,37 +2491,6 @@ def update_plugin_config(plugin_id: str, payload: UpdatePluginConfigIn, request:
     return configuration_write_receipt(expected, snapshot)
 
 
-@app.get("/plugin-registry", responses=_PROVIDER_READ_RESPONSES)
-def plugin_registry(request: Request, identity=Depends(require_identity)):
-    snapshot = access_runtime(request).configuration_access.providers(identity.actor)
-    if not snapshot.active.values.feature_v3_plugins:
-        return _plugins_disabled_response()
-    # This operator-configured file and its installed-provider fallback are
-    # installation data. Only return display metadata, never arbitrary fields.
-    try:
-        with open(snapshot.active.values.plugin_registry_path, "r", encoding="utf-8") as f:
-            registry = json.load(f)
-        if not isinstance(registry, dict) or not isinstance(registry.get('items'), list):
-            raise ValueError('Invalid provider registry.')
-        items = []
-        for entry in registry['items']:
-            if not isinstance(entry, dict) or not isinstance(entry.get('id'), str):
-                raise ValueError('Invalid provider registry item.')
-            item = {key: entry[key] for key in
-                    ('id', 'name', 'version', 'description', 'learn_more')
-                    if isinstance(entry.get(key), str)}
-            item.setdefault('name', item['id'])
-            item.setdefault('version', '')
-            for key in ('categories', 'capabilities'):
-                values = entry.get(key, [])
-                if not isinstance(values, list) or any(not isinstance(value, str) for value in values):
-                    raise ValueError('Invalid provider registry metadata.')
-                item[key] = values
-            items.append(item)
-        return {'items': items}
-    except (OSError, ValueError):
-        pass
-    return {"items": _installed_plugins(snapshot), "note": "default registry"}
 @app.post('/signalwire-callback')
 async def signalwire_callback(request: Request):
     return await _receive_outbound_callback(request, 'signalwire')
@@ -3125,6 +2612,14 @@ async def admin_terminal_websocket(websocket: WebSocket):
         except Exception:
             return False
 
+    # Every session start goes into the audit log, after the permission is checked once more;
+    # a refusal is recorded too, and no shell starts.
+    try:
+        await run_lifecycle_step(lambda: authorize_operation(
+            service, record.actor, 'host:terminal', audit={'request': 'WEBSOCKET /admin/terminal', 'session': 'started'}))
+    except Exception:
+        await _close_terminal(websocket, 1008)
+        return
     audit_event("terminal_opened", principal_id=record.principal_id)
     try:
         await terminal_module.handle_terminal_websocket(websocket,

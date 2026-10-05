@@ -264,11 +264,11 @@ def test_the_command_line_marks_and_refuses_environment_credentials(installation
         def cli(*args):
             return CliRunner().invoke(cli_app, ['--url', ORIGIN, '--key', BOOTSTRAP, *args],
                                       obj={'client_factory': lambda address, timeout: (client, False)})
-        shown = cli('settings', 'get', 'humblefax')
+        shown = cli('system', 'settings', 'get', 'humblefax')
         assert shown.exit_code == 0, shown.stderr
         assert 'set in .env' in shown.stdout and 'synthetic-access-env' not in shown.stdout
         assert 'Set in .env (change them there, then run docker compose up -d): humblefax_access_key' in shown.stdout
-        refused = cli('settings', 'set', 'humblefax_access_key=synthetic-other')
+        refused = cli('system', 'settings', 'set', 'humblefax_access_key=synthetic-other')
         assert refused.exit_code == 6
         assert refused.stderr.strip() == REFUSAL
         assert installation.store().read().active.values.humblefax_access_key == 'synthetic-access-env'

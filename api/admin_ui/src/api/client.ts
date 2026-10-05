@@ -13,7 +13,6 @@ import type {
   PluginConfigurationPatch,
   ConfigurationWriteResult,
   PluginRole,
-  DiagnosticsResult,
   DiagnosticsReport,
   ValidationResult,
   InboundFax,
@@ -673,11 +672,6 @@ class AdminAPIClient {
     return this.json('/admin/db-status');
   }
 
-  // Diagnostics
-  async runDiagnostics(): Promise<DiagnosticsResult> {
-    return this.json('/admin/diagnostics/run', { method: 'POST' });
-  }
-
   // The last diagnostics report, without contacting anything; empty until the first run.
   async getDiagnosticsReport(): Promise<DiagnosticsReport> {
     return this.json('/admin/diagnostics/report');
@@ -812,28 +806,6 @@ class AdminAPIClient {
     return this.json('/admin/inbound/simulate', { method: 'POST', body: JSON.stringify(opts) });
   }
 
-  // Admin actions (container exec — allowlisted)
-  async listActions(): Promise<{ enabled: boolean; items: Array<{ id: string; label: string; backend?: string[] }> }> {
-    return this.json('/admin/actions');
-  }
-
-  async runAction(actionId: string): Promise<{ ok: boolean; id: string; code?: number; stdout?: string; stderr?: string }> {
-    return this.json('/admin/actions/run', { method: 'POST', body: JSON.stringify({ id: actionId }) });
-  }
-
-  // Tunnel
-  async getTunnelStatus(): Promise<any> {
-    return this.json('/admin/tunnel/status');
-  }
-
-  async setTunnelConfig(payload: any): Promise<any> {
-    return this.json('/admin/tunnel/config', { method: 'POST', body: JSON.stringify(payload || {}) });
-  }
-
-  async testTunnel(): Promise<{ ok: boolean; message?: string; target?: string }> {
-    return this.json('/admin/tunnel/test', { method: 'POST' });
-  }
-
   async createTunnelPairing(): Promise<{ code: string; expires_at: string }> {
     const result = await this.json<{ code: string; expires_at: string }>('/admin/tunnel/pair', { method: 'POST', body: '{}' });
     // Issuing a code changes access policy; keep later edits current.
@@ -904,10 +876,6 @@ class AdminAPIClient {
     return configurationResult(await res.json());
   }
 
-  async getPluginRegistry(): Promise<{ items: any[] }> {
-    return this.json('/plugin-registry');
-  }
-
   // Manifest providers
   async validateHttpManifest(payload: { manifest: any; credentials?: any; settings?: any; to?: string; file_url?: string; from_number?: string; render_only?: boolean }): Promise<any> {
     return this.json('/admin/plugins/http/validate', { method: 'POST', body: JSON.stringify(payload || {}) }, { manifestValidation: true });
@@ -933,7 +901,7 @@ class AdminAPIClient {
     return res.json();
   }
 
-  async importHttpManifests(payload: { items?: any[]; markdown?: string; source?: 'repo_scrape' }): Promise<{ ok: boolean; imported: any[]; errors: Array<{ error: string }> }> {
+  async importHttpManifests(payload: { items?: any[]; markdown?: string }): Promise<{ ok: boolean; imported: any[]; errors: Array<{ error: string }> }> {
     const result = await this.json<any>('/admin/plugins/http/import-manifests', { method: 'POST', body: JSON.stringify(payload || {}) }, { manifestValidation: true });
     return {
       ...result,
