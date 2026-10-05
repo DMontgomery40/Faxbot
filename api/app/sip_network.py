@@ -901,6 +901,16 @@ async def check_at_start(runtime, *, delay=START_DELAY_SECONDS, confirm=CONFIRM_
         raise
     except Exception:
         logging.getLogger(__name__).warning('Faxbot could not check its network for fax over IP.')
+    try:
+        # Telnyx's own T.38 settings for the trunk numbers, read at the same times as the network.
+        from .config_runtime import run_lifecycle_step
+        from . import telnyx_t38
+        values = await run_lifecycle_step(lambda: runtime.manager.store.read().active.values)
+        await run_lifecycle_step(lambda: telnyx_t38.check(values))
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        logging.getLogger(__name__).warning('Faxbot could not check fax over IP (T.38) at Telnyx.')
     if keep:
         await keep_router_ports(runtime)
     return outcome

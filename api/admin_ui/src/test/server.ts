@@ -640,6 +640,8 @@ const consoleHandlers = [
   http.get('/admin/sip/calls', () => json({ items: [], next_cursor: null })),
   // The network check for fax over IP: nothing to show until a test says otherwise.
   http.get('/admin/sip/network', () => json({ applies: false, checked: false, t38: null, text: null })),
+  // Telnyx's T.38 setting on the trunk numbers: nothing to show until a test says otherwise.
+  http.get('/admin/sip/telnyx', () => json({ applies: false, numbers: [], connection_texts: [], text: null })),
   // Published plans for providers in use with no rate card yet: none.
   http.get('/routing/published-plans/in-use', () => json({ items: [] })),
   // Work counts for the Overview's Needs attention card: nothing waiting.

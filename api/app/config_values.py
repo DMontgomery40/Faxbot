@@ -162,7 +162,9 @@ class ConfigurationValues(BaseModel):
     # Let Faxbot ask the router (PCP, NAT-PMP or UPnP) to open its published fax ports when the router changes
     # port numbers, so T.38 fax data can come back; Faxbot closes them when it stops.
     sip_router_ports: bool = Field(True, validation_alias='SIP_ROUTER_PORTS')
-    # Read-only Telnyx API v2 key: Faxbot reads what each trunk call was charged. Never used to place calls.
+    # Telnyx API v2 key: Faxbot reads what each trunk call was charged and the trunk numbers' T.38 settings
+    # (telnyx_t38.py). It changes one number's T.38 gateway only when a person selects Turn on T.38. Never used
+    # to place calls.
     telnyx_api_key: str = Field('', validation_alias='TELNYX_API_KEY', repr=False, json_schema_extra={'secret': True},
                                 pattern=r'^[!-~]{0,256}$')
     phaxio_api_key: str = Field('', validation_alias='PHAXIO_API_KEY', repr=False, json_schema_extra={'secret': True})

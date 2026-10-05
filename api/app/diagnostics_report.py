@@ -426,6 +426,15 @@ async def carrier_trunk(context: Context) -> list[Finding]:
         findings.append(Finding('engine.t38', 'engine', 'Fax over IP (T.38)', ATTENTION,
                                 sentence or 'Faxbot uses audio fax on this trunk.', 'Open carrier trunk',
                                 'providers/trunk'))
+    telnyx = status.get('telnyx_t38')
+    if telnyx and telnyx.get('text'):
+        ready = bool(telnyx.get('ready'))
+        fixable = any(entry.get('fixable') for entry in telnyx.get('numbers') or [])
+        findings.append(Finding('engine.telnyx_t38', 'engine', 'Fax over IP (T.38) at Telnyx',
+                                OK if ready else ATTENTION, telnyx['text'],
+                                None if ready else ('Open carrier trunk to turn on T.38' if fixable
+                                                    else 'Open carrier trunk'),
+                                None if ready else 'providers/trunk'))
     if status.get('last_call_text'):
         verdict = status.get('last_call_verdict') or ''
         good = verdict in {'sent', 'received', ''}
