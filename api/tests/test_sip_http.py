@@ -93,7 +93,7 @@ def test_status_without_a_trunk_says_so_in_one_sentence(bare_client):
                     'engine_managed': False, 'engine_restarting': False, 'in_use': False,
                     'handover_ready': None, 'handover_text': None, 't38_off_reason': None, 't38_off_at': None,
                     'phone_system': None, 'phone_system_command': None, 'phone_system_setting': None,
-                    'phone_system_hidden': False,
+                    'phone_system_hidden': False, 'network_t38': None, 'network_text': None,
                     'message': 'No SIP trunk is set up. Choose your carrier to start.'}
 
 
@@ -148,10 +148,13 @@ def test_status_reports_registration_and_reachability_from_asterisk(client, monk
     assert body['registration_text'] == "The carrier accepted Faxbot's registration over TLS."
     assert body['reachability_text'] == "The carrier answered Faxbot's check in 38 ms."
     assert body['internet_address'] == '198.51.100.7' and body['behind_router'] is True
-    assert body['public_address_text'] == ("Faxbot's internet address is 198.51.100.7; your network changes port "
-                                           "numbers, so Telnyx has to follow Faxbot's packets, and the first test "
-                                           "fax shows whether it does.")
-    assert body['ports_text'] == 'No ports need to be opened or forwarded.'
+    # Apply checked the network: it changes port numbers, so the network sentence says what that means for
+    # T.38, the address sentence keeps to the address, and "no ports to open" is not claimed.
+    assert body['public_address_text'] == "Faxbot's internet address is 198.51.100.7; your network changes port numbers."
+    assert body['network_t38'] == 'blocked'
+    assert body['network_text'] == ('Your network changes port numbers, and Telnyx does not follow such changes for '
+                                    'T.38 fax data, so it cannot come back to Faxbot.')
+    assert body['ports_text'] is None
 
     async def rejected(fields, *, collect=False):
         if fields['Action'] == 'PJSIPShowRegistrationsOutbound':
@@ -263,7 +266,9 @@ def test_each_route_declares_the_permission_the_console_relies_on():
     assert declared == {('GET', '/admin/sip/presets'): [('providers:read', False)],
                         ('GET', '/admin/sip/status'): [('providers:read', False)],
                         ('POST', '/admin/sip/apply'): [('providers:write', False)],
-                        ('GET', '/admin/sip/calls'): [('diagnostics:read', False)]}
+                        ('GET', '/admin/sip/calls'): [('diagnostics:read', False)],
+                        ('GET', '/admin/sip/network'): [('providers:read', False)],
+                        ('POST', '/admin/sip/network/check'): [('providers:write', False)]}
 
 
 def test_console_save_then_apply_writes_the_new_trunk(bare_client, isolated_installation):

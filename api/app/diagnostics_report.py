@@ -408,14 +408,28 @@ async def carrier_trunk(context: Context) -> list[Finding]:
         findings.append(Finding('engine.t38', 'engine', 'Fax over IP (T.38)', ATTENTION,
                                 sentence or 'Faxbot uses audio fax on this trunk.', 'Open carrier trunk',
                                 'providers/trunk'))
-    elif status.get('public_address_text'):
-        findings.append(Finding('engine.network', 'engine', 'Internet address', OK, status['public_address_text']))
     if status.get('last_call_text'):
         verdict = status.get('last_call_verdict') or ''
         good = verdict in {'sent', 'received', ''}
         findings.append(Finding('engine.last_call', 'engine', 'Last call', OK if good else ATTENTION,
                                 status['last_call_text']))
     return findings
+
+
+@check('network for fax over IP')
+async def network_for_fax(context: Context) -> list[Finding]:
+    """The last network check for fax over IP (sip_network): whether T.38 fax data can come back."""
+    if not _uses_trunk(context.request):
+        return []
+    from . import sip_network
+    from .config import configuration_values
+    found = await _blocking(sip_network.report, configuration_values())
+    if not found.get('applies'):
+        return []
+    good = found['t38'] == sip_network.OPEN or not found.get('checked')
+    return [Finding('engine.network', 'engine', 'Network for fax over IP', OK if good else ATTENTION,
+                    found.get('text') or '', None if good else 'Open carrier trunk',
+                    None if good else 'providers/trunk')]
 
 
 # ---------------------------------------------------------------------------

@@ -41,6 +41,7 @@ import SecretInput from './common/SecretInput';
 import EnvSetField, { environmentManaged } from './common/EnvSetField';
 import { numberHint, numberPlaceholder, settingsNumberFormat } from './common/numbers';
 import InboundRecovery from './InboundRecovery';
+import NetworkForFax from './NetworkForFax';
 
 interface SipTrunkSettingsProps {
   client: AdminAPIClient;
@@ -160,7 +161,9 @@ export function audioReason(reason: string | null | undefined, at?: string | nul
     return `Off: ${day}a T.38 fax got no fax data back on this network, so Faxbot uses audio fax.`;
   }
   if (reason === 'network') {
-    return "Off: your network changes port numbers, and Telnyx's T.38 fax data does not come back through such networks, so Faxbot uses audio fax.";
+    return carrier === 'Telnyx'
+      ? "Off: your network changes port numbers, so Telnyx's T.38 fax data cannot come back; Faxbot uses audio fax until the network is fixed."
+      : 'Off: your network changes port numbers, so T.38 fax data most likely cannot come back; Faxbot uses audio fax until the network is fixed.';
   }
   if (reason === 'carrier') {
     return `Off: ${carrier || 'your carrier'} turns T.38 into audio fax inside its network, so Faxbot uses audio fax.`;
@@ -686,6 +689,8 @@ function SipTrunkSettings({ client, showCalls = true, revision: sharedRevision, 
           </Alert>
         </Box>
       )}
+
+      {!phone && saved.preset && <NetworkForFax client={client} onChanged={load} refresh={status} />}
 
       <Stack direction={narrow ? 'column' : 'row'} spacing={1}>
         <Button variant="contained" onClick={save} disabled={busy}>Save trunk settings</Button>

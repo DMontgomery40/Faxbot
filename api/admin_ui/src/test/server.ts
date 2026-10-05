@@ -638,6 +638,8 @@ const consoleHandlers = [
   http.get('/direct/deliveries', () => json({ deliveries: [] })),
   // SIP trunk call history (the Dashboard names a received call that left no fax).
   http.get('/admin/sip/calls', () => json({ items: [], next_cursor: null })),
+  // The network check for fax over IP: nothing to show until a test says otherwise.
+  http.get('/admin/sip/network', () => json({ applies: false, checked: false, t38: null, text: null })),
   // Published plans for providers in use with no rate card yet: none.
   http.get('/routing/published-plans/in-use', () => json({ items: [] })),
   // Work counts for the Overview's Needs attention card: nothing waiting.
