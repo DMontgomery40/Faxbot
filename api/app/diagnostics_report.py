@@ -573,10 +573,10 @@ async def run(request: Request, identity) -> dict[str, Any]:
 # Read-only views of the fax engine for System → Developer → Scripts & checks.
 ENGINE_VIEWS = {
     'registrations': ('Trunk sign-ins', {'Action': 'PJSIPShowRegistrationsOutbound'}, 'OutboundRegistrationDetail',
-                      (('ObjectName', 'Name'), ('Status', 'Status'), ('ServerUri', 'Server'), ('Transport', 'Transport'),
-                       ('NextReg', 'Signs in again in (seconds)'))),
-    'contacts': ('Addresses the fax engine checks', {'Action': 'PJSIPShowContacts'}, 'ContactList',
-                 (('ObjectName', 'Name'), ('Status', 'Status'), ('RoundtripUsec', 'Round trip (ms)'))),
+                      (('ObjectName', 'Name'), ('Status', 'Status'), ('ServerUri', 'Server'), ('Transport', 'Transport'))),
+    # The trunk's fixed contact appears only under its endpoint, not in PJSIPShowContacts.
+    'contacts': ('Addresses the fax engine checks', {'Action': 'PJSIPShowEndpoint', 'Endpoint': 'trunk-endpoint'},
+                 'ContactStatusDetail', (('URI', 'Address'), ('Status', 'Status'), ('RoundtripUsec', 'Round trip (ms)'))),
     'calls': ('Calls in progress', {'Action': 'CoreShowChannels'}, 'CoreShowChannel',
               (('Channel', 'Call'), ('ChannelStateDesc', 'State'), ('CallerIDNum', 'Caller'), ('Exten', 'Number'),
                ('Duration', 'Duration'))),
@@ -605,6 +605,10 @@ async def engine_rows(view):
         response, events = await ami_client.status_query(dict(fields), collect=True)
     except (ConnectionError, TimeoutError):
         result['message'] = 'The fax engine did not answer. Check again in a moment.'
+        return result
+    if response['response'].lower() != 'success' and view == 'contacts' and 'unable to retrieve' in str(
+            response.get('message', '')).lower():
+        result['available'], result['message'] = True, 'No carrier trunk is set up in the fax engine.'
         return result
     if response['response'].lower() != 'success':
         message = response.get('message', '')

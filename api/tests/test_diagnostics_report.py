@@ -205,16 +205,16 @@ def _engine(monkeypatch, response, events, connected=True):
 def test_engine_registrations_in_plain_columns(monkeypatch):
     _engine(monkeypatch, {'response': 'Success', 'message': ''}, [
         {'ObjectName': 'trunk-registration', 'Status': 'Registered', 'ServerUri': 'sip:sip.example.com',
-         'NextReg': '3540', 'Transport': 'trunk-transport-tls'}])
+         'NextReg': '0', 'Transport': 'trunk-transport-tls'}])
     view = _run(report.engine_rows('registrations'))
     assert view['available'] and view['columns'][0] == 'Name' and view['rows'] == [
-        ['trunk-registration', 'Registered', 'sip:sip.example.com', 'trunk-transport-tls', '3540']]
+        ['trunk-registration', 'Registered', 'sip:sip.example.com', 'trunk-transport-tls']]
 
 
 def test_engine_contacts_round_trip_in_milliseconds(monkeypatch):
     _engine(monkeypatch, {'response': 'Success', 'message': ''},
-            [{'ObjectName': 'trunk-aor@@sip:sip.example.com', 'Status': 'Reachable', 'RoundtripUsec': '38211'}])
-    assert _run(report.engine_rows('contacts'))['rows'][0][2] == '38'
+            [{'URI': 'sip:sip.example.com:5061;transport=tls', 'Status': 'Reachable', 'RoundtripUsec': '38211'}])
+    assert _run(report.engine_rows('contacts'))['rows'] == [['sip:sip.example.com:5061;transport=tls', 'Reachable', '38']]
 
 
 @pytest.mark.parametrize('view, sentence', [('calls', 'No call is in progress.'), ('faxes', 'No fax is in progress.')])
@@ -319,3 +319,22 @@ def test_t38_off_reason_is_a_sentence_not_a_code(monkeypatch):
     assert findings['engine.trunk'].status == OK
     assert findings['engine.t38'].sentence == (
         'Off: on 3 October a T.38 fax got no fax data back on this network, so Faxbot uses audio fax.')
+
+
+def test_engine_contacts_without_a_trunk(monkeypatch):
+    _engine(monkeypatch, {'response': 'Error', 'message': 'Unable to retrieve endpoint trunk-endpoint'}, [])
+    result = _run(report.engine_rows('contacts'))
+    assert result['available'] and result['message'] == 'No carrier trunk is set up in the fax engine.'
+
+
+def test_endpoint_reply_keeps_only_the_contact_status():
+    """PJSIPShowEndpoint also sends AuthDetail with the trunk password: only ContactStatusDetail fields stay."""
+    from app.ami import AMIClient
+    query = {'response': asyncio.Future(loop=asyncio.new_event_loop()), 'done': None, 'events': []}
+    query['response'].set_result({})
+    for event in ({'Event': 'AuthDetail', 'Password': 'synthetic-secret', 'Username': 'u'},
+                  {'Event': 'EndpointDetail', 'ObjectName': 'trunk-endpoint', 'FromUser': 'u'},
+                  {'Event': 'ContactStatusDetail', 'URI': 'sip:sip.example.com', 'Status': 'Reachable',
+                   'RoundtripUsec': '1000', 'EndpointName': 'trunk-endpoint'}):
+        AMIClient._collect(query, event, {key.lower(): value for key, value in event.items()})
+    assert query['events'] == [{'URI': 'sip:sip.example.com', 'Status': 'Reachable', 'RoundtripUsec': '1000'}]
