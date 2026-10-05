@@ -253,7 +253,8 @@ def sip_job(installation, tmp_path, *, engine_running):
     (tmp_path / (job + '.tiff')).write_bytes(b'II*\x00synthetic')
     if engine_running:
         sip_trunk.write_asterisk_configuration(snapshot.active.values)
-        (tmp_path / 'hylafax' / 'engine.status').write_text('{"state": "running", "lines": 2}')
+        (tmp_path / 'hylafax-out').mkdir(exist_ok=True)
+        (tmp_path / 'hylafax-out' / 'engine.status').write_text('{"state": "running", "lines": 2}')
         (tmp_path / 'asterisk' / 'iax.conf.started').write_bytes((tmp_path / 'asterisk' / 'iax.conf').read_bytes())
     return job
 

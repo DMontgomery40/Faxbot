@@ -26,7 +26,8 @@ def _status_lines(out, result):
                 ('Address on your network' if phone else 'Internet address',
                  (result.get('phone_system') or {}).get('address') if phone
                  else result.get('internet_address') or result.get('public_address'))])
-    for key in ('registration_text', 'reachability_text', 'public_address_text', 'network_text', 'ports_text'):
+    for key in ('registration_text', 'reachability_text', 'public_address_text', 'network_text', 'ports_text',
+                'engine_text'):
         if result.get(key) and result.get(key) != result.get('message'):
             out.line(result[key])
     if result.get('network_t38') == 'blocked':

@@ -1,7 +1,9 @@
 """The SSL Fax engine's result route: each finished job, posted by hylafax/bin/notify.
 
-Authenticated with the same internal secret the Asterisk inbound hand-over
-uses; the job's tag names the fax and attempt Faxbot created. The same result
+Authenticated with the engine's own secret (``report_secret`` in
+``<data>/hylafax/secrets.json``), never Asterisk's; the job's tag names the
+fax and attempt Faxbot created. The engine's scripts keep every report in
+the engine's volume until Faxbot answers, so a result is never lost. The same result
 posted twice changes nothing (the delivery store keys events by attempt and
 outcome; the engine records key on the engine's own call reference).
 
@@ -13,21 +15,25 @@ for the built-in engine.
 """
 from __future__ import annotations
 
-import base64
+import asyncio
+from datetime import datetime, timedelta, timezone
 import hmac
 import re
 from typing import Optional
 
-from fastapi import APIRouter, Body, Header, HTTPException, Request
+from fastapi import APIRouter, Body, Depends, Header, HTTPException, Request
+from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
 from . import hylafax_engine
+from .access.route_policy import require_permission
 from .config import settings
 from .config_runtime import run_lifecycle_step
 
 router = APIRouter()
 
-# HylaFAX's words for a call on which the other side never sent one fax message.
-_NO_MESSAGE = re.compile(r'T\.30 T1 timeout|No response to (?:DIS|DCS|DTC|EOP|MPS)|No sender protocol', re.I)
+# How long a failed result waits for the trunk side of its call (Asterisk's FaxEngineCall, sent when
+# the call hangs up and normally first), so the fax gets the built-in engine's sentence for it.
+CALL_WAIT_SECONDS = 5.0
 
 
 def _store(request: Request):
@@ -77,26 +83,160 @@ def _record(request, job_id, attempt_id, payload, status, sentence):
     return rows[-1] if rows else None
 
 
-def _audio_switch_check(row, payload, status):
-    """A T.38 engine call that never got one fax message back: the same rule as the built-in engine."""
-    if row is None or row.get('t38') != 'yes' or status != 'failed' or payload.get('pages'):
-        return
-    if not _NO_MESSAGE.search(hylafax_engine._text64(payload, 'status_b64', 200)):
-        return
-    from . import sip_fax_mode
-    sip_fax_mode._on_fax_event({
-        'Answered': '1', 'Status': 'FAILED', 'Pages': '0', 'Mode': 'T38',
-        'Error64': base64.b64encode(b'timed out waiting for initial communication').decode()})
+async def _settled_call(request, attempt_id, row):
+    """The call record once both halves are in (its verdict set), waiting briefly for the trunk side."""
+    from . import sip_calls
+    from .routing.background import installation_engine
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + CALL_WAIT_SECONDS
+    while row is not None and row.get('verdict') is None and row.get('ended_at') is None and loop.time() < deadline:
+        await asyncio.sleep(0.5)
+        try:
+            engine, _ = installation_engine(request.app)
+            rows = await run_lifecycle_step(lambda: sip_calls.SipCallRecords(engine).for_attempt(attempt_id))
+        except Exception:
+            return row
+        row = rows[-1] if rows else row
+    return row
+
+
+# Recipients, Details: one fax machine's own limits, and whether it takes SSL Fax -------------------
+
+class FaxLimits(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    # None: the installation's own fax settings apply.
+    max_rate: Optional[int] = Field(default=None)
+    ecm: Optional[StrictBool] = None
+
+
+def _recipient_number(value, request):
+    from .routing.numbers import InvalidNumber, normalize_number
+    country = request.scope['faxbot.configuration'].active.values.fax_default_country
+    try:
+        return normalize_number(value, country=country)
+    except InvalidNumber as error:
+        raise HTTPException(400, detail=str(error)) from None
+
+
+def recipient_view(engine, number):
+    """The Recipients, Details panel: numbers, sentences and limits; dates in ISO for the console to format."""
+    from . import hylafax_records
+    detail = hylafax_records.records_for(engine).recipient_detail(number)
+    accepts = detail['accepts_sslfax']
+    sentence = (None if accepts is None else
+                'This fax machine can take pages faster, so faxes to it are quicker.' if accepts else
+                'This fax machine cannot take pages faster, so faxes to it go the usual way.')
+    return {'number': number, **detail, 'sslfax_sentence': sentence}
+
+
+def _engine_for(request):
+    from .routing.background import installation_engine
+    engine, _ = installation_engine(request.app)
+    return engine
+
+
+@router.get('/routing/destinations/{number}/fax-limits', dependencies=[Depends(require_permission('settings:read'))])
+async def get_fax_limits(number: str, request: Request):
+    from . import hylafax_records
+    target = _recipient_number(number, request)
+    try:
+        return await run_lifecycle_step(lambda: recipient_view(_engine_for(request), target))
+    except hylafax_records.EngineRecordError:
+        raise HTTPException(503, detail='Fax limits are unavailable. Try again.') from None
+
+
+@router.put('/routing/destinations/{number}/fax-limits')
+async def put_fax_limits(number: str, payload: FaxLimits, request: Request,
+                         identity=Depends(require_permission('settings:write'))):
+    from . import hylafax_records
+    target = _recipient_number(number, request)
+    actor = getattr(getattr(identity, 'actor', None), 'principal_id', None) or 'settings'
+
+    def save():
+        engine = _engine_for(request)
+        hylafax_records.records_for(engine).set_recipient_settings(
+            target, max_rate=payload.max_rate, ecm=payload.ecm, actor=str(actor))
+        return recipient_view(engine, target)
+    try:
+        result = await run_lifecycle_step(save)
+    except ValueError as error:
+        raise HTTPException(400, detail=str(error)) from None
+    except hylafax_records.EngineRecordError:
+        raise HTTPException(503, detail='Fax limits could not be saved. Try again.') from None
+    from .audit import audit_event
+    audit_event('recipient_fax_limits', number=target, max_rate=payload.max_rate, ecm=payload.ecm)
+    return result
+
+
+def _require_engine(x_internal_secret):
+    """The engine's own report secret; Asterisk's inbound secret is not accepted here."""
+    expected = hylafax_engine.report_secret(settings.fax_data_dir)
+    if not expected:
+        raise HTTPException(401, detail='Internal secret not configured')
+    if not hmac.compare_digest((x_internal_secret or '').encode(), expected.encode()):
+        raise HTTPException(401, detail='Invalid internal secret')
+
+
+@router.post('/_internal/hylafax/inbound')
+def engine_inbound(request: Request, payload: dict = Body(...),
+                   x_internal_secret: Optional[str] = Header(default=None)):
+    """A fax the engine received: the same hand-over as Asterisk's, for images in the engine's out folder only."""
+    from .inbound.http import _require_route, receive_handover
+    _require_route('sip', '/_internal/hylafax/inbound')
+    _require_engine(x_internal_secret)
+    return receive_handover(request, payload, str(hylafax_engine.received_dir(settings)))
+
+
+# Engine restarts: a fax the engine took before it started again has no result coming.
+RESTART_WINDOW = timedelta(days=7)
+
+
+@router.post('/_internal/hylafax/started')
+async def engine_started(request: Request, payload: dict = Body(...),
+                         x_internal_secret: Optional[str] = Header(default=None)):
+    """The engine started (again). Every fax it took earlier and never reported on waits for a person
+    (uncertain): its call may have reached the other machine, and it is never sent again by itself.
+    A result that arrives later still replaces that with the real outcome."""
+    _require_engine(x_internal_secret)
+    started = payload.get('started')
+    if not isinstance(started, int) or isinstance(started, bool) or not 946684800 <= started <= 4102444800:
+        raise HTTPException(400, detail='Unknown engine start time')
+    before = datetime.fromtimestamp(started, timezone.utc).replace(tzinfo=None)
+    store = _store(request)
+    marked = await run_lifecycle_step(lambda: _settle_interrupted(request, store, before))
+    if marked:
+        from .audit import audit_event
+        audit_event('native_result_requires_reconciliation', provider='sip', engine='hylafax',
+                    reason='engine_restarted', count=marked)
+    return {'status': 'ok', 'uncertain': marked}
+
+
+def _settle_interrupted(request, store, before):
+    from . import hylafax_records
+    from .config_store import ConfigurationStoreError
+    from .outbound_store import DeliveryConflict
+    from .routing.background import installation_engine
+    engine, _ = installation_engine(request.app)
+    pending = hylafax_records.records_for(engine).unfinished_sends(before=before, since=before - RESTART_WINDOW)
+    marked = 0
+    for job_id, attempt_id in pending:
+        try:
+            row = store.get(job_id)
+            if row['state'] != 'in_progress' or row['attempt_id'] != attempt_id:
+                continue
+            _, profile = store.attempt_context(job_id, attempt_id)
+            if store.record_unconfirmed(job_id, attempt_id=attempt_id, profile_id=profile.id,
+                                        event_key=f'{attempt_id}:hylafax:restarted'):
+                marked += 1
+        except (DeliveryConflict, ConfigurationStoreError, LookupError, ValueError):
+            continue
+    return marked
 
 
 @router.post('/_internal/hylafax/result')
 async def engine_result(request: Request, payload: dict = Body(...),
                         x_internal_secret: Optional[str] = Header(default=None)):
-    expected = settings.asterisk_inbound_secret
-    if not expected:
-        raise HTTPException(401, detail='Internal secret not configured')
-    if not hmac.compare_digest((x_internal_secret or '').encode(), expected.encode()):
-        raise HTTPException(401, detail='Invalid internal secret')
+    _require_engine(x_internal_secret)
     identity = hylafax_engine.parse_tag(payload.get('tag'))
     if identity is None:
         raise HTTPException(400, detail='Unknown fax engine job')
@@ -113,7 +253,19 @@ async def engine_result(request: Request, payload: dict = Body(...),
         raise HTTPException(409, detail='The fax engine job does not match the fax.')
     why = payload.get('why') if isinstance(payload.get('why'), str) else ''
     row = await run_lifecycle_step(lambda: _record(request, job_id, attempt_id, payload, status, sentence))
+    if status == 'failed' and category is None:
+        # Nothing confirmed: the same sentence the built-in engine gives for this call, when the trunk
+        # side says why (no fax data came back, not a fax machine, no sound).
+        from . import sip_calls
+        row = await _settled_call(request, attempt_id, row)
+        sentence = sip_calls.verdict_sentence((row or {}).get('verdict')) or sentence
     if status == hylafax_engine.UNCERTAIN:
+        # Removed or rejected after it dialed: the fax may have arrived. It waits for a person, never resent.
+        try:
+            await run_lifecycle_step(lambda: store.record_unconfirmed(
+                job_id, attempt_id=attempt_id, profile_id=profile.id, event_key=f'{attempt_id}:hylafax:{why[:40]}'))
+        except DeliveryConflict:
+            raise HTTPException(409, detail='The fax engine result does not match the fax.') from None
         from .audit import audit_event
         audit_event('native_result_requires_reconciliation', provider='sip', engine='hylafax')
         return {'status': 'uncertain'}
@@ -123,5 +275,6 @@ async def engine_result(request: Request, payload: dict = Body(...),
             event_key=f'{attempt_id}:hylafax:{why[:40]}', error=sentence, error_category=category))
     except DeliveryConflict:
         raise HTTPException(409, detail='The fax engine result does not match the fax.') from None
-    _audio_switch_check(row, payload, status)
+    from .sip_calls import engine_audio_check
+    engine_audio_check(row)
     return {'status': 'ok'}

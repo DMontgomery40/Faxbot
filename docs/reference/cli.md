@@ -916,6 +916,7 @@ $ faxbot recipients [OPTIONS] COMMAND [ARGS]...
 * `list`: List the numbers you fax, with how faxes...
 * `show`: Show one number you fax: its settings, how...
 * `set`: Change a number&#x27;s name, notes, preferred...
+* `limits`: Show or set the highest speed and error...
 * `together`: Send short faxes to the same number...
 * `partners`: Partners: other offices running Faxbot,...
 * `cases`: Case packets: when you fax documents for a...
@@ -973,6 +974,26 @@ $ faxbot recipients set [OPTIONS] {number}
 * `--notes <str>`: Notes for your team.
 * `--preferred-route <str>`: Route to use first, as listed by &#x27;faxbot recipients show&#x27;. Use &#x27;automatic&#x27; for the cheapest reliable route.
 * `--accepts-references / --no-references`: Whether this recipient accepts case packets that reference documents they already received instead of resending them.
+* `--help`: Show this message and exit.
+
+### `faxbot recipients limits`
+
+Show or set the highest speed and error correction for one fax machine that keeps failing.
+
+**Usage**:
+
+```console
+$ faxbot recipients limits [OPTIONS] {number}
+```
+
+**Arguments**:
+
+* `number`: Fax number.  [required]
+
+**Options**:
+
+* `--speed RATE`: Highest speed for this number: 14400, 9600, 7200, 4800, or default for the setting all faxes use.
+* `--error-correction ON|OFF`: Error correction for this number: on, off, or default.
 * `--help`: Show this message and exit.
 
 ### `faxbot recipients together`
@@ -1809,7 +1830,7 @@ $ faxbot costs received [OPTIONS] [fax_id]
 
 ### `faxbot costs savings`
 
-Show how much money Faxbot saved by batching faxes to the same number, delivering directly to partners, and leaving out documents a recipient already has. All figures are estimates.
+Show how much money Faxbot saved by batching faxes to the same number, delivering directly to partners, leaving out documents a recipient already has, and sending pages faster. All figures are estimates.
 
 **Usage**:
 

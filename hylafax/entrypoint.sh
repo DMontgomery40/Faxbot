@@ -6,20 +6,29 @@
 # exists the engine waits; when it changes, the engine restarts once no call is
 # up and Docker starts it again with the new settings.
 #
+# The engine parses fax and TLS data from other machines, so it sees only its
+# own folders: <data>/hylafax (read-only here; Faxbot and Asterisk write it),
+# <data>/hylafax-out (its status and received images; read-only for Faxbot)
+# and its own volume. Never Faxbot's data folder or Asterisk's files.
+#
 # One dial and one try per fax: faxq never redials or retries, and a job left in
-# the send queue by a restart is moved aside, never sent again (Faxbot treats
-# that fax as uncertain). Asterisk also refuses any call Faxbot did not ask for.
+# the send queue by a restart is moved aside, never sent again. Each start is
+# reported to Faxbot, which marks every fax the engine took earlier and never
+# reported on as uncertain. Asterisk also refuses any call Faxbot did not ask for.
 set -euo pipefail
 umask 077
 
 data=${FAXBOT_DATA:-/faxdata}
 shared=$data/hylafax
 conf=$shared/engine.conf
+out=${FAXBOT_ENGINE_OUT:-$data/hylafax-out}
 spool=${FAXBOT_HYLAFAX_SPOOL:-/var/spool/hylafax}
 state=${FAXBOT_ENGINE_STATE:-/var/lib/faxbot-engine}
-status=$shared/engine.status
+status=$out/engine.status
 check_seconds=${FAXBOT_ENGINE_CHECK_SECONDS:-5}
-mkdir -p "$shared" "$state"
+started_at=$(date +%s)
+mkdir -p "$out" "$state"
+chmod 755 "$out"
 
 log() { printf 'faxbot-engine: %s\n' "$*" >&2; }
 # refuse <sentence for the console> [detail for the container log]
@@ -29,9 +38,9 @@ NOT_STARTED="Faxbot's fast fax service could not start; select Apply and connect
 
 write_status() {
   local temporary
-  temporary=$(mktemp "$shared/.engine.status.XXXXXX")
-  printf '{"state": "%s", "reason": "%s", "lines": %s, "listener": "%s", "at": %s, "version": "7.0.11"}\n' \
-    "$1" "${2:-}" "${lines:-0}" "${listener:-}" "$(date +%s)" > "$temporary"
+  temporary=$(mktemp "$out/.engine.status.XXXXXX")
+  printf '{"state": "%s", "reason": "%s", "lines": %s, "listener": "%s", "at": %s, "started": %s, "version": "7.0.11"}\n' \
+    "$1" "${2:-}" "${lines:-0}" "${listener:-}" "$(date +%s)" "$started_at" > "$temporary"
   chmod 644 "$temporary"
   mv -f "$temporary" "$status"
 }
@@ -133,10 +142,17 @@ chmod 600 "$spool/etc/faxbot.conf"
 # Received faxes wait in the engine's volume (written by the receive script as
 # uucp, so they survive a new container) until the hand-over below brings them
 # into Faxbot's data folder; kept until Faxbot has them.
-mkdir -p "$state/received"
-chown uucp:uucp "$state/received"
-chmod 700 "$state/received"
+mkdir -p "$state/received" "$state/results" "$out/inbound"
+chown uucp:uucp "$state/received" "$state/results" "$out/inbound"
+chmod 700 "$state/received" "$state/results" "$out/inbound"
 chmod 711 "$state"
+
+# This start, for Faxbot: every fax this engine took before now and never
+# reported on has no result coming (kept until Faxbot has it, like every report).
+report=$(mktemp "$state/results/.started.XXXXXX")
+printf '{"engine_id":"%s","started":%s}\n' "$engine_id" "$started_at" > "$report"
+chown uucp:uucp "$report"
+mv -f "$report" "$state/results/$started_at-started.report"
 
 # Job submission login for Faxbot only; port 4559 stays on the private network.
 # Inside the container, the engine's own status checks (faxstat) need no login.
@@ -170,13 +186,13 @@ done
 # restarts Asterisk, and a modem whose first registration is refused does not
 # try again by itself. Asterisk's start script records what it loaded.
 lines_loaded() {
-  local started=$data/asterisk/iax.conf.started number
+  local started=$shared/iax.conf.started number
   [ -f "$started" ] || return 1
   for number in $(seq 1 "$lines"); do
     grep -qx "secret=$(get "line${number}_secret")" "$started" || return 1
   done
 }
-if [ -f "$data/asterisk/engine-started" ] && ! lines_loaded; then
+if [ -f "$shared/asterisk-started" ] && ! lines_loaded; then
   write_status waiting "Faxbot's fast fax service is waiting for the phone connection to restart."
   log 'waiting for Asterisk to load the fax lines'
   until lines_loaded; do sleep "$check_seconds"; done
@@ -270,6 +286,8 @@ log "running with $lines fax line(s); SSL Fax $sslfax${listener:+, listener $lis
 # Engine idle: no line is sending or receiving.
 idle() {
   local busy
+  # A job just taken and not yet dialed counts too: a restart now would leave its fax uncertain.
+  compgen -G "$spool/sendq/q*" >/dev/null && return 1
   busy=$(faxstat -s 2>/dev/null | grep -c -i -E 'sending|receiving|answering|dialing' || true)
   [ "$busy" = 0 ]
 }
@@ -292,10 +310,14 @@ registration_refused() {
 }
 
 while sleep "$check_seconds"; do
-  # Received faxes go to Faxbot (as root: only root may write Faxbot's data folder).
+  # Received faxes and kept reports go to Faxbot (as uucp, like every other engine script).
   if compgen -G "$state/received/*.ticket" >/dev/null; then
-    FAXBOT_DATA=$data FAXBOT_HYLAFAX_SPOOL=$spool FAXBOT_ENGINE_STATE=$state \
-      /usr/local/lib/faxbot-engine/handover || true
+    runuser -u uucp -- env FAXBOT_DATA="$data" FAXBOT_ENGINE_OUT="$out" FAXBOT_HYLAFAX_SPOOL="$spool" \
+      FAXBOT_ENGINE_STATE="$state" /usr/local/lib/faxbot-engine/handover || true
+  fi
+  if compgen -G "$state/results/*.report" >/dev/null; then
+    runuser -u uucp -- env FAXBOT_HYLAFAX_SPOOL="$spool" FAXBOT_ENGINE_STATE="$state" \
+      /usr/local/lib/faxbot-engine/deliver || true
   fi
   if registration_refused && idle; then
     write_status restarting "Faxbot's fast fax service is reconnecting to the phone connection."

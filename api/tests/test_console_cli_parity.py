@@ -37,6 +37,8 @@ NOT_OPERATOR = {
     ('POST', '/_internal/asterisk/inbound'): 'internal: the fax engine hands over a received fax',
     ('POST', '/_internal/freeswitch/outbound_result'): 'internal: FreeSWITCH reports a send result',
     ('POST', '/_internal/hylafax/result'): 'internal: the SSL Fax engine reports a send result',
+    ('POST', '/_internal/hylafax/started'): 'internal: the SSL Fax engine reports that it started again',
+    ('POST', '/_internal/hylafax/inbound'): 'internal: the SSL Fax engine hands over a received fax',
     ('POST', '/direct/deliveries'): 'partner protocol: a signed delivery from a partner installation',
     ('GET', '/direct/deliveries/{message_id}'): 'partner protocol: a signed status request',
     ('POST', '/direct/verifications'): 'partner protocol: a signed code confirmation',

@@ -37,7 +37,10 @@ NO_DATA_BACK = 'no_data_back'
 # Only the fax engine's T0/T1 timeouts show that T.38 data never came back; a
 # plain hang-up, a busy line or the other side hanging up never switches the
 # installation. Stored call reasons are cut short, so the start is enough.
-_T38_TIMEOUT = re.compile(r'timed out waiting for (?:initial commu|the first mess)', re.IGNORECASE)
+# The SSL Fax engine (HylaFAX+) says it as E002 "No carrier detected" or E126
+# "No receiver protocol (T.30 T1 timeout)" (sip_calls.engine_verdict).
+_T38_TIMEOUT = re.compile(r'timed out waiting for (?:initial commu|the first mess)'
+                          r'|No carrier detected|T\.30 T1 timeout|\bE(?:002|126)\b', re.IGNORECASE)
 
 
 def t38_timeout(text) -> bool:

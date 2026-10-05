@@ -28,7 +28,8 @@ class Ami:
 
 def engine_running(tmp_path, configured, *, state='running', reason='', listener='', loaded=True):
     sip_trunk.write_asterisk_configuration(configured)
-    (tmp_path / 'hylafax' / 'engine.status').write_text(json.dumps(
+    (tmp_path / 'hylafax-out').mkdir(exist_ok=True)
+    (tmp_path / 'hylafax-out' / 'engine.status').write_text(json.dumps(
         {'state': state, 'reason': reason, 'lines': 2, 'listener': listener}))
     if loaded:
         (tmp_path / 'asterisk' / 'iax.conf.started').write_bytes((tmp_path / 'asterisk' / 'iax.conf').read_bytes())
@@ -55,8 +56,17 @@ async def test_each_engine_state_has_one_sentence(tmp_path):
     engine_running(tmp_path, configured, state='failed', reason="Faxbot's fast fax service could not start; "
                                                                  'select Apply and connect to try again.')
     assert (await summary(configured, Ami()))[0] == 'stopped'
-    (tmp_path / 'hylafax' / 'engine.status').unlink()
+    (tmp_path / 'hylafax-out' / 'engine.status').unlink()
     assert await summary(configured, Ami()) == ('stopped', hylafax_engine.STOPPED)
+    # Only the engine's own sentences reach the trunk page, and a link in its folder is not followed.
+    engine_running(tmp_path, configured, state='failed', reason='Visit http://198.51.100.9 to fix this.')
+    assert await summary(configured, Ami()) == ('stopped', hylafax_engine.STOPPED)
+    elsewhere = tmp_path / 'elsewhere.json'
+    elsewhere.write_text(json.dumps({'state': 'running', 'lines': 2}))
+    (tmp_path / 'hylafax-out' / 'engine.status').unlink()
+    (tmp_path / 'hylafax-out' / 'engine.status').symlink_to(elsewhere)
+    assert hylafax_engine.read_status(configured).state == 'absent'
+    (tmp_path / 'hylafax-out' / 'engine.status').unlink()
     off = values(tmp_path, SIP_SSLFAX_ENABLED='false')
     engine_running(tmp_path, off)
     assert (await summary(off, Ami()))[1] == ("Faxbot's fast fax service is running on 2 fax lines; "

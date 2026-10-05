@@ -365,3 +365,17 @@ def test_postgresql_status_migrate_backup_and_restore(postgres_url, monkeypatch,
         installation.remote_json(client, 'access', 'users', 'add', 'sam', '--name', 'Sam')
     forced = installation.admin_json('restore', folder, '--force')
     assert forced['data_files'] == made['data_files']
+
+
+def test_backup_and_restore_leave_the_fax_engines_out_folder_alone(installation, tmp_path):
+    """The SSL Fax engine's out folder is read-only for Faxbot in Compose and holds nothing Faxbot lacks."""
+    data_dir = Path(installation.environment['FAX_DATA_DIR'])
+    out = data_dir / 'hylafax-out' / 'inbound'
+    out.mkdir(parents=True)
+    (out / 'engine-0123456789abcdef-7-1.tiff').write_bytes(b'II*\x00synthetic')
+    folder = tmp_path / 'backups' / 'engine'
+    installation.admin_json('backup', folder)
+    manifest = json.loads((folder / 'manifest.json').read_text())
+    assert not any(name.startswith('data/hylafax-out/') for name in manifest['files'])
+    installation.admin_json('restore', folder, '--force')
+    assert (out / 'engine-0123456789abcdef-7-1.tiff').read_bytes() == b'II*\x00synthetic'

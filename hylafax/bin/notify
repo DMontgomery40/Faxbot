@@ -4,10 +4,10 @@
 #
 # The body carries the job's own record (pages, dials, the fax machine's
 # answer) and, from the call's session log, whether the pages went over SSL
-# Fax and how long the transfer took. Text values are base64 encoded; the
-# shared secret is read from etc/faxbot.conf and never printed. A request is
-# repeated only while Faxbot cannot be reached or is starting; Faxbot accepts
-# the same result twice without change.
+# Fax and how long the transfer took. Text values are base64 encoded. The
+# report is kept in the engine's volume first and then sent (bin/deliver); one
+# Faxbot cannot take now is sent again every few seconds, also after a restart,
+# until Faxbot answers. The shared secret never goes into the report.
 set -u
 
 qfile=${1:-}
@@ -26,10 +26,9 @@ case $qfile in
 esac
 [ -f "$qfile" ] || fail 'job file missing'
 [ -f "$config" ] || fail 'no Faxbot address'
-url=$(sed -n 's/^url=//p' "$config" | head -1)
-secret=$(sed -n 's/^secret=//p' "$config" | head -1)
 engine=$(sed -n 's/^engine=//p' "$config" | head -1 | tr -cd 'a-f0-9')
-[ -n "$url" ] && [ -n "$secret" ] || fail 'no Faxbot address'
+outbox=${FAXBOT_ENGINE_STATE:-/var/lib/faxbot-engine}/results
+[ -d "$outbox" ] && [ ! -L "$outbox" ] || fail 'no report folder'
 
 field() { sed -n "s/^$1://p" "$qfile" | head -1; }
 digits() { field "$1" | tr -cd '0-9'; }
@@ -89,21 +88,9 @@ body=$(printf '{"tag":"%s","engine_id":"%s","commid":"%s","engine_job":%s,"why":
   "$(b64 "$csi")" "$(b64 "$signalrate")" "$(b64 "$dataformat")" "$jobtime" "$sslfax" "$offered" "$refused" \
   "$(number "$transfer")" "$(number "$session")")
 
-attempt=0
-while [ "$attempt" -lt 10 ]; do
-  attempt=$((attempt + 1))
-  code=$(printf 'X-Internal-Secret: %s\n' "$secret" | curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 5 \
-    --max-time 30 -H @- -H 'Content-Type: application/json' --data-binary "$body" "$url/_internal/hylafax/result" 2>/dev/null)
-  result=$?
-  if [ "$result" -eq 0 ]; then
-    case $code in
-      2??) exit 0 ;;
-      503) ;;
-      *) fail "Faxbot answered $code" ;;
-    esac
-  elif [ "$result" -ne 7 ]; then
-    fail 'no answer from Faxbot'
-  fi
-  sleep 3
-done
-fail 'Faxbot could not be reached'
+# Keep the report, then send it once now; the engine sends whatever is left every few seconds.
+temporary=$(mktemp "$outbox/.report.XXXXXX") || fail 'report not kept'
+printf '%s\n' "$body" > "$temporary" || { rm -f "$temporary"; fail 'report not kept'; }
+mv -f "$temporary" "$outbox/$(date +%s)-job$jobid-$why.report" || { rm -f "$temporary"; fail 'report not kept'; }
+FAXBOT_HYLAFAX_SPOOL=$(pwd) sh "$(dirname "$0")/deliver" || true
+exit 0

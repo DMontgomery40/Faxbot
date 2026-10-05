@@ -20,6 +20,10 @@ services:
       - DATABASE_URL=sqlite:////faxdata/faxbot.db
     volumes:
       - faxdata:/faxdata
+      # The SSL Fax engine's settings (Faxbot writes them) and what the engine
+      # hands back (its status and received faxes; Faxbot only reads them).
+      - hylafax-settings:/faxdata/hylafax
+      - hylafax-out:/faxdata/hylafax-out:ro
     ports:
       - "8080:8080"
     # Note: Asterisk dependency is optional - only needed for SIP backend
@@ -38,6 +42,8 @@ services:
       - TZ=${TZ:-UTC}
     volumes:
       - faxdata:/faxdata
+      # Asterisk tells the SSL Fax engine which fax lines it loaded.
+      - hylafax-settings:/faxdata/hylafax
     # No published ports. Asterisk registers with the carrier and starts every
     # call's audio and fax data from inside, so the carrier answers on those
     # flows and nothing has to reach in. (Publishing the old 1000-port media
@@ -52,6 +58,9 @@ services:
   # the trunk page); while it is not running Faxbot uses its built-in engine.
   # No published ports: job submission (4559) and the fax lines (4569 on
   # Asterisk) stay on the compose network. See docs/setup/sslfax.md.
+  # The engine reads fax and TLS data from other machines, so it never gets
+  # Faxbot's data folder: its settings read-only, one folder it hands faxes
+  # and its status back in, and its own volume.
   hylafax:
     build:
       context: ./hylafax
@@ -60,7 +69,8 @@ services:
     environment:
       - TZ=${TZ:-UTC}
     volumes:
-      - faxdata:/faxdata
+      - hylafax-settings:/faxdata/hylafax:ro
+      - hylafax-out:/faxdata/hylafax-out
       - hylafax:/var/lib/faxbot-engine
 
   # Optional: Faxbot MCP Server for AI integration
@@ -114,6 +124,13 @@ services:
 volumes:
   faxdata:
     driver: local
-  # The SSL Fax engine's certificate and key, made once at its first start.
+  # The SSL Fax engine's own volume: its certificate and key (made once at its
+  # first start), received faxes and reports waiting for Faxbot.
   hylafax:
+    driver: local
+  # The SSL Fax engine's settings, written by Faxbot and Asterisk (read-only for the engine).
+  hylafax-settings:
+    driver: local
+  # What the SSL Fax engine hands back: its status and received faxes (read-only for Faxbot).
+  hylafax-out:
     driver: local

@@ -54,7 +54,9 @@ def test_apply_writes_the_engine_settings_and_one_iax_peer_per_line_privately(tm
     assert settings['station_id'] == '+15555550100' and settings['fax_number'] == '15555550100'
     assert settings['sslfax'] == 'yes' and settings['sslfax_listener'] == ''
     assert settings['submit_user'] == 'faxbot' and settings['submit_password'] == stored['submit_password']
-    assert settings['inbound_secret'] == SECRET and settings['codec'] == 'ulaw'
+    # The engine reports with its own secret, never Asterisk's inbound secret.
+    assert settings['inbound_secret'] == stored['report_secret'] != SECRET and settings['codec'] == 'ulaw'
+    assert hylafax_engine.report_secret(tmp_path) == stored['report_secret']
     assert settings['api_url'] == 'http://api:8080'
 
 
@@ -177,7 +179,8 @@ class FakeAmi:
 
 def running(tmp_path, values, state='running'):
     sip_trunk.write_asterisk_configuration(values)
-    (tmp_path / 'hylafax' / 'engine.status').write_text(json.dumps({'state': state, 'lines': 2}))
+    (tmp_path / 'hylafax-out').mkdir(exist_ok=True)
+    (tmp_path / 'hylafax-out' / 'engine.status').write_text(json.dumps({'state': state, 'lines': 2}))
     (tmp_path / 'asterisk' / 'iax.conf.started').write_bytes((tmp_path / 'asterisk' / 'iax.conf').read_bytes())
 
 
@@ -370,35 +373,43 @@ def test_every_engine_failure_sentence_fits_the_80_characters_a_fax_error_shows(
     assert all(len(sentence) <= 80 and sentence.endswith('.') for sentence in sentences), sentences
 
 
-@pytest.mark.parametrize('row, payload, switched', [
-    ({'t38': 'yes'}, {'pages': 0, 'status_b64': b64('No receiver protocol (T.30 T1 timeout)')}, True),
-    ({'t38': 'no'}, {'pages': 0, 'status_b64': b64('No receiver protocol (T.30 T1 timeout)')}, False),
-    ({'t38': 'yes'}, {'pages': 2, 'status_b64': b64('No receiver protocol (T.30 T1 timeout)')}, False),
-    ({'t38': 'yes'}, {'pages': 0, 'status_b64': b64('Busy signal detected')}, False),
-    (None, {'pages': 0, 'status_b64': b64('No receiver protocol (T.30 T1 timeout)')}, False),
+@pytest.mark.parametrize('row, switched', [
+    ({'verdict': 'no_t38_data_back', 'error_cause': 'no_t38_data_back: No carrier detected E002'}, True),
+    ({'verdict': 'no_t38_data_back', 'error_cause': 'no_t38_data_back: No receiver protocol T.30 T1 timeout E126'},
+     True),
+    ({'verdict': 'no_fax_data_back', 'error_cause': 'no_fax_data_back: No carrier detected E002'}, False),
+    ({'verdict': 'remote_fax_failed', 'error_cause': 'remote_fax_failed: Busy signal detected E001'}, False),
+    ({'verdict': 'sent', 'error_cause': None}, False),
+    (None, False),
 ])
-def test_a_t38_engine_call_with_no_fax_message_back_feeds_the_audio_switch(monkeypatch, row, payload, switched):
-    """The same rule as the built-in engine: T.38, no page, and the far end never sent one fax message."""
-    from app import hylafax_http, sip_calls, sip_fax_mode
+def test_a_t38_engine_call_with_no_fax_message_back_feeds_the_audio_switch(monkeypatch, row, switched):
+    """The same rule as the built-in engine, read from the settled call record (either half may be last)."""
+    from app import sip_calls, sip_fax_mode
     seen = []
     monkeypatch.setattr(sip_fax_mode, '_on_fax_event', seen.append)
-    hylafax_http._audio_switch_check(row, payload, 'failed')
+    sip_calls.engine_audio_check(row)
     assert bool(seen) == switched
     if switched:
         event = seen[0]
         # The built-in engine's own listener reads it as a T.38 call with no data back.
         assert sip_calls.verdict(event) == 'no_t38_data_back'
         assert sip_fax_mode.t38_timeout(sip_calls._reason(event))
-    hylafax_http._audio_switch_check({'t38': 'yes'}, payload, 'success')
-    assert len(seen) == int(switched)
 
 
 def test_compose_runs_the_engine_with_no_published_ports_and_the_override_publishes_one():
     import yaml
-    base = yaml.safe_load((ROOT / 'docker-compose.yml').read_text())['services']['hylafax']
-    assert 'ports' not in base and 'faxdata:/faxdata' in base['volumes']
+    services = yaml.safe_load((ROOT / 'docker-compose.yml').read_text())['services']
+    base = services['hylafax']
+    # The engine parses fax and TLS data from strangers: only its own folders, its settings read-only,
+    # and never Faxbot's data folder (so never Asterisk's files there either).
+    assert 'ports' not in base and sorted(base['volumes']) == [
+        'hylafax-out:/faxdata/hylafax-out', 'hylafax-settings:/faxdata/hylafax:ro', 'hylafax:/var/lib/faxbot-engine']
+    assert not any(item.startswith('faxdata') for item in base['volumes'])
+    assert 'hylafax-settings:/faxdata/hylafax' in services['api']['volumes']
+    assert 'hylafax-out:/faxdata/hylafax-out:ro' in services['api']['volumes']
+    assert 'hylafax-settings:/faxdata/hylafax' in services['asterisk']['volumes']
     override = yaml.safe_load((ROOT / 'docker-compose.sslfax.yml').read_text())['services']
-    assert list(override) == ['hylafax']
+    assert list(override) == ['hylafax'] and 'volumes' not in override['hylafax']
     ports = override['hylafax']['ports']
     assert len(ports) == 1 and ports[0].endswith('/tcp')
     assert '4559' not in ports[0] and '4569' not in ports[0]
@@ -411,23 +422,40 @@ def test_result_tags_name_one_fax_and_attempt():
         assert hylafax_engine.parse_tag(bad) is None
 
 
-def test_result_route_needs_the_internal_secret_and_a_known_job(isolated_installation, monkeypatch):
+def test_result_route_needs_the_engines_own_secret_and_a_known_job(isolated_installation, monkeypatch):
     from fastapi.testclient import TestClient
     from app import main
+    from app.config import settings
     monkeypatch.setenv('ASTERISK_INBOUND_SECRET', SECRET)
     url = '/_internal/hylafax/result'
     with TestClient(main.app) as client:
+        # Before the engine is set up there is no engine secret, and Asterisk's secret is not one.
+        assert client.post(url, json=result('done'), headers={'X-Internal-Secret': SECRET}).status_code == 401
+        values = trunk_values(Path(settings.fax_data_dir))
+        engine_secret = hylafax_engine.engine_secrets(values)['report_secret']
+        engine = {'X-Internal-Secret': engine_secret}
         assert client.post(url, json=result('done'), headers={'X-Internal-Secret': 'wrong'}).status_code == 401
+        assert client.post(url, json=result('done'), headers={'X-Internal-Secret': SECRET}).status_code == 401
         assert client.post(url, json=result('done')).status_code == 401
-        assert client.post(url, json={'tag': 'nope', 'why': 'done'},
-                           headers={'X-Internal-Secret': SECRET}).status_code == 400
+        assert client.post(url, json={'tag': 'nope', 'why': 'done'}, headers=engine).status_code == 400
         # A well-formed tag for a fax this installation never sent.
-        assert client.post(url, json=result('done'), headers={'X-Internal-Secret': SECRET}).status_code == 404
+        assert client.post(url, json=result('done'), headers=engine).status_code == 404
+        # The engine's start: nothing taken earlier, nothing to settle; a bad time is refused.
+        started = client.post('/_internal/hylafax/started', json={'engine_id': 'a' * 16, 'started': 1791180000},
+                              headers=engine)
+        assert started.status_code == 200 and started.json() == {'status': 'ok', 'uncertain': 0}
+        assert client.post('/_internal/hylafax/started', json={'started': 'now'}, headers=engine).status_code == 400
+        assert client.post('/_internal/hylafax/started', json={'started': 1791180000},
+                           headers={'X-Internal-Secret': SECRET}).status_code == 401
 
 
 def test_engine_scripts_keep_secrets_off_the_command_line_and_one_try_per_job():
     notify = (ROOT / 'hylafax' / 'bin' / 'notify').read_text()
-    assert "printf 'X-Internal-Secret: %s\\n' \"$secret\" | curl" in notify and '-H @-' in notify
+    deliver = (ROOT / 'hylafax' / 'bin' / 'deliver').read_text()
+    # notify keeps the report (no secret in it); deliver sends it with the secret from standard input.
+    assert 'secret' not in notify.split('outbox=', 1)[1] and '/deliver' in notify
+    assert "printf 'X-Internal-Secret: %s\\n' \"$secret\" | curl" in deliver and '-H @-' in deliver
+    assert '--data-binary "@$report"' in deliver
     entry = (ROOT / 'hylafax' / 'entrypoint.sh').read_text()
     for line in ('MaxDials:\t\t1', 'MaxTries:\t\t1', 'MaxBatchJobs:\t\t1'):
         assert line in entry

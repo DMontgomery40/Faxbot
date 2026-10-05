@@ -27,6 +27,12 @@ it; a lost answer there leaves the fax uncertain and it is never sent again.
 Faxbot writes the engine's settings (``<data>/hylafax/engine.conf``) and the
 IAX peers for Asterisk (``<data>/asterisk/iax.conf``) with the trunk files on
 Apply. Secrets are generated once and kept in ``<data>/hylafax/secrets.json``.
+
+The engine parses fax and TLS data from strangers, so it never sees Faxbot's
+data folder: in Compose it reads ``<data>/hylafax`` (its own volume, read-only
+for it) and writes only ``<data>/hylafax-out`` (its status and received
+images, read-only for Faxbot). Its reports carry its own secret, which Faxbot
+accepts only on the engine's routes and only for images in its out folder.
 """
 from __future__ import annotations
 
@@ -86,9 +92,19 @@ def engine_conf_path(values) -> Path:
     return engine_dir(values) / 'engine.conf'
 
 
+def out_dir(values) -> Path:
+    """The engine's only writable folder Faxbot can see (its status and received images)."""
+    return Path(values.fax_data_dir) / 'hylafax-out'
+
+
 def status_path(values) -> Path:
     """Written by the engine container (hylafax/entrypoint.sh)."""
-    return engine_dir(values) / 'engine.status'
+    return out_dir(values) / 'engine.status'
+
+
+def received_dir(values) -> Path:
+    """Where the engine's hand-over puts received images (G4 TIFF) for Faxbot to read."""
+    return out_dir(values) / 'inbound'
 
 
 def secrets_path(values) -> Path:
@@ -140,9 +156,24 @@ def engine_secrets(values, *, lines=None) -> dict:
             line_secrets[str(number)] = secrets.token_hex(16)
             changed = True
     stored['lines'] = line_secrets
+    # The engine's own secret for its results and received faxes (never Asterisk's).
+    report = stored.get('report_secret')
+    if not isinstance(report, str) or not _SECRET.fullmatch(report):
+        stored['report_secret'] = secrets.token_hex(32)
+        changed = True
     if changed:
         _write_private(path, json.dumps(stored, sort_keys=True) + '\n')
     return stored
+
+
+def report_secret(data_dir) -> str | None:
+    """The engine's report secret as Faxbot stored it, or None before the engine was set up."""
+    try:
+        stored = json.loads((Path(data_dir) / 'hylafax' / 'secrets.json').read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        return None
+    value = stored.get('report_secret') if isinstance(stored, dict) else None
+    return value if isinstance(value, str) and _SECRET.fullmatch(value) else None
 
 
 def render_iax(values, engine_secret: dict, *, lines=None) -> str:
@@ -293,7 +324,8 @@ def write_engine_files(values, inbound_secret: str | None):
     lines = line_count(values)
     engine_secret = engine_secrets(values, lines=lines)
     try:
-        text = render_engine_conf(values, engine_secret, inbound_secret=inbound_secret, lines=lines)
+        # The engine reports with its own secret; Asterisk's inbound secret never leaves Faxbot and Asterisk.
+        text = render_engine_conf(values, engine_secret, inbound_secret=engine_secret['report_secret'], lines=lines)
     except ValueError:
         # An inbound secret the engine cannot carry (set by hand with other characters):
         # the engine stays not set up and Faxbot's built-in engine places every call.
@@ -330,18 +362,41 @@ class EngineStatus:
     reason: str = ''
     lines: int = 0
     listener: str = ''
+    # When this engine container started (epoch seconds), or None.
+    started: int | None = None
+
+
+# The sentences hylafax/entrypoint.sh writes; anything else from the engine's folder is not shown.
+STATUS_SENTENCES = frozenset({
+    "Faxbot's fast fax service could not start; select Apply and connect to try again.",
+    "Faxbot's fast fax service starts when you select Apply and connect.",
+    "Faxbot's fast fax service could not start; it will try again by itself.",
+    "Faxbot's fast fax service cannot reach the phone connection.",
+    "Faxbot's fast fax service is waiting for the phone connection to restart.",
+    "Faxbot's fast fax service is reconnecting to the phone connection.",
+    "Faxbot's fast fax service stopped and is starting again.",
+    "Faxbot's fast fax service is loading new settings.",
+    *(f'Fax line {number} did not start.' for number in range(1, MAX_LINES + 1)),
+})
 
 
 def read_status(values) -> EngineStatus:
+    """The engine's status file, read without following a link the engine may have put there."""
     try:
-        record = json.loads(status_path(values).read_text(encoding='utf-8'))
+        descriptor = os.open(status_path(values), os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0))
+        with os.fdopen(descriptor, 'rb') as handle:
+            record = json.loads(handle.read(4096).decode('utf-8'))
     except (OSError, ValueError):
         return EngineStatus('absent')
     if not isinstance(record, dict) or record.get('state') not in {'waiting', 'running', 'failed', 'restarting'}:
         return EngineStatus('absent')
     lines = record.get('lines') if isinstance(record.get('lines'), int) else 0
-    return EngineStatus(record['state'], str(record.get('reason') or '')[:200], lines,
-                        str(record.get('listener') or '')[:260])
+    reason = record.get('reason') if record.get('reason') in STATUS_SENTENCES else ''
+    listener = str(record.get('listener') or '')
+    listener = listener if re.fullmatch(r'[A-Za-z0-9.-]{1,253}:[0-9]{1,5}', listener) else ''
+    started = record.get('started')
+    started = started if isinstance(started, int) and not isinstance(started, bool) and started > 0 else None
+    return EngineStatus(record['state'], reason, max(0, min(lines, MAX_LINES)), listener, started)
 
 
 @dataclass(frozen=True)
