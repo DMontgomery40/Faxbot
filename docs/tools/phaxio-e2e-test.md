@@ -19,8 +19,6 @@ cloudflared tunnel --url http://localhost:8080
 ngrok http 8080
 ```
 
-The legacy `scripts/setup-phaxio-tunnel.sh` starts a tunnel, edits repository `.env` and stops/restarts Compose. Those edits are bootstrap inputs; the helper does not update canonical desired settings on an existing installation. Use the manual tunnel plus Settings steps below for an existing installation. This guide does not claim the helper has been repaired.
-
 ## 2. Configure the desired revision
 
 1. Open **Providers → Phaxio** or the **Setup Wizard** (**System → Setup**) and select **Reload** to load the current settings.
