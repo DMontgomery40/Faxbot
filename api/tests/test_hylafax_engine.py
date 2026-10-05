@@ -121,6 +121,11 @@ def test_dialplan_places_engine_calls_only_from_a_stored_plan_and_never_reports_
     # The delivery result comes from the engine, never from this dialplan.
     assert 'UserEvent(FaxResult' not in section and 'UserEvent(FaxEngineCall,' in section
     assert 'SendFAX' not in section and 'ReceiveFAX' not in section
+    # In extensions.conf a bare ; starts a comment and silently cuts the line short.
+    import re
+    for line in section.splitlines():
+        if line.strip() and not line.lstrip().startswith(';'):
+            assert re.search(r'(?<!\\);', line) is None, line
     modules = (ROOT / 'asterisk' / 'etc' / 'asterisk' / 'modules.conf').read_text()
     assert 'load => chan_iax2.so' in modules and 'noload => chan_iax2.so' not in modules
 
@@ -265,16 +270,23 @@ def test_a_job_is_created_with_one_dial_one_try_and_the_tag_then_submitted_only_
     image.write_bytes(b'II*\x00synthetic')
     tag = hylafax_engine.new_tag()
     job = hylafax_engine.create_job(values, tag=tag, job_id=JOB, attempt_id=ATTEMPT, tiff_path=str(image),
-                                    header='Faxbot proof', host='127.0.0.1', port=server.server_address[1])
+                                    header='Faxbot proof 100%', host='127.0.0.1', port=server.server_address[1])
     assert job.engine_job == '7' and server.uploads == [image.read_bytes()]
     assert 'JSUBM' not in server.commands
     parms = [command for command in server.commands if command.startswith('JPARM')]
     assert f'JPARM DIALSTRING "{tag}"' in parms and f'JPARM JOBINFO "{JOB}.{ATTEMPT}"' in parms
     assert 'JPARM MAXDIALS 1' in parms and 'JPARM MAXTRIES 1' in parms
     assert 'JPARM NOTIFY "DONE+REQUEUE"' in parms and 'JPARM DOCUMENT /tmp/doc7.tif' in parms
-    assert 'JPARM TAGLINE "Faxbot proof"' in parms
+    # Faxbot's header, with % kept literal (HylaFAX reads % as a format code).
+    assert 'JPARM TAGLINE "Faxbot proof 100%%"' in parms and 'JPARM USETAGLINE YES' in parms
     assert job.submit() == '7' and server.commands[-1] == 'JSUBM'
     job.close()
+    # No header in Faxbot: no header line from the engine either.
+    server.commands.clear()
+    hylafax_engine.create_job(values, tag=tag, job_id=JOB, attempt_id=ATTEMPT, tiff_path=str(image),
+                              host='127.0.0.1', port=server.server_address[1]).discard()
+    assert 'JPARM USETAGLINE NO' in server.commands
+    assert not any(command.startswith('JPARM TAGLINE') for command in server.commands)
 
 
 def test_a_job_that_is_never_submitted_is_removed_and_a_wrong_login_is_an_engine_error(engine, tmp_path):
@@ -302,8 +314,10 @@ async def test_the_call_plan_is_removed_when_the_engine_cannot_take_the_job(tmp_
     closed.bind(('127.0.0.1', 0))
     port = closed.getsockname()[1]
     closed.close()
-    monkeypatch.setattr(hylafax_engine, 'SUBMIT_PORT', port)
-    monkeypatch.setattr(hylafax_engine.create_job, '__defaults__', (None, port, 2.0))
+    # host, port and timeout are keyword-only: point them at a port nothing listens on.
+    monkeypatch.setattr(hylafax_engine.create_job, '__kwdefaults__',
+                        {**hylafax_engine.create_job.__kwdefaults__, 'host': '127.0.0.1', 'port': port,
+                         'timeout': 2.0})
     image = tmp_path / 'fax.tiff'
     image.write_bytes(b'II*\x00synthetic')
     with pytest.raises(hylafax_engine.EngineError):

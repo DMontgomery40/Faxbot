@@ -406,8 +406,12 @@ def create_job(values, *, tag: str, job_id: str, attempt_id: str, tiff_path: str
             'JPARM USESSLFAX YES',
             f'JPARM DOCUMENT {document}',
         ]
+        # The header line on each page, as the built-in engine prints it; none when Faxbot's is empty.
+        # HylaFAX reads % as a format code, so a literal % is doubled.
         if header:
-            commands.append(f'JPARM TAGLINE {_quote(header[:100])}')
+            commands += [f'JPARM TAGLINE {_quote(header[:100].replace("%", "%%"))}', 'JPARM USETAGLINE YES']
+        else:
+            commands.append('JPARM USETAGLINE NO')
         for command in commands:
             reply = session.sendcmd(command)
             if not reply.startswith('2'):
