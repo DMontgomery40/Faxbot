@@ -2987,7 +2987,9 @@ $ faxbot system diagnostics [OPTIONS] COMMAND [ARGS]...
 **Commands**:
 
 * `database`: Show whether Faxbot can reach its...
-* `run`: Run the installation checks and list...
+* `run`: Check sending, receiving, the fax engine,...
+* `show`: Show the last diagnostics results without...
+* `engine`: List what the fax engine reports now:...
 * `test-fax`: Add a test fax with a real one-page...
 
 #### `faxbot system diagnostics database`
@@ -3006,13 +3008,45 @@ $ faxbot system diagnostics database [OPTIONS]
 
 #### `faxbot system diagnostics run`
 
-Run the installation checks and list anything that needs attention.
+Check sending, receiving, the fax engine, this server and security now. Sends nothing, changes nothing.
 
 **Usage**:
 
 ```console
 $ faxbot system diagnostics run [OPTIONS]
 ```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+#### `faxbot system diagnostics show`
+
+Show the last diagnostics results without checking again.
+
+**Usage**:
+
+```console
+$ faxbot system diagnostics show [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+#### `faxbot system diagnostics engine`
+
+List what the fax engine reports now: trunk sign-ins, checked addresses, calls or faxes.
+
+**Usage**:
+
+```console
+$ faxbot system diagnostics engine [OPTIONS] {VIEW}
+```
+
+**Arguments**:
+
+* `VIEW`: registrations, contacts, calls or faxes.  [required]
 
 **Options**:
 

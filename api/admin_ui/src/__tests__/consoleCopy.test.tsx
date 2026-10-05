@@ -202,7 +202,7 @@ describe('Inbox for people without provider access', () => {
     );
     render(<ScriptsTests client={keyClient()} onNavigate={() => undefined} />);
     fireEvent.click(await screen.findByRole('button', { name: 'Add a test fax' }));
-    expect(await screen.findByText('A test fax was added to your received faxes.')).toBeTruthy();
-    expect(added).toEqual([{}]);
+    expect(await screen.findByText('A test fax was added to Received.')).toBeTruthy();
+    expect(added).toEqual([{ pages: 1, status: 'received' }]);
   });
 });

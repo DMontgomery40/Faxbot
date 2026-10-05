@@ -53,6 +53,8 @@ NOT_OPERATOR = {
     ('POST', '/admin/api-keys'): 'program API for older clients and scripts; people use /access/keys',
     ('DELETE', '/admin/api-keys/{key_id}'): 'program API for older clients and scripts; people use /access/keys',
     ('POST', '/admin/api-keys/{key_id}/rotate'): 'program API for older clients and scripts; people use /access/keys',
+    ('POST', '/admin/diagnostics/run'): ('program API: every setting check for older clients and the console\'s '
+                                         'bucket check; people read /admin/diagnostics/report'),
     ('GET', '/openapi.json'): 'API description',
     ('GET', '/docs'): 'API description',
     ('GET', '/docs/oauth2-redirect'): 'API description',

@@ -89,6 +89,7 @@ from .inbound.http import router as inbound_router
 from .work.http import imports_router, router as work_router
 from .routing.transport import RoutedTransport
 from .batching.http import router as batching_router, summaries as batching_summaries
+from .diagnostics_report import router as diagnostics_router
 from .batching.transport import BatchingTransport
 from .batching import acceptance as batching_acceptance, results as batching_results
 import logging
@@ -191,6 +192,7 @@ app.include_router(work_router)
 app.include_router(imports_router)
 app.include_router(hylafax_router)
 app.include_router(batching_router)
+app.include_router(diagnostics_router)
 
 
 async def _configuration_error_handler(request, exc):
@@ -1331,7 +1333,7 @@ class ActionItem(BaseModel):
 _ACTIONS_REGISTRY: Dict[str, Dict[str, Any]] = {
     # Safe, introspective commands only; never include secrets
     "python_version": {
-        "label": "Python Version",
+        "label": "Python version",
         "kind": "python",
         "runner": lambda: {
             "stdout": f"{os.sys.version}",
@@ -1341,67 +1343,17 @@ _ACTIONS_REGISTRY: Dict[str, Dict[str, Any]] = {
         "backend": ["*"]
     },
     "gs_version": {
-        "label": "Ghostscript Version",
+        "label": "Document converter version",
         "kind": "shell",
         "cmd": ["gs", "-v"],
         "timeout": 10,
-        "backend": ["sip", "freeswitch"],
+        "backend": ["*"],
     },
     "list_faxdata": {
-        "label": "List /faxdata",
+        "label": "Files in the fax data folder",
         "kind": "shell",
         "cmd": ["ls", "-la", "/faxdata"],
         "timeout": 5,
-        "backend": ["*"]
-    },
-    # Tunnel helpers (local-only admin actions)
-    "tunnel_status_cloudflared_logs_tail": {
-        "label": "Cloudflared logs (tail 50)",
-        "kind": "shell",
-        "cmd": ["sh", "-lc", "docker logs faxbot-cloudflared 2>&1 | tail -n 50"],
-        "timeout": 5,
-        "backend": ["*"]
-    },
-    "tunnel_start_cloudflared": {
-        "label": "Start Cloudflared (compose profile)",
-        "kind": "shell",
-        "cmd": ["sh", "-lc", "docker compose --profile cloudflare up -d cloudflared"],
-        "timeout": 20,
-        "backend": ["*"]
-    },
-    "tunnel_stop_cloudflared": {
-        "label": "Stop Cloudflared",
-        "kind": "shell",
-        "cmd": ["sh", "-lc", "docker compose stop cloudflared || true"],
-        "timeout": 15,
-        "backend": ["*"]
-    },
-    "tunnel_start_wireguard": {
-        "label": "Start WireGuard client",
-        "kind": "shell",
-        "cmd": ["sh", "-lc", "docker compose --profile wireguard up -d wireguard"],
-        "timeout": 20,
-        "backend": ["*"]
-    },
-    "tunnel_stop_wireguard": {
-        "label": "Stop WireGuard client",
-        "kind": "shell",
-        "cmd": ["sh", "-lc", "docker compose stop wireguard || true"],
-        "timeout": 15,
-        "backend": ["*"]
-    },
-    "tunnel_start_tailscale": {
-        "label": "Start Tailscale client",
-        "kind": "shell",
-        "cmd": ["sh", "-lc", "docker compose --profile tailscale up -d tailscale"],
-        "timeout": 20,
-        "backend": ["*"]
-    },
-    "tunnel_stop_tailscale": {
-        "label": "Stop Tailscale client",
-        "kind": "shell",
-        "cmd": ["sh", "-lc", "docker compose stop tailscale || true"],
-        "timeout": 15,
         "backend": ["*"]
     },
 }
