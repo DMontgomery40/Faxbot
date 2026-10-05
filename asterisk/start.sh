@@ -151,6 +151,23 @@ else
     '[transport-udp]' 'type=transport' 'protocol=udp' 'bind=0.0.0.0' > "$out_dir/pjsip.conf"
 fi
 
+# The SSL Fax engine's fax lines. Faxbot writes iax.conf with the trunk files
+# (Apply); without it chan_iax2 listens on loopback only and accepts no peer.
+# Port 4569 is never published; the engine reaches it on the Compose network.
+iax_conf=$shared/iax.conf
+rm -f "$shared/iax.conf.started"
+if [ -f "$iax_conf" ] && [ ! -L "$iax_conf" ]; then
+  temporary=$(mktemp "$out_dir/.iax.conf.XXXXXX")
+  cat "$iax_conf" > "$temporary"
+  started=$(mktemp "$shared/.iax.conf.started.XXXXXX")
+  cat "$temporary" > "$started"
+  mv -f "$started" "$shared/iax.conf.started"
+  mv -f "$temporary" "$out_dir/iax.conf"
+else
+  printf '%s\n' '[general]' 'bindaddr=127.0.0.1' 'bindport=4569' 'disallow=all' 'allow=ulaw' \
+    'autokill=yes' 'delayreject=yes' > "$out_dir/iax.conf"
+fi
+
 # This Asterisk shares Faxbot's data folder, so Faxbot may restart it (over the
 # manager connection, once no call is up) to load new settings; Docker's
 # restart policy starts it again.

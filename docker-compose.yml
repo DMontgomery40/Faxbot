@@ -46,6 +46,23 @@ services:
     # -f docker-compose.public.yml, see docs/setup/sip-trunk.md.
     # The manager port (5038) stays private on the compose network.
 
+  # Faxbot's SSL Fax engine (HylaFAX+ 7.0.11): places and answers trunk faxes
+  # through Asterisk's IAX lines and sends pages over SSL Fax when the other
+  # fax machine supports it. It waits until Faxbot writes its settings (Apply on
+  # the trunk page); while it is not running Faxbot uses its built-in engine.
+  # No published ports: job submission (4559) and the fax lines (4569 on
+  # Asterisk) stay on the compose network. See docs/setup/sslfax.md.
+  hylafax:
+    build:
+      context: ./hylafax
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      - TZ=${TZ:-UTC}
+    volumes:
+      - faxdata:/faxdata
+      - hylafax:/var/lib/faxbot-engine
+
   # Optional: Faxbot MCP Server for AI integration
   # Each MCP client sends its own Faxbot API key with every request, so the MCP
   # services get no Faxbot key. Values come from .env next to this file when set.
@@ -107,4 +124,7 @@ services:
 
 volumes:
   faxdata:
+    driver: local
+  # The SSL Fax engine's certificate and key, made once at its first start.
+  hylafax:
     driver: local

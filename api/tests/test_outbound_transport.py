@@ -194,3 +194,111 @@ async def test_unreadable_pre_change_destination_fails_before_any_provider_call(
     monkeypatch.setattr('api.app.outbound_transport.service_from_profile', lambda profile: DestinationService(calls))
     await OutboundWorker(store, CapturedTransport(store, Runtime())).step()
     assert calls == [] and store.get(job)['state'] == 'failed'
+
+
+# -- the SSL Fax engine (HylaFAX+) on the SIP trunk --------------------------------------------------
+
+ENGINE_SECRET = 'synthetic-inbound-secret-0123456789'
+
+
+class EngineAmi:
+    """Faxbot's manager connection as the engine path uses it; records what was asked."""
+    def __init__(self, lines=2):
+        import asyncio
+        self._connected = asyncio.Event()
+        self._connected.set()
+        self.lines, self.originated, self.plans, self.removed = lines, [], {}, []
+
+    async def originate_sendfax(self, job_id, dest, tiff_path, *, attempt_id=None):
+        self.originated.append((job_id, dest, attempt_id))
+
+    async def iax_lines_ready(self, prefix):
+        return self.lines
+
+    async def db_put(self, family, key, value):
+        self.plans[key] = value
+
+    async def db_del(self, family, key):
+        self.removed.append(key)
+
+
+class EngineJob:
+    def __init__(self, tag, events):
+        self.tag, self.events, self.submitted, self.engine_job = tag, events, False, '7'
+
+    def submit(self):
+        self.submitted = True
+        self.events.append('submit')
+        return self.engine_job
+
+    def discard(self):
+        self.events.append('discard')
+
+    def close(self):
+        self.events.append('close')
+
+
+def sip_job(installation, tmp_path, *, engine_running):
+    from api.app import sip_trunk
+    configuration, store, snapshot = installation
+    values = snapshot.active.values.with_patch({
+        'fax_data_dir': str(tmp_path), 'sip_trunk_preset': 'telnyx', 'sip_trunk_username': 'faxbotuser',
+        'sip_trunk_password': 'Synthetic-Password-1', 'sip_trunk_caller_id': '+15555550100',
+        'asterisk_inbound_secret': ENGINE_SECRET})
+    snapshot = configuration.apply(snapshot, values, actor='test', restart_required=False,
+        providers={'outbound': ProviderConfiguration('sip', traits={'requires_tiff': True})})
+    job = accept((configuration, store, snapshot))
+    (tmp_path / (job + '.pdf')).write_bytes(b'%PDF-synthetic')
+    (tmp_path / (job + '.tiff')).write_bytes(b'II*\x00synthetic')
+    if engine_running:
+        sip_trunk.write_asterisk_configuration(snapshot.active.values)
+        (tmp_path / 'hylafax' / 'engine.status').write_text('{"state": "running", "lines": 2}')
+        (tmp_path / 'asterisk' / 'iax.conf.started').write_bytes((tmp_path / 'asterisk' / 'iax.conf').read_bytes())
+    return job
+
+
+@pytest.mark.asyncio
+async def test_a_trunk_fax_goes_to_the_ssl_fax_engine_and_is_submitted_after_the_durable_marker(
+        installation, tmp_path, monkeypatch):
+    from api.app import hylafax_engine
+    _, store, _ = installation
+    job = sip_job(installation, tmp_path, engine_running=True)
+    ami, events = EngineAmi(), []
+
+    def create_job(values, *, tag, job_id, attempt_id, tiff_path, header=''):
+        # Before the durable marker: the plan is stored and nothing is dialed.
+        assert store.get(job_id)['state'] != 'submitting' and tag in ami.plans
+        events.append('create')
+        return EngineJob(tag, events)
+    monkeypatch.setattr(hylafax_engine, 'create_job', create_job)
+    await OutboundWorker(store, CapturedTransport(store, Runtime(), ami=ami)).step()
+    assert events == ['create', 'submit', 'close'] and ami.originated == []
+    (tag, plan), = ami.plans.items()
+    assert plan.split('/')[2] == job and ami.removed == []
+    assert store.get(job)['state'] == 'in_progress'
+
+
+@pytest.mark.asyncio
+async def test_the_built_in_engine_places_the_call_when_the_ssl_fax_engine_is_not_running(installation, tmp_path):
+    _, store, _ = installation
+    job = sip_job(installation, tmp_path, engine_running=False)
+    ami = EngineAmi()
+    await OutboundWorker(store, CapturedTransport(store, Runtime(), ami=ami)).step()
+    assert [call[0] for call in ami.originated] == [job] and ami.plans == {}
+
+
+@pytest.mark.asyncio
+async def test_an_engine_that_refuses_the_job_leaves_no_plan_and_the_built_in_engine_sends(
+        installation, tmp_path, monkeypatch):
+    from api.app import hylafax_engine
+    _, store, _ = installation
+    job = sip_job(installation, tmp_path, engine_running=True)
+    ami = EngineAmi()
+
+    def refuse(*args, **kwargs):
+        raise hylafax_engine.EngineError('Faxbot could not reach the SSL Fax engine.')
+    monkeypatch.setattr(hylafax_engine, 'create_job', refuse)
+    await OutboundWorker(store, CapturedTransport(store, Runtime(), ami=ami)).step()
+    assert [call[0] for call in ami.originated] == [job]
+    assert list(ami.plans) == ami.removed and len(ami.removed) == 1
+    assert store.get(job)['state'] == 'in_progress'

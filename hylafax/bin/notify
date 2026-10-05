@@ -1,0 +1,102 @@
+#!/bin/sh
+# Report one finished fax job to Faxbot. faxq runs this (as uucp, in the spool
+# folder) with: qfile why jobtime [next-try]. Faxbot asks for it on every job.
+#
+# The body carries the job's own record (pages, dials, the fax machine's
+# answer) and, from the call's session log, whether the pages went over SSL
+# Fax and how long the transfer took. Text values are base64 encoded; the
+# shared secret is read from etc/faxbot.conf and never printed. A request is
+# repeated only while Faxbot cannot be reached or is starting; Faxbot accepts
+# the same result twice without change.
+set -u
+
+qfile=${1:-}
+why=$(printf '%s' "${2:-}" | tr -cd 'a-z_')
+jobtime=$(printf '%s' "${3:-}" | tr -cd '0-9:')
+config=etc/faxbot.conf
+
+fail() {
+  printf 'faxbot-notify: job result not delivered to Faxbot (%s)\n' "$1" >&2
+  exit 1
+}
+
+case $qfile in
+  doneq/q[0-9]*|sendq/q[0-9]*) ;;
+  *) fail 'unexpected job file' ;;
+esac
+[ -f "$qfile" ] || fail 'job file missing'
+[ -f "$config" ] || fail 'no Faxbot address'
+url=$(sed -n 's/^url=//p' "$config" | head -1)
+secret=$(sed -n 's/^secret=//p' "$config" | head -1)
+[ -n "$url" ] && [ -n "$secret" ] || fail 'no Faxbot address'
+
+field() { sed -n "s/^$1://p" "$qfile" | head -1; }
+digits() { field "$1" | tr -cd '0-9'; }
+b64() { printf '%s' "$1" | base64 | tr -d '\n'; }
+number() { if [ -n "$1" ]; then printf '%s' "$1"; else printf 'null'; fi; }
+
+tag=$(field jobtag | tr -cd 'a-f0-9.')
+jobid=$(digits jobid)
+commid=$(field commid | tr -cd '0-9')
+state=$(digits state)
+npages=$(digits npages)
+totpages=$(digits totpages)
+ndials=$(digits ndials)
+totdials=$(digits totdials)
+tottries=$(digits tottries)
+status_text=$(field status)
+status_code=$(field statuscode | tr -cd 'A-Za-z0-9')
+csi=$(field csi)
+signalrate=$(field signalrate)
+dataformat=$(field dataformat)
+
+# What the call's session log says about SSL Fax and the page transfer.
+log=''
+[ -n "$commid" ] && [ -f "log/c$commid" ] && log="log/c$commid"
+sslfax=false
+offered=false
+refused=false
+transfer=''
+session=''
+if [ -n "$log" ]; then
+  grep -q -E 'REMOTE (CSA|TSA) "ssl://' "$log" && offered=true
+  grep -q 'Refusing SSL Fax host' "$log" && refused=true
+  if grep -q 'SSL Fax connection was successful' "$log"; then
+    sslfax=true
+  elif grep -q 'SSL Fax connection detected' "$log" && ! grep -q 'SSL Fax client accept failure' "$log"; then
+    sslfax=true
+  fi
+  # "(docq/... sent in 0:00:12)": the whole document's transfer time.
+  transfer=$(grep -E 'SEND FAX .*docq/.* sent in [0-9:]+\)' "$log" | tail -1 \
+    | sed -E 's/.* sent in ([0-9:]+)\).*/\1/' | awk -F: '{ s = 0; for (i = 1; i <= NF; i++) s = s * 60 + $i; print s }')
+  # Seconds from SESSION BEGIN to SESSION END (same day).
+  session=$(awk '/SESSION BEGIN/ { split($3, a, ":"); b = a[1] * 3600 + a[2] * 60 + a[3] }
+                 /SESSION END/ { split($3, a, ":"); e = a[1] * 3600 + a[2] * 60 + a[3] }
+                 END { if (b != "" && e != "" && e >= b) printf "%d", e - b + 0.5 }' "$log")
+fi
+case $signalrate in *SSL*) sslfax=true ;; esac
+
+body=$(printf '{"tag":"%s","engine_job":%s,"why":"%s","state":%s,"pages":%s,"total_pages":%s,"dials":%s,"total_dials":%s,"total_tries":%s,"status_b64":"%s","status_code":"%s","remote_station_b64":"%s","signal_rate_b64":"%s","data_format_b64":"%s","job_time":"%s","sslfax":%s,"sslfax_offered":%s,"sslfax_refused":%s,"transfer_seconds":%s,"session_seconds":%s}' \
+  "$tag" "$(number "$jobid")" "$why" "$(number "$state")" "$(number "$npages")" "$(number "$totpages")" \
+  "$(number "$ndials")" "$(number "$totdials")" "$(number "$tottries")" "$(b64 "$status_text")" "$status_code" \
+  "$(b64 "$csi")" "$(b64 "$signalrate")" "$(b64 "$dataformat")" "$jobtime" "$sslfax" "$offered" "$refused" \
+  "$(number "$transfer")" "$(number "$session")")
+
+attempt=0
+while [ "$attempt" -lt 10 ]; do
+  attempt=$((attempt + 1))
+  code=$(printf 'X-Internal-Secret: %s\n' "$secret" | curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 5 \
+    --max-time 30 -H @- -H 'Content-Type: application/json' --data-binary "$body" "$url/_internal/hylafax/result" 2>/dev/null)
+  result=$?
+  if [ "$result" -eq 0 ]; then
+    case $code in
+      2??) exit 0 ;;
+      503) ;;
+      *) fail "Faxbot answered $code" ;;
+    esac
+  elif [ "$result" -ne 7 ]; then
+    fail 'no answer from Faxbot'
+  fi
+  sleep 3
+done
+fail 'Faxbot could not be reached'

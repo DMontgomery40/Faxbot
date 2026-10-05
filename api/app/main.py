@@ -30,6 +30,7 @@ from .documents import prepare_upload, UploadPreparationError
 from .ami import ami_client, ENGINE_UNREACHABLE
 from . import sip_calls, sip_fax_mode, sip_network
 from .sip_http import router as sip_router, sip_trunk_message, watch_public_address
+from .hylafax_http import router as hylafax_router
 from .phaxio_service import get_phaxio_service
 from .sinch_service import get_sinch_service
 from .signalwire_service import get_signalwire_service
@@ -191,6 +192,7 @@ app.include_router(cases_router)
 app.include_router(inbound_router)
 app.include_router(work_router)
 app.include_router(imports_router)
+app.include_router(hylafax_router)
 app.include_router(batching_router)
 app.include_router(diagnostics_router)
 

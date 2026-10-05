@@ -394,6 +394,10 @@ def _asterisk_started_with_current_files(folder):
     """What asterisk/start.sh and faxbot-public-address record when Asterisk loads the trunk."""
     with open(os.path.join(folder, 'pjsip.conf')) as source, open(os.path.join(folder, 'pjsip.conf.started'), 'w') as copy:
         copy.write(source.read())
+    # The SSL Fax engine's lines, when Faxbot wrote them with the trunk.
+    if os.path.exists(os.path.join(folder, 'iax.conf')):
+        with open(os.path.join(folder, 'iax.conf')) as source, open(os.path.join(folder, 'iax.conf.started'), 'w') as copy:
+            copy.write(source.read())
     record = json.loads(open(os.path.join(folder, 'public-address')).read())
     with open(os.path.join(folder, 'public-address.applied'), 'w') as applied:
         applied.write((record['ip'] + '\n') if record['ports_preserved'] else '')
@@ -594,6 +598,10 @@ def test_a_managed_phone_system_install_says_how_to_publish_faxbot_then_what_to_
     phone_client.post('/admin/sip/apply', headers=ADMIN)
     with open(os.path.join(engine.folder, 'pjsip.conf')) as source, \
             open(os.path.join(engine.folder, 'pjsip.conf.started'), 'w') as copy:
+        copy.write(source.read())
+    # Asterisk also loaded the SSL Fax engine's lines written with the trunk.
+    with open(os.path.join(engine.folder, 'iax.conf')) as source, \
+            open(os.path.join(engine.folder, 'iax.conf.started'), 'w') as copy:
         copy.write(source.read())
     monkeypatch.setattr(ami_client, 'connected_at', sip_http._restart['at'] + 1)
     after = phone_client.get('/admin/sip/status', headers=ADMIN).json()
