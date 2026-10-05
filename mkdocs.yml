@@ -188,7 +188,10 @@ nav:
     - API:
       - Reference: api.md
       - Access and Sign-in: reference/access-api.md
-    - SDKs: sdks/index.md
+    - SDKs:
+      - Overview: sdks/index.md
+      - Node: sdks/node.md
+      - Python: sdks/python.md
     - MCP:
       - Overview: mcp/index.md
       - Node: mcp/node.md

@@ -45,7 +45,7 @@ Console sessions need HTTPS. There are two exceptions:
 - **Local development.** `scripts/run-uvicorn-dev.sh`, or `python -m api.app.server --loopback --port 8080` from the repository root, listens only on `127.0.0.1` and allows sessions over plain HTTP from `http://localhost` and `http://127.0.0.1` on that port.
 - **Private networks.** Setting `FAXBOT_ALLOW_INSECURE_HTTP_SESSIONS=true` in the deployment environment allows sessions over plain HTTP. Use it only on a private network or VPN that you control, such as a WireGuard or Tailscale network. On any other network the session cookie can be read in transit. This is a deployment setting; it is not available on the Settings screen.
 
-API keys work over any transport, HTTP or HTTPS, and from any client, including the desktop app. Outside a network you trust, use HTTPS or a VPN anyway: on plain HTTP the key travels unencrypted.
+API keys work over any transport, HTTP or HTTPS, and from any client. Outside a network you trust, use HTTPS or a VPN anyway: on plain HTTP the key travels unencrypted.
 
 ## API keys
 

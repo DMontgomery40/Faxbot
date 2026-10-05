@@ -18,7 +18,8 @@ logs:
 build:
 	docker compose build
 
-# The API tests, run as the test-api CI job runs them (the API image has no tests).
+# make test runs the API tests from this checkout the same way the test-api CI job does.
+# The API image does not include the tests.
 test: test-local
 
 # Local equivalents of the CI jobs (see CONTRIBUTING.md).
