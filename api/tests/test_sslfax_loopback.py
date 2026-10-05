@@ -80,10 +80,13 @@ class Docker:
             raise RuntimeError(f'docker {args[0]} failed: {result.stderr[-2000:]}')
         return result
 
-    def create(self, name, image, *command, env=None, volumes=(), alias=None, restart=True, entrypoint=None):
+    def create(self, name, image, *command, env=None, volumes=(), alias=None, restart=True, entrypoint=None,
+               caps=()):
         container = f'{self.prefix}-{name}'
         args = ['create', '--name', container, '--network', self.network, '--ip', ADDRESS[name],
                 '--label', 'com.faxbot.scope=sslfax-proof']
+        for cap in caps:
+            args += ['--cap-add', cap]
         if alias:
             args += ['--network-alias', alias]
         if restart:
@@ -270,7 +273,7 @@ except (urllib.error.URLError, OSError) as error:
 
 
 def bring_up(tmp_path, label, made, *, faxbot_t38, carrier_gateway, peer_listener, peer_sslfax=True,
-             carrier_t38=None):
+             carrier_t38=None, carrier_drops_t38=False):
     """Start the whole loopback; returns (docker, context dict). ``made`` collects it for cleanup at once."""
     docker = Docker(label)
     made.append(docker)
@@ -320,7 +323,8 @@ def bring_up(tmp_path, label, made, *, faxbot_t38, carrier_gateway, peer_listene
         'SIP_T38_ENABLED': 'true' if (carrier_gateway if carrier_t38 is None else carrier_t38) else 'false',
         'ASTERISK_INBOUND_SECRET': inbound_secret})
     peer_secrets = hylafax_engine.engine_secrets(carrier_values, lines=1)
-    carrier = docker.create('carrier', images['native'], env={'ASTERISK_AMI_USERNAME': ami_user,
+    carrier = docker.create('carrier', images['native'], caps=('NET_ADMIN',) if carrier_drops_t38 else (),
+                            env={'ASTERISK_AMI_USERNAME': ami_user,
                                                              'ASTERISK_AMI_PASSWORD': ami_password})
     docker.run('start', carrier)
     docker.sh(carrier, 'mkdir -p /faxdata/asterisk', check=True)
@@ -331,7 +335,16 @@ def bring_up(tmp_path, label, made, *, faxbot_t38, carrier_gateway, peer_listene
     # Proof only: SIP messages on the console (container log), to see whether T.38 was offered.
     docker.put(carrier, '/etc/asterisk/logger.conf', LOGGER)
     docker.put(asterisk, '/etc/asterisk/logger.conf', LOGGER)
+    if carrier_drops_t38:
+        # Like the live call of 5 October: the carrier accepts T.38, but none of its T.38 data reaches
+        # Faxbot. Its T.38 ports are one block (4096-4127) and its network drops every packet sent from them.
+        docker.put(carrier, '/etc/asterisk/udptl.conf', '[general]\nudptlstart=4096\nudptlend=4127\n'
+                   'udptlchecksums=no\nudptlfecentries=3\nudptlfecspan=3\n')
     docker.run('restart', carrier)
+    if carrier_drops_t38:
+        docker.sh(carrier, 'tc qdisc add dev eth0 root handle 1: prio && tc filter add dev eth0 parent 1: '
+                           'protocol ip prio 1 u32 match ip protocol 17 0xff match ip sport 4096 0xffe0 action drop',
+                  check=True)
 
     # The peer: one fax line on the carrier; its listener (or none) as the case needs.
     # The peer's listener is published (as docker-compose.sslfax.yml would) when the case gives it one.
@@ -454,7 +467,9 @@ def send_and_collect(tmp_path, context):
     faxbot_log = session_logs(docker, context['engine'])
     peer_log = session_logs(docker, context['peer'])
     events = parse_ami(docker.read(context['asterisk'], '/tmp/ami-events.log'))
-    engine_call = next((event for event in events if event.get('UserEvent') == 'FaxEngineCall'), None)
+    # The engine channel's event for this fax (the trunk channel sends its own, Side: trunk).
+    engine_call = next((event for event in events if event.get('UserEvent') == 'FaxEngineCall'
+                        and event.get('Side') == 'engine' and event.get('JobID') == job_id), None)
     done = docker.sh(context['engine'], 'cat /var/spool/hylafax/doneq/q* 2>/dev/null').stdout
 
     def log(container):
@@ -781,7 +796,8 @@ def test_f_a_restart_mid_call_leaves_the_fax_uncertain_and_never_resends_it(tmp_
                                      f"ORDER BY created_at")
     attempts = database(context, n=f"SELECT COUNT(*) AS n FROM outbound_attempts WHERE job_id = '{job_id}'")
     calls = [event for event in parse_ami(docker.read(context['asterisk'], '/tmp/ami-events.log'))
-             if event.get('UserEvent') == 'FaxEngineCall' and event.get('JobID') == job_id]
+             if event.get('UserEvent') == 'FaxEngineCall' and event.get('Side') == 'engine'
+             and event.get('JobID') == job_id]
     engine_log = docker.run('logs', context['engine'], check=False)
     proof = {'final_state': final, 'events': [row['kind'] for row in events['kinds']],
              'attempts': attempts['n'][0]['n'], 'engine_calls': len(calls),
@@ -792,3 +808,37 @@ def test_f_a_restart_mid_call_leaves_the_fax_uncertain_and_never_resends_it(tmp_
     assert proof['attempts'] == 1 and 'submission_uncertain' in proof['events'], proof
     assert proof['engine_calls'] == 1, proof
     assert 'moved 1 unfinished job(s) aside' in proof['engine_log'], proof
+
+
+def test_g_a_t38_call_with_no_t38_data_back_moves_only_the_engine_to_audio(tmp_path, loopback):
+    """The live failure of 5 October, reproduced: T.38 is agreed and nothing comes back. The engine heard no
+    fax machine; the call says so in the engine's words, only the engine switches to audio fax, and its
+    next fax goes through as audio on the same network."""
+    context = loopback('g', faxbot_t38=True, carrier_gateway=True, peer_listener='', peer_sslfax=False,
+                       carrier_drops_t38=True)
+    docker, key = context['docker'], context['key']
+    first = send_and_collect(tmp_path, context)
+    found = records(context, first['job']['id'])
+    mode = docker.read(context['api'], '/faxdata/hylafax/engine-t38')
+    trunk = api(docker, 'GET', '/admin/sip/status', key=key)['json'] or {}
+    settings = api(docker, 'GET', '/admin/settings', key=key)['json'] or {}
+    proof = {'job_status': first['job'].get('status'), 'job_error': first['job'].get('error'),
+             'call': found['call'], 'engine_t38': mode, 'engine_text': trunk.get('engine_text'),
+             'installation_t38': settings.get('sip', {}).get('trunk', {}).get('t38_enabled'),
+             'engine_call': first['engine_call'], 'faxbot_log': first['faxbot_log'][-1500:]}
+    print('\nSSLFAX_PROOF_G1 ' + json.dumps(proof, indent=2, default=str))
+    assert str(proof['job_status']).lower() == 'failed', proof
+    assert proof['job_error'] == 'The call connected but the fast fax service heard no fax machine on the line.'
+    assert found['call']['t38'] == 'yes' and found['call']['pages'] == 0, proof
+    assert '"mode": "audio"' in mode and proof['installation_t38'] is True, proof
+    assert proof['engine_call'] and proof['engine_call'].get('GwStatus'), proof
+    # The next fax: the engine places it as audio and it goes through.
+    tmp_second = tmp_path / 'second'
+    tmp_second.mkdir()
+    second = send_and_collect(tmp_second, context)
+    found = records(context, second['job']['id'])
+    print('\nSSLFAX_PROOF_G2 ' + json.dumps({'job_status': second['job'].get('status'), 'call': found['call']},
+                                             indent=2, default=str))
+    assert str(second['job'].get('status')).upper() == 'SUCCESS', second['job']
+    assert found['call']['t38'] == 'no' and found['call']['pages'] == PAGES, found
+
