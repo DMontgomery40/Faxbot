@@ -21,6 +21,8 @@ config=$spool/etc/faxbot.conf
 engine=$(sed -n 's/^engine=//p' "$config" 2>/dev/null | head -1 | tr -cd 'a-f0-9')
 [ -n "$engine" ] || exit 1
 [ -f "$seen" ] || : > "$seen"
+# Without a writable list every session would be reported again on every round: report nothing.
+[ -w "$seen" ] && [ ! -L "$seen" ] || exit 1
 
 b64() { printf '%s' "$1" | base64 | tr -d '\n'; }
 mark() { printf '%s\n' "$1" >> "$seen"; }

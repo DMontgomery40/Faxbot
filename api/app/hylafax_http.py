@@ -326,9 +326,10 @@ async def engine_result(request: Request, payload: dict = Body(...),
         from . import sip_calls
         row = await _settled_call(request, attempt_id, row)
         # The engine's own sentence, unless the call says more: the engine heard no fax machine, no
-        # sound came back, or sound came back but no fax machine answered.
+        # sound came back, sound came back but no fax machine answered, or the other machine answered
+        # (sent its ID) and the fax did not finish.
         found = (row or {}).get('verdict')
-        if found in (sip_calls.NO_FAX_SIGNAL, 'no_media_back', 'no_fax_answer'):
+        if found in (sip_calls.NO_FAX_SIGNAL, 'no_media_back', 'no_fax_answer', 'remote_fax_failed'):
             sentence = sip_calls.verdict_sentence(found)
     if status == hylafax_engine.UNCERTAIN:
         # Removed or rejected after it dialed: the fax may have arrived. It waits for a person, never resent.

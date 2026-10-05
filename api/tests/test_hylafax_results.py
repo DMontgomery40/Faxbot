@@ -247,6 +247,17 @@ def test_a_send_the_other_machine_answered_carries_the_engines_own_reason(monkey
     assert calls == [('observed', 'failed', 'The call ended after 1 page; the rest was not confirmed.')]
 
 
+def test_a_send_the_other_machine_answered_without_a_page_says_it_answered(monkeypatch):
+    """No page, but the other machine sent its ID: it answered, so never "did not answer as a fax machine"."""
+    row = {'verdict': 'remote_fax_failed', 'ended_at': '2026-10-05T01:00:40Z', 't38': 'no',
+           'error_cause': 'remote_fax_failed: No response to EOP repeated 3 tries E151'}
+    payload = {'tag': f'{JOB}.{ATTEMPT}', 'why': 'failed', 'dials': 1, 'pages': 0,
+               'remote_station_b64': base64.b64encode(b'+1 303 426 5097').decode(),
+               'status_b64': base64.b64encode(b'No response to EOP repeated 3 tries {E151}').decode()}
+    _, calls, _ = result_route(monkeypatch, payload, row)
+    assert calls == [('observed', 'failed', 'The other fax machine answered but the fax did not finish.')]
+
+
 # The engine's own secret and folders ----------------------------------------------------------------------
 
 def test_the_engine_hands_over_only_images_in_its_out_folder_with_its_own_secret(isolated_installation,
