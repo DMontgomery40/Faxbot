@@ -247,3 +247,75 @@ def test_engine_status_replies_keep_only_allowlisted_fields():
                        {'event': 'coreshowchannel', 'channel': 'PJSIP/trunk-1'})
     assert query['events'] == [{'Channel': 'PJSIP/trunk-1'}]
     assert 'authdetail' not in STATUS_EVENT_FIELDS
+
+
+# --- recent faxes, from real stored rows ---------------------------------------
+
+def _fax_tables(monkeypatch, sent, received):
+    """Minimal outbound_deliveries and inbound_imports tables, written the way Faxbot writes them."""
+    from datetime import datetime
+    import sqlalchemy as sa
+    engine = sa.create_engine('sqlite://', poolclass=sa.pool.StaticPool, connect_args={'check_same_thread': False})
+    metadata = sa.MetaData()
+    deliveries = sa.Table('outbound_deliveries', metadata, sa.Column('id', sa.String), sa.Column('state', sa.String),
+                          sa.Column('updated_at', sa.DateTime))
+    imports = sa.Table('inbound_imports', metadata, sa.Column('id', sa.String), sa.Column('source', sa.String),
+                       sa.Column('state', sa.String), sa.Column('acquired_at', sa.DateTime),
+                       sa.Column('updated_at', sa.DateTime))
+    metadata.create_all(engine)
+    with engine.begin() as connection:
+        for index, (state, at) in enumerate(sent):
+            connection.execute(deliveries.insert().values(id=f's{index}', state=state, updated_at=at))
+        for index, (source, state, at) in enumerate(received):
+            connection.execute(imports.insert().values(id=f'r{index}', source=source, state=state, acquired_at=at,
+                                                       updated_at=at))
+    monkeypatch.setattr(report, '_store_engine', lambda: engine)
+    monkeypatch.setattr(report, 'installation_zone_name', lambda: 'America/Denver')
+    import app.people_time as people_time
+    monkeypatch.setattr(people_time, 'installation_zone_name', lambda: 'America/Denver')
+    return datetime(2026, 10, 5, 4, 0)
+
+
+def test_recent_sent_from_stored_rows(monkeypatch):
+    from datetime import datetime
+    now = _fax_tables(monkeypatch, [('success', datetime(2026, 10, 4, 20, 55)), ('failed', datetime(2026, 10, 4, 18, 0)),
+                                    ('reconciliation_required', datetime(2026, 10, 4, 19, 0))], [])
+    findings = {item.id: item for item in _run(report.recent_sent(SimpleNamespace(now=now)))}
+    assert findings['sending.recent'].status == OK
+    assert findings['sending.recent'].sentence == (
+        'Last fax delivered 4 Oct 2:55 PM MDT. In the last 7 days: 1 delivered, 1 failed.')
+    assert findings['sending.confirm'].status == ATTENTION and findings['sending.confirm'].fix_page == 'faxes/sent'
+
+
+def test_last_fax_failed_is_attention(monkeypatch):
+    from datetime import datetime
+    now = _fax_tables(monkeypatch, [('success', datetime(2026, 10, 3, 20, 0)), ('failed', datetime(2026, 10, 4, 20, 0))], [])
+    finding = _run(report.recent_sent(SimpleNamespace(now=now)))[0]
+    assert finding.status == ATTENTION and finding.sentence.startswith('The last fax failed (4 Oct 2:00 PM MDT).')
+
+
+def test_recent_received_ignores_test_faxes_and_counts_failed_fetches(monkeypatch):
+    from datetime import datetime
+    monkeypatch.setattr(report, '_main', lambda: SimpleNamespace(settings=SimpleNamespace(inbound_enabled=True)))
+    now = _fax_tables(monkeypatch, [], [('sip', 'received', datetime(2026, 10, 4, 20, 51)),
+                                        ('test', 'received', datetime(2026, 10, 4, 23, 0)),
+                                        ('humblefax', 'failed', None)])
+    findings = {item.id: item for item in _run(report.recent_received(SimpleNamespace(now=now)))}
+    assert findings['receiving.recent'].sentence == 'Last fax received 4 Oct 2:51 PM MDT. In the last 7 days: 1 received.'
+    assert findings['receiving.failed'].status == PROBLEM
+    assert 'Fetch again' in findings['receiving.failed'].sentence
+
+
+def test_t38_off_reason_is_a_sentence_not_a_code(monkeypatch):
+    import app.sip_http as sip_http
+    monkeypatch.setattr(report, '_uses_trunk', lambda request: True)
+    monkeypatch.setattr(report, 'installation_zone_name', lambda: 'America/Denver')
+
+    async def status(request, identity):
+        return {'preset_label': 'Telnyx', 'asterisk_connected': True, 'registration': 'registered',
+                'message': 'The trunk is ready.', 't38_off_reason': 'no_data_back', 't38_off_at': '2026-10-04T03:01:00Z'}
+    monkeypatch.setattr(sip_http, 'status', status)
+    findings = {item.id: item for item in _run(report.carrier_trunk(SimpleNamespace(request=None, identity=None)))}
+    assert findings['engine.trunk'].status == OK
+    assert findings['engine.t38'].sentence == (
+        'Off: on 3 October a T.38 fax got no fax data back on this network, so Faxbot uses audio fax.')
