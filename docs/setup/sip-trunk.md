@@ -152,57 +152,39 @@ Asterisk reads the trunk when it starts. Faxbot writes it to `asterisk/pjsip.con
 
 ### Behind a router: nothing to open for calls and audio fax
 
-With username and password sign-in, you do not open, publish or forward a port for calls and audio fax. The default Docker Compose file publishes no ports. Fax over IP (T.38) can need more on some networks; see [Network for fax over IP](network.md).
+With username and password sign-in you don't open, publish or forward any port for calls and audio fax, and the default Docker Compose file publishes none. Fax over IP (T.38) can need more on some networks; see [Network for fax over IP](network.md).
 
-The fax engine (Asterisk) works like this behind a router:
+Behind a router, the fax engine (Asterisk) registers with the carrier over one encrypted connection (for Telnyx, TLS on port 5061) and keeps it alive with a keepalive and a carrier check every 30 seconds. Over UDP the carrier check runs every 25 seconds and registration renews every two minutes, which stays inside common router timeouts. The carrier sends incoming calls back over that same connection. On every call the fax engine sends the first audio and fax over IP (T.38) packets itself, plus a small audio keepalive every two seconds when nothing else is being sent, so your router lets the carrier's answer back in on the same path.
 
-- It registers with the carrier over one encrypted connection. For Telnyx, this is TLS on port 5061.
-- It keeps the connection open with a keepalive every 30 seconds and a carrier check every 30 seconds. Over UDP, the carrier check runs every 25 seconds and registration renews every two minutes. These times are shorter than common router timeouts.
-- The carrier sends incoming calls back over the same connection.
-- On every call, the fax engine sends the first audio and fax over IP (T.38) packets itself. When nothing else is sent, it sends a small audio keepalive every two seconds. So your router lets the carrier's answer back in on the same path.
+Leave **Internet address** empty. It is only an override for a host whose address you want to state yourself, and if you enter one that differs from what Faxbot sees, **Check trunk status** tells you.
 
-Leave **Internet address** empty. It is only an override for a host whose address you want to set yourself. If you enter an address that is not the one Faxbot sees, **Check trunk status** tells you.
+Faxbot finds its internet address with STUN when you select **Apply and connect**, and checks again every five minutes. You can change the interval with **Check the internet address every … minutes** under **Providers → Carrier trunk**, or with `faxbot system settings set sip_public_address_check_minutes=10`; `0` stops the repeat. A change takes effect from the next check, without a restart.
 
-Faxbot finds its internet address with STUN when you select **Apply and connect**. It checks again every five minutes. To change the interval, use **Check the internet address every … minutes** under **Providers → Carrier trunk**, or `faxbot system settings set sip_public_address_check_minutes=10`. `0` stops the repeat. A change applies from the next check, without a restart.
+Faxbot only tells the carrier its internet address when your network keeps port numbers, because then the address and port are exactly right and the call doesn't depend on the carrier following Faxbot's packets. When your network changes port numbers, an internet address with the wrong port would mislead the carrier, so Faxbot leaves it out and lets the carrier follow its packets instead. The fax engine reads the address when it starts; if your internet address changes later, **Check trunk status** says "Your internet address changed. Select Apply and connect so the carrier gets the new address." For a fax engine that Faxbot doesn't manage, it tells you to restart the Asterisk service instead.
 
-Faxbot tells the carrier its internet address only when your network keeps port numbers. Then the address and port are exactly right, and the call does not depend on the carrier following Faxbot's packets. When your network changes port numbers, an internet address with the wrong port would mislead the carrier. So Faxbot leaves the address out, and the carrier follows Faxbot's packets instead.
+Encryption also hides the call setup from router features that rewrite it (often called SIP ALG). If **Check trunk status** keeps saying that Faxbot isn't registered over the encrypted connection, set **Transport** to TCP, apply again and restart Asterisk.
 
-The fax engine reads the address when it starts. If your internet address changes later, **Check trunk status** says "Your internet address changed. Select Apply and connect so the carrier gets the new address." For a fax engine that Faxbot does not manage, it tells you to restart the Asterisk service.
-
-Encryption also hides the call setup from router features that change it (often called SIP ALG). If **Check trunk status** keeps saying that Faxbot is not registered over the encrypted connection, set **Transport** to TCP. Then apply again and restart Asterisk.
-
-All of this works with carriers that send their packets back to the address and port that Faxbot's packets came from. Telnyx does this for audio. Telnyx does not do this for fax over IP (T.38), measured on 3 and 4 October 2026. On a network that changes port numbers, Telnyx's fax data never reaches Faxbot. So fax over IP (T.38) needs a network that keeps port numbers. The network check below finds out which network you have and tells you what to do. If a call shows the problem anyway, the call connects but no fax data arrives. Faxbot then says on that call: "The call connected but no fax data came back from the carrier."
+All of this relies on carriers sending their packets back to wherever Faxbot's packets came from. Telnyx does that for audio, but not for fax over IP (T.38), as measured on 3 and 4 October 2026: on a network that changes port numbers, Telnyx's fax data never reaches Faxbot. Fax over IP (T.38) therefore needs a network that keeps port numbers, and the network check below finds out which kind you have and tells you what to do. If a call runs into the problem anyway, it connects but no fax data arrives, and Faxbot says so on that call: "The call connected but no fax data came back from the carrier."
 
 ### Network for fax over IP
 
-Faxbot checks its network when it starts, when you select **Apply and connect**, every few minutes, and when you select **Check again**. The check is under **Network for fax over IP** on the carrier's page. On the command line, use `faxbot providers trunk network status|check`.
+Faxbot checks its network when it starts, when you select **Apply and connect**, every few minutes and when you select **Check again** under **Network for fax over IP** on the carrier's page (or with `faxbot providers trunk network status|check`). Fax over IP (T.38) then follows the check by itself. When the carrier's fax data can't come back, Faxbot turns fax over IP (T.38) off and gives the reason: "Off: your network changes port numbers, so fax over IP (T.38) cannot work; Faxbot sends audio fax until the network is fixed." Once the network is fixed, Faxbot turns it back on, and it never sends a fax a second time because of this.
 
-Fax over IP (T.38) follows the check by itself:
-
-- When the carrier's fax data cannot come back, Faxbot turns fax over IP (T.38) off and shows the reason: "Off: your network changes port numbers, so fax over IP (T.38) cannot work; Faxbot sends audio fax until the network is fixed."
-- When the network is fixed, Faxbot turns fax over IP (T.38) on again.
-- Faxbot never sends a fax again because of this.
-
-When the router directly in front of Faxbot's computer changes port numbers, Faxbot can open its fax ports on that router itself. [Network for fax over IP](network.md) gives the fix for each platform: Colima, Docker Desktop, Linux behind a router and cloud servers.
+When the router directly in front of Faxbot's computer changes port numbers, Faxbot can open its fax ports on that router itself. [Network for fax over IP](network.md) has the fix for each platform: Colima, Docker Desktop, Linux behind a router and cloud servers.
 
 ### When T.38 data does not come back: audio fax
 
-Sometimes a call switches to fax over IP (T.38), and no fax data comes back. Faxbot then says "The call connected but no fax data came back from the carrier." The carrier does not send the fax data back on Faxbot's path, although it can still send audio.
+Sometimes a call switches to fax over IP (T.38) and no fax data comes back, and Faxbot reports "The call connected but no fax data came back from the carrier." The carrier isn't sending fax data back along Faxbot's path, even though it may still send audio that way.
 
-Faxbot then switches new calls to audio fax by itself. It does this only when the fax engine timed out while it waited for the other side's first fax message. A plain hang-up, a busy line or a hang-up by the other side never causes the switch. When Faxbot switches:
+Faxbot then switches new calls to audio fax by itself, but only when the fax engine timed out waiting for the other side's first fax message; a plain hang-up, a busy line or the other side hanging up never triggers it. When it switches, Faxbot turns off **Use T.38 fax over IP** (the settings history records "system"), reconnects the carrier trunk once no call is in progress, and shows a sentence next to the switch such as "Off: on 3 October a T.38 fax got no fax data back on this network, so Faxbot uses audio fax.", together with **Try T.38 again**. It never sends the failed fax again; send it yourself when you're ready.
 
-- It turns off **Use T.38 fax over IP**. The settings history shows the change as made by "system".
-- It connects the carrier trunk again when no call is in progress.
-- It shows a sentence next to the switch, for example "Off: on 3 October a T.38 fax got no fax data back on this network, so Faxbot uses audio fax.", with **Try T.38 again**.
-- It never sends the failed fax again. Send it again when you are ready.
+If fax over IP (T.38) is off and the most recent fax over IP (T.38) call got no fax data back (for example, because someone turned it off by hand right after such a call), Faxbot takes that call as the reason and says so in the same way.
 
-Sometimes fax over IP (T.38) is off, and the most recent fax over IP (T.38) call got no fax data back. For example, someone turned it off by hand right after such a call. Faxbot then uses that call as the reason and shows the same kind of sentence.
+New calls stay on audio fax: Faxbot declines the carrier's switch to fax over IP (T.38) and sends at up to 9600 bit/s with error correction, which copes better with a voice path.
 
-New calls stay audio fax. Faxbot declines the carrier's switch to fax over IP (T.38). It sends at up to 9600 bit/s with error correction, which works better on a voice path.
+If the failed call happened on a network that changed port numbers and a later network check finds the network fixed, Faxbot turns fax over IP (T.38) back on by itself. If it happened on a network that keeps port numbers, the carrier is the cause, and audio fax stays until you choose otherwise.
 
-Sometimes the failed call was on a network that changed port numbers. If a later network check finds the network fixed, Faxbot turns fax over IP (T.38) on again by itself. If the failed call was on a network that keeps port numbers, the carrier is the cause. Then audio fax stays until you choose otherwise.
-
-A carrier trunk on a network that changes port numbers starts with audio fax (see [Network for fax over IP](#network-for-fax-over-ip)). To turn on audio fax by hand, use `faxbot providers trunk mode audio`. `faxbot providers trunk status` tells you why audio fax is in use. With Telnyx, you can also set **T.38 fax re-invite initiated by** to **Disabled** for audio fax.
+A carrier trunk on a network that changes port numbers starts with audio fax (see [Network for fax over IP](#network-for-fax-over-ip)). `faxbot providers trunk mode audio` turns on audio fax by hand, and `faxbot providers trunk status` tells you why audio fax is in use. With Telnyx you can also set **T.38 fax re-invite initiated by** to **Disabled** for audio fax.
 
 ### Server IP sign-in needs a public host
 
