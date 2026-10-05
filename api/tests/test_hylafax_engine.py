@@ -351,9 +351,8 @@ def b64(text):
     (result('failed', dials=1, pages=0, status_b64=b64('No answer from remote')),
      ('failed', 'The fax did not go through: no one answered.', None)),
     (result('failed', dials=1, pages=2, total_pages=5),
-     ('failed', 'The call ended after 2 pages went through; the rest of the fax was not confirmed.', 'partly_sent')),
-    (result('timedout', dials=0), ('failed', 'The fax did not go through: the fax machine at the other end did not '
-                                             'confirm the pages.', None)),
+     ('failed', 'The call ended after 2 pages; the rest was not confirmed.', 'partly_sent')),
+    (result('timedout', dials=0), ('failed', 'The other fax machine did not confirm the pages.', None)),
     # Removed or rejected after a dial (an engine restart, a person's faxrm): uncertain, never failed.
     (result('rejected', dials=1), (hylafax_engine.UNCERTAIN, None, None)),
     (result('killed', total_dials=1), (hylafax_engine.UNCERTAIN, None, None)),
@@ -361,6 +360,49 @@ def b64(text):
 ])
 def test_engine_results_map_to_delivery_outcomes(payload, outcome):
     assert hylafax_engine.result_outcome(payload) == outcome
+
+
+def test_every_engine_failure_sentence_fits_the_80_characters_a_fax_error_shows():
+    texts = ['', 'Busy signal detected', 'No answer from remote', 'No carrier detected', 'Remote hangup']
+    sentences = {hylafax_engine.failure_sentence(text, 0) for text in texts}
+    sentences |= {hylafax_engine.failure_sentence('', pages) for pages in (1, 2, 99, 9999)}
+    assert len(sentences) == 9
+    assert all(len(sentence) <= 80 and sentence.endswith('.') for sentence in sentences), sentences
+
+
+@pytest.mark.parametrize('row, payload, switched', [
+    ({'t38': 'yes'}, {'pages': 0, 'status_b64': b64('No receiver protocol (T.30 T1 timeout)')}, True),
+    ({'t38': 'no'}, {'pages': 0, 'status_b64': b64('No receiver protocol (T.30 T1 timeout)')}, False),
+    ({'t38': 'yes'}, {'pages': 2, 'status_b64': b64('No receiver protocol (T.30 T1 timeout)')}, False),
+    ({'t38': 'yes'}, {'pages': 0, 'status_b64': b64('Busy signal detected')}, False),
+    (None, {'pages': 0, 'status_b64': b64('No receiver protocol (T.30 T1 timeout)')}, False),
+])
+def test_a_t38_engine_call_with_no_fax_message_back_feeds_the_audio_switch(monkeypatch, row, payload, switched):
+    """The same rule as the built-in engine: T.38, no page, and the far end never sent one fax message."""
+    from app import hylafax_http, sip_calls, sip_fax_mode
+    seen = []
+    monkeypatch.setattr(sip_fax_mode, '_on_fax_event', seen.append)
+    hylafax_http._audio_switch_check(row, payload, 'failed')
+    assert bool(seen) == switched
+    if switched:
+        event = seen[0]
+        # The built-in engine's own listener reads it as a T.38 call with no data back.
+        assert sip_calls.verdict(event) == 'no_t38_data_back'
+        assert sip_fax_mode.t38_timeout(sip_calls._reason(event))
+    hylafax_http._audio_switch_check({'t38': 'yes'}, payload, 'success')
+    assert len(seen) == int(switched)
+
+
+def test_compose_runs_the_engine_with_no_published_ports_and_the_override_publishes_one():
+    import yaml
+    base = yaml.safe_load((ROOT / 'docker-compose.yml').read_text())['services']['hylafax']
+    assert 'ports' not in base and 'faxdata:/faxdata' in base['volumes']
+    override = yaml.safe_load((ROOT / 'docker-compose.sslfax.yml').read_text())['services']
+    assert list(override) == ['hylafax']
+    ports = override['hylafax']['ports']
+    assert len(ports) == 1 and ports[0].endswith('/tcp')
+    assert '4559' not in ports[0] and '4569' not in ports[0]
+    assert any(item.startswith('FAXBOT_SSLFAX_PUBLISHED_PORT=') for item in override['hylafax']['environment'])
 
 
 def test_result_tags_name_one_fax_and_attempt():

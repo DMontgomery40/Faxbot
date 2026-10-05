@@ -619,14 +619,17 @@ async def forget_plan(ami, tag):
 # Results (the engine's notify script) --------------------------------------------------------------
 
 UNCERTAIN = 'uncertain'
-# HylaFAX's own words for a call that never became a fax, first match wins.
+# HylaFAX's own words for a call that never became a fax, first match wins. Every
+# sentence fits the 80 characters a fax's error shows (main.py cuts longer ones).
 _REASONS = (
-    (re.compile(r'busy', re.IGNORECASE), 'the line was busy'),
-    (re.compile(r'no answer', re.IGNORECASE), 'no one answered'),
+    (re.compile(r'busy', re.IGNORECASE), 'The fax did not go through: the line was busy.'),
+    (re.compile(r'no answer', re.IGNORECASE), 'The fax did not go through: no one answered.'),
     (re.compile(r'no carrier|no remote fax|not a fax|no response to', re.IGNORECASE),
-     'the other end did not answer as a fax machine'),
-    (re.compile(r'refused|rejected|hang ?up|disconnect', re.IGNORECASE), 'the call was ended before the fax went through'),
+     'The other end did not answer as a fax machine.'),
+    (re.compile(r'refused|rejected|hang ?up|disconnect', re.IGNORECASE),
+     'The call ended before the fax went through.'),
 )
+NOT_CONFIRMED = 'The other fax machine did not confirm the pages.'
 
 
 def _int(value):
@@ -656,14 +659,13 @@ def parse_tag(tag) -> tuple[str, str] | None:
 
 
 def failure_sentence(status_text: str, pages: int) -> str:
-    """One plain sentence for an engine fax that did not go through."""
+    """One plain sentence for an engine fax that did not go through (at most 80 characters)."""
     if pages:
-        return (f'The call ended after {pages} page{"s" if pages != 1 else ""} went through; '
-                'the rest of the fax was not confirmed.')
-    for pattern, reason in _REASONS:
+        return f'The call ended after {pages} page{"s" if pages != 1 else ""}; the rest was not confirmed.'
+    for pattern, sentence in _REASONS:
         if pattern.search(status_text or ''):
-            return f'The fax did not go through: {reason}.'
-    return 'The fax did not go through: the fax machine at the other end did not confirm the pages.'
+            return sentence
+    return NOT_CONFIRMED
 
 
 def result_outcome(payload: dict) -> tuple[str, str | None, str | None]:

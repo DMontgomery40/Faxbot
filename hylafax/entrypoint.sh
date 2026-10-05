@@ -89,10 +89,8 @@ compression=$(need compression '^(mh|mr|mmr|jbig)$')
 # The receiving listener is used only when docker-compose.sslfax.yml publishes
 # its port (and says so here); otherwise the engine connects out only.
 published=${FAXBOT_SSLFAX_PUBLISHED_PORT:-}
-listener_note=''
 if [ -n "$listener" ] && [ "${listener##*:}" != "$published" ]; then
   listener=''
-  listener_note="Faxbot sends pages faster when the other fax machine offers it."
 fi
 
 # This engine's own name for its calls, made once: received faxes and results
@@ -132,11 +130,13 @@ rm -f "$spool/FIFO" "$spool"/FIFO.* 2>/dev/null || true
 printf 'url=%s\nsecret=%s\nengine=%s\n' "$api_url" "$secret" "$engine_id" > "$spool/etc/faxbot.conf"
 chown uucp:uucp "$spool/etc/faxbot.conf"
 chmod 600 "$spool/etc/faxbot.conf"
-# Received faxes wait here (written by the receive script as uucp) until the
-# hand-over below brings them into Faxbot's data folder; kept until Faxbot has them.
-mkdir -p "$spool/faxbot-received"
-chown uucp:uucp "$spool/faxbot-received"
-chmod 700 "$spool/faxbot-received"
+# Received faxes wait in the engine's volume (written by the receive script as
+# uucp, so they survive a new container) until the hand-over below brings them
+# into Faxbot's data folder; kept until Faxbot has them.
+mkdir -p "$state/received"
+chown uucp:uucp "$state/received"
+chmod 700 "$state/received"
+chmod 711 "$state"
 
 # Job submission login for Faxbot only; port 4559 stays on the private network.
 # Inside the container, the engine's own status checks (faxstat) need no login.
@@ -264,7 +264,7 @@ hfaxd -i 4559
 for line_number in $(seq 1 "$lines"); do
   faxgetty -D "ttyIAX$line_number"
 done
-write_status running "$listener_note"
+write_status running ''
 log "running with $lines fax line(s); SSL Fax $sslfax${listener:+, listener $listener}"
 
 # Engine idle: no line is sending or receiving.
@@ -293,8 +293,9 @@ registration_refused() {
 
 while sleep "$check_seconds"; do
   # Received faxes go to Faxbot (as root: only root may write Faxbot's data folder).
-  if compgen -G "$spool/faxbot-received/*.ticket" >/dev/null; then
-    FAXBOT_DATA=$data FAXBOT_HYLAFAX_SPOOL=$spool /usr/local/lib/faxbot-engine/handover || true
+  if compgen -G "$state/received/*.ticket" >/dev/null; then
+    FAXBOT_DATA=$data FAXBOT_HYLAFAX_SPOOL=$spool FAXBOT_ENGINE_STATE=$state \
+      /usr/local/lib/faxbot-engine/handover || true
   fi
   if registration_refused && idle; then
     write_status restarting "Faxbot's fast fax service is reconnecting to the phone connection."

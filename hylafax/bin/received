@@ -1,11 +1,13 @@
 #!/bin/sh
 # A fax arrived. faxgetty runs this (as uucp, in the spool folder) with:
 #   file device commid reason [caller number] [Asterisk's call name] [called number]
-# It writes a ticket next to the image; the engine's hand-over (as root) brings
-# the image into Faxbot's data folder and hands it to Faxbot, and keeps the
-# ticket until Faxbot has the fax. Nothing here talks to the network.
+# It copies the image and writes a ticket into the engine's volume (so both
+# survive a new container); the engine's hand-over (as root) brings the image
+# into Faxbot's data folder, hands it to Faxbot, and keeps the ticket until
+# Faxbot has the fax. Nothing here talks to the network.
 set -u
 
+state=${FAXBOT_ENGINE_STATE:-/var/lib/faxbot-engine}
 file=${1:-}
 commid=$(printf '%s' "${3:-}" | tr -cd '0-9')
 reason=$(printf '%s' "${4:-}" | tr -cd 'A-Za-z0-9 .,:()_-' | cut -c1-200)
@@ -41,13 +43,19 @@ if [ -f "$log" ]; then
 fi
 case $rate in *SSL*) sslfax=true offered=true ;; esac
 
+# The communication ID restarts with a new spool; the arrival time keeps names unique.
+received=$(date +%s)
+key=$commid-$received
+copy=$state/received/$key.tif
+cp "$file" "$copy.part" && mv -f "$copy.part" "$copy" || { printf 'faxbot-received: image not kept\n' >&2; exit 1; }
+
 b64() { printf '%s' "$1" | base64 | tr -d '\n'; }
-ticket=faxbot-received/$commid.ticket
-temporary=faxbot-received/.$commid.ticket
+ticket=$state/received/$key.ticket
+temporary=$state/received/.$key.ticket
 {
-  printf 'file=%s\ncommid=%s\ncaller=%s\ntoken=%s\ncalled=%s\npages=%s\n' \
-    "$file" "$commid" "$caller" "$token" "$called" "${pages:-0}"
+  printf 'image=%s\nspool_file=%s\ncommid=%s\nkey=%s\ncaller=%s\ntoken=%s\ncalled=%s\npages=%s\n' \
+    "$copy" "$file" "$commid" "$key" "$caller" "$token" "$called" "${pages:-0}"
   printf 'reason64=%s\nstation64=%s\nrate64=%s\nformat64=%s\n' \
     "$(b64 "$reason")" "$(b64 "$station")" "$(b64 "$rate")" "$(b64 "$format")"
-  printf 'recv_seconds=%s\nsslfax=%s\noffered=%s\nreceived=%s\n' "$recv" "$sslfax" "$offered" "$(date +%s)"
+  printf 'recv_seconds=%s\nsslfax=%s\noffered=%s\nreceived=%s\n' "$recv" "$sslfax" "$offered" "$received"
 } > "$temporary" && mv -f "$temporary" "$ticket"
