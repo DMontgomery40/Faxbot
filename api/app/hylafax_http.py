@@ -50,10 +50,14 @@ def _engine_details(payload):
     commid = payload.get('commid') if isinstance(payload.get('commid'), str) else ''
     if not re.fullmatch(r'[a-f0-9]{8,32}', engine_id) or not re.fullmatch(r'[0-9]{1,12}', commid):
         return None
+    # The communication ID starts again with each new engine container (its spool is not kept), so the
+    # attempt keeps the reference unique; received faxes add their arrival time the same way.
+    identity = hylafax_engine.parse_tag(payload.get('tag'))
+    reference = f'{engine_id}:{commid}' + (f'.{identity[1][:12]}' if identity else '')
     # Speed and compression only from a session that agreed them: a call that never trained has none.
     agreed = payload.get('why') == 'done' or bool(payload.get('pages')) or bool(
         hylafax_engine._text64(payload, 'remote_station_b64', 40))
-    return {'engine_ref': f'{engine_id}:{commid}', 'sslfax': payload.get('sslfax') is True,
+    return {'engine_ref': reference, 'sslfax': payload.get('sslfax') is True,
             'sslfax_offered': payload.get('sslfax_offered') if isinstance(payload.get('sslfax_offered'), bool)
             else None,
             'transfer_seconds': payload.get('transfer_seconds'), 'session_seconds': payload.get('session_seconds'),
