@@ -58,6 +58,16 @@ export interface SipTrunkSettings {
   dial_format?: string;
   // Outside-line digits before a number dialled the local way, such as 9.
   dial_prefix?: string;
+  // Fax settings (collapsed on the trunk page); both of Faxbot's fax engines use them.
+  t38_error_correction?: 'redundancy' | 'fec' | 'none';
+  t38_max_datagram?: number;
+  fax_max_rate?: 14400 | 9600 | 7200 | 4800;
+  fax_ecm?: boolean;
+  fax_compression?: 'mh' | 'mr' | 'mmr' | 'jbig';
+  fax_fine?: boolean;
+  sslfax_enabled?: boolean;
+  fax_lines?: number;
+  sslfax_listener_port?: number;
   // Why Faxbot chose audio fax for new calls, and when (read only).
   t38_off_reason?: 'no_data_back' | 'network' | 'carrier' | null;
   t38_off_at?: string | null;

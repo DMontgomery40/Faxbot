@@ -341,7 +341,7 @@ describe('SIP trunk settings', () => {
     const reason = await screen.findByTestId('t38-off-reason');
     expect(reason.textContent).toMatch(/^Off: on .+ a T\.38 fax got no fax data back on this network, so Faxbot uses audio fax\.Try T\.38 again$/);
     expect(screen.getByRole('checkbox', { name: 'Use T.38 fax over IP' })).toBeTruthy();
-    expect(screen.queryByText(/recommended/)).toBeNull();
+    expect(screen.queryByText(/T\.38 fax over IP \(recommended\)/)).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Try T.38 again' }));
     await waitFor(() => expect(applied).toBe(1));
     expect(writes).toEqual([{ expected_revision_id: 'rev-1', sip_t38_enabled: true }]);
