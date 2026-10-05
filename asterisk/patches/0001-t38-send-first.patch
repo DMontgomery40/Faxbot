@@ -36,7 +36,7 @@ module's read and write callbacks), and whether a T.38 gateway engaged
  /*! \brief T.38 state information */
  struct t38_state {
  	/*! \brief Current state */
-@@ -67,6 +71,13 @@
+@@ -67,6 +71,16 @@
  	pj_timer_entry timer;
  	/*! Preserved media state for when T.38 ends */
  	struct ast_sip_session_media_state *media_state;
@@ -47,10 +47,13 @@ module's read and write callbacks), and whether a T.38 gateway engaged
 +	/*! Faxbot: T.38 packets this session sent and received, over all its T.38 streams */
 +	int faxbot_sent;
 +	int faxbot_received;
++	/*! Faxbot: the channel's name and whether a T.38 gateway engaged, kept while the channel exists */
++	char faxbot_channel[AST_CHANNEL_NAME];
++	int faxbot_gateway;
  };
  
  /*! \brief Destructor for T.38 state information */
-@@ -137,6 +148,11 @@
+@@ -137,6 +151,11 @@
  		return;
  	}
  
@@ -62,7 +65,7 @@ module's read and write callbacks), and whether a T.38 gateway engaged
  	session->t38state = new_state;
  	ast_debug(2, "T.38 state changed to '%u' from '%u' on channel '%s'\n",
  		new_state, old_state,
-@@ -732,11 +748,46 @@
+@@ -732,11 +751,45 @@
  }
  
  /*! \brief Supplement for adding framehook to session channel */
@@ -79,7 +82,6 @@ module's read and write callbacks), and whether a T.38 gateway engaged
 +{
 +	RAII_VAR(struct ast_datastore *, datastore, ast_sip_session_get_datastore(session, "t38"), ao2_cleanup);
 +	struct t38_state *state = datastore ? datastore->data : NULL;
-+	const char *gateway = NULL;
 +	char opened[AST_SOCKADDR_BUFLEN];
 +
 +	if (!state || ast_sockaddr_isnull(&state->opened_to)) {
@@ -88,16 +90,16 @@ module's read and write callbacks), and whether a T.38 gateway engaged
 +	ast_copy_string(opened, ast_sockaddr_stringify(&state->opened_to), sizeof(opened));
 +	if (session->channel) {
 +		ast_channel_lock(session->channel);
-+		gateway = pbx_builtin_getvar_helper(session->channel, "FAXBOT_T38_GATEWAY");
-+		ast_log(LOG_NOTICE, "Faxbot T.38 on %s: %d opening packets to %s; %d packets sent, %d received; "
-+			"T.38 gateway %s\n", ast_channel_name(session->channel), FAXBOT_T38_OPENING_PACKETS, opened,
-+			state->faxbot_sent, state->faxbot_received,
-+			gateway ? gateway : "not engaged (none, or Asterisk's own fax engine)");
++		if (pbx_builtin_getvar_helper(session->channel, "FAXBOT_T38_GATEWAY")) {
++			state->faxbot_gateway = 1;
++		}
 +		ast_channel_unlock(session->channel);
-+	} else {
-+		ast_log(LOG_NOTICE, "Faxbot T.38: %d opening packets to %s; %d packets sent, %d received\n",
-+			FAXBOT_T38_OPENING_PACKETS, opened, state->faxbot_sent, state->faxbot_received);
 +	}
++	/* The channel may already have gone (an outbound call ended from this side): use what was kept. */
++	ast_log(LOG_NOTICE, "Faxbot T.38 on %s: %d opening packets to %s; %d packets sent, %d received; "
++		"T.38 gateway %s\n", S_OR(state->faxbot_channel, "an unnamed channel"), FAXBOT_T38_OPENING_PACKETS,
++		opened, state->faxbot_sent, state->faxbot_received,
++		state->faxbot_gateway ? "engaged" : "not engaged (none, or Asterisk's own fax engine)");
 +}
 +
  static struct ast_sip_session_supplement t38_supplement = {
@@ -109,7 +111,7 @@ module's read and write callbacks), and whether a T.38 gateway engaged
  };
  
  /*! \brief Parse a T.38 image stream and store the attribute information */
-@@ -1008,6 +1059,17 @@
+@@ -1008,6 +1061,23 @@
  	return 1;
  }
  
@@ -119,15 +121,21 @@ module's read and write callbacks), and whether a T.38 gateway engaged
 +	RAII_VAR(struct ast_datastore *, datastore, ast_sip_session_get_datastore(session, "t38"), ao2_cleanup);
 +	struct t38_state *state = datastore ? datastore->data : NULL;
 +
-+	if (state) {
-+		ast_atomic_fetchadd_int(sent ? &state->faxbot_sent : &state->faxbot_received, 1);
++	if (!state) {
++		return;
++	}
++	ast_atomic_fetchadd_int(sent ? &state->faxbot_sent : &state->faxbot_received, 1);
++	/* A gateway marks the channel when it starts (0002); look until it has, while the channel exists. */
++	if (sent && !state->faxbot_gateway && session->channel
++		&& pbx_builtin_getvar_helper(session->channel, "FAXBOT_T38_GATEWAY")) {
++		state->faxbot_gateway = 1;
 +	}
 +}
 +
  static struct ast_frame *media_session_udptl_read_callback(struct ast_sip_session *session, struct ast_sip_session_media *session_media)
  {
  	struct ast_frame *frame;
-@@ -1016,6 +1078,7 @@
+@@ -1016,6 +1086,7 @@
  		return &ast_null_frame;
  	}
  
@@ -135,7 +143,7 @@ module's read and write callbacks), and whether a T.38 gateway engaged
  	frame = ast_udptl_read(session_media->udptl);
  	if (!frame) {
  		return NULL;
-@@ -1026,12 +1089,41 @@
+@@ -1026,12 +1097,41 @@
  	return frame;
  }
  
@@ -177,7 +185,7 @@ module's read and write callbacks), and whether a T.38 gateway engaged
  	return ast_udptl_write(session_media->udptl, frame);
  }
  
-@@ -1072,6 +1164,15 @@
+@@ -1072,6 +1172,19 @@
  	ast_sip_session_media_add_read_callback(session, session_media, ast_udptl_fd(session_media->udptl),
  		media_session_udptl_read_callback);
  
@@ -188,6 +196,10 @@ module's read and write callbacks), and whether a T.38 gateway engaged
 +		ast_udptl_get_peer(session_media->udptl, &state->opened_to);
 +		faxbot_t38_open_pinhole(session_media->udptl);
 +		ast_atomic_fetchadd_int(&state->faxbot_sent, FAXBOT_T38_OPENING_PACKETS);
++		if (session->channel) {
++			ast_copy_string(state->faxbot_channel, ast_channel_name(session->channel),
++				sizeof(state->faxbot_channel));
++		}
 +	}
 +
  	return 0;
