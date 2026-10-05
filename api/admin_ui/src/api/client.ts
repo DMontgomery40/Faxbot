@@ -14,6 +14,7 @@ import type {
   ConfigurationWriteResult,
   PluginRole,
   DiagnosticsResult,
+  DiagnosticsReport,
   ValidationResult,
   InboundFax,
   AuthMe,
@@ -240,7 +241,9 @@ type RequestOptions = { method?: string; body?: string | FormData; headers?: Rec
 type RequestExtras = { manifestValidation?: boolean; quiet401?: boolean };
 type PolicyResult = { policy_version: number };
 
-export class AdminAPIClient {
+export type EngineView = 'registrations' | 'contacts' | 'calls' | 'faxes';
+
+class AdminAPIClient {
   private baseURL: string;
   private credential: ClientCredential;
   private onUnauthorized?: () => void;
@@ -673,6 +676,22 @@ export class AdminAPIClient {
   // Diagnostics
   async runDiagnostics(): Promise<DiagnosticsResult> {
     return this.json('/admin/diagnostics/run', { method: 'POST' });
+  }
+
+  // The last diagnostics report, without contacting anything; empty until the first run.
+  async getDiagnosticsReport(): Promise<DiagnosticsReport> {
+    return this.json('/admin/diagnostics/report');
+  }
+
+  // One read-only list from the fax engine (System → Developer → Scripts & checks).
+  async getEngineView(view: EngineView): Promise<{ view: EngineView; title: string; columns: string[]; rows: string[][];
+    available: boolean; message: string | null }> {
+    return this.json(`/admin/diagnostics/engine/${view}`);
+  }
+
+  // Run every diagnostics check now (read-only: nothing is sent or changed).
+  async checkDiagnosticsNow(): Promise<DiagnosticsReport> {
+    return this.json('/admin/diagnostics/report', { method: 'POST' });
   }
 
   async getHealthStatus(): Promise<HealthStatus> {

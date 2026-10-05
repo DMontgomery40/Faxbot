@@ -480,15 +480,22 @@ def test_settings_get_set_validate_export(cli, monkeypatch):
     assert validated['checks']['auth'] is False
 
 
-def test_providers_diagnostics_and_status(cli):
+def test_providers_diagnostics_and_status(cli, monkeypatch):
+    from app import diagnostics_report
+    monkeypatch.setattr(diagnostics_report, '_last', None)
     providers = cli.json('providers', 'list')
     assert providers['outbound'] == 'phaxio'
     status = cli.json('providers', 'status')
     assert status['backend'] == 'phaxio' and 'jobs' in status
+    before = cli('system', 'diagnostics', 'show')
+    assert before.exit_code == 0 and 'Diagnostics have not run yet.' in before.stdout
     diagnostics = cli.json('system', 'diagnostics', 'run')
-    assert 'summary' in diagnostics
-    human = cli('system', 'diagnostics', 'run')
-    assert human.exit_code == 0 and 'Healthy' in human.stdout
+    assert diagnostics['summary'] and diagnostics['checked_at']
+    by_id = {item['id']: item for section in diagnostics['sections'] for item in section['checks']}
+    assert by_id['sending.provider']['status'] == 'problem'  # the synthetic Phaxio profile has no keys
+    human = cli('system', 'diagnostics', 'show')
+    assert human.exit_code == 0 and diagnostics['summary'] in human.stdout
+    assert 'Not working: Sending account. ' in human.stdout and '(Open Providers in the console.)' in human.stdout
 
 
 def test_pairing_a_device_and_reusing_the_code(cli):

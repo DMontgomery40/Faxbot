@@ -1,4 +1,4 @@
-import type { HealthStatus, FaxJob, ApiKey, Settings, DiagnosticsResult, ValidationResult, InboundFax } from '../api/types';
+import type { HealthStatus, FaxJob, ApiKey, Settings, DiagnosticsResult, DiagnosticsReport, ValidationResult, InboundFax } from '../api/types';
 
 export const demoHealth: HealthStatus = {
   timestamp: new Date().toISOString(),
@@ -53,6 +53,24 @@ export const demoValidation: ValidationResult = {
     sent: true,
     job_id: 'job_999',
   },
+};
+
+export const demoReport: DiagnosticsReport = {
+  checked_at: '2026-10-04T21:00:00Z',
+  checked_at_text: '4 Oct 3:00 PM MDT',
+  status: 'attention',
+  summary: 'Faxbot is working. 1 thing needs attention.',
+  sections: [
+    { id: 'sending', title: 'Sending', checks: [
+      { id: 'sending.provider', section: 'sending', title: 'Sending account', status: 'ok',
+        sentence: "HumbleFax accepted Faxbot's sign-in for +13035550100.", fix: null },
+    ] },
+    { id: 'security', title: 'Security', checks: [
+      { id: 'security.audit', section: 'security', title: 'Audit log', status: 'attention',
+        sentence: 'Faxbot is not recording who changed what. Turn on the audit log.',
+        fix: { label: 'Open Audit log', page: 'system/audit' } },
+    ] },
+  ],
 };
 
 export const demoDiagnostics: DiagnosticsResult = {

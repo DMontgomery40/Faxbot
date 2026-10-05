@@ -1,32 +1,24 @@
 # Diagnostics Matrix
 
-Use the active provider and revision shown in [Diagnostics](diagnostics.md) when interpreting a result. The default provider may differ from active outbound or inbound selection. Apply configuration changes through the canonical Settings editor and check whether they became active or remain pending.
+What to do about each result on [Diagnostics](diagnostics.md). The button next to a result opens the page named here.
 
-| Result | Follow-up |
+| Result | What to do |
 | --- | --- |
-| Active outbound configuration fails | Open Settings and inspect the active provider's required fields. For a custom manifest, inspect its configured adapter under System → Developer → Provider plugins. Credentials for an unused default provider do not repair the active adapter. |
-| Required Asterisk AMI connection fails | Verify the active AMI host, port, username, password and Asterisk service. A connection check is not fax-delivery proof. |
-| Native Asterisk password is empty or default | Set a non-default AMI password in both the Asterisk service and the desired provider settings; inspect activation status. |
-| Native Asterisk inbound secret is absent | Select **Apply and connect** on the trunk screen (or restart Faxbot); Faxbot creates the secret and writes it for Asterisk. |
-| Ghostscript fails | Install `gs` in the API runtime and rerun Diagnostics. Document processing requires it. |
-| Fax data directory is absent or unwritable | Check the configured installation path, mount and service-user permissions. Moving installation storage requires the maintenance workflow. |
-| Temporary directory is unwritable | Check runtime temporary-directory permissions and available storage. |
-| Database connection fails | Check the configured database service or SQLite mount and service-user access. Do not replace the installation database to clear the error. |
-| Required inbound storage fails | Review Storage settings and the active receiving provider. The optional S3 access check needs the deployment's `ENABLE_S3_DIAGNOSTICS=true` flag; a missing probe is not proof of bucket access. |
-| Audit, HTTPS enforcement or rate limiting warning | Review the relevant desired settings and the installation's network configuration. These flags alone do not establish end-to-end security. |
-| Plugin or trait metadata warning | Inspect the identified installed manifest and schema. File inventory and the captured active provider revision are distinct. |
-| Desired revision is pending | Arrange a full installation stop/restart, then confirm active and desired identity. Restart Faxbot exits only one process. |
-| Receiving or remote plugin installation is disabled | Informational feature state; enable it only when that capability is intended and configured. |
-
-## Provider validation
-
-Local readiness does not test callback reachability or remote delivery. Use the relevant setup guide and a destination you control:
-
-- [Phaxio](../setup/phaxio.md)
-- [Sinch](../setup/sinch.md)
-- [Documo](../setup/documo.md)
-- [SignalWire](../setup/signalwire.md)
-- [SIP/Asterisk](../setup/sip-asterisk.md)
-- [FreeSWITCH](../setup/freeswitch.md)
-
-Open Send from Diagnostics to use the retained document, destination and request-intent workflow. Acceptance is not delivery. Verify the final job/provider result and the received document.
+| No sending provider is set up | **System → Setup** walks through choosing one. |
+| The provider did not accept Faxbot's sign-in details | **Providers → In use**: enter the keys again, copied from the provider's own dashboard. |
+| Faxbot could not reach the provider | Check the server's internet connection, then **Check now**. A provider outage clears by itself. |
+| Faxes may or may not have arrived | **Faxes → Sent**: confirm each one. Faxbot never sends them again on its own. |
+| The last fax failed | **Faxes → Sent**: open it to see what the receiving machine or provider said. |
+| Faxbot stopped trying to fetch received faxes | **Faxes → Received**: open each one and select **Fetch again**. |
+| The email server did not accept the user name or password | **Numbers → Email delivery**: for Gmail, use an app password. |
+| Faxes could not be emailed | **Faxes → Received**: retry each one once email works. |
+| The fax engine is not running or refuses Faxbot's sign-in | **Providers → carrier trunk**: check that Asterisk runs and the manager password matches. |
+| The carrier did not accept Faxbot's sign-in | **Providers → carrier trunk**: check the user name and password from the carrier's dashboard, then **Apply and connect**. |
+| Received faxes do not reach Faxbot | **Providers → carrier trunk** → **Apply and connect** writes what the fax engine needs. |
+| Fax over IP (T.38) is off | The sentence says why; **Providers → carrier trunk** has the details. Audio fax keeps working meanwhile. |
+| Little disk space is left | **System → Storage & retention**: shorten how long faxes are kept, or give the server more space. Faxbot stops receiving when the disk is full. |
+| Faxbot cannot write fax files | Check the data folder's disk and permissions on the server. |
+| The document converter is missing | Install Ghostscript (`gs`) where Faxbot runs; the Docker image includes it. |
+| No time zone is chosen | **System → Setup** → Time zone. |
+| Some saved changes take effect after Faxbot restarts | **Restart Faxbot** on Diagnostics, or restart the service. |
+| The audit log, request limits or secure links are off | **System → Audit log** or **System → Security**. |

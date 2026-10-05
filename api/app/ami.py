@@ -19,8 +19,11 @@ AMI_MAX_LINE_BYTES = 1024
 STATUS_EVENT_FIELDS = {
     "outboundregistrationdetail": ("ObjectName", "Status", "ServerUri", "NextReg", "Transport"),
     "contactlist": ("ObjectName", "Status", "RoundtripUsec"),
-    # Only counted: whether any call is up before Faxbot restarts Asterisk.
-    "coreshowchannel": ("Uniqueid",),
+    # PJSIPShowEndpoint: only the contact's status. Its EndpointDetail and AuthDetail events are dropped.
+    "contactstatusdetail": ("URI", "Status", "RoundtripUsec"),
+    # Counted before Faxbot restarts Asterisk, and listed under System → Developer → Scripts & checks.
+    "coreshowchannel": ("Uniqueid", "Channel", "ChannelStateDesc", "CallerIDNum", "Exten", "Duration"),
+    "faxsessionsentry": ("Channel", "Technology", "SessionType", "Operation", "State"),
 }
 # One plain sentence for each state of Faxbot's connection to its fax engine
 # (Asterisk). Readiness, the dashboard, diagnostics, trunk status and a refused

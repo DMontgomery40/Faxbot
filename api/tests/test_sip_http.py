@@ -128,9 +128,10 @@ def test_status_reports_registration_and_reachability_from_asterisk(client, monk
         if fields['Action'] == 'PJSIPShowRegistrationsOutbound':
             return ({'response': 'Success', 'value': '', 'message': ''},
                     [{'ObjectName': 'trunk-registration', 'Status': 'Registered', 'Transport': 'transport-tls'}])
-        if fields['Action'] == 'PJSIPShowContacts':
+        if fields['Action'] == 'PJSIPShowEndpoint':
+            # What Asterisk 22 sends for the trunk's fixed contact (PJSIPShowContacts answers "No Contacts found").
             return ({'response': 'Success', 'value': '', 'message': ''},
-                    [{'ObjectName': 'trunk-aor@@1f2e3d', 'Status': 'Reachable', 'RoundtripUsec': '38412'}])
+                    [{'URI': 'sip:sip.example.com:5061;transport=tls', 'Status': 'Reachable', 'RoundtripUsec': '38412'}])
         return {'response': 'Success', 'value': 'NOT_INUSE', 'message': ''}, []
 
     client.post('/admin/sip/apply', headers=ADMIN)
@@ -141,7 +142,7 @@ def test_status_reports_registration_and_reachability_from_asterisk(client, monk
                                                                              'The trunk is ready.')
     assert calls == [{'Action': 'PJSIPShowRegistrationsOutbound'},
                      {'Action': 'Getvar', 'Variable': 'DEVICE_STATE(PJSIP/trunk-endpoint)'},
-                     {'Action': 'PJSIPShowContacts'}]
+                     {'Action': 'PJSIPShowEndpoint', 'Endpoint': 'trunk-endpoint'}]
     # The transport Asterisk registered over, the check round trip and the address in use, in plain words.
     assert body['registration_transport'] == 'tls' and body['transport'] == 'tls'
     assert body['registration_text'] == "The carrier accepted Faxbot's registration over TLS."

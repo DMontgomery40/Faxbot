@@ -409,12 +409,15 @@ async def _asterisk_status(values):
             result['reachability'] = _DEVICE_STATES.get(response['value'].strip().lower(), 'unknown')
         elif 'permission' in response['message'].lower():
             result['permission'] = False
-        # The carrier check (OPTIONS) round trip, over the same connection as the registration.
-        response, events = await ami_client.status_query({'Action': 'PJSIPShowContacts'}, collect=True)
+        # The carrier check (OPTIONS) round trip, over the same connection as the registration. The trunk's
+        # contact is fixed in its AOR, which PJSIPShowContacts does not list ("No Contacts found"); the
+        # endpoint's ContactStatusDetail does.
+        response, events = await ami_client.status_query(
+            {'Action': 'PJSIPShowEndpoint', 'Endpoint': sip_trunk.ENDPOINT}, collect=True)
         if response['response'].lower() == 'success':
             for event in events:
                 microseconds = str(event.get('RoundtripUsec', '')).strip()
-                if str(event.get('ObjectName', '')).startswith('trunk-aor@@') and microseconds.isdigit():
+                if microseconds.isdigit() and int(microseconds) > 0:
                     result['round_trip_ms'] = max(1, round(int(microseconds) / 1000))
     except (ConnectionError, TimeoutError):
         result['connected'] = False
