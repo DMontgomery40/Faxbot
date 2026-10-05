@@ -20,13 +20,13 @@ export const ALL_PERMISSIONS: Array<[string, string]> = [
   ['grants:manage', 'identity'], ['sessions:read', 'identity'], ['sessions:revoke', 'identity'],
   ['settings:read', 'config'], ['settings:write', 'config'], ['providers:read', 'config'], ['providers:write', 'config'],
   ['providers:install', 'config'], ['diagnostics:read', 'host'], ['logs:read', 'audit'], ['audit:read', 'audit'],
-  ['tunnels:read', 'host'], ['tunnels:manage', 'host'], ['tunnels:pair', 'host'], ['host:restart', 'host'],
-  ['host:actions', 'host'], ['host:terminal', 'host'], ['owner:recover', 'identity'], ['mailboxes:read', 'mailbox'],
+  ['tunnels:pair', 'host'], ['host:restart', 'host'],
+  ['host:terminal', 'host'], ['owner:recover', 'identity'], ['mailboxes:read', 'mailbox'],
   ['mailboxes:manage', 'mailbox'],
 ];
 
 const ADMIN_PERMISSIONS = ALL_PERMISSIONS.map(([permission]) => permission)
-  .filter((permission) => !['host:restart', 'host:actions', 'host:terminal', 'owner:recover', 'diagnostics:read', 'settings:read'].includes(permission));
+  .filter((permission) => !['host:restart', 'host:terminal', 'owner:recover', 'diagnostics:read', 'settings:read'].includes(permission));
 
 interface Principal {
   id: string;

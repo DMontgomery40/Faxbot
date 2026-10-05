@@ -5,6 +5,8 @@ Thin Node.js client for the Faxbot API. Sends faxes and checks status via the un
 - Package name: `faxbot`
 - Requires: Node.js 18+
 
+`client.plugins` is deprecated and goes away in the next major release; configure providers in the Faxbot console or with the `faxbot` command.
+
 ## Install
 
 - From npm (once published):

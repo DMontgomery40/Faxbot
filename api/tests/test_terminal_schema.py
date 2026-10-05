@@ -31,8 +31,8 @@ def _downgrade(engine, revision):
         command.downgrade(config, revision)
 
 
-def test_terminal_owner_only_is_head_after_fax_engine():
-    assert schema.HEAD == schema_terminal.REVISION == '0018_terminal_owner_only'
+def test_terminal_owner_only_follows_fax_engine():
+    assert schema.TERMINAL == schema_terminal.REVISION == '0018_terminal_owner_only'
     assert schema.FAX_ENGINE == '0017_fax_engine'
     assert schema_terminal.TABLES == frozenset()
     assert 'host:terminal' in BUILTIN_ROLE_PERMISSIONS['role_owner']
@@ -43,28 +43,28 @@ def test_0018_removes_only_the_host_operator_terminal_row_and_starts(database):
     at_revision(database, '0017_fax_engine')
     assert 'host:terminal' in _host_operator(database)
     before = snapshot(database)
-    schema.upgrade_schema(database)
+    at_revision(database, '0018_terminal_owner_only')
     after = snapshot(database)
-    assert after['alembic_version'] == [{'version_num': schema.HEAD}]
+    assert after['alembic_version'] == [{'version_num': schema.TERMINAL}]
     removed = [row for row in before['access_role_permissions'] if row not in after['access_role_permissions']]
     assert removed == [{'id': schema_terminal.ROW_ID, 'role_id': 'role_host_operator', 'permission_id': 'host:terminal'}]
     assert len(after['access_role_permissions']) == len(before['access_role_permissions']) - 1
     for name, rows in before.items():
         if name not in {'alembic_version', 'access_role_permissions'}:
             assert after[name] == rows, name
-    assert _host_operator(database) == set(BUILTIN_ROLE_PERMISSIONS['role_host_operator'])
+    assert _host_operator(database) == {'host:restart', 'host:actions', 'diagnostics:read', 'settings:read'}
     with database.connect() as connection:
-        assert schema.validate_schema(connection, require_version=True) == schema.HEAD
-    # The access store checks its catalogue at start; an upgraded installation passes.
-    AccessStore(database)
+        assert schema.validate_schema(connection, require_version=True) == schema.TERMINAL
+    # Upgraded to the newest revision, the access store's startup catalogue check passes.
     schema.upgrade_schema(database)
-    assert snapshot(database) == after
+    assert _host_operator(database) == set(BUILTIN_ROLE_PERMISSIONS['role_host_operator'])
+    AccessStore(database)
 
 
 def test_0018_downgrade_puts_the_row_back_and_upgrades_again(database):
     at_revision(database, '0017_fax_engine')
     before = snapshot(database)
-    schema.upgrade_schema(database)
+    at_revision(database, '0018_terminal_owner_only')
     _downgrade(database, '0017_fax_engine')
     assert _ordered(snapshot(database)) == _ordered(before)
     with database.connect() as connection:

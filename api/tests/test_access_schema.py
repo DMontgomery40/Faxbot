@@ -49,6 +49,8 @@ def migrated_id(domain, *parts):
 
 
 WORK = {'work:read', 'work:manage', 'work:export', 'work:import'}
+# Removed by 0019: they guard no route any more.
+RETIRED = {'host:actions', 'tunnels:read', 'tunnels:manage'}
 
 
 def _memberships(rows):
@@ -77,22 +79,22 @@ def test_clean_access_upgrade_enrolls_exact_catalogue_without_owner_or_sessions(
     rows = snapshot(database)
     assert TABLES <= rows.keys()
     assert rows['alembic_version'] == [{'version_num': HEAD}]
-    # 0011 adds the four work permissions to the catalogue and the built-in roles.
-    assert {r['id'] for r in rows['access_permissions']} == PERMISSIONS | WORK
-    assert len(PERMISSIONS | WORK) == 40
+    # 0011 adds the four work permissions to the catalogue and the built-in roles; 0019 removes three.
+    assert {r['id'] for r in rows['access_permissions']} == (PERMISSIONS | WORK) - RETIRED
+    assert len((PERMISSIONS | WORK) - RETIRED) == 37
     assert {r['id'] for r in rows['access_roles']} == {
         'role_owner', 'role_administrator', 'role_fax_operator',
         'role_fax_viewer', 'role_auditor', 'role_host_operator',
     }
     assert _memberships(rows) == {
         **builtin,
-        'role_owner': PERMISSIONS | WORK,
-        'role_administrator': builtin['role_administrator'] | WORK,
+        'role_owner': (PERMISSIONS | WORK) - RETIRED,
+        'role_administrator': (builtin['role_administrator'] | WORK) - RETIRED,
         'role_fax_operator': builtin['role_fax_operator'] | {'work:read', 'work:manage'},
         'role_fax_viewer': builtin['role_fax_viewer'] | {'work:read'},
         'role_auditor': builtin['role_auditor'] | {'work:read', 'work:export'},
-        # 0018 gives the terminal to the Owner role only.
-        'role_host_operator': builtin['role_host_operator'] - {'host:terminal'},
+        # 0018 gives the terminal to the Owner role only; 0019 retires host:actions.
+        'role_host_operator': builtin['role_host_operator'] - {'host:terminal'} - RETIRED,
     }
     assert rows['access_principals'][0]['id'] == 'bootstrap'
     assert rows['access_principals'][0]['kind'] == 'bootstrap'

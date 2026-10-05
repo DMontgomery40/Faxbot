@@ -319,6 +319,8 @@ def _mount_enabled_mcp(application: FastAPI, mounts: list):
         oauth_jwks_url=settings.oauth_jwks_url)
     if settings.enable_mcp_sse:
         from python_mcp import server as _mcp_server
+        logging.getLogger("faxbot").warning(
+            "MCP over SSE (ENABLE_MCP_SSE) is removed in the next release; use Streamable HTTP (ENABLE_MCP_HTTP).")
         application.mount(settings.mcp_sse_path, _mcp_server.create_app(**options))
         mounts.append(application.router.routes[-1])
     if settings.enable_mcp_http:
@@ -1683,11 +1685,13 @@ class PersistSettingsIn(BaseModel):
     path: str | None = None
 
 
-@app.post("/admin/settings/persist",
+@app.post("/admin/settings/persist", deprecated=True,
           dependencies=[Depends(require_permission('owner:recover', audit=True, complete_owner=True))],
           responses={**_PERMISSION_RESPONSES, **_CONFIGURATION_VALIDATION_RESPONSES})
 def persist_settings(payload: PersistSettingsIn):
-    """Atomically export desired settings to the installation's private recovery file.
+    """Deprecated: removed in the next release; back up with `faxbot system backup` instead.
+
+    Atomically export desired settings to the installation's private recovery file.
 
     Restoring historical jobs also requires the database and original installation
     key. This export does not activate settings or change the canonical store.
@@ -2408,7 +2412,8 @@ def _installed_plugins(snapshot=None) -> list[dict[str, Any]]:
     return list(by_id.values())
 
 
-@app.get("/plugins", responses=_PROVIDER_READ_RESPONSES)
+@app.get("/plugins", responses=_PROVIDER_READ_RESPONSES, deprecated=True,
+         description="Deprecated: removed in the next release with FEATURE_V3_PLUGINS; read providers from /admin/settings.")
 def list_plugins(request: Request, identity=Depends(require_identity)):
     snapshot = access_runtime(request).configuration_access.providers(identity.actor)
     if not snapshot.active.values.feature_v3_plugins:
@@ -2450,7 +2455,8 @@ def _plugin_view(snapshot, plugin_id, role=None):
             '_meta': configuration_write_receipt(snapshot, snapshot)['_meta']}
 
 
-@app.get("/plugins/{plugin_id}/config", responses={**_PROVIDER_READ_RESPONSES, **_CONFIGURATION_VALIDATION_RESPONSES})
+@app.get("/plugins/{plugin_id}/config", responses={**_PROVIDER_READ_RESPONSES, **_CONFIGURATION_VALIDATION_RESPONSES},
+         deprecated=True, description="Deprecated: removed in the next release; read provider settings from /admin/settings.")
 def get_plugin_config(plugin_id: str, request: Request, role: str | None = None, identity=Depends(require_identity)):
     snapshot = access_runtime(request).configuration_access.providers(identity.actor)
     if not snapshot.active.values.feature_v3_plugins:
@@ -2469,7 +2475,8 @@ class UpdatePluginConfigIn(BaseModel):
     expected_revision_id: str | None = None
 
 
-@app.put("/plugins/{plugin_id}/config", response_model=ConfigurationWriteResponse, responses=_CONFIGURATION_WRITE_RESPONSES)
+@app.put("/plugins/{plugin_id}/config", response_model=ConfigurationWriteResponse, responses=_CONFIGURATION_WRITE_RESPONSES,
+         deprecated=True, description="Deprecated: removed in the next release; change provider settings with PUT /admin/settings.")
 def update_plugin_config(plugin_id: str, payload: UpdatePluginConfigIn, request: Request,
                          identity=Depends(require_identity)):
     expected = request.scope['faxbot.configuration']
@@ -2506,7 +2513,8 @@ class FSOutboundResultIn(BaseModel):
     uuid: Optional[str] = None
 
 
-@app.post("/_internal/freeswitch/outbound_result")
+@app.post("/_internal/freeswitch/outbound_result", deprecated=True,
+          description="Deprecated: FreeSWITCH is removed in the next release.")
 def freeswitch_outbound_result(payload: FSOutboundResultIn, x_internal_secret: Optional[str] = Header(default=None)):
     status = str(payload.fax_status or '').lower()
     status = {'true': 'success', 'false': 'failed', 'ok': 'success', 'fail': 'failed'}.get(status, status)

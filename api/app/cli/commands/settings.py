@@ -164,9 +164,13 @@ def settings_reload():
 
 @settings.command('persist')
 def settings_persist():
-    """Save every setting, passwords and keys included, to the installation's private recovery file for restoring later. Owners only."""
+    """Save every setting to the server's recovery file (owners only). Goes away in the next release; use 'faxbot system backup'."""
     result = state.api().post('/admin/settings/persist', json={})
-    state.out().result(result, lambda out: out.line(f"Settings written to {result.get('path')} on the server."))
+
+    def human(out):
+        out.line(f"Settings written to {result.get('path')} on the server.")
+        out.line("The recovery copy goes away in the next release. To back up everything, run 'faxbot system backup'.")
+    state.out().result(result, human)
 
 
 @settings.command('export')
@@ -219,6 +223,7 @@ def providers_callbacks():
 
 # A provider's section in the settings document, when it is not named after the provider.
 _SECTIONS = {'freeswitch': 'fs', 's3': 'storage', 'local': 'storage'}
+FREESWITCH_RETIRING = 'FreeSWITCH is removed in the next release. Choose another provider with the Setup wizard.'
 # What each role uses, as the setting that chooses it.
 _ROLES = {'outbound': 'outbound_backend', 'inbound': 'inbound_backend', 'storage': 'storage_backend'}
 
@@ -259,6 +264,8 @@ def providers_config(provider: str = typer.Argument(..., help="Provider from 'fa
         roles = [words[item] for item, on in result['in_use'].items() if on]
         out.fields([('Provider', _provider(name)), ('In use for', ', '.join(roles) if roles else 'nothing')])
         out.table(['Setting', 'Value'], rows, empty='This provider has no settings.')
+        if name == 'freeswitch':
+            out.line(FREESWITCH_RETIRING)
     state.out().result(result, human)
 
 
@@ -304,9 +311,12 @@ def providers_configure(provider: str = typer.Argument(..., help="Provider from 
     if set(changes) & set(current.get('_meta', {}).get('env_managed') or []):
         raise CliError('This key is set in .env. Change it there, then run docker compose up -d.', EXIT_CONFLICT)
     result = api.put('/admin/settings', json={**changes, 'expected_revision_id': current['_meta']['desired_revision_id']})
-    state.out().result(result, lambda out: out.line(
-        'Nothing changed.' if not result.get('changed') else 'Saved. Restart Faxbot to apply it.'
-        if result.get('_meta', {}).get('restart_recommended') else 'Saved and applied.'))
+    def human(out):
+        out.line('Nothing changed.' if not result.get('changed') else 'Saved. Restart Faxbot to apply it.'
+                 if result.get('_meta', {}).get('restart_recommended') else 'Saved and applied.')
+        if name == 'freeswitch':
+            out.line(FREESWITCH_RETIRING)
+    state.out().result(result, human)
 
 
 def efax_status():

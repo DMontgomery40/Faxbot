@@ -220,7 +220,17 @@ test('plugins use live paths and the typed config patch', async () => {
   try {
     const client = new FaxbotClient(fake.url, 'admin-key');
     await new Promise((resolve) => setTimeout(resolve, 50)); // constructor probes GET /plugins
+    const warnings = [];
+    const onWarning = (warning) => warnings.push(warning);
+    process.on('warning', onWarning);
     assert.deepEqual(await client.plugins.listPlugins(), [{ id: 'phaxio', enabled: true }]);
+    await client.plugins.listPlugins();
+    await new Promise((resolve) => setImmediate(resolve));
+    process.off('warning', onWarning);
+    // client.plugins warns once, on first use, that it goes away in the next major release.
+    assert.equal(warnings.length, 1);
+    assert.equal(warnings[0].name, 'DeprecationWarning');
+    assert.match(warnings[0].message, /next major release/);
     await client.plugins.updatePluginConfig('phaxio', { api_key: 'new' }, { enabled: true, expectedRevisionId: 'rev-1' });
     const put = fake.state.requests.find((r) => r.method === 'PUT');
     assert.deepEqual(JSON.parse(put.body), { settings: { api_key: 'new' }, enabled: true, expected_revision_id: 'rev-1' });

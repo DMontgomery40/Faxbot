@@ -19,6 +19,7 @@ This release rebuilds Faxbot's backend, delivery and self-hosted administration.
 - **A command line for everything.** `faxbot` covers the console's tasks. With Faxbot stopped, `faxbot system status`, `migrate`, `recover-owner`, `backup` and `restore` show the installation's state, upgrades its database, recovers owner access, and makes and restores backups. See [Command line](operations/cli.md).
 - **Docker Compose.** `.env` is optional, so a new installation starts with defaults. The MCP containers no longer receive the installation key.
 - **The Terminal is for owners.** Only owners can use the console Terminal by default. Host Operators no longer can, unless an owner gives them a role that includes it (**Access → Roles**). The **Audit log** records every terminal session.
+- **Three permissions that did nothing are gone.** "Run server actions" (`host:actions`) and the two remote-access permissions (`tunnels:read`, `tunnels:manage`) no longer appear under **Access → Roles**. Upgrading removes them from every role and key, and the **Audit log** records what was removed. A key whose only limit was one of them can no longer do anything; give it the permissions it needs, or replace it.
 - **Removed features.** The Remote access page and `faxbot system tunnel` never set up a tunnel, so they are gone. To reach Faxbot from outside your network, use your own domain or VPN. Phone pairing stays under **Access → Keys & phones**. The **Server checks** on Scripts & checks and `faxbot system actions` are gone; use the Terminal or Diagnostics instead. The provider list (`/plugin-registry` and `PLUGIN_REGISTRY_PATH`) is gone. If your settings still name `PLUGIN_REGISTRY_PATH`, Faxbot ignores it for one release. Setup and the console no longer offer FreeSWITCH, which could not run in the shipped Docker image.
 
 ### Renamed commands
@@ -46,7 +47,18 @@ Every `faxbot` command now sits under one of the console's eight areas, and the 
 | `faxbot providers config` | `faxbot providers show` |
 | `faxbot providers registry import` | `faxbot providers import` |
 
-### For API clients
+### Deprecated, removed in the next release
+
+Each of these still works in this release and shows a notice where you use it. Stop using them before your next upgrade.
+
+| Feature | Use instead |
+| --- | --- |
+| MCP over SSE: the Python SSE server, its container (`faxbot-mcp-py-sse`), `ENABLE_MCP_SSE` and the SSE switch under **AI assistants** | Streamable HTTP (`ENABLE_MCP_HTTP`, or `faxbot-mcp-py-http`) |
+| FreeSWITCH as a fax provider | Another provider, chosen in the Setup wizard |
+| Provider plugins: `FEATURE_V3_PLUGINS`, `GET /plugins`, `GET` and `PUT /plugins/{id}/config`, and the **Provider plugins** page | Built-in providers in Setup, and `GET` and `PUT /admin/settings` |
+| The settings recovery copy: **Save a recovery copy**, `faxbot system settings persist`, `POST /admin/settings/persist` and `ENABLE_PERSISTED_SETTINGS` | `faxbot system backup` and `faxbot system restore` |
+| `client.plugins` in the Python and Node SDKs (it now warns once when used) | The console, or `faxbot providers` |
+
 
 - **Existing fax routes keep their contract.** `POST /fax`, `GET /fax/{id}`, `GET /inbound`, `GET /inbound/{id}`, `GET /inbound/{id}/pdf`, `GET /health` and `POST /mobile/pair` keep their fields. Jobs gain `delivery_state`, `dispatch_mode`, `delivery_version` and `reconciliation_reason`.
 - **New routes.** Sign-in (`/auth`), access management (`/access`), routes and costs (`/routing`), intake (`/intake`), direct delivery (`/direct`) and case packets (`/cases`). See the [API reference](api.md) and [Access and sign-in API](reference/access-api.md).

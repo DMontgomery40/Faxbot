@@ -252,6 +252,18 @@ def test_key_ceiling_intersects_current_assignments_without_laundering(world, se
         assert world.control.can_grant_on(connection, actor, (ScopedPermission('fax:read', ResourceRef('personal-alice')),), now=NOW).allowed
 
 
+def test_a_key_with_no_limits_left_is_allowed_nothing(world):
+    """0019 can leave a key whose only limit named a retired permission with none; it then may do nothing."""
+    from api.app.access.catalog import PERMISSIONS
+    world.user('alice')
+    actor = key_context(world)
+    world.assignment('alice', 'role_owner')
+    for permission in sorted(PERMISSIONS - {'fax:send'}):
+        assert not world.control.authorize(actor, permission, ResourceRef('installation'), now=NOW).allowed, permission
+    with world.store.transaction() as connection:
+        assert not world.control.is_complete_owner_on(connection, actor, now=NOW)
+
+
 @pytest.mark.parametrize('change', ['key_version', 'binding_revoked', 'api_revoked', 'expiry_equal', 'principal_version', 'pending', 'ownership'])
 def test_changed_key_source_rejects_old_proof(world, change):
     from api.app.access.types import StaleCredentialError

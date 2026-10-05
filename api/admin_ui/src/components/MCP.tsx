@@ -203,6 +203,9 @@ function MCP({ client }: MCPProps) {
                 <FormControlLabel control={<Switch checked={sseEnabled} onChange={(e) => setSseEnabled(e.target.checked)} />} label="SSE (older clients)" />
                 {settings?.mcp?.sse_path && <Typography variant="caption" color="text.secondary" sx={{ fontFamily: 'monospace' }}>{settings.mcp.sse_path}</Typography>}
               </Box>
+              <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1 }} data-testid="sse-retiring">
+                SSE goes away in the next release. Use Streamable HTTP.
+              </Typography>
               <Box sx={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap' }}>
                 <FormControlLabel control={<Switch checked={httpEnabled} onChange={(e) => setHttpEnabled(e.target.checked)} />} label="Streamable HTTP (recommended)" />
                 {settings?.mcp?.http_path && <Typography variant="caption" color="text.secondary" sx={{ fontFamily: 'monospace' }}>{settings.mcp.http_path}</Typography>}

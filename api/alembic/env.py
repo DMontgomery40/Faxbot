@@ -32,6 +32,7 @@ config.attributes["schema_inbound_sources"] = importlib.import_module(package + 
 config.attributes["schema_case_packets"] = importlib.import_module(package + ".schema_case_packets")
 config.attributes["schema_fax_engine"] = importlib.import_module(package + ".schema_fax_engine")
 config.attributes["schema_terminal"] = importlib.import_module(package + ".schema_terminal")
+config.attributes["schema_retired_permissions"] = importlib.import_module(package + ".schema_retired_permissions")
 
 
 def migrate(connection):

@@ -28,6 +28,7 @@ import os
 import re
 import time
 import uuid
+import warnings
 from typing import Any, Dict, Optional
 
 import requests
@@ -297,7 +298,8 @@ class FaxbotClient:
 
     @property
     def plugins(self) -> PluginManager:
-        """Access plugin manager (lazy initialization)."""
+        """Access plugin manager (lazy initialization). Deprecated: goes away in the next major release."""
         if self._plugin_manager is None:
+            warnings.warn("client.plugins is deprecated and goes away in the next major release, with the server's /plugins routes; configure providers in the Faxbot console or with the faxbot command.", DeprecationWarning, stacklevel=2)
             self._plugin_manager = PluginManager(self)
         return self._plugin_manager

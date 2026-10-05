@@ -59,6 +59,7 @@ export const AUDIT_ACTIONS: Record<string, string> = {
   'host.restart': 'Restarted Faxbot',
   'host.terminal': 'Opened the terminal',
   'host.actions': 'Ran a server action',
+  'access.retire_permissions': 'Removed permissions that no longer do anything',
   access_migration: 'Kept access from an earlier version of Faxbot',
 };
 
