@@ -614,7 +614,9 @@ def test_settings_persist_writes_the_private_recovery_file(monkeypatch, tmp_path
         cli = Cli(client)
         result = cli('system', 'settings', 'persist')
         assert result.exit_code == 0, result.stderr
-        assert result.stdout.strip() == f'Settings written to {target} on the server.'
+        assert result.stdout.strip().splitlines() == [
+            f'Settings written to {target} on the server.',
+            "The recovery copy goes away in the next release. To back up everything, run 'faxbot system backup'."]
         assert stat.S_IMODE(target.stat().st_mode) == 0o600
         written = target.read_text()
         assert 'MAX_FILE_SIZE_MB=' in written and f'API_KEY={BOOTSTRAP}' in written
@@ -669,6 +671,10 @@ def test_providers_show_and_configure_work_on_a_default_install(cli):
     assert chosen.exit_code == 0, chosen.stderr
     assert cli.json('providers', 'show', 'phaxio', '--role', 'inbound')['in_use'] == {'inbound': True}
     assert cli.json('system', 'settings', 'get', 'hybrid')['hybrid']['inbound_override'] == 'phaxio'
+    # FreeSWITCH, kept one release without a console page, says so where its settings are shown.
+    freeswitch = cli('providers', 'show', 'freeswitch')
+    assert freeswitch.exit_code == 0 and freeswitch.stdout.strip().endswith(
+        'FreeSWITCH is removed in the next release. Choose another provider with the Setup wizard.')
     missing = cli('providers', 'show', 'interfax')
     assert missing.exit_code == 5 and 'faxbot providers list' in missing.stderr
     assert cli.client.get('/plugins', headers={'X-API-Key': BOOTSTRAP}).status_code == 404

@@ -644,6 +644,9 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
           >
             Save a recovery copy
           </Button>
+          <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 1 }} data-testid="recovery-retiring">
+            The recovery copy goes away in the next release. Make full backups on the server instead.
+          </Typography>
           </>)}
 
         </Box>
@@ -776,7 +779,7 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
               icon={<StorageIcon />}
               label="Restore from the recovery copy on a fresh start"
               editValue={settings.persisted?.enabled ? 'On' : 'Off'}
-              helperText={ENV_IMPORT_HELP}
+              helperText={`${ENV_IMPORT_HELP} This setting goes away in the next release.`}
               showCurrentValue={false}
             />
             {textField("This server's public address", 'public_api_url', 'The address people and fax services use to reach Faxbot, such as https://fax.example.com.')}
@@ -1034,7 +1037,7 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
             icon={<SettingsIcon />}
           >
             {switchField('Use provider plugins', 'feature_v3_plugins',
-              'Lets Faxbot send and receive through provider plugins installed on this server.')}
+              'Lets Faxbot send and receive through provider plugins installed on this server. Goes away in the next release.')}
             {switchField('Allow remote plugin installation (advanced)', 'feature_plugin_install',
               'Off by default for security. Turn on only in trusted environments.', { disabled: true })}
           </ResponsiveFormSection>

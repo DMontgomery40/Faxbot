@@ -5,6 +5,8 @@ Thin Python client for the Faxbot API. Sends faxes and checks status via the uni
 - Package name: `faxbot`
 - Requires: Python 3.7+
 
+`client.plugins` is deprecated and goes away in the next major release; configure providers in the Faxbot console or with the `faxbot` command.
+
 ## Install
 
 - From PyPI (once published):

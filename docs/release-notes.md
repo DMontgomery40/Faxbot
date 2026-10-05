@@ -47,7 +47,18 @@ Every `faxbot` command now sits under one of the console's eight areas, and the 
 | `faxbot providers config` | `faxbot providers show` |
 | `faxbot providers registry import` | `faxbot providers import` |
 
-### For API clients
+### Deprecated, removed in the next release
+
+Each of these still works in this release and shows a notice where you use it. Stop using them before your next upgrade.
+
+| Feature | Use instead |
+| --- | --- |
+| MCP over SSE: the Python SSE server, its container (`faxbot-mcp-py-sse`), `ENABLE_MCP_SSE` and the SSE switch under **AI assistants** | Streamable HTTP (`ENABLE_MCP_HTTP`, or `faxbot-mcp-py-http`) |
+| FreeSWITCH as a fax provider | Another provider, chosen in the Setup wizard |
+| Provider plugins: `FEATURE_V3_PLUGINS`, `GET /plugins`, `GET` and `PUT /plugins/{id}/config`, and the **Provider plugins** page | Built-in providers in Setup, and `GET` and `PUT /admin/settings` |
+| The settings recovery copy: **Save a recovery copy**, `faxbot system settings persist`, `POST /admin/settings/persist` and `ENABLE_PERSISTED_SETTINGS` | `faxbot system backup` and `faxbot system restore` |
+| `client.plugins` in the Python and Node SDKs (it now warns once when used) | The console, or `faxbot providers` |
+
 
 - **Existing fax routes keep their contract.** `POST /fax`, `GET /fax/{id}`, `GET /inbound`, `GET /inbound/{id}`, `GET /inbound/{id}/pdf`, `GET /health` and `POST /mobile/pair` keep their fields. Jobs gain `delivery_state`, `dispatch_mode`, `delivery_version` and `reconciliation_reason`.
 - **New routes.** Sign-in (`/auth`), access management (`/access`), routes and costs (`/routing`), intake (`/intake`), direct delivery (`/direct`) and case packets (`/cases`). See the [API reference](api.md) and [Access and sign-in API](reference/access-api.md).

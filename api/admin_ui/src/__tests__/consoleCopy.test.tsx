@@ -138,6 +138,8 @@ describe('MCP health check', () => {
     mcpServer(() => HttpResponse.json({ status: 'ok', transport: 'streamable-http', server: 'faxbot-mcp', version: '3.0.0' }));
     render(<MCP client={keyClient()} />);
     expect(await screen.findByText('MCP server responding')).toBeTruthy();
+    // SSE is kept one release; the switch says so.
+    expect(screen.getByTestId('sse-retiring').textContent).toBe('SSE goes away in the next release. Use Streamable HTTP.');
   });
 
   it('does not count a page fallback as a healthy MCP server', async () => {

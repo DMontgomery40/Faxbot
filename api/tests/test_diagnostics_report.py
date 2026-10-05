@@ -63,6 +63,16 @@ def test_missing_sign_in_details(monkeypatch):
     assert status == PROBLEM and sentence == "Some of HumbleFax's sign-in details are missing. Add them in Providers."
 
 
+@pytest.mark.parametrize('provider, status', [('freeswitch', ATTENTION), ('sip', OK)])
+def test_freeswitch_sending_says_it_is_removed_next_release(monkeypatch, provider, status):
+    monkeypatch.setattr(report, '_profile', lambda request, direction: SimpleNamespace(provider_id=provider))
+    (finding,) = _run(report.sending(SimpleNamespace(request=None)))
+    assert finding.status == status
+    if provider == 'freeswitch':
+        assert finding.sentence == 'Your sending provider will stop working in the next Faxbot release. Choose another one in Setup.'
+        assert (finding.fix_label, finding.fix_page) == ('Open Setup', 'system/setup')
+
+
 def test_slow_provider_times_out(monkeypatch):
     monkeypatch.setattr(report, 'CHECK_SECONDS', 0.05)
 

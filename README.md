@@ -87,7 +87,7 @@ npm install faxbot
 
 Another system can hand a PDF to the work queue with `POST /imports` and a small JSON manifest; see [import documents](docs/operations/work.md#import-documents-from-another-system).
 
-The Node and Python MCP servers provide fax tools for AI assistants over stdio and Streamable HTTP; Python also supports legacy SSE. Remote requests use the caller's own Faxbot identity. See [MCP setup](docs/mcp/index.md) and [transport authentication](docs/mcp/transports.md).
+Faxbot's AI assistant servers (Node and Python) work over stdio and Streamable HTTP. The Python server also offers the older SSE transport, which is removed in the next release. Remote requests use the caller's own Faxbot identity. See [MCP setup](docs/mcp/index.md) and [transport authentication](docs/mcp/transports.md).
 
 ## Command line
 
@@ -197,4 +197,5 @@ Enterprise software acceptance uses synthetic/local tests. Live customer end-to-
 - [ ] Prove T.38 Internet Aware Fax interoperability on compatible endpoints before offering it as a transport.
 - [ ] Evaluate SIP routing preferences, inbound channel pooling, and existing plan entitlements against real account costs and delivery reliability.
 - [ ] Explore automatic partner discovery only with a verified number, organization, and inbox binding.
+- [ ] After this release ships, remove what it deprecates: MCP over SSE, the FreeSWITCH code, provider plugins (`FEATURE_V3_PLUGINS` and `/plugins`), the settings recovery copy and the SDKs' `client.plugins` (see the [release notes](docs/release-notes.md#deprecated-removed-in-the-next-release)).
 - [ ] FreeSWITCH as a second fax engine, rebuilt from scratch. The FreeSWITCH support in this release could not run in the shipped Docker image, so Setup and the console no longer offer it; its code stays for one release.

@@ -288,8 +288,14 @@ def test_no_key_sends_no_header(fake):
 
 
 def test_plugins_use_live_paths_and_the_typed_patch(fake):
+    import warnings
     client = FaxbotClient(fake['url'], api_key='admin-key')
-    assert client.plugins.list_plugins() == [{'id': 'phaxio', 'enabled': True}]
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('always')
+        assert client.plugins.list_plugins() == [{'id': 'phaxio', 'enabled': True}]
+        client.plugins.list_plugins()
+    # client.plugins warns once that it goes away in the next major release.
+    assert [w.category for w in caught] == [DeprecationWarning] and 'next major release' in str(caught[0].message)
     client.plugins.update_plugin_config('phaxio', {'api_key': 'new'}, enabled=True, expected_revision_id='rev-1')
     put = fake['requests'][-1]
     assert put['path'] == '/plugins/phaxio/config'

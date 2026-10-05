@@ -163,7 +163,10 @@ async def sending(context: Context) -> list[Finding]:
         return [Finding('sending.provider', 'sending', 'Sending', PROBLEM,
                         'Faxbot cannot read its saved sending settings. Open Providers and save them again.',
                         'Open Providers', 'providers/sending')]
-    if configuration.provider_id in {'sip', 'freeswitch'}:
+    if configuration.provider_id == 'freeswitch':
+        return [Finding('sending.provider', 'sending', 'Sending', ATTENTION,
+                        'Your sending provider will stop working in the next Faxbot release. Choose another one in Setup.', 'Open Setup', 'system/setup')]
+    if configuration.provider_id == 'sip':
         name = provider_label(configuration.provider_id)
         return [Finding('sending.provider', 'sending', 'Sending', OK,
                         f'Faxes are sent through {name}. Fax engine, below, shows whether {name} accepts Faxbot\'s calls.')]

@@ -789,6 +789,7 @@ describe('Settings placed on their own pages', () => {
     unmount();
     render(<Settings client={client()} sections={['plugins']} title="Provider plugins" canWrite />);
     fireEvent.click(await screen.findByLabelText('Use provider plugins'));
+    expect(screen.getByText(/Goes away in the next release\./)).toBeTruthy();
     expect((screen.getByLabelText('Allow remote plugin installation (advanced)') as HTMLInputElement).disabled).toBe(true);
     fireEvent.click(screen.getByRole('button', { name: 'Apply settings' }));
     await waitFor(() => expect(writes).toHaveLength(1));
@@ -848,6 +849,9 @@ describe('System, milestone 5', () => {
     render(<Settings client={client()} sections={['storage', 'advanced', 'backup']} title="Storage & retention" />);
     const rows = await screen.findByTestId('deployment-rows');
     expect(within(rows).getByText('Where the installation key is kept')).toBeTruthy();
+    // The recovery copy is kept one release; its button says what replaces it.
+    expect(screen.getByTestId('recovery-retiring').textContent).toBe(
+      'The recovery copy goes away in the next release. Make full backups on the server instead.');
     expect(within(rows).getAllByText('Not set: Faxbot keeps it in its data folder.')).toHaveLength(2);
   });
 

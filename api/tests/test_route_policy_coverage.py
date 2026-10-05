@@ -46,6 +46,9 @@ STATIC_MOUNTS = {"/admin/ui", "/assets"}
 # Still on legacy guards at this revision; other slices convert them. Remove each
 # entry when its route declares policy; the pending test below fails until then.
 PENDING: dict = {}
+# Routes kept for one release with a deprecation note in the API description.
+RETIRING = {("GET", "/plugins"), ("GET", "/plugins/{plugin_id}/config"), ("PUT", "/plugins/{plugin_id}/config"),
+            ("POST", "/admin/settings/persist"), ("POST", "/_internal/freeswitch/outbound_result")}
 PRIVILEGED = {"host:restart", "host:terminal", "providers:install", "owner:recover"}
 # Routes converted from require_admin: (permission, audited).
 CONVERTED = {
@@ -122,3 +125,15 @@ def test_privileged_permissions_are_always_audited():
     unaudited = [(key, rule.permission) for key, calls in _routes() for rule in _declared(calls)
                  if rule.permission in PRIVILEGED and not rule.audit]
     assert unaudited == []
+
+
+def test_routes_removed_next_release_are_marked_deprecated_and_say_what_replaces_them():
+    from app import main
+    paths = main.app.openapi()["paths"]
+    for method, path in RETIRING:
+        operation = paths[path][method.lower()]
+        assert operation.get("deprecated") is True, (method, path)
+        assert "next release" in (operation.get("description") or ""), (method, path)
+    marked = {(method.upper(), path) for path, operations in paths.items()
+              for method, operation in operations.items() if isinstance(operation, dict) and operation.get("deprecated")}
+    assert marked == RETIRING
