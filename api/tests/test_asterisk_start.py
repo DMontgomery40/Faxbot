@@ -248,3 +248,20 @@ def test_one_hundred_media_ports_is_the_largest_phone_system_range(tmp_path):
     assert result.returncode == 0, result.stderr
     assert json.loads((shared / 'lan-address').read_text())['media_ports'] == '5000-5099'
     assert 'udptlend=5032\n' in (etc / 'udptl.conf').read_text()
+
+
+def test_a_published_media_range_is_recorded_for_the_network_check_and_removed_without_one(tmp_path):
+    """docker-compose.fax-ports.yml publishes 4000-4039: Faxbot learns its fax ports can be forwarded or opened."""
+    (tmp_path / 'etc').mkdir(exist_ok=True)
+    for name in ('rtp.conf', 'udptl.conf'):
+        shutil.copy(ROOT / 'asterisk' / 'etc' / 'asterisk' / name, tmp_path / 'etc' / name)
+    result, etc, shared = start(tmp_path, FAXBOT_MEDIA_PORTS='4000-4039')
+    assert result.returncode == 0, result.stderr
+    assert json.loads((shared / 'media-ports').read_text()) == {'media_ports': '4000-4039'}
+    assert oct((shared / 'media-ports').stat().st_mode & 0o777) == '0o600'
+    udptl, rtp = (etc / 'udptl.conf').read_text(), (etc / 'rtp.conf').read_text()
+    assert 'udptlstart=4000\n' in udptl and 'udptlend=4012\n' in udptl
+    assert 'rtpstart=4013\n' in rtp and 'rtpend=4039\n' in rtp
+    result, etc, shared = start(tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert not (shared / 'media-ports').exists()

@@ -29,6 +29,11 @@ function backend(data: Json) {
       handover_ready: data.inbound.enabled && data.hybrid.inbound_backend === 'sip' ? true : null,
       handover_text: data.inbound.enabled && data.hybrid.inbound_backend === 'sip' ? 'Received faxes reach Faxbot: ready.' : null,
       message: 'No SIP trunk is set up. Choose your carrier to start.' })),
+    // Apply in this step checks the network; a carrier trunk then shows what the check found.
+    http.get('/admin/sip/network', () => HttpResponse.json(data.sip?.trunk?.preset ? { applies: true, checked: true,
+      t38: 'blocked', why: 'ports_change', text: 'Fax over IP (T.38) most likely cannot work here, because your network '
+        + 'changes port numbers.', t38_enabled: true, router_ports_enabled: true, fix_steps: [] }
+      : { applies: false, checked: false, t38: null, text: null })),
     http.put('/admin/settings', async ({ request }) => {
       const body = await request.json() as Json;
       writes.push(body);
@@ -113,6 +118,9 @@ describe('Setup Wizard providers for sending and receiving', () => {
     expect(screen.getByText('Connect Providers', { selector: 'h6' })).toBeTruthy();
     expect(sectionHeadings()).toEqual(['For sending and receiving: Telnyx']);
     expect(await screen.findByTestId('sip-trunk-settings')).toBeTruthy();
+    // The carrier's step shows the network check for fax over IP, as the trunk page does.
+    expect(within(await screen.findByTestId('sip-network')).getByText(
+      'Fax over IP (T.38) most likely cannot work here, because your network changes port numbers.')).toBeTruthy();
     expect(screen.getByLabelText('Fax station ID')).toBeTruthy();
     // The fax engine connection is Faxbot's own business, out of the normal path.
     expect(screen.getByText('Fax engine connection (advanced)')).toBeTruthy();

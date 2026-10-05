@@ -577,7 +577,7 @@ async def apply(request: Request, identity=Depends(require_permission('providers
     values = configuration_values()
     if not sip_trunk.configured(values):
         raise HTTPException(400, detail='Choose a carrier before applying trunk settings.')
-    network = None
+    network, exact = None, None
     phone = _phone_system(values.sip_trunk_preset)
     if not phone:
         network = await probe_network(values.sip_trunk_preset, fresh=True)
@@ -597,9 +597,11 @@ async def apply(request: Request, identity=Depends(require_permission('providers
         before = await run_lifecycle_step(lambda: sip_network.previous_verdict(values))
         await run_lifecycle_step(lambda: sip_fax_mode.reconcile(values, network=before))
         found = await sip_network.discover(fresh=True)
-        check, previous = await run_lifecycle_step(lambda: sip_network.record_check(values, network, found, records))
+        mapping = await run_lifecycle_step(lambda: sip_network.map_ports(values, network, found))
+        check = await run_lifecycle_step(lambda: sip_network.record_check(values, network, found, records, mapping))
+        exact = True if check['why'] == 'router_mapped' else None
         decision = await run_lifecycle_step(lambda: sip_fax_mode.network_decision(
-            values, check['t38'], previous=previous, records=records))
+            values, check['t38'], previous=check['changed_from'], records=records))
         if decision:
             values = await run_lifecycle_step(lambda: _set_t38(runtime, decision == 't38', sip_fax_mode.NETWORK,
                                                                check['t38']))
@@ -614,7 +616,7 @@ async def apply(request: Request, identity=Depends(require_permission('providers
             await run_lifecycle_step(lambda: sip_trunk.write_manager_credentials(values))
         if not values.sip_external_address and not phone:
             # What Asterisk advertises at its next start (only on a network that keeps port numbers).
-            await run_lifecycle_step(lambda: sip_trunk.write_public_address(values, network))
+            await run_lifecycle_step(lambda: sip_trunk.write_public_address(values, network, exact=exact))
     except sip_trunk.TrunkConfigurationError as error:
         names = ', '.join(_FIELD_NAMES.get(field, 'trunk settings') for field in error.fields)
         raise HTTPException(400, detail=f'Fill in the {names} before applying.')
@@ -747,7 +749,7 @@ async def watch_public_address(*, minutes=None, values_source=None, runtime=None
             if not sip_trunk.configured(values) or _phone_system(values.sip_trunk_preset):
                 continue
             if runtime is not None:
-                await sip_network.run_check(runtime)
+                await sip_network.run_check(runtime, unattended=True)
                 continue
             if values.sip_external_address:
                 continue

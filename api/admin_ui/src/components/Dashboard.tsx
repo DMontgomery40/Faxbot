@@ -24,6 +24,7 @@ import AdminAPIClient, { AdminAPIError, isNotAvailable } from '../api/client';
 import type { HealthStatus, WorkCounts } from '../api/types';
 import type { DirectPartner, IntakeCounts, RouteCostsResponse } from '../api/deliveryTypes';
 import type { SipCallRecord } from '../api/sipTypes';
+import type { SipNetworkReport } from '../api/networkTypes';
 import type { AdminDestination } from '../navigation';
 import { formatMoneyList } from './delivery/shared';
 import { NO_PUBLISHED_PRICE, spendingLines, spendingTotal } from './delivery/spendingSummary';
@@ -115,11 +116,13 @@ export interface AttentionItem {
 
 // What needs a person now, from the cards' own data. Items this account
 // cannot read, and items with nothing in them, are left out.
-export function attentionItems({ health, work, intake, costs, canSetUp = false }: {
+export function attentionItems({ health, work, intake, costs, network, canSetUp = false }: {
   health: HealthStatus | null;
   work: CardData<WorkCounts>;
   intake: CardData<IntakeCounts>;
   costs: CardData<RouteCostsResponse>;
+  // The carrier trunk's network check: an item while Faxbot keeps T.38 off because of the network.
+  network?: CardData<SipNetworkReport>;
   canSetUp?: boolean;
 }): AttentionItem[] {
   const items: AttentionItem[] = [];
@@ -152,6 +155,11 @@ export function attentionItems({ health, work, intake, costs, canSetUp = false }
       items.push({ key: 'unrecorded', label: 'Carrier charges with no matching fax, last 30 days', count: unrecorded, destination: 'costs/spending' });
     }
   }
+  if (network?.kind === 'ready' && network.data.applies && network.data.action === 'turned_off'
+    && !network.data.t38_enabled) {
+    items.push({ key: 't38-network', label: 'Your network needs one change so faxes can go over the internet', count: null,
+      destination: 'providers/trunk' });
+  }
   return items;
 }
 
@@ -178,21 +186,24 @@ function Dashboard({ client, onNavigate, canSetUp = false, onSendFax }: Dashboar
   const [intake, setIntake] = useState<CardData<IntakeCounts>>({ kind: 'loading' });
   const [partners, setPartners] = useState<CardData<DirectPartner[]>>({ kind: 'loading' });
   const [work, setWork] = useState<CardData<WorkCounts>>({ kind: 'loading' });
+  const [network, setNetwork] = useState<CardData<SipNetworkReport>>({ kind: 'loading' });
   const [missedCall, setMissedCall] = useState<string | null>(null);
 
   // Delivery cards load on entry and on Refresh, not on every health poll.
   const fetchDelivery = async () => {
-    const [costs, queue, peers, calls, counts] = await Promise.all([
+    const [costs, queue, peers, calls, counts, check] = await Promise.all([
       settle(client.getRouteCosts()),
       settle(client.listIntakeItems({ limit: 1 }).then((result) => result.counts)),
       settle(client.listDirectPartners().then((result) => result.peers)),
       settle(client.listSipCalls({ limit: 20, direction: 'inbound' }).then((result) => result.items)),
       settle(client.workCounts()),
+      settle(client.getSipNetwork()),
     ]);
     setSpending(costs);
     setIntake(queue);
     setPartners(peers);
     setWork(counts);
+    setNetwork(check);
     setMissedCall(calls.kind === 'ready' ? missedInboundCall(calls.data) : null);
   };
 
@@ -253,7 +264,7 @@ function Dashboard({ client, onNavigate, canSetUp = false, onSendFax }: Dashboar
     );
   }
 
-  const attention = attentionItems({ health, work, intake, costs: spending, canSetUp });
+  const attention = attentionItems({ health, work, intake, costs: spending, network, canSetUp });
   const attentionLoading = work.kind === 'loading' || intake.kind === 'loading' || spending.kind === 'loading';
 
   return (

@@ -5,9 +5,11 @@ networks, all from a container), with every internet address replaced by a
 documentation address. No test reaches the internet or a router.
 """
 import asyncio
+import json
 import socket
 import struct
 import sys
+import time
 
 import pytest
 import yaml
@@ -119,45 +121,76 @@ def test_sentences_say_what_the_check_found_and_what_to_do():
     found, result = COLIMA_USER
     check = sip_network.assess(values(), result, found)
     assert sip_network.verdict_text(check, 'Telnyx') == (
-        'Your network changes port numbers, and Telnyx does not follow such changes for T.38 fax data, so it cannot '
-        'come back to Faxbot.')
+        'Fax over IP (T.38) cannot work here: your network changes port numbers, which Telnyx cannot handle for fax '
+        'over IP.')
     assert sip_network.verdict_text(check, 'SignalWire') == (
-        "Your network changes port numbers, so SignalWire's T.38 fax data most likely cannot come back to Faxbot.")
+        'Fax over IP (T.38) most likely cannot work here, because your network changes port numbers.')
     remedy = sip_network.fix(check)
-    assert remedy['text'].startswith('Move Colima onto your office network')
+    assert remedy['text'].startswith('Connect Docker on this Mac directly to your local network')
     # Recreate keeps the machine's size; delete never takes --data (that would erase Faxbot's faxes).
     assert remedy['steps'] == [
+        'colima version   # 0.9 or later keeps your faxes when the machine is recreated',
         'colima list', 'colima delete default',
         'colima start default --cpu 2 --memory 4 --disk 20 --network-address --network-mode bridged '
         '--network-interface "$(route -n get default | awk \'/interface:/{print $2}\')" --network-preferred-route',
         'docker compose up -d']
     assert not any('--data' in step or ' -f' in step or ' -d' in step.split('compose up')[0] for step in remedy['steps'])
-    assert 'Never add --data to the delete command' in remedy['note'] and 'Colima 0.9 or later' in remedy['note']
+    assert 'Never add --data to the delete command' in remedy['note'] and 'The disk keeps its old size' in remedy['note']
     bridged = sip_network.assess(values(), *reversed(COLIMA_BRIDGED))
     assert sip_network.fix(bridged) is None
     assert sip_network.verdict_text(bridged, 'Telnyx') == (
-        "Your network keeps port numbers, so Telnyx's T.38 fax data can come back to Faxbot.")
+        'Fax over IP (T.38) can work here, because your network keeps port numbers unchanged.')
 
 
-@pytest.mark.parametrize('row, start', [
-    (DESKTOP_MAC, 'Docker Desktop changes port numbers: forward UDP ports 4000–4039 on your router to this computer'),
-    (LINUX_LAN_CHANGES, 'Your router changes port numbers: forward UDP ports 4000–4039 on your router to the computer'),
-    (CLOUD_NAT, 'Give the server its own public address, open UDP ports 4000–4039 in its firewall or security group'),
-    (SHARED_ISP, 'No router setting can change this.'),
-    (NO_STUN, 'If a firewall limits outgoing traffic'),
+PUBLISHED = (4000, 4039)
+
+
+@pytest.mark.parametrize('row, published, mapping, start, steps', [
+    (DESKTOP_MAC, None, None, 'Forward UDP ports 4000–4039 on your router to this computer, restart Faxbot with its '
+     'fax ports (the command below), and enter your internet address under Internet address.', 'fax ports'),
+    (DESKTOP_MAC, PUBLISHED, None, 'Forward UDP ports 4000–4039 on your router to this computer, and enter your '
+     'internet address', None),
+    (LINUX_LAN_CHANGES, None, {'state': 'no_fax_ports'}, 'Restart Faxbot with its fax ports (the first command below), '
+     'and Faxbot asks your router to open them.', 'fax ports'),
+    (LINUX_LAN_CHANGES, PUBLISHED, {'state': 'refused'}, 'Turn on UPnP or NAT-PMP on your router so Faxbot can open UDP '
+     'ports 4000–4039 itself. Or forward those ports to this computer', None),
+    (LINUX_LAN_CHANGES, PUBLISHED, {'state': 'off'}, 'Forward UDP ports 4000–4039 on your router to this computer, '
+     'and enter', None),
+    (CLOUD_NAT, None, None, 'Give the server its own public address, open UDP ports 4000–4039 in its firewall',
+     'fax ports'),
+    (SHARED_ISP, None, None, 'No router setting can change this.', None),
+    (NO_STUN, None, None, 'If a firewall limits outgoing traffic', None),
 ])
-def test_each_platform_gets_its_own_fix_and_audio_fax_keeps_working(row, start, tmp_path):
+def test_each_platform_gets_its_own_fix_and_audio_fax_keeps_working(row, published, mapping, start, steps, tmp_path):
     found, result = row
-    check = sip_network.assess(values(), result, found)
+    check = sip_network.assess(values(), result, found, mapping=mapping, published=published)
     remedy = sip_network.fix(check)
     assert remedy['text'].startswith(start)
-    if remedy['steps']:
-        assert remedy['steps'] == [sip_network.FAX_PORTS_COMMAND]
-        assert 'enter your internet address, 198.51.100.7, under Internet address' in remedy['text'] \
-            or row is CLOUD_NAT
+    assert (sip_network.FAX_PORTS_COMMAND in remedy['steps']) is (steps == 'fax ports')
     settings = values(FAX_DATA_DIR=str(tmp_path))
     sip_network.write_check(settings, check)
     assert sip_network.report(settings)['audio_text'] == 'Audio fax keeps working meanwhile.'
+
+
+def test_colima_on_the_local_network_behind_a_router_that_changes_ports_lists_its_own_address():
+    found = Discovery(lima=True, hops=('172.17.0.1', '192.168.68.1', '203.0.113.2'), **APPLE)
+    check = sip_network.assess(values(), probe(4002, 61001, 61001), found, mapping={'state': 'refused'},
+                               published=PUBLISHED)
+    assert check['platform'] == 'colima_bridged'
+    remedy = sip_network.fix(check)
+    assert remedy['text'].endswith('Or forward those ports to the address the command below lists and enter your '
+                                   'internet address under Internet address.')
+    assert remedy['steps'] == ['colima list']
+
+
+def test_network_open_says_t38_is_tried_first_and_audio_carries_the_fax_when_the_carrier_declines(tmp_path):
+    settings = values(FAX_DATA_DIR=str(tmp_path))
+    sip_network.write_check(settings, sip_network.assess(settings, COLIMA_BRIDGED[1], COLIMA_BRIDGED[0]))
+    report = sip_network.report(settings)
+    assert report['tries_text'] == ('Faxbot tries fax over IP (T.38) first. When the carrier declines it, the fax goes '
+                                    'through as audio.')
+    assert report['office_text'] == 'Your network is ready for faxing over the internet.'
+    assert report['audio_text'] is None and report['fix_text'] is None
 
 
 def test_the_fax_ports_file_publishes_exactly_the_range_the_sentences_name():
@@ -261,8 +294,8 @@ def test_fixing_the_network_brings_t38_back_without_touching_the_switch(client, 
     assert _t38(client) is False
     report = client.get('/admin/sip/network', headers=ADMIN).json()
     assert (report['t38'], report['platform'], report['action']) == (BLOCKED, 'colima_user', 'turned_off')
-    assert report['platform_text'] == "Faxbot runs in Colima on a Mac, on Colima's built-in network."
-    assert report['checked_at'].endswith('Z') and report['fix_steps'][0] == 'colima list'
+    assert report['platform_text'] == 'Faxbot runs in Docker on this Mac, on a private network inside the Mac.'
+    assert report['checked_at'].endswith('Z') and report['fix_steps'][1] == 'colima list'
     assert sip_fax_mode.read(_values(client))['network'] == BLOCKED
     # The owner recreates Colima on the local network; Check again turns T.38 back on by itself.
     network['row'] = COLIMA_BRIDGED
@@ -332,7 +365,7 @@ def test_no_ports_is_not_claimed_while_the_network_section_asks_for_a_forward(is
         assert client.post('/admin/sip/apply', headers=ADMIN).status_code == 200
         report = client.get('/admin/sip/network', headers=ADMIN).json()
         assert (report['t38'], report['why']) == (UNKNOWN, 'typed')
-        assert report['fix_text'].startswith('Check that your router forwards UDP ports 4000\u20134039')
+        assert report['fix_text'].startswith('Forward UDP ports 4000\u20134039 on your router to this computer')
         assert client.get('/admin/sip/status', headers=ADMIN).json()['ports_text'] is None
     network['row'] = NO_STUN
     with _client(monkeypatch, TRUNK) as client:
@@ -353,7 +386,7 @@ def test_other_carriers_follow_the_network_unless_they_turn_t38_into_audio_thems
         if preset == 'signalwire':
             assert _t38(client) is False
             assert sip_fax_mode.off_sentence('network', carrier='SignalWire') == (
-                'Off: your network changes port numbers, so T.38 fax data most likely cannot come back; Faxbot uses '
+                'Off: your network changes port numbers, so fax over IP (T.38) most likely cannot work; Faxbot sends '
                 'audio fax until the network is fixed.')
         _set_t38(client, True)
         assert client.post('/admin/sip/apply', headers=ADMIN).status_code == 200
@@ -393,7 +426,9 @@ def test_system_diagnostics_shows_the_network_check(monkeypatch, tmp_path):
     sip_network.write_check(settings, sip_network.assess(settings, COLIMA_USER[1], COLIMA_USER[0]))
     [blocked] = asyncio.run(report.network_for_fax(context))
     assert (blocked.status, blocked.fix_page) == (report.ATTENTION, 'providers/trunk')
-    assert blocked.sentence.startswith('Your network changes port numbers, and Telnyx does not follow')
+    assert blocked.sentence == ('Your network needs one change so faxes can go over the internet. The carrier page '
+                                'shows what to do.')
+    assert blocked.title == 'Faxing over the internet'
     monkeypatch.setattr(report, '_uses_trunk', lambda request: False)
     assert asyncio.run(report.network_for_fax(context)) == []
 
@@ -404,9 +439,27 @@ def test_the_start_check_waits_and_is_skipped_by_tests_unless_asked(client, netw
     runtime = client.app.state.configuration_runtime
     assert asyncio.run(sip_network.check_at_start(runtime)) is None
     assert sip_network.read_check(_values(client)) is None
-    outcome = asyncio.run(sip_network.check_at_start(runtime, delay=0))
-    assert outcome['check']['t38'] == BLOCKED and outcome['switched'] == 'audio'
+    # The start check acts only on the same answer twice in a row: it confirms once more before switching.
+    outcome = asyncio.run(sip_network.check_at_start(runtime, delay=0, confirm=0, keep=False))
+    assert outcome['check']['t38'] == BLOCKED and outcome['check']['count'] == 2 and outcome['switched'] == 'audio'
     assert sip_network.read_check(_values(client))['platform'] == 'colima_user'
+
+
+def test_unattended_checks_switch_only_after_the_same_answer_twice_and_apply_switches_at_once(client, network):
+    runtime = client.app.state.configuration_runtime
+    first = asyncio.run(sip_network.run_check(runtime, unattended=True))
+    assert (first['switched'], first['awaiting'], first['check']['count']) == (None, 'audio', 1)
+    assert _t38(client) is True
+    second = asyncio.run(sip_network.run_check(runtime, unattended=True))
+    assert (second['switched'], second['check']['count']) == ('audio', 2) and _t38(client) is False
+    # One good answer is not enough to switch back unattended; Check again is.
+    network['row'] = COLIMA_BRIDGED
+    assert asyncio.run(sip_network.run_check(runtime, unattended=True))['awaiting'] == 't38' and _t38(client) is False
+    network['row'] = COLIMA_USER
+    flapped = asyncio.run(sip_network.run_check(runtime, unattended=True))
+    assert flapped['switched'] is None and flapped['check']['count'] == 1 and _t38(client) is False
+    network['row'] = COLIMA_BRIDGED
+    assert _check(client)['switched'] == 't38' and _t38(client) is True
 
 
 @pytest.mark.asyncio
@@ -414,8 +467,8 @@ async def test_the_watcher_runs_the_whole_check_with_the_running_installation(mo
     settings = values()
     runs = []
 
-    async def run_check(runtime, records=None, *, fresh=True):
-        runs.append(runtime)
+    async def run_check(runtime, records=None, *, fresh=True, unattended=False):
+        runs.append((runtime, unattended))
     monkeypatch.setattr(sip_network, 'run_check', run_check)
     task = asyncio.create_task(sip_http.watch_public_address(minutes=0.001, values_source=lambda: settings,
                                                              runtime='the installation'))
@@ -426,4 +479,166 @@ async def test_the_watcher_runs_the_whole_check_with_the_running_installation(mo
                 break
     finally:
         task.cancel()
-    assert runs and runs[0] == 'the installation'
+    assert runs and runs[0] == ('the installation', True)
+
+
+# -- Faxbot's fax ports: forwarded by the person, or opened on the router by Faxbot ------------------------------
+
+class StandInRouter:
+    """Stands in for port_mapping.Router: records what Faxbot asked; the wire format is in test_port_mapping.py."""
+    opened, renewed, closed = [], [], []
+    external, refuse = '198.51.100.7', False
+
+    def __init__(self, gateway, **_):
+        self.gateway = gateway
+
+    def open(self, first, last, *, lifetime=3600):
+        if StandInRouter.refuse:
+            return None, ['pcp_no_address', 'natpmp_no_answer', 'upnp_no_address']
+        StandInRouter.opened.append((self.gateway, first, last))
+        from app.port_mapping import Lease
+        return Lease('natpmp', self.gateway, first, last, StandInRouter.external, lifetime, time.time()), None
+
+    def renew(self, lease, *, lifetime=3600):
+        StandInRouter.renewed.append((lease.first, lease.last))
+        lease.granted_at = time.time()
+        return lease
+
+    def close(self, lease):
+        StandInRouter.closed.append((lease.gateway, lease.first, lease.last))
+
+
+@pytest.fixture
+def stand_in_router(monkeypatch):
+    from app import port_mapping
+    StandInRouter.opened, StandInRouter.renewed, StandInRouter.closed = [], [], []
+    StandInRouter.external, StandInRouter.refuse = '198.51.100.7', False
+    monkeypatch.setattr(port_mapping, 'Router', StandInRouter)
+    return StandInRouter
+
+
+def _publish_fax_ports(client, first=4000, last=4039):
+    """What asterisk/start.sh records when docker-compose.fax-ports.yml publishes the range."""
+    path = sip_network.media_ports_path(_values(client))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({'media_ports': f'{first}-{last}'}) + '\n')
+
+
+def _put(client, **changes):
+    current = client.get('/admin/settings', headers=ADMIN).json()
+    response = client.put('/admin/settings', headers=ADMIN, json={
+        'expected_revision_id': current['_meta']['desired_revision_id'], **changes})
+    assert response.status_code == 200, response.text
+
+
+def test_forwarded_fax_ports_bring_t38_back_without_touching_the_switch(client, network, stand_in_router):
+    network['row'] = DESKTOP_MAC
+    assert client.post('/admin/sip/apply', headers=ADMIN).status_code == 200
+    assert _t38(client) is False
+    # The person forwards the ports, starts Faxbot with the fax ports file and types the internet address.
+    _publish_fax_ports(client)
+    _put(client, sip_external_address='198.51.100.7')
+    assert client.post('/admin/sip/apply', headers=ADMIN).status_code == 200
+    report = client.get('/admin/sip/network', headers=ADMIN).json()
+    assert (report['t38'], report['why'], report['action']) == (OPEN, 'forwarded', 'turned_on')
+    assert report['text'] == "Fax over IP (T.38) can work here, because your router forwards Faxbot's fax ports."
+    assert _t38(client) is True and stand_in_router.opened == []  # a typed address: the person forwards, not Faxbot
+    assert 'external_media_address=198.51.100.7' in sip_trunk.configuration_path(_values(client)).read_text()
+
+
+def test_faxbot_opens_its_fax_ports_on_the_router_advertises_them_and_closes_them_when_turned_off(
+        client, network, stand_in_router):
+    network['row'] = LINUX_LAN_CHANGES
+    _publish_fax_ports(client)
+    assert client.post('/admin/sip/apply', headers=ADMIN).status_code == 200
+    assert stand_in_router.opened == [('192.168.1.1', 4000, 4039)]
+    report = client.get('/admin/sip/network', headers=ADMIN).json()
+    assert (report['t38'], report['why'], report['router_state']) == (OPEN, 'router_mapped', 'open')
+    assert report['router_text'] == ('Faxbot opened UDP ports 4000–4039 on your router so fax data can come back. '
+                                     'It renews them while it runs and closes them when it stops.')
+    assert _t38(client) is True
+    # The address and these exact ports are advertised, as on a network that keeps port numbers.
+    assert sip_trunk.read_public_address(_values(client)) | {'probed_at': None} == {
+        'ip': '198.51.100.7', 'ports_preserved': True, 'router_ports': True, 'probed_at': None}
+    assert sip_network.network_allows_t38(_values(client)) is True
+    # The next check keeps the same lease (renewal waits for half its lifetime).
+    assert _check(client)['router_state'] == 'open' and len(stand_in_router.opened) == 1
+    # Turned off: Faxbot closes the ports, and T.38 follows the network at once.
+    _put(client, sip_router_ports=False)
+    body = _check(client)
+    assert stand_in_router.closed == [('192.168.1.1', 4000, 4039)]
+    assert (body['router_state'], body['t38'], body['switched'], body['router_ports_enabled']) == (
+        'off', BLOCKED, 'audio', False)
+    assert body['router_text'] == 'Faxbot does not ask your router to open ports, because that is turned off.'
+    assert not sip_network.lease_path(_values(client)).exists()
+    assert sip_trunk.read_public_address(_values(client))['ports_preserved'] is False
+
+
+def test_a_router_that_refuses_or_sits_behind_another_router_gets_the_forward_to_do(client, network, stand_in_router):
+    network['row'] = LINUX_LAN_CHANGES
+    _publish_fax_ports(client)
+    stand_in_router.refuse = True
+    assert client.post('/admin/sip/apply', headers=ADMIN).status_code == 200
+    report = client.get('/admin/sip/network', headers=ADMIN).json()
+    assert (report['t38'], report['router_state']) == (BLOCKED, 'refused')
+    assert report['router_text'] == 'Your router did not open UDP ports 4000–4039 for Faxbot.'
+    assert report['fix_text'].startswith('Turn on UPnP or NAT-PMP on your router')
+    # The router opens them, but its own internet address is not the one the internet sees.
+    stand_in_router.refuse, stand_in_router.external = False, '100.72.0.9'
+    body = _check(client)
+    assert (body['router_state'], body['why'], body['shared_address']) == ('behind_another_router', 'shared_address',
+                                                                            True)
+    assert stand_in_router.closed == [('192.168.1.1', 4000, 4039)]
+    stand_in_router.external = '192.168.0.2'
+    body = _check(client)
+    assert (body['why'], body['shared_address']) == ('behind_another_router', False)
+    assert body['fix_text'].startswith('Forward UDP ports 4000–4039 on the router in front of yours too')
+
+
+def test_nothing_is_asked_of_the_router_when_ports_are_kept_or_not_published(client, network, stand_in_router):
+    network['row'] = LINUX_LAN
+    _publish_fax_ports(client)
+    assert client.post('/admin/sip/apply', headers=ADMIN).status_code == 200
+    assert client.get('/admin/sip/network', headers=ADMIN).json()['router_state'] == 'not_needed'
+    network['row'] = LINUX_LAN_CHANGES
+    sip_network.media_ports_path(_values(client)).unlink()
+    assert _check(client)['router_state'] == 'no_fax_ports'
+    # Behind Docker Desktop or Colima's own network another layer changes ports: the router is not asked.
+    _publish_fax_ports(client)
+    network['row'] = COLIMA_SHARED
+    assert _check(client)['router_state'] == 'no_router'
+    assert stand_in_router.opened == []
+
+
+def test_the_router_ports_are_renewed_and_closed_when_faxbot_stops(client, network, stand_in_router):
+    network['row'] = LINUX_LAN_CHANGES
+    _publish_fax_ports(client)
+    assert client.post('/admin/sip/apply', headers=ADMIN).status_code == 200
+    runtime = client.app.state.configuration_runtime
+    lease = sip_network.read_lease(_values(client))
+    lease.granted_at -= lease.lifetime  # half its lifetime has passed
+    sip_network._keep_lease(_values(client), lease)
+
+    async def run_until_renewed():
+        task = asyncio.create_task(sip_network.keep_router_ports(runtime, idle=0.05))
+        for _ in range(200):
+            await asyncio.sleep(0.02)
+            if stand_in_router.renewed:
+                break
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    asyncio.run(run_until_renewed())
+    assert stand_in_router.renewed == [(4000, 4039)]
+    assert stand_in_router.closed == [('192.168.1.1', 4000, 4039)]
+    assert sip_network.read_lease(_values(client)) is None
+
+
+def test_the_media_ports_record_is_read_only_when_well_formed(tmp_path):
+    settings = values(FAX_DATA_DIR=str(tmp_path))
+    path = sip_network.media_ports_path(settings)
+    path.parent.mkdir(parents=True)
+    for text, expected in (('{"media_ports": "4000-4039"}', (4000, 4039)), ('{"media_ports": "4039-4000"}', None),
+                           ('{"media_ports": "80-90"}', None), ('not json', None)):
+        path.write_text(text)
+        assert sip_network.read_media_ports(settings) == expected

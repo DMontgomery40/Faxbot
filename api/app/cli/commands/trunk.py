@@ -146,13 +146,15 @@ def _network_lines(out, result):
         out.line(result.get('text') or '')
         return
     out.line(result.get('text') or '')
-    for key in ('platform_text',):
+    for key in ('platform_text', 'tries_text'):
         if result.get(key):
             out.line(result[key])
     moment = parse_time(result.get('action_at'))
     done = action_sentence(result.get('action'), moment.astimezone().strftime('%-d %B') if moment else '')
     if done:
         out.line(done)
+    if result.get('router_text'):
+        out.line(result['router_text'])
     if result.get('engine_message'):
         out.line(result['engine_message'])
     if result.get('fix_text'):
@@ -179,6 +181,21 @@ def network_status():
 def network_check():
     """Run the network check again now; new calls use fax over IP only when it works."""
     result = state.api().post('/admin/sip/network/check')
+    state.out().result(result, lambda out: _network_lines(out, result))
+
+
+@network.command('router-ports')
+def network_router_ports(choice: str = typer.Argument(..., metavar='on|off',
+                                                      help='on lets Faxbot open its fax ports on your router; off stops '
+                                                           'it and closes any it opened.')):
+    """Let Faxbot open its fax ports on your router (on, the default) or not (off), then check the network again."""
+    if choice not in ('on', 'off'):
+        raise typer.BadParameter('Use on or off.', param_hint='on|off')
+    api = state.api()
+    current = api.get('/admin/settings')
+    api.put('/admin/settings', json={'sip_router_ports': choice == 'on',
+                                     'expected_revision_id': current['_meta']['desired_revision_id']})
+    result = api.post('/admin/sip/network/check')
     state.out().result(result, lambda out: _network_lines(out, result))
 
 

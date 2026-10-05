@@ -42,12 +42,13 @@ import logging
 import math
 import os
 from pathlib import Path
+import re
 import socket
 import struct
 import sys
 import time
 
-from . import sip_fax_mode, sip_trunk
+from . import port_mapping, sip_fax_mode, sip_trunk
 
 OPEN, BLOCKED, UNKNOWN = 'open', 'blocked', 'unknown'
 # The fixed media range docker-compose.fax-ports.yml publishes: Asterisk uses its
@@ -308,44 +309,63 @@ def platform(found: Discovery, probe=None):
     return 'unknown'
 
 
-def verdict(probe, ports, shared, typed='', observed=None):
+def verdict(probe, ports, shared, typed='', observed=None, *, published=None, mapped=None):
     """(t38, why): whether the carrier's T.38 fax data can come back to Faxbot, and the reason.
 
     OPEN: public, ports_kept, typed (an address typed in, on a network that keeps
-    port numbers) or t38_worked (the newest T.38 call went through here).
-    BLOCKED: ports_change or shared_address. UNKNOWN: no_address, typed_differs
-    (the typed address is not the one STUN sees), or typed on a network that
-    changes port numbers (it works only if the router forwards Faxbot's fax
-    ports, which Faxbot cannot see).
+    port numbers), forwarded (an address typed in while Faxbot's fax ports are
+    published, which is the operator's word that the router forwards them),
+    router_mapped (Faxbot opened its fax ports on the router) or t38_worked (the
+    newest T.38 call went through here).
+    BLOCKED: ports_change, shared_address, or behind_another_router (the router
+    opened the ports, but another router in front of it changes port numbers).
+    UNKNOWN: no_address, typed_differs (the typed address is not the one STUN
+    sees), or typed on a network that changes port numbers without the fax
+    ports published.
     """
     worked = bool(observed and observed.get('t38_ok'))
-    if typed and ports == 'kept':
-        return (OPEN, 'typed') if probe.public_ip == typed else (UNKNOWN, 'typed_differs')
-    if typed and ports is not None:
-        return (OPEN, 't38_worked') if worked else (UNKNOWN, 'typed')
-    if probe is None or not probe.public_ip:
+    seen = probe.public_ip if probe is not None else None
+    if typed:
+        if seen and seen != typed:
+            return UNKNOWN, 'typed_differs'
+        if ports == 'kept':
+            return OPEN, 'typed'
+        if published:
+            return OPEN, 'forwarded'
+        if ports is not None:
+            return (OPEN, 't38_worked') if worked else (UNKNOWN, 'typed')
+    if not seen:
         return (OPEN, 't38_worked') if worked else (UNKNOWN, 'no_address')
     if probe.behind_nat is False:
         return OPEN, 'public'
     if ports == 'kept':
         return OPEN, 'ports_kept'
+    state = (mapped or {}).get('state')
+    if state == 'open':
+        return OPEN, 'router_mapped'
     if worked:
         return OPEN, 't38_worked'
-    return BLOCKED, ('shared_address' if shared else 'ports_change')
+    if shared:
+        return BLOCKED, 'shared_address'
+    if state == 'behind_another_router':
+        return BLOCKED, 'behind_another_router'
+    return BLOCKED, 'ports_change'
 
 
-def assess(values, probe, found: Discovery, observed=None, *, now=time.time):
+def assess(values, probe, found: Discovery, observed=None, *, mapping=None, published=None, now=time.time):
     """One network check, ready to store."""
     ports = port_behavior(probe)
-    shared = shared_address(found, probe)
+    shared = shared_address(found, probe) or bool((mapping or {}).get('shared'))
     typed = '' if _phone_system(values) else values.sip_external_address
-    t38, why = verdict(probe, ports, shared, typed, observed)
+    t38, why = verdict(probe, ports, shared, typed, observed, published=published, mapped=mapping)
     outside = outside_hops(found)
     router = next((hop for hop in outside if _local(_address(hop))), None)
     return {'checked_at': round(now(), 3), 'platform': platform(found, probe), 'ports': ports,
             'internet_address': probe.public_ip if probe else None,
             'behind_router': probe.behind_nat if probe else None, 'shared_address': shared,
             'router': router, 'hops': list(outside), 't38': t38, 'why': why, 'typed_address': typed or None,
+            'fax_ports': f'{published[0]}-{published[1]}' if published else None,
+            'router_ports': mapping or None,
             'cpus': found.cpus, 'memory_gib': found.memory_gib, 'disk_gib': found.disk_gib}
 
 
@@ -396,12 +416,14 @@ def network_allows_t38(values) -> bool | None:
     """Whether T.38 fax data can come back to Faxbot through this network, from the last stored check.
 
     True: the network keeps port numbers, Faxbot has its own internet address,
-    or the newest T.38 call went through; a phone system on the local network
-    is always True. False: the network changes port numbers, so the carrier's
-    T.38 data cannot find Faxbot; use audio fax. None: Faxbot cannot tell (no
-    trunk, no check yet, the address lookup is blocked, or a typed address on a
-    network that changes port numbers); try T.38, and the no-data-back rule in
-    sip_fax_mode moves new calls to audio after one failed call.
+    its fax ports are opened or forwarded on the router, or the newest T.38
+    call went through; a phone system on the local network is always True.
+    True means T.38 can be tried, not that the carrier accepts it on every call.
+    False: the network changes port numbers, so the carrier's T.38 data cannot
+    find Faxbot; use audio fax. None: Faxbot cannot tell (no trunk, no check
+    yet, the address lookup is blocked, or a typed address on a network that
+    changes port numbers); try T.38, and the no-data-back rule in sip_fax_mode
+    moves new calls to audio after one failed call.
 
     Synchronous and cheap: reads one small file, no network and no database.
     """
@@ -415,13 +437,132 @@ def network_allows_t38(values) -> bool | None:
     return {OPEN: True, BLOCKED: False}.get(record['t38'])
 
 
+# -- Faxbot's fax ports: published on this computer, opened on the router ---------------------------------
+
+_RANGE = re.compile(r'([0-9]{4,5})-([0-9]{4,5})', re.ASCII)
+
+
+def media_ports_path(values) -> Path:
+    """Written by the Asterisk container at start when a Compose file publishes its media range."""
+    return Path(values.fax_data_dir) / 'asterisk' / 'media-ports'
+
+
+def read_media_ports(values):
+    """(first, last) of the media range a Compose file publishes on this computer, or None."""
+    try:
+        record = json.loads(media_ports_path(values).read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        return None
+    found = _RANGE.fullmatch(str(record.get('media_ports', ''))) if isinstance(record, dict) else None
+    if not found or not 1024 <= int(found.group(1)) <= int(found.group(2)) <= 65535:
+        return None
+    return int(found.group(1)), int(found.group(2))
+
+
+def lease_path(values) -> Path:
+    return Path(values.fax_data_dir) / 'asterisk' / 'router-ports'
+
+
+def read_lease(values):
+    """The ports the router opened for Faxbot, as recorded, or None."""
+    try:
+        return port_mapping.Lease.from_dict(json.loads(lease_path(values).read_text(encoding='utf-8')))
+    except (OSError, ValueError, AttributeError):
+        return None
+
+
+def _keep_lease(values, lease):
+    path = lease_path(values)
+    if lease is None:
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
+        return
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    sip_trunk._write_private(path, json.dumps(lease.as_dict()) + '\n')
+
+
+def _gateway(found, where):
+    """The router in front of this computer, when nothing else that changes ports sits in between."""
+    if where not in ('linux_lan', 'colima_bridged', 'unknown'):
+        return None
+    outside = outside_hops(found)
+    first = outside[0] if outside else None
+    return first if _local(_address(first)) else None
+
+
+def map_ports(values, probe, found, *, router=None, now=time.time):
+    """Open, renew or close Faxbot's fax ports on the router as this check needs; returns {state, ...}.
+
+    Faxbot asks only when the router changes port numbers, the fax ports are
+    published on this computer, nobody typed an internet address (then the
+    person forwards them), and the router is the next one out. States: open,
+    refused, behind_another_router, off, not_needed, no_fax_ports, no_router.
+    Blocking; never raises.
+    """
+    router = router or port_mapping.Router
+    lease = read_lease(values)
+    published = read_media_ports(values)
+    where = platform(found, probe)
+    gateway = _gateway(found, where)
+    needed = bool(applies(values) and probe is not None and probe.public_ip and probe.behind_nat
+                  and port_behavior(probe) not in (None, 'kept') and not values.sip_external_address)
+    state = ('off' if not values.sip_router_ports else 'not_needed' if not needed
+             else 'no_fax_ports' if not published else 'no_router' if not gateway else None)
+    try:
+        if state:
+            if lease:
+                router(lease.gateway).close(lease)
+                _keep_lease(values, None)
+            return {'state': state}
+        first, last = published
+        client = router(gateway)
+        if lease and (lease.gateway, lease.first, lease.last) != (gateway, first, last):
+            client.close(lease)
+            lease = None
+        if lease and now() >= lease.renew_at:
+            lease = client.renew(lease)
+        reasons = None
+        if lease is None:
+            lease, reasons = client.open(first, last)
+        _keep_lease(values, lease)
+        ports = f'{first}-{last}'
+        if lease is None:
+            return {'state': 'refused', 'ports': ports, 'reasons': reasons or []}
+        if lease.external_ip and lease.external_ip != probe.public_ip:
+            # The router's own internet address is not the one the internet sees: another router (or the
+            # internet provider's shared address) sits in front, so the opened ports would lead nowhere.
+            client.close(lease)
+            _keep_lease(values, None)
+            outer = _address(lease.external_ip)
+            return {'state': 'behind_another_router', 'ports': ports,
+                    'shared': bool(outer is not None and outer in SHARED_ADDRESS_SPACE)}
+        return {'state': 'open', 'ports': ports, 'method': lease.method}
+    except Exception:
+        return {'state': 'refused', 'ports': f'{published[0]}-{published[1]}' if published else None,
+                'reasons': ['failed']}
+
+
+def close_router_ports(values):
+    """Close the ports the router opened for Faxbot (at stop); never raises."""
+    lease = read_lease(values)
+    if lease is None:
+        return False
+    try:
+        port_mapping.Router(lease.gateway).close(lease)
+    finally:
+        _keep_lease(values, None)
+    return True
+
+
 # -- sentences -----------------------------------------------------------------------------------------
 
 PLATFORM_TEXT = {
-    'colima_user': "Faxbot runs in Colima on a Mac, on Colima's built-in network.",
-    'colima_shared': "Faxbot runs in Colima on a Mac, on the Mac's shared network.",
-    'colima_bridged': 'Faxbot runs in Colima on a Mac, directly on your local network.',
-    'colima': 'Faxbot runs in Colima on a Mac.',
+    'colima_user': 'Faxbot runs in Docker on this Mac, on a private network inside the Mac.',
+    'colima_shared': "Faxbot runs in Docker on this Mac, on the Mac's shared network.",
+    'colima_bridged': 'Faxbot runs in Docker on this Mac, directly on your local network.',
+    'colima': 'Faxbot runs in Docker on this Mac.',
     'docker_desktop_mac': 'Faxbot runs in Docker Desktop, an app on your Mac.',
     'docker_desktop_windows': 'Faxbot runs in Docker Desktop, an app on your Windows computer.',
     'docker_desktop': 'Faxbot runs in Docker Desktop.',
@@ -430,9 +571,22 @@ PLATFORM_TEXT = {
     'linux_lan': 'Faxbot runs on a computer on your local network, behind your router.',
 }
 NOT_CHECKED = 'Faxbot has not checked this network yet.'
+# For the Overview and System diagnostics, read by an office administrator; the trunk page has the details.
+OFFICE_TEXT = {
+    OPEN: 'Your network is ready for faxing over the internet.',
+    BLOCKED: 'Your network needs one change so faxes can go over the internet. The carrier page shows what to do.',
+    UNKNOWN: 'Faxbot cannot tell yet whether your network is ready for faxing over the internet. Faxes still go through.',
+}
 PHONE_SYSTEM_TEXT = 'Your phone system is on your local network, so fax over IP needs no network check.'
 AUDIO_MEANWHILE = 'Audio fax keeps working meanwhile.'
-FAX_PORTS_TEXT = f'{FAX_PORTS[0]}–{FAX_PORTS[1]}'
+# Live 2026-10-04: with the network open, Telnyx still refused T.38 on calls from another fax service.
+TRIES_FIRST = 'Faxbot tries fax over IP (T.38) first. When the carrier declines it, the fax goes through as audio.'
+
+
+def _ports_text(record=None):
+    published = (record or {}).get('fax_ports') or f'{FAX_PORTS[0]}-{FAX_PORTS[1]}'
+    first, _, last = published.partition('-')
+    return f'{first}–{last}'
 
 
 def carrier_name(values):
@@ -440,36 +594,51 @@ def carrier_name(values):
     return preset.label if preset and preset.id != 'custom' else 'the carrier'
 
 
-def _possessive(carrier):
-    return "the carrier's" if carrier == 'the carrier' else f"{carrier}'s"
-
-
 def verdict_text(record, carrier='the carrier'):
-    """One sentence: whether T.38 fax data can come back, and why."""
+    """One sentence: whether T.38 can work through this network, and why."""
     if not record:
         return NOT_CHECKED
-    why, theirs = record.get('why'), _possessive(carrier)
+    why, can = record.get('why'), 'Fax over IP (T.38) can work here, because'
     texts = {
-        'public': f'Faxbot has its own internet address, so {theirs} T.38 fax data can come back to it.',
-        'ports_kept': f'Your network keeps port numbers, so {theirs} T.38 fax data can come back to Faxbot.',
-        'typed': (f'Your network keeps port numbers, and {carrier} sends fax data to the address you entered.'
-                  if record['t38'] == OPEN else
-                  'Your network changes port numbers, so T.38 fax data comes back only if your router forwards '
-                  "Faxbot's fax ports to the address you entered."),
-        'typed_differs': (f'The address you entered is not the one Faxbot sees from the internet '
-                          f'({record.get("internet_address")}), so {theirs} T.38 fax data may not come back.'),
-        't38_worked': f'A T.38 fax went through on this network, so {theirs} T.38 fax data comes back to Faxbot.',
-        'shared_address': ('Your internet provider shares your internet address with other customers, so T.38 fax '
-                           'cannot work here.'),
-        'no_address': 'Faxbot could not find its internet address, so it cannot tell yet whether T.38 fax works here.',
+        'public': f'{can} this server has its own internet address.',
+        'ports_kept': f'{can} your network keeps port numbers unchanged.',
+        'typed': (f'{can} your network keeps port numbers unchanged.' if record['t38'] == OPEN else
+                  "Fax over IP (T.38) works here only if your router forwards Faxbot's fax ports to this computer."),
+        'forwarded': f"{can} your router forwards Faxbot's fax ports.",
+        'router_mapped': f"{can} your router passes Faxbot's fax ports through.",
+        't38_worked': f'{can} a T.38 fax already went through on this network.',
+        'typed_differs': (f'The address you entered is not the one Faxbot sees ({record.get("internet_address")}), '
+                          'so fax over IP (T.38) may not work.'),
+        'shared_address': ('Fax over IP (T.38) cannot work here, because your internet provider shares your internet '
+                           'address.'),
+        'behind_another_router': ('Fax over IP (T.38) cannot work here yet: another router in front of yours changes '
+                                  'port numbers.'),
+        'no_address': ('Faxbot could not find its internet address, so it cannot tell yet whether fax over IP (T.38) '
+                       'works here.'),
     }
     if why == 'ports_change':
         if carrier == 'Telnyx':
             # Measured 2026-10-03: Telnyx follows Faxbot's audio to a changed port, never its T.38 data.
-            return ('Your network changes port numbers, and Telnyx does not follow such changes for T.38 fax data, '
-                    'so it cannot come back to Faxbot.')
-        return f'Your network changes port numbers, so {theirs} T.38 fax data most likely cannot come back to Faxbot.'
+            return ('Fax over IP (T.38) cannot work here: your network changes port numbers, which Telnyx cannot '
+                    'handle for fax over IP.')
+        return 'Fax over IP (T.38) most likely cannot work here, because your network changes port numbers.'
     return texts.get(why, NOT_CHECKED)
+
+
+def router_sentence(record):
+    """One sentence about Faxbot's fax ports on the router, or None when there is nothing to say."""
+    mapping = (record or {}).get('router_ports') or {}
+    state, ports = mapping.get('state'), _ports_text(record)
+    if state == 'open':
+        return (f'Faxbot opened UDP ports {ports} on your router so fax data can come back. It renews them while it '
+                'runs and closes them when it stops.')
+    if state == 'refused':
+        return f'Your router did not open UDP ports {ports} for Faxbot.'
+    if state == 'behind_another_router':
+        return f'Your router opened UDP ports {ports}, but another router sits in front of it, so Faxbot closed them.'
+    if state == 'off' and record and record['t38'] != OPEN:
+        return 'Faxbot does not ask your router to open ports, because that is turned off.'
+    return None
 
 
 _INTERFACE = '"$(route -n get default | awk \'/interface:/{print $2}\')"'
@@ -479,56 +648,73 @@ def colima_steps(record):
     """Recreate Colima directly on the local network, keeping its size and Faxbot's data (Colima 0.9 or later)."""
     size = ''.join(f' --{flag} {record[key]}' for flag, key in (('cpu', 'cpus'), ('memory', 'memory_gib'),
                                                                  ('disk', 'disk_gib')) if record.get(key))
-    return ['colima list', 'colima delete default',
+    return ['colima version   # 0.9 or later keeps your faxes when the machine is recreated',
+            'colima list', 'colima delete default',
             f'colima start default{size} --network-address --network-mode bridged '
             f'--network-interface {_INTERFACE} --network-preferred-route',
             'docker compose up -d']
 
 
 def fix(record):
-    """What the operator does when Faxbot cannot fix the network itself: {text, steps, note}, or None."""
+    """What the operator does when Faxbot cannot fix the network itself: {text, steps, note}, or None.
+
+    Commands go in ``steps``, one per line, so the sentence around them stays plain.
+    """
     if not record or record['t38'] == OPEN:
         return None
-    why, where, address = record.get('why'), record.get('platform'), record.get('internet_address')
-    typed = f', and enter your internet address, {address}, under Internet address' if address else \
-        ', and enter your internet address under Internet address'
-    forward = f'forward UDP ports {FAX_PORTS_TEXT} on your router to'
-    start = 'start Faxbot with its fax ports using the command below'
+    why, where = record.get('why'), record.get('platform')
+    ports, published = _ports_text(record), bool(record.get('fax_ports'))
+    mapping = (record.get('router_ports') or {}).get('state')
+    address = 'enter your internet address under Internet address'
+    command = [] if published else [FAX_PORTS_COMMAND]
+    restart = '' if published else 'restart Faxbot with its fax ports (the command below), '
+
+    def answer(text, steps=(), note=None):
+        return {'text': text, 'steps': list(steps), 'note': note}
     if why == 'shared_address':
-        return {'text': ('No router setting can change this. To use T.38, run Faxbot on a server with its own '
-                         'internet address, such as a rented virtual server.'), 'steps': [], 'note': None}
+        return answer('No router setting can change this. To use fax over IP (T.38), run Faxbot on a server with its '
+                      'own internet address.')
     if why == 'no_address':
-        return {'text': ('If a firewall limits outgoing traffic, let Faxbot reach stun.cloudflare.com on UDP port 3478 '
-                         'so it can learn its internet address.'), 'steps': [], 'note': None}
+        return answer('If a firewall limits outgoing traffic, let Faxbot reach stun.cloudflare.com on UDP port 3478.')
     if why == 'typed_differs':
-        return {'text': 'Empty the Internet address box so Faxbot uses the address it found, or correct the address.',
-                'steps': [], 'note': None}
+        return answer('Empty the Internet address box so Faxbot uses the address it found, or correct it.')
     if where in ('colima_user', 'colima_shared', 'colima'):
-        return {'text': ('Move Colima onto your office network with the commands below. Your faxes and settings '
-                         'stay; everything in Colima pauses for a few minutes, and your Mac may ask for its password '
-                         'once.'),
-                'steps': colima_steps(record),
-                'note': ('Use the name and sizes the first command shows for Faxbot (default when it has no name), '
-                         'and run the last command in Faxbot\'s folder. Never add --data to the delete command: it '
-                         'erases your faxes. Needs Colima 0.9 or later (colima version).')}
+        return answer('Connect Docker on this Mac directly to your local network with the commands below. Faxbot keeps '
+                      'its faxes and settings, Docker stops for a few minutes, and your Mac may ask for its password '
+                      'once.', colima_steps(record),
+                      'Before you start: the second command lists the name and sizes to use (the name is default unless '
+                      "you chose one). The disk keeps its old size. Run the last command in Faxbot's folder. Never add "
+                      '--data to the delete command, because that erases your faxes.')
     if why == 'typed':
-        return {'text': (f'Check that your router forwards UDP ports {FAX_PORTS_TEXT} to this computer and that Faxbot '
-                         'runs with its fax ports (the command below), then turn T.38 on.'),
-                'steps': [FAX_PORTS_COMMAND], 'note': None}
+        return answer(f'Forward UDP ports {ports} on your router to this computer and restart Faxbot with its fax ports '
+                      '(the command below).', [FAX_PORTS_COMMAND])
+    if why == 'behind_another_router':
+        return answer(f'Forward UDP ports {ports} on the router in front of yours too, then {address}.')
     if where == 'cloud':
-        return {'text': (f'Give the server its own public address, open UDP ports {FAX_PORTS_TEXT} in its firewall or '
-                         f'security group, and {start}.'), 'steps': [FAX_PORTS_COMMAND], 'note': None}
+        return answer(f'Give the server its own public address, open UDP ports {ports} in its firewall, {restart}'
+                      f'and {address}.', command)
     if where == 'public_host':
-        return {'text': f'Open UDP ports {FAX_PORTS_TEXT} in the server\'s firewall, {start}{typed}.',
-                'steps': [FAX_PORTS_COMMAND], 'note': None}
-    if where == 'colima_bridged':
-        return {'text': (f'Your router changes port numbers: {forward} Colima\'s address (the ADDRESS column of '
-                         f'colima list), {start}{typed}.'), 'steps': [FAX_PORTS_COMMAND], 'note': None}
+        return answer(f"Open UDP ports {ports} in the server's firewall, {restart}and {address}.", command)
     if where and where.startswith('docker_desktop'):
-        return {'text': f'Docker Desktop changes port numbers: {forward} this computer, {start}{typed}.',
-                'steps': [FAX_PORTS_COMMAND], 'note': None}
-    return {'text': f'Your router changes port numbers: {forward} the computer that runs Faxbot, {start}{typed}.',
-            'steps': [FAX_PORTS_COMMAND], 'note': None}
+        return answer(f'Forward UDP ports {ports} on your router to this computer, {restart}and {address}.', command)
+    vm = where == 'colima_bridged'
+    if mapping == 'refused':
+        target = 'the address the command below lists' if vm else 'this computer'
+        return answer(f'Turn on UPnP or NAT-PMP on your router so Faxbot can open UDP ports {ports} itself. Or forward '
+                      f'those ports to {target} and {address}.', ['colima list'] if vm else [])
+    if not published and mapping != 'off':
+        target = 'the address the second command lists' if vm else 'this computer'
+        return answer('Restart Faxbot with its fax ports (the first command below), and Faxbot asks your router to open '
+                      f'them. If the router refuses, forward UDP ports {ports} to {target} and {address}.',
+                      [FAX_PORTS_COMMAND] + (['colima list'] if vm else []))
+    if vm and published:
+        return answer(f'Forward UDP ports {ports} on your router to the address the command below lists, then '
+                      f'{address}.', ['colima list'])
+    if vm:
+        return answer(f'Forward UDP ports {ports} on your router to the address the first command below lists, restart '
+                      f'Faxbot with its fax ports (the second command), and {address}.',
+                      ['colima list', FAX_PORTS_COMMAND])
+    return answer(f'Forward UDP ports {ports} on your router to this computer, {restart}and {address}.', command)
 
 
 def action(values):
@@ -549,7 +735,7 @@ def action_sentence(done, day=''):
     if done == 'turned_off':
         return f'{when} switched new calls to audio fax.'
     if done == 'turned_on':
-        return f'{when} switched new calls back to T.38 fax because your network allows it now.'
+        return f'{when} switched new calls back to fax over IP (T.38), because your network allows it now.'
     return None
 
 
@@ -579,13 +765,19 @@ def report(values):
         't38': record['t38'] if record else UNKNOWN,
         'why': record.get('why') if record else None,
         'text': verdict_text(record, carrier),
+        'office_text': OFFICE_TEXT[record['t38']] if record else NOT_CHECKED,
+        'tries_text': TRIES_FIRST if record and record['t38'] == OPEN else None,
         'fix_text': remedy['text'] if remedy else None,
         'fix_steps': remedy['steps'] if remedy else [],
         'fix_note': remedy['note'] if remedy else None,
         'audio_text': AUDIO_MEANWHILE if record and record['t38'] != OPEN else None,
         't38_enabled': bool(values.sip_t38_enabled),
         'action': done, 'action_at': done_at,
-        'fax_ports': f'{FAX_PORTS[0]}-{FAX_PORTS[1]}',
+        'fax_ports': (record or {}).get('fax_ports') or f'{FAX_PORTS[0]}-{FAX_PORTS[1]}',
+        'fax_ports_published': bool(record and record.get('fax_ports')),
+        'router_ports_enabled': bool(values.sip_router_ports),
+        'router_state': ((record or {}).get('router_ports') or {}).get('state'),
+        'router_text': router_sentence(record),
     }
 
 
@@ -604,48 +796,129 @@ def _records_for(runtime):
         return None
 
 
-def record_check(values, probe, found, records=None):
-    """Assess, store and return (check, previous verdict); also records the probe for Asterisk's next start."""
-    previous = previous_verdict(values)
-    check = assess(values, probe, found, _observed(records) if records is not None else None)
+def record_check(values, probe, found, records=None, mapping=None):
+    """Assess and store a check; also records the probe for Asterisk's next start.
+
+    The stored check counts how many checks in a row gave the same answer
+    (``count``) and keeps what the network allowed before that run of answers
+    (``changed_from``). ``advertise_changed`` says whether the address Asterisk
+    names at its next start changed.
+    """
+    before = read_check(values)
+    check = assess(values, probe, found, _observed(records) if records is not None else None, mapping=mapping,
+                   published=read_media_ports(values))
+    if before and before['t38'] == check['t38']:
+        check['count'], check['changed_from'] = int(before.get('count') or 1) + 1, before.get('changed_from')
+    else:
+        check['count'], check['changed_from'] = 1, (before['t38'] if before else previous_verdict(values))
     write_check(values, check)
+    check['advertise_changed'] = False
     if probe is not None and probe.public_ip and not values.sip_external_address:
-        sip_trunk.write_public_address(values, probe)
-    return check, previous
+        # Ports the router opened 1:1 make Faxbot's internet address and port numbers exact.
+        exact = True if check['why'] == 'router_mapped' else None
+        check['advertise_changed'] = sip_trunk.write_public_address(values, probe, exact=exact)
+    return check
 
 
-async def run_check(runtime, records=None, *, fresh=True):
+_locks = {}
+
+
+def _lock():
+    loop = asyncio.get_running_loop()
+    found = _locks.get(id(loop))
+    if found is None or found[0] is not loop:
+        found = _locks[id(loop)] = (loop, asyncio.Lock())
+    return found[1]
+
+
+async def run_check(runtime, records=None, *, fresh=True, unattended=False):
     """Check the network now, store it, and turn T.38 on or off for new calls when the check says so.
 
-    Returns {check, switched (None, 't38' or 'audio'), engine (what Asterisk did, or None)}, or None
+    ``unattended`` (the check at start and the periodic one) switches only when
+    two checks in a row gave the same answer; Apply and Check again switch at
+    once. Returns {check, switched (None, 't38' or 'audio'), awaiting (a switch
+    waiting for the next check), engine (what Asterisk did, or None)}, or None
     when there is no carrier trunk. Never resends a fax.
     """
     from .config_runtime import run_lifecycle_step
-    from .sip_http import probe_network
-    values = await run_lifecycle_step(lambda: runtime.manager.store.read().active.values)
-    if not applies(values):
-        return None
-    probe = await probe_network(values.sip_trunk_preset, fresh=fresh)
-    found = await discover(fresh=fresh)
-    records = records if records is not None else _records_for(runtime)
-    check, previous = await run_lifecycle_step(lambda: record_check(values, probe, found, records))
-    decision = await run_lifecycle_step(
-        lambda: sip_fax_mode.network_decision(values, check['t38'], previous=previous, records=records))
-    engine = None
-    if decision:
-        engine = await sip_fax_mode.switch(runtime, decision == 't38', sip_fax_mode.NETWORK, network=check['t38'])
-    return {'check': check, 'switched': decision, 'engine': engine}
+    from .sip_http import _load_into_engine, probe_network
+    async with _lock():
+        values = await run_lifecycle_step(lambda: runtime.manager.store.read().active.values)
+        if not applies(values):
+            await run_lifecycle_step(lambda: close_router_ports(values))
+            return None
+        probe = await probe_network(values.sip_trunk_preset, fresh=fresh)
+        found = await discover(fresh=fresh)
+        records = records if records is not None else _records_for(runtime)
+        mapping = await run_lifecycle_step(lambda: map_ports(values, probe, found))
+        check = await run_lifecycle_step(lambda: record_check(values, probe, found, records, mapping))
+        decision = await run_lifecycle_step(lambda: sip_fax_mode.network_decision(
+            values, check['t38'], previous=check['changed_from'], records=records))
+        awaiting = None
+        if unattended and decision and check['count'] < 2:
+            awaiting, decision = decision, None
+        engine = None
+        if decision:
+            engine = await sip_fax_mode.switch(runtime, decision == 't38', sip_fax_mode.NETWORK, network=check['t38'])
+        elif check['advertise_changed'] and (check['why'] == 'router_mapped'
+                                             or (mapping or {}).get('state') in ('refused', 'behind_another_router')):
+            # Asterisk names the opened ports only after a restart, which waits until no call is up.
+            if await run_lifecycle_step(lambda: sip_trunk.engine_managed(values)):
+                engine = await _load_into_engine(values)
+        return {'check': check, 'switched': decision, 'awaiting': awaiting, 'engine': engine}
 
 
-async def check_at_start(runtime, *, delay=START_DELAY_SECONDS):
-    """The check at every start, once Asterisk and the network have settled; never raises."""
+# How long the start check waits before confirming an answer that differs from the stored one.
+CONFIRM_SECONDS = 60
+
+
+async def check_at_start(runtime, *, delay=START_DELAY_SECONDS, confirm=CONFIRM_SECONDS, keep=True):
+    """The check at every start, once Asterisk and the network have settled; never raises.
+
+    When the answer differs from the last stored one, a second check a minute
+    later confirms it before T.38 is switched. Then (``keep``) the task keeps
+    the router's ports renewed and closes them when Faxbot stops.
+    """
     if delay and _test_mode():
         return None
+    outcome = None
     try:
         await asyncio.sleep(delay)
-        return await run_check(runtime)
+        outcome = await run_check(runtime, unattended=True)
+        if outcome and outcome.get('awaiting'):
+            await asyncio.sleep(confirm)
+            outcome = await run_check(runtime, unattended=True)
     except asyncio.CancelledError:
         raise
     except Exception:
         logging.getLogger(__name__).warning('Faxbot could not check its network for fax over IP.')
-        return None
+    if keep:
+        await keep_router_ports(runtime)
+    return outcome
+
+
+async def keep_router_ports(runtime, *, idle=600):
+    """Renew the ports the router opened for Faxbot at half their lifetime; close them when Faxbot stops."""
+    from .config_runtime import run_lifecycle_step
+
+    def current():
+        return runtime.manager.store.read().active.values
+    try:
+        while True:
+            values = await run_lifecycle_step(current)
+            lease = await run_lifecycle_step(lambda: read_lease(values))
+            await asyncio.sleep(idle if lease is None else min(idle, max(30.0, lease.renew_at - time.time())))
+            lease = await run_lifecycle_step(lambda: read_lease(values))
+            if lease is not None and time.time() >= lease.renew_at:
+                try:
+                    await run_check(runtime, unattended=True)
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    logging.getLogger(__name__).warning('Faxbot could not renew its fax ports on the router.')
+    finally:
+        try:
+            values = current()
+            await asyncio.wait_for(asyncio.to_thread(close_router_ports, values), 5)
+        except BaseException:
+            pass

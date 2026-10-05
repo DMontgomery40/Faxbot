@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Alert, Box, Button, CircularProgress, Stack, Typography } from '@mui/material';
+import { Alert, Box, Button, CircularProgress, FormControlLabel, Stack, Switch, Typography } from '@mui/material';
 import AdminAPIClient, { AdminAPIError, isForbidden } from '../api/client';
 import type { SipNetworkReport } from '../api/networkTypes';
 
@@ -17,13 +17,19 @@ export function actionSentence(action: SipNetworkReport['action'], at?: string |
   const who = date && !Number.isNaN(date.getTime())
     ? `On ${date.toLocaleDateString(undefined, { day: 'numeric', month: 'long' })}, Faxbot` : 'Faxbot';
   if (action === 'turned_off') return `${who} switched new calls to audio fax.`;
-  if (action === 'turned_on') return `${who} switched new calls back to T.38 fax because your network allows it now.`;
+  if (action === 'turned_on') return `${who} switched new calls back to fax over IP (T.38), because your network allows it now.`;
   return null;
 }
 
 const SEVERITY = { open: 'success', blocked: 'warning', unknown: 'info' } as const;
 
-// The trunk page's "Network for fax over IP": the verdict, what Faxbot did, the fix, and Check again.
+function failure(error: unknown, fallback: string): string {
+  if (error instanceof AdminAPIError && error.status === 403) return 'You do not have permission to do this.';
+  if (error instanceof AdminAPIError && error.status === 400 && error.detail) return error.detail;
+  return fallback;
+}
+
+// The trunk page's "Network for fax over IP": the verdict, what Faxbot did, the fix, the router switch and Check again.
 function NetworkForFax({ client, onChanged, refresh }: NetworkForFaxProps) {
   const [report, setReport] = useState<SipNetworkReport | null>(null);
   const [busy, setBusy] = useState(false);
@@ -44,20 +50,36 @@ function NetworkForFax({ client, onChanged, refresh }: NetworkForFaxProps) {
   }, [client]);
   useEffect(() => { void load(); }, [load, refresh]);
 
+  const check = async () => {
+    const result = await client.checkSipNetwork();
+    if (!alive.current) return;
+    setReport(result);
+    if (result.engine_message) setNotice({ severity: 'info', text: result.engine_message });
+    if (result.switched) await onChanged?.();
+  };
+
   const checkAgain = async () => {
     setBusy(true);
     setNotice(null);
     try {
-      const result = await client.checkSipNetwork();
-      if (!alive.current) return;
-      setReport(result);
-      if (result.engine_message) setNotice({ severity: 'info', text: result.engine_message });
-      if (result.switched) await onChanged?.();
+      await check();
     } catch (error) {
-      const text = error instanceof AdminAPIError && error.status === 403 ? 'You do not have permission to do this.'
-        : error instanceof AdminAPIError && error.status === 400 && error.detail ? error.detail
-          : 'The network could not be checked. Try again.';
-      if (alive.current) setNotice({ severity: 'error', text });
+      if (alive.current) setNotice({ severity: 'error', text: failure(error, 'The network could not be checked. Try again.') });
+    } finally {
+      if (alive.current) setBusy(false);
+    }
+  };
+
+  // Save the router switch, then check again so the ports open or close at once.
+  const setRouterPorts = async (enabled: boolean) => {
+    setBusy(true);
+    setNotice(null);
+    try {
+      const settings = await client.getSettings();
+      await client.updateSettings({ expected_revision_id: settings._meta?.desired_revision_id, sip_router_ports: enabled });
+      await check();
+    } catch (error) {
+      if (alive.current) setNotice({ severity: 'error', text: failure(error, 'The setting could not be saved. Try again.') });
     } finally {
       if (alive.current) setBusy(false);
     }
@@ -82,7 +104,9 @@ function NetworkForFax({ client, onChanged, refresh }: NetworkForFaxProps) {
       <Alert severity={SEVERITY[report.t38 ?? 'unknown'] ?? 'info'} sx={{ mt: 1 }}>
         <Typography variant="body2" fontWeight={600}>{report.text}</Typography>
         {report.platform_text && <Typography variant="body2">{report.platform_text}</Typography>}
+        {report.tries_text && <Typography variant="body2">{report.tries_text}</Typography>}
         {done && <Typography variant="body2">{done}</Typography>}
+        {report.router_text && <Typography variant="body2">{report.router_text}</Typography>}
         {report.fix_text && <Typography variant="body2" sx={{ mt: 1 }}>{report.fix_text}</Typography>}
         {steps.length > 0 && (
           <>
@@ -97,7 +121,11 @@ function NetworkForFax({ client, onChanged, refresh }: NetworkForFaxProps) {
         {report.fix_note && <Typography variant="body2" color="text.secondary">{report.fix_note}</Typography>}
         {report.audio_text && <Typography variant="body2" sx={{ mt: 1 }}>{report.audio_text}</Typography>}
       </Alert>
-      <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 1 }}>
+      <FormControlLabel sx={{ mt: 1 }} disabled={busy}
+        control={<Switch checked={report.router_ports_enabled ?? true}
+          onChange={(event) => { void setRouterPorts(event.target.checked); }} />}
+        label="Let Faxbot open its fax ports on your router" />
+      <Stack direction="row" spacing={1} alignItems="center">
         <Button size="small" variant="outlined" onClick={checkAgain} disabled={busy}
           startIcon={busy ? <CircularProgress size={14} color="inherit" /> : undefined}>Check again</Button>
         {checkedAt && !Number.isNaN(checkedAt.getTime()) && (

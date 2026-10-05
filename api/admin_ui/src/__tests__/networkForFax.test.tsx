@@ -7,6 +7,7 @@ import SipTrunkSettings from '../components/SipTrunkSettings';
 import { server } from '../test/server';
 
 const STEPS = [
+  'colima version   # 0.9 or later keeps your faxes when the machine is recreated',
   'colima list',
   'colima delete default',
   'colima start default --cpu 2 --memory 4 --disk 20 --network-address --network-mode bridged '
@@ -17,25 +18,38 @@ const STEPS = [
 // What the server says for Faxbot in Colima's built-in network (measured 2026-10-04), with a documentation address.
 const BLOCKED = {
   applies: true, checked: true, checked_at: '2026-10-05T03:50:00Z', platform: 'colima_user',
-  platform_text: "Faxbot runs in Colima on a Mac, on Colima's built-in network.", ports: 'changed_per_destination',
-  internet_address: '198.51.100.7', shared_address: false, t38: 'blocked', why: 'ports_change',
-  text: 'Your network changes port numbers, and Telnyx does not follow such changes for T.38 fax data, so it cannot '
-    + 'come back to Faxbot.',
-  fix_text: 'Move Colima onto your office network with the commands below. Your faxes and settings stay; everything '
-    + 'in Colima pauses for a few minutes, and your Mac may ask for its password once.',
+  platform_text: 'Faxbot runs in Docker on this Mac, on a private network inside the Mac.',
+  ports: 'changed_per_destination', internet_address: '198.51.100.7', shared_address: false, t38: 'blocked',
+  why: 'ports_change',
+  text: 'Fax over IP (T.38) cannot work here: your network changes port numbers, which Telnyx cannot handle for fax '
+    + 'over IP.',
+  tries_text: null,
+  fix_text: 'Connect Docker on this Mac directly to your local network with the commands below. Faxbot keeps its faxes '
+    + 'and settings, Docker stops for a few minutes, and your Mac may ask for its password once.',
   fix_steps: STEPS,
-  fix_note: "Use the name and sizes the first command shows for Faxbot (default when it has no name), and run the last "
-    + "command in Faxbot's folder. Never add --data to the delete command: it erases your faxes. Needs Colima 0.9 or "
-    + 'later (colima version).',
+  fix_note: 'Before you start: the second command lists the name and sizes to use (the name is default unless you '
+    + "chose one). The disk keeps its old size. Run the last command in Faxbot's folder. Never add --data to the delete "
+    + 'command, because that erases your faxes.',
   audio_text: 'Audio fax keeps working meanwhile.', t38_enabled: false, action: 'turned_off',
-  action_at: '2026-10-05T03:50:00Z', fax_ports: '4000-4039',
+  action_at: '2026-10-05T03:50:00Z', fax_ports: '4000-4039', fax_ports_published: false, router_ports_enabled: true,
+  router_state: 'not_needed', router_text: null,
 };
 const FIXED = {
-  ...BLOCKED, platform: 'colima_bridged', platform_text: 'Faxbot runs in Colima on a Mac, directly on your local network.',
+  ...BLOCKED, platform: 'colima_bridged', platform_text: 'Faxbot runs in Docker on this Mac, directly on your local network.',
   ports: 'kept', t38: 'open', why: 'ports_kept',
-  text: "Your network keeps port numbers, so Telnyx's T.38 fax data can come back to Faxbot.",
+  text: 'Fax over IP (T.38) can work here, because your network keeps port numbers unchanged.',
+  tries_text: 'Faxbot tries fax over IP (T.38) first. When the carrier declines it, the fax goes through as audio.',
   fix_text: null, fix_steps: [], fix_note: null, audio_text: null, t38_enabled: true, action: 'turned_on',
   switched: 't38', engine_message: 'Saved for Asterisk. Restart the Asterisk service to use these settings.',
+};
+// A Linux computer behind a router that changes ports: Faxbot opened its published fax ports there.
+const MAPPED = {
+  ...FIXED, platform: 'linux_lan', platform_text: 'Faxbot runs on a computer on your local network, behind your router.',
+  ports: 'changed_same', why: 'router_mapped',
+  text: "Fax over IP (T.38) can work here, because your router passes Faxbot's fax ports through.",
+  fax_ports_published: true, router_state: 'open', switched: null, engine_message: null,
+  router_text: 'Faxbot opened UDP ports 4000–4039 on your router so fax data can come back. It renews them while it '
+    + 'runs and closes them when it stops.',
 };
 
 function client() {
@@ -62,16 +76,50 @@ describe('Network for fax over IP', () => {
     expect(within(section).getByText('Audio fax keeps working meanwhile.')).toBeTruthy();
     expect(within(section).getByText(/^Checked /)).toBeTruthy();
     // No developer words: no ISO times, no internal names.
-    expect(section.textContent).not.toMatch(/2026-10-05T|colima_user|blocked|ports_change/);
+    expect(section.textContent).not.toMatch(/2026-10-05T|colima_user|blocked|ports_change|not_needed/);
     fireEvent.click(within(section).getByRole('button', { name: 'Check again' }));
     expect(await within(section).findByText(FIXED.text)).toBeTruthy();
-    expect(within(section).getByText(/^On .+, Faxbot switched new calls back to T\.38 fax because your network allows it now\.$/))
-      .toBeTruthy();
+    // Network open is not carrier acceptance: T.38 is tried first, audio carries the fax when the carrier declines.
+    expect(within(section).getByText(FIXED.tries_text)).toBeTruthy();
+    expect(within(section).getByText(
+      /^On .+, Faxbot switched new calls back to fax over IP \(T\.38\), because your network allows it now\.$/)).toBeTruthy();
     expect(within(section).getByText(FIXED.engine_message)).toBeTruthy();
     expect(within(section).queryByText('Audio fax keeps working meanwhile.')).toBeNull();
     expect(within(section).queryByTestId('sip-network-steps')).toBeNull();
     expect(checks).toBe(1);
     await waitFor(() => expect(changed).toBe(1));
+  });
+
+  it('says which ports Faxbot opened on the router, and turning that off saves the setting and checks again', async () => {
+    const writes: Array<Record<string, unknown>> = [];
+    let checks = 0;
+    server.use(
+      http.get('/admin/sip/network', () => HttpResponse.json(MAPPED)),
+      http.get('/admin/settings', () => HttpResponse.json({ _meta: { active_revision_id: 'rev-1',
+        desired_revision_id: 'rev-1', generation: 1, apply_state: 'applied', pending_fields: [] } })),
+      http.put('/admin/settings', async ({ request }) => {
+        writes.push(await request.json() as Record<string, unknown>);
+        return HttpResponse.json({ ok: true, changed: true, _meta: { active_revision_id: 'rev-2',
+          desired_revision_id: 'rev-2', generation: 2, apply_state: 'applied', restart_recommended: false } });
+      }),
+      http.post('/admin/sip/network/check', () => {
+        checks += 1;
+        return HttpResponse.json({ ...BLOCKED, platform: 'linux_lan', router_ports_enabled: false, router_state: 'off',
+          router_text: 'Faxbot does not ask your router to open ports, because that is turned off.' });
+      }),
+    );
+    render(<NetworkForFax client={client()} />);
+    const section = await screen.findByTestId('sip-network');
+    expect(within(section).getByText(MAPPED.router_text)).toBeTruthy();
+    const toggle = within(section).getByRole('checkbox', { name: 'Let Faxbot open its fax ports on your router' });
+    expect((toggle as HTMLInputElement).checked).toBe(true);
+    fireEvent.click(toggle);
+    expect(await within(section).findByText('Faxbot does not ask your router to open ports, because that is turned off.'))
+      .toBeTruthy();
+    expect(writes).toEqual([{ expected_revision_id: 'rev-1', sip_router_ports: false }]);
+    expect(checks).toBe(1);
+    expect((within(section).getByRole('checkbox', { name: 'Let Faxbot open its fax ports on your router' }) as HTMLInputElement)
+      .checked).toBe(false);
   });
 
   it('shows nothing for a phone system or without a carrier, and says when Check again is not allowed', async () => {
@@ -99,20 +147,20 @@ describe('Network for fax over IP', () => {
         sip: { trunk: { preset: 'telnyx', auth: 'registration', host: '', port: 0, transport: '', username: 'faxbotuser',
           password: '***', password_set: true, outbound_proxy: '', caller_id: '+15555550100', dids: [],
           t38_enabled: false, fax_preference_header: true, codecs: '', t38_off_reason: 'network',
-          t38_off_at: '2026-10-05T03:50:00Z' } } })),
+          t38_off_at: '2026-10-05T03:50:00Z', router_ports: true } } })),
       http.get('/admin/sip/network', () => HttpResponse.json(BLOCKED)),
     );
     render(<SipTrunkSettings client={client()} showCalls={false} />);
     const section = await screen.findByTestId('sip-network');
     expect(within(section).getByText(BLOCKED.text)).toBeTruthy();
-    expect(await screen.findByText("Off: your network changes port numbers, so Telnyx's T.38 fax data cannot come back; "
-      + 'Faxbot uses audio fax until the network is fixed.')).toBeTruthy();
+    expect(await screen.findByText('Off: your network changes port numbers, so fax over IP (T.38) cannot work; Faxbot '
+      + 'sends audio fax until the network is fixed.')).toBeTruthy();
   });
 
   it('words what Faxbot did with the day only', () => {
     expect(actionSentence('turned_off', null)).toBe('Faxbot switched new calls to audio fax.');
     expect(actionSentence('turned_on', 'not a time')).toBe(
-      'Faxbot switched new calls back to T.38 fax because your network allows it now.');
+      'Faxbot switched new calls back to fax over IP (T.38), because your network allows it now.');
     expect(actionSentence(null, null)).toBeNull();
   });
 });

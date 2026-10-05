@@ -140,6 +140,9 @@ class ConfigurationValues(BaseModel):
     # How often Faxbot checks its internet address again for the trunk, in minutes; 0 turns the check off.
     sip_public_address_check_minutes: int = Field(5, validation_alias='SIP_PUBLIC_ADDRESS_CHECK_MINUTES',
                                                   ge=0, le=1440)
+    # Let Faxbot ask the router (PCP, NAT-PMP or UPnP) to open its published fax ports when the router changes
+    # port numbers, so T.38 fax data can come back; Faxbot closes them when it stops.
+    sip_router_ports: bool = Field(True, validation_alias='SIP_ROUTER_PORTS')
     # Read-only Telnyx API v2 key: Faxbot reads what each trunk call was charged. Never used to place calls.
     telnyx_api_key: str = Field('', validation_alias='TELNYX_API_KEY', repr=False, json_schema_extra={'secret': True},
                                 pattern=r'^[!-~]{0,256}$')

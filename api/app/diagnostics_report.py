@@ -427,8 +427,8 @@ async def network_for_fax(context: Context) -> list[Finding]:
     if not found.get('applies'):
         return []
     good = found['t38'] == sip_network.OPEN or not found.get('checked')
-    return [Finding('engine.network', 'engine', 'Network for fax over IP', OK if good else ATTENTION,
-                    found.get('text') or '', None if good else 'Open carrier trunk',
+    return [Finding('engine.network', 'engine', 'Faxing over the internet', OK if good else ATTENTION,
+                    found.get('office_text') or '', None if good else 'Open carrier trunk',
                     None if good else 'providers/trunk')]
 
 
