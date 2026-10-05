@@ -100,9 +100,9 @@ FAXBOT_API_KEY=... faxbot send +15551234567 referral.pdf
 
 With Faxbot stopped, `faxbot system recover-owner`, `backup`, `restore` and `migrate` recover owner access, back up and restore an installation, and upgrade its database. See [Command line](docs/operations/cli.md) and the [command reference](docs/reference/cli.md).
 
-## Mobile and desktop
+## Mobile
 
-The iOS companion connects to your Faxbot server to send faxes and check status. Pair it with a short-lived, single-use code from the console. See the [iOS guide](docs/apps/ios.md) for setup and TestFlight invitations, and the [desktop notes](ELECTRON_DESKTOP_APPS.md) for the Electron app.
+The iOS companion connects to your Faxbot server to send faxes and check status. Pair it with a short-lived, single-use code from the console. See the [iOS guide](docs/apps/ios.md) for setup and TestFlight invitations.
 
 ![iOS Send Screen](assets/ios_send_screenshot.png)
 
