@@ -54,6 +54,23 @@ def test_rate_cards_round_trip_as_money(client):
     assert bad.status_code == 400 and 'six decimal places' in bad.json()['detail']
 
 
+def test_the_planned_route_faxbot_send_shows_is_the_numbers_preferred_route(client):
+    """faxbot send prints the first recommended route as its Planned route: a number's chosen route comes
+    first even when another route is cheaper (live, 5 October: Provider HumbleFax was shown instead)."""
+    from app.cli.commands import fax
+    assert client.put('/routing/rate-cards', headers=ADMIN, json={'cards': [TELNYX, PHAXIO]}).status_code == 200
+    chosen = client.patch('/routing/destinations/+12025550123', headers=ADMIN, json={'preferred_route': 'phaxio'})
+    assert chosen.status_code == 200, chosen.text
+
+    class Api:
+        def get(self, path, params=None):
+            return client.get(path, headers=ADMIN, params=params).json()
+    view = Api().get('/routing/destinations/+12025550123', params={'pages': 2})
+    assert (view['recommended_routes'][0]['route'], view['recommended_routes'][0]['reason']) == ('phaxio', 'preferred')
+    planned = fax._planned_route(Api(), {'to_number': '+12025550123', 'pages': 2})
+    assert planned == ('Planned route', view['recommended_routes'][0]['label'])
+
+
 def test_destination_recommendation_ranks_configured_routes_by_cost(client):
     cards = client.put('/routing/rate-cards', headers=ADMIN, json={'cards': [TELNYX, PHAXIO]})
     assert cards.status_code == 200, cards.text

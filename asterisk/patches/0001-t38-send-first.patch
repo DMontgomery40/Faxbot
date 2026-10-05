@@ -7,14 +7,39 @@ but forwards none, so the carrier's T.38 data was dropped until Faxbot sent
 from its UDPTL port first, and the SSL Fax engine's T.38 gateway had nothing
 to relay: its calling fax machine waits silently for the answer. Three T.38
 no-signal indicators sent as soon as the stream is applied open the path, in
-both call directions and for both of Faxbot's fax engines.
+both call directions and for both of Faxbot's fax engines. They are sent once
+per T.38 stream: a session refresh (session timers) applies the same stream
+again mid-call, and no indicator may interrupt a page.
 
 --- a/res/res_pjsip_t38.c
 +++ b/res/res_pjsip_t38.c
-@@ -1026,6 +1026,36 @@
- 	return frame;
- }
+@@ -67,6 +67,8 @@
+ 	pj_timer_entry timer;
+ 	/*! Preserved media state for when T.38 ends */
+ 	struct ast_sip_session_media_state *media_state;
++	/*! Faxbot: the T.38 stream that already sent its opening packets (compared, never used) */
++	struct ast_udptl *opened;
+ };
  
+ /*! \brief Destructor for T.38 state information */
+@@ -137,6 +139,11 @@
+ 		return;
+ 	}
+ 
++	if (new_state != T38_ENABLED) {
++		/* Faxbot: the next T.38 stream sends its opening packets again. */
++		state->opened = NULL;
++	}
++
+ 	session->t38state = new_state;
+ 	ast_debug(2, "T.38 state changed to '%u' from '%u' on channel '%s'\n",
+ 		new_state, old_state,
+@@ -1024,6 +1031,36 @@
+ 	frame->stream_num = session_media->stream_num;
+ 
+ 	return frame;
++}
++
 +/*!
 + * \brief How many T.38 "no signal" indicators to send when a T.38 stream starts (Faxbot).
 + *
@@ -43,17 +68,17 @@ both call directions and for both of Faxbot's fax engines.
 +	for (i = 0; i < FAXBOT_T38_OPENING_PACKETS; i++) {
 +		ast_udptl_write(udptl, &frame);
 +	}
-+}
-+
+ }
+ 
  static int media_session_udptl_write_callback(struct ast_sip_session *session, struct ast_sip_session_media *session_media, struct ast_frame *frame)
- {
- 	if (!session_media->udptl) {
-@@ -1072,6 +1102,11 @@
+@@ -1072,6 +1109,13 @@
  	ast_sip_session_media_add_read_callback(session, session_media, ast_udptl_fd(session_media->udptl),
  		media_session_udptl_read_callback);
  
-+	/* Faxbot: send first, so a router that keeps ports lets the far end's T.38 data in. */
-+	if (remote_stream->desc.port) {
++	/* Faxbot: send first, so a router that keeps ports lets the far end's T.38 data in. Once per T.38
++	 * stream: a session refresh applies the same stream again, and no indicator may interrupt a page. */
++	if (remote_stream->desc.port && state->opened != session_media->udptl) {
++		state->opened = session_media->udptl;
 +		faxbot_t38_open_pinhole(session_media->udptl);
 +	}
 +

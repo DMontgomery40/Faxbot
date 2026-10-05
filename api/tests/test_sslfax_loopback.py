@@ -188,6 +188,14 @@ exten => _X.,1,Set(CALLERID(all)=<+15555550199>)
  same => n,Hangup()
 '''
 
+CARRIER_RELAY = """exten => _[+0-9].,1,NoOp(carrier: call for ${EXTEN} to the peer)
+ same => n,GotoIf($["@GATEWAY@" != "yes"]?dial)"""
+CARRIER_RECEIVES = """exten => _[+0-9].,1,NoOp(carrier: answers as a T.38 fax machine)
+ same => n,Answer()
+ same => n,ReceiveFAX(/tmp/carrier-received.tif,f)
+ same => n,Hangup()
+ same => n,GotoIf($["@GATEWAY@" != "yes"]?dial)"""
+
 NAT_STANDIN = """table inet faxbot_nat {
   chain out {
     type filter hook output priority 0; policy accept;
@@ -282,7 +290,7 @@ except (urllib.error.URLError, OSError) as error:
 
 
 def bring_up(tmp_path, label, made, *, faxbot_t38, carrier_gateway, peer_listener, peer_sslfax=True,
-             carrier_t38=None, carrier_drops_t38=False, carrier_nat_standin=False):
+             carrier_t38=None, carrier_drops_t38=False, carrier_nat_standin=False, carrier_receives=False):
     """Start the whole loopback; returns (docker, context dict). ``made`` collects it for cleanup at once."""
     docker = Docker(label)
     made.append(docker)
@@ -347,8 +355,14 @@ def bring_up(tmp_path, label, made, *, faxbot_t38, carrier_gateway, peer_listene
     docker.sh(carrier, 'mkdir -p /faxdata/asterisk', check=True)
     docker.put(carrier, '/faxdata/asterisk/pjsip.conf', sip_trunk.render_pjsip(carrier_values))
     docker.put(carrier, '/faxdata/asterisk/iax.conf', hylafax_engine.render_iax(carrier_values, peer_secrets, lines=1))
+    dialplan = CARRIER_DIALPLAN
+    if carrier_receives:
+        # The carrier answers as a T.38 fax machine, as Telnyx did on 5 October: ReceiveFAX plays three
+        # seconds of answer tone, then asks Faxbot for T.38 itself, and Faxbot answers the re-INVITE.
+        assert CARRIER_RELAY in dialplan
+        dialplan = dialplan.replace(CARRIER_RELAY, CARRIER_RECEIVES)
     docker.put(carrier, '/etc/asterisk/extensions.conf',
-               CARRIER_DIALPLAN.replace('@GATEWAY@', 'yes' if carrier_gateway else 'no'))
+               dialplan.replace('@GATEWAY@', 'yes' if carrier_gateway else 'no'))
     # Proof only: SIP messages on the console (container log), to see whether T.38 was offered.
     docker.put(carrier, '/etc/asterisk/logger.conf', LOGGER)
     docker.put(asterisk, '/etc/asterisk/logger.conf', LOGGER)
@@ -511,7 +525,7 @@ def sip_evidence(text):
     offer is an INVITE with a T.38 media line on a real port, an answer a
     200 OK to an INVITE with one.
     """
-    offers = answers = refusals = 0
+    offers = answers = refusals = received = sent = 0
     for block in text.split('<--- ')[1:]:
         image = re.search(r'^m=image (\d+) udptl t38', block, re.MULTILINE)
         if not image or not re.search(r'^CSeq: \d+ INVITE', block, re.MULTILINE):
@@ -520,10 +534,13 @@ def sip_evidence(text):
             refusals += 1
         elif re.search(r'^INVITE ', block, re.MULTILINE):
             offers += 1
+            received += block.startswith('Received')
+            sent += block.startswith('Transmitting')
         elif re.search(r'^SIP/2\.0 200 OK', block, re.MULTILINE):
             answers += 1
     return {
         't38_offers': offers, 't38_answers': answers, 't38_closed_with_port_zero': refusals,
+        't38_offers_received': received, 't38_offers_sent': sent,
         'accept_contact': sorted(set(re.findall(r'Accept-Contact: ([^\r\n]*)', text))),
     }
 
@@ -889,4 +906,38 @@ def test_h_t38_through_a_router_that_keeps_ports_works_once_faxbot_sends_first(t
     assert found['call']['t38'] == 'yes' and found['call']['pages'] == PAGES, proof
     # The stand-in let the carrier's T.38 data in only after Faxbot had sent first.
     assert passed and passed > 0, proof
+
+
+def test_i_t38_offered_by_the_carrier_behind_a_router_that_keeps_ports(tmp_path, loopback):
+    """The direction of the live call: the far end answers as a T.38 fax machine and asks Faxbot for T.38
+    three seconds later (ReceiveFAX, like Telnyx on 5 October); Faxbot answers, and its first packets let
+    the far end's T.38 data in through the router stand-in."""
+    context = loopback('i', faxbot_t38=True, carrier_gateway=False, carrier_t38=True, peer_listener='',
+                       peer_sslfax=False, carrier_nat_standin=True, carrier_receives=True)
+    docker, key = context['docker'], context['key']
+    local = tmp_path / 'proof.pdf'
+    local.write_bytes(proof_pdf())
+    docker.run('cp', str(local), f'{context["api"]}:/tmp/proof.pdf')
+    created = api(docker, 'POST', '/fax', key=key,
+                  files=({'file': ('proof.pdf', '/tmp/proof.pdf', 'application/pdf')}, {'to': PEER_NUMBER}))
+    assert created['status'] == 202, created
+    job_id = created['json']['id']
+
+    def finished():
+        job = api(docker, 'GET', f'/fax/{job_id}', key=key)['json'] or {}
+        return job if str(job.get('status', '')).lower() not in {'queued', 'in_progress', 'sending', ''} else None
+    job = wait_for(finished, 600, 'the fax result')
+    found = records(context, job_id)
+    passed, dropped = nft_counters(docker.sh(context['carrier'], 'nft list table inet faxbot_nat').stdout)
+    size = docker.sh(context['carrier'], 'stat -c %s /tmp/carrier-received.tif 2>/dev/null').stdout
+    faxbot_sip = sip_evidence(docker.run('logs', context['asterisk'], check=False).stdout)
+    proof = {'job_status': job.get('status'), 'job_error': job.get('error'), 'call': found['call'],
+             'carrier_image_bytes': size.strip(), 'standin_passed': passed, 'standin_dropped': dropped,
+             'faxbot_sip': faxbot_sip}
+    print('\nSSLFAX_PROOF_I ' + json.dumps(proof, indent=2, default=str))
+    assert str(job.get('status')).upper() == 'SUCCESS', proof
+    assert found['call']['t38'] == 'yes' and found['call']['pages'] == PAGES, proof
+    # The live direction: the carrier offered T.38 and Faxbot answered it.
+    assert faxbot_sip['t38_offers_received'] >= 1 and faxbot_sip['t38_answers'] >= 1, proof
+    assert passed and passed > 0 and int(size.strip() or 0) > 0, proof
 

@@ -435,6 +435,10 @@ def test_asterisk_sends_t38_first_when_a_t38_stream_starts():
     assert '--- a/res/res_pjsip_t38.c' in patch and '+#define FAXBOT_T38_OPENING_PACKETS 3' in patch
     assert '+		faxbot_t38_open_pinhole(session_media->udptl);' in patch
     assert 'static const unsigned char no_signal[1] = { 0x00 };' in patch
+    # Once per T.38 stream: a session refresh applies the same stream again, and no indicator may interrupt
+    # a page; a new T.38 stream (state no longer enabled) sends again.
+    assert '+	if (remote_stream->desc.port && state->opened != session_media->udptl) {' in patch
+    assert '+		state->opened = NULL;' in patch
     dockerfile = (ROOT / 'asterisk' / 'Dockerfile').read_text()
     applied = dockerfile.index('patch -p1 --forward')
     assert dockerfile.index('COPY patches/ /usr/src/patches/') < applied < dockerfile.index('RUN ./configure')
