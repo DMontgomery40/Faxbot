@@ -80,6 +80,25 @@ def test_the_prompt_asks_an_independent_reviewer_to_check_claims_against_the_cod
     assert 'read_file, list_dir, git_diff' in autopilot.SYSTEM_PROMPT
 
 
+def test_every_prompt_states_who_reads_faxbot_docs(autopilot):
+    """The reader is the administrator who set Faxbot up: the rule sits in the prompts, not only in AGENTS.md."""
+    rule = autopilot.READER_RULE
+    for instruction in ('the administrator who set Faxbot up', 'Staff at a company running Faxbot never open',
+                        'tell them exactly what to set and where', 'Never write "ask your administrator"',
+                        '"give this to your (phone system) administrator"', '"ask whoever installed Faxbot"',
+                        'The reader is that person', 'the fax carrier or provider',
+                        'a partner who manages an Avaya or BT phone system', 'give the reader the exact settings',
+                        'revision IDs, plugin manifests, environment-variable plumbing'):
+        assert instruction in rule, instruction
+    review = autopilot.proposal_prompt(autopilot.review_context('HEAD~1'))
+    audit = autopilot.audit_prompt(['docs/guide.md'], ['docs/guide.md'], set(), 'f' * 40)
+    assert rule in autopilot.SYSTEM_PROMPT and rule in review and rule in audit
+    assert 'Text that addresses the reader as someone other than the administrator is not correct' in review
+    assert 'addresses the reader as someone other than the administrator (for example "give your phone system ' \
+           'administrator this address")' in audit
+    assert 'Developer internals in an operator guide' in audit
+
+
 # -- read-only tools and their guard ------------------------------------------------------------------------
 
 @pytest.mark.parametrize('path', ['.env', 'api/../.env', '.env.production', '.local-handoff/brief.md',
@@ -236,6 +255,29 @@ def test_a_refused_patch_still_leaves_its_findings(repository):
     assert result.returncode != 0 and 'outside maintained docs Markdown' in result.stderr
     assert 'None found.' in (repository / 'mkdocs-docs-findings.md').read_text()
     assert not (repository / 'mkdocs-docs-llm.patch').exists()
+
+
+def test_a_model_diff_with_miscounted_hunks_and_no_trailing_context_is_rebuilt_then_validated(autopilot, repository):
+    """What Codex really sent on 2026-10-05: a header counting 7 lines for 4, and a hunk ending on a removal."""
+    (repository / 'docs/routes.md').write_text('# Routes\n\nIntro.\n\n## SSLFax\n\nOld paragraph.\n\nOld limit.\n\n'
+                                               '## Next\n\nKeep this.\n')
+    git(repository, 'add', 'docs/routes.md')
+    git(repository, 'commit', '-qm', 'Routes page')
+    sent = ('diff --git a/docs/routes.md b/docs/routes.md\n--- a/docs/routes.md\n+++ b/docs/routes.md\n'
+            '@@ -4,7 +4,7 @@ Intro.\n \n ## SSLFax\n \n-Old paragraph.\n+New paragraph.\n \n-Old limit.\n')
+    assert subprocess.run(['git', 'apply', '--check', '-'], input=sent, cwd=repository, text=True,
+                          capture_output=True).returncode != 0
+    repaired = autopilot.validated_patch(sent)
+    assert repaired.startswith('diff --git a/docs/routes.md b/docs/routes.md\n--- a/docs/routes.md\n')
+    subprocess.run(['git', 'apply', '-'], input=repaired, cwd=repository, text=True, check=True)
+    assert (repository / 'docs/routes.md').read_text() == ('# Routes\n\nIntro.\n\n## SSLFax\n\nNew paragraph.\n\n\n'
+                                                           '## Next\n\nKeep this.\n')
+    # A patch that applies as written is kept byte for byte; the repair never widens the scope.
+    assert autopilot.validated_patch(DIFF.replace('4000.', '4000.', 1)) == DIFF
+    outside = sent.replace('docs/routes.md', 'README.md')
+    (repository / 'README.md').write_text((repository / 'docs/routes.md').read_text())
+    with pytest.raises(autopilot.ProposalError, match='outside maintained docs Markdown'):
+        autopilot.validated_patch(outside)
 
 
 # -- audit -----------------------------------------------------------------------------------------------------------

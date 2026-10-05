@@ -69,8 +69,11 @@ def test_docs_proposals_run_only_by_hand_through_openrouter_and_open_a_pr_only_w
     upload = propose["steps"][-1]
     assert upload["uses"].startswith("actions/upload-artifact")
     # Findings are a result even without a patch; both travel to the job that may open the pull request.
-    assert upload["with"]["path"].split() == ["mkdocs-docs-findings.md", "mkdocs-docs-llm.patch"]
-    assert 'if [ -f mkdocs-docs-llm.patch ]' in step["run"] and "GITHUB_STEP_SUMMARY" in step["run"]
+    assert upload["with"]["path"].split() == ["mkdocs-docs-findings.md", "mkdocs-docs-llm.patch",
+                                              "mkdocs-docs-llm.rejected.patch"]
+    assert upload["if"] == "always()"
+    assert '[ -f mkdocs-docs-llm.patch ]' in step["run"] and "GITHUB_STEP_SUMMARY" in step["run"]
+    assert step["run"].rstrip().endswith('exit "$status"')
     opened = jobs["open-proposal"]
     assert opened["needs"] == "propose-llm" and "inputs.apply" in opened["if"]
     assert opened["permissions"] == {"contents": "write", "pull-requests": "write"}

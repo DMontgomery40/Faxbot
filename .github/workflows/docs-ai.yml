@@ -67,17 +67,24 @@ jobs:
           DOCS_AI_MODEL: ${{ inputs.model }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
         run: |
-          python scripts/docs_ai/generate_docs_from_diff.py --base "$BASE_REF" --llm openrouter
-          # Findings without a docs patch are a result too; a patch is validated again here.
-          if [ -f mkdocs-docs-llm.patch ]; then python scripts/docs_ai/validate_doc_patch.py mkdocs-docs-llm.patch; fi
-          cat mkdocs-docs-findings.md >> "$GITHUB_STEP_SUMMARY"
+          status=0
+          python scripts/docs_ai/generate_docs_from_diff.py --base "$BASE_REF" --llm openrouter || status=$?
+          # Findings are a result even without a patch, and even when the patch was refused.
+          if [ -f mkdocs-docs-findings.md ]; then cat mkdocs-docs-findings.md >> "$GITHUB_STEP_SUMMARY"; fi
+          if [ "$status" -eq 0 ] && [ -f mkdocs-docs-llm.patch ]; then
+            python scripts/docs_ai/validate_doc_patch.py mkdocs-docs-llm.patch
+          fi
+          exit "$status"
       - uses: actions/upload-artifact@v4
+        # Also after a refusal, so a person can read the findings and the refused patch.
+        if: always()
         with:
           name: docs-autopilot-proposal-${{ github.run_id }}
           path: |
             mkdocs-docs-findings.md
             mkdocs-docs-llm.patch
-          if-no-files-found: error
+            mkdocs-docs-llm.rejected.patch
+          if-no-files-found: warn
   open-proposal:
     needs: propose-llm
     if: github.event_name == 'workflow_dispatch' && inputs.apply

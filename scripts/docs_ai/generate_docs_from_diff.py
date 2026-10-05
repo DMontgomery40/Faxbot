@@ -292,17 +292,28 @@ def review_context(base_ref=None):
     return {'base': base, 'head': head, 'stat': '\n'.join(stat) or '(no changes)', 'pages': '\n'.join(pages)}
 
 
+# Who reads every Faxbot doc and screen (AGENTS.md "Who reads what Faxbot writes"), stated in the prompts
+# themselves so the rule holds even when the model never opens AGENTS.md.
+READER_RULE = """Who reads these pages: the administrator who set Faxbot up and handles its exceptions, usually the same person who runs its server, network and provider accounts. Staff at a company running Faxbot never open the docs or the console; they get their faxes by email. So:
+- Speak to that administrator directly and tell them exactly what to set and where: the screen and setting, the command, or the value to enter in their phone system or router.
+- Never write "ask your administrator", "give this to your (phone system) administrator", "ask your IT team", "ask whoever installed Faxbot" or anything else that treats the reader as someone without access. The reader is that person.
+- Name another party only when real companies really have one: the fax carrier or provider, a partner who manages an Avaya or BT phone system, the recipient's fax machine. Even then, give the reader the exact settings to check or pass on.
+- Keep developer internals (API internals, revision IDs, plugin manifests, environment-variable plumbing) out of operator guides; they belong on developer reference pages."""
+
+
 def proposal_prompt(context) -> str:
     base, head = context['base'], context['head']
     return f"""You are Docs Autopilot for Faxbot, a self-hosted fax server. You are an independent reviewer and technical writer. You did not write this code, so do not trust any page, comment or commit message to be right: check it against the code.
 
 The change to review is {base}..{head}.
 
+{READER_RULE}
+
 How to work:
 1. Read what changed, code first: `git diff {base}..HEAD` for the code (api/, asterisk/, scripts/, docker-compose*.yml, Makefile and similar), then for docs/.
 2. Find every maintained page under docs/ that describes the changed behavior (search for setting names, commands, labels and routes). Check each claim on those pages against the code: setting names and defaults, button and screen labels (api/admin_ui/src), CLI commands and options (api/app/cli), API routes, numbers, limits and what the product actually does.
 3. Fix every contradiction you find. Where user-visible behavior from this change is not explained on any page, add a brief explanation where a reader would look for it.
-4. Do not restate, reword or reorganize text that is already correct, and do not add marketing language.
+4. Do not restate, reword or reorganize text that is already correct, and do not add marketing language. Text that addresses the reader as someone other than the administrator is not correct: fix it.
 5. Write clear, natural prose. ASD-STE100 Simplified Technical English is loose inspiration only (about 20%): prefer shorter sentences and active voice where they help, use one term for one thing, and never chop explanations into fragments. Say plainly what is unverified.
 
 Scope:
@@ -333,7 +344,7 @@ Maintained documentation pages:
 SYSTEM_PROMPT = ('You are Docs Autopilot, an independent reviewer and technical writer for the Faxbot repository. '
                  'You did not write the code under review. You see the repository only through the read-only tools '
                  'read_file, list_dir, git_diff (the change under review) and grep: use them to read the code and '
-                 'the docs before you answer.')
+                 'the docs before you answer.\n\n' + READER_RULE)
 
 
 # -- providers ---------------------------------------------------------------------------
@@ -488,22 +499,127 @@ def extract_findings(text: str):
     return [] if [line.lower().rstrip('.') for line in lines] in ([], ['none']) else lines
 
 
-def validated_patch(patch: str) -> str:
-    """The patch, after the maintained-docs validator accepts it as a whole; ProposalError otherwise."""
+_HUNK = re.compile(r'^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@(.*)$')
+
+
+def recount_hunks(patch: str) -> str:
+    """The patch with each hunk header's line counts taken from its lines (models often miscount them)."""
+    lines = patch.splitlines(keepends=True)
+    out, index = [], 0
+    while index < len(lines):
+        header = _HUNK.match(lines[index].rstrip('\n'))
+        if header is None:
+            out.append(lines[index])
+            index += 1
+            continue
+        body, index = [], index + 1
+        while index < len(lines) and not lines[index].startswith(('@@ ', 'diff --git ')) \
+                and not (lines[index].startswith('--- ') and index + 1 < len(lines)
+                         and lines[index + 1].startswith('+++ ')):
+            body.append(lines[index])
+            index += 1
+        old = sum(1 for line in body if line[:1] in (' ', '-', '\n'))
+        new = sum(1 for line in body if line[:1] in (' ', '+', '\n'))
+        out.append(f'@@ -{header.group(1)},{old} +{header.group(2)},{new} @@{header.group(3)}\n')
+        out.extend(body)
+    return ''.join(out)
+
+
+def _file_sections(patch):
+    """[(path, header lines, body lines)] per file of a unified diff; path is None when it is not a plain edit."""
+    sections, current = [], None
+    for line in patch.splitlines(keepends=True):
+        if line.startswith('diff --git ') or (line.startswith('--- ') and (current is None or current[2])):
+            current = [None, [line], []]
+            sections.append(current)
+            continue
+        if current is None:
+            continue
+        if not current[2] and not line.startswith('@@ '):
+            current[1].append(line)
+            if line.startswith('+++ b/'):
+                current[0] = line[6:].strip()
+            elif line.startswith(('new file', 'deleted file', 'rename ', 'similarity ')) or '/dev/null' in line:
+                current[0] = False
+            continue
+        current[2].append(line)
+    return [(path or None, header, body) for path, header, body in sections]
+
+
+def _rebuilt(path, body):
+    """A fresh diff for one edited file: each hunk's old lines are found in HEAD's copy and replaced by its new
+    lines, then the whole file is diffed again. None when a hunk's old lines are not in the file."""
+    import difflib
+    try:
+        original = run(f'git show {shlex.quote("HEAD:" + path)}').splitlines(keepends=True)
+    except RuntimeError:
+        return None
+    updated, cursor, hunks = list(original), 0, []
+    for line in body:
+        if line.startswith('@@ '):
+            hunks.append(([], []))
+        elif hunks and not line.startswith('\\'):
+            text = line[1:] if line[:1] in (' ', '-', '+') else line
+            text = text if text.endswith('\n') else text + '\n'
+            if line[:1] != '+':
+                hunks[-1][0].append(text)
+            if line[:1] != '-':
+                hunks[-1][1].append(text)
+    for old, new in hunks:
+        found = next((start for start in range(cursor, len(updated) - len(old) + 1)
+                      if updated[start:start + len(old)] == old), None) if old else None
+        if found is None:
+            return None
+        updated[found:found + len(old)] = new
+        cursor = found + len(new)
+    diff = list(difflib.unified_diff(original, updated, f'a/{path}', f'b/{path}'))
+    return f'diff --git a/{path} b/{path}\n' + ''.join(diff) if diff else ''
+
+
+def normalize_patch(patch: str) -> str:
+    """A model's diff made exact: edits are rebuilt against HEAD (miscounted hunks, missing context); anything
+    else only gets its hunk counts recounted. The validator still decides."""
+    pieces = []
+    for path, header, body in _file_sections(patch):
+        rebuilt = _rebuilt(path, body) if path else None
+        pieces.append(rebuilt if rebuilt is not None else recount_hunks(''.join(header + body)))
+    return ''.join(pieces) or patch
+
+
+def _refusal(patch):
+    """The validator's last line when it refuses the patch, or None when it accepts it."""
     with tempfile.TemporaryDirectory(prefix='faxbot-docs-proposal-') as temporary:
         candidate = Path(temporary) / PATCH_NAME
         candidate.write_text(patch, encoding='utf-8')
         checked = subprocess.run([sys.executable, str(Path(__file__).with_name('validate_doc_patch.py')),
                                   str(candidate)], cwd=ROOT, capture_output=True, text=True)
-    if checked.returncode != 0:
-        # Keep what was refused and why, so a person can see what the model tried.
-        rejected = ROOT / 'mkdocs-docs-llm.rejected.patch'
-        rejected.write_text(patch, encoding='utf-8')
-        reason = (checked.stderr or checked.stdout or '').strip().splitlines()[-1:] or ['no reason given']
-        raise ProposalError('The proposed patch does not apply or changes files outside maintained docs '
-                            f'Markdown; nothing was written. Validator: {reason[0]} The refused patch is in '
-                            f'{rejected.name}.')
-    return patch
+    if checked.returncode == 0:
+        return None
+    return ((checked.stderr or checked.stdout or '').strip().splitlines()[-1:] or ['no reason given'])[0]
+
+
+def validated_patch(patch: str) -> str:
+    """The patch, after the maintained-docs validator accepts it as a whole; ProposalError otherwise.
+
+    A patch that does not apply as written gets one repair: its edits are rebuilt against HEAD
+    (normalize_patch), because models often miscount hunk lines or drop trailing context. The repaired
+    patch must pass the same validator; nothing outside maintained docs Markdown ever gets through.
+    """
+    reason = _refusal(patch)
+    if reason is None:
+        return patch
+    repaired = normalize_patch(patch)
+    if repaired != patch:
+        repaired_reason = _refusal(repaired)
+        if repaired_reason is None:
+            return repaired
+        reason = repaired_reason
+    # Keep what was refused and why, so a person can see what the model tried.
+    rejected = ROOT / 'mkdocs-docs-llm.rejected.patch'
+    rejected.write_text(patch, encoding='utf-8')
+    raise ProposalError('The proposed patch does not apply or changes files outside maintained docs '
+                        f'Markdown; nothing was written. Validator: {reason} The refused patch is in '
+                        f'{rejected.name}.')
 
 
 def findings_text(lines, heading, note=''):
@@ -539,14 +655,18 @@ def audit_prompt(pages, everything, missing, head):
 This is an audit of the documentation against the CURRENT code at {head}; there is no change under review. Audit these pages:
 {listed}
 
+{READER_RULE}
+
 How to work:
 1. Read each page in full, then read the code it describes: api/app (settings in api/app/config_values.py, routes, behavior), the console (api/admin_ui/src), the CLI (api/app/cli), asterisk/, the Compose files and scripts/.
 2. Check every claim against the code: setting names and defaults, button and screen labels, CLI commands and options, API routes, numbers, limits and what the product actually does. Fix every contradiction.
 3. Pages or sections that describe features, settings, screens or commands that no longer exist in the code: delete them in the diff (a whole page as a deleted file) and say so in a finding. If mkdocs.yml's nav lists a page you delete, say so too, because mkdocs.yml is changed by hand.
 4. Pages that duplicate each other (also with pages outside this batch, listed below): propose merging them. Keep the better page, move anything it lacks into it, and delete the other.
 5. Report each page of this batch that is not in mkdocs.yml's nav as a finding.
-6. Do not restate, reword or reorganize text that is already correct, and do not add marketing language.
-7. Write clear, natural prose. ASD-STE100 Simplified Technical English is loose inspiration only (about 20%): prefer shorter sentences and active voice where they help, use one term for one thing, and never chop explanations into fragments. Say plainly what is unverified.
+6. Text that addresses the reader as someone other than the administrator (for example "give your phone system administrator this address") breaks the rule above: rewrite it to tell the administrator what to set and where, and list each place you changed as a finding.
+7. Developer internals in an operator guide (revision IDs, manifests, environment-variable plumbing): move them out or cut them, and say so in a finding.
+8. Do not restate, reword or reorganize text that is already correct, and do not add marketing language.
+9. Write clear, natural prose. ASD-STE100 Simplified Technical English is loose inspiration only (about 20%): prefer shorter sentences and active voice where they help, use one term for one thing, and never chop explanations into fragments. Say plainly what is unverified.
 
 Scope:
 - Change only maintained Markdown under docs/. Never change docs/generated/, docs/architecture/, README.md, planning/, AGENTS.md or other agent instructions, .github/ workflows, mkdocs.yml or any code.
