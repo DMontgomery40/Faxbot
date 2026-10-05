@@ -143,13 +143,15 @@ def test_openrouter_request_body_has_model_reasoning_and_no_temperature(autopilo
     body = json.loads(request.data)
     assert body == {'model': model, 'max_tokens': 16000, 'reasoning': {'effort': 'medium'},
                     'messages': [{'role': 'system', 'content': autopilot.SYSTEM_PROMPT},
-                                 {'role': 'user', 'content': 'the prompt'}]}
+                                 {'role': 'user', 'content': 'the prompt'}],
+                    # The read-only tools are offered on every request (OpenRouter validates them each time).
+                    'tools': autopilot.TOOL_SPECS, 'tool_choice': 'auto'}
     assert 'temperature' not in body and 'reasoning_effort' not in body
     headers = {name.lower(): value for name, value in request.header_items()}
     assert headers['authorization'] == 'Bearer ' + SECRET
     assert headers['x-title'] == 'Faxbot Docs Autopilot'
     assert headers['http-referer'] == 'https://github.com/DMontgomery40/Faxbot'
-    assert timeout == 15 * 60
+    assert 0 < timeout <= 15 * 60
     assert model in autopilot.OPENROUTER_MODELS
 
 

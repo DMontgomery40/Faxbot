@@ -67,7 +67,13 @@ def test_docs_proposals_run_only_by_hand_through_openrouter_and_open_a_pr_only_w
     assert "--llm openrouter" in step["run"]
     assert step["run"].index("generate_docs_from_diff.py") < step["run"].index("validate_doc_patch.py")
     upload = propose["steps"][-1]
-    assert upload["uses"].startswith("actions/upload-artifact") and upload["with"]["path"] == "mkdocs-docs-llm.patch"
+    assert upload["uses"].startswith("actions/upload-artifact")
+    # Findings are a result even without a patch; both travel to the job that may open the pull request.
+    assert upload["with"]["path"].split() == ["mkdocs-docs-findings.md", "mkdocs-docs-llm.patch",
+                                              "mkdocs-docs-llm.rejected.patch"]
+    assert upload["if"] == "always()"
+    assert '[ -f mkdocs-docs-llm.patch ]' in step["run"] and "GITHUB_STEP_SUMMARY" in step["run"]
+    assert step["run"].rstrip().endswith('exit "$status"')
     opened = jobs["open-proposal"]
     assert opened["needs"] == "propose-llm" and "inputs.apply" in opened["if"]
     assert opened["permissions"] == {"contents": "write", "pull-requests": "write"}
@@ -75,3 +81,6 @@ def test_docs_proposals_run_only_by_hand_through_openrouter_and_open_a_pr_only_w
     staged = "\n".join(s.get("run", "") for s in opened["steps"])
     assert staged.index("validate_doc_patch.py") < staged.index("git apply --index")
     assert "validate_doc_patch.py --staged" in staged
+    created = next(s for s in opened["steps"] if s.get("uses", "").startswith("peter-evans/create-pull-request"))
+    assert created["if"] == "steps.stage.outputs.patch == 'yes'"
+    assert created["with"]["body-path"] == "${{ runner.temp }}/proposal/mkdocs-docs-findings.md"
