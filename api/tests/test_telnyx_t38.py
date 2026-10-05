@@ -54,8 +54,9 @@ class FakeTelnyx:
             return httpx.Response(401, json={'errors': [{'title': 'Unauthorized'}]})
         if path == '/phone_numbers':
             wanted = request.url.params['filter[phone_number]']
+            # As Telnyx documents it: digits only; any other character returns nothing.
             found = [{'id': item['id'], 'phone_number': number, 'connection_id': item['connection_id']}
-                     for number, item in self.numbers.items() if number == wanted]
+                     for number, item in self.numbers.items() if wanted.isdigit() and wanted in number]
             return httpx.Response(200, json={'data': found, 'meta': {'total_results': len(found)}})
         for number, item in self.numbers.items():
             if path == f'/phone_numbers/{item["id"]}/voice':
@@ -174,6 +175,23 @@ def test_an_unreachable_telnyx_and_a_number_not_on_the_account_are_one_sentence_
                                   'Check again to retry.')
 
 
+def test_the_number_is_looked_up_by_its_digits_and_a_down_telnyx_is_asked_once(client, telnyx):
+    _check(client)
+    lookups = [request.url.params['filter[phone_number]'] for request in telnyx.requests
+               if request.url.path == '/v2/phone_numbers']
+    assert lookups == ['15555550100', '15555550101']
+    # Apply and Check again wait for this check: an unreachable Telnyx is not asked about every other number.
+    telnyx.requests.clear()
+    telnyx.down = True
+    _check(client)
+    assert len(telnyx.requests) == 1
+    assert [entry['state'] for entry in telnyx_t38.read(_values(client))['numbers']] == ['unavailable', 'unavailable']
+    telnyx.down, telnyx.refuse_reads = False, True
+    telnyx.requests.clear()
+    _check(client)
+    assert len(telnyx.requests) == 1
+
+
 def test_without_a_key_or_on_another_carrier_nothing_is_read(isolated_installation, monkeypatch, telnyx):
     with _client(monkeypatch, {**TRUNK, 'TELNYX_API_KEY': ''}) as client:
         assert telnyx_t38.check(_values(client)) is None
@@ -275,6 +293,6 @@ def test_diagnostics_shows_a_carrier_trunk_finding_with_the_fix(client, telnyx, 
     findings = {item.id: item for item in asyncio.run(report.carrier_trunk(SimpleNamespace(request=None, identity=None)))}
     finding = findings['engine.telnyx_t38']
     assert (finding.status, finding.title, finding.fix_label, finding.fix_page) == (
-        report.ATTENTION, 'Fax over IP (T.38) at Telnyx', 'Turn on T.38 at Telnyx', 'providers/trunk')
+        report.ATTENTION, 'Fax over IP (T.38) at Telnyx', 'Open carrier trunk to turn on T.38', 'providers/trunk')
     assert finding.sentence == ('Telnyx has fax over IP (T.38) turned off for +1 555-555-0100, so received faxes there '
                                 'arrive as audio.')

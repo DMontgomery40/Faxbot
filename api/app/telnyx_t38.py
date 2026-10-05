@@ -9,8 +9,11 @@ owner's account on 2026-10-05 and fixed by the lead through the API).
 Faxbot checks both with read-only GETs, using the read-only Telnyx key the
 trunk page already uses for call charges (``telnyx_api_key``):
 
-- ``GET /v2/phone_numbers?filter[phone_number]=<E.164>`` finds the number's id
-  and connection;
+- ``GET /v2/phone_numbers?filter[phone_number]=<digits>`` finds the number's id
+  and connection. The filter takes digits only: Telnyx's OpenAPI description
+  (team-telnyx/openapi spec3.json, read 2026-10-05) says "Non-numerical
+  characters will result in no values being returned", so the + is left out and
+  the returned ``phone_number`` is compared with the full E.164 number;
 - ``GET /v2/phone_numbers/{id}/voice`` reads ``media_features``;
 - ``GET /v2/credential_connections/{id}`` (or ``/ip_connections/{id}`` and
   ``/fqdn_connections/{id}``) reads ``user_name`` and
@@ -114,7 +117,8 @@ class Telnyx:
 
     def find_number(self, number):
         """(id, connection id) of an E.164 number on this account, or None when the account has no such number."""
-        data = self._call('GET', '/phone_numbers', params={'filter[phone_number]': number, 'page[size]': 25})
+        digits = re.sub(r'\D', '', number)
+        data = self._call('GET', '/phone_numbers', params={'filter[phone_number]': digits, 'page[size]': 25})
         for item in data if isinstance(data, list) else []:
             if isinstance(item, dict) and item.get('phone_number') == number and _ID.fullmatch(str(item.get('id'))):
                 connection = item.get('connection_id')
@@ -187,10 +191,15 @@ def check(values, *, now=time.time):
         return None
     if TRANSPORT is None and _test_mode():
         return None
-    numbers, connections = [], {}
+    numbers, connections, stopped = [], {}, None
     with _client(values) as telnyx:
         for number in values.sip_trunk_did_list:
             entry = {'number': number, 'state': UNAVAILABLE, 'number_id': None, 'connection_id': None}
+            if stopped:
+                # Telnyx was unreachable or refused this key: the other numbers would wait or fail the same way.
+                entry['state'] = stopped
+                numbers.append(entry)
+                continue
             try:
                 found = telnyx.find_number(number)
                 if found is None:
@@ -200,9 +209,11 @@ def check(values, *, now=time.time):
                     features = telnyx.voice(found[0])['media_features']
                     entry['state'] = ON if features.get('t38_fax_gateway_enabled') is True else OFF
             except Refused:
-                entry['state'] = UNREADABLE
-            except (Missing, Unavailable):
+                entry['state'] = stopped = UNREADABLE
+            except Missing:
                 entry['state'] = UNAVAILABLE
+            except Unavailable:
+                entry['state'] = stopped = UNAVAILABLE
             numbers.append(entry)
         for connection_id in sorted({entry['connection_id'] for entry in numbers if entry['connection_id']}):
             try:

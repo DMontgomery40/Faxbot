@@ -169,7 +169,7 @@ describe('Provider pages after 4b', () => {
     const minutes = await screen.findByLabelText('Check the internet address every … minutes') as HTMLInputElement;
     expect(minutes.value).toBe('5');
     const key = screen.getByTestId('telnyx-key');
-    expect(within(key).getByText('Key for reading Telnyx charges')).toBeTruthy();
+    expect(within(key).getByText('Telnyx API key')).toBeTruthy();
     expect(within(key).getByDisplayValue('Set in .env')).toBeTruthy();
     fireEvent.change(minutes, { target: { value: '15' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save trunk settings' }));

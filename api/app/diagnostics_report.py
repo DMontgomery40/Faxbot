@@ -432,7 +432,8 @@ async def carrier_trunk(context: Context) -> list[Finding]:
         fixable = any(entry.get('fixable') for entry in telnyx.get('numbers') or [])
         findings.append(Finding('engine.telnyx_t38', 'engine', 'Fax over IP (T.38) at Telnyx',
                                 OK if ready else ATTENTION, telnyx['text'],
-                                None if ready else ('Turn on T.38 at Telnyx' if fixable else 'Open carrier trunk'),
+                                None if ready else ('Open carrier trunk to turn on T.38' if fixable
+                                                    else 'Open carrier trunk'),
                                 None if ready else 'providers/trunk'))
     if status.get('last_call_text'):
         verdict = status.get('last_call_verdict') or ''
