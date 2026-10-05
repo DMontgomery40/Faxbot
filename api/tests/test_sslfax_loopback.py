@@ -358,6 +358,26 @@ def bring_up(tmp_path, label, made, *, faxbot_t38, carrier_gateway, peer_listene
              'the peer engine to start')
     wait_for(lambda: ' OK ' in docker.asterisk(carrier, 'iax2 show peers'), 120, "the peer's line on the carrier")
     wait_for(ami_connected, 120, "Faxbot's manager connection after the restart")
+
+    def settled():
+        # Asterisk runs exactly the applied settings and no restart is waiting for an idle moment
+        # (a restart in the middle of a proof call would lose that call).
+        status = api(docker, 'GET', '/admin/sip/status', key=bootstrap).get('json') or {}
+        return status.get('in_use') and not status.get('engine_restarting')
+    wait_for(settled, 180, 'Asterisk to run the applied settings with no restart pending')
+
+    def uptime():
+        found = re.search(r'System uptime: ([0-9]+)', docker.asterisk(asterisk, 'core show uptime seconds'))
+        return int(found.group(1)) if found else -1
+
+    def steady():
+        # Two readings a few seconds apart that only grow: Asterisk did not restart in between.
+        first = uptime()
+        time.sleep(4)
+        return first >= 0 and uptime() > first and settled()
+    wait_for(steady, 180, "Faxbot's Asterisk to stay up")
+    wait_for(lambda: docker.asterisk(asterisk, 'iax2 show peers').count(' OK ') >= 2, 120,
+             "the engine's two lines after Asterisk settled")
     docker.run('exec', '--detach', asterisk, 'bash', '-c', AMI_LISTENER)
     for container in (asterisk, carrier):
         docker.asterisk(container, 'pjsip set logger on')
@@ -648,7 +668,8 @@ def test_e_a_refused_t38_request_goes_on_as_audio(tmp_path, loopback):
     assert proof['engine_call']['Gateway'] == 'yes', proof
     # Faxbot asked for T.38 and nobody accepted; the call went on as audio.
     assert proof['faxbot_sip']['t38_offers'] >= 1 and proof['faxbot_sip']['t38_answers'] == 0, proof
-    assert proof['engine_call']['T38'] in ('REJECTED', 'DISABLED'), proof
+    # No T.38 fax session started (the trunk's own state is informational and may arrive empty).
+    assert proof['engine_call']['T38Session'] == '0', proof
     assert_recorded(context, outcome, proof, t38=False, sslfax=True)
 
 
@@ -679,7 +700,15 @@ def test_inbound_a_fax_through_the_engine_reaches_received(tmp_path, loopback):
     def arrived():
         rows = database(context, fax="SELECT id, from_number, to_number, pages FROM inbound_faxes")['fax']
         return rows or None
-    faxes = wait_for(arrived, 240, 'the fax in Received')
+    try:
+        faxes = wait_for(arrived, 240, 'the fax in Received')
+    except AssertionError:
+        # What each side saw, for the record: the peer's sending log and Faxbot's engine log.
+        print('\nSSLFAX_INBOUND_TIMEOUT peer:\n' + session_logs(docker, context['peer'])[-4000:])
+        print('\nSSLFAX_INBOUND_TIMEOUT faxbot engine:\n' + session_logs(docker, context['engine'])[-4000:])
+        print('\nSSLFAX_INBOUND_TIMEOUT engine container:\n' + docker.run('logs', context['engine'],
+                                                                           check=False).stderr[-2000:])
+        raise
     time.sleep(3)
     rows = database(
         context,
