@@ -42,6 +42,7 @@ import EnvSetField, { environmentManaged } from './common/EnvSetField';
 import { numberHint, numberPlaceholder, settingsNumberFormat } from './common/numbers';
 import InboundRecovery from './InboundRecovery';
 import NetworkForFax from './NetworkForFax';
+import FaxSettings from './FaxSettings';
 
 interface SipTrunkSettingsProps {
   client: AdminAPIClient;
@@ -69,6 +70,9 @@ const EMPTY: TrunkValues = {
   password_set: false, outbound_proxy: '', caller_id: '', dids: [], t38_enabled: true,
   fax_preference_header: true, codecs: '', external_address: '', dial_format: '', dial_prefix: '',
   public_address_check_minutes: 5,
+  // Fax settings: the recommended values.
+  t38_error_correction: 'redundancy', t38_max_datagram: 400, fax_max_rate: 14400, fax_ecm: true,
+  fax_compression: 'jbig', fax_fine: true, sslfax_enabled: true, fax_lines: 2, sslfax_listener_port: 10443,
 };
 
 // What the phone system section shows: how the phone system reaches Faxbot, from the trunk check.
@@ -293,6 +297,11 @@ function SipTrunkSettings({ client, showCalls = true, revision: sharedRevision, 
       ['external_address', 'sip_external_address'], ['codecs', 'sip_trunk_codecs'],
       ['dial_format', 'sip_trunk_dial_format'], ['dial_prefix', 'sip_trunk_dial_prefix'],
       ['public_address_check_minutes', 'sip_public_address_check_minutes'],
+      // Fax settings.
+      ['t38_error_correction', 'sip_t38_error_correction'], ['t38_max_datagram', 'sip_t38_max_datagram'],
+      ['fax_max_rate', 'sip_fax_max_rate'], ['fax_ecm', 'sip_fax_ecm'], ['fax_compression', 'sip_fax_compression'],
+      ['fax_fine', 'sip_fax_fine'], ['sslfax_enabled', 'sip_sslfax_enabled'], ['fax_lines', 'sip_fax_lines'],
+      ['sslfax_listener_port', 'sip_sslfax_listener_port'],
     ];
     // The caller ID keeps its spaces while typed and is trimmed when saved.
     const current: TrunkValues = { ...form, caller_id: form.caller_id.trim() };
@@ -666,6 +675,7 @@ function SipTrunkSettings({ client, showCalls = true, revision: sharedRevision, 
           <Typography variant="body2" color="text.secondary" sx={{ mt: -1 }}>
             Some carriers use this to pick a fax-capable route; others ignore it. Faxbot never calls again because of it.
           </Typography>
+          <FaxSettings form={form} update={update} />
         </>
       )}
 
