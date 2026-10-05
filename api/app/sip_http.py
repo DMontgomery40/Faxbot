@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from .access.route_policy import require_permission
 from .config import configuration_values
 from .config_runtime import run_lifecycle_step
-from . import sip_fax_mode, sip_trunk, stun
+from . import sip_fax_mode, sip_network, sip_trunk, stun
 from .ami import ENGINE_UNREACHABLE
 from .config_store import ConfigurationStoreError
 from .inbound.acquisition import AcquisitionError
@@ -179,19 +179,25 @@ def _observed(records):
     return found if any(found.values()) else None
 
 
-def _address_text(summary, network, carrier, observed=None, audio=False):
+def _address_text(summary, network, carrier, observed=None, audio=False, blocked=False):
     """Faxbot's internet address in use and how the network treats it, in one sentence.
 
     Once calls have shown whether the carrier follows Faxbot's packets, the
     sentence says what they showed instead of waiting for the first test fax:
     audio and T.38 can differ (a carrier may follow audio packets but not
-    T.38 ones), so both are named when both were seen.
+    T.38 ones), so both are named when both were seen. When the network check
+    already says T.38 data cannot come back (``blocked``), its own sentence
+    says so, and this one keeps to the address and what calls showed.
     """
     text = _network_text(summary, network, carrier)
-    if not text.endswith(_UNTESTED) or observed is None:
+    if not text.endswith(_UNTESTED) or (observed is None and not blocked):
         return text
     lead = text[:-len(_UNTESTED)].rstrip(' ,;').removesuffix(', and')
     bare = lead.removesuffix(f", so {carrier} has to follow Faxbot's packets")
+    if blocked and not (observed and (observed['t38_failed'] or observed['t38_ok'])):
+        if observed and observed['audio_ok']:
+            return f"{bare}; an audio fax went through, so {carrier} follows Faxbot's audio packets."
+        return f'{bare}.'
     if observed['t38_failed'] and observed['audio_ok']:
         return (f"{bare}, and {carrier} follows Faxbot's audio packets (a fax went through) but not its T.38 packets"
                 f"{', so Faxbot uses audio fax' if audio else ''}.")
@@ -304,12 +310,17 @@ def _address_changed(values, network):
 
 
 def _ports_text(values, network):
-    """Whether this sign-in method can work from here; None when Faxbot cannot tell."""
+    """Whether this sign-in method can work from here; None when Faxbot cannot tell.
+
+    "No ports" holds for signaling and audio fax; when the network check says
+    T.38 data cannot come back, the network section says what to open instead.
+    """
     if values.sip_trunk_auth == 'ip':
         if values.sip_external_address:
             return None
         return BEHIND_ROUTER if network and network.behind_nat else None
-    return NO_PORTS
+    check = sip_network.read_check(values)
+    return None if check and check['t38'] == sip_network.BLOCKED else NO_PORTS
 
 
 def _last_call(records):
@@ -492,6 +503,7 @@ async def status(request: Request, identity=Depends(require_permission('provider
     off = await run_lifecycle_step(lambda: sip_fax_mode.reason_for(values, _records(request))) if configured else None
     if configured and not phone:
         summary['advertised_address'] = await run_lifecycle_step(lambda: sip_trunk.applied_public_address(values)) or None
+    network_report = await run_lifecycle_step(lambda: sip_network.report(values)) if configured else None
     message = _message(summary, asterisk, applied, ports_text, transport, managed=managed, in_use=in_use,
                        restarting=restarting)
     if (changed and not restarting and ports_text != BEHIND_ROUTER and asterisk['connected'] and asterisk['permission']
@@ -510,7 +522,10 @@ async def status(request: Request, identity=Depends(require_permission('provider
         'internet_address': network.public_ip if network else None,
         'behind_router': network.behind_nat if network else None,
         'port_numbers': network.ports if network else None,
-        'public_address_text': (_address_text(summary, network, carrier, observed, not values.sip_t38_enabled)
+        'public_address_text': (_address_text(summary, network, carrier, observed, not values.sip_t38_enabled,
+                                              blocked=bool(network_report and network_report['t38'] == 'blocked'
+                                                           and network and network.public_ip
+                                                           and network.ports != 'preserved'))
                                 if configured and not phone else None),
         # A phone system: where it reaches Faxbot on the local network ({address, sip_port, media_ports,
         # faxes_at_once}), or None while Faxbot is not published there (then the command that publishes it).
@@ -537,6 +552,9 @@ async def status(request: Request, identity=Depends(require_permission('provider
         # Received faxes over the trunk: ready, or what keeps them from Faxbot (None when the trunk does not receive).
         'handover_ready': handover['ready'] if handover else None,
         'handover_text': handover['text'] if handover else None,
+        # The last network check for fax over IP: open, blocked or unknown, and its one sentence.
+        'network_t38': network_report['t38'] if network_report and network_report['applies'] else None,
+        'network_text': network_report['text'] if network_report and network_report['applies'] else None,
         'message': message,
     }
 
@@ -556,21 +574,30 @@ async def apply(request: Request, identity=Depends(require_permission('providers
         raise HTTPException(400, detail='Choose a carrier before applying trunk settings.')
     network = None
     phone = _phone_system(values.sip_trunk_preset)
-    if not values.sip_external_address and not phone:
+    if not phone:
         network = await probe_network(values.sip_trunk_preset, fresh=True)
         # A carrier that signs in by address sends calls to a fixed public address, which a router does not pass on.
-        if values.sip_trunk_auth == 'ip' and network and network.behind_nat:
+        if values.sip_trunk_auth == 'ip' and not values.sip_external_address and network and network.behind_nat:
             raise HTTPException(400, detail=BEHIND_ROUTER)
     runtime = _runtime(request)
+    records = _records(request)
     # T.38 already off after a call that got no fax data back: that call is the reason, not a person's choice.
-    await run_lifecycle_step(lambda: sip_fax_mode.derive(values, _records(request)))
-    has_calls = await run_lifecycle_step(lambda: _last_call(_records(request)) is not None)
-    if sip_fax_mode.network_prefers_audio(values, network, has_calls=has_calls):
-        # A new Telnyx trunk on a network that changes port numbers: T.38 data was seen not to come back there.
-        values = await run_lifecycle_step(lambda: _audio_for_network(runtime))
-    elif sip_fax_mode.carrier_prefers_audio(values, has_calls=has_calls):
+    await run_lifecycle_step(lambda: sip_fax_mode.derive(values, records))
+    has_calls = await run_lifecycle_step(lambda: _last_call(records) is not None)
+    if sip_fax_mode.carrier_prefers_audio(values, has_calls=has_calls):
         # A new trunk with a carrier that turns T.38 into audio fax inside its own network.
-        values = await run_lifecycle_step(lambda: _audio_for_network(runtime, sip_fax_mode.CARRIER))
+        values = await run_lifecycle_step(lambda: _set_t38(runtime, False, sip_fax_mode.CARRIER))
+    elif not phone:
+        # The person's own change first, then the network check decides T.38 for new calls.
+        before = await run_lifecycle_step(lambda: sip_network.previous_verdict(values))
+        await run_lifecycle_step(lambda: sip_fax_mode.reconcile(values, network=before))
+        found = await sip_network.discover(fresh=True)
+        check, previous = await run_lifecycle_step(lambda: sip_network.record_check(values, network, found, records))
+        decision = await run_lifecycle_step(lambda: sip_fax_mode.network_decision(
+            values, check['t38'], previous=previous, records=records))
+        if decision:
+            values = await run_lifecycle_step(lambda: _set_t38(runtime, decision == 't38', sip_fax_mode.NETWORK,
+                                                               check['t38']))
     else:
         await run_lifecycle_step(lambda: sip_fax_mode.reconcile(values))
     try:
@@ -593,11 +620,12 @@ async def apply(request: Request, identity=Depends(require_permission('providers
     return await _load_into_engine(values)
 
 
-def _audio_for_network(runtime, reason=sip_fax_mode.NETWORK):
+def _set_t38(runtime, enabled, reason, network=None):
+    """Save T.38 on or off for new calls as Faxbot's own decision, with why; Apply then loads it."""
     snapshot = runtime.manager.store.read()
-    runtime.manager.patch(snapshot, {'sip_t38_enabled': False}, actor='system')
+    runtime.manager.patch(snapshot, {'sip_t38_enabled': enabled}, actor='system')
     values = runtime.manager.store.read().active.values
-    sip_fax_mode.write(values, 'audio', reason)
+    sip_fax_mode.write(values, 't38' if enabled else 'audio', reason, network=network)
     return values
 
 
@@ -650,6 +678,27 @@ async def calls(request: Request, cursor: str | None = Query(default=None, max_l
         raise HTTPException(503, detail='Call records are not available right now.') from None
 
 
+@router.get('/network')
+async def network_check(identity=Depends(require_permission('providers:read'))):
+    """Whether T.38 fax data can come back through this network, where Faxbot runs, and what to do about it."""
+    values = configuration_values()
+    return await run_lifecycle_step(lambda: sip_network.report(values))
+
+
+@router.post('/network/check')
+async def check_network_again(request: Request, identity=Depends(require_permission('providers:write'))):
+    """Check the network for fax over IP now; Faxbot turns T.38 on or off for new calls when the check says so."""
+    values = configuration_values()
+    if not sip_trunk.configured(values):
+        raise HTTPException(400, detail='Choose a carrier before checking the network.')
+    runtime = _runtime(request)
+    outcome = await sip_network.run_check(runtime, _records(request), fresh=True) or {}
+    values = await run_lifecycle_step(lambda: runtime.manager.store.read().active.values)
+    body = await run_lifecycle_step(lambda: sip_network.report(values))
+    engine = outcome.get('engine')
+    return {**body, 'switched': outcome.get('switched'), 'engine_message': engine.get('message') if engine else None}
+
+
 # With the check turned off, look again this often for the setting to change.
 _IDLE_CHECK_MINUTES = 1
 
@@ -661,14 +710,16 @@ async def _current_values(values_source):
     return await run_lifecycle_step(values_source)
 
 
-async def watch_public_address(*, minutes=None, values_source=None):
+async def watch_public_address(*, minutes=None, values_source=None, runtime=None):
     """Probe again every few minutes and record a changed internet address for Asterisk's next start.
 
     The trunk setting sip_public_address_check_minutes (5 by default, 0 turns the
     check off) sets the pace and is read again before every wait, so a change
     applies from the next check. ``minutes`` fixes the pace instead (tests).
     A probe that finds no address leaves the record alone; Check trunk status
-    says when Asterisk needs a restart to advertise the new address.
+    says when Asterisk needs a restart to advertise the new address. With the
+    running installation (``runtime``), each round is the whole network check
+    for fax over IP, which also turns T.38 on or off for new calls.
     """
     if minutes is not None and minutes <= 0:
         return
@@ -688,8 +739,12 @@ async def watch_public_address(*, minutes=None, values_source=None):
             values = await _current_values(values_source)
             if minutes is None and values.sip_public_address_check_minutes <= 0:
                 continue
-            if (not sip_trunk.configured(values) or values.sip_external_address
-                    or _phone_system(values.sip_trunk_preset)):
+            if not sip_trunk.configured(values) or _phone_system(values.sip_trunk_preset):
+                continue
+            if runtime is not None:
+                await sip_network.run_check(runtime)
+                continue
+            if values.sip_external_address:
                 continue
             network = await probe_network(values.sip_trunk_preset, fresh=True)
             if network and network.public_ip:

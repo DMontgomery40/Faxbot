@@ -26,9 +26,11 @@ def _status_lines(out, result):
                 ('Address on your network' if phone else 'Internet address',
                  (result.get('phone_system') or {}).get('address') if phone
                  else result.get('internet_address') or result.get('public_address'))])
-    for key in ('registration_text', 'reachability_text', 'public_address_text', 'ports_text'):
+    for key in ('registration_text', 'reachability_text', 'public_address_text', 'network_text', 'ports_text'):
         if result.get(key) and result.get(key) != result.get('message'):
             out.line(result[key])
+    if result.get('network_t38') == 'blocked':
+        out.line('If the network check shows a problem, run faxbot providers trunk network status to see how to fix it.')
     if result.get('phone_system_command'):
         out.line(f"Set {result.get('phone_system_setting')} in .env to this computer's address on your local "
                  f"network, then run: {result['phone_system_command']}")
@@ -131,6 +133,53 @@ def trunk_mode(mode: str = typer.Argument(..., metavar='t38|audio',
         else:
             out.line(f'New calls use {kind} fax. {applied.get("message")}')
     state.out().result(result, human)
+
+
+network = typer.Typer(help='Whether fax over IP (T.38) works on the network Faxbot runs on, and what to do when it '
+                             'does not.', no_args_is_help=True)
+trunk.add_typer(network, name='network')
+
+
+def _network_lines(out, result):
+    from ...sip_network import action_sentence
+    if not result.get('applies'):
+        out.line(result.get('text') or '')
+        return
+    out.line(result.get('text') or '')
+    for key in ('platform_text',):
+        if result.get(key):
+            out.line(result[key])
+    moment = parse_time(result.get('action_at'))
+    done = action_sentence(result.get('action'), moment.astimezone().strftime('%-d %B') if moment else '')
+    if done:
+        out.line(done)
+    if result.get('engine_message'):
+        out.line(result['engine_message'])
+    if result.get('fix_text'):
+        out.line(result['fix_text'])
+        for step in result.get('fix_steps') or []:
+            out.line(f'  {step}')
+        if result.get('fix_note'):
+            out.line(result['fix_note'])
+    if result.get('audio_text'):
+        out.line(result['audio_text'])
+    if result.get('checked'):
+        out.fields([('Internet address', result.get('internet_address') or 'Not known'),
+                    ('Checked', local_time(result.get('checked_at')))])
+
+
+@network.command('status')
+def network_status():
+    """Show whether fax over IP (T.38) works on this network, where Faxbot runs, and how to fix it when it does not."""
+    result = state.api().get('/admin/sip/network')
+    state.out().result(result, lambda out: _network_lines(out, result))
+
+
+@network.command('check')
+def network_check():
+    """Run the network check again now; new calls use fax over IP only when it works."""
+    result = state.api().post('/admin/sip/network/check')
+    state.out().result(result, lambda out: _network_lines(out, result))
 
 
 @trunk.command('presets')

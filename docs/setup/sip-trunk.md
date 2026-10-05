@@ -124,7 +124,8 @@ The behaviour rests on Asterisk 22 itself (read 2026-10-04 UTC): the manager `Co
 
 - how the carrier answered, for example "The carrier accepted Faxbot's registration over TLS." and "The carrier answered Faxbot's check in 38 ms.";
 - Faxbot's internet address, which it learns itself with STUN (from the carrier's STUN server when there is one, compared with a second public STUN server), and whether your network keeps or changes port numbers on the way out;
-- "No ports need to be opened or forwarded." for username and password sign-in;
+- "No ports need to be opened or forwarded." for username and password sign-in, unless the network check below says T.38 fax data cannot come back;
+- whether T.38 fax data can come back through your network (see [Network for fax over IP](#network-for-fax-over-ip));
 - the newest call, in the same sentence Recent calls shows.
 
 If you manage settings with an environment file instead of the console, set the `SIP_TRUNK_*` values below and run `docker compose run --rm api python -m app.sip_trunk write`, then restart Asterisk.
@@ -156,13 +157,40 @@ Faxbot learns its internet address with STUN when you select **Apply and connect
 
 Encryption also hides the call setup from router features that rewrite it (often called SIP ALG). If **Check trunk status** keeps saying Faxbot is not registered over the encrypted connection, switch **Transport** to TCP, apply again and restart Asterisk.
 
-This works with carriers that send their media back to wherever Faxbot's packets come from, which Telnyx does for audio. Whether Telnyx does the same for T.38 data is settled by your first test fax; once a call has shown it, **Check trunk status** says what it showed instead. When a carrier does not, the call connects but no fax data arrives, and Faxbot says so on that call: "The call connected but no fax data came back from the carrier." In that case, run Faxbot's fax engine on a host with a public address, or use a cloud fax provider.
+This works with carriers that send their media back to wherever Faxbot's packets come from, which Telnyx does for audio. Telnyx does not do it for T.38 data (measured 2026-10-03 and 2026-10-04): on a network that changes port numbers, Telnyx's T.38 data never reaches Faxbot, so T.38 needs a network that keeps port numbers. The network check below finds out which network you have and says what to do. When a call shows it anyway, the call connects but no fax data arrives, and Faxbot says so on that call: "The call connected but no fax data came back from the carrier."
+
+### Network for fax over IP
+
+Faxbot checks its network at every start, on **Apply and connect**, every few minutes (the same interval as the internet address) and when you select **Check again** under **Network for fax over IP** on the carrier's page (`faxbot providers trunk network status` shows the last check, `faxbot providers trunk network check` runs it now). It learns how your network treats port numbers (kept; changed the same way for every destination; changed for each destination), whether your internet provider shares your internet address with other customers, and where Faxbot runs: Colima on a Mac (on Colima's built-in network, the Mac's shared network, or directly on your local network), Docker Desktop on a Mac or Windows, a computer on your local network, a cloud server, or a server with its own internet address. The check looks from the API container, which shares the Compose network, the virtual machine and the router with Asterisk.
+
+T.38 follows the check by itself. When fax data cannot come back, Faxbot turns **Use T.38 fax over IP** off (saved by "system"), says "Off: your network changes port numbers, so Telnyx's T.38 fax data cannot come back; Faxbot uses audio fax until the network is fixed." and keeps sending with audio fax. When a later check finds a network that lets it come back (for example after you moved Colima onto your local network), Faxbot turns T.38 on again without anyone touching the switch. It never resends a fax. If you choose T.38 yourself on the same network (**Try T.38 again**, the switch, or `faxbot providers trunk mode t38`), Faxbot leaves your choice alone until the network changes; a person's choice of audio fax always stands. For other carriers than Telnyx the same rule applies, worded "most likely", because only Telnyx was measured. A carrier that turns T.38 into audio itself (BT One Voice) and a phone system on your local network are left alone.
+
+What to do when Faxbot cannot fix it itself (the console and the command line show the same text and the exact commands; audio fax keeps working meanwhile):
+
+| Where Faxbot runs | What to do |
+| --- | --- |
+| Colima on Colima's built-in network or the Mac's shared network | Recreate Colima directly on your local network with the commands under this table. |
+| Docker Desktop, or a router that changes port numbers | Forward UDP ports 4000–4039 on your router to this computer, start Faxbot with `docker compose -f docker-compose.yml -f docker-compose.fax-ports.yml up -d` (Asterisk then uses exactly those ports: 13 for T.38 and 27 for audio, 13 faxes at once), and enter your internet address under **Internet address**. |
+| A cloud server whose network changes port numbers | Give the server its own public address, open UDP ports 4000–4039 in its firewall or security group, and start Faxbot with the fax ports file as above. |
+| An internet provider that shares your address with other customers | No router setting can change this; audio fax is used. To use T.38, run Faxbot on a server with its own internet address. |
+| No internet address found | Let Faxbot reach `stun.cloudflare.com` on UDP port 3478 through your firewall. |
+
+Colima cannot move a machine to your local network once it exists ("'network mode' cannot be updated after initial setup"), so delete the machine without `--data` and start it again with the same CPU, memory and disk. Colima 0.9 and later keep Docker's images and volumes when the machine is deleted, so Faxbot's faxes and settings stay (`colima version` shows yours). Use the profile name and the CPUS, MEMORY and DISK numbers `colima list` shows for Faxbot (the console fills in the ones Faxbot sees); everything in that Colima machine stops until it is back, and the Mac may ask for your password once:
+
+```sh
+colima list
+colima delete default
+colima start default --cpu 2 --memory 4 --disk 20 --network-address --network-mode bridged --network-interface "$(route -n get default | awk '/interface:/{print $2}')" --network-preferred-route
+docker compose up -d
+```
+
+Run the last command in Faxbot's folder. Never add `--data` to `colima delete`: it erases Docker's volumes, Faxbot's faxes and settings with them. Checked with Colima 0.9.1 on 2026-10-04: after the recreate, a container's port 4002 left the home router as 4002, and a volume written before the delete was still there.
 
 ### When T.38 data does not come back: audio fax
 
 If a call switched to T.38 and no fax data came back ("The call connected but no fax data came back from the carrier."), the carrier is not sending T.38 data back to Faxbot's path, though it may still do so for audio. Faxbot then switches new calls to audio fax by itself, but only when the fax engine timed out waiting for the other side's first fax message (a plain hang-up, a busy line or the other side hanging up never switches it): it turns off **Use T.38 fax over IP** (saved by "system"), connects the trunk again once no call is up, and says next to the switch "Off: on 3 October a T.38 fax got no fax data back on this network, so Faxbot uses audio fax." with **Try T.38 again**. It never resends the failed fax; send it again when you are ready. When T.38 is off and the most recent T.38 call got no fax data back (for example, someone turned T.38 off by hand right after such a call), Faxbot takes that call as the reason and says so the same way. New calls stay audio: Faxbot declines the carrier's switch to T.38 and sends at up to 9600 bit/s with error correction, which survives a voice path better.
 
-A new Telnyx trunk on a network that changes port numbers starts with audio fax for the same reason, because Telnyx's T.38 data was seen not to come back through such a network; the switch says "Off: your network changes port numbers, and Telnyx's T.38 fax data does not come back through such networks, so Faxbot uses audio fax." Once you choose T.38 yourself (**Try T.38 again**, the switch, or `faxbot providers trunk mode t38`), Faxbot leaves your choice alone until another T.38 call gets no fax data back. `faxbot providers trunk mode audio` turns audio fax on by hand, and `faxbot providers trunk status` says why audio fax is in use. With Telnyx you can also set **T.38 fax re-invite initiated by** to **Disabled** for audio fax.
+When such a call happened on a network that changed port numbers and a later network check finds the network fixed, Faxbot turns T.38 on again by itself; when it happened on a network that keeps port numbers, the carrier is the cause and audio fax stays until you choose otherwise. A trunk on a network that changes port numbers starts with audio fax (see [Network for fax over IP](#network-for-fax-over-ip)). `faxbot providers trunk mode audio` turns audio fax on by hand, and `faxbot providers trunk status` says why audio fax is in use. With Telnyx you can also set **T.38 fax re-invite initiated by** to **Disabled** for audio fax.
 
 ### Server IP sign-in needs a public host
 

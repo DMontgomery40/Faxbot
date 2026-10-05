@@ -28,7 +28,7 @@ from .models import FaxJobOut
 from .conversion import ensure_dir
 from .documents import prepare_upload, UploadPreparationError
 from .ami import ami_client, ENGINE_UNREACHABLE
-from . import sip_calls, sip_fax_mode
+from . import sip_calls, sip_fax_mode, sip_network
 from .sip_http import router as sip_router, sip_trunk_message, watch_public_address
 from .phaxio_service import get_phaxio_service
 from .sinch_service import get_sinch_service
@@ -141,8 +141,10 @@ async def lifespan(application: FastAPI):
                     tasks.append(asyncio.create_task(OutboundPoller(delivery).run(), name='faxbot-outbound-poller'))
                     # The task's frame keeps the startup values; the watcher reads the current ones.
                     tasks.append(asyncio.create_task(watch_public_address(
-                        values_source=lambda: runtime.manager.store.read().active.values),
+                        values_source=lambda: runtime.manager.store.read().active.values, runtime=runtime),
                         name='faxbot-public-address'))
+                    # The network check for fax over IP at every start (it also decides T.38 for new calls).
+                    tasks.append(asyncio.create_task(sip_network.check_at_start(runtime), name='faxbot-network-check'))
                     yield
             finally:
                 for task in tasks:

@@ -1541,6 +1541,7 @@ $ faxbot providers trunk [OPTIONS] COMMAND [ARGS]...
 * `mode`: Choose how new fax calls are sent, T.38...
 * `presets`: List the carriers and phone systems Faxbot...
 * `use`: Choose a carrier or phone system preset...
+* `network`: Whether fax over IP (T.38) works on the...
 
 #### `faxbot providers trunk status`
 
@@ -1647,6 +1648,53 @@ $ faxbot providers trunk use [OPTIONS] {PRESET}
 * `--transport <str>`: How Faxbot connects to the line: udp, tcp or tls (encrypted), where the preset offers it.
 * `--number-format e164|local`: How numbers are dialed: e164 (international format, +44...) or local (as a phone at your site dials them).
 * `--prefix <str>`: Outside-line digits before a number dialled as a phone here dials it, such as 9.
+* `--help`: Show this message and exit.
+
+#### `faxbot providers trunk network`
+
+Whether fax over IP (T.38) works on the network Faxbot runs on, and what to do when it does not.
+
+**Usage**:
+
+```console
+$ faxbot providers trunk network [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `status`: Show whether fax over IP (T.38) works on...
+* `check`: Run the network check again now; new calls...
+
+##### `faxbot providers trunk network status`
+
+Show whether fax over IP (T.38) works on this network, where Faxbot runs, and how to fix it when it does not.
+
+**Usage**:
+
+```console
+$ faxbot providers trunk network status [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+##### `faxbot providers trunk network check`
+
+Run the network check again now; new calls use fax over IP only when it works.
+
+**Usage**:
+
+```console
+$ faxbot providers trunk network check [OPTIONS]
+```
+
+**Options**:
+
 * `--help`: Show this message and exit.
 
 ## `faxbot costs`

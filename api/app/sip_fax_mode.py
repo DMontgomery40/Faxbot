@@ -5,14 +5,20 @@ screen can say it in one sentence:
 
 - ``no_data_back``: a call switched to T.38 and no fax data came back. The
   failed fax is never sent again; only new calls use audio fax.
-- ``network``: a new Telnyx trunk on a network that changes port numbers,
-  where Telnyx's T.38 data was seen not to come back.
+- ``network``: the network check (``sip_network``) says the carrier's T.38
+  data cannot come back through this network (it changes port numbers). The
+  check runs at start, on Apply, every few minutes and on "Check again", and
+  each time Faxbot re-decides: once the network lets T.38 data come back,
+  Faxbot turns T.38 on again by itself, recorded with the same reason.
 - ``carrier``: a new trunk with a carrier that turns T.38 into audio fax inside
   its own network (BT One Voice), so audio fax is what reaches the far end.
 
 A person's own choice (the switch, "Try T.38 again", ``faxbot trunk mode``)
-is recorded as ``chosen`` and is never overridden by the network rule. The
-record lives next to the trunk files in ``<FAX_DATA_DIR>/asterisk/fax-mode``;
+is recorded as ``chosen`` with what the network allowed at that moment, and
+the network rule leaves it alone until the network changes. Every record
+carries that network verdict (``network``: open, blocked or unknown) so a
+later check can tell a fixed network from the same one. The record lives
+next to the trunk files in ``<FAX_DATA_DIR>/asterisk/fax-mode``;
 the setting itself (``sip_t38_enabled``) is saved like any other, by "system"
 when Faxbot changed it.
 """
@@ -56,8 +62,9 @@ def read(values):
     return record if isinstance(record, dict) and record.get('mode') in ('t38', 'audio') else None
 
 
-def write(values, mode, reason, at=None, *, derived=False):
-    """Record a decision; ``at`` is a datetime or an ISO time from a call record."""
+def write(values, mode, reason, at=None, *, derived=False, network=None):
+    """Record a decision; ``at`` is a datetime or an ISO time from a call record, ``network`` what the
+    network check allowed when it was made."""
     path = record_path(values)
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     if isinstance(at, str):
@@ -67,6 +74,8 @@ def write(values, mode, reason, at=None, *, derived=False):
     record = {'mode': mode, 'reason': reason, 'at': when}
     if derived:
         record['derived'] = True
+    if network:
+        record['network'] = network
     sip_trunk._write_private(path, json.dumps(record) + '\n')
     return record
 
@@ -114,8 +123,11 @@ def off_sentence(reason, day='', carrier=''):
         return (f'Off: {"on " + day + " " if day else ""}a T.38 fax got no fax data back on this network, '
                 'so Faxbot uses audio fax.')
     if reason == NETWORK:
-        return ('Off: your network changes port numbers, and Telnyx\'s T.38 fax data does not come back through '
-                'such networks, so Faxbot uses audio fax.')
+        if carrier == 'Telnyx':
+            return ('Off: your network changes port numbers, so Telnyx\'s T.38 fax data cannot come back; Faxbot uses '
+                    'audio fax until the network is fixed.')
+        return ('Off: your network changes port numbers, so T.38 fax data most likely cannot come back; Faxbot uses '
+                'audio fax until the network is fixed.')
     if reason == CARRIER:
         return f'Off: {carrier or "your carrier"} turns T.38 into audio fax inside its network, so Faxbot uses audio fax.'
     return None
@@ -144,19 +156,52 @@ def carrier_prefers_audio(values, *, has_calls):
                 and not has_calls)
 
 
-def reconcile(values):
-    """Record a person's own choice: whatever the switch says now, unless Faxbot's reason still stands."""
+def reconcile(values, network=None):
+    """Record a person's own choice: whatever the switch says now, unless Faxbot's reason still stands.
+
+    ``network`` is what the network check allowed before this choice. A switch
+    nobody has moved yet (no record at all) is recorded without it, so the
+    network rule may still decide for a new trunk.
+    """
     record = read(values)
     mode = 't38' if values.sip_t38_enabled else 'audio'
     if record and record['mode'] == mode:
         return record
-    return write(values, mode, CHOSEN)
+    return write(values, mode, CHOSEN, network=network if record else None)
 
 
-def network_prefers_audio(values, network, *, has_calls):
-    """A new Telnyx trunk on a network that changes port numbers starts with audio fax."""
-    return bool(values.sip_trunk_preset == 'telnyx' and values.sip_t38_enabled and read(values) is None
-                and not has_calls and network is not None and network.public_ip and network.ports == 'changes')
+def network_decision(values, verdict, *, previous=None, records=None):
+    """'t38' or 'audio' when a network check should switch new calls, else None.
+
+    ``verdict`` is what the check found (open, blocked or unknown), ``previous``
+    what the network allowed before it. Faxbot turns T.38 off when fax data
+    cannot come back, unless a person chose T.38 on this same network, and
+    turns it on again once the network lets it come back: after its own
+    network decision, or after a T.38 call got no fax data back on a network
+    that has been fixed since. A carrier that turns T.38 into audio itself, a
+    phone system, and a person's choice of audio fax are left alone.
+    """
+    preset = sip_trunk.PRESETS.get(values.sip_trunk_preset)
+    if preset is None or preset.phone_system or preset.audio_by_default or verdict not in ('open', 'blocked'):
+        return None
+    if verdict == 'blocked' and values.sip_t38_enabled:
+        record = read(values)
+        if record is None:
+            return 'audio'
+        if record['mode'] != 't38':
+            return None  # the switch moved since Faxbot's record: a person's choice, until Apply records it
+        if record.get('reason') == CHOSEN and record.get('network') == 'blocked':
+            return None  # "Try T.38 again" on this network
+        return 'audio'
+    if verdict == 'open' and not values.sip_t38_enabled:
+        record = read(values) or derive(values, records)
+        if not record or record['mode'] != 'audio':
+            return None
+        if record.get('reason') == NETWORK:
+            return 't38'
+        if record.get('reason') == NO_DATA_BACK and (record.get('network') or previous) == 'blocked':
+            return 't38'
+    return None
 
 
 # After a call: switch new calls to audio fax when T.38 data never came back ----------------------------
@@ -194,12 +239,26 @@ def detach():
     _runtime = None
 
 
+def _network_now(values):
+    """What the last network check allowed (open, blocked or unknown), or None before any check."""
+    from .sip_network import read_check
+    record = read_check(values)
+    return record['t38'] if record else None
+
+
 async def switch_to_audio(runtime, reason):
     """Save audio fax for new calls (by "system"), record why, write the trunk and let Asterisk load it.
 
     Never resends anything: the failed fax keeps its result. Returns what
     happened with the fax engine, or None when nothing changed.
     """
+    return await switch(runtime, False, reason)
+
+
+async def switch(runtime, enabled, reason, *, network=None):
+    """Save T.38 on or off for new calls (by "system"), record why with what the network allowed, write
+    the trunk and let Asterisk load it once no call is up. Returns what happened with the fax engine,
+    or None when nothing changed."""
     from .config_runtime import run_lifecycle_step
     from .config_store import ConfigurationConflict
 
@@ -207,14 +266,14 @@ async def switch_to_audio(runtime, reason):
         for _ in range(3):
             snapshot = runtime.manager.store.read()
             values = snapshot.desired.values
-            if not values.sip_t38_enabled or not sip_trunk.configured(values):
+            if values.sip_t38_enabled == enabled or not sip_trunk.configured(values):
                 return None
             try:
-                runtime.manager.patch(snapshot, {'sip_t38_enabled': False}, actor='system')
+                runtime.manager.patch(snapshot, {'sip_t38_enabled': enabled}, actor='system')
             except ConfigurationConflict:
                 continue
             values = runtime.manager.store.read().active.values
-            write(values, 'audio', reason)
+            write(values, 't38' if enabled else 'audio', reason, network=network or _network_now(values))
             sip_trunk.write_asterisk_configuration(values)
             return values
         return None
@@ -225,7 +284,7 @@ async def switch_to_audio(runtime, reason):
             return None
         try:
             from .audit import audit_event
-            audit_event('sip_audio_fax_chosen', backend='sip')
+            audit_event('sip_t38_chosen' if enabled else 'sip_audio_fax_chosen', backend='sip', reason=reason)
         except Exception:
             pass
         from .sip_http import _load_into_engine
@@ -239,5 +298,5 @@ async def switch_to_audio(runtime, reason):
             result = await _load_into_engine(values)
         return result
     except Exception:
-        logging.getLogger(__name__).warning('Faxbot could not switch new calls to audio fax.')
+        logging.getLogger(__name__).warning('Faxbot could not switch T.38 for new calls.')
         return None

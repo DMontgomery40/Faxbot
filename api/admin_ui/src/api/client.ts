@@ -1,4 +1,5 @@
 import type { SipApplyResult, SipCallPage, SipPreset, SipTrunkStatus } from './sipTypes';
+import type { SipNetworkReport } from './networkTypes';
 import type { BatchingCheck, BatchingNumber, BatchingSave, FaxTogether } from './batchingTypes';
 import type {
   HealthStatus,
@@ -642,6 +643,15 @@ export class AdminAPIClient {
 
   async listSipCalls(params: { cursor?: string | null; limit?: number; direction?: 'outbound' | 'inbound' } = {}): Promise<SipCallPage> {
     return this.json(`/admin/sip/calls${query(params)}`);
+  }
+
+  // The network check for fax over IP: the last result, and Check again.
+  async getSipNetwork(): Promise<SipNetworkReport> {
+    return this.json('/admin/sip/network');
+  }
+
+  async checkSipNetwork(): Promise<SipNetworkReport> {
+    return this.json('/admin/sip/network/check', { method: 'POST' });
   }
 
   // Bring in faxes the SIP trunk received but could not hand to Faxbot.

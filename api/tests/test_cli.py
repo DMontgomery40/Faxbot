@@ -1027,6 +1027,37 @@ def test_trunk_status_and_calls_read_as_plain_sentences(trunk_cli):
     assert trunk_cli.json('providers', 'trunk', 'apply', '--no-wait')['engine'] == 'manual'
 
 
+def test_trunk_network_says_whether_t38_can_come_back_and_what_to_do(trunk_cli, monkeypatch):
+    from app import sip_network
+    from app.sip_network import Discovery
+
+    async def colima(*, fresh=False):
+        return Discovery(kernel='6.8.0-64-generic', vendor='Apple Inc.', lima=True, in_container=True,
+                         hops=('172.17.0.1', None, None), cpus=2, memory_gib=4, disk_gib=20)
+    monkeypatch.setattr(sip_network, 'discover', colima)
+    before = trunk_cli('providers', 'trunk', 'network', 'status')
+    assert before.exit_code == 0 and 'Faxbot has not checked this network yet.' in before.stdout
+    checked = trunk_cli('providers', 'trunk', 'network', 'check')
+    assert checked.exit_code == 0, checked.stdout
+    for sentence in ('Your network changes port numbers, and Telnyx does not follow such changes for T.38 fax data, '
+                     'so it cannot come back to Faxbot.',
+                     "Faxbot runs in Colima on a Mac, on Colima's built-in network.",
+                     ', Faxbot switched new calls to audio fax.',
+                     'Move Colima onto your office network', '  colima delete default',
+                     '--cpu 2 --memory 4 --disk 20 --network-address --network-mode bridged',
+                     'Never add --data to the delete command', 'Audio fax keeps working meanwhile.', '198.51.100.7'):
+        assert sentence in checked.stdout, sentence
+    assert 'blocked' not in checked.stdout and 'colima_user' not in checked.stdout
+    report = trunk_cli.json('providers', 'trunk', 'network', 'status')
+    assert (report['t38'], report['platform'], report['t38_enabled']) == ('blocked', 'colima_user', False)
+    # The older `faxbot trunk` group still reaches it, and trunk status points here.
+    assert 'Telnyx does not follow' in trunk_cli('trunk', 'network', 'status').stdout
+    status = trunk_cli('providers', 'trunk', 'status').stdout
+    assert 'If the network check shows a problem, run faxbot providers trunk network status to see how to fix it.' \
+        in status
+    assert 'No ports need to be opened or forwarded.' not in status
+
+
 def test_trunk_presets_and_use_cover_phone_systems_and_uk_and_australian_carriers(trunk_cli):
     listing = trunk_cli('providers', 'trunk', 'presets')
     assert listing.exit_code == 0, listing.stdout
