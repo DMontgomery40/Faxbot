@@ -325,6 +325,22 @@ def test_an_older_no_data_record_comes_back_on_once_the_network_is_fixed(client,
     assert _check(client)['switched'] == 't38' and _t38(client) is True
 
 
+def test_no_ports_is_not_claimed_while_the_network_section_asks_for_a_forward(isolated_installation, monkeypatch,
+                                                                             network):
+    network['row'] = DESKTOP_MAC
+    with _client(monkeypatch, {**TRUNK, 'SIP_EXTERNAL_ADDRESS': '198.51.100.7'}) as client:
+        assert client.post('/admin/sip/apply', headers=ADMIN).status_code == 200
+        report = client.get('/admin/sip/network', headers=ADMIN).json()
+        assert (report['t38'], report['why']) == (UNKNOWN, 'typed')
+        assert report['fix_text'].startswith('Check that your router forwards UDP ports 4000\u20134039')
+        assert client.get('/admin/sip/status', headers=ADMIN).json()['ports_text'] is None
+    network['row'] = NO_STUN
+    with _client(monkeypatch, TRUNK) as client:
+        assert client.post('/admin/sip/apply', headers=ADMIN).status_code == 200
+        assert client.get('/admin/sip/status', headers=ADMIN).json()['ports_text'] == (
+            'No ports need to be opened or forwarded.')
+
+
 @pytest.mark.parametrize('preset, extra, switched', [
     ('signalwire', {'SIP_TRUNK_HOST': 'example.sip.signalwire.com'}, 'audio'),
     ('bt-one-voice', {'SIP_TRUNK_HOST': 'sip.example.net', 'SIP_TRUNK_AUTH': 'ip',

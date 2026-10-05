@@ -313,14 +313,16 @@ def _ports_text(values, network):
     """Whether this sign-in method can work from here; None when Faxbot cannot tell.
 
     "No ports" holds for signaling and audio fax; when the network check says
-    T.38 data cannot come back, the network section says what to open instead.
+    T.38 data cannot come back, or comes back only through a forward Faxbot
+    cannot see, the network section says what to open instead.
     """
     if values.sip_trunk_auth == 'ip':
         if values.sip_external_address:
             return None
         return BEHIND_ROUTER if network and network.behind_nat else None
     check = sip_network.read_check(values)
-    return None if check and check['t38'] == sip_network.BLOCKED else NO_PORTS
+    forwards = check and check['t38'] != sip_network.OPEN and check.get('why') != 'no_address'
+    return None if forwards else NO_PORTS
 
 
 def _last_call(records):
