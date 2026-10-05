@@ -22,4 +22,4 @@ This page tells you what to do about each result on [Diagnostics](diagnostics.md
 | The document converter is missing | Install Ghostscript (`gs`) where Faxbot runs. The Docker image includes it. |
 | No time zone is chosen | Go to **System → Setup → Time zone**. |
 | Some saved changes take effect after Faxbot restarts | Select **Restart Faxbot** on Diagnostics, or restart the service. |
-| The audit log, request limits or secure links are off | Go to **System → Audit log** or **System → Security**. |
+| The audit log, protection from overload, or secure links are off | Go to **System → Audit log** or **System → Security**. |

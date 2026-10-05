@@ -14,7 +14,7 @@ The checks only read. They send no fax, change no setting and cost no money.
 | Receiving | Whether the receiving provider accepts Faxbot's sign-in details, when it is not the sending provider. Received faxes that Faxbot stopped trying to fetch. The last received fax. Each email delivery: Faxbot signs in to the email server and leaves without sending a message. Faxes that Faxbot could not email. |
 | Fax engine | Whether Faxbot's own fax engine runs, and how many calls are in progress. For a carrier trunk, also: whether the carrier accepts Faxbot's sign-in details and answers its checks. Whether received faxes reach Faxbot. Why fax over IP (T.38) is off, when Faxbot turned it off. Whether the network allows fax over IP (T.38) ("Faxing over the internet"). The last call. |
 | This server | The database. Free disk space where faxes are kept, with a warning below 2 GB or 5%. Whether Faxbot can write fax files. The document converter. The time zone that times are shown in. Settings that wait for a restart. Online storage, when it is used. |
-| Security | The audit log, request limits and secure links for fax services. |
+| Security | The audit log, protection from overload, and secure links for fax services. |
 
 Some providers have no read-only sign-in check: Phaxio, Sinch, SignalWire and Documo. For them, the check only shows that the sign-in details are saved. The next fax shows whether the provider accepts them.
 
