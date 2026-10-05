@@ -85,6 +85,23 @@ def _when(moment):
     return short_time(moment) if moment else ''
 
 
+def _day(moment):
+    """'3 October' in the installation's time zone, from a datetime or an ISO text; '' when unknown."""
+    from .people_time import zone
+    if isinstance(moment, str):
+        try:
+            moment = datetime.fromisoformat(moment.replace('Z', '+00:00'))
+        except ValueError:
+            return ''
+    if not isinstance(moment, datetime):
+        return ''
+    if moment.tzinfo is None:
+        from datetime import timezone
+        moment = moment.replace(tzinfo=timezone.utc)
+    local = moment.astimezone(zone(installation_zone_name()))
+    return f'{local.day} {local:%B}'
+
+
 async def _blocking(function, *args):
     return await asyncio.to_thread(function, *args)
 
@@ -188,7 +205,8 @@ def _store_engine():
 
 
 def _sent_summary(now):
-    deliveries = sa.table('outbound_deliveries', sa.column('state'), sa.column('updated_at'))
+    # Typed columns: SQLite returns untyped dates as text.
+    deliveries = sa.table('outbound_deliveries', sa.column('state', sa.String), sa.column('updated_at', sa.DateTime))
     week = now - timedelta(days=7)
     with _store_engine().connect() as connection:
         counts = dict(connection.execute(
@@ -230,8 +248,8 @@ async def recent_sent(context: Context) -> list[Finding]:
 
 
 def _received_summary(now):
-    imports = sa.table('inbound_imports', sa.column('source'), sa.column('state'), sa.column('acquired_at'),
-                       sa.column('updated_at'))
+    imports = sa.table('inbound_imports', sa.column('source', sa.String), sa.column('state', sa.String),
+                       sa.column('acquired_at', sa.DateTime), sa.column('updated_at', sa.DateTime))
     real = imports.c.source != 'test'
     with _store_engine().connect() as connection:
         last = connection.execute(sa.select(sa.func.max(imports.c.acquired_at)).where(real)).scalar_one()
@@ -385,8 +403,11 @@ async def carrier_trunk(context: Context) -> list[Finding]:
                                 status['handover_text'], None if ready else 'Open carrier trunk',
                                 None if ready else 'providers/trunk'))
     if status.get('t38_off_reason'):
-        findings.append(Finding('engine.t38', 'engine', 'Fax over IP (T.38)', ATTENTION, status['t38_off_reason'],
-                                'Open carrier trunk', 'providers/trunk'))
+        from . import sip_fax_mode
+        sentence = sip_fax_mode.off_sentence(status['t38_off_reason'], _day(status.get('t38_off_at')), carrier)
+        findings.append(Finding('engine.t38', 'engine', 'Fax over IP (T.38)', ATTENTION,
+                                sentence or 'Faxbot uses audio fax on this trunk.', 'Open carrier trunk',
+                                'providers/trunk'))
     elif status.get('public_address_text'):
         findings.append(Finding('engine.network', 'engine', 'Internet address', OK, status['public_address_text']))
     if status.get('last_call_text'):
