@@ -35,7 +35,7 @@ The future enterprise direction adds accountable correspondence: reusable intake
 | Document conversion and request identity | `api/app/conversion.py`, `api/app/request_identity.py` | [Conversion implementation](api/app/conversion.py), [held test jobs](docs/setup/test-mode.md) |
 | Permissions and saved configuration | `api/app/access/`, `config_values.py`, `config_store.py`, `config_activation.py` | [Access control](docs/security/access-control.md), [configuration design](docs/architecture/2026-10-02-faxbot-configuration-activation.md) |
 | Console and clients | `api/admin_ui/`, `sdks/`, `node_mcp/`, `python_mcp/` | [Console](docs/admin-console.md), [SDKs](docs/sdks/index.md), [MCP](docs/mcp/index.md) |
-| Schema and provider capabilities | `api/app/schema*.py`, `api/alembic/versions/`, `config/provider_traits.json`, `config/plugin_registry.json` | [Schema design](docs/architecture/2026-10-02-faxbot-schema-foundation.md), [plugin registry](docs/plugins/registry.md) |
+| Schema and provider capabilities | `api/app/schema*.py`, `api/alembic/versions/`, `config/provider_traits.json` | [Schema design](docs/architecture/2026-10-02-faxbot-schema-foundation.md) |
 | Future enterprise workflows, templates and setup | Extend existing access, intake, delivery and configuration boundaries; proposed modules are not current APIs | [Enterprise architecture and acceptance criteria](planning/enterprise-correspondence.md) |
 
 ## Enterprise planning boundaries

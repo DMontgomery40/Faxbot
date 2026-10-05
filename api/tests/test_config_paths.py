@@ -21,15 +21,14 @@ def run_resource_probe(root, cwd, package):
     """Import real resources in a fresh, credential-free interpreter."""
     script = f"""
 import json
-from {package}.config_paths import provider_traits_path, providers_dir, faxbot_config_path, plugin_registry_path
+from {package}.config_paths import provider_traits_path, providers_dir, faxbot_config_path
 from {package}.provider_catalog import ProviderCatalog
 catalog = ProviderCatalog.load(provider_traits_path(), providers_dir())
 print(json.dumps({{
     'sip': {{'kind': catalog.get('sip').kind, 'traits': catalog.get('sip').traits.as_dict()}},
     'documo': {{'kind': catalog.get('documo').kind, 'traits': catalog.get('documo').traits.as_dict()}},
     'config_path': str(faxbot_config_path()),
-    'registry_path': str(plugin_registry_path()),
-    'registry': json.loads(plugin_registry_path().read_text(encoding='utf-8')),
+    'traits_path': str(provider_traits_path()),
 }}))
 """
     result = subprocess.run(
@@ -46,7 +45,7 @@ print(json.dumps({{
 
 @pytest.mark.parametrize("package", ["app", "api.app"])
 @pytest.mark.parametrize("working_directory", ["root", "api", "unrelated"])
-def test_bundled_traits_config_and_registry_ignore_source_cwd(tmp_path, package, working_directory):
+def test_bundled_traits_and_config_ignore_source_cwd(tmp_path, package, working_directory):
     cwd = {"root": ROOT, "api": ROOT / "api", "unrelated": tmp_path}[working_directory]
     data = run_resource_probe(ROOT, cwd, package)
     assert data["sip"]["kind"] == "self_hosted"
@@ -54,8 +53,7 @@ def test_bundled_traits_config_and_registry_ignore_source_cwd(tmp_path, package,
     assert data["documo"]["kind"] == "cloud"
     assert data["documo"]["traits"]["requires_tiff"] is False
     assert Path(data["config_path"]) == ROOT / "config" / "faxbot.config.json"
-    assert Path(data["registry_path"]) == ROOT / "config" / "plugin_registry.json"
-    assert data["registry"] == json.loads((ROOT / "config" / "plugin_registry.json").read_text(encoding="utf-8"))
+    assert Path(data["traits_path"]) == ROOT / "config" / "provider_traits.json"
 
 
 def test_flattened_image_layout_loads_bundled_resources_from_unrelated_cwd(tmp_path):
@@ -68,8 +66,7 @@ def test_flattened_image_layout_loads_bundled_resources_from_unrelated_cwd(tmp_p
     assert data["sip"]["traits"]["requires_ami"] is True
     assert data["documo"]["kind"] == "cloud"
     assert Path(data["config_path"]) == runtime / "config" / "faxbot.config.json"
-    assert Path(data["registry_path"]) == runtime / "config" / "plugin_registry.json"
-    assert data["registry"] == json.loads((ROOT / "config" / "plugin_registry.json").read_text(encoding="utf-8"))
+    assert Path(data["traits_path"]) == runtime / "config" / "provider_traits.json"
 
 
 def test_old_api_provider_directory_cannot_shadow_bundled_source_resources(tmp_path):
@@ -82,8 +79,7 @@ def test_old_api_provider_directory_cannot_shadow_bundled_source_resources(tmp_p
     assert data["sip"]["traits"]["requires_ami"] is True
     assert data["documo"]["kind"] == "cloud"
     assert Path(data["config_path"]) == runtime / "config" / "faxbot.config.json"
-    assert Path(data["registry_path"]) == runtime / "config" / "plugin_registry.json"
-    assert data["registry"] == json.loads((ROOT / "config" / "plugin_registry.json").read_text(encoding="utf-8"))
+    assert Path(data["traits_path"]) == runtime / "config" / "provider_traits.json"
 
 
 def manifest(provider_id="synthetic-provider.v1"):
@@ -185,9 +181,6 @@ def test_explicit_root_install_is_visible_to_traits_discovery_config_and_diagnos
     assert view["enabled"] is True
     assert view["settings"] == {}
     assert view["role"] == "outbound"
-    diagnostics = client.post("/admin/diagnostics/run").json()["checks"]["plugins"]
-    assert diagnostics["installed"] == 1
-    assert diagnostics["manifests"][0]["name"] == "Synthetic resource marker"
     update = client.put("/plugins/synthetic-provider.v1/config", json={
         "settings": {"resource_marker": "operator-config"},
         "expected_revision_id": view["_meta"]["desired_revision_id"],
@@ -501,18 +494,15 @@ async def test_legacy_escaped_manifest_is_never_used_for_a_fax(installation, mon
 def test_operator_root_symlink_and_relative_path_overrides_remain_supported(monkeypatch, tmp_path):
     from app.config import use_configuration
     from app.config_values import ConfigurationValues
-    from app.config_paths import provider_manifest_path, faxbot_config_path, plugin_registry_path, provider_traits_path
+    from app.config_paths import provider_manifest_path, faxbot_config_path, provider_traits_path
     from app.provider_catalog import ProviderCatalog
     monkeypatch.chdir(tmp_path)
     providers = tmp_path / "operator-providers"
     providers.mkdir()
     alias = tmp_path / "providers-alias"
     alias.symlink_to(providers, target_is_directory=True)
-    registry = tmp_path / "relative-registry.json"
-    registry.write_text(json.dumps({"items": [{"id": "operator-registry-marker"}]}))
     values = ConfigurationValues.from_environment({
         "FAXBOT_PROVIDERS_DIR": "providers-alias", "FAXBOT_CONFIG_PATH": "relative-settings.json",
-        "PLUGIN_REGISTRY_PATH": registry.name,
     })
     with use_configuration(values):
         selected = provider_manifest_path("safe-name_1.v2")
@@ -520,18 +510,14 @@ def test_operator_root_symlink_and_relative_path_overrides_remain_supported(monk
         selected.write_text(json.dumps(manifest("safe-name_1.v2")))
         assert selected == providers / "safe-name_1.v2" / "manifest.json"
         assert faxbot_config_path() == tmp_path / "relative-settings.json"
-        assert json.loads(plugin_registry_path().read_text()) == {"items": [{"id": "operator-registry-marker"}]}
         catalog = ProviderCatalog.load(provider_traits_path(), Path(values.providers_dir))
         assert catalog.get("safe-name_1.v2").manifest.as_dict() == manifest("safe-name_1.v2")
 
 
-def test_repo_scrape_reads_packaged_examples_instead_of_conflicting_cwd_file(provider_client, tmp_path):
+def test_the_retired_repo_scrape_source_imports_nothing(provider_client, tmp_path):
     client, providers = provider_client
     (tmp_path / "api_plugins_list.md").write_text("```json\n" + json.dumps(manifest("wrong-cwd-provider")) + "\n```")
     response = client.post("/admin/plugins/http/import-manifests", json={"source": "repo_scrape"})
-    # Bundled examples contain plain JSON, while the existing parser accepts
-    # fences only. The path repair must load that real resource, never the cwd
-    # decoy. Parsing those examples is a separate provider-installation repair.
     assert response.status_code == 400
     assert response.json() == {"detail": "No manifest candidates provided"}
     assert not providers.exists()

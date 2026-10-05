@@ -1,4 +1,4 @@
-import type { HealthStatus, FaxJob, ApiKey, Settings, DiagnosticsResult, DiagnosticsReport, ValidationResult, InboundFax } from '../api/types';
+import type { HealthStatus, FaxJob, ApiKey, Settings, DiagnosticsReport, ValidationResult, InboundFax } from '../api/types';
 
 export const demoHealth: HealthStatus = {
   timestamp: new Date().toISOString(),
@@ -73,56 +73,3 @@ export const demoReport: DiagnosticsReport = {
   ],
 };
 
-export const demoDiagnostics: DiagnosticsResult = {
-  timestamp: new Date().toISOString(),
-  backend: 'phaxio',
-  checks: {
-    system: {
-      database_connected: true,
-      ghostscript: true,
-      fax_data_writable: true,
-      version: 'demo-1.0.0',
-      os: 'Darwin',
-      python: '3.11',
-    },
-    phaxio: {
-      api_key_set: true,
-      api_secret_set: true,
-      callback_url_set: true,
-      public_url_https: true,
-    },
-    sinch: {
-      project_id_set: false,
-      api_key_set: false,
-      api_secret_set: false,
-    },
-    sip: {
-      ami_reachable: false,
-      ami_password_not_default: false,
-    },
-    storage: {
-      backend: 'local',
-      kms_enabled: false,
-      bucket_set: false,
-    },
-    inbound: {
-      enabled: true,
-      token_ttl: 60,
-      retention_days: 30,
-    },
-    security: {
-      enforce_https: true,
-      audit_logging: true,
-      rate_limiting: true,
-      pdf_token_ttl: 60,
-    },
-  },
-  summary: {
-    healthy: true,
-    critical_issues: [],
-    warnings: [
-      'SIP/Asterisk not reachable (expected in demo)',
-      'Sinch not configured (demo backend set to Phaxio)',
-    ],
-  },
-};

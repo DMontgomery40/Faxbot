@@ -32,6 +32,9 @@ class ConfigurationValueError(ValueError):
 # Credentials read from the environment at every start (config_runtime). API_KEY keeps
 # its first-start and owner-recovery rules; DATABASE_URL changes need a datastore transfer.
 ENVIRONMENT_CREDENTIAL_EXCLUSIONS = frozenset({"api_key", "database_url"})
+# Variables of settings an earlier release had and this one removed. A settings file that still
+# names one is accepted and the value ignored, for one release, so the installation still starts.
+RETIRED_ENVIRONMENT_KEYS = frozenset({"PLUGIN_REGISTRY_PATH"})
 ENVIRONMENT_MANAGED_REFUSAL = "This key is set in .env. Change it there, then run docker compose up -d."
 
 # Fax numbers in settings are saved in E.164; national input uses the country.
@@ -256,7 +259,6 @@ class ConfigurationValues(BaseModel):
     enable_persisted_settings: bool = Field(False, validation_alias='ENABLE_PERSISTED_SETTINGS')
     persisted_env_path: str = Field('/faxdata/faxbot.env', validation_alias='PERSISTED_ENV_PATH')
     providers_dir: str = Field(default_factory=lambda: str(bundled_config_dir() / 'providers'), validation_alias='FAXBOT_PROVIDERS_DIR')
-    plugin_registry_path: str = Field(default_factory=lambda: str(bundled_config_dir() / 'plugin_registry.json'), validation_alias='PLUGIN_REGISTRY_PATH')
 
     # Delivery routes: extra outbound providers a fax may use, and the success
     # rate a route needs at a number before it stops being chosen first.
@@ -339,6 +341,11 @@ class ConfigurationValues(BaseModel):
             alias = field.validation_alias
             keys.update(alias.choices if isinstance(alias, AliasChoices) else [alias])
         return frozenset(keys)
+
+    @classmethod
+    def accepted_environment_keys(cls) -> frozenset[str]:
+        """Variables a settings file may name: every setting's, and retired ones that are ignored."""
+        return cls.environment_keys() | RETIRED_ENVIRONMENT_KEYS
 
     @classmethod
     def from_environment(cls, environment: Mapping[str, str]) -> "ConfigurationValues":

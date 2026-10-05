@@ -12,7 +12,6 @@ const DOCS_PAGES = {
   freeswitch: 'setup/freeswitch/',
   sip: 'setup/sip-asterisk/',
   inbound: 'inbound/',
-  tunnels: 'networking/tunnels/',
   deployment: 'deployment/',
   security: 'security/',
   scripts: 'tools/scripts-and-tests/',

@@ -56,17 +56,11 @@ CONVERTED = {
     ("POST", "/admin/plugins/http/import-manifests"): ("providers:install", True),
     ("GET", "/admin/logs"): ("logs:read", False),
     ("GET", "/admin/logs/tail"): ("logs:read", False),
-    ("GET", "/admin/actions"): ("host:actions", True),
-    ("POST", "/admin/actions/run"): ("host:actions", True),
-    ("GET", "/admin/tunnel/status"): ("tunnels:read", False),
-    ("POST", "/admin/tunnel/config"): ("tunnels:manage", False),
-    ("POST", "/admin/tunnel/test"): ("tunnels:read", False),
     ("POST", "/admin/tunnel/pair"): ("tunnels:pair", False),
     ("POST", "/admin/terminal/ticket"): ("host:terminal", True),
     ("GET", "/admin/inbound/callbacks"): ("providers:read", False),
     ("POST", "/admin/inbound/simulate"): ("providers:write", False),
     ("POST", "/inbound/{inbound_id}/fetch"): ("providers:write", True),
-    ("POST", "/admin/diagnostics/run"): ("diagnostics:read", False),
     ("POST", "/admin/settings/persist"): ("owner:recover", True),
 }
 

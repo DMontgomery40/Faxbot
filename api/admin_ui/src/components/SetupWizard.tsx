@@ -615,7 +615,6 @@ function SetupWizard({ client, onDone, docsBase, canRestart = true, isOwner = tr
       <Typography variant="h6" component="h3">{heading}</Typography>
       {!known ? <Alert severity="info" sx={{ mt: 2 }}>Set up this provider under System → Developer → Provider plugins.</Alert> : <>
         {id !== 'sip' && <Alert severity="info" sx={{ my: 2 }}>Saved secrets are hidden; leave them unchanged to keep them.</Alert>}
-        {id === 'freeswitch' && <Alert severity="info" sx={{ mt: 2 }}>FreeSWITCH also needs its fax module (mod_spandsp), a gateway to your carrier and the result step shown on its page.</Alert>}
         {credentialFields[id].length > 0 && <Grid container spacing={2} sx={{ mt: 0 }}>
           {credentialFields[id].map(field)}
           {id === 'phaxio' && <Grid item xs={12}>

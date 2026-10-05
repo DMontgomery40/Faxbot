@@ -346,7 +346,6 @@ const CARRIER_PAGES: Record<string, { label: string; page: AdminDestination }> =
   humblefax: { label: 'HumbleFax', page: 'providers/humblefax' },
   efax: { label: 'eFax', page: 'providers/efax' },
   signalwire: { label: 'SignalWire', page: 'providers/signalwire' },
-  freeswitch: { label: 'FreeSWITCH', page: 'providers/freeswitch' },
 };
 
 export function carriedNumbers(settings: Settings): CarriedNumber[] {
@@ -362,7 +361,6 @@ export function carriedNumbers(settings: Settings): CarriedNumber[] {
     ...(settings.humblefax?.account_numbers ?? []).map((number): [string, string] => ['humblefax', number]),
     ['efax', settings.efax?.caller_id],
     ['signalwire', settings.signalwire?.from_fax],
-    ['freeswitch', settings.fs?.caller_id_number],
   ];
   const seen = new Set<string>();
   return found.filter(([provider, number]) => {

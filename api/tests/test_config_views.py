@@ -215,8 +215,7 @@ def test_editor_has_omitted_provider_and_resource_settings_and_preserves_false_z
     assert {'admin_allow_restart', 'docs_base_url', 'mobile_local_base', 'feature_v3_plugins',
             'feature_plugin_install', 'audit_log_enabled'} <= set(view['owner_only'])
     assert not {'fax_header', 'enable_s3_diagnostics', 'backend', 'inbound_enabled'} & set(view['owner_only'])
-    assert set(view['plugin_files']) == {'providers_dir', 'plugin_registry_path'}
-    assert view['plugin_files']['plugin_registry_path'].endswith('plugin_registry.json')
+    assert set(view['plugin_files']) == {'providers_dir'}
     assert view['storage'] == {
         'backend': 'local', 's3_bucket': 'complete-bucket', 's3_prefix': '', 's3_region': 'us-east-1',
         's3_endpoint_url': 'https://storage.example.invalid', 's3_kms_key_id': 'kms-key-identifier', 's3_kms_enabled': True,

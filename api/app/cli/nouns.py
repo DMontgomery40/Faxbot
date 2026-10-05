@@ -2,10 +2,7 @@
 
 `faxbot send` and `faxbot status`, then received, sent, numbers, recipients,
 providers, costs, access and system, each holding what its console area holds.
-Commands are defined in their modules under their older groups; this module
-gives each one its home. The older groups stay registered but hidden, so
-scripts written for them keep working. MOVED lists every older command path
-with its home; the reference page and the tests are generated from it.
+Commands are defined in their modules; this module gives each one its home.
 """
 import typer
 
@@ -60,8 +57,6 @@ sent.command('pdf')(fax.jobs_pdf)
 sent.command('refresh')(fax.jobs_refresh)
 sent.command('evidence')(fax.jobs_history)
 sent.command('confirm-receipt')(fax.jobs_reconcile)
-sent.command('history', hidden=True)(fax.jobs_history)
-sent.command('reconcile', hidden=True)(fax.jobs_reconcile)
 sent.command('send-now')(fax.jobs_send_now)
 
 # -- numbers -------------------------------------------------------------------------
@@ -107,25 +102,11 @@ providers = _group('The fax services Faxbot sends and receives with, their setti
 providers.command('list')(settings.providers_list)
 providers.command('status')(settings.providers_status)
 providers.command('show')(settings.providers_config)
-providers.command('config', hidden=True)(settings.providers_config)
 providers.command('configure')(settings.providers_configure)
 providers.command('callbacks')(settings.providers_callbacks)
 providers.command('validate')(settings.providers_validate)
 providers.command('install')(settings.providers_install)
-registry = typer.Typer(help='Fax services you can add from the provider list, one at a time or several at once.',
-                       invoke_without_command=True)
-
-
-@registry.callback()
-def _registry(ctx: typer.Context):
-    # The older `faxbot providers registry`, with nothing after it, still lists them.
-    if ctx.invoked_subcommand is None:
-        settings.providers_registry()
-
-
-registry.command('list')(settings.providers_registry)
-registry.command('import')(settings.providers_import)
-providers.add_typer(registry, name='registry')
+providers.command('import')(settings.providers_import)
 efax = _group('eFax receiving: whether Faxbot is collecting your faxes from eFax.')
 efax.command('status')(settings.efax_status)
 providers.add_typer(efax, name='efax')
@@ -162,15 +143,10 @@ people.add_typer(access.sessions, name='sessions')
 people.add_typer(settings.pair, name='pair')
 people.add_typer(access.resources, name='resources')
 people.add_typer(access.owner, name='owner')
-# The older `faxbot access list|grant|revoke` share this group's name.
-people.command('list', hidden=True)(access.access_list)
-people.command('grant', hidden=True)(access.access_grant)
-people.command('revoke', hidden=True)(access.access_revoke)
 
 # -- system --------------------------------------------------------------------------
 
-system = _group('Look after the installation: settings, checks, logs, remote access, the security log, backups and '
-                'restarts.')
+system = _group('Look after the installation: settings, checks, logs, the security log, backups and restarts.')
 system.add_typer(settings.settings, name='settings')
 checks = _copy(settings.diagnostics)
 checks.command('test-fax')(fax.inbound_simulate)
@@ -178,8 +154,6 @@ system.add_typer(checks, name='diagnostics')
 system.command('health')(settings.health)
 system.add_typer(operations.logs, name='logs')
 system.command('audit')(access.audit_list)
-system.add_typer(operations.tunnel, name='tunnel')
-system.add_typer(operations.actions, name='actions')
 system.command('restart')(operations.restart)
 profiles = _copy(setup.config, help='Server addresses and keys saved on this computer, so you do not have to type them each time.',
                  rename={'set-profile': 'save', 'show': 'list'})
@@ -193,85 +167,9 @@ for _name, _command in (('status', admin.admin_status), ('migrate', admin.admin_
 HOMES = {'received': received, 'sent': sent, 'numbers': numbers, 'recipients': recipients, 'providers': providers,
          'costs': costs, 'access': people, 'system': system}
 
-# Older groups and commands, hidden from help. `numbers`, `providers` and `access` keep their name.
-OLDER_GROUPS = {
-    'jobs': fax.jobs, 'inbound': fax.inbound, 'work': work.work, 'routing': delivery.routing,
-    'intake': delivery.intake, 'direct': delivery.direct, 'cases': delivery.cases, 'trunk': trunk.trunk,
-    'settings': settings.settings, 'diagnostics': settings.diagnostics, 'pair': settings.pair,
-    'logs': operations.logs, 'tunnel': operations.tunnel, 'actions': operations.actions, 'config': setup.config,
-    'admin': admin.admin, 'owner': access.owner, 'users': access.users, 'integrations': access.integrations,
-    'groups': access.groups, 'roles': access.roles, 'resources': access.resources, 'keys': access.keys,
-    'sessions': access.sessions, 'mailboxes': access.mailboxes, 'audit': access.audit,
-}
-OLDER_COMMANDS = {'me': access.me, 'health': settings.health, 'restart': operations.restart,
-                  'import': work.import_document}
-
-
-def _moved():
-    """Every older command path and its home, as tuples of words."""
-    moved = {}
-
-    def under(old, new, names, rename=None):
-        for name in names:
-            moved[(*old, name)] = (*new, (rename or {}).get(name, name))
-
-    under(('jobs',), ('sent',), ('list', 'pdf', 'refresh', 'history', 'reconcile', 'send-now', 'get'),
-          {'get': 'show', 'history': 'evidence', 'reconcile': 'confirm-receipt'})
-    under(('inbound',), ('received',), ('list', 'get', 'pdf', 'fetch', 'recover'), {'get': 'show'})
-    moved[('inbound', 'simulate')] = ('system', 'diagnostics', 'test-fax')
-    under(('work',), ('received',), ('list', 'show', 'assign', 'acknowledge', 'done', 'reopen', 'export'),
-          {'list': 'owners', 'show': 'history'})
-    moved[('work', 'settings')] = ('numbers', 'mailboxes', 'target')
-    moved[('import',)] = ('received', 'import')
-    under(('routing',), ('recipients',), ('destinations', 'destination', 'update-destination'),
-          {'destinations': 'list', 'destination': 'show', 'update-destination': 'set'})
-    under(('routing',), ('costs',), ('costs', 'reconcile', 'fax-cost', 'rate-cards', 'plans'),
-          {'costs': 'spending', 'fax-cost': 'fax'})
-    under(('routing', 'batching'), ('recipients', 'together'), ('show', 'set', 'off'))
-    under(('intake',), ('received', 'deliveries'), ('items', 'retry'), {'items': 'list'})
-    under(('intake', 'connectors'), ('numbers', 'email', 'connectors'), ('list', 'add', 'update', 'test', 'remove'))
-    under(('direct',), ('recipients', 'partners'), ('card', 'deliveries'))
-    under(('direct', 'peers'), ('recipients', 'partners'), ('list', 'add', 'challenge', 'confirm', 'revoke'))
-    under(('cases',), ('recipients', 'cases'), ('documents', 'send'))
-    under(('trunk',), ('providers', 'trunk'), ('status', 'apply', 'calls', 'mode', 'presets', 'use'))
-    under(('settings',), ('system', 'settings'), ('get', 'set', 'validate', 'persist', 'export'))
-    moved[('providers', 'config')] = ('providers', 'show')
-    moved[('providers', 'registry')] = ('providers', 'registry', 'list')
-    moved[('health',)] = ('system', 'health')
-    under(('diagnostics',), ('system', 'diagnostics'), ('run', 'database'))
-    under(('pair',), ('access', 'pair'), ('new', 'device'))
-    under(('logs',), ('system', 'logs'), ('list', 'tail'))
-    under(('tunnel',), ('system', 'tunnel'), ('status', 'set', 'test'))
-    under(('actions',), ('system', 'actions'), ('list', 'run'))
-    moved[('restart',)] = ('system', 'restart')
-    under(('config',), ('system', 'profiles'), ('set-profile', 'show', 'use', 'remove'),
-          {'set-profile': 'save', 'show': 'list'})
-    under(('admin',), ('system',), ('status', 'migrate', 'recover-owner', 'backup', 'restore'))
-    moved[('me',)] = ('access', 'me')
-    moved[('owner', 'enroll')] = ('access', 'owner', 'enroll')
-    under(('users',), ('access', 'users'), ('list', 'get', 'add', 'update', 'reset-password'), {'get': 'show'})
-    under(('integrations',), ('access', 'integrations'), ('add', 'list'))
-    under(('groups',), ('access', 'groups'), ('list', 'get', 'add', 'update'), {'get': 'show'})
-    under(('groups', 'members'), ('access', 'groups', 'members'), ('add', 'remove'))
-    under(('roles',), ('access', 'roles'), ('list', 'get', 'permissions', 'add', 'update'), {'get': 'show'})
-    under(('access',), ('access', 'grants'), ('list', 'grant', 'revoke'), {'grant': 'add', 'revoke': 'remove'})
-    moved[('resources', 'list')] = ('access', 'resources', 'list')
-    under(('keys',), ('access', 'keys'), ('list', 'create', 'update', 'rotate', 'revoke', 'approve'))
-    under(('sessions',), ('access', 'sessions'), ('list', 'revoke'))
-    under(('mailboxes',), ('numbers', 'mailboxes'), ('list', 'add', 'update'))
-    moved[('audit', 'list')] = ('system', 'audit')
-    return moved
-
-
-MOVED = _moved()
-
 
 def register(app):
     app.command('send')(fax.send)
     app.command('status')(fax.status)
     for name, home in HOMES.items():
         app.add_typer(home, name=name)
-    for name, group in OLDER_GROUPS.items():
-        app.add_typer(group, name=name, hidden=True)
-    for name, command in OLDER_COMMANDS.items():
-        app.command(name, hidden=True)(command)

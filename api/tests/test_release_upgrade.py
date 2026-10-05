@@ -202,7 +202,7 @@ class Installation:
         return self.runner.invoke(cli_app, [str(arg) for arg in args], input=input, obj=obj)
 
     def admin_json(self, *args):
-        result = self._invoke(['--url', NOBODY, '--json', 'admin', *args])
+        result = self._invoke(['--url', NOBODY, '--json', 'system', *args])
         assert result.exit_code == 0, (result.stdout, result.stderr)
         return json.loads(result.stdout)
 
@@ -271,7 +271,7 @@ def test_previous_release_upgrades_with_rows_documents_and_keys(previous_release
         'sent_faxes': 2, 'received_faxes': 2, 'api_keys': 4, 'mailboxes': 1}
     # The previous release has no installation key yet, so faxbot admin backup cannot cover it:
     # the upgrade runbook copies the database and data folder by hand before migrating.
-    early = installation._invoke(['--url', NOBODY, 'admin', 'backup', installation.root / 'too-early'])
+    early = installation._invoke(['--url', NOBODY, 'system', 'backup', installation.root / 'too-early'])
     assert early.exit_code == 5 and 'installation key file' in early.stderr
     assert not (installation.root / 'too-early').exists()
 
@@ -346,7 +346,7 @@ def test_previous_release_upgrades_with_rows_documents_and_keys(previous_release
         assert listed_keys[ids['records']]['scopes'] == ['inbound:list', 'inbound:read']
 
         # The mailbox and its number route survive.
-        mailboxes = installation.remote_json(client, 'mailboxes', 'list')
+        mailboxes = installation.remote_json(client, 'numbers', 'mailboxes', 'list')
         assert [item['label'] for item in mailboxes] == ['Billing']
         numbers = installation.remote_json(client, 'numbers', 'list')
         assert [(item['to_number'], item['mailbox_label']) for item in numbers] == [('+15550001111', 'Billing')]
@@ -354,8 +354,8 @@ def test_previous_release_upgrades_with_rows_documents_and_keys(previous_release
         # After review, the unrestricted key works with the permissions chosen for it. Its owner
         # first needs a role: a key never does more than its owner may.
         integration = f"Legacy integration {ids['unrestricted']}"
-        assert installation.remote(client, 'access', 'grant', integration, 'Fax operator').exit_code == 0
-        approved = installation.remote(client, 'keys', 'approve', ids['unrestricted'], '--for', integration,
+        assert installation.remote(client, 'access', 'grants', 'add', integration, 'Fax operator').exit_code == 0
+        approved = installation.remote(client, 'access', 'keys', 'approve', ids['unrestricted'], '--for', integration,
                                        '-p', 'fax:read')
         assert approved.exit_code == 0, (approved.stdout, approved.stderr)
         reviewed = client.get(f"/fax/{made['sent']}", headers=_headers(tokens['unrestricted']))
@@ -373,12 +373,12 @@ def test_upgraded_installation_backs_up_and_restores_into_a_fresh_installation(p
     installation.admin_json('migrate')
     provider_secret = 'synthetic-phaxio-secret-' + secrets.token_hex(4)
     with installation.serve() as client:
-        owner = installation.remote_json(client, 'owner', 'enroll', '--login', 'olivia', '--name', 'Olivia Owner')
-        assert installation.remote(client, 'integrations', 'add', 'Records app').exit_code == 0
-        assert installation.remote(client, 'access', 'grant', 'Records app', 'Fax operator').exit_code == 0
-        created = installation.remote_json(client, 'keys', 'create', '--for', 'Records app', '-p', 'fax:read',
+        owner = installation.remote_json(client, 'access', 'owner', 'enroll', '--login', 'olivia', '--name', 'Olivia Owner')
+        assert installation.remote(client, 'access', 'integrations', 'add', 'Records app').exit_code == 0
+        assert installation.remote(client, 'access', 'grants', 'add', 'Records app', 'Fax operator').exit_code == 0
+        created = installation.remote_json(client, 'access', 'keys', 'create', '--for', 'Records app', '-p', 'fax:read',
                                            '--name', 'Records app key')
-        saved = installation.remote(client, 'settings', 'set', '--secret', 'phaxio_api_secret',
+        saved = installation.remote(client, 'system', 'settings', 'set', '--secret', 'phaxio_api_secret',
                                     input=f'{provider_secret}\n' * 2)
         assert saved.exit_code == 0, (saved.stdout, saved.stderr)
         assert provider_secret not in saved.stdout + saved.stderr
@@ -431,13 +431,13 @@ def test_upgraded_installation_backs_up_and_restores_into_a_fresh_installation(p
         assert received == {made['billing'], made['unassigned']}
         opened = client.get(f"/inbound/{made['billing']}/pdf", headers=_headers(BOOTSTRAP))
         assert opened.content == made['received'][made['billing']]
-        users = installation.remote_json(client, 'users', 'list', '--kind', 'user')
+        users = installation.remote_json(client, 'access', 'users', 'list', '--kind', 'user')
         assert [user['login'] for user in users] == ['olivia']
-        integrations = {item['display_name'] for item in installation.remote_json(client, 'users', 'list',
+        integrations = {item['display_name'] for item in installation.remote_json(client, 'access', 'users', 'list',
                                                                                    '--kind', 'integration')}
         assert 'Records app' in integrations
         assert f"Legacy integration {made['key_ids']['sender']}" in integrations
-        settings = installation.remote_json(client, 'settings', 'get')
+        settings = installation.remote_json(client, 'system', 'settings', 'get')
         shown = json.dumps(settings)
         assert provider_secret not in shown
         assert settings['phaxio']['api_secret'], 'the restored provider secret is reported as set'
@@ -468,9 +468,9 @@ def test_a_new_installation_starts_with_no_fax_provider(monkeypatch, tmp_path):
         assert refused.status_code == 409 and refused.json() == {'detail': 'No fax provider set up yet.'}
         assert client.post('/phaxio-inbound', data={}).status_code == 404
         assert client.post('/sinch-inbound', data={}).status_code == 404
-        health = installation.remote(client, 'health')
+        health = installation.remote(client, 'system', 'health')
         assert 'No fax provider set up yet.' in health.stdout
-        shown = installation.remote(client, 'settings', 'get', 'backend')
+        shown = installation.remote(client, 'system', 'settings', 'get', 'backend')
         assert shown.exit_code == 0 and 'No fax provider set up yet.' in shown.stdout
     installation.main.app.state.direct_http = None
 
@@ -506,3 +506,48 @@ def test_a_saved_provider_is_kept_when_the_environment_no_longer_names_it(monkey
     _without_provider(monkeypatch)
     with installation.serve() as client:
         assert _provider(client) == ('sip', 'sip', 'sip')
+
+
+# -- settings this release removed --------------------------------------------------------------------
+
+# Every setting a release removes stays accepted, and ignored, for one release: an installation whose
+# saved settings, recovery file or environment still names it starts and shows nothing for it.
+RETIRED = {'PLUGIN_REGISTRY_PATH': '/app/config/plugin_registry.json'}
+
+
+def _shows_no_retired_setting(installation, client):
+    shown = client.get('/admin/settings', headers=_headers(BOOTSTRAP))
+    assert shown.status_code == 200, shown.text
+    exported = installation.remote_json(client, 'system', 'settings', 'export')['env']
+    for name, value in RETIRED.items():
+        assert name not in exported and value not in shown.text and name.lower() not in shown.text
+
+
+def test_saved_settings_that_name_a_removed_setting_still_start(monkeypatch, tmp_path, database_url):
+    from app.config_values import ConfigurationValues
+    installation = Installation(monkeypatch, tmp_path, database_url)
+    with pytest.MonkeyPatch.context() as earlier:
+        # The earlier release saved every setting it had, these included.
+        earlier.setattr(ConfigurationValues, 'to_environment', (lambda original: lambda self, **kwargs: {
+            **original(self, **kwargs), **RETIRED})(ConfigurationValues.to_environment))
+        with installation.serve() as client:
+            assert client.get('/health').status_code == 200
+    with installation.serve() as client:
+        assert client.get('/health').status_code == 200
+        _shows_no_retired_setting(installation, client)
+    installation.main.app.state.direct_http = None
+
+
+def test_a_recovery_file_or_environment_naming_a_removed_setting_still_starts(monkeypatch, tmp_path, database_url):
+    installation = Installation(monkeypatch, tmp_path, database_url)
+    recovery = tmp_path / 'recovery' / 'faxbot.env'
+    recovery.parent.mkdir()
+    recovery.write_text(''.join(f'{name}={value}\n' for name, value in RETIRED.items()) + 'FAX_DISABLED=true\n')
+    monkeypatch.setenv('ENABLE_PERSISTED_SETTINGS', 'true')
+    monkeypatch.setenv('PERSISTED_ENV_PATH', str(recovery))
+    for name, value in RETIRED.items():
+        monkeypatch.setenv(name, value)
+    with installation.serve() as client:
+        assert client.get('/health').status_code == 200
+        _shows_no_retired_setting(installation, client)
+    installation.main.app.state.direct_http = None

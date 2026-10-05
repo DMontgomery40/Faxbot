@@ -27,7 +27,7 @@ PRIVATE_HEADERS = {'Cache-Control':'no-store', 'X-Content-Type-Options':'nosniff
 
 
 def private_response_path(path):
-    return path in {'/fax', '/inbound', '/plugins', '/plugin-registry', '/work', '/imports'} or path.startswith(
+    return path in {'/fax', '/inbound', '/plugins', '/work', '/imports'} or path.startswith(
         ('/auth/', '/access/', '/admin/', '/fax/', '/inbound/', '/plugins/', '/work/', '/imports/'))
 
 

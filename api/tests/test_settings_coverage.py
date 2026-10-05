@@ -35,6 +35,12 @@ READ_ONLY_OR_ENV = {
     'fax_data_dir': 'the data folder is fixed for the installation; shown read-only',
     'faxbot_config_path': 'the older settings file, read once at first start; shown read-only under System → Developer',
     'require_api_key': 'authentication is always required; the console offers no switch to turn it off',
+    # FreeSWITCH is kept for one release without a console page or a Setup choice; an installation that
+    # still uses it reads and changes these with `faxbot providers show|configure freeswitch`.
+    'fs_esl_host': 'FreeSWITCH, kept one release without a console page; faxbot providers configure freeswitch',
+    'fs_esl_port': 'FreeSWITCH, kept one release without a console page; faxbot providers configure freeswitch',
+    'fs_esl_password': 'FreeSWITCH, kept one release without a console page; faxbot providers configure freeswitch',
+    'fs_t38_enable': 'FreeSWITCH, kept one release without a console page; faxbot providers configure freeswitch',
 }
 
 # Settings the console has not placed yet, with the home the map gives them. Builder L shrinks this.
@@ -207,14 +213,17 @@ def test_the_s3_check_is_a_setting_diagnostics_follow(cli, monkeypatch):
     assert _settings(client)['storage']['s3_diagnostics'] is False
 
     def storage():
-        response = client.post('/admin/diagnostics/run', headers=ADMIN)
+        response = client.post('/admin/diagnostics/report', headers=ADMIN)
         assert response.status_code == 200, response.text
-        return response.json()['checks']['storage']
+        found = [check for section in response.json()['sections'] for check in section['checks']
+                 if check['id'] == 'server.storage']
+        assert len(found) == 1, found
+        return found[0]
 
-    assert 'accessible' not in storage() and asked == []
+    assert storage()['status'] == 'attention' and asked == []
     assert _put(client, enable_s3_diagnostics=True).status_code == 200
     assert _settings(client)['storage']['s3_diagnostics'] is True
-    assert storage()['accessible'] is True and asked == ['synthetic-bucket']
+    assert storage()['status'] == 'ok' and asked == ['synthetic-bucket']
 
 
 @pytest.fixture

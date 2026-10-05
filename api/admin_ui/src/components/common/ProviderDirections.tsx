@@ -105,7 +105,7 @@ function carrierLabel(choice: TrunkChoice): string {
 }
 
 // Every choice by name, grouped: fax services, your own line through a carrier
-// (local carriers first for the installation country), your phone system, advanced.
+// (local carriers first for the installation country), your phone system.
 export function providerChoices(trunk: TrunkChoice[] | null, country: string | undefined, receiving: boolean,
   plugins: PluginProvider[] = []): ChoiceGroup[] {
   const groups: ChoiceGroup[] = [];
@@ -123,7 +123,6 @@ export function providerChoices(trunk: TrunkChoice[] | null, country: string | u
   } else {
     groups.push({ title: 'Your own fax line through a carrier', options: [{ value: 'sip', label: providerLabel('sip') }] });
   }
-  if (!receiving) groups.push({ title: 'Advanced', options: [{ value: 'freeswitch', label: providerLabel('freeswitch') }] });
   const installed = plugins.filter((plugin) => !BUILTIN_PROVIDERS.includes(plugin.id)
     && (!receiving || plugin.categories?.includes('inbound')));
   if (installed.length) groups.push({ title: 'Installed plugins', options: installed.map((plugin) => ({ value: plugin.id, label: plugin.name })) });

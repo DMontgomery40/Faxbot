@@ -12,10 +12,6 @@
 
 **System → Storage & retention** (`#/system/storage`): **Where faxes are kept** (on this server or in S3 storage, with **Check the bucket**), limits and cleanup (largest document, requests per minute for each key, how long document links and sent fax files last), **Export settings** and **Save a recovery copy**, and, read-only, where the installation key and the direct-delivery key are kept.
 
-## Remote access
-
-**System → Remote access** (`#/system/remote`): the tunnel phones use to reach Faxbot from outside your network.
-
 ## Audit log
 
 **System → Audit log** (`#/system/audit`) lists who did what in Faxbot, newest first: **When**, **Who**, **Signed in with**, **Action** ("Changed settings", "Opened the terminal"), **Changed** ("Mailbox: Billing", "Terminal access code") and **Result** (Done or Refused). Filter by person and by action; **Show older entries** reads further back. Entries are never changed or removed.

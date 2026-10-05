@@ -8,7 +8,7 @@ import App from '../App';
 import AdminAPIClient from '../api/client';
 import ProvidersInUse from '../components/ProvidersInUse';
 import Settings from '../components/Settings';
-import { providerChoices } from '../components/common/ProviderDirections';
+import ProviderDirectionFields, { providerChoices } from '../components/common/ProviderDirections';
 import { providerLabel, setProviderNames } from '../providerLabels';
 import type { ConsoleContext } from '../api/types';
 import { ALL_PERMISSIONS, backend, server } from '../test/server';
@@ -27,12 +27,11 @@ const TRUNK = [
 const titles = (groups: ReturnType<typeof providerChoices>) => groups.map((group) => [group.title, group.options.map((option) => option.label)]);
 
 describe('Every provider choice, by name and grouped', () => {
-  it('lists fax services, carriers (local ones first), phone systems and the advanced engine', () => {
+  it('lists fax services, carriers (local ones first) and phone systems, and no longer offers FreeSWITCH', () => {
     expect(titles(providerChoices(TRUNK, 'GB', false))).toEqual([
       ['Fax services', ['HumbleFax', 'eFax', 'Phaxio', 'Sinch Fax', 'SignalWire Fax', 'Documo']],
       ['Your own fax line through a carrier', ['Gamma — UK', 'BT One Voice — UK', 'Telnyx', 'Telstra SIP Connect — Australia', 'Another carrier']],
       ['Your phone system', ['Avaya IP Office', 'Avaya Aura']],
-      ['Advanced', ['FreeSWITCH']],
     ]);
     expect(titles(providerChoices(TRUNK, 'AU', false))[1][1][0]).toBe('Telstra SIP Connect — Australia');
     // Receiving offers only what can receive.
@@ -178,15 +177,25 @@ describe('Provider pages after 4b', () => {
     expect(writes[0]).toEqual({ expected_revision_id: 'rev-a', sip_public_address_check_minutes: 15 });
   });
 
-  it('says what FreeSWITCH still needs, and titles each provider page in normal case', async () => {
+  it('has no FreeSWITCH page, and titles each provider page in normal case', async () => {
     const data = settingsFixture((value) => {
       value.fs.problem = 'Enter the caller ID number your carrier gave you for FreeSWITCH.';
     });
     server.use(http.get('/admin/settings', () => HttpResponse.json(data)));
-    const { unmount } = render(<Settings client={keyClient()} sections={['freeswitch']} title="FreeSWITCH (advanced)" />);
-    expect((await screen.findByTestId('freeswitch-problem')).textContent)
-      .toBe('Enter the caller ID number your carrier gave you for FreeSWITCH.');
-    unmount();
+    render(<Settings client={keyClient()} />);
+    expect(await screen.findByRole('heading', { name: 'Phaxio' })).toBeTruthy();
+    expect(screen.queryByTestId('freeswitch-problem')).toBeNull();
+    expect(screen.queryByText(/FreeSWITCH/)).toBeNull();
+  });
+
+  it('keeps a saved FreeSWITCH choice listed by name though it is no longer offered', () => {
+    render(<ProviderDirectionFields value={{ sending: 'freeswitch', receiving: '' }} onChange={() => undefined}
+      saved={{ sending: 'freeswitch', receiving: '' }} />);
+    expect(screen.getAllByText('FreeSWITCH').length).toBeGreaterThan(0);
+  });
+
+  it('titles each provider page in normal case', async () => {
+    server.use(http.get('/admin/settings', () => HttpResponse.json(settingsFixture())));
     render(<Settings client={keyClient()} />);
     expect(await screen.findByRole('heading', { name: 'Phaxio' })).toBeTruthy();
     expect(screen.queryByText(/PHAXIO|Phaxio Configuration/)).toBeNull();

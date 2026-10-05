@@ -11,7 +11,6 @@ import {
   Alert,
   Paper,
   CircularProgress,
-  Grid,
   Chip,
   Switch,
   FormControlLabel,
@@ -45,7 +44,6 @@ import { DeploymentRows } from './common/Deployment';
 import type { ConfigurationWriteResult, Settings as SettingsType, SettingsPatch } from '../api/types';
 import { ResponsiveSettingItem, ResponsiveSettingSection } from './common/ResponsiveSettingItem';
 import { ResponsiveTextField, ResponsiveFormSection } from './common/ResponsiveFormFields';
-import TunnelSettings from './TunnelSettings';
 import SipTrunkSettings from './SipTrunkSettings';
 import EfaxSettings, { efaxEditorValues } from './EfaxSettings';
 import { COUNTRY_HELP, CountryField, countryName, internationalHint, settingsNumberFormat } from './common/numbers';
@@ -71,9 +69,9 @@ interface SettingsProps {
 // The parts of the settings document a console page can show on its own.
 export type SettingsSection =
   | 'providers' | 'inbound' | 'routes'
-  | 'phaxio' | 'sinch' | 'documo' | 'humblefax' | 'efax' | 'trunk' | 'signalwire' | 'freeswitch'
+  | 'phaxio' | 'sinch' | 'documo' | 'humblefax' | 'efax' | 'trunk' | 'signalwire'
   | 'direct' | 'intake' | 'email'
-  | 'security' | 'tunnel' | 'storage' | 'advanced' | 'backup' | 'mcp' | 'identity'
+  | 'security' | 'storage' | 'advanced' | 'backup' | 'mcp' | 'identity'
   | 'plugins' | 'diagnostics' | 'phones' | 'developer' | 'audit' | 'installation-key';
 
 // Sections whose settings each have their own Apply, so one refusal never fails another change.
@@ -112,7 +110,6 @@ const FIELD_RANGES: Record<string, { min: number; max: number; message: string }
 const READ_ONLY_FILES: Array<{ field: string; label: string; value: (data: SettingsType) => string | undefined }> = [
   { field: 'persisted_env_path', label: 'Recovery .env file', value: (data) => data.persisted?.path },
   { field: 'providers_dir', label: 'Provider plugin folder', value: (data) => data.plugin_files?.providers_dir },
-  { field: 'plugin_registry_path', label: 'Plugin registry file', value: (data) => data.plugin_files?.plugin_registry_path },
   { field: 'faxbot_config_path', label: 'Older settings file, read when Faxbot was first installed', value: (data) => data.legacy_config?.path },
 ];
 
@@ -163,12 +160,6 @@ function editorValues(data: SettingsType): SettingsForm {
     ami_password: data.sip.ami_password,
     fax_station_id: data.sip.station_id,
     ...(data.sender ? { fax_header: data.sender.header } : {}),
-    fs_esl_host: data.fs?.esl_host ?? '',
-    fs_esl_port: data.fs?.esl_port ?? 8021,
-    fs_esl_password: data.fs?.esl_password ?? '',
-    fs_gateway_name: data.fs?.gateway_name ?? '',
-    fs_caller_id_number: data.fs?.caller_id_number ?? '',
-    fs_t38_enable: data.fs?.t38_enable ?? true,
     signalwire_space_url: data.signalwire?.space_url ?? '',
     signalwire_project_id: data.signalwire?.project_id ?? '',
     signalwire_api_token: data.signalwire?.api_token ?? '',
@@ -817,15 +808,6 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
           </ResponsiveFormSection>
           )}
 
-          {/* VPN Tunnel (iOS connectivity) */}
-          {shows('tunnel') && (
-          <TunnelSettings
-            client={client}
-            docsBase={docsBase}
-            hipaaMode={Boolean(settings.security?.enforce_https && settings.security?.require_api_key)}
-          />
-          )}
-
           {/* Backend-Specific Configuration */}
           {providerShown('phaxio', 'phaxio') && (
                   <ResponsiveSettingSection
@@ -1242,49 +1224,6 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
           )}
 
           {/* Storage Configuration */}
-          {/* FreeSWITCH (self-hosted) */}
-          {providerShown('freeswitch', 'freeswitch') && (
-            <Grid item xs={12}>
-              <Card>
-                <CardContent>
-                  <Typography variant="h6" gutterBottom>FreeSWITCH</Typography>
-                  {providerStatus('freeswitch')}
-                  {settings.fs?.problem && (
-                    <Alert severity="warning" sx={{ mb: 2 }} data-testid="freeswitch-problem">{settings.fs.problem}</Alert>
-                  )}
-                  {textField('FreeSWITCH address', 'fs_esl_host', 'Where Faxbot reaches FreeSWITCH on your private network.')}
-                  {textField('FreeSWITCH control port', 'fs_esl_port', 'The port FreeSWITCH listens on for Faxbot.', 'number')}
-                  {textField('FreeSWITCH control password', 'fs_esl_password', 'Leave unchanged to keep the saved password, or clear it to remove it.', 'password')}
-                  {textField('FreeSWITCH gateway', 'fs_gateway_name', 'The gateway in FreeSWITCH that reaches your carrier.')}
-                  {textField('Caller ID Number', 'fs_caller_id_number')}
-                  {toggleField('Send as fax data (T.38) when the carrier allows it', 'fs_t38_enable')}
-                  <Box sx={{ mt: 2 }}>
-                    <Typography variant="subtitle2" gutterBottom>Tell Faxbot how each fax ended</Typography>
-                    <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-                      Add this to your FreeSWITCH dial plan, before hang-up, so FreeSWITCH tells Faxbot how each fax ended. Replace YOUR_SECRET with the fax engine secret.
-                    </Typography>
-                    <Box component="pre" sx={{ p: 1, bgcolor: 'background.default', border: '1px solid', borderColor: 'divider', borderRadius: 1, overflowX: 'auto', fontSize: '0.75rem' }}>
-{`<action application="set" data="api_hangup_hook=system curl -s -X POST \
-  -H 'Content-Type: application/json' \
-  -H 'X-Internal-Secret: YOUR_SECRET' \
-  -d '{\"job_id\":\"${'${faxbot_job_id}'}\",\"fax_status\":\"${'${fax_success}'}\",\"fax_result_text\":\"${'${fax_result_text}'}\",\"fax_document_transferred_pages\":${'${fax_document_transferred_pages}'},\"uuid\":\"${'${uuid}'}\"}' \
-  http://api:8080/_internal/freeswitch/outbound_result"/>`}
-                    </Box>
-                    <Button size="small" sx={{ mt: 1 }} onClick={async ()=>{
-                      try {
-                        const text = `<action application=\"set\" data=\"api_hangup_hook=system curl -s -X POST \\\n+  -H 'Content-Type: application/json' \\\n+  -H 'X-Internal-Secret: YOUR_SECRET' \\\n+  -d '{\\\"job_id\\\":\\\"${'${faxbot_job_id}'}\\\",\\\"fax_status\\\":\\\"${'${fax_success}'}\\\",\\\"fax_result_text\\\":\\\"${'${fax_result_text}'}\\\",\\\"fax_document_transferred_pages\\\":${'${fax_document_transferred_pages}'},\\\"uuid\\\":\\\"${'${uuid}'}\\\"}' \\\n+  http://api:8080/_internal/freeswitch/outbound_result\"/>`;
-                        await navigator.clipboard.writeText(text);
-                        setSnack('Copied');
-                      } catch {}
-                    }}>Copy snippet</Button>
-                    <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
-                      With Docker Compose, Faxbot's address is api; otherwise use this server's address. Faxbot sets <code>faxbot_job_id</code> on each call it places.
-                    </Typography>
-                  </Box>
-                </CardContent>
-              </Card>
-            </Grid>
-          )}
           {shows('storage') && (
           <ResponsiveFormSection
             title="Where faxes are kept"
@@ -1367,17 +1306,20 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
                   <Button 
                     variant="outlined" 
                     onClick={async () => { 
-                      try { 
-                        setLoading(true); 
-                        const diag = await (client as any).runDiagnostics?.(); 
-                        if (diag?.checks?.storage?.type === 's3') { 
-                          const st = diag.checks.storage; 
-                          const ok = st.accessible === true || st.bucket_set; 
-                          setSnack(ok ? 'Faxbot can reach the bucket.' : ('Faxbot could not fully check the bucket' + (st.error ? (': ' + st.error) : '.'))); 
-                        } else { 
-                          setSnack('Turn on Also check the S3 bucket under System → Diagnostics, then check again.'); 
-                        } 
-                      } catch(e: any) { 
+                      try {
+                        setLoading(true);
+                        // The diagnostics report checks the saved bucket (read-only) when its check is turned on.
+                        const report = await client.checkDiagnosticsNow();
+                        const storage = report.sections.flatMap((section) => section.checks)
+                          .find((check) => check.id === 'server.storage');
+                        if (!storage) {
+                          setSnack('Save online storage first, then check the bucket.');
+                        } else if (storage.status === 'attention') {
+                          setSnack('Turn on Also check the S3 bucket under System → Diagnostics, then check again.');
+                        } else {
+                          setSnack(storage.sentence);
+                        }
+                      } catch(e: any) {
                         setError(e?.message || 'The bucket could not be checked.'); 
                       } finally { 
                         setLoading(false); 

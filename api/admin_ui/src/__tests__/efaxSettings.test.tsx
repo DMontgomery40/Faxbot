@@ -19,7 +19,6 @@ function backend(data: Json) {
   server.use(
     http.get('/admin/settings', () => HttpResponse.json(data)),
     http.get('/plugins', () => HttpResponse.json({ items: [] })),
-    http.get('/admin/tunnel/status', () => HttpResponse.json({ enabled: false, provider: 'none', status: 'disabled' })),
     http.put('/admin/settings', async ({ request }) => {
       const body = await request.json() as Json;
       writes.push(body);

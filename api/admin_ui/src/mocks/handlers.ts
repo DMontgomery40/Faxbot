@@ -1,5 +1,5 @@
 import { http, HttpResponse } from 'msw';
-import { demoHealth, demoJobs, demoApiKeys, demoSettings, demoDiagnostics, demoReport, demoInbound, demoValidation } from './data';
+import { demoHealth, demoJobs, demoApiKeys, demoSettings, demoReport, demoInbound, demoValidation } from './data';
 
 let jobs = [...demoJobs];
 let apiKeys = [...demoApiKeys];
@@ -153,7 +153,6 @@ export const handlers = [
   http.post('/admin/restart', async () => HttpResponse.json({ ok: true })),
 
   // Diagnostics
-  http.post('/admin/diagnostics/run', () => HttpResponse.json(demoDiagnostics)),
   http.get('/admin/diagnostics/report', () => HttpResponse.json(demoReport)),
   http.post('/admin/diagnostics/report', () => HttpResponse.json(demoReport)),
 
@@ -191,12 +190,6 @@ export const handlers = [
     { id: 'sinch', name: 'Sinch Fax API', version: '1.0.0', categories: ['outbound'], capabilities: ['send','get_status'], enabled: false, description: 'Direct Sinch Fax API v3 backend' },
     { id: 'sip', name: 'SIP/Asterisk', version: '1.0.0', categories: ['outbound'], capabilities: ['send','get_status'], enabled: false, description: 'Self‑hosted SIP via Asterisk with T.38' },
     { id: 's3', name: 'Amazon S3', version: '1.0.0', categories: ['storage'], capabilities: ['store','retrieve'], enabled: false, description: 'S3/S3‑compatible storage for inbound artifacts' },
-  ] })),
-  http.get('/plugin-registry', () => HttpResponse.json({ items: [
-    { id: 'phaxio', name: 'Phaxio (Sinch)', version: '1.0.0', categories: ['outbound'], capabilities: ['send','get_status'], learn_more: 'https://dmontgomery40.github.io/Faxbot/providers/phaxio/', description: 'Cloud fax backend via Phaxio (by Sinch)' },
-    { id: 'sinch', name: 'Sinch Fax API', version: '1.0.0', categories: ['outbound'], capabilities: ['send','get_status'], learn_more: 'https://developers.sinch.com/docs/fax/api-reference/', description: 'Direct Sinch Fax API v3 backend' },
-    { id: 'sip', name: 'SIP/Asterisk', version: '1.0.0', categories: ['outbound'], capabilities: ['send','get_status'], learn_more: 'https://dmontgomery40.github.io/Faxbot/asterisk/', description: 'Self‑hosted SIP via Asterisk with T.38' },
-    { id: 's3', name: 'Amazon S3', version: '1.0.0', categories: ['storage'], capabilities: ['store','retrieve'], learn_more: 'https://aws.amazon.com/s3/', description: 'S3/S3‑compatible storage' },
   ] })),
   http.get('/plugins/:id/config', ({ params }) => {
     const id = (params as any).id as string;

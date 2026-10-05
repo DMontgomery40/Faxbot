@@ -53,8 +53,6 @@ NOT_OPERATOR = {
     ('POST', '/admin/api-keys'): 'program API for older clients and scripts; people use /access/keys',
     ('DELETE', '/admin/api-keys/{key_id}'): 'program API for older clients and scripts; people use /access/keys',
     ('POST', '/admin/api-keys/{key_id}/rotate'): 'program API for older clients and scripts; people use /access/keys',
-    ('POST', '/admin/diagnostics/run'): ('program API: every setting check for older clients and the console\'s '
-                                         'bucket check; people read /admin/diagnostics/report'),
     ('GET', '/openapi.json'): 'API description',
     ('GET', '/docs'): 'API description',
     ('GET', '/docs/oauth2-redirect'): 'API description',
@@ -73,6 +71,10 @@ CONSOLE_ONLY = {
     ('POST', '/auth/sessions/{session_id}/revoke'): 'browser: end one of your own sessions',
     ('POST', '/admin/terminal/ticket'): 'the terminal is a browser feature',
     ('WS', '/admin/terminal'): 'the terminal is a browser feature',
+    ('GET', '/plugins/{plugin_id}/config'): ('the Provider plugins page, off by default and retired next release; '
+                                             'faxbot providers show reads /admin/settings'),
+    ('PUT', '/plugins/{plugin_id}/config'): ('the Provider plugins page, off by default and retired next release; '
+                                             'faxbot providers configure writes /admin/settings'),
 }
 
 # The command line only, by design.

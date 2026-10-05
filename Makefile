@@ -59,7 +59,7 @@ native-proof:
 sslfax-proof:
 	cd api && mkdir -p faxdata && FAXBOT_SSLFAX_PROOF=1 FAXBOT_DOCKER_CONTEXT=$(DOCKER_CONTEXT) FAX_DISABLED=true FAX_DATA_DIR=./faxdata DATABASE_URL='sqlite:///./test_faxbot_ci.db' $(abspath $(VENV))/bin/python -m pytest -q -s -p no:cacheprovider -m native tests/test_sslfax_loopback.py $(PYTEST_ARGS)
 
-# The faxbot command line from this checkout, for example: make cli ARGS="health"
+# The faxbot command line from this checkout, for example: make cli ARGS="system health"
 # Paths in ARGS stay relative to where make runs. See docs/operations/cli.md.
 .PHONY: cli cli-docs
 cli:

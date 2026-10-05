@@ -294,7 +294,7 @@ export interface Settings {
   // The older settings file, read once when a new installation first starts (read only).
   legacy_config?: { path: string };
   // Where provider plugin files are read from (read only).
-  plugin_files?: { providers_dir: string; plugin_registry_path: string };
+  plugin_files?: { providers_dir: string };
   // Environment-only settings, shown read-only, by variable name.
   deployment?: Record<string, DeploymentValue>;
   // Settings only the owner may change, by the names a settings change sends.
@@ -398,30 +398,6 @@ export interface DiagnosticsReport {
   sections: Array<{ id: string; title: string; checks: DiagnosticsFinding[] }>;
 }
 
-export type DiagnosticsValue = string | number | boolean | null | DiagnosticsValue[] | { [key: string]: DiagnosticsValue };
-export type DiagnosticsOutcome = 'pass' | 'fail' | 'warning' | 'info' | 'not_applicable';
-
-export interface DiagnosticsResult {
-  timestamp: string;
-  backend: string;
-  default_backend: string;
-  outbound_backend: string;
-  inbound_backend: string;
-  configuration: {
-    active_revision_id: string;
-    desired_revision_id: string;
-    generation: number;
-    pending_restart: boolean;
-  };
-  checks: Record<string, Record<string, DiagnosticsValue>>;
-  check_outcomes: Record<string, Record<string, DiagnosticsOutcome>>;
-  summary: {
-    healthy: boolean;
-    critical_issues: string[];
-    warnings: string[];
-  };
-}
-
 export interface ValidationResult {
   backend: string;
   checks: Record<string, any>;
@@ -456,17 +432,6 @@ export interface InboundFax {
   recovered?: boolean;
   // A sentence about the provider's own copy, such as an eFax deletion Faxbot is still retrying.
   provider_note?: string | null;
-}
-
-// Tunnel types
-export interface TunnelStatus {
-  enabled: boolean;
-  provider: 'none' | 'cloudflare' | 'wireguard' | 'tailscale';
-  status: 'disabled' | 'connecting' | 'connected' | 'error';
-  public_url?: string;
-  local_ip?: string;
-  last_checked?: string;
-  error_message?: string;
 }
 
 // Authentication and access management (/auth/*, /access/*). Datetimes are

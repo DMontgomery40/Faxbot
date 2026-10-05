@@ -34,14 +34,12 @@ def test_configuration_facade_rejects_per_field_mutation():
 
 def test_operation_resource_paths_ignore_changed_process_environment(monkeypatch, tmp_path):
     from app.config import use_configuration
-    from app.config_paths import providers_dir, faxbot_config_path, plugin_registry_path
+    from app.config_paths import providers_dir, faxbot_config_path
     root = tmp_path / 'captured'
     values = ConfigurationValues.from_environment({'FAXBOT_PROVIDERS_DIR': str(root / 'providers'),
-        'FAXBOT_CONFIG_PATH': str(root / 'legacy.json'), 'PLUGIN_REGISTRY_PATH': str(root / 'registry.json')})
+        'FAXBOT_CONFIG_PATH': str(root / 'legacy.json')})
     with use_configuration(values):
         monkeypatch.setenv('FAXBOT_PROVIDERS_DIR', '/changed/providers')
         monkeypatch.setenv('FAXBOT_CONFIG_PATH', '/changed/legacy.json')
-        monkeypatch.setenv('PLUGIN_REGISTRY_PATH', '/changed/registry.json')
         assert providers_dir() == root / 'providers'
         assert faxbot_config_path() == root / 'legacy.json'
-        assert plugin_registry_path() == root / 'registry.json'
