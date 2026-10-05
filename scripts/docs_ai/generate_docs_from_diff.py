@@ -236,8 +236,13 @@ def validated_patch(reply: str) -> str:
         checked = subprocess.run([sys.executable, str(Path(__file__).with_name('validate_doc_patch.py')),
                                   str(candidate)], cwd=ROOT, capture_output=True, text=True)
     if checked.returncode != 0:
+        # Keep what was refused and why, so a person can see what the model tried.
+        rejected = ROOT / 'mkdocs-docs-llm.rejected.patch'
+        rejected.write_text(patch, encoding='utf-8')
+        reason = (checked.stderr or checked.stdout or '').strip().splitlines()[-1:] or ['no reason given']
         raise ProposalError('The proposed patch does not apply or changes files outside maintained docs '
-                            'Markdown; nothing was written.')
+                            f'Markdown; nothing was written. Validator: {reason[0]} The refused patch is in '
+                            f'{rejected.name}.')
     return patch
 
 
