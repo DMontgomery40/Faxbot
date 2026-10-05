@@ -1046,19 +1046,25 @@ def test_trunk_network_says_whether_t38_can_come_back_and_what_to_do(trunk_cli, 
     assert before.exit_code == 0 and 'Faxbot has not checked this network yet.' in before.stdout
     checked = trunk_cli('providers', 'trunk', 'network', 'check')
     assert checked.exit_code == 0, checked.stdout
-    for sentence in ('Your network changes port numbers, and Telnyx does not follow such changes for T.38 fax data, '
-                     'so it cannot come back to Faxbot.',
-                     "Faxbot runs in Colima on a Mac, on Colima's built-in network.",
+    for sentence in ('Fax over IP (T.38) cannot work here: your network changes port numbers, which Telnyx cannot '
+                     'handle for fax over IP.',
+                     'Faxbot runs in Docker on this Mac, on a private network inside the Mac.',
                      ', Faxbot switched new calls to audio fax.',
-                     'Move Colima onto your office network', '  colima delete default',
+                     'Connect Docker on this Mac directly to your local network', '  colima delete default',
                      '--cpu 2 --memory 4 --disk 20 --network-address --network-mode bridged',
-                     'Never add --data to the delete command', 'Audio fax keeps working meanwhile.', '198.51.100.7'):
+                     'Never add --data', 'Audio fax keeps working meanwhile.', '198.51.100.7'):
         assert sentence in checked.stdout, sentence
     assert 'blocked' not in checked.stdout and 'colima_user' not in checked.stdout
     report = trunk_cli.json('providers', 'trunk', 'network', 'status')
     assert (report['t38'], report['platform'], report['t38_enabled']) == ('blocked', 'colima_user', False)
     # The older `faxbot trunk` group still reaches it, and trunk status points here.
-    assert 'Telnyx does not follow' in trunk_cli('trunk', 'network', 'status').stdout
+    assert 'which Telnyx cannot handle' in trunk_cli('trunk', 'network', 'status').stdout
+    # Faxbot may open its fax ports on the router unless this is turned off.
+    off = trunk_cli('providers', 'trunk', 'network', 'router-ports', 'off')
+    assert off.exit_code == 0, off.stdout
+    assert trunk_cli.json('providers', 'trunk', 'network', 'status')['router_ports_enabled'] is False
+    assert trunk_cli('providers', 'trunk', 'network', 'router-ports', 'maybe').exit_code != 0
+    assert trunk_cli.json('providers', 'trunk', 'network', 'router-ports', 'on')['router_ports_enabled'] is True
     status = trunk_cli('providers', 'trunk', 'status').stdout
     assert 'If the network check shows a problem, run faxbot providers trunk network status to see how to fix it.' \
         in status

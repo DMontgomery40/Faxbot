@@ -145,13 +145,14 @@ If you manage settings with an environment file instead of the console, set the 
 | `SIP_TRUNK_DIAL_FORMAT` | `e164` (`+441632960123`) or `local` (`01632960123`, as a phone at the installation dials it), where the preset offers the choice |
 | `SIP_TRUNK_DIAL_PREFIX` | Up to four digits before a number dialled the local way, such as `9` for a phone system's outside line |
 | `SIP_EXTERNAL_ADDRESS` | Leave empty: Faxbot finds its internet address itself. Only an override for a host whose public address you want to state |
+| `SIP_ROUTER_PORTS` | `true` by default: Faxbot may open its published fax ports on your router (see [Network for fax over IP](network.md)); `false` stops it and closes any it opened |
 | `SIP_PUBLIC_ADDRESS_CHECK_MINUTES` | How often Faxbot checks its internet address again; `5` by default, `0` turns it off. Read at the first start; after that it is a setting (see below) |
 
 Asterisk reads the trunk when it starts. Faxbot writes it to `asterisk/pjsip.conf` inside the shared fax data folder; while that file exists it replaces the older `SIP_USERNAME`, `SIP_PASSWORD` and `SIP_SERVER` settings.
 
 ### Behind a router: nothing to open
 
-With username and password sign-in you do not open, publish or forward any port, and the default Docker Compose file publishes none. Asterisk registers with the carrier over one encrypted connection (TLS on port 5061 for Telnyx) and keeps it alive with a keepalive every 30 seconds and a carrier check every 30 seconds (every 25 seconds over UDP, with registration renewed every two minutes, inside common router timeouts). The carrier sends incoming calls back over that connection. On every call Asterisk sends the first audio and T.38 packets itself, and a small audio keepalive every two seconds when nothing else is sent, so your router lets the carrier's answer back in on the same path. Leave **Internet address** empty; it is only an override for a host whose address you want to state yourself. If you enter one that differs from what Faxbot sees, **Check trunk status** says so.
+With username and password sign-in you do not open, publish or forward any port for calls and audio fax, and the default Docker Compose file publishes none (T.38 may need more on some networks; see [Network for fax over IP](network.md)). Asterisk registers with the carrier over one encrypted connection (TLS on port 5061 for Telnyx) and keeps it alive with a keepalive every 30 seconds and a carrier check every 30 seconds (every 25 seconds over UDP, with registration renewed every two minutes, inside common router timeouts). The carrier sends incoming calls back over that connection. On every call Asterisk sends the first audio and T.38 packets itself, and a small audio keepalive every two seconds when nothing else is sent, so your router lets the carrier's answer back in on the same path. Leave **Internet address** empty; it is only an override for a host whose address you want to state yourself. If you enter one that differs from what Faxbot sees, **Check trunk status** says so.
 
 Faxbot learns its internet address with STUN when you select **Apply and connect**, and again every five minutes. The interval is a setting: **Check the internet address every … minutes** under Providers → Carrier trunk in the console, or `faxbot system settings set sip_public_address_check_minutes=10`. `0` turns the repeat off, and a change applies from the next check without a restart. It tells the carrier that address only when your network keeps port numbers, because then the address and port are exactly right and the call does not depend on the carrier following Faxbot's packets. When your network changes port numbers, a public address with the wrong port would mislead the carrier, so Faxbot leaves it out and the carrier follows Faxbot's packets instead. Asterisk picks the address up when it starts; if your internet address changes later, **Check trunk status** says "Your internet address changed. Select Apply and connect so the carrier gets the new address." (or, for an Asterisk Faxbot does not manage, to restart the Asterisk service).
 
@@ -161,30 +162,7 @@ This works with carriers that send their media back to wherever Faxbot's packets
 
 ### Network for fax over IP
 
-Faxbot checks its network at every start, on **Apply and connect**, every few minutes (the same interval as the internet address) and when you select **Check again** under **Network for fax over IP** on the carrier's page (`faxbot providers trunk network status` shows the last check, `faxbot providers trunk network check` runs it now). It learns how your network treats port numbers (kept; changed the same way for every destination; changed for each destination), whether your internet provider shares your internet address with other customers, and where Faxbot runs: Colima on a Mac (on Colima's built-in network, the Mac's shared network, or directly on your local network), Docker Desktop on a Mac or Windows, a computer on your local network, a cloud server, or a server with its own internet address. The check looks from the API container, which shares the Compose network, the virtual machine and the router with Asterisk.
-
-T.38 follows the check by itself. When fax data cannot come back, Faxbot turns **Use T.38 fax over IP** off (saved by "system"), says "Off: your network changes port numbers, so Telnyx's T.38 fax data cannot come back; Faxbot uses audio fax until the network is fixed." and keeps sending with audio fax. When a later check finds a network that lets it come back (for example after you moved Colima onto your local network), Faxbot turns T.38 on again without anyone touching the switch. It never resends a fax. If you choose T.38 yourself on the same network (**Try T.38 again**, the switch, or `faxbot providers trunk mode t38`), Faxbot leaves your choice alone until the network changes; a person's choice of audio fax always stands. For other carriers than Telnyx the same rule applies, worded "most likely", because only Telnyx was measured. A carrier that turns T.38 into audio itself (BT One Voice) and a phone system on your local network are left alone.
-
-What to do when Faxbot cannot fix it itself (the console and the command line show the same text and the exact commands; audio fax keeps working meanwhile):
-
-| Where Faxbot runs | What to do |
-| --- | --- |
-| Colima on Colima's built-in network or the Mac's shared network | Recreate Colima directly on your local network with the commands under this table. |
-| Docker Desktop, or a router that changes port numbers | Forward UDP ports 4000–4039 on your router to this computer, start Faxbot with `docker compose -f docker-compose.yml -f docker-compose.fax-ports.yml up -d` (Asterisk then uses exactly those ports: 13 for T.38 and 27 for audio, 13 faxes at once), and enter your internet address under **Internet address**. |
-| A cloud server whose network changes port numbers | Give the server its own public address, open UDP ports 4000–4039 in its firewall or security group, and start Faxbot with the fax ports file as above. |
-| An internet provider that shares your address with other customers | No router setting can change this; audio fax is used. To use T.38, run Faxbot on a server with its own internet address. |
-| No internet address found | Let Faxbot reach `stun.cloudflare.com` on UDP port 3478 through your firewall. |
-
-Colima cannot move a machine to your local network once it exists ("'network mode' cannot be updated after initial setup"), so delete the machine without `--data` and start it again with the same CPU, memory and disk. Colima 0.9 and later keep Docker's images and volumes when the machine is deleted, so Faxbot's faxes and settings stay (`colima version` shows yours). Use the profile name and the CPUS, MEMORY and DISK numbers `colima list` shows for Faxbot (the console fills in the ones Faxbot sees); everything in that Colima machine stops until it is back, and the Mac may ask for your password once:
-
-```sh
-colima list
-colima delete default
-colima start default --cpu 2 --memory 4 --disk 20 --network-address --network-mode bridged --network-interface "$(route -n get default | awk '/interface:/{print $2}')" --network-preferred-route
-docker compose up -d
-```
-
-Run the last command in Faxbot's folder. Never add `--data` to `colima delete`: it erases Docker's volumes, Faxbot's faxes and settings with them. Checked with Colima 0.9.1 on 2026-10-04: after the recreate, a container's port 4002 left the home router as 4002, and a volume written before the delete was still there.
+Faxbot checks its network at every start, on **Apply and connect**, every few minutes and on **Check again** (**Network for fax over IP** on the carrier's page, or `faxbot providers trunk network status|check`). T.38 follows the check by itself: off with the reason when the carrier's T.38 data cannot come back ("Off: your network changes port numbers, so fax over IP (T.38) cannot work; Faxbot sends audio fax until the network is fixed."), and back on once the network is fixed, never resending a fax. When Faxbot's computer sits directly behind a router that changes port numbers, Faxbot can open its fax ports on the router itself. For every platform (Colima, Docker Desktop, Linux behind a router, cloud servers) the exact fix is in [Network for fax over IP](network.md).
 
 ### When T.38 data does not come back: audio fax
 
