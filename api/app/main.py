@@ -1270,13 +1270,6 @@ def import_http_manifests(payload: ImportManifestsIn, request: Request):
     return {"ok": True, "imported": imported, "errors": errors}
 
 
-class LogsQuery(BaseModel):
-    q: Optional[str] = None
-    event: Optional[str] = None
-    since: Optional[str] = None
-    limit: Optional[int] = 200
-
-
 @app.get("/admin/logs", dependencies=[Depends(require_permission('logs:read'))], responses=_PERMISSION_RESPONSES)
 def admin_logs(q: Optional[str] = None, event: Optional[str] = None, since: Optional[str] = None, limit: int = 200):
     """Return recent audit logs from in-process ring buffer with simple filtering.
@@ -2160,10 +2153,6 @@ def export_settings_env(request: Request, identity=Depends(require_identity)):
     values = access_runtime(request).configuration_access.settings(identity.actor).desired.values
     content = format_environment(values.to_environment(redact_secrets=True))
     return {"env": content, "env_content": content}
-
-
-def _export_settings_full_env() -> str:
-    return format_environment(_configuration_manager().store.read().desired.values.to_environment())
 
 
 class PersistSettingsIn(BaseModel):
