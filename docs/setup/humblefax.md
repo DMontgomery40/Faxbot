@@ -10,12 +10,12 @@ The builtin HumbleFax adapter uploads prepared PDFs directly and polls the origi
 
 ## Configure the installation
 
-1. Open **Settings** or **Setup Wizard**.
+1. Open the **Setup Wizard** (**System → Setup**), or **Providers → HumbleFax** when it is already in use.
 2. Select **HumbleFax** as the outbound provider.
 3. Paste the access key and secret key. Leave unchanged secret masks alone.
 4. Optional: enter **HumbleFax From Number** as 10 digits, or 11 digits starting with `1` (for example `13035550199`). It must be a fax number on the same HumbleFax account.
 5. Apply the changes. If Faxbot asks for a restart, stop every API process and start the installation again, then confirm that no restart is pending.
-6. Use **Send** with a synthetic document and a controlled destination. Disabled sending creates permanently held jobs; real transmission requires sending to be enabled. Inspect **Jobs** and the HumbleFax sent history for the result and document fidelity.
+6. Use **Faxes → Send a fax** with a synthetic document and a controlled destination. Disabled sending creates permanently held jobs; real transmission requires sending to be enabled. Inspect **Faxes → Sent** and the HumbleFax sent history for the result and document fidelity.
 
 Setup does not authenticate HumbleFax keys. Readiness checks local configuration, not account access or delivery. The key pair must permit both sending faxes and reading sent fax details. When a new installation starts for the first time, it reads `FAX_OUTBOUND_BACKEND=humblefax` and `HUMBLEFAX_FROM_NUMBER` from the environment; change them in Settings after that. The keys are read from the environment at every start:
 

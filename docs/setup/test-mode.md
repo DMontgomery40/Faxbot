@@ -1,10 +1,10 @@
 # Fax Disabled: Held Test Jobs
 
-Use **Disable outbound fax sending** to check document preparation and the Jobs screens without sending anything.
+Turn **Sending is on** off to check document preparation and **Faxes → Sent** without sending anything.
 
 ## Configure an existing installation
 
-1. Open **Settings**, click **Load Settings** and turn on **Disable outbound fax sending**.
+1. Open **Providers → In use** and turn **Sending is on** off (it asks first).
 2. Click **Apply settings**. If Faxbot asks for a restart, stop every API process and start the installation again.
 3. Click **Load Settings** again and confirm that sending is off and no restart is pending.
 4. In **Send**, attach a synthetic document and use **Queue**. The server refuses a stale queue-only form if another operator has enabled sending; refresh Send before proceeding.

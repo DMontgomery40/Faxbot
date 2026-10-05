@@ -80,7 +80,11 @@ export function emailDeliveryApplies(connectors: EmailConnector[] | null, number
   return connectors.some((connector) => connector.enabled && (connector.match_number === null || connector.match_number === number));
 }
 
-export function inboxDeliveryStatus(item: IntakeItem | undefined, isNew = true, emailApplies = true): InboxDeliveryStatus | null {
+export const ARRIVED_BEFORE_EMAIL = 'Arrived before email delivery was set up';
+
+// setUpNow: email delivery is known to cover this number today (the fax came before it did).
+export function inboxDeliveryStatus(item: IntakeItem | undefined, isNew = true, emailApplies = true,
+  setUpNow = false): InboxDeliveryStatus | null {
   if (!item) return isNew ? { label: 'Waiting for email delivery', detail: null, tone: 'info', retry: false } : null;
   const reason = GENERIC.has(item.status) ? null : item.status;
   if (item.state === 'delivered') {
@@ -93,12 +97,14 @@ export function inboxDeliveryStatus(item: IntakeItem | undefined, isNew = true, 
   // Once email delivery is set up for the number, Retry delivery sends it;
   // until then there is nothing to retry.
   if (item.status === NO_EMAIL_DELIVERY && !item.next_attempt_at) {
-    return { label: 'No email delivery set up for this number', detail: null, tone: 'default', retry: item.needs_action && emailApplies };
+    return { label: setUpNow ? ARRIVED_BEFORE_EMAIL : 'No email delivery set up for this number', detail: null, tone: 'default',
+      retry: item.needs_action && emailApplies };
   }
   return { label: 'Waiting for email delivery', detail: reason, tone: item.needs_action ? 'warning' : 'info', retry: item.needs_action };
 }
 
-export function DeliveryStatusLine({ item, canRetry, busy, onRetry, label, isNew = true, emailApplies = true, documentPending = false }: {
+export function DeliveryStatusLine({ item, canRetry, busy, onRetry, label, isNew = true, emailApplies = true, setUpNow = false,
+  documentPending = false }: {
   item: IntakeItem | undefined;
   canRetry: boolean;
   busy: boolean;
@@ -106,18 +112,21 @@ export function DeliveryStatusLine({ item, canRetry, busy, onRetry, label, isNew
   label: string;
   isNew?: boolean;
   emailApplies?: boolean;
+  // Email delivery is known to cover this number today.
+  setUpNow?: boolean;
   // The fax's document has not arrived, so email delivery waits for it.
   documentPending?: boolean;
 }) {
   if (documentPending) return <StatusChip label="Waiting for the document" tone="default" />;
-  const status = inboxDeliveryStatus(item, isNew, emailApplies);
+  const status = inboxDeliveryStatus(item, isNew, emailApplies, setUpNow);
   if (!status) return <Typography variant="body2" color="text.secondary">-</Typography>;
   return (
     <Box>
       <StatusChip label={status.label} tone={status.tone} />
       {status.detail && <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>{status.detail}</Typography>}
       {item && status.retry && canRetry && (
-        <Button size="small" onClick={() => onRetry(item)} disabled={busy} sx={{ mt: 0.5 }} aria-label={`Retry delivery of ${label}`}>
+        <Button size="small" onClick={(event) => { event.stopPropagation(); onRetry(item); }} disabled={busy} sx={{ mt: 0.5 }}
+          aria-label={`Retry delivery of ${label}`}>
           Retry delivery
         </Button>
       )}

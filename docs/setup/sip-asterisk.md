@@ -52,7 +52,7 @@ It publishes SIP on 5060 (UDP and TCP) and the media range `FAXBOT_MEDIA_PORTS` 
 
 ## Configure API and Asterisk separately
 
-On an existing installation, choose **SIP trunk (Asterisk)** for sending, receiving or both in the Setup Wizard and select **Restart now** when it asks.
+On an existing installation, choose your carrier or phone system (under **Your own fax line through a carrier** or **Your phone system**) for sending, receiving or both in the Setup Wizard and select **Restart now** when it asks.
 
 ### The fax engine login: nothing to type
 
@@ -119,7 +119,7 @@ curl -X POST http://localhost:8080/fax \
 
     - Open Admin Console → Send Fax  
     - Enter a valid E.164 number; attach a small PDF  
-    - Watch Jobs for status; see Asterisk logs if calls fail
+    - Watch **Faxes → Sent** for status; see Asterisk logs if calls fail
 
 ## Choosing a SIP Provider (T.38)
 Pick one of these two (beginner-friendly):

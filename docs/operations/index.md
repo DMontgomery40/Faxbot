@@ -28,7 +28,7 @@ Operate and troubleshoot Faxbot day to day.
   Manage received documents and email delivery.\
   [Guide](intake.md)
 
-- :material-account-check: **Work**\
+- :material-account-check: **Owners in Received**\
   Give each received document an owner, a target and a history.\
   [Guide](work.md)
 

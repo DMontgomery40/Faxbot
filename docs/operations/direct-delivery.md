@@ -51,7 +51,7 @@ A verified partner stays verified for a year. **Remove** stops direct delivery t
 
 - When the partner cannot be reached, or signs a refusal, nothing was delivered. Faxbot sends the fax normally in the same attempt.
 - When the answer is lost after the document was sent, Faxbot does not send it again. It asks the partner whether the document arrived. If the partner confirms receipt, the fax is marked delivered. If the partner signs that it never arrived, Faxbot sends an ordinary fax.
-- When the partner has turned direct delivery off, its Faxbot answers as if the feature did not exist. The fax waits for confirmation, and you can check it in **Jobs**.
+- When the partner has turned direct delivery off, its Faxbot answers as if the feature did not exist. The fax waits for confirmation, and you can check it in **Faxes → Sent**.
 
 ## API
 

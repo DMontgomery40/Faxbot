@@ -1,6 +1,6 @@
-# Work
+# Owners in Received
 
-The **Work** screen gives each received document an owner. The owner acknowledges it, does what it needs, and marks it done. Faxbot keeps the history of who owned it and when, and can export that history with the document as evidence.
+**Faxes → Received** gives each received document an owner: its filters (**Mine**, **Waiting for an owner**, **Overdue**, **Not delivered**) and the **Assign** and **Acknowledge** actions are the owner queue. The owner acknowledges it, does what it needs, and marks it done. Faxbot keeps the history of who owned it and when, and can export that history with the document as evidence.
 
 Work is separate from delivery. A fax reaching Faxbot, an email reaching an inbox and a person acknowledging the document are three different events, and Faxbot records each one separately. An email server accepting a message does not mean anyone read it.
 
@@ -8,9 +8,9 @@ Work is separate from delivery. A fax reaching Faxbot, an email reaching an inbo
 
 Every received document gets one work item once Faxbot holds the document itself:
 
-- A fax becomes a work item when its document has arrived. A fax that is still **waiting for the document** has no item yet; the Work screen lists it under **Waiting for documents** so it is visible, but it has no owner until the document arrives. The Inbox shows why it is waiting.
+- A fax becomes a work item when its document has arrived. A fax that is still **waiting for the document** has no item yet; Received lists it, and says why it is waiting, but it has no owner until the document arrives.
 - A document imported from another system (see [Import documents from another system](#import-documents-from-another-system)) becomes a work item the same way.
-- Documents received by [direct delivery](direct-delivery.md) are delivered through [intake](intake.md) and do not appear in Work.
+- Documents received by [direct delivery](direct-delivery.md) are delivered through [intake](intake.md) and get no owner.
 
 The item sits in the mailbox the document was routed to by its fax number. A document that matched no routing rule is in no mailbox; only people with access on everything see it.
 
@@ -28,7 +28,7 @@ Each mailbox can have a backup person. If an item is not acknowledged by its tar
 
 The acknowledgement target is your team's operational target, not a legal deadline. Set it in hours:
 
-- **Installation target**: in the Work screen's settings, or with `faxbot numbers mailboxes target --acknowledge-hours 24`. The setting is `WORK_ACKNOWLEDGE_HOURS`; `0` (the default) sets no target.
+- **Installation target**: under **Numbers → Mailboxes**, or with `faxbot numbers mailboxes target --acknowledge-hours 24`. The setting is `WORK_ACKNOWLEDGE_HOURS`; `0` (the default) sets no target.
 - **Mailbox target**: overrides the installation target for one mailbox. `0` means no target for that mailbox.
 
 The clock starts when the document became available: when Faxbot acquired the document, or when the fax arrived if it was stored before acquisition records existed. Faxbot works out the due time once, when the item is created. Changing a target applies to documents that arrive afterwards. Restarts, repeated provider notifications and duplicate documents never restart the clock.

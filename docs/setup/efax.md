@@ -27,7 +27,7 @@ EFAX_USER_ID=...
 
 Faxbot reads them at every start. The Setup Wizard and Settings show them as **Set in .env**; change them there. You can also type them into the Setup Wizard or Settings instead; Faxbot keeps them encrypted in its database.
 
-Then, in the **Setup Wizard** (or **Settings**):
+Then, in the **Setup Wizard** (or **Providers → eFax** when it is already in use):
 
 1. Choose **eFax** for **Sending**, **Receiving** or both.
 2. In the eFax section, optionally enter:
@@ -54,7 +54,7 @@ EFAX_APP_ID=... EFAX_API_KEY=... EFAX_USER_ID=... faxbot system settings validat
 
 This says whether eFax's API answers and whether eFax accepts the keys. It sends no fax. Signing in to eFax ends the sign-in Faxbot was using; Faxbot signs in again by itself on its next request.
 
-Then send a test page to eFax's demo number from **Send** or with `faxbot send`, and follow it in **Jobs**.
+Then send a test page to eFax's demo number from **Faxes → Send a fax** or with `faxbot send`, and follow it in **Faxes → Sent**.
 
 ## Sending
 
@@ -71,14 +71,14 @@ Faxbot asks eFax for each sent fax's progress until it finishes:
 | Error | Failed |
 | Canceled | Cancelled |
 
-Anything else, or no answer, leaves the fax as it was. A send whose reply is lost (a timeout, an unreadable answer) is never sent again by itself: the fax waits for a person in **Jobs**, where you can enter the eFax fax ID once you have found it in eFax. eFax can stop a fax only before it is delivered, and an accepted request to stop is not proof that it stopped; Faxbot does not offer cancelling eFax faxes yet.
+Anything else, or no answer, leaves the fax as it was. A send whose reply is lost (a timeout, an unreadable answer) is never sent again by itself: the fax waits for a person in **Faxes → Sent**, where you can enter the eFax fax ID once you have found it in eFax. eFax can stop a fax only before it is delivered, and an accepted request to stop is not proof that it stopped; Faxbot does not offer cancelling eFax faxes yet.
 
 ## Receiving
 
 Faxbot asks eFax for the faxes it lists as not downloaded yet, every minute by default, 100 at a time and up to 1,000 per check. For each new fax:
 
 1. Faxbot records the fax first (it shows as **Waiting for the document from eFax.**), because reading a fax from eFax marks it as downloaded there.
-2. It then downloads the fax by its eFax ID as a PDF, checks it and stores it. A fax that cannot be fetched is tried again on Faxbot's usual schedule and can be fetched again from the Inbox. If Faxbot stops in between, it carries on with the same fax after a restart.
+2. It then downloads the fax by its eFax ID as a PDF, checks it and stores it. A fax that cannot be fetched is tried again on Faxbot's usual schedule and can be fetched again from **Faxes → Received**. If Faxbot stops in between, it carries on with the same fax after a restart.
 3. Once the fax is stored, Faxbot tells eFax it was downloaded and, if you turned deletion on, deletes it from eFax.
 
 If eFax refuses a deletion, the fax stays at eFax and Faxbot tries again on each check, waiting longer each time (up to 30 minutes) for seven days. The eFax section in Settings and `faxbot received list` say "1 received fax is still stored at eFax; Faxbot will try again to delete it." After seven days they say to delete it in your eFax account.
@@ -88,7 +88,7 @@ If eFax asks Faxbot to slow down, Faxbot waits as long as eFax says. After a fai
 Things to know:
 
 - Faxbot only collects faxes eFax lists as not downloaded. If another program, or eFax's own web portal, downloads a fax first, Faxbot does not see it.
-- Faxbot only asks eFax's API address, `https://api.securedocex.com`, with the account in settings, and never follows an address from a reply. If you change the App ID or User ID, faxes that arrived on the earlier account are not fetched with the new one; the Inbox says so.
+- Faxbot only asks eFax's API address, `https://api.securedocex.com`, with the account in settings, and never follows an address from a reply. If you change the App ID or User ID, faxes that arrived on the earlier account are not fetched with the new one; Received says so.
 
 ### Notifications (optional)
 

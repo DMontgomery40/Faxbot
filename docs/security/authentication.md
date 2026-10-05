@@ -13,7 +13,7 @@ Who can do what after signing in is covered in [Access Control](access-control.m
 
 The sign-in screen offers two ways in.
 
-**Username and password.** People get a username from an Owner or Administrator on the **Users** screen, together with a temporary password. The first sign-in asks for a new password before anything else works. Passwords need at least 12 characters. Changing a password ends every other session for that person.
+**Username and password.** People get a username from an Owner or Administrator under **Access → Users**, together with a temporary password. The first sign-in asks for a new password before anything else works. Passwords need at least 12 characters. Changing a password ends every other session for that person.
 
 **API key.** Select **Sign in with API key** and paste a Faxbot API key. The console then works with exactly the permissions that key has. The session ends when the key expires or is revoked, even if the session's own time has not run out.
 
