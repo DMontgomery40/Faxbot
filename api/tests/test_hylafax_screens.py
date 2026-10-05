@@ -111,3 +111,15 @@ def test_recipient_limits_route_saves_and_refuses_what_it_cannot_use(isolated_in
         assert client.put(url, json={'max_rate': None, 'ecm': 'yes'}, headers=admin).status_code == 422
         assert client.put(url, json={'max_rate': None, 'ecm': None}, headers=admin).json()['max_rate'] is None
         assert client.get('/routing/destinations/not-a-number/fax-limits', headers=admin).status_code == 400
+
+
+def test_the_command_line_shows_the_consoles_sentence_or_not_known_yet():
+    from app.cli.commands import sslfax
+    unknown = {'sslfax_sentence': None, 'max_rate': None, 'ecm': None}
+    assert sslfax.limits_fields(unknown) == [('Faster pages', 'not known yet'), ('Highest speed', 'as set for all faxes'),
+                                             ('Error correction', 'as set for all faxes')]
+    known = {'sslfax_sentence': 'This fax machine can take pages faster, so faxes to it are quicker.', 'max_rate': 9600,
+             'ecm': False}
+    assert sslfax.limits_fields(known) == [('Faster pages', known['sslfax_sentence']),
+                                           ('Highest speed', '9600 bits per second'), ('Error correction', 'off')]
+

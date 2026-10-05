@@ -41,10 +41,14 @@ for report in "$outbox"/*.report; do
       mv -f "$report" "$outbox/refused/"
       printf 'faxbot-deliver: Faxbot refused report %s (answer %s); kept in results/refused\n' \
         "${report##*/}" "$code" >&2 ;;
-    *)
-      # Faxbot is starting, unreachable or refused the secret: try every report again next round.
-      printf 'faxbot-deliver: report %s not taken yet (answer %s); trying again\n' "${report##*/}" "${code:-none}" >&2
+    ''|000|401|403|503)
+      # Faxbot is starting, unreachable or refused the secret: every report waits for the next round.
+      printf 'faxbot-deliver: Faxbot is not taking reports yet (answer %s); trying again\n' "${code:-none}" >&2
       exit 1 ;;
+    *)
+      # Something wrong with this report only: keep it, and send the ones after it.
+      printf 'faxbot-deliver: report %s not taken (answer %s); trying again later\n' "${report##*/}" "$code" >&2
+      failed=1 ;;
   esac
 done
-exit 0
+exit "${failed:-0}"

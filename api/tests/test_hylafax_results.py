@@ -163,6 +163,52 @@ def test_an_uncertain_engine_fax_still_takes_its_late_result(sip):
     assert delivery.get(member.job_id)['state'] == 'success'
 
 
+class ResultStore:
+    def __init__(self):
+        self.calls = []
+
+    def attempt_context(self, job_id, attempt_id):
+        return None, SimpleNamespace(id='profile-1', configuration=SimpleNamespace(provider_id='sip', manifest=None))
+
+    def record_unconfirmed(self, job_id, *, attempt_id, profile_id, event_key):
+        self.calls.append(('uncertain', job_id, attempt_id, event_key))
+        return True
+
+    def observe(self, job_id, **fields):
+        self.calls.append(('observed', fields['status'], fields['error']))
+        return True
+
+
+def result_route(monkeypatch, payload, row=None):
+    import asyncio
+    from app import audit
+    store = ResultStore()
+    switched = []
+    monkeypatch.setattr(hylafax_http, '_require_engine', lambda secret: None)
+    monkeypatch.setattr(hylafax_http, '_store', lambda request: store)
+    monkeypatch.setattr(hylafax_http, '_record', lambda *args: row)
+    monkeypatch.setattr(audit, 'audit_event', lambda *args, **kwargs: None)
+    monkeypatch.setattr(sip_fax_mode, '_on_fax_event', switched.append)
+    answer = asyncio.run(hylafax_http.engine_result(SimpleNamespace(app=None), payload, x_internal_secret='x'))
+    return answer, store.calls, switched
+
+
+def test_a_fax_the_engine_dialed_and_then_dropped_waits_for_a_person_instead_of_staying_in_progress(monkeypatch):
+    answer, calls, _ = result_route(monkeypatch, {'tag': f'{JOB}.{ATTEMPT}', 'why': 'killed', 'dials': 1})
+    assert answer == {'status': 'uncertain'}
+    assert calls == [('uncertain', JOB, ATTEMPT, f'{ATTEMPT}:hylafax:killed')]
+
+
+def test_a_failed_send_gets_the_built_in_engines_sentence_and_audio_rule(monkeypatch):
+    row = {'verdict': 'no_t38_data_back', 'ended_at': '2026-10-05T01:00:40Z',
+           'error_cause': 'no_t38_data_back: No carrier detected E002'}
+    payload = {'tag': f'{JOB}.{ATTEMPT}', 'why': 'failed', 'dials': 1, 'pages': 0,
+               'status_b64': base64.b64encode(b'No carrier detected {E002}').decode()}
+    answer, calls, switched = result_route(monkeypatch, payload, row)
+    assert answer == {'status': 'ok'} and calls == [('observed', 'failed', sip_calls.NO_FAX_DATA)]
+    assert len(switched) == 1
+
+
 # The engine's own secret and folders ----------------------------------------------------------------------
 
 def test_the_engine_hands_over_only_images_in_its_out_folder_with_its_own_secret(isolated_installation,

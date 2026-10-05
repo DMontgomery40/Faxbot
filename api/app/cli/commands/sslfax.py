@@ -4,17 +4,14 @@ import typer
 from .. import state
 from ..client import segment
 from ..errors import CliError
-from ..output import local_time
 
 RATES = ('14400', '9600', '7200', '4800')
 
 
 def limits_fields(view):
     """The rows 'faxbot recipients show' and 'faxbot recipients limits' print for one number."""
-    accepts = view.get('accepts_sslfax')
-    seen = local_time(view.get('accepts_sslfax_at')) if view.get('accepts_sslfax_at') else None
-    takes = None if accepts is None else ('yes' if accepts else 'no') + (f' (seen {seen})' if seen else '')
-    return [('Faster pages', takes or 'not known yet'),
+    # The sentence the console shows when Faxbot knows; otherwise not known yet.
+    return [('Faster pages', view.get('sslfax_sentence') or 'not known yet'),
             ('Highest speed', f"{view['max_rate']} bits per second" if view.get('max_rate') else 'as set for all faxes'),
             ('Error correction', 'as set for all faxes' if view.get('ecm') is None else 'on' if view['ecm'] else 'off')]
 
@@ -43,6 +40,4 @@ def recipient_limits(number: str = typer.Argument(..., help='Fax number.'),
 
     def human(out):
         out.fields([('Fax number', view['number']), *limits_fields(view)])
-        if view.get('sslfax_sentence'):
-            out.line(view['sslfax_sentence'])
     state.out().result(view, human)

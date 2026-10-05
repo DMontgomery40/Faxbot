@@ -63,7 +63,7 @@ export default function RecipientFaxLimitsPanel({ client, number, canWrite }: {
       <Typography variant="body2" sx={{ mt: 0.5 }}>
         {view.sslfax_sentence
           ? `${view.sslfax_sentence}${view.accepts_sslfax_at ? ` Seen on ${new Date(view.accepts_sslfax_at).toLocaleDateString()}.` : ''}`
-          : 'Faxbot finds out after the next call whether this fax machine can take pages faster.'}
+          : 'Faxbot does not know yet whether this fax machine can take pages faster. It finds out on the next call.'}
       </Typography>
       <Typography variant="body2" color="text.secondary">
         If faxes to this number keep failing, a lower speed or error correction off can help.

@@ -17,7 +17,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 TOOLS = ('sh', 'sed', 'awk', 'base64', 'tr', 'head', 'cut', 'cat', 'grep', 'cp', 'mv', 'rm', 'mkdir', 'chmod',
-         'mktemp', 'dirname')
+         'mktemp', 'dirname', 'tail')
 
 pytestmark = pytest.mark.skipif(not all(shutil.which(tool) for tool in TOOLS),
                                 reason='POSIX tools are needed to run the engine scripts.')
@@ -45,12 +45,14 @@ def engine(tmp_path):
                             "'SignalRate: SSL Fax' 'DataFormat: JBIG' 'TimeToRecv: 0:00:12'\n")
     _stub(tools, 'tiffcp', 'cp "$3" "$4"\n')
     _stub(tools, 'date', 'echo 1791180000\n')
-    # The stand-in Faxbot gives the answer in CAPTURE/answer and records each request.
+    # The stand-in Faxbot gives the next line of CAPTURE/answers, else CAPTURE/answer, and records each request.
     _stub(tools, 'curl', 'cat > "$CAPTURE/header.$$"; for a; do last=$a; done\n'
                          'while [ $# -gt 0 ]; do if [ "$1" = --data-binary ]; then case $2 in '
                          '@*) cat "${2#@}" > "$CAPTURE/body" ;; *) printf %s "$2" > "$CAPTURE/body" ;; esac; fi; '
                          'shift; done\nprintf %s "$last" > "$CAPTURE/url"; printf \'%s\\n\' "$last" >> "$CAPTURE/urls"\n'
-                         'cat "$CAPTURE/answer"\n')
+                         'if [ -s "$CAPTURE/answers" ]; then head -1 "$CAPTURE/answers"; '
+                         'tail -n +2 "$CAPTURE/answers" > "$CAPTURE/answers.next"; '
+                         'mv "$CAPTURE/answers.next" "$CAPTURE/answers"; else cat "$CAPTURE/answer"; fi\n')
     _stub(tools, 'flock', 'exit 0\n')
     for tool in TOOLS:
         (tools / tool).symlink_to(shutil.which(tool))
@@ -177,3 +179,21 @@ def test_the_engines_start_is_reported_and_a_malformed_report_is_set_aside(engin
         '1791180000-started.report', '1791180001-job12-failed.report']
     assert run('deliver', environment).returncode == 0
     assert len((tmp_path / 'urls').read_text().splitlines()) == 2
+
+
+def test_one_report_faxbot_cannot_take_does_not_hold_up_the_others(engine, tmp_path):
+    spool, state, data, environment = engine
+    first, second = state / 'results' / '1791180000-job11-failed.report', state / 'results' / '1791180001-job12-done.report'
+    first.write_text('{"tag":"one"}\n')
+    second.write_text('{"tag":"two"}\n')
+    # A server error on the oldest report: it stays, and the next one is still sent.
+    (tmp_path / 'answers').write_text('500\n200\n')
+    assert run('deliver', environment).returncode == 1
+    assert first.exists() and not second.exists()
+    # Faxbot unreachable: the round stops at once and every report waits.
+    third = state / 'results' / '1791180002-job13-done.report'
+    third.write_text('{"tag":"three"}\n')
+    (tmp_path / 'answers').write_text('000\n200\n')
+    assert run('deliver', environment).returncode == 1
+    assert first.exists() and third.exists()
+    assert len((tmp_path / 'urls').read_text().splitlines()) == 3
