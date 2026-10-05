@@ -68,6 +68,12 @@ export function auditAction(operation: string): string {
   return words ? words[0].toUpperCase() + words.slice(1) : operation;
 }
 
+// One entry's action. The terminal records two: asking to open it, then each session it starts.
+export function entryAction(entry: Pick<AuditEntry, 'operation' | 'details'>): string {
+  if (entry.operation === 'host.terminal' && entry.details?.session !== 'started') return 'Asked to open the terminal';
+  return auditAction(entry.operation);
+}
+
 const SIGNED_IN_WITH: Record<AuditEntry['credential_kind'], string> = {
   session: 'Signed in',
   key: 'API key',
@@ -179,7 +185,7 @@ export default function AuditLog({ client, canListPeople }: {
                 <TableCell sx={{ whiteSpace: 'nowrap' }}>{formatServerTime(entry.at)}</TableCell>
                 <TableCell>{who(entry)}</TableCell>
                 <TableCell>{SIGNED_IN_WITH[entry.credential_kind] ?? '-'}</TableCell>
-                <TableCell>{auditAction(entry.operation)}</TableCell>
+                <TableCell>{entryAction(entry)}</TableCell>
                 <TableCell>{changed(entry)}</TableCell>
                 <TableCell>
                   <Chip size="small" variant="outlined" label={entry.outcome === 'denied' ? 'Refused' : 'Done'}

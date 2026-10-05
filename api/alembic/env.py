@@ -31,6 +31,7 @@ config.attributes["schema_batching"] = importlib.import_module(package + ".schem
 config.attributes["schema_inbound_sources"] = importlib.import_module(package + ".schema_inbound_sources")
 config.attributes["schema_case_packets"] = importlib.import_module(package + ".schema_case_packets")
 config.attributes["schema_fax_engine"] = importlib.import_module(package + ".schema_fax_engine")
+config.attributes["schema_terminal"] = importlib.import_module(package + ".schema_terminal")
 
 
 def migrate(connection):

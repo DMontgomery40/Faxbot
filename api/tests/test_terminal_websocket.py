@@ -3,6 +3,7 @@ import json
 import threading
 
 import pytest
+import sqlalchemy as sa
 from starlette.websockets import WebSocketDisconnect
 
 import app.main as main_module
@@ -84,6 +85,45 @@ def ticket(client, headers=B):
 
 def connect(client, headers):
     return client.websocket_connect(SOCKET, headers=headers)
+
+
+def terminal_audits(client):
+    """The installation's persistent audit rows for the terminal: (outcome, principal, details)."""
+    runtime = client.app.state.access_runtime
+    audit = runtime.store.tables['access_audit']
+    with runtime.store.engine.connect() as connection:
+        rows = connection.execute(sa.select(audit).where(audit.c.operation == 'host.terminal')
+                                  .order_by(audit.c.created_at)).mappings().all()
+    return [(row['outcome'], row['actor_principal_id'], json.loads(row['details'])) for row in rows]
+
+
+def integration_with(client, role_ids, ceiling):
+    """A new integration holding these roles at the installation, and a key limited to ``ceiling``."""
+    integration = client.post('/access/integrations', headers=B, json={'display_name': 'Ops robot', 'enabled': True,
+        'expected_policy_version': policy_version(client)}).json()['integration']
+    version = integration['version']
+    for role_id in role_ids:
+        roles = {role['id']: role for role in client.get('/access/roles', headers=B).json()['items']}
+        granted = client.post('/access/assignments', headers=B, json={
+            'subject': {'kind': 'principal', 'id': integration['id'], 'version': version},
+            'role': {'id': role_id, 'version': roles[role_id]['version']},
+            'resource_id': 'installation', 'expected_policy_version': policy_version(client)})
+        assert granted.status_code == 200, granted.text
+        version = granted.json()['subject']['version']
+    issued = client.post('/access/keys', headers=B, json={
+        'principal': {'id': integration['id'], 'version': version}, 'name': 'ops',
+        'ceiling': [{'permission': permission, 'resource_id': 'installation'} for permission in ceiling],
+        'expected_policy_version': policy_version(client)})
+    assert issued.status_code == 200, issued.text
+    return integration['id'], issued.json()
+
+
+def terminal_role(client):
+    """A role of the owner's own that holds only the terminal."""
+    created = client.post('/access/roles', headers=B, json={'name': 'Terminal', 'description': 'Server terminal',
+        'permissions': ['host:terminal'], 'enabled': True, 'expected_policy_version': policy_version(client)})
+    assert created.status_code == 200, created.text
+    return created.json()['role']['id']
 
 
 def test_production_timings_meet_the_revocation_bound():
@@ -201,24 +241,43 @@ def test_revoking_the_minting_session_closes_the_socket(client, shell):
 
 
 def test_revoking_the_minting_key_closes_an_idle_socket(client, shell):
-    integration = client.post('/access/integrations', headers=B, json={'display_name': 'Ops robot', 'enabled': True,
-        'expected_policy_version': policy_version(client)}).json()['integration']
-    roles = {role['id']: role for role in client.get('/access/roles', headers=B).json()['items']}
-    granted = client.post('/access/assignments', headers=B, json={
-        'subject': {'kind': 'principal', 'id': integration['id'], 'version': integration['version']},
-        'role': {'id': 'role_host_operator', 'version': roles['role_host_operator']['version']},
-        'resource_id': 'installation', 'expected_policy_version': policy_version(client)})
-    assert granted.status_code == 200, granted.text
-    issued = client.post('/access/keys', headers=B, json={
-        'principal': {'id': integration['id'], 'version': granted.json()['subject']['version']},
-        'name': 'ops', 'ceiling': [{'permission': 'host:terminal', 'resource_id': 'installation'}],
-        'expected_policy_version': policy_version(client)})
-    assert issued.status_code == 200, issued.text
-    secret = ticket(client, {'X-API-Key': issued.json()['token']})
+    _, issued = integration_with(client, [terminal_role(client)], ['host:terminal'])
+    secret = ticket(client, {'X-API-Key': issued['token']})
     with connect(client, {}) as ws:
         ws.send_json({'type': 'auth', 'ticket': secret})
         assert output(ws)['data'] == 'ready'
-        key = issued.json()['key']
+        key = issued['key']
         assert client.post(f"/access/keys/{key['id']}/revoke", headers=B, json={
             'version': key['version'], 'expected_policy_version': policy_version(client)}).status_code == 200
         assert closed_with(ws)
+
+
+def test_the_terminal_is_the_owners_and_is_granted_to_others_on_purpose(client, shell):
+    """A Host Operator restarts Faxbot but has no terminal; an owner's own role can grant it."""
+    operator, issued = integration_with(client, ['role_host_operator'], ['host:restart'])
+    refused = client.post('/admin/terminal/ticket', headers={'X-API-Key': issued['token']}, json={})
+    assert refused.status_code == 403
+    assert ('denied', operator, {'request': 'POST /admin/terminal/ticket', 'reason': 'forbidden'}) in terminal_audits(client)
+
+    granted, issued = integration_with(client, ['role_host_operator', terminal_role(client)], ['host:terminal'])
+    secret = ticket(client, {'X-API-Key': issued['token']})
+    with connect(client, {}) as ws:
+        ws.send_json({'type': 'auth', 'ticket': secret})
+        assert output(ws)['data'] == 'ready'
+    # The ticket and the session start are each recorded, in that order.
+    mine = [(outcome, details) for outcome, principal, details in terminal_audits(client) if principal == granted]
+    assert mine == [('allowed', {'request': 'POST /admin/terminal/ticket'}),
+                    ('allowed', {'request': 'WEBSOCKET /admin/terminal', 'session': 'started'})]
+
+
+def test_a_refused_session_start_closes_the_socket_before_any_shell(client, shell, monkeypatch):
+    from app.access.mutation_types import MutationDeniedError, MutationReason
+    secret = ticket(client)
+
+    def refused(*args, **kwargs):
+        raise MutationDeniedError(MutationReason.FORBIDDEN)
+    monkeypatch.setattr(main_module, 'authorize_operation', refused)
+    with connect(client, {}) as ws:
+        ws.send_json({'type': 'auth', 'ticket': secret})
+        assert closed_with(ws)  # no "ready": the shell never started
+    assert shell.inputs == [] and shell.closed == []

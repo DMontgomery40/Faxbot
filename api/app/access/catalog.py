@@ -33,5 +33,6 @@ BUILTIN_ROLE_PERMISSIONS = MappingProxyType({
                                   "work:read"}),
     "role_auditor": frozenset({"audit:read", "fax:read", "inbound:list", "inbound:read", "work:read",
                                "work:export"}),
-    "role_host_operator": frozenset({"host:restart", "host:actions", "host:terminal", "diagnostics:read", "settings:read"}),
+    # The Terminal is the Owner role's by default (revision 0018); a role of the owner's own can grant it.
+    "role_host_operator": frozenset({"host:restart", "host:actions", "diagnostics:read", "settings:read"}),
 })

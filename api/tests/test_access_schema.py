@@ -91,6 +91,8 @@ def test_clean_access_upgrade_enrolls_exact_catalogue_without_owner_or_sessions(
         'role_fax_operator': builtin['role_fax_operator'] | {'work:read', 'work:manage'},
         'role_fax_viewer': builtin['role_fax_viewer'] | {'work:read'},
         'role_auditor': builtin['role_auditor'] | {'work:read', 'work:export'},
+        # 0018 gives the terminal to the Owner role only.
+        'role_host_operator': builtin['role_host_operator'] - {'host:terminal'},
     }
     assert rows['access_principals'][0]['id'] == 'bootstrap'
     assert rows['access_principals'][0]['kind'] == 'bootstrap'

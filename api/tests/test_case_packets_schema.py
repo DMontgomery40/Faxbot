@@ -10,6 +10,7 @@ import sqlalchemy as sa
 from api.app import schema, schema_case_packets
 from api.tests.test_schema import database, snapshot  # noqa: F401 - fixture
 from api.tests.test_access_schema import at_revision
+from api.tests.test_work_schema import without_terminal_change
 
 
 NOW = datetime(2026, 10, 4, 12)
@@ -45,7 +46,7 @@ def test_0016_upgrade_preserves_0015_rows_and_validates_frozen_shape(database):
     assert after['case_packet_sends'] == []
     for name, rows in before.items():
         if name != 'alembic_version':
-            assert after[name] == rows, name
+            assert without_terminal_change(name, after[name]) == without_terminal_change(name, rows), name
     metadata = schema_case_packets.frozen_metadata(dialect=database.dialect.name)
     with database.connect() as connection:
         assert schema.validate_schema(connection, require_version=True) == schema.HEAD

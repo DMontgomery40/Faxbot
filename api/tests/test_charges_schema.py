@@ -7,6 +7,7 @@ import sqlalchemy as sa
 from api.app import schema, schema_charges
 from api.tests.test_schema import database, snapshot
 from api.tests.test_access_schema import at_revision
+from api.tests.test_work_schema import without_terminal_change
 
 
 NOW = datetime(2026, 10, 3, 12)
@@ -50,7 +51,8 @@ def test_0012_upgrade_preserves_0011_rows_adds_empty_columns_and_validates_froze
             continue
         new = {column for table, column in added if table == name}
         # Existing rows keep every value; an added column starts empty.
-        assert [{key: value for key, value in row.items() if key not in new} for row in after[name]] == rows, name
+        assert without_terminal_change(name, [{key: value for key, value in row.items() if key not in new}
+                                              for row in after[name]]) == without_terminal_change(name, rows), name
         assert all(row[column] is None for row in after[name] for column in new)
     metadata = schema_charges.frozen_metadata(dialect=database.dialect.name)
     with database.connect() as connection:

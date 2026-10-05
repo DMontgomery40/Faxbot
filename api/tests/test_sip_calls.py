@@ -12,7 +12,7 @@ from app.config import use_configuration
 from app.config_values import ConfigurationValues
 from api.tests.test_schema import database, snapshot
 from api.tests.test_access_schema import at_revision
-from api.tests.test_work_schema import without_work_catalogue
+from api.tests.test_work_schema import without_terminal_change, without_work_catalogue
 
 
 JOB = '0123456789abcdef0123456789abcdef'
@@ -35,7 +35,8 @@ def test_0009_upgrade_preserves_0008_state_and_validates_frozen_shape(database):
     assert after['sip_call_records'] == []
     for name, rows in before.items():
         if name != 'alembic_version':
-            assert without_work_catalogue(name, after[name]) == rows, name
+            assert (without_terminal_change(name, without_work_catalogue(name, after[name]))
+                    == without_terminal_change(name, rows)), name
     # Later revisions add the SIP Call-ID column and its index to this table.
     metadata = schema_charges.frozen_metadata(dialect=database.dialect.name)
     table = metadata.tables['sip_call_records']

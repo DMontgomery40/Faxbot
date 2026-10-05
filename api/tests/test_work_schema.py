@@ -24,10 +24,23 @@ def without_work_catalogue(name, rows):
     return rows
 
 
+def without_terminal_change(name, rows):
+    """Rows without the one row 0018 removes (the Host Operator's terminal), so both sides compare."""
+    from api.app import schema_terminal
+    if name == 'access_role_permissions':
+        return [row for row in rows if row['id'] != schema_terminal.ROW_ID]
+    return rows
+
+
 def add_work_catalogue(engine):
-    """Give an older access schema today's catalogue, so the running store can open it."""
+    """Give an older access schema today's catalogue, so the running store can open it.
+
+    That is 0011's work permissions and, from 0018, a Host Operator role without the terminal.
+    """
     from api.app.schema_access import _identity
+    from api.app import schema_terminal
     with engine.begin() as connection:
+        connection.execute(sa.text('DELETE FROM access_role_permissions WHERE id = :id'), {'id': schema_terminal.ROW_ID})
         for permission, description in schema_work.PERMISSIONS.items():
             connection.execute(sa.text('INSERT INTO access_permissions (id, description) VALUES (:id, :d)'),
                                {'id': permission, 'd': description})
@@ -66,7 +79,8 @@ def test_0011_upgrade_preserves_0010_state_seeds_catalogue_and_validates_frozen_
         assert after[name] == [], name
     for name, rows in before.items():
         if name != 'alembic_version':
-            assert without_work_catalogue(name, after[name]) == rows, name
+            assert (without_terminal_change(name, without_work_catalogue(name, after[name]))
+                    == without_terminal_change(name, rows)), name
     assert {row['id'] for row in after['access_permissions']} == PERMISSIONS
     members = {}
     for row in after['access_role_permissions']:

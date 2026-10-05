@@ -632,7 +632,7 @@ def health_ready(request: Request):
 
 # Every protected route either declares its permission with require_permission
 # or authenticates with require_identity and checks permission on the resource.
-from .access.route_policy import authorize as authorize_operation, request_audit, require_permission  # noqa: E402
+from .access.route_policy import authorize as authorize_operation, require_permission  # noqa: E402
 
 
 class CreateAPIKeyIn(BaseModel):
@@ -2608,6 +2608,14 @@ async def admin_terminal_websocket(websocket: WebSocket):
         except Exception:
             return False
 
+    # Every session start goes into the audit log, after the permission is checked once more;
+    # a refusal is recorded too, and no shell starts.
+    try:
+        await run_lifecycle_step(lambda: authorize_operation(
+            service, record.actor, 'host:terminal', audit={'request': 'WEBSOCKET /admin/terminal', 'session': 'started'}))
+    except Exception:
+        await _close_terminal(websocket, 1008)
+        return
     audit_event("terminal_opened", principal_id=record.principal_id)
     try:
         await terminal_module.handle_terminal_websocket(websocket,
