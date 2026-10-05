@@ -24,9 +24,6 @@ for (const file of [...scripts, ...modules]) {
   if (result.status !== 0) failures.push(`syntax ${path.relative(root, file)}\n${result.stderr || result.error}`);
 }
 
-// Servers start only when run directly; keep an ephemeral port as a safety net.
-process.env.MCP_WS_PORT = '0';
-
 for (const file of modules) {
   try {
     await import(pathToFileURL(file).href);

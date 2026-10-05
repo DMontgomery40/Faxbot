@@ -798,12 +798,13 @@ describe('Settings placed on their own pages', () => {
 });
 
 describe('System, milestone 5', () => {
-  const deployment = (values: Record<string, string>) => Object.fromEntries([
+  // `withheld` names values the server reports as set but never sends.
+  const deployment = (values: Record<string, string>, withheld: string[] = []) => Object.fromEntries([
     'FAXBOT_ALLOW_INSECURE_HTTP_SESSIONS', 'FAXBOT_CONSOLE_ORIGINS', 'ENABLE_LOCAL_ADMIN', 'ENABLE_ADMIN_EXEC',
     'FAXBOT_ALLOW_INSECURE_LOOPBACK', 'FAXBOT_INSTALLATION_KEY_PATH', 'FAXBOT_DIRECT_KEY_PATH', 'FAXBOT_MEDIA_PORTS',
     'FAXBOT_PHONE_SYSTEM_ADDRESS', 'MCP_ALLOWED_HOSTS', 'MCP_ALLOWED_ORIGINS', 'MCP_OAUTH_SUBJECT_KEYS_FILE',
-    'MCP_RESOURCE_URL', 'MCP_HTTP_PORT', 'MCP_WS_PORT', 'MCP_WS_API_KEY', 'TZ',
-  ].map((name) => [name, name in values ? { set: true, value: name === 'MCP_WS_API_KEY' ? null : values[name] } : { set: false, value: null }]));
+    'MCP_RESOURCE_URL', 'MCP_HTTP_PORT', 'TZ',
+  ].map((name) => [name, name in values ? { set: true, value: withheld.includes(name) ? null : values[name] } : { set: false, value: null }]));
 
   it('shows the environment-only security settings with their meaning, and set or not set', async () => {
     settingsHandlers(settingsFixture((data) => {
@@ -823,17 +824,18 @@ describe('System, milestone 5', () => {
     expect(screen.queryByText('Audit Logging')).toBeNull();
   });
 
-  it('names the assistant servers\' settings in Developer and never shows a secret', async () => {
+  it('names the assistant servers\' settings in Developer and never shows a withheld value', async () => {
     settingsHandlers(settingsFixture((data) => {
-      data.deployment = deployment({ MCP_HTTP_PORT: '3001', MCP_WS_API_KEY: 'hidden' });
+      data.deployment = deployment({ MCP_HTTP_PORT: '3001', MCP_OAUTH_SUBJECT_KEYS_FILE: 'hidden' },
+        ['MCP_OAUTH_SUBJECT_KEYS_FILE']);
     }));
     render(<Settings client={client()} sections={['mcp']} />);
     const rows = await screen.findByTestId('deployment-rows');
     expect(within(rows).getByDisplayValue('3001')).toBeTruthy();
-    expect(within(rows).getByText('Set when Faxbot started. (MCP_WS_API_KEY)')).toBeTruthy();
+    expect(within(rows).getByText('Set when Faxbot started. (MCP_OAUTH_SUBJECT_KEYS_FILE)')).toBeTruthy();
     expect(within(rows).getByDisplayValue('Set')).toBeTruthy();
     // A setting that is not set names the default the assistant server then uses.
-    expect(within(rows).getByText('Not set: port 3004. (MCP_WS_PORT)')).toBeTruthy();
+    expect(within(rows).getByText('Not set: the assistant server answers to any address. (MCP_ALLOWED_HOSTS)')).toBeTruthy();
     expect(document.body.textContent).not.toContain('hidden');
   });
 

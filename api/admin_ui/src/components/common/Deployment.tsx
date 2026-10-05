@@ -38,8 +38,6 @@ export const DEPLOYMENT_MEANINGS: Record<string, { label: string; kind: Kind; un
     unset: 'Not set: assistants sign in with a Faxbot API key.' },
   MCP_RESOURCE_URL: { label: 'Public address of the assistant server', kind: 'text', unset: 'Not set.' },
   MCP_HTTP_PORT: { label: 'Assistant server port', kind: 'text', unset: 'Not set: port 3001.' },
-  MCP_WS_PORT: { label: 'Assistant server port for live connections', kind: 'text', unset: 'Not set: port 3004.' },
-  MCP_WS_API_KEY: { label: 'Key for live assistant connections', kind: 'secret', unset: 'Not set.' },
   TZ: { label: "Server log time zone", kind: 'text',
     unset: 'Not set, so only the server\'s own logs use world standard time (UTC). Faxbot shows times in the time zone chosen in Setup.' },
 };

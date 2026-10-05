@@ -1429,7 +1429,7 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
             {textField('OAuth Audience', 'oauth_audience')}
             {textField('OAuth JWKS URL', 'oauth_jwks_url')}
             <DeploymentRows settings={settings} showNames names={['MCP_ALLOWED_HOSTS', 'MCP_ALLOWED_ORIGINS',
-              'MCP_OAUTH_SUBJECT_KEYS_FILE', 'MCP_RESOURCE_URL', 'MCP_HTTP_PORT', 'MCP_WS_PORT', 'MCP_WS_API_KEY']} />
+              'MCP_OAUTH_SUBJECT_KEYS_FILE', 'MCP_RESOURCE_URL', 'MCP_HTTP_PORT']} />
           </ResponsiveFormSection>
           )}
 
