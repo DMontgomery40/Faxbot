@@ -185,8 +185,7 @@ def test_0004_enrollment_preserves_all_rows_and_narrows_unproven_authority(datab
                         'wrong-db-id': 'legacy', 'reserved': 'legacy', 'unknown': 'legacy', 'unbound': 'legacy'}
     assert next(r for r in resources if r['kind'] == 'inbound')['parent_id'] == 'legacy'
     assert [(r['id'], r['mailbox_id']) for r in after['access_mailbox_routes']] == [('match', 'mailbox')]
-    # 0019 adds one record of the permissions it retired; the enrollment audits are the rest.
-    audits = [json.loads(r['details']) for r in after['access_audit'] if r['operation'] != 'access.retire_permissions']
+    audits = [json.loads(r['details']) for r in after['access_audit']]
     assert len(audits) == len(cases) + 1
     audit_text = repr(audits)
     for secret in ['unknown-private-scope', 'same owner', 'unchanged-hash', 'private note', '+12025550123', 'fingerprint']:
@@ -690,9 +689,7 @@ finally:
     assert rows['alembic_version'] == [{'version_num': HEAD}]
     assert len(rows['access_principals']) == 2
     assert len(rows['access_key_bindings']) == len(rows['access_assignments']) == len(rows['access_key_grants']) == 1
-    # Two enrollment audits, and 0019's one record of the permissions it retired.
-    assert len([r for r in rows['access_audit'] if r['operation'] != 'access.retire_permissions']) == 2
-    assert len(rows['access_audit']) == 3
+    assert len(rows['access_audit']) == 2
 
 
 def test_sqlite_overlength_or_control_key_labels_are_not_copied_to_display_or_audit(database):

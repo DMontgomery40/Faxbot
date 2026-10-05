@@ -645,7 +645,7 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
             Save a recovery copy
           </Button>
           <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 1 }} data-testid="recovery-retiring">
-            The recovery copy goes away in the next release. Make full backups on the server instead.
+            The recovery copy goes away in the next release. Make a full backup on the server instead (faxbot system backup).
           </Typography>
           </>)}
 

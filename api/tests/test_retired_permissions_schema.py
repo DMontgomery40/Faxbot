@@ -122,6 +122,17 @@ def test_0019_downgrade_restores_every_removed_row_and_keeps_the_audit_record(da
     assert len(_rows(database, 'access_audit', operation=retired.OPERATION)) == 2
 
 
+def test_0019_on_an_installation_with_only_built_in_roles_writes_no_audit_record(database):
+    at_revision(database, '0018_terminal_owner_only')
+    before = snapshot(database)
+    schema.upgrade_schema(database)
+    after = snapshot(database)
+    assert after['access_audit'] == before['access_audit']
+    assert {row['id'] for row in after['access_permissions']} == PERMISSIONS
+    _downgrade(database, '0018_terminal_owner_only')
+    assert _ordered(snapshot(database)) == _ordered(before)
+
+
 def test_0019_refuses_a_catalogue_that_is_not_as_left(database):
     at_revision(database, '0018_terminal_owner_only')
     members = sa.Table('access_role_permissions', sa.MetaData(), autoload_with=database)

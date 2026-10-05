@@ -69,7 +69,7 @@ def test_freeswitch_sending_says_it_is_removed_next_release(monkeypatch, provide
     (finding,) = _run(report.sending(SimpleNamespace(request=None)))
     assert finding.status == status
     if provider == 'freeswitch':
-        assert finding.sentence == 'Your sending provider will stop working in the next Faxbot release. Choose another one in Setup.'
+        assert finding.sentence == "FreeSWITCH, your sending provider, won't work after the next update. Choose a new one in Setup."
         assert (finding.fix_label, finding.fix_page) == ('Open Setup', 'system/setup')
 
 

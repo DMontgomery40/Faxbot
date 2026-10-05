@@ -14,9 +14,10 @@ The upgrade deletes, in foreign-key order:
   become empty is allowed nothing, because a key may only use what its limits name;
 - the three ``access_permissions`` rows.
 
-It writes one audit row (``access.retire_permissions``, outcome ``migrated``, no
-actor) listing the removed rows of owners' own roles and of key limits with their
-original ids, so history keeps them. Policy, role and key versions are unchanged, as
+When it removes any row of an owner's own role or any key limit, it writes one audit
+row (``access.retire_permissions``, outcome ``migrated``, no actor) listing those rows
+with their original ids, so history keeps them. A new installation has none, so its
+audit log starts without this row; the built-in rows need no record. Policy, role and key versions are unchanged, as
 in 0011 and 0018: the permissions authorized nothing, so no decision changes.
 
 The downgrade puts the three permissions and the built-in rows back with their
@@ -87,6 +88,8 @@ def upgrade_retired_permissions(connection, operations):
     connection.execute(members.delete().where(_retired(members.c.permission_id)))
     connection.execute(grants.delete().where(_retired(grants.c.permission_id)))
     connection.execute(permissions.delete().where(_retired(permissions.c.id)))
+    if not custom and not limits:
+        return
     version = connection.execute(sa.select(state.c.policy_version)).scalar_one()
     details = {'revision': REVISION, 'permissions': sorted(PERMISSIONS), 'role_permissions': custom,
                'key_grants': limits}

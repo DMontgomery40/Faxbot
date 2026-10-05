@@ -165,7 +165,7 @@ async def sending(context: Context) -> list[Finding]:
                         'Open Providers', 'providers/sending')]
     if configuration.provider_id == 'freeswitch':
         return [Finding('sending.provider', 'sending', 'Sending', ATTENTION,
-                        'Your sending provider will stop working in the next Faxbot release. Choose another one in Setup.', 'Open Setup', 'system/setup')]
+                        "FreeSWITCH, your sending provider, won't work after the next update. Choose a new one in Setup.", 'Open Setup', 'system/setup')]
     if configuration.provider_id == 'sip':
         name = provider_label(configuration.provider_id)
         return [Finding('sending.provider', 'sending', 'Sending', OK,
