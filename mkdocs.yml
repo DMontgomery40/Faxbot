@@ -151,10 +151,10 @@ nav:
     - HumbleFax: setup/humblefax.md
     - eFax: setup/efax.md
     - SignalWire: setup/signalwire.md
-    - FreeSWITCH: setup/freeswitch.md
+    - FreeSWITCH (existing installations): setup/freeswitch.md
     - Fax numbers on SIP: setup/sip-numbers.md
     - Test Mode: setup/test-mode.md
-    - Public Access & Tunnels: setup/public-access.md
+    - Public Access: setup/public-access.md
     - Webhooks: setup/webhooks.md
     - Deployment: deployment.md
   - Security:
@@ -198,9 +198,9 @@ nav:
       - Node: mcp/node.md
       - Python: mcp/python.md
       - Transports: mcp/transports.md
-  - Plugins (v3):
-    - Curated Registry: plugins/registry.md
-    - Plugin Config File: plugins/config-file.md
+  - Provider plugins (legacy):
+    - Provider plugins: plugins/registry.md
+    - Plugin config file: plugins/config-file.md
   - Admin Console:
     - The console: admin-console.md
     - Overview: admin-console/overview.md

@@ -14,7 +14,7 @@
 
 ## Audit log
 
-**System → Audit log** (`#/system/audit`) lists who did what in Faxbot, newest first: **When**, **Who**, **Signed in with**, **Action** ("Changed settings", "Opened the terminal"), **Changed** ("Mailbox: Billing", "Terminal access code") and **Result** (Done or Refused). Filter by person and by action; **Show older entries** reads further back. Entries are never changed or removed.
+**System → Audit log** (`#/system/audit`) lists who did what in Faxbot, newest first: **When**, **Who**, **Signed in with**, **Action** ("Changed settings", "Asked for access to the server terminal"), **Changed** ("Mailbox: Billing", "Terminal access code") and **Result** (Done or Refused). Filter by person and by action; **Show older entries** reads further back. Entries are never changed or removed.
 
 Below the list, **Event recording** sets what Faxbot records for Logs: **Record events**, how each event is written, a file on the server, and the system log. Only the owner can change these; they take effect after Faxbot restarts.
 
@@ -25,13 +25,3 @@ Below the list, **Event recording** sets what Faxbot records for Logs: **Record 
 ## Logs
 
 **System → Logs** (`#/system/logs`) shows recorded events with the columns Time, Event, Fax, Key, Provider, Result, Error, To and From. To search one column, type its name, a colon and the words, such as `provider:sinch` or `result:failed`. Select an entry to see all of it.
-
-## Developer
-
-The Developer pages use developer words; the rest of the console does not.
-
-- **API & SDKs**: security status, held test faxes, and the quickstart with the SDKs' current version; **Documentation address** and the files Faxbot reads, including the older settings file read once at the first start.
-- **AI assistants**: the MCP servers and their settings, and the assistant servers' own settings, read-only with their variable names.
-- **Terminal**: a shell on the server for people allowed to use it; whether it is on is set when Faxbot is installed.
-- **Scripts & checks**: test faxes and a simulated received fax.
-- **Provider plugins**: **Use provider plugins**, always listed so plugins can be turned on here, and the installed plugins once they are on.

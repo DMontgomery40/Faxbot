@@ -6,7 +6,7 @@ How people and apps sign in is covered in [Authentication](authentication.md).
 
 ## Users and integrations
 
-**Users** are people. They sign in with a username and password. Someone with the `users:manage` permission adds them under **Access → Users** and receives a temporary password to pass on. At first sign-in the new user must choose a password of at least 12 characters. An administrator can reset a password, which issues a new temporary one, or disable a user, which ends their sessions and stops their keys.
+**Users** are people. They sign in with a username and password. Under **Access → Users**, add a user to receive a temporary password to pass on. At first sign-in the new user must choose a password of at least 12 characters. You can reset a password, which issues a new temporary one, or disable a user, which ends their sessions and stops their keys.
 
 **Integrations** are apps, scanners, scripts and other systems. They have no password and only use [API keys](#keys). Add them under **Access → Users** too. Each iPhone that pairs with Faxbot becomes its own integration named after the device.
 
@@ -134,8 +134,4 @@ If `API_KEY` is empty or lost, the host operator can set a new one with Faxbot s
 
 Faxbot records access changes and sign-ins in a security audit: users, integrations, groups, roles, access, keys, mailboxes and routing rules that were added or changed, and every session started, whether allowed or refused. Received faxes also record which mailbox they were placed in.
 
-Read the security audit through `GET /access/audit`, which needs `audit:read`, or in the console under **System → Audit log**: who did what, how they were signed in, what changed and whether it was refused, newest first, filtered by person and by action. The same page holds the event-recording settings (whether Faxbot records events, their format, a file and the system log); only the owner can change them. The **Logs** screen, which needs `logs:read`, shows the separate activity log, including terminal use and iPhone pairing.
-
-## API reference
-
-Everything on these screens is also available through the `/access` API. See [Access and Sign-in API](../reference/access-api.md).
+Read the security audit in the console under **System → Audit log**: who did what, how they were signed in, what changed and whether it was refused, newest first, filtered by person and by action. The same page holds the event-recording settings (whether Faxbot records events, their format, a file and the system log); only the owner can change them. The **Logs** screen, which needs `logs:read`, shows the separate activity log, including terminal use and iPhone pairing.

@@ -24,7 +24,7 @@ Carrier names are accepted too: `HUMBLEFAX_API_ACCESS_KEY` and `HUMBLEFAX_API_SE
 
 **Providers → In use** shows what sends and what receives, by name (the trunk by its carrier, such as **Telnyx**). Providers are chosen in the [Setup wizard](setup-wizard.md) (**Add or change a provider**). **Receiving is on** turns receiving on or off with the receiving provider chosen there; it cannot be turned on with a provider that only sends. Providers installed from a manifest are configured under **System → Developer → Provider plugins**.
 
-Turning **Sending is on** off (it asks first) keeps accepting new faxes but holds them instead of sending. Turning sending back on never sends held faxes automatically, and pausing cannot recall a fax that is already being sent. Read [Test Mode](../setup/test-mode.md) before testing.
+Turning **Sending is on** off (it asks first) keeps accepting new faxes but holds them instead of sending. Turning sending back on does not release held faxes automatically, and pausing cannot recall a fax that is already being sent. Read [Test Mode](../setup/test-mode.md) before testing.
 
 ## Available controls
 
@@ -38,16 +38,5 @@ Moving the database or changing installation paths is maintenance work that this
 ## Export and recovery
 
 **Export settings** (Storage & retention) returns a `.env` template of the saved settings with secrets hidden. It does not change anything on the server and is not a backup by itself. **Save a recovery copy** writes a private recovery file on the server; it does not apply pending changes. A complete backup also needs the database, the installation key file and stored documents.
-
-## API
-
-- `GET /admin/settings`: saved values with secrets hidden, plus `_meta`, which says whether changes are waiting for a restart and lists them in `pending_fields`.
-- `PUT /admin/settings`: the changed fields plus the `expected_revision_id` from the last read. The reply says whether anything changed and whether a restart is needed. Read the settings again for the new values.
-- `POST /admin/settings/reload`: reads the saved settings again. It does not import the `.env` file or apply pending changes.
-- `GET /admin/settings/export`: the `.env` template with secrets hidden.
-- `POST /admin/settings/persist`: writes the recovery file.
-- `POST /admin/settings/validate`: checks credentials you supply for the built-in providers that support it. It does not send a fax.
-
-Reading settings and exporting the template need `settings:read`; saving needs `settings:write`. Provider fields need `providers:read` to see and `providers:write` to change, and some fields can only be changed by the owner: the console shows those disabled, with one sentence, to everyone else (`owner_only` in `GET /admin/settings`). Settings set when Faxbot was installed are shown read-only (`deployment`), never with a secret's value. Permission to save does not include permission to read. See [Access Control](../security/access-control.md).
 
 See the [Setup Wizard](setup-wizard.md) for a guided edit and the [provider guides](../setup/index.md) for what each provider needs.
