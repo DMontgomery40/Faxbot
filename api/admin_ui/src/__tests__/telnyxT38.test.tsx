@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import { http, HttpResponse } from 'msw';
 import AdminAPIClient from '../api/client';
 import TelnyxT38 from '../components/TelnyxT38';
+import { entryAction } from '../components/AuditLog';
 import { server } from '../test/server';
 
 const OFF = 'Telnyx has fax over IP (T.38) turned off for +1 555-555-0100, so received faxes there arrive as audio.';
@@ -62,5 +63,21 @@ describe('Fax over IP (T.38) at Telnyx', () => {
       text: null })));
     const { container } = render(<TelnyxT38 client={client()} />);
     await waitFor(() => expect(container.textContent).toBe(''));
+  });
+});
+
+describe('Audit log entries for Telnyx T.38 changes', () => {
+  it('name the number and what Telnyx did', () => {
+    const entry = (result: string) => ({ operation: 'telnyx.t38_gateway',
+      details: { number: '+17208565062', shown: '+1 720-856-5062', result } });
+    expect(entryAction(entry('turned_on'))).toBe('Turned on T.38 at Telnyx for +1 720-856-5062');
+    expect(entryAction(entry('still_off'))).toBe('Tried to turn on T.38 at Telnyx for +1 720-856-5062; Telnyx still shows it off');
+    expect(entryAction(entry('refused'))).toBe('Tried to turn on T.38 at Telnyx for +1 720-856-5062; Telnyx refused the change');
+    expect(entryAction(entry('not_found')))
+      .toBe('Tried to turn on T.38 at Telnyx for +1 720-856-5062; the number is not on the Telnyx account');
+    expect(entryAction(entry('unreachable')))
+      .toBe('Tried to turn on T.38 at Telnyx for +1 720-856-5062; Telnyx could not be reached');
+    // A request refused for lack of permission reads as an attempt; its outcome chip says Refused.
+    expect(entryAction(entry('forbidden'))).toBe('Tried to turn on T.38 at Telnyx for +1 720-856-5062');
   });
 });

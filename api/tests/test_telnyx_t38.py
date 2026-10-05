@@ -228,8 +228,14 @@ def _audit_rows(client):
     store = client.app.state.configuration_runtime.manager.store
     with store.engine.connect() as connection:
         rows = connection.execute(sa.text(
-            "SELECT details, outcome FROM access_audit WHERE operation = 'providers.write' ORDER BY created_at"))
-        return [json.loads(row.details) | {'outcome': row.outcome} for row in rows]
+            "SELECT details, outcome, actor_principal_id FROM access_audit WHERE operation = 'telnyx.t38_gateway' "
+            "ORDER BY created_at"))
+        return [json.loads(row.details) | {'outcome': row.outcome, 'who': row.actor_principal_id} for row in rows]
+
+
+def _row(result, outcome='allowed'):
+    return {'request': 'POST /admin/sip/telnyx/numbers/{number}/t38', 'number': FIRST, 'shown': '+1 555-555-0100',
+            'result': result, 'outcome': outcome}
 
 
 def test_turning_it_on_changes_only_that_setting_for_that_number_reads_it_back_and_is_audited(client, telnyx):
@@ -247,24 +253,39 @@ def test_turning_it_on_changes_only_that_setting_for_that_number_reads_it_back_a
     assert telnyx.requests[-1].method == 'GET' and telnyx.requests[-1].url.path.endswith('/voice')
     assert telnyx.numbers[SECOND]['media_features'] == {**OTHER_FEATURES, 't38_fax_gateway_enabled': True}
     rows = _audit_rows(client)
-    assert rows == [{'request': 'POST /admin/sip/telnyx/numbers/+15555550100/t38', 'outcome': 'allowed'}]
+    assert len(rows) == 1 and rows[0]['who']  # the bootstrap owner who asked
+    assert {key: value for key, value in rows[0].items() if key != 'who'} == _row('turned_on')
 
 
-@pytest.mark.parametrize('mode, outcome, message', [
+@pytest.mark.parametrize('mode, outcome, message, result', [
     ('refuse_changes', 'refused', 'Telnyx did not let Faxbot change +1 555-555-0100, because the API key may not change '
                                   'numbers. In the Telnyx portal, open Numbers → My Numbers, select the gear next to '
-                                  '+1 555-555-0100, open Expert Configuration and tick Enable T.38 Fax Gateway.'),
+                                  '+1 555-555-0100, open Expert Configuration and tick Enable T.38 Fax Gateway.',
+     'refused'),
     ('ignore_changes', 'not_on', 'Telnyx accepted the change but still shows fax over IP (T.38) off for +1 555-555-0100. '
                                  'In the Telnyx portal, open Numbers → My Numbers, select the gear next to +1 555-555-0100, '
-                                 'open Expert Configuration and tick Enable T.38 Fax Gateway.'),
-    ('down', 'unavailable', 'Faxbot could not reach Telnyx, so nothing changed for +1 555-555-0100; try again.'),
+                                 'open Expert Configuration and tick Enable T.38 Fax Gateway.', 'still_off'),
+    ('down', 'unavailable', 'Faxbot could not reach Telnyx, so nothing changed for +1 555-555-0100; try again.',
+     'unreachable'),
 ])
-def test_a_refused_or_unconfirmed_change_says_so_with_the_portal_steps(client, telnyx, mode, outcome, message):
+def test_a_refused_or_unconfirmed_change_says_so_with_the_portal_steps(client, telnyx, mode, outcome, message, result):
     _check(client)
     setattr(telnyx, mode, True)
     body = client.post('/admin/sip/telnyx/numbers/%2B15555550100/t38', headers=ADMIN).json()
     assert (body['outcome'], body['message']) == (outcome, message)
     assert body['numbers'][0]['state'] == 'off'
+    # One row, with what Telnyx did.
+    assert [{key: value for key, value in row.items() if key != 'who'} for row in _audit_rows(client)] == [_row(result)]
+
+
+def test_a_number_telnyx_does_not_have_is_audited_as_not_found(client, telnyx):
+    _check(client)
+    del telnyx.numbers[FIRST]
+    body = client.post('/admin/sip/telnyx/numbers/%2B15555550100/t38', headers=ADMIN).json()
+    assert (body['outcome'], body['message']) == (
+        'not_found', '+1 555-555-0100 is not a number on this Telnyx account, so Faxbot changed nothing.')
+    assert [{key: value for key, value in row.items() if key != 'who'} for row in _audit_rows(client)] == [
+        _row('not_found')]
 
 
 def test_the_fix_needs_providers_write_and_a_trunk_number(client, telnyx):
@@ -273,10 +294,14 @@ def test_the_fix_needs_providers_write_and_a_trunk_number(client, telnyx):
     assert client.post('/admin/sip/telnyx/numbers/%2B15555550100/t38', headers=key).status_code == 403
     assert client.get('/admin/sip/telnyx', headers=key).status_code == 403
     assert not any(request.method == 'PATCH' for request in telnyx.requests)
-    assert _audit_rows(client)[-1]['outcome'] == 'denied'
+    # A refusal is one audited row naming the number; the read is not audited.
+    assert [{key: value for key, value in row.items() if key != 'who'} for row in _audit_rows(client)] == [
+        _row('forbidden', 'denied')]
     other = client.post('/admin/sip/telnyx/numbers/%2B15555550199/t38', headers=ADMIN)
     assert other.status_code == 404 and other.json()['detail'] == "That number is not one of this trunk's fax numbers."
     assert not any(request.method == 'PATCH' for request in telnyx.requests)
+    # A number that is not the trunk's is refused before anything else: no Telnyx call and no audit row.
+    assert len(_audit_rows(client)) == 1 and telnyx.requests == []
 
 
 def test_diagnostics_shows_a_carrier_trunk_finding_with_the_fix(client, telnyx, monkeypatch):
@@ -296,3 +321,13 @@ def test_diagnostics_shows_a_carrier_trunk_finding_with_the_fix(client, telnyx, 
         report.ATTENTION, 'Fax over IP (T.38) at Telnyx', 'Open carrier trunk to turn on T.38', 'providers/trunk')
     assert finding.sentence == ('Telnyx has fax over IP (T.38) turned off for +1 555-555-0100, so received faxes there '
                                 'arrive as audio.')
+
+
+def test_the_audit_log_shows_the_change_in_plain_words(client, telnyx):
+    _check(client)
+    client.post('/admin/sip/telnyx/numbers/%2B15555550100/t38', headers=ADMIN)
+    entries = [item for item in client.get('/access/audit', headers=ADMIN).json()['items']
+               if item['operation'] == 'telnyx.t38_gateway']
+    assert len(entries) == 1
+    assert (entries[0]['outcome'], entries[0]['details']['result'], entries[0]['details']['shown']) == (
+        'allowed', 'turned_on', '+1 555-555-0100')
