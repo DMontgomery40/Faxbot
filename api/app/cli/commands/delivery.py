@@ -44,14 +44,30 @@ def _read_document(path):
 
 # -- routing ---------------------------------------------------------------------------
 
+def preferred_text(item):
+    """The route a number is sent by first, in the console's words."""
+    route = item.get('preferred_route')
+    if not route:
+        return 'Cheapest reliable'
+    if route == 'direct':
+        return 'Direct delivery'
+    return next((known['label'] for known in item.get('routes') or [] if known.get('route') == route), route)
+
+
+def references_text(value):
+    """Whether a number takes a case packet's one-page list, in the console's words."""
+    return 'Takes a one-page list instead' if value else 'Full documents'
+
+
 @routing.command('destinations')
 def routing_destinations():
     """List the numbers you fax, with how faxes went and what they cost over the last 30 days."""
     result = state.api().get('/routing/destinations')
     state.out().result(result, lambda out: out.table(
-        ['Fax number', 'Name', 'Preferred route', 'Accepts references', 'Routes used', 'Estimated cost'],
-        [[item['number'], item.get('display_name'), item.get('preferred_route') or 'automatic',
-          item.get('accepts_references'), len(item.get('routes', [])), money(item.get('estimated_cost_30_days'))]
+        ['Fax number', 'Name', 'Preferred way to send', 'Case packets', 'Routes used', 'Estimated cost'],
+        [[item['number'], item.get('display_name'), preferred_text(item),
+          references_text(item.get('accepts_references')), len(item.get('routes', [])),
+          money(item.get('estimated_cost_30_days'))]
          for item in result.get('destinations', [])], empty='No destinations yet.'))
 
 
@@ -72,14 +88,14 @@ def routing_destination(number: str = typer.Argument(..., help='Fax number.'),
     def human(out):
         partner = view.get('direct_partner') or {}
         out.fields([('Fax number', view['number']), ('Name', view.get('display_name')), ('Notes', view.get('notes')),
-                    ('Preferred route', view.get('preferred_route') or 'automatic'),
-                    ('Accepts references', view.get('accepts_references')),
+                    ('Preferred way to send', preferred_text(view)),
+                    ('Case packets', references_text(view.get('accepts_references'))),
                     ('Direct partner', partner.get('organization')),
                     ('Available routes', [item['label'] for item in view.get('available_routes', [])])])
         out.table(['Route', 'Attempts', 'Delivered', 'Failed', 'Success', 'Estimated cost', 'Last used'],
                   _route_rows(view.get('routes', [])), empty='No faxes sent to this number in the last 30 days.')
         out.table(['Faxbot would choose', 'Why', 'Rate', f"Estimated cost, {pages} {'page' if pages == 1 else 'pages'}"],
-                  [[item['label'], item['explanation'], item.get('rate') or 'No price set',
+                  [[item['label'], item['explanation'], _route_rate(item),
                     'In your plan' if item.get('included_in_plan')
                     else f"{money([item['estimated_cost']])} estimate" if item.get('estimated_cost') else 'Unknown']
                    for item in view.get('recommended_routes', [])],
@@ -93,7 +109,7 @@ def routing_update_destination(number: str = typer.Argument(..., help='Fax numbe
                                notes: str = typer.Option(None, '--notes', help='Notes for your team.'),
                                preferred_route: str = typer.Option(None, '--preferred-route',
                                    help="Route to use first, as listed by 'faxbot recipients show'. Use "
-                                        "'automatic' to let Faxbot choose."),
+                                        "'automatic' for the cheapest reliable route."),
                                references: bool = typer.Option(None, '--accepts-references/--no-references',
                                    help='Whether this recipient accepts case packets that reference documents '
                                         'they already received instead of resending them.')):
@@ -113,6 +129,18 @@ def routing_update_destination(number: str = typer.Argument(..., help='Fax numbe
     current = api.get('/routing/destinations/' + segment(number))
     view = api.patch('/routing/destinations/' + segment(number), json={**body, 'version': current.get('version', 0)})
     state.out().result(view, lambda out: out.line(f"Destination {view['number']} updated."))
+
+
+def _monthly(card):
+    return f"{money([{'currency': card['currency'], 'amount': card['monthly_fee']}])} a month"
+
+
+def _route_rate(item):
+    """A route's price as Prices & plans words it: the plan with its fee, the rate, or no price yet."""
+    fee = item.get('monthly_fee')
+    if item.get('included_in_plan') and fee:
+        return f'{money([fee])} a month, faxes included'
+    return item.get('rate') or 'No price set'
 
 
 def _route_name(item):
@@ -142,7 +170,7 @@ def _unrecorded_lines(out, items):
                      "It is included in Charged.")
         if matched:
             out.line(f"{matched} {'call' if matched == 1 else 'calls'} reached Faxbot without a call record; "
-                     f"{'its fax is' if matched == 1 else 'their faxes are'} in the Inbox. Included in Charged.")
+                     f"{'its fax is' if matched == 1 else 'their faxes are'} in Received. Included in Charged.")
 
 
 @routing.command('costs')
@@ -262,7 +290,8 @@ def routing_rate_cards(replace: str = typer.Option(None, '--replace', metavar='F
     state.out().result(result, lambda out: out.table(
         ['Provider', 'Name', 'Per minute', 'Per page', 'Per call', 'Monthly', 'Billing step', 'Currency', 'Captured'],
         [[card['provider_id'], card['label'], card['per_minute'], card['per_page'], card['per_call'],
-          (f"{card['monthly_fee']}, faxes included" if card.get('included_in_plan') else card.get('monthly_fee')) or '-',
+          (f"{_monthly(card)}, faxes included" if card.get('included_in_plan')
+           else _monthly(card) if card.get('monthly_fee') else '-'),
           f"{card['billing_increment_seconds']} s", card['currency'], card['captured_on']]
          for card in result.get('cards', [])], empty='No rate cards.'))
 

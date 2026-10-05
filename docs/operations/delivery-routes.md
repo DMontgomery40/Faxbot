@@ -93,7 +93,7 @@ Each fax keeps its own record and its own result. The receiving machine confirms
 
 Faxbot does not send a shared call again automatically. If the SIP trunk is unavailable when the faxes are due, each fax goes on its own instead. A fax whose document cannot be read goes on its own; the others still go together.
 
-Job Details says "Sent in one call with 2 other faxes" and shows the fax's share of the call's charge. The charge is split by pages, each fax with its separator page. The number's **Details** shows how many calls were saved in the last 30 days and about how much money. That figure is an estimate: separate calls are priced from the rate card the way Faxbot estimates any fax, and compared with the call's reported charge, or with its estimate when no charge has been reported. In Spending, a shared call counts once.
+Sent's fax details say "Sent in one call with 2 other faxes" and shows the fax's share of the call's charge. The charge is split by pages, each fax with its separator page. The number's **Details** shows how many calls were saved in the last 30 days and about how much money. That figure is an estimate: separate calls are priced from the rate card the way Faxbot estimates any fax, and compared with the call's reported charge, or with its estimate when no charge has been reported. In Spending, a shared call counts once.
 
 From the command line: `faxbot recipients together show|set|off NUMBER` (`set` takes `--recipient-agreed`, `--wait`, `--max-pages` and `--mixed-senders`), `faxbot send --now` and `faxbot sent send-now FAX_ID`.
 
@@ -119,9 +119,9 @@ Spending adds up charges where they exist and estimates only for faxes without o
 
 The Overview's **Spending, last 30 days** card reads the same figures: one line per sending route, one for calls received on the SIP trunk, and the total. A provider with no published price and no rate card reads "No published price; add your rate".
 
-Faxbot finds calls it has no record of by reading the trunk's Telnyx records for the last two days once an hour. It only counts priced records on the trunk's own numbers (its fax numbers and caller ID) that are not within five minutes of any call Faxbot recorded with the same numbers. When exactly one fax received over the trunk, with no call record, was received within 45 seconds of the call's end and has the same numbers where it knows them, the charge is shown on that fax in Received, and Spending says the call "reached Faxbot without a call record; its fax is in Received". For a fax brought in later, Faxbot uses the time the trunk received it; a fax whose numbers were never learned is matched by that time alone, and only when no other such fax or record is that close. The charged line counts these calls too, for example "Telnyx charged $0.0096 for 3 calls, 1 without a Faxbot call record."
+Faxbot finds calls it has no record of by reading the trunk's Telnyx records for the last two days once an hour. It only counts priced records on the trunk's own numbers (its fax numbers and caller ID) that are not within five minutes of any call Faxbot recorded with the same numbers. When exactly one fax received over the trunk, with no call record, was received within 45 seconds of the call's end and has the same numbers where it knows them, the charge is shown on that fax in Received, and `faxbot costs spending` says the call "reached Faxbot without a call record; its fax is in Received". For a fax brought in later, Faxbot uses the time the trunk received it; a fax whose numbers were never learned is matched by that time alone, and only when no other such fax or record is that close. The charged line counts these calls too, for example "Telnyx charged $0.0096 for 3 calls, 1 without a Faxbot call record."
 
-Sent's fax details show one fax's cost, for example "Telnyx charged $0.005 for this call." or "Cost not reported yet." The Inbox shows the same line for each received fax under **Received through**.
+Sent's fax details show one fax's cost, for example "Telnyx charged $0.005 for this call." or "Cost not reported yet." Received shows the same line for each received fax under **Received through**.
 
 From the command line:
 
@@ -137,7 +137,7 @@ If a call record with measured connected time is available for an attempt, Faxbo
 
 ### Flat monthly plans
 
-Some providers charge a monthly fee and nothing per fax. Give that provider a rate card with a **Monthly plan fee** and leave the per-minute, per-page and per-call prices at 0. Faxbot then shows the route as "Included in your HumbleFax plan ($10 a month)" in Spending, on the Dashboard and in route recommendations, and ranks it as costing nothing extra per fax. The fee is never added to one fax. In spending totals the fee counts once per 30 days, pro-rated by day for other periods.
+Some providers charge a monthly fee and nothing per fax. Give that provider a rate card with a **Monthly plan fee** and leave the per-minute, per-page and per-call prices at 0. Faxbot then shows the route as "Included in your HumbleFax plan ($10 a month)" in Spending, on the Overview and in route recommendations, and ranks it as costing nothing extra per fax. The fee is never added to one fax. In spending totals the fee counts once per 30 days, pro-rated by day for other periods.
 
 ### Published prices Faxbot ships
 
