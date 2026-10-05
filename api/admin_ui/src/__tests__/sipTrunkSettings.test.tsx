@@ -185,7 +185,9 @@ describe('SIP trunk settings', () => {
         public_address_text: "Faxbot's internet address is 198.51.100.7; your network changes port numbers, so Telnyx has to follow Faxbot's packets, and the first test fax shows whether it does.",
         ports_text: 'No ports need to be opened or forwarded.',
         last_call_text: 'The call connected but no fax data came back from the carrier.',
-        last_call_at: '2026-10-03T12:00:00Z', message: 'The trunk is ready.' })),
+        last_call_at: '2026-10-03T12:00:00Z', message: 'The trunk is ready.',
+        engine_state: 'running', engine_audio: true,
+        engine_text: "Faxbot's fast fax service is running on 2 fax lines and sends pages faster when the other fax machine allows it. It sends audio fax because its last T.38 call heard no fax machine." })),
     );
     render(<SipTrunkSettings client={client()} />);
     await screen.findByText('A password is saved.');
@@ -201,6 +203,9 @@ describe('SIP trunk settings', () => {
     expect(screen.getByText('Automatic: Faxbot found 198.51.100.7. Enter an address only to override it.')).toBeTruthy();
     expect(within(status).getByText(/^Last call, .*: The call connected but no fax data came back from the carrier\.$/)).toBeTruthy();
     expect(status.textContent).not.toMatch(/registered|reachable[^.]|no_t38|tls[^.]/);
+    // The console names its own button to try T.38 again after the fast fax service chose audio fax.
+    expect(within(status).getByTestId('engine-text').textContent).toMatch(
+      /last T\.38 call heard no fax machine\. To try T\.38 again, select Apply and connect\.$/);
   });
 
   it('refuses server IP sign-in behind a router in one sentence and names the transports plainly', async () => {

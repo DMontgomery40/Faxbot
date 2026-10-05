@@ -80,3 +80,46 @@ async def test_each_engine_state_has_one_sentence(tmp_path):
 def test_the_engine_check_is_registered_for_system_diagnostics():
     from app import diagnostics_report
     assert 'ssl fax engine' in [name for name, _ in diagnostics_report._CHECKS]
+
+
+class Out:
+    def __init__(self):
+        self.lines = []
+
+    def line(self, text):
+        self.lines.append(text)
+
+    def fields(self, rows):
+        pass
+
+
+def test_the_command_line_names_its_own_command_to_try_t38_again():
+    from app.cli.commands import trunk
+    out = Out()
+    trunk._status_lines(out, {'configured': True, 'message': 'The trunk is ready.', 'engine_audio': True,
+                              'engine_text': "Faxbot's fast fax service is running on 2 fax lines. "
+                                             + hylafax_engine.ENGINE_AUDIO})
+    assert out.lines[-1] == 'To try T.38 again, run faxbot providers trunk apply.'
+    assert not any('select Apply' in line for line in out.lines)
+    quiet = Out()
+    trunk._status_lines(quiet, {'configured': True, 'message': 'The trunk is ready.', 'engine_audio': False})
+    assert not any('T.38' in line for line in quiet.lines)
+
+
+@pytest.mark.asyncio
+async def test_diagnostics_asks_for_attention_while_the_engine_is_on_audio_on_its_own(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from app import config, diagnostics_report
+    configured = values(tmp_path)
+    engine_running(tmp_path, configured)
+    monkeypatch.setattr(config, 'configuration_values', lambda: configured)
+    monkeypatch.setattr(diagnostics_report, '_uses_trunk', lambda request: True)
+    import app.ami as ami
+    monkeypatch.setattr(ami, 'ami_client', Ami())
+    context = SimpleNamespace(request=None, identity=None)
+    [finding] = await diagnostics_report.ssl_fax_engine(context)
+    assert finding.status == diagnostics_report.OK
+    hylafax_engine.note_t38_failure(configured)
+    [finding] = await diagnostics_report.ssl_fax_engine(context)
+    assert finding.status == diagnostics_report.ATTENTION and hylafax_engine.ENGINE_AUDIO in finding.sentence
+

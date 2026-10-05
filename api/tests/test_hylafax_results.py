@@ -426,3 +426,16 @@ def test_the_trunks_hang_up_handler_reports_in_its_own_event_and_writes_nothing_
     # Inherited by the trunk channel, so its event names the fax and attempt.
     assert 'Set(__FAXBOT_ENGINE_JOB=${JOBID})' in dialplan and 'Set(__FAXBOT_ENGINE_ATTEMPT=${FAXATTEMPT})' in dialplan
 
+
+def test_asterisk_sends_t38_first_when_a_t38_stream_starts():
+    """Behind a router that keeps ports and forwards none, the carrier's T.38 data gets in only after Faxbot
+    sends from its T.38 port (live, 5 October 2026: zero UDPTL packets either way). Faxbot's Asterisk image
+    applies its own patch: three T.38 no-signal packets as soon as a T.38 stream is applied."""
+    patch = (ROOT / 'asterisk' / 'patches' / '0001-t38-send-first.patch').read_text()
+    assert '--- a/res/res_pjsip_t38.c' in patch and '+#define FAXBOT_T38_OPENING_PACKETS 3' in patch
+    assert '+		faxbot_t38_open_pinhole(session_media->udptl);' in patch
+    assert 'static const unsigned char no_signal[1] = { 0x00 };' in patch
+    dockerfile = (ROOT / 'asterisk' / 'Dockerfile').read_text()
+    applied = dockerfile.index('patch -p1 --forward')
+    assert dockerfile.index('COPY patches/ /usr/src/patches/') < applied < dockerfile.index('RUN ./configure')
+

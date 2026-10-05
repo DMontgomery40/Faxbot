@@ -188,6 +188,15 @@ exten => _X.,1,Set(CALLERID(all)=<+15555550199>)
  same => n,Hangup()
 '''
 
+NAT_STANDIN = """table inet faxbot_nat {
+  chain out {
+    type filter hook output priority 0; policy accept;
+    udp sport 4096-4127 ct state established counter accept
+    udp sport 4096-4127 counter drop
+  }
+}
+"""
+
 LOGGER = '[general]\ndateformat=%F %T\n\n[logfiles]\nconsole => notice,warning,error,verbose\n'
 
 AMI_LISTENER = r'''
@@ -273,7 +282,7 @@ except (urllib.error.URLError, OSError) as error:
 
 
 def bring_up(tmp_path, label, made, *, faxbot_t38, carrier_gateway, peer_listener, peer_sslfax=True,
-             carrier_t38=None, carrier_drops_t38=False):
+             carrier_t38=None, carrier_drops_t38=False, carrier_nat_standin=False):
     """Start the whole loopback; returns (docker, context dict). ``made`` collects it for cleanup at once."""
     docker = Docker(label)
     made.append(docker)
@@ -323,7 +332,15 @@ def bring_up(tmp_path, label, made, *, faxbot_t38, carrier_gateway, peer_listene
         'SIP_T38_ENABLED': 'true' if (carrier_gateway if carrier_t38 is None else carrier_t38) else 'false',
         'ASTERISK_INBOUND_SECRET': inbound_secret})
     peer_secrets = hylafax_engine.engine_secrets(carrier_values, lines=1)
-    carrier = docker.create('carrier', images['native'], caps=('NET_ADMIN',) if carrier_drops_t38 else (),
+    carrier_image = images['native']
+    if carrier_nat_standin:
+        # The carrier's image plus nftables, for the router stand-in below.
+        carrier_image = os.environ.get('FAXBOT_PROOF_PREFIX', 'faxbot-sslfax-proof') + '-natstandin:latest'
+        docker.run('build', '-t', carrier_image, '-', input_text=(
+            f"FROM {images['native']}\nRUN apt-get update && apt-get install -y --no-install-recommends nftables "
+            "&& rm -rf /var/lib/apt/lists/*\n"), timeout=900)
+    carrier = docker.create('carrier', carrier_image,
+                            caps=('NET_ADMIN',) if carrier_drops_t38 or carrier_nat_standin else (),
                             env={'ASTERISK_AMI_USERNAME': ami_user,
                                                              'ASTERISK_AMI_PASSWORD': ami_password})
     docker.run('start', carrier)
@@ -335,7 +352,7 @@ def bring_up(tmp_path, label, made, *, faxbot_t38, carrier_gateway, peer_listene
     # Proof only: SIP messages on the console (container log), to see whether T.38 was offered.
     docker.put(carrier, '/etc/asterisk/logger.conf', LOGGER)
     docker.put(asterisk, '/etc/asterisk/logger.conf', LOGGER)
-    if carrier_drops_t38:
+    if carrier_drops_t38 or carrier_nat_standin:
         # Like the live call of 5 October: the carrier accepts T.38, but none of its T.38 data reaches
         # Faxbot. Its T.38 ports are one block (4096-4127) and its network drops every packet sent from them.
         docker.put(carrier, '/etc/asterisk/udptl.conf', '[general]\nudptlstart=4096\nudptlend=4127\n'
@@ -345,6 +362,11 @@ def bring_up(tmp_path, label, made, *, faxbot_t38, carrier_gateway, peer_listene
         docker.sh(carrier, 'tc qdisc add dev eth0 root handle 1: prio && tc filter add dev eth0 parent 1: '
                            'protocol ip prio 1 u32 match ip protocol 17 0xff match ip sport 4096 0xffe0 action drop',
                   check=True)
+    if carrier_nat_standin:
+        # A router in front of Faxbot that keeps port numbers and forwards none (the owner's network): the
+        # carrier's T.38 packets get through only on a flow Faxbot opened by sending from its side first.
+        docker.put(carrier, '/tmp/nat-standin.nft', NAT_STANDIN)
+        docker.sh(carrier, 'nft -f /tmp/nat-standin.nft', check=True)
 
     # The peer: one fax line on the carrier; its listener (or none) as the case needs.
     # The peer's listener is published (as docker-compose.sslfax.yml would) when the case gives it one.
@@ -841,4 +863,30 @@ def test_g_a_t38_call_with_no_t38_data_back_moves_only_the_engine_to_audio(tmp_p
                                              indent=2, default=str))
     assert str(second['job'].get('status')).upper() == 'SUCCESS', second['job']
     assert found['call']['t38'] == 'no' and found['call']['pages'] == PAGES, found
+
+
+def nft_counters(text):
+    """(packets let through, packets dropped) from the router stand-in's rules."""
+    passed = re.search(r'ct state established counter packets (\d+)', text)
+    dropped = re.search(r'udp sport 4096-4127 counter packets (\d+) bytes \d+ drop', text)
+    return (int(passed.group(1)) if passed else None, int(dropped.group(1)) if dropped else None)
+
+
+def test_h_t38_through_a_router_that_keeps_ports_works_once_faxbot_sends_first(tmp_path, loopback):
+    """The fix for the live call of 5 October: behind a router that keeps ports and forwards none, the
+    carrier's T.38 data gets in only after Faxbot sends from its T.38 port. Asterisk now sends three T.38
+    no-signal packets as soon as a T.38 stream starts (asterisk/patches/0001-t38-send-first.patch), so the
+    engine's T.38 fax goes through; with the unpatched image the same case fails like the live call."""
+    context = loopback('h', faxbot_t38=True, carrier_gateway=True, peer_listener='', peer_sslfax=False,
+                       carrier_nat_standin=True)
+    outcome = send_and_collect(tmp_path, context)
+    found = records(context, outcome['job']['id'])
+    passed, dropped = nft_counters(context['docker'].sh(context['carrier'], 'nft list table inet faxbot_nat').stdout)
+    proof = evidence(outcome)
+    proof.update({'records': found, 'standin_passed': passed, 'standin_dropped': dropped})
+    print('\nSSLFAX_PROOF_H ' + json.dumps(proof, indent=2, default=str))
+    assert_delivered(outcome, proof)
+    assert found['call']['t38'] == 'yes' and found['call']['pages'] == PAGES, proof
+    # The stand-in let the carrier's T.38 data in only after Faxbot had sent first.
+    assert passed and passed > 0, proof
 

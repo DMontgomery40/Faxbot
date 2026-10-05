@@ -30,6 +30,8 @@ def _status_lines(out, result):
                 'engine_text'):
         if result.get(key) and result.get(key) != result.get('message'):
             out.line(result[key])
+    if result.get('engine_audio'):
+        out.line('To try T.38 again, run faxbot providers trunk apply.')
     if result.get('network_t38') == 'blocked':
         out.line('If the network check shows a problem, run faxbot providers trunk network status to see how to fix it.')
     if result.get('phone_system_command'):

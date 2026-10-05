@@ -210,6 +210,9 @@ def test_send_status_jobs_and_documents(cli, tmp_path):
     assert again['id'] == sent['id']
     human = cli('send', '+15551230002', note, '--queue')
     assert human.exit_code == 0 and 'Fax accepted.' in human.stdout and 'faxbot status' in human.stdout
+    # Faxbot picks each fax's route when it sends it: at accept time only the planned route, never the
+    # provider setting the fax was accepted under.
+    assert 'Provider' not in human.stdout.replace('Provider fax ID', '') and 'Planned route' in human.stdout
 
     assert cli.json('status', sent['id'])['id'] == sent['id']
     listing = cli.json('sent', 'list')
@@ -221,6 +224,7 @@ def test_send_status_jobs_and_documents(cli, tmp_path):
     assert 'Held test fax' in table and ' held ' not in table and 'queued' not in table
     shown = cli('status', sent['id']).stdout
     assert 'Held test fax' in shown and 'This test fax is held and will not be sent.' in shown
+    assert 'Provider' not in shown.replace('Provider fax ID', '')  # no route assigned to a held fax
     table = cli('sent', 'list')
     assert table.exit_code == 0 and sent['id'] not in table.stdout and '+15551230001' not in table.stdout
     assert sent['id'] in cli('sent', 'list', '--ids').stdout
@@ -1144,3 +1148,26 @@ def test_sent_list_names_the_route_that_carried_each_fax():
     assert _route_text({'backend': 'humblefax'}, None) == 'HumbleFax'
     assert _route_text({'backend': 'humblefax'}, {'routes': ['phaxio', 'signalwire']}) == 'SignalWire (after Phaxio)'
     assert _route_text({'backend': 'phaxio'}, {'routes': ['direct']}) == 'Direct delivery'
+
+
+def test_status_names_the_route_faxbot_assigned_and_nothing_before_it():
+    from app.cli.commands import fax
+    from app.cli.errors import CliError
+
+    class Api:
+        def __init__(self, cost):
+            self.cost = cost
+
+        def get(self, path, params=None):
+            if isinstance(self.cost, Exception):
+                raise self.cost
+            return self.cost
+    job = {'id': 'f' * 32, 'backend': 'humblefax', 'to_number': '+13035550123', 'pages': 1}
+    assert fax._assigned_route(Api({'routes': []}), job) is None
+    assert fax._assigned_route(Api(CliError('Not allowed.')), job) is None
+    assert fax._assigned_route(Api({'routes': ['sip']}), job)[0] == 'Provider'
+    assert fax._planned_route(Api({'recommended_routes': [{'label': 'Telnyx'}]}), job) == ('Planned route', 'Telnyx')
+    assert fax._planned_route(Api(CliError('Not allowed.')), job) is None
+    fields = dict(fax._fax_fields(job))
+    assert 'Provider' not in fields and 'Planned route' not in fields
+

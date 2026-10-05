@@ -74,8 +74,9 @@ ASTERISK_NOT_CURRENT = ("Faxbot's fast fax service is waiting for the phone conn
 STOPPED = "Faxbot's fast fax service is not running, so faxes are sent the ordinary way."
 STARTING = "Faxbot's fast fax service is still starting."
 WAITING_FOR_RESTART = "Faxbot's fast fax service is waiting for the phone connection to restart."
-ENGINE_AUDIO = ("It sends audio fax because its last T.38 call heard no fax machine. "
-                'To try T.38 again, select Apply and connect.')
+# What the engine does after a T.38 call that heard no fax machine; each screen adds its own way to
+# try T.38 again (the console's button, the command line's command).
+ENGINE_AUDIO = 'It sends audio fax because its last T.38 call heard no fax machine.'
 
 _TAG = re.compile(r'[1-9][0-9]{15}', re.ASCII)
 _HEX32 = re.compile(r'[a-f0-9]{32}', re.ASCII)
@@ -595,9 +596,14 @@ async def engine_summary(values, ami=None) -> tuple[str, str]:
         sentence = f"Faxbot's fast fax service is running on {lines}; faster pages are turned off."
     elif status.listener:
         sentence += ' Fax machines that call Faxbot can also send their pages faster.'
-    if engine_t38_off(values) and getattr(values, 'sip_t38_enabled', True):
+    if engine_audio(values):
         sentence += ' ' + ENGINE_AUDIO
     return 'running', sentence
+
+
+def engine_audio(values) -> bool:
+    """Whether the engine sends audio fax on its own while the trunk's T.38 setting is on."""
+    return bool(engine_t38_off(values)) and bool(getattr(values, 'sip_t38_enabled', True))
 
 
 def new_tag() -> str:

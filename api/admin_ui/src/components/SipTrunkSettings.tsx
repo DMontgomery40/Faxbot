@@ -729,7 +729,12 @@ function SipTrunkSettings({ client, showCalls = true, revision: sharedRevision, 
           {status?.configured && (
             <>
               {status.public_address_text && <Typography variant="body2">{status.public_address_text}</Typography>}
-              {status.engine_text && <Typography variant="body2" data-testid="engine-text">{status.engine_text}</Typography>}
+              {status.engine_text && (
+                <Typography variant="body2" data-testid="engine-text">
+                  {status.engine_audio ? `${status.engine_text} To try T.38 again, select Apply and connect.`
+                    : status.engine_text}
+                </Typography>
+              )}
               {status.ports_text && status.ports_text !== status.message && status.kind !== 'phone_system'
                 && <Typography variant="body2">{status.ports_text}</Typography>}
               {!showReceiving && status.handover_text && status.handover_text !== status.message

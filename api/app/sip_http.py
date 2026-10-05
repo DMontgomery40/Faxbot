@@ -577,6 +577,8 @@ async def status(request: Request, identity=Depends(require_permission('provider
         # The fast fax service: running, starting, not_set_up or stopped, and its sentence (None outside Compose).
         'engine_state': engine_state,
         'engine_text': engine_text,
+        # The engine went to audio fax on its own; the console and the command line say how to undo it.
+        'engine_audio': bool(engine_state == 'running' and hylafax_engine.engine_audio(values)),
         'message': message,
     }
 
