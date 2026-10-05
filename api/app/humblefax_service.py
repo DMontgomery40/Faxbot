@@ -193,6 +193,35 @@ def _status(value: object) -> str:
     return status
 
 
+# HumbleFax's own words for a failed call, read on 2026-10-04 from GetSentFax recipients[].failureReason
+# ("No fax machine detected at destination"), turned into Faxbot's sentences; never shown as provider text.
+_FAILURES = (
+    (('no fax machine', 'no fax tone', 'not a fax', 'voice answered'), 'No fax machine answered at that number.'),
+    (('busy',), 'The number was busy each time HumbleFax called.'),
+    (('no answer', 'not answer', 'unanswered'), 'Nobody answered the call.'),
+    (('invalid', 'not in service', 'disconnected', 'unallocated'), 'The number could not be reached.'),
+)
+
+
+# Every sentence _failure_sentence can give; delivery history shows a reason only from this set.
+FAILURE_SENTENCES = frozenset({sentence for _, sentence in _FAILURES} | {
+    'HumbleFax sent only some of the pages.', 'HumbleFax could not turn the document into fax pages.',
+    'HumbleFax could not deliver the fax.'})
+
+
+def _failure_sentence(fax: dict) -> str:
+    """One plain sentence for why HumbleFax could not deliver this fax."""
+    status = str(fax.get('status') or '').strip().lower()
+    if status == 'partial success':
+        return 'HumbleFax sent only some of the pages.'
+    if status == 'image failure':
+        return 'HumbleFax could not turn the document into fax pages.'
+    reasons = ' '.join(str(recipient.get('failureReason') or recipient.get('error') or '')
+                       for recipient in fax.get('recipients') or [] if isinstance(recipient, dict)).lower()
+    return next((sentence for words, sentence in _FAILURES if any(word in reasons for word in words)),
+                'HumbleFax could not deliver the fax.')
+
+
 def _receipt(response: httpx.Response, *, requested_sid: str | None = None) -> dict[str, str]:
     if response.status_code == 401:
         raise HumbleFaxCredentialsError()
@@ -215,6 +244,8 @@ def _receipt(response: httpx.Response, *, requested_sid: str | None = None) -> d
         # A created fax identity without a summary is queued work, never success.
         return {'provider_sid': provider_sid, 'status': 'in_progress'}
     receipt = {'provider_sid': provider_sid, 'status': _status(fax.get('status'))}
+    if receipt['status'] == 'failed':
+        receipt['failure'] = _failure_sentence(fax)
     sender = _account_number(fax.get('fromNumber'))
     if sender:
         receipt['from_number'] = sender

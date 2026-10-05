@@ -253,6 +253,11 @@ async def test_definite_failure_falls_back_to_the_next_route_at_most_twice(multi
     assert kinds.count('route_fallback') == 1 and kinds.count('claimed') == 2
     fallback = next(event for event in delivery.operator_view(job)['events'] if event['kind'] == 'route_fallback')
     assert fallback['details'] == {'category': 'provider_failed'}
+    # Sent shows the route that carried the last attempt and the one tried before it.
+    from api.app.routing.carriers import CarrierChargeStore
+    from api.app.routing.spending import Spending
+    cost = Spending(routes, CarrierChargeStore(configuration.engine)).job(job)
+    assert (cost['route'], cost['routes']) == ('phaxio', ['signalwire', 'phaxio'])
 
 
 @pytest.mark.asyncio
@@ -387,3 +392,22 @@ async def test_native_trunk_result_explains_a_failed_fax_in_one_sentence(databas
     assert (row['status'], row['error']) == (state, sentence)
     # Jobs read the error through the same sanitizer; the sentence comes back whole.
     assert main.sanitize_error(row['error']) == sentence
+
+
+def test_a_fax_to_the_trunks_own_number_never_goes_over_that_trunk_as_another_route(database):
+    """A fallback once faxed the Telnyx number over the Telnyx trunk: the call only rang the trunk itself."""
+    from api.app.routing.plan import RoutePlanner
+    upgrade_schema(database)
+    routes = RouteStore(database)
+    routes.replace_cards([card('phaxio', page='0.07'), card('sip', minute='0.005')])
+    values = ConfigurationValues.from_environment({**ENVIRONMENT, 'FAX_OUTBOUND_ROUTES': 'sip',
+                                                   'SIP_TRUNK_DIDS': '+17205550100, +17205550101'})
+    planner = RoutePlanner(routes)
+    own = planner.plan(to_number='(720) 555-0101', bound='phaxio', values=values, pages=2, alternates=True)
+    assert [choice.route.key for choice in own.choices] == ['phaxio']
+    # The fallback after the main route failed finds nothing left, so nothing is sent again.
+    retry = planner.plan(to_number='+17205550100', bound='phaxio', values=values, pages=2, alternates=True,
+                         exclude={'phaxio'})
+    assert all(choice.route.key != 'sip' for choice in retry.choices)
+    other = planner.plan(to_number='+12025550123', bound='phaxio', values=values, pages=2, alternates=True)
+    assert 'sip' in [choice.route.key for choice in other.choices]

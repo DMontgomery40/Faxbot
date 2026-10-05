@@ -1179,3 +1179,10 @@ def test_route_and_spending_words_match_the_console(monkeypatch):
     out = Lines()
     delivery._unrecorded_lines(out, [{'unrecorded_calls': 1, 'unrecorded_matched_to_faxes': 1}])
     assert out.lines == ['1 call reached Faxbot without a call record; its fax is in Received. Included in Charged.']
+
+
+def test_sent_list_names_the_route_that_carried_each_fax():
+    from app.cli.commands.fax import _route_text
+    assert _route_text({'backend': 'humblefax'}, None) == 'HumbleFax'
+    assert _route_text({'backend': 'humblefax'}, {'routes': ['phaxio', 'signalwire']}) == 'SignalWire (after Phaxio)'
+    assert _route_text({'backend': 'phaxio'}, {'routes': ['direct']}) == 'Direct delivery'
