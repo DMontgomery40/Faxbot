@@ -89,7 +89,7 @@ def test_sslfax_savings_price_the_shorter_call_with_the_carriers_own_billing(ins
     assert short == ('1 fax had its pages sent faster: about 1 minute less on the phone. Your carrier charges whole '
                      'minutes, so it cost the same.')
     nothing = hylafax_records.sslfax_savings(Routes(None), calls.engine, since=NOW + timedelta(days=1), days=30)
-    assert nothing['sentence'] == 'No fax in the last 30 days had its pages sent faster.'
+    assert nothing['sentence'] == 'No faxes were sent faster in the last 30 days.'
 
 
 def test_recipient_limits_route_saves_and_refuses_what_it_cannot_use(isolated_installation, monkeypatch):

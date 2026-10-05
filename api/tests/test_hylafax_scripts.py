@@ -1,9 +1,11 @@
 """The SSL Fax engine's receive and hand-over scripts, with stand-in tools and an explicit PATH (no container).
 
 hylafax/bin/received runs as uucp when a fax arrives: it copies the image and
-writes a ticket into the engine's volume. hylafax/bin/handover runs as root
-and brings the fax into Faxbot's data folder and hands it over. Linux CI runs
-these with the same small set of tools.
+writes a ticket into the engine's volume. hylafax/bin/handover (also uucp)
+puts the fax in the engine's out folder and hands it over. hylafax/bin/notify
+keeps each job's result in the engine's volume and hylafax/bin/deliver sends
+kept reports until Faxbot takes them. Linux CI runs these with the same small
+set of tools.
 """
 import base64
 import json
@@ -14,7 +16,8 @@ import subprocess
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
-TOOLS = ('sh', 'sed', 'awk', 'base64', 'tr', 'head', 'cut', 'cat', 'grep', 'cp', 'mv', 'rm', 'mkdir', 'chmod')
+TOOLS = ('sh', 'sed', 'awk', 'base64', 'tr', 'head', 'cut', 'cat', 'grep', 'cp', 'mv', 'rm', 'mkdir', 'chmod',
+         'mktemp', 'dirname')
 
 pytestmark = pytest.mark.skipif(not all(shutil.which(tool) for tool in TOOLS),
                                 reason='POSIX tools are needed to run the engine scripts.')
@@ -29,7 +32,8 @@ def _stub(folder, name, body):
 @pytest.fixture
 def engine(tmp_path):
     spool, state, data, tools = tmp_path / 'spool', tmp_path / 'state', tmp_path / 'faxdata', tmp_path / 'tools'
-    for folder in (spool / 'recvq', spool / 'log', spool / 'etc', state / 'received', data, tools):
+    for folder in (spool / 'recvq', spool / 'log', spool / 'etc', spool / 'doneq', state / 'received',
+                   state / 'results', data / 'hylafax-out' / 'inbound', tools):
         folder.mkdir(parents=True)
     (spool / 'recvq' / 'fax000000007.tif').write_bytes(b'II*\x00jbig image')
     (spool / 'log' / 'c000000007').write_text(
@@ -43,8 +47,11 @@ def engine(tmp_path):
     _stub(tools, 'date', 'echo 1791180000\n')
     # The stand-in Faxbot gives the answer in CAPTURE/answer and records each request.
     _stub(tools, 'curl', 'cat > "$CAPTURE/header.$$"; for a; do last=$a; done\n'
-                         'while [ $# -gt 0 ]; do [ "$1" = --data-binary ] && printf %s "$2" > "$CAPTURE/body"; '
-                         'shift; done\nprintf %s "$last" > "$CAPTURE/url"; cat "$CAPTURE/answer"\n')
+                         'while [ $# -gt 0 ]; do if [ "$1" = --data-binary ]; then case $2 in '
+                         '@*) cat "${2#@}" > "$CAPTURE/body" ;; *) printf %s "$2" > "$CAPTURE/body" ;; esac; fi; '
+                         'shift; done\nprintf %s "$last" > "$CAPTURE/url"; printf \'%s\\n\' "$last" >> "$CAPTURE/urls"\n'
+                         'cat "$CAPTURE/answer"\n')
+    _stub(tools, 'flock', 'exit 0\n')
     for tool in TOOLS:
         (tools / tool).symlink_to(shutil.which(tool))
     environment = {'PATH': str(tools), 'CAPTURE': str(tmp_path), 'FAXBOT_DATA': str(data),
@@ -70,14 +77,15 @@ def test_a_received_fax_is_kept_in_the_engine_volume_and_handed_over_once_faxbot
     assert run('handover', environment).returncode == 0
     # Faxbot was starting: ticket and image stay for the next round; the G4 copy is already in place.
     assert (state / 'received' / '000000007-1791180000.ticket').exists()
-    stored = data / 'inbound' / 'engine-0123456789abcdef-000000007-1791180000.tiff'
-    assert stored.exists()
+    # In the engine's out folder (the only one Faxbot reads from the engine), never Faxbot's own inbound folder.
+    stored = data / 'hylafax-out' / 'inbound' / 'engine-0123456789abcdef-000000007-1791180000.tiff'
+    assert stored.exists() and not (data / 'inbound').exists()
     (tmp_path / 'answer').write_text('200')
     assert run('handover', environment).returncode == 0
     assert not list((state / 'received').iterdir())
     assert not (spool / 'recvq' / 'fax000000007.tif').exists()
     body = json.loads((tmp_path / 'body').read_text())
-    assert (tmp_path / 'url').read_text() == 'http://api:8080/_internal/asterisk/inbound'
+    assert (tmp_path / 'url').read_text() == 'http://api:8080/_internal/hylafax/inbound'
     assert body['tiff_path'] == str(stored) and body['uniqueid'] == 'engine.179117219142'
     assert body['to_number'] == '+15555550100' and body['from_number'] == '+15555550199'
     assert body['faxstatus'] == 'SUCCESS' and body['faxpages'] == 2
@@ -118,3 +126,54 @@ def test_the_receive_script_refuses_files_outside_the_receive_queue(engine):
     spool, state, _, environment = engine
     result = run('received', environment, '../etc/faxbot.conf', 'ttyIAX1', '7', '', cwd=spool)
     assert result.returncode == 1 and not list((state / 'received').iterdir())
+
+
+def test_a_received_image_or_ticket_that_is_a_link_is_not_handed_over(engine, tmp_path):
+    spool, state, data, environment = engine
+    secret = tmp_path / 'secret.tif'
+    secret.write_bytes(b'not the fax')
+    (state / 'received' / '1-1.tif').symlink_to(secret)
+    (state / 'received' / '1-1.ticket').write_text('key=1-1\ncommid=1\n')
+    (tmp_path / 'answer').write_text('200')
+    assert run('handover', environment).returncode == 0
+    assert not (tmp_path / 'url').exists() and not list((data / 'hylafax-out' / 'inbound').iterdir())
+
+
+QFILE = ('jobtag:' + 'a' * 32 + '.' + 'b' * 32 + '\njobid:12\ncommid:000000007\nstate:8\nnpages:0\ntotpages:2\n'
+         'ndials:1\ntotdials:1\ntottries:1\nstatus:No carrier detected {E002}\nstatuscode:E002\ncsi:\n'
+         'signalrate:\ndataformat:\n')
+
+
+def test_a_job_result_is_kept_in_the_engine_volume_until_faxbot_takes_it(engine, tmp_path):
+    spool, state, data, environment = engine
+    (spool / 'doneq' / 'q12').write_text(QFILE)
+    # Faxbot is down for longer than notify waits: the result stays in the volume (no secret in it).
+    (tmp_path / 'answer').write_text('503')
+    assert run('notify', environment, 'doneq/q12', 'failed', '0:00:41', cwd=spool).returncode == 0
+    kept = state / 'results' / '1791180000-job12-failed.report'
+    report = json.loads(kept.read_text())
+    assert report['tag'] == 'a' * 32 + '.' + 'b' * 32 and report['status_code'] == 'E002'
+    assert 'synthetic-secret-value' not in kept.read_text()
+    # The engine's next round, once Faxbot is back: sent once, then gone.
+    (tmp_path / 'answer').write_text('200')
+    assert run('deliver', environment).returncode == 0
+    assert not kept.exists()
+    assert json.loads((tmp_path / 'body').read_text()) == report
+    assert (tmp_path / 'urls').read_text().splitlines() == ['http://api:8080/_internal/hylafax/result'] * 2
+    headers = ''.join(path.read_text() for path in tmp_path.glob('header.*'))
+    assert 'X-Internal-Secret: synthetic-secret-value' in headers
+
+
+def test_the_engines_start_is_reported_and_a_malformed_report_is_set_aside(engine, tmp_path):
+    spool, state, data, environment = engine
+    (state / 'results' / '1791180000-started.report').write_text('{"engine_id":"0123456789abcdef","started":1}\n')
+    (state / 'results' / '1791180001-job12-failed.report').write_text('{"tag":"x"}\n')
+    (tmp_path / 'answer').write_text('400')
+    assert run('deliver', environment).returncode == 0
+    assert (tmp_path / 'urls').read_text().splitlines() == ['http://api:8080/_internal/hylafax/started',
+                                                            'http://api:8080/_internal/hylafax/result']
+    # Faxbot refused both as malformed: kept aside for a person, never sent again.
+    assert sorted(path.name for path in (state / 'results' / 'refused').iterdir()) == [
+        '1791180000-started.report', '1791180001-job12-failed.report']
+    assert run('deliver', environment).returncode == 0
+    assert len((tmp_path / 'urls').read_text().splitlines()) == 2

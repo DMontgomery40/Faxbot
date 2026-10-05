@@ -145,6 +145,7 @@ nav:
     - SIP/Asterisk (Self‑hosted): setup/sip-asterisk.md
     - SIP trunk (your carrier): setup/sip-trunk.md
     - Network for fax over IP: setup/network.md
+    - SSL Fax engine: setup/sslfax.md
     - Avaya IP Office and Aura: setup/avaya.md
     - Documo (mFax): setup/documo.md
     - HumbleFax: setup/humblefax.md

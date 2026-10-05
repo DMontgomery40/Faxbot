@@ -218,6 +218,18 @@ class FaxEngineRecords:
         return self._write(apply)
 
 
+    def unfinished_sends(self, *, before, since):
+        """(job, attempt) the engine took between ``since`` and ``before`` and never reported on."""
+        table = self._table('fax_engine_calls')
+
+        def read(connection):
+            return [(row['job_id'], row['call_key']) for row in connection.execute(sa.select(
+                table.c.job_id, table.c.call_key).where(
+                    table.c.direction == 'outbound', table.c.engine == 'hylafax', table.c.engine_ref.is_(None),
+                    table.c.created_at < before, table.c.created_at >= since,
+                    table.c.job_id.is_not(None)).order_by(table.c.created_at).limit(500)).mappings()]
+        return self._read(read)
+
     # Screens --------------------------------------------------------------
 
     def sent_detail(self, job_id):
@@ -321,7 +333,7 @@ def savings_sentence(result, days):
     from .routing.costs import money_text
     count = result['faxes']
     if not count:
-        return f'No fax in the last {days} days had its pages sent faster.'
+        return f'No faxes were sent faster in the last {days} days.'
     minutes = max(1, round(result['seconds_saved'] / 60))
     sentence = (f"{count} {'fax' if count == 1 else 'faxes'} had {'its' if count == 1 else 'their'} pages sent "
                 f"faster: about {minutes} {'minute' if minutes == 1 else 'minutes'} less on the phone")

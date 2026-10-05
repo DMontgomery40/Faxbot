@@ -10,7 +10,7 @@ const client = () => new AdminAPIClient({ kind: 'key', key: 'synthetic-console-k
 const NUMBER = '+15555550199';
 
 describe('SSL Fax on the Recipients and Costs screens', () => {
-  it('says whether the fax machine takes SSL Fax and saves its own speed and error correction', async () => {
+  it('says whether the fax machine takes faster pages and saves its own speed and error correction', async () => {
     const writes: unknown[] = [];
     server.use(
       http.get('/routing/destinations/:number/fax-limits', () => HttpResponse.json({
@@ -35,7 +35,7 @@ describe('SSL Fax on the Recipients and Costs screens', () => {
     expect(writes).toEqual([{ max_rate: 9600, ecm: null }]);
   });
 
-  it('shows the SSL Fax saving as an estimate', async () => {
+  it('shows the faster-pages saving as an estimate', async () => {
     const part = { sentence: '', saved: [], estimate: true };
     server.use(http.get('/routing/savings', () => HttpResponse.json({
       days: 30, since: '2026-09-04T00:00:00', estimate: true, sentence: 'Each figure is an estimate.', total_saved: [],
@@ -44,12 +44,12 @@ describe('SSL Fax on the Recipients and Costs screens', () => {
       case_packets: { ...part, counted_from: null, earlier_not_counted: false, counted_from_sentence: null, packets: 0,
         documents_left_out: 0, pages_not_resent: 0, pages_saved: 0, priced: 0, in_plan: 0, unpriced: 0 },
       sslfax: { ...part, faxes: 3, seconds_saved: 110, priced: 3, in_plan: 0, unpriced: 0, same_cost: 3,
-        sentence: '3 faxes went over SSL Fax, about 2 minutes less on the line. Your carrier rounds each call up, '
-          + 'so these faxes cost the same either way.' },
+        sentence: '3 faxes had their pages sent faster: about 2 minutes less on the phone. Your carrier charges '
+          + 'whole minutes, so they cost the same.' },
     })));
     render(<Savings client={client()} />);
     const sslfax = await screen.findByTestId('savings-sslfax');
-    await waitFor(() => expect(sslfax.textContent).toContain('3 faxes went over SSL Fax'));
+    await waitFor(() => expect(sslfax.textContent).toContain('3 faxes had their pages sent faster'));
     expect(within(sslfax).getByText('Estimate')).toBeTruthy();
   });
 });

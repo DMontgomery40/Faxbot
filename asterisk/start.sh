@@ -9,7 +9,11 @@ out_dir=${FAXBOT_ASTERISK_ETC:-/etc/asterisk}
 data_dir=${FAXBOT_DATA:-/faxdata}
 # Shared with Faxbot: it writes the trunk and secrets here, and reads what Asterisk loaded.
 shared=$data_dir/asterisk
-mkdir -p "$out_dir" "$shared"
+# The SSL Fax engine's settings folder (read-only for the engine, which never sees
+# the folder above): which fax lines this Asterisk loaded, so the engine registers
+# them only once they exist.
+engine_dir=$data_dir/hylafax
+mkdir -p "$out_dir" "$shared" "$engine_dir"
 
 refuse() { printf '%s\n' "$1" >&2; exit 1; }
 safe_value() {
@@ -167,13 +171,18 @@ fi
 # (Apply); without it chan_iax2 listens on loopback only and accepts no peer.
 # Port 4569 is never published; the engine reaches it on the Compose network.
 iax_conf=$shared/iax.conf
-rm -f "$shared/iax.conf.started"
+rm -f "$shared/iax.conf.started" "$engine_dir/iax.conf.started"
 if [ -f "$iax_conf" ] && [ ! -L "$iax_conf" ]; then
   temporary=$(mktemp "$out_dir/.iax.conf.XXXXXX")
   cat "$iax_conf" > "$temporary"
   started=$(mktemp "$shared/.iax.conf.started.XXXXXX")
   cat "$temporary" > "$started"
   mv -f "$started" "$shared/iax.conf.started"
+  # Only the engine's own line secrets are in this file.
+  started=$(mktemp "$engine_dir/.iax.conf.started.XXXXXX")
+  cat "$temporary" > "$started"
+  chmod 644 "$started"
+  mv -f "$started" "$engine_dir/iax.conf.started"
   mv -f "$temporary" "$out_dir/iax.conf"
 else
   printf '%s\n' '[general]' 'bindaddr=127.0.0.1' 'bindport=4569' 'disallow=all' 'allow=ulaw' \
@@ -200,6 +209,10 @@ fi
 # manager connection, once no call is up) to load new settings; Docker's
 # restart policy starts it again.
 date +%s > "$shared/engine-started"
+started=$(mktemp "$engine_dir/.asterisk-started.XXXXXX")
+date +%s > "$started"
+chmod 644 "$started"
+mv -f "$started" "$engine_dir/asterisk-started"
 
 # Without a login in the environment, follow the one Faxbot writes: when it
 # appears or changes, stop gracefully (once no call is up) and Docker starts
@@ -218,6 +231,10 @@ if [ "$login_from" != environment ]; then
       current=$(login_sum)
       if [ "$current" != "$loaded" ] \
           && "${FAXBOT_ASTERISK_CONTROL:-asterisk}" -rx 'core stop gracefully' >/dev/null 2>&1; then
+        # In the container log: this restart came from the login, not from Faxbot's manager connection.
+        # (Asterisk's own error output; this watcher keeps no pipe of the container open.)
+        { printf 'faxbot-asterisk: the manager login changed; Asterisk restarts once no call is up\n' \
+            > "/proc/$$/fd/2"; } 2>/dev/null || true
         exit 0
       fi
     done

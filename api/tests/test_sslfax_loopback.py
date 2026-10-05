@@ -283,15 +283,21 @@ def bring_up(tmp_path, label, made, *, faxbot_t38, carrier_gateway, peer_listene
     docker.run('network', 'create', '--internal', '--subnet', SUBNET, '--label', 'com.faxbot.scope=sslfax-proof',
                docker.network)
     faxdata = docker.volume('faxdata')
+    # The engine's own folders, mounted as docker-compose.yml mounts them.
+    settings_volume, out_volume, state_volume = (docker.volume('hylafax-settings'), docker.volume('hylafax-out'),
+                                                 docker.volume('hylafax'))
     bootstrap = 'proof-' + secrets.token_urlsafe(24)
     ami_user, ami_password = 'proof_ami', 'Proof-' + secrets.token_hex(16)
     inbound_secret = secrets.token_urlsafe(32)
     ami_env = {'ASTERISK_AMI_USERNAME': ami_user, 'ASTERISK_AMI_PASSWORD': ami_password}
 
-    # Faxbot: Asterisk, the engine and the API share one data folder, as in docker-compose.yml.
-    asterisk = docker.create('asterisk', images['native'], env=ami_env, volumes=[(faxdata, '/faxdata')],
-                             alias='asterisk')
-    engine = docker.create('hylafax', images['engine'], volumes=[(faxdata, '/faxdata')], alias='hylafax')
+    # Faxbot: Asterisk and the API share the data folder; the engine gets only its own folders
+    # (settings read-only, the out folder, its volume), exactly as in docker-compose.yml.
+    asterisk = docker.create('asterisk', images['native'], env=ami_env,
+                             volumes=[(faxdata, '/faxdata'), (settings_volume, '/faxdata/hylafax')], alias='asterisk')
+    engine = docker.create('hylafax', images['engine'], alias='hylafax',
+                           volumes=[(settings_volume, '/faxdata/hylafax:ro'), (out_volume, '/faxdata/hylafax-out'),
+                                    (state_volume, '/var/lib/faxbot-engine')])
     api_env = {
         'FAX_DATA_DIR': '/faxdata', 'DATABASE_URL': 'sqlite:////faxdata/faxbot.db', 'API_KEY': bootstrap,
         'REQUIRE_API_KEY': 'true', 'FAX_BACKEND': 'sip', 'FAX_DEFAULT_COUNTRY': 'US',
@@ -302,7 +308,9 @@ def bring_up(tmp_path, label, made, *, faxbot_t38, carrier_gateway, peer_listene
         'INBOUND_ENABLED': 'true',
         **ami_env,
     }
-    api_container = docker.create('api', images['api'], env=api_env, volumes=[(faxdata, '/faxdata')], alias='api')
+    api_container = docker.create('api', images['api'], env=api_env, alias='api',
+                                  volumes=[(faxdata, '/faxdata'), (settings_volume, '/faxdata/hylafax'),
+                                           (out_volume, '/faxdata/hylafax-out:ro')])
 
     # The carrier: a trunk back to Faxbot rendered by Faxbot itself, and the peer's line.
     carrier_values = ConfigurationValues.from_environment({
@@ -350,11 +358,11 @@ def bring_up(tmp_path, label, made, *, faxbot_t38, carrier_gateway, peer_listene
     assert applied['status'] == 200, applied
     context['apply'] = applied['json']
     # Apply restarts Asterisk with the engine's lines; the engine starts once its settings exist.
-    wait_for(lambda: docker.read(engine, '/faxdata/hylafax/engine.status').find('"running"') >= 0, 180,
+    wait_for(lambda: docker.read(engine, '/faxdata/hylafax-out/engine.status').find('"running"') >= 0, 180,
              'the engine to start')
     wait_for(lambda: docker.asterisk(asterisk, 'iax2 show peers').count(' OK ') >= 2, 120,
              "the engine's two lines on Faxbot's Asterisk")
-    wait_for(lambda: docker.read(peer, '/faxdata/hylafax/engine.status').find('"running"') >= 0, 120,
+    wait_for(lambda: docker.read(peer, '/faxdata/hylafax-out/engine.status').find('"running"') >= 0, 120,
              'the peer engine to start')
     wait_for(lambda: ' OK ' in docker.asterisk(carrier, 'iax2 show peers'), 120, "the peer's line on the carrier")
     wait_for(ami_connected, 120, "Faxbot's manager connection after the restart")
@@ -737,3 +745,47 @@ def test_inbound_a_fax_through_the_engine_reaches_received(tmp_path, loopback):
     assert engine['engine'] == 'hylafax' and engine['sslfax'] == 1 and engine['number'] == PEER_NUMBER, proof
     assert proof['accepts'] and proof['accepts'][0]['accepts'] == 1, proof
     assert not passcodes(log), proof
+
+
+def test_f_a_restart_mid_call_leaves_the_fax_uncertain_and_never_resends_it(tmp_path, loopback):
+    """The engine restarts while its call is up: the fax waits for a person (uncertain), is never
+    dialed again, and the engine cannot write Faxbot's data folder or Asterisk's files."""
+    context = loopback('f', faxbot_t38=False, carrier_gateway=False, peer_listener='', peer_sslfax=False)
+    docker, key = context['docker'], context['key']
+    # The narrowed mounts: nothing of Faxbot's data folder is there, and the settings are read-only.
+    mounts = docker.sh(context['engine'], 'ls /faxdata; touch /faxdata/hylafax/x 2>&1; ls /faxdata/asterisk 2>&1').stdout
+    assert 'faxbot.db' not in mounts and 'Read-only file system' in mounts and 'No such file' in mounts, mounts
+    local = tmp_path / 'proof.pdf'
+    local.write_bytes(proof_pdf())
+    docker.run('cp', str(local), f'{context["api"]}:/tmp/proof.pdf')
+    created = api(docker, 'POST', '/fax', key=key,
+                  files=({'file': ('proof.pdf', '/tmp/proof.pdf', 'application/pdf')}, {'to': PEER_NUMBER}))
+    assert created['status'] == 202, created
+    job_id = created['json']['id']
+    # Restart once the engine's call is up and the pages are going.
+    wait_for(lambda: 'faxbot-line' in docker.asterisk(context['asterisk'], 'core show channels concise'), 120,
+             "the engine's call")
+    time.sleep(8)
+    docker.run('restart', '--time', '1', context['engine'])
+
+    def state():
+        rows = database(context, delivery=f"SELECT state FROM outbound_deliveries WHERE id = '{job_id}'")
+        found = rows['delivery'][0]['state'] if rows['delivery'] else None
+        return found if found not in (None, 'ready', 'preparing', 'submitting', 'in_progress') else None
+    final = wait_for(state, 240, 'the fax to leave in progress')
+    time.sleep(20)
+    events = database(context, kinds=f"SELECT kind FROM outbound_events WHERE job_id = '{job_id}' "
+                                     f"ORDER BY created_at")
+    attempts = database(context, n=f"SELECT COUNT(*) AS n FROM outbound_attempts WHERE job_id = '{job_id}'")
+    calls = [event for event in parse_ami(docker.read(context['asterisk'], '/tmp/ami-events.log'))
+             if event.get('UserEvent') == 'FaxEngineCall' and event.get('JobID') == job_id]
+    engine_log = docker.run('logs', context['engine'], check=False)
+    proof = {'final_state': final, 'events': [row['kind'] for row in events['kinds']],
+             'attempts': attempts['n'][0]['n'], 'engine_calls': len(calls),
+             'engine_log': (engine_log.stdout + engine_log.stderr)[-3000:]}
+    print('\nSSLFAX_PROOF_F ' + json.dumps(proof, indent=2))
+    # Uncertain (waiting for a person), one attempt, one call to the peer, and the job moved aside.
+    assert final == 'reconciliation_required', proof
+    assert proof['attempts'] == 1 and 'submission_uncertain' in proof['events'], proof
+    assert proof['engine_calls'] == 1, proof
+    assert 'moved 1 unfinished job(s) aside' in proof['engine_log'], proof

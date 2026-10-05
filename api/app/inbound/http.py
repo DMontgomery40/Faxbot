@@ -443,9 +443,18 @@ def asterisk_inbound(request: Request, payload: dict = Body(...),
         raise HTTPException(401, detail='Internal secret not configured')
     if not hmac.compare_digest((x_internal_secret or '').encode(), settings.asterisk_inbound_secret.encode()):
         raise HTTPException(401, detail='Invalid internal secret')
+    return receive_handover(request, payload, settings.fax_data_dir)
+
+
+def receive_handover(request: Request, payload: dict, root: str):
+    """Store one received fax a fax engine handed over; its image must sit inside ``root``.
+
+    Asterisk may name any image in Faxbot's data folder; the SSL Fax engine
+    (hylafax_http.py) only images in its own out folder.
+    """
     service = _acquisition(request)
     try:
-        tiff_path = inside_directory(str(payload.get('tiff_path') or ''), settings.fax_data_dir)
+        tiff_path = inside_directory(str(payload.get('tiff_path') or ''), root)
     except UnsafeSourcePath:
         raise HTTPException(400, detail='TIFF path invalid') from None
     if not os.path.isfile(tiff_path):

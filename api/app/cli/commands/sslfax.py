@@ -14,7 +14,7 @@ def limits_fields(view):
     accepts = view.get('accepts_sslfax')
     seen = local_time(view.get('accepts_sslfax_at')) if view.get('accepts_sslfax_at') else None
     takes = None if accepts is None else ('yes' if accepts else 'no') + (f' (seen {seen})' if seen else '')
-    return [('Can take pages faster', takes or 'not known yet'),
+    return [('Faster pages', takes or 'not known yet'),
             ('Highest speed', f"{view['max_rate']} bits per second" if view.get('max_rate') else 'as set for all faxes'),
             ('Error correction', 'as set for all faxes' if view.get('ecm') is None else 'on' if view['ecm'] else 'off')]
 

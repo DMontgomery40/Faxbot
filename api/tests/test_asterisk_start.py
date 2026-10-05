@@ -77,6 +77,12 @@ def test_the_ssl_fax_engine_lines_are_loaded_and_recorded_or_iax_stays_on_loopba
     assert result.returncode == 0, result.stderr
     assert (etc / 'iax.conf').read_text() == lines == (shared / 'iax.conf.started').read_text()
     assert oct((shared / 'iax.conf.started').stat().st_mode & 0o777) == '0o600'
+    # The engine never sees this folder: it reads the same lines and Asterisk's start in its own settings folder.
+    engine = tmp_path / 'data' / 'hylafax'
+    assert (engine / 'iax.conf.started').read_text() == lines and (engine / 'asterisk-started').exists()
+    (shared / 'iax.conf').unlink()
+    result, etc, shared = start(tmp_path)
+    assert result.returncode == 0 and not (engine / 'iax.conf.started').exists()
 
 
 def test_a_start_without_a_faxbot_trunk_leaves_no_stale_copy(tmp_path):

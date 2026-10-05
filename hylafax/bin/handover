@@ -1,10 +1,11 @@
 #!/bin/sh
-# Hand received faxes to Faxbot (run as root by the engine every few seconds).
+# Hand received faxes to Faxbot (run as uucp by the engine every few seconds).
 #
 # For each ticket the receive script wrote: convert the image to Group 4 (Faxbot
-# reads G4; the engine may have received JBIG), store it in Faxbot's inbound
-# folder, and post it to Faxbot's inbound hand-over with the internal secret,
-# the same authenticated path Asterisk's received faxes use. The fax's ID is
+# reads G4; the engine may have received JBIG), store it in the engine's out
+# folder (the only one Faxbot reads from the engine), and post it to the
+# engine's hand-over with the engine's own secret; Faxbot stores it the same
+# way as Asterisk's received faxes. The fax's ID is
 # Asterisk's name for the call (or this engine's communication ID and arrival
 # time), so a fax handed over twice is stored once. The ticket and image are
 # kept until Faxbot answers; a failure is tried again on the next round. Never
@@ -12,6 +13,7 @@
 set -u
 
 data=${FAXBOT_DATA:-/faxdata}
+out=${FAXBOT_ENGINE_OUT:-$data/hylafax-out}
 spool=${FAXBOT_HYLAFAX_SPOOL:-/var/spool/hylafax}
 state=${FAXBOT_ENGINE_STATE:-/var/lib/faxbot-engine}
 config=$spool/etc/faxbot.conf
@@ -19,8 +21,8 @@ url=$(sed -n 's/^url=//p' "$config" | head -1)
 secret=$(sed -n 's/^secret=//p' "$config" | head -1)
 engine=$(sed -n 's/^engine=//p' "$config" | head -1 | tr -cd 'a-f0-9')
 [ -n "$url" ] && [ -n "$secret" ] && [ -n "$engine" ] || exit 1
-inbound=$data/inbound
-mkdir -p "$inbound"
+inbound=$out/inbound
+[ -d "$inbound" ] && [ ! -L "$inbound" ] || exit 1
 
 field() { sed -n "s/^$1=//p" "$2" | head -1; }
 number() { if [ -n "$1" ]; then printf '%s' "$1"; else printf 'null'; fi; }
@@ -35,7 +37,7 @@ e164() {
 }
 
 for ticket in "$state"/received/*.ticket; do
-  [ -f "$ticket" ] || continue
+  [ -f "$ticket" ] && [ ! -L "$ticket" ] || continue
   key=$(field key "$ticket" | tr -cd '0-9-')
   commid=$(field commid "$ticket" | tr -cd '0-9')
   image=$state/received/$key.tif
@@ -53,9 +55,10 @@ for ticket in "$state"/received/*.ticket; do
   offered=$(field offered "$ticket")
   case $sslfax in true|false) ;; *) sslfax=false ;; esac
   case $offered in true|false) ;; *) offered=null ;; esac
-  [ -n "$key" ] && [ -n "$commid" ] && [ -f "$image" ] || continue
+  [ -n "$key" ] && [ -n "$commid" ] && [ -f "$image" ] && [ ! -L "$image" ] || continue
 
   target=$inbound/engine-$engine-$key.tiff
+  [ -L "$target" ] && rm -f "$target"
   if [ ! -f "$target" ]; then
     tiffcp -c g4 "$image" "$target.part" 2>/dev/null && mv -f "$target.part" "$target" \
       || { rm -f "$target.part"; printf 'faxbot-handover: fax %s could not be converted\n' "$key" >&2; continue; }
@@ -72,7 +75,7 @@ for ticket in "$state"/received/*.ticket; do
     "$(text "$called")" "$(text "$caller")" "$(number "$pages")" "$(text "$station64")" \
     "$engine" "$key" "$sslfax" "$offered" "$(number "$recv")" "$(text "$rate64")" "$(text "$format64")")
   code=$(printf 'X-Internal-Secret: %s\n' "$secret" | curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 5 \
-    --max-time 60 -H @- -H 'Content-Type: application/json' --data-binary "$body" "$url/_internal/asterisk/inbound" \
+    --max-time 60 -H @- -H 'Content-Type: application/json' --data-binary "$body" "$url/_internal/hylafax/inbound" \
     2>/dev/null)
   case $code in
     2??)

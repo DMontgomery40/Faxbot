@@ -145,6 +145,41 @@ def verdict(event):
     return 'remote_fax_failed'
 
 
+# HylaFAX+ 7.0.11 status codes (faxd/ClassModem.c++, faxd/Class1Send.c++) for an answered engine call
+# on which the other side never sent one fax message: E002 "No carrier detected" (no fax answer once the
+# call connected) and E126 "No receiver protocol (T.30 T1 timeout)".
+_ENGINE_NO_MESSAGE = re.compile(r'\bE(?:002|126)\b|No carrier detected|T\.30 T1 timeout', re.IGNORECASE)
+# What the trunk heard on an audio engine call, kept until the engine's result arrives.
+_HEARD, _SILENT = 'trunk heard sound', 'trunk heard no sound'
+
+
+def engine_verdict(record, heard=None):
+    """Why an answered engine call delivered nothing, from both halves: the trunk side (answered, T.38,
+    whether sound came back) and the engine's result (pages, the other machine, its words). The same
+    verdicts and sentences as the built-in engine; None for a sent fax or an unanswered call."""
+    if record['disposition'] != 'answered' or record['fax_status'] != 'FAILED':
+        return None
+    if (record['pages'] or 0) > 0 or record['remote_station_id']:
+        return 'remote_fax_failed'
+    audio = record['t38'] != 'yes'
+    if audio and heard is False:
+        return 'no_media_back'
+    no_message = bool(_ENGINE_NO_MESSAGE.search(record['error_cause'] or ''))
+    if audio and heard:
+        return 'no_fax_answer' if no_message else 'remote_fax_failed'
+    if no_message:
+        return 'no_t38_data_back' if record['t38'] == 'yes' else 'no_fax_data_back'
+    return 'remote_fax_failed'
+
+
+def verdict_sentence(found):
+    """The Jobs sentence for a failure verdict (the built-in engine's words), or None."""
+    if found in VERDICTS and found != NOT_HANDED_OVER:
+        return 'The other fax machine answered but the fax did not finish.' if found == 'remote_fax_failed' \
+            else _sentence(found)
+    return None
+
+
 def _error_cause(event):
     """What error_cause stores for a failed call: the verdict, the engine's words, the hang-up cause."""
     error = re.sub(r'[^A-Za-z0-9 _.,-]', '', _reason(event))
@@ -462,6 +497,9 @@ class SipCallRecords:
             t38 = 'unknown'
         cause = str(event.get('Cause') or '').strip()
         dial_status = str(event.get('DialStatus') or '').strip().upper()
+        # Audio calls only: RTCP packets the trunk received (None when not reported).
+        heard = _count(event.get('RtpRx')) if t38 != 'yes' else None
+        heard = None if heard is None else heard > 0
         if answered:
             disposition = 'answered'
         else:
@@ -488,6 +526,7 @@ class SipCallRecords:
                 if sip_call_id and not row['sip_call_id']:
                     changes['sip_call_id'] = sip_call_id
                 connection.execute(table.update().where(table.c.id == row['id']).values(updated_at=now, **changes))
+                self._settle_engine(connection, table, row['id'], heard, now)
                 return row['id']
             return self._write(apply)
         token = re.sub(r'[^0-9]', '', str(event.get('Token') or ''))[:40]
@@ -532,11 +571,39 @@ class SipCallRecords:
 
         def apply(connection, table):
             row = self._outbound_row(connection, table, job_id, attempt_id, now)
+            if row['fax_status'] is not None and (row['error_cause'] or '').split(':', 1)[0] in VERDICTS:
+                return row['id']  # The same result again: already settled.
+            kept = row['error_cause'] if row['fax_status'] is None else None
+            heard = True if kept == _HEARD else False if kept == _SILENT else None
             changes = {'fax_status': 'SUCCESS' if success else 'FAILED', 'pages': _pages(pages),
                        'remote_station_id': station or row['remote_station_id'], 'error_cause': cause}
             connection.execute(table.update().where(table.c.id == row['id']).values(updated_at=now, **changes))
+            self._settle_engine(connection, table, row['id'], heard, now)
             return row['id']
         return self._write(apply)
+
+    def _settle_engine(self, connection, table, row_id, heard, now):
+        """Once both halves of an engine call are in, whichever came first, store its verdict with the
+        engine's words (``verdict: words``, as for the built-in engine). Until then, keep what the trunk
+        heard on an audio call for the result that follows."""
+        row = connection.execute(sa.select(table).where(table.c.id == row_id)).mappings().one()
+        if row['fax_status'] is None:
+            if row['ended_at'] is not None and row['disposition'] == 'answered' and heard is not None:
+                connection.execute(table.update().where(table.c.id == row_id).values(
+                    updated_at=now, error_cause=_HEARD if heard else _SILENT))
+            return None
+        if row['ended_at'] is None:
+            return None
+        settled = (row['error_cause'] or '').split(':', 1)[0]
+        if settled in VERDICTS:
+            return settled
+        found = engine_verdict(row, heard)
+        if found is None:
+            return None
+        words = re.sub(r'[^A-Za-z0-9 _.,-]', '', row['error_cause'] or '') or 'fax failed'
+        cause = (found + ': ' + words)[:64].rstrip()
+        connection.execute(table.update().where(table.c.id == row_id).values(updated_at=now, error_cause=cause))
+        return found
 
     def record_inbound(self, call, *, call_id, inbound_fax_id=None, preset=None, fax_status=None, now=None):
         """One received call; repeated reports of the same Asterisk call are ignored."""
@@ -754,6 +821,28 @@ def _on_engine_call(event):
         records.record_engine_call(event, preset=_active_preset())
     except Exception:
         logging.getLogger(__name__).warning('A SIP call record could not be saved.')
+        return
+    # The engine's result may have come first: the same audio rule runs on whichever half is last.
+    if str(event.get('Direction') or '').lower() != 'in':
+        try:
+            rows = records.for_attempt(event.get('AttemptID'))
+        except SipCallRecordError:
+            return
+        engine_audio_check(rows[-1] if rows else None)
+
+
+def engine_audio_check(row):
+    """An engine call on T.38 that never got one fax message back moves new calls to audio fax, the
+    rule the built-in engine follows. Runs when either half of the call arrives; switching is done once.
+    Call from the event loop."""
+    if row is None or row.get('verdict') != 'no_t38_data_back':
+        return
+    from . import sip_fax_mode
+    if not sip_fax_mode.t38_timeout(row.get('error_cause')):
+        return
+    sip_fax_mode._on_fax_event({
+        'Answered': '1', 'Status': 'FAILED', 'Pages': '0', 'Mode': 'T38',
+        'Error64': base64.b64encode(b'timed out waiting for initial communication').decode()})
 
 
 def attach(ami_client, engine):
