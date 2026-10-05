@@ -46,7 +46,7 @@ STATIC_MOUNTS = {"/admin/ui", "/assets"}
 # Still on legacy guards at this revision; other slices convert them. Remove each
 # entry when its route declares policy; the pending test below fails until then.
 PENDING: dict = {}
-PRIVILEGED = {"host:restart", "host:actions", "host:terminal", "providers:install", "owner:recover"}
+PRIVILEGED = {"host:restart", "host:terminal", "providers:install", "owner:recover"}
 # Routes converted from require_admin: (permission, audited).
 CONVERTED = {
     ("POST", "/admin/settings/validate"): ("providers:write", False),

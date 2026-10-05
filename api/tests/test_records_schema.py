@@ -7,7 +7,7 @@ import sqlalchemy as sa
 from api.app import schema, schema_records
 from api.tests.test_schema import database, snapshot
 from api.tests.test_access_schema import at_revision
-from api.tests.test_work_schema import without_terminal_change
+from api.tests.test_work_schema import without_later_access_changes
 
 
 NOW = datetime(2026, 10, 3, 12)
@@ -28,7 +28,7 @@ def test_0013_upgrade_preserves_0012_rows_and_validates_frozen_shape(database):
     assert after['carrier_records'] == []
     for name, rows in before.items():
         if name != 'alembic_version':
-            assert without_terminal_change(name, after[name]) == without_terminal_change(name, rows), name
+            assert without_later_access_changes(name, after[name]) == without_later_access_changes(name, rows), name
     metadata = schema_records.frozen_metadata(dialect=database.dialect.name)
     table = metadata.tables['carrier_records']
     with database.connect() as connection:

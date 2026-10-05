@@ -7,7 +7,7 @@ import sqlalchemy as sa
 from api.app import schema, schema_delivery
 from api.tests.test_schema import database, snapshot
 from api.tests.test_access_schema import at_revision
-from api.tests.test_work_schema import without_terminal_change, without_work_catalogue
+from api.tests.test_work_schema import without_later_access_changes, without_work_catalogue
 
 
 def test_delivery_revision_is_head_after_capabilities():
@@ -26,8 +26,8 @@ def test_0008_upgrade_preserves_0007_state_and_validates_frozen_shape(database):
         assert after[name] == [], name
     for name, rows in before.items():
         if name != 'alembic_version':
-            assert (without_terminal_change(name, without_work_catalogue(name, after[name]))
-                    == without_terminal_change(name, rows)), name
+            assert (without_later_access_changes(name, without_work_catalogue(name, after[name]))
+                    == without_later_access_changes(name, rows)), name
     metadata = schema_delivery.frozen_metadata(dialect=database.dialect.name)
     with database.connect() as connection:
         assert schema.validate_schema(connection, require_version=True) == schema.HEAD

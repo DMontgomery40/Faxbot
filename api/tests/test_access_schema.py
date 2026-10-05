@@ -49,6 +49,8 @@ def migrated_id(domain, *parts):
 
 
 WORK = {'work:read', 'work:manage', 'work:export', 'work:import'}
+# Removed by 0019: they guard no route any more.
+RETIRED = {'host:actions', 'tunnels:read', 'tunnels:manage'}
 
 
 def _memberships(rows):
@@ -77,22 +79,22 @@ def test_clean_access_upgrade_enrolls_exact_catalogue_without_owner_or_sessions(
     rows = snapshot(database)
     assert TABLES <= rows.keys()
     assert rows['alembic_version'] == [{'version_num': HEAD}]
-    # 0011 adds the four work permissions to the catalogue and the built-in roles.
-    assert {r['id'] for r in rows['access_permissions']} == PERMISSIONS | WORK
-    assert len(PERMISSIONS | WORK) == 40
+    # 0011 adds the four work permissions to the catalogue and the built-in roles; 0019 removes three.
+    assert {r['id'] for r in rows['access_permissions']} == (PERMISSIONS | WORK) - RETIRED
+    assert len((PERMISSIONS | WORK) - RETIRED) == 37
     assert {r['id'] for r in rows['access_roles']} == {
         'role_owner', 'role_administrator', 'role_fax_operator',
         'role_fax_viewer', 'role_auditor', 'role_host_operator',
     }
     assert _memberships(rows) == {
         **builtin,
-        'role_owner': PERMISSIONS | WORK,
-        'role_administrator': builtin['role_administrator'] | WORK,
+        'role_owner': (PERMISSIONS | WORK) - RETIRED,
+        'role_administrator': (builtin['role_administrator'] | WORK) - RETIRED,
         'role_fax_operator': builtin['role_fax_operator'] | {'work:read', 'work:manage'},
         'role_fax_viewer': builtin['role_fax_viewer'] | {'work:read'},
         'role_auditor': builtin['role_auditor'] | {'work:read', 'work:export'},
-        # 0018 gives the terminal to the Owner role only.
-        'role_host_operator': builtin['role_host_operator'] - {'host:terminal'},
+        # 0018 gives the terminal to the Owner role only; 0019 retires host:actions.
+        'role_host_operator': builtin['role_host_operator'] - {'host:terminal'} - RETIRED,
     }
     assert rows['access_principals'][0]['id'] == 'bootstrap'
     assert rows['access_principals'][0]['kind'] == 'bootstrap'
@@ -183,7 +185,8 @@ def test_0004_enrollment_preserves_all_rows_and_narrows_unproven_authority(datab
                         'wrong-db-id': 'legacy', 'reserved': 'legacy', 'unknown': 'legacy', 'unbound': 'legacy'}
     assert next(r for r in resources if r['kind'] == 'inbound')['parent_id'] == 'legacy'
     assert [(r['id'], r['mailbox_id']) for r in after['access_mailbox_routes']] == [('match', 'mailbox')]
-    audits = [json.loads(r['details']) for r in after['access_audit']]
+    # 0019 adds one record of the permissions it retired; the enrollment audits are the rest.
+    audits = [json.loads(r['details']) for r in after['access_audit'] if r['operation'] != 'access.retire_permissions']
     assert len(audits) == len(cases) + 1
     audit_text = repr(audits)
     for secret in ['unknown-private-scope', 'same owner', 'unchanged-hash', 'private note', '+12025550123', 'fingerprint']:
@@ -687,7 +690,9 @@ finally:
     assert rows['alembic_version'] == [{'version_num': HEAD}]
     assert len(rows['access_principals']) == 2
     assert len(rows['access_key_bindings']) == len(rows['access_assignments']) == len(rows['access_key_grants']) == 1
-    assert len(rows['access_audit']) == 2
+    # Two enrollment audits, and 0019's one record of the permissions it retired.
+    assert len([r for r in rows['access_audit'] if r['operation'] != 'access.retire_permissions']) == 2
+    assert len(rows['access_audit']) == 3
 
 
 def test_sqlite_overlength_or_control_key_labels_are_not_copied_to_display_or_audit(database):

@@ -8,8 +8,8 @@ PERMISSIONS = frozenset({
     "users:manage", "groups:read", "groups:manage", "roles:read", "roles:manage",
     "grants:read", "grants:manage", "sessions:read", "sessions:revoke", "settings:read",
     "settings:write", "providers:read", "providers:write", "providers:install",
-    "diagnostics:read", "logs:read", "audit:read", "tunnels:read", "tunnels:manage",
-    "tunnels:pair", "host:restart", "host:actions", "host:terminal", "owner:recover",
+    "diagnostics:read", "logs:read", "audit:read",
+    "tunnels:pair", "host:restart", "host:terminal", "owner:recover",
     "mailboxes:read", "mailboxes:manage",
     "work:read", "work:manage", "work:export", "work:import",
 })
@@ -26,7 +26,7 @@ KEY_SCOPES = frozenset({"fax:send", "fax:read", "fax:document", "inbound:list", 
                         "inbound:document", "keys:manage", "work:import"})
 BUILTIN_ROLE_PERMISSIONS = MappingProxyType({
     "role_owner": PERMISSIONS,
-    "role_administrator": PERMISSIONS - {"host:restart", "host:actions", "host:terminal", "owner:recover"},
+    "role_administrator": PERMISSIONS - {"host:restart", "host:terminal", "owner:recover"},
     "role_fax_operator": frozenset({"fax:send", "fax:read", "fax:document", "fax:refresh", "inbound:list",
                                     "inbound:read", "inbound:document", "work:read", "work:manage"}),
     "role_fax_viewer": frozenset({"fax:read", "fax:document", "inbound:list", "inbound:read", "inbound:document",
@@ -34,5 +34,5 @@ BUILTIN_ROLE_PERMISSIONS = MappingProxyType({
     "role_auditor": frozenset({"audit:read", "fax:read", "inbound:list", "inbound:read", "work:read",
                                "work:export"}),
     # The Terminal is the Owner role's by default (revision 0018); a role of the owner's own can grant it.
-    "role_host_operator": frozenset({"host:restart", "host:actions", "diagnostics:read", "settings:read"}),
+    "role_host_operator": frozenset({"host:restart", "diagnostics:read", "settings:read"}),
 })

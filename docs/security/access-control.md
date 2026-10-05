@@ -58,13 +58,11 @@ On the **Roles** screen, people with `roles:manage` can also create custom roles
 | Configuration | `settings:read`, `settings:write` | See, or change, installation settings |
 | | `providers:read`, `providers:write` | See, or change, fax provider settings |
 | | `providers:install` | Install provider plugins |
-| | `tunnels:read`, `tunnels:manage` | See, or change, the remote access tunnel |
 | | `tunnels:pair` | Create iPhone pairing codes |
 | Monitoring | `diagnostics:read` | Run diagnostics |
 | | `logs:read` | Read the activity log on the **Logs** screen |
 | | `audit:read` | Read the security audit |
 | Host | `host:restart` | Restart Faxbot |
-| | `host:actions` | Run approved maintenance actions on the server |
 | | `host:terminal` | Use the host terminal |
 
 Some settings, such as the installation key, the public address, signature checks and file locations, can only be changed by an Owner, even when someone has `settings:write`.

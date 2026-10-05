@@ -246,9 +246,9 @@ def test_unassigned_role_is_inert_and_metadata_edit_of_assigned_role_does_not_re
     w = mworld
     actor = w.restricted('manager', {'roles:manage', 'groups:manage'})
     role = w.call('create_custom_role', T.CustomRoleValues('Power', '', False, frozenset({'host:terminal'})), actor=actor)
-    w.call('update_custom_role', role.target, T.CustomRoleValues('Power', '', True, frozenset({'host:actions'})), actor=actor)
+    w.call('update_custom_role', role.target, T.CustomRoleValues('Power', '', True, frozenset({'host:restart'})), actor=actor)
     w.assignment('alice', role.target.id)
-    w.call('update_custom_role', w.version('access_roles', role.target.id), T.CustomRoleValues('New Power', 'metadata', True, frozenset({'host:actions'})), actor=actor)
+    w.call('update_custom_role', w.version('access_roles', role.target.id), T.CustomRoleValues('New Power', 'metadata', True, frozenset({'host:restart'})), actor=actor)
     w.group('disabled', 0)
     w.assignment(None, 'role_owner', group='disabled')
     w.call('update_group', w.version('access_groups', 'disabled'), T.GroupValues('Renamed', '', False), actor=actor)

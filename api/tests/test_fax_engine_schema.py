@@ -7,7 +7,7 @@ import sqlalchemy as sa
 from api.app import schema, schema_fax_engine
 from api.tests.test_schema import database, snapshot  # noqa: F401 - fixture
 from api.tests.test_access_schema import at_revision
-from api.tests.test_work_schema import without_terminal_change
+from api.tests.test_work_schema import without_later_access_changes
 
 
 NOW = datetime(2026, 10, 4, 23)
@@ -39,7 +39,7 @@ def test_0017_upgrade_preserves_0016_rows_and_validates_frozen_shape(database):
         assert after[name] == []
     for name, rows in before.items():
         if name != 'alembic_version':
-            assert without_terminal_change(name, after[name]) == without_terminal_change(name, rows), name
+            assert without_later_access_changes(name, after[name]) == without_later_access_changes(name, rows), name
     metadata = schema_fax_engine.frozen_metadata(dialect=database.dialect.name)
     with database.connect() as connection:
         assert schema.validate_schema(connection, require_version=True) == schema.HEAD
