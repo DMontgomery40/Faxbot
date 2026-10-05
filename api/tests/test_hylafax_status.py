@@ -71,6 +71,10 @@ async def test_each_engine_state_has_one_sentence(tmp_path):
     engine_running(tmp_path, off)
     assert (await summary(off, Ami()))[1] == ("Faxbot's fast fax service is running on 2 fax lines; "
                                               'faster pages are turned off.')
+    # After its T.38 call heard no fax machine, the engine says it sends audio fax and how to try T.38 again.
+    hylafax_engine.note_t38_failure(configured)
+    state, sentence = await summary(configured, Ami())
+    assert state == 'running' and sentence.endswith(' ' + hylafax_engine.ENGINE_AUDIO)
 
 
 def test_the_engine_check_is_registered_for_system_diagnostics():

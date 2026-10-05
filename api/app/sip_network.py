@@ -587,6 +587,8 @@ PHONE_SYSTEM_TEXT = 'Your phone system is on your local network, so fax over IP 
 AUDIO_MEANWHILE = 'Audio fax keeps working meanwhile.'
 # Live 2026-10-04: with the network open, Telnyx still refused T.38 on calls from another fax service.
 TRIES_FIRST = 'Faxbot tries fax over IP (T.38) first. When the carrier declines it, the fax goes through as audio.'
+# The network allows T.38 but the switch above is off (Faxbot's own choice or a person's): no contradiction.
+OPEN_BUT_AUDIO = 'Your network allows fax over IP (T.38), but new calls use audio fax, as set above.'
 
 
 def _ports_text(record=None):
@@ -772,7 +774,8 @@ def report(values):
         'why': record.get('why') if record else None,
         'text': verdict_text(record, carrier),
         'office_text': OFFICE_TEXT[record['t38']] if record else NOT_CHECKED,
-        'tries_text': TRIES_FIRST if record and record['t38'] == OPEN else None,
+        'tries_text': (None if not record or record['t38'] != OPEN
+                       else TRIES_FIRST if values.sip_t38_enabled else OPEN_BUT_AUDIO),
         'fix_text': remedy['text'] if remedy else None,
         'fix_steps': remedy['steps'] if remedy else [],
         'fix_note': remedy['note'] if remedy else None,

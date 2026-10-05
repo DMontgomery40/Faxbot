@@ -22,6 +22,7 @@ from app.config_values import ConfigurationValues
 ROOT = Path(__file__).resolve().parents[2]
 SECRET = 'synthetic-inbound-secret-0123456789'
 JOB, ATTEMPT = 'a' * 32, 'b' * 32
+PEER = '+15555550199'
 
 
 def trunk_values(tmp_path, **extra):
@@ -374,26 +375,59 @@ def test_every_engine_failure_sentence_fits_the_80_characters_a_fax_error_shows(
 
 
 @pytest.mark.parametrize('row, switched', [
-    ({'verdict': 'no_t38_data_back', 'error_cause': 'no_t38_data_back: No carrier detected E002'}, True),
-    ({'verdict': 'no_t38_data_back', 'error_cause': 'no_t38_data_back: No receiver protocol T.30 T1 timeout E126'},
-     True),
-    ({'verdict': 'no_fax_data_back', 'error_cause': 'no_fax_data_back: No carrier detected E002'}, False),
-    ({'verdict': 'remote_fax_failed', 'error_cause': 'remote_fax_failed: Busy signal detected E001'}, False),
-    ({'verdict': 'sent', 'error_cause': None}, False),
+    ({'verdict': 'no_fax_signal', 't38': 'yes', 'ended_at': '2026-10-05T11:19:12Z'}, True),
+    ({'verdict': 'no_fax_signal', 't38': 'no', 'ended_at': '2026-10-05T11:19:12Z'}, False),
+    ({'verdict': 'remote_fax_failed', 't38': 'yes', 'ended_at': '2026-10-05T11:19:12Z'}, False),
+    ({'verdict': 'sent', 't38': 'yes', 'ended_at': '2026-10-05T11:19:12Z'}, False),
     (None, False),
 ])
-def test_a_t38_engine_call_with_no_fax_message_back_feeds_the_audio_switch(monkeypatch, row, switched):
-    """The same rule as the built-in engine, read from the settled call record (either half may be last)."""
+def test_an_engine_t38_call_that_heard_no_fax_machine_moves_only_the_engine_to_audio(monkeypatch, row, switched):
     from app import sip_calls, sip_fax_mode
-    seen = []
-    monkeypatch.setattr(sip_fax_mode, '_on_fax_event', seen.append)
+    installation, engine = [], []
+    monkeypatch.setattr(sip_fax_mode, '_on_fax_event', installation.append)
+    monkeypatch.setattr(hylafax_engine, 'engine_t38_failed', lambda at=None: engine.append(at))
     sip_calls.engine_audio_check(row)
-    assert bool(seen) == switched
-    if switched:
-        event = seen[0]
-        # The built-in engine's own listener reads it as a T.38 call with no data back.
-        assert sip_calls.verdict(event) == 'no_t38_data_back'
-        assert sip_fax_mode.t38_timeout(sip_calls._reason(event))
+    assert not installation and bool(engine) == switched
+
+
+def test_the_engines_own_audio_choice_changes_only_its_calls_and_apply_clears_it(tmp_path, monkeypatch):
+    values = trunk_values(tmp_path)
+    assert hylafax_engine.call_settings(values, PEER, engine=True).t38 is True
+    assert hylafax_engine.note_t38_failure(values, '2026-10-05T11:19:12Z') is True
+    assert hylafax_engine.note_t38_failure(values) is False  # recorded once
+    assert hylafax_engine.engine_t38_off(values) == {'mode': 'audio', 'reason': 'no_fax_signal',
+                                                       'at': '2026-10-05T11:19:12Z'}
+    assert stat.S_IMODE(os.stat(hylafax_engine.engine_t38_path(values)).st_mode) == 0o600
+    # The engine's calls go audio (9600 at most); the built-in engine keeps the installation's T.38.
+    engine_call = hylafax_engine.call_settings(values, PEER, engine=True)
+    assert engine_call.t38 is False and engine_call.max_rate == 9600
+    assert hylafax_engine.call_settings(values, PEER).t38 is True
+    assert hylafax_engine.clear_engine_t38(values) is True and hylafax_engine.engine_t38_off(values) is None
+    assert hylafax_engine.clear_engine_t38(values) is False
+
+
+@pytest.mark.asyncio
+async def test_received_calls_learn_the_engines_audio_choice_from_asterisks_database(tmp_path):
+    values = trunk_values(tmp_path)
+
+    class Connected(FakeAmi):
+        def __init__(self, connected=True):
+            super().__init__()
+            self._connected = asyncio.Event()
+            if connected:
+                self._connected.set()
+    ami = Connected()
+    hylafax_engine.note_t38_failure(values)
+    await hylafax_engine.sync_engine_t38(values, ami)
+    hylafax_engine.clear_engine_t38(values)
+    await hylafax_engine.sync_engine_t38(values, ami)
+    assert ami.puts == [('faxbot-engine', 't38', 'audio')] and ami.deletes == [('faxbot-engine', 't38')]
+    # Never over a connection that is down (that would mark it unreachable).
+    offline = Connected(connected=False)
+    await hylafax_engine.sync_engine_t38(values, offline)
+    assert offline.puts == offline.deletes == []
+    dialplan = (ROOT / 'asterisk' / 'etc' / 'asterisk' / 'extensions.conf').read_text()
+    assert '${DB(faxbot-engine/t38)}" = "audio"]?dial)' in dialplan
 
 
 def test_compose_runs_the_engine_with_no_published_ports_and_the_override_publishes_one():

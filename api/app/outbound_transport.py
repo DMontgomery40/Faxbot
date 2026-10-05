@@ -241,9 +241,10 @@ class CapturedTransport:
         engine = getattr(getattr(self.store, 'configuration', None), 'engine', None)
         records = hylafax_records.records_for(engine) if engine is not None else None
         recipient = await asyncio.to_thread(hylafax_engine.recipient_limits, engine, job['to_number'])
-        call = hylafax_engine.call_settings(values, job['to_number'], recipient=recipient)
         choice = await hylafax_engine.choose(values, members=bool(claim.members), ami=self.ami)
         if choice.engine == 'hylafax':
+            # The engine may be on audio fax on its own after a T.38 call that heard no fax machine.
+            call = hylafax_engine.call_settings(values, job['to_number'], recipient=recipient, engine=True)
             try:
                 engine_job = await hylafax_engine.prepare_job(values, self.ami, job_id=claim.job_id,
                     attempt_id=claim.attempt_id, dest=job['to_number'], tiff_path=str(tiff), settings=call)
@@ -252,6 +253,7 @@ class CapturedTransport:
                 choice = hylafax_engine.EngineChoice('builtin', hylafax_engine.NOT_RUNNING)
             except ValueError:
                 raise PreparationFailure('preparation_failed') from None
+        call = hylafax_engine.call_settings(values, job['to_number'], recipient=recipient)
         logging.getLogger(__name__).info('Fax %s: %s', claim.job_id, choice.reason)
         return None, choice, call, records
 

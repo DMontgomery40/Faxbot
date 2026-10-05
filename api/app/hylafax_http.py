@@ -50,12 +50,15 @@ def _engine_details(payload):
     commid = payload.get('commid') if isinstance(payload.get('commid'), str) else ''
     if not re.fullmatch(r'[a-f0-9]{8,32}', engine_id) or not re.fullmatch(r'[0-9]{1,12}', commid):
         return None
+    # Speed and compression only from a session that agreed them: a call that never trained has none.
+    agreed = payload.get('why') == 'done' or bool(payload.get('pages')) or bool(
+        hylafax_engine._text64(payload, 'remote_station_b64', 40))
     return {'engine_ref': f'{engine_id}:{commid}', 'sslfax': payload.get('sslfax') is True,
             'sslfax_offered': payload.get('sslfax_offered') if isinstance(payload.get('sslfax_offered'), bool)
             else None,
             'transfer_seconds': payload.get('transfer_seconds'), 'session_seconds': payload.get('session_seconds'),
-            'signal_rate': hylafax_engine._text64(payload, 'signal_rate_b64', 32),
-            'data_format': hylafax_engine._text64(payload, 'data_format_b64', 32)}
+            'signal_rate': hylafax_engine._text64(payload, 'signal_rate_b64', 32) if agreed else None,
+            'data_format': hylafax_engine._text64(payload, 'data_format_b64', 32) if agreed else None}
 
 
 def _record(request, job_id, attempt_id, payload, status, sentence):
@@ -178,13 +181,77 @@ def _require_engine(x_internal_secret):
 
 
 @router.post('/_internal/hylafax/inbound')
-def engine_inbound(request: Request, payload: dict = Body(...),
-                   x_internal_secret: Optional[str] = Header(default=None)):
+async def engine_inbound(request: Request, payload: dict = Body(...),
+                         x_internal_secret: Optional[str] = Header(default=None)):
     """A fax the engine received: the same hand-over as Asterisk's, for images in the engine's out folder only."""
     from .inbound.http import _require_route, receive_handover
     _require_route('sip', '/_internal/hylafax/inbound')
     _require_engine(x_internal_secret)
-    return receive_handover(request, payload, str(hylafax_engine.received_dir(settings)))
+    answer = await run_lifecycle_step(
+        lambda: receive_handover(request, payload, str(hylafax_engine.received_dir(settings))))
+    # The engine's result decides this call's record, also when Asterisk's event for it came first.
+    call = payload.get('call') if isinstance(payload.get('call'), dict) else {}
+    pages = call.get('pages') if isinstance(call.get('pages'), int) else None
+    row = await run_lifecycle_step(lambda: _engine_receive(
+        request, str(payload.get('uniqueid') or ''), success=payload.get('faxstatus') == 'SUCCESS',
+        pages=pages, station=hylafax_engine._text64(call, 'remote_station_id_b64', 40),
+        reason=hylafax_engine._text64(payload, 'reason_b64', 64), did=payload.get('to_number'),
+        caller=payload.get('from_number'), inbound_fax_id=answer.get('id')))
+    from .sip_calls import engine_audio_check
+    engine_audio_check(row)
+    return answer
+
+
+def _engine_receive(request, call_id, **fields):
+    """Record the engine's result for one received call; the call record, or None. Never raises."""
+    from . import hylafax_records, sip_calls
+    from .inbound.http import received_number
+    from .routing.background import installation_engine
+    try:
+        engine, _ = installation_engine(request.app)
+        records = sip_calls.SipCallRecords(engine)
+        for name in ('did', 'caller'):
+            fields[name] = received_number(fields.get(name))
+        row_id = records.record_engine_receive(call_id, preset=settings.sip_trunk_preset, **fields)
+        row = records.call(row_id) if row_id else None
+    except Exception:
+        import logging
+        logging.getLogger(__name__).warning('A SIP call record could not be saved.')
+        return None
+    return row
+
+
+@router.post('/_internal/hylafax/received-failed')
+async def engine_receive_failed(request: Request, payload: dict = Body(...),
+                                x_internal_secret: Optional[str] = Header(default=None)):
+    """A call the engine answered that left no fax (hylafax/bin/sessions): its record and sentence."""
+    from .inbound.http import _require_route
+    _require_route('sip', '/_internal/hylafax/received-failed')
+    _require_engine(x_internal_secret)
+    engine_id = payload.get('engine_id') if isinstance(payload.get('engine_id'), str) else ''
+    key = payload.get('key') if isinstance(payload.get('key'), str) else ''
+    token = payload.get('token') if isinstance(payload.get('token'), str) else ''
+    if not re.fullmatch(r'[a-f0-9]{16}', engine_id) or not re.fullmatch(r'[0-9]{1,12}-[0-9]{1,12}', key):
+        raise HTTPException(400, detail='Unknown fax engine call')
+    if token and not re.fullmatch(r'[0-9]{1,40}', token):
+        raise HTTPException(400, detail='Unknown fax engine call')
+    call_id = f'engine.{token}' if token else f'hylafax.{engine_id}.{key}'
+    row = await run_lifecycle_step(lambda: _engine_receive(
+        request, call_id, success=False, pages=0, station=None,
+        reason=hylafax_engine._text64(payload, 'reason_b64', 64) or 'fax failed',
+        did=payload.get('called'), caller=payload.get('caller'), inbound_fax_id=None))
+    from . import hylafax_records
+    from .routing.background import installation_engine
+    try:
+        engine, _ = installation_engine(request.app)
+        hylafax_records.safely(hylafax_records.records_for(engine).record_result, direction='inbound',
+                               call_key=call_id, details={'engine_ref': f'{engine_id}:{key}', 'sslfax': False},
+                               number=(row or {}).get('caller'))
+    except Exception:
+        pass
+    from .sip_calls import engine_audio_check
+    engine_audio_check(row)
+    return {'status': 'ok', 'summary': (row or {}).get('summary')}
 
 
 # Engine restarts: a fax the engine took before it started again has no result coming.
@@ -258,7 +325,12 @@ async def engine_result(request: Request, payload: dict = Body(...),
         # side says why (no fax data came back, not a fax machine, no sound).
         from . import sip_calls
         row = await _settled_call(request, attempt_id, row)
-        sentence = sip_calls.verdict_sentence((row or {}).get('verdict')) or sentence
+        # The engine's own sentence, unless the call says more: the engine heard no fax machine, no
+        # sound came back, sound came back but no fax machine answered, or the other machine answered
+        # (sent its ID) and the fax did not finish.
+        found = (row or {}).get('verdict')
+        if found in (sip_calls.NO_FAX_SIGNAL, 'no_media_back', 'no_fax_answer', 'remote_fax_failed'):
+            sentence = sip_calls.verdict_sentence(found)
     if status == hylafax_engine.UNCERTAIN:
         # Removed or rejected after it dialed: the fax may have arrived. It waits for a person, never resent.
         try:

@@ -80,6 +80,12 @@ if [ -n "$log" ]; then
                  END { if (b != "" && e != "" && e >= b) printf "%d", e - b + 0.5 }' "$log")
 fi
 case $signalrate in *SSL*) sslfax=true ;; esac
+# Speed and compression only when the session agreed them: the job file holds the requested ones until
+# then, so a call that never trained (or never reached SSL Fax) reports neither.
+if [ -z "$log" ] || { ! grep -q 'TRAINING succeeded' "$log" && [ "$sslfax" != true ]; }; then
+  signalrate=''
+  dataformat=''
+fi
 
 case $offered in true|false) ;; *) offered=null ;; esac
 body=$(printf '{"tag":"%s","engine_id":"%s","commid":"%s","engine_job":%s,"why":"%s","state":%s,"pages":%s,"total_pages":%s,"dials":%s,"total_dials":%s,"total_tries":%s,"status_b64":"%s","status_code":"%s","remote_station_b64":"%s","signal_rate_b64":"%s","data_format_b64":"%s","job_time":"%s","sslfax":%s,"sslfax_offered":%s,"sslfax_refused":%s,"transfer_seconds":%s,"session_seconds":%s}' \

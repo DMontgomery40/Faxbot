@@ -191,6 +191,10 @@ def test_network_open_says_t38_is_tried_first_and_audio_carries_the_fax_when_the
                                     'through as audio.')
     assert report['office_text'] == 'Your network is ready for faxing over the internet.'
     assert report['audio_text'] is None and report['fix_text'] is None
+    # With T.38 switched off above it (by Faxbot or a person), the panel never says T.38 is tried first.
+    off = values(FAX_DATA_DIR=str(tmp_path), SIP_T38_ENABLED='false')
+    assert sip_network.report(off)['tries_text'] == ('Your network allows fax over IP (T.38), but new calls use '
+                                                     'audio fax, as set above.')
 
 
 def test_the_fax_ports_file_publishes_exactly_the_range_the_sentences_name():

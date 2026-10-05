@@ -29,6 +29,7 @@ OWN_AUTHENTICATION = {
     ("POST", "/_internal/hylafax/result"): "internal shared secret (the SSL Fax engine's job results)",
     ("POST", "/_internal/hylafax/started"): "the SSL Fax engine's own secret (faxes it took before a restart)",
     ("POST", "/_internal/hylafax/inbound"): "the SSL Fax engine's own secret; images in its out folder only",
+    ("POST", "/_internal/hylafax/received-failed"): "the SSL Fax engine's own secret (a received call that left no fax)",
     ("POST", "/mobile/pair"): "single-use pairing code minted by a principal with tunnels:pair",
     ("WS", "/admin/terminal"): "single-use ticket from POST /admin/terminal/ticket; host:terminal rechecked while open",
     # Direct delivery partners carry no API key: each request is verified against
