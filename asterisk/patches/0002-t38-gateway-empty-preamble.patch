@@ -1,0 +1,95 @@
+Faxbot: the T.38 gateway ends a V.21 preamble that carried no frame (spandsp 0.0.6).
+
+Live over Telnyx on 5 October 2026, T.38 engine sends failed one call in two:
+T.38 was agreed and the carrier's packets arrived, but the fax machine behind
+the gateway never heard the answer. The carrier's T.38 began with two V.21
+preambles closed by an HDLC signal end with no data (its gateway relaying an
+answer that started before the switch to T.38). spandsp 0.0.6's gateway then
+keeps its V.21 transmitter sending flags forever; every change queued behind
+it waits. Replaying the captured T.38 packets into spandsp reproduces it every
+time: no frame reaches the fax machine; with this change every DIS does, and
+the calls that worked are unchanged frame for frame.
+
+The gateway also marks the T.38 channel FAXBOT_T38_GATEWAY=engaged when it
+starts, for the line 0001 logs at the end of the session.
+
+--- a/res/res_fax_spandsp.c
++++ b/res/res_fax_spandsp.c
+@@ -62,6 +62,7 @@
+ #include "asterisk/res_fax.h"
+ #include "asterisk/channel.h"
+ #include "asterisk/format_cache.h"
++#include "asterisk/pbx.h"
+ 
+ #define SPANDSP_EXPOSE_INTERNAL_STRUCTURES
+ #include <spandsp.h>
+@@ -162,6 +163,8 @@
+ 
+ 	int v21_detected;
+ 	modem_connect_tones_rx_state_t *tone_state;
++	/*! Faxbot: empty V.21 preambles the gateway ended (see faxbot_end_empty_preamble) */
++	unsigned int faxbot_empty_preambles;
+ };
+ 
+ static int spandsp_v21_new(struct spandsp_pvt *p);
+@@ -788,7 +791,43 @@
+ 		return t38_core_rx_ifp_packet(p->t38_core_state, f->data.ptr, f->datalen, f->seqno);
+ 	} else {
+ 		return fax_rx(&p->fax_state, f->data.ptr, f->samples);
++	}
++}
++
++/*!
++ * \brief Faxbot: end a V.21 preamble that carried no HDLC frame (spandsp 0.0.6).
++ *
++ * A T.38 sender relaying a fax answer that began before the call switched to
++ * T.38 can send a V.21 preamble indicator followed by an HDLC signal end with no
++ * data (live over Telnyx, 5 October 2026: twice, before the first DIS). In
++ * spandsp 0.0.6 the gateway's V.21 transmitter then sends flags forever: its
++ * HDLC underflow handler moves on only from a buffer marked ready for output,
++ * so the change queued behind the empty preamble never runs, and the fax
++ * machine behind the gateway never hears the answer. When the next item for the
++ * fax machine is an indicator and no frame is loaded, the preamble was empty:
++ * end the transmitter, cutting its remaining timed flags so it does not fall
++ * behind the T.38 stream (spandsp would then wipe a frame that arrived while it
++ * lagged). In every other state this changes nothing: a normal frame end is
++ * already ended by spandsp itself, with its two closing flags.
++ */
++#define FAXBOT_SPANDSP_FLAG_INDICATOR 0x100	/* FLAG_INDICATOR in spandsp 0.0.6's t38_gateway.c */
++
++static void faxbot_end_empty_preamble(struct ast_fax_session *s, struct spandsp_pvt *p)
++{
++	t38_gateway_hdlc_state_t *queue = &p->t38_gw_state.core.hdlc_to_modem;
++	hdlc_tx_state_t *hdlc = &p->t38_gw_state.audio.modems.hdlc_tx;
++
++	if (queue->in == queue->out || !(queue->buf[queue->out].contents & FAXBOT_SPANDSP_FLAG_INDICATOR) || hdlc->len) {
++		return;
++	}
++	if (hdlc->flag_octets > 2) {
++		hdlc->flag_octets = 2;
++		p->faxbot_empty_preambles++;
++		ast_log(LOG_NOTICE, "Faxbot T.38 gateway on %s: the far end's V.21 signal ended with no frame; "
++			"ended it so its next frame reaches the fax machine (%u so far)\n",
++			s->chan ? ast_channel_name(s->chan) : "<gone>", p->faxbot_empty_preambles);
+ 	}
++	hdlc_tx_frame(hdlc, NULL, 0);
+ }
+ 
+ /*! \brief generate T.30 packets sent to the T.30 leg of gateway
+@@ -819,6 +858,7 @@
+ 	}
+ 
+ 	/* generate a T.30 packet */
++	faxbot_end_empty_preamble(s, p);
+ 	if ((f->samples = t38_gateway_tx(&p->t38_gw_state, f->data.ptr, f->samples))) {
+ 		f->datalen = f->samples * sizeof(int16_t);
+ 		res = ast_write(chan, f);
+@@ -883,6 +923,8 @@
+ 	}
+ 
+ 	ast_activate_generator(p->ast_t38_state == T38_STATE_NEGOTIATED ? peer : s->chan, &t30_gen , s);
++	/* Faxbot: the T.38 side's log line at the end of its session says the gateway engaged. */
++	pbx_builtin_setvar_helper(p->ast_t38_state == T38_STATE_NEGOTIATED ? s->chan : peer, "FAXBOT_T38_GATEWAY", "engaged");
+ 
+ 	set_logging(&p->t38_gw_state.logging, s->details);
+ 	set_logging(&p->t38_core_state->logging, s->details);

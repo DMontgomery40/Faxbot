@@ -439,7 +439,37 @@ def test_asterisk_sends_t38_first_when_a_t38_stream_starts():
     # a page; a new T.38 stream (state no longer enabled) sends again.
     assert '+	if (remote_stream->desc.port && state->opened != session_media->udptl) {' in patch
     assert '+		state->opened = NULL;' in patch
+    # The T.38 gateway ends a V.21 preamble that carried no frame (spandsp 0.0.6), with the same steps
+    # asterisk/tests/t38_gateway_replay.c proves (tests/test_t38_gateway_replay.py).
+    gateway = (ROOT / 'asterisk' / 'patches' / '0002-t38-gateway-empty-preamble.patch').read_text()
+    replay = (ROOT / 'asterisk' / 'tests' / 't38_gateway_replay.c').read_text()
+    for step in ('queue->in == queue->out || !(queue->buf[queue->out].contents & FAXBOT_SPANDSP_FLAG_INDICATOR) '
+                 '|| hdlc->len', 'if (hdlc->flag_octets > 2) {', 'hdlc->flag_octets = 2;', 'hdlc_tx_frame(hdlc, NULL, 0);',
+                 '#define FAXBOT_SPANDSP_FLAG_INDICATOR 0x100'):
+        assert step in gateway and step in replay, step
+    assert '+\tfaxbot_end_empty_preamble(s, p);\n \tif ((f->samples = t38_gateway_tx(' in gateway
+    # One NOTICE line per T.38 stream, with packet counts from UDPTL.
+    assert '+	.session_end = t38_session_end,' in patch and 'ast_udptl_get_counts(media->udptl, &sent, &received);' in patch
+    counts = (ROOT / 'asterisk' / 'patches' / '0003-udptl-packet-counts.patch').read_text()
+    assert '+			s->faxbot_sent++;' in counts and '+	udptl->faxbot_received++;' in counts
     dockerfile = (ROOT / 'asterisk' / 'Dockerfile').read_text()
     applied = dockerfile.index('patch -p1 --forward')
     assert dockerfile.index('COPY patches/ /usr/src/patches/') < applied < dockerfile.index('RUN ./configure')
+
+
+def test_two_sends_with_the_same_communication_id_both_keep_their_engine_record(database):
+    """A new engine container starts its communication IDs again (live, 5 October: the record of a send was
+    dropped as a duplicate of an earlier call's); the attempt keeps each reference unique."""
+    schema.upgrade_schema(database)
+    records = hylafax_records.records_for(database)
+    first, second = ('1' * 32, '2' * 32), ('3' * 32, '4' * 32)
+    for job, attempt in (first, second):
+        records.record_call(direction='outbound', call_key=attempt, job_id=job, engine='hylafax', now=NOW)
+        details = hylafax_http._engine_details({'tag': f'{job}.{attempt}', 'engine_id': '0123456789abcdef',
+                                                'commid': '000000001', 'why': 'done', 'sslfax': True,
+                                                'transfer_seconds': 12})
+        assert details['engine_ref'] == f'0123456789abcdef:000000001.{attempt[:12]}'
+        records.record_result(direction='outbound', call_key=attempt, job_id=job, details=details, now=NOW)
+    for _, attempt in (first, second):
+        assert records.for_call('outbound', attempt)['sslfax'] is True
 

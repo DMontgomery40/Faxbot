@@ -882,6 +882,16 @@ def test_g_a_t38_call_with_no_t38_data_back_moves_only_the_engine_to_audio(tmp_p
     assert found['call']['t38'] == 'no' and found['call']['pages'] == PAGES, found
 
 
+T38_LINE = re.compile(r'Faxbot T\.38 on (PJSIP/\S+): 3 opening packets to ([0-9.]+:\d+); (\d+) packets sent, '
+                      r'(\d+) received; T\.38 gateway (\S+)')
+
+
+def t38_lines(log):
+    """Asterisk's NOTICE line for each T.38 stream (asterisk/patches/0001): channel, opened to, sent, received,
+    whether the gateway engaged."""
+    return [match.groups() for match in T38_LINE.finditer(log)]
+
+
 def nft_counters(text):
     """(packets let through, packets dropped) from the router stand-in's rules."""
     passed = re.search(r'ct state established counter packets (\d+)', text)
@@ -900,12 +910,17 @@ def test_h_t38_through_a_router_that_keeps_ports_works_once_faxbot_sends_first(t
     found = records(context, outcome['job']['id'])
     passed, dropped = nft_counters(context['docker'].sh(context['carrier'], 'nft list table inet faxbot_nat').stdout)
     proof = evidence(outcome)
-    proof.update({'records': found, 'standin_passed': passed, 'standin_dropped': dropped})
+    proof.update({'records': found, 'standin_passed': passed, 'standin_dropped': dropped,
+                  't38_lines': t38_lines(outcome['asterisk_log'])})
     print('\nSSLFAX_PROOF_H ' + json.dumps(proof, indent=2, default=str))
     assert_delivered(outcome, proof)
     assert found['call']['t38'] == 'yes' and found['call']['pages'] == PAGES, proof
     # The stand-in let the carrier's T.38 data in only after Faxbot had sent first.
     assert passed and passed > 0, proof
+    # One line for the stream says where the opening packets went, the counts, and that the gateway engaged.
+    [(_, opened, sent, received, gateway)] = proof['t38_lines']
+    assert opened.startswith(ADDRESS['carrier'] + ':') and int(sent) > 3 and int(received) > 0, proof
+    assert gateway == 'engaged', proof
 
 
 def test_i_t38_offered_by_the_carrier_behind_a_router_that_keeps_ports(tmp_path, loopback):
@@ -930,14 +945,17 @@ def test_i_t38_offered_by_the_carrier_behind_a_router_that_keeps_ports(tmp_path,
     found = records(context, job_id)
     passed, dropped = nft_counters(docker.sh(context['carrier'], 'nft list table inet faxbot_nat').stdout)
     size = docker.sh(context['carrier'], 'stat -c %s /tmp/carrier-received.tif 2>/dev/null').stdout
-    faxbot_sip = sip_evidence(docker.run('logs', context['asterisk'], check=False).stdout)
+    faxbot_log = docker.run('logs', context['asterisk'], check=False).stdout
+    faxbot_sip = sip_evidence(faxbot_log)
     proof = {'job_status': job.get('status'), 'job_error': job.get('error'), 'call': found['call'],
              'carrier_image_bytes': size.strip(), 'standin_passed': passed, 'standin_dropped': dropped,
-             'faxbot_sip': faxbot_sip}
+             'faxbot_sip': faxbot_sip, 't38_lines': t38_lines(faxbot_log)}
     print('\nSSLFAX_PROOF_I ' + json.dumps(proof, indent=2, default=str))
     assert str(job.get('status')).upper() == 'SUCCESS', proof
     assert found['call']['t38'] == 'yes' and found['call']['pages'] == PAGES, proof
     # The live direction: the carrier offered T.38 and Faxbot answered it.
     assert faxbot_sip['t38_offers_received'] >= 1 and faxbot_sip['t38_answers'] >= 1, proof
     assert passed and passed > 0 and int(size.strip() or 0) > 0, proof
+    [(_, opened, sent, received, gateway)] = proof['t38_lines']
+    assert int(sent) > 3 and int(received) > 0 and gateway == 'engaged', proof
 
