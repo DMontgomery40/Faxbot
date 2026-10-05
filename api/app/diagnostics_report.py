@@ -384,6 +384,21 @@ async def fax_engine(context: Context) -> list[Finding]:
     return [Finding('engine.running', 'engine', 'Fax engine', OK, f'The fax engine is running. {detail}'.strip())]
 
 
+@check('ssl fax engine')
+async def ssl_fax_engine(context: Context) -> list[Finding]:
+    """The SSL Fax engine (HylaFAX+): running, its lines on Asterisk, and whether its listener is published."""
+    if not _uses_trunk(context.request):
+        return []
+    from . import hylafax_engine
+    from .ami import ami_client
+    from .config import configuration_values
+    state, sentence = await hylafax_engine.engine_summary(configuration_values(), ami_client)
+    status = {'running': OK, 'starting': ATTENTION, 'not_set_up': OFF}.get(state, PROBLEM)
+    fix = None if status in (OK, OFF) else 'Open carrier trunk'
+    return [Finding('engine.sslfax', 'engine', 'Fast fax service', status, sentence, fix,
+                    'providers/trunk' if fix else None)]
+
+
 @check('carrier trunk')
 async def carrier_trunk(context: Context) -> list[Finding]:
     if not _uses_trunk(context.request):

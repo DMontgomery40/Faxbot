@@ -28,6 +28,7 @@ esac
 [ -f "$config" ] || fail 'no Faxbot address'
 url=$(sed -n 's/^url=//p' "$config" | head -1)
 secret=$(sed -n 's/^secret=//p' "$config" | head -1)
+engine=$(sed -n 's/^engine=//p' "$config" | head -1 | tr -cd 'a-f0-9')
 [ -n "$url" ] && [ -n "$secret" ] || fail 'no Faxbot address'
 
 field() { sed -n "s/^$1://p" "$qfile" | head -1; }
@@ -54,12 +55,17 @@ dataformat=$(field dataformat)
 log=''
 [ -n "$commid" ] && [ -f "log/c$commid" ] && log="log/c$commid"
 sslfax=false
-offered=false
+offered=''
 refused=false
 transfer=''
 session=''
 if [ -n "$log" ]; then
-  grep -q -E 'REMOTE (CSA|TSA) "ssl://' "$log" && offered=true
+  # The other machine takes SSL Fax: it said so when it answered, or named its own connection.
+  if grep -q -E 'REMOTE supports internet fax|REMOTE (CSA|TSA) "ssl://' "$log"; then
+    offered=true
+  elif grep -q -E 'SEND recv DIS|REMOTE best rate' "$log"; then
+    offered=false
+  fi
   grep -q 'Refusing SSL Fax host' "$log" && refused=true
   if grep -q 'SSL Fax connection was successful' "$log"; then
     sslfax=true
@@ -76,8 +82,9 @@ if [ -n "$log" ]; then
 fi
 case $signalrate in *SSL*) sslfax=true ;; esac
 
-body=$(printf '{"tag":"%s","engine_job":%s,"why":"%s","state":%s,"pages":%s,"total_pages":%s,"dials":%s,"total_dials":%s,"total_tries":%s,"status_b64":"%s","status_code":"%s","remote_station_b64":"%s","signal_rate_b64":"%s","data_format_b64":"%s","job_time":"%s","sslfax":%s,"sslfax_offered":%s,"sslfax_refused":%s,"transfer_seconds":%s,"session_seconds":%s}' \
-  "$tag" "$(number "$jobid")" "$why" "$(number "$state")" "$(number "$npages")" "$(number "$totpages")" \
+case $offered in true|false) ;; *) offered=null ;; esac
+body=$(printf '{"tag":"%s","engine_id":"%s","commid":"%s","engine_job":%s,"why":"%s","state":%s,"pages":%s,"total_pages":%s,"dials":%s,"total_dials":%s,"total_tries":%s,"status_b64":"%s","status_code":"%s","remote_station_b64":"%s","signal_rate_b64":"%s","data_format_b64":"%s","job_time":"%s","sslfax":%s,"sslfax_offered":%s,"sslfax_refused":%s,"transfer_seconds":%s,"session_seconds":%s}' \
+  "$tag" "$engine" "$commid" "$(number "$jobid")" "$why" "$(number "$state")" "$(number "$npages")" "$(number "$totpages")" \
   "$(number "$ndials")" "$(number "$totdials")" "$(number "$tottries")" "$(b64 "$status_text")" "$status_code" \
   "$(b64 "$csi")" "$(b64 "$signalrate")" "$(b64 "$dataformat")" "$jobtime" "$sslfax" "$offered" "$refused" \
   "$(number "$transfer")" "$(number "$session")")

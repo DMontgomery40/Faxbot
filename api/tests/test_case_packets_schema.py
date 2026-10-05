@@ -16,8 +16,8 @@ NOW = datetime(2026, 10, 4, 12)
 API_DIRECTORY = Path(schema.__file__).resolve().parents[1]
 
 
-def test_case_packet_sends_is_head_after_inbound_sources():
-    assert schema.HEAD == schema_case_packets.REVISION == '0016_case_packet_sends'
+def test_case_packet_sends_follows_inbound_sources():
+    assert schema.CASE_PACKETS == schema_case_packets.REVISION == '0016_case_packet_sends'
     assert schema.INBOUND_SOURCES == '0015_inbound_sources'
     assert schema_case_packets.TABLES <= schema.STRICT_TABLES
 

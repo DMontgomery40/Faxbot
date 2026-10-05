@@ -179,6 +179,22 @@ else
   printf '%s\n' '[general]' 'bindaddr=127.0.0.1' 'bindport=4569' 'disallow=all' 'allow=ulaw' \
     'autokill=yes' 'delayreject=yes' > "$out_dir/iax.conf"
 fi
+# Faxbot's fax settings for received calls and the engine's lines (dialplan
+# [faxbot-options]); the recommended values until Faxbot writes its own.
+options_conf=$shared/extensions-options.conf
+rm -f "$shared/extensions-options.conf.started"
+if [ -f "$options_conf" ] && [ ! -L "$options_conf" ]; then
+  temporary=$(mktemp "$out_dir/.extensions-options.conf.XXXXXX")
+  cat "$options_conf" > "$temporary"
+  started=$(mktemp "$shared/.extensions-options.conf.started.XXXXXX")
+  cat "$temporary" > "$started"
+  mv -f "$started" "$shared/extensions-options.conf.started"
+  mv -f "$temporary" "$out_dir/extensions-options.conf"
+else
+  temporary=$(mktemp "$out_dir/.extensions-options.conf.XXXXXX")
+  cat "$tpl_dir/extensions-options.conf" > "$temporary"
+  mv -f "$temporary" "$out_dir/extensions-options.conf"
+fi
 
 # This Asterisk shares Faxbot's data folder, so Faxbot may restart it (over the
 # manager connection, once no call is up) to load new settings; Docker's

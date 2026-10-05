@@ -1,0 +1,86 @@
+#!/bin/sh
+# Hand received faxes to Faxbot (run as root by the engine every few seconds).
+#
+# For each ticket the receive script wrote: convert the image to Group 4 (Faxbot
+# reads G4; the engine may have received JBIG), store it in Faxbot's inbound
+# folder, and post it to Faxbot's inbound hand-over with the internal secret,
+# the same authenticated path Asterisk's received faxes use. The fax's ID is
+# Asterisk's name for the call (or this engine's communication ID and arrival
+# time), so a fax handed over twice is stored once. The ticket and image are
+# kept until Faxbot answers; a failure is tried again on the next round. Never
+# a placeholder.
+set -u
+
+data=${FAXBOT_DATA:-/faxdata}
+spool=${FAXBOT_HYLAFAX_SPOOL:-/var/spool/hylafax}
+state=${FAXBOT_ENGINE_STATE:-/var/lib/faxbot-engine}
+config=$spool/etc/faxbot.conf
+url=$(sed -n 's/^url=//p' "$config" | head -1)
+secret=$(sed -n 's/^secret=//p' "$config" | head -1)
+engine=$(sed -n 's/^engine=//p' "$config" | head -1 | tr -cd 'a-f0-9')
+[ -n "$url" ] && [ -n "$secret" ] && [ -n "$engine" ] || exit 1
+inbound=$data/inbound
+mkdir -p "$inbound"
+
+field() { sed -n "s/^$1=//p" "$2" | head -1; }
+number() { if [ -n "$1" ]; then printf '%s' "$1"; else printf 'null'; fi; }
+text() { if [ -n "$1" ]; then printf '"%s"' "$1"; else printf 'null'; fi; }
+# A number as Faxbot stores it: E.164 with a plus sign.
+e164() {
+  case $1 in
+    '') ;;
+    +*) printf '%s' "$1" ;;
+    *) printf '+%s' "$1" ;;
+  esac
+}
+
+for ticket in "$state"/received/*.ticket; do
+  [ -f "$ticket" ] || continue
+  key=$(field key "$ticket" | tr -cd '0-9-')
+  commid=$(field commid "$ticket" | tr -cd '0-9')
+  image=$state/received/$key.tif
+  spool_file=$(field spool_file "$ticket" | tr -cd 'A-Za-z0-9/._-')
+  token=$(field token "$ticket" | tr -cd '0-9')
+  caller=$(e164 "$(field caller "$ticket" | tr -cd '0-9+')")
+  called=$(e164 "$(field called "$ticket" | tr -cd '0-9+')")
+  pages=$(field pages "$ticket" | tr -cd '0-9')
+  station64=$(field station64 "$ticket" | tr -cd 'A-Za-z0-9+/=')
+  rate64=$(field rate64 "$ticket" | tr -cd 'A-Za-z0-9+/=')
+  format64=$(field format64 "$ticket" | tr -cd 'A-Za-z0-9+/=')
+  reason64=$(field reason64 "$ticket" | tr -cd 'A-Za-z0-9+/=')
+  recv=$(field recv_seconds "$ticket" | tr -cd '0-9')
+  sslfax=$(field sslfax "$ticket")
+  offered=$(field offered "$ticket")
+  case $sslfax in true|false) ;; *) sslfax=false ;; esac
+  case $offered in true|false) ;; *) offered=null ;; esac
+  [ -n "$key" ] && [ -n "$commid" ] && [ -f "$image" ] || continue
+
+  target=$inbound/engine-$engine-$key.tiff
+  if [ ! -f "$target" ]; then
+    tiffcp -c g4 "$image" "$target.part" 2>/dev/null && mv -f "$target.part" "$target" \
+      || { rm -f "$target.part"; printf 'faxbot-handover: fax %s could not be converted\n' "$key" >&2; continue; }
+    chmod 600 "$target"
+  fi
+  if [ -n "$token" ]; then uniqueid="engine.$token"; else uniqueid="hylafax.$engine.$key"; fi
+  if [ -n "$reason64" ] && [ -n "$(printf '%s' "$reason64" | base64 -d 2>/dev/null)" ]; then
+    status=FAILED
+  else
+    status=SUCCESS
+  fi
+  body=$(printf '{"tiff_path":"%s","to_number":%s,"from_number":%s,"faxstatus":"%s","faxpages":%s,"uniqueid":"%s","call":{"did":%s,"caller":%s,"pages":%s,"t38":null,"remote_station_id_b64":%s},"engine":{"engine":"hylafax","engine_ref":"%s:%s","sslfax":%s,"sslfax_offered":%s,"transfer_seconds":%s,"signal_rate_b64":%s,"data_format_b64":%s}}' \
+    "$target" "$(text "$called")" "$(text "$caller")" "$status" "$(number "$pages")" "$uniqueid" \
+    "$(text "$called")" "$(text "$caller")" "$(number "$pages")" "$(text "$station64")" \
+    "$engine" "$key" "$sslfax" "$offered" "$(number "$recv")" "$(text "$rate64")" "$(text "$format64")")
+  code=$(printf 'X-Internal-Secret: %s\n' "$secret" | curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 5 \
+    --max-time 60 -H @- -H 'Content-Type: application/json' --data-binary "$body" "$url/_internal/asterisk/inbound" \
+    2>/dev/null)
+  case $code in
+    2??)
+      rm -f "$ticket" "$image"
+      case $spool_file in recvq/fax[0-9]*.tif) rm -f "$spool/$spool_file" ;; esac
+      printf 'faxbot-handover: fax %s handed to Faxbot\n' "$key" >&2 ;;
+    *)
+      printf 'faxbot-handover: fax %s not handed to Faxbot yet (answer %s); trying again\n' "$key" "${code:-none}" >&2 ;;
+  esac
+done
+exit 0

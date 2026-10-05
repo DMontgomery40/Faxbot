@@ -436,6 +436,108 @@ class SipCallRecords:
             return row['id']
         return self._write(apply)
 
+    # The SSL Fax engine (HylaFAX+) --------------------------------------------
+
+    def record_engine_call(self, event, *, preset=None, now=None):
+        """The trunk side of a call the SSL Fax engine placed or answered (the FaxEngineCall event).
+
+        Outbound rows are the attempt's own row; inbound rows are keyed
+        ``engine.<token>``, the same key the engine's hand-over uses. Only what
+        is still unknown is filled in, so the event and the hand-over may arrive
+        in either order.
+        """
+        now = now or utcnow()
+        direction = 'inbound' if str(event.get('Direction') or '').lower() == 'in' else 'outbound'
+        answered, ended = _epoch(event.get('Answered')), _epoch(event.get('Ended')) or now
+        started = _epoch(event.get('Started'))
+        # T.38 ran when the gateway started a fax session (its number, 0 when none); the trunk's
+        # PJSIP state at hang-up is back to audio by then, but still says ENABLED mid-call.
+        state = str(event.get('T38') or '').strip().upper()
+        session = str(event.get('T38Session') or '').strip()
+        if (session.isdigit() and int(session) > 0) or state == 'ENABLED':
+            t38 = 'yes'
+        elif session == '0' or state in ('DISABLED', 'REJECTED'):
+            t38 = 'no'
+        else:
+            t38 = 'unknown'
+        cause = str(event.get('Cause') or '').strip()
+        dial_status = str(event.get('DialStatus') or '').strip().upper()
+        if answered:
+            disposition = 'answered'
+        else:
+            disposition = {'BUSY': 'busy', 'NOANSWER': 'no_answer', 'CONGESTION': 'congestion'}.get(
+                dial_status) or {'17': 'busy', '18': 'no_answer', '19': 'no_answer', '34': 'congestion',
+                                 '38': 'congestion', '42': 'congestion'}.get(cause, 'failed')
+        sip_call_id = _sip_call_id(event.get('CallID64'))
+        if direction == 'outbound':
+            job_id, attempt_id = _identity(event.get('JobID')), _identity(event.get('AttemptID'))
+            if job_id is None or attempt_id is None:
+                return None
+
+            def apply(connection, table):
+                row = self._outbound_row(connection, table, job_id, attempt_id, now)
+                changes = {'disposition': disposition, 'answered_at': row['answered_at'] or answered,
+                           'ended_at': row['ended_at'] or ended}
+                changes['connected_seconds'] = _seconds(changes['answered_at'], changes['ended_at']) or (
+                    0 if not answered else None)
+                if row['t38'] == 'unknown':
+                    changes['t38'] = t38
+                if not answered and row['error_cause'] is None:
+                    changes['error_cause'] = _REASON_TEXT.get({'busy': '5', 'no_answer': '3', 'congestion': '8'}.get(
+                        disposition, '0'), 'call failed')
+                if sip_call_id and not row['sip_call_id']:
+                    changes['sip_call_id'] = sip_call_id
+                connection.execute(table.update().where(table.c.id == row['id']).values(updated_at=now, **changes))
+                return row['id']
+            return self._write(apply)
+        token = re.sub(r'[^0-9]', '', str(event.get('Token') or ''))[:40]
+        if not token:
+            return None
+        call_id = 'engine.' + token
+        did, caller = _number(event.get('DID')), _number(event.get('Caller'))
+        record = {
+            'id': uuid4().hex, 'direction': 'inbound', 'call_id': call_id, 'job_id': None, 'attempt_id': None,
+            'trunk_preset': str(preset or '')[:32] or None, 'did': did, 'caller': caller, 'called': did,
+            'started_at': started or answered or now, 'answered_at': answered, 'ended_at': ended,
+            'disposition': 'answered' if answered else 'failed', 'connected_seconds': _seconds(answered, ended),
+            't38': t38, 'pages': None, 'fax_status': None, 'remote_station_id': None,
+            'error_cause': None if answered else 'caller hung up before answer', 'fax_preference': 0,
+            'sip_call_id': sip_call_id, 'created_at': now, 'updated_at': now}
+
+        def apply(connection, table):
+            row = self._find(connection, table, 'inbound', call_id)
+            if row is None:
+                connection.execute(table.insert().values(**record))
+                return record['id']
+            changes = {name: record[name] for name in ('sip_call_id', 'answered_at', 'connected_seconds', 'did',
+                                                       'caller', 'called') if row[name] is None and record[name]}
+            if row['t38'] == 'unknown' and t38 != 'unknown':
+                changes['t38'] = t38
+            if row['ended_at'] is None:
+                changes['ended_at'] = ended
+            if changes:
+                connection.execute(table.update().where(table.c.id == row['id']).values(updated_at=now, **changes))
+            return row['id']
+        return self._write(apply)
+
+    def record_engine_result(self, job_id, attempt_id, *, success, pages=None, station=None, reason=None,
+                             now=None):
+        """What the SSL Fax engine reported for one sent fax: confirmed pages, the other machine, why it failed."""
+        job_id, attempt_id = _identity(job_id), _identity(attempt_id)
+        if job_id is None or attempt_id is None:
+            return None
+        now = now or utcnow()
+        station = ''.join(character for character in str(station or '') if character.isprintable()).strip()[:40]
+        cause = None if success else re.sub(r'[^A-Za-z0-9 _.,:-]', '', str(reason or 'fax failed'))[:64]
+
+        def apply(connection, table):
+            row = self._outbound_row(connection, table, job_id, attempt_id, now)
+            changes = {'fax_status': 'SUCCESS' if success else 'FAILED', 'pages': _pages(pages),
+                       'remote_station_id': station or row['remote_station_id'], 'error_cause': cause}
+            connection.execute(table.update().where(table.c.id == row['id']).values(updated_at=now, **changes))
+            return row['id']
+        return self._write(apply)
+
     def record_inbound(self, call, *, call_id, inbound_fax_id=None, preset=None, fax_status=None, now=None):
         """One received call; repeated reports of the same Asterisk call are ignored."""
         if not isinstance(call, dict):
@@ -644,6 +746,16 @@ def _on_inbound_call(event):
         logging.getLogger(__name__).warning('A SIP call record could not be saved.')
 
 
+def _on_engine_call(event):
+    records = _current
+    if records is None:
+        return
+    try:
+        records.record_engine_call(event, preset=_active_preset())
+    except Exception:
+        logging.getLogger(__name__).warning('A SIP call record could not be saved.')
+
+
 def attach(ami_client, engine):
     """Record calls from this AMI client into ``engine``; safe to call on every start."""
     global _current
@@ -652,6 +764,8 @@ def attach(ami_client, engine):
     ami_client.on_originate_response(_on_originate_response)
     ami_client.on_fax_result(_on_fax_result)
     ami_client.on_inbound_call(_on_inbound_call)
+    # Calls the SSL Fax engine (HylaFAX+) placed or answered through the trunk.
+    ami_client.on_engine_call(_on_engine_call)
     return _current
 
 

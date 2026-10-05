@@ -78,6 +78,28 @@ secret=$(need inbound_secret '^[A-Za-z0-9_-]{16,256}$')
 for line_number in $(seq 1 "$lines"); do
   need "line${line_number}_secret" '^[A-Za-z0-9]{24,128}$' >/dev/null
 done
+# Fax settings (older settings files without them get the recommended values).
+setting[max_rate]=${setting[max_rate]:-14400}
+setting[ecm]=${setting[ecm]:-yes}
+setting[compression]=${setting[compression]:-jbig}
+max_rate=$(need max_rate '^(14400|9600|7200|4800)$')
+ecm=$(need ecm '^(yes|no)$')
+compression=$(need compression '^(mh|mr|mmr|jbig)$')
+
+# The receiving listener is used only when docker-compose.sslfax.yml publishes
+# its port (and says so here); otherwise the engine connects out only.
+published=${FAXBOT_SSLFAX_PUBLISHED_PORT:-}
+if [ -n "$listener" ] && [ "${listener##*:}" != "$published" ]; then
+  listener=''
+fi
+
+# This engine's own name for its calls, made once: received faxes and results
+# carry <engine id>:<communication id>, which stays unique after a fresh spool.
+engine_id_file=$state/engine-id
+if ! grep -qE '^[a-f0-9]{16}$' "$engine_id_file" 2>/dev/null; then
+  od -An -N8 -tx1 /dev/urandom | tr -d ' \n' > "$engine_id_file"
+fi
+engine_id=$(cat "$engine_id_file")
 
 # One certificate and key for the SSL Fax listener, made once and kept in the
 # engine's volume. HylaFAX+ reads the certificate first and then the key.
@@ -105,9 +127,16 @@ fi
 rm -f "$spool/FIFO" "$spool"/FIFO.* 2>/dev/null || true
 
 # Where results and received faxes go (read by the notify scripts as uucp).
-printf 'url=%s\nsecret=%s\n' "$api_url" "$secret" > "$spool/etc/faxbot.conf"
+printf 'url=%s\nsecret=%s\nengine=%s\n' "$api_url" "$secret" "$engine_id" > "$spool/etc/faxbot.conf"
 chown uucp:uucp "$spool/etc/faxbot.conf"
 chmod 600 "$spool/etc/faxbot.conf"
+# Received faxes wait in the engine's volume (written by the receive script as
+# uucp, so they survive a new container) until the hand-over below brings them
+# into Faxbot's data folder; kept until Faxbot has them.
+mkdir -p "$state/received"
+chown uucp:uucp "$state/received"
+chmod 700 "$state/received"
+chmod 711 "$state"
 
 # Job submission login for Faxbot only; port 4559 stays on the private network.
 # Inside the container, the engine's own status checks (faxstat) need no login.
@@ -161,6 +190,23 @@ if [ "$sslfax" = yes ]; then ssl_support=Yes; else ssl_support=No; fi
 # Session logs leave out HDLC frame dumps, modem byte traces and SSL Fax data:
 # server, protocol, modem operations, timeouts and state changes only.
 session_tracing=0x08117
+# Fax settings: the modulations up to the highest speed (V.27ter, V.29, V.17),
+# error correction, and the best compression the engine may agree.
+case $max_rate in
+  14400) modulations='24,48,72,73,74,96,97,98,121,122,145,146' ;;
+  9600) modulations='24,48,72,73,74,96,97,98' ;;
+  7200) modulations='24,48,72,73,74' ;;
+  4800) modulations='24,48' ;;
+esac
+if [ "$ecm" = yes ]; then ecm_support=yes; else ecm_support=no; fi
+mr=yes mmr=yes jbig=full
+case $compression in
+  mh) mr=no mmr=no jbig=none ;;
+  mr) mmr=no jbig=none ;;
+  mmr) jbig=none ;;
+esac
+# MMR and JBIG need error correction; without it the engine offers MH and MR only.
+[ "$ecm" = yes ] || { mmr=no; jbig=none; }
 
 for line_number in $(seq 1 "$lines"); do
   device=ttyIAX$line_number
@@ -188,9 +234,14 @@ EOF
     printf 'RingsBeforeAnswer:\t1\nSpeakerVolume:\t\toff\nGettyArgs:\t\t"-h %%l dx_%%s"\n'
     printf 'MaxRecvPages:\t\t200\nModemType:\t\tClass1\n'
     printf 'Class1AdaptRecvCmd:\tAT+FAR=1\nClass1TMConnectDelay:\t400\n'
-    printf 'Class1RMQueryCmd:\t"!24,48,72,73,74,96,97,98,121,122,145,146"\n'
-    printf 'Class1TMQueryCmd:\t"!24,48,72,73,74,96,97,98,121,122,145,146"\n'
+    printf 'Class1RMQueryCmd:\t"!%s"\nClass1TMQueryCmd:\t"!%s"\n' "$modulations" "$modulations"
+    printf 'Class1ECMSupport:\t%s\nClass1MRSupport:\t%s\nClass1MMRSupport:\t%s\nClass1JBIGSupport:\t%s\n' \
+      "$ecm_support" "$mr" "$mmr" "$jbig"
     printf 'ModemResetCmds:\t\t"AT+VCID=1"\nModemReadyCmds:\t\tAT+FAR=1\n'
+    # Who called and which number (from Faxbot's Asterisk), and Asterisk's
+    # name for the call (in the caller name); the receive script gets them in this order.
+    printf 'CallIDPattern:\t\t"NMBR="\nCallIDPattern:\t\t"NAME="\nCallIDPattern:\t\t"DNIS="\n'
+    printf 'FaxRcvdCmd:\t\t/usr/local/lib/faxbot-engine/received\n'
     printf 'Class1SSLFaxSupport:\t%s\nClass1SSLFaxCert:\tetc/ssl.pem\n' "$ssl_support"
     if [ "$sslfax" = yes ] && [ -n "$listener" ]; then
       printf 'Class1SSLFaxInfo:\t"%s"\n' "$listener"
@@ -241,6 +292,11 @@ registration_refused() {
 }
 
 while sleep "$check_seconds"; do
+  # Received faxes go to Faxbot (as root: only root may write Faxbot's data folder).
+  if compgen -G "$state/received/*.ticket" >/dev/null; then
+    FAXBOT_DATA=$data FAXBOT_HYLAFAX_SPOOL=$spool FAXBOT_ENGINE_STATE=$state \
+      /usr/local/lib/faxbot-engine/handover || true
+  fi
   if registration_refused && idle; then
     write_status restarting "Faxbot's fast fax service is reconnecting to the phone connection."
     log 'a fax line was refused by Asterisk; restarting to register again'
