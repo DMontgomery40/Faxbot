@@ -40,7 +40,8 @@ export const DEPLOYMENT_MEANINGS: Record<string, { label: string; kind: Kind; un
   MCP_HTTP_PORT: { label: 'Assistant server port', kind: 'text', unset: 'Not set: port 3001.' },
   MCP_WS_PORT: { label: 'Assistant server port for live connections', kind: 'text', unset: 'Not set: port 3004.' },
   MCP_WS_API_KEY: { label: 'Key for live assistant connections', kind: 'secret', unset: 'Not set.' },
-  TZ: { label: "Server's time zone", kind: 'text', unset: 'Not set, so the server uses world standard time (UTC).' },
+  TZ: { label: "Server log time zone", kind: 'text',
+    unset: 'Not set, so only the server\'s own logs use world standard time (UTC). Faxbot shows times in the time zone chosen in Setup.' },
 };
 
 export const SET = 'Set';

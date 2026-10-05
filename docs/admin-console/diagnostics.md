@@ -1,36 +1,43 @@
 # Diagnostics
 
-Open **System → Diagnostics** and select **Run Diagnostics** to inspect the active installation. Above the checks, the **Database** card says what kind of database Faxbot uses, whether it can reach it, what you can see, and warns about a database file outside the data folder (`GET /admin/db-status`). The summary identifies the active outbound provider, active inbound provider, default provider, active and desired revisions, and configuration generation. A pending revision does not change the configuration being checked.
+**System → Diagnostics** answers one question: is Faxbot working, and if not, what do you do about it? Each check is one sentence, and a check that needs you has a button that opens the page where you fix it.
 
-## What the results mean
+The page shows the last results as soon as it opens. The first visit after Faxbot starts runs the checks by itself; after that, select **Check now**. Checks only read. No fax is sent, no setting changes, and nothing costs money.
 
-- **Pass / Fail** describe applicable checks. Local readiness requires the active outbound configuration, required native connections and storage, database access, Ghostscript, and writable document directories.
-- **Warning** identifies a configuration concern, such as disabled audit logging or public HTTPS enforcement.
-- **Info** describes feature state or metadata. Disabled receiving, remote plugin installation, and an unneeded AMI connection are not automatically failures.
-- **Not applicable** means a check is not required for the active configuration.
+## What is checked
 
-Readiness checks inspect the captured active outbound adapter. They do not authenticate every remote provider account, verify callback reachability, or prove delivery. Inbound profile presence also does not establish that an external fax can be received. Use a controlled end-to-end fax to establish those results.
+| Section | Checks |
+| --- | --- |
+| Sending | The sending provider accepts Faxbot's sign-in: HumbleFax through its read-only account lookup, eFax through its sign-in. Faxes that may or may not have arrived and wait for you to confirm them in Sent. The last delivered fax and the last 7 days. |
+| Receiving | The receiving provider's sign-in (when it is not the sending account). Received faxes Faxbot stopped trying to fetch. The last fax received. Each email delivery: Faxbot signs in to the email server and leaves without sending a message. Faxes that could not be emailed. |
+| Fax engine | Whether Faxbot's own fax engine is running and how many calls are up. For a carrier trunk: whether the carrier accepted Faxbot's sign-in and answers its checks, whether received faxes reach Faxbot, why fax over IP (T.38) is off when Faxbot turned it off, Faxbot's internet address and the last call. |
+| This server | The database, free disk space where faxes are kept (a warning below 2 GB or 5%), whether Faxbot can write fax files, the document converter, the time zone times are shown in, settings waiting for a restart, and online storage when it is used. |
+| Security | The audit log, request limits and secure links for fax services. |
 
-Native Asterisk diagnostics include AMI connection state, a non-default AMI password, and the inbound secret when receiving is enabled. A custom HTTP manifest using the same provider name is assessed as its captured adapter rather than assumed to be native Asterisk.
+A provider without a read-only sign-in check (Phaxio, Sinch, SignalWire, Documo) shows that its sign-in details are saved; the next fax shows whether the provider accepts them. A check that cannot finish says so and does not hide the others.
 
-System checks create and remove their own temporary files. Storage reports its configured type and whether the active inbound provider requires it. The optional S3 bucket access probe runs only when inbound storage is required, a bucket is configured, and **Also check the S3 bucket** is on (each Diagnostics switch has its own **Apply**).
+The summary at the top counts what is not working and what needs attention. **Copy results** and **Download** give the same sentences as plain text, without passwords, keys or provider replies.
 
-Installed plugin and trait metadata are shown as structured values. This inventory describes installed files; active readiness uses the captured revision. Long values are shortened on screen and remain available in the JSON export.
+## Other actions
 
-## Actions
+- **Restart Faxbot** asks Faxbot to stop, only when the installation allows it (System → Diagnostics → **Allow restarting Faxbot from here**). With Docker Compose the `api` service starts again by itself, usually within a few seconds; elsewhere your process manager must start it.
+- **Read saved settings again** asks Faxbot to read its saved settings (`POST /admin/settings/reload`). It never applies changes that wait for a restart.
+- The **Database** card shows what kind of database Faxbot uses, whether it can reach it and what you can see.
+- **Also check the S3 bucket** adds a reach check of the online storage bucket to the settings check below.
 
-- **Open Settings** opens Providers → In use to review desired settings, apply explicit changes using the loaded revision, and inspect active versus pending state. Editing environment files does not update an initialized canonical store.
-- **Open Send** to choose a document and a destination you control. Held mode creates durable work without dispatch. Real mode can submit to the active provider when sending is enabled. Follow the resulting job and verify the received document to establish delivery.
-- **Copy results** copies the diagnostic result. **Download results** requests a browser download; verify that the browser saved it.
-- **Read saved settings again** asks Faxbot to read its saved settings (`POST /admin/settings/reload`); it never applies changes that wait for a restart.
-- **Restart Faxbot** asks Faxbot to stop, only when the installation allows it; the reply confirms the request, not a completed restart. With Docker Compose the `api` service starts again by itself (`restart: unless-stopped`), usually within a few seconds; elsewhere your process manager must start it again. Where several API processes run, a pending settings change waits until every one of them has stopped and started again.
+## Command line
 
-See the [Diagnostics Matrix](diagnostics-matrix.md) for follow-up actions, [Saving settings](settings.md) for configuration, and [Deployment](../deployment.md) for host preparation.
+```
+faxbot system diagnostics run      # check now
+faxbot system diagnostics show     # the last results, without checking again
+faxbot system diagnostics engine registrations|contacts|calls|faxes
+```
 
 ## Related endpoints
 
-- `POST /admin/diagnostics/run`: this diagnostic result.
-- `GET /health/ready`: shared local readiness checks.
-- `GET /admin/health-status`: dashboard health and durable job counts.
+- `POST /admin/diagnostics/report`: run every check now. `GET` returns the last run without contacting anything.
+- `GET /admin/diagnostics/engine/{view}`: what the fax engine reports (System → Developer → Scripts & checks).
+- `POST /admin/diagnostics/run`: every saved setting as a value, for older clients and scripts.
+- `GET /health/ready`: the shared readiness check the Overview uses.
 - `GET /admin/db-status`: the database card.
-- `POST /admin/restart`: optional process restart request.
+- `POST /admin/restart`: the optional restart request.

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Box, Button, Chip, Link, Paper, Stack, Typography } from '@mui/material';
+import { Box, Button, Chip, Link, Stack, Typography } from '@mui/material';
 import { Cloud, Security, VpnKey, VpnLock } from '@mui/icons-material';
 import AdminAPIClient from '../api/client';
 import PairPhoneDialog from './access/PairPhoneDialog';
@@ -16,8 +16,6 @@ export default function TunnelSettings({ client, docsBase, hipaaMode }: Props) {
   const [saving, setSaving] = useState<boolean>(false);
   const [testing, setTesting] = useState<boolean>(false);
   const [pairing, setPairing] = useState(false);
-  const [logsLoading, setLogsLoading] = useState<boolean>(false);
-  const [logs, setLogs] = useState<string[]>([]);
 
   const [provider, setProvider] = useState<'none' | 'cloudflare' | 'wireguard' | 'tailscale'>('none');
   const [wg, setWg] = useState<{ endpoint?: string; server_key?: string; client_ip?: string; dns?: string }>({});
@@ -79,19 +77,6 @@ export default function TunnelSettings({ client, docsBase, hipaaMode }: Props) {
   };
 
   const cloudflareDisabled = Boolean(hipaaMode);
-
-  const fetchLogs = async () => {
-    setLogsLoading(true); setLogs([]);
-    try {
-      const res = await (client as any).runAction?.('tunnel_status_cloudflared_logs_tail');
-      const out = (res?.stdout || '').split('\n').slice(-50);
-      setLogs(out);
-    } catch (e: any) {
-      setLogs([`[error] ${(e?.message || 'Failed to run action')}`]);
-    } finally {
-      setLogsLoading(false);
-    }
-  };
 
   return (
     <Box>
@@ -204,9 +189,6 @@ export default function TunnelSettings({ client, docsBase, hipaaMode }: Props) {
             <Button variant="outlined" onClick={() => setPairing(true)} sx={{ borderRadius: 2 }}>
               Pair a phone
             </Button>
-            <Button variant="text" onClick={fetchLogs} disabled={logsLoading} sx={{ borderRadius: 2 }}>
-              View Cloudflared Logs (tail)
-            </Button>
             <Box sx={{ ml: 'auto' }}>
               <Link href={learnMoreUrl} target="_blank" rel="noreferrer">Learn more</Link>
             </Box>
@@ -214,15 +196,6 @@ export default function TunnelSettings({ client, docsBase, hipaaMode }: Props) {
         </Stack>
         <SmoothLoader loading={loading} variant="linear" />
       </ResponsiveFormSection>
-
-      {logs.length > 0 && (
-        <Paper sx={{ p: 2, border: '1px solid', borderColor: 'divider', borderRadius: 2, mb: 2 }}>
-          <Typography variant="subtitle2" sx={{ mb: 1 }}>Cloudflared logs (last 50 lines)</Typography>
-          <Box component="pre" sx={{ m: 0, p: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: '0.8rem' }}>
-            {logs.join('\n')}
-          </Box>
-        </Paper>
-      )}
 
       <PairPhoneDialog client={client} open={pairing} onClose={() => setPairing(false)} />
     </Box>

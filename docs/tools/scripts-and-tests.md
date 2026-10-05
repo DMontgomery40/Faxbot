@@ -3,13 +3,16 @@
 
 A practical catalog of helper scripts and core API tests so you can validate Faxbot quickly. Where noted, helpers read values from `.env`. Every API request needs a Faxbot API key. On an existing installation, change server settings in [Settings](../admin-console/settings.md); editing `.env` later does not change them.
 
-## Admin Console workflows
+## In the console
 
-In **Tools → Scripts & Tests**, **Open Keys**, **Open Send Fax**, and **Open Settings** navigate to their existing console workflows. Opening these pages does not create a credential, submit a fax, or save configuration. Review the destination, document and send mode in Send Fax, and check in Settings whether changes are waiting for a restart.
+**System → Developer → Scripts & checks** has tools for checking Faxbot by hand. None of them sends a fax or changes a setting.
 
-**Show Config** reads configured inbound callback information. It does not prove provider reachability or fax receipt. The separate inbound helper creates a persisted synthetic record; it is not a provider-delivery check. Container actions can affect the host, including tunnels, and remain subject to the installation execution gate.
+- **Add a test fax** puts a one-page fax in Received, marked as a test everywhere. It goes through owners, mailbox rules and email delivery like a real fax; no call is made. It needs receiving to be on.
+- **How the receiving provider reaches Faxbot** shows the address to give a provider that calls Faxbot when a fax arrives (Phaxio, Sinch, SignalWire, eFax notifications), with a copy button and the provider's guide. For a carrier trunk it shows whether received faxes reach Faxbot; for a provider Faxbot collects from (HumbleFax), it says there is nothing to set.
+- **Fax engine** lists what Faxbot's own fax engine reports now: trunk sign-ins, the addresses it checks, calls in progress and faxes in progress. The command line has the same lists: `faxbot system diagnostics engine registrations|contacts|calls|faxes`.
+- **Server checks** run read-only commands on Faxbot's server (Python version, document converter version, files in the fax data folder) when the installation allows it (`ENABLE_ADMIN_EXEC`). The command line equivalent is `faxbot system actions run <id>`.
 
-Disabled sending holds outbound jobs without a provider attempt. It does not simulate delivery, and enabling sending does not automatically transmit held jobs.
+For "is everything working", use [Diagnostics](../admin-console/diagnostics.md).
 
 ## Auth and API basics
 

@@ -1,5 +1,5 @@
 import { http, HttpResponse } from 'msw';
-import { demoHealth, demoJobs, demoApiKeys, demoSettings, demoDiagnostics, demoInbound, demoValidation } from './data';
+import { demoHealth, demoJobs, demoApiKeys, demoSettings, demoDiagnostics, demoReport, demoInbound, demoValidation } from './data';
 
 let jobs = [...demoJobs];
 let apiKeys = [...demoApiKeys];
@@ -154,6 +154,8 @@ export const handlers = [
 
   // Diagnostics
   http.post('/admin/diagnostics/run', () => HttpResponse.json(demoDiagnostics)),
+  http.get('/admin/diagnostics/report', () => HttpResponse.json(demoReport)),
+  http.post('/admin/diagnostics/report', () => HttpResponse.json(demoReport)),
 
   // Inbound
   http.get('/inbound', () => HttpResponse.json(inbound)),
