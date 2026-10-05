@@ -134,6 +134,9 @@ export interface FaxCost {
   summary: string | null;
   reported_cost: Money[];
   estimated_cost?: Money[];
+  /** The route that carried the latest attempt ('direct', 'sip' or a provider id), and every route tried in order. */
+  route?: string | null;
+  routes?: string[];
 }
 
 export interface ReconcileResult {

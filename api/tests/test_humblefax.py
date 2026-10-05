@@ -368,7 +368,9 @@ def test_unusable_create_reply_is_sanitized_and_not_retried(fake, document, stat
 def test_poll_maps_documented_humblefax_states_to_faxbot_states(fake, wire_status, expected):
     fake.reply(200, sent(status=wire_status))
     adapter, transport = service(fake)
-    assert asyncio.run(adapter.get_fax_status('123456')) == {'provider_sid': '123456', 'status': expected}
+    result = asyncio.run(adapter.get_fax_status('123456'))
+    assert {key: result[key] for key in ('provider_sid', 'status')} == {'provider_sid': '123456', 'status': expected}
+    assert ('failure' in result) == (expected == 'failed')
     [request] = fake.requests
     assert request['method'] == 'GET' and request['path'] == '/sentFax/123456'
     assert request['headers']['authorization'] == BASIC
@@ -571,3 +573,22 @@ async def test_unready_account_or_unsupported_destination_fails_before_submissio
     record = attempt(store, job)
     assert record['error_category'] == category and record['submitted_at'] is None
     assert fake.requests == []
+
+
+@pytest.mark.parametrize(('reason', 'sentence'), [
+    ('No fax machine detected at destination', 'No fax machine answered at that number.'),
+    ('Line busy', 'The number was busy each time HumbleFax called.'),
+    ('No answer', 'Nobody answered the call.'),
+    ('Number not in service', 'The number could not be reached.'),
+    ('Something new <script>', 'HumbleFax could not deliver the fax.'),
+])
+def test_a_failed_fax_says_why_in_faxbots_words(fake, reason, sentence):
+    """HumbleFax's failureReason (GetSentFax recipients) becomes one plain sentence, never its own text."""
+    payload = sent(status='failure')
+    payload['data']['sentFax']['recipients'] = [{'status': 'failure', 'failureReason': reason, 'error': reason,
+                                                 'numAttempts': 1}]
+    fake.reply(200, payload)
+    adapter, _ = service(fake)
+    result = asyncio.run(adapter.get_fax_status('123456'))
+    assert result['status'] == 'failed' and result['failure'] == sentence
+    assert reason not in result['failure'] or reason == sentence

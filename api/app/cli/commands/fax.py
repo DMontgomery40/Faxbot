@@ -65,6 +65,15 @@ def delivery_notice(job):
     return None
 
 
+def _route_text(job, cost):
+    """The route that carried the fax (its latest attempt) and any route tried before it, as Sent shows it."""
+    routes = (cost or {}).get('routes') or []
+    if not routes:
+        return _provider(job.get('backend'))
+    names = ['Direct delivery' if route == 'direct' else _provider(route) for route in routes]
+    return names[-1] + (f" (after {', '.join(names[:-1])})" if len(names) > 1 else '')
+
+
 def _fax_fields(job):
     return [('Fax ID', job.get('id')), ('To', job.get('to') or job.get('to_number')), ('Status', status_label(job)),
             *([('Delivery', delivery_notice(job))] if delivery_notice(job) else []),
@@ -152,8 +161,9 @@ def jobs_list(status_filter: str = typer.Option(None, '--status', help='Only fax
     page = {**page, 'costs': costs}
 
     def human(out):
-        out.table((['Fax ID'] if ids else []) + ['To', 'Status', 'Pages', 'Provider', 'Cost', 'Accepted'],
-                  [([job['id']] if ids else []) + [job['to_number'], status_label(job), job['pages'], _provider(job['backend']),
+        out.table((['Fax ID'] if ids else []) + ['To', 'Status', 'Pages', 'Route', 'Cost', 'Accepted'],
+                  [([job['id']] if ids else []) + [job['to_number'], status_label(job), job['pages'],
+                                                   _route_text(job, costs.get(job['id'])),
                                                    cost_amount(costs.get(job['id'])), local_time(job['created_at'])]
                    for job in page['jobs']],
                   empty='No sent faxes.')
@@ -232,7 +242,8 @@ def jobs_history(fax_id: str = typer.Argument(..., help="Fax ID, from 'faxbot se
     def human(out):
         attempt = history.get('attempt') or {}
         out.fields([('Status', _label(history.get('state'))),
-                    ('Provider', _provider(history.get('provider_id'))), ('Provider fax ID', attempt.get('provider_sid')),
+                    ('Provider of the latest attempt', _provider(history.get('provider_id'))),
+                    ('Provider fax ID', attempt.get('provider_sid')),
                     ('Submitted', local_time(attempt.get('submitted_at'))),
                     ('Finished', local_time(attempt.get('completed_at')))])
         if history.get('state') == 'reconciliation_required':

@@ -252,3 +252,31 @@ async def test_excessive_positive_interval_does_not_block_the_next_eligible_fax(
         'captured.signalwire.invalid', 'eligible.signalwire.invalid']
     assert all(request.method == 'GET' for request in requests)
     assert store.get(eligible_job)['state'] == 'in_progress'
+
+
+@pytest.mark.asyncio
+async def test_a_polled_failure_keeps_the_adapters_plain_reason(installation, monkeypatch):
+    """HumbleFax said "No fax machine detected at destination"; Sent shows the adapter's own sentence."""
+    import sqlalchemy as sa
+    configuration, store, _ = installation
+    job, _ = issued(installation)
+    class Service:
+        async def get_fax_status(self, sid):
+            return {'provider_sid': sid, 'status': 'failed', 'failure': 'No fax machine answered at that number.'}
+    monkeypatch.setattr('api.app.outbound_polling.service_from_profile', lambda profile: Service())
+    await OutboundPoller(store).refresh(job)
+    assert store.get(job)['state'] == 'failed'
+    with configuration.engine.connect() as connection:
+        error = connection.execute(sa.text('select error from fax_jobs where id = :id'), {'id': job}).scalar()
+    assert error == 'No fax machine answered at that number.'
+
+
+
+def test_history_shows_only_known_failure_sentences():
+    import json
+    from api.app.outbound_store import _safe_event_details
+    known = json.dumps({'category': 'provider_failed', 'reason': 'No fax machine answered at that number.'})
+    assert _safe_event_details(known) == {'category': 'provider_failed',
+                                          'reason': 'No fax machine answered at that number.'}
+    other = json.dumps({'category': 'provider_failed', 'reason': '<b>anything the provider said</b>'})
+    assert _safe_event_details(other) == {'category': 'provider_failed'}
