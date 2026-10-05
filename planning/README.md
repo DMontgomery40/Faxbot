@@ -19,15 +19,6 @@ Inspected October 3, 2026 against the current checkout. Re-check these boundarie
 
 The [old architecture location](../docs/architecture/2026-10-03-enterprise-correspondence.md) is now a navigation pointer. The full enterprise specification lives here so replacement of the public documentation tree does not erase its source.
 
-## Legacy scripts are not routine generation
-
-The current workflows do not invoke the following migration tools:
-
-- [Branch mirror](../scripts/docs_tools/mirror_from_branch.py) overwrites a fixed set of operator guides and can restore historical pages that have since been archived.
-- [Markdown cleanup](../scripts/docs_tools/cleanup_mkdocs_content.py) rewrites matching content recursively under its supplied directory. Giving it the repository root includes planning and ignored research/archive files.
-
-Do not use these scripts for ordinary documentation updates. An explicitly requested historical migration needs its own scoped review and preservation of maintained sources. Relocating a file protects it from a `docs/` replacement, not from arbitrary scripts pointed at the whole repository.
-
 ## Maintenance rules
 
 Edit the enterprise specification here and update the root README/roadmap and affected guidance in the same capability change. Keep the old documentation pointer, agent entry points and local research cross-references current. Preserve implemented/partial/proposed labels and source limitations. Never infer that documented future work has shipped merely because a generator publishes a page.

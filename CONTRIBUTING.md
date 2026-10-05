@@ -60,7 +60,7 @@ These commands run the same checks as CI (`.github/workflows/ci.yml`). You need 
 | Command | What it does |
 | --- | --- |
 | `make venv` | Creates `.venv` with Python 3.11 and installs `api/requirements.txt` and `python_mcp/requirements.txt` |
-| `make test-local` | Runs the backend tests from `api/` with the same command and environment as the `test-api` job |
+| `make test-local` (or `make test`) | Runs the backend tests from `api/` with the same command and environment as the `test-api` job |
 | `make ui-build` | Runs `npm ci` and `npm run build` (typecheck and build) in `api/admin_ui` |
 | `npm ci --prefix node_mcp && npm --prefix node_mcp run check` | Checks that every Node MCP module parses and imports |
 
