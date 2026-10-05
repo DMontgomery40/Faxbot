@@ -1,43 +1,47 @@
 # Diagnostics
 
-**System → Diagnostics** answers one question: is Faxbot working, and if not, what do you do about it? Each check is one sentence, and a check that needs you has a button that opens the page where you fix it.
+**System → Diagnostics** answers one question: does Faxbot work, and if not, what do you do? Each check gives one sentence. When a check needs you, it has a button that opens the page where you fix the problem.
 
-The page shows the last results as soon as it opens. The first visit after Faxbot starts runs the checks by itself; after that, select **Check now**. Checks only read. No fax is sent, no setting changes, and nothing costs money.
+The page shows the last results when it opens. The first time you open it after Faxbot starts, it runs the checks by itself. After that, select **Check now**.
+
+The checks only read. They send no fax, change no setting and cost no money.
 
 ## What is checked
 
 | Section | Checks |
 | --- | --- |
-| Sending | The sending provider accepts Faxbot's sign-in: HumbleFax through its read-only account lookup, eFax through its sign-in. Faxes that may or may not have arrived and wait for you to confirm them in Sent. The last delivered fax and the last 7 days. |
-| Receiving | The receiving provider's sign-in (when it is not the sending account). Received faxes Faxbot stopped trying to fetch. The last fax received. Each email delivery: Faxbot signs in to the email server and leaves without sending a message. Faxes that could not be emailed. |
-| Fax engine | Whether Faxbot's own fax engine is running and how many calls are up. For a carrier trunk: whether the carrier accepted Faxbot's sign-in and answers its checks, whether received faxes reach Faxbot, why fax over IP (T.38) is off when Faxbot turned it off, Faxbot's internet address and the last call. |
-| This server | The database, free disk space where faxes are kept (a warning below 2 GB or 5%), whether Faxbot can write fax files, the document converter, the time zone times are shown in, settings waiting for a restart, and online storage when it is used. |
+| Sending | Whether the sending provider accepts Faxbot's sign-in details. For HumbleFax, Faxbot uses its read-only account lookup. For eFax, Faxbot signs in. Faxes that may or may not have arrived, which you confirm in **Sent**. The last delivered fax and the last 7 days. |
+| Receiving | Whether the receiving provider accepts Faxbot's sign-in details, when it is not the sending provider. Received faxes that Faxbot stopped trying to fetch. The last received fax. Each email delivery: Faxbot signs in to the email server and leaves without sending a message. Faxes that Faxbot could not email. |
+| Fax engine | Whether Faxbot's own fax engine runs, and how many calls are in progress. For a carrier trunk, also: whether the carrier accepts Faxbot's sign-in details and answers its checks. Whether received faxes reach Faxbot. Why fax over IP (T.38) is off, when Faxbot turned it off. Whether the network allows fax over IP (T.38) ("Faxing over the internet"). The last call. |
+| This server | The database. Free disk space where faxes are kept, with a warning below 2 GB or 5%. Whether Faxbot can write fax files. The document converter. The time zone that times are shown in. Settings that wait for a restart. Online storage, when it is used. |
 | Security | The audit log, request limits and secure links for fax services. |
 
-A provider without a read-only sign-in check (Phaxio, Sinch, SignalWire, Documo) shows that its sign-in details are saved; the next fax shows whether the provider accepts them. A check that cannot finish says so and does not hide the others.
+Some providers have no read-only sign-in check: Phaxio, Sinch, SignalWire and Documo. For them, the check only shows that the sign-in details are saved. The next fax shows whether the provider accepts them.
 
-The summary at the top counts what is not working and what needs attention. **Copy results** and **Download** give the same sentences as plain text, without passwords, keys or provider replies.
+When a check cannot finish, it says so. The other checks still show their results.
+
+The summary at the top counts what does not work and what needs attention. **Copy results** and **Download** give the same sentences as plain text. The text contains no passwords, no keys and no provider replies.
 
 ## Other actions
 
-- **Restart Faxbot** asks Faxbot to stop, only when the installation allows it (System → Diagnostics → **Allow restarting Faxbot from here**). With Docker Compose the `api` service starts again by itself, usually within a few seconds; elsewhere your process manager must start it.
+- **Restart Faxbot** asks Faxbot to stop. It works only when **Allow restarting Faxbot from here** is on (**System → Diagnostics**). With Docker Compose, the `api` service starts again by itself, usually in a few seconds. Elsewhere, your process manager must start it.
 - **Read saved settings again** asks Faxbot to read its saved settings (`POST /admin/settings/reload`). It never applies changes that wait for a restart.
-- The **Database** card shows what kind of database Faxbot uses, whether it can reach it and what you can see.
-- **Also check the S3 bucket** adds a reach check of the online storage bucket to the settings check below.
+- The **Database** card shows the type of database, whether Faxbot can reach it and what you can see.
+- **Also check the S3 bucket** adds a check that Faxbot can reach the online storage bucket. The settings check below includes it.
 
 ## Command line
 
 ```
 faxbot system diagnostics run      # check now
-faxbot system diagnostics show     # the last results, without checking again
+faxbot system diagnostics show     # show the last results, without a new check
 faxbot system diagnostics engine registrations|contacts|calls|faxes
 ```
 
 ## Related endpoints
 
-- `POST /admin/diagnostics/report`: run every check now. `GET` returns the last run without contacting anything.
-- `GET /admin/diagnostics/engine/{view}`: what the fax engine reports (System → Developer → Scripts & checks).
+- `POST /admin/diagnostics/report`: runs every check now. `GET` returns the last results and contacts nothing.
+- `GET /admin/diagnostics/engine/{view}`: what the fax engine reports (**System → Developer → Scripts & checks**).
 - `POST /admin/diagnostics/run`: every saved setting as a value, for older clients and scripts.
-- `GET /health/ready`: the shared readiness check the Overview uses.
-- `GET /admin/db-status`: the database card.
+- `GET /health/ready`: the shared readiness check that the Overview uses.
+- `GET /admin/db-status`: the **Database** card.
 - `POST /admin/restart`: the optional restart request.
