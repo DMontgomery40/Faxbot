@@ -609,8 +609,8 @@ def test_a_managed_phone_system_install_says_how_to_publish_faxbot_then_what_to_
     after = phone_client.get('/admin/sip/status', headers=ADMIN).json()
     assert after['phone_system'] == {'address': '192.168.10.20', 'sip_port': 5060, 'media_ports': '4000-4019',
                                      'faxes_at_once': 6}
-    assert after['ports_text'] == ('Give your phone system administrator this address: 192.168.10.20, port 5060 '
-                                   '(UDP or TCP), and media ports 4000\u20134019, enough for 6 faxes at once.')
+    assert after['ports_text'] == ('In your phone system, send fax calls to 192.168.10.20, port 5060 '
+                                   '(UDP or TCP), with media ports 4000\u20134019: enough for 6 faxes at once.')
     assert after['phone_system_command'] is None and after['phone_system_hidden'] is False
     # IP-authenticated peer: no registration, reachability from Asterisk's checks of the phone system.
     assert (after['registration'], after['reachability'], after['in_use']) == ('not_used', 'reachable', True)

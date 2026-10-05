@@ -1,24 +1,25 @@
 # Diagnostics Matrix
 
-What to do about each result on [Diagnostics](diagnostics.md). The button next to a result opens the page named here.
+What to do about each result on [Diagnostics](diagnostics.md). The button next to a result on that page opens the page named here.
 
 | Result | What to do |
 | --- | --- |
-| No sending provider is set up | **System → Setup** walks through choosing one. |
-| The provider did not accept Faxbot's sign-in details | **Providers → In use**: enter the keys again, copied from the provider's own dashboard. |
-| Faxbot could not reach the provider | Check the server's internet connection, then **Check now**. A provider outage clears by itself. |
-| Faxes may or may not have arrived | **Faxes → Sent**: confirm each one. Faxbot never sends them again on its own. |
-| The last fax failed | **Faxes → Sent**: open it to see what the receiving machine or provider said. |
-| Faxbot stopped trying to fetch received faxes | **Faxes → Received**: open each one and select **Fetch again**. |
-| The email server did not accept the user name or password | **Numbers → Email delivery**: for Gmail, use an app password. |
-| Faxes could not be emailed | **Faxes → Received**: retry each one once email works. |
-| The fax engine is not running or refuses Faxbot's sign-in | **Providers → carrier trunk**: check that Asterisk runs and the manager password matches. |
-| The carrier did not accept Faxbot's sign-in | **Providers → carrier trunk**: check the user name and password from the carrier's dashboard, then **Apply and connect**. |
-| Received faxes do not reach Faxbot | **Providers → carrier trunk** → **Apply and connect** writes what the fax engine needs. |
-| Fax over IP (T.38) is off | The sentence says why; **Providers → carrier trunk** has the details. Audio fax keeps working meanwhile. |
-| Little disk space is left | **System → Storage & retention**: shorten how long faxes are kept, or give the server more space. Faxbot stops receiving when the disk is full. |
-| Faxbot cannot write fax files | Check the data folder's disk and permissions on the server. |
-| The document converter is missing | Install Ghostscript (`gs`) where Faxbot runs; the Docker image includes it. |
-| No time zone is chosen | **System → Setup** → Time zone. |
-| Some saved changes take effect after Faxbot restarts | **Restart Faxbot** on Diagnostics, or restart the service. |
-| The audit log, request limits or secure links are off | **System → Audit log** or **System → Security**. |
+| No sending provider is set up | **System → Setup** walks you through choosing one. |
+| The provider did not accept Faxbot's sign-in details | In **Providers → In use**, enter the keys again, copied from the provider's own dashboard. |
+| Faxbot could not reach the provider | Check the server's internet connection, then select **Check now**. A provider outage clears up on its own. |
+| Faxes may or may not have arrived | Confirm each one in **Faxes → Sent**. Faxbot never sends them again by itself. |
+| The last fax failed | Open it in **Faxes → Sent** to see what the receiving machine or the provider said. |
+| Faxbot stopped trying to fetch received faxes | Open each one in **Faxes → Received** and select **Fetch again**. |
+| The email server did not accept the user name or password | Fix it in **Numbers → Email delivery**. With Gmail, use an app password. |
+| Faxbot could not email some faxes | Once email works again, retry each one from **Faxes → Received**. |
+| The fax engine isn't running, or refuses Faxbot's sign-in | On **Providers → carrier trunk**, check that Asterisk is running and that the manager password matches. |
+| The carrier did not accept Faxbot's sign-in details | On **Providers → carrier trunk**, check the username and password against the carrier's dashboard, then select **Apply and connect**. |
+| Received faxes don't reach Faxbot | Select **Apply and connect** on **Providers → carrier trunk**; it writes what the fax engine needs. |
+| Fax over IP (T.38) is off | The sentence explains why, and **Providers → carrier trunk** has the details. Audio fax keeps working in the meantime. |
+| Faxing over the internet: your network needs one change | **Providers → carrier trunk → Network for fax over IP** shows the fix for your setup; see also [Network for fax over IP](../setup/network.md). Audio fax keeps working in the meantime. |
+| Little disk space is left | In **System → Storage & retention**, keep faxes for a shorter time, or give the server more space. Faxbot stops receiving when the disk is full. |
+| Faxbot can't write fax files | Check the disk and the data folder's permissions on the server. |
+| The document converter is missing | Install Ghostscript (`gs`) where Faxbot runs. The Docker image already includes it. |
+| No time zone is chosen | Choose one in **System → Setup → Time zone**. |
+| Some saved changes take effect after Faxbot restarts | Select **Restart Faxbot** on Diagnostics, or restart the service. |
+| The audit log, protection from overload, or secure links are off | Turn them on in **System → Audit log** or **System → Security**. |

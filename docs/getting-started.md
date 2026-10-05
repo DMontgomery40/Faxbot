@@ -36,7 +36,12 @@ Faxbot is an open-source, self-hostable fax API that combines:
 ## Launch Faxbot
 
 1. For first bootstrap, copy `.env.example` to `.env`. Once canonical state exists, use Settings for server configuration changes.
-2. On a Mac with Colima, create Colima directly on your local network from the start, so fax over IP (T.38) works with a carrier trunk (see [Network for fax over IP](setup/network.md)): `colima start --network-address --network-mode bridged --network-interface "$(route -n get default | awk '/interface:/{print $2}')" --network-preferred-route`. Colima cannot switch an existing machine to this later without recreating it.
+2. On a Mac with Colima, create the Colima virtual machine directly on your local network from the start, so that fax over IP (T.38) can work with a carrier trunk (see [Network for fax over IP](setup/network.md)). Colima can't change this later without creating a new virtual machine.
+
+    ```sh
+    colima start --network-address --network-mode bridged --network-interface "$(route -n get default | awk '/interface:/{print $2}')" --network-preferred-route
+    ```
+
 3. Start the API: `docker compose up -d --build api`
 4. Open the Admin Console at `http://localhost:8080/admin/ui/`.
 

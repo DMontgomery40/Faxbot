@@ -501,8 +501,8 @@ async def server(context: Context) -> list[Finding]:
     folders = facts['data_writable'] and facts['temp_writable']
     findings.append(Finding('server.folders', 'server', 'Fax folders', OK if folders else PROBLEM,
                             'Faxbot can save fax files.' if folders
-                            else 'Faxbot cannot save fax files on this server. Ask whoever runs the server to '
-                                 'check its disk.'))
+                            else 'Faxbot cannot save fax files on this server. Check the disk and the '
+                                 'permissions of the fax data folder.'))
     findings.append(Finding('server.converter', 'server', 'Document converter', OK if facts['gs'] else PROBLEM,
                             'Faxbot can turn documents into fax pages.' if facts['gs']
                             else 'Faxbot\'s document converter is missing, so it cannot turn documents into fax pages.'))
