@@ -301,6 +301,12 @@ READER_RULE = """Who reads these pages: the administrator who set Faxbot up and 
 - Keep developer internals (API internals, revision IDs, plugin manifests, environment-variable plumbing) out of operator guides; they belong on developer reference pages."""
 
 
+DIFF_FORMAT = ("Write the diff exactly as `git diff` prints it: a `diff --git a/<path> b/<path>` line, `--- a/<path>` "
+               "and `+++ b/<path>` lines, then hunks headed `@@ -<start>,<count> +<start>,<count> @@` with three "
+               "unchanged context lines before and after each change. Do not use the apply_patch format or bare `@@` "
+               "lines. Delete a whole page with `deleted file mode 100644` and every line removed.")
+
+
 def proposal_prompt(context) -> str:
     base, head = context['base'], context['head']
     return f"""You are Docs Autopilot for Faxbot, a self-hosted fax server. You are an independent reviewer and technical writer. You did not write this code, so do not trust any page, comment or commit message to be right: check it against the code.
@@ -332,6 +338,8 @@ Answer with exactly two fenced blocks and nothing else:
 ```findings
 (one line per finding: path:line, then one sentence; or the single word none)
 ```
+
+{DIFF_FORMAT}
 
 Files changed in {base[:12]}..{head[:12]}:
 {context['stat']}
@@ -535,7 +543,7 @@ def _file_sections(patch):
             continue
         if current is None:
             continue
-        if not current[2] and not line.startswith('@@ '):
+        if not current[2] and not line.startswith('@@'):
             current[1].append(line)
             if line.startswith('+++ b/'):
                 current[0] = line[6:].strip()
@@ -556,7 +564,7 @@ def _rebuilt(path, body):
         return None
     updated, cursor, hunks = list(original), 0, []
     for line in body:
-        if line.startswith('@@ '):
+        if line.startswith('@@'):  # also Codex's bare '@@' hunks, which carry no line numbers
             hunks.append(([], []))
         elif hunks and not line.startswith('\\'):
             text = line[1:] if line[:1] in (' ', '-', '+') else line
@@ -566,6 +574,9 @@ def _rebuilt(path, body):
             if line[:1] != '-':
                 hunks[-1][1].append(text)
     for old, new in hunks:
+        # A model often ends a hunk with blank lines the file does not have there.
+        while old and new and old[-1] == new[-1] == '\n':
+            old, new = old[:-1], new[:-1]
         found = next((start for start in range(cursor, len(updated) - len(old) + 1)
                       if updated[start:start + len(old)] == old), None) if old else None
         if found is None:
@@ -574,6 +585,15 @@ def _rebuilt(path, body):
         cursor = found + len(new)
     diff = list(difflib.unified_diff(original, updated, f'a/{path}', f'b/{path}'))
     return f'diff --git a/{path} b/{path}\n' + ''.join(diff) if diff else ''
+
+
+_BARE_HUNK = re.compile(r'^@@\s*$', re.M)
+
+
+def _unusable(patch: str):
+    """Pages whose hunks still have no line numbers: git apply would skip them without a word."""
+    return [path or 'a page' for path, header, body in _file_sections(patch)
+            if any(_BARE_HUNK.match(line.rstrip('\n')) for line in body)]
 
 
 def normalize_patch(patch: str) -> str:
@@ -605,11 +625,15 @@ def validated_patch(patch: str) -> str:
     (normalize_patch), because models often miscount hunk lines or drop trailing context. The repaired
     patch must pass the same validator; nothing outside maintained docs Markdown ever gets through.
     """
-    reason = _refusal(patch)
-    if reason is None:
+    reason = None if _unusable(patch) else _refusal(patch)
+    if reason is None and not _unusable(patch):
         return patch
     repaired = normalize_patch(patch)
-    if repaired != patch:
+    unusable = _unusable(repaired)
+    if unusable:
+        reason = (f'the change to {", ".join(unusable)} does not match the page as it is in the repository, and its '
+                  'hunks give no line numbers.')
+    elif repaired != patch:
         repaired_reason = _refusal(repaired)
         if repaired_reason is None:
             return repaired
@@ -685,6 +709,8 @@ Answer with exactly two fenced blocks and nothing else:
 (one line per finding: path:line, then one sentence; or the single word none)
 ```
 
+{DIFF_FORMAT}
+
 All maintained documentation pages:
 {chr(10).join(everything)}
 """
@@ -719,10 +745,13 @@ def run_audit(provider, patterns, batch_size):
             if patch:
                 try:
                     accepted.append(validated_patch(patch))
-                    note = f'Proposed changes: {_patch_stats(patch)}.'
+                    note = f'Proposed changes: {_patch_stats(accepted[-1])}.'
                 except ProposalError as error:
                     failed += 1
-                    note = f'The proposed patch for this batch was refused: {error}'
+                    # Each batch keeps its own refused patch.
+                    kept = ROOT / f'mkdocs-docs-llm.rejected.batch-{number}.patch'
+                    (ROOT / 'mkdocs-docs-llm.rejected.patch').replace(kept)
+                    note = f'The proposed patch for this batch was refused ({kept.name}): {error}'
         except ProposalError as error:
             failed += 1
             note = f'This batch produced no result: {error}'

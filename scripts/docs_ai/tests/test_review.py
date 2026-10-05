@@ -280,6 +280,24 @@ def test_a_model_diff_with_miscounted_hunks_and_no_trailing_context_is_rebuilt_t
         autopilot.validated_patch(outside)
 
 
+def test_codex_style_bare_hunks_are_rebuilt_and_a_hunk_that_does_not_match_is_refused_by_name(autopilot, repository):
+    """Codex's apply_patch habit: '@@' with no line numbers, and trailing blank lines the page does not have."""
+    (repository / 'docs/avaya.md').write_text('# Avaya\n\nIntro.\n\nGive your phone system administrator this '
+                                              'address.\n\nMore.\n')
+    git(repository, 'add', 'docs/avaya.md')
+    git(repository, 'commit', '-qm', 'Avaya page')
+    sent = ('--- a/docs/avaya.md\n+++ b/docs/avaya.md\n@@\n-Give your phone system administrator this address.\n'
+            '+In your phone system, send fax calls to this address.\n\n\n')
+    repaired = autopilot.validated_patch(sent)
+    subprocess.run(['git', 'apply', '-'], input=repaired, cwd=repository, text=True, check=True)
+    assert 'In your phone system, send fax calls to this address.\n' in (repository / 'docs/avaya.md').read_text()
+    git(repository, 'checkout', '--', 'docs/avaya.md')
+    # git apply would skip this section without a word; Docs Autopilot refuses it and names the page.
+    stale = '--- a/docs/avaya.md\n+++ b/docs/avaya.md\n@@\n-A line the page does not have.\n+Something new.\n'
+    with pytest.raises(autopilot.ProposalError, match='the change to docs/avaya.md does not match the page'):
+        autopilot.validated_patch(DIFF + stale)
+
+
 # -- audit -----------------------------------------------------------------------------------------------------------
 
 def test_the_audit_checks_pages_in_batches_against_the_current_code_and_flags_pages_missing_from_nav(repository):
