@@ -37,7 +37,6 @@ import logging
 import os
 import re
 import secrets
-import socket
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -710,11 +709,3 @@ def record_inbound_engine(engine, payload, *, call_key, inbound_fax_id, number):
     records = hylafax_records.records_for(engine)
     return hylafax_records.safely(records.record_result, direction='inbound', call_key=call_key, details=values,
                                   job_id=inbound_fax_id, number=number)
-
-
-def engine_reachable(host=None, port=SUBMIT_PORT, timeout=2.0) -> bool:
-    try:
-        with socket.create_connection((host or ENGINE_HOST, port), timeout=timeout):
-            return True
-    except OSError:
-        return False

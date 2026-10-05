@@ -55,6 +55,6 @@ Streamable HTTP and SSE send files as base64 inside a JSON body limited to 16 MB
 
 ## API tests
 
-The [API Tests Overview](api-tests.md) has the commands for an isolated development environment and a map of what the tests cover. The production image doesn't include the test suite, so the older `make test` target can't run it.
+The [API Tests Overview](api-tests.md) has the commands for an isolated development environment and a map of what the tests cover. From a checkout, `make test` runs them the way CI does.
 
 For operator checks, turn [sending off](../setup/test-mode.md): Faxbot then accepts real documents as held jobs and makes no provider attempt for them. Held jobs never go out on their own when you turn sending back on, and a fake callback can't mark one as delivered.

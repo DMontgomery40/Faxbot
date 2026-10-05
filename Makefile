@@ -1,6 +1,6 @@
 SHELL := /bin/bash
 
-.PHONY: up down build logs fmt test mcp-up mcp-down mcp-setup mcp-logs mcp-sse-up mcp-sse-down mcp-sse-logs
+.PHONY: up up-cloud down build logs test mcp-up mcp-down mcp-logs
 
 up:
 	docker compose up -d --build
@@ -18,8 +18,9 @@ logs:
 build:
 	docker compose build
 
-test:
-	docker compose run --rm api pytest -q
+# make test runs the API tests from this checkout the same way the test-api CI job does.
+# The API image does not include the tests.
+test: test-local
 
 # Local equivalents of the CI jobs (see CONTRIBUTING.md).
 # VENV can point at an existing venv, e.g. make test-local VENV=/path/to/.venv
@@ -106,40 +107,12 @@ inbound-smoke:
 inbound-e2e:
 	API_KEY=$${API_KEY} ./scripts/inbound-watch.sh
 
-# MCP-specific commands (2025 Standards)
-mcp-install:
-	./install.sh
-
-mcp-setup:
-	@echo "See docs/MCP_INTEGRATION.md for stdio/HTTP/SSE config"
-
+# MCP servers in Docker (the compose profile "mcp")
 mcp-up:
 	docker compose --profile mcp up -d --build
-
-mcp-http:
-	cd api && npm run start:http
-
-mcp-stdio:
-	cd api && npm run start:mcp
 
 mcp-down:
 	docker compose --profile mcp down
 
 mcp-logs:
 	docker compose logs -f faxbot-mcp
-
-mcp-sse-up:
-	docker compose --profile mcp up -d --build faxbot-mcp-sse
-
-mcp-sse-down:
-	docker compose --profile mcp down
-
-mcp-sse-logs:
-	docker compose logs -f faxbot-mcp-sse
-
-# Package management
-npm-global:
-	cd api && npm run install-global
-
-homebrew-install:
-	brew bundle

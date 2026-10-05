@@ -17,11 +17,6 @@ Guidance for securing MCP transports and webhooks when running Faxbot in product
   - Port: 3003, or built into the API at `/mcp/sse/sse` with `ENABLE_MCP_SSE=true`.
   - Same per-client keys and OAuth options as Streamable HTTP. Prefer Streamable HTTP for new clients.
 
-- WebSocket (Node MCP)
-  - Port: 3004 (default)
-  - Protect with `MCP_WS_API_KEY` (or reuse `API_KEY`) and run behind TLS or an authenticated proxy.
-  - Use only for trusted clients or internal networks.
-
 ## Webhooks & Callbacks
 
 - Phaxio (outbound status)

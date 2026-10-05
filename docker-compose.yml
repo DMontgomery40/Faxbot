@@ -111,17 +111,6 @@ services:
     stdin_open: true
     tty: true
 
-  # Optional: MCP Inspector (web UI) to explore tools/resources/prompts
-  mcp-inspector:
-    image: ghcr.io/modelcontextprotocol/inspector:latest
-    ports:
-      - "6274:6274"  # UI
-      - "6277:6277"  # Proxy
-    profiles:
-      - mcp
-    stdin_open: true
-    tty: true
-
 volumes:
   faxdata:
     driver: local

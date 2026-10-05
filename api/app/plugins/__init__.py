@@ -1,7 +1,8 @@
-"""Plugin subsystem (v3) — feature-gated scaffolding.
+"""HTTP manifest providers.
 
-This package contains base types and helpers for the planned v3 plugin
-architecture. It is intentionally not imported by the core runtime unless
-FEATURE_V3_PLUGINS is enabled.
+``http_provider`` sends faxes through another provider's HTTP API, as described
+by a JSON manifest. ``provider_catalog`` lists the manifests found under
+``FAXBOT_PROVIDERS_DIR``. ``main`` reads manifests with this module when they
+are installed or validated, and ``provider_execution`` sends through them.
+Installing a manifest through the API still needs ``FEATURE_V3_PLUGINS``.
 """
-

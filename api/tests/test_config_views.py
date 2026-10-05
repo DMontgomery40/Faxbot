@@ -255,16 +255,20 @@ def test_editor_projects_delivery_routes_intake_email_and_direct_delivery_settin
     assert defaults['sender'] == {'header': 'Faxbot', 'station_id': defaults['sip']['station_id']}
 
 
-def test_environment_only_settings_show_whether_they_are_set_and_never_a_secret():
-    from api.app.config_views import DEPLOYMENT_VARIABLES, deployment_view
+def test_environment_only_settings_show_whether_they_are_set_and_never_a_secret(monkeypatch):
+    from api.app import config_views
+    from api.app.config_views import deployment_view
 
-    view = deployment_view({'FAXBOT_CONSOLE_ORIGINS': ' https://fax.example ', 'MCP_WS_API_KEY': 'synthetic-ws-secret',
+    # No shipped environment-only setting is secret today; a synthetic one keeps the redaction rule tested.
+    monkeypatch.setattr(config_views, 'DEPLOYMENT_VARIABLES', config_views.DEPLOYMENT_VARIABLES + ('SYNTHETIC_SECRET',))
+    monkeypatch.setattr(config_views, 'SECRET_DEPLOYMENT_VARIABLES', frozenset({'SYNTHETIC_SECRET'}))
+    view = deployment_view({'FAXBOT_CONSOLE_ORIGINS': ' https://fax.example ', 'SYNTHETIC_SECRET': 'synthetic-secret-value',
                             'ENABLE_LOCAL_ADMIN': 'true', 'TZ': '', 'UNRELATED': 'x'})
-    assert set(view) == set(DEPLOYMENT_VARIABLES)
+    assert set(view) == set(config_views.DEPLOYMENT_VARIABLES)
     assert view['FAXBOT_CONSOLE_ORIGINS'] == {'set': True, 'value': 'https://fax.example'}
-    assert view['MCP_WS_API_KEY'] == {'set': True, 'value': None}
+    assert view['SYNTHETIC_SECRET'] == {'set': True, 'value': None}
     assert view['TZ'] == {'set': False, 'value': None}
-    assert 'synthetic-ws-secret' not in repr(view)
+    assert 'synthetic-secret-value' not in repr(view)
     # The terminal follows the console when ENABLE_ADMIN_EXEC is not set, and ENABLE_ADMIN_EXEC when it is.
     assert view['ENABLE_ADMIN_EXEC'] == {'set': False, 'value': None, 'effective': True}
     assert deployment_view({'ENABLE_LOCAL_ADMIN': 'true', 'ENABLE_ADMIN_EXEC': 'false'})['ENABLE_ADMIN_EXEC']['effective'] is False

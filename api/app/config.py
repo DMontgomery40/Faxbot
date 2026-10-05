@@ -312,16 +312,3 @@ def providerTraitValue(direction: str, trait_name: str):
         return tr.get(trait_name)
     except Exception:
         return None
-
-
-def is_inbound_sip() -> bool:
-    # SIP-like inbound if AMI is required by inbound provider
-    return providerHasTrait("inbound", "requires_ami")
-
-
-def is_outbound_cloud() -> bool:
-    try:
-        pid = active_outbound()
-        return (get_provider_traits(pid).get("kind") or "").lower() == "cloud"
-    except Exception:
-        return False

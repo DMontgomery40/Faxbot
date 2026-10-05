@@ -16,11 +16,6 @@ Streamable HTTP
 - Start: `node node_mcp/src/servers/http.js`
 - Endpoints: `POST /mcp`, `GET /health`; with OAuth and `MCP_RESOURCE_URL`, `GET /.well-known/oauth-protected-resource`
 
-WebSocket (development bridge, not an MCP transport)
-
-- Path: `node_mcp/src/servers/ws.js`
-- Env: `MCP_WS_PORT` (default 3004), `MCP_WS_API_KEY` or `API_KEY` (required; sent in the `X-API-Key` or `Authorization: Bearer` header)
-
 Tools
 
 - `send_fax(to, fileContent, fileName, fileType?)`. On stdio, `filePath` or `fileUrl` can replace `fileContent`.

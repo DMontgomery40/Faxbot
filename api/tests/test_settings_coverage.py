@@ -363,15 +363,20 @@ def test_a_new_installation_takes_its_zone_from_tz_and_an_upgrade_takes_it_once(
 
 
 def test_environment_only_settings_are_shown_read_only_and_never_a_secret(cli, monkeypatch):
+    from app import config_views
+
     client = cli.client
+    # No shipped environment-only setting is secret today; a synthetic one keeps the redaction rule tested.
+    monkeypatch.setattr(config_views, 'DEPLOYMENT_VARIABLES', config_views.DEPLOYMENT_VARIABLES + ('SYNTHETIC_SECRET',))
+    monkeypatch.setattr(config_views, 'SECRET_DEPLOYMENT_VARIABLES', frozenset({'SYNTHETIC_SECRET'}))
     monkeypatch.setenv('FAXBOT_MEDIA_PORTS', '10000-10100')
-    monkeypatch.setenv('MCP_WS_API_KEY', 'synthetic-ws-secret-value')
+    monkeypatch.setenv('SYNTHETIC_SECRET', 'synthetic-secret-value')
     monkeypatch.delenv('TZ', raising=False)
     response = client.get('/admin/settings', headers=ADMIN)
     assert response.status_code == 200, response.text
     deployment = response.json()['deployment']
     assert deployment['FAXBOT_MEDIA_PORTS'] == {'set': True, 'value': '10000-10100'}
-    assert deployment['MCP_WS_API_KEY'] == {'set': True, 'value': None}
+    assert deployment['SYNTHETIC_SECRET'] == {'set': True, 'value': None}
     assert deployment['TZ'] == {'set': False, 'value': None}
-    assert 'synthetic-ws-secret-value' not in response.text
+    assert 'synthetic-secret-value' not in response.text
     assert 'admin_allow_restart' in response.json()['owner_only']
