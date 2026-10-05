@@ -1313,7 +1313,7 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
                         const storage = report.sections.flatMap((section) => section.checks)
                           .find((check) => check.id === 'server.storage');
                         if (!storage) {
-                          setSnack('Save online storage first, then check the bucket.');
+                          setSnack('Save your storage settings first, then check again.');
                         } else if (storage.status === 'attention') {
                           setSnack('Turn on Also check the S3 bucket under System → Diagnostics, then check again.');
                         } else {

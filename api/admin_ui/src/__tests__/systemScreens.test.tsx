@@ -83,7 +83,7 @@ describe('Audit log', () => {
 
   it('tells asking to open the terminal from each session it started', () => {
     expect(entryAction({ operation: 'host.terminal', details: { request: 'POST /admin/terminal/ticket' } }))
-      .toBe('Asked to open the terminal');
+      .toBe('Asked for access to the server terminal');
     expect(entryAction({ operation: 'host.terminal', details: { request: 'WEBSOCKET /admin/terminal', session: 'started' } }))
       .toBe('Opened the terminal');
     expect(entryAction({ operation: 'host.restart', details: {} })).toBe('Restarted Faxbot');

@@ -270,7 +270,8 @@ def providers_configure(provider: str = typer.Argument(..., help="Provider from 
                                                          help="Prompt for this setting's value without echoing it, for passwords and keys. Repeat for more."),
                         role: str = typer.Option(None, '--role', help='With --enable: outbound (sending), inbound '
                                                                       '(receiving) or storage.'),
-                        enable: bool = typer.Option(False, '--enable', help='Use this provider for the role.')):
+                        enable: bool = typer.Option(False, '--enable', help='Use this provider for sending, receiving or storage '
+                                                                     '(choose which with --role).')):
     """Change a provider's settings, or start using it for sending, receiving or storage."""
     name, fields = _provider_fields(provider)
     known = _request_names()

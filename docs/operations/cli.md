@@ -21,7 +21,7 @@ Every command and option is listed in the [command line reference](../reference/
 | `faxbot access` | People, groups, roles, keys, sign-ins and paired phones |
 | `faxbot system` | Settings, checks, logs, the security log, profiles, backups and restarts |
 
-The command names from before these eight areas, such as `faxbot jobs list`, were removed; the [release notes](../release-notes.md) list their new names.
+Command names from before these eight areas, such as `faxbot jobs list`, no longer work. The [release notes](../release-notes.md#renamed-commands) list the new name for each.
 
 ## Install
 

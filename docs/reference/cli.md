@@ -1382,7 +1382,7 @@ $ faxbot providers configure [OPTIONS] {provider} [NAME=VALUE...]
 
 * `--secret NAME`: Prompt for this setting&#x27;s value without echoing it, for passwords and keys. Repeat for more.
 * `--role <str>`: With --enable: outbound (sending), inbound (receiving) or storage.
-* `--enable`: Use this provider for the role.
+* `--enable`: Use this provider for sending, receiving or storage (choose which with --role).
 * `--help`: Show this message and exit.
 
 ### `faxbot providers callbacks`

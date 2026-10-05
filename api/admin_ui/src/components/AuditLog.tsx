@@ -70,7 +70,7 @@ export function auditAction(operation: string): string {
 
 // One entry's action. The terminal records two: asking to open it, then each session it starts.
 export function entryAction(entry: Pick<AuditEntry, 'operation' | 'details'>): string {
-  if (entry.operation === 'host.terminal' && entry.details?.session !== 'started') return 'Asked to open the terminal';
+  if (entry.operation === 'host.terminal' && entry.details?.session !== 'started') return 'Asked for access to the server terminal';
   return auditAction(entry.operation);
 }
 

@@ -18,9 +18,33 @@ This release rebuilds Faxbot's backend, delivery and self-hosted administration.
 - **One destination per fax, in E.164.** Faxbot reads national numbers for the installation country (`FAX_DEFAULT_COUNTRY`, UK and US) and stores the full international number on the job.
 - **A command line for everything.** `faxbot` covers the console's tasks. With Faxbot stopped, `faxbot system status`, `migrate`, `recover-owner`, `backup` and `restore` show the installation's state, upgrades its database, recovers owner access, and makes and restores backups. See [Command line](operations/cli.md).
 - **Docker Compose.** `.env` is optional, so a new installation starts with defaults. The MCP containers no longer receive the installation key.
-- **Command names follow the console.** `faxbot` commands sit under the console's eight areas, and the earlier names are gone: `jobs` is now `sent`, `inbound` and `work` are `received`, `routing` is `recipients` and `costs`, `intake` is `received deliveries` and `numbers email`, `direct` and `cases` are under `recipients`, `trunk` is `providers trunk`, `settings`, `diagnostics`, `logs`, `health`, `restart`, `config` and `admin` are under `system` (`config` is `system profiles`), `users`, `integrations`, `groups`, `roles`, `keys`, `sessions`, `owner`, `resources`, `pair` and `me` are under `access` (`access grant` is `access grants add`), `mailboxes` is `numbers mailboxes`, `audit list` is `system audit`, `import` is `received import`, `providers config` is `providers show`, and `providers registry import` is `providers import`. See the [command reference](reference/cli.md).
-- **The Terminal is the owner's.** Only the Owner role opens the console Terminal by default. Host Operators lose it unless an owner gives it to them through a role of their own under **Access → Roles**. Every terminal session start is recorded in the **Audit log**.
-- **Removed: remote-access tunnels, server checks and the plugin list.** The Remote access page and `faxbot system tunnel` set up nothing and are gone; reach Faxbot through your own domain or VPN. Phone pairing stays under **Access → Keys & phones**. The **Server checks** on Scripts & checks and `faxbot system actions` are gone; the Terminal and Diagnostics cover them. The provider list (`/plugin-registry`, `PLUGIN_REGISTRY_PATH`) is gone; a saved `PLUGIN_REGISTRY_PATH` is ignored for one release.
+- **The Terminal is for owners.** Only owners can use the console Terminal by default. Host Operators no longer can, unless an owner gives them a role that includes it (**Access → Roles**). The **Audit log** records every terminal session.
+- **Removed features.** The Remote access page and `faxbot system tunnel` never set up a tunnel, so they are gone. To reach Faxbot from outside your network, use your own domain or VPN. Phone pairing stays under **Access → Keys & phones**. The **Server checks** on Scripts & checks and `faxbot system actions` are gone; use the Terminal or Diagnostics instead. The provider list (`/plugin-registry` and `PLUGIN_REGISTRY_PATH`) is gone. If your settings still name `PLUGIN_REGISTRY_PATH`, Faxbot ignores it for one release. Setup and the console no longer offer FreeSWITCH, which could not run in the shipped Docker image.
+
+### Renamed commands
+
+Every `faxbot` command now sits under one of the console's eight areas, and the older names no longer work. Scripts that use an older name need the new one. The [command reference](reference/cli.md) lists every command.
+
+| Older command | Now |
+| --- | --- |
+| `faxbot jobs …` | `faxbot sent …`; `jobs get` is `sent show`, `jobs history` is `sent evidence`, `jobs reconcile` is `sent confirm-receipt` |
+| `faxbot inbound …` | `faxbot received …`; `inbound get` is `received show`, `inbound simulate` is `system diagnostics test-fax` |
+| `faxbot work …` | `faxbot received …`; `work list` is `received owners`, `work show` is `received history`, `work settings` is `numbers mailboxes target` |
+| `faxbot import` | `faxbot received import` |
+| `faxbot routing …` | `faxbot recipients list`, `show` and `set` for destinations, `recipients together` for sending together, and `faxbot costs spending`, `reconcile`, `fax`, `rate-cards` and `plans` |
+| `faxbot intake …` | `faxbot received deliveries list` and `retry`, and `faxbot numbers email connectors …` |
+| `faxbot direct …` | `faxbot recipients partners …` |
+| `faxbot cases …` | `faxbot recipients cases …` |
+| `faxbot trunk …` | `faxbot providers trunk …` |
+| `faxbot settings …`, `diagnostics …`, `logs …`, `health`, `restart` | `faxbot system settings …`, `system diagnostics …`, `system logs …`, `system health`, `system restart` |
+| `faxbot admin …` | `faxbot system status`, `migrate`, `recover-owner`, `backup` and `restore` |
+| `faxbot config …` | `faxbot system profiles …`; `config set-profile` is `system profiles save`, `config show` is `system profiles list` |
+| `faxbot me`, `users …`, `integrations …`, `groups …`, `roles …`, `keys …`, `sessions …`, `owner …`, `resources …`, `pair …` | `faxbot access …`; each `get` is `show` |
+| `faxbot access grant`, `access list`, `access revoke` | `faxbot access grants add`, `grants list`, `grants remove` |
+| `faxbot mailboxes …` | `faxbot numbers mailboxes …` |
+| `faxbot audit list` | `faxbot system audit` |
+| `faxbot providers config` | `faxbot providers show` |
+| `faxbot providers registry import` | `faxbot providers import` |
 
 ### For API clients
 
