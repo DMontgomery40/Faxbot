@@ -446,6 +446,24 @@ def asterisk_inbound(request: Request, payload: dict = Body(...),
     return receive_handover(request, payload, settings.fax_data_dir)
 
 
+def received_number(value, country=None):
+    """A caller or called number as Faxbot stores it: E.164 read for the installation's country, as a
+    person there would dial it (``3034265097`` in the US is ``+13034265097``); a number that already
+    carries its country code without the plus sign is read with it; anything else is kept as given."""
+    from ..routing.numbers import InvalidNumber, normalize_number
+    if not isinstance(value, str) or not value.strip():
+        return None
+    text = value.strip()[:64]
+    country = country or settings.fax_default_country or 'US'
+    candidates = [text] if text.startswith('+') else [text, '+' + text.lstrip('0')]
+    for candidate in candidates:
+        try:
+            return normalize_number(candidate, country=country)
+        except (InvalidNumber, ValueError):
+            continue
+    return text
+
+
 def receive_handover(request: Request, payload: dict, root: str):
     """Store one received fax a fax engine handed over; its image must sit inside ``root``.
 
@@ -464,6 +482,12 @@ def receive_handover(request: Request, payload: dict, root: str):
         value = payload.get(name)
         return str(value).strip()[:limit] or None if isinstance(value, (str, int)) else None
     faxstatus = text('faxstatus', 32)
+    # Both fax engines' numbers are stored the same way, whatever format the carrier sent.
+    payload = {**payload, 'to_number': received_number(text('to_number')),
+               'from_number': received_number(text('from_number'))}
+    if isinstance(payload.get('call'), dict):
+        payload['call'] = {**payload['call'], 'did': received_number(payload['call'].get('did')),
+                           'caller': received_number(payload['call'].get('caller'))}
     uniqueid = text('uniqueid', 100)
     if uniqueid is None or re.fullmatch(r'[A-Za-z0-9._:-]{1,100}', uniqueid) is None:
         uniqueid = 'file:' + hashlib.sha256(tiff_path.encode()).hexdigest()[:32]

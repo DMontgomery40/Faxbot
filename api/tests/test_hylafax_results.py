@@ -3,6 +3,7 @@ first, the audio rule run by the last half, a restart that leaves a fax uncertai
 the engine's own secret and folders."""
 import base64
 from datetime import datetime, timedelta
+import itertools
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -33,9 +34,16 @@ def epoch(moment):
     return str(int((moment - datetime(1970, 1, 1)).total_seconds()))
 
 
-def trunk_side(session, rtp_rx=''):
-    return {'Direction': 'out', 'JobID': JOB, 'AttemptID': ATTEMPT, 'T38Session': session, 'Cause': '16',
-            'Started': epoch(NOW), 'Answered': epoch(NOW), 'Ended': epoch(NOW + timedelta(seconds=40)),
+def engine_event(session):
+    """The engine channel's own event: answered, ended, the gateway's T.38 session."""
+    return {'Direction': 'out', 'Side': 'engine', 'JobID': JOB, 'AttemptID': ATTEMPT, 'T38Session': session,
+            'Cause': '16', 'Started': epoch(NOW), 'Answered': epoch(NOW), 'Ended': epoch(NOW + timedelta(seconds=40)),
+            'CallID64': base64.b64encode(b'synthetic-call').decode()}
+
+
+def trunk_event(state, rtp_rx=''):
+    """The trunk channel's own event (its hang-up handler runs in its own thread)."""
+    return {'Direction': 'out', 'Side': 'trunk', 'JobID': JOB, 'AttemptID': ATTEMPT, 'T38': state, 'Cause': '16',
             'RtpRx': rtp_rx, 'CallID64': base64.b64encode(b'synthetic-call').decode()}
 
 
@@ -44,69 +52,88 @@ def engine_side(records, reason, pages=0, station=''):
 
 
 CASES = [
-    # T.38 ran and the far end never sent one fax message: no fax data came back.
-    ('1', '', 'No carrier detected {E002}', 0, 'no_t38_data_back', sip_calls.NO_FAX_DATA),
-    ('1', '', 'No receiver protocol (T.30 T1 timeout) {E126}', 0, 'no_t38_data_back', sip_calls.NO_FAX_DATA),
+    # T.38 ran and the engine never heard the other fax machine: the engine's own verdict, not the network's.
+    ('1', 'ENABLED', '', 'No carrier detected {E002}', 0, sip_calls.NO_FAX_SIGNAL, sip_calls.NO_SIGNAL),
+    ('1', 'ENABLED', '', 'No receiver protocol (T.30 T1 timeout) {E126}', 0, sip_calls.NO_FAX_SIGNAL,
+     sip_calls.NO_SIGNAL),
     # Audio: no sound came back at all.
-    ('0', '0', 'No carrier detected {E002}', 0, 'no_media_back', sip_calls.NO_SOUND),
+    ('0', 'DISABLED', '0', 'No carrier detected {E002}', 0, 'no_media_back', sip_calls.NO_SOUND),
     # Audio with sound, but no fax answer: not a fax machine.
-    ('0', '412', 'No carrier detected {E002}', 0, 'no_fax_answer', sip_calls.NOT_A_FAX),
-    # Audio, sound not reported: no fax data came back.
-    ('0', '', 'No carrier detected {E002}', 0, 'no_fax_data_back', sip_calls.NO_FAX_DATA),
+    ('0', 'DISABLED', '412', 'No carrier detected {E002}', 0, 'no_fax_answer', sip_calls.NOT_A_FAX),
+    # Audio, sound not reported: the engine heard no fax machine.
+    ('0', 'DISABLED', '', 'No carrier detected {E002}', 0, sip_calls.NO_FAX_SIGNAL, sip_calls.NO_SIGNAL),
     # The other machine answered (pages or its station ID): it failed, the network did not.
-    ('1', '', 'No response to MPS repeated 3 tries {E150}', 1, 'remote_fax_failed',
+    ('1', 'ENABLED', '', 'No response to MPS repeated 3 tries {E150}', 1, 'remote_fax_failed',
      'The other fax machine answered but the fax did not finish.'),
 ]
+ORDERS = list(itertools.permutations(('engine', 'trunk', 'result')))
 
 
-@pytest.mark.parametrize('session, rtp_rx, reason, pages, verdict, sentence', CASES)
-@pytest.mark.parametrize('trunk_first', [True, False])
-def test_the_built_in_engines_verdict_whichever_half_of_the_call_arrives_first(
-        calls, session, rtp_rx, reason, pages, verdict, sentence, trunk_first):
-    if trunk_first:
-        calls.record_engine_call(trunk_side(session, rtp_rx), now=NOW)
-        engine_side(calls, reason, pages)
-    else:
-        engine_side(calls, reason, pages)
-        calls.record_engine_call(trunk_side(session, rtp_rx), now=NOW)
+@pytest.mark.parametrize('session, state, rtp_rx, reason, pages, verdict, sentence', CASES)
+@pytest.mark.parametrize('order', ORDERS, ids='-'.join)
+def test_an_engine_calls_verdict_is_the_same_whichever_part_arrives_first(
+        calls, session, state, rtp_rx, reason, pages, verdict, sentence, order):
+    parts = {'engine': lambda: calls.record_engine_call(engine_event(session), now=NOW),
+             'trunk': lambda: calls.record_engine_call(trunk_event(state, rtp_rx), now=NOW),
+             'result': lambda: engine_side(calls, reason, pages)}
+    for part in order:
+        parts[part]()
     row = calls.for_attempt(ATTEMPT)[-1]
     assert row['verdict'] == verdict and row['error_cause'].startswith(verdict + ': '), row
+    assert '~h' not in row['error_cause'] and row['t38'] == ('yes' if session == '1' else 'no')
+    assert row['connected_seconds'] == 40
     assert sip_calls.verdict_sentence(row['verdict']) == sentence
-    assert sip_calls.call_summary(row).startswith(sentence[:-1].split(':')[0]) or row['verdict'] == 'remote_fax_failed'
-    # The same report again changes nothing.
-    calls.record_engine_call(trunk_side(session, rtp_rx), now=NOW)
-    engine_side(calls, reason, pages)
+    # The same reports again change nothing.
+    for part in order:
+        parts[part]()
     assert calls.for_attempt(ATTEMPT)[-1]['error_cause'] == row['error_cause']
 
 
-def test_a_sent_fax_has_no_verdict_and_an_unfinished_call_waits_for_its_other_half(calls):
-    calls.record_engine_call(trunk_side('0', '900'), now=NOW)
+def test_a_sent_fax_has_no_verdict_and_an_unfinished_call_waits_for_its_other_parts(calls):
+    calls.record_engine_call(trunk_event('DISABLED', '900'), now=NOW)
     row = calls.for_attempt(ATTEMPT)[-1]
     # What the trunk heard is kept for the result; it is not a verdict and reads as not finished.
-    assert row['verdict'] is None and sip_calls.call_summary(row) == 'The call connected but the fax did not finish.'
+    assert row['verdict'] is None and row['disposition'] != 'answered'
+    calls.record_engine_call(engine_event('0'), now=NOW)
     calls.record_engine_result(JOB, ATTEMPT, success=True, pages=3, now=NOW)
     row = calls.for_attempt(ATTEMPT)[-1]
-    assert row['verdict'] == 'sent' and row['error_cause'] is None
+    assert row['verdict'] == 'sent' and row['error_cause'] is None and row['pages'] == 3
 
 
-@pytest.mark.parametrize('trunk_first', [True, False])
-def test_the_audio_rule_runs_on_the_last_half_either_way(calls, monkeypatch, trunk_first):
-    seen = []
-    monkeypatch.setattr(sip_fax_mode, '_on_fax_event', seen.append)
+def test_an_unanswered_engine_call_keeps_its_own_reason(calls):
+    calls.record_engine_call(trunk_event('DISABLED'), now=NOW)
+    calls.record_engine_call({**engine_event('0'), 'Answered': '', 'DialStatus': 'BUSY', 'Cause': '17'}, now=NOW)
+    row = calls.for_attempt(ATTEMPT)[-1]
+    assert row['disposition'] == 'busy' and row['error_cause'] == 'busy'
+
+
+@pytest.mark.parametrize('order', ORDERS, ids='-'.join)
+def test_only_the_engine_switches_to_audio_after_its_t38_call_heard_no_fax_machine(calls, monkeypatch, order):
+    """Never the installation's T.38 setting (the built-in engine keeps it), whichever part is last."""
+    switched, engine = [], []
+    monkeypatch.setattr(sip_fax_mode, '_on_fax_event', switched.append)
+    monkeypatch.setattr(hylafax_engine, 'engine_t38_failed', lambda at=None: engine.append(at))
     monkeypatch.setattr(sip_calls, '_current', calls)
     monkeypatch.setattr(sip_calls, '_active_preset', lambda: 'telnyx')
-    if trunk_first:
-        sip_calls._on_engine_call(trunk_side('1'))
-        assert not seen  # The engine's result is not in yet.
+
+    def result():
         engine_side(calls, 'No carrier detected {E002}')
         sip_calls.engine_audio_check(calls.for_attempt(ATTEMPT)[-1])  # what the result route runs
-    else:
-        engine_side(calls, 'No carrier detected {E002}')
-        sip_calls.engine_audio_check(calls.for_attempt(ATTEMPT)[-1])
-        assert not seen  # T.38 is not known until the trunk side arrives.
-        sip_calls._on_engine_call(trunk_side('1'))
-    assert len(seen) == 1 and sip_calls.verdict(seen[0]) == 'no_t38_data_back'
-    assert sip_fax_mode.t38_timeout(calls.for_attempt(ATTEMPT)[-1]['error_cause'])
+    parts = {'engine': lambda: sip_calls._on_engine_call(engine_event('1')),
+             'trunk': lambda: sip_calls._on_engine_call(trunk_event('ENABLED')), 'result': result}
+    for part in order:
+        parts[part]()
+    assert not switched and engine and set(engine) == {'2026-10-05T01:00:40Z'}
+
+
+def test_an_audio_engine_call_does_not_switch_anything(calls, monkeypatch):
+    engine = []
+    monkeypatch.setattr(hylafax_engine, 'engine_t38_failed', lambda at=None: engine.append(at))
+    calls.record_engine_call(engine_event('0'), now=NOW)
+    calls.record_engine_call(trunk_event('DISABLED', ''), now=NOW)
+    engine_side(calls, 'No carrier detected {E002}')
+    sip_calls.engine_audio_check(calls.for_attempt(ATTEMPT)[-1])
+    assert calls.for_attempt(ATTEMPT)[-1]['verdict'] == sip_calls.NO_FAX_SIGNAL and not engine
 
 
 # Restarts -----------------------------------------------------------------------------------------------
@@ -199,14 +226,25 @@ def test_a_fax_the_engine_dialed_and_then_dropped_waits_for_a_person_instead_of_
     assert calls == [('uncertain', JOB, ATTEMPT, f'{ATTEMPT}:hylafax:killed')]
 
 
-def test_a_failed_send_gets_the_built_in_engines_sentence_and_audio_rule(monkeypatch):
-    row = {'verdict': 'no_t38_data_back', 'ended_at': '2026-10-05T01:00:40Z',
-           'error_cause': 'no_t38_data_back: No carrier detected E002'}
+def test_a_failed_send_gets_the_engines_sentence_and_only_the_engine_goes_to_audio(monkeypatch):
+    row = {'verdict': sip_calls.NO_FAX_SIGNAL, 'ended_at': '2026-10-05T01:00:40Z', 't38': 'yes',
+           'error_cause': 'no_fax_signal: No carrier detected E002'}
     payload = {'tag': f'{JOB}.{ATTEMPT}', 'why': 'failed', 'dials': 1, 'pages': 0,
                'status_b64': base64.b64encode(b'No carrier detected {E002}').decode()}
+    engine = []
+    monkeypatch.setattr(hylafax_engine, 'engine_t38_failed', lambda at=None: engine.append(at))
     answer, calls, switched = result_route(monkeypatch, payload, row)
-    assert answer == {'status': 'ok'} and calls == [('observed', 'failed', sip_calls.NO_FAX_DATA)]
-    assert len(switched) == 1
+    assert answer == {'status': 'ok'} and calls == [('observed', 'failed', sip_calls.NO_SIGNAL)]
+    assert not switched and engine == ['2026-10-05T01:00:40Z']
+
+
+def test_a_send_the_other_machine_answered_carries_the_engines_own_reason(monkeypatch):
+    row = {'verdict': 'remote_fax_failed', 'ended_at': '2026-10-05T01:00:40Z', 't38': 'yes',
+           'error_cause': 'remote_fax_failed: No response to MPS repeated 3 tries E150'}
+    payload = {'tag': f'{JOB}.{ATTEMPT}', 'why': 'failed', 'dials': 1, 'pages': 1,
+               'status_b64': base64.b64encode(b'No response to MPS repeated 3 tries {E150}').decode()}
+    answer, calls, _ = result_route(monkeypatch, payload, row)
+    assert calls == [('observed', 'failed', 'The call ended after 1 page; the rest was not confirmed.')]
 
 
 # The engine's own secret and folders ----------------------------------------------------------------------
@@ -256,3 +294,124 @@ def test_the_only_shell_command_is_the_built_in_hand_over_and_engine_lines_reach
     peers = [block for block in iax.split('\n[') if block.startswith('faxbot-line')]
     assert len(peers) == 2 and all('context=faxbot-engine-out' in block for block in peers)
     assert 'guest' not in iax.lower() and 'allowguest' not in iax.lower()
+
+
+# Received calls ---------------------------------------------------------------------------------------------
+
+@pytest.mark.parametrize('value, country, stored', [
+    ('3034265097', 'US', '+13034265097'),       # Telnyx's caller as the engine's modem passed it
+    ('13034265097', 'US', '+13034265097'),
+    ('+13034265097', 'US', '+13034265097'),     # the built-in engine's form stays as it is
+    ('17208565062', 'US', '+17208565062'),
+    ('02079460000', 'GB', '+442079460000'),     # a UK caller in the UK's own format
+    ('442079460000', 'US', '+442079460000'),    # a country code without its plus sign
+    ('0061298765432', 'GB', '+61298765432'),    # an international prefix counts as a country code
+    ('anonymous', 'US', 'anonymous'),           # anything else is kept as given
+    ('', 'US', None),
+])
+def test_received_numbers_are_stored_the_same_way_for_both_engines_in_every_country(value, country, stored):
+    from app.inbound.http import received_number
+    assert received_number(value, country) == stored
+
+
+def inbound_event(**extra):
+    return {'Direction': 'in', 'Token': '17911995026', 'DID': '+17208565062', 'Caller': '+13034265097',
+            'T38Session': '0', 'T38': 'DISABLED', 'Started': epoch(NOW), 'Answered': epoch(NOW),
+            'Ended': epoch(NOW + timedelta(seconds=58)), 'Cause': '16', 'RtpRx': '2400',
+            'CallID64': base64.b64encode(b'synthetic-in').decode(), **extra}
+
+
+@pytest.mark.parametrize('event_first', [True, False])
+def test_a_received_fax_reads_received_whichever_report_came_first(database, event_first):
+    schema.upgrade_schema(database)
+    calls = sip_calls.SipCallRecords(database)
+
+    def receive():
+        calls.record_engine_receive('engine.17911995026', success=True, pages=2, station='3034265097',
+                                    did='+17208565062', caller='+13034265097', inbound_fax_id='f' * 32, now=NOW)
+    if event_first:
+        calls.record_engine_call(inbound_event(), now=NOW)
+        receive()
+    else:
+        receive()
+        calls.record_engine_call(inbound_event(), now=NOW)
+    row = calls.page(limit=5)['items'][0]
+    assert row['verdict'] == 'received' and row['pages'] == 2 and row['summary'] == 'Received: 2 pages.'
+    assert row['caller'] == '+13034265097' and row['connected_seconds'] == 58 and row['job_id'] == 'f' * 32
+
+
+@pytest.mark.parametrize('event_first', [True, False])
+def test_a_received_call_that_left_no_fax_has_a_record_and_a_sentence(database, event_first):
+    schema.upgrade_schema(database)
+    calls = sip_calls.SipCallRecords(database)
+
+    def failed():
+        calls.record_engine_receive('engine.17911994223', success=False, pages=0,
+                                    reason='No sender protocol (T.30 T1 timeout) {E102}', did='+17208565062',
+                                    caller='+13034265097', now=NOW)
+    event = inbound_event(Token='17911994223')
+    if event_first:
+        calls.record_engine_call(event, now=NOW)
+        failed()
+    else:
+        failed()
+        calls.record_engine_call(event, now=NOW)
+    row = calls.page(limit=5)['items'][0]
+    assert row['verdict'] == sip_calls.NO_FAX_SIGNAL and row['fax_status'] == 'FAILED'
+    assert row['summary'] == 'A fax call from +13034265097 came in, but no pages arrived.'
+    assert row['error_cause'].startswith('no_fax_signal: No sender protocol')
+
+
+def test_the_engines_report_of_a_received_call_that_left_no_fax_reaches_recent_calls(isolated_installation,
+                                                                                       monkeypatch, tmp_path):
+    from api.app.main import app
+    data = tmp_path / 'faxdata_engine'
+    for name, value in (('INBOUND_ENABLED', 'true'), ('ASTERISK_INBOUND_SECRET', 'sekret'),
+                        ('FAX_DATA_DIR', str(data)), ('REQUIRE_API_KEY', 'true'), ('API_KEY', 'bootstrap_admin_only'),
+                        ('FAX_DEFAULT_COUNTRY', 'US')):
+        monkeypatch.setenv(name, value)
+    secret = hylafax_engine.engine_secrets(SimpleNamespace(fax_data_dir=str(data)), lines=1)['report_secret']
+    body = {'engine_id': '0123456789abcdef', 'commid': '000000003', 'key': '000000003-1791199466',
+            'token': '17911994223', 'caller': '3034265097', 'called': '17208565062',
+            'reason_b64': base64.b64encode(b'No sender protocol (T.30 T1 timeout) {E102}').decode()}
+    with TestClient(app, base_url='http://testserver') as client:
+        url = '/_internal/hylafax/received-failed'
+        assert client.post(url, json=body, headers={'X-Internal-Secret': 'sekret'}).status_code == 401
+        assert client.post(url, json={**body, 'key': 'x'}, headers={'X-Internal-Secret': secret}).status_code == 400
+        answer = client.post(url, json=body, headers={'X-Internal-Secret': secret})
+        assert answer.status_code == 200, answer.text
+        assert answer.json()['summary'] == 'A fax call from +13034265097 came in, but no pages arrived.'
+        calls = client.get('/admin/sip/calls', headers={'X-API-Key': 'bootstrap_admin_only'}).json()['items']
+        assert calls[0]['did'] == '+17208565062' and calls[0]['verdict'] == sip_calls.NO_FAX_SIGNAL
+
+
+# Restarting Asterisk waits for the engine's calls -------------------------------------------------------------
+
+def test_a_restart_waits_while_the_engine_holds_a_fax_it_has_not_reported_on(database, monkeypatch):
+    from app import sip_http
+    schema.upgrade_schema(database)
+    monkeypatch.setattr(sip_calls, '_current', sip_calls.SipCallRecords(database))
+    records = hylafax_records.records_for(database)
+    assert sip_http._engine_faxes_pending() is False
+    records.record_call(direction='outbound', call_key=ATTEMPT, job_id=JOB, engine='hylafax')
+    assert sip_http._engine_faxes_pending() is True
+    records.record_result(direction='outbound', call_key=ATTEMPT, job_id=JOB,
+                          details={'engine_ref': 'e:9', 'sslfax': False})
+    assert sip_http._engine_faxes_pending() is False
+
+
+# The dialplan --------------------------------------------------------------------------------------------------
+
+def test_the_trunks_hang_up_handler_reports_in_its_own_event_and_writes_nothing_to_the_engines_channel():
+    dialplan = (ROOT / 'asterisk' / 'etc' / 'asterisk' / 'extensions.conf').read_text()
+    trunk = dialplan.split('[faxbot-engine-trunk-done]', 1)[1].split('\n[', 1)[0]
+    assert 'SHARED(' not in trunk and 'Side:trunk' in trunk and 'JobID:${FAXBOT_ENGINE_JOB}' in trunk
+    # RTCP is read only on an answered call whose carrier leg is audio (a T.38 leg has no RTP session).
+    guard, read = trunk.index('!= "DISABLED" & "${FAXBOT_T38}" != "REJECTED"]?emit)'), trunk.index('rtcp,rxcount')
+    assert trunk.index('"${FAXBOT_CALLID64}" = ""]?emit)') < guard < read
+    engine = dialplan.split('[faxbot-engine-result]', 1)[1].split('\n[', 1)[0]
+    assert 'SHARED(FAXBOT_T38' not in engine and 'SHARED(FAXBOT_RTPRX' not in engine and 'Side:engine' in engine
+    assert 'GwStatus:' in engine and 'GwError:' in engine
+    # Inherited by the trunk channel, so its event names the fax and attempt.
+    assert 'Set(__FAXBOT_ENGINE_JOB=${JOBID})' in dialplan and 'Set(__FAXBOT_ENGINE_ATTEMPT=${FAXATTEMPT})' in dialplan
+

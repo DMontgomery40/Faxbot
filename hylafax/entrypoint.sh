@@ -315,6 +315,9 @@ while sleep "$check_seconds"; do
     runuser -u uucp -- env FAXBOT_DATA="$data" FAXBOT_ENGINE_OUT="$out" FAXBOT_HYLAFAX_SPOOL="$spool" \
       FAXBOT_ENGINE_STATE="$state" /usr/local/lib/faxbot-engine/handover || true
   fi
+  # Received calls that left no fax get a report too (from the session logs).
+  runuser -u uucp -- env FAXBOT_HYLAFAX_SPOOL="$spool" FAXBOT_ENGINE_STATE="$state" \
+    /usr/local/lib/faxbot-engine/sessions || true
   if compgen -G "$state/results/*.report" >/dev/null; then
     runuser -u uucp -- env FAXBOT_HYLAFAX_SPOOL="$spool" FAXBOT_ENGINE_STATE="$state" \
       /usr/local/lib/faxbot-engine/deliver || true

@@ -89,9 +89,10 @@ def test_a_received_fax_is_kept_in_the_engine_volume_and_handed_over_once_faxbot
     body = json.loads((tmp_path / 'body').read_text())
     assert (tmp_path / 'url').read_text() == 'http://api:8080/_internal/hylafax/inbound'
     assert body['tiff_path'] == str(stored) and body['uniqueid'] == 'engine.179117219142'
-    assert body['to_number'] == '+15555550100' and body['from_number'] == '+15555550199'
+    # Numbers as the call carried them (a plus sign only when it had one); Faxbot reads them for its country.
+    assert body['to_number'] == '15555550100' and body['from_number'] == '+15555550199'
     assert body['faxstatus'] == 'SUCCESS' and body['faxpages'] == 2
-    assert body['call']['did'] == '+15555550100' and body['call']['t38'] is None
+    assert body['call']['did'] == '15555550100' and body['call']['t38'] is None
     assert body['engine'] == {'engine': 'hylafax', 'engine_ref': '0123456789abcdef:000000007-1791180000',
                               'sslfax': True, 'sslfax_offered': True, 'transfer_seconds': 12,
                               'signal_rate_b64': base64.b64encode(b'SSL Fax').decode(),
@@ -197,3 +198,66 @@ def test_one_report_faxbot_cannot_take_does_not_hold_up_the_others(engine, tmp_p
     assert run('deliver', environment).returncode == 1
     assert first.exists() and third.exists()
     assert len((tmp_path / 'urls').read_text().splitlines()) == 3
+
+
+FAILED_RECEIVE = """Oct 05 11:23:42.60: [  108]: SESSION BEGIN 000000003 17208565062 (logging via thread)
+Oct 05 11:23:42.60: [  108]: CallID: '3034265097' '17911994223.17208565062' ''
+Oct 05 11:23:46.34: [  108]: ANSWER: FAX CONNECTION  DEVICE '/dev/ttyIAX2'
+Oct 05 11:23:46.34: [  108]: RECV FAX: begin
+Oct 05 11:23:53.21: [  108]: MODEM TIMEOUT: waiting for v.21 carrier
+Oct 05 11:24:26.13: [  108]: RECV FAX: No sender protocol (T.30 T1 timeout) {E102}
+Oct 05 11:24:26.13: [  108]: RECV FAX: end
+Oct 05 11:24:26.15: [  108]: SESSION END
+"""
+RECEIVED = """Oct 05 11:25:02.30: [  108]: CallID: '3034265097' '17911995026.17208565062' ''
+Oct 05 11:25:06.04: [  108]: RECV FAX: begin
+Oct 05 11:26:00.93: [  108]: RECV FAX: /usr/local/lib/faxbot-engine/received 'recvq/fax000000002.tif' 'ttyIAX2'
+Oct 05 11:26:00.93: [  108]: RECV FAX (000000004): recvq/fax000000002.tif from 3034265097, subaddress <unspecified>, 2 pages in 0:00:53
+Oct 05 11:26:00.93: [  108]: RECV FAX: end
+Oct 05 11:26:00.94: [  108]: SESSION END
+"""
+
+
+def test_a_received_call_that_left_no_fax_is_reported_once_with_the_engines_reason(engine, tmp_path):
+    spool, state, data, environment = engine
+    (spool / 'log' / 'c000000003').write_text(FAILED_RECEIVE)
+    (spool / 'log' / 'c000000004').write_text(RECEIVED)
+    (spool / 'log' / 'c000000005').write_text(FAILED_RECEIVE.replace('SESSION END\n', ''))  # still in progress
+    (spool / 'log' / 'c000000007').unlink()  # the fixture's sent-fax log
+    assert run('sessions', environment).returncode == 0
+    reports = sorted((state / 'results').glob('*.report'))
+    assert [path.name for path in reports] == ['1791180000-recv000000003-failed.report']
+    report = json.loads(reports[0].read_text())
+    assert report == {'engine_id': '0123456789abcdef', 'commid': '000000003', 'key': '000000003-1791180000',
+                      'token': '17911994223', 'caller': '3034265097', 'called': '17208565062',
+                      'reason_b64': base64.b64encode(b'No sender protocol (T.30 T1 timeout) {E102}').decode()}
+    # Reported once; the session still in progress is reported when it ends.
+    assert run('sessions', environment).returncode == 0
+    assert len(list((state / 'results').glob('*.report'))) == 1
+    (spool / 'log' / 'c000000005').write_text(FAILED_RECEIVE)
+    assert run('sessions', environment).returncode == 0
+    assert len(list((state / 'results').glob('*.report'))) == 2
+    # bin/deliver sends it to the engine's route for received calls that left no fax.
+    (tmp_path / 'answer').write_text('200')
+    assert run('deliver', environment).returncode == 0
+    assert set((tmp_path / 'urls').read_text().splitlines()) == {'http://api:8080/_internal/hylafax/received-failed'}
+
+
+
+
+def test_a_job_reports_speed_and_compression_only_when_the_session_agreed_them(engine, tmp_path):
+    spool, state, data, environment = engine
+    requested = QFILE + 'signalrate:14400 bit/s\ndataformat:JBIG\n'
+    (spool / 'doneq' / 'q12').write_text(requested.replace('signalrate:\ndataformat:\n', ''))
+    (spool / 'log' / 'c000000007').write_text('Oct 05 11:18:30.08: [  858]: DIAL 3235486610915671\n'
+                                             'Oct 05 11:19:12.78: [  858]: SEND FAILED: No carrier detected {E002}\n')
+    (tmp_path / 'answer').write_text('200')
+    assert run('notify', environment, 'doneq/q12', 'failed', '0:00:41', cwd=spool).returncode == 0
+    body = json.loads((tmp_path / 'body').read_text())
+    assert body['signal_rate_b64'] == '' and body['data_format_b64'] == ''
+    # A session that trained reports what it agreed.
+    (spool / 'log' / 'c000000007').write_text('Oct 05 11:22:33.61: [  598]: TRAINING succeeded\n')
+    assert run('notify', environment, 'doneq/q12', 'failed', '0:00:41', cwd=spool).returncode == 0
+    body = json.loads((tmp_path / 'body').read_text())
+    assert base64.b64decode(body['signal_rate_b64']) == b'14400 bit/s'
+

@@ -27,14 +27,9 @@ inbound=$out/inbound
 field() { sed -n "s/^$1=//p" "$2" | head -1; }
 number() { if [ -n "$1" ]; then printf '%s' "$1"; else printf 'null'; fi; }
 text() { if [ -n "$1" ]; then printf '"%s"' "$1"; else printf 'null'; fi; }
-# A number as Faxbot stores it: E.164 with a plus sign.
-e164() {
-  case $1 in
-    '') ;;
-    +*) printf '%s' "$1" ;;
-    *) printf '+%s' "$1" ;;
-  esac
-}
+# A number as the call carried it (a plus sign only when it had one): Faxbot reads it for the
+# installation's country, the same way for both fax engines.
+e164() { printf '%s' "$1"; }
 
 for ticket in "$state"/received/*.ticket; do
   [ -f "$ticket" ] && [ ! -L "$ticket" ] || continue

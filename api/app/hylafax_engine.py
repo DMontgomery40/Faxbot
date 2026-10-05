@@ -74,6 +74,8 @@ ASTERISK_NOT_CURRENT = ("Faxbot's fast fax service is waiting for the phone conn
 STOPPED = "Faxbot's fast fax service is not running, so faxes are sent the ordinary way."
 STARTING = "Faxbot's fast fax service is still starting."
 WAITING_FOR_RESTART = "Faxbot's fast fax service is waiting for the phone connection to restart."
+ENGINE_AUDIO = ("It sends audio fax because its last T.38 call heard no fax machine. "
+                'To try T.38 again, select Apply and connect.')
 
 _TAG = re.compile(r'[1-9][0-9]{15}', re.ASCII)
 _HEX32 = re.compile(r'[a-f0-9]{32}', re.ASCII)
@@ -415,6 +417,95 @@ class CallSettings:
     compression: str
 
 
+# The engine's own T.38 choice ----------------------------------------------------------------------------
+# After an engine call on T.38 on which the engine heard no fax machine, the engine sends and receives
+# audio fax on its own (its T.38 gateway may be the cause); the built-in engine keeps the installation's
+# T.38 setting. Apply and connect clears it. Received calls read it from Asterisk's database.
+ENGINE_T38_FAMILY, ENGINE_T38_KEY = 'faxbot-engine', 't38'
+
+
+def engine_t38_path(values) -> Path:
+    return engine_dir(values) / 'engine-t38'
+
+
+def engine_t38_off(values):
+    """{mode: 'audio', reason, at} while the engine sends audio fax on its own, else None."""
+    try:
+        record = json.loads(engine_t38_path(values).read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        return None
+    return record if isinstance(record, dict) and record.get('mode') == 'audio' else None
+
+
+def note_t38_failure(values, at=None) -> bool:
+    """Record that the engine's T.38 call heard no fax machine; True the first time (nothing to do after)."""
+    if engine_t38_off(values):
+        return False
+    from datetime import datetime, timezone
+    when = at if isinstance(at, str) and at else datetime.now(timezone.utc).replace(tzinfo=None).isoformat(
+        timespec='seconds') + 'Z'
+    _write_private(engine_t38_path(values), json.dumps({'mode': 'audio', 'reason': 'no_fax_signal',
+                                                        'at': when}) + '\n')
+    return True
+
+
+def clear_engine_t38(values) -> bool:
+    """Let the engine try T.38 again (Apply and connect); True when it had been sending audio fax."""
+    try:
+        engine_t38_path(values).unlink()
+        return True
+    except FileNotFoundError:
+        return False
+
+
+async def sync_engine_t38(values, ami) -> None:
+    """Tell Asterisk whether received calls may use the engine's T.38 gateway; best effort, and only over a
+    connected manager connection (an attempt would otherwise mark the connection unreachable)."""
+    connected = getattr(ami, '_connected', None)
+    if connected is None or not connected.is_set():
+        return
+    try:
+        if engine_t38_off(values):
+            await ami.db_put(ENGINE_T38_FAMILY, ENGINE_T38_KEY, 'audio')
+        else:
+            await ami.db_del(ENGINE_T38_FAMILY, ENGINE_T38_KEY)
+    except Exception:
+        pass
+
+
+def engine_t38_failed(at=None) -> bool:
+    """An engine call on T.38 heard no fax machine: the engine uses audio fax from the next call on.
+
+    Runs from the call record (either half of the call may be last); does
+    nothing when already recorded. The fax itself takes its next route, as
+    any fax that never reached a fax machine.
+    """
+    from .config import settings
+    try:
+        changed = note_t38_failure(settings, at)
+    except OSError:
+        logging.getLogger(__name__).warning('Faxbot could not record audio fax for its fast fax service.')
+        return False
+    if not changed:
+        return False
+    try:
+        from .audit import audit_event
+        audit_event('sslfax_engine_audio_chosen', backend='sip', reason='no_fax_signal')
+    except Exception:
+        pass
+    try:
+        from .ami import ami_client
+        task = asyncio.get_running_loop().create_task(sync_engine_t38(settings, ami_client))
+        _pending_tasks.add(task)
+        task.add_done_callback(_pending_tasks.discard)
+    except RuntimeError:
+        pass  # No event loop (a command-line tool): Apply and connect syncs it.
+    return True
+
+
+_pending_tasks: set = set()
+
+
 def try_t38(values) -> bool:
     """Whether this call tries T.38 before audio: the trunk's switch, and the network check when it can tell.
 
@@ -432,11 +523,12 @@ def try_t38(values) -> bool:
         return True
 
 
-def call_settings(values, number, *, recipient=None) -> CallSettings:
-    """The settings for one call to ``number``; ``recipient`` is that number's own limits, when set."""
+def call_settings(values, number, *, recipient=None, engine=False) -> CallSettings:
+    """The settings for one call to ``number``; ``recipient`` is that number's own limits, when set.
+    ``engine``: the SSL Fax engine places the call, which may be on audio fax on its own."""
     from . import sip_trunk
     options = sip_trunk.fax_options(values)
-    t38 = try_t38(values)
+    t38 = try_t38(values) and not (engine and engine_t38_off(values))
     override = (recipient or {}).get('max_rate')
     ecm = (recipient or {}).get('ecm')
     return CallSettings(t38=t38, max_rate=options.rate_for(t38=t38, override=override),
@@ -503,6 +595,8 @@ async def engine_summary(values, ami=None) -> tuple[str, str]:
         sentence = f"Faxbot's fast fax service is running on {lines}; faster pages are turned off."
     elif status.listener:
         sentence += ' Fax machines that call Faxbot can also send their pages faster.'
+    if engine_t38_off(values) and getattr(values, 'sip_t38_enabled', True):
+        sentence += ' ' + ENGINE_AUDIO
     return 'running', sentence
 
 
@@ -645,7 +739,7 @@ def create_job(values, *, tag: str, job_id: str, attempt_id: str, tiff_path: str
 async def prepare_job(values, ami, *, job_id, attempt_id, dest, tiff_path, settings=None) -> PreparedJob:
     """Store the call plan in Asterisk and create the engine job; nothing is dialed yet."""
     from .ami import FAX_PREFERENCE_VARIABLE, originate_fields_for
-    settings = settings or call_settings(values, dest)
+    settings = settings or call_settings(values, dest, engine=True)
     fields = originate_fields_for(values, job_id, dest, tiff_path, attempt_id=attempt_id)
     tag = new_tag()
     plan = call_plan(fields, job_id, attempt_id, t38=settings.t38)

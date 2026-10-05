@@ -1,0 +1,59 @@
+#!/bin/sh
+# Report received calls that left no fax (run as uucp by the engine every few seconds).
+#
+# HylaFAX runs the receive script only for a document with pages: a call on
+# which the other machine never sent its first fax message, or one that ended
+# before a page, leaves only its session log. For each finished receive
+# session without a page this keeps one report in the engine's volume
+# (results/, sent by bin/deliver like every other report), so Faxbot records
+# the call with the engine's own reason. Each session is reported once; the
+# list of reported sessions lives in the spool, which a new container starts
+# afresh together with its session logs.
+set -u
+
+spool=${FAXBOT_HYLAFAX_SPOOL:-/var/spool/hylafax}
+state=${FAXBOT_ENGINE_STATE:-/var/lib/faxbot-engine}
+outbox=$state/results
+seen=$spool/etc/faxbot-sessions-seen
+config=$spool/etc/faxbot.conf
+
+[ -d "$outbox" ] && [ ! -L "$outbox" ] || exit 0
+engine=$(sed -n 's/^engine=//p' "$config" 2>/dev/null | head -1 | tr -cd 'a-f0-9')
+[ -n "$engine" ] || exit 1
+[ -f "$seen" ] || : > "$seen"
+
+b64() { printf '%s' "$1" | base64 | tr -d '\n'; }
+mark() { printf '%s\n' "$1" >> "$seen"; }
+
+for log in "$spool"/log/c[0-9]*; do
+  [ -f "$log" ] && [ ! -L "$log" ] || continue
+  commid=$(printf '%s' "${log##*/c}" | tr -cd '0-9')
+  [ -n "$commid" ] || continue
+  grep -qx "$commid" "$seen" && continue
+  grep -q 'SESSION END' "$log" || continue          # still in progress
+  if ! grep -q 'RECV FAX: begin' "$log"; then mark "$commid"; continue; fi  # a sent fax: notify reports it
+  # A document with pages goes through the receive script and the hand-over.
+  if grep -q -E 'RECV FAX \([0-9]+\): recvq/fax[0-9]+\.tif from .*, [1-9][0-9]* pages in' "$log"; then
+    mark "$commid"
+    continue
+  fi
+  # CallID: '<caller>' '<Asterisk's call name: token.called>' '<dialed>'
+  callid=$(grep -m1 'CallID:' "$log")
+  caller=$(printf '%s' "$callid" | sed -n "s/.*CallID: '\([^']*\)'.*/\1/p" | tr -cd '0-9+' | cut -c1-20)
+  name=$(printf '%s' "$callid" | sed -n "s/.*CallID: '[^']*' '\([^']*\)'.*/\1/p" | tr -cd '0-9.' | cut -c1-80)
+  token=${name%%.*}
+  called=''
+  case $name in *.*) called=${name#*.} ;; esac
+  called=$(printf '%s' "$called" | tr -cd '0-9' | cut -c1-20)
+  token=$(printf '%s' "$token" | tr -cd '0-9' | cut -c1-40)
+  # The engine's own reason: its last "RECV FAX: ..." words that are not the session's begin, end or command.
+  reason=$(grep 'RECV FAX: ' "$log" | grep -v -E 'RECV FAX: (begin|end)$|RECV FAX: /' | tail -1 \
+    | sed 's/.*RECV FAX: //' | tr -cd 'A-Za-z0-9 .,:(){}_-' | cut -c1-120)
+  key=$commid-$(date +%s)
+  report=$(mktemp "$outbox/.received.XXXXXX") || exit 1
+  printf '{"engine_id":"%s","commid":"%s","key":"%s","token":"%s","caller":"%s","called":"%s","reason_b64":"%s"}\n' \
+    "$engine" "$commid" "$key" "$token" "$caller" "$called" "$(b64 "${reason:-fax failed}")" > "$report" \
+    && mv -f "$report" "$outbox/$(date +%s)-recv$commid-failed.report" || { rm -f "$report"; exit 1; }
+  mark "$commid"
+done
+exit 0

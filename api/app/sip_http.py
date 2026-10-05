@@ -641,6 +641,11 @@ async def apply(request: Request, identity=Depends(require_permission('providers
         raise HTTPException(500, detail='Faxbot could not save the trunk settings for Asterisk.') from None
     except (AcquisitionError, ConfigurationStoreError):
         raise HTTPException(503, detail='Faxbot could not save an inbound secret for the fax engine. Try again.') from None
+    # Apply and connect lets the fast fax service try T.38 again after it chose audio fax on its own.
+    from . import hylafax_engine
+    from .ami import ami_client
+    await run_lifecycle_step(lambda: hylafax_engine.clear_engine_t38(values))
+    await hylafax_engine.sync_engine_t38(values, ami_client)
     return await _load_into_engine(values)
 
 
@@ -651,6 +656,25 @@ def _set_t38(runtime, enabled, reason, network=None):
     values = runtime.manager.store.read().active.values
     sip_fax_mode.write(values, 't38' if enabled else 'audio', reason, network=network)
     return values
+
+
+# How long a fax the fast fax service took counts as pending (it dials once, within ten minutes).
+ENGINE_PENDING_MINUTES = 15
+
+
+def _engine_faxes_pending() -> bool:
+    """Whether the fast fax service holds a fax it took in the last minutes and has not reported on."""
+    from datetime import datetime, timedelta, timezone
+    from . import hylafax_records, sip_calls
+    current = sip_calls._current
+    if current is None:
+        return False
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    try:
+        return bool(hylafax_records.records_for(current.engine).unfinished_sends(
+            before=now + timedelta(seconds=1), since=now - timedelta(minutes=ENGINE_PENDING_MINUTES)))
+    except Exception:
+        return False
 
 
 async def _load_into_engine(values):
@@ -670,7 +694,9 @@ async def _load_into_engine(values):
         return {'ok': True, 'engine': 'not_connected',
                 'message': 'Saved. ' + (ami_client.engine_message() or ENGINE_UNREACHABLE)}
     try:
-        if await ami_client.active_calls():
+        # A call on any line counts (the trunk, the fast fax service's lines), and so does a fax the fast
+        # fax service has taken and not reported on yet: it may be about to dial.
+        if await ami_client.active_calls() or await run_lifecycle_step(_engine_faxes_pending):
             return {'ok': True, 'engine': 'busy', 'message': SAVED_BUSY}
         if not await ami_client.stop_gracefully():
             return {'ok': True, 'engine': 'not_allowed', 'message': SAVED_NOT_ALLOWED}
