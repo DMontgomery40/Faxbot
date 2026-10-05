@@ -105,7 +105,7 @@ A-law comes first for UK and Australian installations; an Avaya phone system pre
 
 ## Set it up
 
-1. In the console, open the **Setup Wizard**, choose **SIP trunk (Asterisk)** for sending, receiving or both, and select **Next**. The first time, select **Restart now** when Setup asks. The next step shows the trunk form; **Settings** shows the same form under **Carrier SIP trunk**.
+1. In the console, open the **Setup Wizard**, choose your carrier (or phone system) for sending, receiving or both, and select **Next**. The first time, select **Restart now** when Setup asks. The next step shows the trunk form; Afterwards, **Providers** shows the same form on the page named after your carrier (such as **Providers → Telnyx**).
 2. Choose your carrier and how Faxbot signs in. The screen says which directions the trunk carries; a trunk that only receives needs no caller ID. Server, port and transport show the carrier's values in force (for example `sip.telnyx.com`, `5061`, **Default: Encrypted (TLS)**) until you type your own. Fill in the server if the carrier asks for one, then the username and password.
 3. Enter your caller ID and the fax numbers the carrier sends to this trunk.
 4. Select **Apply and connect**. Faxbot saves what you typed, writes the trunk for Asterisk, restarts Asterisk to load it and keeps checking ("Checking the carrier…") until the carrier answers Faxbot's check, for up to a minute, then shows the trunk check on the same screen: the transport Faxbot registered over, how quickly the carrier answers its checks, Faxbot's internet address and "No ports need to be opened or forwarded." From the command line, `faxbot providers trunk apply` does the same.
@@ -224,7 +224,7 @@ Check your carrier account for your actual rates before you rely on these figure
 
 ### How actual charges arrive (Telnyx)
 
-The figures above are estimates. With a Telnyx trunk, Faxbot can also read what Telnyx actually charged for each call, sent or received, and show it in **Tools → Delivery routes**, in **Job Details** and in the Inbox.
+The figures above are estimates. With a Telnyx trunk, Faxbot can also read what Telnyx actually charged for each call, sent or received, and show it in **Costs → Spending**, in Sent's fax details and in Received.
 
 1. In the Telnyx portal, create an API key (**Account settings → Keys & credentials → API keys**).
 2. Add it to `.env` and restart:
@@ -264,7 +264,7 @@ For every call on the trunk Faxbot keeps a call record:
 
 A call whose outcome Faxbot cannot confirm stays "not known yet" and is never sent again automatically.
 
-**Recent calls** under the trunk settings lists them, newest first, with that sentence (`faxbot providers trunk calls` prints the same list). When a fax over the trunk fails, **Jobs** shows the same sentence for that fax; when the other fax machine was the problem, Jobs says "The other fax machine answered but the fax did not finish." and Recent calls keeps the reason. The sentences you may see:
+**Recent calls** under the trunk settings lists them, newest first, with that sentence (`faxbot providers trunk calls` prints the same list). When a fax over the trunk fails, **Faxes → Sent** shows the same sentence for that fax; when the other fax machine was the problem, Sent says "The other fax machine answered but the fax did not finish." and Recent calls keeps the reason. The sentences you may see:
 
 | Sentence | What it means |
 | --- | --- |
@@ -273,7 +273,7 @@ A call whose outcome Faxbot cannot confirm stays "not known yet" and is never se
 | The call connected but no sound came back from the carrier. | The call stayed audio and not one audio packet arrived. |
 | The call connected but the other end did not answer as a fax machine. | Sound came back, but no fax signal: often a person or a voice line answered. |
 | The other fax machine answered but the fax failed: … | The network worked; the fax machines did not finish. The reason is the fax engine's own. |
-| A fax call from +1 303 … came in, but no pages arrived. | Someone called your fax number and no page was received, so the Inbox has nothing; the Dashboard's inbound card names the newest such call from the last day. |
+| A fax call from +1 303 … came in, but no pages arrived. | Someone called your fax number and no page was received, so Received has nothing; the Overview names the newest such call from the last day. |
 | The number was busy. / Nobody answered the call. | The call never connected. |
 
 Faxbot tells "no fax data came back" apart from a fax failure by the result of the call: no page and no station ID from the other machine, and either no audio packet at all or a fax engine ending that means nothing ever arrived (a first-message timeout, or the other side hanging up first). After a switch to T.38, Asterisk no longer counts audio packets, so only the fax engine's ending decides. Delivery routes use the connected seconds to estimate what each fax cost.

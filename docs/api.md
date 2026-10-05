@@ -34,7 +34,7 @@ Acceptance captures provider/account credentials, manifest/traits, URLs and conf
 
 ## Provider PDF access
 
-`GET /fax/{job_id}/pdf?token=...` serves the prepared PDF using the accepted token and expiry. It has no API-key header requirement for provider fetching, but rejects an invalid/expired token. A tokenized URL is sensitive. Reopening a job does not mint a new provider URL or retry its attempt. Admin Jobs offers a separate authenticated PDF download.
+`GET /fax/{job_id}/pdf?token=...` serves the prepared PDF using the accepted token and expiry. It has no API-key header requirement for provider fetching, but rejects an invalid/expired token. A tokenized URL is sensitive. Reopening a job does not mint a new provider URL or retry its attempt. The console's **Faxes → Sent** offers a separate authenticated PDF download.
 
 Document conversion never substitutes a placeholder for a missing dependency or disabled sending. Required TIFF conversion fails honestly when Ghostscript is unavailable. Builtin Phaxio/Sinch/SignalWire use PDF paths; captured traits determine whether another provider requires TIFF.
 

@@ -58,7 +58,7 @@ print('Queued', job['id'])
 ```
 
 Status updates
-- Read `GET /fax/{id}` or Jobs for stored delivery state. Supported status polling uses the original captured account/remote ID and does not resubmit. An unknown outcome requires reconciliation with that account, not a blind retry.
+- Read `GET /fax/{id}` or **Faxes → Sent** for stored delivery state. Supported status polling uses the original captured account/remote ID and does not resubmit. An unknown outcome requires reconciliation with that account, not a blind retry.
 
 Notes
 - Only PDF and TXT files are accepted. Convert images (PNG/JPG) to PDF first.

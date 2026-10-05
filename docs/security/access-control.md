@@ -1,14 +1,14 @@
 # Access Control
 
-Faxbot decides what each person, app and device may do. You manage this in the admin console under **Settings**, on the **Users**, **Groups**, **Roles**, **Access**, **Keys** and **Sessions** screens. The console only shows the screens you are allowed to use, and the server checks every request again.
+Faxbot decides what each person, app and device may do. You manage this in the admin console under **Access**: **Users**, **Groups**, **Roles**, **Who has access**, **Keys & phones** and **Sessions**. The console only shows the screens you are allowed to use, and the server checks every request again.
 
 How people and apps sign in is covered in [Authentication](authentication.md).
 
 ## Users and integrations
 
-**Users** are people. They sign in with a username and password. Someone with the `users:manage` permission adds them on the **Users** screen and receives a temporary password to pass on. At first sign-in the new user must choose a password of at least 12 characters. An administrator can reset a password, which issues a new temporary one, or disable a user, which ends their sessions and stops their keys.
+**Users** are people. They sign in with a username and password. Someone with the `users:manage` permission adds them under **Access → Users** and receives a temporary password to pass on. At first sign-in the new user must choose a password of at least 12 characters. An administrator can reset a password, which issues a new temporary one, or disable a user, which ends their sessions and stops their keys.
 
-**Integrations** are apps, scanners, scripts and other systems. They have no password and only use [API keys](#keys). Add them on the same **Users** screen. Each iPhone that pairs with Faxbot becomes its own integration named after the device.
+**Integrations** are apps, scanners, scripts and other systems. They have no password and only use [API keys](#keys). Add them under **Access → Users** too. Each iPhone that pairs with Faxbot becomes its own integration named after the device.
 
 **The installation key** is the `API_KEY` value saved in the installation's configuration. It can do everything. Use it to create the first owner and to recover owner access, not for daily work. If `API_KEY` is empty, the installation key cannot sign in at all.
 
@@ -98,7 +98,7 @@ To let a team see only their own faxes, give their group **Fax Viewer** or **Fax
 
 ## Keys
 
-API keys let apps, scanners and phones use Faxbot. Manage them on the **Keys** screen, which needs `keys:manage`.
+API keys let apps, scanners and phones use Faxbot. Manage them under **Access → Keys & phones**, which needs `keys:manage`.
 
 - **Every key belongs to a user or an integration.** It can never do more than its owner, even if the owner later loses access.
 - **Every key has its own permission list.** When you create a key, choose only what that app needs, for example `fax:send` and `fax:read` for a scanner. The key can do something only when both its owner and its permission list allow it.
@@ -110,7 +110,7 @@ Keys created before this access system appear as **Needs review** when they had 
 
 ### Keys for the iPhone app
 
-When the iPhone app pairs, Faxbot creates an integration for that device and gives it a key. The key can send faxes, see sent faxes and their documents, and see received faxes and their documents. It is listed on the **Keys** screen under the device's name, where you can revoke it if the phone is lost. See [iOS App](../apps/ios.md#pair-the-app).
+When the iPhone app pairs, Faxbot creates an integration for that device and gives it a key. The key can send faxes, see sent faxes and their documents, and see received faxes and their documents. It is listed under **Access → Keys & phones** under the device's name, where you can revoke it if the phone is lost. See [iOS App](../apps/ios.md#pair-the-app).
 
 ## Create the first owner
 
@@ -126,7 +126,7 @@ The **Create the first owner** prompt appears only while no owner exists.
 
 ## Recover owner access
 
-If every owner is locked out, sign in to the console with the installation key (`API_KEY`), as in the steps above. The installation key can do everything an Owner can, including resetting an owner's password on the **Users** screen or adding a new owner.
+If every owner is locked out, sign in to the console with the installation key (`API_KEY`), as in the steps above. The installation key can do everything an Owner can, including resetting an owner's password under **Access → Users** or adding a new owner.
 
 Keep `API_KEY` somewhere safe, such as a password manager. On an existing installation, only an Owner can change it, through the settings API (`PUT /admin/settings` with `api_key`); the Settings screen does not show it, and editing `.env` does not change it.
 

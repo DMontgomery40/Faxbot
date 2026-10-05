@@ -70,7 +70,7 @@ Faxbot tells the phone system this address in every call. A phone system on a pr
 
 ## 2. Set up Faxbot
 
-In the console, open **Settings** (or step 2 of the **Setup Wizard**) and, under **Carrier**, choose **Avaya IP Office** or **Avaya Aura** from **Your phone system**.
+In the console, open the **Setup Wizard** (**System → Setup**) and choose **Avaya IP Office** or **Avaya Aura** under **Your phone system**. Afterwards its page is under **Providers**, named after it.
 
 | Field | What to enter |
 | --- | --- |
@@ -107,7 +107,7 @@ faxbot providers trunk status
 
 ## What your Avaya administrator sets
 
-Both lists come from Avaya's DevConnect application notes and say which notes each step comes from. **Settings** shows the same list under **What your Avaya administrator sets**, and `faxbot providers trunk presets avaya-ipoffice` prints it.
+Both lists come from Avaya's DevConnect application notes and say which notes each step comes from. The phone system's page under **Providers** shows the same list under **What your Avaya administrator sets**, and `faxbot providers trunk presets avaya-ipoffice` prints it.
 
 ### IP Office (IP Office Manager)
 

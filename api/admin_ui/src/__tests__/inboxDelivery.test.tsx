@@ -102,9 +102,31 @@ describe('Inbox email delivery', () => {
     server.use(http.get('/intake/connectors', () => HttpResponse.json({ connectors: [emailConnector(null)] })));
     render(<Received client={client()} inboundEnabled permissions={operator} />);
     const unrouted = await rowFor('+15550104444');
+    // Email delivery covers the number now, so the fax simply came first.
+    expect(within(unrouted).getByText('Arrived before email delivery was set up')).toBeTruthy();
+    expect(within(unrouted).queryByText('No email delivery set up for this number')).toBeNull();
     fireEvent.click(within(unrouted).getByRole('button', { name: `Retry delivery of the fax from ${masked('+15550104444')}` }));
     expect(await screen.findByText('Faxbot will deliver it shortly.')).toBeTruthy();
     expect(retries).toEqual(['i4']);
+  });
+
+  it('retries without opening the fax\'s details, though the row opens them', async () => {
+    const retries = inbox();
+    const work = (id: string, fax: string, from: string) => ({ id, inbound_fax_id: fax, state: 'open', state_key: 'waiting',
+      state_text: 'Waiting for an owner.', due_text: null, due_at: null, due_hours: null, due_source: null,
+      available_at: '2026-10-03T12:00:00', from_number: from, to_number: '+15550100001', pages: 1, mailbox: null, owner: null,
+      backup: null, assigned_at: null, acknowledged_by: null, acknowledged_at: null, escalated_at: null, done_at: null,
+      done_by: null, done_note: null, duplicate_of: null, is_mine: false, overdue: false, version: 1, actions: [] });
+    server.use(http.get('/work', () => HttpResponse.json({ items: [work('w3', 'fax-failed', '+15550103333')] })));
+    render(<Received client={client()} inboundEnabled permissions={new Set([...operator, 'work:read'])} canWork />);
+    const failed = await rowFor('+15550103333');
+    fireEvent.click(within(failed).getByRole('button', { name: `Retry delivery of the fax from ${masked('+15550103333')}` }));
+    expect(await screen.findByText('Faxbot will deliver it shortly.')).toBeTruthy();
+    expect(retries).toEqual(['i3']);
+    expect(screen.queryByRole('dialog', { name: 'Work item' })).toBeNull();
+    // A click on the row itself still opens them.
+    fireEvent.click(within(failed).getByText(masked('+15550103333')));
+    expect(await screen.findByRole('dialog', { name: 'Work item' })).toBeTruthy();
   });
 
   it('offers no retry to people who cannot change settings', async () => {

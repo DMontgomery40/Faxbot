@@ -441,6 +441,7 @@ export default function Received({
     return (
       <DeliveryStatusLine item={deliveryFor.get(fax.id)} canRetry={canRetryDelivery} busy={retrying} isNew={isNewFax(fax.received_at)}
         emailApplies={emailDeliveryApplies(connectors, fax.to)} documentPending={!inboundFaxStatus(fax).hasDocument}
+        setUpNow={connectors !== null && emailDeliveryApplies(connectors, fax.to)}
         onRetry={(item) => void retryDelivery(item)} label={`the fax from ${maskPhoneNumber(fax.fr)}`} />
     );
   };
