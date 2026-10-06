@@ -94,7 +94,7 @@ ENGINE_CAPABILITIES = {
     # start.sh hands Asterisk its folders (CHOWN; FSETID keeps the data folder's setgid bit), Asterisk drops
     # to its own user (SETUID, SETGID), and a stop reaches it (KILL).
     'asterisk': ['CHOWN', 'FSETID', 'SETUID', 'SETGID', 'KILL'],
-    # The root start script writes the uucp spool's settings (CHOWN, DAC_OVERRIDE, FOWNER), the daemons drop
+    # The root start script writes the uucp spool's settings (CHOWN, DAC_OVERRIDE, FOWNER), the daemons switch
     # to uucp (SETUID, SETGID), the job server shuts each session into the spool (SYS_CHROOT), and a stop
     # reaches the daemons (KILL).
     'hylafax': ['CHOWN', 'DAC_OVERRIDE', 'FOWNER', 'SETUID', 'SETGID', 'SYS_CHROOT', 'KILL'],
@@ -104,10 +104,13 @@ ENGINE_CAPABILITIES = {
 @pytest.mark.parametrize('name', sorted(ENGINE_CAPABILITIES))
 def test_the_engine_containers_keep_only_the_capabilities_they_need(name):
     """Asterisk and the fax engine parse other machines' packets. Each drops every capability but the few
-    its root start script needs, and nothing in it can gain privileges. Each capability is shown to be
-    needed by starting the image without it (tests/test_engine_processes.py, FAXBOT_NATIVE_PROOF=1)."""
+    its root start script needs; each capability is shown to be needed by starting the image without it
+    (tests/test_engine_processes.py, FAXBOT_NATIVE_PROOF=1). Nothing in Asterisk's container can gain
+    privileges. The engine cannot take that option: HylaFAX starts its sender and scripts working as uucp
+    with root as their real user, which no-new-privileges turns into root with no capabilities, and the
+    sender then cannot open its fax line (the loopback proof's case n found it)."""
     service = yaml.safe_load((ROOT / 'docker-compose.yml').read_text())['services'][name]
-    assert service['security_opt'] == ['no-new-privileges:true']
+    assert service.get('security_opt') == (['no-new-privileges:true'] if name == 'asterisk' else None)
     assert service['cap_drop'] == ['ALL'] and service['cap_add'] == ENGINE_CAPABILITIES[name]
     assert 'privileged' not in service and 'NET_BIND_SERVICE' not in service['cap_add']
     if name == 'asterisk':
@@ -128,7 +131,8 @@ def test_every_compose_file_keeps_the_engine_containers_privileges():
         for name, capabilities in ENGINE_CAPABILITIES.items():
             assert services[name]['cap_drop'] == ['ALL'], (extra, name)
             assert sorted(services[name]['cap_add']) == sorted(capabilities), (extra, name)
-            assert services[name]['security_opt'] == ['no-new-privileges:true'], (extra, name)
+            assert services[name].get('security_opt') == (['no-new-privileges:true'] if name == 'asterisk'
+                                                          else None), (extra, name)
 
 
 def test_asterisk_starts_without_errors_and_keeps_every_fax_module():

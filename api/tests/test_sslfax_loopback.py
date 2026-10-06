@@ -1350,7 +1350,8 @@ def test_n_asterisk_as_its_own_user_sends_and_receives_with_its_built_in_engine(
     def arrived():
         return database(context, fax="SELECT id, from_number, to_number, pages FROM inbound_faxes")['fax'] or None
     faxes = wait_for(arrived, 240, 'the fax in Received')
-    received = docker.run('exec', asterisk, 'sh', '-c', 'stat -c "%a %U:%G" /faxdata/inbound/*.tiff',
+    # As Asterisk's user: its inbound folder is its own (root here has no file override).
+    received = docker.run('exec', '-u', 'asterisk', asterisk, 'sh', '-c', 'stat -c "%a %U:%G" /faxdata/inbound/*.tiff',
                           check=False).stdout.split('\n')[0]
     log = docker.run('logs', asterisk, check=False)
     proof.update({'files': files.splitlines(), 'asterisk_process': ' '.join(owner.split()), 'sent_tiff': sent_tiff,

@@ -113,15 +113,19 @@ services:
       - hylafax-settings:/faxdata/hylafax:ro
       - hylafax-out:/faxdata/hylafax-out
       - hylafax:/var/lib/faxbot-engine
-    # The fax daemons run as uucp (HylaFAX and IAXmodem drop to it themselves). The start
-    # script stays root and keeps only what it needs, found by starting the image without
-    # each one (api/tests/test_engine_processes.py): CHOWN, DAC_OVERRIDE and FOWNER to write
-    # the uucp spool's settings, SETUID and SETGID for the daemons to drop to uucp,
-    # SYS_CHROOT for the job server, which shuts each session into the spool (without it
-    # Faxbot cannot hand it a fax and the lines never come ready), KILL to pass a stop on
-    # to the daemons. The SSL Fax listener's port needs none.
-    security_opt:
-      - no-new-privileges:true
+    # The fax daemons work as uucp (HylaFAX and IAXmodem switch to it themselves). Only the
+    # capabilities found needed by starting the image without each one stay
+    # (api/tests/test_engine_processes.py): CHOWN, DAC_OVERRIDE and FOWNER to write the uucp
+    # spool's settings, SETUID and SETGID for the daemons to switch to uucp, SYS_CHROOT for
+    # the job server, which shuts each session into the spool (without it Faxbot cannot hand
+    # it a fax and the lines never come ready), KILL to pass a stop on to the daemons. The
+    # SSL Fax listener's port needs none.
+    # No no-new-privileges here, unlike Asterisk: HylaFAX's daemons keep root as their real
+    # user and switch only their working (effective) user to uucp, and the programs they
+    # start (the fax sender, the result and received-fax scripts) begin the same way. With
+    # no-new-privileges the kernel starts those programs as root with no capabilities, so
+    # the sender loses access to the modem and no fax goes out (loopback proof, case n;
+    # api/tests/test_engine_processes.py shows both ways).
     cap_drop:
       - ALL
     cap_add:

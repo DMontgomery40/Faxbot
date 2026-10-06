@@ -87,10 +87,10 @@ def start():
     """start(image, service, *, without=(), env=None, run=True) -> container name; removed afterwards."""
     made = []
 
-    def run(image, service, *, without=(), env=None, started=True):
+    def run(image, service, *, without=(), env=None, started=True, extra=()):
         name = f'{PREFIX}-processes-{uuid.uuid4().hex[:8]}'
         args = ['create', '--name', name, '--label', 'com.faxbot.scope=engine-processes',
-                *compose_security(service, without=without)]
+                *compose_security(service, without=without), *extra]
         for key, value in (env or {}).items():
             args += ['--env', f'{key}={value}']
         docker(*args, image)
@@ -292,10 +292,10 @@ def test_a_data_volume_from_before_converges_when_the_new_asterisk_starts(asteri
 
 # The fax engine ----------------------------------------------------------------------------------------------
 
-def engine_with_settings(start, image, *, without=(), left_job=False):
+def engine_with_settings(start, image, *, without=(), left_job=False, extra=()):
     """The engine container, given its settings once it waits for them (optionally with a job a restart
     left in uucp's send queue first)."""
-    name = start(image, 'hylafax', without=without)
+    name = start(image, 'hylafax', without=without, extra=extra)
     wait_for(lambda: 'waiting for Faxbot' in docker('logs', name).stderr, 30, 'the engine to wait for settings')
     if left_job:
         docker('exec', '-u', 'uucp', name, 'sh', '-c', 'umask 077 && echo synthetic > /var/spool/hylafax/sendq/q7')
@@ -335,7 +335,9 @@ def test_the_engine_daemons_run_once_as_uucp_and_a_left_job_is_moved_aside(engin
         details = status(name, pid)
         if not details and program not in ('iaxmodem', 'faxgetty', 'faxq', 'hfaxd'):
             continue
-        assert details['NoNewPrivs'] == '1' and int(details['CapBnd'], 16) == allowed, (command, details)
+        # No no-new-privileges for the engine (docker-compose.yml says why): HylaFAX starts its sender and
+        # scripts working as uucp, which that option would turn into root with no capabilities.
+        assert details['NoNewPrivs'] == '0' and int(details['CapBnd'], 16) == allowed, (command, details)
         if program in ('iaxmodem', 'faxgetty', 'faxq', 'hfaxd'):
             # They work as uucp with no effective capability. HylaFAX's design keeps root as their real and
             # saved user, to switch back for device and session work, so root here is the bounded set above.
@@ -358,7 +360,7 @@ def test_the_engine_needs_each_capability_compose_gives_it(engine_image, start):
     spool, so no line ever comes ready and Faxbot could not hand it a fax. (KILL only lets a stop reach the
     uucp daemons; without it Docker ends them when the container ends.)"""
     spec = yaml.safe_load((ROOT / 'docker-compose.yml').read_text())['services']['hylafax']
-    assert spec['cap_drop'] == ['ALL'] and spec['security_opt'] == ['no-new-privileges:true']
+    assert spec['cap_drop'] == ['ALL'] and 'security_opt' not in spec
     assert sorted(spec['cap_add']) == ['CHOWN', 'DAC_OVERRIDE', 'FOWNER', 'KILL', 'SETGID', 'SETUID', 'SYS_CHROOT']
     outcomes = {}
     for cap in [cap for cap in spec['cap_add'] if cap != 'KILL']:
@@ -370,3 +372,51 @@ def test_the_engine_needs_each_capability_compose_gives_it(engine_image, start):
     assert all(state != 'running' for state, _ in outcomes.values()), outcomes
     for cap in ('CHOWN', 'DAC_OVERRIDE', 'FOWNER'):
         assert '/var/spool/hylafax/etc/ssl.pem' in outcomes[cap][1], (cap, outcomes[cap])
+
+
+# A program a HylaFAX daemon starts (faxq starts faxsend and the result script, faxgetty the received-fax
+# script): its real user is root and it works as uucp. It opens the line's modem and writes uucp's folders.
+CHILD = ('id -u; if exec 3<>/dev/ttyIAX1; then echo modem; fi; '
+         'touch /var/lib/faxbot-engine/results/.child && touch /var/lib/faxbot-engine/received/.child && echo wrote')
+PAGE = '%!PS\n/Helvetica-Bold findfont 30 scalefont setfont 72 700 moveto (PROCESS TEST) show showpage\n'
+
+
+@pytest.mark.parametrize('no_new_privileges', [False, True], ids=['as-compose-runs-it', 'with-no-new-privileges'])
+def test_the_programs_the_engine_daemons_start_still_work_as_uucp(engine_image, start, no_new_privileges):
+    """The engine's daemons keep root as their real user and work as uucp; so do the programs they start, the
+    fax sender and the result and received-fax scripts. That is why docker-compose.yml gives the engine no
+    no-new-privileges: with it, the kernel starts each such program as root with no capabilities, and the
+    sender cannot open its fax line (live in the loopback proof's case n: "Can not open modem (Permission
+    denied)"). The same container with that one option added shows the failure."""
+    extra = ('--security-opt', 'no-new-privileges:true') if no_new_privileges else ()
+    name = engine_with_settings(start, engine_image, extra=extra)
+    wait_for(lambda: engine_state(name) == 'running', 90, 'the engine to say it is running')
+    uucp = docker('exec', name, 'id', '-u', 'uucp').stdout.strip()
+
+    def started_by_a_daemon(*shell):
+        """Run CHILD the way the daemons start their programs: real user root, working as uucp."""
+        return docker('exec', name, 'setpriv', '--ruid', '0', '--rgid', '0', '--euid', 'uucp', '--egid', 'uucp',
+                      '--clear-groups', '--', *shell, '-c', CHILD, check=False).stdout.split()
+    # A program (sh -p keeps the user it was started as, as faxsend does) and a script (the shell takes
+    # back its real user, root, as the result and received-fax scripts do).
+    child, script = started_by_a_daemon('sh', '-p'), started_by_a_daemon('sh')
+    # A real fax job: faxq starts faxsend, which opens the line's modem and dials (nobody answers here).
+    subprocess.run(['docker', '--context', CONTEXT, 'exec', '-i', name, 'sh', '-c', 'cat > /tmp/page.ps'],
+                   input=PAGE, text=True, check=True, timeout=60)
+    docker('exec', name, 'sendfax', '-n', '-d', '5555550123', '/tmp/page.ps')
+
+    def sender():
+        logs = docker('logs', name).stderr
+        dialed = docker('exec', name, 'sh', '-c', 'cat /var/spool/hylafax/log/c* 2>/dev/null', check=False).stdout
+        if 'Can not open modem' in logs:
+            return 'refused: ' + next(line for line in logs.splitlines() if 'Can not open modem' in line)
+        return 'dialed' if 'DIAL' in dialed else None
+    outcome = wait_for(sender, 90, 'faxsend to open the modem or be refused')
+    if no_new_privileges:
+        # Each starts as root with no capabilities: the modem and uucp's folders are closed to it, and the
+        # real sender is refused its line.
+        assert child == ['0'] and script == ['0'], (child, script)
+        assert outcome.startswith('refused: ') and 'Permission denied' in outcome, outcome
+    else:
+        assert child == [uucp, 'modem', 'wrote'] and script == ['0', 'modem', 'wrote'], (child, script)
+        assert outcome == 'dialed', outcome
