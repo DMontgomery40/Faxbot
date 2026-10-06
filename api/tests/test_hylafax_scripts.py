@@ -165,9 +165,10 @@ def test_a_new_container_that_repeats_a_communication_id_reports_each_call_that_
 
 
 def test_a_fax_received_without_a_communication_id_is_still_kept_and_handed_over(engine, tmp_path):
-    """Asterisk rings every free line for one call; when two lines begin a session at the same moment HylaFAX
-    left the answering line's communication ID empty (loopback, 6 October 2026), and the fax was refused here.
-    It is kept under its receive-queue number instead, and handed over like any other."""
+    """When Asterisk rang every free line for one call (it now tries them in turn), two lines could begin a
+    session at the same moment and HylaFAX left the answering line's communication ID empty (loopback,
+    6 October 2026), and the fax was refused here. It is kept under its receive-queue number instead, and
+    handed over like any other."""
     spool, state, data, environment = engine
     # An ordinary fax (not SSL Fax by its image): whether SSL Fax ran on the call is unknown, never "no".
     _stub(tmp_path / 'tools', 'faxinfo', "printf '%s\\n' 'x:' '    Sender: +1 555 555 0199' '     Pages: 2' "

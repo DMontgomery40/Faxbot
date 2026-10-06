@@ -132,6 +132,8 @@ def test_dialplan_tries_the_engine_lines_in_turn_and_reports_a_call_no_free_line
     assert 'GotoIf($[${FAXBOT_RING} < 1]?none)' in section
     assert 'Set(FAXBOT_RING=${IF($[${FAXBOT_RING} > 12]?12:${FAXBOT_RING})})' in section
     assert 'UserEvent(FaxEngineMissed,' in section
+    # Every line Faxbot can set up is tried.
+    assert f'${{FAXBOT_LINE}} > {hylafax_engine.MAX_LINES}]?none)' in section
     assert section.index('UserEvent(FaxEngineMissed,') < section.index('(builtin),')
     import re
     for line in section.splitlines():

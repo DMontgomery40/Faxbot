@@ -974,6 +974,24 @@ def trunk_cli(monkeypatch, tmp_path):
         yield Cli(client)
 
 
+def test_trunk_restart_engine_asks_the_engine_or_says_why_there_is_nothing_to_restart(trunk_cli):
+    """`faxbot providers trunk restart-engine`, the console's Restart the fast fax service."""
+    import json as json_module
+    from app import hylafax_engine
+    refused = trunk_cli('providers', 'trunk', 'restart-engine')
+    assert refused.exit_code == 6 and hylafax_engine.NOT_SET_UP in refused.stderr  # 6: a conflict
+    values = trunk_cli.client.app.state.configuration_runtime.manager.store.read().active.values
+    hylafax_engine.engine_conf_path(values).parent.mkdir(parents=True, exist_ok=True)
+    hylafax_engine.engine_conf_path(values).write_text('lines=2\n')
+    stopped = trunk_cli('providers', 'trunk', 'restart-engine')
+    assert stopped.exit_code == 6 and hylafax_engine.RESTART_NOT_RUNNING in stopped.stderr
+    hylafax_engine.status_path(values).parent.mkdir(parents=True, exist_ok=True)
+    hylafax_engine.status_path(values).write_text(json_module.dumps({'state': 'running', 'lines': 2}))
+    asked = trunk_cli('providers', 'trunk', 'restart-engine')
+    assert asked.exit_code == 0 and asked.stdout.strip() == hylafax_engine.RESTART_ASKED
+    assert hylafax_engine.restart_request(values)['reason'] == 'manual'
+
+
 def test_trunk_status_and_calls_read_as_plain_sentences(trunk_cli):
     from app import sip_calls
     engine = trunk_cli.client.app.state.configuration_runtime.manager.store.engine
