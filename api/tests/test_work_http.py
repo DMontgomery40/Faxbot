@@ -216,7 +216,7 @@ def test_export_contains_manifest_original_and_history_and_names_what_is_missing
 
 
 def test_export_never_names_todays_email_recipients_as_the_ones_a_fax_went_to(client, tmp_path):
-    """Recipients are not stored at delivery and the connector can change later, so the export says so."""
+    """A delivery from before recipients were stored says so; a newer one names who it went to then."""
     from app.intake.store import IntakeStore
     from app.intake.worker import ConnectorSecrets
     mailbox(client, 'Front Desk', '+15550100001')
@@ -240,6 +240,22 @@ def test_export_never_names_todays_email_recipients_as_the_ones_a_fax_went_to(cl
     assert 'Who each email was sent to was not recorded when it was delivered.' in manifest['missing']
     assert b'changed-later@clinic.example' not in files['manifest.json']
     assert b'changed-later@clinic.example' not in files['history.txt']
+
+    # A delivery that kept its recipients when the email server accepted it names them, not today's.
+    newer = receive(tmp_path, '+15550100001', content=pdf('Synthetic newer document'))
+    feed(4)
+    intake.feed_inbound()
+    with intake.engine.begin() as connection:
+        connection.execute(intake.items.update().where(intake.items.c.inbound_fax_id == newer).values(
+            state='delivered', connector_id=created.json()['id'], delivered_at=datetime.utcnow(), last_error=None,
+            delivered_to=json.dumps(['frontdesk@clinic.example', 'billing@clinic.example'])))
+    files = _export(client.get(f"/work/{item_of(client, newer)['id']}/export", headers=B))
+    manifest = json.loads(files['manifest.json'])
+    [delivery] = manifest['email_delivery']
+    assert delivery['delivered_to'] == ['frontdesk@clinic.example', 'billing@clinic.example']
+    assert 'Who each email was sent to was not recorded when it was delivered.' not in manifest['missing']
+    assert b'changed-later@clinic.example' not in files['manifest.json']
+    assert 'Emailed to frontdesk@clinic.example, billing@clinic.example.' in files['history.txt'].decode()
 
 
 def test_export_withholds_the_original_from_people_who_cannot_read_documents(client, tmp_path):

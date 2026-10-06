@@ -265,8 +265,10 @@ export interface IntakeItem {
   next_attempt_at: string | null;
   delivered_at: string | null;
   connector: string | null;
-  // Where a delivered item was emailed.
+  // Where a delivered item was emailed, as the email server accepted it at the time.
   delivered_to?: string[];
+  // False for an email delivered before Faxbot kept its recipients.
+  recipients_recorded?: boolean;
 }
 
 export interface IntakeCounts {

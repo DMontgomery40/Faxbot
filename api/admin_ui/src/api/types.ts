@@ -444,6 +444,19 @@ export interface InboundFax {
   recovered?: boolean;
   // A sentence about the provider's own copy, such as an eFax deletion Faxbot is still retrying.
   provider_note?: string | null;
+  // Each time fetching the document stopped before it was set going again, oldest first.
+  earlier_failures?: InboundEarlierFailure[];
+  // One sentence about them, such as "Failed twice before Phaxio reported it again on ...".
+  earlier_failures_text?: string | null;
+}
+
+export interface InboundEarlierFailure {
+  stopped_at: string | null;
+  attempts: number;
+  problem: string | null;
+  resumed_at: string;
+  resumed_by: 'person' | 'notification';
+  resumed_by_name: string | null;
 }
 
 // Authentication and access management (/auth/*, /access/*). Datetimes are

@@ -81,6 +81,7 @@ export function emailDeliveryApplies(connectors: EmailConnector[] | null, number
 }
 
 export const ARRIVED_BEFORE_EMAIL = 'Arrived before email delivery was set up';
+export const RECIPIENTS_NOT_RECORDED = 'Who it went to was not recorded when it was delivered.';
 
 // setUpNow: email delivery is known to cover this number today (the fax came before it did).
 export function inboxDeliveryStatus(item: IntakeItem | undefined, isNew = true, emailApplies = true,
@@ -88,9 +89,14 @@ export function inboxDeliveryStatus(item: IntakeItem | undefined, isNew = true, 
   if (!item) return isNew ? { label: 'Waiting for email delivery', detail: null, tone: 'info', retry: false } : null;
   const reason = GENERIC.has(item.status) ? null : item.status;
   if (item.state === 'delivered') {
+    // The addresses stored when the email server accepted it; never the connector's addresses today.
     const to = item.delivered_to?.length ? item.delivered_to.join(', ') : null;
-    return { label: to ? `Delivered to ${to}` : 'Delivered by email',
-      detail: item.delivered_at ? formatServerTime(item.delivered_at) : null, tone: 'success', retry: false };
+    const when = item.delivered_at ? formatServerTime(item.delivered_at) : null;
+    if (!to && item.recipients_recorded === false) {
+      return { label: 'Delivered by email', detail: when ? `${when}. ${RECIPIENTS_NOT_RECORDED}` : RECIPIENTS_NOT_RECORDED,
+        tone: 'success', retry: false };
+    }
+    return { label: to ? `Delivered to ${to}` : 'Delivered by email', detail: when, tone: 'success', retry: false };
   }
   if (item.state === 'failed') return { label: 'Not delivered', detail: reason, tone: 'error', retry: true };
   if (item.state === 'sending') return { label: 'Waiting for email delivery', detail: null, tone: 'info', retry: false };

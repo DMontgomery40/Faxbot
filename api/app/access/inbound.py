@@ -244,7 +244,7 @@ class AuthorizedInboundQueries:
 
     def _with_acquisition(self, connection, rows):
         """Add each fax's acquisition state, read in one query; never duplicates a fax."""
-        from ..inbound.acquisition import describe
+        from ..inbound.acquisition import describe, failures_on, provider_copies_on
         imports = self.resources.imports_table()
         found = {}
         identities = [row['id'] for row in rows]
@@ -252,12 +252,15 @@ class AuthorizedInboundQueries:
             for record in connection.execute(sa.select(imports).where(imports.c.inbound_fax_id.in_(identities))
                                              .order_by(imports.c.created_at, imports.c.id)).mappings():
                 found.setdefault(record['inbound_fax_id'], dict(record))
+        failures = failures_on(connection, self.store.engine, identities) if imports is not None else {}
+        copies = provider_copies_on(connection, self.store.engine, identities) if imports is not None else {}
         now = self._clock()
         result = []
         for row in rows:
             row = dict(row)
             record = found.get(row['id'])
-            row.update(describe(row, record, now=now))
+            row.update(describe(row, record, now=now, failures=failures.get(row['id'], ()),
+                                provider_copy=copies.get(row['id'])))
             for private in ('pdf_path', 'provider_sid'):
                 row.pop(private, None)
             result.append(row)

@@ -4,7 +4,7 @@ import { Alert, Box, Button, Divider, Drawer, List, ListItem, ListItemText, Stac
 import DownloadIcon from '@mui/icons-material/Download';
 import type AdminAPIClient from '../../api/client';
 import { formatServerTime } from '../../api/time';
-import type { WorkEvent, WorkItem } from '../../api/types';
+import type { InboundFax, WorkEvent, WorkItem } from '../../api/types';
 import { deliveryErrorMessage } from '../delivery/shared';
 import { can, duplicateSentence, maskNumber, workStateSentence } from './text';
 
@@ -18,11 +18,13 @@ function Field({ label, value }: { label: string; value: string | null | undefin
   );
 }
 
-export default function WorkDetail({ client, item, onClose, onDownload }: {
+export default function WorkDetail({ client, item, onClose, onDownload, fax = null }: {
   client: AdminAPIClient;
   item: WorkItem | null;
   onClose: () => void;
   onDownload: (item: WorkItem) => void;
+  // The received fax behind this item, when this person may list it.
+  fax?: InboundFax | null;
 }) {
   const [events, setEvents] = useState<WorkEvent[] | null>(null);
   const [detail, setDetail] = useState<WorkItem | null>(null);
@@ -63,6 +65,7 @@ export default function WorkDetail({ client, item, onClose, onDownload }: {
             <Field label="Due" value={shown.due_at ? formatServerTime(shown.due_at) : null} />
             <Field label="Owner" value={shown.owner?.name} />
             <Field label="Same document" value={duplicateSentence(shown)} />
+            <Field label="Earlier failures" value={fax?.earlier_failures_text} />
             <Field label="Done note" value={shown.done_note} />
             {can(shown, 'document') && (
               <Button startIcon={<DownloadIcon />} onClick={() => onDownload(shown)} sx={{ mb: 2 }}>Download document</Button>

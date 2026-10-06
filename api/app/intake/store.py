@@ -34,6 +34,17 @@ class IntakeConflict(RuntimeError):
     """The record changed or is in a state that does not allow this action."""
 
 
+def recipients_of(item):
+    """The addresses a delivered email went to, as stored when the server accepted it; None when not recorded."""
+    try:
+        found = json.loads(item.get('delivered_to') or 'null')
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(found, list) or not all(isinstance(value, str) for value in found):
+        return None
+    return found
+
+
 def number_key(value, country=DEFAULT_COUNTRY):
     try:
         return normalize_number(value, country=country)
@@ -365,10 +376,11 @@ class IntakeStore:
             connection.execute(self.items.update().where(self.items.c.id == item['id']).values(
                 claim_token=None, claim_expires_at=None, version=current['version'] + 1, updated_at=now, **values))
 
-    def record_delivered(self, item, *, connector_id, reference, now=None):
+    def record_delivered(self, item, *, connector_id, reference, recipients, now=None):
+        """``recipients`` are the addresses the email server accepted, kept as they were at that moment."""
         self._finish(item, now or utcnow(), state='delivered', delivered_at=now or utcnow(),
                      delivery_reference=reference[:255], connector_id=connector_id, last_error=None,
-                     next_attempt_at=None)
+                     next_attempt_at=None, delivered_to=json.dumps([str(value) for value in recipients]))
 
     def record_retry(self, item, *, message, connector_id=None, now=None):
         """A definite failure that may succeed later; back off, then stop for a person."""

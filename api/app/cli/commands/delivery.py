@@ -643,6 +643,15 @@ def routing_plans(provider: str = typer.Argument(None, help='The fax service, fo
 
 # -- intake ------------------------------------------------------------------------------
 
+def _emailed_to(item):
+    """Who a delivered email went to, as stored when the email server accepted it."""
+    if item.get('state') != 'delivered':
+        return '-'
+    if item.get('delivered_to'):
+        return ', '.join(item['delivered_to'])
+    return 'Not recorded' if item.get('recipients_recorded') is False else '-'
+
+
 @intake.command('items')
 def intake_items(state_filter: str = typer.Option(None, '--state', help='received, sending, delivered or failed.'),
                  limit: int = typer.Option(100, '--limit', min=1, max=500, help='How many to show.'),
@@ -651,11 +660,11 @@ def intake_items(state_filter: str = typer.Option(None, '--state', help='receive
     result = state.api().get('/intake/items', params={'state': state_filter, 'limit': limit})
 
     def human(out):
-        out.table((['Item ID'] if ids else []) + ['Received', 'From', 'To', 'Pages', 'Delivery', 'Status',
-                                                  'Needs action'],
+        out.table((['Item ID'] if ids else []) + ['Received', 'From', 'To', 'Pages', 'Delivery', 'Emailed to',
+                                                  'Status', 'Needs action'],
                   [([item['id']] if ids else []) + [local_time(item['received_at']), item.get('from_number'),
                                                     item.get('to_number'), item.get('pages'), item.get('connector'),
-                                                    item['status'], item['needs_action']]
+                                                    _emailed_to(item), item['status'], item['needs_action']]
                    for item in result.get('items', [])], empty='The intake queue is empty.')
         counts = result.get('counts', {})
         out.line(', '.join(f'{count} {name}' for name, count in counts.items()))

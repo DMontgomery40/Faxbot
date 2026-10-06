@@ -2213,6 +2213,22 @@ class InboundFaxOut(BaseModel):
     recovered: bool = False
     # A sentence about the provider's own copy, such as an eFax deletion Faxbot is still retrying.
     provider_note: Optional[str] = None
+    # Each time fetching stopped before it was set going again, oldest first, and one sentence about them.
+    earlier_failures: List["InboundEarlierFailure"] = []
+    earlier_failures_text: Optional[str] = None
+
+
+class InboundEarlierFailure(BaseModel):
+    stopped_at: Optional[datetime] = None
+    attempts: int
+    problem: Optional[str] = None
+    resumed_at: datetime
+    # person (someone asked to fetch it again) or notification (the provider reported it again).
+    resumed_by: str
+    resumed_by_name: Optional[str] = None
+
+
+InboundFaxOut.model_rebuild()
 
 
 def _inbound_pdf_response(inbound_id: str, pdf_path: Optional[str], method: str, status: Optional[str] = "received"):

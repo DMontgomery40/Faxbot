@@ -410,6 +410,13 @@ export default function Received({
     return row.fax.backend === 'import' ? 'Imported' : providerName(row.fax.backend);
   };
 
+  // How often fetching the document stopped before it was set going again, when it did.
+  const EarlierFailures = ({ row }: { row: Row }) => (row.fax?.earlier_failures_text ? (
+    <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.5, maxWidth: 280 }}>
+      {row.fax.earlier_failures_text}
+    </Typography>
+  ) : null);
+
   // The fax's own state while its document is missing; otherwise the owner and state of its work item.
   const OwnerAndState = ({ row }: { row: Row }) => {
     const faxStatus = row.fax ? inboundFaxStatus(row.fax) : null;
@@ -422,6 +429,7 @@ export default function Received({
           {duplicateSentence(row.work) && (
             <Typography variant="caption" display="block" sx={{ mt: 0.5 }}>{duplicateSentence(row.work)}</Typography>
           )}
+          <EarlierFailures row={row} />
         </Box>
       );
     }
@@ -433,6 +441,7 @@ export default function Received({
         {faxStatus.detail && (
           <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, maxWidth: 280 }}>{faxStatus.detail}</Typography>
         )}
+        <EarlierFailures row={row} />
       </Box>
     );
   };
@@ -697,6 +706,7 @@ export default function Received({
       </Dialog>
 
       <WorkDetail client={client} item={selected} onClose={() => setSelected(null)}
+        fax={selected ? faxes.find((candidate) => candidate.id === selected.inbound_fax_id) ?? null : null}
         onDownload={(item) => void downloadPdf(item.inbound_fax_id, `document-${localDay(item.available_at) || 'fax'}.pdf`)} />
     </Box>
   );

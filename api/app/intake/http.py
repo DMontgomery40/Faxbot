@@ -14,7 +14,7 @@ from ..config_runtime import run_lifecycle_step
 from ..routing.background import installation_engine, lifespan_tasks, repeat
 from ..routing.database import DeliveryStoreError
 from .email import AmbiguousFailure, DefiniteFailure, send, test_message
-from .store import IntakeConflict, IntakeInputError, IntakeStore
+from .store import IntakeConflict, IntakeInputError, IntakeStore, recipients_of
 from .worker import ConnectorSecrets, IntakeWorker
 
 
@@ -102,7 +102,8 @@ STATE_TEXT = {
 def _item_view(item, connectors):
     waiting = item['state'] == 'received' and item['next_attempt_at'] is None
     connector = connectors.get(item['connector_id'])
-    delivered = connector is not None and item['state'] == 'delivered'
+    # Who it went to as stored when the email server accepted it; never the connector's addresses today.
+    recipients = recipients_of(item) if item['state'] == 'delivered' else None
     return {'id': item['id'], 'source': item['source'], 'inbound_fax_id': item['inbound_fax_id'],
             'received_at': item['received_at'],
             'pages': item['pages'], 'from_number': item['from_number'], 'to_number': item['to_number'],
@@ -110,7 +111,7 @@ def _item_view(item, connectors):
             'needs_action': item['state'] == 'failed' or waiting, 'attempts': item['attempts'],
             'next_attempt_at': item['next_attempt_at'], 'delivered_at': item['delivered_at'],
             'connector': connector.name if connector is not None else None,
-            'delivered_to': list(connector.settings.recipients) if delivered else []}
+            'delivered_to': recipients or [], 'recipients_recorded': recipients is not None}
 
 
 def _connector_view(connector):
