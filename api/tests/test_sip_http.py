@@ -297,7 +297,8 @@ def test_each_route_declares_the_permission_the_console_relies_on():
                         ('POST', '/admin/sip/network/check'): [('providers:write', False)],
                         ('GET', '/admin/sip/telnyx'): [('providers:read', False)],
                         ('GET', '/admin/sip/negotiation'): [('providers:read', False)],
-                        ('GET', '/admin/sip/negotiation/received/{inbound_id}'): [('providers:read', False)],
+                        # One received fax's call: that fax's own read check, as its detail (route policy coverage).
+                        ('GET', '/admin/sip/negotiation/received/{inbound_id}'): [],
                         ('POST', '/admin/sip/telnyx/numbers/{number}/t38'): [('providers:write', True)]}
 
 

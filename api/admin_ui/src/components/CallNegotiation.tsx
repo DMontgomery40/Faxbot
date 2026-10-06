@@ -33,7 +33,7 @@ export function callsPerFax(value: number | null): string {
 }
 
 // Faxes → Received, one fax's details: how its call went. Shows nothing when no phone-line call carried the
-// fax, or when the person may not read the phone line's records.
+// fax. Whoever may read the fax may read this line (the server checks the fax's own access).
 export function ReceivedCallNegotiation({ client, faxId }: { client: AdminAPIClient; faxId: string | null | undefined }) {
   const [sentence, setSentence] = useState<string | null>(null);
   useEffect(() => {
