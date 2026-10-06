@@ -403,8 +403,11 @@ def providers_status():
     result = state.api().get('/admin/health-status')
 
     def human(out):
-        out.fields([('Provider', _provider(result.get('backend'))), ('Ready', result.get('backend_healthy')),
-                    ('Receiving faxes', result.get('inbound_enabled')), ('API keys set up', result.get('api_keys_configured')),
+        out.fields([('Sending provider', _provider(result.get('backend'))), ('Ready to send', result.get('backend_healthy')),
+                    ('Receiving faxes', result.get('inbound_enabled')),
+                    ('Receiving provider', _provider(result.get('receiving_backend'))),
+                    ('Ready to receive', result.get('receiving_ready')),
+                    ('API keys set up', result.get('api_keys_configured')),
                     ('Checked', local_time(result.get('timestamp')))])
         jobs = result.get('jobs')
         if isinstance(jobs, dict):
@@ -423,7 +426,11 @@ def health():
         checks = (ready or {}).get('checks', {})
         out.fields([('Server', api.url), ('Answering', (live or {}).get('status') == 'ok'),
                     ('Ready to send', (ready or {}).get('status') == 'ready'),
-                    ('Provider', _provider((ready or {}).get('backend'))), ('Database', checks.get('db')),
+                    ('Ready to receive', (ready or {}).get('ready_to_receive')),
+                    ('Sending provider', _provider((ready or {}).get('backend'))),
+                    ('Receiving provider', _provider((checks.get('inbound') or {}).get('backend')
+                                                     if (checks.get('inbound') or {}).get('enabled') else None)),
+                    ('Database', checks.get('db')),
                     ('Ghostscript', checks.get('ghostscript'))])
         for warning in (ready or {}).get('warnings') or []:
             out.line('Warning: ' + warning)

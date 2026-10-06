@@ -19,6 +19,9 @@ export interface HealthStatus {
   backend_healthy: boolean;
   // One plain reason when sending cannot work, such as the fax engine refusing Faxbot's login.
   backend_message?: string | null;
+  // The provider that receives faxes ('' when receiving is off), and whether receiving can work now.
+  receiving_backend?: string;
+  receiving_ready?: boolean;
   jobs: {
     queued: number;
     in_progress: number;
