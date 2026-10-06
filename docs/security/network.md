@@ -34,7 +34,7 @@ Guidance for securing MCP transports and webhooks when running Faxbot in product
 - Sinch (inbound)
   - Endpoint: `POST /sinch-inbound`
   - Basic auth: `SINCH_INBOUND_BASIC_USER/PASS`
-  - HMAC: `X-Sinch-Signature` with `SINCH_INBOUND_HMAC_SECRET`
+  - Sinch Fax API v3 does not sign webhooks. Without both Basic auth values, Faxbot confirms each fax with Sinch's API before recording it.
 
 - SIP/Asterisk (inbound)
   - Endpoint: `POST /_internal/asterisk/inbound`
