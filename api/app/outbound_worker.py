@@ -100,7 +100,7 @@ class OutboundWorker:
         return True
 
     async def run(self):
-        """Claim work at once after work; when idle, back off up to 10 s, and start at once on a new fax."""
-        from .outbound_wake import LONGEST_SECONDS, IdleBackoff, idle_loop
-        await idle_loop(self.step, backoff=IdleBackoff(self.interval, max(self.interval, LONGEST_SECONDS)),
+        """Claim work at once after work; when idle, back off to ten intervals (10 s), and start at once on a new fax."""
+        from .outbound_wake import IdleBackoff, idle_loop
+        await idle_loop(self.step, backoff=IdleBackoff(self.interval, self.interval * 10),
                         warning='Delivery worker operation requires recovery.', logger=logging.getLogger(__name__))

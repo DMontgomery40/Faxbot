@@ -52,8 +52,8 @@ class OutboundPoller:
         return True
 
     async def run(self):
-        """Read statuses at once while some are due; when idle, back off up to 10 s, and wake on new work."""
-        from .outbound_wake import LONGEST_SECONDS, IdleBackoff, idle_loop
-        await idle_loop(self.step, backoff=IdleBackoff(self.interval, max(self.interval, LONGEST_SECONDS)),
+        """Read statuses at once while some are due; when idle, back off to ten intervals (10 s), and wake on new work."""
+        from .outbound_wake import IdleBackoff, idle_loop
+        await idle_loop(self.step, backoff=IdleBackoff(self.interval, self.interval * 10),
                         warning='Provider status refresh is temporarily unavailable.',
                         logger=logging.getLogger(__name__))
