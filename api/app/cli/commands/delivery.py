@@ -340,11 +340,14 @@ def print_receiving(out, result):
     days = result.get('days', 30)
     pool = result.get('pool') or {}
     out.line(pool.get('sentence') or result.get('sentence') or '')
-    if pool.get('note'):
-        out.line(pool['note'])
+    for extra in (pool.get('action'), pool.get('note')):
+        if extra:
+            out.line(extra)
     if pool.get('numbers'):
+        # A number with a call that has no price shows "No price", never $0.
         out.table(['Number', f'Calls, last {days} days', 'Billed by the minute (estimate)', 'Advice'],
-                  [[row['number'], row['calls'], money(row.get('billed_by_the_minute'), empty='$0.00'),
+                  [[row['number'], row['calls'],
+                    'No price' if row.get('unpriced_calls') else money(row.get('billed_by_the_minute'), empty='$0.00'),
                     _line_advice(row)] for row in pool['numbers']],
                   title=f'Should your numbers share incoming lines? (estimate, last {days} days)')
     check, choose = pool.get('check'), pool.get('choose')

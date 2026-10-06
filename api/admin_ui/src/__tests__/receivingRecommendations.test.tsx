@@ -114,6 +114,27 @@ describe('Costs → Recommendations → Receiving', () => {
     expect(screen.getByText('Most calls at once in the last 30 days: 2.')).toBeTruthy();
   });
 
+  it('says which numbers have calls with no price and shows them as no price, never $0', async () => {
+    const advice = sharedAdvice();
+    advice.pool = {
+      state: 'unpriced', unpriced_numbers: ['+13035550100'],
+      sentence: 'Faxbot has no price for some calls received on +13035550100, so it cannot compare shared lines yet.',
+      action: 'Enter what Telnyx charges for received calls in Costs → Prices & plans.',
+      numbers: [{ number: '+13035550100', kind: 'local', eligible: true, reason: null, in_pool: false, calls_before: 30,
+        calls: 30, billed_by_the_minute: [], unpriced_calls: 60 }],
+      assumptions: [],
+    } as never;
+    server.use(http.get('/routing/recommendations/receiving', () => HttpResponse.json(advice)));
+    render(<ReceivingRecommendations client={client()} />);
+    const lines = await screen.findByTestId('receiving-lines');
+    expect(within(lines).getByTestId('receiving-action').textContent).toBe(
+      'Enter what Telnyx charges for received calls in Costs → Prices & plans.');
+    const row = within(lines).getByText('+13035550100').closest('tr') as HTMLElement;
+    expect(within(row).getByText('No price')).toBeTruthy();
+    expect(row.textContent).not.toContain('$0.00');
+    expect(within(lines).queryByRole('table', { name: 'Shared lines compared with billing by the minute' })).toBeNull();
+  });
+
   it('writes the date a price was read as a calendar day in the reader\'s own words', () => {
     expect(readOnText('2026-10-05')).toBe(new Date(2026, 9, 5, 12).toLocaleDateString(undefined,
       { day: 'numeric', month: 'long', year: 'numeric' }));

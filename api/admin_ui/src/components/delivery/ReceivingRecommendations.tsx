@@ -63,6 +63,7 @@ function SharedLines({ advice }: { advice: Advice }) {
     <Paper variant="outlined" sx={{ p: 2, borderRadius: 2 }} data-testid="receiving-lines">
       <Heading title="Shared lines for received faxes" />
       <Typography variant="body1" data-testid="receiving-sentence">{pool.sentence}</Typography>
+      {pool.action && <Typography variant="body2" sx={{ mt: 1 }} data-testid="receiving-action">{pool.action}</Typography>}
       {pool.note && <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>{pool.note}</Typography>}
       {!TOO_LITTLE.has(pool.state) && (
         <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }} data-testid="receiving-window">
@@ -86,7 +87,9 @@ function SharedLines({ advice }: { advice: Advice }) {
                 <TableRow key={row.number}>
                   <TableCell>{row.number}</TableCell>
                   <TableCell align="right">{row.calls}</TableCell>
-                  <TableCell align="right">{formatMoneyList(row.billed_by_the_minute, '$0.00')}</TableCell>
+                  <TableCell align="right">
+                    {row.unpriced_calls ? 'No price' : formatMoneyList(row.billed_by_the_minute, '$0.00')}
+                  </TableCell>
                   <TableCell>{adviceText(row)}</TableCell>
                 </TableRow>
               ))}

@@ -17,7 +17,7 @@ import pytest
 from api.app.routing.carriers import CarrierChargeStore
 from api.app.routing.costs import RateCard, format_amount, parse_amount
 from api.app.routing.receiving import (Call, ReceivingHistory, about, carrier_prices, channel_fee, choose_pool,
-                                       number_kind, prorate, receiving_report, replay)
+                                       evaluate, number_kind, prorate, receiving_report, replay, spend)
 from api.app.routing.seed import load_cards
 from api.app.routing.store import RouteStore
 from api.app.routing.telnyx import CarrierRecord
@@ -100,6 +100,20 @@ def test_numbers_join_busiest_first_and_no_pool_wins_a_tie():
              BUSY[1]: [call('b', BUSY[1], at(NOW, 600), 600, 9_000_000)],
              BUSY[2]: [call('c', BUSY[2], at(NOW, 300), 60, 1_000_000)]}
     assert choose_pool(calls, list(calls), TIERS, window) == ((BUSY[0], BUSY[1]), 1, 13_000_000)
+
+
+def test_a_call_with_no_price_is_unknown_never_free():
+    """AGENTS.md: unknown cost is not zero cost. One unpriced call leaves nothing to compare."""
+    priced = [call('a', BUSY[0], NOW, 600, 20_000_000), call('b', BUSY[0], at(NOW, 900), 600, 20_000_000)]
+    unknown = [call('c', BUSY[1], NOW, 600, None)]
+    assert spend(priced) == 40_000_000 and spend(unknown) is None and spend(priced + unknown) is None
+    window = 30 * 86_400
+    # Alone, BUSY[0] pays for a shared line; with an unpriced neighbour Faxbot chooses nothing and states no cost.
+    assert choose_pool({BUSY[0]: priced}, [BUSY[0]], TIERS, window) == ((BUSY[0],), 1, 12_000_000)
+    assert choose_pool({BUSY[0]: priced, BUSY[1]: unknown}, [BUSY[0], BUSY[1]], TIERS, window) == ((), 0, None)
+    assert choose_pool({BUSY[1]: unknown}, [BUSY[1]], TIERS, window) == ((), 0, None)
+    checked = evaluate({BUSY[0]: priced, BUSY[1]: unknown}, (BUSY[0],), 1, TIERS, window)
+    assert checked['metered'] is None and checked['still_metered'] is None
 
 
 def test_toll_free_international_and_unknown_numbers_are_told_apart():
@@ -275,7 +289,7 @@ def test_busy_local_numbers_share_channels_chosen_on_one_month_and_checked_on_th
     assert rows[TOLL_FREE] == {
         'number': TOLL_FREE, 'kind': 'toll_free', 'eligible': False, 'in_pool': False,
         'reason': 'Toll-free numbers stay billed by the minute.', 'calls_before': 600, 'calls': 600,
-        'billed_by_the_minute': money(600 * 10 * TOLL_FREE_MINUTE)}
+        'billed_by_the_minute': money(600 * 10 * TOLL_FREE_MINUTE), 'unpriced_calls': 0}
     assert rows[CANADA]['kind'] == 'international' and rows[CANADA]['in_pool'] is False
     assert rows[CANADA]['reason'] == 'Numbers outside the US stay billed by the minute, because the shared-line price is for the US.'
     assert pool['break_even'] == ('One shared line at $12.00 a month costs as much as 3,750 received minutes at $0.0032 a '
@@ -302,6 +316,42 @@ def test_a_pool_chosen_on_the_earlier_month_is_not_advised_when_the_later_month_
                                      'numbers': [BUSY[4]]}]
     assert pool['sentence'] == ("Don't switch yet: with 5 shared lines for 8 of your Telnyx numbers, 1 caller would "
                                 'have heard a busy signal in the last 30 days (estimate).')
+
+
+def euro_card(routes):
+    """The installation's received-call price in euros: Telnyx's channel price is in dollars, so local calls have none."""
+    routes.replace_cards([RateCard(None, 'sip', 'inbound', 'Telnyx inbound', 'EUR', parse_amount('0.003'), 0, 0, 60,
+                                   60, None, datetime(2026, 10, 5))])
+
+
+def test_some_calls_without_a_price_stop_the_comparison_and_name_their_numbers(history):
+    engine, routes, store = history
+    euro_card(routes)
+    # Local calls have no dollar price; the toll-free ones keep Telnyx's published toll-free rate.
+    insert_calls(store, [(number, CHOOSE_START + timedelta(days=day, hours=9), 120)
+                         for day in range(2 * DAYS) for number in (BUSY[0], BUSY[1], TOLL_FREE)])
+    pool = receiving_report(engine, routes, values(), now=NOW, days=DAYS)['pool']
+    assert pool['state'] == 'unpriced' and pool['unpriced_numbers'] == [BUSY[0], BUSY[1]]
+    assert pool['sentence'] == (f'Faxbot has no price for some calls received on {BUSY[0]} and {BUSY[1]}, so it cannot '
+                                'compare shared lines yet.')
+    assert pool['action'] == 'Enter what Telnyx charges for received calls in Costs → Prices & plans.'
+    assert not {'check', 'choose', 'channels', 'pool_numbers'} & set(pool)
+    rows = {row['number']: row for row in pool['numbers']}
+    assert rows[BUSY[0]]['billed_by_the_minute'] == [] and rows[BUSY[0]]['unpriced_calls'] == 60
+    assert rows[TOLL_FREE]['billed_by_the_minute'] == money(30 * 2 * TOLL_FREE_MINUTE)
+    assert rows[TOLL_FREE]['unpriced_calls'] == 0
+    assert not any('free' in line for line in pool['assumptions'])
+
+
+def test_a_pool_whose_calls_all_lack_a_price_states_no_saving(history):
+    engine, routes, store = history
+    euro_card(routes)
+    insert_calls(store, busy_calls(CHOOSE_START) + busy_calls(CHECK_START))  # would share 5 lines if priced
+    pool = receiving_report(engine, routes, values(), now=NOW, days=DAYS)['pool']
+    assert pool['state'] == 'unpriced' and pool['unpriced_numbers'] == BUSY
+    assert pool['sentence'] == ('Faxbot has no price for some calls received on 8 of your Telnyx numbers, so it cannot '
+                                'compare shared lines yet.')
+    assert all(row['billed_by_the_minute'] == [] for row in pool['numbers'] if row['number'] in BUSY)
 
 
 def test_light_traffic_keeps_every_number_billed_by_the_minute(history):

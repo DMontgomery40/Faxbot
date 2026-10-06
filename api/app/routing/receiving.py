@@ -251,19 +251,38 @@ def prorate(monthly_micros, seconds):
 
 
 def spend(calls):
-    return sum(call.metered_micros or 0 for call in calls)
+    """What ``calls`` cost billed by the minute, or None when any of them has no price: unknown is never zero."""
+    total = 0
+    for call in calls:
+        if call.metered_micros is None:
+            return None
+        total += call.metered_micros
+    return total
+
+
+def unpriced(calls):
+    return sum(1 for call in calls if call.metered_micros is None)
+
+
+def _seconds(calls):
+    return sum(int((call.end - call.start).total_seconds()) for call in calls)
 
 
 def choose_pool(calls_by_number, eligible, tiers, seconds):
     """``(numbers, channels, cost)`` that cost least over a period of ``seconds`` with no call turned away.
 
     Eligible numbers join busiest first (by what their calls cost billed by the
-    minute); the pool has as many channels as its calls ever needed at once.
-    ``cost`` is the channels plus what the eligible numbers left out still pay
-    by the minute. No pool (every number billed by the minute) wins a tie.
+    minute, then by how long they held a line); the pool has as many channels as
+    its calls ever needed at once. ``cost`` is the channels plus what the
+    eligible numbers left out still pay by the minute. No pool (every number
+    billed by the minute) wins a tie. When any eligible number has a call with
+    no price, nothing can be compared: no pool, and ``cost`` is None.
     """
     by_number = {number: spend(calls_by_number.get(number, ())) for number in eligible}
-    order = sorted(eligible, key=lambda number: (-by_number[number], number))
+    if any(value is None for value in by_number.values()):
+        return (), 0, None
+    order = sorted(eligible, key=lambda number: (-by_number[number],
+                                                 -_seconds(calls_by_number.get(number, ())), number))
     remaining = sum(by_number.values())
     best, pooled = ((), 0, remaining), []
     for index, number in enumerate(order):
@@ -283,9 +302,11 @@ def evaluate(calls_by_number, pool, channels, tiers, seconds):
     pooled = [call for number in pool for call in calls_by_number.get(number, ())]
     everything = [call for calls in calls_by_number.values() for call in calls]
     result = replay(pooled, channels) if pool else Replay(0, 0, [], 0, [])
-    pooled_spend = spend(pooled)
+    pooled_spend, metered = spend(pooled), spend(everything)
+    # Unknown stays unknown: with a call that has no price there is no total to compare.
+    still = None if metered is None or pooled_spend is None else metered - pooled_spend
     return {'replay': result, 'needed': replay(pooled).peak if pool else 0,
-            'metered': spend(everything), 'still_metered': spend(everything) - pooled_spend,
+            'metered': metered, 'still_metered': still,
             'channel_cost': prorate(channel_fee(tiers, channels), seconds) if pool else 0}
 
 
@@ -406,10 +427,12 @@ class ReceivingHistory:
                 reported = sum(charge['amount_micros'] for charge in charges)
             chosen = price_card(number_kind(number, prices.country or country)) if number else None
             estimate = None
-            if chosen is not None and chosen.currency == currency and row['ended_at'] is not None:
-                seconds = row['connected_seconds']
-                if seconds is None and row['answered_at'] is not None:
-                    seconds = int((row['ended_at'] - row['answered_at']).total_seconds())
+            seconds = row['connected_seconds']
+            if seconds is None and row['answered_at'] is not None and row['ended_at'] is not None:
+                seconds = int((row['ended_at'] - row['answered_at']).total_seconds())
+            if seconds is None and row['ended_at'] is not None and row['answered_at'] is None:
+                seconds = 0  # ended without being answered: nothing billed by the minute
+            if chosen is not None and chosen.currency == currency and seconds is not None:
                 estimate = attempt_cost(chosen, seconds=seconds, pages=row['pages'],
                                         delivered=row['job_id'] is not None)
             add_inbound(row['id'], number, row['started_at'], end, reported, estimate)
@@ -565,9 +588,6 @@ def _assumptions(history, carrier, days, prices):
     if history.other_carrier:
         lines.append(f"{_plural(history.other_carrier, 'call')} that came in through another carrier "
                      f"{'is' if history.other_carrier == 1 else 'are'} not counted.")
-    if history.unpriced:
-        lines.append(f"{_plural(history.unpriced, 'call')} {'has' if history.unpriced == 1 else 'have'} no price "
-                     f"and {'counts' if history.unpriced == 1 else 'count'} as free.")
     return lines
 
 
@@ -586,6 +606,26 @@ def pool_advice(history, kinds, prices, carrier, choose_start, check_start, now,
         (first if call.start < check_start else later).setdefault(call.number, []).append(call)
     numbers = sorted(set(first) | set(later) | set(kinds))
     eligible = [number for number in numbers if kinds.get(number) == 'local']
+
+    def number_rows(pool=()):
+        return [{'number': number, 'kind': kinds.get(number, 'other'), 'eligible': kinds.get(number) == 'local',
+                 'reason': _reason(kinds.get(number, 'other'), prices), 'in_pool': number in pool,
+                 'calls_before': len(first.get(number, [])), 'calls': len(later.get(number, [])),
+                 # Empty when a call has no price: unknown, never $0.
+                 'billed_by_the_minute': _money(spend(later.get(number, [])), currency),
+                 'unpriced_calls': unpriced(first.get(number, [])) + unpriced(later.get(number, []))}
+                for number in numbers]
+    without_price = [number for number in numbers if unpriced(first.get(number, []) + later.get(number, []))]
+    if without_price:
+        # Every comparison rests on what each call cost; with calls that have no price there is no saving to state.
+        named = (', '.join(without_price[:-1]) + ' and ' + without_price[-1] if 1 < len(without_price) <= 3
+                 else without_price[0] if len(without_price) == 1
+                 else _numbers_text(len(without_price), carrier))
+        return {'state': 'unpriced', 'numbers': number_rows(), 'unpriced_numbers': without_price,
+                'sentence': (f'Faxbot has no price for some calls received on {named}, so it cannot compare shared '
+                             'lines yet.'),
+                'action': f'Enter what {carrier} charges for received calls in Costs → Prices & plans.',
+                'assumptions': _assumptions(history, carrier, days, prices)}
     pool, channels, _ = choose_pool(first, eligible, prices.tiers, seconds)
     checked = evaluate({number: later.get(number, []) for number in numbers}, pool, channels, prices.tiers, seconds)
     chosen = evaluate({number: first.get(number, []) for number in numbers}, pool, channels, prices.tiers, seconds)
@@ -623,13 +663,7 @@ def pool_advice(history, kinds, prices, carrier, choose_start, check_start, now,
         sentence = (f'Keep your {carrier} numbers billed by the minute: the shared lines chosen from the {days} '
                     f'days before would have cost about {about(pooled_total, currency)} in {window}, compared with '
                     f'{about(baseline, currency)} billed by the minute (estimate).')
-    rows = []
-    for number in numbers:
-        kind = kinds.get(number, 'other')
-        rows.append({'number': number, 'kind': kind, 'eligible': kind == 'local', 'reason': _reason(kind, prices),
-                     'in_pool': number in pool, 'calls_before': len(first.get(number, [])),
-                     'calls': len(later.get(number, [])),
-                     'billed_by_the_minute': _money(spend(later.get(number, [])), currency)})
+    rows = number_rows(pool)
     rate = prices.per_minute.get('local')
     break_even = None
     if rate is not None and rate.per_minute_micros:
