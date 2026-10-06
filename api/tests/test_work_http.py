@@ -215,6 +215,33 @@ def test_export_contains_manifest_original_and_history_and_names_what_is_missing
     assert 'The original document is no longer stored.' in cleared['missing']
 
 
+def test_export_never_names_todays_email_recipients_as_the_ones_a_fax_went_to(client, tmp_path):
+    """Recipients are not stored at delivery and the connector can change later, so the export says so."""
+    from app.intake.store import IntakeStore
+    from app.intake.worker import ConnectorSecrets
+    mailbox(client, 'Front Desk', '+15550100001')
+    fax = receive(tmp_path, '+15550100001', content=pdf('Synthetic delivered document'))
+    feed(4)
+    created = client.post('/intake/connectors', headers=B, json={
+        'name': 'Front desk email', 'host': '127.0.0.1', 'port': 25, 'security': 'none',
+        'from_address': 'fax@clinic.example', 'recipients': ['changed-later@clinic.example'],
+        'password': 'synthetic-password'})
+    assert created.status_code == 201, created.text
+    runtime = app.state.configuration_runtime
+    intake = IntakeStore(runtime.manager.store.engine, ConnectorSecrets(runtime.manager.store))
+    intake.feed_inbound()
+    with intake.engine.begin() as connection:
+        connection.execute(intake.items.update().where(intake.items.c.inbound_fax_id == fax).values(
+            state='delivered', connector_id=created.json()['id'], delivered_at=datetime.utcnow(), last_error=None))
+    files = _export(client.get(f"/work/{item_of(client, fax)['id']}/export", headers=B))
+    manifest = json.loads(files['manifest.json'])
+    [delivery] = manifest['email_delivery']
+    assert delivery['state'] == 'delivered' and delivery['delivered_to'] is None
+    assert 'Who each email was sent to was not recorded when it was delivered.' in manifest['missing']
+    assert b'changed-later@clinic.example' not in files['manifest.json']
+    assert b'changed-later@clinic.example' not in files['history.txt']
+
+
 def test_export_withholds_the_original_from_people_who_cannot_read_documents(client, tmp_path):
     front = mailbox(client, 'Front Desk', '+15550100001')
     auditor, auditor_principal = ready_user(client, 'audrey')
