@@ -109,7 +109,11 @@ export default function FaxSettings({ form, update }: FaxSettingsProps) {
             <FormControlLabel label="Send pages faster when the other fax machine can (recommended)"
               control={<Switch checked={form.sslfax_enabled ?? true}
                 onChange={(event) => update('sslfax_enabled', event.target.checked)} />} />
-            <Hint>When the other fax machine supports it, pages go over the internet during the call.</Hint>
+            <Hint>
+              When the other fax machine supports it, pages go over the internet during the call. They travel
+              encrypted, but Faxbot can't confirm who is at the other end, so this is as private as an ordinary
+              fax call, not more.
+            </Hint>
           </div>
 
           <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>

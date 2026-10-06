@@ -43,6 +43,9 @@ describe('Fax settings on the trunk page', () => {
     expect(within(section).getByRole('checkbox', { name: 'Error correction (recommended)' })).toHaveProperty('checked', true);
     expect(within(section).getByRole('checkbox', { name: 'Send pages faster when the other fax machine can (recommended)' }))
       .toHaveProperty('checked', true);
+    // SSL Fax encrypts the pages but cannot check who answers: the hint says so, without overselling it.
+    expect(within(section).getByText(/They travel encrypted, but Faxbot can't confirm who is at the other end, so this is as private as an ordinary fax call, not more\./))
+      .toBeTruthy();
     expect(within(section).getByText('14,400 bits per second (recommended)')).toBeTruthy();
     fireEvent.click(within(section).getByRole('checkbox', { name: 'Error correction (recommended)' }));
     fireEvent.change(within(section).getByLabelText('Fax lines'), { target: { value: '4' } });
