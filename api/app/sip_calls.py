@@ -328,6 +328,32 @@ def _number(value):
     return text if _NUMBER.fullmatch(text) else None
 
 
+def _installation_country():
+    """The installation's country for reading received numbers, or None when it cannot be read."""
+    try:
+        from .config import settings
+        return settings.fax_default_country or 'US'
+    except Exception:
+        return None
+
+
+def _received(value, country=None):
+    """A received call's number the way the fax hand-overs store it (read for the installation's country):
+    Asterisk's events carry the carrier's form (Telnyx: 3034265097), so a call reads the same whichever
+    report came first. Kept as given when it is no telephone number there or the country cannot be read."""
+    number = _number(value)
+    if number is None:
+        return None
+    country = country or _installation_country()
+    if country is None:
+        return number
+    try:
+        from .inbound.http import received_number
+        return _number(received_number(number, country)) or number
+    except Exception:
+        return number
+
+
 def _identity(value):
     text = str(value or '').strip()
     return text if _ID.fullmatch(text) else None
@@ -567,7 +593,7 @@ class SipCallRecords:
         if not token:
             return None
         call_id = 'engine.' + token
-        did, caller = _number(event.get('DID')), _number(event.get('Caller'))
+        did, caller = _received(event.get('DID')), _received(event.get('Caller'))
         record = {
             'id': uuid4().hex, 'direction': 'inbound', 'call_id': call_id, 'job_id': None, 'attempt_id': None,
             'trunk_preset': str(preset or '')[:32] or None, 'did': did, 'caller': caller, 'called': did,
@@ -761,7 +787,7 @@ class SipCallRecords:
         now = now or utcnow()
         started, answered = _epoch(event.get('Started')), _epoch(event.get('Answered'))
         ended = _epoch(event.get('Ended')) or now
-        did, caller = _number(event.get('DID')), _number(event.get('Caller'))
+        did, caller = _received(event.get('DID')), _received(event.get('Caller'))
         status = re.sub(r'[^A-Z_]', '', str(event.get('Status') or '').upper())[:16] or None
         handover = _handover(event)
         if handover is not None:
@@ -832,8 +858,13 @@ class SipCallRecords:
     # Reads -------------------------------------------------------------------
 
     @staticmethod
-    def _public(row):
+    def _public(row, country=None):
         result = {name: row[name] for name in COLUMNS}
+        if result['direction'] == 'inbound' and country:
+            # Rows stored before received numbers were read for the country keep their stored form; they are
+            # shown (and named in the summary) the way new rows are stored.
+            for name in ('did', 'caller', 'called'):
+                result[name] = _received(result[name], country) or result[name]
         for name in ('started_at', 'answered_at', 'ended_at'):
             result[name] = _iso(result[name])
         result['fax_preference'] = bool(result['fax_preference'])
@@ -854,7 +885,7 @@ class SipCallRecords:
                 row = connection.execute(sa.select(table).where(table.c.id == row_id)).mappings().one_or_none()
         except sa.exc.SQLAlchemyError:
             raise SipCallRecordError('Call records are unavailable.') from None
-        return self._public(row) if row is not None else None
+        return self._public(row, _installation_country()) if row is not None else None
 
     def for_attempt(self, attempt_id):
         """Call records for one outbound attempt (normally one), oldest first."""
@@ -902,7 +933,8 @@ class SipCallRecords:
         more = len(rows) > limit
         rows = rows[:limit]
         next_cursor = _encode_cursor(rows[-1]['started_at'], rows[-1]['id']) if more and rows else None
-        return {'items': [self._public(row) for row in rows], 'next_cursor': next_cursor}
+        country = _installation_country() if any(row['direction'] == 'inbound' for row in rows) else None
+        return {'items': [self._public(row, country) for row in rows], 'next_cursor': next_cursor}
 
 
 # AMI wiring ---------------------------------------------------------------------

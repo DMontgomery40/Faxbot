@@ -125,6 +125,41 @@ def test_without_asterisks_call_name_the_communication_id_and_arrival_keep_the_f
     assert body['faxstatus'] == 'FAILED' and body['to_number'] is None
 
 
+def test_a_new_container_that_repeats_a_communication_id_hands_over_two_faxes(engine, tmp_path):
+    """A new engine container starts its communication IDs again (its spool is not kept). The arrival time
+    keeps the second fax's identity and engine reference apart from the first, so it is never taken for a
+    replay of the first."""
+    spool, state, data, environment = engine
+    (tmp_path / 'answer').write_text('200')
+    bodies = []
+    for arrival in ('1791180000', '1791183600'):
+        _stub(tmp_path / 'tools', 'date', f'echo {arrival}\n')
+        (spool / 'recvq' / 'fax000000007.tif').write_bytes(b'II*\x00jbig image')
+        assert run('received', environment, 'recvq/fax000000007.tif', 'ttyIAX1', '000000007', '',
+                   '+15555550199', cwd=spool).returncode == 0
+        assert run('handover', environment).returncode == 0
+        bodies.append(json.loads((tmp_path / 'body').read_text()))
+    assert [body['uniqueid'] for body in bodies] == ['hylafax.0123456789abcdef.000000007-1791180000',
+                                                     'hylafax.0123456789abcdef.000000007-1791183600']
+    assert [body['engine']['engine_ref'] for body in bodies] == ['0123456789abcdef:000000007-1791180000',
+                                                                 '0123456789abcdef:000000007-1791183600']
+    assert bodies[0]['tiff_path'] != bodies[1]['tiff_path']
+
+
+def test_a_new_container_that_repeats_a_communication_id_reports_each_call_that_left_no_fax(engine, tmp_path):
+    spool, state, data, environment = engine
+    (spool / 'log' / 'c000000007').unlink()  # the fixture's sent-fax log
+    for arrival in ('1791180000', '1791183600'):
+        _stub(tmp_path / 'tools', 'date', f'echo {arrival}\n')
+        # A new container: a fresh spool with no list of reported sessions, and the same communication ID.
+        (spool / 'etc' / 'faxbot-sessions-seen').unlink(missing_ok=True)
+        (spool / 'log' / 'c000000003').write_text(FAILED_RECEIVE.replace("'17911994223.17208565062'", "''"))
+        assert run('sessions', environment).returncode == 0
+    reports = [json.loads(path.read_text()) for path in sorted((state / 'results').glob('*.report'))]
+    assert [report['key'] for report in reports] == ['000000003-1791180000', '000000003-1791183600']
+    assert all(report['token'] == '' for report in reports)
+
+
 def test_the_receive_script_refuses_files_outside_the_receive_queue(engine):
     spool, state, _, environment = engine
     result = run('received', environment, '../etc/faxbot.conf', 'ttyIAX1', '7', '', cwd=spool)
