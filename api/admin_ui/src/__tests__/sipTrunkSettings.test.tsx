@@ -235,6 +235,24 @@ describe('SIP trunk settings', () => {
     expect(restarts).toBe(1);
   });
 
+  it('offers no restart while the fast fax service is not running', async () => {
+    server.use(
+      http.get('/admin/sip/presets', () => HttpResponse.json({ presets: PRESETS })),
+      http.get('/admin/settings', () => HttpResponse.json(settings())),
+      http.get('/admin/sip/calls', () => HttpResponse.json({ items: [], next_cursor: null })),
+      http.get('/admin/sip/status', () => HttpResponse.json({ configured: true, applied: true,
+        message: 'The trunk is ready.', engine_state: 'stopped', engine_audio: false,
+        engine_text: "Faxbot's fast fax service is not running, so faxes are sent the ordinary way." })),
+    );
+    render(<SipTrunkSettings client={client()} />);
+    await screen.findByText('A password is saved.');
+    fireEvent.click(screen.getByRole('button', { name: 'Check trunk status' }));
+    const status = await screen.findByTestId('sip-trunk-status');
+    expect(within(status).getByTestId('engine-text').textContent)
+      .toBe("Faxbot's fast fax service is not running, so faxes are sent the ordinary way.");
+    expect(within(status).queryByRole('button', { name: 'Restart the fast fax service' })).toBeNull();
+  });
+
   it('refuses server IP sign-in behind a router in one sentence and names the transports plainly', async () => {
     const detail = 'Your Faxbot runs behind a router, so sign in with a username and password; server IP sign-in needs a public address.';
     server.use(
