@@ -39,6 +39,12 @@ In Faxbot, an optional **Telnyx API key** lets the trunk page check the T.38 set
 
 Faxbot registers with Telnyx using these credentials. Registration is what lets Telnyx deliver incoming faxes to Faxbot, so keep the username and password filled in even if you only receive. Then select **Apply and connect**; Faxbot saves the form, restarts Asterisk with the trunk and shows the trunk check.
 
+### Limit calls on the trunk
+
+Faxbot limits how many calls use the trunk at once and how quickly it starts new calls. In the console, they are **Calls at once** and **New calls per second** under **Fax settings** on the trunk's page. By default, the concurrent-call limit follows the fax engine's number of lines. The new-calls-per-second limit uses the carrier's published limit when Faxbot has one; Telnyx defaults to 5 per second. For other carriers with no published limit in Faxbot, there is no rate limit by default.
+
+Faxes that reach a trunk limit wait for room; they do not fail because of the limit. Set either limit to 0 to use its default. From the command line, run `faxbot providers trunk limits` to see the effective limits, or add `--calls-at-once N` and `--calls-per-second N` to change them. Each accepts 0; the maximums are 200 concurrent calls and 100 new calls per second.
+
 ## Choose a carrier
 
 Faxbot has settings ready for these carriers. Each preset uses the carrier's own connection documentation, read on 2026-10-03.

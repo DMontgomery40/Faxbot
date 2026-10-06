@@ -4,6 +4,8 @@ Faxbot records how every fax was sent and what it cost, and uses that to send ea
 
 In the Admin Console, spending, prices and savings are under **Costs**, and the numbers you fax and direct partners under **Recipients**.
 
+Faxbot also limits concurrent calls to each destination and, for calls over your SIP trunk, to the trunk's configured capacity. A fax that reaches a limit waits for room; it does not fail because of the limit. You can set a destination's **Calls at once** in **Recipients → Details**. The default is one call at a time; set 0 for no limit. Calls to a destination are limited across phone routes because the receiving fax line is the same whichever route calls it.
+
 ## What you see
 
 - **Spending** shows the last 30 days per route: faxes sent and delivered, billed minutes, what the carrier charged, an estimate for faxes it has not billed yet, and how many are still waiting for the carrier's bill. Calls received on your SIP trunk get their own card. See [Costs](#costs).
@@ -131,6 +133,7 @@ faxbot costs reconcile            # ask Telnyx now, instead of waiting for the n
 faxbot costs fax FAX_ID           # one sent fax
 faxbot costs received --all       # every received fax you can see; or one: faxbot costs received ID
 faxbot costs plans --in-use       # published plans for the services you send with that have no price yet
+faxbot costs recommendations      # route, plan and receiving-cost advice
 ```
 
 If a call record with measured connected time is available for an attempt, Faxbot uses it instead of its own timing, which includes queueing and ringing.
@@ -208,6 +211,10 @@ These routes need `settings:read`, or `settings:write` for changes:
 | POST | `/routing/reconcile` | Ask the SIP trunk carrier now what each open call cost (`settings:write`) |
 | GET, PUT | `/routing/rate-cards` | Read or replace the rate cards |
 | GET, PUT, DELETE | `/batching/numbers/{number}` | Sending together for one number: its setting and history, the reason it saves money or not, and calls saved. PUT takes `enabled`, `recipient_agreed`, `max_wait_minutes`, `max_pages`, `mixed_senders` and `version` |
+| GET | `/routing/recommendations/sending` | Cheaper routes for the numbers you fax, from each route's cost per delivered fax |
+| GET | `/routing/recommendations/plans` | Whether each monthly plan is worth its fee at your traffic |
+| GET | `/routing/recommendations/receiving` | Receiving-cost advice from recorded calls and published carrier prices (`days`, 7–183) |
+| PATCH | `/routing/destinations/{number}` | Also accepts `max_calls` for the number's concurrent-call limit |
 
 Anyone who may send faxes can ask whether a number sends faxes together: `GET /batching/check?to=`. Anyone who may read a fax can see whether it is waiting or went with others, and its share of the charge: `GET /batching/faxes/{id}`. They can also send a waiting fax now: `POST /batching/faxes/{id}/send-now`. `POST /fax` takes an optional `send_now=true`.
 
