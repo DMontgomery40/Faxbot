@@ -563,7 +563,7 @@ def _assumptions(history, carrier, days, prices):
         lines.append(f"{_plural(history.no_end, 'call')} {'is' if history.no_end == 1 else 'are'} not counted "
                      f"because {'its' if history.no_end == 1 else 'their'} end time is missing.")
     if history.other_carrier:
-        lines.append(f"{_plural(history.other_carrier, 'call')} from another carrier "
+        lines.append(f"{_plural(history.other_carrier, 'call')} that came in through another carrier "
                      f"{'is' if history.other_carrier == 1 else 'are'} not counted.")
     if history.unpriced:
         lines.append(f"{_plural(history.unpriced, 'call')} {'has' if history.unpriced == 1 else 'have'} no price "
@@ -750,8 +750,11 @@ def _connections_sentence(items):
     known = [item for item in items if item['_fee'] is not None]
     unknown = [item['name'] for item in items if item['_fee'] is None]
     currencies = {item['_currency'] for item in known if item['_fee']}
-    missing = (f" To compare {' and '.join(unknown)}, enter {'its' if len(unknown) == 1 else 'their'} prices in "
-               'Costs → Prices & plans.' if unknown else '')
+    if len(unknown) == 1:
+        missing = f" Faxbot does not know {unknown[0]}'s monthly fee yet; enter it in Costs → Prices & plans."
+    else:
+        missing = (f" Faxbot does not know the monthly fees of {' and '.join(unknown)} yet; enter them in "
+                   'Costs → Prices & plans.' if unknown else '')
     if len(currencies) > 1:
         return f'Your {len(items)} fax services charge monthly fees in different currencies.' + missing
     total = sum(item['_fee'] for item in known)

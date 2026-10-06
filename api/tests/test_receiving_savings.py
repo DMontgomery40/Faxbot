@@ -393,11 +393,17 @@ def test_connections_are_arithmetic_on_monthly_fees(history):
         ('Telnyx', money(0)), ('HumbleFax', money(10_000_000)), ('Phaxio', []), ('SignalWire', [])]
     assert both['sentence'] == ('Your 4 fax services cost $10.00 a month in fixed fees (estimate). Keeping only '
                                 'Telnyx would cost $0.00 a month, $10.00 less, if it can carry all your numbers and '
-                                'calls; keep a second service if you need a backup. To compare Phaxio and SignalWire, '
-                                'enter their prices in Costs → Prices & plans.')
+                                'calls; keep a second service if you need a backup. Faxbot does not know the monthly '
+                                'fees of Phaxio and SignalWire yet; enter them in Costs → Prices & plans.')
     unpriced = receiving_report(engine, routes, values(outbound_route_providers=('phaxio',)), now=NOW, days=DAYS)
     assert unpriced['connections']['sentence'] == (
-        'Telnyx has no monthly fee. To compare Phaxio and SignalWire, enter their prices in Costs → Prices & plans.')
+        'Telnyx has no monthly fee. Faxbot does not know the monthly fees of Phaxio and SignalWire yet; enter them in '
+        'Costs → Prices & plans.')
+    # Before the SignalWire call, only Phaxio has no price.
+    earlier = receiving_report(engine, routes, values(outbound_route_providers=('phaxio',)),
+                               now=NOW - timedelta(days=4), days=DAYS)
+    assert earlier['connections']['sentence'] == (
+        "Telnyx has no monthly fee. Faxbot does not know Phaxio's monthly fee yet; enter it in Costs → Prices & plans.")
 
 
 def test_no_trunk_or_a_carrier_without_a_channel_price_says_so_in_one_sentence(history):
