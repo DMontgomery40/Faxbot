@@ -134,6 +134,19 @@ def make_pre_change(job_id, entered, document=DOCUMENT):
                                                    document_sha256=hashlib.sha256(document).hexdigest())))
 
 
+def test_a_replay_that_races_the_first_send_returns_the_first_fax(isolated_installation, monkeypatch):
+    # Two identical sends can both pass the early replay lookup; the second one's insert then finds
+    # the first and raises IdempotentReplay, which /fax answers with the first fax (main.py's except).
+    with installation_client(monkeypatch, "GB") as client:
+        first = send(client, "01782 684953", key="raced-intent")
+        assert first.status_code == 202
+        from app.access import outbound
+        monkeypatch.setattr(outbound.AuthorizedOutbound, "find_replay", lambda self, actor, identity: None)
+        raced = send(client, "01782 684953", key="raced-intent")
+        assert raced.status_code == 202 and raced.json()["id"] == first.json()["id"]
+        assert len(stored_jobs()) == 1
+
+
 def test_pre_change_records_replay_on_their_exact_original_request(isolated_installation, monkeypatch):
     with installation_client(monkeypatch, "US") as client:
         old = send(client, "3035550123", key="old-intent").json()["id"]
