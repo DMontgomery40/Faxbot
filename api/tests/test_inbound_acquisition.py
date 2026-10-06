@@ -1,8 +1,8 @@
 """Received faxes are acquired durably: authenticated first, resumable, with provenance.
 
 Provider APIs are a synthetic ``httpx.MockTransport``; nothing leaves the test.
-The background fetcher is turned off and single steps are run, so each state
-is asserted deterministically.
+The background fetcher and the email delivery worker are held and single steps
+are run, so each state is asserted deterministically.
 """
 import asyncio
 import base64
@@ -99,6 +99,9 @@ def providers(monkeypatch):
     fake = FakeProviders()
     monkeypatch.setattr(inbound_fetch, '_TRANSPORT', httpx.MockTransport(fake.handler))
     monkeypatch.setattr(inbound_http, 'AUTOMATIC', False)
+    # The lifespan's email delivery worker feeds received faxes every 5 s; a slow runner let it
+    # feed first, so feed() saw 0. The test feeds them itself.
+    monkeypatch.setattr('app.intake.worker.IntakeWorker.step', lambda self: False)
     return fake
 
 
