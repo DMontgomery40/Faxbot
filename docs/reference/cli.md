@@ -1408,7 +1408,7 @@ $ faxbot providers configure [OPTIONS] {provider} [NAME=VALUE...]
 **Options**:
 
 * `--secret NAME`: Prompt for this setting&#x27;s value without echoing it, for passwords and keys. Repeat for more.
-* `--secret-stdin NAME`: Read this password or key from standard input, for scripts.
+* `--secret-stdin NAME`: Read this password or key from standard input, one line each, for scripts. Repeat for more.
 * `--role <str>`: With --enable: outbound (sending), inbound (receiving) or storage.
 * `--enable`: Use this provider for sending, receiving or storage (choose which with --role).
 * `--help`: Show this message and exit.
@@ -3065,7 +3065,7 @@ $ faxbot system settings set [OPTIONS] [NAME=VALUE...]
 **Options**:
 
 * `--secret NAME`: Ask for this setting without showing what you type, for passwords and provider keys. Repeat for more.
-* `--secret-stdin NAME`: Read this password or key from standard input, for scripts.
+* `--secret-stdin NAME`: Read this password or key from standard input, one line each, for scripts. Repeat for more.
 * `--text`: Send every value exactly as typed.
 * `--help`: Show this message and exit.
 

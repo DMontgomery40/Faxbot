@@ -112,14 +112,20 @@ def _store(cli):
 def test_the_command_line_sets_every_setting(cli):
     values = _store(cli).read().desired.values
     written = values.to_environment()
-    assignments = []
+    assignments, secrets, lines = [], [], []
     for name, field in ConfigurationValues.model_fields.items():
         if name in READ_ONLY_OR_ENV:
             continue
         value = getattr(values, name)
         typed = ('true' if value else 'false') if isinstance(value, bool) else str(value)
-        assignments.append(f'{name}={written.get(_variable(field), typed)}')
-    result = cli('--json', 'system', 'settings', 'set', *assignments)
+        if (field.json_schema_extra or {}).get('secret'):
+            # A password or key is never typed as NAME=VALUE (shell history): it comes from standard input.
+            secrets += ['--secret-stdin', name]
+            lines.append(written.get(_variable(field), typed))
+        else:
+            assignments.append(f'{name}={written.get(_variable(field), typed)}')
+    assert secrets, 'the secret settings are set through --secret-stdin'
+    result = cli('--json', 'system', 'settings', 'set', *assignments, *secrets, input=''.join(f'{line}\n' for line in lines))
     assert result.exit_code == 0, result.stdout + result.stderr
 
     # Text that looks like a number stays text: a caller ID, an outside-line prefix.
