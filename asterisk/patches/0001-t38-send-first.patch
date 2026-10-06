@@ -73,7 +73,7 @@ channel left when its session ends.
  	}
  
  	session->t38state = new_state;
-@@ -732,11 +754,96 @@
+@@ -732,11 +754,105 @@
  }
  
  /*! \brief Supplement for adding framehook to session channel */
@@ -82,30 +82,39 @@ channel left when its session ends.
 + *
 + * res_fax_spandsp sets FAXBOT_T38_GATEWAY on the T.38 channel when a gateway
 + * starts (0002), and FAXBOT_T38_EMPTY_PREAMBLES and FAXBOT_T38_EMPTY_TRAININGS
-+ * each time it ends a signal the far end left open (0002, 0003). Read at the
-+ * BYE (either direction) and at session end, because an outbound call ended
-+ * from this side has no channel left when its session ends.
++ * each time it ends a signal the far end left open (0002, 0003). Read every
++ * 50th T.38 packet sent, at the BYE (either direction) and at session end: a
++ * call ended from this side has no channel left when its session ends, and
++ * none at its BYE either when an open re-INVITE delays that BYE.
 + */
++static void faxbot_t38_keep_state(struct ast_sip_session *session, struct t38_state *state)
++{
++	struct ast_channel *chan = session->channel;
++	const char *value;
++
++	if (!chan) {
++		return;
++	}
++	ast_channel_lock(chan);
++	if (pbx_builtin_getvar_helper(chan, "FAXBOT_T38_GATEWAY")) {
++		state->faxbot_gateway = 1;
++	}
++	if ((value = pbx_builtin_getvar_helper(chan, "FAXBOT_T38_EMPTY_PREAMBLES"))) {
++		sscanf(value, "%30u", &state->faxbot_empty_preambles);
++	}
++	if ((value = pbx_builtin_getvar_helper(chan, "FAXBOT_T38_EMPTY_TRAININGS"))) {
++		sscanf(value, "%30u", &state->faxbot_empty_trainings);
++	}
++	ast_channel_unlock(chan);
++}
++
 +static void faxbot_t38_keep(struct ast_sip_session *session)
 +{
 +	RAII_VAR(struct ast_datastore *, datastore, ast_sip_session_get_datastore(session, "t38"), ao2_cleanup);
-+	struct t38_state *state = datastore ? datastore->data : NULL;
-+	const char *value;
 +
-+	if (!state || !session->channel) {
-+		return;
++	if (datastore && datastore->data) {
++		faxbot_t38_keep_state(session, datastore->data);
 +	}
-+	ast_channel_lock(session->channel);
-+	if (pbx_builtin_getvar_helper(session->channel, "FAXBOT_T38_GATEWAY")) {
-+		state->faxbot_gateway = 1;
-+	}
-+	if ((value = pbx_builtin_getvar_helper(session->channel, "FAXBOT_T38_EMPTY_PREAMBLES"))) {
-+		sscanf(value, "%30u", &state->faxbot_empty_preambles);
-+	}
-+	if ((value = pbx_builtin_getvar_helper(session->channel, "FAXBOT_T38_EMPTY_TRAININGS"))) {
-+		sscanf(value, "%30u", &state->faxbot_empty_trainings);
-+	}
-+	ast_channel_unlock(session->channel);
 +}
 +
 +/*!
@@ -170,7 +179,7 @@ channel left when its session ends.
  };
  
  /*! \brief Parse a T.38 image stream and store the attribute information */
-@@ -1007,7 +1114,24 @@
+@@ -1007,7 +1123,24 @@
  
  	return 1;
  }
@@ -185,17 +194,17 @@ channel left when its session ends.
 +		return;
 +	}
 +	ast_atomic_fetchadd_int(sent ? &state->faxbot_sent : &state->faxbot_received, 1);
-+	/* A gateway marks the channel when it starts (0002); look until it has, while the channel exists. */
-+	if (sent && !state->faxbot_gateway && session->channel
-+		&& pbx_builtin_getvar_helper(session->channel, "FAXBOT_T38_GATEWAY")) {
-+		state->faxbot_gateway = 1;
++	/* A gateway marks the channel when it starts (0002) and counts there what it ends (0002, 0003): look
++	 * until it has started, then every 50th packet sent, while the channel exists. */
++	if (sent && (!state->faxbot_gateway || !(state->faxbot_sent % 50))) {
++		faxbot_t38_keep_state(session, state);
 +	}
 +}
 +
  static struct ast_frame *media_session_udptl_read_callback(struct ast_sip_session *session, struct ast_sip_session_media *session_media)
  {
  	struct ast_frame *frame;
-@@ -1016,6 +1140,7 @@
+@@ -1016,6 +1149,7 @@
  		return &ast_null_frame;
  	}
  
@@ -203,12 +212,10 @@ channel left when its session ends.
  	frame = ast_udptl_read(session_media->udptl);
  	if (!frame) {
  		return NULL;
-@@ -1024,6 +1149,34 @@
- 	frame->stream_num = session_media->stream_num;
- 
+@@ -1026,12 +1160,41 @@
  	return frame;
-+}
-+
+ }
+ 
 +/*!
 + * \brief Faxbot: send T.38 "no signal" indicators as soon as a T.38 stream starts.
 + *
@@ -235,10 +242,11 @@ channel left when its session ends.
 +	for (i = 0; i < FAXBOT_T38_OPENING_PACKETS; i++) {
 +		ast_udptl_write(udptl, &frame);
 +	}
- }
- 
++}
++
  static int media_session_udptl_write_callback(struct ast_sip_session *session, struct ast_sip_session_media *session_media, struct ast_frame *frame)
-@@ -1032,6 +1185,7 @@
+ {
+ 	if (!session_media->udptl) {
  		return 0;
  	}
  
@@ -246,7 +254,7 @@ channel left when its session ends.
  	return ast_udptl_write(session_media->udptl, frame);
  }
  
-@@ -1072,6 +1226,19 @@
+@@ -1072,6 +1235,19 @@
  	ast_sip_session_media_add_read_callback(session, session_media, ast_udptl_fd(session_media->udptl),
  		media_session_udptl_read_callback);
  
@@ -266,7 +274,7 @@ channel left when its session ends.
  	return 0;
  }
  
-@@ -1126,6 +1293,7 @@
+@@ -1126,6 +1302,7 @@
  {
  	ast_sip_session_unregister_sdp_handler(&image_sdp_handler, "image");
  	ast_sip_session_unregister_supplement(&t38_supplement);
@@ -274,7 +282,7 @@ channel left when its session ends.
  
  	return 0;
  }
-@@ -1149,6 +1317,7 @@
+@@ -1149,6 +1326,7 @@
  	}
  
  	ast_sip_session_register_supplement(&t38_supplement);
