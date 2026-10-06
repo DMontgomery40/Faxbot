@@ -526,6 +526,10 @@ async def status(request: Request, identity=Depends(require_permission('provider
                                  if configured and managed else (None, None))
     message = _message(summary, asterisk, applied, ports_text, transport, managed=managed, in_use=in_use,
                        restarting=restarting)
+    reload_waiting = bool(configured and managed and sip_fax_mode.reload_waiting())
+    if reload_waiting and not restarting:
+        # A switched fax setting is saved; Asterisk loads it once the calls in progress end.
+        message = sip_fax_mode.RELOAD_WAITING
     if (changed and not restarting and ports_text != BEHIND_ROUTER and asterisk['connected'] and asterisk['permission']
             and asterisk['registration'] != 'rejected'):
         message = ADDRESS_CHANGED_MANAGED if managed else ADDRESS_CHANGED
@@ -558,6 +562,8 @@ async def status(request: Request, identity=Depends(require_permission('provider
         'phone_system_hidden': bool(phone and ports_text == LAN_HIDDEN),
         # Why new calls use audio fax when Faxbot chose it ({reason, at}); None when T.38 is on or a person chose.
         't38_off_reason': off['reason'] if off else None,
+        # A switched fax setting saved and waiting for the calls in progress to end before Asterisk loads it.
+        'reload_waiting': reload_waiting,
         't38_off_at': off['at'] if off else None,
         'ports_text': ports_text,
         'last_call_text': last['summary'] if last else None,

@@ -873,15 +873,18 @@ async def run_check(runtime, records=None, *, fresh=True, unattended=False):
         awaiting = None
         if unattended and decision and check['count'] < 2:
             awaiting, decision = decision, None
-        engine = None
-        if decision:
-            engine = await sip_fax_mode.switch(runtime, decision == 't38', sip_fax_mode.NETWORK, network=check['t38'])
-        elif check['advertise_changed'] and (check['why'] == 'router_mapped'
-                                             or (mapping or {}).get('state') in ('refused', 'behind_another_router')):
-            # Asterisk names the opened ports only after a restart, which waits until no call is up.
-            if await run_lifecycle_step(lambda: sip_trunk.engine_managed(values)):
-                engine = await _load_into_engine(values)
-        return {'check': check, 'switched': decision, 'awaiting': awaiting, 'engine': engine}
+        reload = (not decision and check['advertise_changed']
+                  and (check['why'] == 'router_mapped'
+                       or (mapping or {}).get('state') in ('refused', 'behind_another_router'))
+                  and await run_lifecycle_step(lambda: sip_trunk.engine_managed(values)))
+    # Waiting for calls to end happens after the check's lock is released, so Check again never waits on it.
+    engine = None
+    if decision:
+        engine = await sip_fax_mode.switch(runtime, decision == 't38', sip_fax_mode.NETWORK, network=check['t38'])
+    elif reload:
+        # Asterisk names the opened ports only after a restart, which waits until no call is up.
+        engine = await _load_into_engine(values)
+    return {'check': check, 'switched': decision, 'awaiting': awaiting, 'engine': engine}
 
 
 # How long the start check waits before confirming an answer that differs from the stored one.
