@@ -888,6 +888,15 @@ def test_costs_savings_reads_as_estimates(cli):
     assert result['sentence'] in ' '.join(cli('costs', 'savings', '--days', '7').stdout.split())
 
 
+def test_costs_receiving_reads_as_estimates_and_says_why_it_cannot_advise(cli):
+    result = cli.json('costs', 'receiving', '--days', '7')
+    assert result['days'] == 7 and result['estimate'] is True and result['pool']['state'] == 'no_trunk'
+    human = ' '.join(cli('costs', 'receiving').stdout.split())
+    assert 'Faxbot has no phone line from a carrier set up, so there are no received calls to compare.' in human
+    assert 'Phaxio is your only fax service, so there is no second monthly fee to save.' in human
+    assert cli('costs', 'receiving', '--days', '3').exit_code != 0
+
+
 # -- profiles --------------------------------------------------------------------------------
 
 def test_profiles_keep_the_key_private_and_are_used_by_default(cli, tmp_path):

@@ -69,6 +69,10 @@ CONVERTED = {
     ("POST", "/inbound/{inbound_id}/fetch"): ("providers:write", True),
     ("POST", "/admin/settings/persist"): ("owner:recover", True),
 }
+# Read-only cost recommendations: (permission, audited).
+RECOMMENDATIONS = {
+    ("GET", "/routing/recommendations/receiving"): ("settings:read", False),
+}
 
 
 def _calls(dependant):
@@ -120,6 +124,12 @@ def test_converted_routes_declare_their_exact_permission():
     assert declared == {key: [expected] for key, expected in CONVERTED.items()}
     persist = _declared(routes[("POST", "/admin/settings/persist")])[0]
     assert persist.complete_owner is True
+
+
+def test_cost_recommendations_need_exactly_settings_read():
+    routes = dict(_routes())
+    declared = {key: [(rule.permission, rule.audit) for rule in _declared(routes[key])] for key in RECOMMENDATIONS}
+    assert declared == {key: [expected] for key, expected in RECOMMENDATIONS.items()}
 
 
 def test_privileged_permissions_are_always_audited():

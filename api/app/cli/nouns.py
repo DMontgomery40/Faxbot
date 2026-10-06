@@ -122,6 +122,7 @@ costs.command('reconcile')(delivery.routing_reconcile)
 costs.command('fax')(delivery.routing_fax_cost)
 costs.command('received')(delivery.routing_received_costs)
 costs.command('savings')(delivery.routing_savings)
+costs.command('receiving')(delivery.routing_receiving)
 costs.command('rate-cards')(delivery.routing_rate_cards)
 costs.command('plans')(delivery.routing_plans)
 

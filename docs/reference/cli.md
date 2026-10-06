@@ -1776,6 +1776,7 @@ $ faxbot costs [OPTIONS] COMMAND [ARGS]...
 * `fax`: Show what one fax cost: the carrier&#x27;s...
 * `received`: Show what the call that brought in a...
 * `savings`: Show how much money Faxbot saved by...
+* `receiving`: Show which of your numbers could share...
 * `rate-cards`: Show the prices Faxbot uses to estimate...
 * `plans`: Show the price plans a fax service...
 
@@ -1859,6 +1860,21 @@ $ faxbot costs savings [OPTIONS]
 **Options**:
 
 * `--days <int range>`: How many days back to count.  [default: 30; 1&lt;=x&lt;=366]
+* `--help`: Show this message and exit.
+
+### `faxbot costs receiving`
+
+Show which of your numbers could share incoming lines, which numbers get few calls, and what your fax services cost each month. All figures are estimates; Faxbot never changes your carrier account.
+
+**Usage**:
+
+```console
+$ faxbot costs receiving [OPTIONS]
+```
+
+**Options**:
+
+* `--days <int range>`: Length of each period in days. Faxbot chooses its advice from the earlier period and checks it against the most recent one.  [default: 30; 7&lt;=x&lt;=183]
 * `--help`: Show this message and exit.
 
 ### `faxbot costs rate-cards`

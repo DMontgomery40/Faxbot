@@ -478,6 +478,19 @@ async def savings(request: Request, days: int = Query(default=WINDOW_DAYS, ge=1,
             'sslfax': _saving_view(result['sslfax'])}
 
 
+@router.get('/recommendations/receiving', dependencies=[Depends(require_permission('settings:read'))])
+async def receiving_recommendations(request: Request, days: int = Query(default=30, ge=7, le=183)):
+    """Receiving advice from call history: shared channels, quiet numbers and connections (estimates, never applied).
+
+    The shared-channel advice is chosen on the ``days`` before the last ``days``
+    and checked on the last ``days``.
+    """
+    from .receiving import receiving_report
+    store = _store(request)
+    values = request.scope['faxbot.configuration'].active.values
+    return await _call(lambda: receiving_report(store.engine, store, values, days=days))
+
+
 @router.get('/inbound/{inbound_id}/cost')
 async def inbound_cost(inbound_id: str, request: Request, identity=Depends(require_identity)):
     """What the call that brought in one received fax cost, for anyone who may read that fax."""
