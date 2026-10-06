@@ -49,7 +49,7 @@ import type { EfaxStatus, InboundFax, WorkAssignee, WorkCounts, WorkItem, WorkVi
 import type { EmailConnector, IntakeItem } from '../api/deliveryTypes';
 import type { AdminDestination } from '../navigation';
 import {
-  DeliveryStatusLine, DirectDeliveries, emailDeliveryApplies, inboundFaxStatus, isNewFax, providerName,
+  DeliveryStatusLine, DirectDeliveries, earlierFailuresText, emailDeliveryApplies, inboundFaxStatus, isNewFax, providerName,
 } from './delivery/InboxDelivery';
 import type { DeliveryTone } from './delivery/InboxDelivery';
 import { DeliveryError, Notice } from './delivery/shared';
@@ -411,11 +411,14 @@ export default function Received({
   };
 
   // How often fetching the document stopped before it was set going again, when it did.
-  const EarlierFailures = ({ row }: { row: Row }) => (row.fax?.earlier_failures_text ? (
-    <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.5, maxWidth: 280 }}>
-      {row.fax.earlier_failures_text}
-    </Typography>
-  ) : null);
+  const EarlierFailures = ({ row }: { row: Row }) => {
+    const text = row.fax ? earlierFailuresText(row.fax) : null;
+    return text ? (
+      <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.5, maxWidth: 280 }}>
+        {text}
+      </Typography>
+    ) : null;
+  };
 
   // The fax's own state while its document is missing; otherwise the owner and state of its work item.
   const OwnerAndState = ({ row }: { row: Row }) => {

@@ -1389,6 +1389,49 @@ def test_route_and_spending_words_match_the_console(monkeypatch):
         'Your carrier never priced 1 call in full; only its priced part is in the total.')
 
 
+@pytest.fixture
+def denver_reader(monkeypatch):
+    """The person running `faxbot` is in Denver; the server's own sentence below is in UTC."""
+    monkeypatch.setenv('TZ', 'America/Denver')
+    time.tzset()
+    yield
+    monkeypatch.undo()
+    time.tzset()
+
+
+def test_received_show_says_earlier_failures_in_the_readers_local_time(monkeypatch, denver_reader):
+    """Built from the structured earlier failures, as the console does, never the server's sentence in its own zone."""
+    from app.cli import state as cli_state
+    from app.cli.commands import fax
+    stop = {'stopped_at': '2026-10-04T08:00:00', 'attempts': 30, 'problem': 'Phaxio did not answer.'}
+    item = {'id': 'fax-1', 'fr': '+15559990000', 'to': '+15555550100', 'status': 'received', 'backend': 'phaxio',
+            'received_at': '2026-10-05T21:15:00', 'earlier_failures': [
+                {**stop, 'resumed_at': '2026-10-04T09:00:00', 'resumed_by': 'person', 'resumed_by_name': 'Dana Lee'},
+                {**stop, 'resumed_at': '2026-10-05T21:12:00', 'resumed_by': 'notification', 'resumed_by_name': None}],
+            'earlier_failures_text': 'Failed twice before Phaxio reported it again on 5 October 2026 at 9:12 PM UTC.'}
+
+    class Canned:
+        url = 'https://faxbot.example'
+
+        def get(self, path, **_):
+            return item if path == '/inbound/fax-1' else {}
+    monkeypatch.setattr(cli_state, 'api', lambda: Canned())
+    result = CliRunner().invoke(cli_app, ['--url', 'https://faxbot.example', 'received', 'show', 'fax-1'],
+                                env={'COLUMNS': '200'})
+    assert result.exit_code == 0, result.stdout
+    shown = ' '.join(result.stdout.split())
+    assert 'Earlier failures Failed twice before Phaxio reported it again on 2026-10-05 15:12 MDT.' in shown
+    assert '9:12 PM UTC' not in shown
+    # Who set it going again, and a server that sends only its sentence.
+    person = {'resumed_at': '2026-10-04T09:00:00', 'resumed_by': 'person', 'resumed_by_name': None}
+    assert fax.earlier_failures({'earlier_failures': [person] * 3}) == (
+        'Failed 3 times before Faxbot was asked to fetch it again on 2026-10-04 03:00 MDT.')
+    assert fax.earlier_failures({'backend': 'import', 'earlier_failures': [{**person, 'resumed_by': 'notification'}]}) \
+        == 'Failed once before the provider reported it again on 2026-10-04 03:00 MDT.'
+    assert fax.earlier_failures({'earlier_failures_text': 'An older server.'}) == 'An older server.'
+    assert fax.earlier_failures({'earlier_failures': [], 'earlier_failures_text': None}) is None
+
+
 def test_sent_list_names_the_route_that_carried_each_fax():
     from app.cli.commands.fax import _route_text
     assert _route_text({'backend': 'humblefax'}, None) == 'HumbleFax'

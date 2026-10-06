@@ -451,7 +451,8 @@ export interface InboundFax {
   provider_note?: string | null;
   // Each time fetching the document stopped before it was set going again, oldest first.
   earlier_failures?: InboundEarlierFailure[];
-  // One sentence about them, such as "Failed twice before Phaxio reported it again on ...".
+  // The server's sentence about them, in the installation's time zone. The console builds its own from
+  // earlier_failures in the viewer's (earlierFailuresText) and shows this only from a server without them.
   earlier_failures_text?: string | null;
 }
 

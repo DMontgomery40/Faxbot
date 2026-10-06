@@ -9,6 +9,7 @@ import { duplicateSentence, OPERATIONAL_TARGET, shortTime, targetLabel, workStat
 import { NAVIGATION, parseAddress, resolveAddress, visibleNavigation } from '../navigation';
 import WorkSettingsPanel from '../components/work/WorkSettingsPanel';
 import WorkDetail from '../components/work/WorkDetail';
+import { formatServerTime } from '../api/time';
 import type { IntakeItem } from '../api/deliveryTypes';
 import { server } from '../test/server';
 
@@ -191,9 +192,13 @@ describe('the received fax detail', () => {
       http.get('/work/:id', () => HttpResponse.json(shown)),
       http.get('/work/:id/history', () => HttpResponse.json({ events: [] })),
     );
+    // The server's own sentence is in its installation's zone; the drawer builds it in the viewer's.
     const sentence = 'Failed once before Dana Lee asked Faxbot to fetch it again on 3 October 2026 at 2:00 PM UTC.';
+    const earlier = [{ stopped_at: '2026-10-03T13:00:00', attempts: 30, problem: 'Phaxio did not answer.',
+      resumed_at: '2026-10-03T14:00:00', resumed_by: 'person' as const, resumed_by_name: 'Dana Lee' }];
     render(<WorkDetail client={client()} item={shown} onClose={() => undefined} onDownload={() => undefined}
-      fax={{ id: 'fax', status: 'received', backend: 'phaxio', earlier_failures_text: sentence }} delivery={delivery} />);
+      fax={{ id: 'fax', status: 'received', backend: 'phaxio', earlier_failures: earlier, earlier_failures_text: sentence }}
+      delivery={delivery} />);
     return within(screen.getByRole('dialog', { name: 'Work item' }));
   }
 
@@ -201,7 +206,8 @@ describe('the received fax detail', () => {
     const drawer = open(delivered({ delivered_to: ['frontdesk@clinic.example'], recipients_recorded: true }));
     expect(drawer.getByText('Emailed to')).toBeTruthy();
     expect(drawer.getByText('frontdesk@clinic.example')).toBeTruthy();
-    expect(drawer.getByText(/^Failed once before Dana Lee asked Faxbot to fetch it again/)).toBeTruthy();
+    expect(drawer.getByText(
+      `Failed once before Dana Lee asked Faxbot to fetch it again on ${formatServerTime('2026-10-03T14:00:00')}.`)).toBeTruthy();
   });
 
   it('says plainly when an older email delivery did not record who it went to', () => {
