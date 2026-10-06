@@ -334,7 +334,7 @@ def test_some_calls_without_a_price_stop_the_comparison_and_name_their_numbers(h
     assert pool['state'] == 'unpriced' and pool['unpriced_numbers'] == [BUSY[0], BUSY[1]]
     assert pool['sentence'] == (f'Faxbot has no price for some calls received on {BUSY[0]} and {BUSY[1]}, so it cannot '
                                 'compare shared lines yet.')
-    assert pool['action'] == 'Enter what Telnyx charges for received calls in Costs → Prices & plans.'
+    assert pool['action'] == "Add Telnyx's price for receiving faxes in Costs → Prices & plans."
     assert not {'check', 'choose', 'channels', 'pool_numbers'} & set(pool)
     rows = {row['number']: row for row in pool['numbers']}
     assert rows[BUSY[0]]['billed_by_the_minute'] == [] and rows[BUSY[0]]['unpriced_calls'] == 60

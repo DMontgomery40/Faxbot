@@ -624,7 +624,7 @@ def pool_advice(history, kinds, prices, carrier, choose_start, check_start, now,
         return {'state': 'unpriced', 'numbers': number_rows(), 'unpriced_numbers': without_price,
                 'sentence': (f'Faxbot has no price for some calls received on {named}, so it cannot compare shared '
                              'lines yet.'),
-                'action': f'Enter what {carrier} charges for received calls in Costs → Prices & plans.',
+                'action': f"Add {carrier}'s price for receiving faxes in Costs → Prices & plans.",
                 'assumptions': _assumptions(history, carrier, days, prices)}
     pool, channels, _ = choose_pool(first, eligible, prices.tiers, seconds)
     checked = evaluate({number: later.get(number, []) for number in numbers}, pool, channels, prices.tiers, seconds)

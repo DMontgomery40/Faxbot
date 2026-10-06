@@ -119,7 +119,7 @@ describe('Costs → Recommendations → Receiving', () => {
     advice.pool = {
       state: 'unpriced', unpriced_numbers: ['+13035550100'],
       sentence: 'Faxbot has no price for some calls received on +13035550100, so it cannot compare shared lines yet.',
-      action: 'Enter what Telnyx charges for received calls in Costs → Prices & plans.',
+      action: "Add Telnyx's price for receiving faxes in Costs → Prices & plans.",
       numbers: [{ number: '+13035550100', kind: 'local', eligible: true, reason: null, in_pool: false, calls_before: 30,
         calls: 30, billed_by_the_minute: [], unpriced_calls: 60 }],
       assumptions: [],
@@ -128,9 +128,9 @@ describe('Costs → Recommendations → Receiving', () => {
     render(<ReceivingRecommendations client={client()} />);
     const lines = await screen.findByTestId('receiving-lines');
     expect(within(lines).getByTestId('receiving-action').textContent).toBe(
-      'Enter what Telnyx charges for received calls in Costs → Prices & plans.');
+      "Add Telnyx's price for receiving faxes in Costs → Prices & plans.");
     const row = within(lines).getByText('+13035550100').closest('tr') as HTMLElement;
-    expect(within(row).getByText('No price')).toBeTruthy();
+    expect(within(row).getByText('Not priced yet')).toBeTruthy();
     expect(row.textContent).not.toContain('$0.00');
     expect(within(lines).queryByRole('table', { name: 'Shared lines compared with billing by the minute' })).toBeNull();
   });

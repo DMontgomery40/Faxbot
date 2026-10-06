@@ -88,7 +88,7 @@ function SharedLines({ advice }: { advice: Advice }) {
                   <TableCell>{row.number}</TableCell>
                   <TableCell align="right">{row.calls}</TableCell>
                   <TableCell align="right">
-                    {row.unpriced_calls ? 'No price' : formatMoneyList(row.billed_by_the_minute, '$0.00')}
+                    {row.unpriced_calls ? 'Not priced yet' : formatMoneyList(row.billed_by_the_minute, '$0.00')}
                   </TableCell>
                   <TableCell>{adviceText(row)}</TableCell>
                 </TableRow>
