@@ -161,8 +161,11 @@ def concatenate(pages, out_path):
 
 def _write_atomically(path, data):
     path = Path(path)
+    from ..conversion import FAX_IMAGE_MODE
     descriptor, temporary = tempfile.mkstemp(prefix='.batch-', dir=str(path.parent))
     try:
+        # The call image Asterisk sends: readable by its group too (FAX_IMAGE_MODE).
+        os.fchmod(descriptor, FAX_IMAGE_MODE)
         with os.fdopen(descriptor, 'wb') as handle:
             handle.write(data)
         os.replace(temporary, path)

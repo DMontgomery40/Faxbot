@@ -14,9 +14,13 @@ far end 1.5 s after the training check, within the sender's 3 s wait. The
 call that worked, the send-direction captures 0002 was proven with, and a
 training check the engine sends are unchanged.
 
+Only the first such signal in a call is logged; the count goes on the T.38
+channel (FAXBOT_T38_EMPTY_TRAININGS) for the line 0001 logs at the end of the
+session. The steps are in faxbot_t38_gateway.h, shared with the replay proof.
+
 --- a/res/res_fax_spandsp.c
 +++ b/res/res_fax_spandsp.c
-@@ -165,6 +165,8 @@
+@@ -167,6 +167,8 @@
  	modem_connect_tones_rx_state_t *tone_state;
  	/*! Faxbot: empty V.21 preambles the gateway ended (see faxbot_end_empty_preamble) */
  	unsigned int faxbot_empty_preambles;
@@ -25,8 +29,8 @@ training check the engine sends are unchanged.
  };
  
  static int spandsp_v21_new(struct spandsp_pvt *p);
-@@ -830,6 +832,50 @@
- 	hdlc_tx_frame(hdlc, NULL, 0);
+@@ -854,6 +856,40 @@
+ 	faxbot_gateway_count(s, t30, "FAXBOT_T38_EMPTY_PREAMBLES", p->faxbot_empty_preambles);
  }
  
 +/*!
@@ -45,42 +49,32 @@ training check the engine sends are unchanged.
 + * data is arriving), the data has ended: mark it finished, as a signal end does,
 + * so the modem sends what it has and stops. A modem still training or already
 + * shutting down, and data that ended with its signal end, are left alone.
++ *
++ * The steps are faxbot_gateway_end_empty_training in faxbot_t38_gateway.h,
++ * which the replay proof runs as well. Only the first one in a call is logged;
++ * 0001's line at the end of the call has the count.
 + */
-+static void faxbot_end_empty_training(struct ast_fax_session *s, struct spandsp_pvt *p)
++static void faxbot_end_empty_training(struct ast_fax_session *s, struct ast_channel *t30, struct spandsp_pvt *p)
 +{
-+	t38_gateway_state_t *gw = &p->t38_gw_state;
-+	fax_modems_state_t *modems = &gw->audio.modems;
-+	t38_gateway_hdlc_state_t *queue = &gw->core.hdlc_to_modem;
-+	t38_non_ecm_buffer_state_t *buffer = &gw->core.non_ecm_to_modem;
-+	get_bit_func_t get_bit = NULL;
-+
-+	if (modems->tx_handler == (span_tx_handler_t *) &v29_tx) {
-+		get_bit = modems->fast_modems.v29_tx.current_get_bit;
-+	} else if (modems->tx_handler == (span_tx_handler_t *) &v17_tx) {
-+		get_bit = modems->fast_modems.v17_tx.current_get_bit;
-+	} else if (modems->tx_handler == (span_tx_handler_t *) &v27ter_tx) {
-+		get_bit = modems->fast_modems.v27ter_tx.current_get_bit;
-+	}
-+	if (get_bit != t38_non_ecm_buffer_get_bit || buffer->data_finished
-+		|| queue->in == queue->out || !(queue->buf[queue->out].contents & FAXBOT_SPANDSP_FLAG_INDICATOR)
-+		|| gw->t38x.current_rx_field_class == T38_FIELD_CLASS_NON_ECM) {
++	if (!faxbot_gateway_end_empty_training(&p->t38_gw_state)) {
 +		return;
 +	}
-+	t38_non_ecm_buffer_push(buffer);
-+	p->faxbot_empty_trainings++;
-+	ast_log(LOG_NOTICE, "Faxbot T.38 gateway on %s: the far end's fast modem signal ended with its data still open; "
-+		"ended it so the fax machine's answer reaches the far end (%u so far)\n",
-+		s->chan ? ast_channel_name(s->chan) : "<gone>", p->faxbot_empty_trainings);
++	if (!p->faxbot_empty_trainings++) {
++		ast_log(LOG_NOTICE, "Faxbot T.38 gateway on %s: the far end's fast modem signal ended with its data still "
++			"open; ended it so the fax machine's answer reaches the far end (logged once per call; the T.38 line "
++			"at the end of the call counts them)\n", s->chan ? ast_channel_name(s->chan) : "<gone>");
++	}
++	faxbot_gateway_count(s, t30, "FAXBOT_T38_EMPTY_TRAININGS", p->faxbot_empty_trainings);
 +}
 +
  /*! \brief generate T.30 packets sent to the T.30 leg of gateway
   * \param chan T.30 channel
   * \param data fax session structure
-@@ -859,6 +905,7 @@
+@@ -883,6 +919,7 @@
  
  	/* generate a T.30 packet */
- 	faxbot_end_empty_preamble(s, p);
-+	faxbot_end_empty_training(s, p);
+ 	faxbot_end_empty_preamble(s, chan, p);
++	faxbot_end_empty_training(s, chan, p);
  	if ((f->samples = t38_gateway_tx(&p->t38_gw_state, f->data.ptr, f->samples))) {
  		f->datalen = f->samples * sizeof(int16_t);
  		res = ast_write(chan, f);

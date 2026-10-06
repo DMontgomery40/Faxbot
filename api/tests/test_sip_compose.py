@@ -90,6 +90,47 @@ def test_start_script_splits_the_published_range_between_t38_and_audio():
         assert 'Publish UDP' not in text
 
 
+ENGINE_CAPABILITIES = {
+    # start.sh hands Asterisk its folders (CHOWN; FSETID keeps the data folder's setgid bit), Asterisk drops
+    # to its own user (SETUID, SETGID), and a stop reaches it (KILL).
+    'asterisk': ['CHOWN', 'FSETID', 'SETUID', 'SETGID', 'KILL'],
+    # The root start script writes the uucp spool's settings (CHOWN, DAC_OVERRIDE, FOWNER), the daemons drop
+    # to uucp (SETUID, SETGID), the job server shuts each session into the spool (SYS_CHROOT), and a stop
+    # reaches the daemons (KILL).
+    'hylafax': ['CHOWN', 'DAC_OVERRIDE', 'FOWNER', 'SETUID', 'SETGID', 'SYS_CHROOT', 'KILL'],
+}
+
+
+@pytest.mark.parametrize('name', sorted(ENGINE_CAPABILITIES))
+def test_the_engine_containers_keep_only_the_capabilities_they_need(name):
+    """Asterisk and the fax engine parse other machines' packets. Each drops every capability but the few
+    its root start script needs, and nothing in it can gain privileges. Each capability is shown to be
+    needed by starting the image without it (tests/test_engine_processes.py, FAXBOT_NATIVE_PROOF=1)."""
+    service = yaml.safe_load((ROOT / 'docker-compose.yml').read_text())['services'][name]
+    assert service['security_opt'] == ['no-new-privileges:true']
+    assert service['cap_drop'] == ['ALL'] and service['cap_add'] == ENGINE_CAPABILITIES[name]
+    assert 'privileged' not in service and 'NET_BIND_SERVICE' not in service['cap_add']
+    if name == 'asterisk':
+        settings = (ROOT / 'asterisk' / 'etc' / 'asterisk' / 'asterisk.conf').read_text()
+        assert 'runuser=asterisk\n' in settings and 'rungroup=asterisk\n' in settings
+        assert 'astctlpermissions=0660\n' in settings
+        assert 'groupadd --system --gid 5060 asterisk' in (ROOT / 'asterisk' / 'Dockerfile').read_text()
+
+
+@pytest.mark.skipif(shutil.which('docker') is None, reason='The docker command is not installed.')
+def test_every_compose_file_keeps_the_engine_containers_privileges():
+    """The override files (public host, phone system, SSL Fax listener, fax ports) change ports, never privileges."""
+    for extra in ('docker-compose.public.yml', 'docker-compose.sslfax.yml', 'docker-compose.fax-ports.yml'):
+        result = subprocess.run(['docker', 'compose', '-f', 'docker-compose.yml', '-f', extra, 'config',
+                                 '--format', 'json'], cwd=ROOT, capture_output=True, text=True, timeout=60)
+        assert result.returncode == 0, (extra, result.stderr[-500:])
+        services = json.loads(result.stdout)['services']
+        for name, capabilities in ENGINE_CAPABILITIES.items():
+            assert services[name]['cap_drop'] == ['ALL'], (extra, name)
+            assert sorted(services[name]['cap_add']) == sorted(capabilities), (extra, name)
+            assert services[name]['security_opt'] == ['no-new-privileges:true'], (extra, name)
+
+
 def test_asterisk_starts_without_errors_and_keeps_every_fax_module():
     """Every start logged a burst of "X declined to load" ERRORs (seen on the acceptance install).
 

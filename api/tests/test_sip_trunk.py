@@ -164,7 +164,8 @@ def test_written_configuration_is_private_and_replaced_atomically(tmp_path):
     assert stat.S_IMODE(os.stat(path).st_mode) == 0o600
     assert path.read_text() == (FIXTURES / 'telnyx-registration.conf').read_text()
     secret = tmp_path / 'asterisk' / 'inbound.secret'
-    assert secret.read_text() == 'synthetic-inbound-secret' and stat.S_IMODE(os.stat(secret).st_mode) == 0o600
+    # Asterisk's notify script runs as the asterisk user, in the shared folder's group: it reads the secret.
+    assert secret.read_text() == 'synthetic-inbound-secret' and stat.S_IMODE(os.stat(secret).st_mode) == 0o640
     path.write_text('stale')
     sip_trunk.write_asterisk_configuration(configured)
     assert path.read_text() != 'stale'
@@ -175,6 +176,27 @@ def test_written_configuration_is_private_and_replaced_atomically(tmp_path):
     sip_trunk.write_asterisk_configuration(values({**CASES['telnyx-registration'], 'FAX_DATA_DIR': str(tmp_path)}))
     # The fax options for received calls stay (the built-in engine uses them); the engine's lines go.
     assert sorted(item.name for item in path.parent.iterdir()) == ['extensions-options.conf', 'pjsip.conf']
+
+
+def test_only_the_inbound_secret_is_readable_by_asterisks_group(tmp_path):
+    """Asterisk runs as its own user in the shared folder's group (asterisk/start.sh sets the group and
+    setgid): its notify script reads the inbound secret (0640) in a folder it may enter (0750). The trunk
+    settings and the manager login stay root's alone; start.sh reads them as root."""
+    configured = values({**CASES['telnyx-registration'], 'FAX_DATA_DIR': str(tmp_path),
+                         'ASTERISK_INBOUND_SECRET': 'synthetic-inbound-secret',
+                         'ASTERISK_AMI_USERNAME': 'api', 'ASTERISK_AMI_PASSWORD': 'Synthetic-Manager-Login-0123456789'})
+    old = os.umask(0o022)
+    try:
+        sip_trunk.write_asterisk_configuration(configured)
+        login = sip_trunk.write_manager_credentials(configured)
+    finally:
+        os.umask(old)
+    folder = tmp_path / 'asterisk'
+    assert stat.S_IMODE(os.stat(folder).st_mode) == 0o750
+    modes = {path.name: stat.S_IMODE(path.stat().st_mode) for path in folder.iterdir()}
+    assert modes.pop('inbound.secret') == 0o640
+    assert login is not None and modes.pop(login.name) == 0o600 and modes.pop('pjsip.conf') == 0o600
+    assert all(mode & 0o077 == 0 for mode in modes.values()), modes
 
 
 def test_public_address_is_advertised_only_outside_private_networks():

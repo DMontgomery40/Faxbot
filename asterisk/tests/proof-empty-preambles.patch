@@ -7,9 +7,9 @@ asterisk/patches/.
 
 --- a/res/res_fax_spandsp.c
 +++ b/res/res_fax_spandsp.c
-@@ -875,7 +875,30 @@
- 		"ended it so the fax machine's answer reaches the far end (%u so far)\n",
- 		s->chan ? ast_channel_name(s->chan) : "<gone>", p->faxbot_empty_trainings);
+@@ -889,7 +889,30 @@
+ 	}
+ 	faxbot_gateway_count(s, t30, "FAXBOT_T38_EMPTY_TRAININGS", p->faxbot_empty_trainings);
  }
 +
 +/* Faxbot loopback proof only (a carrier stand-in, never Faxbot's own Asterisk): blocks of gateway audio
@@ -38,15 +38,15 @@ asterisk/patches/.
  /*! \brief generate T.30 packets sent to the T.30 leg of gateway
   * \param chan T.30 channel
   * \param data fax session structure
-@@ -906,6 +929,7 @@
+@@ -920,6 +943,7 @@
  	/* generate a T.30 packet */
- 	faxbot_end_empty_preamble(s, p);
- 	faxbot_end_empty_training(s, p);
+ 	faxbot_end_empty_preamble(s, chan, p);
+ 	faxbot_end_empty_training(s, chan, p);
 +	faxbot_proof_empty_preambles(s, p);
  	if ((f->samples = t38_gateway_tx(&p->t38_gw_state, f->data.ptr, f->samples))) {
  		f->datalen = f->samples * sizeof(int16_t);
  		res = ast_write(chan, f);
-@@ -1005,6 +1029,7 @@
+@@ -1019,6 +1043,7 @@
  		t38_core_send_indicator(&p->t38_gw_state.t38, T38_IND_NO_SIGNAL, p->t38_gw_state.t38.indicator_tx_count);
  #endif
  	}

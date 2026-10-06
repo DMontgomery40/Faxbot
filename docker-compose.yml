@@ -69,6 +69,21 @@ services:
       - faxdata:/faxdata
       # Asterisk tells the SSL Fax engine which fax lines it loaded.
       - hylafax-settings:/faxdata/hylafax
+    # Asterisk itself runs as its own unprivileged user (asterisk.conf). Root in this
+    # container keeps only what it needs, found by starting the image without each one
+    # (api/tests/test_engine_processes.py): CHOWN and FSETID for start.sh to hand Asterisk
+    # its folders (FSETID keeps the data folder's setgid bit), SETUID and SETGID for
+    # Asterisk to drop to its user, KILL to pass a stop on to it. Ports 5060/5061 need none.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - FSETID
+      - SETUID
+      - SETGID
+      - KILL
     # No published ports. Asterisk registers with the carrier and starts every
     # call's audio and fax data from inside, so the carrier answers on those
     # flows and nothing has to reach in. (Publishing the old 1000-port media
@@ -98,6 +113,25 @@ services:
       - hylafax-settings:/faxdata/hylafax:ro
       - hylafax-out:/faxdata/hylafax-out
       - hylafax:/var/lib/faxbot-engine
+    # The fax daemons run as uucp (HylaFAX and IAXmodem drop to it themselves). The start
+    # script stays root and keeps only what it needs, found by starting the image without
+    # each one (api/tests/test_engine_processes.py): CHOWN, DAC_OVERRIDE and FOWNER to write
+    # the uucp spool's settings, SETUID and SETGID for the daemons to drop to uucp,
+    # SYS_CHROOT for the job server, which shuts each session into the spool (without it
+    # Faxbot cannot hand it a fax and the lines never come ready), KILL to pass a stop on
+    # to the daemons. The SSL Fax listener's port needs none.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETUID
+      - SETGID
+      - SYS_CHROOT
+      - KILL
 
   # Optional: Faxbot MCP Server for AI integration
   # Each MCP client sends its own Faxbot API key with every request, so the MCP

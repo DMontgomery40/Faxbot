@@ -739,7 +739,7 @@ def write_asterisk_configuration(values, *, inbound_secret=None) -> Path:
     """
     text = render_pjsip(values)
     target = configuration_path(values)
-    target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    target.parent.mkdir(parents=True, exist_ok=True, mode=SHARED_FOLDER_MODE)
     _write_private(target, text)
     secret = inbound_secret or values.asterisk_inbound_secret
     if secret:
@@ -755,23 +755,30 @@ def write_asterisk_configuration(values, *, inbound_secret=None) -> Path:
     return target
 
 
+# Asterisk runs as its own user, in its own group, which the shared folder gives every file made in it
+# (asterisk/start.sh). The folder and the inbound secret are readable by that group; the trunk settings and
+# the manager login stay root's alone (start.sh reads them as root).
+SHARED_FOLDER_MODE = 0o750
+SECRET_MODE = 0o640
+
+
 def write_inbound_secret(values, secret: str) -> Path:
-    """Write the inbound secret the Asterisk notify script reads with each received fax (mode 0600)."""
+    """Write the inbound secret the Asterisk notify script reads with each received fax (mode 0640)."""
     path = secret_path(values)
-    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    path.parent.mkdir(parents=True, exist_ok=True, mode=SHARED_FOLDER_MODE)
     try:
         if path.read_text(encoding='utf-8') == secret:
             return path
     except OSError:
         pass
-    _write_private(path, secret)
+    _write_private(path, secret, mode=SECRET_MODE)
     return path
 
 
-def _write_private(target: Path, text: str):
+def _write_private(target: Path, text: str, *, mode: int = 0o600):
     descriptor, temporary = tempfile.mkstemp(prefix='.' + target.name + '.', dir=target.parent)
     try:
-        os.fchmod(descriptor, 0o600)
+        os.fchmod(descriptor, mode)
         with os.fdopen(descriptor, 'w', encoding='utf-8') as handle:
             handle.write(text)
             handle.flush()

@@ -16,7 +16,7 @@ from pathlib import Path
 from fastapi import UploadFile
 from starlette.concurrency import run_in_threadpool
 
-from .conversion import DocumentConversionError, pdf_to_tiff, txt_to_pdf, validate_pdf
+from .conversion import FAX_IMAGE_MODE, DocumentConversionError, pdf_to_tiff, txt_to_pdf, validate_pdf
 
 
 class UploadPreparationError(Exception):
@@ -111,7 +111,8 @@ async def prepare_upload(
             final_tiff = root / f"{job_id}.tiff" if tiff is not None else None
             for staged, final in ((pdf, final_pdf), (tiff, final_tiff)):
                 if staged is not None and final is not None:
-                    staged.chmod(0o600)
+                    # Asterisk (its own group on the data folder) reads the pages it sends; nobody else.
+                    staged.chmod(FAX_IMAGE_MODE if staged is tiff else 0o600)
                     # Hard-link publication is atomic and refuses identity collisions.
                     os.link(staged, final)
                     published.append(final)
