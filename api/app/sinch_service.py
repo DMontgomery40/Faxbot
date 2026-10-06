@@ -1,5 +1,6 @@
 from typing import Optional, Dict, Any, Tuple
 import httpx
+import os
 import re
 
 from .config import settings
