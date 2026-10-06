@@ -129,9 +129,14 @@ class Capacity:
     TABLES = ('outbound_deliveries', 'outbound_attempts', 'fax_jobs', 'delivery_destinations',
               'delivery_attempt_costs', 'outbound_batch_members', 'access_resources', 'sip_call_records')
 
-    def __init__(self, engine):
+    def __init__(self, engine, connection=None):
+        """Inside an open transaction pass its ``connection``: reflection then reads through it.
+
+        Reflecting on a second connection while the claim holds the SQLite write
+        lock left that connection blocking the next writer ("database is locked").
+        """
         metadata = sa.MetaData()
-        metadata.reflect(engine, only=list(self.TABLES))
+        metadata.reflect(connection if connection is not None else engine, only=list(self.TABLES))
         self.engine = engine
         self.t = {name: metadata.tables[name] for name in self.TABLES}
 
@@ -307,3 +312,18 @@ class Capacity:
             if waiting is not None:
                 query = query.where(d.c.id.not_in(waiting))
             return int(connection.scalar(query) or 0)
+
+
+_CACHE = {}
+
+
+def for_engine(engine, connection=None):
+    """One ``Capacity`` per engine, reflected once (through ``connection`` inside an open transaction)."""
+    cached = _CACHE.get(id(engine))
+    if cached is not None and cached.engine is engine:
+        return cached
+    capacity = Capacity(engine, connection)
+    if len(_CACHE) > 16:
+        _CACHE.clear()
+    _CACHE[id(engine)] = capacity
+    return capacity

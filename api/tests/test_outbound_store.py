@@ -1,6 +1,7 @@
 """Durable worker ownership; no HTTP or user-facing acceptance substitutes."""
 from datetime import datetime, timedelta
 from dataclasses import replace
+import itertools
 import json
 from uuid import uuid4
 
@@ -25,11 +26,23 @@ def installation(database, tmp_path):
     return configuration, OutboundStore(configuration), snapshot
 
 
-def accept(installation, identity=None):
+_NUMBERS = itertools.count()
+
+
+def another_number():
+    """A different synthetic number (+1 202 555 0150 to 0199) for each call.
+
+    Faxbot places one call at a time to a number (``capacity.py``), so a test
+    that needs several faxes on the line at once sends each to its own number.
+    """
+    return '+1202555%04d' % (150 + next(_NUMBERS) % 50)
+
+
+def accept(installation, identity=None, *, to_number='+12025550123'):
     configuration, delivery, snapshot = installation
     identity = identity or uuid4().hex
     now = datetime.utcnow()
-    configuration.accept_outbound(snapshot.active, {'id': identity, 'to_number': '+12025550123',
+    configuration.accept_outbound(snapshot.active, {'id': identity, 'to_number': to_number,
         'file_name': 'synthetic.txt', 'tiff_path': '', 'status': 'queued', 'pages': 3,
         'created_at': now, 'updated_at': now})
     return identity

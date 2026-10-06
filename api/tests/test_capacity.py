@@ -98,6 +98,23 @@ def test_a_second_fax_to_the_same_number_waits_and_dials_after_the_first_finishe
     assert install.start().job_id == second
 
 
+def test_the_first_claim_reads_room_through_its_own_locked_connection(install):
+    # Reflecting on a second connection while the claim held the SQLite write lock
+    # left that connection blocking the next writer ("database is locked").
+    install.accept()
+    checkouts = []
+
+    def checked_out(*_):
+        checkouts.append(1)
+
+    sa.event.listen(install.engine, 'checkout', checked_out)
+    try:
+        assert install.claim() is not None
+    finally:
+        sa.event.remove(install.engine, 'checkout', checked_out)
+    assert len(checkouts) == 1
+
+
 def test_a_number_can_take_more_calls_at_once_or_no_limit(install):
     from api.app.routing.store import RouteStore
     jobs = [install.accept() for _ in range(3)]

@@ -6,7 +6,7 @@ from uuid import uuid4
 import httpx
 import pytest
 
-from api.tests.test_outbound_store import installation, accept
+from api.tests.test_outbound_store import installation, accept, another_number
 from api.tests.test_schema import database
 from api.app.config_profiles import ProviderConfiguration
 from api.app.outbound_polling import OutboundPoller
@@ -14,12 +14,13 @@ from api.app.outbound_store import DeliveryConflict, OutboundStore
 
 
 def issued(installation, *, created_at=None):
+    """One fax on the line, waiting for its result; each goes to its own number so several can be."""
     configuration, store, snapshot = installation
     if created_at is None:
-        job = accept(installation)
+        job = accept(installation, to_number=another_number())
     else:
         job = uuid4().hex
-        configuration.accept_outbound(snapshot.active, {'id': job, 'to_number': '+12025550123',
+        configuration.accept_outbound(snapshot.active, {'id': job, 'to_number': another_number(),
             'file_name': 'synthetic.txt', 'tiff_path': '', 'status': 'queued', 'pages': 3,
             'created_at': created_at, 'updated_at': created_at})
     claim = store.claim('worker', now=created_at)
