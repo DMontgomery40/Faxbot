@@ -471,13 +471,19 @@ export interface ReceivingNumber {
   calls_before: number;
   calls: number;
   billed_by_the_minute: Money[];
+  // Calls with no price in either period: the cost is unknown, never $0.
+  unpriced_calls?: number;
 }
 
 export interface ReceivingPool {
-  state: 'share' | 'turned_away' | 'keep_metered' | 'not_saving' | 'too_little_history' | 'no_channel_price' | 'no_trunk';
+  state: 'share' | 'turned_away' | 'keep_metered' | 'not_saving' | 'too_little_history' | 'no_channel_price' | 'no_trunk'
+    | 'unpriced';
   sentence: string;
   numbers: ReceivingNumber[];
   note?: string | null;
+  // With state unpriced: what to enter where, and the numbers whose calls have no price.
+  action?: string;
+  unpriced_numbers?: string[];
   pool_numbers?: string[];
   channels?: number;
   calls?: number;
