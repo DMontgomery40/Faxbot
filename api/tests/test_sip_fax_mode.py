@@ -264,7 +264,7 @@ def test_a_switch_that_finds_calls_up_reloads_asterisk_once_they_end_and_says_so
     async def scenario():
         result = await sip_fax_mode.switch_to_audio(runtime, sip_fax_mode.NO_DATA_BACK)
         assert (result['engine'], result['waiting'], result['message']) == (
-            'busy', True, 'Saved. Asterisk loads the new fax setting as soon as no call is up.')
+            'busy', True, 'Saved. Asterisk loads the new settings as soon as no call is up.')
         assert sip_fax_mode.reload_waiting() and 'core stop gracefully' not in actions
         busy['up'] = False  # the call ends
         for _ in range(200):
@@ -285,7 +285,7 @@ def test_the_status_says_asterisk_loads_a_switched_setting_once_calls_end(client
     monkeypatch.setattr(sip_fax_mode, 'reload_waiting', lambda: True)
     status = client.get('/admin/sip/status', headers=ADMIN).json()
     assert status['reload_waiting'] is True
-    assert status['message'] == 'Saved. Asterisk loads the new fax setting as soon as no call is up.'
+    assert status['message'] == 'Saved. Asterisk loads the new settings as soon as no call is up.'
 
 
 def test_a_t38_call_that_was_simply_hung_up_gives_no_derived_reason(client, network):

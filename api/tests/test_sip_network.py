@@ -732,6 +732,26 @@ def test_apply_opens_router_ports_under_the_same_lock_as_every_network_check(cli
     assert order == ['locked', 'map_ports', 'released'] and stand_in_router.opened == [('192.168.1.1', 4000, 4039)]
 
 
+def test_a_check_that_finds_calls_up_leaves_the_restart_for_the_opened_ports_waiting_for_them(
+        client, network, stand_in_router, monkeypatch):
+    """Like the T.38 switch: Asterisk names the opened ports once no call is up, not only at the next Apply."""
+    network['row'] = LINUX_LAN_CHANGES
+    _publish_fax_ports(client)
+    waiting = []
+
+    async def busy(values):
+        return {'ok': True, 'engine': 'busy', 'message': sip_http.SAVED_BUSY}
+    monkeypatch.setattr(sip_http, '_load_into_engine', busy)
+    monkeypatch.setattr(sip_trunk, 'engine_managed', lambda values: True)
+    monkeypatch.setattr(sip_fax_mode, 'reload_later', waiting.append)
+    runtime = client.app.state.configuration_runtime
+    outcome = asyncio.run(sip_network.run_check(runtime))
+    assert outcome['check']['why'] == 'router_mapped' and outcome['switched'] is None
+    assert (outcome['engine']['engine'], outcome['engine']['waiting']) == ('busy', True)
+    assert outcome['engine']['message'] == 'Saved. Asterisk loads the new settings as soon as no call is up.'
+    assert waiting == [runtime]
+
+
 def test_unattended_checks_reuse_the_last_look_at_the_host(client, network, monkeypatch):
     network['row'] = LINUX_LAN
     asked = []

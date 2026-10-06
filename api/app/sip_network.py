@@ -884,6 +884,9 @@ async def run_check(runtime, records=None, *, fresh=True, unattended=False):
     elif reload:
         # Asterisk names the opened ports only after a restart, which waits until no call is up.
         engine = await _load_into_engine(values)
+        if engine.get('engine') == 'busy':
+            sip_fax_mode.reload_later(runtime)
+            engine = {**engine, 'waiting': True, 'message': sip_fax_mode.RELOAD_WAITING}
     return {'check': check, 'switched': decision, 'awaiting': awaiting, 'engine': engine}
 
 

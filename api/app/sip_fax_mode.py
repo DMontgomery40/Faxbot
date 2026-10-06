@@ -311,7 +311,7 @@ async def switch(runtime, enabled, reason, *, network=None):
 
 
 # A saved switch that Asterisk loads once no call is up, so the screen and Asterisk never disagree for long.
-RELOAD_WAITING = 'Saved. Asterisk loads the new fax setting as soon as no call is up.'
+RELOAD_WAITING = 'Saved. Asterisk loads the new settings as soon as no call is up.'
 _reload = {}
 
 
