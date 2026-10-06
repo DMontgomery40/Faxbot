@@ -109,6 +109,8 @@ function SendFax({ client, config, configLoading, configError, onOpenJob }: Send
   // A number that sends faxes together offers "Send now" (go at once, taking the faxes waiting for it).
   const [together, setTogether] = useState<BatchingCheck | null>(null);
   const [sendNow, setSendNow] = useState(false);
+  // One of this installation's own numbers: delivered inside Faxbot unless the sender asks for a real call.
+  const [byCall, setByCall] = useState(false);
   useEffect(() => {
     setTogether(null);
     setSendNow(false);
@@ -219,7 +221,8 @@ function SendFax({ client, config, configLoading, configError, onOpenJob }: Send
       savePendingSend({ key: intent.key, fingerprint: intent.fingerprint, queueOnly: intent.queueOnly,
         maxFileSizeBytes: intent.maxFileSizeBytes, createdAt: intent.createdAt });
       const response = await client.sendFax(intent.destination, intent.file,
-        { queueOnly: intent.queueOnly, idempotencyKey: intent.key, sendNow: together !== null && sendNow });
+        { queueOnly: intent.queueOnly, idempotencyKey: intent.key, sendNow: together !== null && sendNow,
+          byCall: route?.route === 'local' && byCall });
       const state = (response.delivery_state || response.status).toLowerCase();
       const to = typeof response.to === 'string' && response.to ? response.to : undefined;
       setResult({
@@ -338,6 +341,13 @@ function SendFax({ client, config, configLoading, configError, onOpenJob }: Send
                       <Typography variant="body2" color="text.secondary" data-testid="send-cost">{costSentence}</Typography>
                     )}
                   </Box>
+                )}
+
+                {route?.route === 'local' && (
+                  <FormControlLabel data-testid="send-by-call"
+                    control={<Checkbox checked={byCall} onChange={(e) => setByCall(e.target.checked)}
+                      disabled={!configReady || loading} />}
+                    label="Send it through your carrier with a real call instead, to test your fax line" />
                 )}
 
                 {together && (

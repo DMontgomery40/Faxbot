@@ -117,6 +117,7 @@ const categoryLabels: Record<string, string> = {
   sid_mismatch: 'Provider fax ID did not match',
   provider_failed: 'The provider reported that the fax failed',
   partner_not_received: 'The direct delivery partner did not receive it',
+  local_not_delivered: 'It could not go straight into Received, so Faxbot sent it by phone call',
   partly_sent: 'Part of this fax may have arrived before the call failed',
   pages_unconfirmed: 'The call ended without confirming which pages arrived',
 };
@@ -163,7 +164,10 @@ function eventDetails(event: DeliveryHistoryEvent): string {
 
 interface DetailSelection { jobId: string }
 
+export const BY_CALL_TEXT = 'You asked for a real phone call through your carrier, even if the number is one of your own.';
+
 function routeName(route: string): string {
+  if (route === 'local') return 'This Faxbot';
   return route === 'direct' ? 'Direct delivery' : providerLabel(route);
 }
 
@@ -682,6 +686,12 @@ function JobsList({ client, openJobId, onOpened, onSendFax }: JobsListProps) {
                   secondary={<>
                     {routeText(detailJob.backend, costs.get(detailJob.id))}
                     {/* Why Faxbot chose it, as recorded when it chose it. */}
+                    {detailJob.send_by_call && (
+                      <Typography component="span" variant="body2" color="text.secondary" display="block"
+                        data-testid="job-by-call">
+                        {BY_CALL_TEXT}
+                      </Typography>
+                    )}
                     {costs.get(detailJob.id)?.route_explanation && (
                       <Typography component="span" variant="body2" color="text.secondary" display="block"
                         data-testid="job-route-reason">

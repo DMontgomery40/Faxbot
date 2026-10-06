@@ -17,6 +17,8 @@ under, so the same provider fax ID under two accounts stays two records:
 - SIP trunk: ``sip:`` and the trunk user name, or ``sip:asterisk``.
 - Generic import: ``import:`` and the importing principal's ID.
 - Test fax: ``test:`` and the principal's ID.
+- Delivered inside Faxbot: ``local:installation``, keyed on the sent fax's ID
+  (a fax to one of the installation's own numbers; ``routing/local.py``).
 
 Other sources (generic import, test fax) use two calls::
 
@@ -45,10 +47,10 @@ import sqlalchemy as sa
 from ..routing.numbers import DEFAULT_COUNTRY
 
 
-SOURCES = ('phaxio', 'sinch', 'sip', 'import', 'test', 'efax')
+SOURCES = ('phaxio', 'sinch', 'sip', 'import', 'test', 'efax', 'local')
 FETCHABLE = ('phaxio', 'sinch', 'sip', 'efax')
 SOURCE_NAMES = {'phaxio': 'Phaxio', 'sinch': 'Sinch', 'sip': 'the SIP trunk', 'import': 'the import',
-                'test': 'Faxbot', 'efax': 'eFax'}
+                'test': 'Faxbot', 'efax': 'eFax', 'local': 'Faxbot'}
 # Minutes to wait after each failed attempt: 1, 2, 4, 8, 16, 32, then hourly for 24 hours.
 RETRY_MINUTES = (1, 2, 4, 8, 16, 32) + (60,) * 24
 LEASE = timedelta(minutes=2)
@@ -203,7 +205,9 @@ def describe(row, record, *, now=None):
     name = SOURCE_NAMES.get(source, 'the provider')
     retry_at = None
     if state == 'received':
-        text = 'A test fax created in Faxbot.' if source == 'test' else 'Received.'
+        text = ('A test fax created in Faxbot.' if source == 'test'
+                else 'Delivered straight into Received from a fax sent to this number; no phone call was made.'
+                if source == 'local' else 'Received.')
     elif state == 'conflict':
         text = 'This fax arrived earlier and is kept as received.'
     elif state == 'failed':

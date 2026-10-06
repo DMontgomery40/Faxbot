@@ -825,13 +825,15 @@ class AdminAPIClient {
     return result;
   }
 
-  async sendFax(to: string, file: File, options: { queueOnly?: boolean; idempotencyKey?: string; sendNow?: boolean } = {}): Promise<FaxSendResult> {
+  async sendFax(to: string, file: File, options: { queueOnly?: boolean; idempotencyKey?: string; sendNow?: boolean; byCall?: boolean } = {}): Promise<FaxSendResult> {
     const formData = new FormData();
     formData.append('to', normalizeFaxDestination(to));
     formData.append('file', file);
     if (options.queueOnly) formData.append('queue_only', 'true');
     // Only for a number that sends faxes together: go at once, taking the faxes waiting for it.
     if (options.sendNow) formData.append('send_now', 'true');
+    // A real call through the carrier even to one of this installation's own numbers (test faxes).
+    if (options.byCall) formData.append('send_by_call', 'true');
 
     const res = await this.send('/fax', {
       method: 'POST',

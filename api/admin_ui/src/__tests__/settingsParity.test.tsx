@@ -100,6 +100,18 @@ describe('Settings delivery routes', () => {
     expect(await screen.findByText('Settings saved.')).toBeTruthy();
     expect(writes[0]).toEqual({ expected_revision_id: 'rev-a', outbound_routes: 'humblefax,sip', route_min_success_percent: 90 });
   });
+
+  it('delivers faxes to your own numbers inside Faxbot by default and saves turning it off', async () => {
+    const writes = settingsHandlers(settingsFixture());
+    render(<Settings client={client()} />);
+    const routes = await section('Delivery routes');
+    const toggle = within(routes).getByRole('checkbox', { name: 'Deliver faxes to your own numbers inside Faxbot' }) as HTMLInputElement;
+    expect(toggle.checked).toBe(true);
+    fireEvent.click(toggle);
+    apply();
+    expect(await screen.findByText('Settings saved.')).toBeTruthy();
+    expect(writes[0]).toEqual({ expected_revision_id: 'rev-a', local_delivery_enabled: false });
+  });
 });
 
 describe('Settings direct delivery', () => {

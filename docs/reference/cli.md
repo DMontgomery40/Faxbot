@@ -57,6 +57,7 @@ $ faxbot send [OPTIONS] {to} {file}
 * `--queue`: Accept the fax without sending it. Faxbot allows this only while sending is turned off (test mode).
 * `--idempotency-key KEY`: Your own reference for this fax. Sending again with the same reference returns the first fax instead of sending twice.
 * `--now`: Send immediately, even when this number batches faxes; faxes already waiting for it go in the same call.
+* `--by-call`: Place a real call through your carrier even when the number is one of your own, for example to test your fax line.
 * `--help`: Show this message and exit.
 
 ## `faxbot status`

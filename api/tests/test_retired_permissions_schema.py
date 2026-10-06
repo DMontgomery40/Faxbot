@@ -61,7 +61,7 @@ def _rows(engine, table, **where):
 
 
 def test_retired_permissions_is_head_after_terminal_owner_only():
-    assert schema.HEAD == retired.REVISION == '0019_retired_permissions'
+    assert schema.RETIRED == retired.REVISION == '0019_retired_permissions'
     assert schema.TERMINAL == '0018_terminal_owner_only'
     assert retired.TABLES == frozenset()
     assert not RETIRED & PERMISSIONS and 'tunnels:pair' in PERMISSIONS

@@ -19,6 +19,8 @@ def cost_text(figure):
     state = figure.state
     if state == 'direct':
         return 'No charge, sent straight to the partner'
+    if state == 'local':
+        return 'No call'
     if state == 'included':
         return 'Included in your plan'
     if state == 'mixed':
@@ -33,7 +35,7 @@ def cost_text(figure):
 
 def basis_text(figure):
     """Where the cost comes from: "14 faxes billed", "9 faxes billed, 5 estimated", "1 fax with no price"."""
-    if figure.state in ('direct', 'included'):
+    if figure.state in ('local', 'direct', 'included'):
         return None
     parts = [(figure.reported, 'billed'), (figure.estimated, 'estimated'), (figure.unpriced, 'with no price')]
     parts = [(count, words) for count, words in parts if count]
@@ -50,7 +52,7 @@ def route_view(figure):
             'delivered': figure.delivered, 'failed': figure.failed, 'uncertain': figure.uncertain,
             'cancelled': figure.cancelled, 'delivered_percent': figure.delivered_percent,
             'cost_per_delivered': _money(figure.per_delivered_micros, figure.currency),
-            'total_cost': (None if figure.state in ('direct', 'included', 'mixed')
+            'total_cost': (None if figure.state in ('local', 'direct', 'included', 'mixed')
                            else _money(figure.cost_micros, figure.currency)),
             'estimate': figure.estimate, 'charged_attempts': figure.reported,
             'estimated_attempts': figure.estimated, 'unpriced_attempts': figure.unpriced,
@@ -107,15 +109,18 @@ def sending_recommendations(store, revision, bound):
         plan = planner.plan(to_number=number, bound=bound, values=values, pages=1, alternates=True)
         first = plan.first
         current = figures.get(first.route.key)
-        if current is None or current.state != 'priced':
-            continue
         usable = {choice.route.key for choice in plan.choices if choice.reason != 'unreliable'}
         chosen = first.reason == 'preferred'
-        included = sorted((figure for key, figure in plans.items() if chosen and key in usable and key != current.route),
+        # A plan is suggested over a metered route you chose, with its cost when Faxbot has one.
+        metered = first.route.kind == 'provider' and not getattr(first.route.card, 'flat_plan', False)
+        included = sorted((figure for key, figure in plans.items()
+                           if chosen and metered and key in usable and key != first.route.key),
                           key=lambda figure: route_label(figure.route))
         if included:
             best, kind, saving, sentence = included[0], 'plan', None, _plan_sentence(included[0], current)
         else:
+            if current is None or current.state != 'priced':
+                continue
             options = [figure for key, figure in comparable.items()
                        if key in usable and key != current.route and figure.currency == current.currency]
             if current.route not in comparable or not options:
@@ -129,14 +134,17 @@ def sending_recommendations(store, revision, bound):
         items.append({
             'number': number, 'display_name': row.get('display_name'), 'version': row.get('version') or 0,
             'preferred_route': row.get('preferred_route'), 'chosen_by_you': chosen, 'kind': kind,
-            'current': route_view(current), 'suggested': route_view(best), 'saving_per_fax': saving,
-            'sentence': sentence})
+            # ``current`` is None when the route used now has no faxes to this number in the window.
+            'current_label': route_label(first.route.key), 'current': route_view(current) if current else None,
+            'suggested': route_view(best), 'saving_per_fax': saving, 'sentence': sentence})
     return items
 
 
 def _plan_sentence(plan, current):
-    return (f'Your {route_label(plan.route)} plan already includes faxes to this number. '
-            f'{route_label(current.route)} cost {_amount(current)} per delivered fax here over the last '
+    included = f'Your {route_label(plan.route)} plan already includes faxes to this number.'
+    if current is None or current.state != 'priced':
+        return included  # nothing delivered on the chosen route, or a cost Faxbot does not know
+    return (f'{included} {route_label(current.route)} cost {_amount(current)} per delivered fax here over the last '
             f'{WINDOW_DAYS} days.')
 
 

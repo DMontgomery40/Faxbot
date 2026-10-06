@@ -131,8 +131,11 @@ async def lifespan(application: FastAPI):
                         await stack.enter_async_context(mount.app.router.lifespan_context(mount.app))
                     await run_lifecycle_step(runtime.publish_ready)
                     delivery = OutboundStore(runtime.manager.store)
+                    # Faxes to the installation's own numbers are delivered inside Faxbot (routing/local.py).
+                    from .routing.local import installation_route
                     worker = OutboundWorker(delivery, BatchingTransport(
-                        RoutedTransport(CapturedTransport(delivery, runtime, ami=ami_client))))
+                        RoutedTransport(CapturedTransport(delivery, runtime, ami=ami_client),
+                                        local=installation_route(application, runtime))))
                     tasks.append(asyncio.create_task(worker.run(), name='faxbot-outbound-worker'))
                     tasks.append(asyncio.create_task(OutboundPoller(delivery).run(), name='faxbot-outbound-poller'))
                     # The task's frame keeps the startup values; the watcher reads the current ones.
@@ -1573,7 +1576,9 @@ async def get_admin_job(job_id: str, request: Request, identity=Depends(require_
     fax_engine = await run_lifecycle_step(
         lambda: safely(records_for(_configuration_manager().store.engine).sent_detail, job_id))
     return {**_admin_fax_view(row), 'provider_sid': row['provider_sid'], 'file_name': row['file_name'],
-            'together': together.get(job_id), 'fax_engine': fax_engine}
+            'together': together.get(job_id), 'fax_engine': fax_engine,
+            # The sender asked for a real call through the carrier, even to one of this installation's own numbers.
+            'send_by_call': bool(row.get('send_by_call'))}
 
 
 def _admin_fax_view(row):
@@ -1700,6 +1705,9 @@ async def send_fax(request: Request, to: str = Form(...), file: UploadFile = Fil
                    queue_only: bool = Form(False),
                    send_now: bool = Form(False, description='Send at once even when this number sends faxes '
                                                             'together; faxes waiting for it go in the same call.'),
+                   send_by_call: bool = Form(False, description="Place a real call through your fax provider or "
+                                             "carrier even when the number is one of this installation's own "
+                                             "numbers, instead of delivering it inside Faxbot. Test faxes use this."),
                    idempotency_key: Optional[str] = Header(default=None, alias='Idempotency-Key',
                        description='Optional key for replaying the same fax request; 1 to 128 printable ASCII characters without spaces.'),
                    identity=Depends(require_identity)):
@@ -1733,12 +1741,12 @@ async def send_fax(request: Request, to: str = Form(...), file: UploadFile = Fil
             # under the country its original was accepted with.
             original = destination if accepted is None else resolve(accepted.fax_default_country)[0]
             fingerprint, legacy = request_fingerprints(entered=to, destination=original,
-                queue_only=queue_only, document_sha256=document_sha256)
+                queue_only=queue_only, document_sha256=document_sha256, by_call=send_by_call)
             replay_identity = RequestIdentity(scope, validated.idempotency_digest, fingerprint, legacy)
             existing = await run_lifecycle_step(lambda: access.outbound.find_replay(identity.actor, replay_identity))
             if destination is not None:
                 fingerprint, legacy = request_fingerprints(entered=to, destination=destination,
-                    queue_only=queue_only, document_sha256=document_sha256)
+                    queue_only=queue_only, document_sha256=document_sha256, by_call=send_by_call)
                 request_identity = RequestIdentity(scope, validated.idempotency_digest, fingerprint, legacy)
         except UploadPreparationError as error:
             raise HTTPException(error.status_code, detail=str(error)) from None
@@ -1803,6 +1811,8 @@ async def send_fax(request: Request, to: str = Form(...), file: UploadFile = Fil
             'id': job_id, 'to_number': destination, 'file_name': prepared.original_name,
             'tiff_path': tiff_path, 'status': 'queued', 'pages': prepared.pages,
             'created_at': accepted_at, 'updated_at': accepted_at,
+            # A real call even to one of this installation's own numbers (never delivered inside Faxbot).
+            **({'send_by_call': 1} if send_by_call else {}),
         }, request_identity=request_identity, also=None if hold is None else batching_acceptance.recorder(
             manager.store.engine, job_id, hold, identity.actor)))
     except IdempotentReplay as replay:

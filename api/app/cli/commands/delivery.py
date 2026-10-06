@@ -283,7 +283,7 @@ def routing_received_costs(fax_id: str = typer.Argument(None, help="Received fax
 
 
 SAVING_PARTS = (('sending_together', 'Sending together'), ('direct_delivery', 'Direct delivery'),
-                ('case_packets', 'Case packets'), ('sslfax', 'Faster pages'))
+                ('case_packets', 'Case packets'), ('sslfax', 'Faster pages'), ('own_numbers', 'Faxes to your own numbers'))
 
 
 def routing_savings(days: int = typer.Option(30, '--days', min=1, max=366, help='How many days back to count.')):
@@ -318,7 +318,8 @@ def _show_sending(out, result):
         return
     out.table(['Fax number', 'Name', 'Sent now by', 'Per delivered fax', 'Cheaper route', 'Per delivered fax',
                'Saves per fax'],
-              [[item['number'], item.get('display_name'), item['current']['label'], item['current']['cost_text'],
+              [[item['number'], item.get('display_name'), item.get('current_label') or (item['current'] or {}).get('label'),
+                (item['current'] or {}).get('cost_text') or '-',
                 item['suggested']['label'], item['suggested']['cost_text'],
                 money([item['saving_per_fax']]) if item.get('saving_per_fax') else '-']
                for item in items])

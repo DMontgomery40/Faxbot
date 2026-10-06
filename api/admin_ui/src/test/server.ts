@@ -178,6 +178,8 @@ export function emptySavings() {
     case_packets: { ...part('No case packet in the last 30 days left out a document the recipient already had.'),
       counted_from: null, earlier_not_counted: false, counted_from_sentence: null, packets: 0, documents_left_out: 0,
       pages_not_resent: 0, pages_saved: 0, priced: 0, in_plan: 0, unpriced: 0 },
+    own_numbers: { ...part('No faxes went to your own numbers in the last 30 days.'),
+      faxes: 0, calls_avoided: 0, pages: 0, priced: 0, in_plan: 0, unpriced: 0 },
   };
 }
 const fail = (status: number, detail: string) => json({ detail }, status);

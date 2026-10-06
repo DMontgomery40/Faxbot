@@ -70,7 +70,8 @@ def _route_text(job, cost):
     routes = (cost or {}).get('routes') or []
     if not routes:
         return _provider(job.get('backend'))
-    names = ['Direct delivery' if route == 'direct' else _provider(route) for route in routes]
+    names = ['Direct delivery' if route == 'direct' else 'This Faxbot' if route == 'local' else _provider(route)
+             for route in routes]
     return names[-1] + (f" (after {', '.join(names[:-1])})" if len(names) > 1 else '')
 
 
@@ -120,7 +121,10 @@ def send(to: str = typer.Argument(..., help='Fax number to send to, for example 
                                                   'reference returns the first fax instead of sending twice.'),
          now: bool = typer.Option(False, '--now',
                                   help='Send immediately, even when this number batches faxes; faxes already '
-                                       'waiting for it go in the same call.')):
+                                       'waiting for it go in the same call.'),
+         by_call: bool = typer.Option(False, '--by-call',
+                                      help='Place a real call through your carrier even when the number is one of '
+                                           'your own, for example to test your fax line.')):
     """Send a fax. Faxbot accepts it and sends it in the background."""
     api = state.api()
     headers = {'Idempotency-Key': idempotency_key} if idempotency_key else None
@@ -128,6 +132,8 @@ def send(to: str = typer.Argument(..., help='Fax number to send to, for example 
     data = {'to': to, 'queue_only': 'true' if queue else 'false'}
     if now:
         data['send_now'] = 'true'
+    if by_call:
+        data['send_by_call'] = 'true'
     with file.open('rb') as handle:
         job = api.post('/fax', data=data, files={'file': (file.name, handle, content_type)}, headers=headers)
     waiting = _together(api, job['id'])
@@ -216,6 +222,8 @@ def jobs_get(fax_id: str = typer.Argument(..., help='Fax ID.')):
     # The route that carried the fax and why Faxbot chose it, as Sent details show them.
     route = ([('Route', _route_text(job, cost)), ('Why this route', cost.get('route_explanation'))]
              if cost.get('routes') else [])
+    if job.get('send_by_call'):
+        route.append(('Note', 'You asked for a real phone call through your carrier, even if the number is one of your own.'))
 
     def human(out):
         out.fields(_fax_fields(job) + route + ([('Reference on its separator page', together.get('reference'))]
@@ -367,6 +375,14 @@ def _inbound_fields(item):
             *([('Provider copy', item['provider_note'])] if item.get('provider_note') else [])]
 
 
+def came_through(item):
+    """Where a received fax came from, as Received shows it: a provider, "Imported" or "This Faxbot"."""
+    backend = item.get('backend')
+    if backend == 'local':
+        return 'This Faxbot'
+    return 'Imported' if backend == 'import' else (_provider(backend) or '-')
+
+
 def _provider_copies(items):
     """One sentence for received faxes still stored at eFax, as the eFax settings section says it."""
     from ...efax_service import PENDING_DELETION_NOTE, STOPPED_DELETION_NOTE, deletion_sentences
@@ -385,10 +401,11 @@ def inbound_list(to_number: str = typer.Option(None, '--to', help='Only faxes se
 
     def human(out):
         out.table(
-            (['Received fax ID'] if ids else []) + ['From', 'To', 'Status', 'Pages', 'Mailbox', 'Received'],
+            (['Received fax ID'] if ids else []) + ['From', 'To', 'Arrived through', 'Status', 'Pages', 'Mailbox',
+                                                    'Received'],
             [([item['id']] if ids else []) + [item.get('fr') or 'Unknown', item.get('to') or 'Unknown',
-                                              _inbound_status(item), item.get('pages'), item.get('mailbox'),
-                                              arrived(item)]
+                                              came_through(item), _inbound_status(item), item.get('pages'),
+                                              item.get('mailbox'), arrived(item)]
              for item in items], empty='No received faxes.')
         for sentence in _provider_copies(items):
             out.line(sentence)

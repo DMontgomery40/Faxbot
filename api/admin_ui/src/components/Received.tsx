@@ -405,6 +405,8 @@ export default function Received({
   const hasDocument = (row: Row) => (row.fax ? inboundFaxStatus(row.fax).hasDocument : true);
   const through = (row: Row) => {
     if (!row.fax) return '-';
+    // A fax sent to one of this installation's own numbers was delivered here, with no call.
+    if (row.fax.backend === 'local') return 'This Faxbot';
     return row.fax.backend === 'import' ? 'Imported' : providerName(row.fax.backend);
   };
 

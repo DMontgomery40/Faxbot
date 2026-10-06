@@ -25,7 +25,7 @@ def without_work_catalogue(name, rows):
 
 
 def without_later_access_changes(name, rows):
-    """Rows without what 0018 and 0019 change in the access catalogue, so both sides of an upgrade compare.
+    """Rows without what 0018, 0019 and 0020 change, so both sides of an upgrade compare.
 
     0018 removes the Host Operator's terminal row; 0019 removes three permissions, every role row and
     key limit naming them, and records that in one audit row.
@@ -40,6 +40,9 @@ def without_later_access_changes(name, rows):
         return [row for row in rows if row['permission_id'] not in retired.PERMISSIONS]
     if name == 'access_audit':
         return [row for row in rows if row['operation'] != retired.OPERATION]
+    if name == 'fax_jobs':
+        # 0020 adds a nullable column to every sent fax; existing rows hold NULL.
+        return [{key: value for key, value in row.items() if key != 'send_by_call'} for row in rows]
     return rows
 
 

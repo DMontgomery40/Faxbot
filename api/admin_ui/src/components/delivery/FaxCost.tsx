@@ -73,6 +73,8 @@ export function costAmount(cost: FaxCost | undefined): string {
   if (cost.state === 'reported') return formatMoneyList(cost.reported_cost, '-');
   if (cost.state === 'partial') return `${formatMoneyList(cost.reported_cost, '-')} charged so far`;
   if (cost.state === 'included') return 'In your plan';
+  // Delivered inside Faxbot to one of this installation's own numbers.
+  if (cost.state === 'local') return 'No call';
   if (cost.state === 'unmatched') return 'Unknown';
   return cost.estimated_cost && cost.estimated_cost.length > 0
     ? `${formatMoneyList(cost.estimated_cost)} estimate` : 'Not reported yet';

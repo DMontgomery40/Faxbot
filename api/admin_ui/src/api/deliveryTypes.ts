@@ -72,7 +72,9 @@ export interface SendingRecommendation {
   preferred_route: string | null;
   chosen_by_you: boolean;
   kind: 'plan' | 'cheaper_route';
-  current: DeliveredCost;
+  current_label: string;
+  // Null when the route used now has no faxes to this number in the last 30 days (a plan suggestion only).
+  current: DeliveredCost | null;
   suggested: DeliveredCost;
   // Null for a plan: the plan's fee is already paid, so Faxbot claims no saving per fax.
   saving_per_fax: Money | null;
@@ -187,7 +189,7 @@ export interface RouteCostsResponse {
 
 // One fax's cost: what the carrier charged, or why it is not known yet.
 export interface FaxCost {
-  state: 'reported' | 'partial' | 'waiting' | 'unmatched' | 'included' | 'none';
+  state: 'reported' | 'partial' | 'waiting' | 'unmatched' | 'included' | 'local' | 'none';
   summary: string | null;
   reported_cost: Money[];
   estimated_cost?: Money[];
@@ -403,6 +405,10 @@ export interface Savings {
   // Faxes whose pages went over SSL Fax (the fast fax service); optional for older servers.
   sslfax?: SavingPart & {
     faxes: number; seconds_saved: number; priced: number; in_plan: number; unpriced: number; same_cost: number;
+  };
+  // Faxes to this installation's own numbers, delivered inside Faxbot with no call; optional for older servers.
+  own_numbers?: SavingPart & {
+    faxes: number; calls_avoided: number; pages: number; priced: number; in_plan: number; unpriced: number;
   };
 }
 

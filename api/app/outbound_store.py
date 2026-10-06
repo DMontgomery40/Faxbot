@@ -28,7 +28,7 @@ _EVENT_KINDS = frozenset({'accepted', 'legacy_migrated', 'binding_unavailable',
 _CATEGORIES = frozenset({'transport_ambiguous', 'response_unusable', 'submission_cancelled',
     'worker_lost', 'artifact_unavailable', 'provider_unavailable', 'preparation_failed',
     'profile_mismatch', 'sid_mismatch', 'provider_failed', 'partner_not_received',
-    'partly_sent', 'pages_unconfirmed'})
+    'partly_sent', 'pages_unconfirmed', 'local_not_delivered'})
 # A fax in a shared call whose pages were only partly confirmed: failed, never resent automatically.
 NO_FALLBACK_CATEGORIES = frozenset({'partly_sent'})
 _ROUTE = re.compile(r'[a-z0-9][a-z0-9_.-]{0,63}', re.ASCII)
@@ -838,10 +838,13 @@ class OutboundStore:
 
         ``provider_failed``: the attempt's provider reported a final failure.
         ``partner_not_received``: a direct partner signed that it never received
-        the document. Never used for an ambiguous outcome. The next claim creates
-        a new attempt; at most ``max_fallbacks`` per fax.
+        the document. ``local_not_delivered``: a fax to one of the installation's
+        own numbers has no received-fax record, so nothing was delivered inside
+        Faxbot. Never used for an ambiguous outcome. The next claim creates a new
+        attempt; at most ``max_fallbacks`` per fax.
         """
-        if category not in {'provider_failed', 'partner_not_received'} or type(max_fallbacks) is not int:
+        if (category not in {'provider_failed', 'partner_not_received', 'local_not_delivered'}
+                or type(max_fallbacks) is not int):
             raise ValueError('Invalid delivery fallback.')
         with self.configuration._locked() as connection:
             now = now or datetime.utcnow()
@@ -861,7 +864,7 @@ class OutboundStore:
                 self.events.c.job_id == job_id, self.events.c.kind == 'route_fallback'))
             if not definite or used >= max_fallbacks or not self._enabled(connection):
                 return False
-            if category == 'partner_not_received':
+            if category != 'provider_failed':
                 connection.execute(self.attempts.update().where(self.attempts.c.id == attempt_id).values(
                     phase='failed', error_category=category, completed_at=now))
             # Detach the finished attempt so a late result for it cannot move the requeued fax.

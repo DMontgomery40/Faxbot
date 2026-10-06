@@ -59,10 +59,12 @@ def _installation_direct_route(inner):
 
 
 class RoutedTransport:
-    def __init__(self, inner, *, direct=_AUTOMATIC, route_store=None):
+    def __init__(self, inner, *, direct=_AUTOMATIC, route_store=None, local=None):
+        """``local`` delivers faxes to the installation's own numbers inside Faxbot (``routing.local``)."""
         self.inner = inner
         self.store = inner.store
         self.direct = _installation_direct_route(inner) if direct is _AUTOMATIC else direct
+        self.local = local
         self._route_store = route_store
 
     def routes(self):
@@ -73,18 +75,20 @@ class RoutedTransport:
     def _plan(self, claim):
         revision, profile, job = self.store.load_dispatch(claim)
         routes = self.routes()
-        planner = RoutePlanner(routes, direct_ready=self.direct.ready if self.direct is not None else None)
+        planner = RoutePlanner(routes, direct_ready=self.direct.ready if self.direct is not None else None,
+                               local_ready=self.local.ready if self.local is not None else None)
         bound = profile.configuration.provider_id
         exclude = planner.tried_routes(claim.job_id, claim.attempt_id)
         plan = planner.plan(to_number=job['to_number'], bound=bound, values=revision.values,
-                            pages=job.get('pages'), alternates=True, exclude=exclude)
+                            pages=job.get('pages'), alternates=True, exclude=exclude,
+                            by_call=bool(job.get('send_by_call')))
         return plan, job, revision
 
     def _assign(self, claim, plan, revision):
         """Bind the first usable provider route; the fax's own provider needs no change."""
         for choice in plan.choices:
             route = choice.route
-            if route.kind == 'direct':
+            if route.kind in ('direct', 'local'):
                 return choice, claim
             if route.bound:
                 return choice, claim
@@ -135,6 +139,16 @@ class RoutedTransport:
                 await run_lifecycle_step(lambda: self._record(claim, plan, choice))
             except Exception:
                 logging.getLogger(__name__).warning('Route evidence could not be recorded for a fax.')
+        if choice is not None and choice.route.kind == 'local' and self.local is not None:
+            async with AsyncExitStack() as stack:
+                try:
+                    operation = await stack.enter_async_context(self.local.prepare(claim, plan, job))
+                except Exception:
+                    # Nothing was recorded as received; the fax goes by its normal route as a first send.
+                    await run_lifecycle_step(lambda: self.record_fallback(claim, plan))
+                    operation = await stack.enter_async_context(self.inner.prepare(claim))
+                yield operation
+            return
         if choice is None or choice.route.kind != 'direct' or self.direct is None:
             async with AsyncExitStack() as stack:
                 try:

@@ -46,6 +46,8 @@ describe('Setup Wizard test fax', () => {
     expect(posts[0].key).toBeTruthy();
     // A one-page PDF a fax machine shows plainly: heading, time, provider and number.
     expect(sent).toHaveBeenCalledTimes(1);
+    // A test proves the carrier path: it always asks for a real call, even to one of your own numbers.
+    expect(sent.mock.calls[0][2]).toMatchObject({ byCall: true });
     const [to, file] = sent.mock.calls[0];
     expect(to).toBe('+15555550123');
     expect(file.name).toBe('faxbot-test-page.pdf');

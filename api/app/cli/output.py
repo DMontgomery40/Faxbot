@@ -112,6 +112,8 @@ def cost_amount(cost):
         return f"{money(cost.get('reported_cost'))} charged so far"
     if state == 'included':
         return 'In your plan'
+    if state == 'local':
+        return 'No call'
     if state == 'unmatched':
         return 'Unknown'
     return f"{money(cost['estimated_cost'])} estimate" if cost.get('estimated_cost') else 'Not reported yet'
