@@ -439,7 +439,7 @@ def test_settings_get_set_validate_export(cli, monkeypatch):
             'history.' in ' '.join(typed.stderr.split()))
     assert cli('system', 'settings', 'set', 'sinch_inbound_basic_user=synthetic-sinch-webhook',
                '--secret-stdin', 'sinch_inbound_basic_pass', input='synthetic-webhook-pass\n').exit_code == 0
-    assert '--secret-stdin' in cli('system', 'settings', 'set', '--help').stdout
+    assert '--secret-stdin' in _plain(cli('system', 'settings', 'set', '--help').stdout)
     exported = cli('system', 'settings', 'export')
     assert exported.exit_code == 0 and 'MAX_FILE_SIZE_MB=7' in exported.stdout and BOOTSTRAP not in exported.stdout
     monkeypatch.setenv('SINCH_PROJECT_ID', 'synthetic-project')
@@ -537,7 +537,7 @@ def test_global_options_are_accepted_before_or_after_the_subcommand(cli, tmp_pat
     assert noted.exit_code == 0 and not noted.stdout.lstrip().startswith('{')
     assert [item['note'] for item in cli.json('access', 'keys', 'list') if item['id'] == key_id] == ['--json']
     helped = cli('received', 'list', '--help', url=None, key=None)
-    assert helped.exit_code == 0 and 'Usage' in helped.stdout
+    assert helped.exit_code == 0 and 'Usage' in _plain(helped.stdout)
 
 
 def test_global_options_are_moved_only_from_after_the_subcommand():
