@@ -957,7 +957,34 @@ def _safely(method_name):
 
 _on_submission = _safely('record_submission')
 _on_originate_response = _safely('record_originate_response')
-_on_fax_result = _safely('record_fax_result')
+_record_fax_result = _safely('record_fax_result')
+
+
+# The built-in engine's negotiation (fax_negotiation): its own step after the call record, so a failure here
+# never loses the call record, and neither ever reaches the fax.
+_BUILTIN_CALL = re.compile(r'[0-9]{1,20}\.[0-9]{1,10}', re.ASCII)
+
+
+def record_builtin_negotiation(engine, *, direction, call_key, rate, resolution, pages, job_id=None, number=None):
+    """The last page's speed and resolution the built-in engine reported for one call. Never raises."""
+    from . import fax_negotiation, hylafax_records
+    try:
+        values = fax_negotiation.builtin_values(rate, resolution, pages)
+        records = hylafax_records.records_for(engine)
+    except Exception:
+        return None
+    return hylafax_records.safely(records.record_negotiation, direction=direction, call_key=call_key,
+                                  engine='builtin', values=values, job_id=job_id, number=number)
+
+
+def _on_fax_result(event):
+    _record_fax_result(event)
+    records = _current
+    attempt_id, job_id = _identity(event.get('AttemptID')), _identity(event.get('JobID'))
+    if records is None or attempt_id is None or job_id is None:
+        return
+    record_builtin_negotiation(records.engine, direction='outbound', call_key=attempt_id, rate=event.get('Rate'),
+                               resolution=event.get('Resolution'), pages=event.get('Pages'), job_id=job_id)
 
 
 def _active_preset():
@@ -976,6 +1003,11 @@ def _on_inbound_call(event):
         records.record_inbound_event(event, preset=_active_preset())
     except Exception:
         logging.getLogger(__name__).warning('A SIP call record could not be saved.')
+    call_id = str(event.get('UniqueID') or '').strip()
+    if _BUILTIN_CALL.fullmatch(call_id):
+        record_builtin_negotiation(records.engine, direction='inbound', call_key=call_id, rate=event.get('Rate'),
+                                   resolution=event.get('Resolution'), pages=event.get('Pages'),
+                                   number=_number(event.get('Caller')))
 
 
 def _on_engine_call(event):
@@ -1048,7 +1080,13 @@ def record_inbound_call(engine, call, *, call_id, inbound_fax_id, preset=None, f
                                           preset=preset, fax_status=fax_status)
         # A hand-over that was reported as failed but reached Faxbot later links its call here.
         records.link_inbound(call_id, inbound_fax_id)
-        return recorded
     except Exception:
         logging.getLogger(__name__).warning('A SIP call record could not be saved.')
         return None
+    # Received by the built-in engine (Asterisk's own call name): what the call negotiated. The SSL Fax
+    # engine's calls ('engine.<token>', 'hylafax.<...>') report theirs through the engine's hand-over.
+    if isinstance(call, dict) and _BUILTIN_CALL.fullmatch(str(call_id or '')):
+        record_builtin_negotiation(engine, direction='inbound', call_key=str(call_id), rate=call.get('rate'),
+                                   resolution=call.get('resolution'), pages=call.get('pages'),
+                                   job_id=inbound_fax_id, number=_number(call.get('caller')))
+    return recorded

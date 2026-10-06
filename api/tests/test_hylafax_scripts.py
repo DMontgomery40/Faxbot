@@ -96,10 +96,14 @@ def test_a_received_fax_is_kept_in_the_engine_volume_and_handed_over_once_faxbot
     assert body['to_number'] == '15555550100' and body['from_number'] == '+15555550199'
     assert body['faxstatus'] == 'SUCCESS' and body['faxpages'] == 2
     assert body['call']['did'] == '15555550100' and body['call']['t38'] is None
+    negotiation = json.loads(base64.b64decode(body['engine'].pop('negotiation_b64')))
     assert body['engine'] == {'engine': 'hylafax', 'engine_ref': '0123456789abcdef:000000007-1791180000',
                               'sslfax': True, 'sslfax_offered': True, 'transfer_seconds': 12,
                               'signal_rate_b64': base64.b64encode(b'SSL Fax').decode(),
                               'data_format_b64': base64.b64encode(b'JBIG').decode()}
+    # Over SSL Fax there is no speed; the two log lines name no compression or resolution either.
+    assert negotiation == {'rate_first': None, 'rate_lowest': None, 'rate_last': None, 'trainings': None,
+                           'compression': None, 'resolution': None, 'ecm': None, 'session': None}
     # The secret went in a header from standard input, never on the command line.
     headers = ''.join(path.read_text() for path in tmp_path.glob('header.*'))
     assert 'X-Internal-Secret: synthetic-secret-value' in headers

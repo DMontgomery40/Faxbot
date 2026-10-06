@@ -1,0 +1,109 @@
+#!/bin/sh
+# What one fax call negotiated, read from its session log (log/c<commid>), for
+# bin/notify (sent) and bin/received. Prints one base64-encoded JSON object, or
+# nothing when there is no log. Measurement only: nothing reads it to choose
+# how a fax is sent.
+#
+# Whole call: rate_first (the first speed it trained at), rate_lowest (the
+# lowest speed that trained), trainings (how many times it trained),
+# compression, resolution and ecm ("mixed" when the pages differed), session
+# (seconds from SESSION BEGIN to SESSION END). rate_last is the speed of the
+# last training, which the last page used. Speed, compression, resolution and
+# error correction are reported only when the call agreed them (a training
+# succeeded, or the pages went over SSL Fax); null means not reported. Only
+# protocol lines are read: never the other machine's ID or numbers.
+set -u
+
+log=${1:-}
+[ -n "$log" ] && [ -f "$log" ] && [ ! -L "$log" ] || exit 0
+
+awk '
+function message(line,   at) {
+  at = index(line, "]: ")
+  return at ? substr(line, at + 3) : ""
+}
+function rate_of(text,   found) {
+  if (!match(text, /[0-9]+ bit\/s/)) return 0
+  found = substr(text, RSTART, RLENGTH)
+  sub(/ bit\/s/, "", found)
+  return found + 0
+}
+function resolution_of(text) {
+  if (text ~ /^3\.85 line\/mm$/ || text ~ /^200 x 100 dpi$/) return "standard"
+  if (text ~ /^7\.7 line\/mm$/ || text ~ /^200 x 200 dpi$/) return "fine"
+  if (text ~ /^(R16 x )?15\.4 line\/mm$/ || text ~ /^200 x 400 dpi$/ || text ~ /^300 x 300 dpi$/) return "superfine"
+  return ""
+}
+function compression_of(text) {
+  if (text == "1-D MH") return "MH"
+  if (text == "2-D MR") return "MR"
+  if (text == "2-D MMR") return "MMR"
+  if (text == "JBIG") return "JBIG"
+  if (text ~ /^JPEG/) return "JPEG"
+  return ""
+}
+function seen(kind, value) {
+  if (value == "") return
+  if (!((kind, value) in values)) { values[kind, value] = 1; distinct[kind]++; only[kind] = value }
+}
+function one(kind) {
+  if (!distinct[kind]) return "null"
+  return distinct[kind] > 1 ? "\"mixed\"" : "\"" only[kind] "\""
+}
+function number(value) { return value ? value : "null" }
+function seconds(clock,   part) {
+  split(clock, part, ":")
+  return part[1] * 3600 + part[2] * 60 + part[3]
+}
+{
+  text = message($0)
+  if (text ~ /^SESSION BEGIN/) begin = seconds($3)
+  else if (text ~ /^SESSION END/) end = seconds($3)
+  else if (text ~ /^(SEND|RECV) training at /) {
+    trainings++
+    pending = rate_of(text)
+    if (!first) first = pending
+  } else if (text ~ /^TRAINING succeeded/) {
+    if (pending) {
+      agreed = 1
+      last = pending
+      if (!lowest || pending < lowest) lowest = pending
+    }
+    pending = 0
+  } else if (text ~ /^TRAINING failed/) pending = 0
+  else if (text ~ /SSL Fax connection (was successful|detected)/) sslfax = 1
+  else if (text ~ /SSL Fax client accept failure/) sslfax = 0
+  # Sent: the speed Faxbot chose for the call, then "USE error correction mode" when it is on; then the
+  # resolution and compression of each document.
+  else if (text ~ /^USE [0-9]+ bit\/s$/) offers++
+  else if (text ~ /^USE error correction mode$/) corrected++
+  else if (text ~ /^USE /) {
+    seen("resolution", resolution_of(substr(text, 5)))
+    seen("compression", compression_of(substr(text, 5)))
+  }
+  # Received: each command from the other machine starts with its speed, then error correction when it asks
+  # for it; each page received names its resolution, compression and speed last.
+  else if (text ~ /^REMOTE wants [0-9]+ bit\/s$/) offers++
+  else if (text ~ /^REMOTE wants .*ECM$/) corrected++
+  else if (text ~ /^RECV FAX \(.*\): from .*, page [0-9]+ in /) {
+    count = split(text, field, ", ")
+    if (count >= 4) {
+      seen("resolution", resolution_of(field[count - 2]))
+      seen("compression", compression_of(field[count - 1]))
+    }
+  }
+}
+END {
+  session = "null"
+  if (begin != "" && end != "" && end >= begin) session = sprintf("%d", end - begin + 0.5)
+  if (!agreed && !sslfax) {
+    printf "{\"rate_first\":null,\"rate_lowest\":null,\"rate_last\":null,\"trainings\":%s,", number(trainings)
+    printf "\"compression\":null,\"resolution\":null,\"ecm\":null,\"session\":%s}", session
+    exit
+  }
+  ecm = "null"
+  if (offers) ecm = corrected == 0 ? "\"off\"" : corrected >= offers ? "\"on\"" : "\"mixed\""
+  if (sslfax) { first = 0; lowest = 0; last = 0 }
+  printf "{\"rate_first\":%s,\"rate_lowest\":%s,\"rate_last\":%s,\"trainings\":%s,", number(first), number(lowest), number(last), number(trainings)
+  printf "\"compression\":%s,\"resolution\":%s,\"ecm\":%s,\"session\":%s}", one("compression"), one("resolution"), ecm, session
+}' "$log" | base64 | tr -d '\n'

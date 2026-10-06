@@ -52,6 +52,9 @@ if [ -z "$queued" ] && [ -f "$log" ]; then
   grep -q 'SSL Fax client accept failure' "$log" && sslfax=false
 fi
 case $rate in *SSL*) sslfax=true offered=true ;; esac
+# What the call negotiated over the whole call (bin/negotiation; base64 JSON), for measurement only.
+negotiation=''
+[ -z "$queued" ] && [ -f "$log" ] && negotiation=$(sh "$(dirname "$0")/negotiation" "$log" | tr -cd 'A-Za-z0-9+/=')
 
 # The communication ID restarts with a new spool; the arrival time keeps names unique.
 received=$(date +%s)
@@ -68,4 +71,5 @@ temporary=$state/received/.$key.ticket
   printf 'reason64=%s\nstation64=%s\nrate64=%s\nformat64=%s\n' \
     "$(b64 "$reason")" "$(b64 "$station")" "$(b64 "$rate")" "$(b64 "$format")"
   printf 'recv_seconds=%s\nsslfax=%s\noffered=%s\nreceived=%s\n' "$recv" "$sslfax" "$offered" "$received"
+  printf 'negotiation64=%s\n' "$negotiation"
 } > "$temporary" && mv -f "$temporary" "$ticket"

@@ -46,6 +46,7 @@ for ticket in "$state"/received/*.ticket; do
   format64=$(field format64 "$ticket" | tr -cd 'A-Za-z0-9+/=')
   reason64=$(field reason64 "$ticket" | tr -cd 'A-Za-z0-9+/=')
   recv=$(field recv_seconds "$ticket" | tr -cd '0-9')
+  negotiation64=$(field negotiation64 "$ticket" | tr -cd 'A-Za-z0-9+/=')
   sslfax=$(field sslfax "$ticket")
   offered=$(field offered "$ticket")
   case $sslfax in true|false) ;; *) sslfax=null ;; esac  # unknown (a call without its session log)
@@ -65,10 +66,11 @@ for ticket in "$state"/received/*.ticket; do
   else
     status=SUCCESS
   fi
-  body=$(printf '{"tiff_path":"%s","to_number":%s,"from_number":%s,"faxstatus":"%s","faxpages":%s,"uniqueid":"%s","call":{"did":%s,"caller":%s,"pages":%s,"t38":null,"remote_station_id_b64":%s},"engine":{"engine":"hylafax","engine_ref":"%s:%s","sslfax":%s,"sslfax_offered":%s,"transfer_seconds":%s,"signal_rate_b64":%s,"data_format_b64":%s}}' \
+  body=$(printf '{"tiff_path":"%s","to_number":%s,"from_number":%s,"faxstatus":"%s","faxpages":%s,"uniqueid":"%s","call":{"did":%s,"caller":%s,"pages":%s,"t38":null,"remote_station_id_b64":%s},"engine":{"engine":"hylafax","engine_ref":"%s:%s","sslfax":%s,"sslfax_offered":%s,"transfer_seconds":%s,"signal_rate_b64":%s,"data_format_b64":%s,"negotiation_b64":%s}}' \
     "$target" "$(text "$called")" "$(text "$caller")" "$status" "$(number "$pages")" "$uniqueid" \
     "$(text "$called")" "$(text "$caller")" "$(number "$pages")" "$(text "$station64")" \
-    "$engine" "$key" "$sslfax" "$offered" "$(number "$recv")" "$(text "$rate64")" "$(text "$format64")")
+    "$engine" "$key" "$sslfax" "$offered" "$(number "$recv")" "$(text "$rate64")" "$(text "$format64")" \
+    "$(text "$negotiation64")")
   code=$(printf 'X-Internal-Secret: %s\n' "$secret" | curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 5 \
     --max-time 60 -H @- -H 'Content-Type: application/json' --data-binary "$body" "$url/_internal/hylafax/inbound" \
     2>/dev/null)
