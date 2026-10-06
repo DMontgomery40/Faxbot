@@ -238,6 +238,38 @@ describe('One reading of spending', () => {
     expect(card.textContent).toContain('Total$10.03');
     expect(card.textContent).not.toContain('No price set');
   });
+
+  it('counts faxes and calls with no price apart from every total, never as $0', async () => {
+    // One sent fax estimated, one with no price (a call of unknown length); one received call with no price.
+    const sent = { ...sip, attempts: 4, attempts_without_reported_cost: 2, attempts_not_priced: 1 };
+    const call = { ...received, calls: 1, faxes: 1, calls_with_reported_cost: 0, calls_without_reported_cost: 1,
+      calls_not_priced: 1, reported_cost: [], estimated_cost: [], estimated_cost_not_reported: [], unmatched_charges: 0,
+      unrecorded_calls: 0, unrecorded_cost: [], unrecorded_matched_to_faxes: 0, unrecorded_unmatched_cost: [],
+      total_cost: [] };
+    const costs = { since: '2026-09-03T00:00:00', providers: [sent, { ...documo, attempts_not_priced: 1 }],
+      received: [call], carrier_charges: { carrier: 'Telnyx', supported: true, readable: true },
+      total_cost: [usd('0.02')], not_priced: 3 };
+    routes(costs);
+    const { unmount } = render(<DeliveryRoutes client={client()} canWrite={false} />);
+    const trunk = (await screen.findByText('Carrier trunk · Telnyx')).closest('.MuiCard-root') as HTMLElement;
+    expect(within(trunk).getByText('Estimated $0.005 for 1 fax not billed yet.')).toBeTruthy();
+    expect(within(trunk).getByText('1 fax not priced yet.')).toBeTruthy();
+    const inbound = screen.getByText('Received through Carrier trunk · Telnyx').closest('.MuiCard-root') as HTMLElement;
+    expect(within(inbound).getByText('Not priced yet')).toBeTruthy();
+    expect(within(inbound).getByText('1 call not priced yet.')).toBeTruthy();
+    expect(inbound.textContent).not.toMatch(/\$0\.00|Not billed yet/);
+    // A route with no published price already says so; its faxes are not counted a second time.
+    const unpublished = screen.getByText('Documo').closest('.MuiCard-root') as HTMLElement;
+    expect(unpublished.textContent).toContain('No published price; add your rate');
+    expect(unpublished.textContent).not.toContain('not priced yet');
+    unmount();
+    render(<Dashboard client={client()} onNavigate={() => undefined} />);
+    const card = await screen.findByRole('button', { name: 'Spending, last 30 days' });
+    expect(card.textContent).toContain('Carrier trunk$0.02, 1 fax not priced yet');
+    expect(card.textContent).toContain('DocumoNo published price; add your rate');
+    expect(card.textContent).toContain('Received through Carrier trunk · TelnyxNot priced yet');
+    expect(card.textContent).toContain('Total$0.02, 2 faxes and 1 call not priced yet');
+  });
 });
 
 describe('Rate card dates', () => {

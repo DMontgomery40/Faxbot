@@ -6,7 +6,7 @@ import AdminAPIClient from '../../api/client';
 import type { CarrierChargeStatus, Money, ProviderCosts, ReceivedCosts } from '../../api/deliveryTypes';
 import { providerLabel } from '../../providerLabels';
 import { DeliveryError, Notice, formatMinutes, formatMoney, formatMoneyList } from './shared';
-import { NO_PUBLISHED_PRICE, receivedCost, receivedLabel, sentCost, withCarrier } from './spendingSummary';
+import { NO_PUBLISHED_PRICE, notPriced, receivedCost, receivedLabel, sentCost, withCarrier } from './spendingSummary';
 import { usePublishedPlans } from './RateCards';
 import type { PublishedPlans } from '../../api/deliveryTypes';
 
@@ -21,20 +21,29 @@ function charged(who: string | null | undefined, money: Money[], faxes: number, 
   return `${who ?? 'Your provider'} charged ${formatMoneyList(money)} for ${count(items, unit)}${extra}.`;
 }
 
-function OpenCounts({ carrier, unreported, estimate, awaiting, unmatched, unit }: {
+function OpenCounts({ carrier, unreported, unpriced, estimate, awaiting, unmatched, unit }: {
   carrier: string | null | undefined;
   unreported: number;
+  // Of unreported, those with no estimate either: never in the estimate or the total.
+  unpriced: number;
   estimate: Money[] | undefined;
   awaiting: number;
   unmatched: number;
-  unit: string;
+  unit: 'fax' | 'call';
 }) {
   const bill = carrier ? `the ${carrier} bill` : "the carrier's bill";
+  const estimated = unreported - unpriced;
+  const open = notPriced(unpriced, unit);
   return (
     <>
-      {unreported > 0 && estimate && estimate.length > 0 && (
+      {estimated > 0 && estimate && estimate.length > 0 && (
         <Typography variant="body2" color="text.secondary">
-          Estimated {formatMoneyList(estimate)} for {count(unreported, unit)} not billed yet.
+          Estimated {formatMoneyList(estimate)} for {count(estimated, unit)} not billed yet.
+        </Typography>
+      )}
+      {open && (
+        <Typography variant="body2" color="text.secondary" data-testid={`not-priced-${unit}`}>
+          {`${open.charAt(0).toUpperCase()}${open.slice(1)}.`}
         </Typography>
       )}
       {awaiting > 0 && (
@@ -110,6 +119,8 @@ function SentCard({ provider, published }: { provider: ProviderCosts; published?
           cost={provider.unrecorded_unmatched_cost ?? provider.unrecorded_cost} matched={provider.unrecorded_matched_to_faxes ?? 0} />
         {!provider.plan && (
           <OpenCounts carrier={provider.carrier} unreported={provider.attempts_without_reported_cost}
+            // A route with no published price says so above; its faxes are not counted again.
+            unpriced={top.amount === NO_PUBLISHED_PRICE ? 0 : provider.attempts_not_priced ?? 0}
             estimate={provider.estimated_cost_not_reported} awaiting={provider.awaiting_carrier_bill ?? 0}
             unmatched={provider.unmatched_charges ?? 0} unit="fax" />
         )}
@@ -136,6 +147,7 @@ function ReceivedCard({ entry }: { entry: ReceivedCosts }) {
           </Typography>
         )}
         <OpenCounts carrier={entry.carrier} unreported={entry.calls_without_reported_cost}
+          unpriced={entry.calls_not_priced ?? 0}
           estimate={entry.estimated_cost_not_reported} awaiting={entry.awaiting_carrier_bill}
           unmatched={entry.unmatched_charges} unit="call" />
         <Unrecorded carrier={entry.carrier} calls={entry.unrecorded_calls ?? 0}

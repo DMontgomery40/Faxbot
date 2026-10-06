@@ -356,6 +356,22 @@ def test_whole_minute_rounding_is_per_call_never_on_averages(installation, route
     assert totals['billed_seconds'] == 180 and totals['cost_micros'] == {'USD': 30_000}
 
 
+def test_an_attempt_whose_call_length_is_unknown_has_no_estimate_not_the_call_fee_alone(installation, routes):
+    """Unknown cost is not zero cost: without a finish time a per-minute card cannot price the call."""
+    from api.app.routing.store import CaptureTarget
+    routes.replace_cards([phaxio_card(per_page_micros=0, per_minute_micros=parse_amount('0.01'),
+                                      per_call_micros=parse_amount('0.02'))])
+    start = datetime(2026, 10, 3, 12)
+    job, attempt = accept(installation), uuid4().hex
+    with routes.engine.begin() as connection:
+        connection.execute(routes.attempts.insert().values(id=attempt, job_id=job, sequence=1, phase='failed',
+                                                           created_at=start, submitted_at=start, completed_at=None))
+    values = routes.capture(CaptureTarget(attempt, job, '+12025550123', 'phaxio', None, 'failed', 1, start, None, False))
+    assert values['estimated_cost_micros'] is None and values['billed_seconds'] is None
+    assert values['cost_basis'] is None and values['currency'] is None
+    assert routes.decision(attempt)['estimated_cost_micros'] is None
+
+
 def test_shipped_rate_cards_seed_only_an_empty_table(routes, tmp_path):
     import json
     from api.app.routing.seed import load_cards

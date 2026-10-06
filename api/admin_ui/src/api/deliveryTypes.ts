@@ -134,6 +134,8 @@ export interface ProviderCosts {
   // The carrier that reported these charges, such as Telnyx; null when none did.
   carrier?: string | null;
   attempts_with_reported_cost?: number;
+  // Of attempts_without_reported_cost, those with no estimate either: in no total, never counted as $0.
+  attempts_not_priced?: number;
   // Rate-card estimates for faxes the carrier has not reported yet (never double-counted).
   estimated_cost_not_reported?: Money[];
   awaiting_carrier_bill?: number;
@@ -161,6 +163,8 @@ export interface ReceivedCosts {
   reported_cost: Money[];
   calls_with_reported_cost: number;
   calls_without_reported_cost: number;
+  // Of calls_without_reported_cost, those with no estimate either (such as an answered call of unknown length).
+  calls_not_priced?: number;
   estimated_cost_not_reported: Money[];
   awaiting_carrier_bill: number;
   unmatched_charges: number;
@@ -185,6 +189,8 @@ export interface RouteCostsResponse {
   received?: ReceivedCosts[];
   carrier_charges?: CarrierChargeStatus;
   total_cost?: Money[];
+  // Sent faxes and received calls with no charge and no estimate: left out of total_cost.
+  not_priced?: number;
 }
 
 // One fax's cost: what the carrier charged, or why it is not known yet.
@@ -390,7 +396,9 @@ export interface Savings {
   since: string;
   estimate: true;
   sentence: string;
+  // Signed: a negative amount cost more than it saved; total_sentence says so in words.
   total_saved: Money[];
+  total_sentence?: string;
   sending_together: SavingPart & {
     numbers: number; calls: number; faxes: number; calls_saved: number; priced_calls: number;
   };
@@ -421,10 +429,14 @@ export interface PlanWindow {
   sent: number;
   received: number;
   own_numbers: number;
+  // Of own_numbers, tests to a number that does not receive into Faxbot: still a paid call, so priced.
+  paid_tests?: number;
   fee: Money[];
   fee_per_fax: Money[];
   other_way: Money[];
   number_rental: Money[];
+  // The carrier publishes no price for keeping the plan's number: unknown, not free.
+  number_rental_unpublished?: boolean;
   other_routes: string[];
   without_other_way: number;
 }

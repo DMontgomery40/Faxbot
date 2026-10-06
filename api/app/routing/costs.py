@@ -76,17 +76,128 @@ class RateCard:
             raise InvalidRateCard('A monthly fee is zero or more and at most 2,000.')
 
 
+class UnknownAmount(TypeError):
+    """An unknown amount met a known one in arithmetic. Count it as not priced (``Tally``) instead."""
+
+
+@dataclass(frozen=True)
+class Money:
+    """A known amount: whole micros in one currency. An unknown amount is ``None``, never ``Money(0, ...)``.
+
+    Money adds to and subtracts from Money of the same currency only. Adding
+    ``None`` raises ``UnknownAmount``, and plain numbers (``sum()``'s starting
+    0 included) raise ``TypeError``, so an unknown cost can never quietly
+    become a number. To total amounts that may be unknown, use ``Tally``, which
+    keeps the known sum per currency and counts the unknown ones.
+    """
+    micros: int
+    currency: str
+
+    def __post_init__(self):
+        if type(self.micros) is not int:
+            raise TypeError('Money is a whole number of micros.')
+        if not isinstance(self.currency, str) or re.fullmatch(r'[A-Z]{3}', self.currency) is None:
+            raise ValueError('Money needs a three-letter currency code.')
+
+    @classmethod
+    def of(cls, micros, currency):
+        """The amount, or None when either part is unknown."""
+        if micros is None or not currency:
+            return None
+        return cls(int(micros), currency)
+
+    def _other(self, other):
+        if other is None:
+            raise UnknownAmount('An unknown amount cannot be added to a known one; count it as not priced.')
+        if not isinstance(other, Money):
+            return None
+        if other.currency != self.currency:
+            raise ValueError(f'Cannot combine {self.currency} with {other.currency}.')
+        return other
+
+    def __add__(self, other):
+        found = self._other(other)
+        return NotImplemented if found is None else Money(self.micros + found.micros, self.currency)
+
+    __radd__ = __add__
+
+    def __sub__(self, other):
+        found = self._other(other)
+        return NotImplemented if found is None else Money(self.micros - found.micros, self.currency)
+
+    def __rsub__(self, other):
+        found = self._other(other)
+        return NotImplemented if found is None else Money(found.micros - self.micros, self.currency)
+
+    def __neg__(self):
+        return Money(-self.micros, self.currency)
+
+    def text(self):
+        return money_text(self.micros, self.currency)
+
+
+class Tally:
+    """Known amounts summed per currency (``known``), and how many amounts were unknown (``unknown``).
+
+    An unknown amount is counted, never added as 0. With nothing known,
+    ``known`` is empty: no total, rather than a total of 0.
+    """
+
+    def __init__(self):
+        self.known, self.unknown = {}, 0
+
+    def add(self, amount):
+        if amount is None:
+            self.unknown += 1
+        elif isinstance(amount, Money):
+            self.known[amount.currency] = self.known.get(amount.currency, 0) + amount.micros
+        else:
+            raise TypeError('A Tally adds Money or None (unknown).')
+        return self
+
+
+# A call that ended without being answered is billed nothing by the minute.
+NOT_ANSWERED = ('busy', 'congestion', 'failed', 'no_answer')
+
+
+def call_seconds(connected_seconds, answered_at, ended_at, disposition=None):
+    """Seconds to price a call by, or None when nobody measured them.
+
+    The measured connected time; else the time from answer to end; else 0 for
+    a call that ended without being answered. An answered call whose length was
+    never reported (the SSL Fax engine records the answer before Asterisk
+    reports the times) is unknown, never 0.
+    """
+    if connected_seconds is not None:
+        return connected_seconds
+    if answered_at is not None and ended_at is not None:
+        return max(0, int((ended_at - answered_at).total_seconds()))
+    if ended_at is not None and answered_at is None and disposition in NOT_ANSWERED:
+        return 0
+    return None
+
+
 def billed_seconds(card, seconds):
-    """Connected seconds rounded up to the card's increment, after its minimum."""
-    if seconds is None or seconds <= 0:
+    """Connected seconds rounded up to the card's increment, after its minimum; None when ``seconds`` is unknown."""
+    if seconds is None:
+        return None
+    if seconds <= 0:
         return 0
     seconds = max(int(_ceil_div(int(seconds * 1000), 1000)), card.minimum_seconds)
     return _ceil_div(seconds, card.billing_increment_seconds) * card.billing_increment_seconds
 
 
 def attempt_cost(card, *, seconds, pages, delivered):
-    """Cost of one placed attempt: setup fee, billed minutes, and pages only if delivered."""
+    """Cost of one placed attempt: setup fee, billed minutes, and pages only if delivered.
+
+    None when the card charges by the minute and the call's length is unknown:
+    unknown is never priced as zero minutes.
+    """
     billed = billed_seconds(card, seconds)
+    if billed is None:
+        if card.per_minute_micros:
+            return None
+        billed = 0
     minutes = _ceil_div(billed * card.per_minute_micros, 60)
     page_count = pages if delivered and isinstance(pages, int) and pages > 0 else 0
     return card.per_call_micros + minutes + page_count * card.per_page_micros

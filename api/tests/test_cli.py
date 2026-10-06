@@ -805,6 +805,20 @@ def test_routing_reconcile_asks_the_carrier_and_costs_show_charges(telnyx_cli, m
     human = telnyx_cli('costs', 'spending')
     assert 'Telnyx billed 1 call Faxbot has no record of: $0.0032. It is included in Charged.' in human.stdout
     assert 'Total: $0.0032' in human.stdout
+    assert 'not priced yet, so' not in human.stdout
+    # A received call the SSL Fax engine recorded without its length has no price: counted, never added as $0.
+    calls = sa.Table('sip_call_records', sa.MetaData(), autoload_with=engine)
+    with engine.begin() as connection:
+        connection.execute(calls.insert().values(
+            id='c1', direction='inbound', call_id='1759.c1', job_id=None, attempt_id=None, trunk_preset='telnyx',
+            did='+13035550100', caller='+17205550112', called='+13035550100', started_at=moment, answered_at=None,
+            ended_at=moment, disposition='answered', connected_seconds=None, t38='unknown', pages=1,
+            fax_status='SUCCESS', fax_preference=0, created_at=moment, updated_at=moment))
+    human = ' '.join(telnyx_cli('costs', 'spending').stdout.split())
+    assert 'Total: $0.0032' in human and '1 call is not priced yet, so it is not in the total.' in human
+    costs = telnyx_cli.json('costs', 'spending')
+    assert costs['not_priced'] == 1 and costs['received'][0]['calls_not_priced'] == 1
+    assert costs['total_cost'] == [{'currency': 'USD', 'amount': '0.0032'}]
 
 
 def test_intake_connectors_items_and_test_email(cli):

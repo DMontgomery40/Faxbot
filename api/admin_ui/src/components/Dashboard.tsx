@@ -26,8 +26,7 @@ import type { DirectPartner, IntakeCounts, RouteCostsResponse } from '../api/del
 import type { SipCallRecord } from '../api/sipTypes';
 import type { SipNetworkReport } from '../api/networkTypes';
 import type { AdminDestination } from '../navigation';
-import { formatMoneyList } from './delivery/shared';
-import { NO_PUBLISHED_PRICE, spendingLines, spendingTotal } from './delivery/spendingSummary';
+import { spendingLines, spendingTotalText } from './delivery/spendingSummary';
 import { providerLabel } from '../providerLabels';
 
 type CardData<T> = { kind: 'loading' } | { kind: 'ready'; data: T } | { kind: 'denied' | 'unavailable' | 'error' };
@@ -502,7 +501,7 @@ function Dashboard({ client, onNavigate, canSetUp = false, onSendFax }: Dashboar
                 ) : (
                   <Box display="flex" flexDirection="column" gap={1}>
                     {lines.map((line) => <Line key={line.key} label={line.label} value={line.value} />)}
-                    {lines.length > 1 && <Line label="Total" value={formatMoneyList(spendingTotal(costs), NO_PUBLISHED_PRICE)} />}
+                    {lines.length > 1 && <Line label="Total" value={spendingTotalText(costs)} />}
                   </Box>
                 );
               }}

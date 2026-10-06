@@ -138,7 +138,8 @@ class BatchingSettings:
                     raise BatchingConflict('This number changed; reload and try again.')
             connection.execute(changes.insert().values(
                 id=uuid4().hex, phone_number=number, action=action, actor=actor,
-                actor_name=(actor_name or '')[:200] or None, recipient_agreed=int(enabled),
+                # Only a save that itself records the recipient's agreement says so; a later change does not.
+                actor_name=(actor_name or '')[:200] or None, recipient_agreed=int(bool(enabled and recipient_agreed)),
                 max_wait_seconds=wait, max_pages=pages, mixed_senders=int(mixed), created_at=now))
             return setting_on(connection, self.t, number), action
 

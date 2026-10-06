@@ -5,14 +5,11 @@ through the same acquisition records as any received fax (source ``local``), so
 mailbox rules and email delivery treat it alike and Received says where it came
 from. No provider or carrier is contacted.
 
-Own numbers are only numbers Faxbot knows are routed to it, never guessed from formatting:
-
-- the SIP trunk's numbers (its DIDs), when Faxbot receives over the trunk;
-- the direct-delivery card's own number, while direct delivery is on;
-- numbers read from the receiving provider's own account, only when that
-  provider receives into Faxbot (``ACCOUNT_NUMBERS``). HumbleFax reports its
-  account numbers but cannot receive into Faxbot, so a fax to a HumbleFax number
-  still places a real call and lands in the HumbleFax inbox.
+Own numbers are the numbers that receive into this Faxbot, as
+``own_numbers.receiving_numbers`` defines them for every use (the plan check
+counts the wider "an account number of yours" with ``account_numbers``). A
+HumbleFax account number is not one: HumbleFax cannot receive into Faxbot, so a
+fax to it still places a real call and lands in the HumbleFax inbox.
 
 Delivery is idempotent on the sent fax: the received-fax record is keyed on the
 job id, so a retry, a restart or a later attempt never makes a second received
@@ -32,6 +29,7 @@ from ..config_runtime import run_lifecycle_step
 from ..outbound_worker import SubmissionReceipt
 from .database import read_connection, utcnow
 from .numbers import InvalidNumber, normalize_number
+from .own_numbers import receiving_numbers
 from .store import destination_key
 
 
@@ -39,8 +37,6 @@ LOCAL = 'local'
 SOURCE = 'local'
 ACCOUNT = 'local:installation'
 REASON = 'own_number'
-# Receiving providers that report their own fax numbers to Faxbot: none today.
-ACCOUNT_NUMBERS = {}
 
 
 def display_number(number):
@@ -54,24 +50,8 @@ def display_number(number):
 
 
 def own_numbers(values):
-    """The installation's own receiving numbers, in E.164."""
-    country = getattr(values, 'fax_default_country', 'US')
-    numbers = set()
-    if not getattr(values, 'inbound_enabled', False):
-        return numbers  # this installation does not receive faxes, so no number is its own receiving number
-    from ..inbound.sip_handover import receives_over_trunk
-    if receives_over_trunk(values):
-        numbers |= {destination_key(number, country) for number in getattr(values, 'sip_trunk_did_list', ())}
-    if getattr(values, 'direct_delivery_enabled', False) and getattr(values, 'direct_fax_number', ''):
-        try:
-            numbers.add(normalize_number(values.direct_fax_number, country=country))
-        except InvalidNumber:
-            pass
-    reader = ACCOUNT_NUMBERS.get(getattr(values, 'effective_inbound', ''))
-    if reader is not None and getattr(values, 'inbound_enabled', False):
-        for number in reader(values) or ():
-            numbers.add(destination_key(number, country))
-    return {number for number in numbers if number.startswith('+')}
+    """The installation's own receiving numbers, in E.164 (the one shared rule: ``own_numbers.py``)."""
+    return receiving_numbers(values)
 
 
 def applies(values, destination, *, by_call=False):
