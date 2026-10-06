@@ -13,7 +13,12 @@ fax, and what the same faxes would have cost another way:
   so it is never a $0 "cheapest";
 - a received fax costs the carrier trunk's received-call estimate, plus the
   carrier's published rental for the number once it is moved there;
-- a fax to one of your own numbers is a test and needs no other way.
+- a fax to one of your own numbers is a test (``own_numbers.account_numbers``).
+  A test to a number that receives into this Faxbot (delivered inside Faxbot
+  with no call) or to the plan's own number (it goes with the plan, or moves to
+  the carrier and then receives here) needs no other way; a test to any other
+  number of yours, such as another provider's number, still places a paid call
+  and is priced like any other fax.
 
 The advice is "keep" (the plan is cheaper, or some of what it carries has no
 reliable other way), "review" (the other way would have cost less; the
@@ -31,6 +36,7 @@ from .database import read_connection, reflect, utcnow
 from .delivered import WINDOW_DAYS, short_money_text
 from .delivered_store import DeliveredEvidence
 from .numbers import stored_number
+from .own_numbers import PROVIDER_NUMBERS, account_numbers, receiving_numbers
 from .plan import MIN_ATTEMPTS, extra_routes, route_label
 from .policy import DIRECT, RoutePolicy
 from .receiving import carrier_prices, prorate
@@ -40,9 +46,6 @@ from .seed import default_path
 DAY = 86_400
 # With fewer days of records than the window, a plan needs at least this many faxes to be judged.
 MIN_FAXES = 3
-# Config fields that hold a number a provider gives you; the trunk's are its DIDs and caller ID.
-PROVIDER_NUMBERS = {'humblefax': ('humblefax_from_number',), 'efax': ('efax_caller_id',),
-                    'signalwire': ('signalwire_fax_from_e164',), 'freeswitch': ('fs_caller_id_number',)}
 
 
 def _money(micros, currency):
@@ -80,14 +83,6 @@ def shipped_numbers_included(path=None):
 
 def _route_key(provider_id):
     return 'sip' if provider_id == 'sip' or provider_id.startswith('sip-') else provider_id
-
-
-def _own_numbers(values, country, accounts):
-    found = [*getattr(values, 'sip_trunk_did_list', ()), getattr(values, 'sip_trunk_caller_id', '')]
-    for fields in PROVIDER_NUMBERS.values():
-        found += [getattr(values, field, '') or '' for field in fields]
-    found += [number for numbers in accounts.values() for number in numbers]
-    return {stored_number(number, country=country) for number in found if number}
 
 
 def _plan_numbers(values, key, country, accounts):
@@ -128,7 +123,9 @@ class PlanCheck:
                                   min_attempts=MIN_ATTEMPTS)
         self.bound = bound or getattr(values, 'effective_outbound', '') or ''
         self.extras = extra_routes(values, self.bound) if self.bound else []
-        self.own = _own_numbers(values, self.country, self.accounts)
+        # Tests: faxes to any number of yours. Delivered inside Faxbot with no call when the number receives here.
+        self.own = account_numbers(values, self.accounts)
+        self.free = receiving_numbers(values) if getattr(values, 'local_delivery_enabled', True) else set()
         self._evidence = None
         self._stats = {}
 
@@ -211,12 +208,20 @@ class PlanCheck:
         received = self.received(key, start, end)
         currency = card.currency
         result = {'start': start, 'end': end, 'days': seconds // DAY, 'seconds': seconds, 'sent': len(sent),
-                  'received': len(received), 'own_numbers': 0, 'fee': prorate(card.monthly_fee_micros, seconds),
-                  'alternative': 0, 'estimated': False, 'routes': set(), 'blocked': {}}
+                  'received': len(received), 'own_numbers': 0, 'paid_tests': 0, 'paid_numbers': set(),
+                  'fee': prorate(card.monthly_fee_micros, seconds), 'alternative': 0, 'estimated': False,
+                  'routes': set(), 'blocked': {}}
+        # Tests needing no other way: to a number that receives here (delivered inside Faxbot with no call), or to
+        # the plan's own number, which goes with the plan or moves to the carrier and then receives here.
+        free = self.free | set(_plan_numbers(self.values, key, self.country, self.accounts))
         for destination, pages in sent:
             if destination in self.own:
                 result['own_numbers'] += 1
-                continue
+                if destination in free:
+                    continue
+                # Any other number of yours (another provider's) still places a paid call: priced like any fax.
+                result['paid_tests'] += 1
+                result['paid_numbers'].add(destination)
             micros, route, estimated = self.alternative(key, destination, pages, currency)
             if micros is None:
                 result['blocked'][route] = result['blocked'].get(route, 0) + 1
@@ -296,8 +301,9 @@ class PlanCheck:
             else:
                 sentence = (f"Worth reviewing: {head} for {fee_part}; {other_cost}, "
                             f"{_about(latest['fee'] - total, currency)} less (estimate).")
-            # Faxes priced another way (not only received ones on the trunk) need that way chosen in Recipients.
-            sends_elsewhere = latest['sent'] > latest['own_numbers'] and latest['routes']
+            # Faxes priced another way (not only received ones on the trunk) need that way chosen in Recipients;
+            # tests delivered inside Faxbot need none, but paid tests do.
+            sends_elsewhere = latest['sent'] - latest['own_numbers'] + latest['paid_tests'] > 0 and latest['routes']
             action = (f'If you decide to drop the plan, fax these numbers with {other} instead, then cancel the plan in '
                       f'your {name} account. Faxbot never cancels anything for you.') if sends_elsewhere else (
                 f'If you decide to drop the plan, cancel it in your {name} account. Faxbot never cancels anything '
@@ -338,7 +344,17 @@ class PlanCheck:
             else:
                 caveats.append(f'Before you cancel, move your {name} number to {target} if anyone still faxes it.')
         if latest['own_numbers']:
-            caveats.append(f"{latest['own_numbers']} of these faxes were tests to your own numbers.")
+            tests = (f"{latest['own_numbers']} of these faxes " +
+                     ('was a test' if latest['own_numbers'] == 1 else 'were tests') + ' to your own numbers.')
+            paid, where = latest['paid_tests'], ', '.join(sorted(latest['paid_numbers']))
+            # A test to a number that does not receive into Faxbot still places a paid call: counted as a cost.
+            if paid == 1:
+                tests += (f' The one sent to {where} still costs a phone call, so it is counted in what the other way '
+                          'would cost.')
+            elif paid:
+                tests += (f' The {paid} sent to {where} still cost a phone call, so they are counted in what the other '
+                          'way would cost.')
+            caveats.append(tests)
         if key in suggested:
             caveats.append(f'Faxes through the plan cost nothing extra while you pay for it; the question here is '
                            f'whether the {_fee_text(fee, currency)} monthly fee is worth paying.')
@@ -348,6 +364,8 @@ class PlanCheck:
         carried = view['sent'] + view['received']
         return {'start': view['start'], 'end': view['end'], 'days': view['days'], 'sent': view['sent'],
                 'received': view['received'], 'own_numbers': view['own_numbers'],
+                # Of own_numbers, tests that still place a paid call (to a number that does not receive here).
+                'paid_tests': view['paid_tests'],
                 'fee': _money(view['fee'], currency) if view['seconds'] else [],
                 'fee_per_fax': _money(-(-view['fee'] // carried), currency) if carried and view['seconds'] else [],
                 # The same faxes another way, and the carrier's rental for the plan's number once moved there.

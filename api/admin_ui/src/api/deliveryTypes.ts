@@ -429,6 +429,8 @@ export interface PlanWindow {
   sent: number;
   received: number;
   own_numbers: number;
+  // Of own_numbers, tests to a number that does not receive into Faxbot: still a paid call, so priced.
+  paid_tests?: number;
   fee: Money[];
   fee_per_fax: Money[];
   other_way: Money[];

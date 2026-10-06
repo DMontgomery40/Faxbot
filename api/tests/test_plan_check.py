@@ -236,6 +236,37 @@ def test_faxes_to_your_own_numbers_are_tests_that_need_no_other_way(plans):
     assert '6 of these faxes were tests to your own numbers.' in plan['caveats']
 
 
+def test_a_test_fax_that_places_a_paid_call_is_counted_as_a_cost(plans):
+    """Telnyx (a trunk with a $5 monthly fee) faxed the HumbleFax number twice: tests, but HumbleFax cannot receive
+    into Faxbot, so each was a paid call and is priced; a test to the trunk's own number arrives with no call."""
+    multi, routes = plans
+    routes.replace_cards([card('sip-telnyx', minute='0.005', minimum=60, monthly='5'), TELNYX_IN,
+                          card('phaxio', page='1.00')])
+    sent(multi, routes, 'sip', HUMBLE, ['success'] * 2)
+    sent(multi, routes, 'sip', TRUNK, ['success'])
+    sent(multi, routes, 'sip', CLINIC, ['success'] * 3)
+    (plan,) = report(routes, effective_outbound='sip', outbound_route_providers=('phaxio',),
+                     humblefax_from_number=HUMBLE)['plans']
+    latest = plan['windows'][0]
+    assert plan['route'] == 'sip'
+    each = estimate_cost(card('phaxio', page='1.00'), 3)
+    assert latest['other_way'] == money(5 * each)  # the clinic's 3 faxes and the 2 paid tests
+    assert (latest['sent'], latest['own_numbers'], latest['paid_tests']) == (6, 3, 2)
+    assert ('3 of these faxes were tests to your own numbers. The 2 sent to +13035550150 still cost a phone call, '
+            'so they are counted in what the other way would cost.') in plan['caveats']
+
+
+def test_one_rule_for_own_numbers_with_its_two_uses(monkeypatch):
+    """A HumbleFax account number is an account number of yours, but it does not receive into this Faxbot."""
+    from api.app.routing import local
+    from api.app.routing.own_numbers import account_numbers, receiving_numbers
+    settings = values(humblefax_from_number=HUMBLE, local_delivery_enabled=True)
+    assert receiving_numbers(settings) == {TRUNK} == local.own_numbers(settings)
+    assert {TRUNK, HUMBLE} <= account_numbers(settings)
+    assert '+13035550199' in account_numbers(settings, {'humblefax': ('+13035550199',)})
+    assert not local.applies(settings, HUMBLE) and local.applies(settings, TRUNK)
+
+
 def test_too_little_history_is_one_sentence(plans):
     multi, routes = plans
     with routes.engine.begin() as connection:  # records start 4 days ago, not 61

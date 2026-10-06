@@ -195,7 +195,8 @@ def test_turning_on_needs_the_recipients_agreement_and_every_change_is_kept(sip)
         settings.save('+15555550999', enabled=False, actor='principal:p1', expected_version=1)
     assert settings.save('+15555550999', enabled=False, actor='principal:p1')[1] == 'off'
     assert [change['action'] for change in settings.history('+15555550999')] == ['off', 'changed', 'on']
-    assert [change['recipient_agreed'] for change in settings.history('+15555550999')] == [0, 1, 1]
+    # The change to 12 pages did not record the recipient's agreement again, so its row does not claim it.
+    assert [change['recipient_agreed'] for change in settings.history('+15555550999')] == [0, 0, 1]
     for bad in ({'max_wait_seconds': 30}, {'max_pages': 1}, {'mixed_senders': 'yes'}):
         with pytest.raises(batching.BatchingInputError):
             settings.save('+15555550999', enabled=True, recipient_agreed=True, actor='principal:p1', **bad)
