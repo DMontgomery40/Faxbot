@@ -1134,8 +1134,8 @@ def test_trunk_negotiation_and_each_faxs_call_say_what_was_measured_and_what_was
             'correction are not reported by this engine; 1 page in a 44 s call.') in shown
     assert trunk_cli.json('received', 'show', received['id'])['negotiation']['rate_last_page'] == 9600
     sent_shown = ' '.join(trunk_cli('sent', 'show', sent['id']).stdout.split())
-    assert ('How the call went Speed, compression and error correction were not reported by this engine; no pages '
-            'confirmed in a 30 s call.') in sent_shown
+    assert ('How the call went Speed, compression, resolution and error correction are not reported by this engine; '
+            'no pages confirmed in a 30 s call.') in sent_shown
 
 
 def test_trunk_telnyx_shows_t38_per_number_and_turns_it_on_for_one(monkeypatch, tmp_path):

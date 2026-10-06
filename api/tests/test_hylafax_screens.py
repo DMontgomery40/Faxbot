@@ -37,7 +37,8 @@ def test_sent_details_say_how_the_pages_went_or_why_the_built_in_engine_carried_
                           details={'engine_ref': 'e:1', 'sslfax': True, 'sslfax_offered': True, 'transfer_seconds': 12})
     detail = records.sent_detail(JOB)
     assert detail.pop('negotiation')['sentence'] == (
-        'The pages went over the internet instead of the phone line; 6 pages in 12 s.')
+        'The pages went over the internet instead of the phone line; compression, resolution and error correction '
+        'are not reported by this engine; 6 pages in 12 s.')
     assert detail == {'engine': 'hylafax', 'sslfax': True, 'sentence':
                       'The pages were sent faster during the call: 12 seconds instead of about 48.'}
     other = 'c' * 32

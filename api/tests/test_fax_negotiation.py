@@ -216,8 +216,8 @@ def test_a_built_in_call_with_no_page_keeps_every_value_unknown(installation, da
     kept = row(database, 'outbound', ATTEMPT)
     assert kept['negotiation_by'] is None and kept['rate_last_page'] is None and kept['resolution_last_page'] is None
     assert records.sent_detail(JOB)['negotiation']['sentence'] == (
-        'Speed, compression and error correction were not reported by this engine; no pages confirmed in a 58 s '
-        'call.')
+        'Speed, compression, resolution and error correction are not reported by this engine; no pages confirmed '
+        'in a 58 s call.')
 
 
 def test_a_report_is_kept_once_and_never_rewritten_by_a_repeat_or_another_engine(installation, database,
@@ -274,11 +274,28 @@ def test_a_fax_the_ssl_fax_engine_received_records_its_whole_call_values(install
     ({'rate_first': 14400, 'rate_lowest': 14400, 'compression': 'MMR', 'ecm': 'on', 'resolution': 'fine'},
      'The call used MMR compression with error correction at 14400 bit/s, fine resolution; 2 pages in 41 s.'),
     ({'rate_first': 9600, 'rate_lowest': 9600, 'resolution': 'mixed'},
-     'The call ran at 9600 bit/s (compression and error correction not reported by this engine), more than one '
-     'resolution; 2 pages in 41 s.'),
+     'The call ran at 9600 bit/s, more than one resolution; compression and error correction are not reported by '
+     'this engine; 2 pages in 41 s.'),
+    # One value missing from each kind of report: it is named, never dropped.
+    ({'rate_first': 14400, 'rate_lowest': 9600, 'compression': 'MR', 'ecm': 'off'},
+     'The call used MR compression without error correction starting at 14400 bit/s and dropping to 9600 bit/s; '
+     'resolution is not reported by this engine; 2 pages in 41 s.'),
+    ({'rate_last_page': 14400},
+     'The last page went at 14400 bit/s; compression, resolution and error correction are not reported by this '
+     'engine; 2 pages in 41 s.'),
+    ({'resolution_last_page': 'fine'},
+     'The last page had fine resolution; speed, compression and error correction are not reported by this engine; '
+     '2 pages in 41 s.'),
+    ({'sslfax': 1}, 'The pages went over the internet instead of the phone line; compression, resolution and error '
+                    'correction are not reported by this engine; 2 pages in 41 s.'),
+    ({'sslfax': 1, 'compression': 'JBIG', 'ecm': 'on', 'resolution': 'fine'},
+     'The pages went over the internet instead of the phone line, using JBIG compression with error correction, '
+     'fine resolution; 2 pages in 41 s.'),
+    ({'compression': 'MH'}, 'The call used MH compression; speed, resolution and error correction are not reported by '
+                            'this engine; 2 pages in 41 s.'),
     ({'trainings': 3}, 'The call tried 3 times to agree a speed with the other fax machine and never did; 2 pages '
                        'in 41 s.'),
-    ({}, 'Speed, compression and error correction were not reported by this engine; 2 pages in 41 s.'),
+    ({}, 'Speed, compression, resolution and error correction are not reported by this engine; 2 pages in 41 s.'),
 ])
 def test_the_detail_sentence_names_what_is_known_and_what_this_engine_does_not_report(values, sentence):
     assert fax_negotiation.call_sentence({**values, 'transfer_seconds': 41}, {'pages': 2}) == sentence

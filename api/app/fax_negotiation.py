@@ -150,6 +150,18 @@ def _coding(compression, ecm):
     return None
 
 
+def _known_coding(compression, ecm):
+    """Compression and error correction in words, only what the engine reported; None when neither."""
+    named = None if not compression else (
+        'more than one compression' if compression == 'mixed' else f'{compression} compression')
+    if named and ecm:
+        return {'on': f'{named} with error correction', 'off': f'{named} without error correction',
+                'mixed': f'{named} with error correction on some pages'}[ecm]
+    if ecm:
+        return {'on': 'error correction', 'off': 'no error correction', 'mixed': 'error correction on some pages'}[ecm]
+    return named
+
+
 def _resolution_text(value):
     return 'more than one resolution' if value == 'mixed' else f'{value} resolution'
 
@@ -175,39 +187,46 @@ def call_sentence(row, call=None):
     values, call = measured(row), call or {}
     pages = call.get('pages')
     tail = _pages_text(pages, (row or {}).get('transfer_seconds'), call.get('connected_seconds'))
-    coding = _coding(values['compression'], values['ecm'])
-    if (row or {}).get('sslfax') == 1:
+    sslfax = (row or {}).get('sslfax') == 1
+    first, lowest = values['rate_first'] or values['rate_lowest'], values['rate_lowest'] or values['rate_first']
+    if not sslfax and not first and not values['rate_last_page'] and values['trainings']:
+        # The call trained and never agreed a speed: nothing else was agreed either.
+        tries = 'once' if values['trainings'] == 1 else f'{values["trainings"]} times'
+        sentence = f'The call tried {tries} to agree a speed with the other fax machine and never did'
+        return f'{sentence}; {tail}.' if tail else f'{sentence}.'
+    coding = _known_coding(values['compression'], values['ecm'])
+    resolution = (_resolution_text(values['resolution']) if values['resolution'] else None)
+    # Every value the engine did not report is named once, in a closing clause (no speed over the internet).
+    missing = [name for name, known in (('speed', sslfax or first or values['rate_last_page']),
+                                        ('compression', values['compression']),
+                                        ('resolution', values['resolution'] or values['resolution_last_page']),
+                                        ('error correction', values['ecm'])) if not known]
+    if sslfax:
         sentence = 'The pages went over the internet instead of the phone line'
-        if coding:
-            sentence += f', using {coding}'
-        if values['resolution']:
-            sentence += f', {_resolution_text(values["resolution"])}'
-    elif values['rate_first'] or values['rate_lowest']:
-        first, lowest = values['rate_first'] or values['rate_lowest'], values['rate_lowest'] or values['rate_first']
+        sentence += f', using {coding}' if coding else ''
+        sentence += f', {resolution}' if resolution else ''
+    elif first:
         speed = (f'at {first} bit/s' if first == lowest
                  else f'starting at {first} bit/s and dropping to {lowest} bit/s')
-        sentence = f'The call used {coding} {speed}' if coding else (
-            f'The call ran {speed} (compression and error correction {NOT_REPORTED})')
-        if values['resolution']:
-            sentence += f', {_resolution_text(values["resolution"])}'
+        sentence = f'The call used {coding} {speed}' if coding else f'The call ran {speed}'
+        sentence += f', {resolution}' if resolution else ''
     elif values['rate_last_page'] or values['resolution_last_page']:
         parts = []
         if values['rate_last_page']:
             parts.append(f'went at {values["rate_last_page"]} bit/s')
-        if values['resolution_last_page']:
+        if values['resolution_last_page'] and not resolution:
             parts.append(f'had {values["resolution_last_page"]} resolution')
         sentence = 'The last page ' + ' and '.join(parts)
-        if coding:
-            sentence += f', using {coding}'
-        else:
-            sentence += f'; compression and error correction are {NOT_REPORTED}'
-    elif values['trainings']:
-        tries = 'once' if values['trainings'] == 1 else f'{values["trainings"]} times'
-        sentence = f'The call tried {tries} to agree a speed with the other fax machine and never did'
-    elif coding:
-        sentence = f'The call used {coding}; its speed is {NOT_REPORTED}'
+        sentence += f', using {coding}' if coding else ''
+        sentence += f', {resolution}' if resolution else ''
+    elif coding or resolution:
+        sentence = 'The call used ' + ', '.join(part for part in (coding, resolution) if part)
     else:
-        sentence = f'Speed, compression and error correction were {NOT_REPORTED}'
+        sentence = None
+    if missing:
+        names = missing[0] if len(missing) == 1 else ', '.join(missing[:-1]) + ' and ' + missing[-1]
+        clause = f"{names} {'is' if len(missing) == 1 else 'are'} {NOT_REPORTED}"
+        sentence = f'{sentence}; {clause}' if sentence else clause[:1].upper() + clause[1:]
     return f'{sentence}; {tail}.' if tail else f'{sentence}.'
 
 
