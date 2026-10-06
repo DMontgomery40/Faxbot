@@ -1,9 +1,12 @@
 """Which fax engine handled each trunk call, what SSL Fax did, and per-recipient fax limits (migration 0017).
 
-``fax_engine_calls`` has one row per trunk fax call: the engine (built-in or
-the SSL Fax engine), the reason when the built-in engine handled it, and what
-the SSL Fax engine saw. A row is written once and later reports only fill in
-what is still unknown. ``sslfax_observations`` is append-only: each engine
+``fax_engine_calls`` has one row per trunk fax call: the engine chosen for it
+(built-in or the SSL Fax engine), the reason when the built-in engine was
+chosen, and what the SSL Fax engine saw. A row is written once and later
+reports only fill in what is still unknown: when the SSL Fax engine reports a
+call the built-in engine was chosen for, its result goes in its own fields and
+the chosen engine and reason stay as written; the views name the engine that
+handled the call (the one that reported it). ``sslfax_observations`` is append-only: each engine
 call that showed whether the other number takes SSL Fax adds one row, and the
 newest row is the answer. ``recipient_fax_settings`` holds a person's limits
 for one fax number. Recording is evidence only and never changes delivery.
@@ -134,11 +137,8 @@ class FaxEngineRecords:
                                                             calls.c.call_key == call_key)).mappings().first()
             if row['engine_ref'] not in (None, engine_ref):
                 return row['id']
+            # Only what is still unknown; the engine chosen and its reason stay as written (handled_by reads both).
             changes = {name: value for name, value in values.items() if row[name] is None and value is not None}
-            if row['engine'] != 'hylafax' and row['engine_ref'] is None:
-                # The engine handled the call after all (the built-in choice was not used).
-                changes['engine'] = 'hylafax'
-                changes['reason'] = None
             if changes:
                 connection.execute(calls.update().where(calls.c.id == row['id']).values(updated_at=now, **changes))
             accepts = 1 if values['sslfax'] or values['sslfax_offered'] else 0 if values['sslfax_offered'] == 0 else None
@@ -160,8 +160,9 @@ class FaxEngineRecords:
             table.c.direction == direction, table.c.call_key == str(call_key))).mappings().first())
         if row is None:
             return None
-        result = {name: row[name] for name in ('engine', 'reason', 'number', 'transfer_seconds', 'session_seconds',
-                                               'signal_rate', 'data_format')}
+        result = {name: row[name] for name in ('number', 'transfer_seconds', 'session_seconds', 'signal_rate',
+                                               'data_format')}
+        result['engine'], result['reason'] = handled_by(row)
         result['sslfax'] = None if row['sslfax'] is None else bool(row['sslfax'])
         result['sslfax_offered'] = None if row['sslfax_offered'] is None else bool(row['sslfax_offered'])
         result['created_at'] = _iso(row['created_at'])
@@ -253,12 +254,13 @@ class FaxEngineRecords:
         row, pages = self._read(read)
         if row is None:
             return None
+        engine, reason = handled_by(row)
         sentence = None
-        if row['engine'] == 'builtin':
-            sentence = row['reason']
+        if engine == 'builtin':
+            sentence = reason
         elif row['sslfax'] == 1 and row['transfer_seconds'] is not None and pages:
             sentence = sslfax_sentence(row['transfer_seconds'], pages)
-        return {'engine': row['engine'], 'sslfax': None if row['sslfax'] is None else bool(row['sslfax']),
+        return {'engine': engine, 'sslfax': None if row['sslfax'] is None else bool(row['sslfax']),
                 'sentence': sentence}
 
     def recipient_detail(self, number):
@@ -342,6 +344,14 @@ def savings_sentence(result, days):
     if result['same_cost'] and result['same_cost'] == result['priced']:
         sentence += ' Your carrier charges whole minutes, so ' + ('it' if count == 1 else 'they') + ' cost the same.'
     return sentence
+
+
+def handled_by(row):
+    """(engine, reason) for one call: the SSL Fax engine when it chose it or reported on it (its reference),
+    else the built-in engine and why it was chosen."""
+    if row['engine'] == 'hylafax' or row['engine_ref'] is not None:
+        return 'hylafax', None
+    return row['engine'], row['reason']
 
 
 def records_for(engine):

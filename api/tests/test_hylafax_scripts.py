@@ -169,6 +169,9 @@ def test_a_fax_received_without_a_communication_id_is_still_kept_and_handed_over
     left the answering line's communication ID empty (loopback, 6 October 2026), and the fax was refused here.
     It is kept under its receive-queue number instead, and handed over like any other."""
     spool, state, data, environment = engine
+    # An ordinary fax (not SSL Fax by its image): whether SSL Fax ran on the call is unknown, never "no".
+    _stub(tmp_path / 'tools', 'faxinfo', "printf '%s\\n' 'x:' '    Sender: +1 555 555 0199' '     Pages: 2' "
+                                         "'SignalRate: 14400 bit/s' 'DataFormat: 2-D MMR' 'TimeToRecv: 0:00:12'\n")
     received = run('received', environment, 'recvq/fax000000007.tif', 'ttyIAX2', '', '', '+15555550199',
                    '179125888.15555550100', '', cwd=spool)
     assert received.returncode == 0, received.stderr
@@ -179,6 +182,7 @@ def test_a_fax_received_without_a_communication_id_is_still_kept_and_handed_over
     body = json.loads((tmp_path / 'body').read_text())
     assert body['uniqueid'] == 'engine.179125888' and body['faxpages'] == 2
     assert body['engine']['engine_ref'] == '0123456789abcdef:0-000000007-1791180000'
+    assert body['engine']['sslfax'] is None
     assert not list((state / 'received').iterdir())
 
 
@@ -317,7 +321,7 @@ def entrypoint(tmp_path):
         'lines': '2', 'asterisk_host': 'asterisk', 'asterisk_port': '4569', 'submit_user': 'faxbot',
         'submit_password': 'Submit' + 'b' * 30, 'station_id': '+15555550100', 'fax_number': '15555550100',
         'codec': 'ulaw', 'sslfax': 'yes', 'sslfax_listener': '', 'api_url': 'http://api:8080',
-        'inbound_secret': 'synthetic-inbound-secret-0123456789', **secrets}.items()))
+        'report_secret': 'synthetic-report-secret-0123456789', **secrets}.items()))
     environment = {'PATH': f'{tools}:/usr/bin:/bin', 'FAXBOT_ENGINE_ROOT': str(root), 'FAXBOT_DATA': str(data),
                    'FAXBOT_HYLAFAX_SPOOL': str(spool), 'FAXBOT_ENGINE_STATE': str(state),
                    'FAXBOT_ENGINE_CHECK_SECONDS': '1', 'FAXBOT_ENGINE_UNREADY_SECONDS': '1',

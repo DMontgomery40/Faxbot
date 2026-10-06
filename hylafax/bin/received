@@ -43,7 +43,9 @@ recv=$(printf '%s\n' "$info" | sed -n 's/^ *TimeToRecv: *//p' | head -1 \
   | awk -F: '{ s = 0; for (i = 1; i <= NF; i++) s = s * 60 + $i; print s }')
 log=log/c$commid
 sslfax=false offered=''
-if [ -f "$log" ]; then
+# Without its communication ID the call has no session log of its own: whether SSL Fax ran is unknown.
+[ -z "$queued" ] || sslfax=unknown
+if [ -z "$queued" ] && [ -f "$log" ]; then
   grep -q -E 'SSL Fax connection (was successful|detected)' "$log" && sslfax=true
   if grep -q -E 'REMOTE (wants internet fax|TSA "ssl://)' "$log"; then offered=true; else offered=false; fi
   grep -q 'SSL Fax client accept failure' "$log" && sslfax=false

@@ -227,6 +227,82 @@ def test_a_fax_the_engine_dialed_and_then_dropped_waits_for_a_person_instead_of_
     assert calls == [('uncertain', JOB, ATTEMPT, f'{ATTEMPT}:hylafax:killed')]
 
 
+# A result is never lost ----------------------------------------------------------------------------------------
+
+def test_a_result_the_store_cannot_take_now_is_answered_503_so_the_engine_keeps_it(monkeypatch):
+    """A temporary storage failure is not an unknown job: 503 (the engine keeps the report and sends it again),
+    never 404 (the engine sets a refused report aside for good)."""
+    import asyncio
+    from fastapi import HTTPException
+    from app.config_store import ConfigurationStoreError
+
+    class Unavailable(ResultStore):
+        def attempt_context(self, job_id, attempt_id):
+            raise ConfigurationStoreError('synthetic outage')
+    monkeypatch.setattr(hylafax_http, '_require_engine', lambda secret: None)
+    monkeypatch.setattr(hylafax_http, '_store', lambda request: Unavailable())
+    with pytest.raises(HTTPException) as refused:
+        asyncio.run(hylafax_http.engine_result(SimpleNamespace(app=None), {'tag': f'{JOB}.{ATTEMPT}', 'why': 'done'},
+                                               x_internal_secret='x'))
+    assert refused.value.status_code == 503
+
+
+def test_engine_evidence_is_recorded_only_once_the_store_takes_the_result(monkeypatch):
+    """An attempt whose result the store refused keeps no engine reference, so the restart rule (and the
+    no-result rule) still find it and it never stays in progress."""
+    import asyncio
+    from fastapi import HTTPException
+    from app.outbound_store import DeliveryConflict
+    recorded = []
+    monkeypatch.setattr(hylafax_http, '_record_engine', lambda *args: recorded.append(args[2]))
+
+    class Conflicting(ResultStore):
+        def observe(self, job_id, **fields):
+            raise DeliveryConflict('synthetic conflict')
+    monkeypatch.setattr(hylafax_http, '_require_engine', lambda secret: None)
+    monkeypatch.setattr(hylafax_http, '_record', lambda *args: None)
+    monkeypatch.setattr(hylafax_http, '_store', lambda request: Conflicting())
+    payload = {'tag': f'{JOB}.{ATTEMPT}', 'why': 'done', 'engine_id': '0123456789abcdef', 'commid': '000000001'}
+    with pytest.raises(HTTPException) as refused:
+        asyncio.run(hylafax_http.engine_result(SimpleNamespace(app=None), payload, x_internal_secret='x'))
+    assert refused.value.status_code == 409 and recorded == []
+    _, calls, _ = result_route(monkeypatch, payload)
+    assert calls == [('observed', 'success', None)] and recorded == [ATTEMPT]
+
+
+def test_a_send_the_engine_never_reported_on_waits_for_a_person_after_three_hours(database):
+    """A report the server refused for good (or lost) leaves its fax in progress; after three hours, longer
+    than any fax call, the fax waits for a person and is never sent again by itself."""
+    schema.upgrade_schema(database)
+    records = hylafax_records.records_for(database)
+    taken = {}
+    for index, (age, reported) in enumerate(((timedelta(hours=4), False), (timedelta(hours=4), True),
+                                             (timedelta(minutes=30), False))):
+        job, attempt = f'{index + 1:032x}', f'{index + 11:032x}'
+        records.record_call(direction='outbound', call_key=attempt, job_id=job, engine='hylafax', now=NOW - age)
+        if reported:
+            records.record_result(direction='outbound', call_key=attempt, job_id=job, now=NOW,
+                                  details={'engine_ref': f'e:{index}', 'sslfax': False})
+        taken[job] = ('in_progress', attempt)
+    store = Store(taken)
+    assert hylafax_http._settle_unreported(database, store, NOW - hylafax_http.NO_RESULT_AFTER, 'no-result') == 1
+    assert store.unconfirmed == [(f'{1:032x}', f'{11:032x}', f'{11:032x}:hylafax:no-result')]
+
+
+@pytest.mark.parametrize('route', ['/_internal/hylafax/received-failed', '/_internal/hylafax/inbound'])
+def test_engine_reports_wait_with_503_while_receiving_over_the_trunk_is_off(isolated_installation, monkeypatch,
+                                                                            tmp_path, route):
+    """Receiving switched off (or another provider receiving) may change: the engine keeps the report and
+    sends it again, instead of setting it aside for good. The engine's own secret is checked first."""
+    from api.app.main import app
+    data, secret = engine_installation(monkeypatch, tmp_path)
+    monkeypatch.setenv('INBOUND_ENABLED', 'false')
+    with TestClient(app, base_url='http://testserver') as client:
+        assert client.post(route, json={}, headers={'X-Internal-Secret': 'wrong'}).status_code == 401
+        answer = client.post(route, json={}, headers={'X-Internal-Secret': secret})
+        assert answer.status_code == 503, answer.text
+
+
 def test_a_failed_send_gets_the_engines_sentence_and_only_the_engine_goes_to_audio(monkeypatch):
     row = {'verdict': sip_calls.NO_FAX_SIGNAL, 'ended_at': '2026-10-05T01:00:40Z', 't38': 'yes',
            'error_cause': 'no_fax_signal: No carrier detected E002'}

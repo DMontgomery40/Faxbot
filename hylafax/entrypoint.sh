@@ -89,7 +89,9 @@ codec=$(need codec '^(ulaw|alaw)$')
 sslfax=$(need sslfax '^(yes|no)$')
 listener=$(need sslfax_listener '^([A-Za-z0-9.-]{1,253}:[0-9]{1,5})?$')
 api_url=$(need api_url '^https?://[A-Za-z0-9.-]{1,253}(:[0-9]{1,5})?$')
-secret=$(need inbound_secret '^[A-Za-z0-9_-]{16,256}$')
+# The engine's own secret for its reports (settings files written before 6 October 2026 call it inbound_secret).
+setting[report_secret]=${setting[report_secret]:-${setting[inbound_secret]:-}}
+secret=$(need report_secret '^[A-Za-z0-9_-]{16,256}$')
 for line_number in $(seq 1 "$lines"); do
   need "line${line_number}_secret" '^[A-Za-z0-9]{24,128}$' >/dev/null
 done
