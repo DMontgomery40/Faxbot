@@ -840,6 +840,11 @@ def _lock():
     return found[1]
 
 
+def check_lock():
+    """The lock every network check holds while it opens router ports and writes its files (Apply takes it too)."""
+    return _lock()
+
+
 async def run_check(runtime, records=None, *, fresh=True, unattended=False):
     """Check the network now, store it, and turn T.38 on or off for new calls when the check says so.
 

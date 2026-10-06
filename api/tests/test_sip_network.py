@@ -706,6 +706,32 @@ def test_renewing_the_router_ports_asks_the_router_only_and_a_permanent_lease_is
     assert sip_network.read_lease(_values(client)) is None
 
 
+def test_apply_opens_router_ports_under_the_same_lock_as_every_network_check(client, network, stand_in_router,
+                                                                            monkeypatch):
+    """Review round 4: Apply repeated the check outside its lock, so two port openings could race."""
+    import contextlib
+    network['row'] = LINUX_LAN_CHANGES
+    _publish_fax_ports(client)
+    order = []
+    original_map = sip_network.map_ports
+
+    @contextlib.asynccontextmanager
+    async def recorded_lock():
+        order.append('locked')
+        try:
+            yield
+        finally:
+            order.append('released')
+
+    def recorded_map(*args, **kwargs):
+        order.append('map_ports')
+        return original_map(*args, **kwargs)
+    monkeypatch.setattr(sip_network, 'check_lock', recorded_lock)
+    monkeypatch.setattr(sip_network, 'map_ports', recorded_map)
+    assert client.post('/admin/sip/apply', headers=ADMIN).status_code == 200
+    assert order == ['locked', 'map_ports', 'released'] and stand_in_router.opened == [('192.168.1.1', 4000, 4039)]
+
+
 def test_unattended_checks_reuse_the_last_look_at_the_host(client, network, monkeypatch):
     network['row'] = LINUX_LAN
     asked = []

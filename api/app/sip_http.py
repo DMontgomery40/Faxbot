@@ -619,15 +619,19 @@ async def apply(request: Request, identity=Depends(require_permission('providers
         # The person's own change first, then the network check decides T.38 for new calls.
         before = await run_lifecycle_step(lambda: sip_network.previous_verdict(values))
         await run_lifecycle_step(lambda: sip_fax_mode.reconcile(values, network=before))
-        found = await sip_network.discover(fresh=True)
-        mapping = await run_lifecycle_step(lambda: sip_network.map_ports(values, network, found))
-        check = await run_lifecycle_step(lambda: sip_network.record_check(values, network, found, records, mapping))
-        exact = True if check['why'] == 'router_mapped' else None
-        decision = await run_lifecycle_step(lambda: sip_fax_mode.network_decision(
-            values, check['t38'], previous=check['changed_from'], records=records))
-        if decision:
-            values = await run_lifecycle_step(lambda: _set_t38(runtime, decision == 't38', sip_fax_mode.NETWORK,
-                                                               check['t38']))
+        # The same lock as every network check: two port openings at once could leave router ports untracked
+        # and overwrite each other's lease and check files.
+        async with sip_network.check_lock():
+            found = await sip_network.discover(fresh=True)
+            mapping = await run_lifecycle_step(lambda: sip_network.map_ports(values, network, found))
+            check = await run_lifecycle_step(lambda: sip_network.record_check(values, network, found, records,
+                                                                              mapping))
+            exact = True if check['why'] == 'router_mapped' else None
+            decision = await run_lifecycle_step(lambda: sip_fax_mode.network_decision(
+                values, check['t38'], previous=check['changed_from'], records=records))
+            if decision:
+                values = await run_lifecycle_step(lambda: _set_t38(runtime, decision == 't38', sip_fax_mode.NETWORK,
+                                                                   check['t38']))
     else:
         await run_lifecycle_step(lambda: sip_fax_mode.reconcile(values))
     try:
