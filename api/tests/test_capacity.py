@@ -1,4 +1,5 @@
 """Room for fax calls: one call at a time to a number, the trunk's lines, new calls a second (SQLite and PostgreSQL)."""
+from contextlib import contextmanager
 from datetime import datetime, timedelta
 from uuid import uuid4
 
@@ -99,19 +100,38 @@ def test_a_second_fax_to_the_same_number_waits_and_dials_after_the_first_finishe
     assert install.start().job_id == second
 
 
-def _connections_used(engine, action):
-    """How many pooled connections ``action`` checks out, and what it returned."""
-    checkouts = []
+def _connections_used(configuration, action):
+    """How many more pooled connections ``action`` checks out while it holds the write lock, how many
+    times it took the lock, and what it returned.
+
+    A plain read before the lock (the idle check, ``OutboundStore._any``) is not counted: it never
+    waits behind a writer and never holds anything a writer waits for.
+    """
+    state = {'held': 0, 'locks': 0, 'extra': 0}
+    original = configuration._locked
+
+    @contextmanager
+    def locked():
+        with original() as connection:
+            state['held'] += 1
+            state['locks'] += 1
+            try:
+                yield connection
+            finally:
+                state['held'] -= 1
 
     def checked_out(*_):
-        checkouts.append(1)
+        if state['held']:
+            state['extra'] += 1
 
-    sa.event.listen(engine, 'checkout', checked_out)
+    configuration._locked = locked
+    sa.event.listen(configuration.engine, 'checkout', checked_out)
     try:
         result = action()
     finally:
-        sa.event.remove(engine, 'checkout', checked_out)
-    return len(checkouts), result
+        sa.event.remove(configuration.engine, 'checkout', checked_out)
+        del configuration._locked
+    return state['extra'], state['locks'], result
 
 
 # Reflecting on a second connection while the claim held the SQLite write lock left
@@ -121,8 +141,8 @@ def _connections_used(engine, action):
 
 def test_the_first_claim_reads_room_through_its_own_locked_connection(install):
     install.accept()
-    used, claim = _connections_used(install.engine, install.claim)
-    assert claim is not None and used == 1
+    extra, locks, claim = _connections_used(install.configuration, install.claim)
+    assert claim is not None and locks >= 1 and extra == 0
 
 
 def test_the_first_claim_of_a_trunk_fax_reads_room_through_its_own_locked_connection(database, tmp_path):
@@ -131,15 +151,16 @@ def test_the_first_claim_of_a_trunk_fax_reads_room_through_its_own_locked_connec
     from api.app.routing.own_numbers import receiving_numbers
     assert receiving_numbers(install.values) == {'+13035550100'}  # so the own-number check runs too
     install.accept(trunk=True)
-    used, claim = _connections_used(install.engine, install.claim)
-    assert claim is not None and used == 1
+    extra, locks, claim = _connections_used(install.configuration, install.claim)
+    assert claim is not None and locks >= 1 and extra == 0
 
 
 def test_the_first_claim_of_a_group_sent_together_reads_room_through_its_own_locked_connection(sip, database):
     _, delivery, *_ = sip
     first, second = accept_held(sip, at=HELD_AT), accept_held(sip, at=HELD_AT + timedelta(minutes=1))
-    used, claim = _connections_used(database, lambda: delivery.claim('worker', now=HELD_AT + timedelta(minutes=10)))
-    assert [member.job_id for member in claim.members] == [first, second] and used == 1
+    extra, locks, claim = _connections_used(delivery.configuration,
+                                            lambda: delivery.claim('worker', now=HELD_AT + timedelta(minutes=10)))
+    assert [member.job_id for member in claim.members] == [first, second] and locks >= 1 and extra == 0
 
 
 def test_a_number_can_take_more_calls_at_once_or_no_limit(install):

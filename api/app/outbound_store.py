@@ -325,12 +325,15 @@ class OutboundStore:
         """Reserve a status read, never a submission or replacement attempt."""
         if not 1 <= interval_seconds <= 3600:
             raise ValueError('Invalid delivery polling interval.')
-        now = datetime.utcnow() if now is None else now
+        # Idle: no status read is due, so no lock. A poll is no lease, so a read that falls due while this
+        # looks is simply taken in the next round; which read is due is decided with the time after the lock.
+        due = datetime.utcnow() if now is None else now
         if not self._any(sa.select(self.deliveries.c.id).where(
                 self.deliveries.c.state.in_(['in_progress', 'reconciliation_required']),
-                sa.or_(self.deliveries.c.next_poll_at.is_(None), self.deliveries.c.next_poll_at <= now))):
+                sa.or_(self.deliveries.c.next_poll_at.is_(None), self.deliveries.c.next_poll_at <= due))):
             return None
         with self.configuration._locked() as connection:
+            now = datetime.utcnow() if now is None else now
             row = connection.execute(sa.select(self.deliveries, self.attempts.c.profile_id).join(self.attempts,
                 self.attempts.c.id == self.deliveries.c.attempt_id).where(
                     self.deliveries.c.state.in_(['in_progress', 'reconciliation_required']),
@@ -691,11 +694,13 @@ class OutboundStore:
                 attempt_id=claim.attempt_id, details={'category': category})
 
     def recover_expired(self, *, now=None):
-        now = datetime.utcnow() if now is None else now
+        # Idle: no fax holds a lease, so no lock. Whether a lease has run out is decided only with the time read
+        # after the lock, so a lease that ends while this waits for the lock is recovered in this round.
         if not self._any(sa.select(self.deliveries.c.id).where(
-                self.deliveries.c.state.in_(['preparing', 'submitting']), self.deliveries.c.claim_expires_at <= now)):
+                self.deliveries.c.state.in_(['preparing', 'submitting']))):
             return 0
         with self.configuration._locked() as connection:
+            now = datetime.utcnow() if now is None else now
             rows = connection.execute(sa.select(self.deliveries).where(
                 self.deliveries.c.state.in_(['preparing', 'submitting']), self.deliveries.c.claim_expires_at <= now)).mappings().all()
             for row in rows:
