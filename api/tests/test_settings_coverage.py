@@ -1,8 +1,9 @@
 """Every configuration value can be set from the command line and has a place in the console.
 
 Each field of ConfigurationValues is accepted by `faxbot system settings set` and its
-name appears in the console source (api/admin_ui/src, tests and mocks
-excluded), unless READ_ONLY_OR_ENV says why not. AWAITING_CONSOLE holds the
+name appears in a console screen (api/admin_ui/src outside api/, tests and
+mocks excluded: the API client and the type files are not a place), unless
+READ_ONLY_OR_ENV says why not. AWAITING_CONSOLE holds the
 fields the console has not placed yet: whoever places one removes its entry in
 the same change (a listed field that the console now names fails here).
 
@@ -24,7 +25,7 @@ from app.config_values import ConfigurationValues
 from api.tests.test_cli import BOOTSTRAP, Cli, _serve
 from api.tests.test_config_env_secrets import (  # noqa: F401 (fixtures)
     ADMIN as INSTALLATION_ADMIN, Installation, _environment_audits, database_url, installation)
-from api.tests.test_console_cli_parity import CONSOLE_SOURCE, _console_files
+from api.tests.test_console_cli_parity import CONSOLE_SOURCE, screen_files
 
 ADMIN = {'X-API-Key': BOOTSTRAP}
 
@@ -51,8 +52,9 @@ PROMOTED = {'sip_public_address_check_minutes': 'SIP_PUBLIC_ADDRESS_CHECK_MINUTE
             'docs_base_url': 'DOCS_BASE_URL'}
 
 
-def _console_names():
-    text = '\n'.join(path.read_text(encoding='utf-8') for path in _console_files())
+def _console_names(files=None):
+    """Settings named in the console's screens; the API client and the type files are not a place."""
+    text = '\n'.join(path.read_text(encoding='utf-8') for path in (screen_files() if files is None else files))
     return {name for name in ConfigurationValues.model_fields if re.search(rf'\b{name}\b', text)}
 
 
@@ -78,6 +80,13 @@ def test_every_setting_is_in_the_console_or_listed():
     assert missing == [], f'Settings with no place in the console: {missing}'
     placed = sorted(set(AWAITING_CONSOLE) & present)
     assert placed == [], f'The console now names these; remove them from AWAITING_CONSOLE: {placed}'
+
+
+def test_a_setting_named_only_by_the_api_client_or_types_has_no_place():
+    api = sorted((CONSOLE_SOURCE / 'api').glob('*.ts'))
+    assert api and not set(api) & set(screen_files())
+    # A name in the response types alone is not a place on a screen.
+    assert _console_names(api) - _console_names() <= set(READ_ONLY_OR_ENV)
 
 
 def test_every_setting_has_a_name_the_settings_change_accepts():
