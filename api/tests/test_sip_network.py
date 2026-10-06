@@ -660,6 +660,70 @@ def test_the_router_ports_are_renewed_and_closed_when_faxbot_stops(client, netwo
     assert sip_network.read_lease(_values(client)) is None
 
 
+def _keep_for_a_while(runtime, seconds=0.4):
+    async def run():
+        task = asyncio.create_task(sip_network.keep_router_ports(runtime, idle=0.05))
+        await asyncio.sleep(seconds)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    asyncio.run(run())
+
+
+def test_renewing_the_router_ports_asks_the_router_only_and_a_permanent_lease_is_never_renewed(
+        client, network, stand_in_router, monkeypatch):
+    """Review round 4: a permanent UPnP lease made a full network check (STUN, traceroute, DNS) every minute."""
+    network['row'] = LINUX_LAN_CHANGES
+    _publish_fax_ports(client)
+    assert client.post('/admin/sip/apply', headers=ADMIN).status_code == 200
+    runtime = client.app.state.configuration_runtime
+    checks = []
+
+    async def counted(*args, **kwargs):
+        checks.append(kwargs)
+    monkeypatch.setattr(sip_network, 'run_check', counted)
+    # Due for renewal: the router extends the lease, and nothing else runs.
+    lease = sip_network.read_lease(_values(client))
+    lease.granted_at -= lease.lifetime
+    sip_network._keep_lease(_values(client), lease)
+    _keep_for_a_while(runtime)
+    assert stand_in_router.renewed == [(4000, 4039)] and checks == []
+    # Stopping closes the ports and forgets the lease; each case below starts from its own lease.
+    from app.port_mapping import Lease
+    assert sip_network.read_lease(_values(client)) is None
+    # A router that keeps only permanent mappings: the lease is never due, so neither the router nor the network
+    # is asked again while Faxbot runs.
+    stand_in_router.renewed.clear()
+    sip_network._keep_lease(_values(client), Lease('upnp', '192.168.1.1', 4000, 4039, '198.51.100.7', 0, 0.0))
+    assert sip_network.read_lease(_values(client)).renew_at == float('inf')
+    _keep_for_a_while(runtime)
+    assert stand_in_router.renewed == [] and checks == []
+    # A router that refuses to extend a lease: one full check decides whether to open the ports again.
+    sip_network._keep_lease(_values(client), Lease('natpmp', '192.168.1.1', 4000, 4039, '198.51.100.7', 3600, 0.0))
+    monkeypatch.setattr(StandInRouter, 'renew', lambda self, lease, **_: None)
+    _keep_for_a_while(runtime, 0.2)
+    assert len(checks) >= 1 and checks[0] == {'unattended': True}
+    assert sip_network.read_lease(_values(client)) is None
+
+
+def test_unattended_checks_reuse_the_last_look_at_the_host(client, network, monkeypatch):
+    network['row'] = LINUX_LAN
+    asked = []
+    original = sip_network.discover
+
+    async def recorded(*, fresh=False):
+        asked.append(fresh)
+        return await original(fresh=fresh)
+    monkeypatch.setattr(sip_network, 'discover', recorded)
+    assert client.post('/admin/sip/apply', headers=ADMIN).status_code == 200
+    runtime = client.app.state.configuration_runtime
+    asked.clear()
+    asyncio.run(sip_network.run_check(runtime, unattended=True))
+    assert asked == [False]
+    asyncio.run(sip_network.run_check(runtime))  # Check again looks afresh
+    assert asked == [False, True]
+
+
 def test_the_media_ports_record_is_read_only_when_well_formed(tmp_path):
     settings = values(FAX_DATA_DIR=str(tmp_path))
     path = sip_network.media_ports_path(settings)

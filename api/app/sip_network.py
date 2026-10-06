@@ -857,7 +857,9 @@ async def run_check(runtime, records=None, *, fresh=True, unattended=False):
             await run_lifecycle_step(lambda: close_router_ports(values))
             return None
         probe = await probe_network(values.sip_trunk_preset, fresh=fresh)
-        found = await discover(fresh=fresh)
+        # Only Apply and Check again look at the host afresh; the check at start and the periodic one reuse
+        # the last look (traceroute, names, metadata) for DISCOVERY_SECONDS.
+        found = await discover(fresh=fresh and not unattended)
         records = records if records is not None else _records_for(runtime)
         mapping = await run_lifecycle_step(lambda: map_ports(values, probe, found))
         check = await run_lifecycle_step(lambda: record_check(values, probe, found, records, mapping))
@@ -916,8 +918,31 @@ async def check_at_start(runtime, *, delay=START_DELAY_SECONDS, confirm=CONFIRM_
     return outcome
 
 
-async def keep_router_ports(runtime, *, idle=600):
-    """Renew the ports the router opened for Faxbot at half their lifetime; close them when Faxbot stops."""
+def renew_lease(values, *, router=None):
+    """Ask the router to extend Faxbot's ports; True when it did. Blocking; never raises.
+
+    Only the router is asked: no network check, no STUN, no traceroute. A router
+    that no longer grants the ports has them closed (Router.renew) and the lease
+    forgotten, and the next network check decides whether to open them again.
+    """
+    lease = read_lease(values)
+    if lease is None or not lease.lifetime:
+        return False  # nothing to renew: no lease, or a permanent one
+    try:
+        renewed = (router or port_mapping.Router)(lease.gateway, client=lease.client or None).renew(lease)
+    except Exception:
+        renewed = None
+    _keep_lease(values, renewed)
+    return renewed is not None
+
+
+async def keep_router_ports(runtime, *, idle=600, router=None):
+    """Renew the ports the router opened for Faxbot at half their lifetime; close them when Faxbot stops.
+
+    Renewal asks the router only. A permanent lease (a router that grants
+    nothing else) is never renewed; a lease the router refuses to extend leads
+    to one full network check, which decides whether to open the ports again.
+    """
     from .config_runtime import run_lifecycle_step
 
     def current():
@@ -928,13 +953,17 @@ async def keep_router_ports(runtime, *, idle=600):
             lease = await run_lifecycle_step(lambda: read_lease(values))
             await asyncio.sleep(idle if lease is None else min(idle, max(30.0, lease.renew_at - time.time())))
             lease = await run_lifecycle_step(lambda: read_lease(values))
-            if lease is not None and time.time() >= lease.renew_at:
-                try:
+            if lease is None or time.time() < lease.renew_at:
+                continue
+            try:
+                async with _lock():  # never at the same time as a check that opens or closes ports
+                    renewed = await run_lifecycle_step(lambda: renew_lease(values, router=router))
+                if not renewed:
                     await run_check(runtime, unattended=True)
-                except asyncio.CancelledError:
-                    raise
-                except Exception:
-                    logging.getLogger(__name__).warning('Faxbot could not renew its fax ports on the router.')
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logging.getLogger(__name__).warning('Faxbot could not renew its fax ports on the router.')
     finally:
         try:
             values = current()

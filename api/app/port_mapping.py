@@ -74,6 +74,9 @@ class Lease:
 
     @property
     def renew_at(self):
+        """Half the lifetime from when it was granted; never for a permanent lease (lifetime 0)."""
+        if not self.lifetime:
+            return float('inf')
         return self.granted_at + max(self.lifetime, 120) / 2
 
     def as_dict(self):
