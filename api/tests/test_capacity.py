@@ -12,6 +12,7 @@ from api.app.config_values import ConfigurationValues
 from api.app.outbound_store import OutboundStore
 from api.app.schema import upgrade_schema
 from api.tests.test_schema import database  # noqa: F401 (fixture)
+from api.tests.test_batching import T0 as HELD_AT, accept as accept_held, sip  # noqa: F401 (fixture)
 
 
 NUMBER, OTHER = '+12025550123', '+12025550124'
@@ -98,21 +99,47 @@ def test_a_second_fax_to_the_same_number_waits_and_dials_after_the_first_finishe
     assert install.start().job_id == second
 
 
-def test_the_first_claim_reads_room_through_its_own_locked_connection(install):
-    # Reflecting on a second connection while the claim held the SQLite write lock
-    # left that connection blocking the next writer ("database is locked").
-    install.accept()
+def _connections_used(engine, action):
+    """How many pooled connections ``action`` checks out, and what it returned."""
     checkouts = []
 
     def checked_out(*_):
         checkouts.append(1)
 
-    sa.event.listen(install.engine, 'checkout', checked_out)
+    sa.event.listen(engine, 'checkout', checked_out)
     try:
-        assert install.claim() is not None
+        result = action()
     finally:
-        sa.event.remove(install.engine, 'checkout', checked_out)
-    assert len(checkouts) == 1
+        sa.event.remove(engine, 'checkout', checked_out)
+    return len(checkouts), result
+
+
+# Reflecting on a second connection while the claim held the SQLite write lock left
+# that connection blocking the next writer ("database is locked"). Every claim path
+# reads room through the one locked connection: a cloud fax, a fax over the trunk
+# (its lines, calls coming in, new calls a second, own numbers) and a group sent together.
+
+def test_the_first_claim_reads_room_through_its_own_locked_connection(install):
+    install.accept()
+    used, claim = _connections_used(install.engine, install.claim)
+    assert claim is not None and used == 1
+
+
+def test_the_first_claim_of_a_trunk_fax_reads_room_through_its_own_locked_connection(database, tmp_path):
+    install = Install(database, tmp_path, SIP_TRUNK_PRESET='telnyx', SIP_TRUNK_MAX_CALLS='2',
+                      SIP_TRUNK_CALLS_PER_SECOND='10', INBOUND_ENABLED='true', SIP_TRUNK_DIDS='+13035550100')
+    from api.app.routing.own_numbers import receiving_numbers
+    assert receiving_numbers(install.values) == {'+13035550100'}  # so the own-number check runs too
+    install.accept(trunk=True)
+    used, claim = _connections_used(install.engine, install.claim)
+    assert claim is not None and used == 1
+
+
+def test_the_first_claim_of_a_group_sent_together_reads_room_through_its_own_locked_connection(sip, database):
+    _, delivery, *_ = sip
+    first, second = accept_held(sip, at=HELD_AT), accept_held(sip, at=HELD_AT + timedelta(minutes=1))
+    used, claim = _connections_used(database, lambda: delivery.claim('worker', now=HELD_AT + timedelta(minutes=10)))
+    assert [member.job_id for member in claim.members] == [first, second] and used == 1
 
 
 def test_a_number_can_take_more_calls_at_once_or_no_limit(install):
