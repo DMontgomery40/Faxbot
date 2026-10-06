@@ -156,6 +156,7 @@ def test_a_new_container_that_repeats_a_communication_id_reports_each_call_that_
         _stub(tmp_path / 'tools', 'date', f'echo {arrival}\n')
         # A new container: a fresh spool with no list of reported sessions, and the same communication ID.
         (spool / 'etc' / 'faxbot-sessions-seen').unlink(missing_ok=True)
+        (spool / 'etc' / 'faxbot-sessions-done').unlink(missing_ok=True)
         (spool / 'log' / 'c000000003').write_text(FAILED_RECEIVE.replace("'17911994223.17208565062'", "''"))
         assert run('sessions', environment).returncode == 0
     reports = [json.loads(path.read_text()) for path in sorted((state / 'results').glob('*.report'))]
@@ -235,9 +236,14 @@ if [ $# -eq 1 ]; then controller; fi
 ( controller ) &
 exit 0
 """,
-    # faxgetty -D, faxq and hfaxd detach and keep running; faxgetty needs its modem's device.
+    # faxgetty -D, faxq and hfaxd detach and keep running; faxgetty needs its modem's device, and (as
+    # HylaFAX's UUCPLock does with kill(pid, 0)) waits for good on a modem lock whose process ID is alive.
     'faxgetty': r"""[ -e "$root/dev/$2" ] || exit 1
-( printf 'Running and idle\n' > "$root/status.$2"; become "faxgetty $*" ) &
+lock=$root/run/lock/LCK..$2
+state='Running and idle'
+if [ -f "$lock" ] && kill -0 "$(tr -cd '0-9' < "$lock")" 2>/dev/null; then state='Waiting for modem to come free'; fi
+[ -f "$root/force.$2" ] && state=$(cat "$root/force.$2")
+( printf '%s\n' "$state" > "$root/status.$2"; become "faxgetty $*" ) &
 exit 0
 """,
     'faxq': r"""( become "faxq" ) &
@@ -246,8 +252,9 @@ exit 0
     'hfaxd': r"""( become "hfaxd $*" ) &
 exit 0
 """,
+    # faxstat -s, with the CR LF line ends the real one prints.
     'faxstat': r"""for file in "$root"/status.*; do
-  [ -f "$file" ] && printf 'Modem %s (15555550100): %s\n' "${file##*.}" "$(cat "$file")"
+  [ -f "$file" ] && printf 'Modem %s (15555550100): %s\r\n' "${file##*.}" "$(cat "$file")"
 done
 exit 0
 """,
@@ -313,7 +320,8 @@ def entrypoint(tmp_path):
         'inbound_secret': 'synthetic-inbound-secret-0123456789', **secrets}.items()))
     environment = {'PATH': f'{tools}:/usr/bin:/bin', 'FAXBOT_ENGINE_ROOT': str(root), 'FAXBOT_DATA': str(data),
                    'FAXBOT_HYLAFAX_SPOOL': str(spool), 'FAXBOT_ENGINE_STATE': str(state),
-                   'FAXBOT_ENGINE_CHECK_SECONDS': '1', 'HOME': str(tmp_path)}
+                   'FAXBOT_ENGINE_CHECK_SECONDS': '1', 'FAXBOT_ENGINE_UNREADY_SECONDS': '1',
+                   'FAXBOT_ENGINE_READY_SECONDS': '3', 'HOME': str(tmp_path)}
     started = []
 
     def start():
@@ -391,6 +399,50 @@ def test_a_line_that_loses_its_modem_is_reported_and_the_engine_starts_again(ent
     status = _status(data)
     assert status['state'] == 'restarting', status
     assert status['reason'] == "Faxbot's fast fax service lost a fax line and is starting again."
+
+
+def test_a_modem_lock_left_by_a_restart_never_keeps_a_line_out_of_service(entrypoint):
+    """Live, 6 October 2026: the engine restarted itself during a call; faxgetty's lock on ttyIAX1 stayed in
+    the container and named a process ID that the restart gave to a live process, so line 1 waited on it for
+    good while the status said running. Every start clears the modem locks before the lines start."""
+    start, root, data = entrypoint
+    (root / 'run' / 'lock').mkdir(parents=True)
+    (root / 'run' / 'lock' / 'LCK..ttyIAX1').write_text(f'{os.getpid():10d}\n')
+    start()
+    assert _wait(lambda: _status(data).get('state') == 'running'), _status(data)
+    assert not (root / 'run' / 'lock' / 'LCK..ttyIAX1').exists()
+    assert (root / 'status.ttyIAX1').read_text().strip() == 'Running and idle'
+
+
+def test_a_line_that_never_gets_ready_is_never_reported_running(entrypoint):
+    """A line whose faxgetty is not ready takes no calls: the engine does not say it is running, and starts
+    again once the wait for its lines is over and no call is up."""
+    start, root, data = entrypoint
+    (root / 'force.ttyIAX1').write_text('Waiting for modem to come free\n')
+    process = start()
+    assert _wait(lambda: process.poll() is not None)
+    assert process.returncode == 1 and _status(data)['state'] == 'failed', _status(data)
+    assert (root / 'status.ttyIAX1').read_text().strip() == 'Waiting for modem to come free'
+
+
+def test_a_line_that_stops_being_ready_is_reported_and_running_again_once_it_recovers(entrypoint):
+    """After the start, a line that is not ready for a call (waiting on a modem lock) makes the status say so;
+    while the other line is in a call the engine does not restart, and once the line is ready again the
+    status says running. With no call up, the engine starts again."""
+    start, root, data = entrypoint
+    process = start()
+    assert _wait(lambda: _status(data).get('state') == 'running')
+    (root / 'status.ttyIAX2').write_text('Receiving facsimile\n')
+    (root / 'status.ttyIAX1').write_text('Waiting for modem to come free\n')
+    assert _wait(lambda: _status(data).get('state') == 'restarting'), _status(data)
+    assert _status(data)['reason'] == "Faxbot's fast fax service lost a fax line and is starting again."
+    assert process.poll() is None
+    (root / 'status.ttyIAX1').write_text('Running and idle\n')
+    assert _wait(lambda: _status(data).get('state') == 'running'), _status(data)
+    (root / 'status.ttyIAX2').write_text('Running and idle\n')
+    (root / 'status.ttyIAX1').write_text('Waiting for modem to come free\n')
+    assert _wait(lambda: process.poll() is not None)
+    assert process.returncode == 1
 
 
 def test_the_receive_script_refuses_files_outside_the_receive_queue(engine):
@@ -511,6 +563,47 @@ def test_a_received_call_that_left_no_fax_is_reported_once_with_the_engines_reas
     assert set((tmp_path / 'urls').read_text().splitlines()) == {'http://api:8080/_internal/hylafax/received-failed'}
 
 
+
+
+def test_a_received_call_the_engines_restart_cut_off_is_reported_never_skipped(engine, tmp_path):
+    """A session the engine's last start cut off never gets SESSION END (live, 6 October 2026: c000000004);
+    it is reported as a received call that left no fax, and a call still in progress is left alone."""
+    spool, state, data, environment = engine
+    (spool / 'log' / 'c000000007').unlink()  # the fixture's sent-fax log
+    cut_off = "Oct 06 02:44:56.78: [  106]: SESSION BEGIN 000000004 17208565062 (logging via thread)\n" \
+              "Oct 06 02:44:56.78: [  106]: CallID: '3034265097' '179125469614.17208565062' ''\n"
+    (spool / 'log' / 'c000000004').write_text(cut_off)
+    (spool / 'log' / 'c000000005').write_text(cut_off.replace('000000004', '000000005'))
+    marker = spool / 'etc' / 'faxbot-engine-started'
+    marker.write_text('')
+    os.utime(spool / 'log' / 'c000000004', (1791180000 - 60, 1791180000 - 60))
+    os.utime(marker, (1791180000, 1791180000))
+    os.utime(spool / 'log' / 'c000000005', (1791180000 + 60, 1791180000 + 60))  # after the start: in progress
+    assert run('sessions', environment).returncode == 0
+    (report,) = [json.loads(path.read_text()) for path in (state / 'results').glob('*.report')]
+    assert report['commid'] == '000000004' and report['token'] == '179125469614'
+    assert base64.b64decode(report['reason_b64']) == b'Call cut off: the fast fax service restarted'
+
+
+def test_sessions_read_only_the_sessions_above_the_last_finished_one(engine, tmp_path):
+    """The logs are never pruned; every round once read every one. Communication IDs rise one by one, so a
+    mark below which every session is finished keeps each round to the new and unfinished ones."""
+    spool, state, data, environment = engine
+    (spool / 'log' / 'c000000007').unlink()
+    (spool / 'log' / 'c000000003').write_text(FAILED_RECEIVE)
+    (spool / 'log' / 'c000000004').write_text(RECEIVED)
+    (spool / 'log' / 'c000000005').write_text(FAILED_RECEIVE.replace('SESSION END\n', ''))  # still in progress
+    (spool / 'log' / 'c000000006').write_text(FAILED_RECEIVE)
+    assert run('sessions', environment).returncode == 0
+    assert (spool / 'etc' / 'faxbot-sessions-done').read_text().strip() == '000000004'
+    assert len(list((state / 'results').glob('*.report'))) == 2  # 3 and 6
+    # Sessions at or below the mark are not read again, whatever their log says now.
+    (spool / 'log' / 'c000000003').write_text('unreadable now')
+    (spool / 'log' / 'c000000003').chmod(0)
+    (spool / 'log' / 'c000000005').write_text(FAILED_RECEIVE)
+    assert run('sessions', environment).returncode == 0
+    assert (spool / 'etc' / 'faxbot-sessions-done').read_text().strip() == '000000006'
+    assert len(list((state / 'results').glob('*.report'))) == 3
 
 
 def test_a_job_reports_speed_and_compression_only_when_the_session_agreed_them(engine, tmp_path):

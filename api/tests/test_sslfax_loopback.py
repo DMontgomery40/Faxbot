@@ -464,7 +464,7 @@ def bring_up(tmp_path, label, made, *, faxbot_t38, carrier_gateway, peer_listene
     # line, live on 6 October 2026, still looked healthy to Asterisk), and each line holds only its own port.
     engine_daemons = lambda lines: sorted(  # noqa: E731
         [f'iaxmodem ttyIAX{n}' for n in range(1, lines + 1)] + [f'faxgetty -D ttyIAX{n}' for n in range(1, lines + 1)]
-        + ['faxq', 'hfaxd -i 4559'])
+        + ['faxq', 'hfaxd -i 4559', 'busybox syslogd -n -s 0 -f /etc/faxbot-syslog.conf'])
     expected = {
         asterisk: ['asterisk -f -C /etc/asterisk/asterisk.conf'],
         carrier: ['asterisk -f -C /etc/asterisk/asterisk.conf'],
@@ -1176,9 +1176,17 @@ def test_k_after_an_engine_restart_and_a_fresh_start_received_calls_still_reach_
     docker.asterisk(context['asterisk'], 'core set verbose 3')
     proof = {'lines_at_start': engine_lines(docker, context['engine'])}
     proof['first'] = receive_through_the_engine(context, 1)
+    # A modem lock left in the container by a restart, naming a process ID that is alive after it (live,
+    # 6 October 2026: line 1 then waited on it for good). The engine clears it and both lines take calls.
+    docker.run('exec', '-u', 'uucp', context['engine'], 'sh', '-c',
+               'rm -f /run/lock/LCK..ttyIAX1; printf "%10d\\n" 1 > /run/lock/LCK..ttyIAX1')
     started = int(time.time())
     docker.run('restart', context['engine'])
     engine_running_again(context, started)
+    proof['lock_after_restart'] = docker.run('exec', '-u', 'root', context['engine'], 'ls', '/run/lock',
+                                             check=False).stdout.split()
+    proof['faxstat_after_restart'] = docker.run('exec', '-u', 'root', context['engine'], 'faxstat', '-s',
+                                                check=False).stdout
     proof['lines_after_engine_restart'] = engine_lines(docker, context['engine'])
     proof['second'] = receive_through_the_engine(context, 2)
     started = int(time.time())
@@ -1191,6 +1199,12 @@ def test_k_after_an_engine_restart_and_a_fresh_start_received_calls_still_reach_
                 [4569 + number for number in range(1, ENGINE_LINES + 1)])
     for moment in ('lines_at_start', 'lines_after_engine_restart', 'lines_after_fresh_start'):
         assert tuple(proof[moment]) == expected, proof
+    assert 'LCK..ttyIAX1' not in proof['lock_after_restart'], proof
+    assert proof['faxstat_after_restart'].count(': Running and idle') == ENGINE_LINES, proof
+    # HylaFAX's own server messages now reach the container log (a syslog relay in the engine).
+    engine_log = docker.run('logs', context['engine'], check=False)
+    assert 'FaxGetty[' in engine_log.stdout + engine_log.stderr, proof
+    assert 'runuser' not in engine_log.stdout + engine_log.stderr, proof
     for name in ('first', 'second', 'third'):
         assert proof[name]['fax']['pages'] == 2, proof
         assert proof[name]['call'] and proof[name]['call'][0]['call_id'].startswith('engine.'), proof
