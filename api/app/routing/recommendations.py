@@ -73,8 +73,8 @@ def delivered_costs_for(store, number=None):
     return {destination: route_views(figures) for destination, figures in found.items()}
 
 
-NO_SENDING = (f'No cheaper routes yet. Faxbot compares routes for a number once each route has delivered at least '
-              f'{MIN_DELIVERED} faxes to it in the last {WINDOW_DAYS} days.')
+NO_SENDING = (f'Nothing to suggest yet. Faxbot compares the cost of two routes once each has delivered '
+              f'{MIN_DELIVERED} faxes to the same number in the last {WINDOW_DAYS} days.')
 
 
 def sending_recommendations(store, revision, bound):

@@ -434,7 +434,7 @@ def test_recipients_and_recommendations_show_cost_per_delivered_fax(routed_cli, 
     assert cli('costs', 'rate-cards', '--replace', cards).exit_code == 0
     empty = cli('costs', 'recommendations')
     assert empty.exit_code == 0 and 'Sending' in empty.stdout
-    assert 'No cheaper routes yet.' in ' '.join(empty.stdout.split())
+    assert 'Nothing to suggest yet.' in ' '.join(empty.stdout.split())
     # SignalWire: 4 of 5 delivered at $0.10 a call; Phaxio: 3 of 3 at $0.07. SignalWire is the chosen route.
     sent = _charged_faxes(cli, number, 'signalwire', ['success'] * 4 + ['failed'], '0.10', call_seconds=65)
     _charged_faxes(cli, number, 'phaxio', ['success'] * 3, '0.07')

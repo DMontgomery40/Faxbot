@@ -314,7 +314,7 @@ def _read_sending(api):
 def _show_sending(out, result):
     items = result.get('items') or []
     if not items:
-        out.line(result.get('empty_sentence') or 'No cheaper routes yet.')
+        out.line(result.get('empty_sentence') or 'Nothing to suggest yet.')
         return
     out.table(['Fax number', 'Name', 'Sent now by', 'Per delivered fax', 'Cheaper route', 'Per delivered fax',
                'Saves per fax'],

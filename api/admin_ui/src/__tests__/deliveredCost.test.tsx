@@ -79,7 +79,7 @@ describe('Costs → Recommendations', () => {
     let items = [recommendation];
     server.use(
       http.get('/routing/recommendations/sending', () => HttpResponse.json({ window_days: 30, min_delivered: 3, items,
-        empty_sentence: 'No cheaper routes yet.' })),
+        empty_sentence: 'Nothing to suggest yet.' })),
       http.patch('/routing/destinations/:number', async ({ request }) => {
         patched.push(await request.json());
         items = [];
@@ -106,7 +106,7 @@ describe('Costs → Recommendations', () => {
       sentence: 'Your HumbleFax plan already includes faxes to this number. Telnyx cost $0.0089 per delivered fax here over the last 30 days.',
     };
     server.use(http.get('/routing/recommendations/sending', () => HttpResponse.json({ window_days: 30, min_delivered: 3,
-      items: [plan], empty_sentence: 'No cheaper routes yet.' })));
+      items: [plan], empty_sentence: 'Nothing to suggest yet.' })));
     render(<Recommendations client={client()} canWrite={false} />);
     const card = await screen.findByTestId('sending-recommendation');
     expect(within(card).getByText(plan.sentence)).toBeTruthy();

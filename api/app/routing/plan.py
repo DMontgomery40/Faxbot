@@ -37,8 +37,8 @@ REASON_TEXT = {
 # Why a sent fax went by its route, from the reason stored when Faxbot chose it; no amounts are stored.
 DECIDED_TEXT = {
     'alternative': 'Your first-choice route was not available, so Faxbot used this one.',
-    'unreliable': 'Recent faxes to this number often failed on this route, but the other routes were unavailable.',
-    'unknown_cost': 'No route had a known price, so Faxbot used the first one in your list.',
+    'unreliable': 'Faxes to this number often failed on this route, but no other route was available.',
+    'unknown_cost': 'None of your routes had a price, so Faxbot used the first one in your list.',
 }
 
 
