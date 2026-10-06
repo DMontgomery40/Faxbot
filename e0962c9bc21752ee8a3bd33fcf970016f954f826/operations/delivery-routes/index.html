@@ -1,0 +1,3512 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+      
+      
+        <link rel="canonical" href="https://docs.faxbot.net/e0962c9bc21752ee8a3bd33fcf970016f954f826/operations/delivery-routes/">
+      
+      
+        <link rel="prev" href="../">
+      
+      
+        <link rel="next" href="../receiving/">
+      
+      
+      <link rel="icon" href="../../assets/images/favicon-32x32.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.6.21">
+    
+    
+      
+        <title>Delivery routes - Faxbot Docs</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.2a3383ac.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.06af60db.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../overrides/extra.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="teal">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#delivery-routes" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow md-header--lifted" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="Faxbot Docs" class="md-header__button md-logo" aria-label="Faxbot Docs" data-md-component="logo">
+      
+  <img src="../../assets/images/faxbot_mini_banner_dark.png" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Faxbot Docs
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Delivery routes
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="teal"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="teal"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/DMontgomery40/Faxbot" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.0.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    DMontgomery40/Faxbot
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+    
+      
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../release-notes/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Release notes
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../getting-started/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Getting started
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../setup/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Setup
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../security/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Security
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../cli/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Operations
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../reference/cli/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../plugins/registry/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Provider plugins (legacy)
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../admin-console/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Admin Console
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../apps/ios/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Apps
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+    
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+  
+
+<nav class="md-nav md-nav--primary md-nav--lifted md-nav--integrated" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="Faxbot Docs" class="md-nav__button md-logo" aria-label="Faxbot Docs" data-md-component="logo">
+      
+  <img src="../../assets/images/faxbot_mini_banner_dark.png" alt="logo">
+
+    </a>
+    Faxbot Docs
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/DMontgomery40/Faxbot" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.0.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    DMontgomery40/Faxbot
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Home
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../release-notes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Release notes
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    Getting started
+    
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            Getting started
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Overview
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="https://github.com/DMontgomery40/Faxbot/blob/main/CONTRIBUTING.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Contributing
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../setup/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    Setup
+    
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            Setup
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../setup/phaxio/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Phaxio (Cloud)
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../setup/sinch/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Sinch (Cloud v3)
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../setup/sip-asterisk/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    SIP/Asterisk (Self‑hosted)
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../setup/sip-trunk/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    SIP trunk (your carrier)
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../setup/network/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Network for fax over IP
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../setup/sslfax/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    SSL Fax engine
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../setup/avaya/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Avaya IP Office and Aura
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../setup/documo/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Documo (mFax)
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../setup/humblefax/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    HumbleFax
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../setup/efax/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    eFax
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../setup/signalwire/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    SignalWire
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../setup/freeswitch/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    FreeSWITCH (existing installations)
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../setup/sip-numbers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Fax numbers on SIP
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../setup/test-mode/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Test Mode
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../setup/public-access/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Public Access
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../setup/webhooks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Webhooks
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../deployment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Deployment
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../security/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    Security
+    
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            Security
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../security/authentication/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Authentication
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../security/access-control/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Access Control
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../security/oauth-setup/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    OAuth/OIDC Setup
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../security/network/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Network & Transports
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../HIPAA_REQUIREMENTS/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    HIPAA Requirements
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" checked>
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    Operations
+    
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_6" id="__nav_6_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            Operations
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Command line
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    Delivery routes
+    
+  </span>
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    Delivery routes
+    
+  </span>
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#what-you-see" class="md-nav__link">
+    <span class="md-ellipsis">
+      What you see
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#how-faxbot-picks-a-route" class="md-nav__link">
+    <span class="md-ellipsis">
+      How Faxbot picks a route
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#adding-routes" class="md-nav__link">
+    <span class="md-ellipsis">
+      Adding routes
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#when-a-route-fails" class="md-nav__link">
+    <span class="md-ellipsis">
+      When a route fails
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#sending-together" class="md-nav__link">
+    <span class="md-ellipsis">
+      Sending together
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#costs" class="md-nav__link">
+    <span class="md-ellipsis">
+      Costs
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Costs">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#flat-monthly-plans" class="md-nav__link">
+    <span class="md-ellipsis">
+      Flat monthly plans
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#published-prices-faxbot-ships" class="md-nav__link">
+    <span class="md-ellipsis">
+      Published prices Faxbot ships
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rate-cards" class="md-nav__link">
+    <span class="md-ellipsis">
+      Rate cards
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#sslfax" class="md-nav__link">
+    <span class="md-ellipsis">
+      SSLFax
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#case-packets" class="md-nav__link">
+    <span class="md-ellipsis">
+      Case packets
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#api" class="md-nav__link">
+    <span class="md-ellipsis">
+      API
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../receiving/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Receiving faxes
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../intake/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Intake
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../work/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Work
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../direct-delivery/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Direct delivery
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+          
+          
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6_8" >
+        
+          
+          <label class="md-nav__link" for="__nav_6_8" id="__nav_6_8_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    Tools
+    
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6_8">
+            <span class="md-nav__icon md-icon"></span>
+            Tools
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../terminal/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Terminal
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tools/scripts-and-tests/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Scripts & Tests
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tools/node-mcp-scripts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Node MCP Scripts
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tools/api-tests/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    API Tests
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tools/phaxio-e2e-test/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Phaxio E2E Test
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../troubleshooting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Troubleshooting
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_7" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../reference/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    Reference
+    
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_7" id="__nav_7_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            Reference
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Command line
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_7_3" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../generated/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    Generated source
+    
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_7_3" id="__nav_7_3_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_7_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7_3">
+            <span class="md-nav__icon md-icon"></span>
+            Generated source
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../generated/configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Configuration
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../generated/providers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Providers
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_7_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_7_4" id="__nav_7_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    API
+    
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_7_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7_4">
+            <span class="md-nav__icon md-icon"></span>
+            API
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Reference
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/access-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Access and Sign-in
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_7_5" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../sdks/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    SDKs
+    
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_7_5" id="__nav_7_5_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_7_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7_5">
+            <span class="md-nav__icon md-icon"></span>
+            SDKs
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../sdks/node/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Node
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../sdks/python/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Python
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_7_6" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../mcp/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    MCP
+    
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_7_6" id="__nav_7_6_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_7_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7_6">
+            <span class="md-nav__icon md-icon"></span>
+            MCP
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mcp/node/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Node
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mcp/python/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Python
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mcp/transports/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Transports
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_8" >
+        
+          
+          <label class="md-nav__link" for="__nav_8" id="__nav_8_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    Provider plugins (legacy)
+    
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_8">
+            <span class="md-nav__icon md-icon"></span>
+            Provider plugins (legacy)
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../plugins/registry/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Provider plugins
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../plugins/config-file/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Plugin config file
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_9" >
+        
+          
+          <label class="md-nav__link" for="__nav_9" id="__nav_9_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    Admin Console
+    
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_9_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_9">
+            <span class="md-nav__icon md-icon"></span>
+            Admin Console
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../admin-console/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    The console
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../admin-console/overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Overview
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../admin-console/faxes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Faxes
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../admin-console/numbers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Numbers
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../admin-console/recipients/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Recipients
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../admin-console/providers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Providers
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../admin-console/costs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Costs
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../admin-console/access/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Access
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../admin-console/system/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    System
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../admin-console/setup-wizard/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Setup Wizard
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../admin-console/settings/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Saving settings
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../admin-console/diagnostics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Diagnostics
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../admin-console/diagnostics-matrix/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Diagnostics Matrix
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../admin-console/api-keys/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    API Keys
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_10" >
+        
+          
+          <label class="md-nav__link" for="__nav_10" id="__nav_10_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    Apps
+    
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_10_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_10">
+            <span class="md-nav__icon md-icon"></span>
+            Apps
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../apps/ios/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    iOS
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+    <a href="https://github.com/DMontgomery40/Faxbot/edit/main/docs/operations/delivery-routes.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
+    </a>
+  
+  
+
+
+<h1 id="delivery-routes">Delivery routes<a class="headerlink" href="#delivery-routes" title="Permanent link">&para;</a></h1>
+<p>Faxbot records how every fax was sent and what it cost, and uses that to send each fax the cheapest way that works for its number.</p>
+<p>In the Admin Console, spending, prices and savings are under <strong>Costs</strong>, and the numbers you fax and direct partners under <strong>Recipients</strong>.</p>
+<p>Faxbot also limits concurrent calls to each destination and, for calls over your SIP trunk, to the trunk's configured capacity. A fax that reaches a limit waits for room; it does not fail because of the limit. By default Faxbot makes one call at a time to each number, because most fax machines take one call at a time. To change that for one number, open its <strong>Details</strong> under <strong>Recipients → Recipients</strong> and choose <strong>Calls at once to this number</strong>: 2, 3, 4, 5 or 10 at once, or <strong>No limit</strong> (<code>max_calls</code> 0 in the API). Calls to a destination are limited across phone routes because the receiving fax line is the same whichever route calls it.</p>
+<h2 id="what-you-see">What you see<a class="headerlink" href="#what-you-see" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Spending</strong> shows the last 30 days per route: faxes sent and delivered, billed minutes, what the carrier charged, an estimate for faxes it has not billed yet, and how many are still waiting for the carrier's bill. Calls received on your SIP trunk get their own card. See <a href="#costs">Costs</a>.</li>
+<li><strong>Fax numbers</strong> lists every number Faxbot has sent to, which routes reached it, how often each route delivered, and what the number cost. A number's <strong>Details</strong> also has its <a href="#sending-together">sending together</a> setting.</li>
+<li><strong>Rate cards</strong> hold the prices Faxbot uses for its estimates.</li>
+<li><strong>Direct partners</strong> are organizations that receive your documents straight into their Faxbot, with no fax call. See <a href="../direct-delivery/">Direct delivery</a>.</li>
+</ul>
+<h2 id="how-faxbot-picks-a-route">How Faxbot picks a route<a class="headerlink" href="#how-faxbot-picks-a-route" title="Permanent link">&para;</a></h2>
+<p>For each fax, Faxbot puts the available routes in this order:</p>
+<ol>
+<li>A verified direct partner for the number, if there is one.</li>
+<li>The cheapest route that has worked reliably for that number.</li>
+<li>The other routes, cheapest first. A route without a known price comes after the routes with one.</li>
+<li>Routes that have recently failed for that number. These come last.</li>
+</ol>
+<p>Each route in a number's <strong>Details</strong> says what decided its place:</p>
+<table>
+<thead>
+<tr>
+<th>Reason</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>The cheapest route that works reliably for this number.</td>
+<td>Every reliable route has a known price, and this one costs least.</td>
+</tr>
+<tr>
+<td>The cheapest route with a known price that works reliably for this number.</td>
+<td>Another reliable route has no rate card, so Faxbot cannot say it is the cheapest overall.</td>
+</tr>
+<tr>
+<td>Included in your HumbleFax plan.</td>
+<td>The route's rate card is a flat monthly plan, so a fax adds nothing.</td>
+</tr>
+<tr>
+<td>More reliable for this number; its cost is unknown.</td>
+<td>Cheaper routes often failed for this number, and this route has no rate card.</td>
+</tr>
+<tr>
+<td>Your outbound fax provider; its cost is unknown.</td>
+<td>No route has a known price, so your configured order decides.</td>
+</tr>
+<tr>
+<td>Your outbound fax provider.</td>
+<td>There is only one route to choose from.</td>
+</tr>
+</tbody>
+</table>
+<p>A route whose cost is unknown is never called the cheapest.</p>
+<p>A route counts as unreliable for a number after at least three finished faxes with less than 80% delivered in the last 30 days. Set <code>FAX_ROUTE_MIN_SUCCESS_PERCENT</code> to change that threshold.</p>
+<p>You can override the order for one number. Open the number's <strong>Details</strong> and choose a <strong>Preferred route</strong>. Faxbot then tries that route first.</p>
+<p>The route chosen for each fax, and the reason, is recorded before the fax is sent.</p>
+<h2 id="adding-routes">Adding routes<a class="headerlink" href="#adding-routes" title="Permanent link">&para;</a></h2>
+<p>Your outbound provider is always a route. To let Faxbot use more providers, list them in <code>FAX_OUTBOUND_ROUTES</code>:</p>
+<div class="highlight"><pre><span></span><code>FAX_BACKEND=sip
+FAX_OUTBOUND_ROUTES=signalwire,phaxio
+</code></pre></div>
+<p>Each listed provider needs its own settings filled in, as if it were the outbound provider. Faxbot uses the settings that were active when each fax was accepted.</p>
+<p>A provider that is not ready is skipped. A cloud provider needs its credentials. An Asterisk route needs a connected Asterisk: Faxbot connects to it when Asterisk is your outbound or inbound provider, or when <code>sip</code> is listed as an extra route. A common setup receives on your own Asterisk, sends through a cloud provider, and lists <code>sip</code> as an extra route. When a SIP route needs a fax image that the fax does not have yet, Faxbot makes one from the original PDF before sending.</p>
+<h2 id="when-a-route-fails">When a route fails<a class="headerlink" href="#when-a-route-fails" title="Permanent link">&para;</a></h2>
+<p>When a provider reports that a fax failed, Faxbot sends it again on the next route it has not tried yet. It does this at most twice per fax. Each retry is a new attempt on the same fax, and the fax history shows why it was retried. While another route remains, the fax status goes from <code>in_progress</code> back to <code>queued</code> and never shows <code>failed</code>.</p>
+<p>Faxbot never resends a fax whose outcome is unknown, for example when a provider stopped answering mid-request. That fax waits for confirmation from the provider, or from you.</p>
+<h2 id="sending-together">Sending together<a class="headerlink" href="#sending-together" title="Permanent link">&para;</a></h2>
+<p>Faxbot can hold short faxes to the same number for a few minutes and send them together in one call. This helps on a SIP trunk billed by the minute with a minimum. On Telnyx, for example, every call is billed at least one minute, so three one-page faxes sent separately cost three minutes but together cost about two.</p>
+<p>It is off for every number. Turn it on for one number in its <strong>Details</strong>, under <strong>Sending together</strong>. You must first tick <strong>This recipient has agreed to receive several documents in one call.</strong> Faxbot keeps a record of who turned it on or changed it, and when.</p>
+<ul>
+<li><strong>Longest wait</strong> (default 10 minutes) is how long a fax may wait for others.</li>
+<li><strong>Most pages in one call</strong> (default 30) counts the separator pages.</li>
+<li><strong>Faxes from different senders may share a call</strong> is off by default. While it is off, only faxes from the same person or API key go together.</li>
+</ul>
+<p>Faxbot holds a fax only when all of these are true:</p>
+<ul>
+<li>the fax goes over Faxbot's own SIP trunk;</li>
+<li>the trunk's rate card charges per call, or bills with a minimum of at least 30 seconds;</li>
+<li>the fax fits in one call together with its separator page.</li>
+</ul>
+<p>On per-page and flat-plan routes, faxes go straight away, and the setting says why in one sentence. For example: "On HumbleFax's flat plan, sending together saves nothing, so faxes go straight away."</p>
+<p>A waiting fax goes when any of these happens:</p>
+<ul>
+<li>its longest wait ends;</li>
+<li>the next fax for that number would not fit in the call;</li>
+<li>someone chooses <strong>Send now</strong> in Sent, the <strong>Send now</strong> box on Send a fax, or <code>faxbot send --now</code>. This takes the faxes already waiting for that number with it.</li>
+</ul>
+<p>One call carries the documents in the order they were accepted. Each document follows a separator page, for example "Document 2 of 3 · Faxbot 7f3a9c21 · 4 pages · from Front Desk". The reference is the sender's case reference when the fax belongs to one. Otherwise it is "Faxbot" and the first 8 characters of the fax's ID. Job Details shows the same reference.</p>
+<p>Each fax keeps its own record and its own result. The receiving machine confirms pages in order:</p>
+<ul>
+<li>A fax whose separator and pages were all confirmed is delivered.</li>
+<li>A fax the call never reached failed, as a single fax would. Faxbot may try it on the next route.</li>
+<li>If the call failed after part of a fax was confirmed, that fax failed with a sentence saying how many of its pages were confirmed. Faxbot never sends it again by itself; a person decides.</li>
+<li>If the call ended with no page count, every fax in it waits for a person, like any fax whose outcome is unknown.</li>
+</ul>
+<p>Faxbot does not send a shared call again automatically. If the SIP trunk is unavailable when the faxes are due, each fax goes on its own instead. A fax whose document cannot be read goes on its own; the others still go together.</p>
+<p>Sent's fax details say "Sent in one call with 2 other faxes" and shows the fax's share of the call's charge. The charge is split by pages, each fax with its separator page. The number's <strong>Details</strong> shows how many calls were saved in the last 30 days and about how much money. That figure is an estimate: separate calls are priced from the rate card the way Faxbot estimates any fax, and compared with the call's reported charge, or with its estimate when no charge has been reported. In Spending, a shared call counts once.</p>
+<p>From the command line: <code>faxbot recipients together show|set|off NUMBER</code> (<code>set</code> takes <code>--recipient-agreed</code>, <code>--wait</code>, <code>--max-pages</code> and <code>--mixed-senders</code>), <code>faxbot send --now</code> and <code>faxbot sent send-now FAX_ID</code>.</p>
+<p>Tested on 4 October 2026 over a local T.38 test line between two Faxbot fax engines (<code>make native-proof</code>). One call carried two faxes, 5 pages including separators, in 39 seconds, and both were delivered with identical pages. A call ended after 27 seconds: the sender counted 2 confirmed pages, the first fax was delivered and the second failed. In an earlier cut, the receiver held 1 page while the sender counted 0, so the receiver can hold one page more than the sender saw confirmed. Not yet confirmed on a live trunk.</p>
+<h2 id="costs">Costs<a class="headerlink" href="#costs" title="Permanent link">&para;</a></h2>
+<p>Faxbot keeps three amounts for each attempt:</p>
+<ul>
+<li><strong>Estimated</strong> comes from your rate card and the call or pages Faxbot observed. It is rounded per call under the card's billing rule. With whole-minute billing, a 59-second call and a 61-second call bill as 1 and 2 minutes, which is 3 minutes in total.</li>
+<li><strong>Charged</strong> is the amount the provider or carrier reports. Faxbot reads SignalWire's reported fax price and, for faxes sent or received on a Telnyx SIP trunk, what Telnyx billed for each call (see <a href="../../setup/sip-trunk/#what-a-call-costs">What a call costs</a>). A charge can arrive after the fax is delivered, so Faxbot keeps asking for up to 7 days.</li>
+<li><strong>Settled</strong> is the charge once it has stopped changing. A charge seen a day after the call ended is treated as settled.</li>
+</ul>
+<p>A charge the provider has not reported stays empty; Faxbot never fills it in with its own estimate. For a fax with an unknown outcome, the estimate assumes the fax was sent. A failed attempt that the carrier charged for counts in that fax's total. Billing never changes a fax's delivery status.</p>
+<p>Spending adds up charges where they exist and estimates only for faxes without one, so the same fax is never counted twice. Each route card says:</p>
+<ul>
+<li>what the carrier charged, for how many faxes;</li>
+<li>the estimate for faxes not billed yet;</li>
+<li>how many are waiting for the carrier's bill;</li>
+<li>how many could not be matched to exactly one carrier record (their cost stays unknown);</li>
+<li>calls the carrier billed that Faxbot has no record of, for example a received fax whose hand-over failed before Faxbot recorded its call. Their charge is part of the charged total and is listed on its own line, such as "Telnyx billed 1 call Faxbot has no record of: $0.0032."</li>
+</ul>
+<p>The Overview's <strong>Spending, last 30 days</strong> card reads the same figures: one line per sending route, one for calls received on the SIP trunk, and the total. A provider with no published price and no rate card reads "No published price; add your rate".</p>
+<p>Faxbot finds calls it has no record of by reading the trunk's Telnyx records for the last two days once an hour. It only counts priced records on the trunk's own numbers (its fax numbers and caller ID) that are not within five minutes of any call Faxbot recorded with the same numbers. When exactly one fax received over the trunk, with no call record, was received within 45 seconds of the call's end and has the same numbers where it knows them, the charge is shown on that fax in Received, and <code>faxbot costs spending</code> says the call "reached Faxbot without a call record; its fax is in Received". For a fax brought in later, Faxbot uses the time the trunk received it; a fax whose numbers were never learned is matched by that time alone, and only when no other such fax or record is that close. The charged line counts these calls too, for example "Telnyx charged $0.0096 for 3 calls, 1 without a Faxbot call record."</p>
+<p>Sent's fax details show one fax's cost, for example "Telnyx charged $0.005 for this call." or "Cost not reported yet." Received shows the same line for each received fax under <strong>Received through</strong>.</p>
+<p>From the command line:</p>
+<div class="highlight"><pre><span></span><code>faxbot<span class="w"> </span>costs<span class="w"> </span>spending<span class="w">             </span><span class="c1"># spending per route and for received calls</span>
+faxbot<span class="w"> </span>costs<span class="w"> </span>reconcile<span class="w">            </span><span class="c1"># ask Telnyx now, instead of waiting for the next check</span>
+faxbot<span class="w"> </span>costs<span class="w"> </span>fax<span class="w"> </span>FAX_ID<span class="w">           </span><span class="c1"># one sent fax</span>
+faxbot<span class="w"> </span>costs<span class="w"> </span>received<span class="w"> </span>--all<span class="w">       </span><span class="c1"># every received fax you can see; or one: faxbot costs received ID</span>
+faxbot<span class="w"> </span>costs<span class="w"> </span>plans<span class="w"> </span>--in-use<span class="w">       </span><span class="c1"># published plans for the services you send with that have no price yet</span>
+faxbot<span class="w"> </span>costs<span class="w"> </span>recommendations<span class="w">      </span><span class="c1"># route, plan and receiving-cost advice</span>
+</code></pre></div>
+<p>If a call record with measured connected time is available for an attempt, Faxbot uses it instead of its own timing, which includes queueing and ringing.</p>
+<h3 id="flat-monthly-plans">Flat monthly plans<a class="headerlink" href="#flat-monthly-plans" title="Permanent link">&para;</a></h3>
+<p>Some providers charge a monthly fee and nothing per fax. Give that provider a rate card with a <strong>Monthly plan fee</strong> and leave the per-minute, per-page and per-call prices at 0. Faxbot then shows the route as "Included in your HumbleFax plan ($10 a month)" in Spending, on the Overview and in route recommendations, and ranks it as costing nothing extra per fax. The fee is never added to one fax. In spending totals the fee counts once per 30 days, pro-rated by day for other periods.</p>
+<h3 id="published-prices-faxbot-ships">Published prices Faxbot ships<a class="headerlink" href="#published-prices-faxbot-ships" title="Permanent link">&para;</a></h3>
+<p>Every time Faxbot starts, each provider you send or receive with that has never had a rate card gets the card below, marked with its advertised date and source. You can edit or remove it like any other card. Faxbot records the addition in the audit log, and a card you removed or replaced is never added back. Prices were read on 2026-10-03 from each provider's own pages:</p>
+<table>
+<thead>
+<tr>
+<th>Provider</th>
+<th>Price</th>
+<th>Source</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Phaxio, sending and receiving (US and Canada)</td>
+<td>7 cents per page; 5 cents from 50,000 pages a month, 4 cents from 100,000; numbers $2 a month</td>
+<td><a href="https://www.phaxio.com/pricing/">phaxio.com/pricing</a>, <a href="https://www.phaxio.com/">phaxio.com</a></td>
+</tr>
+<tr>
+<td>Sinch Fax API, sending and receiving</td>
+<td>$0.045 per page</td>
+<td><a href="https://sinch.com/voice/fax-api/">sinch.com/voice/fax-api</a></td>
+</tr>
+<tr>
+<td>SignalWire Fax, sending and receiving</td>
+<td>$0.0095 per minute (48 contiguous states and Canada); no billing increment published, so whole minutes are assumed</td>
+<td><a href="https://signalwire.com/pricing/fax">signalwire.com/pricing/fax</a></td>
+</tr>
+<tr>
+<td>HumbleFax</td>
+<td>$10 a month to send and receive unlimited faxes, no overage charges</td>
+<td><a href="https://humblefax.com/faq">humblefax.com/faq</a></td>
+</tr>
+<tr>
+<td>Your SIP trunk</td>
+<td>the trunk carrier's per-minute prices in <a href="../../setup/sip-trunk/#what-a-call-costs">What a call costs</a></td>
+<td>carrier pages</td>
+</tr>
+<tr>
+<td>Documo</td>
+<td>no published fax API price; add your contracted rate</td>
+<td><a href="https://www.documo.com/pricing/">documo.com/pricing</a></td>
+</tr>
+<tr>
+<td>eFax</td>
+<td>the API is priced by quote, so no card; <strong>Rate cards</strong> names eFax's cheapest published plan for your installation country and <strong>Use a published plan as my estimate</strong> adds it as your own card when you choose (<code>faxbot costs plans efax</code>)</td>
+<td><a href="../../setup/efax/#prices">eFax</a></td>
+</tr>
+</tbody>
+</table>
+<h2 id="rate-cards">Rate cards<a class="headerlink" href="#rate-cards" title="Permanent link">&para;</a></h2>
+<p>Add one rate card per provider. Enter the provider's advertised price per minute, per page and per call, how they round call time, and where and when the price was advertised. Faxbot keeps old versions, so earlier estimates still show the price that applied.</p>
+<p>These are examples of advertised prices (advertised on 2026-10-03). Check your own account, because prices vary by destination and plan:</p>
+<table>
+<thead>
+<tr>
+<th>Provider</th>
+<th>Product</th>
+<th>Advertised price</th>
+<th>Source</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Telnyx</td>
+<td>Elastic SIP trunk, US outbound</td>
+<td>from $0.005 per minute</td>
+<td><a href="https://telnyx.com/pricing/elastic-sip">telnyx.com/pricing/elastic-sip</a></td>
+</tr>
+<tr>
+<td>Telnyx</td>
+<td>Elastic SIP trunk, US inbound</td>
+<td>from $0.0032 per minute</td>
+<td><a href="https://telnyx.com/pricing/elastic-sip">telnyx.com/pricing/elastic-sip</a></td>
+</tr>
+<tr>
+<td>Telnyx</td>
+<td>Fax API, US</td>
+<td>$0.007 per page, plus SIP usage</td>
+<td><a href="https://telnyx.com/pricing/fax">telnyx.com/pricing/fax</a></td>
+</tr>
+<tr>
+<td>SignalWire</td>
+<td>Fax, lower 48 states and Canada</td>
+<td>$0.0095 per minute</td>
+<td><a href="https://signalwire.com/pricing/fax">signalwire.com/pricing/fax</a></td>
+</tr>
+</tbody>
+</table>
+<p>Running your own fax engine on a SIP trunk removes the per-page fee. For example, a 20-page fax takes about 10.5 minutes, billed as 11 whole minutes: about $0.055 over a trunk at $0.005 per minute, against about $0.195 through a per-page API at $0.007 per page plus the same minutes.</p>
+<p>If the installation ships <code>config/rate_cards.json</code>, Faxbot loads it once as starting rate cards when you have none. Your edits always take precedence.</p>
+<h2 id="sslfax">SSLFax<a class="headerlink" href="#sslfax" title="Permanent link">&para;</a></h2>
+<p>SSLFax is a HylaFAX+ feature. During an ordinary fax call, it moves the pages onto an encrypted internet connection, so the call ends sooner. It was tested on 2026-10-03 with HylaFAX+ 7.0.11 at both ends over a local test line. A 6-page fax took 12 seconds instead of 50, with identical pages, and fell back to an ordinary fax when the connection could not be made. It needs:</p>
+<ul>
+<li>a fax engine with SSLFax at both ends</li>
+<li>an audio (G.711) call rather than T.38</li>
+<li>an internet address the sender can reach, to receive this way</li>
+</ul>
+<p>It saves money only on routes billed by the minute. Faxbot's Asterisk fax engine does not support SSLFax, so Faxbot does not currently offer it.</p>
+<h2 id="case-packets">Case packets<a class="headerlink" href="#case-packets" title="Permanent link">&para;</a></h2>
+<p>When you fax the same case to a recipient again and again, Faxbot can leave out the documents the recipient already has. Turn on <strong>Accepts a one-page index instead of documents it already received for a case</strong> in the number's <strong>Details</strong> only after the recipient agrees.</p>
+<p>Send a case packet with <code>POST /cases/{case}/faxes</code>, using form fields <code>to</code>, one <code>documents</code> file per PDF, and an optional <code>titles</code> value for each. This needs <code>fax:send</code>. Faxbot identifies each document by the fingerprint of its exact bytes, so a corrected document counts as new. A document counts as accepted once a fax that carried it to that number for that case was delivered.</p>
+<ul>
+<li>When the recipient accepts references, the packet holds a one-page index listing the documents already accepted, followed by only the new or changed documents.</li>
+<li>Otherwise the packet holds every document.</li>
+<li>When nothing is new, Faxbot refuses the packet instead of faxing an index alone.</li>
+</ul>
+<p>For example, a 40-page record and a cover letter go out as 41 pages. Each later update of four pages then goes out as 5 pages instead of 45. Add <code>preview=true</code> to see the packet without sending it. <code>GET /cases/{case}/documents?to=</code> lists what the recipient has accepted. <code>GET /cases?limit=</code> (default 50, at most 200) lists the newest cases this installation sent packets for, one row per case and recipient, with the number of documents, how many the recipient has, the pages and when the last one was sent; <strong>Recipients → Case packets</strong> shows the same list. Both need <code>settings:read</code>.</p>
+<p>Faxbot records what each packet left out when it is sent (schema <code>0016_case_packet_sends</code>). Savings from case packets count from the first packet recorded this way; earlier packets are not counted.</p>
+<h2 id="api">API<a class="headerlink" href="#api" title="Permanent link">&para;</a></h2>
+<p>These routes need <code>settings:read</code>, or <code>settings:write</code> for changes:</p>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Path</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>GET</td>
+<td><code>/routing/destinations</code></td>
+<td>Numbers with their routes, delivery rate and 30-day cost</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/routing/destinations/{number}?pages=</code></td>
+<td>One number, with the route order for its next fax. Each route gives <code>rate</code>, its price in the card's own unit ("$0.005 a minute, at least 1 minute", "$0.07 a page"), and <code>estimated_cost</code> for a fax of <code>pages</code> pages (default 1): about 30 seconds to connect and 30 a page, rounded the way the card bills</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/routing/savings?days=</code></td>
+<td>What sending together (calls saved), direct delivery (fax calls avoided) and case packets (pages not sent again) saved in the last <code>days</code> (default 30). Every figure is an estimate, even after the carrier reports, because it compares with calls that never happened; a fax that would have gone through a flat plan counts as <code>in_plan</code> and saves no money</td>
+</tr>
+<tr>
+<td>PATCH</td>
+<td><code>/routing/destinations/{number}</code></td>
+<td>Name, notes, preferred route, case references</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/routing/costs?since=</code></td>
+<td>Spending by route and for received calls, with charged, estimated and waiting counts</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/routing/reconcile</code></td>
+<td>Ask the SIP trunk carrier now what each open call cost (<code>settings:write</code>)</td>
+</tr>
+<tr>
+<td>GET, PUT</td>
+<td><code>/routing/rate-cards</code></td>
+<td>Read or replace the rate cards</td>
+</tr>
+<tr>
+<td>GET, PUT, DELETE</td>
+<td><code>/batching/numbers/{number}</code></td>
+<td>Sending together for one number: its setting and history, the reason it saves money or not, and calls saved. PUT takes <code>enabled</code>, <code>recipient_agreed</code>, <code>max_wait_minutes</code>, <code>max_pages</code>, <code>mixed_senders</code> and <code>version</code></td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/routing/recommendations/sending</code></td>
+<td>Cheaper routes for the numbers you fax, from each route's cost per delivered fax</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/routing/recommendations/plans</code></td>
+<td>Whether each monthly plan is worth its fee at your traffic</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/routing/recommendations/receiving</code></td>
+<td>Receiving-cost advice from recorded calls and published carrier prices (<code>days</code>, 7–183)</td>
+</tr>
+<tr>
+<td>PATCH</td>
+<td><code>/routing/destinations/{number}</code></td>
+<td>Also accepts <code>max_calls</code> for the number's concurrent-call limit</td>
+</tr>
+</tbody>
+</table>
+<p>Anyone who may send faxes can ask whether a number sends faxes together: <code>GET /batching/check?to=</code>. Anyone who may read a fax can see whether it is waiting or went with others, and its share of the charge: <code>GET /batching/faxes/{id}</code>. They can also send a waiting fax now: <code>POST /batching/faxes/{id}/send-now</code>. <code>POST /fax</code> takes an optional <code>send_now=true</code>.</p>
+<p>Anyone who may read a fax can read its cost: <code>GET /routing/faxes/{id}/cost</code> for a sent fax, <code>GET /routing/fax-costs?ids=</code> for up to 100 sent faxes at once (the cost column of Faxes → Sent), <code>GET /routing/inbound/{id}/cost</code> for a received fax, and <code>GET /routing/inbound-costs?ids=</code> for up to 100 received faxes at once. Faxes the person cannot read are left out. A fax sent together with others in one call costs its share of that call, split by pages, as an estimate until the carrier reports the call; the whole call is counted once in the spending totals. A fax going through a flat plan reads "Included in your HumbleFax plan ($10 a month)." as soon as Faxbot has chosen its route, while it is still sending.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="Footer" >
+        
+          
+          <a href="../" class="md-footer__link md-footer__link--prev" aria-label="Previous: Overview">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              <div class="md-ellipsis">
+                Overview
+              </div>
+            </div>
+          </a>
+        
+        
+          
+          <a href="../receiving/" class="md-footer__link md-footer__link--next" aria-label="Next: Receiving faxes">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              <div class="md-ellipsis">
+                Receiving faxes
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11z"/></svg>
+            </div>
+          </a>
+        
+      </nav>
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      <script id="__config" type="application/json">{"base": "../..", "features": ["navigation.sections", "navigation.expand", "navigation.tabs", "navigation.tabs.sticky", "navigation.indexes", "navigation.top", "navigation.footer", "navigation.instant", "navigation.tracking", "content.tabs.link", "toc.integrate", "search.suggest", "search.highlight", "content.code.copy", "content.action.edit"], "search": "../../assets/javascripts/workers/search.973d3a69.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.f55a23d4.min.js"></script>
+      
+    
+  </body>
+</html>
