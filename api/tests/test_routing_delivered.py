@@ -297,6 +297,13 @@ async def test_the_worker_sends_by_the_route_that_cost_less_per_delivered_fax(mu
                                    'the cheapest of 2 routes.')
     # A definite failure would fall back to the next route in the same order.
     assert FallbackScheduler(delivery, routes).next_route(job, attempt, 'phaxio').route.key == 'signalwire'
+    # Sent details: only the reason is stored, so the sentence carries no amount.
+    from api.app.routing.carriers import CarrierChargeStore
+    from api.app.routing.http import _cost_view
+    from api.app.routing.spending import Spending
+    cost = _cost_view(Spending(routes, CarrierChargeStore(configuration.engine)).job(job))
+    assert (cost['route'], cost['route_reason']) == ('phaxio', 'cheapest_delivered')
+    assert cost['route_explanation'] == 'The cheapest route per delivered fax to this number over the last 30 days.'
 
 
 def test_faxes_sent_together_and_attempts_still_in_progress_are_not_counted_twice(multi):
@@ -325,6 +332,53 @@ def test_faxes_sent_together_and_attempts_still_in_progress_are_not_counted_twic
     assert route.per_delivered_micros == 15_000 and route.average_pages == 3.0 and route.average_seconds is None
 
 
+def _finished(multi, route, outcomes, *, reported=None, estimated=None, number='+12025550123'):
+    """Finished attempts on ``route`` with their cost rows, as the cost recorder and billing leave them."""
+    from uuid import uuid4
+    _, _, routes, _ = multi
+    now = datetime.utcnow()
+    jobs = [accept(multi, number) for _ in outcomes]
+    with routes.engine.begin() as connection:
+        for job, outcome in zip(jobs, outcomes):
+            attempt = uuid4().hex
+            connection.execute(routes.attempts.insert().values(id=attempt, job_id=job, sequence=1, phase=outcome,
+                                                               created_at=now, submitted_at=now, completed_at=now))
+            connection.execute(routes.costs.insert().values(
+                id=attempt, job_id=job, destination=number, route=route, route_reason='preferred', provider_id=route,
+                outcome=outcome, estimated_cost_micros=None if estimated is None else parse_amount(estimated),
+                currency=None if estimated is None else 'USD',
+                reported_cost_micros=None if reported is None else parse_amount(reported),
+                reported_currency=None if reported is None else 'USD', billing_checks=0, created_at=now,
+                updated_at=now))
+
+
+def test_a_flat_plan_is_suggested_only_over_a_metered_route_you_chose(multi):
+    from api.app.routing.recommendations import sending_recommendations
+    configuration, _, routes, _ = multi
+    number, revision = '+12025550123', configuration.read().active
+    # Phaxio is a flat monthly plan here; SignalWire charges by the minute.
+    routes.replace_cards([card('phaxio', monthly='10'), card('signalwire', minute='0.0095')])
+    _finished(multi, 'signalwire', ['success'] * 4 + ['failed'], reported='0.10')
+    _finished(multi, 'phaxio', ['success'] * 2, estimated='0')
+    routes.update_destination(number, preferred_route='signalwire')
+    # Two delivered faxes through the plan are not enough evidence yet.
+    assert sending_recommendations(routes, revision, 'phaxio') == []
+    _finished(multi, 'phaxio', ['success'], estimated='0')
+    [item] = sending_recommendations(routes, revision, 'phaxio')
+    assert (item['kind'], item['current']['route'], item['suggested']['route']) == ('plan', 'signalwire', 'phaxio')
+    assert item['saving_per_fax'] is None and item['suggested']['cost_text'] == 'Included in your plan'
+    assert item['sentence'] == ('Your Phaxio plan already includes faxes to this number. '
+                                'SignalWire cost $0.13 per delivered fax here over the last 30 days.')
+    # With no preferred route, the plan already goes first ("included"): nothing to suggest, and never the
+    # metered route over the plan.
+    routes.update_destination(number, preferred_route=None)
+    assert sending_recommendations(routes, revision, 'phaxio') == []
+    # A plan that often fails to this number is not suggested.
+    routes.update_destination(number, preferred_route='signalwire')
+    _finished(multi, 'phaxio', ['failed'] * 3)
+    assert sending_recommendations(routes, revision, 'phaxio') == []
+
+
 # -- the HTTP routes and `faxbot`, over the real application -----------------------------
 
 @pytest.fixture
@@ -334,8 +388,8 @@ def routed_cli(monkeypatch, tmp_path):
         yield Cli(client)
 
 
-def _charged_faxes(number, route, outcomes, amount, *, call_seconds=None):
-    """Sent faxes with one finished attempt each, charged ``amount`` by the route (synthetic rows)."""
+def _charged_faxes(cli, number, route, outcomes, amount, *, call_seconds=None):
+    """Faxes sent through the API (held in test mode), each with one finished attempt charged ``amount``."""
     from datetime import timedelta
     from uuid import uuid4
     import app.main as main_module
@@ -345,11 +399,10 @@ def _charged_faxes(number, route, outcomes, amount, *, call_seconds=None):
     routes, now = RouteStore(store.engine), datetime.utcnow()
     jobs = []
     for _ in outcomes:
-        job = uuid4().hex
-        store.accept_outbound(store.read().active, {'id': job, 'to_number': number, 'file_name': 'note.txt',
-                                                    'tiff_path': '', 'status': 'queued', 'pages': 2,
-                                                    'created_at': now, 'updated_at': now})
-        jobs.append(job)
+        sent = cli.client.post('/fax', headers={'X-API-Key': cli_bootstrap()}, data={'to': number},
+                               files={'file': ('note.txt', b'Synthetic\n', 'text/plain')})
+        assert sent.status_code == 202, sent.text
+        jobs.append(sent.json()['id'])
     with store.engine.begin() as connection:
         calls = SipCallRecords(store.engine).table
         for index, (job, outcome) in enumerate(zip(jobs, outcomes)):
@@ -368,6 +421,7 @@ def _charged_faxes(number, route, outcomes, amount, *, call_seconds=None):
                     ended_at=start + timedelta(seconds=call_seconds), disposition='answered',
                     connected_seconds=call_seconds, t38='yes', pages=2, fax_status='SUCCESS', fax_preference=0,
                     created_at=start, updated_at=start))
+    return jobs
 
 
 def test_recipients_and_recommendations_show_cost_per_delivered_fax(routed_cli, tmp_path):
@@ -380,11 +434,19 @@ def test_recipients_and_recommendations_show_cost_per_delivered_fax(routed_cli, 
     assert cli('costs', 'rate-cards', '--replace', cards).exit_code == 0
     empty = cli('costs', 'recommendations')
     assert empty.exit_code == 0 and 'Sending' in empty.stdout
-    assert 'No cheaper routes yet.' in ' '.join(empty.stdout.split())
+    assert 'Nothing to suggest yet.' in ' '.join(empty.stdout.split())
     # SignalWire: 4 of 5 delivered at $0.10 a call; Phaxio: 3 of 3 at $0.07. SignalWire is the chosen route.
-    _charged_faxes(number, 'signalwire', ['success'] * 4 + ['failed'], '0.10', call_seconds=65)
-    _charged_faxes(number, 'phaxio', ['success'] * 3, '0.07')
+    sent = _charged_faxes(cli, number, 'signalwire', ['success'] * 4 + ['failed'], '0.10', call_seconds=65)
+    _charged_faxes(cli, number, 'phaxio', ['success'] * 3, '0.07')
     assert cli('recipients', 'set', number, '--preferred-route', 'signalwire').exit_code == 0
+    # Sent details say why the fax went by its route, from the reason recorded when Faxbot chose it.
+    response = cli.client.get(f'/routing/faxes/{sent[0]}/cost', headers={'X-API-Key': cli_bootstrap()})
+    assert response.status_code == 200, response.text
+    cost = response.json()
+    assert (cost['route'], cost['route_reason']) == ('signalwire', 'preferred')
+    assert cost['route_explanation'] == 'You chose this route for this number.'
+    details = ' '.join(cli('sent', 'show', sent[0]).stdout.split())
+    assert 'Route SignalWire' in details and 'Why this route You chose this route for this number.' in details
 
     view = cli.json('recipients', 'show', number)
     figures = {item['route']: item for item in view['delivered_costs']}
@@ -392,7 +454,7 @@ def test_recipients_and_recommendations_show_cost_per_delivered_fax(routed_cli, 
     assert figures['signalwire']['cost_per_delivered'] == {'currency': 'USD', 'amount': '0.125'}
     assert (figures['signalwire']['delivered'], figures['signalwire']['attempts'],
             figures['signalwire']['delivered_percent']) == (4, 5, 80)
-    assert figures['signalwire']['average_connected_seconds'] == 65 and figures['phaxio']['average_pages'] == 2.0
+    assert figures['signalwire']['average_connected_seconds'] == 65 and figures['phaxio']['average_pages'] == 1.0
     assert figures['phaxio']['basis_text'] == '3 faxes billed' and figures['phaxio']['enough_evidence'] is True
     shown = ' '.join(cli('recipients', 'show', number).stdout.split())
     assert 'Cost per delivered fax, last 30 days' in shown and '4 of 5' in shown and '1 minute 5 seconds' in shown

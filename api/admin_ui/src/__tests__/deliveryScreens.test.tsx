@@ -173,8 +173,8 @@ describe('Savings and Recommendations', () => {
     expect((await screen.findByTestId('savings-total')).textContent).toBe('No money saved in the last 30 days, as far as Faxbot can tell.');
     expect(screen.getByText('No faxes were sent together in the last 30 days.')).toBeTruthy();
     unmount();
-    render(<Recommendations client={client()} />);
-    expect(screen.getByTestId('recommendations-empty').textContent).toBe(NO_RECOMMENDATIONS);
+    render(<Recommendations client={client()} canWrite />);
+    expect((await screen.findByTestId('recommendations-empty')).textContent).toBe(NO_RECOMMENDATIONS);
     expect((await screen.findByTestId('receiving-sentence')).textContent)
       .toBe('Faxbot needs 60 days of call history to advise on shared lines; it has none yet.');
   });

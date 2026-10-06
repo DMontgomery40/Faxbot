@@ -270,10 +270,13 @@ class Spending:
                 mine, c.c.outcome == 'pending').order_by(c.c.created_at.desc(), c.c.id.desc()).limit(1)).first()
             pending = pending_row.provider_id if pending_row else None
             # The route each attempt of this fax used, in order (a shared call's share is not this fax's route).
-            used = [row.route for row in connection.execute(sa.select(c.c.route).where(c.c.job_id == job_id).order_by(
-                c.c.created_at, c.c.id)).all() if row.route]
+            decided = [row for row in connection.execute(sa.select(c.c.route, c.c.route_reason).where(
+                c.c.job_id == job_id).order_by(c.c.created_at, c.c.id)).all() if row.route]
+        used = [row.route for row in decided]
         routes = [route for index, route in enumerate(used) if index == 0 or route != used[index - 1]]
-        where = {'route': routes[-1] if routes else None, 'routes': routes}
+        # Why the latest attempt's route was chosen, as recorded when Faxbot chose it.
+        where = {'route': routes[-1] if routes else None, 'routes': routes,
+                 'route_reason': decided[-1].route_reason if decided else None}
         rows = []
         for row in found:
             share = shares.get(row['id'])

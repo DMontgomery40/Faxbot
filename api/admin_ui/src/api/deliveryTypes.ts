@@ -62,16 +62,20 @@ export interface Destination {
   delivered_costs?: DeliveredCost[];
 }
 
-// A number where another route cost less per delivered fax than the one Faxbot uses first now.
+// A number where another route would cost less than the one Faxbot uses first now:
+// `plan` is a flat plan that already includes faxes (you chose a metered route),
+// `cheaper_route` another metered route that cost less per delivered fax.
 export interface SendingRecommendation {
   number: string;
   display_name: string | null;
   version: number;
   preferred_route: string | null;
   chosen_by_you: boolean;
+  kind: 'plan' | 'cheaper_route';
   current: DeliveredCost;
   suggested: DeliveredCost;
-  saving_per_fax: Money;
+  // Null for a plan: the plan's fee is already paid, so Faxbot claims no saving per fax.
+  saving_per_fax: Money | null;
   sentence: string;
 }
 
@@ -190,6 +194,9 @@ export interface FaxCost {
   /** The route that carried the latest attempt ('direct', 'sip' or a provider id), and every route tried in order. */
   route?: string | null;
   routes?: string[];
+  // Why the latest attempt went by its route, in one sentence, as recorded when Faxbot chose it.
+  route_reason?: string | null;
+  route_explanation?: string | null;
 }
 
 export interface ReconcileResult {

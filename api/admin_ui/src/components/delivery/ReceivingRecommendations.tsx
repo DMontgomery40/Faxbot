@@ -230,7 +230,17 @@ function Prices({ advice }: { advice: Advice }) {
   );
 }
 
-export default function ReceivingRecommendations({ client }: { client: AdminAPIClient }) {
+// Too little history (or no carrier line) is one sentence; the quiet numbers wait for the same history.
+function waitingForHistory(advice: Advice): boolean {
+  return TOO_LITTLE.has(advice.pool.state)
+    && advice.quiet_numbers.state !== 'quiet' && advice.quiet_numbers.state !== 'none_quiet';
+}
+
+export default function ReceivingRecommendations({ client, onCount }: {
+  client: AdminAPIClient;
+  // Recommendations' empty sentence: 0 while Faxbot waits for call history, 1 once it advises; null on failure.
+  onCount?: (count: number | null) => void;
+}) {
   const [advice, setAdvice] = useState<Advice | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
@@ -239,19 +249,20 @@ export default function ReceivingRecommendations({ client }: { client: AdminAPIC
     setBusy(true);
     setError(null);
     try {
-      setAdvice(await client.getReceivingRecommendations());
+      const loaded = await client.getReceivingRecommendations();
+      setAdvice(loaded);
+      onCount?.(waitingForHistory(loaded) ? 0 : 1);
     } catch (failure) {
       setError(failure);
+      onCount?.(null);
     } finally {
       setBusy(false);
     }
-  }, [client]);
+  }, [client, onCount]);
 
   useEffect(() => { void load(); }, [load]);
 
-  // Too little history (or no carrier line) is one sentence; the quiet numbers wait for the same history.
-  const waiting = advice !== null && TOO_LITTLE.has(advice.pool.state)
-    && advice.quiet_numbers.state !== 'quiet' && advice.quiet_numbers.state !== 'none_quiet';
+  const waiting = advice !== null && waitingForHistory(advice);
   return (
     <Box data-testid="receiving-recommendations">
       <Typography variant="h5" component="h2" sx={{ mb: 1 }}>Receiving</Typography>

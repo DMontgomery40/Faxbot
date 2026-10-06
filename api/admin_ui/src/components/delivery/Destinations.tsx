@@ -7,9 +7,9 @@ import {
 } from '@mui/material';
 import PhoneIcon from '@mui/icons-material/Phone';
 import AdminAPIClient from '../../api/client';
-import type { Destination, DestinationDetail, DirectPartner } from '../../api/deliveryTypes';
+import type { DeliveredCost, Destination, DestinationDetail, DirectPartner } from '../../api/deliveryTypes';
 import { EmptyState, Field, FormDialog, useSmallScreens } from '../access/AccessViews';
-import { DeliveryError, formatMoneyList, formatPercent } from './shared';
+import { DeliveryError, formatMoney, formatMoneyList, formatPercent } from './shared';
 import { numberPlaceholder, useNumberFormat } from '../common/numbers';
 import { SendingTogetherPanel } from './SendingTogether';
 import RecipientFaxLimitsPanel from './RecipientFaxLimits';
@@ -17,6 +17,59 @@ import RecipientFaxLimitsPanel from './RecipientFaxLimits';
 function routeSummary(destination: Destination): string {
   if (destination.routes.length === 0) return 'No faxes sent yet';
   return destination.routes.map((route) => `${route.label}: ${formatPercent(route.success_percent)}`).join(' · ');
+}
+
+// Each route's cost per delivered fax, the cheapest first: "Telnyx: $0.0089 · HumbleFax: Included in your plan".
+export function deliveredSummary(destination: Destination): string {
+  const routes = destination.delivered_costs ?? [];
+  if (routes.length === 0) return '-';
+  return routes.map((route) => `${route.label}: ${route.cost_text}`).join(' · ');
+}
+
+function callTime(seconds: number | null): string | null {
+  if (seconds === null) return null;
+  const minutes = Math.floor(seconds / 60);
+  const rest = seconds % 60;
+  const parts = [
+    ...(minutes ? [`${minutes} ${minutes === 1 ? 'minute' : 'minutes'}`] : []),
+    ...(rest || !minutes ? [`${rest} ${rest === 1 ? 'second' : 'seconds'}`] : []),
+  ];
+  return parts.join(' ');
+}
+
+// "9 of 14 delivered, $0.08 in all (14 faxes billed). Average 1.9 pages, 37 seconds a call."
+export function deliveredDetail(route: DeliveredCost): string {
+  const total = route.total_cost ? `, ${formatMoney(route.total_cost)} in all` : '';
+  const basis = route.basis_text ? ` (${route.basis_text})` : '';
+  const averages = [
+    route.average_pages !== null ? `${route.average_pages} ${route.average_pages === 1 ? 'page' : 'pages'}` : null,
+    route.average_connected_seconds !== null ? `${callTime(route.average_connected_seconds)} a call` : null,
+  ].filter(Boolean);
+  return `${route.delivered} of ${route.attempts} delivered${total}${basis}.`
+    + (averages.length ? ` Average ${averages.join(', ')}.` : '');
+}
+
+// Recipients → Details: what one delivered fax cost on each route, counting every attempt.
+function DeliveredCosts({ routes }: { routes: DeliveredCost[] }) {
+  return (
+    <Box data-testid="delivered-costs">
+      <Typography variant="subtitle2">Cost per delivered fax, last 30 days</Typography>
+      <List dense>
+        {routes.map((route) => (
+          <ListItem key={route.route} disableGutters>
+            <ListItemText
+              primary={route.included_in_plan || route.direct ? `${route.label}: ${route.cost_text}`
+                : `${route.label}: ${route.cost_text} per delivered fax`}
+              secondary={deliveredDetail(route)} />
+          </ListItem>
+        ))}
+      </List>
+      <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1 }}>
+        Failed calls count toward the cost. Once two routes have each delivered 3 faxes here, Faxbot sends by the one
+        that cost less per delivered fax.
+      </Typography>
+    </Box>
+  );
 }
 
 export function DestinationDialog({ client, number, canWrite, onClose, onSaved }: {
@@ -93,7 +146,8 @@ export function DestinationDialog({ client, number, canWrite, onClose, onSaved }
               </ListItem>
             ))}
           </List>
-          {detail.routes.length > 0 && (
+          {(detail.delivered_costs ?? []).length > 0 && <DeliveredCosts routes={detail.delivered_costs ?? []} />}
+          {detail.routes.length > 0 && (detail.delivered_costs ?? []).length === 0 && (
             <>
               <Typography variant="subtitle2">Last 30 days</Typography>
               {detail.routes.map((route) => (
@@ -172,6 +226,9 @@ export default function Destinations({ client, destinations, canWrite, onChanged
                 {destination.display_name && <Typography variant="body2" color="text.secondary">{destination.number}</Typography>}
                 <Typography variant="body2" sx={{ mt: 1 }}>{routeSummary(destination)}</Typography>
                 <Typography variant="body2" color="text.secondary">Last 30 days: {formatMoneyList(destination.estimated_cost_30_days)}</Typography>
+                {(destination.delivered_costs ?? []).length > 0 && (
+                  <Typography variant="body2" color="text.secondary">Per delivered fax: {deliveredSummary(destination)}</Typography>
+                )}
                 <Box mt={1} display="flex" gap={1} alignItems="center">
                   {destination.preferred_route && <Chip size="small" label="Preferred route set" />}
                   <Button size="small" onClick={() => setOpen(destination.number)}>Details</Button>
@@ -188,6 +245,7 @@ export default function Destinations({ client, destinations, canWrite, onChanged
                 <TableCell>Fax number</TableCell>
                 <TableCell>Routes</TableCell>
                 <TableCell>Last 30 days</TableCell>
+                <TableCell>Per delivered fax</TableCell>
                 <TableCell>Preferred way to send</TableCell>
                 <TableCell>Partner</TableCell>
                 <TableCell>Case packets</TableCell>
@@ -203,6 +261,7 @@ export default function Destinations({ client, destinations, canWrite, onChanged
                   </TableCell>
                   <TableCell>{routeSummary(destination)}</TableCell>
                   <TableCell>{formatMoneyList(destination.estimated_cost_30_days)}</TableCell>
+                  <TableCell>{deliveredSummary(destination)}</TableCell>
                   <TableCell>{preferredText(destination)}</TableCell>
                   <TableCell>{partnerText(destination, partners)}</TableCell>
                   <TableCell>{destination.accepts_references ? 'Takes a one-page list instead' : 'Full documents'}</TableCell>

@@ -209,10 +209,17 @@ def jobs_get(fax_id: str = typer.Argument(..., help='Fax ID.')):
     job = api.get('/admin/fax-jobs/' + segment(fax_id))
     together = job.get('together') or {}
     line = _together(api, fax_id) if together else None
+    try:
+        cost = api.get('/routing/faxes/' + segment(fax_id) + '/cost')
+    except CliError:
+        cost = {}
+    # The route that carried the fax and why Faxbot chose it, as Sent details show them.
+    route = ([('Route', _route_text(job, cost)), ('Why this route', cost.get('route_explanation'))]
+             if cost.get('routes') else [])
 
     def human(out):
-        out.fields(_fax_fields(job) + ([('Reference on its separator page', together.get('reference'))]
-                                       if together.get('state') == 'together' else []))
+        out.fields(_fax_fields(job) + route + ([('Reference on its separator page', together.get('reference'))]
+                                               if together.get('state') == 'together' else []))
         if line:
             out.line(line)
         # Over the SIP trunk: SSL Fax's line, or why the built-in fax engine carried it.
