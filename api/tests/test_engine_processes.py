@@ -143,8 +143,8 @@ def asterisk_ready(name):
     return 'System uptime' in docker('exec', name, 'asterisk', '-rx', 'core show uptime seconds', check=False).stdout
 
 
-def stat(name, *paths):
-    out = docker('exec', name, 'stat', '-c', '%a %U:%G %n', *paths).stdout
+def stat(name, *paths, user='root'):
+    out = docker('exec', '-u', user, name, 'stat', '-c', '%a %U:%G %n', *paths).stdout
     return {line.split()[2]: tuple(line.split()[:2]) for line in out.splitlines()}
 
 
@@ -235,6 +235,59 @@ def test_the_login_watcher_still_restarts_asterisk_when_faxbot_writes_a_login(as
     logs = docker('logs', name)
     assert docker('inspect', '-f', '{{.State.ExitCode}}', name).stdout.strip() == '0'
     assert 'the manager login changed; Asterisk restarts once no call is up' in logs.stdout + logs.stderr
+
+
+OLD_VOLUME = r'''
+set -e
+mkdir -p /faxdata/asterisk /faxdata/inbound
+chmod 0755 /faxdata
+chmod 0700 /faxdata/asterisk /faxdata/inbound
+printf synthetic-inbound-secret > /faxdata/asterisk/inbound.secret
+printf 'api\nSynthetic-Manager-Login-0123456789\n' > /faxdata/asterisk/manager.credentials
+printf old > /faxdata/0123456789abcdef0123456789abcdef.tiff
+printf old > /faxdata/0123456789abcdef0123456789abcdef.pdf
+printf old > /faxdata/inbound/1791083644.1.tiff
+printf db > /faxdata/faxbot.db
+chmod 0600 /faxdata/asterisk/* /faxdata/*.tiff /faxdata/*.pdf /faxdata/inbound/*
+chmod 0644 /faxdata/faxbot.db
+'''
+
+
+def test_a_data_volume_from_before_converges_when_the_new_asterisk_starts(asterisk_image, start):
+    """An upgrade lands on a volume of root-only files (Asterisk ran as root). The new start script hands
+    Asterisk exactly what it needs and nothing else: the shared folder and the inbound secret (group), faxes
+    waiting to be sent (group), the inbound folder (its own). The rest stays as it was; the API's own files
+    are the API's to tighten (the database, at its next connection)."""
+    volume = f'{PREFIX}-processes-{uuid.uuid4().hex[:8]}'
+    docker('volume', 'create', '--label', 'com.faxbot.scope=engine-processes', volume)
+    try:
+        docker('run', '--rm', '--label', 'com.faxbot.scope=engine-processes', '--volume', f'{volume}:/faxdata',
+               '--entrypoint', 'sh', asterisk_image, '-c', OLD_VOLUME)
+        name = f'{PREFIX}-processes-{uuid.uuid4().hex[:8]}'
+        docker('run', '-d', '--name', name, '--label', 'com.faxbot.scope=engine-processes',
+               '--volume', f'{volume}:/faxdata', *compose_security('asterisk'), asterisk_image)
+        try:
+            wait_for(lambda: asterisk_ready(name), 60, 'Asterisk on the old volume')
+            job = '/faxdata/0123456789abcdef0123456789abcdef'
+            modes = stat(name, '/faxdata', '/faxdata/asterisk', '/faxdata/asterisk/inbound.secret',
+                         '/faxdata/asterisk/manager.credentials', '/faxdata/inbound',
+                         f'{job}.tiff', f'{job}.pdf', '/faxdata/faxbot.db')
+            # Inside Asterisk's own inbound folder (root here has no file override; the API's root has).
+            modes.update(stat(name, '/faxdata/inbound/1791083644.1.tiff', user='asterisk'))
+        finally:
+            docker('rm', '--force', name, check=False)
+    finally:
+        docker('volume', 'rm', '--force', volume, check=False)
+    assert modes['/faxdata'] == ('2755', 'root:asterisk'), modes
+    assert modes['/faxdata/asterisk'] == ('2750', 'root:asterisk'), modes
+    assert modes['/faxdata/asterisk/inbound.secret'] == ('640', 'root:asterisk'), modes
+    assert modes['/faxdata/0123456789abcdef0123456789abcdef.tiff'] == ('640', 'root:asterisk'), modes
+    assert modes['/faxdata/inbound'] == ('700', 'asterisk:asterisk'), modes
+    # Untouched: the manager login, the document, a fax received before, and the API's database.
+    assert modes['/faxdata/asterisk/manager.credentials'] == ('600', 'root:root'), modes
+    assert modes['/faxdata/0123456789abcdef0123456789abcdef.pdf'] == ('600', 'root:root'), modes
+    assert modes['/faxdata/inbound/1791083644.1.tiff'] == ('600', 'root:root'), modes
+    assert modes['/faxdata/faxbot.db'] == ('644', 'root:root'), modes
 
 
 # The fax engine ----------------------------------------------------------------------------------------------

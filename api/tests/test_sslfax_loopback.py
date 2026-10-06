@@ -112,12 +112,20 @@ class Docker:
         return volume
 
     def put(self, container, path, text):
-        with tempfile.NamedTemporaryFile('w', delete=False) as handle:
-            handle.write(text)
-        try:
-            self.run('cp', handle.name, f'{container}:{path}')
-        finally:
-            os.unlink(handle.name)
+        """Write a file as root (mode 0600), as Faxbot writes its settings. A plain "docker cp" keeps this
+        computer's user ID, which root in a container without a file override (docker-compose.yml) cannot
+        read; a tar stream names root."""
+        import tarfile
+        data = text.encode()
+        archive = io.BytesIO()
+        with tarfile.open(fileobj=archive, mode='w') as tar:
+            entry = tarfile.TarInfo(os.path.basename(path))
+            entry.size, entry.mode, entry.uid, entry.gid, entry.mtime = len(data), 0o600, 0, 0, int(time.time())
+            tar.addfile(entry, io.BytesIO(data))
+        result = subprocess.run(self.base + ['cp', '-', f'{container}:{os.path.dirname(path)}'],
+                                input=archive.getvalue(), capture_output=True, timeout=120)
+        if result.returncode:
+            raise RuntimeError(f'docker cp failed: {result.stderr.decode(errors="replace")[-2000:]}')
 
     def sh(self, container, script, check=False, timeout=120):
         return self.run('exec', container, 'sh', '-c', script, check=check, timeout=timeout)
