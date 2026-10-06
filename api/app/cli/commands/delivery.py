@@ -64,11 +64,17 @@ def routing_destinations():
     """List the numbers you fax, with how faxes went and what they cost over the last 30 days."""
     result = state.api().get('/routing/destinations')
     state.out().result(result, lambda out: out.table(
-        ['Fax number', 'Name', 'Preferred way to send', 'Case packets', 'Routes used', 'Estimated cost'],
+        ['Fax number', 'Name', 'Preferred way to send', 'Case packets', 'Routes used', 'Estimated cost',
+         'Per delivered fax'],
         [[item['number'], item.get('display_name'), preferred_text(item),
           references_text(item.get('accepts_references')), len(item.get('routes', [])),
-          money(item.get('estimated_cost_30_days'))]
+          money(item.get('estimated_cost_30_days')), per_delivered_text(item.get('delivered_costs'))]
          for item in result.get('destinations', [])], empty='No destinations yet.'))
+
+
+def per_delivered_text(routes):
+    """Each route's cost per delivered fax in one cell, the cheapest first: "Telnyx: $0.0089; HumbleFax: Included in your plan"."""
+    return '; '.join(f"{item['label']}: {item['cost_text']}" for item in routes or []) or '-'
 
 
 def _route_rows(routes):
@@ -76,6 +82,23 @@ def _route_rows(routes):
              '-' if item['success_percent'] is None else f"{item['success_percent']}%",
              money(item['estimated_cost_30_days']), local_time(item.get('last_attempt_at'), empty='never')]
             for item in routes]
+
+
+def call_time(seconds):
+    """Seconds as people say them: "45 seconds", "1 minute 5 seconds"."""
+    if seconds is None:
+        return '-'
+    minutes, rest = divmod(int(seconds), 60)
+    parts = ([f"{minutes} {'minute' if minutes == 1 else 'minutes'}"] if minutes else []) + (
+        [f"{rest} {'second' if rest == 1 else 'seconds'}"] if rest or not minutes else [])
+    return ' '.join(parts)
+
+
+def delivered_rows(routes):
+    """Each route's delivered faxes and what one cost, counting every attempt on it (failed ones too)."""
+    return [[item['label'], f"{item['delivered']} of {item['attempts']}", item['cost_text'],
+             item.get('basis_text') or '-', text(item.get('average_pages')),
+             call_time(item.get('average_connected_seconds'))] for item in routes]
 
 
 @routing.command('destination')
@@ -101,6 +124,10 @@ def routing_destination(number: str = typer.Argument(..., help='Fax number.'),
                     *(limits_fields(limits) if limits else [])])
         out.table(['Route', 'Attempts', 'Delivered', 'Failed', 'Success', 'Estimated cost', 'Last used'],
                   _route_rows(view.get('routes', [])), empty='No faxes sent to this number in the last 30 days.')
+        if view.get('delivered_costs'):
+            out.table(['Route', 'Delivered', 'Cost per delivered fax', 'Where the cost comes from', 'Average pages',
+                       'Average call time'],
+                      delivered_rows(view['delivered_costs']), title='Cost per delivered fax, last 30 days')
         out.table(['Faxbot would choose', 'Why', 'Rate', f"Estimated cost, {pages} {'page' if pages == 1 else 'pages'}"],
                   [[item['label'], item['explanation'], _route_rate(item),
                     'In your plan' if item.get('included_in_plan')
@@ -275,6 +302,108 @@ def routing_savings(days: int = typer.Option(30, '--days', min=1, max=366, help=
             out.line(counted)
         if result.get('sentence'):
             out.line(result['sentence'])
+    state.out().result(result, human)
+
+
+# -- costs recommendations ----------------------------------------------------------------
+
+def _read_sending(api):
+    return api.get('/routing/recommendations/sending')
+
+
+def _show_sending(out, result):
+    items = result.get('items') or []
+    if not items:
+        out.line(result.get('empty_sentence') or 'No cheaper routes yet.')
+        return
+    out.table(['Fax number', 'Name', 'Sent now by', 'Per delivered fax', 'Cheaper route', 'Per delivered fax',
+               'Saves per fax'],
+              [[item['number'], item.get('display_name'), item['current']['label'], item['current']['cost_text'],
+                item['suggested']['label'], item['suggested']['cost_text'], money([item['saving_per_fax']])]
+               for item in items])
+    for item in items:
+        out.line(item['sentence'])
+        out.line(f"To send by {item['suggested']['label']}: faxbot recipients set {item['number']} "
+                 f"--preferred-route {item['suggested']['route']}")
+
+
+def _line_advice(row):
+    if not row.get('eligible'):
+        return row.get('reason') or 'Billed by the minute'
+    return 'Shared lines' if row.get('in_pool') else 'Billed by the minute'
+
+
+def print_receiving(out, result):
+    """The receiving recommendations in words and tables; ``faxbot costs recommendations`` reuses this."""
+    days = result.get('days', 30)
+    pool = result.get('pool') or {}
+    out.line(pool.get('sentence') or result.get('sentence') or '')
+    if pool.get('note'):
+        out.line(pool['note'])
+    if pool.get('numbers'):
+        out.table(['Number', f'Calls, last {days} days', 'Billed by the minute (estimate)', 'Advice'],
+                  [[row['number'], row['calls'], money(row.get('billed_by_the_minute'), empty='$0.00'),
+                    _line_advice(row)] for row in pool['numbers']],
+                  title=f'Should your numbers share incoming lines? (estimate, last {days} days)')
+    check, choose = pool.get('check'), pool.get('choose')
+    if check and choose and pool.get('pool_numbers'):
+        rows = [('Billed by the minute today', 'billed_by_the_minute'), ('Shared lines', 'channels'),
+                ('Still billed by the minute', 'still_billed_by_the_minute'), ('Fax number rental', 'number_rental'),
+                ('Total today', 'total_today'), ('Total with shared lines', 'total_with_pool')]
+        out.table(['Estimate', f'The {days} days before', f'The last {days} days'],
+                  [[label, money(choose.get(key), empty='$0.00'), money(check.get(key), empty='$0.00')]
+                   for label, key in rows])
+        out.line(f"Most calls at once in the last {days} days: {pool.get('needed', 0)}.")
+    for stretch in pool.get('busy_windows') or []:
+        count = stretch['turned_away']
+        out.line(f"All shared lines busy from {local_time(stretch['start'])} to {local_time(stretch['end'])}: "
+                 f"{count} {'caller' if count == 1 else 'callers'} would have heard a busy signal.")
+    if pool.get('break_even'):
+        out.line(pool['break_even'])
+    for line in pool.get('assumptions') or []:
+        out.line(line)
+    quiet = result.get('quiet_numbers') or {}
+    out.line('')
+    out.line(quiet.get('sentence') or '')
+    if quiet.get('numbers'):
+        out.table(['Number', 'Received', 'Sent', 'Rental a month (estimate)'],
+                  [[row['number'], row['received'], row['sent'], money(row.get('monthly_rental'))]
+                   for row in quiet['numbers']], title=f'Numbers with few calls in the last {days} days')
+    connections = result.get('connections') or {}
+    out.line('')
+    out.line(connections.get('sentence') or '')
+    if len(connections.get('items') or []) > 1:
+        out.table(['Fax service', 'Monthly fee'],
+                  [[item['name'], money(item.get('monthly_fee'), empty='No price yet')]
+                   for item in connections['items']])
+    if result.get('prices'):
+        out.table(['Price', 'Amount', 'Read on', 'Source'],
+                  [[item.get('label'), item.get('text'), _read_on(item.get('read_on')), item.get('source_url')]
+                   for item in result['prices']], title='Published prices used')
+
+
+def _read_receiving(api):
+    return api.get('/routing/recommendations/receiving')
+
+
+# Each section of `faxbot costs recommendations`: (key in --json output, heading, read(api), show(out, data)).
+RECOMMENDATION_SECTIONS = [
+    ('sending', 'Sending', _read_sending, _show_sending),
+    ('receiving', 'Receiving', _read_receiving, print_receiving),
+]
+
+
+def routing_recommendations():
+    """Show ways to pay less: numbers where another route cost less per delivered fax in the last 30 days, and numbers that could share incoming lines."""
+    api = state.api()
+    result = {key: read(api) for key, _, read, _ in RECOMMENDATION_SECTIONS}
+
+    def human(out):
+        for index, (key, heading, _, show) in enumerate(RECOMMENDATION_SECTIONS):
+            if index:
+                out.line()
+            out.line(heading)
+            show(out, result[key])
     state.out().result(result, human)
 
 

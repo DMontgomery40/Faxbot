@@ -122,6 +122,19 @@ def test_converted_routes_declare_their_exact_permission():
     assert persist.complete_owner is True
 
 
+# New routes that read installation-wide evidence: (permission, audited).
+READS = {
+    ("GET", "/routing/recommendations/sending"): ("settings:read", False),
+    ("GET", "/routing/recommendations/receiving"): ("settings:read", False),
+}
+
+
+def test_recommendation_reads_need_settings_read():
+    routes = dict(_routes())
+    declared = {key: [(rule.permission, rule.audit) for rule in _declared(routes[key])] for key in READS}
+    assert declared == {key: [expected] for key, expected in READS.items()}
+
+
 def test_privileged_permissions_are_always_audited():
     unaudited = [(key, rule.permission) for key, calls in _routes() for rule in _declared(calls)
                  if rule.permission in PRIVILEGED and not rule.audit]
