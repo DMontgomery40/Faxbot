@@ -27,10 +27,6 @@ class Api:
         self._client = None
         self._owned = False
 
-    @property
-    def has_key(self):
-        return bool(self._key)
-
     def _http(self):
         if self._client is None:
             self._client, self._owned = self._factory(self.url, self._timeout)

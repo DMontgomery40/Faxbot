@@ -102,7 +102,3 @@ class ProviderProfile:
     id: str
     account_id: str
     configuration: ProviderConfiguration = field(repr=False)
-
-    @property
-    def credential_revision(self):
-        return self.id

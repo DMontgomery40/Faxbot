@@ -89,12 +89,6 @@ class BatchingSettings:
         with read_connection(self.engine) as connection:
             return setting_on(connection, self.t, number)
 
-    def enabled_numbers(self):
-        numbers = self.t['batching_numbers']
-        with read_connection(self.engine) as connection:
-            return [dict(row) for row in connection.execute(sa.select(numbers).where(numbers.c.enabled == 1)
-                                                             .order_by(numbers.c.phone_number)).mappings()]
-
     def history(self, number, *, limit=20):
         changes = self.t['batching_changes']
         with read_connection(self.engine) as connection:

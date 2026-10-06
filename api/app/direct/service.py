@@ -46,10 +46,6 @@ class PartnerAddressRefused(PartnerUnreachable):
     """Nothing was sent: the partner's address is not a public Internet address."""
 
 
-def _naive(moment):
-    return moment.astimezone(timezone.utc).replace(tzinfo=None) if moment.tzinfo else moment
-
-
 class HttpClient:
     """Production transport to partner installations.
 

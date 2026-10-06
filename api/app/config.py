@@ -237,10 +237,6 @@ def get_provider_registry() -> Dict[str, Dict[str, Any]]:
     return _TRAITS_CACHE.get("registry") or {}
 
 
-def get_traits_schema_issues() -> Dict[str, Any]:
-    return _TRAITS_CACHE.get("schema_issues") or {}
-
-
 def get_provider_traits(provider_id: Optional[str]) -> Dict[str, Any]:
     if not provider_id:
         return {}

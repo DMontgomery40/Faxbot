@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import AsyncMock, patch, Mock
+from unittest.mock import AsyncMock, patch
 from fastapi.testclient import TestClient
 from pypdf import PdfWriter
 
@@ -107,21 +107,12 @@ async def test_phaxio_integration_end_to_end(isolated_installation, monkeypatch,
             "file": ("test.pdf", test_pdf_path.read_bytes(), "application/pdf"),
         }
         
-        with patch("app.phaxio_service.get_phaxio_service") as mock_get_service:
-            mock_service = Mock()
-            mock_service.is_configured.return_value = True
-            mock_service.send_fax = AsyncMock(return_value={
-                "provider_sid": "phaxio_123",
-                "status": "queued"
-            })
-            mock_get_service.return_value = mock_service
-            
-            response = client.post("/fax", files=files)
-            
-            assert response.status_code == 202
-            data = response.json()
-            assert data["backend"] == "phaxio"
-            assert data["status"] in ["queued", "disabled"]
+        response = client.post("/fax", files=files)
+
+        assert response.status_code == 202
+        data = response.json()
+        assert data["backend"] == "phaxio"
+        assert data["status"] in ["queued", "disabled"]
 
 
 @pytest.mark.parametrize("unknown_job", [False, True])

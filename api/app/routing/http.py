@@ -116,14 +116,6 @@ async def _install_policy(store_class, policy):
             store_class.fallback_policy = None
 
 
-async def _once(step):
-    try:
-        await run_lifecycle_step(step)
-    except Exception:
-        import logging
-        logging.getLogger(__name__).warning('Starting rate cards could not be loaded.')
-
-
 router = APIRouter(prefix='/routing', tags=['Delivery routes'], lifespan=lifespan_tasks(_background))
 
 

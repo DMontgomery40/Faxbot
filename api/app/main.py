@@ -7,7 +7,7 @@ import secrets
 from contextlib import AsyncExitStack, asynccontextmanager
 from datetime import datetime, timedelta, timezone
 import tempfile
-from typing import Optional, Any, List, Dict, Literal, cast
+from typing import Optional, Any, List, Dict, Literal
 import time
 import sqlalchemy as sa
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Header, Depends, Query, Request, Response, WebSocket
@@ -29,9 +29,6 @@ from .ami import ami_client
 from . import sip_calls, sip_fax_mode, sip_network
 from .sip_http import router as sip_router, sip_trunk_message, watch_public_address
 from .hylafax_http import router as hylafax_router
-from .phaxio_service import get_phaxio_service
-from .sinch_service import get_sinch_service
-from .signalwire_service import get_signalwire_service
 from .freeswitch_service import originate_txfax, fs_cli_available
 import hmac
 import hashlib
@@ -46,7 +43,6 @@ from .config_paths import (
     InvalidProviderPath,
     provider_manifest_path, providers_dir,
 )
-from .signalwire_service import get_signalwire_service
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, create_model
 from .config_values import ENVIRONMENT_MANAGED_REFUSAL, ConfigurationValues, ConfigurationValueError
