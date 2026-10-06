@@ -392,7 +392,10 @@
         "https://humblefax.com/faq",
         "https://humblefax.com/"
       ],
-      "includes": "unlimited faxing"
+      "includes": "unlimited faxing",
+      "includes_number": true,
+      "includes_number_read_on": "2026-10-05",
+      "includes_number_note": "The HumbleFax FAQ, read again October 5, 2026: the plan comes with a dedicated local fax number that receives faxes into your email inbox. The FAQ explains bringing an existing number to HumbleFax but not moving a number away from it."
     }
   ],
   "providers": [

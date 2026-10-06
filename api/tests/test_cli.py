@@ -896,6 +896,34 @@ def test_costs_recommendations_has_a_receiving_section_of_estimates(cli):
     assert 'Phaxio is your only fax service, so there is no second monthly fee to save.' in human
 
 
+def test_costs_recommendations_has_a_plans_section(cli):
+    plans = cli.json('costs', 'recommendations')['plans']
+    assert plans['plans'] == [] and plans['estimate'] is True
+    human = ' '.join(cli('costs', 'recommendations').stdout.split())
+    assert 'Plans You pay no monthly fee for a fax service, so there is no plan to review.' in human
+
+
+def test_the_plans_section_prints_each_plan_with_both_periods(capsys, monkeypatch):
+    from app.cli import output
+    from app.cli.commands.delivery import show_plans
+    monkeypatch.setattr(output, 'home_currency', lambda: 'USD')
+    monkeypatch.setenv('COLUMNS', '200')
+    out = output.Output()
+    money = lambda amount: [{'currency': 'USD', 'amount': amount}]  # noqa: E731
+    window = {'days': 30, 'sent': 5, 'received': 0, 'own_numbers': 0, 'fee': money('10.00'), 'fee_per_fax': money('2.00'),
+              'other_way': money('0.05'), 'number_rental': money('1.00'), 'other_routes': ['Telnyx'],
+              'without_other_way': 0}
+    show_plans(out, {'days': 30, 'plans': [{
+        'route': 'humblefax', 'name': 'HumbleFax', 'monthly_fee': money('10.00'), 'state': 'review',
+        'sentence': 'Worth reviewing: HumbleFax carried 5 faxes in the last 30 days.', 'action': 'If you decide...',
+        'caveats': ['Your HumbleFax plan includes its own fax number.'],
+        'windows': [window, {**window, 'days': 0, 'sent': 0, 'fee': [], 'fee_per_fax': [], 'other_way': [],
+                             'number_rental': []}]}]})
+    text = ' '.join(capsys.readouterr().out.split())
+    assert 'HumbleFax, $10.00 a month' in text and 'Worth reviewing: HumbleFax carried 5 faxes' in text
+    assert 'Plan fee per fax $2.00 -' in text and 'Rent for the fax number at your carrier $1.00 -' in text
+
+
 # -- profiles --------------------------------------------------------------------------------
 
 def test_profiles_keep_the_key_private_and_are_used_by_default(cli, tmp_path):

@@ -387,15 +387,49 @@ def _read_receiving(api):
     return api.get('/routing/recommendations/receiving')
 
 
+def _read_plans(api):
+    return api.get('/routing/recommendations/plans')
+
+
+def show_plans(out, result):
+    """Whether each monthly plan is worth its fee; every figure an estimate, next to its period."""
+    plans = result.get('plans') or []
+    if not plans:
+        out.line(result.get('empty_sentence') or '')
+        return
+    days = result.get('days', 30)
+    for index, plan in enumerate(plans):
+        if index:
+            out.line('')
+        out.line(plan['sentence'])
+        if plan.get('action'):
+            out.line(plan['action'])
+        for caveat in plan.get('caveats') or []:
+            out.line(caveat)
+        latest, before = (plan.get('windows') or [{}, {}])[:2]
+
+        def cell(window, key, empty='-'):
+            value = window.get(key)
+            return money(value, empty=empty) if isinstance(value, list) else (empty if value is None else value)
+        rows = [('Days Faxbot has records for', 'days'), ('Faxes sent', 'sent'), ('Faxes received', 'received'),
+                ('Of these, test faxes to your own numbers', 'own_numbers'), ('Plan fee for this period', 'fee'),
+                ('Plan fee per fax', 'fee_per_fax'), ('The same faxes another way', 'other_way'),
+                ('Rent for the fax number at your carrier', 'number_rental')]
+        out.table(['Estimate', f'Last {days} days', f'The {days} days before'],
+                  [[label, cell(latest, key), cell(before, key)] for label, key in rows],
+                  title=f"{plan['name']}, {money(plan.get('monthly_fee'))} a month")
+
+
 # Each section of `faxbot costs recommendations`: (key in --json output, heading, read(api), show(out, data)).
 RECOMMENDATION_SECTIONS = [
     ('sending', 'Sending', _read_sending, _show_sending),
     ('receiving', 'Receiving', _read_receiving, print_receiving),
+    ('plans', 'Plans', _read_plans, show_plans),
 ]
 
 
 def routing_recommendations():
-    """Show ways to pay less: numbers where another route cost less per delivered fax in the last 30 days, and numbers that could share incoming lines."""
+    """Show ways to pay less: numbers where another route cost less per delivered fax in the last 30 days, numbers that could share incoming lines, and whether each monthly plan is worth its fee."""
     api = state.api()
     result = {key: read(api) for key, _, read, _ in RECOMMENDATION_SECTIONS}
 
