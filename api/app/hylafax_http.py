@@ -25,6 +25,7 @@ from fastapi import APIRouter, Body, Depends, Header, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
 from . import hylafax_engine
+from .access.http import private_operation, require_identity
 from .access.route_policy import require_permission
 from .config import settings
 from .config_runtime import run_lifecycle_step
@@ -217,11 +218,18 @@ async def negotiation_summary(request: Request, days: int = 30):
         raise HTTPException(503, detail='Call measurements are unavailable. Try again.') from None
 
 
-@router.get('/admin/sip/negotiation/received/{inbound_id}',
-            dependencies=[Depends(require_permission('providers:read'))])
-async def received_negotiation(inbound_id: str, request: Request):
-    """Faxes → Received, a fax's detail: what its call negotiated."""
+@router.get('/admin/sip/negotiation/received/{inbound_id}')
+async def received_negotiation(inbound_id: str, request: Request, identity=Depends(require_identity)):
+    """Faxes → Received, a fax's detail: what its call negotiated, for anyone who may read that fax.
+
+    The fax's own read check comes first, as for the detail (GET /inbound/{id}): someone who may not read
+    the fax gets the detail's answer, so this route never shows that the fax exists.
+    """
     from . import fax_negotiation
+    if not settings.inbound_enabled:
+        raise HTTPException(404, detail='Inbound not enabled')
+    runtime = request.app.state.access_runtime
+    await run_lifecycle_step(private_operation(lambda: runtime.inbound_queries.item(identity.actor, inbound_id)))
     if not re.fullmatch(r'[A-Za-z0-9_-]{1,40}', inbound_id):
         raise HTTPException(404, detail='No phone-line call carried this fax.')
     try:

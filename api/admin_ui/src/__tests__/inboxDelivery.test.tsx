@@ -5,7 +5,7 @@ import { http, HttpResponse } from 'msw';
 import AdminAPIClient from '../api/client';
 import Received from '../components/Received';
 import ReceivingAddresses from '../components/delivery/ReceivingAddresses';
-import { emailDeliveryApplies, inboundFaxStatus, inboxDeliveryStatus, providerName } from '../components/delivery/InboxDelivery';
+import { earlierFailuresText, emailDeliveryApplies, inboundFaxStatus, inboxDeliveryStatus, providerName } from '../components/delivery/InboxDelivery';
 import { visibleNavigation } from '../navigation';
 import { formatServerTime, parseServerTime, toServerTime } from '../api/time';
 import type { EmailConnector, IntakeItem } from '../api/deliveryTypes';
@@ -238,16 +238,41 @@ describe('Received fax status', () => {
       detail: `${formatServerTime('2026-10-03T12:00:09')}. Who it went to was not recorded when it was delivered.` });
   });
 
-  it('says how often fetching stopped before the document was fetched again', async () => {
-    const sentence = 'Failed twice before Phaxio reported it again on 5 October 2026 at 3:12 PM UTC.';
-    server.use(
-      http.get('/inbound', () => HttpResponse.json([{ ...fax('fax-refetched', '+15550108888'), backend: 'phaxio',
-        earlier_failures_text: sentence, earlier_failures: [] }])),
-      http.get('/admin/inbound/callbacks', () => HttpResponse.json({ callbacks: [] })),
-      http.get('/intake/items', () => HttpResponse.json({ items: [], counts: { received: 0, sending: 0, delivered: 0, failed: 0 } })),
-    );
-    render(<Received client={client()} inboundEnabled permissions={operator} />);
-    expect(within(await rowFor('+15550108888')).getByText(sentence)).toBeTruthy();
+  it('says how often fetching stopped before the document was fetched again, in the viewer local time', async () => {
+    // The viewer is in Denver, whatever zone the test machine is in: the console's dates come from
+    // toLocaleString, which reads the browser's zone. The server's own sentence (UTC here) is not shown.
+    const toLocaleString = Date.prototype.toLocaleString;
+    const denver = vi.spyOn(Date.prototype, 'toLocaleString').mockImplementation(function (this: Date, locales, options) {
+      return toLocaleString.call(this, locales ?? 'en-US', { timeZone: 'America/Denver', ...options });
+    });
+    try {
+      expect(formatServerTime('2026-10-05T21:12:00')).toBe('10/5/2026, 3:12:00 PM');
+      const stop = { stopped_at: '2026-10-04T08:00:00', attempts: 30, problem: 'Phaxio did not answer.' };
+      server.use(
+        http.get('/inbound', () => HttpResponse.json([{ ...fax('fax-refetched', '+15550108888'), backend: 'phaxio',
+          earlier_failures: [
+            { ...stop, resumed_at: '2026-10-04T09:00:00', resumed_by: 'person', resumed_by_name: 'Dana Lee' },
+            { ...stop, resumed_at: '2026-10-05T21:12:00', resumed_by: 'notification', resumed_by_name: null }],
+          earlier_failures_text: 'Failed twice before Phaxio reported it again on 5 October 2026 at 9:12 PM UTC.' }])),
+        http.get('/admin/inbound/callbacks', () => HttpResponse.json({ callbacks: [] })),
+        http.get('/intake/items', () => HttpResponse.json({ items: [], counts: { received: 0, sending: 0, delivered: 0, failed: 0 } })),
+      );
+      render(<Received client={client()} inboundEnabled permissions={operator} />);
+      const row = await rowFor('+15550108888');
+      expect(within(row).getByText(
+        `Failed twice before Phaxio reported it again on ${formatServerTime('2026-10-05T21:12:00')}.`)).toBeTruthy();
+      expect(row.textContent).not.toContain('9:12 PM UTC');
+      // Someone who asked for it again, an unknown provider, and a server that sends only its sentence.
+      const person = { ...stop, resumed_at: '2026-10-04T09:00:00', resumed_by: 'person' as const, resumed_by_name: null };
+      expect(earlierFailuresText({ backend: 'phaxio', earlier_failures: [person, person, person] })).toBe(
+        `Failed 3 times before Faxbot was asked to fetch it again on ${formatServerTime('2026-10-04T09:00:00')}.`);
+      expect(earlierFailuresText({ backend: 'import', earlier_failures: [{ ...person, resumed_by: 'notification' }] }))
+        .toBe(`Failed once before the provider reported it again on ${formatServerTime('2026-10-04T09:00:00')}.`);
+      expect(earlierFailuresText({ backend: 'phaxio', earlier_failures_text: 'An older server.' })).toBe('An older server.');
+      expect(earlierFailuresText({ backend: 'phaxio', earlier_failures: [], earlier_failures_text: null })).toBeNull();
+    } finally {
+      denver.mockRestore();
+    }
   });
 
   it('shows a waiting fax without a download or delivery retry, and fetches it again on request', async () => {

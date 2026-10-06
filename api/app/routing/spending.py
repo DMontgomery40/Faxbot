@@ -15,8 +15,9 @@ an estimate (no rate card, or a per-minute card and a call of unknown length)
 adds nothing to the totals and is counted as ``unpriced`` ("not priced yet"),
 apart from ``unreported``, which also counts the estimated ones. A call the
 carrier priced only in part by the give-up time (``carriers.GIVE_UP``) adds
-what was priced and is counted as ``unpriced`` too; its cost reads as
-incomplete, never as the priced part alone.
+what was priced and is counted as ``never_priced`` ("never priced in full"),
+apart from ``unpriced``, because it will not be priced later; its cost reads
+as incomplete, never as the priced part alone.
 """
 from datetime import timedelta
 
@@ -137,13 +138,13 @@ class Spending:
             else:
                 entry['reported'] += 1
                 if call is not None and call[3]:
-                    # Priced only in part: the priced part counts, and the call counts as unpriced too.
+                    # Priced only in part: the priced part counts, and the call counts as never priced in full.
                     incomplete[row['provider_id']] = incomplete.get(row['provider_id'], 0) + 1
         for provider, tally in open_costs.items():
             totals[provider]['unreported_estimate_micros'] = tally.known
             totals[provider]['unpriced'] = tally.unknown
         for provider, count in incomplete.items():
-            totals[provider]['unpriced'] += count
+            totals[provider]['never_priced'] = count
         unrecorded = [row for row in self.carriers.unrecorded_in_effect(since=since) if row['direction'] == 'outbound']
         if unrecorded:
             entry = totals.setdefault('sip', self._empty_outbound('sip'))
@@ -176,13 +177,13 @@ class Spending:
         return {'provider_id': provider_id, 'attempts': 0, 'successes': 0, 'failures': 0, 'uncertain': 0,
                 'billed_seconds': 0, 'billed_pages': 0, 'cost_micros': {}, 'reported_cost_micros': {},
                 'settled_cost_micros': {}, 'unreported': 0, 'reported': 0, 'unreported_estimate_micros': {},
-                'unpriced': 0, 'awaiting': 0, 'unmatched': 0, 'carriers': set()}
+                'unpriced': 0, 'never_priced': 0, 'awaiting': 0, 'unmatched': 0, 'carriers': set()}
 
     @staticmethod
     def _empty_received(carrier):
         return {'provider_id': 'sip', 'carrier': carrier, 'calls': 0, 'faxes': 0, 'billed_seconds': 0,
                 'cost_micros': {}, 'reported_cost_micros': {}, 'unreported_estimate_micros': {}, 'reported': 0,
-                'unreported': 0, 'unpriced': 0, 'awaiting': 0, 'unmatched': 0}
+                'unreported': 0, 'unpriced': 0, 'never_priced': 0, 'awaiting': 0, 'unmatched': 0}
 
     @staticmethod
     def _add_unrecorded(entry, rows):
@@ -248,7 +249,7 @@ class Spending:
             totals[preset]['unreported_estimate_micros'] = tally.known
             totals[preset]['unpriced'] = tally.unknown
         for preset, count in incomplete.items():
-            totals[preset]['unpriced'] += count
+            totals[preset]['never_priced'] = count
         for row in self.carriers.unrecorded_in_effect(since=since):
             if row['direction'] != 'inbound':
                 continue

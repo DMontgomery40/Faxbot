@@ -6,7 +6,7 @@ import type AdminAPIClient from '../../api/client';
 import { formatServerTime } from '../../api/time';
 import type { InboundFax, WorkEvent, WorkItem } from '../../api/types';
 import type { IntakeItem } from '../../api/deliveryTypes';
-import { RECIPIENTS_NOT_RECORDED } from '../delivery/InboxDelivery';
+import { RECIPIENTS_NOT_RECORDED, earlierFailuresText } from '../delivery/InboxDelivery';
 import { deliveryErrorMessage } from '../delivery/shared';
 import { ReceivedCallNegotiation } from '../CallNegotiation';
 import { can, duplicateSentence, maskNumber, workStateSentence } from './text';
@@ -78,7 +78,7 @@ export default function WorkDetail({ client, item, onClose, onDownload, fax = nu
             <Field label="Due" value={shown.due_at ? formatServerTime(shown.due_at) : null} />
             <Field label="Owner" value={shown.owner?.name} />
             <Field label="Same document" value={duplicateSentence(shown)} />
-            <Field label="Earlier failures" value={fax?.earlier_failures_text} />
+            <Field label="Earlier failures" value={fax ? earlierFailuresText(fax) : null} />
             <Field label="Emailed to" value={emailedTo(delivery)} />
             <Field label="Done note" value={shown.done_note} />
             {can(shown, 'document') && (

@@ -297,7 +297,8 @@ def test_each_route_declares_the_permission_the_console_relies_on():
                         ('POST', '/admin/sip/network/check'): [('providers:write', False)],
                         ('GET', '/admin/sip/telnyx'): [('providers:read', False)],
                         ('GET', '/admin/sip/negotiation'): [('providers:read', False)],
-                        ('GET', '/admin/sip/negotiation/received/{inbound_id}'): [('providers:read', False)],
+                        # One received fax's call: that fax's own read check, as its detail (route policy coverage).
+                        ('GET', '/admin/sip/negotiation/received/{inbound_id}'): [],
                         ('POST', '/admin/sip/telnyx/numbers/{number}/t38'): [('providers:write', True)]}
 
 
@@ -570,6 +571,52 @@ def test_an_install_that_only_receives_is_never_told_no_provider_is_set_up(isola
         health = client.get('/admin/health-status', headers=ADMIN).json()
         assert (health['backend'], health['receiving_backend'], health['receiving_ready'],
                 health['backend_message']) == ('', 'sip', True, None)
+
+
+READINESS_SETUPS = {
+    'sending': ({**TRUNK, 'FAX_BACKEND': 'sip', 'INBOUND_ENABLED': 'false'}, ('ready', False)),
+    'receiving': ({**TRUNK, 'FAX_INBOUND_BACKEND': 'sip', 'INBOUND_ENABLED': 'true'}, ('not_ready', True)),
+    'both': ({**TRUNK, 'FAX_BACKEND': 'sip', 'INBOUND_ENABLED': 'true'}, ('ready', True)),
+}
+
+
+@pytest.mark.parametrize('setup', sorted(READINESS_SETUPS))
+def test_readiness_answers_200_when_ready_for_what_the_install_is_set_up_to_do(setup, isolated_installation,
+                                                                               monkeypatch):
+    """The HTTP status followed sending only, so an install that only receives got 503 while ready to receive.
+
+    Only the status code follows the setup (the rule `faxbot system health` uses); the body is unchanged.
+    """
+    import shutil
+    ghostscript = {'installed': True}
+    monkeypatch.setattr(ami_client._connected, 'is_set', lambda: True)
+    monkeypatch.setattr(main.shutil, 'which', lambda name: (
+        (f'/usr/bin/{name}' if ghostscript['installed'] else None) if name == 'gs' else shutil.which(name)))
+    if setup == 'receiving':
+        monkeypatch.delenv('FAX_BACKEND', raising=False)
+        monkeypatch.delenv('FAX_OUTBOUND_BACKEND', raising=False)
+    environment, fields = READINESS_SETUPS[setup]
+    with _client(monkeypatch, environment) as client:
+        ready = client.get('/health/ready')
+        body = ready.json()
+        assert ready.status_code == 200, body
+        assert (body['status'], body['ready_to_receive'], 'message' in body) == (*fields, False)
+        # Not ready: without Ghostscript no direction is ready.
+        ghostscript['installed'] = False
+        ready = client.get('/health/ready')
+        assert ready.status_code == 503
+        assert (ready.json()['status'], ready.json()['ready_to_receive']) == ('not_ready', False)
+
+
+def test_an_install_set_up_both_ways_answers_503_while_only_receiving_is_ready(isolated_installation, monkeypatch):
+    import shutil
+    monkeypatch.setattr(ami_client._connected, 'is_set', lambda: True)
+    monkeypatch.setattr(main.shutil, 'which', lambda name: f'/usr/bin/{name}' if name == 'gs' else shutil.which(name))
+    monkeypatch.setattr(main, '_outbound_profile_ready', lambda revision: False)  # the sending side's own check
+    with _client(monkeypatch, READINESS_SETUPS['both'][0]) as client:
+        ready = client.get('/health/ready')
+        assert ready.status_code == 503
+        assert (ready.json()['status'], ready.json()['ready_to_receive']) == ('not_ready', True)
 
 
 def test_a_refused_registration_names_the_password_the_carrier_wants(client, monkeypatch):

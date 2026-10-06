@@ -17,6 +17,20 @@ export function notPriced(count: number | undefined, unit: 'fax' | 'call'): stri
   return count ? `${countOf(count, unit)} not priced yet` : null;
 }
 
+// What a line leaves out: "2 faxes not priced yet, 1 never priced in full". Never priced in full: the carrier
+// priced part of the call by the give-up time and never the rest, so only that part is in the amount.
+export function openCounts(notYet: number | undefined, never: number | undefined, unit: 'fax' | 'call'): string | null {
+  const yet = notPriced(notYet, unit);
+  if (!never) return yet;
+  return yet ? `${yet}, ${never} never priced in full` : `${countOf(never, unit)} never priced in full`;
+}
+
+// The Spending card's sentence for those calls; `faxbot costs spending` prints the same.
+export function neverPricedSentence(carrier: string | null | undefined, count: number, unit: 'fax' | 'call'): string {
+  return `${carrier ?? 'Your carrier'} never priced ${countOf(count, unit)} in full; only `
+    + `${count === 1 ? 'its priced part is' : 'their priced parts are'} in the total.`;
+}
+
 // Exact sums in millionths, as the server keeps them; an amount that is not a decimal adds nothing.
 function add(totals: Map<string, bigint>, values: Money[] | undefined) {
   for (const value of values ?? []) {
@@ -80,18 +94,28 @@ export interface SpendingLine {
 export function spendingLines(costs: Pick<RouteCostsResponse, 'providers' | 'received'>): SpendingLine[] {
   return [
     ...costs.providers.map((provider) => ({ key: `sent-${provider.provider_id}`, label: providerLabel(provider.provider_id),
-      value: withNotPriced(sentCost(provider), notPriced(provider.attempts_not_priced, 'fax')) })),
+      value: withNotPriced(sentCost(provider), openCounts(provider.attempts_not_priced, provider.attempts_never_priced, 'fax')) })),
     ...(costs.received ?? []).map((entry) => ({ key: `received-${entry.carrier ?? entry.provider_id}`, label: receivedLabel(entry),
-      value: withNotPriced(receivedCost(entry), notPriced(entry.calls_not_priced, 'call')) })),
+      value: withNotPriced(receivedCost(entry), openCounts(entry.calls_not_priced, entry.calls_never_priced, 'call')) })),
   ];
 }
 
-// "2 faxes and 1 call not priced yet" across every route, or null: none of them is in the total.
+// "2 faxes and 1 call not priced yet" across every route (none of them is in the total), then "1 call never
+// priced in full" (only its priced part is), or null.
 export function notPricedTotal(costs: Pick<RouteCostsResponse, 'providers' | 'received'>): string | null {
-  const faxes = costs.providers.reduce((sum, provider) => sum + (provider.attempts_not_priced ?? 0), 0);
-  const calls = (costs.received ?? []).reduce((sum, entry) => sum + (entry.calls_not_priced ?? 0), 0);
-  const parts = [...(faxes ? [countOf(faxes, 'fax')] : []), ...(calls ? [countOf(calls, 'call')] : [])];
-  return parts.length ? `${parts.join(' and ')} not priced yet` : null;
+  const counted = (faxes: number, calls: number, words: string) => {
+    const parts = [...(faxes ? [countOf(faxes, 'fax')] : []), ...(calls ? [countOf(calls, 'call')] : [])];
+    return parts.length ? [`${parts.join(' and ')} ${words}`] : [];
+  };
+  const sum = (values: (number | undefined)[]) => values.reduce<number>((total, value) => total + (value ?? 0), 0);
+  const received = costs.received ?? [];
+  const phrases = [
+    ...counted(sum(costs.providers.map((provider) => provider.attempts_not_priced)),
+      sum(received.map((entry) => entry.calls_not_priced)), 'not priced yet'),
+    ...counted(sum(costs.providers.map((provider) => provider.attempts_never_priced)),
+      sum(received.map((entry) => entry.calls_never_priced)), 'never priced in full'),
+  ];
+  return phrases.length ? phrases.join(', ') : null;
 }
 
 // The Total line: the known total and what it leaves out, never a $0 for faxes with no price.

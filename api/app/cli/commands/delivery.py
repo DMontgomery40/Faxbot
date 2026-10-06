@@ -238,6 +238,22 @@ def _not_priced_line(result):
             "not in the total.")
 
 
+def never_priced_sentence(who, count, unit):
+    """A carrier that priced part of a call by the give-up time and never the rest; the console says the same."""
+    many = count != 1
+    noun = unit if not many else ('faxes' if unit == 'fax' else f'{unit}s')
+    return (f"{who or 'Your carrier'} never priced {count} {noun} in full; only "
+            f"{'their priced parts are' if many else 'its priced part is'} in the total.")
+
+
+def _never_priced_lines(out, result):
+    for item, unit in [*((item, 'fax') for item in result.get('providers') or []),
+                       *((item, 'call') for item in result.get('received') or [])]:
+        count = item.get('attempts_never_priced' if unit == 'fax' else 'calls_never_priced') or 0
+        if count:
+            out.line(never_priced_sentence(item.get('carrier'), count, unit))
+
+
 def _unrecorded_lines(out, items):
     for item in items:
         calls = item.get('unrecorded_calls') or 0
@@ -284,6 +300,7 @@ def routing_costs(since: str = typer.Option(None, '--since', help='Start date, f
         not_priced = _not_priced_line(result)
         if not_priced:
             out.line(not_priced)
+        _never_priced_lines(out, result)
         carrier = result.get('carrier_charges') or {}
         if carrier.get('supported') and not carrier.get('readable'):
             out.line(f"{carrier['carrier']} call charges appear once a {carrier['carrier']} API key is saved: add it "
