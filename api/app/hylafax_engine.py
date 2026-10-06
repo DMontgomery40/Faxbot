@@ -972,5 +972,12 @@ def record_inbound_engine(engine, payload, *, call_key, inbound_fax_id, number):
               'signal_rate': _text64(details, 'signal_rate_b64', 32),
               'data_format': _text64(details, 'data_format_b64', 32)}
     records = hylafax_records.records_for(engine)
-    return hylafax_records.safely(records.record_result, direction='inbound', call_key=call_key, details=values,
-                                  job_id=inbound_fax_id, number=number)
+    recorded = hylafax_records.safely(records.record_result, direction='inbound', call_key=call_key, details=values,
+                                      job_id=inbound_fax_id, number=number)
+    # What the call negotiated, from the call's session log (measurement only).
+    from .fax_negotiation import engine_values
+    if recorded is not None:
+        hylafax_records.safely(records.record_negotiation, direction='inbound', call_key=call_key, engine='hylafax',
+                               values=engine_values(details.get('negotiation_b64')), job_id=inbound_fax_id,
+                               number=number)
+    return recorded

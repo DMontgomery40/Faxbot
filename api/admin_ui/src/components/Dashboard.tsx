@@ -119,8 +119,23 @@ function receivesOnly(health: HealthStatus): boolean {
   return !health.backend && !!health.receiving_backend;
 }
 
+// Ready for what the install is set up for: sending, receiving, or both (the rule `faxbot system health`
+// uses). Which direction that is set up is not ready now, or null.
+export function notReadyFor(health: HealthStatus): 'send' | 'receive' | 'both' | null {
+  const sending = !!health.backend && !health.backend_healthy;
+  const receiving = !!health.receiving_backend && !health.receiving_ready;
+  return sending && receiving ? 'both' : sending ? 'send' : receiving ? 'receive' : null;
+}
+
+const NOT_READY_TEXT = {
+  send: 'Faxbot is not ready to send faxes',
+  receive: 'Faxbot is not ready to receive faxes',
+  both: 'Faxbot is not ready to send or receive faxes',
+} as const;
+
 function statusReady(health: HealthStatus): boolean {
-  return receivesOnly(health) ? !!health.receiving_ready : health.backend_healthy;
+  // No provider in either direction is never ready; "No fax provider set up yet" says why.
+  return (!!health.backend || !!health.receiving_backend) && notReadyFor(health) === null;
 }
 
 // What needs a person now, from the cards' own data. Items this account
@@ -139,11 +154,9 @@ export function attentionItems({ health, work, intake, costs, network, canSetUp 
     items.push({ key: 'no-provider', label: 'No fax provider is set up yet', count: null,
       destination: canSetUp ? 'setup' : 'diagnostics' });
   }
-  if (health && health.backend && !health.backend_healthy) {
-    items.push({ key: 'not-ready', label: 'Faxbot is not ready to send faxes', count: null, destination: 'system/diagnostics' });
-  }
-  if (health && receivesOnly(health) && !health.receiving_ready) {
-    items.push({ key: 'not-ready', label: 'Faxbot is not ready to receive faxes', count: null, destination: 'system/diagnostics' });
+  const notReady = health ? notReadyFor(health) : null;
+  if (notReady) {
+    items.push({ key: 'not-ready', label: NOT_READY_TEXT[notReady], count: null, destination: 'system/diagnostics' });
   }
   if (health?.jobs.recent_failures) {
     items.push({ key: 'failed', label: 'Faxes that failed in the last 24 hours', count: health.jobs.recent_failures, destination: 'faxes/sent' });
@@ -338,6 +351,11 @@ function Dashboard({ client, onNavigate, canSetUp = false, onSendFax }: Dashboar
                     : receivesOnly(health) ? `Receiving: ${providerLabel(health.receiving_backend ?? '')}`
                       : 'No fax provider set up yet.'}
                 </Typography>
+                {notReadyFor(health) && (
+                  <Typography variant="body2" sx={{ mt: 1 }} data-testid="status-not-ready">
+                    {NOT_READY_TEXT[notReadyFor(health)!]}.
+                  </Typography>
+                )}
                 {!health.backend && !receivesOnly(health) && canSetUp && onNavigate && (
                   <Button variant="contained" size="small" sx={{ mt: 1.5 }}
                     onClick={(event) => { event.stopPropagation(); onNavigate('setup'); }}>

@@ -85,8 +85,8 @@ def _rows(engine, name):
         return [dict(row) for row in connection.execute(sa.select(table).order_by(table.c.id)).mappings()]
 
 
-def test_history_is_head_after_capacity():
-    assert schema.HEAD == schema_history.REVISION == '0022_history'
+def test_history_follows_capacity():
+    assert schema.HISTORY == schema_history.REVISION == '0022_history'
     assert schema.CAPACITY == schema_capacity.REVISION == '0021_capacity'
     assert schema_history.TABLES == frozenset({'inbound_import_failures', 'inbound_provider_deletions'})
     assert schema_history.TABLES <= schema.STRICT_TABLES

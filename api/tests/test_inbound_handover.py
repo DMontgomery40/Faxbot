@@ -402,5 +402,7 @@ def test_notifier_passes_the_sip_call_id_in_the_call_object(tmp_path):
     assert first['sip_call_id_b64'] == 'M2YwYzVhOGUtMTExMQ==touchpwned'  # only base64 characters survive
     assert second['sip_call_id_b64'] is None
     assert set(first) - {'sip_call_id_b64'} == {'did', 'caller', 'started_at', 'answered_at', 'ended_at', 'pages',
-                                                't38', 'remote_station_id_b64'}
+                                                't38', 'remote_station_id_b64', 'rate', 'resolution'}
+    # Not passed: unknown, never a default.
+    assert first['rate'] is None and first['resolution'] is None
 

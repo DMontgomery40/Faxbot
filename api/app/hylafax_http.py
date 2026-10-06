@@ -111,6 +111,11 @@ def _record_engine(request, job_id, attempt_id, payload, row):
         return
     hylafax_records.safely(records.record_result, direction='outbound', call_key=attempt_id, details=details,
                            job_id=job_id, number=(row or {}).get('called'))
+    # What the call negotiated, from the call's session log (measurement only).
+    from .fax_negotiation import engine_values
+    hylafax_records.safely(records.record_negotiation, direction='outbound', call_key=attempt_id, engine='hylafax',
+                           values=engine_values(payload.get('negotiation_b64')), job_id=job_id,
+                           number=(row or {}).get('called'))
 
 
 async def _settled_call(request, attempt_id, row):
@@ -196,6 +201,36 @@ async def put_fax_limits(number: str, payload: FaxLimits, request: Request,
     from .audit import audit_event
     audit_event('recipient_fax_limits', number=target, max_rate=payload.max_rate, ecm=payload.ecm)
     return result
+
+
+# What fax calls negotiated (measurement only; fax_negotiation) ------------------------------------
+
+@router.get('/admin/sip/negotiation', dependencies=[Depends(require_permission('providers:read'))])
+async def negotiation_summary(request: Request, days: int = 30):
+    """Providers → the trunk page: calls per compression, error correction and speed over 7, 30 or 90 days."""
+    from . import fax_negotiation
+    if days not in fax_negotiation.DAYS:
+        raise HTTPException(400, detail='Choose 7, 30 or 90 days.')
+    try:
+        return await run_lifecycle_step(lambda: fax_negotiation.summary(_engine_for(request), days=days))
+    except Exception:
+        raise HTTPException(503, detail='Call measurements are unavailable. Try again.') from None
+
+
+@router.get('/admin/sip/negotiation/received/{inbound_id}',
+            dependencies=[Depends(require_permission('providers:read'))])
+async def received_negotiation(inbound_id: str, request: Request):
+    """Faxes → Received, a fax's detail: what its call negotiated."""
+    from . import fax_negotiation
+    if not re.fullmatch(r'[A-Za-z0-9_-]{1,40}', inbound_id):
+        raise HTTPException(404, detail='No phone-line call carried this fax.')
+    try:
+        view = await run_lifecycle_step(lambda: fax_negotiation.received_view(_engine_for(request), inbound_id))
+    except Exception:
+        raise HTTPException(503, detail='Call measurements are unavailable. Try again.') from None
+    if view is None:
+        raise HTTPException(404, detail='No phone-line call carried this fax.')
+    return view
 
 
 def _require_engine(x_internal_secret):

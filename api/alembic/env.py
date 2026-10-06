@@ -36,6 +36,7 @@ config.attributes["schema_retired_permissions"] = importlib.import_module(packag
 config.attributes["schema_local_delivery"] = importlib.import_module(package + ".schema_local_delivery")
 config.attributes["schema_capacity"] = importlib.import_module(package + ".schema_capacity")
 config.attributes["schema_history"] = importlib.import_module(package + ".schema_history")
+config.attributes["schema_negotiation"] = importlib.import_module(package + ".schema_negotiation")
 
 
 def migrate(connection):
