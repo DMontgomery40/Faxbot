@@ -121,24 +121,30 @@ def test_a_plan_dearer_than_a_reliable_route_is_worth_reviewing_with_the_differe
                                 'to keep the number, $8.95 less (estimate).')
     assert plan['action'] == ('If you decide to drop the plan, fax these numbers with Telnyx instead, then cancel the '
                               'plan in your HumbleFax account. Faxbot never cancels anything for you.')
-    assert plan['caveats'] == ['The HumbleFax plan includes a fax number of its own. Before you cancel, move that number '
-                               'to Telnyx if anyone still faxes it.']
+    assert plan['caveats'] == ['Before you cancel, move your HumbleFax number to Telnyx if anyone still faxes it.']
 
 
 def test_a_plan_whose_number_receives_faxes_says_to_move_the_number_first(plans):
     multi, routes = plans
     sent(multi, routes, 'humblefax', CLINIC, ['success'] * 3)
     received(routes, 'humblefax', HUMBLE, 2)
-    sent(multi, routes, 'sip', HUMBLE, ['success'])  # Faxbot itself faxed the plan's number once
+    # Faxbot itself faxed the plan's number once: a test of your own number, not a caller.
+    sent(multi, routes, 'sip', HUMBLE, ['success'])
     (plan,) = report(routes, humblefax_from_number=HUMBLE)['plans']
     latest = plan['windows'][0]
     assert (latest['sent'], latest['received']) == (3, 2)
     # Received faxes would arrive on the trunk once the number moves: one page, one billed minute each.
     assert latest['other_way'] == money(3 * estimate_cost(TELNYX_OUT, 3) + 2 * estimate_cost(TELNYX_IN, 1))
     assert plan['state'] == 'review'
-    assert plan['caveats'][0] == (f'Your HumbleFax plan includes the fax number {HUMBLE}, which received 3 faxes in the '
+    assert plan['caveats'][0] == (f'Your HumbleFax plan includes the fax number {HUMBLE}, which received 2 faxes in the '
                                   'last 30 days. Move it to Telnyx before you cancel, or faxes sent to it will stop '
                                   'arriving.')
+    # With nothing received through it, the number is still named, with no count.
+    with routes.engine.begin() as connection:
+        connection.execute(sa.text('DELETE FROM inbound_faxes'))
+    (plan,) = report(routes, humblefax_from_number=HUMBLE)['plans']
+    assert plan['caveats'][0] == (f'Before you cancel, move your HumbleFax number, {HUMBLE}, to Telnyx if anyone still '
+                                  'faxes it.')
 
 
 def test_an_unreliable_alternative_suggests_nothing(plans):

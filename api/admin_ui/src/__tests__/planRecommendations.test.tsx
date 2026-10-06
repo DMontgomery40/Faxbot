@@ -24,8 +24,7 @@ function review() {
         + 'fee; Telnyx would have cost about $0.05 for the same faxes and $1.00 to keep the number, $8.95 less (estimate).',
       action: 'If you decide to drop the plan, fax these numbers with Telnyx instead, then cancel the plan in your '
         + 'HumbleFax account. Faxbot never cancels anything for you.',
-      caveats: ['The HumbleFax plan includes a fax number of its own. Before you cancel, move that number to Telnyx if '
-        + 'anyone still faxes it.'],
+      caveats: ['Before you cancel, move your HumbleFax number to Telnyx if anyone still faxes it.'],
       windows: [window(30, 5), window(0, 0)],
     }],
   };
@@ -47,7 +46,7 @@ describe('Costs → Recommendations → Plans', () => {
     expect(within(plan).getAllByText('Estimate').length).toBeGreaterThan(0);
     expect(within(plan).getByTestId('plan-sentence').textContent).toContain('$8.95 less (estimate)');
     expect(within(plan).getByTestId('plan-action').textContent).toContain('Faxbot never cancels anything for you.');
-    expect(within(plan).getByText(/includes a fax number of its own/)).toBeTruthy();
+    expect(within(plan).getByText(/move your HumbleFax number to Telnyx/)).toBeTruthy();
     const table = within(plan).getByRole('table', { name: 'HumbleFax plan compared with paying per fax' });
     const perFax = within(table).getByText('Plan fee per fax').closest('tr') as HTMLElement;
     // The 30 days before have no records: a dash, never $0.

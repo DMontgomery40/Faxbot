@@ -148,16 +148,6 @@ class PlanCheck:
                 self.faxes.c.backend == key, when >= start, when < end)).all()
         return [(stored_number(row.to_number or '', country=self.country), row.pages) for row in rows]
 
-    def delivered_to(self, numbers, start, end):
-        """How many faxes Faxbot delivered to ``numbers`` (any route) between ``start`` and ``end``."""
-        if not numbers:
-            return 0
-        c = self.routes.costs
-        with read_connection(self.routes.engine) as connection:
-            return connection.scalar(sa.select(sa.func.count()).select_from(c).where(
-                c.c.destination.in_(list(numbers)), c.c.outcome == 'success', c.c.created_at >= start,
-                c.c.created_at < end)) or 0
-
     # The other way ---------------------------------------------------------------------
     def evidence(self):
         if self._evidence is None:
@@ -307,17 +297,19 @@ class PlanCheck:
     def _caveats(self, key, name, latest, numbers, includes_number, carrier, suggested, fee, currency):
         caveats = []
         if includes_number and key != 'sip':
-            where = f'Move it to {carrier}' if carrier else 'Move it to another carrier'
-            if numbers:
-                received = latest['received'] + self.delivered_to(numbers, latest['start'], latest['end'])
-                heard = (f", which received {_faxes(received)} in the last {self.days} days" if received else '')
-                number = numbers[0] if len(numbers) == 1 else ', '.join(numbers)
-                caveats.append(f'Your {name} plan includes the fax number {number}{heard}. {where} before you '
+            target = carrier or 'another carrier'
+            # Only faxes received through the plan count: Faxbot's own sends to the number are tests, not callers.
+            received = latest['received']
+            number = (numbers[0] if len(numbers) == 1 else ', '.join(numbers)) if numbers else None
+            if number and received:
+                caveats.append(f'Your {name} plan includes the fax number {number}, which received '
+                               f'{_faxes(received)} in the last {self.days} days. Move it to {target} before you '
                                'cancel, or faxes sent to it will stop arriving.')
+            elif number:
+                caveats.append(f'Before you cancel, move your {name} number, {number}, to {target} if anyone still '
+                               'faxes it.')
             else:
-                target = carrier or 'another carrier'
-                caveats.append(f'The {name} plan includes a fax number of its own. Before you cancel, move that number '
-                               f'to {target} if anyone still faxes it.')
+                caveats.append(f'Before you cancel, move your {name} number to {target} if anyone still faxes it.')
         if latest['own_numbers']:
             caveats.append(f"{latest['own_numbers']} of these faxes were tests to your own numbers.")
         if key in suggested:
