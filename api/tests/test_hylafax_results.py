@@ -611,6 +611,32 @@ def test_asterisk_sends_t38_first_when_a_t38_stream_starts():
     assert dockerfile.index('COPY patches/ /usr/src/patches/') < applied < dockerfile.index('RUN ./configure')
 
 
+def test_the_t38_gateway_ends_a_fast_modem_signal_the_far_end_left_open():
+    """Live, 6 October 2026: after Telnyx relayed a cut-short training check and two trainings with no data,
+    the gateway played V.29 fill to the engine for seconds and never relayed the engine's answer. Faxbot's
+    Asterisk applies patch 0003 after 0002, with the same steps asterisk/tests/t38_gateway_replay.c proves
+    (tests/test_t38_gateway_replay.py), and the image build stops when a patch no longer applies."""
+    patch = (ROOT / 'asterisk' / 'patches' / '0003-t38-gateway-open-fast-modem-signal.patch').read_text()
+    replay = (ROOT / 'asterisk' / 'tests' / 't38_gateway_replay.c').read_text()
+    assert '--- a/res/res_fax_spandsp.c' in patch
+    for step in ('get_bit = modems->fast_modems.v29_tx.current_get_bit;',
+                 'get_bit = modems->fast_modems.v17_tx.current_get_bit;',
+                 'get_bit = modems->fast_modems.v27ter_tx.current_get_bit;',
+                 'if (get_bit != t38_non_ecm_buffer_get_bit || buffer->data_finished',
+                 '|| queue->in == queue->out || !(queue->buf[queue->out].contents & FAXBOT_SPANDSP_FLAG_INDICATOR)',
+                 '|| gw->t38x.current_rx_field_class == T38_FIELD_CLASS_NON_ECM) {',
+                 't38_non_ecm_buffer_push(buffer);'):
+        assert step in patch and step in replay, step
+    # Run before each block of audio, after 0002's step, with one NOTICE line each time it acts.
+    assert ' \tfaxbot_end_empty_preamble(s, p);\n+\tfaxbot_end_empty_training(s, p);\n' in patch
+    assert 'ast_log(LOG_NOTICE, "Faxbot T.38 gateway on %s: ' in patch
+    names = sorted(path.name for path in (ROOT / 'asterisk' / 'patches').glob('*.patch'))
+    assert names[:3] == ['0001-t38-send-first.patch', '0002-t38-gateway-empty-preamble.patch',
+                         '0003-t38-gateway-open-fast-modem-signal.patch']
+    dockerfile = (ROOT / 'asterisk' / 'Dockerfile').read_text()
+    assert 'for change in /usr/src/patches/*.patch; do patch -p1 --forward < "$change" || exit 1; done' in dockerfile
+
+
 def test_two_sends_with_the_same_communication_id_both_keep_their_engine_record(database):
     """A new engine container starts its communication IDs again (live, 5 October: the record of a send was
     dropped as a duplicate of an earlier call's); the attempt keeps each reference unique."""
