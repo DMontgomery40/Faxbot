@@ -227,6 +227,29 @@ describe('Received fax status', () => {
     expect(inboxDeliveryStatus(unrouted, false, true)?.retry).toBe(true);
   });
 
+  it('names who an email went to only from the delivery, and says when that was not recorded', () => {
+    const recorded = item({ state: 'delivered', delivered_at: '2026-10-03T12:00:09', delivered_to: ['billing@clinic.example'],
+      recipients_recorded: true }) as IntakeItem;
+    expect(inboxDeliveryStatus(recorded)).toMatchObject({ label: 'Delivered to billing@clinic.example',
+      detail: formatServerTime('2026-10-03T12:00:09') });
+    const older = item({ state: 'delivered', delivered_at: '2026-10-03T12:00:09', delivered_to: [],
+      recipients_recorded: false }) as IntakeItem;
+    expect(inboxDeliveryStatus(older)).toMatchObject({ label: 'Delivered by email',
+      detail: `${formatServerTime('2026-10-03T12:00:09')}. Who it went to was not recorded when it was delivered.` });
+  });
+
+  it('says how often fetching stopped before the document was fetched again', async () => {
+    const sentence = 'Failed twice before Phaxio reported it again on 5 October 2026 at 3:12 PM UTC.';
+    server.use(
+      http.get('/inbound', () => HttpResponse.json([{ ...fax('fax-refetched', '+15550108888'), backend: 'phaxio',
+        earlier_failures_text: sentence, earlier_failures: [] }])),
+      http.get('/admin/inbound/callbacks', () => HttpResponse.json({ callbacks: [] })),
+      http.get('/intake/items', () => HttpResponse.json({ items: [], counts: { received: 0, sending: 0, delivered: 0, failed: 0 } })),
+    );
+    render(<Received client={client()} inboundEnabled permissions={operator} />);
+    expect(within(await rowFor('+15550108888')).getByText(sentence)).toBeTruthy();
+  });
+
   it('shows a waiting fax without a download or delivery retry, and fetches it again on request', async () => {
     const fetches: string[] = [];
     server.use(

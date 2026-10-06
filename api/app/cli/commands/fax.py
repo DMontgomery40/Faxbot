@@ -374,7 +374,9 @@ def arrived(item):
 def _inbound_fields(item):
     return [('Received fax ID', item.get('id')), ('From', item.get('fr') or 'Unknown'),
             ('To', item.get('to') or 'Unknown'),
-            ('Status', _inbound_status(item)), ('Problem', item.get('problem')), ('Mailbox', item.get('mailbox')),
+            ('Status', _inbound_status(item)), ('Problem', item.get('problem')),
+            *([('Earlier failures', item['earlier_failures_text'])] if item.get('earlier_failures_text') else []),
+            ('Mailbox', item.get('mailbox')),
             ('Received through', _provider(item.get('backend'))),
             ('Provider fax ID', item.get('provider_fax_id')),
             ('Sent', local_time(item.get('source_received_at'))),

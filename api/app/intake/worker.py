@@ -104,7 +104,8 @@ class IntakeWorker:
             store.record_failed(item, message=str(error) + ' Check the inbox before sending it again.',
                                 connector_id=connector.id)
             return
-        store.record_delivered(item, connector_id=connector.id, reference=delivery.reference, now=utcnow())
+        store.record_delivered(item, connector_id=connector.id, reference=delivery.reference,
+                               recipients=delivery.accepted, now=utcnow())
 
     def step(self):
         self.store.recover_expired()

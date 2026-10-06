@@ -41,7 +41,7 @@ def _columns(engine, table):
 
 
 def test_capacity_is_head_after_local_delivery():
-    assert schema.HEAD == schema_capacity.REVISION == '0021_capacity'
+    assert schema.CAPACITY == schema_capacity.REVISION == '0021_capacity'
     assert schema.LOCAL_DELIVERY == '0020_local_delivery'
     assert schema_capacity.TABLES == frozenset()
 

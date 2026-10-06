@@ -173,6 +173,38 @@ def test_every_command_is_shown_in_help_and_the_older_names_are_gone():
         assert older not in commands
 
 
+@pytest.mark.parametrize('sends,receives,ready_to_send,ready_to_receive,code', [
+    (True, False, True, False, 0),      # sends only, ready to send
+    (False, True, False, True, 0),      # receives only, ready to receive (no sending provider: never ready to send)
+    (True, True, True, True, 0),        # both, ready for both
+    (True, True, True, False, 1),       # both, but not ready to receive
+    (False, True, False, False, 1),     # receives only, not ready
+    (False, False, False, False, 1),    # nothing set up
+])
+def test_system_health_exits_0_when_ready_for_what_the_install_is_set_up_to_do(
+        monkeypatch, sends, receives, ready_to_send, ready_to_receive, code):
+    """A receive-only install is judged on receiving, a send-only one on sending, and one set up for both on both."""
+    from app.cli import state as cli_state
+
+    class Canned:
+        url = 'https://faxbot.example'
+
+        def get(self, path, **_):
+            if path == '/health':
+                return {'status': 'ok'}
+            return {'status': 'ready' if ready_to_send else 'not_ready', 'ready_to_receive': ready_to_receive,
+                    'backend': 'phaxio' if sends else '',
+                    'checks': {'db': True, 'ghostscript': True,
+                               'inbound': {'backend': 'sip' if receives else '', 'enabled': receives}}}
+    monkeypatch.setattr(cli_state, 'api', lambda: Canned())
+    result = CliRunner().invoke(cli_app, ['--url', 'https://faxbot.example', 'system', 'health'],
+                                env={'COLUMNS': '200'})
+    assert result.exit_code == code, result.stdout
+    # What the install is not set up to do reads as such, never as a failure.
+    assert bool(re.search(r'Ready to send\s+Not set up', result.stdout)) is (not sends)
+    assert bool(re.search(r'Ready to receive\s+Not set up', result.stdout)) is (not receives)
+
+
 def test_me_health_and_errors_map_to_plain_sentences(cli):
     me = cli.json('access', 'me')
     assert me['principal']['kind'] == 'bootstrap' and 'owner:recover' in me['permissions']
@@ -1235,6 +1267,8 @@ def test_money_reads_as_the_console_shows_it(monkeypatch):
     assert output.cost_amount({'state': 'estimated', 'estimated_cost': [usd('0.0025')]}) == '$0.0025 estimate'
     assert output.cost_amount({'state': 'reported', 'reported_cost': [usd('0.005')]}) == '$0.005'
     assert output.cost_amount({'state': 'included'}) == 'In your plan'
+    # A call the carrier priced only in part never reads as costing that part alone.
+    assert output.cost_amount({'state': 'incomplete', 'reported_cost': [usd('0.005')]}) == '$0.005, part never priced'
     assert output.money([usd('0.005'), {'currency': 'EUR', 'amount': '0.01'}]) == '$0.005 + 0.01 EUR'
 
 

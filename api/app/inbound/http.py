@@ -613,7 +613,8 @@ async def fetch_inbound(inbound_id: str, request: Request,
     queries = access_runtime(request).inbound_queries
     await run_lifecycle_step(private_operation(lambda: queries.require_fetchable(identity.actor, inbound_id)))
     try:
-        await run_lifecycle_step(lambda: service.store.resume_for_fax(inbound_id))
+        await run_lifecycle_step(lambda: service.store.resume_for_fax(
+            inbound_id, principal_id=getattr(identity.actor, 'principal_id', None)))
     except (AlreadyReceived, ImportNotFound) as error:
         raise HTTPException(409, detail=str(error)) from None
     service.kick()

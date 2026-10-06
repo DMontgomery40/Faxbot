@@ -434,18 +434,35 @@ def providers_status():
     state.out().result(result, human)
 
 
+def ready_for_setup(ready):
+    """``(set up to send, set up to receive, ready for each of those)`` from ``/health/ready``.
+
+    An install with no sending provider is judged on receiving alone, one with sending and no
+    receiving on sending alone, and one set up for both must be ready for both; one set up for
+    neither is not ready.
+    """
+    ready = ready or {}
+    inbound = (ready.get('checks') or {}).get('inbound') or {}
+    sends = bool(ready.get('backend'))
+    receives = bool(inbound.get('enabled') and inbound.get('backend'))
+    ok = ((sends or receives) and (not sends or ready.get('status') == 'ready')
+          and (not receives or bool(ready.get('ready_to_receive'))))
+    return sends, receives, bool(ok)
+
+
 def health():
-    """Check that Faxbot answers and is ready to send faxes. No key is needed. For scripts, the command ends with exit code 1 when Faxbot is not ready."""
+    """Check that Faxbot answers and is ready to send and receive faxes, for whichever of those it is set up to do. No key is needed. For scripts, the command ends with exit code 1 when Faxbot is not ready for them."""
     api = state.api()
     live = api.get('/health', auth=False)
     ready = api.get('/health/ready', auth=False, allow=(503,))
-    result = {'live': live, 'ready': ready}
+    sends, receives, ok = ready_for_setup(ready)
+    result = {'live': live, 'ready': ready, 'ready_for_setup': ok}
 
     def human(out):
         checks = (ready or {}).get('checks', {})
         out.fields([('Server', api.url), ('Answering', (live or {}).get('status') == 'ok'),
-                    ('Ready to send', (ready or {}).get('status') == 'ready'),
-                    ('Ready to receive', (ready or {}).get('ready_to_receive')),
+                    ('Ready to send', (ready or {}).get('status') == 'ready' if sends else 'Not set up'),
+                    ('Ready to receive', (ready or {}).get('ready_to_receive') if receives else 'Not set up'),
                     ('Sending provider', _provider((ready or {}).get('backend'))),
                     ('Receiving provider', _provider((checks.get('inbound') or {}).get('backend')
                                                      if (checks.get('inbound') or {}).get('enabled') else None)),
@@ -456,7 +473,7 @@ def health():
         if (ready or {}).get('message'):
             out.line(ready['message'])
     state.out().result(result, human)
-    if (ready or {}).get('status') != 'ready':
+    if not ok:
         raise typer.Exit(EXIT_FAILURE)  # the result above already says what failed, in --json too
 
 

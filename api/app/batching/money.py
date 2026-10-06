@@ -6,7 +6,7 @@ when there is one, otherwise Faxbot's rate-card estimate from the measured call.
 """
 from datetime import timedelta
 
-from ..routing.costs import Money, estimate_cost, money_text
+from ..routing.costs import Money, estimate_cost, money_text, split_by_weight
 from ..routing.database import utcnow
 from .store import call_members, calls_to
 
@@ -27,18 +27,23 @@ def call_charge(routes, batch_id):
 
 
 def share(routes, engine, member):
-    """This fax's share of its call's charge, split by pages (each fax with its separator page)."""
+    """This fax's share of its call's charge, split by pages (each fax with its separator page).
+
+    The shares of one call sum exactly to its charge: largest remainder, in call order then fax ID
+    (``routing.costs.split_by_weight``).
+    """
     if member is None or member['state'] != 'together' or not member['batch_id']:
         return None
     charge = call_charge(routes, member['batch_id'])
     if charge is None:
         return None
     micros, currency, basis = charge
-    members = call_members(engine, member['batch_id'])
-    total = sum(row['pages'] + 1 for row in members)
-    if not total:
+    members = sorted(call_members(engine, member['batch_id']),
+                     key=lambda row: (row['document_number'] or 0, row['id']))
+    positions = [row['id'] for row in members]
+    if member['id'] not in positions or not sum(row['pages'] + 1 for row in members):
         return None
-    part = (micros * (member['pages'] + 1) + total // 2) // total
+    part = split_by_weight(micros, [row['pages'] + 1 for row in members])[positions.index(member['id'])]
     estimate = '' if basis == 'reported' else ' (estimate)'
     return {'amount_micros': part, 'call_micros': micros, 'currency': currency, 'basis': basis,
             'sentence': f"Its share of the call's charge, split by pages: {money_text(part, currency)} "

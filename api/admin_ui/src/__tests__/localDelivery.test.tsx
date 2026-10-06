@@ -39,6 +39,12 @@ describe('a fax to one of your own numbers', () => {
     expect(within(dialog).queryByTestId('job-by-call')).toBeNull();
   });
 
+  it('never shows a call the carrier priced only in part as costing that part alone', () => {
+    const cost = { state: 'incomplete' as const, reported_cost: [{ currency: 'USD', amount: '0.005' }], estimated_cost: [],
+      summary: 'Telnyx charged $0.005 for part of this call and never priced the rest, so its full cost is unknown.' };
+    expect(costAmount(cost)).toBe('$0.005, part never priced');
+  });
+
   it('says when you asked for a real call through your carrier', async () => {
     server.use(
       http.get('/admin/fax-jobs', () => HttpResponse.json({ total: 1, jobs: [job()] })),

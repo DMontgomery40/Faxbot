@@ -18,6 +18,7 @@ import zipfile
 import sqlalchemy as sa
 
 from ..access.types import ResourceRef
+from ..intake.store import recipients_of
 from . import text
 
 
@@ -122,15 +123,16 @@ class EvidenceExport:
         if row['acknowledged_at'] is None and not any(event['kind'] == 'acknowledged' for event in events):
             missing.append('No acknowledgement by an owner has been recorded.')
 
-        # Who each email went to is not stored at delivery, and the connector's recipients can change
-        # later, so the evidence never names today's recipients in their place.
-        if any(item['state'] == 'delivered' for item in deliveries):
+        # Who each email went to is stored when the email server accepts it. A delivery from before
+        # that was kept says so; the connector's recipients today are never named in its place.
+        if any(item['state'] == 'delivered' and recipients_of(item) is None for item in deliveries):
             missing.append('Who each email was sent to was not recorded when it was delivered.')
 
         def delivery(item):
             connector = connectors.get(item['connector_id'])
             return {'state': item['state'], 'connector': connector.name if connector is not None else None,
-                    'delivered_to': None, 'delivered_at': utc(item['delivered_at']),
+                    'delivered_to': recipients_of(item) if item['state'] == 'delivered' else None,
+                    'delivered_at': utc(item['delivered_at']),
                     'attempts': item['attempts'], 'problem': item['last_error'], 'queued_at': utc(item['received_at'])}
 
         history = []
@@ -179,6 +181,8 @@ class EvidenceExport:
                  '']
         lines += [f"{text.time_text(event['occurred_at'])}  {text.event_text(event['kind'], json.loads(event['details'] or '{}'))}"
                   for event in events]
+        lines += [f"{text.time_text(item['delivered_at'])}  Emailed to {', '.join(recipients_of(item))}."
+                  for item in deliveries if item['state'] == 'delivered' and recipients_of(item)]
         if missing:
             lines += ['', 'Not included or not recorded:'] + [f'- {item}' for item in missing]
         lines += ['', *LIMITS]
