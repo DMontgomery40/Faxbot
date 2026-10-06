@@ -460,10 +460,51 @@ def bring_up(tmp_path, label, made, *, faxbot_t38, carrier_gateway, peer_listene
     wait_for(steady, 180, "Faxbot's Asterisk to stay up")
     wait_for(lambda: docker.asterisk(asterisk, 'iax2 show peers').count(' OK ') >= 2, 120,
              "the engine's two lines after Asterisk settled")
+    # Every daemon runs exactly once, with the command line its installed version reads (a second modem for a
+    # line, live on 6 October 2026, still looked healthy to Asterisk), and each line holds only its own port.
+    engine_daemons = lambda lines: sorted(  # noqa: E731
+        [f'iaxmodem ttyIAX{n}' for n in range(1, lines + 1)] + [f'faxgetty -D ttyIAX{n}' for n in range(1, lines + 1)]
+        + ['faxq', 'hfaxd -i 4559'])
+    expected = {
+        asterisk: ['asterisk -f -C /etc/asterisk/asterisk.conf'],
+        carrier: ['asterisk -f -C /etc/asterisk/asterisk.conf'],
+        engine: engine_daemons(2), peer: engine_daemons(1),
+        api_container: ['/usr/local/bin/python3.11 /usr/local/bin/uvicorn app.main:app --host 0.0.0.0 --port 8080'],
+    }
+    for container, commands in expected.items():
+        names = {command.split()[1 if 'python' in command.split()[0] else 0].rsplit('/', 1)[-1]
+                 for command in commands}
+        assert daemons(docker, container, names) == commands, (container, daemons(docker, container, names))
+    for container, lines in ((engine, 2), (peer, 1)):
+        assert udp_ports(docker, container) == [4569 + n for n in range(1, lines + 1)], container
     docker.run('exec', '--detach', asterisk, 'bash', '-c', AMI_LISTENER)
     for container in (asterisk, carrier):
         docker.asterisk(container, 'pjsip set logger on')
     return docker, context
+
+
+PROCESSES = ('for p in /proc/[0-9]*; do [ -r "$p/cmdline" ] || continue; '
+             'tr "\\000" "\\037" < "$p/cmdline"; echo; done')
+
+
+def daemons(docker, container, names):
+    """The command lines (sorted) of the processes in ``container`` running one of the programs ``names``
+    (by program name; a Python program by its script name), whatever started them."""
+    found = []
+    for line in docker.run('exec', '-u', 'root', container, 'sh', '-c', PROCESSES, check=False).stdout.splitlines():
+        argv = [part for part in line.split('\x1f') if part]
+        if not argv:
+            continue
+        program = argv[1] if argv[0].rsplit('/', 1)[-1].startswith('python') and len(argv) > 1 else argv[0]
+        if program.rsplit('/', 1)[-1] in names:
+            found.append(' '.join(argv))
+    return sorted(found)
+
+
+def udp_ports(docker, container):
+    """UDP ports open on all addresses in ``container``, one entry per socket (a port held twice shows twice)."""
+    table = docker.run('exec', '-u', 'root', container, 'cat', '/proc/net/udp', check=False).stdout.splitlines()[1:]
+    return sorted(int(line.split()[1].split(':')[1], 16) for line in table if line.split()[1].startswith('00000000:'))
 
 
 def session_logs(docker, container):

@@ -24,6 +24,8 @@ conf=$shared/engine.conf
 out=${FAXBOT_ENGINE_OUT:-$data/hylafax-out}
 spool=${FAXBOT_HYLAFAX_SPOOL:-/var/spool/hylafax}
 state=${FAXBOT_ENGINE_STATE:-/var/lib/faxbot-engine}
+# Tests only (api/tests/test_hylafax_engine.py): a folder standing in for / for the modems' files.
+root=${FAXBOT_ENGINE_ROOT:-}
 status=$out/engine.status
 check_seconds=${FAXBOT_ENGINE_CHECK_SECONDS:-5}
 started_at=$(date +%s)
@@ -202,9 +204,9 @@ if [ -f "$shared/asterisk-started" ] && ! lines_loaded; then
   sleep "$check_seconds"
 fi
 
-mkdir -p /run/lock /etc/iaxmodem /var/log/iaxmodem
-chmod 1777 /run/lock
-[ -e /var/lock ] || ln -s /run/lock /var/lock
+mkdir -p "$root/run/lock" "$root/etc/iaxmodem" "$root/var/log/iaxmodem"
+chmod 1777 "$root/run/lock"
+[ -e "$root/var/lock" ] || ln -s "$root/run/lock" "$root/var/lock"
 if [ "$sslfax" = yes ]; then ssl_support=Yes; else ssl_support=No; fi
 # Session logs leave out HDLC frame dumps, modem byte traces and SSL Fax data:
 # server, protocol, modem operations, timeouts and state changes only.
@@ -230,7 +232,7 @@ esac
 for line_number in $(seq 1 "$lines"); do
   device=ttyIAX$line_number
   line_secret=$(get "line${line_number}_secret")
-  cat > "/etc/iaxmodem/$device" <<EOF
+  cat > "$root/etc/iaxmodem/$device" <<EOF
 device		/dev/$device
 owner		uucp:uucp
 mode		660
@@ -243,7 +245,7 @@ cidname		Faxbot
 cidnumber	$fax_number
 codec		$codec
 EOF
-  chmod 600 "/etc/iaxmodem/$device"
+  chmod 600 "$root/etc/iaxmodem/$device"
   {
     printf 'CountryCode:\t\t1\nAreaCode:\t\t\nLongDistancePrefix:\t1\nInternationalPrefix:\t011\n'
     printf 'FAXNumber:\t\t%s\n' "$fax_number"
@@ -270,15 +272,15 @@ EOF
   # One modem per line: with its config name as the only argument IAXmodem runs that line alone.
   # (`iaxmodem -F <file>` starts a modem for every file in /etc/iaxmodem: two copies of each line
   # register as one peer from two ports, and calls reach the copy no faxgetty answers.)
-  iaxmodem "$device" > "/var/log/iaxmodem/$device.log" 2>&1 &
+  iaxmodem "$device" > "$root/var/log/iaxmodem/$device.log" 2>&1 &
 done
 
 for line_number in $(seq 1 "$lines"); do
   for attempt in $(seq 1 50); do
-    [ -e "/dev/ttyIAX$line_number" ] && break
+    [ -e "$root/dev/ttyIAX$line_number" ] && break
     sleep 0.2
   done
-  [ -e "/dev/ttyIAX$line_number" ] || refuse "Fax line $line_number did not start."
+  [ -e "$root/dev/ttyIAX$line_number" ] || refuse "Fax line $line_number did not start."
 done
 
 faxq
@@ -295,9 +297,9 @@ line_problem() {
   for number in $(seq 1 "$lines"); do
     count=$(pgrep -c -x -f "iaxmodem ttyIAX$number" || true)
     [ "$count" = 1 ] || { printf 'line %s has %s modems' "$number" "$count"; return 0; }
-    grep -q -E "^ *[0-9]+: [0-9A-F]{8}:$(printf '%04X' $((4569 + number))) " /proc/net/udp \
+    grep -q -E "^ *[0-9]+: [0-9A-F]{8}:$(printf '%04X' $((4569 + number))) " "$root/proc/net/udp" \
       || { printf 'line %s is not on its port %s' "$number" $((4569 + number)); return 0; }
-    [ -e "/dev/ttyIAX$number" ] || { printf 'line %s has no device' "$number"; return 0; }
+    [ -e "$root/dev/ttyIAX$number" ] || { printf 'line %s has no device' "$number"; return 0; }
     pgrep -x -f "faxgetty -D ttyIAX$number" >/dev/null || { printf 'line %s has no faxgetty' "$number"; return 0; }
   done
   count=$(pgrep -c -x iaxmodem || true)
@@ -343,7 +345,7 @@ registration_refused() {
   now=$(date +%s)
   for number in $(seq 1 "$lines"); do
     # A modem started with one argument logs to its output (the .log file), not /var/log/iaxmodem/ttyIAXn.
-    if tail -n 1 "/var/log/iaxmodem/ttyIAX$number.log" 2>/dev/null | grep -q 'Registration failed'; then
+    if tail -n 1 "$root/var/log/iaxmodem/ttyIAX$number.log" 2>/dev/null | grep -q 'Registration failed'; then
       refused_since[$number]=${refused_since[$number]:-$now}
       (( now - refused_since[$number] >= 30 )) && return 0
     else
