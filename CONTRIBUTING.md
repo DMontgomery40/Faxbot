@@ -60,8 +60,10 @@ These commands run the same checks as CI (`.github/workflows/ci.yml`). You need 
 | Command | What it does |
 | --- | --- |
 | `make venv` | Creates `.venv` with Python 3.11 and installs `api/requirements.txt` and `python_mcp/requirements.txt` |
-| `make test-local` (or `make test`) | Runs the backend tests from `api/` with the same command and environment as the `test-api` job |
+| `make test-local PYTEST_ARGS='tests/test_x.py'` | Runs the named backend tests from `api/` with the same command and environment as the `test-api` job |
+| `make test-local FULL_GATE=1` (or `make test FULL_GATE=1`) | Runs the whole backend suite, as CI does (about an hour) |
 | `make ui-build` | Runs `npm ci` and `npm run build` (typecheck and build) in `api/admin_ui` |
+| `make ui-check` | Runs the console tests (`VITEST_ARGS` narrows them to named files), the type check and the build, as the `build-admin-ui` job does |
 | `npm ci --prefix node_mcp && npm --prefix node_mcp run check` | Checks that every Node MCP module parses and imports |
 
 `make test-local` sets the CI environment:
@@ -72,8 +74,8 @@ These commands run the same checks as CI (`.github/workflows/ci.yml`). You need 
 
 Options:
 
-- `PYTEST_ARGS` passes extra pytest arguments, for example `make test-local PYTEST_ARGS="tests/test_api.py -x"`.
-- `FAXBOT_SCHEMA_TEST_POSTGRES_URL`, if set in your environment, points the PostgreSQL schema tests at a disposable database. Without it they are skipped.
+- `PYTEST_ARGS` names the tests and passes extra pytest arguments, for example `make test-local PYTEST_ARGS="tests/test_api.py -x"`. Without it, `make test-local` refuses unless `FULL_GATE=1` asks for the whole suite.
+- `FAXBOT_SCHEMA_TEST_POSTGRES_URL`, if set in your environment, points the PostgreSQL schema tests at a disposable database. Without it they are skipped. Alternatively, `PGDB=<database>` reads the server URL (without a database name) from `PG_URL_FILE`, by default `~/.config/faxbot/postgres-test-url`.
 - `VENV` uses a virtualenv other than `.venv`, for example `make test-local VENV=/path/to/Faxbot/.venv` from a git worktree.
 
 If your change affects a specific fax backend or MCP transport, also test it against that backend or transport.
