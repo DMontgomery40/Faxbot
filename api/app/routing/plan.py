@@ -11,6 +11,8 @@ import sqlalchemy as sa
 
 from .costs import plan_fee_text
 from .database import read_connection
+from .delivered import WINDOW_DAYS, short_money_text
+from .delivered_store import DeliveredEvidence
 from .policy import DIRECT, RouteCandidate, RouteChoice, RoutePolicy
 from .store import destination_key
 from ..provider_labels import PROVIDER_LABELS, trunk_name
@@ -27,6 +29,8 @@ REASON_TEXT = {
     'alternative': 'Used if the routes above it are unavailable.',
     'unreliable': 'Recent faxes to this number often failed on this route.',
     'configured': 'Your outbound fax provider.',
+    # Only the reason is stored with a sent fax, so its details use this sentence without the amount.
+    'cheapest_delivered': f'The cheapest route per delivered fax to this number over the last {WINDOW_DAYS} days.',
 }
 
 
@@ -42,6 +46,12 @@ def explain(choice):
     if choice.reason == 'included':
         card = choice.route.card
         return f'Included in your {route_label(choice.route.key)} plan ({plan_fee_text(card.monthly_fee_micros, card.currency)} a month).'
+    if choice.reason == 'cheapest_delivered' and choice.delivered is not None and choice.compared:
+        figure = choice.delivered
+        about = 'about ' if figure.estimate else ''
+        return (f'{route_label(choice.route.key)} cost {about}'
+                f'{short_money_text(figure.per_delivered_micros, figure.currency)} per delivered fax to this number '
+                f'over the last {WINDOW_DAYS} days, the cheapest of {choice.compared} routes.')
     if choice.reason == 'unknown_cost':
         return ('Your outbound fax provider; its cost is unknown.' if choice.route.bound
                 else 'First in your list of routes; its cost is unknown.')
@@ -103,8 +113,11 @@ class RoutePlanner:
             candidates = [candidate for candidate in candidates if candidate.bound or candidate.key != 'sip']
         row = self.store.get_destination(destination)
         policy = RoutePolicy(min_success_percent=values.route_min_success_percent, min_attempts=MIN_ATTEMPTS)
+        # What each route really cost per delivered fax here; it decides only with enough evidence.
+        providers = sum(candidate.kind == 'provider' for candidate in candidates)
+        delivered = DeliveredEvidence(self.store).for_destination(destination) if providers > 1 else {}
         choices = policy.order(candidates, stats=self.store.route_stats(destination),
-                               preferred=row['preferred_route'] if row else None, pages=pages)
+                               preferred=row['preferred_route'] if row else None, pages=pages, delivered=delivered)
         if not choices:
             fallback = RouteCandidate(bound, 'provider', bound, card_for(bound), bound=True)
             choices = [RouteChoice(fallback, 'configured', None)]

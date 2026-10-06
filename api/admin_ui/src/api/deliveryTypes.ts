@@ -18,6 +18,37 @@ export interface RouteEvidence {
   last_attempt_at: string | null;
 }
 
+// One route's faxes to one number over the last 30 days and what one delivered fax cost,
+// counting every attempt on the route (failed and uncertain ones too).
+export interface DeliveredCost {
+  route: string;
+  label: string;
+  attempts: number;
+  delivered: number;
+  failed: number;
+  uncertain: number;
+  cancelled: number;
+  delivered_percent: number | null;
+  // Null for a flat plan, a direct partner, an attempt without a price, or no delivered fax.
+  cost_per_delivered: Money | null;
+  total_cost: Money | null;
+  // True when any attempt's cost is Faxbot's estimate rather than a charge.
+  estimate: boolean;
+  charged_attempts: number;
+  estimated_attempts: number;
+  unpriced_attempts: number;
+  included_in_plan: boolean;
+  direct: boolean;
+  average_pages: number | null;
+  average_connected_seconds: number | null;
+  // Enough delivered faxes for Faxbot to choose routes by this figure.
+  enough_evidence: boolean;
+  // The cell text, such as "$0.0089", "About $0.012" or "Included in your plan".
+  cost_text: string;
+  // Where the cost came from, such as "9 charged, 5 estimated".
+  basis_text: string | null;
+}
+
 export interface Destination {
   number: string;
   display_name: string | null;
@@ -27,6 +58,28 @@ export interface Destination {
   version: number;
   routes: RouteEvidence[];
   estimated_cost_30_days: Money[];
+  // Each route's cost per delivered fax, the cheapest first (absent from a save response).
+  delivered_costs?: DeliveredCost[];
+}
+
+// A number where another route cost less per delivered fax than the one Faxbot uses first now.
+export interface SendingRecommendation {
+  number: string;
+  display_name: string | null;
+  version: number;
+  preferred_route: string | null;
+  chosen_by_you: boolean;
+  current: DeliveredCost;
+  suggested: DeliveredCost;
+  saving_per_fax: Money;
+  sentence: string;
+}
+
+export interface SendingRecommendations {
+  window_days: number;
+  min_delivered: number;
+  items: SendingRecommendation[];
+  empty_sentence: string;
 }
 
 export interface RecommendedRoute {
