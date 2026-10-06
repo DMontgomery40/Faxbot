@@ -624,8 +624,13 @@ def _readiness_status(request: Request):
 
 @app.get("/health/ready")
 def health_ready(request: Request):
+    """200 when Faxbot is ready for what it is set up to do (sending, receiving or both), else 503.
+
+    The body is unchanged: ``status`` stays ready to send, and ``ready_to_receive`` answers for receiving.
+    """
+    from .readiness import ready_for_setup
     status = _readiness_status(request)
-    return JSONResponse(status, status_code=200 if status['status'] == 'ready' else 503)
+    return JSONResponse(status, status_code=200 if ready_for_setup(status)[2] else 503)
 
 
 # Every protected route either declares its permission with require_permission
@@ -2213,6 +2218,22 @@ class InboundFaxOut(BaseModel):
     recovered: bool = False
     # A sentence about the provider's own copy, such as an eFax deletion Faxbot is still retrying.
     provider_note: Optional[str] = None
+    # Each time fetching stopped before it was set going again, oldest first, and one sentence about them.
+    earlier_failures: List["InboundEarlierFailure"] = []
+    earlier_failures_text: Optional[str] = None
+
+
+class InboundEarlierFailure(BaseModel):
+    stopped_at: Optional[datetime] = None
+    attempts: int
+    problem: Optional[str] = None
+    resumed_at: datetime
+    # person (someone asked to fetch it again) or notification (the provider reported it again).
+    resumed_by: str
+    resumed_by_name: Optional[str] = None
+
+
+InboundFaxOut.model_rebuild()
 
 
 def _inbound_pdf_response(inbound_id: str, pdf_path: Optional[str], method: str, status: Optional[str] = "received"):

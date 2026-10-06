@@ -669,6 +669,12 @@ const consoleHandlers = [
   http.get('/direct/deliveries', () => json({ deliveries: [] })),
   // SIP trunk call history (the Dashboard names a received call that left no fax).
   http.get('/admin/sip/calls', () => json({ items: [], next_cursor: null })),
+  // What fax calls negotiated (measurement only): no calls, and no call for any received fax.
+  http.get('/admin/sip/negotiation', ({ request }) => json({
+    days: Number(new URL(request.url).searchParams.get('days') ?? 30), calls: 0, measured_calls: 0, groups: [],
+    sentence: 'No answered fax calls on your phone line in the last 30 days.',
+    note: 'Faxbot only measures these for now; it does not change speed, compression or error correction because of them.' })),
+  http.get('/admin/sip/negotiation/received/:id', () => json({ detail: 'No phone-line call carried this fax.' }, 404)),
   // The network check for fax over IP: nothing to show until a test says otherwise.
   http.get('/admin/sip/network', () => json({ applies: false, checked: false, t38: null, text: null })),
   // Telnyx's T.38 setting on the trunk numbers: nothing to show until a test says otherwise.

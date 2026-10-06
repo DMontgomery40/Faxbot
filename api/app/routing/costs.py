@@ -203,6 +203,26 @@ def attempt_cost(card, *, seconds, pages, delivered):
     return card.per_call_micros + minutes + page_count * card.per_page_micros
 
 
+def split_by_weight(total, weights):
+    """Split integer ``total`` micros in proportion to ``weights``; the parts always sum exactly to ``total``.
+
+    Largest remainder: each part is first rounded down, then the micros left over go one each to the
+    parts with the largest remainders. Between equal remainders the earlier part comes first, so
+    callers pass the weights in a stated order (for a shared call: call order, then fax ID). A negative
+    total is split by its size and keeps its sign.
+    """
+    weights = [int(weight) for weight in weights]
+    whole = sum(weights)
+    if not weights or whole <= 0 or any(weight < 0 for weight in weights):
+        raise ValueError('Weights must be whole numbers with a positive sum.')
+    size, sign = abs(int(total)), -1 if total < 0 else 1
+    parts = [size * weight // whole for weight in weights]
+    remainders = [size * weight % whole for weight in weights]
+    for index in sorted(range(len(weights)), key=lambda index: (-remainders[index], index))[:size - sum(parts)]:
+        parts[index] += 1
+    return [sign * part for part in parts]
+
+
 def estimate_cost(card, pages):
     """Expected cost of a successful send, used only to rank routes."""
     pages = pages if isinstance(pages, int) and pages > 0 else 1

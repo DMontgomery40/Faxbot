@@ -105,6 +105,38 @@ def test_historical_rows_and_auxiliary_children_survive(database, revision, tmp_
     assert snapshot(database) == after
 
 
+def test_the_sqlite_database_and_its_journals_are_the_owners_alone(tmp_path):
+    """Faxbot's SQLite database sits on the data volume Asterisk shares. SQLite makes it readable by
+    everyone; each connection takes that away (it never adds access), so a database made before is fixed
+    at the next start, and the WAL and shared-memory files, made with the database's mode, follow."""
+    path = tmp_path / "faxbot.db"
+    sqlite3.connect(path).close()
+    os.chmod(path, 0o644)
+    for suffix in ("-wal", "-shm"):
+        Path(f"{path}{suffix}").write_bytes(b"")
+        os.chmod(f"{path}{suffix}", 0o644)
+    engine = create_database_engine("sqlite:///" + str(path))
+    try:
+        with engine.connect() as connection:
+            connection.exec_driver_sql("PRAGMA journal_mode=WAL")
+            connection.exec_driver_sql("CREATE TABLE IF NOT EXISTS probe (x INTEGER)")
+            connection.exec_driver_sql("INSERT INTO probe VALUES (1)")
+            connection.commit()
+            modes = {name: oct(os.stat(name).st_mode & 0o777)
+                     for name in (str(path), f"{path}-wal", f"{path}-shm") if os.path.exists(name)}
+    finally:
+        engine.dispose()
+    assert modes[str(path)] == "0o600" and set(modes.values()) == {"0o600"}, modes
+    # It never adds access: a database the owner made read-only stays so.
+    os.chmod(path, 0o400)
+    reader = create_database_engine("sqlite:///" + str(path))
+    try:
+        reader.connect().close()
+    finally:
+        reader.dispose()
+    assert oct(os.stat(path).st_mode & 0o777) == "0o400"
+
+
 def test_fresh_upgrade_is_versioned_and_repeatable(database):
     upgrade_schema(database)
     assert snapshot(database)["alembic_version"] == [{"version_num": HEAD}]

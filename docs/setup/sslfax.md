@@ -2,6 +2,8 @@
 
 Faxbot can send pages faster when the recipient's fax machine supports SSL Fax. This is separate from T.38. Faxbot can use a recipient's SSL Fax connection without opening a port on your router. To let other fax machines connect to Faxbot, publish a listener port.
 
+The pages travel encrypted, but SSL Fax gives no way to confirm who is at the other end, so a fax sent this way is as private as an ordinary fax call, not more.
+
 ## Let other fax machines connect
 
 1. In **Providers**, open the page for your carrier trunk. Leave **Send pages faster when the other fax machine can (recommended)** on. Set **Router port for faster faxes** to the port you want to use; the default is `10443`.

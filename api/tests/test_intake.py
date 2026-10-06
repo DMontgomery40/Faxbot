@@ -1,6 +1,7 @@
 """Intake queue delivery over a real local SMTP server; never a duplicate delivery."""
 from datetime import datetime, timedelta
 from email import message_from_bytes, policy
+import json
 import socket
 from uuid import uuid4
 
@@ -102,6 +103,12 @@ def test_inbound_fax_is_emailed_once_with_the_original_pdf(intake, smtp):
     assert item['connector_id'] == connector.id
     (sender, recipients, content), = recorder.messages
     assert sender == 'fax@clinic.example' and recipients == ['frontdesk@clinic.example']
+    # Who the email went to is kept on the delivery as the server accepted it; a later change to
+    # the connector never rewrites it.
+    assert json.loads(item['delivered_to']) == ['frontdesk@clinic.example']
+    store.update_connector(connector.id, version=connector.version,
+                           settings=email_settings(port, recipients=['changed-later@clinic.example']))
+    assert json.loads(store.list_items()[0]['delivered_to']) == ['frontdesk@clinic.example']
     message = message_from_bytes(content, policy=policy.default)
     assert message['Subject'] == 'Fax from +15550109999'
     body = message.get_body(('plain',)).get_content().strip()

@@ -20,7 +20,7 @@ set -u
 
 data=${FAXBOT_DATA_DIR:-/faxdata}
 file='' did='' caller='' status='' pages='' mode='' started='' answered='' ended='' uniqueid='' station64=''
-callid64=''
+callid64='' rate='' resolution=''
 
 fail() {
   printf '%s\n' "$1"
@@ -44,6 +44,9 @@ for word in "$@"; do
     uniqueid) uniqueid=$(printf '%s' "$value" | tr -cd '0-9.') ;;
     station64) station64=$(printf '%s' "$value" | tr -cd 'A-Za-z0-9+/=') ;;
     callid64) callid64=$(printf '%s' "$value" | tr -cd 'A-Za-z0-9+/=') ;;
+    # The last page's speed and resolution (measurement only; Faxbot keeps them when a page was confirmed).
+    rate) rate=$(printf '%s' "$value" | tr -cd '0-9') ;;
+    resolution) resolution=$(printf '%s' "$value" | tr -cd '0-9x') ;;
   esac
 done
 case $file in
@@ -69,10 +72,11 @@ case $mode in
   *) t38=null ;;
 esac
 
-body=$(printf '{"tiff_path":"%s","to_number":%s,"from_number":%s,"faxstatus":%s,"faxpages":%s,"uniqueid":%s,"call":{"did":%s,"caller":%s,"started_at":%s,"answered_at":%s,"ended_at":%s,"pages":%s,"t38":%s,"remote_station_id_b64":%s,"sip_call_id_b64":%s}}' \
+body=$(printf '{"tiff_path":"%s","to_number":%s,"from_number":%s,"faxstatus":%s,"faxpages":%s,"uniqueid":%s,"call":{"did":%s,"caller":%s,"started_at":%s,"answered_at":%s,"ended_at":%s,"pages":%s,"t38":%s,"remote_station_id_b64":%s,"sip_call_id_b64":%s,"rate":%s,"resolution":%s}}' \
   "$file" "$(text "$did")" "$(text "$caller")" "$(text "$status")" "$(number "$pages")" "$(text "$uniqueid")" \
   "$(text "$did")" "$(text "$caller")" "$(number "$started")" "$(number "$answered")" "$(number "$ended")" \
-  "$(number "$pages")" "$t38" "$(text "$station64")" "$(text "$callid64")")
+  "$(number "$pages")" "$t38" "$(text "$station64")" "$(text "$callid64")" "$(number "$rate")" \
+  "$(text "$resolution")")
 
 url="${FAXBOT_API_URL:-http://api:8080}/_internal/asterisk/inbound"
 attempt=0

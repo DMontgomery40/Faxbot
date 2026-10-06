@@ -15,10 +15,12 @@ a page of 100 at a time and at most ``MAX_PAGES`` pages per check:
    validates and stores it. A restart in between resumes from the import.
 3. Only once the document is stored does Faxbot tell eFax it was downloaded
    and, when the person turned it on, delete it from eFax. A deletion eFax
-   refuses is retried: the import's report keeps ``efax_delete`` (pending,
-   attempts, since, next try) and each check retries the due ones on the same
-   schedule as checking (doubling up to 30 minutes) for seven days, then says
-   the fax has to be deleted in eFax. A deletion that succeeds removes the mark.
+   refuses is retried: its state (pending, attempts, since, next try) is one
+   ``inbound_provider_deletions`` row keyed by the import, and each check
+   retries the due ones on the same schedule as checking (doubling up to 30
+   minutes) for seven days, then says the fax has to be deleted in eFax. A
+   deletion that succeeds marks the row deleted. The import's ``report`` (what
+   eFax listed) is never written again after the import begins.
 
 Nothing here follows an address from a reply; every request goes to the one
 eFax API host with the configured account. A notification eFax posts to
@@ -28,8 +30,7 @@ and the next check waits longer, up to 30 minutes, or as long as eFax asks.
 """
 import asyncio
 from dataclasses import dataclass
-from datetime import datetime, timedelta
-import json
+from datetime import timedelta
 import logging
 import os
 import tempfile
@@ -40,8 +41,8 @@ from ..config_runtime import run_lifecycle_step
 from ..efax_service import (EfaxBusy, EfaxCredentialsError, EfaxError, EfaxFaxService, EfaxNotFound, PAGE_LIMIT,
                             PENDING_DELETION_NOTE, STOPPED_DELETION_NOTE, account_key,
                             deletion_sentences)  # noqa: F401 - deletion_sentences is used by callers
-from .acquisition import (AcquisitionError, InvalidDocument, account_identity, discard, parse_source_time,
-                          store_document)
+from .acquisition import (AcquisitionError, InvalidDocument, account_identity, discard, history_table,
+                          parse_source_time, store_document)
 from .fetch import FetchError
 
 
@@ -52,7 +53,7 @@ MAX_BACKOFF_SECONDS = 1800
 # A notification never starts checks closer together than this.
 MIN_GAP_SECONDS = 5.0
 DELETE_FOR = timedelta(days=7)
-MARK = 'efax_delete'
+OPEN = ('pending', 'stopped')
 _TIFF_MAGIC = (b'II*\x00', b'MM\x00*')
 
 
@@ -97,13 +98,30 @@ def _int(value):
     return value if isinstance(value, int) and 0 <= value <= 100000 else None
 
 
+def _deletions(store):
+    table = history_table(store.engine, 'inbound_provider_deletions')
+    if table is None:
+        raise AcquisitionError('Received-fax storage is not ready; upgrade the database.')
+    return table
+
+
 def _find(store, account, fax_id):
-    imports = store.imports
+    imports, deletions = store.imports, _deletions(store)
     with store.engine.connect() as connection:
-        row = connection.execute(sa.select(imports.c.id, imports.c.state, imports.c.report).where(
+        row = connection.execute(sa.select(imports.c.id, imports.c.state).where(
             imports.c.source == SOURCE, imports.c.account == account, imports.c.operation_id == fax_id,
             imports.c.revision == '')).mappings().first()
-    return dict(row) if row is not None else None
+        if row is None:
+            return None
+        mark = connection.execute(sa.select(deletions).where(deletions.c.id == row['id'],
+                                                             deletions.c.state.in_(OPEN))).mappings().first()
+    return {**dict(row), 'mark': _mark(mark)}
+
+
+def _mark(row):
+    if row is None or row['state'] not in OPEN:
+        return None
+    return {'state': row['state'], 'attempts': row['attempts'], 'since': row['since'], 'next_at': row['next_at']}
 
 
 def _report(item):
@@ -134,7 +152,7 @@ async def check_once(store, values, *, service=None, kick=None):
             elif found['state'] in ('received', 'conflict'):
                 # Stored earlier, but eFax still lists it as not downloaded: say so again.
                 await finish(service, fax_id, values, delete=found['state'] == 'received', store=store,
-                             import_id=found['id'], marked=deletion_mark(found['report']))
+                             import_id=found['id'], marked=found['mark'])
                 result.finished += 1
         if len(items) < PAGE_LIMIT:
             break
@@ -158,43 +176,26 @@ async def finish(service, fax_id, values, *, delete, store, import_id, marked=No
         await _delete(service, store, import_id, fax_id, marked)
 
 
-def deletion_mark(report):
-    """The pending or stopped deletion recorded in an import's report, or None."""
-    try:
-        data = json.loads(report or '{}')
-    except (TypeError, ValueError):
-        return None
-    mark = data.get(MARK) if isinstance(data, dict) else None
-    return mark if isinstance(mark, dict) and mark.get('state') in ('pending', 'stopped') else None
-
-
-def _when(value):
-    try:
-        return datetime.fromisoformat(value) if isinstance(value, str) else None
-    except ValueError:
-        return None
-
-
 def _write_mark(store, import_id, mark):
-    """Record (or with None remove) the deletion mark; every other report field stays as it was."""
-    imports = store.imports
+    """Record the deletion state, or with None that the fax was deleted; the import itself is never written."""
+    imports, deletions = store.imports, _deletions(store)
     now = store.clock()
     with store.store.transaction() as connection:
-        report = connection.execute(sa.select(imports.c.report).where(imports.c.id == import_id)).scalar_one_or_none()
-        try:
-            data = json.loads(report or '{}')
-        except (TypeError, ValueError):
-            data = None
-        if not isinstance(data, dict):
-            data = {}
+        current = connection.execute(sa.select(deletions.c.state).where(deletions.c.id == import_id)).first()
         if mark is None:
-            if MARK not in data:
-                return
-            data.pop(MARK)
+            if current is not None:
+                connection.execute(deletions.update().where(deletions.c.id == import_id).values(
+                    state='deleted', next_at=None, updated_at=now))
+            return
+        values = dict(state=mark['state'], attempts=mark['attempts'], since=mark['since'],
+                      next_at=mark.get('next_at') if mark['state'] == 'pending' else None, updated_at=now)
+        if current is None:
+            inbound_fax_id = connection.execute(sa.select(imports.c.inbound_fax_id).where(
+                imports.c.id == import_id)).scalar_one()
+            connection.execute(deletions.insert().values(id=import_id, inbound_fax_id=inbound_fax_id,
+                                                         created_at=now, **values))
         else:
-            data[MARK] = mark
-        connection.execute(imports.update().where(imports.c.id == import_id).values(
-            report=json.dumps(data, sort_keys=True, separators=(',', ':'), ensure_ascii=True), updated_at=now))
+            connection.execute(deletions.update().where(deletions.c.id == import_id).values(**values))
 
 
 async def _delete(service, store, import_id, fax_id, marked):
@@ -204,13 +205,13 @@ async def _delete(service, store, import_id, fax_id, marked):
         await service.delete_fax(fax_id)  # eFax no longer having the fax also counts as deleted
     except (EfaxError, ValueError):
         attempts = int((marked or {}).get('attempts') or 0) + 1
-        since = _when((marked or {}).get('since')) or now
+        since = (marked or {}).get('since') or now.replace(microsecond=0)
         if now - since >= DELETE_FOR:
-            mark = {'state': 'stopped', 'attempts': attempts, 'since': since.isoformat(timespec='seconds')}
+            mark = {'state': 'stopped', 'attempts': attempts, 'since': since}
         else:
             wait = timedelta(seconds=min(MAX_BACKOFF_SECONDS, 60 * 2 ** (attempts - 1)))
-            mark = {'state': 'pending', 'attempts': attempts, 'since': since.isoformat(timespec='seconds'),
-                    'next_at': (now + wait).isoformat(timespec='seconds')}
+            mark = {'state': 'pending', 'attempts': attempts, 'since': since,
+                    'next_at': (now + wait).replace(microsecond=0)}
         await run_lifecycle_step(lambda: _write_mark(store, import_id, mark))
         logging.getLogger(__name__).warning('Faxbot stored a received fax but eFax did not delete it; '
                                             'Faxbot will try again.' if mark['state'] == 'pending' else
@@ -224,15 +225,15 @@ async def _delete(service, store, import_id, fax_id, marked):
 
 
 def _marked_rows(store, account=None):
-    imports = store.imports
-    query = sa.select(imports.c.id, imports.c.operation_id, imports.c.account, imports.c.report).where(
-        imports.c.source == SOURCE, imports.c.state == 'received', imports.c.report.like('%' + MARK + '%'))
+    imports, deletions = store.imports, _deletions(store)
+    query = (sa.select(imports.c.id, imports.c.operation_id, imports.c.account, deletions)
+             .select_from(imports.join(deletions, deletions.c.id == imports.c.id))
+             .where(imports.c.source == SOURCE, imports.c.state == 'received', deletions.c.state.in_(OPEN)))
     if account is not None:
         query = query.where(imports.c.account == account)
     with store.engine.connect() as connection:
         rows = connection.execute(query.order_by(imports.c.created_at, imports.c.id)).mappings().all()
-    return [(row['id'], row['operation_id'], row['account'], mark) for row in rows
-            for mark in [deletion_mark(row['report'])] if mark is not None]
+    return [(row['id'], row['operation_id'], row['account'], _mark(row)) for row in rows]
 
 
 async def retry_deletions(store, values, *, service=None, limit=50):
@@ -255,7 +256,7 @@ async def retry_deletions(store, values, *, service=None, limit=50):
             stopped['state'] = 'stopped'
             await run_lifecycle_step(lambda: _write_mark(store, import_id, stopped))
             continue
-        due = _when(mark.get('next_at'))
+        due = mark.get('next_at')
         if (due is not None and due > now) or attempted >= limit:
             continue
         attempted += 1
@@ -271,12 +272,11 @@ def deletion_counts(store):
     return pending, len(rows) - pending
 
 
-def deletion_note(report):
-    """The sentence for one received fax whose deletion from eFax is still open, or None."""
-    mark = deletion_mark(report)
-    if mark is None:
+def deletion_note(state):
+    """The sentence for one received fax whose deletion from eFax is still open (pending or stopped), or None."""
+    if state not in OPEN:
         return None
-    return PENDING_DELETION_NOTE if mark['state'] == 'pending' else STOPPED_DELETION_NOTE
+    return PENDING_DELETION_NOTE if state == 'pending' else STOPPED_DELETION_NOTE
 
 
 def _pdf_from(data, inbound_fax_id, directory):

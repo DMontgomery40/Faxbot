@@ -231,22 +231,25 @@ def test_a_refused_deletion_is_retried_until_efax_deletes_the_fax(isolated_insta
         assert status['receiving'] is True and status['pending_deletions'] == 1
         assert status['notes'] == ['1 received fax is still stored at eFax; Faxbot will try again to delete it.']
         [record] = rows(isolated_installation, 'inbound_imports')
-        report = json.loads(record['report'])
-        assert report['efax_delete']['state'] == 'pending' and report['efax_delete']['attempts'] == 1
-        assert report['fax']['fax_id'] == FAX_ID  # what eFax listed is kept as it was
+        # What eFax listed is kept byte for byte; the retry state has a row of its own.
+        written = record['report']
+        assert 'efax_delete' not in json.loads(written) and json.loads(written)['fax']['fax_id'] == FAX_ID
+        [deletion] = rows(isolated_installation, 'inbound_provider_deletions')
+        assert (deletion['id'], deletion['state'], deletion['attempts']) == (record['id'], 'pending', 1)
         assert _retry(timedelta(seconds=30)) == 0  # not due yet
         assert efax.calls().count(('DELETE', f'/faxes/{FAX_ID}')) == 1
         assert _retry(timedelta(minutes=2)) == 0  # due, refused again: the wait doubles
-        report = json.loads(rows(isolated_installation, 'inbound_imports')[0]['report'])
-        assert report['efax_delete']['attempts'] == 2
+        assert rows(isolated_installation, 'inbound_provider_deletions')[0]['attempts'] == 2
+        assert rows(isolated_installation, 'inbound_imports')[0]['report'] == written
         del efax.fail[('DELETE', f'/faxes/{FAX_ID}')]
         assert _retry(timedelta(minutes=2)) == 0  # the second wait is two minutes from the last try
         assert _retry(timedelta(minutes=5)) == 1
         assert efax.deleted == [FAX_ID]
         assert only_fax(http)['provider_note'] is None
         assert _status(http)['notes'] == []
-        report = json.loads(rows(isolated_installation, 'inbound_imports')[0]['report'])
-        assert 'efax_delete' not in report and report['fax']['fax_id'] == FAX_ID
+        assert rows(isolated_installation, 'inbound_imports')[0]['report'] == written
+        [deletion] = rows(isolated_installation, 'inbound_provider_deletions')
+        assert (deletion['state'], deletion['attempts'], deletion['next_at']) == ('deleted', 2, None)
         assert _retry(timedelta(hours=1)) == 0
 
 

@@ -166,6 +166,10 @@ def test_disabled_telephony_upload_produces_real_two_page_tiff(document_client):
         fax.load()
         # GS tiffg4 AdjustWidth=1 normalizes near-A4 widths to 1728 fax columns.
         assert fax.size == (1728, 2292)
+    # Asterisk runs as its own user in the data folder's group: it may read the pages it sends (0640);
+    # the document itself stays the API's alone.
+    assert oct((data_dir / f"{job['id']}.tiff").stat().st_mode & 0o777) == "0o640"
+    assert oct((data_dir / f"{job['id']}.pdf").stat().st_mode & 0o777) == "0o600"
 
 
 @pytest.mark.parametrize("document_client", ["freeswitch"], indirect=True)

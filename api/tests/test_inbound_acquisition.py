@@ -461,8 +461,14 @@ def test_invalid_bytes_retry_then_stop_and_both_fetch_again_and_replay_resume(is
                          headers={'X-API-Key': reader.json()['token']}).status_code == 403
         again = http.post(f"/inbound/{fax['id']}/fetch", headers=ADMIN)
         assert again.status_code == 200 and again.json()['status'] == 'waiting'
+        # Fetching again keeps the stop it replaced: how many attempts and the last problem.
+        [earlier] = again.json()['earlier_failures']
+        assert (earlier['attempts'], earlier['problem'], earlier['resumed_by']) == (
+            len(RETRY_MINUTES), 'Phaxio sent something that is not a PDF.', 'person')
         providers.files[('phaxio', '9006')] = (200, pdf_bytes())
         assert step() is True and only_fax(http)['status'] == 'received'
+        assert only_fax(http)['earlier_failures'][0]['attempts'] == len(RETRY_MINUTES)
+        assert only_fax(http)['earlier_failures_text'].startswith('Failed once before ')
         received = http.post(f"/inbound/{fax['id']}/fetch", headers=ADMIN)
         assert received.status_code == 409 and received.json()['detail'] == 'This fax has already been received.'
         assert http.post('/inbound/' + '0' * 32 + '/fetch', headers=ADMIN).status_code == 404
@@ -626,3 +632,66 @@ def test_import_store_resumes_leases_retries_and_conflicts_on_both_databases(dat
     assert store.abandon(other.import_id, 'Synthetic stop.') == 'failed'
     assert store.resume_for_fax(other.inbound_fax_id) == other.import_id
     assert store.get(other.import_id)['attempts'] == 0 and store.get(other.import_id)['state'] == 'pending'
+
+
+# A resumed import keeps its failure history ---------------------------------------
+def test_a_resumed_import_keeps_each_earlier_failure_append_only_on_both_databases(database):
+    from api.app import people_time
+    from api.app.inbound.acquisition import ImportStore as Store, describe
+    from api.tests.test_inbound_access import InboundWorld
+    world = InboundWorld(database)
+    world.user('Dana Lee')
+    moment = [datetime(2026, 10, 3, 12)]
+    store = Store(world.inbound, clock=lambda: moment[0])
+    begun = store.begin(source='phaxio', account='phaxio:0123456789ab', operation_id='9200', backend='phaxio',
+                        to_number='+1 (555) 010-0001', report={'id': '9200'})
+    problem = 'Phaxio sent something that is not a PDF.'
+    for _ in range(2):
+        claim = store.claim()
+        assert store.fail(claim['id'], problem, claim_token=claim['claim_token']) == 'pending'
+        moment[0] += timedelta(hours=1)
+    assert store.abandon(begun.import_id, problem) == 'failed'
+    first_stop = moment[0]
+    moment[0] += timedelta(hours=1)
+    assert store.resume_for_fax(begun.inbound_fax_id, principal_id='Dana Lee') == begun.import_id
+    first_resume = moment[0]
+    # The working state starts over; the failure it replaced is kept.
+    assert store.get(begun.import_id)['attempts'] == 0 and store.get(begun.import_id)['last_error'] is None
+    claim = store.claim()
+    store.fail(claim['id'], 'Phaxio did not answer.', claim_token=claim['claim_token'])
+    moment[0] += timedelta(hours=1)
+    assert store.abandon(begun.import_id, 'Phaxio did not answer.') == 'failed'
+    second_stop = moment[0]
+    moment[0] += timedelta(hours=1)
+    # A notification that arrives again resumes it too, and says so.
+    store.begin(source='phaxio', account='phaxio:0123456789ab', operation_id='9200', backend='phaxio')
+    second_resume = moment[0]
+    failures = store.failures_for([begun.inbound_fax_id])[begun.inbound_fax_id]
+    assert [(row['attempts'], row['last_error'], row['failed_at'], row['resumed_at'], row['resumed_by'],
+             row['principal_name']) for row in failures] == [
+        (2, problem, first_stop, first_resume, 'person', 'Dana Lee'),
+        (1, 'Phaxio did not answer.', second_stop, second_resume, 'notification', None)]
+    store.complete(begun.import_id, artifact_path='/synthetic/9200.pdf', digest='a' * 64, size=10, pages=1)
+    # Fetching it never rewrites an earlier failure.
+    assert store.failures_for([begun.inbound_fax_id])[begun.inbound_fax_id] == failures
+    shown = describe({'sha256': 'a' * 64}, store.get(begun.import_id), failures=failures)
+    assert shown['earlier_failures_text'] == (
+        f'Failed twice before Phaxio reported it again on {people_time.date_and_time(second_resume)}.')
+    assert shown['earlier_failures'] == [
+        {'stopped_at': first_stop, 'attempts': 2, 'problem': problem, 'resumed_at': first_resume,
+         'resumed_by': 'person', 'resumed_by_name': 'Dana Lee'},
+        {'stopped_at': second_stop, 'attempts': 1, 'problem': 'Phaxio did not answer.',
+         'resumed_at': second_resume, 'resumed_by': 'notification', 'resumed_by_name': None}]
+    once = describe({'sha256': None}, store.get(begun.import_id), failures=failures[:1])
+    assert once['earlier_failures_text'] == (
+        f'Failed once before Dana Lee asked Faxbot to fetch it again on '
+        f'{people_time.date_and_time(first_resume)}.')
+    assert describe({'sha256': None}, store.get(begun.import_id))['earlier_failures'] == []
+    assert describe({'sha256': None}, store.get(begun.import_id))['earlier_failures_text'] is None
+
+
+def test_the_command_line_shows_earlier_failures_only_when_there_were_some():
+    from app.cli.commands.fax import _inbound_fields
+    sentence = 'Failed once before Dana Lee asked Faxbot to fetch it again on 3 October 2026 at 2:00 PM UTC.'
+    assert ('Earlier failures', sentence) in _inbound_fields({'earlier_failures_text': sentence})
+    assert all(name != 'Earlier failures' for name, _ in _inbound_fields({'earlier_failures_text': None}))

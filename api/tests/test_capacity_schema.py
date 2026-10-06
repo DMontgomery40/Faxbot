@@ -40,8 +40,8 @@ def _columns(engine, table):
         return {column['name'] for column in sa.inspect(connection).get_columns(table)}
 
 
-def test_capacity_is_head_after_local_delivery():
-    assert schema.HEAD == schema_capacity.REVISION == '0021_capacity'
+def test_capacity_follows_local_delivery():
+    assert schema.CAPACITY == schema_capacity.REVISION == '0021_capacity'
     assert schema.LOCAL_DELIVERY == '0020_local_delivery'
     assert schema_capacity.TABLES == frozenset()
 

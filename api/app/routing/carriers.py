@@ -27,6 +27,20 @@ history without taking effect. An unpriced record is not recorded at all, so
 unknown stays unknown. For sent faxes the amount in effect is also recorded
 against the attempt in ``delivery_charges``. Delivery status is never read
 for a decision here and never changed.
+
+A call settles once every record matched to it is priced. While one is not,
+the call stays open and is asked about again until ``GIVE_UP`` (a week after
+it ended). Telnyx documents no time by which a detail record's price is final:
+its "Search detail records" API reference
+(https://developers.telnyx.com/api-reference/detail-records/search-detail-records),
+its reporting guides (https://support.telnyx.com/en/articles/4305547-reporting-overview,
+https://support.telnyx.com/en/articles/4424926-reporting-detail-requests) and its
+usage-report docs (https://developers.telnyx.com/docs/reporting/usage-reports),
+read 6 October 2026, give a ``cost`` field but no finality window. So the
+limit is Faxbot's own week. A call still holding an unpriced record then
+settles: what was priced becomes final, and ``carrier_call_checks.unpriced_records``
+keeps how many records were never priced, so the call's cost reads as
+incomplete, counts as unpriced, and is never taken as the priced part alone.
 """
 from dataclasses import dataclass
 from datetime import timedelta
@@ -238,7 +252,8 @@ class CarrierChargeStore:
                 charges.c.call_record_id.in_(tuple(call_ids) or ('',)))).scalars())
         return attached, holding
 
-    def mark(self, call_id, provider_id, state, *, now=None, next_check_at=None):
+    def mark(self, call_id, provider_id, state, *, now=None, next_check_at=None, unpriced=None):
+        """``unpriced``: how many records matched to the call had no price at this check (None for none)."""
         now = now or utcnow()
         checks = self.checks
         with write_transaction(self.engine) as connection:
@@ -247,19 +262,57 @@ class CarrierChargeStore:
             wait = min(FIRST_RETRY * (2 ** min(count - 1, 10)), LONGEST_RETRY)
             values = dict(provider_id=provider_id, state=state, checks=count, checked_at=now,
                           next_check_at=next_check_at or now + wait, updated_at=now)
+            if 'unpriced_records' in checks.c:
+                values['unpriced_records'] = unpriced or None
             if row is None:
                 connection.execute(checks.insert().values(id=call_id, created_at=now, **values))
             else:
                 connection.execute(checks.update().where(checks.c.id == call_id).values(**values))
 
     def expire(self, preset, *, now=None, give_up=GIVE_UP):
-        """Stop asking about calls the carrier never priced within ``give_up``; they stay unreported."""
+        """Stop asking about calls the carrier never priced within ``give_up``; they stay unreported.
+
+        A call holding priced records with one still unpriced at its last check settles: each amount in
+        effect gets its final version and the call keeps ``unpriced_records``, in one transaction.
+        Returns those calls' rows, so their final amounts can be carried to their attempts.
+        """
         now = now or utcnow()
         calls, checks = self.calls, self.checks
         old = sa.select(calls.c.id).where(calls.c.trunk_preset == preset, calls.c.ended_at < now - give_up)
+        incomplete = (checks.c.state == 'matched', checks.c.unpriced_records > 0) if 'unpriced_records' in checks.c else ()
+        with read_connection(self.engine) as connection:
+            if not incomplete or connection.execute(sa.select(checks.c.id).where(
+                    checks.c.id.in_(old), *incomplete).limit(1)).first() is None:
+                incomplete = ()
         with write_transaction(self.engine) as connection:
             connection.execute(checks.update().where(checks.c.id.in_(old), checks.c.state.in_(('waiting', 'ambiguous')))
                                .values(state='unreported', updated_at=now))
+            if not incomplete:
+                return []
+            settled = [dict(row) for row in connection.execute(sa.select(calls).where(
+                calls.c.id.in_(sa.select(checks.c.id).where(checks.c.id.in_(old), *incomplete)))
+                .order_by(calls.c.started_at, calls.c.id)).mappings()]
+            for call in settled:
+                self._finalize_on(connection, call['id'], now)
+                connection.execute(checks.update().where(checks.c.id == call['id']).values(
+                    state='settled', checked_at=now, updated_at=now))
+            return settled
+
+    def _finalize_on(self, connection, call_id, now):
+        """Add the final version of each amount in effect for one call; amounts already final are left."""
+        charges = self.charges
+        for current in self.in_effect([call_id], connection).get(call_id, []):
+            if current['is_final']:
+                continue
+            versions = connection.execute(sa.select(sa.func.count()).select_from(charges).where(
+                charges.c.call_record_id == call_id, charges.c.record_id == current['record_id'])).scalar_one()
+            connection.execute(charges.insert().values(
+                id=uuid4().hex, call_record_id=call_id, provider_id=current['provider_id'],
+                record_id=current['record_id'], version=versions + 1, amount_micros=current['amount_micros'],
+                raw_amount=current['raw_amount'], currency=current['currency'],
+                billed_seconds=current['billed_seconds'], call_seconds=current['call_seconds'],
+                match_method=current['match_method'], effective_at=now, observed_at=now, created_at=now,
+                supersedes_id=current['id'], applied=1, is_final=1))
 
     # Charges ---------------------------------------------------------------
     def record(self, call_id, *, provider_id, record, method, effective_at, final, now=None):
@@ -557,7 +610,8 @@ class CarrierReconciler:
     def sweep(self, *, now=None, force=False, skip=None):
         now = now or utcnow()
         result = Sweep()
-        self.store.expire(self.preset, now=now, give_up=self.give_up)
+        for settled in self.store.expire(self.preset, now=now, give_up=self.give_up):
+            self._attempt_charges(settled, now=now)  # what was priced is final; the rest stays unpriced
         due = [row for row in self.store.due_calls(self.preset, now=now, force=force, give_up=self.give_up)
                if skip is None or row['id'] not in skip]
         if not due:
@@ -613,10 +667,10 @@ class CarrierReconciler:
                     self.store.mark(row['id'], self.provider_id, 'settled', now=now)
                 elif unpriced and now - row['ended_at'] >= self.settle_after:
                     # Another record of this call is still unpriced: stay open and ask again, backing off,
-                    # until it is priced or the call is past the give-up time.
-                    self.store.mark(row['id'], self.provider_id, 'matched', now=now)
+                    # until it is priced or the call is past the give-up time, when it settles incomplete.
+                    self.store.mark(row['id'], self.provider_id, 'matched', now=now, unpriced=unpriced)
                 else:
-                    self.store.mark(row['id'], self.provider_id, 'matched', now=now,
+                    self.store.mark(row['id'], self.provider_id, 'matched', now=now, unpriced=unpriced,
                                     next_check_at=max(row['ended_at'] + self.settle_after, now + FIRST_RETRY))
             else:
                 result.waiting += 1

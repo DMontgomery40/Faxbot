@@ -508,6 +508,36 @@ def test_the_call_is_costed_once_on_the_fax_that_placed_it_and_shares_split_by_p
     assert money.savings_sentence(saved) == 'Last 30 days: 3 faxes in 1 call, 2 calls saved, about $0.01 saved (estimate).'
 
 
+def test_shares_of_a_call_sum_exactly_to_its_charge_by_largest_remainder_in_call_order(sip):
+    """Three one-page faxes split $0.01 (10,000 micros): 3,333.33 each would drift, so the first in the call gets 3,334."""
+    from api.app.batching import money
+    from api.app.routing.capture import CostRecorder
+    from api.app.routing.carriers import CarrierChargeStore
+    from api.app.routing.spending import Spending
+    configuration, delivery, _, routes, _ = sip
+    jobs, claim = _submitted(sip, 1, 1, 1)
+    for job in jobs:
+        routes.record_decision(attempt_id=delivery.get(job)['attempt_id'], job_id=job, destination=NUMBER,
+                               route='sip', reason='configured', provider_id='sip')
+    results.apply_fax_result(delivery, {'JobID': claim.job_id, 'AttemptID': claim.attempt_id, 'Status': 'SUCCESS',
+                                        'Pages': '6'})
+    CostRecorder(routes, observed_seconds=lambda target: 100).step()
+    assert routes.decision(claim.attempt_id)['estimated_cost_micros'] == 10_000
+    shares = [money.share(routes, configuration.engine, batching.member(configuration.engine, job))['amount_micros']
+              for job in jobs]
+    assert shares == [3334, 3333, 3333] and sum(shares) == 10_000
+    spending = Spending(routes, CarrierChargeStore(configuration.engine))
+    assert [spending.job(job)['estimated_cost'] for job in jobs] == [{'USD': 3334}, {'USD': 3333}, {'USD': 3333}]
+    # The rule itself: round each part down, then one unit each to the largest remainders, earlier first on a tie.
+    from api.app.routing.costs import split_by_weight
+    assert split_by_weight(5, [2, 2, 2]) == [2, 2, 1]
+    assert split_by_weight(10_000, [2, 3, 2]) == [2857, 4286, 2857]
+    assert split_by_weight(7, [1, 3]) == [2, 5]
+    assert split_by_weight(0, [4, 1]) == [0, 0]
+    for total, weights in ((1, [1, 1, 1]), (999_999, [2, 7, 3, 5]), (10, [3])):
+        assert sum(split_by_weight(total, weights)) == total
+
+
 def test_a_shared_call_that_cost_more_than_separate_calls_shows_the_loss_never_a_zero_saving(sip):
     from api.app.batching import money
     from api.app.routing.capture import CostRecorder
@@ -549,6 +579,8 @@ def test_the_call_image_copies_each_faxs_pages_unchanged_after_its_separator(tmp
     assert lines[0][2] == 'Document 1 of 2 · Faxbot 11111111 · 2 pages · from Front Desk'
     out = image.build_call_image(tmp_path, 'a' * 32, lines)
     assert image.page_count(out) == 5
+    # Asterisk sends the call image as its own user (the data folder's group): 0640, never world-readable.
+    assert oct(out.stat().st_mode & 0o777) == '0o640'
     with Image.open(out) as combined, Image.open(tmp_path / ('1' * 32 + '.tiff')) as original:
         for combined_page, original_page in ((1, 0), (2, 1)):
             combined.seek(combined_page)

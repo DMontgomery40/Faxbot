@@ -41,6 +41,7 @@ import os
 import secrets
 import tempfile
 from uuid import uuid4
+import weakref
 
 import sqlalchemy as sa
 
@@ -190,17 +191,23 @@ def _clock_text(moment):
     return people_time.clock(moment)
 
 
-def describe(row, record, *, now=None):
-    """The added InboundFaxOut fields for one fax row and its import (or None)."""
+def describe(row, record, *, now=None, failures=(), provider_copy=None):
+    """The added InboundFaxOut fields for one fax row and its import (or None).
+
+    ``failures`` are the import's earlier stops, oldest first (``ImportStore.failures_for``);
+    ``provider_copy`` is its provider deletion row, if any (``provider_copies_on``).
+    """
     if record is None:
         placeholder = PLACEHOLDER_DIGESTS.get(row.get('sha256'))
         if placeholder:
             return {'status': 'failed', 'status_text': placeholder, 'source_received_at': None,
                     'provider_fax_id': row.get('provider_sid'), 'sha256': None, 'is_test': False,
-                    'retry_at': None, 'problem': None, 'can_fetch_again': False}
+                    'retry_at': None, 'problem': None, 'can_fetch_again': False,
+                    'earlier_failures': [], 'earlier_failures_text': None}
         return {'status_text': 'Received.', 'source_received_at': None,
                 'provider_fax_id': row.get('provider_sid'), 'sha256': row.get('sha256'), 'is_test': False,
-                'retry_at': None, 'problem': None, 'can_fetch_again': False}
+                'retry_at': None, 'problem': None, 'can_fetch_again': False,
+                'earlier_failures': [], 'earlier_failures_text': None}
     source, state = record['source'], record['state']
     name = SOURCE_NAMES.get(source, 'the provider')
     retry_at = None
@@ -223,15 +230,40 @@ def describe(row, record, *, now=None):
             'is_test': source == 'test', 'retry_at': retry_at,
             'problem': record['last_error'] if state != 'received' else None,
             'can_fetch_again': source in FETCHABLE and state in ('pending', 'failed'),
-            'recovered': _recovered(record), 'provider_note': _provider_note(record)}
+            'recovered': _recovered(record), 'provider_note': _provider_note(record, provider_copy),
+            'earlier_failures': [_failure_view(item) for item in failures],
+            'earlier_failures_text': failures_text(source, failures)}
 
 
-def _provider_note(record):
+def _failure_view(item):
+    return {'stopped_at': item['failed_at'], 'attempts': item['attempts'], 'problem': item['last_error'],
+            'resumed_at': item['resumed_at'], 'resumed_by': item['resumed_by'],
+            'resumed_by_name': item['principal_name']}
+
+
+def failures_text(source, failures):
+    """One sentence: how often fetching stopped, and who or what set it going again last."""
+    if not failures:
+        return None
+    from .. import people_time
+    count = len(failures)
+    times = 'once' if count == 1 else 'twice' if count == 2 else f'{count} times'
+    last = failures[-1]
+    when = people_time.date_and_time(last['resumed_at'])
+    if last['resumed_by'] == 'person':
+        who = (f"{last['principal_name']} asked Faxbot to fetch it again" if last['principal_name']
+               else 'Faxbot was asked to fetch it again')
+    else:
+        who = f"{SOURCE_NAMES.get(source, 'the provider')} reported it again"
+    return f'Failed {times} before {who} on {when}.'
+
+
+def _provider_note(record, provider_copy):
     """A sentence about the provider's own copy, such as an eFax deletion Faxbot is still retrying."""
-    if record.get('source') != 'efax' or record.get('state') != 'received':
+    if record.get('source') != 'efax' or record.get('state') != 'received' or provider_copy is None:
         return None
     from .efax import deletion_note
-    return deletion_note(record.get('report'))
+    return deletion_note(provider_copy['state'])
 
 
 def _recovered(record):
@@ -246,6 +278,46 @@ def _recovered(record):
 def _settings():
     from ..config import settings
     return settings
+
+
+_HISTORY = weakref.WeakKeyDictionary()
+
+
+def history_table(engine, name):
+    """A 0022 history table (``inbound_import_failures`` or ``inbound_provider_deletions``), reflected once.
+
+    None before that migration.
+    """
+    tables = _HISTORY.setdefault(engine, {})
+    if name not in tables:
+        try:
+            tables[name] = sa.Table(name, sa.MetaData(), autoload_with=engine)
+        except sa.exc.NoSuchTableError:
+            return None
+    return tables[name]
+
+
+def provider_copies_on(connection, engine, inbound_fax_ids):
+    """{inbound fax id: its provider deletion row} in one query (a received eFax fax Faxbot is deleting there)."""
+    table = history_table(engine, 'inbound_provider_deletions')
+    identities = [value for value in inbound_fax_ids if value]
+    if table is None or not identities:
+        return {}
+    return {row['inbound_fax_id']: dict(row) for row in connection.execute(
+        sa.select(table).where(table.c.inbound_fax_id.in_(identities))).mappings()}
+
+
+def failures_on(connection, engine, inbound_fax_ids):
+    """{inbound fax id: [its import's earlier stops, oldest first]} in one query."""
+    table = history_table(engine, 'inbound_import_failures')
+    identities = [value for value in inbound_fax_ids if value]
+    if table is None or not identities:
+        return {}
+    found = {}
+    for row in connection.execute(sa.select(table).where(table.c.inbound_fax_id.in_(identities))
+                                  .order_by(table.c.resumed_at, table.c.created_at, table.c.id)).mappings():
+        found.setdefault(row['inbound_fax_id'], []).append(dict(row))
+    return found
 
 
 def store_document(data, inbound_fax_id, *, provider='The provider'):
@@ -378,7 +450,7 @@ class ImportStore:
             existing = connection.execute(sa.select(self.imports).where(identity)).mappings().first()
             if existing is not None:
                 return self._resume_on(connection, dict(existing), now, artifact_digest=artifact_digest,
-                                       schedule=schedule)
+                                       schedule=schedule, resumed_by='notification')
             inbound_id, import_id = uuid4().hex, uuid4().hex
             due = None
             if source in FETCHABLE:
@@ -396,7 +468,8 @@ class ImportStore:
                 inbound_fax_id=inbound_id, created_at=now, updated_at=now))
             return Begun(import_id, inbound_id, 'pending', True, False)
 
-    def _resume_on(self, connection, record, now, *, artifact_digest=None, schedule=True):
+    def _resume_on(self, connection, record, now, *, artifact_digest=None, schedule=True, resumed_by,
+                   principal_id=None):
         imports = self.imports
         conflict = bool(artifact_digest and record['artifact_digest'] and artifact_digest != record['artifact_digest'])
         if record['state'] in ('received', 'conflict'):
@@ -408,6 +481,8 @@ class ImportStore:
         if record['source'] not in FETCHABLE:
             due = None
         if record['state'] == 'failed':
+            # The import's own counters start over; the stop they record is kept first, append-only.
+            self._keep_failure_on(connection, record, now, resumed_by=resumed_by, principal_id=principal_id)
             connection.execute(imports.update().where(imports.c.id == record['id']).values(
                 state='pending', attempts=0, next_attempt_at=due, claim_token=None, claim_expires_at=None,
                 last_error=None, updated_at=now))
@@ -417,6 +492,26 @@ class ImportStore:
             connection.execute(imports.update().where(imports.c.id == record['id']).values(
                 next_attempt_at=due, updated_at=now))
         return Begun(record['id'], record['inbound_fax_id'], 'pending', False, False)
+
+    def _keep_failure_on(self, connection, record, now, *, resumed_by, principal_id=None):
+        table = history_table(self.engine, 'inbound_import_failures')
+        if table is None:
+            return
+        name = None
+        if principal_id is not None:
+            principals = self.resources.tables['access_principals']
+            name = connection.execute(sa.select(principals.c.display_name).where(
+                principals.c.id == principal_id)).scalar_one_or_none()
+        connection.execute(table.insert().values(
+            id=uuid4().hex, import_id=record['id'], inbound_fax_id=record['inbound_fax_id'],
+            attempts=record['attempts'], last_error=record['last_error'], failed_at=record['updated_at'],
+            resumed_at=now, resumed_by=resumed_by, principal_id=principal_id,
+            principal_name=name[:200] if isinstance(name, str) and name else None, created_at=now))
+
+    def failures_for(self, inbound_fax_ids):
+        """{inbound fax id: [earlier stops, oldest first]}: when, attempts, last error, who or what resumed it."""
+        with self.engine.connect() as connection:
+            return failures_on(connection, self.engine, inbound_fax_ids)
 
     def _conflict_on(self, connection, record, now, *, offered=None):
         connection.execute(self.imports.update().where(self.imports.c.id == record['id']).values(
@@ -500,8 +595,8 @@ class ImportStore:
             status='failed', updated_at=now))
         _audit('inbound_not_received', job_id=record['inbound_fax_id'], backend=record['source'])
 
-    def resume_for_fax(self, inbound_fax_id):
-        """A person asks to fetch again: schedule an immediate attempt."""
+    def resume_for_fax(self, inbound_fax_id, *, principal_id=None):
+        """A person asks to fetch again: schedule an immediate attempt; a stopped import keeps its failure."""
         now = self.clock()
         with self.store.transaction() as connection:
             record = self.for_fax(inbound_fax_id, connection)
@@ -509,7 +604,7 @@ class ImportStore:
                 raise ImportNotFound('Faxbot has nothing to fetch for this fax.')
             if record['state'] in ('received', 'conflict'):
                 raise AlreadyReceived('This fax has already been received.')
-            self._resume_on(connection, record, now)
+            self._resume_on(connection, record, now, resumed_by='person', principal_id=principal_id)
         _audit('inbound_fetch_requested', job_id=inbound_fax_id, backend=record['source'])
         return record['id']
 

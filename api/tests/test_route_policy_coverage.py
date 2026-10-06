@@ -130,6 +130,21 @@ READS = {
 }
 
 
+# Routes about one received fax: an identity, then that fax's own read check in the handler (as GET
+# /inbound/{id}), never an installation-wide permission, so whoever may read the fax may read these.
+FOLLOW_THE_FAX = {
+    ("GET", "/inbound/{inbound_id}"),
+    ("GET", "/routing/inbound/{inbound_id}/cost"),
+    ("GET", "/admin/sip/negotiation/received/{inbound_id}"),
+}
+
+
+def test_routes_about_one_received_fax_follow_that_faxs_access():
+    routes = dict(_routes())
+    for key in FOLLOW_THE_FAX:
+        assert require_identity in routes[key] and _declared(routes[key]) == [], key
+
+
 def test_recommendation_reads_need_settings_read():
     routes = dict(_routes())
     declared = {key: [(rule.permission, rule.audit) for rule in _declared(routes[key])] for key in READS}

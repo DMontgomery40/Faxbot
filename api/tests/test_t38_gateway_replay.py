@@ -37,7 +37,7 @@ pytestmark = [
 DOCKERFILE = '''FROM debian:trixie-slim@sha256:a99cfc517144bc59b1978475ec53b46ecabec7e43635402ee5b77cc54cd1b20a
 RUN apt-get update && apt-get install -y --no-install-recommends gcc libc6-dev libspandsp-dev libtiff-dev \\
     && rm -rf /var/lib/apt/lists/*
-COPY t38_gateway_replay.c sequences/ /data/
+COPY t38_gateway_replay.c faxbot_t38_gateway.h sequences/ /data/
 RUN gcc -O1 -Wall -Werror -o /replay /data/t38_gateway_replay.c -lspandsp -ltiff -lm
 '''
 
@@ -136,6 +136,9 @@ def replay():
             (context / 'sequences' / f'{name}.modem').write_text(text)
         (context / 't38_gateway_replay.c').write_text(
             (ROOT / 'asterisk' / 'tests' / 't38_gateway_replay.c').read_text())
+        # The gateway steps and the spandsp guard, from the file the image build compiles into Asterisk.
+        (context / 'faxbot_t38_gateway.h').write_text(
+            (ROOT / 'asterisk' / 'patches' / 'faxbot_t38_gateway.h').read_text())
         (context / 'Dockerfile').write_text(DOCKERFILE)
         subprocess.run(['docker', '--context', CONTEXT, 'build', '-q', '-t', IMAGE, str(context)], check=True,
                        capture_output=True, timeout=900)
@@ -210,3 +213,26 @@ def test_a_full_training_check_either_way_is_unchanged(replay):
     (data,) = kind(sent, 't38 data')
     assert dcs[3:6] == ['6', 'ff', '13'] and int(data[3]) >= 1700 and int(data[5]) >= 1700, sent
     assert replay('quiet', 1, 'send') == sent and replay('quiet', 2, 'send') == sent
+
+
+# The spandsp version guard ------------------------------------------------------------------------------------
+
+GUARD_PROBE = r'''
+set -e
+mkdir -p /tmp/other/spandsp
+sed 's/^#define SPANDSP_RELEASE_DATE .*/#define SPANDSP_RELEASE_DATE 20140101/' /usr/include/spandsp/version.h \
+  > /tmp/other/spandsp/version.h
+printf '#define SPANDSP_EXPOSE_INTERNAL_STRUCTURES\n#include <spandsp.h>\n#include "faxbot_t38_gateway.h"\n' > /tmp/probe.c
+gcc -fsyntax-only -Wall -Werror -I /data /tmp/probe.c && echo pinned-builds
+if gcc -fsyntax-only -I /tmp/other -I /data /tmp/probe.c 2> /tmp/other.err; then echo other-builds; fi
+cat /tmp/other.err
+'''
+
+
+def test_a_spandsp_other_than_the_pinned_one_stops_the_build(replay):
+    """0002 and 0003 reach into spandsp 0.0.6's internal gateway state: the shared header refuses any other
+    spandsp release, so a package update fails the image build instead of shipping unchecked gateway code."""
+    result = subprocess.run(['docker', '--context', CONTEXT, 'run', '--rm', IMAGE, 'sh', '-c', GUARD_PROBE],
+                            capture_output=True, text=True, timeout=120, check=True)
+    assert 'pinned-builds' in result.stdout and 'other-builds' not in result.stdout, result.stdout
+    assert 'checked against spandsp 0.0.6 (20110122) only' in result.stdout, result.stdout

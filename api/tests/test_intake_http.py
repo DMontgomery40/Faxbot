@@ -1,5 +1,6 @@
 """Intake administration over the real HTTPS stack and access policy."""
 from datetime import datetime, timedelta
+import json
 from uuid import uuid4
 
 import pytest
@@ -90,16 +91,23 @@ def test_queue_items_name_their_inbound_fax_and_where_they_were_delivered(client
     store.feed_inbound()
     (item,) = client.get('/intake/items', headers=ADMIN).json()['items']
     assert item['inbound_fax_id'] == identity and item['delivered_to'] == [] and item['connector'] is None
+    assert item['recipients_recorded'] is False
 
     created = client.post('/intake/connectors', headers=ADMIN, json=connector(25))
     assert created.status_code == 201, created.text
     with store.engine.begin() as connection:
         connection.execute(store.items.update().where(store.items.c.id == item['id']).values(
             state='delivered', connector_id=created.json()['id'], delivered_at=now, last_error=None))
+    # Delivered before Faxbot kept recipients: the connector's addresses today are never shown in their place.
     (delivered,) = client.get('/intake/items', headers=ADMIN).json()['items']
     assert delivered['inbound_fax_id'] == identity
     assert delivered['connector'] == 'Front desk'
-    assert delivered['delivered_to'] == ['frontdesk@clinic.example']
+    assert delivered['delivered_to'] == [] and delivered['recipients_recorded'] is False
+    with store.engine.begin() as connection:
+        connection.execute(store.items.update().where(store.items.c.id == item['id']).values(
+            delivered_to=json.dumps(['billing@clinic.example'])))
+    (delivered,) = client.get('/intake/items', headers=ADMIN).json()['items']
+    assert delivered['delivered_to'] == ['billing@clinic.example'] and delivered['recipients_recorded'] is True
 
 
 def test_intake_permissions(client):
@@ -133,3 +141,11 @@ def test_email_settings_appear_as_a_connector_at_once(client):
         'intake_email_enabled': False}).status_code == 200
     managed = [item for item in client.get('/intake/connectors', headers=ADMIN).json()['connectors'] if item['managed']]
     assert len(managed) == 1 and managed[0]['enabled'] is False
+
+
+def test_the_command_line_says_who_an_email_went_to_or_that_it_was_not_recorded():
+    from app.cli.commands.delivery import _emailed_to
+    assert _emailed_to({'state': 'delivered', 'delivered_to': ['a@clinic.example', 'b@clinic.example'],
+                        'recipients_recorded': True}) == 'a@clinic.example, b@clinic.example'
+    assert _emailed_to({'state': 'delivered', 'delivered_to': [], 'recipients_recorded': False}) == 'Not recorded'
+    assert _emailed_to({'state': 'failed', 'delivered_to': [], 'recipients_recorded': False}) == '-'

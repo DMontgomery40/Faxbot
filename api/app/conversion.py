@@ -408,8 +408,13 @@ def tiff_to_pdf(tiff_path: str, pdf_path: str) -> Tuple[int, str]:
         raise DocumentConversionError("TIFF document is invalid or unsupported.") from None
 
 
+# A fax image Asterisk sends: readable by its group as well (the data folder gives new files Asterisk's
+# group; asterisk/start.sh), because Asterisk runs as its own user. Nothing else Faxbot writes there is.
+FAX_IMAGE_MODE = 0o640
+
+
 def pdf_to_tiff(pdf_path: str, tiff_path: str) -> Tuple[int, str]:
-    """Rasterize a validated PDF to real Group 4 fax TIFF at 204 by 196 DPI."""
+    """Rasterize a validated PDF to real Group 4 fax TIFF at 204 by 196 DPI (mode FAX_IMAGE_MODE)."""
     pages = _inspect_pdf(pdf_path, raster=True)
     executable = shutil.which("gs")
     if executable is None:
@@ -433,6 +438,7 @@ def pdf_to_tiff(pdf_path: str, tiff_path: str) -> Tuple[int, str]:
                     actual_pages = sum(1 for _ in _tiff_frames(image))
             if actual_pages != pages:
                 raise ValueError("Incomplete raster output")
+            os.chmod(temporary, FAX_IMAGE_MODE)
         except Exception:
             raise DocumentConversionError("PDF rasterization failed.", operational=True) from None
     return pages, tiff_path

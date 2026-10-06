@@ -173,6 +173,38 @@ def test_every_command_is_shown_in_help_and_the_older_names_are_gone():
         assert older not in commands
 
 
+@pytest.mark.parametrize('sends,receives,ready_to_send,ready_to_receive,code', [
+    (True, False, True, False, 0),      # sends only, ready to send
+    (False, True, False, True, 0),      # receives only, ready to receive (no sending provider: never ready to send)
+    (True, True, True, True, 0),        # both, ready for both
+    (True, True, True, False, 1),       # both, but not ready to receive
+    (False, True, False, False, 1),     # receives only, not ready
+    (False, False, False, False, 1),    # nothing set up
+])
+def test_system_health_exits_0_when_ready_for_what_the_install_is_set_up_to_do(
+        monkeypatch, sends, receives, ready_to_send, ready_to_receive, code):
+    """A receive-only install is judged on receiving, a send-only one on sending, and one set up for both on both."""
+    from app.cli import state as cli_state
+
+    class Canned:
+        url = 'https://faxbot.example'
+
+        def get(self, path, **_):
+            if path == '/health':
+                return {'status': 'ok'}
+            return {'status': 'ready' if ready_to_send else 'not_ready', 'ready_to_receive': ready_to_receive,
+                    'backend': 'phaxio' if sends else '',
+                    'checks': {'db': True, 'ghostscript': True,
+                               'inbound': {'backend': 'sip' if receives else '', 'enabled': receives}}}
+    monkeypatch.setattr(cli_state, 'api', lambda: Canned())
+    result = CliRunner().invoke(cli_app, ['--url', 'https://faxbot.example', 'system', 'health'],
+                                env={'COLUMNS': '200'})
+    assert result.exit_code == code, result.stdout
+    # What the install is not set up to do reads as such, never as a failure.
+    assert bool(re.search(r'Ready to send\s+Not set up', result.stdout)) is (not sends)
+    assert bool(re.search(r'Ready to receive\s+Not set up', result.stdout)) is (not receives)
+
+
 def test_me_health_and_errors_map_to_plain_sentences(cli):
     me = cli.json('access', 'me')
     assert me['principal']['kind'] == 'bootstrap' and 'owner:recover' in me['permissions']
@@ -844,6 +876,31 @@ def test_routing_reconcile_asks_the_carrier_and_costs_show_charges(telnyx_cli, m
     costs = telnyx_cli.json('costs', 'spending')
     assert costs['not_priced'] == 1 and costs['received'][0]['calls_not_priced'] == 1
     assert costs['total_cost'] == [{'currency': 'USD', 'amount': '0.0032'}]
+    # A received call Telnyx priced only in part by the give-up time: its priced part is in the total, and it
+    # reads as never priced in full, apart from the call that is not priced yet.
+    checks = sa.Table('carrier_call_checks', sa.MetaData(), autoload_with=engine)
+    charges = sa.Table('carrier_charges', sa.MetaData(), autoload_with=engine)
+    with engine.begin() as connection:
+        connection.execute(calls.insert().values(
+            id='c2', direction='inbound', call_id='1759.c2', job_id=None, attempt_id=None, trunk_preset='telnyx',
+            did='+13035550100', caller='+17205550113', called='+13035550100', started_at=moment,
+            answered_at=moment, ended_at=moment + timedelta(seconds=25), disposition='answered',
+            connected_seconds=25, t38='yes', pages=1, fax_status='SUCCESS', fax_preference=0, created_at=moment,
+            updated_at=moment))
+        connection.execute(checks.insert().values(
+            id='c2', provider_id='telnyx', state='settled', checks=3, checked_at=moment, next_check_at=moment,
+            unpriced_records=1, created_at=moment, updated_at=moment))
+        connection.execute(charges.insert().values(
+            id='charge-c2', call_record_id='c2', provider_id='telnyx', record_id='rec-c2', version=1,
+            amount_micros=1000, raw_amount='0.001', currency='USD', billed_seconds=60, call_seconds=25,
+            match_method='call_id', effective_at=moment, observed_at=moment, created_at=moment,
+            supersedes_id=None, applied=1, is_final=1))
+    human = ' '.join(telnyx_cli('costs', 'spending').stdout.split())
+    assert 'Total: $0.0042' in human and '1 call is not priced yet, so it is not in the total.' in human
+    assert 'Telnyx never priced 1 call in full; only its priced part is in the total.' in human
+    costs = telnyx_cli.json('costs', 'spending')
+    assert (costs['not_priced'], costs['never_priced']) == (1, 1)
+    assert (costs['received'][0]['calls_not_priced'], costs['received'][0]['calls_never_priced']) == (1, 1)
 
 
 def test_intake_connectors_items_and_test_email(cli):
@@ -1090,6 +1147,54 @@ def test_trunk_status_and_calls_read_as_plain_sentences(trunk_cli):
     assert trunk_cli.json('providers', 'trunk', 'apply', '--no-wait')['engine'] == 'manual'
 
 
+def test_trunk_negotiation_and_each_faxs_call_say_what_was_measured_and_what_was_not(trunk_cli, tmp_path):
+    """`faxbot providers trunk negotiation`, `sent show` and `received show`: the same words as the console."""
+    from datetime import datetime, timedelta
+    from app import hylafax_engine, hylafax_records, sip_calls
+    engine = trunk_cli.client.app.state.configuration_runtime.manager.store.engine
+    now = datetime.utcnow().replace(microsecond=0)
+    epoch = lambda moment: str(int((moment - datetime(1970, 1, 1)).total_seconds()))  # noqa: E731
+    received = trunk_cli.json('system', 'diagnostics', 'test-fax', '--from', '+15559990000', '--to', '+15555550100')
+    call = {'did': '+15555550100', 'caller': '+15559990000', 'started_at': epoch(now), 'answered_at': epoch(now),
+            'ended_at': epoch(now + timedelta(seconds=44)), 'pages': 1, 't38': True, 'rate': 9600,
+            'resolution': '8031x3850'}
+    sip_calls.record_inbound_call(engine, call, call_id='1791083644.7', inbound_fax_id=received['id'],
+                                  fax_status='SUCCESS')
+    note = tmp_path / 'note.txt'
+    note.write_text('Synthetic\n')
+    sent = trunk_cli.json('send', '+15551230001', note, '--queue')
+    attempt = 'b' * 32
+    calls = sip_calls.SipCallRecords(engine)
+    calls.record_submission({'JobID': sent['id'], 'AttemptID': attempt, 'Called': '+15551230001'}, now=now)
+    hylafax_records.records_for(engine).record_call(direction='outbound', call_key=attempt, job_id=sent['id'],
+                                                    engine='builtin', reason=hylafax_engine.NOT_RUNNING, now=now)
+    calls.record_fax_result({'JobID': sent['id'], 'AttemptID': attempt, 'Status': 'FAILED', 'Pages': '0',
+                             'Error': 'T30_ERR_RX_NOCARRIER', 'Answered': epoch(now),
+                             'Ended': epoch(now + timedelta(seconds=30))}, now=now)
+    sip_calls.record_builtin_negotiation(engine, direction='outbound', call_key=attempt, rate='14400',
+                                         resolution='0x0', pages='0', job_id=sent['id'])
+
+    summary = trunk_cli('providers', 'trunk', 'negotiation', '--days', '7')
+    assert summary.exit_code == 0, summary.stdout
+    out = ' '.join(summary.stdout.split())
+    for words in ('Measured on 1 call in the last 7 days; the engine reported nothing for 1 more call.',
+                  '9600 bit/s on the last page', 'Not reported by this engine', 'Calls per delivered fax',
+                  'Faxbot only measures these for now; it does not change speed, compression or error correction '
+                  'because of them.'):
+        assert words in out, words
+    assert '14400' not in out  # spandsp's starting speed on a call that confirmed no page is not a measurement
+    assert trunk_cli.json('providers', 'trunk', 'negotiation')['days'] == 30
+    assert trunk_cli('providers', 'trunk', 'negotiation', '--days', '12').exit_code != 0
+
+    shown = ' '.join(trunk_cli('received', 'show', received['id']).stdout.split())
+    assert ('How the call went The last page went at 9600 bit/s and had standard resolution; compression and error '
+            'correction are not reported by this engine; 1 page in a 44 s call.') in shown
+    assert trunk_cli.json('received', 'show', received['id'])['negotiation']['rate_last_page'] == 9600
+    sent_shown = ' '.join(trunk_cli('sent', 'show', sent['id']).stdout.split())
+    assert ('How the call went Speed, compression, resolution and error correction are not reported by this engine; '
+            'no pages confirmed in a 30 s call.') in sent_shown
+
+
 def test_trunk_telnyx_shows_t38_per_number_and_turns_it_on_for_one(monkeypatch, tmp_path):
     import httpx
     from app import sip_http, stun, telnyx_t38
@@ -1235,6 +1340,8 @@ def test_money_reads_as_the_console_shows_it(monkeypatch):
     assert output.cost_amount({'state': 'estimated', 'estimated_cost': [usd('0.0025')]}) == '$0.0025 estimate'
     assert output.cost_amount({'state': 'reported', 'reported_cost': [usd('0.005')]}) == '$0.005'
     assert output.cost_amount({'state': 'included'}) == 'In your plan'
+    # A call the carrier priced only in part never reads as costing that part alone.
+    assert output.cost_amount({'state': 'incomplete', 'reported_cost': [usd('0.005')]}) == '$0.005, part never priced'
     assert output.money([usd('0.005'), {'currency': 'EUR', 'amount': '0.01'}]) == '$0.005 + 0.01 EUR'
 
 
@@ -1275,6 +1382,54 @@ def test_route_and_spending_words_match_the_console(monkeypatch):
     out = Lines()
     delivery._unrecorded_lines(out, [{'unrecorded_calls': 1, 'unrecorded_matched_to_faxes': 1}])
     assert out.lines == ['1 call reached Faxbot without a call record; its fax is in Received. Included in Charged.']
+    # The console's Spending cards say the same (carrierCharges.test.tsx).
+    assert delivery.never_priced_sentence('Telnyx', 2, 'fax') == (
+        'Telnyx never priced 2 faxes in full; only their priced parts are in the total.')
+    assert delivery.never_priced_sentence(None, 1, 'call') == (
+        'Your carrier never priced 1 call in full; only its priced part is in the total.')
+
+
+@pytest.fixture
+def denver_reader(monkeypatch):
+    """The person running `faxbot` is in Denver; the server's own sentence below is in UTC."""
+    monkeypatch.setenv('TZ', 'America/Denver')
+    time.tzset()
+    yield
+    monkeypatch.undo()
+    time.tzset()
+
+
+def test_received_show_says_earlier_failures_in_the_readers_local_time(monkeypatch, denver_reader):
+    """Built from the structured earlier failures, as the console does, never the server's sentence in its own zone."""
+    from app.cli import state as cli_state
+    from app.cli.commands import fax
+    stop = {'stopped_at': '2026-10-04T08:00:00', 'attempts': 30, 'problem': 'Phaxio did not answer.'}
+    item = {'id': 'fax-1', 'fr': '+15559990000', 'to': '+15555550100', 'status': 'received', 'backend': 'phaxio',
+            'received_at': '2026-10-05T21:15:00', 'earlier_failures': [
+                {**stop, 'resumed_at': '2026-10-04T09:00:00', 'resumed_by': 'person', 'resumed_by_name': 'Dana Lee'},
+                {**stop, 'resumed_at': '2026-10-05T21:12:00', 'resumed_by': 'notification', 'resumed_by_name': None}],
+            'earlier_failures_text': 'Failed twice before Phaxio reported it again on 5 October 2026 at 9:12 PM UTC.'}
+
+    class Canned:
+        url = 'https://faxbot.example'
+
+        def get(self, path, **_):
+            return item if path == '/inbound/fax-1' else {}
+    monkeypatch.setattr(cli_state, 'api', lambda: Canned())
+    result = CliRunner().invoke(cli_app, ['--url', 'https://faxbot.example', 'received', 'show', 'fax-1'],
+                                env={'COLUMNS': '200'})
+    assert result.exit_code == 0, result.stdout
+    shown = ' '.join(result.stdout.split())
+    assert 'Earlier failures Failed twice before Phaxio reported it again on 2026-10-05 15:12 MDT.' in shown
+    assert '9:12 PM UTC' not in shown
+    # Who set it going again, and a server that sends only its sentence.
+    person = {'resumed_at': '2026-10-04T09:00:00', 'resumed_by': 'person', 'resumed_by_name': None}
+    assert fax.earlier_failures({'earlier_failures': [person] * 3}) == (
+        'Failed 3 times before Faxbot was asked to fetch it again on 2026-10-04 03:00 MDT.')
+    assert fax.earlier_failures({'backend': 'import', 'earlier_failures': [{**person, 'resumed_by': 'notification'}]}) \
+        == 'Failed once before the provider reported it again on 2026-10-04 03:00 MDT.'
+    assert fax.earlier_failures({'earlier_failures_text': 'An older server.'}) == 'An older server.'
+    assert fax.earlier_failures({'earlier_failures': [], 'earlier_failures_text': None}) is None
 
 
 def test_sent_list_names_the_route_that_carried_each_fax():

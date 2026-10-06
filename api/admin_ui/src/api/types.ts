@@ -1,4 +1,5 @@
 import type { FaxTogetherSummary } from './batchingTypes';
+import type { CallNegotiation } from './sipTypes';
 // TypeScript types for the admin API
 
 // Active operator fields consumed by Send and Plugins. The shell builds this
@@ -73,7 +74,11 @@ export interface FaxJob extends DeliveryMetadata {
   // Present when the fax waited, or went, with other faxes to the same number.
   together?: FaxTogetherSummary | null;
   // Over the SIP trunk: which fax engine carried it, and SSL Fax's line or the built-in engine's reason.
-  fax_engine?: { engine: 'hylafax' | 'builtin'; sslfax: boolean | null; sentence: string | null } | null;
+  // negotiation: what the call negotiated (measurement only), once the call has a result.
+  fax_engine?: {
+    engine: 'hylafax' | 'builtin'; sslfax: boolean | null; sentence: string | null;
+    negotiation?: CallNegotiation | null;
+  } | null;
   // The sender asked for a real call through the carrier, even to one of this installation's own numbers.
   send_by_call?: boolean;
   // Marked urgent: it goes before other faxes waiting for the same line.
@@ -444,6 +449,20 @@ export interface InboundFax {
   recovered?: boolean;
   // A sentence about the provider's own copy, such as an eFax deletion Faxbot is still retrying.
   provider_note?: string | null;
+  // Each time fetching the document stopped before it was set going again, oldest first.
+  earlier_failures?: InboundEarlierFailure[];
+  // The server's sentence about them, in the installation's time zone. The console builds its own from
+  // earlier_failures in the viewer's (earlierFailuresText) and shows this only from a server without them.
+  earlier_failures_text?: string | null;
+}
+
+export interface InboundEarlierFailure {
+  stopped_at: string | null;
+  attempts: number;
+  problem: string | null;
+  resumed_at: string;
+  resumed_by: 'person' | 'notification';
+  resumed_by_name: string | null;
 }
 
 // Authentication and access management (/auth/*, /access/*). Datetimes are

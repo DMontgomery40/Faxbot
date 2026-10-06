@@ -6,6 +6,8 @@ from ..errors import CliError, EXIT_FAILURE, EXIT_NOT_FOUND
 from ..output import local_time, text
 from ..settings_write import secret_names, secrets_from_stdin, write_settings
 from ...provider_labels import provider_label
+# The same rule as /health/ready's HTTP status, applied to the answer's fields (any server version).
+from ...readiness import ready_for_setup
 
 
 def _provider(identity):
@@ -435,17 +437,18 @@ def providers_status():
 
 
 def health():
-    """Check that Faxbot answers and is ready to send faxes. No key is needed. For scripts, the command ends with exit code 1 when Faxbot is not ready."""
+    """Check that Faxbot answers and is ready to send and receive faxes, for whichever of those it is set up to do. No key is needed. For scripts, the command ends with exit code 1 when Faxbot is not ready for them."""
     api = state.api()
     live = api.get('/health', auth=False)
     ready = api.get('/health/ready', auth=False, allow=(503,))
-    result = {'live': live, 'ready': ready}
+    sends, receives, ok = ready_for_setup(ready)
+    result = {'live': live, 'ready': ready, 'ready_for_setup': ok}
 
     def human(out):
         checks = (ready or {}).get('checks', {})
         out.fields([('Server', api.url), ('Answering', (live or {}).get('status') == 'ok'),
-                    ('Ready to send', (ready or {}).get('status') == 'ready'),
-                    ('Ready to receive', (ready or {}).get('ready_to_receive')),
+                    ('Ready to send', (ready or {}).get('status') == 'ready' if sends else 'Not set up'),
+                    ('Ready to receive', (ready or {}).get('ready_to_receive') if receives else 'Not set up'),
                     ('Sending provider', _provider((ready or {}).get('backend'))),
                     ('Receiving provider', _provider((checks.get('inbound') or {}).get('backend')
                                                      if (checks.get('inbound') or {}).get('enabled') else None)),
@@ -456,7 +459,7 @@ def health():
         if (ready or {}).get('message'):
             out.line(ready['message'])
     state.out().result(result, human)
-    if (ready or {}).get('status') != 'ready':
+    if not ok:
         raise typer.Exit(EXIT_FAILURE)  # the result above already says what failed, in --json too
 
 

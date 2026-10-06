@@ -153,6 +153,36 @@ class FaxEngineRecords:
             return row['id']
         return self._write(apply)
 
+    def record_negotiation(self, *, direction, call_key, engine, values, job_id=None, number=None, now=None):
+        """What one call negotiated, as the engine that handled it reported it (fax_negotiation's values).
+
+        Fills only columns that are still unknown and never rewrites one, so a report posted twice changes
+        nothing; a report from a different engine than the one already recorded is ignored. The call's row is
+        written first when there is none yet (a call the built-in engine received). Evidence only.
+        """
+        from .fax_negotiation import COLUMNS, ENGINES
+        if engine not in ENGINES or not isinstance(values, dict):
+            raise ValueError('Unsupported fax engine record')
+        self.record_call(direction=direction, call_key=call_key, engine=engine, job_id=job_id, number=number,
+                         now=now)
+        now = now or utcnow()
+        table = self._table('fax_engine_calls')
+        wanted = {name: values.get(name) for name in COLUMNS[1:] + ('session_seconds',)
+                  if values.get(name) is not None and name in table.c}
+
+        def apply(connection):
+            row = connection.execute(sa.select(table).where(table.c.direction == direction,
+                                                            table.c.call_key == call_key)).mappings().first()
+            if row['negotiation_by'] not in (None, engine):
+                return row['id']
+            changes = {name: value for name, value in wanted.items() if row[name] is None}
+            if changes and row['negotiation_by'] is None and any(name != 'session_seconds' for name in changes):
+                changes['negotiation_by'] = engine
+            if changes:
+                connection.execute(table.update().where(table.c.id == row['id']).values(updated_at=now, **changes))
+            return row['id']
+        return self._write(apply)
+
     def for_call(self, direction, call_key):
         """The engine record for one call, or None."""
         table = self._table('fax_engine_calls')
@@ -248,20 +278,24 @@ class FaxEngineRecords:
                                      .order_by(calls.c.created_at.desc(), calls.c.id.desc()).limit(1)).mappings().first()
             if row is None:
                 return None, None
-            pages = connection.execute(sa.select(records.c.pages).where(
-                records.c.direction == 'outbound', records.c.call_id == row['call_key'])).scalar()
-            return row, pages
-        row, pages = self._read(read)
+            call = connection.execute(sa.select(records).where(
+                records.c.direction == 'outbound', records.c.call_id == row['call_key'])).mappings().first()
+            return dict(row), dict(call) if call is not None else None
+        row, call = self._read(read)
         if row is None:
             return None
+        pages = (call or {}).get('pages')
         engine, reason = handled_by(row)
         sentence = None
         if engine == 'builtin':
             sentence = reason
         elif row['sslfax'] == 1 and row['transfer_seconds'] is not None and pages:
             sentence = sslfax_sentence(row['transfer_seconds'], pages)
+        # What the call negotiated (measurement only), once the call has a result.
+        from .fax_negotiation import call_view
+        negotiation = call_view(row, call) if (call or {}).get('fax_status') is not None else None
         return {'engine': engine, 'sslfax': None if row['sslfax'] is None else bool(row['sslfax']),
-                'sentence': sentence}
+                'sentence': sentence, 'negotiation': negotiation}
 
     def recipient_detail(self, number):
         """Recipients, Details: whether the number takes SSL Fax (and since when) and its own fax limits."""

@@ -122,6 +122,37 @@ def trunk_calls(limit: int = typer.Option(10, '--limit', min=1, max=200, help='H
     state.out().result(result, human)
 
 
+def _percent(value):
+    return f'{value}%' if value is not None else ''
+
+
+def _number(value):
+    return '' if value is None else f'{value:g}'
+
+
+@trunk.command('negotiation')
+def trunk_negotiation(days: int = typer.Option(30, '--days', metavar='DAYS',
+                                               help='How many days to count: 7, 30 or 90.')):
+    """Show how fax calls on your phone line went, grouped by compression, error correction and speed: calls, how many succeeded, seconds per confirmed page and calls per delivered fax. Faxbot only measures these; it changes nothing because of them."""
+    if days not in (7, 30, 90):
+        raise typer.BadParameter('Use 7, 30 or 90.', param_hint='--days')
+    result = state.api().get('/admin/sip/negotiation', params={'days': days})
+
+    def human(out):
+        out.line(result['sentence'])
+        rows = [[group['coding_label'], group['speed_label'], group['calls'], _percent(group['success_percent']),
+                 _number(group['seconds_per_page']), _number(group['attempts_per_delivered'])]
+                for group in result.get('groups') or []]
+        if rows:
+            out.table(['Compression and error correction', 'Speed', 'Calls', 'Succeeded', 'Seconds per page',
+                       'Calls per delivered fax'], rows)
+            out.line("Speed: the lowest speed each call used, or the last page's speed where the engine reports "
+                     'only that. Seconds per page: the time of every call in the row, divided by the pages they '
+                     'confirmed. Calls per delivered fax: sent faxes only.')
+        out.line(result['note'])
+    state.out().result(result, human)
+
+
 @trunk.command('restart-engine')
 def trunk_restart_engine():
     """Restart the fast fax service once no fax is being sent or received."""

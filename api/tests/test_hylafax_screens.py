@@ -35,8 +35,12 @@ def test_sent_details_say_how_the_pages_went_or_why_the_built_in_engine_carried_
     calls.record_engine_result(JOB, ATTEMPT, success=True, pages=6, now=NOW)
     records.record_result(direction='outbound', call_key=ATTEMPT, job_id=JOB, number=PEER, now=NOW,
                           details={'engine_ref': 'e:1', 'sslfax': True, 'sslfax_offered': True, 'transfer_seconds': 12})
-    assert records.sent_detail(JOB) == {'engine': 'hylafax', 'sslfax': True, 'sentence':
-                                        'The pages were sent faster during the call: 12 seconds instead of about 48.'}
+    detail = records.sent_detail(JOB)
+    assert detail.pop('negotiation')['sentence'] == (
+        'The pages went over the internet instead of the phone line; compression, resolution and error correction '
+        'are not reported by this engine; 6 pages in 12 s.')
+    assert detail == {'engine': 'hylafax', 'sslfax': True, 'sentence':
+                      'The pages were sent faster during the call: 12 seconds instead of about 48.'}
     other = 'c' * 32
     records.record_call(direction='outbound', call_key='d' * 32, job_id=other, engine='builtin', now=NOW,
                         reason=hylafax_engine.SENDING_TOGETHER)

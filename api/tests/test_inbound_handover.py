@@ -261,7 +261,10 @@ def test_apply_creates_the_inbound_secret_and_asterisk_hands_faxes_over_with_it(
         applied = client.post('/admin/sip/apply', headers=ADMIN)
         assert applied.status_code == 200, applied.text
         secret = secret_file.read_text()
-        assert len(secret) >= 32 and oct(secret_file.stat().st_mode & 0o777) == '0o600'
+        # Group-readable: faxbot-inbound-notify runs as Asterisk's own user, in the shared folder's group.
+        assert len(secret) >= 32 and oct(secret_file.stat().st_mode & 0o777) == '0o640'
+        # The trunk settings and the manager login stay root's alone.
+        assert oct((data / 'asterisk' / 'pjsip.conf').stat().st_mode & 0o777) == '0o600'
         view = client.get('/admin/settings', headers=ADMIN)
         assert view.json()['inbound']['sip']['configured'] is True and secret not in view.text
         assert client.post('/admin/sip/apply', headers=ADMIN).status_code == 200
@@ -402,5 +405,7 @@ def test_notifier_passes_the_sip_call_id_in_the_call_object(tmp_path):
     assert first['sip_call_id_b64'] == 'M2YwYzVhOGUtMTExMQ==touchpwned'  # only base64 characters survive
     assert second['sip_call_id_b64'] is None
     assert set(first) - {'sip_call_id_b64'} == {'did', 'caller', 'started_at', 'answered_at', 'ended_at', 'pages',
-                                                't38', 'remote_station_id_b64'}
+                                                't38', 'remote_station_id_b64', 'rate', 'resolution'}
+    # Not passed: unknown, never a default.
+    assert first['rate'] is None and first['resolution'] is None
 

@@ -682,3 +682,64 @@ def test_a_call_whose_other_record_is_unpriced_stays_open_until_every_record_is_
     CarrierReconciler(carriers, routes, FakeTelnyx(legs)).step(now=later + timedelta(hours=7))
     assert checks(carriers, call) == 'settled'
     assert sorted(charge['amount_micros'] for charge in carriers.in_effect([call])[call]) == [2000, 5000]
+
+
+def test_a_record_still_unpriced_at_the_give_up_time_settles_the_call_as_incomplete_never_as_its_priced_part(ledger):
+    """Telnyx states no time by which a record's price is final, so Faxbot's one-week give-up time is the limit."""
+    from api.app.routing.carriers import GIVE_UP
+    installation, routes, carriers = ledger
+    job = accept(installation)
+    attempt = outbound_attempt(ledger, job, phase='success', answer=at(3, 28), end=at(4, 14), call_id='call-two-legs')
+    call = call_of(carriers, attempt)
+    legs = [sent_b(call_id='call-two-legs'), {**sent_b(call_id='call-two-legs', cost=None), 'id': 'rec-b2'}]
+    CarrierReconciler(carriers, routes, FakeTelnyx(legs)).step(now=at(4, 14) + timedelta(hours=25))
+    assert checks(carriers, call) == 'matched'
+    # Before this fix the call stayed open for good, and its fax read as costing the priced part alone.
+    past = at(4, 14) + GIVE_UP + timedelta(minutes=1)
+    CarrierReconciler(carriers, routes, FakeTelnyx(legs)).step(now=past)
+    assert checks(carriers, call) == 'settled'
+    with carriers.engine.connect() as connection:
+        assert connection.execute(sa.select(carriers.checks.c.unpriced_records).where(
+            carriers.checks.c.id == call)).scalar_one() == 1
+    [charge] = carriers.in_effect([call])[call]
+    assert (charge['amount_micros'], charge['is_final']) == (5000, 1)
+    assert routes.decision(attempt)['settled_cost_micros'] == 5000
+    assert call not in [row['id'] for row in carriers.due_calls('telnyx', now=past, force=True)]
+    spending = Spending(routes, carriers)
+    cost = spending.job(job)
+    assert cost['state'] == 'incomplete'
+    assert cost['summary'] == ('Telnyx charged $0.005 for part of this call and never priced the rest, '
+                               'so its full cost is unknown.')
+    totals = spending.outbound(BASE - timedelta(days=1), now=past)[0]
+    # The priced part is in the total; the call counts as never priced in full, apart from "not priced yet".
+    assert totals['reported_cost_micros'] == {'USD': 5000}
+    assert (totals['unreported'], totals['unpriced'], totals['never_priced']) == (0, 0, 1)
+    # Settling again changes nothing.
+    CarrierReconciler(carriers, routes, FakeTelnyx(legs)).step(now=past + timedelta(days=1))
+    assert len(carriers.history(call)) == 2 and spending.job(job)['summary'] == cost['summary']
+
+
+def test_a_received_call_never_priced_in_full_says_its_cost_is_unknown(ledger):
+    from api.app.routing.carriers import GIVE_UP
+    installation, routes, carriers = ledger
+    fax = uuid4().hex
+    with carriers.engine.begin() as connection:
+        connection.execute(carriers.faxes.insert().values(id=fax, from_number=CALLER_C, to_number=OURS,
+                                                          status='received', backend='sip', created_at=at(14, 29),
+                                                          received_at=at(14, 29), updated_at=at(14, 29)))
+        connection.execute(carriers.calls.insert().values(
+            id='received-call', direction='inbound', call_id='received-call', job_id=fax, trunk_preset='telnyx',
+            did=OURS, caller=CALLER_C, started_at=at(14, 4), answered_at=at(14, 4), ended_at=at(14, 29),
+            disposition='answered', connected_seconds=25, t38='yes', pages=1, fax_status='SUCCESS', fax_preference=0,
+            sip_call_id='call-in', created_at=at(14, 4), updated_at=at(14, 29)))
+    legs = [received_c(call_id='call-in'), {**received_c(call_id='call-in', cost=None), 'id': 'rec-c2'}]
+    CarrierReconciler(carriers, routes, FakeTelnyx(legs)).step(now=at(14, 29) + timedelta(hours=25))
+    past = at(14, 29) + GIVE_UP + timedelta(minutes=1)
+    CarrierReconciler(carriers, routes, FakeTelnyx(legs)).step(now=past)
+    spending = Spending(routes, carriers)
+    assert spending.inbound(fax) == {
+        'state': 'incomplete', 'reported_cost': {'USD': 3200},
+        'summary': 'Telnyx charged $0.0032 for part of this call and never priced the rest, so its full cost is unknown.'}
+    [entry] = spending.received(BASE - timedelta(days=1), now=past)
+    assert entry['reported_cost_micros'] == {'USD': 3200}
+    assert (entry['unreported'], entry['unpriced'], entry['never_priced']) == (0, 0, 1)

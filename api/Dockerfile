@@ -30,7 +30,8 @@ COPY api/alembic /app/alembic
 COPY api/alembic.ini /app/alembic.ini
 
 # The faxbot command line, for example: docker compose exec api faxbot system health
-RUN printf '#!/bin/sh\nexec env PYTHONPATH=/app python -m app.cli "$@"\n' > /usr/local/bin/faxbot \
+# Files it makes are its own alone (umask 077), as the server's are.
+RUN printf '#!/bin/sh\numask 077\nexec env PYTHONPATH=/app python -m app.cli "$@"\n' > /usr/local/bin/faxbot \
     && chmod 755 /usr/local/bin/faxbot
 
 # Copy provider traits and any provider manifests
@@ -48,4 +49,6 @@ COPY --from=admin-ui-builder /build/dist /app/admin_ui/dist
 EXPOSE 8080
 
 ENTRYPOINT ["/usr/bin/tini", "--"]
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080"]
+# Every file the API makes on the data volume is root's alone unless it says otherwise (umask 077):
+# the volume is shared with Asterisk, which reads only the fax images and the inbound secret (0640).
+CMD ["sh", "-c", "umask 077 && exec uvicorn app.main:app --host 0.0.0.0 --port 8080"]

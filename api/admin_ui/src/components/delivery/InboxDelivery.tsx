@@ -73,6 +73,25 @@ export function providerName(backend: string | null | undefined): string {
   return providerLabel(backend);
 }
 
+// Providers that can report a received fax again, which sets fetching going again.
+const REPORTS_AGAIN = new Set(['phaxio', 'sinch', 'efax', 'sip']);
+
+// "Failed twice before Phaxio reported it again on {date}.", from the structured earlier failures with the date in
+// the viewer's local time, as every other date on the screen; `faxbot received show` builds the same sentence.
+// A server without the structured failures sends only its own sentence, shown as it is.
+export function earlierFailuresText(fax: Pick<InboundFax, 'backend' | 'earlier_failures' | 'earlier_failures_text'>): string | null {
+  const failures = fax.earlier_failures;
+  if (!failures) return fax.earlier_failures_text ?? null;
+  const last = failures[failures.length - 1];
+  if (!last) return null;
+  const count = failures.length;
+  const times = count === 1 ? 'once' : count === 2 ? 'twice' : `${count} times`;
+  const who = last.resumed_by === 'person'
+    ? (last.resumed_by_name ? `${last.resumed_by_name} asked Faxbot to fetch it again` : 'Faxbot was asked to fetch it again')
+    : `${fax.backend && REPORTS_AGAIN.has(fax.backend) ? providerName(fax.backend) : 'the provider'} reported it again`;
+  return `Failed ${times} before ${who} on ${formatServerTime(last.resumed_at)}.`;
+}
+
 // Whether an enabled email connector covers this fax number now: one for the
 // exact number, or one for every number.
 export function emailDeliveryApplies(connectors: EmailConnector[] | null, number: string | null | undefined): boolean {
@@ -81,6 +100,7 @@ export function emailDeliveryApplies(connectors: EmailConnector[] | null, number
 }
 
 export const ARRIVED_BEFORE_EMAIL = 'Arrived before email delivery was set up';
+export const RECIPIENTS_NOT_RECORDED = 'Who it went to was not recorded when it was delivered.';
 
 // setUpNow: email delivery is known to cover this number today (the fax came before it did).
 export function inboxDeliveryStatus(item: IntakeItem | undefined, isNew = true, emailApplies = true,
@@ -88,9 +108,14 @@ export function inboxDeliveryStatus(item: IntakeItem | undefined, isNew = true, 
   if (!item) return isNew ? { label: 'Waiting for email delivery', detail: null, tone: 'info', retry: false } : null;
   const reason = GENERIC.has(item.status) ? null : item.status;
   if (item.state === 'delivered') {
+    // The addresses stored when the email server accepted it; never the connector's addresses today.
     const to = item.delivered_to?.length ? item.delivered_to.join(', ') : null;
-    return { label: to ? `Delivered to ${to}` : 'Delivered by email',
-      detail: item.delivered_at ? formatServerTime(item.delivered_at) : null, tone: 'success', retry: false };
+    const when = item.delivered_at ? formatServerTime(item.delivered_at) : null;
+    if (!to && item.recipients_recorded === false) {
+      return { label: 'Delivered by email', detail: when ? `${when}. ${RECIPIENTS_NOT_RECORDED}` : RECIPIENTS_NOT_RECORDED,
+        tone: 'success', retry: false };
+    }
+    return { label: to ? `Delivered to ${to}` : 'Delivered by email', detail: when, tone: 'success', retry: false };
   }
   if (item.state === 'failed') return { label: 'Not delivered', detail: reason, tone: 'error', retry: true };
   if (item.state === 'sending') return { label: 'Waiting for email delivery', detail: null, tone: 'info', retry: false };

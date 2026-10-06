@@ -139,6 +139,9 @@ export interface ProviderCosts {
   attempts_with_reported_cost?: number;
   // Of attempts_without_reported_cost, those with no estimate either: in no total, never counted as $0.
   attempts_not_priced?: number;
+  // Of attempts_with_reported_cost, those the carrier priced only in part by the give-up time: the priced part
+  // is in reported_cost; the rest will never be priced.
+  attempts_never_priced?: number;
   // Rate-card estimates for faxes the carrier has not reported yet (never double-counted).
   estimated_cost_not_reported?: Money[];
   awaiting_carrier_bill?: number;
@@ -168,6 +171,8 @@ export interface ReceivedCosts {
   calls_without_reported_cost: number;
   // Of calls_without_reported_cost, those with no estimate either (such as an answered call of unknown length).
   calls_not_priced?: number;
+  // Of calls_with_reported_cost, those the carrier priced only in part by the give-up time.
+  calls_never_priced?: number;
   estimated_cost_not_reported: Money[];
   awaiting_carrier_bill: number;
   unmatched_charges: number;
@@ -194,11 +199,13 @@ export interface RouteCostsResponse {
   total_cost?: Money[];
   // Sent faxes and received calls with no charge and no estimate: left out of total_cost.
   not_priced?: number;
+  // Sent faxes and received calls the carrier never priced in full: only their priced parts are in total_cost.
+  never_priced?: number;
 }
 
 // One fax's cost: what the carrier charged, or why it is not known yet.
 export interface FaxCost {
-  state: 'reported' | 'partial' | 'waiting' | 'unmatched' | 'included' | 'local' | 'none';
+  state: 'reported' | 'partial' | 'incomplete' | 'waiting' | 'unmatched' | 'included' | 'local' | 'none';
   summary: string | null;
   reported_cost: Money[];
   estimated_cost?: Money[];
@@ -265,8 +272,10 @@ export interface IntakeItem {
   next_attempt_at: string | null;
   delivered_at: string | null;
   connector: string | null;
-  // Where a delivered item was emailed.
+  // Where a delivered item was emailed, as the email server accepted it at the time.
   delivered_to?: string[];
+  // False for an email delivered before Faxbot kept its recipients.
+  recipients_recorded?: boolean;
 }
 
 export interface IntakeCounts {

@@ -147,6 +147,51 @@ def test_mailbox_operator_sees_only_their_mailbox_and_denials_disclose_nothing(c
                                headers=operator.headers()).status_code == 403
 
 
+def test_a_received_faxs_call_measurement_follows_access_to_that_fax(client, tmp_path):
+    """Whoever may read a received fax may read how its call went, with or without the phone line's records."""
+    from app import sip_calls
+    front = mailbox(client, 'Front Desk', '+15550100001')
+    mailbox(client, 'Billing', '+15550100002')
+    phone_line = client.post('/access/roles', headers=B, json={
+        'name': 'Phone line', 'permissions': ['providers:read'], 'enabled': True,
+        'expected_policy_version': policy_version(client)}).json()['role']
+    operator, operator_principal = ready_user(client, 'olive')  # Front Desk only; no phone-line records
+    assign(client, operator_principal['id'], 'role_fax_operator', front['resource_id'])
+    technician, technician_principal = ready_user(client, 'trent')  # phone-line records; no mailbox
+    assign(client, technician_principal['id'], phone_line['id'])
+    both, both_principal = ready_user(client, 'pat')
+    assign(client, both_principal['id'], phone_line['id'])
+    assign(client, both_principal['id'], 'role_fax_operator', front['resource_id'])
+    mine = receive(tmp_path, '+15550100001', content=pdf('front'))
+    other = receive(tmp_path, '+15550100002', content=pdf('billing'))
+    moment = datetime.utcnow().replace(microsecond=0)
+    epoch = lambda value: str(int((value - datetime(1970, 1, 1)).total_seconds()))  # noqa: E731
+    for index, fax in enumerate((mine, other)):
+        sip_calls.record_inbound_call(engine(), {
+            'did': '+15550100001', 'caller': '+15559990000', 'started_at': epoch(moment),
+            'answered_at': epoch(moment), 'ended_at': epoch(moment + timedelta(seconds=44)), 'pages': 1,
+            't38': True, 'rate': 9600, 'resolution': '8031x3850'},
+            call_id=f'1791083644.{index}', inbound_fax_id=fax, fax_status='SUCCESS')
+    sentence = ('The last page went at 9600 bit/s and had standard resolution; compression and error correction '
+                'are not reported by this engine; 1 page in a 44 s call.')
+
+    def measurement(reader, fax):
+        return reader.get(f'/admin/sip/negotiation/received/{fax}')
+
+    # A reader of the fax gets the line, with and without the phone line's records.
+    for reader in (operator, both):
+        shown = measurement(reader, mine)
+        assert shown.status_code == 200, shown.text
+        assert shown.json()['sentence'] == sentence
+    client.cookies.clear()  # the logins above left a session in the shared client's jar
+    assert measurement(client, mine).status_code == 401
+    # Anyone else gets exactly what the fax's detail gives them, so the route never shows the fax exists.
+    for reader, fax in ((technician, mine), (technician, other), (operator, other), (both, other)):
+        refused, detail = measurement(reader, fax), reader.get(f'/inbound/{fax}')
+        assert detail.status_code == 404
+        assert (refused.status_code, refused.json()) == (detail.status_code, detail.json())
+
+
 def test_documents_without_bytes_wait_outside_the_queue(client, tmp_path):
     waiting = receive(tmp_path, '+15550100001', status='waiting')
     feed()
@@ -216,7 +261,7 @@ def test_export_contains_manifest_original_and_history_and_names_what_is_missing
 
 
 def test_export_never_names_todays_email_recipients_as_the_ones_a_fax_went_to(client, tmp_path):
-    """Recipients are not stored at delivery and the connector can change later, so the export says so."""
+    """A delivery from before recipients were stored says so; a newer one names who it went to then."""
     from app.intake.store import IntakeStore
     from app.intake.worker import ConnectorSecrets
     mailbox(client, 'Front Desk', '+15550100001')
@@ -240,6 +285,22 @@ def test_export_never_names_todays_email_recipients_as_the_ones_a_fax_went_to(cl
     assert 'Who each email was sent to was not recorded when it was delivered.' in manifest['missing']
     assert b'changed-later@clinic.example' not in files['manifest.json']
     assert b'changed-later@clinic.example' not in files['history.txt']
+
+    # A delivery that kept its recipients when the email server accepted it names them, not today's.
+    newer = receive(tmp_path, '+15550100001', content=pdf('Synthetic newer document'))
+    feed(4)
+    intake.feed_inbound()
+    with intake.engine.begin() as connection:
+        connection.execute(intake.items.update().where(intake.items.c.inbound_fax_id == newer).values(
+            state='delivered', connector_id=created.json()['id'], delivered_at=datetime.utcnow(), last_error=None,
+            delivered_to=json.dumps(['frontdesk@clinic.example', 'billing@clinic.example'])))
+    files = _export(client.get(f"/work/{item_of(client, newer)['id']}/export", headers=B))
+    manifest = json.loads(files['manifest.json'])
+    [delivery] = manifest['email_delivery']
+    assert delivery['delivered_to'] == ['frontdesk@clinic.example', 'billing@clinic.example']
+    assert 'Who each email was sent to was not recorded when it was delivered.' not in manifest['missing']
+    assert b'changed-later@clinic.example' not in files['manifest.json']
+    assert 'Emailed to frontdesk@clinic.example, billing@clinic.example.' in files['history.txt'].decode()
 
 
 def test_export_withholds_the_original_from_people_who_cannot_read_documents(client, tmp_path):

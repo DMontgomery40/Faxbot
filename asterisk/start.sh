@@ -211,6 +211,36 @@ else
   mv -f "$temporary" "$out_dir/extensions-options.conf"
 fi
 
+# Asterisk itself runs as its own unprivileged user (runuser in asterisk.conf,
+# uid and gid 5060), because it parses the carrier's packets. Everything above
+# and the watcher below run as root; here root hands over what Asterisk needs.
+# Skipped when this script is not root (the tests run it as an ordinary user).
+if [ "$(id -u)" = 0 ] && getent passwd asterisk >/dev/null 2>&1; then
+  # Its configuration (rendered above with umask 077): root's, readable by its group only.
+  chown -R root:asterisk "$out_dir"
+  chmod -R u=rwX,g=rX,o= "$out_dir"
+  # Its own working folders. They stay in the container across a restart.
+  chown asterisk:asterisk /var/lib/asterisk /var/spool/asterisk /var/log/asterisk /var/run/asterisk
+  # Faxbot's data folder. Files the API makes in it, and in the shared folder,
+  # take the asterisk group (setgid). The API writes only two kinds of them
+  # readable by the group (mode 0640): each fax's pages, which SendFAX reads,
+  # and the inbound secret faxbot-inbound-notify sends. Everything else it
+  # writes is root's alone.
+  chgrp asterisk "$data_dir" "$shared"
+  chmod g+s "$data_dir"
+  chmod 2750 "$shared"
+  # Written before Asterisk ran as its own user (root only): the inbound secret,
+  # and faxes waiting to be sent.
+  if [ -f "$shared/inbound.secret" ] && [ ! -L "$shared/inbound.secret" ]; then
+    chgrp asterisk "$shared/inbound.secret"
+    chmod 0640 "$shared/inbound.secret"
+  fi
+  find "$data_dir" -maxdepth 1 -type f -name '*.tiff' -user root ! -perm -0040 \
+    -exec chgrp asterisk {} + -exec chmod 0640 {} +
+  # Received faxes: Asterisk writes them; Faxbot (root) reads them.
+  chown asterisk:asterisk "$data_dir/inbound"
+fi
+
 # This Asterisk shares Faxbot's data folder, so Faxbot may restart it (over the
 # manager connection, once no call is up) to load new settings; Docker's
 # restart policy starts it again.
@@ -233,14 +263,21 @@ if [ "$login_from" != environment ]; then
   loaded=$(login_sum)
   (
     while sleep "${FAXBOT_LOGIN_CHECK_SECONDS:-5}"; do
-      kill -0 "$$" 2>/dev/null || exit 0
+      # Asterisk (this PID after the exec) runs as another user: without the kill capability, /proc says.
+      kill -0 "$$" 2>/dev/null || [ -e "/proc/$$" ] || exit 0
       current=$(login_sum)
-      if [ "$current" != "$loaded" ] \
-          && "${FAXBOT_ASTERISK_CONTROL:-asterisk}" -rx 'core stop gracefully' >/dev/null 2>&1; then
+      [ "$current" != "$loaded" ] || continue
+      if [ -z "${noted:-}" ]; then
         # In the container log: this restart came from the login, not from Faxbot's manager connection.
-        # (Asterisk's own error output; this watcher keeps no pipe of the container open.)
-        { printf 'faxbot-asterisk: the manager login changed; Asterisk restarts once no call is up\n' \
-            > "/proc/$$/fd/2"; } 2>/dev/null || true
+        # Written before the stop, which can end the container at once: the container's first process's
+        # error output (root may open it; Asterisk's own is its user's), or else Asterisk's. This watcher
+        # keeps no pipe of the container open.
+        note='faxbot-asterisk: the manager login changed; Asterisk restarts once no call is up'
+        { printf '%s\n' "$note" > /proc/1/fd/2; } 2>/dev/null \
+          || { printf '%s\n' "$note" > "/proc/$$/fd/2"; } 2>/dev/null || true
+        noted=yes
+      fi
+      if "${FAXBOT_ASTERISK_CONTROL:-asterisk}" -rx 'core stop gracefully' >/dev/null 2>&1; then
         exit 0
       fi
     done

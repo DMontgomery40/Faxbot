@@ -234,9 +234,13 @@ def jobs_get(fax_id: str = typer.Argument(..., help='Fax ID.')):
     if job.get('send_by_call'):
         route.append(('Note', 'You asked for a real phone call through your carrier, even if the number is one of your own.'))
 
+    # What the phone call negotiated (speed, compression, error correction), measured only.
+    negotiation = ((job.get('fax_engine') or {}).get('negotiation') or {}).get('sentence')
+
     def human(out):
         out.fields(_fax_fields(job) + route + ([('Reference on its separator page', together.get('reference'))]
-                                               if together.get('state') == 'together' else []))
+                                               if together.get('state') == 'together' else [])
+                   + ([('How the call went', negotiation)] if negotiation else []))
         if line:
             out.line(line)
         # Over the SIP trunk: SSL Fax's line, or why the built-in fax engine carried it.
@@ -371,10 +375,40 @@ def arrived(item):
     return f'{when} · brought in later' if item.get('recovered') else when
 
 
+# Providers that can report a received fax again, which sets fetching going again.
+_REPORTS_AGAIN = ('phaxio', 'sinch', 'efax', 'sip')
+
+
+def earlier_failures(item):
+    """How often fetching stopped before it was set going again, with the date in the reader's local time.
+
+    Built from the structured ``earlier_failures``, as the console builds it; a server without them
+    sends only its own sentence (``earlier_failures_text``), shown as it is.
+    """
+    failures = item.get('earlier_failures')
+    if failures is None:
+        return item.get('earlier_failures_text')
+    if not failures:
+        return None
+    count = len(failures)
+    times = 'once' if count == 1 else 'twice' if count == 2 else f'{count} times'
+    last = failures[-1]
+    if last.get('resumed_by') == 'person':
+        name = last.get('resumed_by_name')
+        who = f'{name} asked Faxbot to fetch it again' if name else 'Faxbot was asked to fetch it again'
+    else:
+        backend = item.get('backend')
+        who = f"{_provider(backend) if backend in _REPORTS_AGAIN else 'the provider'} reported it again"
+    return f"Failed {times} before {who} on {local_time(last.get('resumed_at'))}."
+
+
 def _inbound_fields(item):
+    failures = earlier_failures(item)
     return [('Received fax ID', item.get('id')), ('From', item.get('fr') or 'Unknown'),
             ('To', item.get('to') or 'Unknown'),
-            ('Status', _inbound_status(item)), ('Problem', item.get('problem')), ('Mailbox', item.get('mailbox')),
+            ('Status', _inbound_status(item)), ('Problem', item.get('problem')),
+            *([('Earlier failures', failures)] if failures else []),
+            ('Mailbox', item.get('mailbox')),
             ('Received through', _provider(item.get('backend'))),
             ('Provider fax ID', item.get('provider_fax_id')),
             ('Sent', local_time(item.get('source_received_at'))),
@@ -460,7 +494,16 @@ def inbound_get(inbound_id: str = typer.Argument(..., help="A received fax's ID,
     """Show one received fax."""
     api = state.api()
     item = received_id(api, inbound_id, lambda fax_id: api.get('/inbound/' + segment(fax_id)))
-    state.out().result(item, lambda out: out.fields(_inbound_fields(item)))
+    # What the phone call negotiated, when Faxbot's own phone line carried the fax (measured only).
+    try:
+        negotiation = api.get('/admin/sip/negotiation/received/' + segment(item.get('id') or inbound_id))
+    except CliError:
+        negotiation = None
+    if negotiation:
+        item = {**item, 'negotiation': negotiation}
+    sentence = (negotiation or {}).get('sentence')
+    state.out().result(item, lambda out: out.fields(_inbound_fields(item)
+                                                    + ([('How the call went', sentence)] if sentence else [])))
 
 
 @inbound.command('pdf')
