@@ -35,6 +35,7 @@ log() { printf 'faxbot-engine: %s\n' "$*" >&2; }
 refuse() { log "${2:-$1}"; write_status failed "$1"; exit 1; }
 # Status sentences an office administrator reads on the trunk page (checked with Jev, 0.65-0.82).
 NOT_STARTED="Faxbot's fast fax service could not start; select Apply and connect to try again."
+LINE_DOWN="Faxbot's fast fax service lost a fax line and is starting again."
 
 write_status() {
   local temporary
@@ -266,7 +267,10 @@ EOF
     fi
   } > "$spool/etc/config.$device"
   chown uucp:uucp "$spool/etc/config.$device"
-  iaxmodem -F "/etc/iaxmodem/$device" > "/var/log/iaxmodem/$device.log" 2>&1 &
+  # One modem per line: with its config name as the only argument IAXmodem runs that line alone.
+  # (`iaxmodem -F <file>` starts a modem for every file in /etc/iaxmodem: two copies of each line
+  # register as one peer from two ports, and calls reach the copy no faxgetty answers.)
+  iaxmodem "$device" > "/var/log/iaxmodem/$device.log" 2>&1 &
 done
 
 for line_number in $(seq 1 "$lines"); do
@@ -282,6 +286,43 @@ hfaxd -i 4559
 for line_number in $(seq 1 "$lines"); do
   faxgetty -D "ttyIAX$line_number"
 done
+
+# Each line answers calls only as exactly one modem on its own port, with its device and its
+# faxgetty: a second modem for a line registers the same line from another port, and Asterisk then
+# sends calls where nothing answers. Prints the first problem; fails when every line is whole.
+line_problem() {
+  local number count
+  for number in $(seq 1 "$lines"); do
+    count=$(pgrep -c -x -f "iaxmodem ttyIAX$number" || true)
+    [ "$count" = 1 ] || { printf 'line %s has %s modems' "$number" "$count"; return 0; }
+    grep -q -E "^ *[0-9]+: [0-9A-F]{8}:$(printf '%04X' $((4569 + number))) " /proc/net/udp \
+      || { printf 'line %s is not on its port %s' "$number" $((4569 + number)); return 0; }
+    [ -e "/dev/ttyIAX$number" ] || { printf 'line %s has no device' "$number"; return 0; }
+    pgrep -x -f "faxgetty -D ttyIAX$number" >/dev/null || { printf 'line %s has no faxgetty' "$number"; return 0; }
+  done
+  count=$(pgrep -c -x iaxmodem || true)
+  [ "$count" = "$lines" ] || { printf '%s modems for %s lines' "$count" "$lines"; return 0; }
+  return 1
+}
+problem=''
+for attempt in $(seq 1 20); do
+  problem=$(line_problem) || { problem=''; break; }
+  sleep 0.5
+done
+[ -z "$problem" ] || { write_status failed "$LINE_DOWN"; log "$problem; restarting the engine"; exit 1; }
+# Asterisk sends calls to a line as soon as its modem registers, but a call is answered only once faxgetty
+# has set the modem up: the engine says it is running only when every line is ready for a call.
+lines_ready() {
+  local ready
+  ready=$(faxstat -s 2>/dev/null | grep -c -E '^Modem ttyIAX[0-9]+ .*: Running and idle' || true)
+  [ "$ready" = "$lines" ]
+}
+write_status starting ''
+for attempt in $(seq 1 120); do
+  lines_ready && break
+  sleep 1
+done
+lines_ready || { write_status failed "$LINE_DOWN"; log 'the fax lines did not come ready; restarting the engine'; exit 1; }
 write_status running ''
 log "running with $lines fax line(s); SSL Fax $sslfax${listener:+, listener $listener}"
 
@@ -301,7 +342,8 @@ registration_refused() {
   local number now
   now=$(date +%s)
   for number in $(seq 1 "$lines"); do
-    if tail -n 1 "/var/log/iaxmodem/ttyIAX$number" 2>/dev/null | grep -q 'Registration failed'; then
+    # A modem started with one argument logs to its output (the .log file), not /var/log/iaxmodem/ttyIAXn.
+    if tail -n 1 "/var/log/iaxmodem/ttyIAX$number.log" 2>/dev/null | grep -q 'Registration failed'; then
       refused_since[$number]=${refused_since[$number]:-$now}
       (( now - refused_since[$number] >= 30 )) && return 0
     else
@@ -336,6 +378,14 @@ while sleep "$check_seconds"; do
       exit 1
     fi
   done
+  # A line that is not whole takes no calls: say so at once, and start again once no call is up.
+  if problem=$(line_problem); then
+    write_status restarting "$LINE_DOWN"
+    if idle; then
+      log "$problem; restarting the engine"
+      exit 1
+    fi
+  fi
   current=$(conf_sum)
   if [ "$current" != "$loaded" ] && idle; then
     write_status restarting "Faxbot's fast fax service is loading new settings."

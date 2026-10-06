@@ -160,6 +160,43 @@ def test_a_new_container_that_repeats_a_communication_id_reports_each_call_that_
     assert all(report['token'] == '' for report in reports)
 
 
+def test_a_fax_received_without_a_communication_id_is_still_kept_and_handed_over(engine, tmp_path):
+    """Asterisk rings every free line for one call; when two lines begin a session at the same moment HylaFAX
+    left the answering line's communication ID empty (loopback, 6 October 2026), and the fax was refused here.
+    It is kept under its receive-queue number instead, and handed over like any other."""
+    spool, state, data, environment = engine
+    received = run('received', environment, 'recvq/fax000000007.tif', 'ttyIAX2', '', '', '+15555550199',
+                   '179125888.15555550100', '', cwd=spool)
+    assert received.returncode == 0, received.stderr
+    ticket = (state / 'received' / '0-000000007-1791180000.ticket').read_text()
+    assert 'commid=0\n' in ticket and 'token=179125888' in ticket
+    (tmp_path / 'answer').write_text('200')
+    assert run('handover', environment).returncode == 0
+    body = json.loads((tmp_path / 'body').read_text())
+    assert body['uniqueid'] == 'engine.179125888' and body['faxpages'] == 2
+    assert body['engine']['engine_ref'] == '0123456789abcdef:0-000000007-1791180000'
+    assert not list((state / 'received').iterdir())
+
+
+def test_each_fax_line_runs_as_exactly_one_modem_on_its_own_port():
+    """Live, 6 October 2026: `iaxmodem -F <file>` (two arguments) makes IAXmodem 1.2.0 start a modem for every
+    file in /etc/iaxmodem, so two lines ran as four modems; the second copy of each line registered from another
+    port and calls rang where no faxgetty answered. The engine starts one modem per line by its config name,
+    checks every line (one modem, its port, its device, its faxgetty) before it says it is running and on every
+    round after, and starts again once no call is up when a line is not whole."""
+    entrypoint = (ROOT / 'hylafax' / 'entrypoint.sh').read_text()
+    starts = [line.strip() for line in entrypoint.splitlines() if line.strip().startswith('iaxmodem ')]
+    assert starts == ['iaxmodem "$device" > "/var/log/iaxmodem/$device.log" 2>&1 &'], starts
+    assert 'port\t\t$((4569 + line_number))' in entrypoint
+    check = entrypoint.split('line_problem() {', 1)[1].split('\n}\n', 1)[0]
+    for step in ('pgrep -c -x -f "iaxmodem ttyIAX$number"', '/proc/net/udp', '"/dev/ttyIAX$number"',
+                 'pgrep -x -f "faxgetty -D ttyIAX$number"', 'pgrep -c -x iaxmodem'):
+        assert step in check, step
+    start, supervision = entrypoint.split("write_status running ''", 1)
+    assert 'problem=$(line_problem)' in start.split('line_problem() {', 1)[1]
+    assert 'if problem=$(line_problem); then' in supervision and 'write_status restarting "$LINE_DOWN"' in supervision
+
+
 def test_the_receive_script_refuses_files_outside_the_receive_queue(engine):
     spool, state, _, environment = engine
     result = run('received', environment, '../etc/faxbot.conf', 'ttyIAX1', '7', '', cwd=spool)
