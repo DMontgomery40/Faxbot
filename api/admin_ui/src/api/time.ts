@@ -31,6 +31,14 @@ export function localDay(value: string | null | undefined): string {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
 
+// A plain calendar date ("2026-10-03") in the reader's words, such as "3 October 2026"; the text unchanged otherwise.
+export function formatLocalDate(day: string | null | undefined, fallback = '-'): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(day ?? '');
+  if (!match) return day || fallback;
+  const date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  return date.toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' });
+}
+
 export function isPast(value: string | null | undefined, now = Date.now()): boolean {
   const date = parseServerTime(value);
   return date !== null && date.getTime() <= now;

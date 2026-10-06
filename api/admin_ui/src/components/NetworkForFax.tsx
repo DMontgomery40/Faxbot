@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert, Box, Button, CircularProgress, FormControlLabel, Stack, Switch, Typography } from '@mui/material';
 import AdminAPIClient, { AdminAPIError, isForbidden } from '../api/client';
 import type { SipNetworkReport } from '../api/networkTypes';
+import { formatServerTime, parseServerTime } from '../api/time';
 
 interface NetworkForFaxProps {
   client: AdminAPIClient;
@@ -97,7 +98,7 @@ function NetworkForFax({ client, onChanged, refresh }: NetworkForFaxProps) {
   if (!report?.applies) return notice ? <Alert severity={notice.severity}>{notice.text}</Alert> : null;
   const done = actionSentence(report.action, report.action_at);
   const steps = report.fix_steps ?? [];
-  const checkedAt = report.checked_at ? new Date(report.checked_at) : null;
+  const checkedAt = parseServerTime(report.checked_at);
   return (
     <Box data-testid="sip-network">
       <Typography variant="subtitle2">Network for fax over IP</Typography>
@@ -128,8 +129,8 @@ function NetworkForFax({ client, onChanged, refresh }: NetworkForFaxProps) {
       <Stack direction="row" spacing={1} alignItems="center">
         <Button size="small" variant="outlined" onClick={checkAgain} disabled={busy}
           startIcon={busy ? <CircularProgress size={14} color="inherit" /> : undefined}>Check again</Button>
-        {checkedAt && !Number.isNaN(checkedAt.getTime()) && (
-          <Typography variant="caption" color="text.secondary">{`Checked ${checkedAt.toLocaleString()}`}</Typography>
+        {checkedAt && (
+          <Typography variant="caption" color="text.secondary">{`Checked ${formatServerTime(report.checked_at)}`}</Typography>
         )}
       </Stack>
       {notice && <Alert severity={notice.severity} sx={{ mt: 1 }}>{notice.text}</Alert>}

@@ -132,6 +132,10 @@ describe('Delivery routes spending', () => {
     render(<DeliveryRoutes client={client()} canWrite />);
     expect(await screen.findByText('$10.00 a month, faxes included')).toBeTruthy();
     expect(screen.getByText('Flat monthly fee')).toBeTruthy();  // not Whole minutes
+    // The advertised date in the reader's words, never 2026-10-03.
+    const advertised = new Date(2026, 9, 3).toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' });
+    expect(screen.getByText(new RegExp(`Advertised on ${advertised}`))).toBeTruthy();
+    expect(document.body.textContent).not.toContain('2026-10-03');
     fireEvent.click(screen.getByRole('button', { name: 'Add rate card' }));
     const dialog = await screen.findByRole('dialog', { name: 'Add rate card' });
     fireEvent.change(within(dialog).getByLabelText('Name'), { target: { value: 'Plan' } });
