@@ -430,8 +430,11 @@ class ReceivingHistory:
             seconds = row['connected_seconds']
             if seconds is None and row['answered_at'] is not None and row['ended_at'] is not None:
                 seconds = int((row['ended_at'] - row['answered_at']).total_seconds())
-            if seconds is None and row['ended_at'] is not None and row['answered_at'] is None:
+            if (seconds is None and row['ended_at'] is not None and row['answered_at'] is None
+                    and row['disposition'] not in ('answered', 'ambiguous', None)):
                 seconds = 0  # ended without being answered: nothing billed by the minute
+            # An answered call with no times (the fax engine reports a received fax after its session, with no
+            # answer time or length) has an unknown length: unpriced, never zero minutes.
             if chosen is not None and chosen.currency == currency and seconds is not None:
                 estimate = attempt_cost(chosen, seconds=seconds, pages=row['pages'],
                                         delivered=row['job_id'] is not None)
