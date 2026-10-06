@@ -70,7 +70,7 @@ def _route_text(job, cost):
     routes = (cost or {}).get('routes') or []
     if not routes:
         return _provider(job.get('backend'))
-    names = ['Direct delivery' if route == 'direct' else 'This installation' if route == 'local' else _provider(route)
+    names = ['Direct delivery' if route == 'direct' else 'This Faxbot' if route == 'local' else _provider(route)
              for route in routes]
     return names[-1] + (f" (after {', '.join(names[:-1])})" if len(names) > 1 else '')
 
@@ -223,7 +223,7 @@ def jobs_get(fax_id: str = typer.Argument(..., help='Fax ID.')):
     route = ([('Route', _route_text(job, cost)), ('Why this route', cost.get('route_explanation'))]
              if cost.get('routes') else [])
     if job.get('send_by_call'):
-        route.append(('Real call', 'You asked for a real call through your carrier, even if the number is one of your own.'))
+        route.append(('Phone call', 'You asked for a real phone call through your carrier, even if the number is one of your own.'))
 
     def human(out):
         out.fields(_fax_fields(job) + route + ([('Reference on its separator page', together.get('reference'))]
@@ -376,10 +376,10 @@ def _inbound_fields(item):
 
 
 def came_through(item):
-    """Where a received fax came from, as Received shows it: a provider, "Imported" or "This installation"."""
+    """Where a received fax came from, as Received shows it: a provider, "Imported" or "This Faxbot"."""
     backend = item.get('backend')
     if backend == 'local':
-        return 'This installation'
+        return 'This Faxbot'
     return 'Imported' if backend == 'import' else (_provider(backend) or '-')
 
 
@@ -401,7 +401,7 @@ def inbound_list(to_number: str = typer.Option(None, '--to', help='Only faxes se
 
     def human(out):
         out.table(
-            (['Received fax ID'] if ids else []) + ['From', 'To', 'Came through', 'Status', 'Pages', 'Mailbox',
+            (['Received fax ID'] if ids else []) + ['From', 'To', 'Arrived through', 'Status', 'Pages', 'Mailbox',
                                                     'Received'],
             [([item['id']] if ids else []) + [item.get('fr') or 'Unknown', item.get('to') or 'Unknown',
                                               came_through(item), _inbound_status(item), item.get('pages'),

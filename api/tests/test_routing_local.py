@@ -59,10 +59,11 @@ def test_the_route_comes_first_unless_you_chose_another_and_says_why():
     first = RoutePolicy().order([phaxio, here, direct])
     assert [(c.route.key, c.reason) for c in first] == [('local', 'own_number'), ('direct', 'direct_peer'),
                                                         ('phaxio', 'configured')]
-    assert explain(first[0], '+17208565062') == ('+1 720-856-5062 is one of your own numbers, so Faxbot delivers it '
-                                                 'here without a call.')
-    assert decided_text('local', 'own_number') == 'One of your own numbers, so Faxbot delivered it here without a call.'
-    assert REASON_TEXT['own_number'].endswith('without a call.')
+    assert explain(first[0], '+17208565062') == ('+1 720-856-5062 is one of your own fax numbers, so the fax goes '
+                                                 'straight into Received without a phone call.')
+    assert decided_text('local', 'own_number') == ('This is one of your own fax numbers, so the fax went straight into '
+                                                   'Received without a phone call.')
+    assert REASON_TEXT['own_number'].endswith('with no phone call.')
     chosen = RoutePolicy().order([phaxio, here], preferred='phaxio')
     assert [(c.route.key, c.reason) for c in chosen] == [('phaxio', 'preferred'), ('local', 'alternative')]
 
@@ -139,14 +140,24 @@ async def test_a_fax_to_an_own_number_is_received_here_with_no_call(own):
     record = own['local'].find(job)
     assert (record['source'], record['state'], local.report(record)['sent_fax']) == ('local', 'received', job)
     from api.app.inbound.acquisition import describe
-    assert describe(received, record)['status_text'] == ('Delivered inside Faxbot from a fax sent to this number; '
-                                                         'no call was made.')
+    assert describe(received, record)['status_text'] == ('Delivered straight into Received from a fax sent to this '
+                                                         'number; no phone call was made.')
     # Repeating the delivery for the same sent fax never makes a second received fax.
     values = own['configuration'].read().active.values
     again = own['local'].deliver(job_id=job, attempt_id='another', values=values, destination=NUMBER, pages=2)
     assert again == received['id'] and len(_received(own)) == 1
     cost = Spending(own['routes'], CarrierChargeStore(own['configuration'].engine)).job(job)
-    assert (cost['state'], cost['summary']) == ('local', 'No call: delivered inside Faxbot.')
+    assert (cost['state'], cost['summary']) == ('local', 'No call needed; it went straight into Received.')
+    # Savings: the call its own provider would have placed, priced by that rate card (2 pages at $0.07).
+    from api.app.routing.capture import CostRecorder
+    from api.app.routing.savings import savings
+    CostRecorder(own['routes']).step()
+    saved = savings(own['routes'], own['configuration'].engine)['own_numbers']
+    assert (saved['faxes'], saved['calls_avoided'], saved['saved']) == (1, 1, {'USD': 140_000})
+    assert saved['sentence'] == ('1 fax to your own numbers went straight into Received, so 1 phone call was not '
+                                 'needed, saving about $0.14.')
+    assert Spending(own['routes'], CarrierChargeStore(own['configuration'].engine)).outbound(
+        datetime(2026, 1, 1)) == []
     # Email delivery picks it up once, like any received fax.
     from api.app.intake.store import IntakeStore
     from api.app.intake.worker import ConnectorSecrets

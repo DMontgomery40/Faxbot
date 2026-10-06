@@ -503,7 +503,9 @@ async def savings(request: Request, days: int = Query(default=WINDOW_DAYS, ge=1,
             'sending_together': _saving_view(result['sending_together']),
             'direct_delivery': _saving_view(result['direct_delivery']),
             'case_packets': _saving_view(result['case_packets']),
-            'sslfax': _saving_view(result['sslfax'])}
+            'sslfax': _saving_view(result['sslfax']),
+            # Faxes to the installation's own numbers, delivered inside Faxbot with no call.
+            'own_numbers': _saving_view(result['own_numbers'])}
 
 
 @router.get('/recommendations/receiving', dependencies=[Depends(require_permission('settings:read'))])

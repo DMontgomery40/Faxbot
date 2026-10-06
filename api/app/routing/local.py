@@ -139,8 +139,8 @@ class LocalDelivery:
             artifact = store_document(data, begun.inbound_fax_id, provider='Faxbot')
         except Exception:
             # Nothing was received: the record says so instead of waiting forever, and a retry resumes it.
-            store.abandon(begun.import_id, 'This fax could not be delivered inside Faxbot, so it went by its '
-                                           'normal route.')
+            store.abandon(begun.import_id, 'This fax could not go straight into Received, so Faxbot sent it '
+                                           'with a normal phone call.')
             raise
         completion = store.complete(begun.import_id, artifact_path=artifact.path, digest=artifact.digest,
                                     size=artifact.size, pages=artifact.pages)

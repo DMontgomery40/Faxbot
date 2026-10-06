@@ -271,6 +271,25 @@ describe('Before sending', () => {
     expect(screen.getByRole('heading', { name: 'Send a fax' })).toBeTruthy();
   });
 
+  it('offers a real call for one of your own numbers and sends that choice', async () => {
+    server.use(http.get('/routing/destinations/:number', ({ params }) => HttpResponse.json({ number: params.number,
+      display_name: null, notes: null, preferred_route: null, accepts_references: false, version: 0, routes: [],
+      estimated_cost_30_days: [], direct_partner: null, available_routes: [],
+      recommended_routes: [{ route: 'local', label: 'This Faxbot', reason: 'own_number',
+        explanation: '+1 202-555-0123 is one of your own fax numbers, so the fax goes straight into Received without a phone call.',
+        estimated_cost_one_page: null, rate: null, included_in_plan: false, monthly_fee: null }] })));
+    faxServer(['accepted']);
+    const appended = vi.spyOn(FormData.prototype, 'append');
+    openSend();
+    fireEvent.change(screen.getByRole('textbox', { name: /Destination Number/ }), { target: { value: '+12025550123' } });
+    const choice = await screen.findByTestId('send-by-call', {}, { timeout: 2000 });
+    expect(screen.getByTestId('send-route').textContent).toContain('goes straight into Received');
+    fireEvent.click(choice.querySelector('input') as HTMLInputElement);
+    await send('+12025550123', document());
+    await waitFor(() => expect(appended.mock.calls.some(([name, value]) => name === 'send_by_call' && String(value) === 'true')).toBe(true));
+    appended.mockRestore();
+  });
+
   it('sends without a route line when the number has no recommendation or routing is not readable', async () => {
     server.use(http.get('/routing/destinations/:number', () => HttpResponse.json({ detail: 'Forbidden' }, { status: 403 })));
     openSend();

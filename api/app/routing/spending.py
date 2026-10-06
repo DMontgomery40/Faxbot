@@ -287,7 +287,7 @@ class Spending:
         shared = any(row['id'] in shares for row in rows)
         if (rows and all(row['provider_id'] == 'local' for row in rows)) or (not rows and pending == 'local'):
             # A fax to one of the installation's own numbers: delivered inside Faxbot, with no call.
-            return {'state': 'local', 'summary': 'No call: delivered inside Faxbot.', 'reported_cost': {},
+            return {'state': 'local', 'summary': 'No call needed; it went straight into Received.', 'reported_cost': {},
                     'estimated_cost': {}, 'attempts': len(rows), **where}
         rows = [row for row in rows if row['provider_id'] != 'local']
         if not rows:

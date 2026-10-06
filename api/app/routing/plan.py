@@ -20,7 +20,7 @@ from ..provider_labels import PROVIDER_LABELS, trunk_name
 
 
 MIN_ATTEMPTS = 3
-LABELS = {'local': 'This installation', 'direct': 'Direct delivery', **PROVIDER_LABELS}
+LABELS = {'local': 'This Faxbot', 'direct': 'Direct delivery', **PROVIDER_LABELS}
 REASON_TEXT = {
     'direct_peer': 'Delivered straight to a verified partner, with no fax call.',
     'preferred': 'You chose this route for this number.',
@@ -32,7 +32,7 @@ REASON_TEXT = {
     'configured': 'Your outbound fax provider.',
     # Only the reason is stored with a sent fax, so its details use this sentence without the amount.
     'cheapest_delivered': f'The cheapest route per delivered fax to this number over the last {WINDOW_DAYS} days.',
-    'own_number': 'One of your own numbers, so Faxbot delivers it here without a call.',
+    'own_number': 'One of your own fax numbers: the fax goes straight into Received, with no phone call.',
 }
 
 
@@ -41,7 +41,7 @@ DECIDED_TEXT = {
     'alternative': 'Your first-choice route was not available, so Faxbot used this one.',
     'unreliable': 'Faxes to this number often failed on this route, but no other route was available.',
     'unknown_cost': 'None of your routes had a price, so Faxbot used the first one in your list.',
-    'own_number': 'One of your own numbers, so Faxbot delivered it here without a call.',
+    'own_number': 'This is one of your own fax numbers, so the fax went straight into Received without a phone call.',
 }
 
 
@@ -63,7 +63,8 @@ def explain(choice, destination=None):
     """One sentence saying what decided this route."""
     if choice.reason == 'own_number' and destination:
         from .local import display_number
-        return f'{display_number(destination)} is one of your own numbers, so Faxbot delivers it here without a call.'
+        return (f'{display_number(destination)} is one of your own fax numbers, so the fax goes straight into '
+                'Received without a phone call.')
     if choice.reason == 'included':
         card = choice.route.card
         return f'Included in your {route_label(choice.route.key)} plan ({plan_fee_text(card.monthly_fee_micros, card.currency)} a month).'

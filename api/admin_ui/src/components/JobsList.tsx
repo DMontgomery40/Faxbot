@@ -163,10 +163,10 @@ function eventDetails(event: DeliveryHistoryEvent): string {
 
 interface DetailSelection { jobId: string }
 
-export const BY_CALL_TEXT = 'You asked for a real call through your carrier, even if the number is one of your own.';
+export const BY_CALL_TEXT = 'You asked for a real phone call through your carrier, even if the number is one of your own.';
 
 function routeName(route: string): string {
-  if (route === 'local') return 'This installation';
+  if (route === 'local') return 'This Faxbot';
   return route === 'direct' ? 'Direct delivery' : providerLabel(route);
 }
 

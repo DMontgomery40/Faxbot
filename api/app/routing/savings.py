@@ -1,4 +1,4 @@
-"""What sending together, direct delivery and case packets saved: always estimates.
+"""What sending together, direct delivery, case packets and own numbers saved: always estimates.
 
 Every saving compares what Faxbot sent with calls or pages that never
 happened, so each figure stays an estimate even after a carrier reports its
@@ -113,6 +113,36 @@ def direct_delivery(routes, engine, *, since, days):
     return result
 
 
+def own_numbers(routes, engine, *, since, days):
+    """Fax calls avoided by faxes to the installation's own numbers, delivered inside Faxbot.
+
+    Each is priced as the call its own provider would have placed, when a rate card prices it.
+    """
+    t = reflect(engine, ('fax_jobs', 'delivery_attempt_costs'))
+    jobs, costs = t['fax_jobs'], t['delivery_attempt_costs']
+    with read_connection(engine) as connection:
+        rows = connection.execute(sa.select(jobs.c.backend, jobs.c.pages).join(jobs, jobs.c.id == costs.c.job_id).where(
+            costs.c.route == 'local', costs.c.outcome == 'success', costs.c.created_at >= since)).all()
+    result = {'faxes': 0, 'calls_avoided': 0, 'pages': 0, 'priced': 0, 'in_plan': 0, 'unpriced': 0, 'saved': {}}
+    cards = {}
+    for backend, pages in rows:
+        result['faxes'] += 1
+        result['calls_avoided'] += 1
+        result['pages'] += pages or 0
+        if backend not in cards:
+            cards[backend] = routes.card_for(backend) if backend else None
+        _avoided(cards[backend], pages, None, result)
+    if not result['faxes']:
+        result['sentence'] = f'No faxes went to your own numbers in the last {days} days.'
+        return result
+    calls = result['calls_avoided']
+    sentence = (f"{_plural(result['faxes'], 'fax', 'faxes')} to your own numbers went straight into Received, so "
+                f"{_plural(calls, 'phone call')} {'was' if calls == 1 else 'were'} not needed")
+    sentence += f", saving about {_money_text(result['saved'])}." if result['saved'] else '.'
+    result['sentence'] = sentence
+    return result
+
+
 def case_packets(routes, engine, *, since, days):
     """Pages not sent again because a delivered case packet listed accepted documents instead."""
     t = reflect(engine, ('case_packet_sends', 'case_documents', 'outbound_deliveries', 'fax_jobs',
@@ -182,9 +212,10 @@ def savings(routes, engine, *, now=None, days=WINDOW_DAYS):
     # Faxes whose pages went over SSL Fax (the fast fax service), priced with the trunk carrier's billing.
     from ..hylafax_records import sslfax_savings
     sslfax = sslfax_savings(routes, engine, since=since, days=days)
+    own = own_numbers(routes, engine, since=since, days=days)
     total = {}
-    for part in (together, direct, packets, sslfax):
+    for part in (together, direct, packets, sslfax, own):
         for currency, micros in part['saved'].items():
             _add(total, currency, micros)
     return {'days': days, 'since': since, 'sending_together': together, 'direct_delivery': direct,
-            'case_packets': packets, 'sslfax': sslfax, 'total': total}
+            'case_packets': packets, 'sslfax': sslfax, 'own_numbers': own, 'total': total}

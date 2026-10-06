@@ -406,6 +406,10 @@ export interface Savings {
   sslfax?: SavingPart & {
     faxes: number; seconds_saved: number; priced: number; in_plan: number; unpriced: number; same_cost: number;
   };
+  // Faxes to this installation's own numbers, delivered inside Faxbot with no call; optional for older servers.
+  own_numbers?: SavingPart & {
+    faxes: number; calls_avoided: number; pages: number; priced: number; in_plan: number; unpriced: number;
+  };
 }
 
 // GET /routing/recommendations/receiving: shared lines, numbers with few calls and fax services. Every figure is an

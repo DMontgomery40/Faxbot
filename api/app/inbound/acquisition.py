@@ -206,7 +206,7 @@ def describe(row, record, *, now=None):
     retry_at = None
     if state == 'received':
         text = ('A test fax created in Faxbot.' if source == 'test'
-                else 'Delivered inside Faxbot from a fax sent to this number; no call was made.'
+                else 'Delivered straight into Received from a fax sent to this number; no phone call was made.'
                 if source == 'local' else 'Received.')
     elif state == 'conflict':
         text = 'This fax arrived earlier and is kept as received.'
