@@ -125,6 +125,13 @@
     "aliases": []
   },
   {
+    "version": "796717af517d50d52249a484fa35c42394ada304",
+    "title": "796717af517d50d52249a484fa35c42394ada304",
+    "aliases": [
+      "latest"
+    ]
+  },
+  {
     "version": "488895d5",
     "title": "488895d5",
     "aliases": []
@@ -297,9 +304,7 @@
   {
     "version": "4ce577490c5d746b5c83314c49b4abd41dac71d9",
     "title": "4ce577490c5d746b5c83314c49b4abd41dac71d9",
-    "aliases": [
-      "latest"
-    ]
+    "aliases": []
   },
   {
     "version": "4cc04704",
