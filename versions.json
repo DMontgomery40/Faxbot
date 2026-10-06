@@ -42,9 +42,7 @@
   {
     "version": "e0962c9bc21752ee8a3bd33fcf970016f954f826",
     "title": "e0962c9bc21752ee8a3bd33fcf970016f954f826",
-    "aliases": [
-      "latest"
-    ]
+    "aliases": []
   },
   {
     "version": "dfefd2b8",
@@ -295,6 +293,13 @@
     "version": "4ee1fb94",
     "title": "4ee1fb94",
     "aliases": []
+  },
+  {
+    "version": "4ce577490c5d746b5c83314c49b4abd41dac71d9",
+    "title": "4ce577490c5d746b5c83314c49b4abd41dac71d9",
+    "aliases": [
+      "latest"
+    ]
   },
   {
     "version": "4cc04704",
