@@ -117,6 +117,7 @@ const categoryLabels: Record<string, string> = {
   sid_mismatch: 'Provider fax ID did not match',
   provider_failed: 'The provider reported that the fax failed',
   partner_not_received: 'The direct delivery partner did not receive it',
+  local_not_delivered: 'It could not go straight into Received, so Faxbot sent it by phone call',
   partly_sent: 'Part of this fax may have arrived before the call failed',
   pages_unconfirmed: 'The call ended without confirming which pages arrived',
 };

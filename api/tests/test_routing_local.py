@@ -18,7 +18,7 @@ NUMBER = '+12025550123'
 
 
 def values(**environment):
-    return ConfigurationValues.from_environment({'FAX_BACKEND': 'phaxio', **environment})
+    return ConfigurationValues.from_environment({'FAX_BACKEND': 'phaxio', 'INBOUND_ENABLED': 'true', **environment})
 
 
 # -- which numbers are the installation's own --------------------------------------------
@@ -50,6 +50,21 @@ def test_the_setting_and_a_real_call_request_turn_it_off():
     assert not local.applies(values(SIP_TRUNK_PRESET='telnyx', SIP_TRUNK_DIDS='+17205550101',
                                     FAX_LOCAL_DELIVERY='false'), '+17205550101')
     assert values().local_delivery_enabled is True
+    # An installation that does not receive faxes has no own receiving numbers.
+    assert local.own_numbers(values(SIP_TRUNK_PRESET='telnyx', SIP_TRUNK_DIDS='+17205550101',
+                                    INBOUND_ENABLED='false')) == set()
+
+
+def test_a_request_without_the_real_call_flag_keeps_its_old_fingerprint():
+    import json
+    from api.app.request_identity import intent_fingerprint, request_fingerprints
+    before = hashlib.sha256(json.dumps({'version': 2, 'to': NUMBER, 'queue_only': False, 'document_sha256': 'a' * 64},
+                                       sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+    assert intent_fingerprint(version=2, to=NUMBER, queue_only=False, document_sha256='a' * 64) == before
+    plain = request_fingerprints(entered=NUMBER, destination=NUMBER, queue_only=False, document_sha256='a' * 64)
+    by_call = request_fingerprints(entered=NUMBER, destination=NUMBER, queue_only=False, document_sha256='a' * 64,
+                                   by_call=True)
+    assert plain[0] == before and by_call[0] != before and by_call[1] != plain[1]
 
 
 def test_the_route_comes_first_unless_you_chose_another_and_says_why():
@@ -84,7 +99,7 @@ def own(database, tmp_path, monkeypatch):
     configuration = ConfigurationStore(database, tmp_path / 'installation.key')
     environment = {'FAX_BACKEND': 'phaxio', 'FAX_DISABLED': 'false', 'PHAXIO_API_KEY': 'synthetic-key',
                    'PHAXIO_API_SECRET': 'synthetic-secret', 'DIRECT_DELIVERY_ENABLED': 'true',
-                   'DIRECT_FAX_NUMBER': NUMBER, 'DIRECT_ORGANIZATION': 'County Clinic',
+                   'DIRECT_FAX_NUMBER': NUMBER, 'DIRECT_ORGANIZATION': 'County Clinic', 'INBOUND_ENABLED': 'true',
                    'PUBLIC_API_URL': 'https://faxbot.example.org'}
     phaxio = ProviderConfiguration('phaxio', credentials={'api_key': 'synthetic-key', 'api_secret': 'synthetic-secret'})
     snapshot = configuration.initialize(ConfigurationValues.from_environment(environment), actor='test',
@@ -238,15 +253,85 @@ async def test_a_lost_answer_is_settled_from_the_records_and_never_makes_two_rec
 
 
 @pytest.mark.asyncio
-async def test_a_definite_failure_records_nothing_received_and_falls_back_to_the_normal_route(own):
-    from api.app.routing.fallback import FallbackScheduler
+async def test_a_document_it_cannot_read_goes_by_the_normal_route_at_once_with_nothing_received(own):
+    from api.app.outbound_worker import SubmissionReceipt
     job = own['accept']()
     (own['dir'] / f'{job}.pdf').write_bytes(b'%PDF-1.4 not really a pdf')
+    inner = await _send(own, [SubmissionReceipt('PX9', 'success')])
+    assert inner.used == ['phaxio']
+    row = own['delivery'].get(job)
+    assert row['state'] == 'success'
+    assert (own['routes'].decision(row['attempt_id'])['route'], own['local'].find(job)) == ('phaxio', None)
+    assert _received(own) == []
+
+
+@pytest.mark.asyncio
+async def test_a_failure_while_storing_is_definite_says_so_and_falls_back_to_the_normal_route(own, monkeypatch):
+    from api.app.inbound import acquisition
+    from api.app.routing.fallback import FallbackScheduler
+
+    def broken(*args, **kwargs):
+        raise OSError('disk full')
+    monkeypatch.setattr(acquisition, 'store_document', broken)
+    job = own['accept']()
     await _send(own)
     row = own['delivery'].get(job)
     assert row['state'] == 'failed'
     record = own['local'].find(job)
     assert record['state'] == 'failed' and not own['local'].delivered(job)
+    assert record['last_error'] == ('This fax could not go straight into Received, so Faxbot sent it with a normal '
+                                    'phone call.')
     assert all(fax['status'] != 'received' for fax in _received(own))
     choice = FallbackScheduler(own['delivery'], own['routes']).next_route(job, row['attempt_id'], 'local')
     assert choice.route.key == 'phaxio'
+
+
+# -- the API and `faxbot`, over the real application ------------------------------------
+
+@pytest.fixture
+def own_cli(monkeypatch, tmp_path):
+    """The CLI test server: its direct card names +15550006666, one of its own receiving numbers."""
+    from api.tests.test_cli import Cli, _serve
+    for client in _serve(monkeypatch, tmp_path):
+        yield Cli(client), tmp_path
+
+
+def test_api_and_cli_record_the_real_call_request_and_show_a_fax_delivered_here(own_cli):
+    import app.main as main_module
+    from api.tests.test_cli import BOOTSTRAP
+    from app.routing.local import LocalDelivery
+    cli, tmp_path = own_cli
+    admin, own_number = {'X-API-Key': BOOTSTRAP}, '+15550006666'
+    cli.json('numbers', 'mailboxes', 'add', 'Front desk')
+    cli.json('numbers', 'add', own_number, '--mailbox', 'Front desk')
+
+    def post(by_call, key):
+        data = {'to': own_number, **({'send_by_call': 'true'} if by_call else {})}
+        return cli.client.post('/fax', headers={**admin, 'Idempotency-Key': key}, data=data,
+                               files={'file': ('note.txt', b'Synthetic page\n', 'text/plain')})
+    called = post(True, 'synthetic-key-1')
+    assert called.status_code == 202, called.text
+    job = called.json()['id']
+    assert cli.client.get(f'/admin/fax-jobs/{job}', headers=admin).json()['send_by_call'] is True
+    # The same key with the other choice is a different request; the same choice replays the first.
+    assert post(False, 'synthetic-key-1').status_code == 409
+    assert post(True, 'synthetic-key-1').json()['id'] == job
+    shown = ' '.join(cli('sent', 'show', job).stdout.split())
+    assert 'You asked for a real phone call through your carrier' in shown
+    plain = post(False, 'synthetic-key-2').json()['id']
+    assert cli.client.get(f'/admin/fax-jobs/{plain}', headers=admin).json()['send_by_call'] is False
+
+    runtime = main_module.app.state.configuration_runtime
+    delivery = LocalDelivery(lambda: main_module.app.state.access_runtime.inbound,
+                             data_dir=lambda: str(tmp_path / 'faxdata'))
+    inbound_id = delivery.deliver(job_id=plain, attempt_id='synthetic-attempt',
+                                  values=runtime.manager.store.read().active.values, destination=own_number, pages=1)
+    simulated = cli.client.post('/admin/inbound/simulate', headers=admin, json={'to': own_number})
+    assert simulated.status_code == 200, simulated.text
+    items = {item['id']: item for item in cli.client.get('/inbound', headers=admin).json()}
+    here, other = items[inbound_id], items[simulated.json()['id']]
+    # The public list keeps every field it had; a fax delivered here only has its own values.
+    assert set(other) <= set(here)
+    assert (here['backend'], here['to'], here['fr'], here['mailbox']) == ('local', own_number, own_number, 'Front desk')
+    listed = ' '.join(cli('received', 'list').stdout.split())
+    assert 'Arrived through' in listed and 'This Faxbot' in listed

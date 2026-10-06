@@ -29,7 +29,7 @@ import sqlalchemy as sa
 
 from ..config_runtime import run_lifecycle_step
 from ..outbound_worker import SubmissionReceipt
-from .database import read_connection
+from .database import read_connection, utcnow
 from .numbers import InvalidNumber, normalize_number
 from .store import destination_key
 
@@ -56,6 +56,8 @@ def own_numbers(values):
     """The installation's own receiving numbers, in E.164."""
     country = getattr(values, 'fax_default_country', 'US')
     numbers = set()
+    if not getattr(values, 'inbound_enabled', False):
+        return numbers  # this installation does not receive faxes, so no number is its own receiving number
     from ..inbound.sip_handover import receives_over_trunk
     if receives_over_trunk(values):
         numbers |= {destination_key(number, country) for number in getattr(values, 'sip_trunk_did_list', ())}
@@ -118,6 +120,11 @@ class LocalDelivery:
         path = Path(self.data_dir()) / (job_id + '.pdf')
         if re.fullmatch('[a-f0-9]{32}', job_id) is None or path.is_symlink() or not path.is_file():
             raise LocalRefused('The fax document is unavailable, so it cannot be delivered inside Faxbot.')
+        from ..conversion import DocumentConversionError, validate_pdf
+        try:
+            validate_pdf(str(path))  # an unreadable document refuses before anything is recorded
+        except DocumentConversionError:
+            raise LocalRefused('The fax document cannot be read, so it cannot be delivered inside Faxbot.') from None
         return path.read_bytes()
 
     def deliver(self, *, job_id, attempt_id, values, destination, pages):
@@ -132,7 +139,8 @@ class LocalDelivery:
                             inbound_backend=LOCAL, to_number=destination,
                             from_number=sending_number(values, destination), reported_pages=pages,
                             report={'sent_fax': job_id, 'attempt': attempt_id, 'route': LOCAL}, schedule=False,
-                            country=getattr(values, 'fax_default_country', 'US'))
+                            # Faxbot itself is the source, so it knows when the fax arrived (evidence exports).
+                            source_received_at=utcnow(), country=getattr(values, 'fax_default_country', 'US'))
         if begun.state in ('received', 'conflict'):
             return begun.inbound_fax_id
         try:
