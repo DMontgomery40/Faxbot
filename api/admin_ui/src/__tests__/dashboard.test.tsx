@@ -161,6 +161,52 @@ describe('Dashboard delivery cards', () => {
   });
 });
 
+describe('Overview status: ready for what the install is set up for', () => {
+  const health = (fields: Record<string, unknown>) => http.get('/admin/health-status', () => HttpResponse.json({
+    timestamp: new Date().toISOString(), backend: '', backend_healthy: false, receiving_backend: '',
+    receiving_ready: false, jobs: { queued: 0, in_progress: 0, recent_failures: 0 }, inbound_enabled: false,
+    api_keys_configured: true, require_auth: true, ...fields }));
+
+  async function status(fields: Record<string, unknown>) {
+    server.use(health(fields));
+    const view = render(<Dashboard client={client()} />);
+    const chip = await screen.findByText(/^(Ready|Needs attention)$/, { selector: '.MuiChip-label' });
+    const sentence = screen.queryByTestId('status-not-ready')?.textContent ?? null;
+    const attention = screen.queryByTestId('attention-not-ready')?.textContent ?? null;
+    view.unmount();
+    return { chip: chip.textContent, sentence, attention };
+  }
+
+  it('judges an install that only sends by sending', async () => {
+    expect(await status({ backend: 'phaxio', backend_healthy: true })).toEqual({ chip: 'Ready', sentence: null, attention: null });
+    const down = await status({ backend: 'phaxio', backend_healthy: false });
+    expect(down.chip).toBe('Needs attention');
+    expect(down.sentence).toBe('Faxbot is not ready to send faxes.');
+  });
+
+  it('judges an install that only receives by receiving', async () => {
+    expect((await status({ receiving_backend: 'sip', receiving_ready: true, inbound_enabled: true })).chip).toBe('Ready');
+    const down = await status({ receiving_backend: 'sip', receiving_ready: false, inbound_enabled: true });
+    expect(down.chip).toBe('Needs attention');
+    expect(down.sentence).toBe('Faxbot is not ready to receive faxes.');
+  });
+
+  it('judges an install that sends and receives by both, and names the direction that is not ready', async () => {
+    const both = { backend: 'humblefax', receiving_backend: 'sip', inbound_enabled: true };
+    expect((await status({ ...both, backend_healthy: true, receiving_ready: true })).chip).toBe('Ready');
+    const receiving = await status({ ...both, backend_healthy: true, receiving_ready: false });
+    expect(receiving.chip).toBe('Needs attention');
+    expect(receiving.sentence).toBe('Faxbot is not ready to receive faxes.');
+    expect(receiving.attention).toContain('Faxbot is not ready to receive faxes');
+    const sending = await status({ ...both, backend_healthy: false, receiving_ready: true });
+    expect(sending.sentence).toBe('Faxbot is not ready to send faxes.');
+    const neither = await status({ ...both, backend_healthy: false, receiving_ready: false });
+    expect(neither.chip).toBe('Needs attention');
+    expect(neither.sentence).toBe('Faxbot is not ready to send or receive faxes.');
+    expect(neither.attention).toContain('Faxbot is not ready to send or receive faxes');
+  });
+});
+
 describe('Dashboard providers', () => {
   it('names what sends and what receives faxes, the same way as System Status', async () => {
     server.use(http.get('/admin/config', () => HttpResponse.json({ backend: 'humblefax',
