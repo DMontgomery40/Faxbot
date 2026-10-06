@@ -373,7 +373,3 @@ class Spending:
             return {'state': 'unmatched', 'reported_cost': {},
                     'summary': f'Faxbot could not match this call to one {who} record, so its cost is unknown.'}
         return {'state': 'waiting', 'summary': 'Cost not reported yet.', 'reported_cost': {}}
-
-    @staticmethod
-    def since_default(now=None, days=30):
-        return (now or utcnow()) - timedelta(days=days)

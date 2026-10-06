@@ -1,7 +1,7 @@
 from typing import Optional, Dict, Any
 import httpx
 
-from .config import settings, reload_settings
+from .config import settings
 from .routing.numbers import canonical_number
 from .callback_locator import callback_url_with_locators
 
@@ -120,23 +120,3 @@ class SignalWireFaxService:
             'cancelled': 'cancelled',
         }
         return mapping.get(s, s or 'queued')
-
-
-_svc: Optional[SignalWireFaxService] = None
-
-
-def get_signalwire_service() -> Optional[SignalWireFaxService]:
-    global _svc
-    reload_settings()
-    if not (settings.signalwire_space_url and settings.signalwire_project_id and settings.signalwire_api_token):
-        _svc = None
-        return None
-    if _svc is None:
-        _svc = SignalWireFaxService(
-            space_url=settings.signalwire_space_url,
-            project_id=settings.signalwire_project_id,
-            api_token=settings.signalwire_api_token,
-            from_number=settings.signalwire_fax_from_e164 or None,
-            status_callback_url=settings.signalwire_status_callback_url or None,
-        )
-    return _svc

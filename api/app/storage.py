@@ -15,9 +15,6 @@ class Storage:
     def delete(self, uri: str) -> None:
         raise NotImplementedError
 
-    def is_s3_uri(self, uri: str) -> bool:
-        return uri.startswith("s3://")
-
 
 class LocalStorage(Storage):
     def put_pdf(self, local_path: str, object_name: str) -> str:

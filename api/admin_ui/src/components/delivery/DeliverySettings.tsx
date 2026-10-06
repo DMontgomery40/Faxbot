@@ -23,16 +23,13 @@ import { ResponsiveSettingItem } from '../common/ResponsiveSettingItem';
 import SecretInput from '../common/SecretInput';
 import EnvSetField, { environmentManaged } from '../common/EnvSetField';
 import { numberHint, settingsNumberFormat } from '../common/numbers';
-import { PROVIDER_LABELS, providerLabel } from '../../providerLabels';
+import { providerLabel } from '../../providerLabels';
 import DirectCardDialog from './DirectCardDialog';
 import EmailDelivery from './EmailDelivery';
 import { DeliveryError } from './shared';
 
 type FormValue = string | number | boolean;
 type Values = Record<string, FormValue>;
-
-// The same names every screen uses for providers.
-export const ROUTE_LABELS: Record<string, string> = PROVIDER_LABELS;
 
 const routeLabel = (id: string) => providerLabel(id);
 

@@ -1,9 +1,8 @@
 from typing import Optional, Dict, Any, Tuple
 import httpx
-import os
 import re
 
-from .config import settings, reload_settings
+from .config import settings
 from .routing.numbers import canonical_number
 
 
@@ -163,22 +162,3 @@ class SinchFaxService:
         except (httpx.HTTPError, httpx.InvalidURL, OSError):
             raise RuntimeError('Sinch multipart create request failed.') from None
         return self._fax_response(resp)
-
-
-_sinch_service: Optional[SinchFaxService] = None
-
-
-def get_sinch_service() -> Optional[SinchFaxService]:
-    global _sinch_service
-    reload_settings()
-    if not (settings.sinch_project_id and settings.sinch_api_key and settings.sinch_api_secret):
-        _sinch_service = None
-        return None
-    if _sinch_service is None:
-        _sinch_service = SinchFaxService(
-            project_id=settings.sinch_project_id,
-            api_key=settings.sinch_api_key,
-            api_secret=settings.sinch_api_secret,
-            base_url=os.getenv("SINCH_BASE_URL") or None,
-        )
-    return _sinch_service
