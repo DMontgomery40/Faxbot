@@ -42,8 +42,6 @@ COPY python_mcp /app/python_mcp
 # Copy admin UI build from the first stage
 COPY --from=admin-ui-builder /build/dist /app/admin_ui/dist
 
-# Copy assets for the admin UI
-COPY assets /app/assets
 
 # Data volume mounted at /faxdata by compose
 

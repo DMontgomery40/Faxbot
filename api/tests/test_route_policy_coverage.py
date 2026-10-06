@@ -43,7 +43,7 @@ OWN_AUTHENTICATION = {
     ("GET", "/redoc"): "API description",
 }
 # Static files carry no authority. /admin/ui exists only with ENABLE_LOCAL_ADMIN at import.
-STATIC_MOUNTS = {"/admin/ui", "/assets"}
+STATIC_MOUNTS = {"/admin/ui"}
 # Still on legacy guards at this revision; other slices convert them. Remove each
 # entry when its route declares policy; the pending test below fails until then.
 PENDING: dict = {}
@@ -125,6 +125,7 @@ def test_converted_routes_declare_their_exact_permission():
 # New routes that read installation-wide evidence: (permission, audited).
 READS = {
     ("GET", "/routing/recommendations/sending"): ("settings:read", False),
+    ("GET", "/routing/recommendations/receiving"): ("settings:read", False),
 }
 
 

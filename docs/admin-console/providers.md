@@ -16,6 +16,6 @@ The panel lists only what this installation uses: **In use**, one page per provi
 
 A provider's page says in one sentence whether Faxbot uses it now, then shows its account: keys and secrets (a value set in `.env` shows **Set in .env**), addresses for status updates, and signing checks.
 
-- **The carrier trunk** is titled by its carrier or phone system. It opens with that carrier's guidance and settings, the fax numbers, **Check the internet address every … minutes**, and for Telnyx **Key for reading Telnyx charges**. The fax engine connection sits in a collapsed **Fax engine connection (advanced)** box with the read-only ports and phone system address. See [SIP trunk](../setup/sip-trunk.md).
+- **The carrier trunk** is titled by its carrier or phone system. It opens with that carrier's guidance and settings, the fax numbers, **Check the internet address every … minutes**, and for Telnyx the optional **Telnyx API key**, which shows call charges and checks fax over IP (T.38) on your numbers. On the trunk page, **Fax over IP (T.38) at Telnyx** shows each number's setting and lets you turn it on for one number. The fax engine connection sits in a collapsed **Fax engine connection (advanced)** box with the read-only ports and phone system address. See [SIP trunk](../setup/sip-trunk.md).
 - **FreeSWITCH (advanced)** says what it still needs, such as a caller ID number.
 - **HumbleFax** lists the numbers on its account under **Numbers → Your numbers**.

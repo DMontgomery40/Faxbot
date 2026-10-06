@@ -17,7 +17,7 @@ Inspected October 3, 2026 against the current checkout. Re-check these boundarie
 | Optional AI prose proposals | Written by `make docs-propose` (Codex, read-only, on the maintainer's own sign-in) or by the manually dispatched workflow job (OpenRouter with the `OPENROUTER_API_KEY` secret). [Patch validation](../scripts/docs_ai/validate_doc_patch.py) permits ordinary Markdown under `docs/` and excludes `docs/architecture/`, `docs/generated/` and agent/skill instruction filenames. Root README/roadmap, root agent instructions and `planning/` are outside its allowed scope. A proposal is saved only after validation, and the workflow and local `--apply` command both validate again before applying. The workflow opens a pull request only when asked. |
 | [MkDocs/Mike publication](../.github/workflows/mkdocs-deploy.yml) | Restores the generated reference overlay, builds/publishes the website on `gh-pages`, and does not regenerate maintained planning sources. The [artifact hook](../scripts/docs_ai/use_built_artifact.py) replaces the built site directory, not source documentation. |
 
-The [old architecture location](../docs/architecture/2026-10-03-enterprise-correspondence.md) is now a navigation pointer. The full enterprise specification lives here so replacement of the public documentation tree does not erase its source.
+The full enterprise specification lives here so replacement of the public documentation tree does not erase its source. The earlier design records (`2026-10-02-*.md`) moved here from `docs/architecture/`; they are maintainer history, not operator instructions.
 
 ## Maintenance rules
 

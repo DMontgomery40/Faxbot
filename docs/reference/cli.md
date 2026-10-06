@@ -1597,7 +1597,7 @@ $ faxbot providers trunk mode [OPTIONS] {t38|audio}
 
 #### `faxbot providers trunk presets`
 
-List the carriers and phone systems Faxbot knows the settings for, or show one with where each setting comes from. For a phone system it also lists, in order, what its administrator sets.
+List the carriers and phone systems Faxbot knows the settings for, or show one with where each setting comes from. For a phone system it also lists, in order, what you set in it.
 
 **Usage**:
 
@@ -1776,7 +1776,7 @@ $ faxbot costs [OPTIONS] COMMAND [ARGS]...
 * `fax`: Show what one fax cost: the carrier&#x27;s...
 * `received`: Show what the call that brought in a...
 * `savings`: Show how much money Faxbot saved by...
-* `recommendations`: Show ways to pay less, such as numbers...
+* `recommendations`: Show ways to pay less: numbers where...
 * `rate-cards`: Show the prices Faxbot uses to estimate...
 * `plans`: Show the price plans a fax service...
 
@@ -1864,7 +1864,7 @@ $ faxbot costs savings [OPTIONS]
 
 ### `faxbot costs recommendations`
 
-Show ways to pay less, such as numbers where another route cost less per delivered fax in the last 30 days.
+Show ways to pay less: numbers where another route cost less per delivered fax in the last 30 days, and numbers that could share incoming lines.
 
 **Usage**:
 

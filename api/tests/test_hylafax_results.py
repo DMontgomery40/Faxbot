@@ -10,6 +10,7 @@ from types import SimpleNamespace
 from fastapi.testclient import TestClient
 from PIL import Image
 import pytest
+import sqlalchemy as sa
 
 from api.app import schema
 from app import hylafax_engine, hylafax_http, hylafax_records, sip_calls, sip_fax_mode
@@ -396,6 +397,158 @@ def test_the_engines_report_of_a_received_call_that_left_no_fax_reaches_recent_c
         assert calls[0]['did'] == '+17208565062' and calls[0]['verdict'] == sip_calls.NO_FAX_SIGNAL
 
 
+# Received faxes stay apart after an engine restart; a replayed hand-over stays one fax ------------------------
+
+ENGINE_ID = '0123456789abcdef'
+ADMIN = {'X-API-Key': 'bootstrap_admin_only'}
+
+
+def engine_installation(monkeypatch, tmp_path):
+    """Receiving over the trunk, with the engine's own report secret; (data folder, secret)."""
+    data = tmp_path / 'faxdata_engine'
+    for name, value in (('INBOUND_ENABLED', 'true'), ('ASTERISK_INBOUND_SECRET', 'sekret'),
+                        ('FAX_DATA_DIR', str(data)), ('REQUIRE_API_KEY', 'true'), ('API_KEY', 'bootstrap_admin_only'),
+                        ('FAX_DEFAULT_COUNTRY', 'US')):
+        monkeypatch.setenv(name, value)
+    return data, hylafax_engine.engine_secrets(SimpleNamespace(fax_data_dir=str(data)), lines=1)['report_secret']
+
+
+def handed_over(data, arrival, token):
+    """bin/handover's body for communication ID 7 received at ``arrival`` (an image in the engine's out folder)."""
+    key = f'000000007-{arrival}'
+    folder = data / 'hylafax-out' / 'inbound'
+    folder.mkdir(parents=True, exist_ok=True)
+    image = folder / f'engine-{ENGINE_ID}-{key}.tiff'
+    Image.new('1', (20, 10), 1).save(image, format='TIFF')
+    return {'tiff_path': str(image), 'to_number': '15555550100', 'from_number': '+15555550199',
+            'faxstatus': 'SUCCESS', 'faxpages': 1,
+            'uniqueid': f'engine.{token}' if token else f'hylafax.{ENGINE_ID}.{key}',
+            'call': {'did': '15555550100', 'caller': '+15555550199', 'pages': 1, 't38': None,
+                     'remote_station_id_b64': None},
+            'engine': {'engine': 'hylafax', 'engine_ref': f'{ENGINE_ID}:{key}', 'sslfax': False,
+                       'sslfax_offered': False, 'transfer_seconds': 12, 'signal_rate_b64': None,
+                       'data_format_b64': None}}
+
+
+def inbound_engine_refs(app):
+    from app.routing.background import installation_engine
+    engine, _ = installation_engine(app)
+    table = hylafax_records.records_for(engine)._table('fax_engine_calls')
+    with engine.connect() as connection:
+        return sorted(connection.execute(sa.select(table.c.engine_ref).where(
+            table.c.direction == 'inbound')).scalars())
+
+
+@pytest.mark.parametrize('tokens', [(None, None), ('17911995026', '17911998111')], ids=['engine-key', 'asterisk-call'])
+def test_a_new_engine_container_repeating_a_communication_id_keeps_two_received_faxes_and_a_replay_one(
+        isolated_installation, monkeypatch, tmp_path, tokens):
+    """A new engine container starts its communication IDs again; each received fax keeps its own identity and
+    engine record (with or without Asterisk's call name), and the same hand-over posted again stays one fax."""
+    from api.app.main import app
+    data, secret = engine_installation(monkeypatch, tmp_path)
+    first, second = handed_over(data, '1791180000', tokens[0]), handed_over(data, '1791183600', tokens[1])
+    with TestClient(app, base_url='http://testserver') as client:
+        answers = [client.post('/_internal/hylafax/inbound', headers={'X-Internal-Secret': secret}, json=body)
+                   for body in (first, second, first)]
+        assert [answer.status_code for answer in answers] == [200, 200, 200], [answer.text for answer in answers]
+        ids = [answer.json()['id'] for answer in answers]
+        assert ids[0] != ids[1] and ids[2] == ids[0]
+        assert sorted(item['id'] for item in client.get('/inbound', headers=ADMIN).json()) == sorted(ids[:2])
+        assert inbound_engine_refs(app) == [f'{ENGINE_ID}:000000007-1791180000', f'{ENGINE_ID}:000000007-1791183600']
+
+
+def test_a_new_engine_container_repeating_a_communication_id_keeps_two_calls_that_left_no_fax(
+        isolated_installation, monkeypatch, tmp_path):
+    from api.app.main import app
+    data, secret = engine_installation(monkeypatch, tmp_path)
+    reason = base64.b64encode(b'No sender protocol (T.30 T1 timeout) {E102}').decode()
+    first, second = ({'engine_id': ENGINE_ID, 'commid': '000000003', 'key': f'000000003-{arrival}', 'token': '',
+                      'caller': '3034265097', 'called': '17208565062', 'reason_b64': reason}
+                     for arrival in ('1791180000', '1791183600'))
+    with TestClient(app, base_url='http://testserver') as client:
+        for body in (first, second, first):
+            answer = client.post('/_internal/hylafax/received-failed', json=body, headers={'X-Internal-Secret': secret})
+            assert answer.status_code == 200, answer.text
+        calls = client.get('/admin/sip/calls', headers=ADMIN).json()['items']
+        assert len(calls) == 2 and {call['verdict'] for call in calls} == {sip_calls.NO_FAX_SIGNAL}
+        assert inbound_engine_refs(app) == [f'{ENGINE_ID}:000000003-1791180000', f'{ENGINE_ID}:000000003-1791183600']
+
+
+# A received call's numbers read the same whichever report came first ---------------------------------------------
+
+def test_a_failed_engine_receive_names_the_caller_with_the_country_code_when_asterisks_event_came_first(
+        isolated_installation, monkeypatch, tmp_path):
+    """Live, 6 October 2026: Asterisk's event carried Telnyx's caller as 3034265097 and came before the engine's
+    report, so the failed call and its engine record kept it without the country code (the received fax, which
+    came the other way round, read +13034265097)."""
+    from api.app.main import app
+    from app.routing.background import installation_engine
+    data, secret = engine_installation(monkeypatch, tmp_path)
+    reason = base64.b64encode(b'Failure to receive silence (synchronization failure). {E100}').decode()
+    with TestClient(app, base_url='http://testserver') as client:
+        engine, _ = installation_engine(app)
+        sip_calls.SipCallRecords(engine).record_engine_call(
+            inbound_event(Token='17912491111', Caller='3034265097', DID='17208565062'))
+        answer = client.post('/_internal/hylafax/received-failed', headers={'X-Internal-Secret': secret}, json={
+            'engine_id': ENGINE_ID, 'commid': '000000008', 'key': '000000008-1791249049', 'token': '17912491111',
+            'caller': '3034265097', 'called': '17208565062', 'reason_b64': reason})
+        assert answer.status_code == 200, answer.text
+        assert answer.json()['summary'] == 'A fax call from +13034265097 came in, but no pages arrived.'
+        (call,) = client.get('/admin/sip/calls', headers=ADMIN).json()['items']
+        assert (call['caller'], call['did'], call['called']) == ('+13034265097', '+17208565062', '+17208565062')
+        table = hylafax_records.records_for(engine)._table('fax_engine_calls')
+        with engine.connect() as connection:
+            assert connection.execute(sa.select(table.c.number)).scalars().all() == ['+13034265097']
+
+
+@pytest.mark.parametrize('kind', ['engine', 'built-in'])
+def test_asterisks_events_store_received_numbers_the_way_the_hand_overs_do(database, kind):
+    schema.upgrade_schema(database)
+    calls = sip_calls.SipCallRecords(database)
+    if kind == 'engine':
+        calls.record_engine_call(inbound_event(Caller='3034265097', DID='17208565062'), now=NOW)
+    else:
+        calls.record_inbound_event({'UniqueID': '1791249049.12', 'DID': '17208565062', 'Caller': '3034265097',
+                                    'Started': epoch(NOW), 'Answered': epoch(NOW), 'Ended': epoch(NOW),
+                                    'Status': 'FAILED', 'Mode': 'audio'}, now=NOW)
+    (row,) = calls.page(limit=5)['items']
+    assert (row['caller'], row['did']) == ('+13034265097', '+17208565062')
+    # A number that is not a telephone number in this country is kept as Asterisk gave it.
+    calls.record_inbound_event({'UniqueID': '1791249050.13', 'DID': '100', 'Caller': '200',
+                                'Started': epoch(NOW), 'Ended': epoch(NOW)}, now=NOW)
+    assert {(item['caller'], item['did']) for item in calls.page(limit=5)['items']} >= {('200', '100')}
+
+
+def test_received_calls_stored_without_the_country_code_are_shown_with_it_and_kept_as_stored(database):
+    """Recent calls, the trunk's last call and `faxbot providers trunk calls` read the same records. Rows stored
+    before received numbers were read for the country keep their stored form (history is never rewritten)."""
+    schema.upgrade_schema(database)
+    calls = sip_calls.SipCallRecords(database)
+    for call_id, status, pages in (('engine.17912490001', 'FAILED', 0), ('engine.17912491682', 'SUCCESS', 2)):
+        with database.begin() as connection:
+            connection.execute(calls.table.insert().values(
+                id=call_id[-12:].rjust(32, '0'), direction='inbound', call_id=call_id, did='17208565062',
+                caller='3034265097', called='17208565062', started_at=NOW + timedelta(seconds=int(call_id[-1])),
+                answered_at=NOW, ended_at=NOW + timedelta(seconds=61), disposition='answered', connected_seconds=61,
+                t38='yes', pages=pages, fax_status=status, fax_preference=0, created_at=NOW, updated_at=NOW,
+                error_cause=None if pages else 'Failure to receive silence synchronization'))
+    calls.record_submission({'JobID': JOB, 'AttemptID': ATTEMPT, 'Called': '3035550199', 'CallerID': '3035550100'},
+                            now=NOW)
+    items = calls.page(limit=5)['items']
+    received = [item for item in items if item['direction'] == 'inbound']
+    assert {(item['caller'], item['did'], item['called']) for item in received} == {
+        ('+13034265097', '+17208565062', '+17208565062')}
+    assert {item['summary'] for item in received} >= {'A fax call from +13034265097 came in, but no pages arrived.'}
+    assert calls.call(received[0]['id'])['caller'] == '+13034265097'
+    # A sent call shows what Faxbot dialled, as before.
+    (sent,) = [item for item in items if item['direction'] == 'outbound']
+    assert sent['called'] == '3035550199'
+    with database.connect() as connection:
+        stored = connection.execute(sa.select(calls.table.c.caller).where(
+            calls.table.c.direction == 'inbound')).scalars().all()
+    assert stored == ['3034265097', '3034265097']
+
+
 # Restarting Asterisk waits for the engine's calls -------------------------------------------------------------
 
 def test_a_restart_waits_while_the_engine_holds_a_fax_it_has_not_reported_on(database, monkeypatch):
@@ -473,4 +626,27 @@ def test_two_sends_with_the_same_communication_id_both_keep_their_engine_record(
         records.record_result(direction='outbound', call_key=attempt, job_id=job, details=details, now=NOW)
     for _, attempt in (first, second):
         assert records.for_call('outbound', attempt)['sslfax'] is True
+
+
+def test_two_received_faxes_with_the_same_communication_id_both_keep_their_engine_record(database):
+    """The received side of the same rule: the arrival time keeps each received fax's reference unique after a
+    new engine container, and the same hand-over recorded again adds no row and no second observation."""
+    schema.upgrade_schema(database)
+    records = hylafax_records.records_for(database)
+
+    def handed_over(arrival, call_key):
+        return hylafax_engine.record_inbound_engine(
+            database, {'engine': {'engine': 'hylafax', 'engine_ref': f'0123456789abcdef:000000007-{arrival}',
+                                  'sslfax': True, 'transfer_seconds': 12}},
+            call_key=call_key, inbound_fax_id='f' * 32, number='+15555550199')
+    first = handed_over('1791180000', 'engine.17911995026')
+    second = handed_over('1791183600', 'engine.17911998111')
+    assert first and second and first != second
+    assert handed_over('1791180000', 'engine.17911995026') == first
+    for call_key in ('engine.17911995026', 'engine.17911998111'):
+        assert records.for_call('inbound', call_key)['sslfax'] is True
+    observations = records._table('sslfax_observations')
+    with database.connect() as connection:
+        sources = sorted(connection.execute(sa.select(observations.c.source)).scalars())
+    assert sources == ['0123456789abcdef:000000007-1791180000', '0123456789abcdef:000000007-1791183600']
 

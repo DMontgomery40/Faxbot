@@ -287,19 +287,6 @@ if os.getenv("ENABLE_LOCAL_ADMIN", "false").lower() == "true":
         except Exception:
             pass
 
-# Serve project assets (logo, etc.) under /assets if present (dev convenience)
-_assets_candidates = [
-    os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "assets")),
-    os.path.abspath(os.path.join(os.getcwd(), "assets")),
-]
-for _ap in _assets_candidates:
-    try:
-        if os.path.isdir(_ap):
-            app.mount("/assets", StaticFiles(directory=_ap), name="assets")
-            break
-    except Exception:
-        pass
-
 # ===== Embedded MCP mounts (optional, startup failures are fatal when enabled) =====
 def _mount_enabled_mcp(application: FastAPI, mounts: list):
     if not (settings.enable_mcp_sse or settings.enable_mcp_http):

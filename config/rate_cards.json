@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "description": "Advertised US prices, read 2026-10-03 from each provider's own pages. cards: calls over each SIP trunk preset when Faxbot's own fax engine places or answers the call. providers: cloud fax providers' per-page or per-minute prices. plans: flat monthly plans with nothing charged per fax. Prices are advertised starting or typical rates, not quotes; confirm them against your account. Amounts are decimal strings in the card currency. per_call is a charge for each call; number_setup is a one-time charge for each number. A null price or increment means the provider does not publish it. Documo publishes no fax API price, so it has no card. UK and Australian carrier cards (Gamma, BT One Voice, Telstra SIP Connect) are in their own currency and carry no price, because none is published. A phone system (Avaya) has no card: the carrier behind it bills the calls. reference_plans: plans a provider publishes that Faxbot never adds as a rate card by itself, because the provider prices the API Faxbot uses differently (eFax prices its API by quote in every country); a person can choose one as their own estimate. included_pages and overage_per_page describe the plan; the estimate counts the monthly fee only.",
+  "description": "Advertised US prices, read 2026-10-03 from each provider's own pages. cards: calls over each SIP trunk preset when Faxbot's own fax engine places or answers the call. providers: cloud fax providers' per-page or per-minute prices. plans: flat monthly plans with nothing charged per fax. Prices are advertised starting or typical rates, not quotes; confirm them against your account. Amounts are decimal strings in the card currency. per_call is a charge for each call; number_setup is a one-time charge for each number. A null price or increment means the provider does not publish it. Documo publishes no fax API price, so it has no card. UK and Australian carrier cards (Gamma, BT One Voice, Telstra SIP Connect) are in their own currency and carry no price, because none is published. A phone system (Avaya) has no card: the carrier behind it bills the calls. reference_plans: plans a provider publishes that Faxbot never adds as a rate card by itself, because the provider prices the API Faxbot uses differently (eFax prices its API by quote in every country); a person can choose one as their own estimate. included_pages and overage_per_page describe the plan; the estimate counts the monthly fee only. receiving_prices: what a carrier charges for receiving, read for the receiving recommendations (shared inbound channels in price tiers, received-call rates by number type, number rental and any monthly trunk fee); they are never added as rate cards.",
   "cards": [
     {
       "provider_id": "sip-telnyx",
@@ -701,6 +701,120 @@
       ],
       "advertised_on": "2026-10-04",
       "notes": "eFax UK, read October 4, 2026: the UK site's plan and sign-up links lead to eFax's US price page and a US dollar checkout when read from the US, so no UK price could be read; eFax Corporate in the UK is sold through enterprise.efax.eu by quote. No published price; add your rate."
+    }
+  ],
+  "receiving_prices": [
+    {
+      "carrier": "telnyx",
+      "country": "US",
+      "kind": "inbound_channel",
+      "label": "Telnyx inbound channel, US",
+      "currency": "USD",
+      "tiers": [
+        {
+          "channels": 10,
+          "monthly_fee": "12"
+        },
+        {
+          "channels": 40,
+          "monthly_fee": "11"
+        },
+        {
+          "channels": 200,
+          "monthly_fee": "9"
+        },
+        {
+          "channels": null,
+          "monthly_fee": "8"
+        }
+      ],
+      "source_url": "https://telnyx.com/pricing/elastic-sip",
+      "sources": [
+        "https://telnyx.com/pricing/elastic-sip",
+        "https://support.telnyx.com/en/articles/1130678-channel-billing-and-how-to-use-it"
+      ],
+      "advertised_on": "2026-10-05",
+      "notes": "Monthly price of each inbound channel: the first 10 channels at $12, the next 40 at $11, the next 200 at $9 and any beyond 250 at $8. Channels replace per-minute billing for calls received on the numbers that share them. Only standard local numbers can use channels; toll-free and international numbers stay billed by the minute. A call that arrives while every channel is in use hears a busy tone instead of being billed by the minute. Channel-billed and per-minute numbers can be on the same account."
+    },
+    {
+      "carrier": "telnyx",
+      "country": "US",
+      "kind": "inbound_per_minute",
+      "number_type": "local",
+      "label": "Telnyx received calls, US local number",
+      "currency": "USD",
+      "per_minute": "0.0032",
+      "billing_increment_seconds": 60,
+      "minimum_seconds": 60,
+      "source_url": "https://telnyx.com/pricing/elastic-sip",
+      "sources": [
+        "https://telnyx.com/pricing/elastic-sip",
+        "https://support.telnyx.com/en/articles/1130659-billing-increments"
+      ],
+      "advertised_on": "2026-10-05",
+      "notes": "Starting rate for calls received on a local number. Telnyx bills 60/60: every call is rounded up to whole minutes, with a one-minute minimum."
+    },
+    {
+      "carrier": "telnyx",
+      "country": "US",
+      "kind": "inbound_per_minute",
+      "number_type": "toll_free",
+      "label": "Telnyx received calls, US toll-free number",
+      "currency": "USD",
+      "per_minute": "0.015",
+      "billing_increment_seconds": 60,
+      "minimum_seconds": 60,
+      "source_url": "https://telnyx.com/pricing/elastic-sip",
+      "sources": [
+        "https://telnyx.com/pricing/elastic-sip",
+        "https://support.telnyx.com/en/articles/1130659-billing-increments"
+      ],
+      "advertised_on": "2026-10-05",
+      "notes": "Starting rate for calls received on a toll-free number, billed in whole minutes."
+    },
+    {
+      "carrier": "telnyx",
+      "country": "US",
+      "kind": "number_rental",
+      "number_type": "local",
+      "label": "Telnyx US local number",
+      "currency": "USD",
+      "monthly_fee": "1",
+      "source_url": "https://telnyx.com/pricing/numbers",
+      "sources": [
+        "https://telnyx.com/pricing/numbers"
+      ],
+      "advertised_on": "2026-10-05",
+      "notes": "From $1 a month. Text messaging on the number costs $0.10 a month more, which a fax number does not need."
+    },
+    {
+      "carrier": "telnyx",
+      "country": "US",
+      "kind": "number_rental",
+      "number_type": "toll_free",
+      "label": "Telnyx US toll-free number",
+      "currency": "USD",
+      "monthly_fee": "1",
+      "source_url": "https://telnyx.com/pricing/numbers",
+      "sources": [
+        "https://telnyx.com/pricing/numbers"
+      ],
+      "advertised_on": "2026-10-05",
+      "notes": "From $1 a month. Text messaging on the number costs $0.10 a month more, which a fax number does not need."
+    },
+    {
+      "carrier": "telnyx",
+      "country": "US",
+      "kind": "trunk",
+      "label": "Telnyx SIP trunk",
+      "currency": "USD",
+      "monthly_fee": "0",
+      "source_url": "https://telnyx.com/pricing/elastic-sip",
+      "sources": [
+        "https://telnyx.com/pricing/elastic-sip"
+      ],
+      "advertised_on": "2026-10-05",
+      "notes": "Telnyx lists a $0 platform fee and pay-as-you-go calls with no contract, so a trunk has no monthly fee of its own."
     }
   ]
 }

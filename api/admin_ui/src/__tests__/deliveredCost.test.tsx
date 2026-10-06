@@ -8,7 +8,7 @@ import type { DeliveredCost, Destination, SendingRecommendation } from '../api/d
 import Destinations from '../components/delivery/Destinations';
 import Recommendations, { NO_RECOMMENDATIONS } from '../components/delivery/Recommendations';
 import JobsList from '../components/JobsList';
-import { server } from '../test/server';
+import { newReceivingAdvice, server } from '../test/server';
 
 const client = () => new AdminAPIClient({ kind: 'key', key: 'synthetic-key' });
 const NUMBER = '+12025550123';
@@ -69,9 +69,19 @@ const recommendation: SendingRecommendation = {
 
 describe('Costs → Recommendations', () => {
   it('shows the empty sentence only when no section has anything', async () => {
-    render(<Recommendations client={client()} canWrite />);
+    const { unmount } = render(<Recommendations client={client()} canWrite />);
     expect((await screen.findByTestId('recommendations-empty')).textContent).toBe(NO_RECOMMENDATIONS);
     expect(screen.queryByTestId('sending-recommendations')).toBeNull();
+    unmount();
+    // Receiving has advice (enough call history): no empty sentence, even with nothing to send cheaper.
+    const advice = newReceivingAdvice();
+    server.use(http.get('/routing/recommendations/receiving', () => HttpResponse.json({ ...advice,
+      pool: { ...advice.pool, state: 'keep_metered', sentence: 'Keep every number billed by the minute.' },
+      quiet_numbers: { ...advice.quiet_numbers, state: 'none_quiet', sentence: 'Every number gets calls.' } })));
+    render(<Recommendations client={client()} canWrite />);
+    expect(await screen.findByText('Keep every number billed by the minute.')).toBeTruthy();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(screen.queryByTestId('recommendations-empty')).toBeNull();
   });
 
   it('lists a cheaper route and uses it as the preferred route with the existing setting', async () => {

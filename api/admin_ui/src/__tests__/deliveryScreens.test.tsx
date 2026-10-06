@@ -175,5 +175,7 @@ describe('Savings and Recommendations', () => {
     unmount();
     render(<Recommendations client={client()} canWrite />);
     expect((await screen.findByTestId('recommendations-empty')).textContent).toBe(NO_RECOMMENDATIONS);
+    expect((await screen.findByTestId('receiving-sentence')).textContent)
+      .toBe('Faxbot needs 60 days of call history to advise on shared lines; it has none yet.');
   });
 });

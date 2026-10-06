@@ -96,9 +96,6 @@ plugins:
 
   - exclude:
       glob:
-        # Internal architecture specs are maintainer records, not operator
-        # instructions or search results.
-        - 'architecture/**'
         - 'api/admin_ui/node_modules/**'
         - 'api/**/node_modules/**'
         - 'vendor/**'

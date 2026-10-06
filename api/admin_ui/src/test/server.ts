@@ -145,6 +145,26 @@ const s = () => backend.state;
 const nextId = (prefix: string) => `${prefix}_${++s().sequence}`;
 const json = (body: JsonBodyType, status = 200) => HttpResponse.json(body, { status });
 
+// GET /routing/recommendations/receiving for a new installation: too little call history to advise.
+export function newReceivingAdvice() {
+  const window = (start: string, end: string) => ({ start, end, days: 30 });
+  return {
+    days: 30, estimate: true, carrier: 'Telnyx',
+    sentence: 'Faxbot needs 60 days of call history to advise on shared lines; it has none yet.',
+    windows: { choose: window('2026-08-06T00:00:00', '2026-09-05T00:00:00'),
+      check: window('2026-09-05T00:00:00', '2026-10-05T00:00:00') },
+    history: { enough: false, first_call_at: null, days: 0 },
+    pool: { state: 'too_little_history', numbers: [],
+      sentence: 'Faxbot needs 60 days of call history to advise on shared lines; it has none yet.' },
+    quiet_numbers: { state: 'too_little_history', numbers: [], monthly_total: [],
+      sentence: 'Faxbot needs 30 days of call history to tell which numbers are quiet; it has none yet.' },
+    connections: { sentence: 'Telnyx is your only fax service, so there is no second monthly fee to save.',
+      items: [{ name: 'Telnyx', kind: 'trunk', monthly_fee: [{ currency: 'USD', amount: '0.00' }] }] },
+    prices: [{ label: 'Telnyx inbound channel, US', read_on: '2026-10-05', source_url: 'https://telnyx.com/pricing/elastic-sip',
+      text: '$12.00 a month each for the first 10, $11.00 for the next 40, $9.00 for the next 200 and $8.00 after 250' }],
+  };
+}
+
 // GET /routing/savings for an installation that has saved nothing yet.
 export function emptySavings() {
   const part = (sentence: string) => ({ estimate: true, saved: [], sentence });
@@ -620,6 +640,8 @@ const consoleHandlers = [
   // Sending recommendations: no number has enough delivered faxes on two routes yet.
   http.get('/routing/recommendations/sending', () => json({ window_days: 30, min_delivered: 3, items: [],
     empty_sentence: 'Nothing to suggest yet. Faxbot compares the cost of two routes once each has delivered 3 faxes to the same number in the last 30 days.' })),
+  // Receiving recommendations: too little call history yet.
+  http.get('/routing/recommendations/receiving', () => json(newReceivingAdvice())),
   // Case packets: none sent yet.
   http.get('/cases', () => json({ cases: [] })),
   // The audit log: nothing recorded yet.

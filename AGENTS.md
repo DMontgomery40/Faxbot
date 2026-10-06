@@ -13,7 +13,7 @@ The future enterprise direction adds accountable correspondence: reusable intake
 
 ## Start here
 
-- [Planning sources](planning/README.md) are maintained outside the generated documentation tree. Keep enterprise requirements in `planning/enterprise-correspondence.md`; the old `docs/architecture/` page is a pointer. Do not target planning with generated patches.
+- [Planning sources](planning/README.md) are maintained outside the generated documentation tree. Keep enterprise requirements in `planning/enterprise-correspondence.md`; the earlier design records (`planning/2026-10-02-*.md`) live there too. Do not target planning with generated patches.
 - Read [README.md](README.md) for current capabilities and its [roadmap](README.md#roadmap) for planned work. Verify against the current checkout before treating a capability as complete.
 - Read [CONTRIBUTING.md](CONTRIBUTING.md) for setup and checks. Preserve unrelated changes and coordinate when another agent owns the same files.
 - Historical Markdown from 2025 is kept locally under `.archived/`, preserving its original paths. That folder is excluded from Git and Docker builds. Use current docs for instructions; do not restore archived pages to navigation or treat their old plans as active work.
@@ -25,7 +25,7 @@ The future enterprise direction adds accountable correspondence: reusable intake
 
 | Area | Code | Read first |
 | --- | --- | --- |
-| Outbound delivery and provider identity | `api/app/outbound_store.py`, `outbound_worker.py`, `outbound_transport.py`, `provider_execution.py` | [Durable outbound design](docs/architecture/2026-10-02-faxbot-durable-outbound.md) |
+| Outbound delivery and provider identity | `api/app/outbound_store.py`, `outbound_worker.py`, `outbound_transport.py`, `provider_execution.py` | [Durable outbound design](planning/2026-10-02-faxbot-durable-outbound.md) |
 | Route selection, cost estimates, and charge reconciliation | `api/app/routing/` | [Delivery routes and case packets](docs/operations/delivery-routes.md) |
 | Received-fax notifications, document fetching and provenance | `api/app/inbound/` | [Receiving faxes](docs/operations/receiving.md) |
 | Intake and email delivery | `api/app/intake/` | [Intake](docs/operations/intake.md) |
@@ -33,9 +33,9 @@ The future enterprise direction adds accountable correspondence: reusable intake
 | Encrypted delivery and peer verification | `api/app/direct/` | [Direct delivery](docs/operations/direct-delivery.md) |
 | Accepted case documents and packet preparation | `api/app/cases/` | [Case packets](docs/operations/delivery-routes.md#case-packets) |
 | Document conversion and request identity | `api/app/conversion.py`, `api/app/request_identity.py` | [Conversion implementation](api/app/conversion.py), [held test jobs](docs/setup/test-mode.md) |
-| Permissions and saved configuration | `api/app/access/`, `config_values.py`, `config_store.py`, `config_activation.py` | [Access control](docs/security/access-control.md), [configuration design](docs/architecture/2026-10-02-faxbot-configuration-activation.md) |
+| Permissions and saved configuration | `api/app/access/`, `config_values.py`, `config_store.py`, `config_activation.py` | [Access control](docs/security/access-control.md), [configuration design](planning/2026-10-02-faxbot-configuration-activation.md) |
 | Console and clients | `api/admin_ui/`, `sdks/`, `node_mcp/`, `python_mcp/` | [Console](docs/admin-console.md), [SDKs](docs/sdks/index.md), [MCP](docs/mcp/index.md) |
-| Schema and provider capabilities | `api/app/schema*.py`, `api/alembic/versions/`, `config/provider_traits.json` | [Schema design](docs/architecture/2026-10-02-faxbot-schema-foundation.md) |
+| Schema and provider capabilities | `api/app/schema*.py`, `api/alembic/versions/`, `config/provider_traits.json` | [Schema design](planning/2026-10-02-faxbot-schema-foundation.md) |
 | Future enterprise workflows, templates and setup | Extend existing access, intake, delivery and configuration boundaries; proposed modules are not current APIs | [Enterprise architecture and acceptance criteria](planning/enterprise-correspondence.md) |
 
 ## Enterprise planning boundaries

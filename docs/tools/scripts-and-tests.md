@@ -35,11 +35,6 @@ Both helpers use `API_KEY` (an admin API key) and `FAX_API_URL`. Each creates a 
 - `scripts/load-env.sh` exports the variables in `.env` into the current shell. Most scripts source it.
 - `scripts/install-terminal-deps.sh` installs the Python and console dependencies for the Admin Console's Terminal. See the Terminal guide.
 
-## Release (maintainers)
-
-- `scripts/release_npm.sh` publishes the Node packages (`node_mcp`, `sdks/node`) to npm. It needs `npm login` or `NPM_TOKEN`.
-- `scripts/release_pypi.sh` builds the Python packages (`sdks/python`, `python_mcp`) and uploads them to PyPI. It needs `twine` credentials.
-
 ## Node MCP scripts
 
 These scripts run the Node MCP server, the AI assistant integration. They need a running Faxbot API and read `FAX_API_URL` and `API_KEY` from your environment. Only the stdio server uses `API_KEY`; the Streamable HTTP server uses each client's own Faxbot API key.

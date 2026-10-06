@@ -102,8 +102,10 @@ if [ -n "$listener" ] && [ "${listener##*:}" != "$published" ]; then
   listener=''
 fi
 
-# This engine's own name for its calls, made once: received faxes and results
-# carry <engine id>:<communication id>, which stays unique after a fresh spool.
+# This engine's own name for its calls, made once. A fresh spool starts the
+# communication IDs again, so references add what keeps them unique: received
+# faxes carry <engine id>:<communication id>-<arrival time> and sent faxes
+# <engine id>:<communication id>.<attempt>.
 engine_id_file=$state/engine-id
 if ! grep -qE '^[a-f0-9]{16}$' "$engine_id_file" 2>/dev/null; then
   od -An -N8 -tx1 /dev/urandom | tr -d ' \n' > "$engine_id_file"

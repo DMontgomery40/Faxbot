@@ -328,15 +328,74 @@ def _show_sending(out, result):
                  f"--preferred-route {item['suggested']['route']}")
 
 
+def _line_advice(row):
+    if not row.get('eligible'):
+        return row.get('reason') or 'Billed by the minute'
+    return 'Shared lines' if row.get('in_pool') else 'Billed by the minute'
+
+
+def print_receiving(out, result):
+    """The receiving recommendations in words and tables; ``faxbot costs recommendations`` reuses this."""
+    days = result.get('days', 30)
+    pool = result.get('pool') or {}
+    out.line(pool.get('sentence') or result.get('sentence') or '')
+    if pool.get('note'):
+        out.line(pool['note'])
+    if pool.get('numbers'):
+        out.table(['Number', f'Calls, last {days} days', 'Billed by the minute (estimate)', 'Advice'],
+                  [[row['number'], row['calls'], money(row.get('billed_by_the_minute'), empty='$0.00'),
+                    _line_advice(row)] for row in pool['numbers']],
+                  title=f'Should your numbers share incoming lines? (estimate, last {days} days)')
+    check, choose = pool.get('check'), pool.get('choose')
+    if check and choose and pool.get('pool_numbers'):
+        rows = [('Billed by the minute today', 'billed_by_the_minute'), ('Shared lines', 'channels'),
+                ('Still billed by the minute', 'still_billed_by_the_minute'), ('Fax number rental', 'number_rental'),
+                ('Total today', 'total_today'), ('Total with shared lines', 'total_with_pool')]
+        out.table(['Estimate', f'The {days} days before', f'The last {days} days'],
+                  [[label, money(choose.get(key), empty='$0.00'), money(check.get(key), empty='$0.00')]
+                   for label, key in rows])
+        out.line(f"Most calls at once in the last {days} days: {pool.get('needed', 0)}.")
+    for stretch in pool.get('busy_windows') or []:
+        count = stretch['turned_away']
+        out.line(f"All shared lines busy from {local_time(stretch['start'])} to {local_time(stretch['end'])}: "
+                 f"{count} {'caller' if count == 1 else 'callers'} would have heard a busy signal.")
+    if pool.get('break_even'):
+        out.line(pool['break_even'])
+    for line in pool.get('assumptions') or []:
+        out.line(line)
+    quiet = result.get('quiet_numbers') or {}
+    out.line('')
+    out.line(quiet.get('sentence') or '')
+    if quiet.get('numbers'):
+        out.table(['Number', 'Received', 'Sent', 'Rental a month (estimate)'],
+                  [[row['number'], row['received'], row['sent'], money(row.get('monthly_rental'))]
+                   for row in quiet['numbers']], title=f'Numbers with few calls in the last {days} days')
+    connections = result.get('connections') or {}
+    out.line('')
+    out.line(connections.get('sentence') or '')
+    if len(connections.get('items') or []) > 1:
+        out.table(['Fax service', 'Monthly fee'],
+                  [[item['name'], money(item.get('monthly_fee'), empty='No price yet')]
+                   for item in connections['items']])
+    if result.get('prices'):
+        out.table(['Price', 'Amount', 'Read on', 'Source'],
+                  [[item.get('label'), item.get('text'), _read_on(item.get('read_on')), item.get('source_url')]
+                   for item in result['prices']], title='Published prices used')
+
+
+def _read_receiving(api):
+    return api.get('/routing/recommendations/receiving')
+
+
 # Each section of `faxbot costs recommendations`: (key in --json output, heading, read(api), show(out, data)).
-# The receiving section is one more entry in this list.
 RECOMMENDATION_SECTIONS = [
     ('sending', 'Sending', _read_sending, _show_sending),
+    ('receiving', 'Receiving', _read_receiving, print_receiving),
 ]
 
 
 def routing_recommendations():
-    """Show ways to pay less, such as numbers where another route cost less per delivered fax in the last 30 days."""
+    """Show ways to pay less: numbers where another route cost less per delivered fax in the last 30 days, and numbers that could share incoming lines."""
     api = state.api()
     result = {key: read(api) for key, _, read, _ in RECOMMENDATION_SECTIONS}
 

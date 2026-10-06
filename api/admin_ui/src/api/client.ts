@@ -56,6 +56,7 @@ import type {
   CaseSummary,
   Savings,
   SendingRecommendations,
+  ReceivingRecommendations,
 } from './deliveryTypes';
 import type {
   ImportManifest, ImportResult, WorkAssignee, WorkCounts, WorkEvent, WorkItem, WorkSettings, WorkView,
@@ -1155,6 +1156,12 @@ class AdminAPIClient {
   // What sending together, direct delivery and case packets saved in the last `days` (estimates).
   async getSavings(days?: number): Promise<Savings> {
     return this.json(`/routing/savings${query({ days })}`);
+  }
+
+  // Shared lines for received calls, numbers with few calls and fax services' monthly fees (estimates; Costs →
+  // Recommendations). The advice is chosen on the `days` before the last `days` and checked on the last `days`.
+  async getReceivingRecommendations(days?: number): Promise<ReceivingRecommendations> {
+    return this.json(`/routing/recommendations/receiving${query({ days })}`);
   }
 
   // The newest cases this installation sent packets for, with recipient and counts.
