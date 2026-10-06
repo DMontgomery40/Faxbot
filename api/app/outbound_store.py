@@ -123,6 +123,11 @@ def record_acceptance(connection, tables, job_id, *, held, now):
         dispatch_mode=mode, state=state, version=1, created_at=now, updated_at=now))
     _event(connection, tables['outbound_events'], job_id, 'accepted', now,
         details={'dispatch_mode': mode})
+    if state == 'ready':
+        # The idle worker starts at once instead of after its back-off (the worker
+        # re-reads after the commit; a check before it simply finds nothing yet).
+        from .outbound_wake import wake
+        wake.notify()
 
 
 FALLBACK_LIMIT = 2
@@ -319,8 +324,12 @@ class OutboundStore:
         """Reserve a status read, never a submission or replacement attempt."""
         if not 1 <= interval_seconds <= 3600:
             raise ValueError('Invalid delivery polling interval.')
+        now = datetime.utcnow() if now is None else now
+        if not self._any(sa.select(self.deliveries.c.id).where(
+                self.deliveries.c.state.in_(['in_progress', 'reconciliation_required']),
+                sa.or_(self.deliveries.c.next_poll_at.is_(None), self.deliveries.c.next_poll_at <= now))):
+            return None
         with self.configuration._locked() as connection:
-            now = datetime.utcnow() if now is None else now
             row = connection.execute(sa.select(self.deliveries, self.attempts.c.profile_id).join(self.attempts,
                 self.attempts.c.id == self.deliveries.c.attempt_id).where(
                     self.deliveries.c.state.in_(['in_progress', 'reconciliation_required']),
@@ -416,16 +425,38 @@ class OutboundStore:
         head = configuration._head(connection)
         if head is None:
             return False
-        active = configuration._revision(connection, configuration._cipher(), head['installation_id'], head['active_revision_id'])
-        return not active.values.fax_disabled
+        # A revision never changes, so whether it sends is read (key file and decryption) once per revision.
+        revision_id = head['active_revision_id']
+        cached = getattr(self, '_enabled_for', None)
+        if cached is not None and cached[0] == revision_id:
+            return cached[1]
+        active = configuration._revision(connection, configuration._cipher(), head['installation_id'], revision_id)
+        self._enabled_for = (revision_id, not active.values.fax_disabled)
+        return self._enabled_for[1]
+
+    def _any(self, query):
+        """True when ``query`` finds a row; a plain read, never the write lock an idle check would queue others behind."""
+        try:
+            with self.configuration.engine.connect() as connection:
+                return connection.execute(query.limit(1)).first() is not None
+        except sa.exc.SQLAlchemyError:
+            from .config_store import ConfigurationStoreError
+            raise ConfigurationStoreError('Configuration transaction could not complete.') from None
 
     def _update(self, connection, row, now, **changes):
         connection.execute(self.deliveries.update().where(self.deliveries.c.id == row['id']).values(
             **changes, version=row['version'] + 1, updated_at=now))
+        if changes.get('state') in ('ready', 'in_progress', 'reconciliation_required'):
+            # New work for the worker (a fax to send again) or the poller (a status to read).
+            from .outbound_wake import wake
+            wake.notify()
 
     def claim(self, owner, *, now=None, lease_seconds=30):
         if not isinstance(owner, str) or not owner or len(owner) > 40 or not 1 <= lease_seconds <= 300:
             raise ValueError('Invalid delivery worker claim.')
+        # Idle: no fax is ready (alone or waiting for others), so no lock and no configuration read.
+        if not self._any(sa.select(self.deliveries.c.id).where(self.deliveries.c.state == 'ready')):
+            return None
         with self.configuration._locked() as connection:
             now = datetime.utcnow() if now is None else now
             if not self._enabled(connection):
@@ -600,8 +631,11 @@ class OutboundStore:
                 attempt_id=claim.attempt_id, details={'category': category})
 
     def recover_expired(self, *, now=None):
+        now = datetime.utcnow() if now is None else now
+        if not self._any(sa.select(self.deliveries.c.id).where(
+                self.deliveries.c.state.in_(['preparing', 'submitting']), self.deliveries.c.claim_expires_at <= now)):
+            return 0
         with self.configuration._locked() as connection:
-            now = datetime.utcnow() if now is None else now
             rows = connection.execute(sa.select(self.deliveries).where(
                 self.deliveries.c.state.in_(['preparing', 'submitting']), self.deliveries.c.claim_expires_at <= now)).mappings().all()
             for row in rows:

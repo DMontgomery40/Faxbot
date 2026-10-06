@@ -52,13 +52,8 @@ class OutboundPoller:
         return True
 
     async def run(self):
-        while True:
-            try:
-                worked = await self.step()
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                logging.getLogger(__name__).warning('Provider status refresh is temporarily unavailable.')
-                worked = False
-            if not worked:
-                await asyncio.sleep(self.interval)
+        """Read statuses at once while some are due; when idle, back off up to 10 s, and wake on new work."""
+        from .outbound_wake import LONGEST_SECONDS, IdleBackoff, idle_loop
+        await idle_loop(self.step, backoff=IdleBackoff(self.interval, max(self.interval, LONGEST_SECONDS)),
+                        warning='Provider status refresh is temporarily unavailable.',
+                        logger=logging.getLogger(__name__))

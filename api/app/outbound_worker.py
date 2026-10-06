@@ -100,14 +100,7 @@ class OutboundWorker:
         return True
 
     async def run(self):
-        while True:
-            try:
-                worked = await self.step()
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                # No provider payload, recipient, URL, credentials or traceback.
-                logging.getLogger(__name__).warning('Delivery worker operation requires recovery.')
-                worked = False
-            if not worked:
-                await asyncio.sleep(self.interval)
+        """Claim work at once after work; when idle, back off up to 10 s, and start at once on a new fax."""
+        from .outbound_wake import LONGEST_SECONDS, IdleBackoff, idle_loop
+        await idle_loop(self.step, backoff=IdleBackoff(self.interval, max(self.interval, LONGEST_SECONDS)),
+                        warning='Delivery worker operation requires recovery.', logger=logging.getLogger(__name__))
