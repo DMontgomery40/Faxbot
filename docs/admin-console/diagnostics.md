@@ -39,6 +39,6 @@ faxbot system diagnostics engine registrations|contacts|calls|faxes
 
 - `POST /admin/diagnostics/report` runs every check now; `GET` returns the last results without contacting anything.
 - `GET /admin/diagnostics/engine/{view}` shows what the fax engine reports (**System → Developer → Scripts & checks**).
-- `GET /health/ready` is the shared readiness check the Overview uses.
+- `GET /admin/health-status` is the readiness the Overview shows. `GET /health/ready` is the public readiness check: it answers 200 when the installation is ready for what it is set up to do (sending, receiving or both) and 503 otherwise, and the Overview reads its fax engine sentence from it.
 - `GET /admin/db-status` feeds the **Database** card.
 - `POST /admin/restart` is the optional restart request.
