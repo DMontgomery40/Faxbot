@@ -124,6 +124,6 @@ def _amount(figure):
 
 
 def _sentence(best, current, chosen):
-    which = 'the route you chose for it' if chosen else 'which Faxbot uses now'
-    return (f'Over the last {WINDOW_DAYS} days, {route_label(best.route)} cost {_amount(best)} per delivered fax '
-            f'to this number. {route_label(current.route)}, {which}, cost {_amount(current)}.')
+    which = 'which you chose' if chosen else 'which Faxbot uses now'
+    return (f'{route_label(best.route)} cost {_amount(best)} per delivered fax to this number over the last '
+            f'{WINDOW_DAYS} days. {route_label(current.route)}, {which}, cost {_amount(current)}.')

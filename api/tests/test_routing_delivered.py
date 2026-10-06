@@ -279,8 +279,8 @@ async def test_the_worker_sends_by_the_route_that_cost_less_per_delivered_fax(mu
     assert [(item['number'], item['current']['route'], item['suggested']['route']) for item in advice] == [
         (number, 'signalwire', 'phaxio')]
     assert advice[0]['chosen_by_you'] is True and advice[0]['saving_per_fax'] == {'currency': 'USD', 'amount': '0.165'}
-    assert advice[0]['sentence'] == ('Over the last 30 days, Phaxio cost about $0.21 per delivered fax to this '
-                                     'number. SignalWire, the route you chose for it, cost $0.38.')
+    assert advice[0]['sentence'] == ('Phaxio cost about $0.21 per delivered fax to this number over the last 30 '
+                                     'days. SignalWire, which you chose, cost $0.38.')
     routes.update_destination(number, preferred_route=None)
     assert sending_recommendations(routes, revision, 'phaxio') == []
 
