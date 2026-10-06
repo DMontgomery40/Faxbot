@@ -25,7 +25,7 @@ Note on branding: New Phaxio signups and dashboards may redirect to Sinch. That 
 
 ### 2. Configure Faxbot
 
-On an existing installation, open Settings or Setup, select Phaxio for outbound and fill in the credential and address fields. Apply only the changes you mean. If Faxbot asks for a restart, stop every API process and start the installation again. An empty outbound or inbound override uses the default provider.
+On an existing installation, open **System → Setup** or **Providers → Phaxio**, select Phaxio for outbound and fill in the credential and address fields. Apply the changes you want. If Faxbot asks for a restart, stop every API process and start the installation again. An empty outbound or inbound override uses the default provider.
 
 The following `.env` values only apply when a new installation starts for the first time; later edits are not imported:
 
@@ -44,7 +44,7 @@ API_KEY=your_secure_api_key   # Optional but recommended; used as X-API-Key
 - Note: PUBLIC_API_URL must be reachable by Phaxio to fetch PDFs.
 - For production, set `ENFORCE_PUBLIC_HTTPS=true` to require HTTPS (recommended). For local testing, leave it false.
 
-Sinch v3 vs legacy Phaxio: If you prefer Sinch’s Fax API v3 “direct upload” flow, use the separate `sinch` backend instead (see SINCH_SETUP.md). This guide covers the classic Phaxio-style flow where the provider fetches your PDF via a tokenized URL and posts status to `/phaxio-callback`.
+If you prefer Sinch’s Fax API v3 direct-upload flow, use the separate Sinch backend instead; see [Sinch setup](sinch.md). This guide covers the Phaxio flow where the provider fetches your PDF from your public address and posts status to `/phaxio-callback`.
 
 ### 3. Start the API
 
@@ -99,17 +99,12 @@ How this works: you talk to the Faxbot API (your local/server endpoint). Faxbot 
 
 ### 5. Configure callback (optional but recommended)
 
-- Phaxio will POST status to your callback URL (`PHAXIO_CALLBACK_URL` or `PHAXIO_STATUS_CALLBACK_URL`).
-- Faxbot adds `job_id` and `attempt_id` query locators to the URL submitted to Phaxio. A locator alone does not authenticate a callback: the signature, captured provider account, attempt and provider fax ID must also match.
-- Ensure your PUBLIC_API_URL and callback URL are reachable from Phaxio.
-- Obtain the account Callback Token from Phaxio's callback settings and set `PHAXIO_CALLBACK_TOKEN`; `PHAXIO_API_SECRET` remains the send/status API credential. Faxbot verifies `X-Phaxio-Signature` as lowercase hexadecimal HMAC-SHA1 over the exact captured callback URL/query, stably name-sorted form fields and file-part SHA1 digests. See [the outbound callback contract](webhooks.md#outbound-status-phaxio).
-- A job captured with `PHAXIO_VERIFY_SIGNATURE=false` disables outbound callback updates by rejecting them; it does not accept unsigned updates. Status polling still uses its captured original API credentials when its provider fax ID is known. Later configuration changes do not replace a previously accepted job's captured callback token, URL or verification setting.
-- Optional retention: set `ARTIFACT_TTL_DAYS>0` to automatically delete PDFs after the specified number of days (cleanup runs daily by default).
+In **Providers → Phaxio**, leave **Address for Phaxio status updates** empty to use Faxbot's public address, or enter a reachable HTTPS address. Enter the account's **Callback Token** and keep **Check that status updates come from Phaxio** on. If signature checks are off, Faxbot ignores status callbacks and checks status with Phaxio instead. Phaxio must be able to reach the callback address.
 
 ## Costs & HIPAA
 
 - Phaxio pricing: see their site for per-page costs.
-- HIPAA information (BAA): https://www.phaxio.com/docs/security/hipaa
+- HIPAA information and BAA: see [Phaxio's HIPAA documentation](https://www.phaxio.com/docs/security/hipaa).
 
 ## Security Notes
 
@@ -125,14 +120,14 @@ How this works: you talk to the Faxbot API (your local/server endpoint). Faxbot 
 
 ## Troubleshooting
 
-- "phaxio not configured": verify `FAX_BACKEND=phaxio` and both API key/secret.
+- "Phaxio not configured": check **Providers → Phaxio** and enter the API key and API secret.
 - No callback updates: confirm the captured callback URL/query, public reachability, account Callback Token and `PHAXIO_VERIFY_SIGNATURE=true`. Polling can still report status from the captured original account.
 - 403 when fetching PDF: token mismatch or expired URL.
 - See docs/TROUBLESHOOTING.md for more.
 
 ## Related: Sinch Fax API v3
 
-Phaxio is part of Sinch. If your console shows Sinch and you prefer the v3 API’s direct upload model (and features like their own webhooks), use the `sinch` backend. See SINCH_SETUP.md. Your existing Phaxio credentials typically work as Sinch API credentials; you will also need the Sinch Project ID.
+Phaxio is part of Sinch. For the v3 API's direct-upload model, use the Sinch backend; see [Sinch setup](sinch.md). You will also need the Sinch Project ID.
 
 ## Receiving faxes
 

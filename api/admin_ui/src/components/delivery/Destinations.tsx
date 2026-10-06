@@ -19,6 +19,9 @@ function routeSummary(destination: Destination): string {
   return destination.routes.map((route) => `${route.label}: ${formatPercent(route.success_percent)}`).join(' · ');
 }
 
+// One sentence for the calls-at-once choice on a recipient's details.
+export const CALLS_AT_ONCE_HELP = 'Other faxes to this number wait until a call ends, so they never reach a busy line.';
+
 // Each route's cost per delivered fax, the cheapest first: "Telnyx: $0.0089 · HumbleFax: Included in your plan".
 export function deliveredSummary(destination: Destination): string {
   const routes = destination.delivered_costs ?? [];
@@ -84,6 +87,8 @@ export function DestinationDialog({ client, number, canWrite, onClose, onSaved }
   const [notes, setNotes] = useState('');
   const [preferred, setPreferred] = useState('');
   const [references, setReferences] = useState(false);
+  // '' is the default (one call at a time); '0' means no limit.
+  const [callsAtOnce, setCallsAtOnce] = useState('');
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
 
@@ -99,6 +104,7 @@ export function DestinationDialog({ client, number, canWrite, onClose, onSaved }
       setNotes(loaded.notes ?? '');
       setPreferred(loaded.preferred_route ?? '');
       setReferences(loaded.accepts_references);
+      setCallsAtOnce(loaded.max_calls === null || loaded.max_calls === undefined ? '' : String(loaded.max_calls));
     }).catch((failure) => current && setError(failure));
     return () => { current = false; };
   }, [client, number]);
@@ -110,7 +116,8 @@ export function DestinationDialog({ client, number, canWrite, onClose, onSaved }
     try {
       await client.updateDestination(detail.number, {
         display_name: name.trim() || null, notes: notes.trim() || null, preferred_route: preferred || null,
-        accepts_references: references, version: detail.version,
+        accepts_references: references, max_calls: callsAtOnce === '' ? null : Number(callsAtOnce),
+        version: detail.version,
       });
       onSaved();
     } catch (failure) {
@@ -164,6 +171,13 @@ export function DestinationDialog({ client, number, canWrite, onClose, onSaved }
             disabled={!canWrite}>
             <option value="">Cheapest reliable route</option>
             {options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+          </TextField>
+          <TextField select fullWidth margin="normal" label="Calls at once to this number" value={callsAtOnce}
+            onChange={(e) => setCallsAtOnce(e.target.value)} SelectProps={{ native: true }} InputLabelProps={{ shrink: true }}
+            helperText={CALLS_AT_ONCE_HELP} disabled={!canWrite}>
+            <option value="">One at a time (most fax machines)</option>
+            {[2, 3, 4, 5, 10].map((count) => <option key={count} value={String(count)}>{count} at once</option>)}
+            <option value="0">No limit</option>
           </TextField>
           <TextField fullWidth margin="normal" label="Notes" value={notes} onChange={(e) => setNotes(e.target.value)}
             multiline minRows={2} disabled={!canWrite} />
@@ -225,7 +239,7 @@ export default function Destinations({ client, destinations, canWrite, onChanged
                 <Typography variant="subtitle1">{destination.display_name || destination.number}</Typography>
                 {destination.display_name && <Typography variant="body2" color="text.secondary">{destination.number}</Typography>}
                 <Typography variant="body2" sx={{ mt: 1 }}>{routeSummary(destination)}</Typography>
-                <Typography variant="body2" color="text.secondary">Last 30 days: {formatMoneyList(destination.estimated_cost_30_days)}</Typography>
+                <Typography variant="body2" color="text.secondary">Last 30 days: {formatMoneyList(destination.estimated_cost_30_days, 'None yet')}</Typography>
                 {(destination.delivered_costs ?? []).length > 0 && (
                   <Typography variant="body2" color="text.secondary">Per delivered fax: {deliveredSummary(destination)}</Typography>
                 )}
@@ -260,7 +274,7 @@ export default function Destinations({ client, destinations, canWrite, onChanged
                     {destination.display_name && <Typography variant="caption" color="text.secondary">{destination.number}</Typography>}
                   </TableCell>
                   <TableCell>{routeSummary(destination)}</TableCell>
-                  <TableCell>{formatMoneyList(destination.estimated_cost_30_days)}</TableCell>
+                  <TableCell>{formatMoneyList(destination.estimated_cost_30_days, 'None yet')}</TableCell>
                   <TableCell>{deliveredSummary(destination)}</TableCell>
                   <TableCell>{preferredText(destination)}</TableCell>
                   <TableCell>{partnerText(destination, partners)}</TableCell>

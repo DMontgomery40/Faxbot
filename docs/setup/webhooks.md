@@ -59,7 +59,7 @@ When there is no `file` part, Faxbot downloads `GET https://api.phaxio.com/v2.1/
 ### Sinch Fax API v3 {#inbound-sinch-fax-api-v3}
 
 - Endpoint: `POST /sinch-inbound`
-- Basic auth: `SINCH_INBOUND_BASIC_USER` and `SINCH_INBOUND_BASIC_PASS`. HMAC: `X-Sinch-Signature` with `SINCH_INBOUND_HMAC_SECRET`.
+- Basic auth: `SINCH_INBOUND_BASIC_USER` and `SINCH_INBOUND_BASIC_PASS`. Sinch Fax API v3 does not sign webhooks. Unless both Basic auth values are set, Faxbot confirms the fax with Sinch's API before recording it.
 - With neither set, Faxbot looks the fax up with `GET /v3/projects/{projectId}/faxes/{id}` before recording it. It downloads the document from `/file`.
 
 A shortened example of an incoming fax event:
@@ -82,7 +82,7 @@ A shortened example of an incoming fax event:
 }
 ```
 
-Faxbot uses an attached `file` only when basic auth or HMAC authenticated the event.
+Faxbot uses an attached `file` only when Basic auth authenticated the event.
 
 ### SIP/Asterisk (self-hosted) {#inbound-sipasterisk-selfhosted}
 

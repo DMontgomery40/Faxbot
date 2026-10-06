@@ -491,7 +491,7 @@ async def test_the_watcher_runs_the_whole_check_with_the_running_installation(mo
 class StandInRouter:
     """Stands in for port_mapping.Router: records what Faxbot asked; the wire format is in test_port_mapping.py."""
     opened, renewed, closed = [], [], []
-    external, refuse = '198.51.100.7', False
+    external, refuse, silent = '198.51.100.7', False, False
 
     def __init__(self, gateway, **_):
         self.gateway = gateway
@@ -510,13 +510,14 @@ class StandInRouter:
 
     def close(self, lease):
         StandInRouter.closed.append((lease.gateway, lease.first, lease.last))
+        return not StandInRouter.silent
 
 
 @pytest.fixture
 def stand_in_router(monkeypatch):
     from app import port_mapping
     StandInRouter.opened, StandInRouter.renewed, StandInRouter.closed = [], [], []
-    StandInRouter.external, StandInRouter.refuse = '198.51.100.7', False
+    StandInRouter.external, StandInRouter.refuse, StandInRouter.silent = '198.51.100.7', False, False
     monkeypatch.setattr(port_mapping, 'Router', StandInRouter)
     return StandInRouter
 
@@ -620,6 +621,64 @@ def test_a_router_that_refuses_or_sits_behind_another_router_gets_the_forward_to
     body = _check(client)
     assert (body['why'], body['shared_address']) == ('behind_another_router', False)
     assert body['fix_text'].startswith('Forward UDP ports 4000–4039 on the router in front of yours too')
+    # Review round 4: a router that does not say its internet address, with the provider's shared address on the
+    # way out, opened ports that lead nowhere; the verdict was OPEN.
+    network['row'] = SHARED_ISP
+    stand_in_router.external, stand_in_router.closed = None, []
+    body = _check(client)
+    assert (body['t38'], body['why'], body['router_state'], body['shared_address']) == (
+        BLOCKED, 'shared_address', 'behind_another_router', True)
+    assert stand_in_router.closed == [('192.168.1.1', 4000, 4039)]
+    assert sip_network.read_lease(_values(client)) is None
+
+
+def test_ports_the_router_opened_never_outweigh_the_providers_shared_address():
+    changing = probe(4000, 61001, 61002)
+    assert sip_network.verdict(changing, 'changed_per_destination', True, mapped={'state': 'open'}) == (
+        BLOCKED, 'shared_address')
+    assert sip_network.verdict(changing, 'changed_per_destination', False, mapped={'state': 'open'}) == (
+        OPEN, 'router_mapped')
+    # A T.38 fax that went through is still the strongest evidence.
+    assert sip_network.verdict(changing, 'changed_per_destination', True, observed={'t38_ok': True},
+                               mapped={'state': 'open'}) == (OPEN, 't38_worked')
+
+
+def test_one_stun_answer_alone_never_says_ports_are_kept():
+    """Review round 4: one answering server that saw the local port made the verdict OPEN."""
+    one = probe(4000, 4000, None)  # stun.cloudflare.com did not answer
+    check = sip_network.assess(values(), one, LINUX_LAN[0])
+    assert (check['ports'], check['t38'], check['why'], check['unanswered']) == (
+        'kept_once', UNKNOWN, 'one_server', ['stun.cloudflare.com:3478'])
+    assert sip_network.verdict_text(check, 'Telnyx') == (
+        'Faxbot heard back from only one of the two servers it asks for its internet address, so it cannot tell yet '
+        'whether your network keeps port numbers, which fax over IP (T.38) needs.')
+    assert sip_network.fix(check)['text'] == ('If a firewall limits outgoing traffic, let Faxbot reach '
+                                              'stun.cloudflare.com on UDP port 3478.')
+    other = stun.Probe(public_ip='198.51.100.7', local_ip='172.18.0.5', local_port=4000,
+                       mapped=(('stun.cloudflare.com:3478', 4000), ('stun.l.google.com:19302', None)))
+    assert sip_network.fix(sip_network.assess(values(), other, LINUX_LAN[0]))['text'].endswith(
+        'reach stun.l.google.com on UDP port 19302.')
+    # On Colima the advice is still about the firewall, never to recreate the machine.
+    colima = sip_network.assess(values(), one, Discovery(lima=True, **APPLE))
+    assert colima['why'] == 'one_server' and 'colima' not in str(sip_network.fix(colima)).lower()
+    # Two agreeing answers still say the network keeps port numbers.
+    assert sip_network.assess(values(), probe(4000, 4000, 4000), LINUX_LAN[0])['why'] == 'ports_kept'
+
+
+def test_one_stun_answer_leaves_t38_alone_unless_the_router_opens_the_ports(client, network, stand_in_router):
+    network['row'] = (LINUX_LAN[0], probe(4000, 4000, None))
+    before = _t38(client)
+    assert client.post('/admin/sip/apply', headers=ADMIN).status_code == 200
+    report = client.get('/admin/sip/network', headers=ADMIN).json()
+    assert (report['t38'], report['why'], report['action']) == (UNKNOWN, 'one_server', None)
+    assert _t38(client) is before
+    assert client.get('/admin/sip/status', headers=ADMIN).json()['ports_text'] == (
+        'No ports need to be opened or forwarded.')
+    # With Faxbot's fax ports published, the router opens them 1:1, which settles the doubt.
+    _publish_fax_ports(client)
+    body = _check(client)
+    assert (body['t38'], body['why'], body['router_state']) == (OPEN, 'router_mapped', 'open')
+    assert stand_in_router.opened == [('192.168.1.1', 4000, 4039)]
 
 
 def test_nothing_is_asked_of_the_router_when_ports_are_kept_or_not_published(client, network, stand_in_router):
@@ -635,6 +694,26 @@ def test_nothing_is_asked_of_the_router_when_ports_are_kept_or_not_published(cli
     network['row'] = COLIMA_SHARED
     assert _check(client)['router_state'] == 'no_router'
     assert stand_in_router.opened == []
+
+
+def test_router_ports_stay_on_record_when_the_router_does_not_answer_at_stop(client, network, stand_in_router):
+    """Review round 4: the lease was forgotten although the router never closed the ports."""
+    network['row'] = LINUX_LAN_CHANGES
+    _publish_fax_ports(client)
+    assert client.post('/admin/sip/apply', headers=ADMIN).status_code == 200
+    stand_in_router.silent = True
+    assert sip_network.close_router_ports(_values(client)) is False
+    assert sip_network.read_lease(_values(client)) is not None  # the next check closes or reuses them
+    stand_in_router.silent = False
+    assert sip_network.close_router_ports(_values(client)) is True
+    assert sip_network.read_lease(_values(client)) is None
+    # A lease whose lifetime is over is forgotten either way: the router has dropped those ports itself.
+    from app.port_mapping import Lease
+    sip_network._keep_lease(_values(client), Lease('natpmp', '192.168.1.1', 4000, 4039, '198.51.100.7', 3600,
+                                                   time.time() - 3700))
+    stand_in_router.silent = True
+    assert sip_network.close_router_ports(_values(client)) is False
+    assert sip_network.read_lease(_values(client)) is None
 
 
 def test_the_router_ports_are_renewed_and_closed_when_faxbot_stops(client, network, stand_in_router):
@@ -660,6 +739,116 @@ def test_the_router_ports_are_renewed_and_closed_when_faxbot_stops(client, netwo
     assert sip_network.read_lease(_values(client)) is None
 
 
+def _keep_for_a_while(runtime, seconds=0.4):
+    async def run():
+        task = asyncio.create_task(sip_network.keep_router_ports(runtime, idle=0.05))
+        await asyncio.sleep(seconds)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    asyncio.run(run())
+
+
+def test_renewing_the_router_ports_asks_the_router_only_and_a_permanent_lease_is_never_renewed(
+        client, network, stand_in_router, monkeypatch):
+    """Review round 4: a permanent UPnP lease made a full network check (STUN, traceroute, DNS) every minute."""
+    network['row'] = LINUX_LAN_CHANGES
+    _publish_fax_ports(client)
+    assert client.post('/admin/sip/apply', headers=ADMIN).status_code == 200
+    runtime = client.app.state.configuration_runtime
+    checks = []
+
+    async def counted(*args, **kwargs):
+        checks.append(kwargs)
+    monkeypatch.setattr(sip_network, 'run_check', counted)
+    # Due for renewal: the router extends the lease, and nothing else runs.
+    lease = sip_network.read_lease(_values(client))
+    lease.granted_at -= lease.lifetime
+    sip_network._keep_lease(_values(client), lease)
+    _keep_for_a_while(runtime)
+    assert stand_in_router.renewed == [(4000, 4039)] and checks == []
+    # Stopping closes the ports and forgets the lease; each case below starts from its own lease.
+    from app.port_mapping import Lease
+    assert sip_network.read_lease(_values(client)) is None
+    # A router that keeps only permanent mappings: the lease is never due, so neither the router nor the network
+    # is asked again while Faxbot runs.
+    stand_in_router.renewed.clear()
+    sip_network._keep_lease(_values(client), Lease('upnp', '192.168.1.1', 4000, 4039, '198.51.100.7', 0, 0.0))
+    assert sip_network.read_lease(_values(client)).renew_at == float('inf')
+    _keep_for_a_while(runtime)
+    assert stand_in_router.renewed == [] and checks == []
+    # A router that refuses to extend a lease: one full check decides whether to open the ports again.
+    sip_network._keep_lease(_values(client), Lease('natpmp', '192.168.1.1', 4000, 4039, '198.51.100.7', 3600, 0.0))
+    monkeypatch.setattr(StandInRouter, 'renew', lambda self, lease, **_: None)
+    _keep_for_a_while(runtime, 0.2)
+    assert len(checks) >= 1 and checks[0] == {'unattended': True}
+    assert sip_network.read_lease(_values(client)) is None
+
+
+def test_apply_opens_router_ports_under_the_same_lock_as_every_network_check(client, network, stand_in_router,
+                                                                            monkeypatch):
+    """Review round 4: Apply repeated the check outside its lock, so two port openings could race."""
+    import contextlib
+    network['row'] = LINUX_LAN_CHANGES
+    _publish_fax_ports(client)
+    order = []
+    original_map = sip_network.map_ports
+
+    @contextlib.asynccontextmanager
+    async def recorded_lock():
+        order.append('locked')
+        try:
+            yield
+        finally:
+            order.append('released')
+
+    def recorded_map(*args, **kwargs):
+        order.append('map_ports')
+        return original_map(*args, **kwargs)
+    monkeypatch.setattr(sip_network, 'check_lock', recorded_lock)
+    monkeypatch.setattr(sip_network, 'map_ports', recorded_map)
+    assert client.post('/admin/sip/apply', headers=ADMIN).status_code == 200
+    assert order == ['locked', 'map_ports', 'released'] and stand_in_router.opened == [('192.168.1.1', 4000, 4039)]
+
+
+def test_a_check_that_finds_calls_up_leaves_the_restart_for_the_opened_ports_waiting_for_them(
+        client, network, stand_in_router, monkeypatch):
+    """Like the T.38 switch: Asterisk names the opened ports once no call is up, not only at the next Apply."""
+    network['row'] = LINUX_LAN_CHANGES
+    _publish_fax_ports(client)
+    waiting = []
+
+    async def busy(values):
+        return {'ok': True, 'engine': 'busy', 'message': sip_http.SAVED_BUSY}
+    monkeypatch.setattr(sip_http, '_load_into_engine', busy)
+    monkeypatch.setattr(sip_trunk, 'engine_managed', lambda values: True)
+    monkeypatch.setattr(sip_fax_mode, 'reload_later', waiting.append)
+    runtime = client.app.state.configuration_runtime
+    outcome = asyncio.run(sip_network.run_check(runtime))
+    assert outcome['check']['why'] == 'router_mapped' and outcome['switched'] is None
+    assert (outcome['engine']['engine'], outcome['engine']['waiting']) == ('busy', True)
+    assert outcome['engine']['message'] == 'Saved. Asterisk loads the new settings as soon as no call is up.'
+    assert waiting == [runtime]
+
+
+def test_unattended_checks_reuse_the_last_look_at_the_host(client, network, monkeypatch):
+    network['row'] = LINUX_LAN
+    asked = []
+    original = sip_network.discover
+
+    async def recorded(*, fresh=False):
+        asked.append(fresh)
+        return await original(fresh=fresh)
+    monkeypatch.setattr(sip_network, 'discover', recorded)
+    assert client.post('/admin/sip/apply', headers=ADMIN).status_code == 200
+    runtime = client.app.state.configuration_runtime
+    asked.clear()
+    asyncio.run(sip_network.run_check(runtime, unattended=True))
+    assert asked == [False]
+    asyncio.run(sip_network.run_check(runtime))  # Check again looks afresh
+    assert asked == [False, True]
+
+
 def test_the_media_ports_record_is_read_only_when_well_formed(tmp_path):
     settings = values(FAX_DATA_DIR=str(tmp_path))
     path = sip_network.media_ports_path(settings)
@@ -668,3 +857,8 @@ def test_the_media_ports_record_is_read_only_when_well_formed(tmp_path):
                            ('{"media_ports": "80-90"}', None), ('not json', None)):
         path.write_text(text)
         assert sip_network.read_media_ports(settings) == expected
+    # Review round 4: the widths asterisk/start.sh accepts, checked here too (Faxbot asks the router port by port).
+    for ports, expected in (('4000-4004', None), ('4000-4005', (4000, 4005)), ('4000-5999', (4000, 5999)),
+                            ('4000-6000', None), ('1024-65535', None)):
+        path.write_text(json.dumps({'media_ports': ports}))
+        assert sip_network.read_media_ports(settings) == expected, ports

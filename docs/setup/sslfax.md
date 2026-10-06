@@ -4,7 +4,7 @@ Faxbot can send pages faster when the recipient's fax machine supports SSL Fax. 
 
 ## Let other fax machines connect
 
-1. In **Providers → Carrier trunk**, leave **Send pages faster when the other fax machine can (recommended)** on. Set **Router port for faster faxes** to the port you want to use; the default is `10443`.
+1. In **Providers**, open the page for your carrier trunk. Leave **Send pages faster when the other fax machine can (recommended)** on. Set **Router port for faster faxes** to the port you want to use; the default is `10443`.
 2. Start Faxbot with the SSL Fax Compose file:
 
    ```bash

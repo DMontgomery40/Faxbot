@@ -100,6 +100,15 @@ def test_every_prompt_states_who_reads_faxbot_docs(autopilot):
     assert 'Developer internals in an operator guide' in audit
 
 
+def test_every_prompt_checks_screen_paths_against_the_console_navigation(autopilot):
+    """Audits that checked labels alone left guides naming console areas that had been renamed."""
+    rule = autopilot.SCREEN_PATH_RULE
+    assert 'api/admin_ui/src/navigation.tsx' in rule and '**Costs → Prices & plans**' in rule
+    review = autopilot.proposal_prompt(autopilot.review_context('HEAD~1'))
+    audit = autopilot.audit_prompt(['docs/guide.md'], ['docs/guide.md'], set(), 'f' * 40)
+    assert rule in review and rule in audit
+
+
 # -- read-only tools and their guard ------------------------------------------------------------------------
 
 @pytest.mark.parametrize('path', ['.env', 'api/../.env', '.env.production', '.local-handoff/brief.md',

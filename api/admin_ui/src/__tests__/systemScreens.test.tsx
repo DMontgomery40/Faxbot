@@ -139,6 +139,15 @@ describe('Logs in plain words', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Show matching entries' }));
     await waitFor(() => expect(screen.queryByText('job_sent')).toBeNull());
     expect(screen.getByText('job_failed')).toBeTruthy();
+    // Times in local time; one entry reads as labelled lines, with the raw entry only behind the developer switch.
+    expect(document.body.textContent).not.toContain('2026-10-04T15:00:00Z');
+    fireEvent.click(screen.getByText('job_failed'));
+    const lines = await screen.findByTestId('log-entry-lines');
+    expect(lines.textContent).toContain('Providersinch');
+    expect(lines.textContent).toContain(`Time${new Date('2026-10-04T15:00:00Z').toLocaleString()}`);
+    expect(screen.queryByTestId('log-entry-raw')).toBeNull();
+    fireEvent.click(screen.getByLabelText('Show all recorded details'));
+    expect(screen.getByTestId('log-entry-raw').textContent).toContain('"path": "/fax"');
   });
 });
 

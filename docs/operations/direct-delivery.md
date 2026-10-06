@@ -23,7 +23,7 @@ Faxbot creates this installation's keys the first time you show your card. They 
 
 Both organizations do these steps, each for the other.
 
-1. In **Tools → Delivery routes → Direct partners**, select **Show our card** and send the card to the other organization. The card holds your organization name, fax number, address and public keys. It contains no secrets.
+1. In **Recipients → Partners**, select **Show our card** and send the card to the other organization. The card holds your organization name, fax number, address and public keys. It contains no secrets.
 2. When their card arrives, select **Add partner** and paste it. Faxbot checks the card's signature.
 3. Select **Send code by fax** next to the partner. Faxbot faxes a one-page code to the partner's fax number.
 4. The partner reads the code from that fax. In their console they select **Confirm a code** next to your organization and enter it. Their Faxbot sends the code back to you, signed with their key.

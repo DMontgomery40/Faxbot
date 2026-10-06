@@ -10,6 +10,7 @@ import type { PublishedPlans, RateCard } from '../../api/deliveryTypes';
 import { ConfirmDialog, EmptyState, Field, FormDialog, useSmallScreens } from '../access/AccessViews';
 import { DeliveryError, formatMoney, formatRate } from './shared';
 import { providerLabel } from '../../providerLabels';
+import { formatLocalDate } from '../../api/time';
 
 const BILLING = [
   { value: 1, label: 'Per second' },
@@ -168,7 +169,7 @@ export default function RateCards({ client, cards, canWrite, onChanged }: {
 
   const source = (card: RateCard) => (
     <Typography variant="caption" color="text.secondary">
-      Advertised on {card.captured_on}{card.source_url ? <> · <Link href={card.source_url} target="_blank" rel="noreferrer">source</Link></> : null}
+      Advertised on {formatLocalDate(card.captured_on)}{card.source_url ? <> · <Link href={card.source_url} target="_blank" rel="noreferrer">source</Link></> : null}
     </Typography>
   );
 

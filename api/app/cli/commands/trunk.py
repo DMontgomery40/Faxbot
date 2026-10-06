@@ -6,6 +6,7 @@ import typer
 from .. import state
 from ..errors import CliError
 from ..output import local_time, parse_time
+from ..settings_write import write_settings
 
 trunk = typer.Typer(help='Your own phone line for faxing, to a phone carrier or to your phone system: presets, status and '
                          'recent calls.', no_args_is_help=True)
@@ -121,6 +122,13 @@ def trunk_calls(limit: int = typer.Option(10, '--limit', min=1, max=200, help='H
     state.out().result(result, human)
 
 
+@trunk.command('restart-engine')
+def trunk_restart_engine():
+    """Restart the fast fax service once no fax is being sent or received."""
+    result = state.api().post('/admin/sip/engine/restart')
+    state.out().result(result, lambda out: out.line(result.get('message') or ''))
+
+
 @trunk.command('mode')
 def trunk_mode(mode: str = typer.Argument(..., metavar='t38|audio',
                                           help='t38 (recommended), or audio when T.38 faxes fail on your line.')):
@@ -128,9 +136,7 @@ def trunk_mode(mode: str = typer.Argument(..., metavar='t38|audio',
     if mode not in ('t38', 'audio'):
         raise typer.BadParameter('Use t38 or audio.', param_hint='MODE')
     api = state.api()
-    current = api.get('/admin/settings')
-    saved = api.put('/admin/settings', json={'sip_t38_enabled': mode == 't38',
-                                             'expected_revision_id': current['_meta']['desired_revision_id']})
+    saved = write_settings(api, {'sip_t38_enabled': mode == 't38'})
     applied, _ = _connect(api, wait=False, timeout=0)
     result = {'mode': mode, 'changed': bool(saved.get('changed')), 'applied': bool(applied.get('ok')),
               'engine': applied.get('engine'), 'message': applied.get('message')}
@@ -143,6 +149,36 @@ def trunk_mode(mode: str = typer.Argument(..., metavar='t38|audio',
             out.line(f'New calls use {kind} fax once you restart the Asterisk service.')
         else:
             out.line(f'New calls use {kind} fax. {applied.get("message")}')
+    state.out().result(result, human)
+
+
+@trunk.command('limits')
+def trunk_limits(calls_at_once: int = typer.Option(None, '--calls-at-once', min=0, max=200,
+                                                  help='Calls at once on the trunk; 0 means the same as the fax lines.'),
+                 calls_per_second: int = typer.Option(None, '--calls-per-second', min=0, max=100,
+                                                      help="New calls per second; 0 means your carrier's published "
+                                                           'limit, or no limit.')):
+    """Show or change how many calls the trunk takes at once and how many new calls a second. Faxes beyond them wait for a free line; they never fail for it."""
+    api = state.api()
+    changes = {name: value for name, value in (('sip_trunk_max_calls', calls_at_once),
+                                               ('sip_trunk_calls_per_second', calls_per_second)) if value is not None}
+    if changes:
+        current = api.get('/admin/settings')
+        api.put('/admin/settings', json={**changes, 'expected_revision_id': current['_meta']['desired_revision_id']})
+    trunk = ((api.get('/admin/settings').get('sip') or {}).get('trunk') or {})
+    result = {key: trunk.get(key) for key in ('max_calls', 'calls_per_second', 'max_calls_in_effect',
+                                              'calls_per_second_in_effect', 'carrier_limits')}
+
+    def human(out):
+        lines = result.get('max_calls_in_effect')
+        rate = result.get('calls_per_second_in_effect')
+        out.fields([('Calls at once', f"{lines}" + ('' if result.get('max_calls') else ' (the same as the fax lines)')),
+                    ('New calls per second', f'{rate}' + ('' if result.get('calls_per_second') else
+                                                           " (your carrier's limit)") if rate else 'No limit')])
+        limits = result.get('carrier_limits')
+        if limits:
+            out.line(limits['note'])
+            out.line(f"Read {limits['read_on']}: " + ', '.join(limits['sources']))
     state.out().result(result, human)
 
 
@@ -203,9 +239,7 @@ def network_router_ports(choice: str = typer.Argument(..., metavar='on|off',
     if choice not in ('on', 'off'):
         raise typer.BadParameter('Use on or off.', param_hint='on|off')
     api = state.api()
-    current = api.get('/admin/settings')
-    api.put('/admin/settings', json={'sip_router_ports': choice == 'on',
-                                     'expected_revision_id': current['_meta']['desired_revision_id']})
+    write_settings(api, {'sip_router_ports': choice == 'on'})
     result = api.post('/admin/sip/network/check')
     state.out().result(result, lambda out: _network_lines(out, result))
 
@@ -336,7 +370,7 @@ def trunk_use(preset: str = typer.Argument(..., metavar='PRESET', help='Carrier 
         changes['sip_trunk_dial_format'] = number_format
     if prefix is not None:
         changes['sip_trunk_dial_prefix'] = prefix.strip()
-    result = api.put('/admin/settings', json={**changes, 'expected_revision_id': current['_meta']['desired_revision_id']})
+    result = write_settings(api, changes, current=current)
 
     def human(out):
         kind = 'phone system' if chosen['kind'] == 'phone_system' else 'carrier'

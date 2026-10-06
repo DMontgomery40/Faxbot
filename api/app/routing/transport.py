@@ -13,7 +13,7 @@ from contextlib import AsyncExitStack, asynccontextmanager
 import logging
 
 from ..config_runtime import run_lifecycle_step
-from ..outbound_worker import PreparationFailure
+from ..outbound_worker import CapacityWait, PreparationFailure
 from .plan import RoutePlanner
 from .routes import RouteUnavailable, ensure_route_artifact, route_configuration, route_ready
 from .store import RouteStore
@@ -84,12 +84,29 @@ class RoutedTransport:
                             by_call=bool(job.get('send_by_call')))
         return plan, job, revision
 
+    def _trunk_has_room(self, claim, revision):
+        """Whether the trunk can take this call now (the claim gate covers faxes bound to it; this covers the rest)."""
+        capacity = getattr(self.store, 'capacity', lambda: None)()
+        if capacity is None:
+            return True
+        from datetime import datetime
+        with self.store.configuration.engine.connect() as connection:
+            room = capacity.room(connection, revision.values, datetime.utcnow(),
+                                 exclude=[member.job_id for member in claim.everyone])
+        return not (room.trunk_full or room.rate_full)
+
     def _assign(self, claim, plan, revision):
-        """Bind the first usable provider route; the fax's own provider needs no change."""
+        """Bind the first usable provider route; the fax's own provider needs no change.
+
+        A route over the trunk is used only while the trunk has room; otherwise the
+        fax waits (``CapacityWait``) before any route is bound or anything is sent.
+        """
         for choice in plan.choices:
             route = choice.route
             if route.kind in ('direct', 'local'):
                 return choice, claim
+            if route.provider_id == 'sip' and not self._trunk_has_room(claim, revision):
+                raise CapacityWait()
             if route.bound:
                 return choice, claim
             try:
@@ -130,6 +147,8 @@ class RoutedTransport:
         try:
             plan, job, revision = await run_lifecycle_step(lambda: self._plan(claim))
             choice, assigned = await run_lifecycle_step(lambda: self._assign(claim, plan, revision))
+        except CapacityWait:
+            raise
         except Exception:
             # Route evidence is optional; the accepted provider still works.
             logging.getLogger(__name__).warning('Route choice is unavailable; using the outbound provider.')

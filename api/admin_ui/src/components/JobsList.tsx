@@ -38,6 +38,7 @@ import { FaxTogetherItem, togetherLine } from './delivery/SendingTogether';
 import type { FaxJob, OperatorDelivery, DeliveryHistoryEvent } from '../api/types';
 import type { DirectDeliveryRecord, FaxCost } from '../api/deliveryTypes';
 import { providerLabel } from '../providerLabels';
+import { formatServerTime } from '../api/time';
 
 
 interface JobsListProps {
@@ -164,6 +165,7 @@ function eventDetails(event: DeliveryHistoryEvent): string {
 
 interface DetailSelection { jobId: string }
 
+export const URGENT_TEXT = 'Urgent: it goes before other faxes waiting for the same line.';
 export const BY_CALL_TEXT = 'You asked for a real phone call through your carrier, even if the number is one of your own.';
 
 function routeName(route: string): string {
@@ -260,19 +262,8 @@ function JobsList({ client, openJobId, onOpened, onSendFax }: JobsListProps) {
     }
   };
 
-  const formatDate = (dateString: string) => {
-    try {
-      const naiveUTC = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?$/.test(dateString);
-      const date = new Date(naiveUTC ? `${dateString}Z` : dateString);
-      if (Number.isNaN(date.getTime())
-          || (naiveUTC && date.toISOString().slice(0, 19) !== dateString.slice(0, 19))) {
-        return dateString;
-      }
-      return date.toLocaleString();
-    } catch {
-      return dateString;
-    }
-  };
+  // The shared server-time reading: local time, and a dash rather than a raw date it cannot read.
+  const formatDate = (dateString: string) => formatServerTime(dateString);
 
   const beginDetailAction = (selection: DetailSelection): object | null => {
     if (detailSelectionRef.current !== selection || detailActionRef.current) return null;
@@ -686,6 +677,18 @@ function JobsList({ client, openJobId, onOpened, onSendFax }: JobsListProps) {
                   secondary={<>
                     {routeText(detailJob.backend, costs.get(detailJob.id))}
                     {/* Why Faxbot chose it, as recorded when it chose it. */}
+                    {detailJob.waiting_reason && (
+                      <Typography component="span" variant="body2" color="text.secondary" display="block"
+                        data-testid="job-waiting-reason">
+                        {detailJob.waiting_reason}
+                      </Typography>
+                    )}
+                    {detailJob.urgent && (
+                      <Typography component="span" variant="body2" color="text.secondary" display="block"
+                        data-testid="job-urgent">
+                        {URGENT_TEXT}
+                      </Typography>
+                    )}
                     {detailJob.send_by_call && (
                       <Typography component="span" variant="body2" color="text.secondary" display="block"
                         data-testid="job-by-call">

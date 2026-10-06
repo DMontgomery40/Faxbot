@@ -24,7 +24,7 @@ _EVENT_KINDS = frozenset({'accepted', 'legacy_migrated', 'binding_unavailable',
     'submission_uncertain', 'preparation_failed', 'preparation_expired',
     'provider_observation_refused', 'terminal_conflict', 'late_observation',
     'provider_observed', 'operator_identity_bound', 'route_assigned', 'route_fallback',
-    'sent_together', 'batch_split'})
+    'sent_together', 'batch_split', 'capacity_wait'})
 _CATEGORIES = frozenset({'transport_ambiguous', 'response_unusable', 'submission_cancelled',
     'worker_lost', 'artifact_unavailable', 'provider_unavailable', 'preparation_failed',
     'profile_mismatch', 'sid_mismatch', 'provider_failed', 'partner_not_received',
@@ -124,6 +124,11 @@ def record_acceptance(connection, tables, job_id, *, held, now):
         dispatch_mode=mode, state=state, version=1, created_at=now, updated_at=now))
     _event(connection, tables['outbound_events'], job_id, 'accepted', now,
         details={'dispatch_mode': mode})
+    if state == 'ready':
+        # The idle worker starts at once instead of after its back-off (the worker
+        # re-reads after the commit; a check before it simply finds nothing yet).
+        from .outbound_wake import wake
+        wake.notify()
 
 
 FALLBACK_LIMIT = 2
@@ -320,6 +325,13 @@ class OutboundStore:
         """Reserve a status read, never a submission or replacement attempt."""
         if not 1 <= interval_seconds <= 3600:
             raise ValueError('Invalid delivery polling interval.')
+        # Idle: no status read is due, so no lock. A poll is no lease, so a read that falls due while this
+        # looks is simply taken in the next round; which read is due is decided with the time after the lock.
+        due = datetime.utcnow() if now is None else now
+        if not self._any(sa.select(self.deliveries.c.id).where(
+                self.deliveries.c.state.in_(['in_progress', 'reconciliation_required']),
+                sa.or_(self.deliveries.c.next_poll_at.is_(None), self.deliveries.c.next_poll_at <= due))):
+            return None
         with self.configuration._locked() as connection:
             now = datetime.utcnow() if now is None else now
             row = connection.execute(sa.select(self.deliveries, self.attempts.c.profile_id).join(self.attempts,
@@ -412,34 +424,93 @@ class OutboundStore:
     def _row(self, connection, job_id):
         return connection.execute(sa.select(self.deliveries).where(self.deliveries.c.id == job_id)).mappings().one_or_none()
 
-    def _enabled(self, connection):
+    def _active_values(self, connection):
+        """The active configuration's values, or None before one exists.
+
+        A revision never changes, so its values (key file and decryption) are read once per revision.
+        """
         configuration = self.configuration
         head = configuration._head(connection)
         if head is None:
-            return False
-        active = configuration._revision(connection, configuration._cipher(), head['installation_id'], head['active_revision_id'])
-        return not active.values.fax_disabled
+            return None
+        revision_id = head['active_revision_id']
+        cached = getattr(self, '_values_for', None)
+        if cached is not None and cached[0] == revision_id:
+            return cached[1]
+        values = configuration._revision(connection, configuration._cipher(), head['installation_id'],
+                                         revision_id).values
+        self._values_for = (revision_id, values)
+        return values
+
+    def _enabled(self, connection):
+        values = self._active_values(connection)
+        return values is not None and not values.fax_disabled
+
+    def capacity(self, connection=None):
+        """Room for calls (``capacity.py``), or None before the tables it reads exist.
+
+        Inside the claim's locked transaction pass its ``connection`` so the first
+        reflection reads through it and opens no second connection.
+        """
+        if getattr(self, '_capacity', None) is None:
+            try:
+                from .capacity import for_engine
+                self._capacity = for_engine(self.configuration.engine, connection)
+            except Exception:
+                return None
+        return self._capacity
+
+    def _any(self, query):
+        """True when ``query`` finds a row; a plain read, never the write lock an idle check would queue others behind."""
+        try:
+            with self.configuration.engine.connect() as connection:
+                return connection.execute(query.limit(1)).first() is not None
+        except sa.exc.SQLAlchemyError:
+            from .config_store import ConfigurationStoreError
+            raise ConfigurationStoreError('Configuration transaction could not complete.') from None
 
     def _update(self, connection, row, now, **changes):
         connection.execute(self.deliveries.update().where(self.deliveries.c.id == row['id']).values(
             **changes, version=row['version'] + 1, updated_at=now))
+        if changes.get('state') in ('ready', 'in_progress', 'reconciliation_required'):
+            # New work for the worker (a fax to send again) or the poller (a status to read).
+            from .outbound_wake import wake
+            wake.notify()
 
-    def claim(self, owner, *, now=None, lease_seconds=30):
+    def claim(self, owner, *, now=None, lease_seconds=30, exclude=()):
+        """Claim the next fax that may start a call now; ``exclude`` names faxes the worker is pausing.
+
+        Only a fax whose number, and trunk, have room is claimed (``capacity.py``);
+        the others wait in ``ready`` and never fail for it.
+        """
         if not isinstance(owner, str) or not owner or len(owner) > 40 or not 1 <= lease_seconds <= 300:
             raise ValueError('Invalid delivery worker claim.')
+        # Idle: no fax is ready (alone or waiting for others), so no lock and no configuration read.
+        if not self._any(sa.select(self.deliveries.c.id).where(self.deliveries.c.state == 'ready')):
+            return None
         with self.configuration._locked() as connection:
             now = datetime.utcnow() if now is None else now
-            if not self._enabled(connection):
+            values = self._active_values(connection)
+            if values is None or values.fax_disabled:
                 return None
-            together = self._claim_together_on(connection, owner, now, lease_seconds)
+            capacity = self.capacity(connection)
+            together = self._claim_together_on(connection, owner, now, lease_seconds, capacity=capacity,
+                                               values=values)
             if together is not None:
                 return together
             from .batching.store import waiting_ids
             # A fax waiting to go with others is claimed only with its group.
-            row = connection.execute(sa.select(self.deliveries).where(
-                self.deliveries.c.state == 'ready', self.deliveries.c.dispatch_mode == 'normal',
-                self.deliveries.c.id.not_in(waiting_ids(self._batching(connection)))
-            ).order_by(self.deliveries.c.created_at, self.deliveries.c.id).limit(1)).mappings().one_or_none()
+            waiting = waiting_ids(self._batching(connection))
+            if capacity is not None:
+                row = capacity.next_ready(connection, values, now, waiting=waiting, exclude=exclude)
+            else:
+                query = sa.select(self.deliveries).where(
+                    self.deliveries.c.state == 'ready', self.deliveries.c.dispatch_mode == 'normal',
+                    self.deliveries.c.id.not_in(waiting))
+                if exclude:
+                    query = query.where(self.deliveries.c.id.not_in(list(exclude)))
+                row = connection.execute(query.order_by(self.deliveries.c.created_at, self.deliveries.c.id)
+                                         .limit(1)).mappings().one_or_none()
             if row is None:
                 return None
             return self._claim_row_on(connection, row, owner, now, lease_seconds)
@@ -467,13 +538,15 @@ class OutboundStore:
         _event(connection, self.events, row['id'], 'claimed', now, attempt_id=attempt)
         return DispatchClaim(row['id'], attempt, profile.id, owner, token, expiry)
 
-    def _claim_together_on(self, connection, owner, now, lease_seconds):
+    def _claim_together_on(self, connection, owner, now, lease_seconds, *, capacity=None, values=None):
         """Claim the first due group of waiting faxes as one call; a group of one goes on its own."""
         from .batching import store as batching
         t = self._batching(connection)
         group = batching.due_group_on(connection, t, now)
         if group is None:
             return None
+        if capacity is not None and values is not None and not capacity.group_may_start(connection, values, group, now):
+            return None  # the group waits, still together, until its number (and the trunk) have room
         claims, joined = [], []
         for member in group:
             claim = self._claim_row_on(connection, self._row(connection, member['id']), owner, now, lease_seconds)
@@ -490,6 +563,26 @@ class OutboundStore:
         for claim in claims:
             _event(connection, self.events, claim.job_id, 'sent_together', now, attempt_id=claim.attempt_id)
         return replace(claims[0], members=tuple(claims))
+
+    def defer(self, claim, *, now=None):
+        """Give a claimed fax back to the queue before anything was sent: there is no room for its call yet.
+
+        Nothing fails and nothing is sent; a shared call's faxes wait again, still together.
+        """
+        from .batching.store import return_to_waiting_on
+        now = now or datetime.utcnow()
+        with self.configuration._locked() as connection:
+            for member in claim.everyone:
+                row = self._row(connection, member.job_id)
+                if not self._owns(row, member) or row['state'] != 'preparing':
+                    continue
+                connection.execute(self.attempts.update().where(self.attempts.c.id == member.attempt_id).values(
+                    phase='abandoned', completed_at=now))
+                self._update(connection, row, now, state='ready', claim_owner=None, claim_token=None,
+                             claim_expires_at=None)
+                _event(connection, self.events, member.job_id, 'capacity_wait', now, attempt_id=member.attempt_id)
+                if claim.members:
+                    return_to_waiting_on(connection, self._batching(connection), member.job_id, member.attempt_id, now)
 
     def split_batch(self, claim, *, separate=None, now=None):
         """Undo a shared call before anything was sent; no fax is failed here.
@@ -601,6 +694,11 @@ class OutboundStore:
                 attempt_id=claim.attempt_id, details={'category': category})
 
     def recover_expired(self, *, now=None):
+        # Idle: no fax holds a lease, so no lock. Whether a lease has run out is decided only with the time read
+        # after the lock, so a lease that ends while this waits for the lock is recovered in this round.
+        if not self._any(sa.select(self.deliveries.c.id).where(
+                self.deliveries.c.state.in_(['preparing', 'submitting']))):
+            return 0
         with self.configuration._locked() as connection:
             now = datetime.utcnow() if now is None else now
             rows = connection.execute(sa.select(self.deliveries).where(

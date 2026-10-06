@@ -9,13 +9,13 @@ SignalWire’s “Compatibility” endpoints mimic the old Twilio Fax API. Faxbo
 - Project ID and API Token
 - Public HTTPS URL for callbacks and PDF fetches
 
-## Configure with the Setup Wizard
+## Configure Faxbot
 
-1. Admin Console → **Setup Wizard**
-2. Choose **SignalWire Compatibility**
-3. Enter Space URL, Project ID, API Token, and default From number
-4. Provide your public URL; the wizard computes the MediaUrl that SignalWire fetches
-5. Apply the changed desired fields and inspect active/pending status. Pending changes require every API worker to stop and the installation restart. Existing `.env` edits do not import configuration.
+1. In the Admin Console, open **System → Setup** and choose SignalWire.
+2. Enter the Space URL, Project ID, API Token, and the number to send faxes from.
+3. Apply the changes. Faxbot uses a tokenized PDF URL when it submits a fax; SignalWire must be able to fetch that URL over HTTPS.
+
+To review or change these settings later, open **Providers → SignalWire**. The optional status update address and signing key are there too. Leave the address empty to use Faxbot's public address. If you change settings that require a restart, stop all API workers and restart the installation.
 
 {: .note }
 Need a quick tunnel? Follow [Public Access & Tunnels](public-access.md).

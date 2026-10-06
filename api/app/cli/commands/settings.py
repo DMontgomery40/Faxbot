@@ -2,8 +2,9 @@
 import typer
 
 from .. import profiles, state
-from ..errors import CliError, EXIT_CONFLICT, EXIT_NOT_FOUND
+from ..errors import CliError, EXIT_FAILURE, EXIT_NOT_FOUND
 from ..output import local_time, text
+from ..settings_write import secret_names, secrets_from_stdin, write_settings
 from ...provider_labels import provider_label
 
 
@@ -89,25 +90,33 @@ def settings_set(assignments: list[str] = typer.Argument(None, metavar='NAME=VAL
                  secret: list[str] = typer.Option(None, '--secret', metavar='NAME',
                                                   help='Ask for this setting without showing what you type, for '
                                                        'passwords and provider keys. Repeat for more.'),
+                 secret_stdin: list[str] = typer.Option(None, '--secret-stdin', metavar='NAME',
+                                                        help='Read this password or key from standard input, one '
+                                                             'line each, for scripts. Repeat for more.'),
                  as_text: bool = typer.Option(False, '--text', help='Send every value exactly as typed.')):
-    """Change settings by name, for example max_file_size_mb=20. Faxbot checks the result before saving it."""
-    changes = {}
+    """Change settings by name, for example max_file_size_mb=20. Faxbot checks the result before saving it.
+
+    Passwords and keys are never typed as NAME=VALUE, where they would stay in your shell history: use --secret
+    NAME to type one without showing it, or --secret-stdin NAME to read it from standard input.
+    """
+    changes, typed_secrets, secrets = {}, [], secret_names()
     known = _request_names()
     for item in assignments or []:
         name, separator, raw = item.partition('=')
         if not separator or not name.strip():
             raise CliError(f"Write each setting as NAME=VALUE; '{item}' has no '='.")
         name = name.strip()
+        if known.get(name, name) in secrets:
+            typed_secrets.append(name)  # refused after the .env check, which comes first
         changes[known.get(name, name)] = raw if as_text or name in known else _value(raw)
     for name in secret or []:
         changes[known.get(name, name)] = typer.prompt(f'Value for {name}', hide_input=True, confirmation_prompt=True)
+    for name, value in secrets_from_stdin(secret_stdin).items():
+        changes[known.get(name, name)] = value
     if not changes:
-        raise CliError('Nothing to change. Give NAME=VALUE pairs or --secret NAME.')
+        raise CliError('Nothing to change. Give NAME=VALUE pairs, --secret NAME or --secret-stdin NAME.')
     api = state.api()
-    current = api.get('/admin/settings')
-    if set(changes) & set(current.get('_meta', {}).get('env_managed') or []):
-        raise CliError('This key is set in .env. Change it there, then run docker compose up -d.', EXIT_CONFLICT)
-    result = api.put('/admin/settings', json={**changes, 'expected_revision_id': current['_meta']['desired_revision_id']})
+    result = write_settings(api, changes, typed_secrets=typed_secrets)
 
     def human(out):
         if not result.get('changed'):
@@ -275,11 +284,18 @@ def providers_configure(provider: str = typer.Argument(..., help="Provider from 
                                                                 help='Provider settings to change.'),
                         secret: list[str] = typer.Option(None, '--secret', metavar='NAME',
                                                          help="Prompt for this setting's value without echoing it, for passwords and keys. Repeat for more."),
+                        secret_stdin: list[str] = typer.Option(None, '--secret-stdin', metavar='NAME',
+                                                               help='Read this password or key from standard input, '
+                                                                    'one line each, for scripts. Repeat for more.'),
                         role: str = typer.Option(None, '--role', help='With --enable: outbound (sending), inbound '
                                                                       '(receiving) or storage.'),
                         enable: bool = typer.Option(False, '--enable', help='Use this provider for sending, receiving or storage '
                                                                      '(choose which with --role).')):
-    """Change a provider's settings, or start using it for sending, receiving or storage."""
+    """Change a provider's settings, or start using it for sending, receiving or storage.
+
+    Passwords and keys are never typed as NAME=VALUE, where they would stay in your shell history: use --secret
+    NAME to type one without showing it, or --secret-stdin NAME to read it from standard input.
+    """
     name, fields = _provider_fields(provider)
     known = _request_names()
 
@@ -290,14 +306,18 @@ def providers_configure(provider: str = typer.Argument(..., help="Provider from 
                            'to see them.')
         return known.get(target, target)
 
-    changes = {}
+    changes, typed_secrets = {}, []
     for item in assignments or []:
         key, separator, raw = item.partition('=')
         if not separator or not key.strip():
             raise CliError(f"Write each setting as NAME=VALUE; '{item}' has no '='.")
+        if setting(key.strip()) in secret_names():
+            typed_secrets.append(key.strip())  # refused after the .env check, which comes first
         changes[setting(key.strip())] = raw
     for key in secret or []:
         changes[setting(key)] = typer.prompt(f'Value for {key}', hide_input=True, confirmation_prompt=True)
+    for key, value in secrets_from_stdin(secret_stdin).items():
+        changes[setting(key)] = value
     if enable:
         if role not in _ROLES:
             raise CliError('Add --role outbound, inbound or storage to say what to use it for.')
@@ -305,12 +325,9 @@ def providers_configure(provider: str = typer.Argument(..., help="Provider from 
     elif role is not None:
         raise CliError('--role goes with --enable.')
     if not changes:
-        raise CliError('Nothing to change. Give NAME=VALUE pairs, --secret NAME or --enable.')
+        raise CliError('Nothing to change. Give NAME=VALUE pairs, --secret NAME, --secret-stdin NAME or --enable.')
     api = state.api()
-    current = api.get('/admin/settings')
-    if set(changes) & set(current.get('_meta', {}).get('env_managed') or []):
-        raise CliError('This key is set in .env. Change it there, then run docker compose up -d.', EXIT_CONFLICT)
-    result = api.put('/admin/settings', json={**changes, 'expected_revision_id': current['_meta']['desired_revision_id']})
+    result = write_settings(api, changes, typed_secrets=typed_secrets)
     def human(out):
         out.line('Nothing changed.' if not result.get('changed') else 'Saved. Restart Faxbot to apply it.'
                  if result.get('_meta', {}).get('restart_recommended') else 'Saved and applied.')
@@ -403,12 +420,17 @@ def providers_status():
     result = state.api().get('/admin/health-status')
 
     def human(out):
-        out.fields([('Provider', _provider(result.get('backend'))), ('Ready', result.get('backend_healthy')),
-                    ('Receiving faxes', result.get('inbound_enabled')), ('API keys set up', result.get('api_keys_configured')),
+        out.fields([('Sending provider', _provider(result.get('backend'))), ('Ready to send', result.get('backend_healthy')),
+                    ('Receiving faxes', result.get('inbound_enabled')),
+                    ('Receiving provider', _provider(result.get('receiving_backend'))),
+                    ('Ready to receive', result.get('receiving_ready')),
+                    ('API keys set up', result.get('api_keys_configured')),
                     ('Checked', local_time(result.get('timestamp')))])
         jobs = result.get('jobs')
         if isinstance(jobs, dict):
-            out.table(['Faxes', 'Count'], [[name.replace('_', ' '), count] for name, count in jobs.items()])
+            names = {'waiting_for_line': 'waiting for a free line'}
+            out.table(['Faxes', 'Count'], [[names.get(name, name.replace('_', ' ')), count]
+                                           for name, count in jobs.items()])
     state.out().result(result, human)
 
 
@@ -423,7 +445,11 @@ def health():
         checks = (ready or {}).get('checks', {})
         out.fields([('Server', api.url), ('Answering', (live or {}).get('status') == 'ok'),
                     ('Ready to send', (ready or {}).get('status') == 'ready'),
-                    ('Provider', _provider((ready or {}).get('backend'))), ('Database', checks.get('db')),
+                    ('Ready to receive', (ready or {}).get('ready_to_receive')),
+                    ('Sending provider', _provider((ready or {}).get('backend'))),
+                    ('Receiving provider', _provider((checks.get('inbound') or {}).get('backend')
+                                                     if (checks.get('inbound') or {}).get('enabled') else None)),
+                    ('Database', checks.get('db')),
                     ('Ghostscript', checks.get('ghostscript'))])
         for warning in (ready or {}).get('warnings') or []:
             out.line('Warning: ' + warning)
@@ -431,7 +457,7 @@ def health():
             out.line(ready['message'])
     state.out().result(result, human)
     if (ready or {}).get('status') != 'ready':
-        raise typer.Exit(1)
+        raise typer.Exit(EXIT_FAILURE)  # the result above already says what failed, in --json too
 
 
 @diagnostics.command('database')

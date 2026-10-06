@@ -5,6 +5,7 @@ import {
   FormControl,
   FormControlLabel,
   InputLabel,
+  Link,
   MenuItem,
   Select,
   Stack,
@@ -19,7 +20,7 @@ import type { SipTrunkSettings as TrunkValues } from '../api/sipTypes';
 // Faxbot's fax engines. Each has one plain line and starts at the recommended value; the trunk
 // form saves them with its other fields (sip_t38_error_correction, sip_t38_max_datagram,
 // sip_fax_max_rate, sip_fax_ecm, sip_fax_compression, sip_fax_fine, sip_sslfax_enabled,
-// sip_fax_lines, sip_sslfax_listener_port).
+// sip_fax_lines, sip_sslfax_listener_port, sip_trunk_max_calls, sip_trunk_calls_per_second).
 
 interface FaxSettingsProps {
   form: TrunkValues;
@@ -30,8 +31,29 @@ const Hint = ({ children }: { children: string }) => (
   <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>{children}</Typography>
 );
 
+// A source's read date ('2026-10-06' is a calendar day) in the reader's own words.
+function readDay(day: string): string {
+  const [year, month, date] = day.split('-').map(Number);
+  if (!year || !month || !date) return day;
+  return new Date(year, month - 1, date).toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' });
+}
+
+// One sentence each for the trunk's capacity: what the number does and what 0 means here.
+export function callsAtOnceHint(form: TrunkValues): string {
+  return 'The most faxes Faxbot sends or receives at the same time on your phone line. Others wait their turn. '
+    + `Leave 0 to use the number of fax lines (${form.fax_lines ?? 2}).`;
+}
+
+export function callsPerSecondHint(form: TrunkValues): string {
+  const limit = form.carrier_limits?.calls_per_second;
+  const most = 'The most fax calls Faxbot starts in one second on your phone line. Others wait a moment.';
+  return limit ? `${most} Leave 0 to use ${limit}, the most your carrier takes at no extra cost.`
+    : `${most} Leave 0 for no limit.`;
+}
+
 export default function FaxSettings({ form, update }: FaxSettingsProps) {
-  const number = (key: 't38_max_datagram' | 'fax_lines' | 'sslfax_listener_port', fallback: number) =>
+  const number = (key: 't38_max_datagram' | 'fax_lines' | 'sslfax_listener_port' | 'max_calls' | 'calls_per_second',
+    fallback: number) =>
     (event: React.ChangeEvent<HTMLInputElement>) => {
       const value = Number.parseInt(event.target.value, 10);
       update(key, Number.isFinite(value) ? value : fallback);
@@ -98,6 +120,23 @@ export default function FaxSettings({ form, update }: FaxSettingsProps) {
               inputProps={{ min: 1024, max: 65535 }} onChange={number('sslfax_listener_port', 10443)}
               helperText="Used only after you forward this port on your router to this computer." />
           </Stack>
+
+          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} data-testid="trunk-capacity">
+            <TextField size="small" type="number" label="Calls at once" value={form.max_calls ?? 0}
+              inputProps={{ min: 0, max: 200 }} onChange={number('max_calls', 0)}
+              helperText={callsAtOnceHint(form)} />
+            <TextField size="small" type="number" label="New calls per second" value={form.calls_per_second ?? 0}
+              inputProps={{ min: 0, max: 100 }} onChange={number('calls_per_second', 0)}
+              helperText={callsPerSecondHint(form)} />
+          </Stack>
+          {form.carrier_limits && (
+            <Typography variant="body2" color="text.secondary" data-testid="carrier-limits">
+              {form.carrier_limits.note} Read {readDay(form.carrier_limits.read_on)}:{' '}
+              {form.carrier_limits.sources.map((url, index) => (
+                <span key={url}>{index > 0 && ', '}<Link href={url} target="_blank" rel="noopener noreferrer">{new URL(url).host}</Link></span>
+              ))}.
+            </Typography>
+          )}
 
           <FormControl fullWidth size="small">
             <InputLabel id="t38-correction-label">Protection against lost fax data</InputLabel>

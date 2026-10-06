@@ -68,9 +68,9 @@ An attached file is never used in this mode. Faxbot accepts at most 60 notificat
 
 Set the incoming fax webhook of your Sinch fax service to `PUBLIC_API_URL` followed by `/sinch-inbound`.
 
-When `SINCH_INBOUND_BASIC_USER` and `SINCH_INBOUND_BASIC_PASS`, or `SINCH_INBOUND_HMAC_SECRET` (the `X-Sinch-Signature` header), are set, every notification has to match them. Faxbot then uses a document attached to the notification, as base64 in JSON or as a multipart `file` part.
+When both `SINCH_INBOUND_BASIC_USER` and `SINCH_INBOUND_BASIC_PASS` are set, every notification has to match them. (Sinch Fax API v3 does not sign webhooks, so there is no signature to check.) Faxbot then uses a document attached to the notification, as base64 in JSON or as a multipart `file` part.
 
-When neither is set, Faxbot first looks the fax up in the configured project (`GET /v3/projects/{projectId}/faxes/{id}`). It ignores faxes that project did not receive, and downloads the document from `/v3/projects/{projectId}/faxes/{id}/file`.
+Otherwise, Faxbot first looks the fax up in the configured project (`GET /v3/projects/{projectId}/faxes/{id}`). It ignores faxes that project did not receive, and downloads the document from `/v3/projects/{projectId}/faxes/{id}/file`.
 
 ### Asterisk
 

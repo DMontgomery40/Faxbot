@@ -4,6 +4,7 @@ import base64
 from datetime import datetime, timedelta
 
 import pytest
+import sqlalchemy as sa
 
 from api.app import schema
 from app import hylafax_engine, hylafax_records, sip_calls, sip_trunk
@@ -132,6 +133,31 @@ def test_the_built_in_engine_record_says_why(installation):
         records.record_call(direction='sideways', call_key=ATTEMPT, engine='builtin')
 
 
+def test_the_engines_result_for_a_built_in_call_never_rewrites_its_record(installation):
+    """History is never rewritten: a call the built-in engine was chosen for keeps that choice and its reason
+    when the SSL Fax engine reports on it after all; the engine's result is in its own fields, and the views
+    name the engine that handled the call."""
+    _, records = installation
+    records.record_call(direction='outbound', call_key=ATTEMPT, engine='builtin', job_id=JOB,
+                        reason=hylafax_engine.SENDING_TOGETHER, number=PEER, now=NOW)
+    table = records._table('fax_engine_calls')
+
+    def stored():
+        with records.engine.connect() as connection:
+            return dict(connection.execute(sa.select(table)).mappings().one())
+    before = stored()
+    records.record_result(direction='outbound', call_key=ATTEMPT, job_id=JOB, number=PEER, now=NOW + timedelta(minutes=2),
+                          details={'engine_ref': 'abcdef0123456789:7.' + ATTEMPT[:12], 'sslfax': True,
+                                   'transfer_seconds': 21})
+    after = stored()
+    for name in ('id', 'engine', 'reason', 'job_id', 'call_key', 'direction', 'created_at'):
+        assert after[name] == before[name], name
+    assert after['engine_ref'] and after['sslfax'] == 1 and after['transfer_seconds'] == 21
+    found = records.for_call('outbound', ATTEMPT)
+    assert found['engine'] == 'hylafax' and found['reason'] is None and found['sslfax'] is True
+    assert records.sent_detail(JOB)['engine'] == 'hylafax'
+
+
 def test_recipient_limits_are_saved_cleared_and_checked(installation):
     _, records = installation
     assert records.recipient_settings(PEER) is None
@@ -184,7 +210,7 @@ def test_fax_settings_reach_the_trunk_the_built_in_engine_and_the_ssl_fax_engine
     fields = ami.originate_fields_for(configured, JOB, PEER, '/faxdata/x.tiff', attempt_id=ATTEMPT, call=call)
     assert 'FAXBOT_MAXRATE=7200' in fields['Variable'] and 'FAXBOT_ECM=no' in fields['Variable']
     secrets_ = hylafax_engine.engine_secrets(configured)
-    conf = hylafax_engine.render_engine_conf(configured, secrets_, inbound_secret='synthetic-inbound-secret-0123456789')
+    conf = hylafax_engine.render_engine_conf(configured, secrets_, report_secret='synthetic-report-secret-0123456789')
     assert 'max_rate=7200\n' in conf and 'ecm=no\n' in conf and 'compression=mr\n' in conf
     options = hylafax_engine.render_options(configured, lines=2)
     assert 'FAXBOT_IN_RATE=7200' in options and 'FAXBOT_IN_AUDIO_RATE=7200' in options

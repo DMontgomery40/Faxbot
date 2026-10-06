@@ -23,8 +23,9 @@ CLIENT = '192.168.1.20'
 class FakeRouter:
     """A NAT-PMP and (optionally) PCP router on 127.0.0.1 that keeps the mappings it granted."""
 
-    def __init__(self, *, pcp=True, natpmp=True, taken=(), refuse=None, external=EXTERNAL, lifetime=None):
+    def __init__(self, *, pcp=True, natpmp=True, taken=(), refuse=None, external=EXTERNAL, lifetime=None, short=()):
         self.pcp, self.natpmp, self.taken, self.refuse = pcp, natpmp, set(taken), refuse
+        self.short = set(short)  # ports whose PCP answer is cut short after the nonce (the mapping is made)
         self.external, self.lifetime = external, lifetime
         self.mappings, self.requests = {}, []
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -88,6 +89,8 @@ class FakeRouter:
         if internal in self.taken:
             return reply(11) if prefer_failure else reply(0, internal + 1000, lifetime)
         self.mappings[internal] = ('pcp', external, lifetime)
+        if internal in self.short:
+            return reply(0, external, self.lifetime or lifetime)[:40]
         return reply(0, external, self.lifetime or lifetime)
 
     def close(self):
@@ -153,6 +156,33 @@ def test_a_silent_router_or_a_wrong_address_never_raises(router):
     mismatch = router()
     lease, reasons = client_for(mismatch, client='192.168.1.99').open(4000, 4000)
     assert lease.method == 'natpmp' and reasons is None  # PCP said ADDRESS_MISMATCH; NAT-PMP maps the sender
+
+
+def test_a_cut_short_pcp_answer_is_refused_and_every_port_opened_is_handed_back(router):
+    """Review round 4: a short PCP answer raised struct.error, which skipped the hand-back and escaped renew."""
+    quick = {'send': lambda payload, address, **kw: port_mapping.exchange(payload, address,
+                                                                          **{**kw, 'tries': 1, 'wait': 0.05})}
+    fake = router(natpmp=False, short={4001})
+    lease, reasons = client_for(fake, **quick).open(4000, 4002)
+    assert lease is None and reasons[0] == 'pcp_short_answer'
+    assert fake.mappings == {}  # 4000, and 4001 that the short answer was about
+    # The same answer at renewal: the lease is closed and forgotten, never an exception.
+    fake.short = set()
+    lease, _ = client_for(fake, **quick).open(4000, 4002)
+    assert lease.method == 'pcp' and set(fake.mappings) == {4000, 4001, 4002}
+    fake.short = {4002}
+    assert client_for(fake, **quick).renew(lease) is None
+    assert fake.mappings == {}
+
+
+def test_closing_says_whether_the_router_answered(router):
+    fake = router()
+    lease, _ = client_for(fake).open(4000, 4001)
+    assert client_for(fake).close(lease) is True and fake.mappings == {}
+    fake.close()
+    silent = client_for(fake, send=lambda payload, address, **kw: port_mapping.exchange(
+        payload, address, **{**kw, 'tries': 1, 'wait': 0.05}))
+    assert silent.close(lease) is False
 
 
 def test_the_pcp_request_is_the_rfc_6887_map_layout():

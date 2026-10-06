@@ -9,6 +9,7 @@ import DeliveryRoutes from '../components/DeliveryRoutes';
 import Received from '../components/Received';
 import JobsList from '../components/JobsList';
 import { localToday } from '../components/delivery/RateCards';
+import { NOT_PRICED, formatMoney, formatMoneyList } from '../components/delivery/shared';
 import { server } from '../test/server';
 
 const client = () => new AdminAPIClient({ kind: 'key', key: 'synthetic-key' });
@@ -88,7 +89,7 @@ describe('Delivery routes spending', () => {
     routes({ providers: [{ ...sip, carrier: null, reported_cost: [], attempts_with_reported_cost: 0, total_cost: [usd('0.02')],
       attempts_without_reported_cost: 3 }], received: [], carrier_charges: { carrier: 'Telnyx', supported: true, readable: false } });
     render(<DeliveryRoutes client={client()} canWrite />);
-    expect(await screen.findByText('Telnyx call charges appear here once a Telnyx API key is added to .env.')).toBeTruthy();
+    expect(await screen.findByText('Telnyx call charges appear here once you add your Telnyx API key in Providers → Telnyx.')).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Check Telnyx charges now' })).toBeNull();
     expect(screen.getByText('estimated')).toBeTruthy();
   });
@@ -131,6 +132,10 @@ describe('Delivery routes spending', () => {
     render(<DeliveryRoutes client={client()} canWrite />);
     expect(await screen.findByText('$10.00 a month, faxes included')).toBeTruthy();
     expect(screen.getByText('Flat monthly fee')).toBeTruthy();  // not Whole minutes
+    // The advertised date in the reader's words, never 2026-10-03.
+    const advertised = new Date(2026, 9, 3).toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' });
+    expect(screen.getByText(new RegExp(`Advertised on ${advertised}`))).toBeTruthy();
+    expect(document.body.textContent).not.toContain('2026-10-03');
     fireEvent.click(screen.getByRole('button', { name: 'Add rate card' }));
     const dialog = await screen.findByRole('dialog', { name: 'Add rate card' });
     fireEvent.change(within(dialog).getByLabelText('Name'), { target: { value: 'Plan' } });
@@ -237,6 +242,51 @@ describe('One reading of spending', () => {
     });
     expect(card.textContent).toContain('Total$10.03');
     expect(card.textContent).not.toContain('No price set');
+  });
+
+  it('counts faxes and calls with no price apart from every total, never as $0', async () => {
+    // One sent fax estimated, one with no price (a call of unknown length); one received call with no price.
+    const sent = { ...sip, attempts: 4, attempts_without_reported_cost: 2, attempts_not_priced: 1 };
+    const call = { ...received, calls: 1, faxes: 1, calls_with_reported_cost: 0, calls_without_reported_cost: 1,
+      calls_not_priced: 1, reported_cost: [], estimated_cost: [], estimated_cost_not_reported: [], unmatched_charges: 0,
+      unrecorded_calls: 0, unrecorded_cost: [], unrecorded_matched_to_faxes: 0, unrecorded_unmatched_cost: [],
+      total_cost: [] };
+    const costs = { since: '2026-09-03T00:00:00', providers: [sent, { ...documo, attempts_not_priced: 1 }],
+      received: [call], carrier_charges: { carrier: 'Telnyx', supported: true, readable: true },
+      total_cost: [usd('0.02')], not_priced: 3 };
+    routes(costs);
+    const { unmount } = render(<DeliveryRoutes client={client()} canWrite={false} />);
+    const trunk = (await screen.findByText('Carrier trunk · Telnyx')).closest('.MuiCard-root') as HTMLElement;
+    expect(within(trunk).getByText('Estimated $0.005 for 1 fax not billed yet.')).toBeTruthy();
+    expect(within(trunk).getByText('1 fax not priced yet.')).toBeTruthy();
+    const inbound = screen.getByText('Received through Carrier trunk · Telnyx').closest('.MuiCard-root') as HTMLElement;
+    expect(within(inbound).getByText('Not priced yet')).toBeTruthy();
+    expect(within(inbound).getByText('1 call not priced yet.')).toBeTruthy();
+    expect(inbound.textContent).not.toMatch(/\$0\.00|Not billed yet/);
+    // A route with no published price already says so; its faxes are not counted a second time.
+    const unpublished = screen.getByText('Documo').closest('.MuiCard-root') as HTMLElement;
+    expect(unpublished.textContent).toContain('No published price; add your rate');
+    expect(unpublished.textContent).not.toContain('not priced yet');
+    unmount();
+    render(<Dashboard client={client()} onNavigate={() => undefined} />);
+    const card = await screen.findByRole('button', { name: 'Spending, last 30 days' });
+    expect(card.textContent).toContain('Carrier trunk$0.02, 1 fax not priced yet');
+    expect(card.textContent).toContain('DocumoNo published price; add your rate');
+    expect(card.textContent).toContain('Received through Carrier trunk · TelnyxNot priced yet');
+    expect(card.textContent).toContain('Total$0.02, 2 faxes and 1 call not priced yet');
+  });
+});
+
+describe('Money as money', () => {
+  it('formats the exact decimal the way the faxbot command does, and an unknown amount as not priced', () => {
+    // The same cases as test_money_reads_as_the_console_shows_it: half up from the decimal, never through a float.
+    expect(['0.005', '0.0032', '1.5', '0.07', '0', '10', '0.00125', '0.000049', '-0.03', '-0.000001']
+      .map((amount) => formatMoney(usd(amount))))
+      .toEqual(['$0.005', '$0.0032', '$1.50', '$0.07', '$0.00', '$10.00', '$0.0013', '$0.00', '-$0.03', '$0.00']);
+    expect(formatMoney(usd('12345678901.125'))).toBe('$12,345,678,901.13');
+    expect(formatMoney(usd('not a number'))).toBe('-');
+    expect(formatMoneyList([])).toBe(NOT_PRICED);
+    expect(formatMoneyList([usd('0.005'), { currency: 'EUR', amount: '0.01' }])).toBe('$0.005 + €0.01');
   });
 });
 

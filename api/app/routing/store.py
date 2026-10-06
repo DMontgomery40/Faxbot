@@ -201,9 +201,13 @@ class RouteStore:
             return read(conn)
 
     def update_destination(self, number, *, expected_version=None, **changes):
-        allowed = {'display_name', 'notes', 'preferred_route', 'accepts_references'}
+        allowed = {'display_name', 'notes', 'preferred_route', 'accepts_references', 'max_calls'}
         if set(changes) - allowed:
             raise RoutingInputError('Unknown destination setting.')
+        if 'max_calls' in changes and changes['max_calls'] is not None:
+            # Calls at once to this number: None is the default (one), 0 means no limit.
+            if type(changes['max_calls']) is not int or not 0 <= changes['max_calls'] <= 20:
+                raise RoutingInputError('Choose from 0 to 20 calls at once; 0 means no limit.')
         if 'display_name' in changes and changes['display_name'] is not None:
             name = changes['display_name'].strip() if isinstance(changes['display_name'], str) else None
             if name is None or len(name) > 200:
@@ -349,13 +353,14 @@ class RouteStore:
                 # The fax may have been sent; estimate what a successful send would cost.
                 cost, basis = estimate_cost(card, target.pages), 'estimated'
             else:
+                # Unknown seconds stay unknown: a per-minute card then has no estimate, never the call fee alone.
                 billed = billed_seconds(card, seconds)
                 cost = attempt_cost(card, seconds=seconds, pages=target.pages, delivered=outcome == 'success')
-                basis = 'measured' if observed_seconds is not None else 'estimated'
+                basis = None if cost is None else 'measured' if observed_seconds is not None else 'estimated'
         values = dict(provider_sid=target.provider_sid, rate_card_id=card.id if card is not None else None,
                       started_at=target.submitted_at, ended_at=target.completed_at,
                       billed_seconds=billed, billed_pages=target.pages if outcome == 'success' else 0,
-                      estimated_cost_micros=cost, currency=card.currency if card is not None else None,
+                      estimated_cost_micros=cost, currency=card.currency if cost is not None else None,
                       cost_basis=basis, outcome=outcome, updated_at=now)
         with write_transaction(self.engine) as connection:
             exists = connection.execute(sa.select(self.costs.c.id).where(self.costs.c.id == target.attempt_id)).first()

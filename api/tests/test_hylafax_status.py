@@ -123,3 +123,21 @@ async def test_diagnostics_asks_for_attention_while_the_engine_is_on_audio_on_it
     [finding] = await diagnostics_report.ssl_fax_engine(context)
     assert finding.status == diagnostics_report.ATTENTION and hylafax_engine.ENGINE_AUDIO in finding.sentence
 
+
+
+@pytest.mark.asyncio
+async def test_diagnostics_says_when_the_engine_missed_a_call_and_restarted(tmp_path, monkeypatch):
+    """System diagnostics shows the same one sentence as the trunk page after a fax call no free line answered."""
+    import time
+    from types import SimpleNamespace
+    from app import config, diagnostics_report
+    configured = values(tmp_path)
+    engine_running(tmp_path, configured)
+    monkeypatch.setattr(config, 'configuration_values', lambda: configured)
+    monkeypatch.setattr(diagnostics_report, '_uses_trunk', lambda request: True)
+    import app.ami as ami
+    monkeypatch.setattr(ami, 'ami_client', Ami())
+    assert hylafax_engine.request_restart(configured, reason='missed_call', at=int(time.time()) - 60)
+    [finding] = await diagnostics_report.ssl_fax_engine(SimpleNamespace(request=None, identity=None))
+    assert finding.sentence == hylafax_engine.missed_sentence(configured, hylafax_engine.read_status(configured))
+    assert finding.sentence.startswith("Faxbot's fast fax service did not answer the ")

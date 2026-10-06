@@ -92,6 +92,9 @@ describe('Costs → Recommendations → Receiving', () => {
     expect(within(quiet).getByRole('table', { name: 'Numbers with few calls' })).toBeTruthy();
     const services = within(screen.getByTestId('receiving-services')).getByRole('table', { name: 'Fax services' });
     expect(within(services).getByText('$10.00')).toBeTruthy();
+    // A number whose cost is unknown says so; nothing unknown reads as $0.00.
+    const quietNumber = within(numbers).getByText('+18005550199').closest('tr') as HTMLElement;
+    expect(quietNumber.textContent).toContain('Not priced yet');
     // No raw dates, identifiers or true/false on the screen.
     const text = document.body.textContent ?? '';
     expect(text).not.toMatch(/\d{4}-\d{2}-\d{2}T|\btrue\b|\bfalse\b|_/);

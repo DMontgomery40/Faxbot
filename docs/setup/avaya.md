@@ -81,12 +81,12 @@ In the console, open the **Setup Wizard** (**System → Setup**) and choose **Av
 | Number format | **International, with + and the country code**, or **As a phone here dials it** when the phone system's short codes expect local dialling |
 | Outside-line prefix | With **As a phone here dials it**: the digits the phone system needs before an outside number, such as `9`. At most four digits |
 | Caller ID | The fax number your phone system shows for faxes Faxbot sends |
-| Fax numbers your phone system sends to Faxbot | Your fax numbers. Ask the administrator to pass the full number through, not an extension |
+| Fax numbers your phone system sends to Faxbot | Your fax numbers. Set the phone system's incoming route to pass the full number through, not an extension |
 | Use T.38 fax over IP | On. Turn it off only if the phone system offers no T.38 (see below) |
 
 With **As a phone here dials it**, a UK installation dials `+44 1632 960123` as `01632960123` and an American number as `0016502530000`, with the outside-line prefix in front of each. A US installation dials `16502530000` and `011442079460000`. A number that would come to more than 20 digits is refused before any call is placed.
 
-Then select **Apply and connect**. Under **Reaching Faxbot from your phone system**, Faxbot shows what to give your administrator, for example "Give your phone system administrator this address: 192.168.1.20, port 5060 (UDP or TCP), and media ports 4000–4019, enough for 6 faxes at once." Until Faxbot is published on your local network, the same place says "Your phone system cannot reach Faxbot yet, because Faxbot is not published on your local network." and shows the command from step 1.
+Then select **Apply and connect**. Under **Reaching Faxbot from your phone system**, Faxbot shows what to set in the phone system, for example "In your phone system, send fax calls to 192.168.1.20, port 5060 (UDP or TCP), with media ports 4000–4019: enough for 6 faxes at once." Until Faxbot is published on your local network, the same place says "Your phone system cannot reach Faxbot yet, because Faxbot is not published on your local network." and shows the command from step 1.
 
 **Check trunk status** then reads, one sentence per line:
 

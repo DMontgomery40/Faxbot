@@ -119,7 +119,10 @@ PRESETS: dict[str, TrunkPreset] = {preset.id: preset for preset in (
                  Source('https://support.telnyx.com/en/articles/4404448-sip-connection-inbound-outbound-settings')),
     ),
     TrunkPreset(
-        id='signalwire', label='SignalWire', host='', port=5060, transport='udp',
+        # Encrypted signaling by default, as for Telnyx: SignalWire's trunking page (the first source, read
+        # again 2026-10-05) gives devices that register "SIP Server Port: 5061" and "Transport Protocol: TLS".
+        # Not yet tried with a live SignalWire trunk.
+        id='signalwire', label='SignalWire', host='', port=5061, transport='tls',
         auth_modes=('registration',), codecs=('ulaw', 'alaw'), dial_format='e164',
         t38='T.38 is not documented by the carrier. Confirm it with SignalWire support and send test faxes first.',
         notes=('Enter your space SIP domain, for example example.sip.signalwire.com.',

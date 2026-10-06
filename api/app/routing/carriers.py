@@ -591,7 +591,10 @@ class CarrierReconciler:
                 result.ambiguous += 1
                 self.store.mark(row['id'], self.provider_id, 'ambiguous', now=now)
                 continue
-            final = now - row['ended_at'] >= self.settle_after
+            # A call settles only when every record matched to it is priced: while one is unpriced, the
+            # call's amount is incomplete, so nothing of it is final.
+            unpriced = sum(1 for record, _ in found if record.amount_micros is None)
+            final = now - row['ended_at'] >= self.settle_after and not unpriced
             priced = 0
             for record, method in found:
                 if record.amount_micros is None:
@@ -608,6 +611,10 @@ class CarrierReconciler:
                 self._attempt_charges(row, now=now)
                 if final and priced:
                     self.store.mark(row['id'], self.provider_id, 'settled', now=now)
+                elif unpriced and now - row['ended_at'] >= self.settle_after:
+                    # Another record of this call is still unpriced: stay open and ask again, backing off,
+                    # until it is priced or the call is past the give-up time.
+                    self.store.mark(row['id'], self.provider_id, 'matched', now=now)
                 else:
                     self.store.mark(row['id'], self.provider_id, 'matched', now=now,
                                     next_check_at=max(row['ended_at'] + self.settle_after, now + FIRST_RETRY))

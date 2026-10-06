@@ -82,7 +82,7 @@ describe('delivery routes', () => {
     await screen.findByText('Spending');
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(calls.find((call) => call.method === 'PATCH')?.body).toEqual({
-      display_name: 'County clinic', notes: null, preferred_route: 'phaxio', accepts_references: false, version: 3,
+      display_name: 'County clinic', notes: null, preferred_route: 'phaxio', accepts_references: false, max_calls: null, version: 3,
     });
   });
 
@@ -146,6 +146,7 @@ describe('Savings and Recommendations', () => {
   it('shows each saving with its sentence, every one marked an estimate, and from when case packets count', async () => {
     const savings = emptySavings();
     savings.total_saved = [{ currency: 'USD', amount: '0.42' }] as never[];
+    savings.total_sentence = 'About $0.42 saved in the last 30 days.';
     savings.sending_together.sentence = '5 faxes to the same numbers went in 2 calls instead of 5, saving 3 calls and about $0.012.';
     savings.direct_delivery.sentence = '1 document went straight to a partner instead of by fax: 1 fax call and about $0.005 saved.';
     Object.assign(savings.case_packets, {
@@ -166,6 +167,20 @@ describe('Savings and Recommendations', () => {
     const day = new Date('2026-10-04T12:00:00Z').toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' });
     expect(within(screen.getByTestId('savings-packets'))
       .getByText(`Counted from ${day}, when Faxbot started recording what each packet left out.`)).toBeTruthy();
+  });
+
+  it('says so when a saving cost more than it saved, never a $0 or a minus sign', async () => {
+    const savings = emptySavings();
+    Object.assign(savings, { total_saved: [{ currency: 'USD', amount: '-0.03' }],
+      total_sentence: 'About $0.03 more spent than saved in the last 30 days.' });
+    savings.sending_together.sentence = '3 faxes to the same number went in 1 call instead of 3, saving 2 calls, but that '
+      + 'call cost about $0.03 more than 3 separate calls.';
+    server.use(http.get('/routing/savings', () => HttpResponse.json(savings)));
+    render(<Savings client={client()} />);
+    expect((await screen.findByTestId('savings-total')).textContent)
+      .toBe('About $0.03 more spent than saved in the last 30 days.');
+    expect(screen.getByTestId('savings-together').textContent).toContain('cost about $0.03 more than 3 separate calls');
+    expect(document.body.textContent).not.toMatch(/-\$|saved \$0\.00/);
   });
 
   it('says nothing was saved yet on a new installation, and Recommendations says what will appear', async () => {

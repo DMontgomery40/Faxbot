@@ -92,10 +92,34 @@ def test_status_without_a_trunk_says_so_in_one_sentence(bare_client):
                     'address_changed': False, 'last_call_verdict': None, 'suggest_audio': False,
                     'engine_managed': False, 'engine_restarting': False, 'in_use': False,
                     'handover_ready': None, 'handover_text': None, 't38_off_reason': None, 't38_off_at': None,
+                    'reload_waiting': False,
                     'phone_system': None, 'phone_system_command': None, 'phone_system_setting': None,
                     'phone_system_hidden': False, 'network_t38': None, 'network_text': None, 'telnyx_t38': None,
                     'engine_state': None, 'engine_text': None, 'engine_audio': False,
                     'message': 'No SIP trunk is set up. Choose your carrier to start.'}
+
+
+def test_restart_the_fast_fax_service_asks_the_engine_and_never_touches_asterisk(client, isolated_installation):
+    """The console's Restart the fast fax service and `faxbot providers trunk restart-engine`: the engine reads
+    the request and starts again once no fax is going through; before Apply, or while the engine is not
+    running, there is nothing to restart and the answer says so."""
+    from app import hylafax_engine
+    from app.config import configuration_values
+    refused = client.post('/admin/sip/engine/restart', headers=ADMIN)
+    assert refused.status_code == 409 and refused.json()['detail'] == hylafax_engine.NOT_SET_UP
+    assert client.post('/admin/sip/apply', headers=ADMIN).status_code == 200
+    stopped = client.post('/admin/sip/engine/restart', headers=ADMIN)
+    assert stopped.status_code == 409 and stopped.json()['detail'] == hylafax_engine.RESTART_NOT_RUNNING
+    out = os.path.join(isolated_installation['FAX_DATA_DIR'], 'hylafax-out')
+    os.makedirs(out, exist_ok=True)
+    with open(os.path.join(out, 'engine.status'), 'w') as handle:
+        handle.write(json.dumps({'state': 'running', 'lines': 2}))
+    asked = client.post('/admin/sip/engine/restart', headers=ADMIN)
+    assert asked.status_code == 200, asked.text
+    assert asked.json() == {'ok': True, 'message': hylafax_engine.RESTART_ASKED}
+    request = json.loads(open(os.path.join(isolated_installation['FAX_DATA_DIR'], 'hylafax', 'engine-restart')).read())
+    assert request['reason'] == 'manual'
+    assert client.post('/admin/sip/engine/restart').status_code == 401
 
 
 def test_apply_writes_the_private_trunk_file_and_status_never_shows_the_password(client, isolated_installation):
@@ -267,6 +291,7 @@ def test_each_route_declares_the_permission_the_console_relies_on():
     assert declared == {('GET', '/admin/sip/presets'): [('providers:read', False)],
                         ('GET', '/admin/sip/status'): [('providers:read', False)],
                         ('POST', '/admin/sip/apply'): [('providers:write', False)],
+                        ('POST', '/admin/sip/engine/restart'): [('providers:write', False)],
                         ('GET', '/admin/sip/calls'): [('diagnostics:read', False)],
                         ('GET', '/admin/sip/network'): [('providers:read', False)],
                         ('POST', '/admin/sip/network/check'): [('providers:write', False)],
@@ -519,6 +544,30 @@ def test_readiness_waits_for_a_trunk_on_each_direction_that_uses_it(isolated_ins
             'expected_revision_id': current['_meta']['desired_revision_id'], 'sip_trunk_password': PASSWORD,
             'sip_trunk_caller_id': '+15555550100'})
         assert 'message' not in client.get('/health/ready').json()
+
+
+def test_an_install_that_only_receives_is_never_told_no_provider_is_set_up(isolated_installation, monkeypatch):
+    """Review round 4: readiness looked only at sending, so a receive-only install read "No fax provider set up yet."""
+    import shutil
+    monkeypatch.setattr(ami_client._connected, 'is_set', lambda: True)
+    monkeypatch.setattr(main.shutil, 'which', lambda name: f'/usr/bin/{name}' if name == 'gs' else shutil.which(name))
+    monkeypatch.delenv('FAX_BACKEND', raising=False)
+    monkeypatch.delenv('FAX_OUTBOUND_BACKEND', raising=False)
+    with _client(monkeypatch, {'FAX_INBOUND_BACKEND': 'sip', 'INBOUND_ENABLED': 'true'}) as client:
+        ready = client.get('/health/ready').json()
+        assert (ready['backend'], ready['status'], ready['ready_to_receive']) == ('', 'not_ready', False)
+        assert ready['message'] == 'No SIP trunk is set up. Choose your carrier to start.'
+        current = client.get('/admin/settings', headers=ADMIN).json()
+        saved = client.put('/admin/settings', headers=ADMIN, json={
+            'expected_revision_id': current['_meta']['desired_revision_id'], 'sip_trunk_preset': 'telnyx',
+            'sip_trunk_username': 'faxbotuser', 'sip_trunk_password': PASSWORD})
+        assert saved.status_code == 200, saved.text
+        ready = client.get('/health/ready').json()
+        # Ready to send stays false (nothing sends), receiving is ready, and nothing claims no provider.
+        assert (ready['status'], ready['ready_to_receive'], 'message' in ready) == ('not_ready', True, False)
+        health = client.get('/admin/health-status', headers=ADMIN).json()
+        assert (health['backend'], health['receiving_backend'], health['receiving_ready'],
+                health['backend_message']) == ('', 'sip', True, None)
 
 
 def test_a_refused_registration_names_the_password_the_carrier_wants(client, monkeypatch):

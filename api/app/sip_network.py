@@ -255,12 +255,14 @@ def outside_hops(found: Discovery):
 
 
 def port_behavior(probe):
-    """'kept', 'changed_same' (one changed port for every destination), 'changed_per_destination',
-    'changed' (one answer, changed), or None when no STUN server answered."""
+    """'kept', 'kept_once' (only one server answered, with the same port), 'changed_same' (one changed port
+    for every destination), 'changed_per_destination', 'changed' (one answer, changed), or None when no STUN
+    server answered."""
     if probe is None or not probe.answered:
         return None
     if probe.ports == 'preserved':
-        return 'kept'
+        # Two servers must agree that the port stayed the same; one answer alone is not enough to say so.
+        return 'kept' if len(probe.answered) > 1 else 'kept_once'
     if probe.ports == 'consistent':
         return 'changed_same'
     return 'changed_per_destination' if len(set(probe.answered)) > 1 else 'changed'
@@ -319,9 +321,13 @@ def verdict(probe, ports, shared, typed='', observed=None, *, published=None, ma
     newest T.38 call went through here).
     BLOCKED: ports_change, shared_address, or behind_another_router (the router
     opened the ports, but another router in front of it changes port numbers).
-    UNKNOWN: no_address, typed_differs (the typed address is not the one STUN
-    sees), or typed on a network that changes port numbers without the fax
-    ports published.
+    UNKNOWN: no_address, one_server (only one STUN server answered, so nothing
+    confirms that ports are kept), typed_differs (the typed address is not the
+    one STUN sees), or typed on a network that changes port numbers without the
+    fax ports published.
+
+    Ports the router opened count only when nothing shows the provider's shared
+    address in front of it (that address changes port numbers again).
     """
     worked = bool(observed and observed.get('t38_ok'))
     seen = probe.public_ip if probe is not None else None
@@ -341,10 +347,12 @@ def verdict(probe, ports, shared, typed='', observed=None, *, published=None, ma
     if ports == 'kept':
         return OPEN, 'ports_kept'
     state = (mapped or {}).get('state')
-    if state == 'open':
+    if state == 'open' and not shared:
         return OPEN, 'router_mapped'
     if worked:
         return OPEN, 't38_worked'
+    if ports == 'kept_once':
+        return UNKNOWN, 'one_server'
     if shared:
         return BLOCKED, 'shared_address'
     if state == 'behind_another_router':
@@ -366,6 +374,8 @@ def assess(values, probe, found: Discovery, observed=None, *, mapping=None, publ
             'router': router, 'hops': list(outside), 't38': t38, 'why': why, 'typed_address': typed or None,
             'fax_ports': f'{published[0]}-{published[1]}' if published else None,
             'router_ports': mapping or None,
+            # The STUN servers that did not answer (host:port), for the firewall advice.
+            'unanswered': [server for server, port in (probe.mapped if probe else ()) if port is None],
             'cpus': found.cpus, 'memory_gib': found.memory_gib, 'disk_gib': found.disk_gib}
 
 
@@ -440,6 +450,9 @@ def network_allows_t38(values) -> bool | None:
 # -- Faxbot's fax ports: published on this computer, opened on the router ---------------------------------
 
 _RANGE = re.compile(r'([0-9]{4,5})-([0-9]{4,5})', re.ASCII)
+# The widths asterisk/start.sh accepts (last - first): at least 5 and under 2000. Faxbot asks the router for
+# every port of the range one by one, so a wider record is never trusted.
+MEDIA_RANGE_NARROWEST, MEDIA_RANGE_WIDEST = 5, 1999
 
 
 def media_ports_path(values) -> Path:
@@ -454,9 +467,12 @@ def read_media_ports(values):
     except (OSError, ValueError):
         return None
     found = _RANGE.fullmatch(str(record.get('media_ports', ''))) if isinstance(record, dict) else None
-    if not found or not 1024 <= int(found.group(1)) <= int(found.group(2)) <= 65535:
+    if not found:
         return None
-    return int(found.group(1)), int(found.group(2))
+    first, last = int(found.group(1)), int(found.group(2))
+    if not (1024 <= first <= last <= 65535 and MEDIA_RANGE_NARROWEST <= last - first <= MEDIA_RANGE_WIDEST):
+        return None
+    return first, last
 
 
 def lease_path(values) -> Path:
@@ -538,6 +554,12 @@ def map_ports(values, probe, found, *, router=None, now=time.time):
             outer = _address(lease.external_ip)
             return {'state': 'behind_another_router', 'ports': ports,
                     'shared': bool(outer is not None and outer in SHARED_ADDRESS_SPACE)}
+        if not lease.external_ip and shared_address(found, probe):
+            # The router did not say its internet address, and the way out passes the internet provider's
+            # shared address, which changes port numbers again: the opened ports would lead nowhere.
+            client.close(lease)
+            _keep_lease(values, None)
+            return {'state': 'behind_another_router', 'ports': ports, 'shared': True}
         return {'state': 'open', 'ports': ports, 'method': lease.method}
     except Exception:
         return {'state': 'refused', 'ports': f'{published[0]}-{published[1]}' if published else None,
@@ -545,20 +567,31 @@ def map_ports(values, probe, found, *, router=None, now=time.time):
 
 
 def close_router_ports(values):
-    """Close the ports the router opened for Faxbot (at stop); never raises."""
+    """Close the ports the router opened for Faxbot (at stop); True when the router closed them. Never raises.
+
+    When the router does not answer, the lease stays on record (unless its
+    lifetime is over, when the router has dropped the ports itself), so the
+    next check closes or reuses those ports instead of losing track of them.
+    """
     lease = read_lease(values)
     if lease is None:
         return False
+
     def quick(payload, address, **options):
         return port_mapping.exchange(payload, address, **{**options, 'tries': 1, 'wait': 0.3})
 
     def brief(method, url, body=None, headers=None):
         return port_mapping._http(method, url, body, headers, timeout=0.5)
+    closed = False
     try:
-        port_mapping.Router(lease.gateway, send=quick, http=brief, client=lease.client or None).close(lease)
-    finally:
+        closed = bool(port_mapping.Router(lease.gateway, send=quick, http=brief,
+                                          client=lease.client or None).close(lease))
+    except Exception:
+        closed = False
+    expired = bool(lease.lifetime) and time.time() >= lease.granted_at + lease.lifetime
+    if closed or expired:
         _keep_lease(values, None)
-    return True
+    return closed
 
 
 # -- sentences -----------------------------------------------------------------------------------------
@@ -623,6 +656,8 @@ def verdict_text(record, carrier='the carrier'):
                                   'port numbers.'),
         'no_address': ('Faxbot could not find its internet address, so it cannot tell yet whether fax over IP (T.38) '
                        'works here.'),
+        'one_server': ('Faxbot heard back from only one of the two servers it asks for its internet address, so it '
+                       'cannot tell yet whether your network keeps port numbers, which fax over IP (T.38) needs.'),
     }
     if why == 'ports_change':
         if carrier == 'Telnyx':
@@ -684,6 +719,9 @@ def fix(record):
                       'own internet address.')
     if why == 'no_address':
         return answer('If a firewall limits outgoing traffic, let Faxbot reach stun.cloudflare.com on UDP port 3478.')
+    if why == 'one_server':
+        host, _, port = ((record.get('unanswered') or ['stun.cloudflare.com:3478'])[0]).rpartition(':')
+        return answer(f'If a firewall limits outgoing traffic, let Faxbot reach {host} on UDP port {port}.')
     if why == 'typed_differs':
         return answer('Empty the Internet address box so Faxbot uses the address it found, or correct it.')
     if where in ('colima_user', 'colima_shared', 'colima'):
@@ -840,6 +878,11 @@ def _lock():
     return found[1]
 
 
+def check_lock():
+    """The lock every network check holds while it opens router ports and writes its files (Apply takes it too)."""
+    return _lock()
+
+
 async def run_check(runtime, records=None, *, fresh=True, unattended=False):
     """Check the network now, store it, and turn T.38 on or off for new calls when the check says so.
 
@@ -857,7 +900,9 @@ async def run_check(runtime, records=None, *, fresh=True, unattended=False):
             await run_lifecycle_step(lambda: close_router_ports(values))
             return None
         probe = await probe_network(values.sip_trunk_preset, fresh=fresh)
-        found = await discover(fresh=fresh)
+        # Only Apply and Check again look at the host afresh; the check at start and the periodic one reuse
+        # the last look (traceroute, names, metadata) for DISCOVERY_SECONDS.
+        found = await discover(fresh=fresh and not unattended)
         records = records if records is not None else _records_for(runtime)
         mapping = await run_lifecycle_step(lambda: map_ports(values, probe, found))
         check = await run_lifecycle_step(lambda: record_check(values, probe, found, records, mapping))
@@ -866,15 +911,21 @@ async def run_check(runtime, records=None, *, fresh=True, unattended=False):
         awaiting = None
         if unattended and decision and check['count'] < 2:
             awaiting, decision = decision, None
-        engine = None
-        if decision:
-            engine = await sip_fax_mode.switch(runtime, decision == 't38', sip_fax_mode.NETWORK, network=check['t38'])
-        elif check['advertise_changed'] and (check['why'] == 'router_mapped'
-                                             or (mapping or {}).get('state') in ('refused', 'behind_another_router')):
-            # Asterisk names the opened ports only after a restart, which waits until no call is up.
-            if await run_lifecycle_step(lambda: sip_trunk.engine_managed(values)):
-                engine = await _load_into_engine(values)
-        return {'check': check, 'switched': decision, 'awaiting': awaiting, 'engine': engine}
+        reload = (not decision and check['advertise_changed']
+                  and (check['why'] == 'router_mapped'
+                       or (mapping or {}).get('state') in ('refused', 'behind_another_router'))
+                  and await run_lifecycle_step(lambda: sip_trunk.engine_managed(values)))
+    # Waiting for calls to end happens after the check's lock is released, so Check again never waits on it.
+    engine = None
+    if decision:
+        engine = await sip_fax_mode.switch(runtime, decision == 't38', sip_fax_mode.NETWORK, network=check['t38'])
+    elif reload:
+        # Asterisk names the opened ports only after a restart, which waits until no call is up.
+        engine = await _load_into_engine(values)
+        if engine.get('engine') == 'busy':
+            sip_fax_mode.reload_later(runtime)
+            engine = {**engine, 'waiting': True, 'message': sip_fax_mode.RELOAD_WAITING}
+    return {'check': check, 'switched': decision, 'awaiting': awaiting, 'engine': engine}
 
 
 # How long the start check waits before confirming an answer that differs from the stored one.
@@ -916,8 +967,31 @@ async def check_at_start(runtime, *, delay=START_DELAY_SECONDS, confirm=CONFIRM_
     return outcome
 
 
-async def keep_router_ports(runtime, *, idle=600):
-    """Renew the ports the router opened for Faxbot at half their lifetime; close them when Faxbot stops."""
+def renew_lease(values, *, router=None):
+    """Ask the router to extend Faxbot's ports; True when it did. Blocking; never raises.
+
+    Only the router is asked: no network check, no STUN, no traceroute. A router
+    that no longer grants the ports has them closed (Router.renew) and the lease
+    forgotten, and the next network check decides whether to open them again.
+    """
+    lease = read_lease(values)
+    if lease is None or not lease.lifetime:
+        return False  # nothing to renew: no lease, or a permanent one
+    try:
+        renewed = (router or port_mapping.Router)(lease.gateway, client=lease.client or None).renew(lease)
+    except Exception:
+        renewed = None
+    _keep_lease(values, renewed)
+    return renewed is not None
+
+
+async def keep_router_ports(runtime, *, idle=600, router=None):
+    """Renew the ports the router opened for Faxbot at half their lifetime; close them when Faxbot stops.
+
+    Renewal asks the router only. A permanent lease (a router that grants
+    nothing else) is never renewed; a lease the router refuses to extend leads
+    to one full network check, which decides whether to open the ports again.
+    """
     from .config_runtime import run_lifecycle_step
 
     def current():
@@ -928,13 +1002,17 @@ async def keep_router_ports(runtime, *, idle=600):
             lease = await run_lifecycle_step(lambda: read_lease(values))
             await asyncio.sleep(idle if lease is None else min(idle, max(30.0, lease.renew_at - time.time())))
             lease = await run_lifecycle_step(lambda: read_lease(values))
-            if lease is not None and time.time() >= lease.renew_at:
-                try:
+            if lease is None or time.time() < lease.renew_at:
+                continue
+            try:
+                async with _lock():  # never at the same time as a check that opens or closes ports
+                    renewed = await run_lifecycle_step(lambda: renew_lease(values, router=router))
+                if not renewed:
                     await run_check(runtime, unattended=True)
-                except asyncio.CancelledError:
-                    raise
-                except Exception:
-                    logging.getLogger(__name__).warning('Faxbot could not renew its fax ports on the router.')
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logging.getLogger(__name__).warning('Faxbot could not renew its fax ports on the router.')
     finally:
         try:
             values = current()

@@ -51,6 +51,8 @@ class AuthorizedFaxQueries:
                    'error', 'provider_sid', 'created_at', 'updated_at')
         # 0020: whether the sender asked for a real call even to one of the installation's own numbers.
         columns += ('send_by_call',) if 'send_by_call' in jobs.c else ()
+        # 0021: an urgent fax goes before others waiting for the same line.
+        columns += ('urgent',) if 'urgent' in jobs.c else ()
         return sa.select(*(jobs.c[name] for name in columns),
             delivery.c.state.label('delivery_state'), delivery.c.dispatch_mode,
             delivery.c.version.label('delivery_version')).select_from(

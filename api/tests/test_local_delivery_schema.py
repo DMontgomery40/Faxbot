@@ -57,7 +57,7 @@ def _insert_local(engine, number):
 
 
 def test_local_delivery_is_head_after_retired_permissions():
-    assert schema.HEAD == schema_local_delivery.REVISION == '0020_local_delivery'
+    assert schema.LOCAL_DELIVERY == schema_local_delivery.REVISION == '0020_local_delivery'
     assert schema.RETIRED == '0019_retired_permissions'
     assert schema_local_delivery.TABLES == frozenset()
     assert schema_local_delivery.SOURCES == schema_inbound_sources.SOURCES + ('local',)

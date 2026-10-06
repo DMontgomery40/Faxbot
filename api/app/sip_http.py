@@ -331,7 +331,7 @@ def _ports_text(values, network):
             return None
         return BEHIND_ROUTER if network and network.behind_nat else None
     check = sip_network.read_check(values)
-    forwards = check and ((check['t38'] != sip_network.OPEN and check.get('why') != 'no_address')
+    forwards = check and ((check['t38'] != sip_network.OPEN and check.get('why') not in ('no_address', 'one_server'))
                           or check.get('why') in ('router_mapped', 'forwarded'))
     return None if forwards else NO_PORTS
 
@@ -528,6 +528,10 @@ async def status(request: Request, identity=Depends(require_permission('provider
                                  if configured and managed else (None, None))
     message = _message(summary, asterisk, applied, ports_text, transport, managed=managed, in_use=in_use,
                        restarting=restarting)
+    reload_waiting = bool(configured and managed and sip_fax_mode.reload_waiting())
+    if reload_waiting and not restarting:
+        # A switched fax setting is saved; Asterisk loads it once the calls in progress end.
+        message = sip_fax_mode.RELOAD_WAITING
     if (changed and not restarting and ports_text != BEHIND_ROUTER and asterisk['connected'] and asterisk['permission']
             and asterisk['registration'] != 'rejected'):
         message = ADDRESS_CHANGED_MANAGED if managed else ADDRESS_CHANGED
@@ -560,12 +564,15 @@ async def status(request: Request, identity=Depends(require_permission('provider
         'phone_system_hidden': bool(phone and ports_text == LAN_HIDDEN),
         # Why new calls use audio fax when Faxbot chose it ({reason, at}); None when T.38 is on or a person chose.
         't38_off_reason': off['reason'] if off else None,
+        # A switched fax setting saved and waiting for the calls in progress to end before Asterisk loads it.
+        'reload_waiting': reload_waiting,
         't38_off_at': off['at'] if off else None,
         'ports_text': ports_text,
         'last_call_text': last['summary'] if last else None,
         'last_call_at': last['started_at'] if last else None,
         'last_call_verdict': last['verdict'] if last else None,
-        # After a T.38 call carried no fax data, audio fax is the next thing to try (the owner decides).
+        # After a T.38 call carried no fax data while T.38 is still on, audio fax is the next thing to try. Faxbot
+        # switches by itself when the call timed out waiting for fax data; the console offers it for the rest.
         'suggest_audio': bool(last and last['verdict'] == 'no_t38_data_back' and values.sip_t38_enabled),
         'address_changed': bool(changed),
         # Asterisk shares Faxbot's data folder (the Compose install), so Apply and connect restarts it.
@@ -621,15 +628,19 @@ async def apply(request: Request, identity=Depends(require_permission('providers
         # The person's own change first, then the network check decides T.38 for new calls.
         before = await run_lifecycle_step(lambda: sip_network.previous_verdict(values))
         await run_lifecycle_step(lambda: sip_fax_mode.reconcile(values, network=before))
-        found = await sip_network.discover(fresh=True)
-        mapping = await run_lifecycle_step(lambda: sip_network.map_ports(values, network, found))
-        check = await run_lifecycle_step(lambda: sip_network.record_check(values, network, found, records, mapping))
-        exact = True if check['why'] == 'router_mapped' else None
-        decision = await run_lifecycle_step(lambda: sip_fax_mode.network_decision(
-            values, check['t38'], previous=check['changed_from'], records=records))
-        if decision:
-            values = await run_lifecycle_step(lambda: _set_t38(runtime, decision == 't38', sip_fax_mode.NETWORK,
-                                                               check['t38']))
+        # The same lock as every network check: two port openings at once could leave router ports untracked
+        # and overwrite each other's lease and check files.
+        async with sip_network.check_lock():
+            found = await sip_network.discover(fresh=True)
+            mapping = await run_lifecycle_step(lambda: sip_network.map_ports(values, network, found))
+            check = await run_lifecycle_step(lambda: sip_network.record_check(values, network, found, records,
+                                                                              mapping))
+            exact = True if check['why'] == 'router_mapped' else None
+            decision = await run_lifecycle_step(lambda: sip_fax_mode.network_decision(
+                values, check['t38'], previous=check['changed_from'], records=records))
+            if decision:
+                values = await run_lifecycle_step(lambda: _set_t38(runtime, decision == 't38', sip_fax_mode.NETWORK,
+                                                                   check['t38']))
     else:
         await run_lifecycle_step(lambda: sip_fax_mode.reconcile(values))
     try:
@@ -751,6 +762,23 @@ async def calls(request: Request, cursor: str | None = Query(default=None, max_l
         raise HTTPException(400, detail='That page of calls is not available.') from None
     except SipCallRecordError:
         raise HTTPException(503, detail='Call records are not available right now.') from None
+
+
+@router.post('/engine/restart')
+async def restart_engine(request: Request, identity=Depends(require_permission('providers:write'))):
+    """Restart the fast fax service: it starts again as soon as no fax is going through (the engine reads
+    the request; Asterisk and the trunk settings are left as they are)."""
+    from . import hylafax_engine
+    values = configuration_values()
+    if not hylafax_engine.engine_conf_path(values).is_file():
+        raise HTTPException(409, detail=hylafax_engine.NOT_SET_UP)
+    if hylafax_engine.read_status(values).state in ('absent', 'failed'):
+        raise HTTPException(409, detail=hylafax_engine.RESTART_NOT_RUNNING)
+    if not await run_lifecycle_step(lambda: hylafax_engine.request_restart(values, reason='manual')):
+        raise HTTPException(503, detail='Faxbot could not ask the fast fax service to restart; try again.')
+    from .audit import audit_event
+    audit_event('sip_engine_restart_requested', backend='sip', reason='manual')
+    return {'ok': True, 'message': hylafax_engine.RESTART_ASKED}
 
 
 @router.get('/network')

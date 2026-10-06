@@ -32,6 +32,8 @@ class FaxJob(Base):  # type: ignore
     outbound_backend = Column(String(255).with_variant(String(20), "sqlite"), nullable=True)  # effective outbound backend (hybrid)
     # 1 when the sender asked for a real call through the carrier, even to one of the installation's own numbers.
     send_by_call = Column(Integer, nullable=True)
+    # 1 when the sender marked the fax urgent: it goes before other faxes waiting for the same line.
+    urgent = Column(Integer, nullable=True)
     provider_sid = Column(String(100), nullable=True)  # Cloud provider fax ID
     pdf_url = Column(String(512), nullable=True)  # Public URL for PDF (for cloud backend)
     pdf_token = Column(String(128), nullable=True)  # Secure token for PDF fetch

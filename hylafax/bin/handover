@@ -48,7 +48,7 @@ for ticket in "$state"/received/*.ticket; do
   recv=$(field recv_seconds "$ticket" | tr -cd '0-9')
   sslfax=$(field sslfax "$ticket")
   offered=$(field offered "$ticket")
-  case $sslfax in true|false) ;; *) sslfax=false ;; esac
+  case $sslfax in true|false) ;; *) sslfax=null ;; esac  # unknown (a call without its session log)
   case $offered in true|false) ;; *) offered=null ;; esac
   [ -n "$key" ] && [ -n "$commid" ] && [ -f "$image" ] && [ ! -L "$image" ] || continue
 

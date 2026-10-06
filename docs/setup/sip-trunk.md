@@ -39,6 +39,12 @@ In Faxbot, an optional **Telnyx API key** lets the trunk page check the T.38 set
 
 Faxbot registers with Telnyx using these credentials. Registration is what lets Telnyx deliver incoming faxes to Faxbot, so keep the username and password filled in even if you only receive. Then select **Apply and connect**; Faxbot saves the form, restarts Asterisk with the trunk and shows the trunk check.
 
+### Limit calls on the trunk
+
+Faxbot limits how many calls use the trunk at once and how quickly it starts new calls. In the console, they are **Calls at once** and **New calls per second** under **Fax settings** on the trunk's page. By default, the concurrent-call limit follows the fax engine's number of lines. The new-calls-per-second limit uses the carrier's published limit when Faxbot has one; Telnyx defaults to 5 per second. For other carriers with no published limit in Faxbot, there is no rate limit by default.
+
+Faxes that reach a trunk limit wait for room; they do not fail because of the limit. Set either limit to 0 to use its default. From the command line, run `faxbot providers trunk limits` to see the effective limits, or add `--calls-at-once N` and `--calls-per-second N` to change them. Each accepts 0; the maximums are 200 concurrent calls and 100 new calls per second.
+
 ## Choose a carrier
 
 Faxbot has settings ready for these carriers. Each preset uses the carrier's own connection documentation, read on 2026-10-03.
@@ -85,7 +91,7 @@ Faxbot is that digital alternative. Keep your fax numbers, and fax over a SIP tr
 
 **Gamma** is the main UK wholesale SIP provider and sells through resellers. It recognises the fax server by its public address (no registration). Its codecs include "T.38 for FAX Negotiation", and a phone system maker tested "T.38 Negotiation and FAX transmission" over it ([Swyx, updated 17 June 2024](https://service.swyx.net/hc/en-gb/articles/360010513919-SIP-Provider-Gamma-Telecom-UK)). Choose the **Gamma** preset, enter the SIP server address your reseller gives you, and give them your static public address. Yeastar's UK list also marks DIDlogic, Fuse2 and Sona for T.38; use **Another carrier** for those. **Telnyx** has UK numbers and T.38, and works from behind a router with no open ports, which makes it the quickest UK start.
 
-No published price was found for Gamma, BT One Voice or Telstra SIP Connect, so their rate cards carry none: Spending says "No published price; add your rate" until you enter your own rate under **Tools → Delivery routes**. Gamma's own page gives only a range: £3 to £150 a month for each SIP channel, plus £50 to £150 a month service rental.
+No published price was found for Gamma, BT One Voice or Telstra SIP Connect, so their rate cards carry none: Spending says "No published price; add your rate" until you enter your own rate under **Costs → Prices & plans**. Gamma's own page gives only a range: £3 to £150 a month for each SIP channel, plus £50 to £150 a month service rental.
 
 ## Australia
 

@@ -646,6 +646,11 @@ class AdminAPIClient {
     return this.json('/admin/sip/apply', { method: 'POST' });
   }
 
+  // Restart the fast fax service: it starts again as soon as no fax is going through.
+  async restartSipEngine(): Promise<{ ok: boolean; message: string }> {
+    return this.json('/admin/sip/engine/restart', { method: 'POST' });
+  }
+
   async listSipCalls(params: { cursor?: string | null; limit?: number; direction?: 'outbound' | 'inbound' } = {}): Promise<SipCallPage> {
     return this.json(`/admin/sip/calls${query(params)}`);
   }
@@ -825,7 +830,7 @@ class AdminAPIClient {
     return result;
   }
 
-  async sendFax(to: string, file: File, options: { queueOnly?: boolean; idempotencyKey?: string; sendNow?: boolean; byCall?: boolean } = {}): Promise<FaxSendResult> {
+  async sendFax(to: string, file: File, options: { queueOnly?: boolean; idempotencyKey?: string; sendNow?: boolean; byCall?: boolean; urgent?: boolean } = {}): Promise<FaxSendResult> {
     const formData = new FormData();
     formData.append('to', normalizeFaxDestination(to));
     formData.append('file', file);
@@ -834,6 +839,8 @@ class AdminAPIClient {
     if (options.sendNow) formData.append('send_now', 'true');
     // A real call through the carrier even to one of this installation's own numbers (test faxes).
     if (options.byCall) formData.append('send_by_call', 'true');
+    // Goes before other faxes waiting for the same line, and does not wait to go together with others.
+    if (options.urgent) formData.append('urgent', 'true');
 
     const res = await this.send('/fax', {
       method: 'POST',

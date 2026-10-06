@@ -26,9 +26,9 @@ import type { DirectPartner, IntakeCounts, RouteCostsResponse } from '../api/del
 import type { SipCallRecord } from '../api/sipTypes';
 import type { SipNetworkReport } from '../api/networkTypes';
 import type { AdminDestination } from '../navigation';
-import { formatMoneyList } from './delivery/shared';
-import { NO_PUBLISHED_PRICE, spendingLines, spendingTotal } from './delivery/spendingSummary';
+import { spendingLines, spendingTotalText } from './delivery/spendingSummary';
 import { providerLabel } from '../providerLabels';
+import { formatServerTime } from '../api/time';
 
 type CardData<T> = { kind: 'loading' } | { kind: 'ready'; data: T } | { kind: 'denied' | 'unavailable' | 'error' };
 
@@ -114,6 +114,15 @@ export interface AttentionItem {
   destination: AdminDestination;
 }
 
+// An install that only receives: no sending provider, one that receives. Its status is about receiving.
+function receivesOnly(health: HealthStatus): boolean {
+  return !health.backend && !!health.receiving_backend;
+}
+
+function statusReady(health: HealthStatus): boolean {
+  return receivesOnly(health) ? !!health.receiving_ready : health.backend_healthy;
+}
+
 // What needs a person now, from the cards' own data. Items this account
 // cannot read, and items with nothing in them, are left out.
 export function attentionItems({ health, work, intake, costs, network, canSetUp = false }: {
@@ -126,12 +135,15 @@ export function attentionItems({ health, work, intake, costs, network, canSetUp 
   canSetUp?: boolean;
 }): AttentionItem[] {
   const items: AttentionItem[] = [];
-  if (health && !health.backend) {
+  if (health && !health.backend && !health.receiving_backend) {
     items.push({ key: 'no-provider', label: 'No fax provider is set up yet', count: null,
       destination: canSetUp ? 'setup' : 'diagnostics' });
   }
   if (health && health.backend && !health.backend_healthy) {
     items.push({ key: 'not-ready', label: 'Faxbot is not ready to send faxes', count: null, destination: 'system/diagnostics' });
+  }
+  if (health && receivesOnly(health) && !health.receiving_ready) {
+    items.push({ key: 'not-ready', label: 'Faxbot is not ready to receive faxes', count: null, destination: 'system/diagnostics' });
   }
   if (health?.jobs.recent_failures) {
     items.push({ key: 'failed', label: 'Faxes that failed in the last 24 hours', count: health.jobs.recent_failures, destination: 'faxes/sent' });
@@ -181,7 +193,6 @@ function Dashboard({ client, onNavigate, canSetUp = false, onSendFax }: Dashboar
   const [health, setHealth] = useState<HealthStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [justApplied, setJustApplied] = useState<boolean>(false);
   const [cfg, setCfg] = useState<any | null>(null);
   const [spending, setSpending] = useState<CardData<RouteCostsResponse>>({ kind: 'loading' });
   const [intake, setIntake] = useState<CardData<IntakeCounts>>({ kind: 'loading' });
@@ -233,11 +244,6 @@ function Dashboard({ client, onNavigate, canSetUp = false, onSendFax }: Dashboar
   useEffect(() => {
     fetchHealth();
     void fetchDelivery();
-    if (sessionStorage.getItem('fb_admin_applied') === '1') {
-      setJustApplied(true);
-      sessionStorage.removeItem('fb_admin_applied');
-      setTimeout(() => setJustApplied(false), 4000);
-    }
 
     // Start polling
     const cleanup = client.startPolling((data) => {
@@ -270,11 +276,6 @@ function Dashboard({ client, onNavigate, canSetUp = false, onSendFax }: Dashboar
 
   return (
     <Box>
-      {justApplied && (
-        <Alert severity="success" sx={{ mb: 2 }}>
-          Configuration applied successfully.
-        </Alert>
-      )}
       <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
         <Typography variant="h4" component="h1">
           Overview
@@ -322,26 +323,28 @@ function Dashboard({ client, onNavigate, canSetUp = false, onSendFax }: Dashboar
               >
               <CardContent sx={{ pb: { xs: 1, sm: 2 } }}>
                 <Box display="flex" alignItems="center" mb={{ xs: 1, sm: 2 }}>
-                  {getStatusIcon(health.backend_healthy)}
+                  {getStatusIcon(statusReady(health))}
                   <Typography variant="h6" component="h2" sx={{ ml: 1, fontSize: { xs: '1rem', sm: '1.25rem' } }}>
                     System Status
                   </Typography>
                 </Box>
                 <Chip
-                  label={health.backend_healthy ? 'Ready' : 'Needs attention'}
-                  color={getStatusColor(health.backend_healthy)}
+                  label={statusReady(health) ? 'Ready' : 'Needs attention'}
+                  color={getStatusColor(statusReady(health))}
                   variant="outlined"
                 />
                 <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-                  {health.backend ? `Sending: ${providerLabel(health.backend)}` : 'No fax provider set up yet.'}
+                  {health.backend ? `Sending: ${providerLabel(health.backend)}`
+                    : receivesOnly(health) ? `Receiving: ${providerLabel(health.receiving_backend ?? '')}`
+                      : 'No fax provider set up yet.'}
                 </Typography>
-                {!health.backend && canSetUp && onNavigate && (
+                {!health.backend && !receivesOnly(health) && canSetUp && onNavigate && (
                   <Button variant="contained" size="small" sx={{ mt: 1.5 }}
                     onClick={(event) => { event.stopPropagation(); onNavigate('setup'); }}>
                     Set up a fax provider
                   </Button>
                 )}
-                {health.backend && health.backend_message && (
+                {(health.backend || receivesOnly(health)) && health.backend_message && (
                   <Typography variant="body2" color="error" sx={{ mt: 1 }} data-testid="engine-message">
                     {health.backend_message}
                   </Typography>
@@ -421,6 +424,12 @@ function Dashboard({ client, onNavigate, canSetUp = false, onSendFax }: Dashboar
                       {health.jobs.queued}
                     </Typography>
                   </Box>
+                  {(health.jobs.waiting_for_line ?? 0) > 0 && (
+                    <Box display="flex" justifyContent="space-between" data-testid="waiting-for-line">
+                      <Typography variant="body2">Waiting for a free line:</Typography>
+                      <Typography variant="body2" fontWeight="bold">{health.jobs.waiting_for_line}</Typography>
+                    </Box>
+                  )}
                   <Box display="flex" justifyContent="space-between">
                     <Typography variant="body2">Submitting / In Progress:</Typography>
                     <Typography variant="body2" fontWeight="bold">
@@ -502,7 +511,7 @@ function Dashboard({ client, onNavigate, canSetUp = false, onSendFax }: Dashboar
                 ) : (
                   <Box display="flex" flexDirection="column" gap={1}>
                     {lines.map((line) => <Line key={line.key} label={line.label} value={line.value} />)}
-                    {lines.length > 1 && <Line label="Total" value={formatMoneyList(spendingTotal(costs), NO_PUBLISHED_PRICE)} />}
+                    {lines.length > 1 && <Line label="Total" value={spendingTotalText(costs)} />}
                   </Box>
                 );
               }}
@@ -543,7 +552,7 @@ function Dashboard({ client, onNavigate, canSetUp = false, onSendFax }: Dashboar
             <Card>
               <CardContent>
                 <Typography variant="body2" color="text.secondary">
-                  Last updated: {new Date(health.timestamp).toLocaleString()}
+                  Last updated: {formatServerTime(health.timestamp)}
                 </Typography>
                 <Typography variant="caption" color="text.secondary">
                   Auto-refreshing every 5 seconds

@@ -1,6 +1,6 @@
 """Human output (rich tables, local times) and machine output (--json)."""
 from datetime import datetime, timezone
-from decimal import Decimal, InvalidOperation
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 import json
 import sys
 
@@ -77,17 +77,21 @@ def home_currency():
 def money_amount(item, home=None):
     """One amount as the console shows it: "$0.005", "$1.50", or "0.005 EUR" outside the installation's currency.
 
-    Two decimal places, or up to four for amounts under ten cents.
+    Two decimal places, or up to four for amounts under ten cents, rounded half up from the exact decimal and
+    trailing zeros trimmed: the console's ``formatMoney`` gives the same digits.
     """
     try:
         amount = Decimal(str(item['amount']))
     except (InvalidOperation, KeyError, TypeError):
         return '-'
+    if not amount.is_finite():
+        return '-'
     places = 4 if amount != 0 and abs(amount) < Decimal('0.1') else 2
-    shown = f'{abs(amount):.{places}f}'
+    rounded = abs(amount).quantize(Decimal(1).scaleb(-places), rounding=ROUND_HALF_UP)
+    shown = f'{rounded:.{places}f}'
     while places > 2 and shown.endswith('0'):
         shown, places = shown[:-1], places - 1
-    sign = '-' if amount < 0 else ''
+    sign = '-' if amount < 0 and rounded != 0 else ''
     currency = item.get('currency') or ''
     symbol = SYMBOLS.get(currency) if currency == (home or home_currency()) else None
     return f'{sign}{symbol}{shown}' if symbol else f'{sign}{shown} {currency}'.strip()

@@ -167,3 +167,86 @@ def test_docker_compose_config_binds_every_phone_system_port_to_the_lan_address(
 def test_docker_compose_refuses_the_phone_system_file_without_a_lan_address():
     result = _phone_system_config({})
     assert result.returncode != 0 and 'FAXBOT_LAN_ADDRESS' in result.stderr
+
+
+# Secrets: only the API reads .env; every other service names exactly what it may receive.
+
+COMPOSE_FILES = sorted(ROOT.glob('docker-compose*.yml'))
+# Secret-bearing variables each service may receive, besides the API (which reads .env for its settings).
+SECRETS_ALLOWED = {
+    'asterisk': {'SIP_PASSWORD', 'ASTERISK_AMI_PASSWORD', 'ASTERISK_INBOUND_SECRET'},
+    'hylafax': set(),
+    'faxbot-mcp': set(),
+    'faxbot-mcp-py-sse': set(),
+}
+
+
+def _secret_names():
+    """Every variable of a setting Faxbot marks secret."""
+    from pydantic import AliasChoices
+    from app.config_values import ConfigurationValues
+    names = set()
+    for field in ConfigurationValues.model_fields.values():
+        if (field.json_schema_extra or {}).get('secret'):
+            alias = field.validation_alias
+            names.update(alias.choices if isinstance(alias, AliasChoices) else [alias])
+    return names
+
+
+def _secret_bearing(name, known):
+    """A secret setting's variable, or any *PASS*, *SECRET*, *TOKEN* or *KEY* name (a *_FILE path is not one)."""
+    return name in known or (re.search(r'PASS|SECRET|TOKEN|(^|_)KEY($|_)', name) is not None
+                             and not name.endswith('_FILE'))
+
+
+def _environment_names(service):
+    entries = service.get('environment') or []
+    if isinstance(entries, dict):
+        return set(entries)
+    return {str(entry).split('=', 1)[0] for entry in entries}
+
+
+@pytest.mark.parametrize('path', COMPOSE_FILES, ids=[path.name for path in COMPOSE_FILES])
+def test_only_the_api_reads_env_and_each_service_gets_only_its_own_secrets(path):
+    known = _secret_names()
+    assert {'ASTERISK_AMI_PASSWORD', 'TELNYX_API_KEY'} <= known
+    services = yaml.safe_load(path.read_text())['services']
+    for name, service in services.items():
+        if name == 'api':
+            continue
+        assert 'env_file' not in service, f'{path.name}: {name} must list its variables, not read all of .env'
+        received = {variable for variable in _environment_names(service) if _secret_bearing(variable, known)}
+        assert received <= SECRETS_ALLOWED[name], (path.name, name, sorted(received - SECRETS_ALLOWED[name]))
+
+
+def test_asterisk_gets_exactly_what_its_start_script_and_dialplan_read():
+    asterisk = yaml.safe_load((ROOT / 'docker-compose.yml').read_text())['services']['asterisk']
+    names = _environment_names(asterisk)
+    assert names == {'TZ', 'SIP_USERNAME', 'SIP_PASSWORD', 'SIP_SERVER', 'SIP_FROM_DOMAIN', 'SIP_REGISTER',
+                     'ASTERISK_AMI_USERNAME', 'ASTERISK_AMI_PASSWORD', 'ASTERISK_INBOUND_SECRET', 'FAX_HEADER',
+                     'FAX_LOCAL_STATION_ID', 'FAXBOT_LOCAL_NET', 'FAXBOT_API_ADDRESS'}
+    # The provider, mail and carrier keys the audit found in Asterisk's environment are never named.
+    assert not names & {'GMAIL_PASSWORD', 'HUMBLEFAX_API_ACCESS_KEY', 'INTAKE_SMTP_PASSWORD', 'TELNYX_API_KEY',
+                        'TELNYX_PASS', 'PHAXIO_API_SECRET'}
+    # Every variable the start script, the helpers or the dialplan reads is still passed in.
+    read = set()
+    for script in ('start.sh', 'bin/faxbot-inbound-notify', 'bin/faxbot-public-address'):
+        read |= set(re.findall(r'\$\{?((?:SIP|ASTERISK|FAX|FAXBOT)_[A-Z_]+)', (ROOT / 'asterisk' / script).read_text()))
+    read |= set(re.findall(r'ENV\(([A-Z_]+)\)',
+                           (ROOT / 'asterisk' / 'etc' / 'asterisk' / 'extensions.conf').read_text()))
+    # Image paths and test hooks keep their built-in defaults; the overrides set the media and phone system values.
+    builtin = {'FAXBOT_ASTERISK_TEMPLATES', 'FAXBOT_ASTERISK_ETC', 'FAXBOT_DATA', 'FAXBOT_TRUNK_CONF',
+               'FAXBOT_PUBLIC_ADDRESS_BIN', 'FAXBOT_ASTERISK_COMMAND', 'FAXBOT_ASTERISK_CONTROL',
+               'FAXBOT_LOGIN_CHECK_SECONDS', 'FAXBOT_MEDIA_PORTS', 'FAXBOT_PHONE_SYSTEM_ADDRESS',
+               'FAXBOT_MANAGER_PERMIT', 'FAXBOT_DATA_DIR', 'FAXBOT_API_URL', 'FAXBOT_NOTIFY_RETRY_SECONDS',
+               'FAXBOT_PUBLIC_ADDRESS_FILE'}
+    assert read - builtin <= names, sorted(read - builtin - names)
+
+
+@pytest.mark.parametrize('path', COMPOSE_FILES, ids=[path.name for path in COMPOSE_FILES])
+def test_every_service_keeps_its_logs_small(path):
+    base = yaml.safe_load((ROOT / 'docker-compose.yml').read_text())['services']
+    for name in yaml.safe_load(path.read_text())['services']:
+        logging = base[name].get('logging') or {}
+        assert logging.get('driver') == 'json-file', (path.name, name)
+        assert logging.get('options') == {'max-size': '10m', 'max-file': '3'}, (path.name, name)

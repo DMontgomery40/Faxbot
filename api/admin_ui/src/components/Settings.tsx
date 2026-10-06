@@ -35,7 +35,7 @@ import {
   Public as PublicIcon,
   ExpandMore as ExpandMoreIcon,
 } from '@mui/icons-material';
-import AdminAPIClient, { configurationWriteRejected, isForbidden, plainRefusal } from '../api/client';
+import AdminAPIClient, { AdminAPIError, accessErrorMessage, configurationWriteRejected, isForbidden, plainRefusal } from '../api/client';
 import { DELIVERY_SECTIONS, DeliverySettingsSections, EMAIL_DELIVERY_SECTION, deliveryEditorValues, type DeliverySection } from './delivery/DeliverySettings';
 import { DEFAULT_DOCS_BASE, docsLink } from '../docsLinks';
 import EnvSetField, { ENV_SET_HELP, environmentManaged } from './common/EnvSetField';
@@ -339,7 +339,8 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
       }
     } catch (err) {
       if (epoch !== requestEpoch.current) return;
-      const message = err instanceof Error ? err.message : 'Failed to apply settings';
+      // One plain sentence, never the raw "API Error: 500".
+      const message = plainRefusal(err) ?? accessErrorMessage(err);
       if (!writeStarted) {
         setError(message);
         return;
@@ -350,14 +351,14 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
         return;
       }
       setNeedsReload(true);
-      setError(message.includes('409')
+      setError(err instanceof AdminAPIError && err.status === 409
         ? 'Someone else changed these settings. Your edits are kept here; reload to see the current values.'
         : isForbidden(err)
           ? 'You do not have permission to change some of these settings. Your edits are kept here; reload before trying again.'
         : plainRefusal(err)
           ? `${plainRefusal(err)} Your edits are kept here; reload before trying again.`
         : configurationWriteRejected(err)
-          ? `Settings were not saved (${message}). Your edits are kept here; reload before trying again.`
+          ? `Settings were not saved; your edits are kept here. ${message}`
           : 'The save could not be confirmed. Reload to check whether your changes were saved.');
     } finally {
       if (epoch === requestEpoch.current) {
@@ -463,7 +464,7 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
         if (epoch === requestEpoch.current) setEngineMessage(message);
       } catch { /* Readiness is optional here; Diagnostics shows it in full. */ }
     } catch (err) {
-      if (epoch === requestEpoch.current) setError(err instanceof Error ? err.message : 'Settings could not be loaded.');
+      if (epoch === requestEpoch.current) setError(accessErrorMessage(err));
     } finally {
       if (epoch === requestEpoch.current) setLoading(false);
     }
@@ -497,7 +498,7 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
       const data = await client.exportSettings();
       setEnvContent(data.env);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Settings could not be exported.');
+      setError(accessErrorMessage(err));  // one plain sentence, never "API Error: 500"
     } finally {
       setLoading(false);
     }

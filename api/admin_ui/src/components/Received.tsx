@@ -44,7 +44,7 @@ import {
 } from '@mui/icons-material';
 import AdminAPIClient from '../api/client';
 import { docsLink } from '../docsLinks';
-import { parseServerTime } from '../api/time';
+import { localDay, parseServerTime } from '../api/time';
 import type { EfaxStatus, InboundFax, WorkAssignee, WorkCounts, WorkItem, WorkView } from '../api/types';
 import type { EmailConnector, IntakeItem } from '../api/deliveryTypes';
 import type { AdminDestination } from '../navigation';
@@ -366,7 +366,7 @@ export default function Received({
 
   const exportEvidence = async (item: WorkItem) => {
     try {
-      saveBlob(await client.exportWork(item.id), `evidence-${item.available_at.slice(0, 10)}.zip`);
+      saveBlob(await client.exportWork(item.id), `evidence-${localDay(item.available_at) || 'fax'}.zip`);
       setNotice('Evidence downloaded. The export is recorded in the item history.');
     } catch (failure) {
       setError(failure);
@@ -381,7 +381,7 @@ export default function Received({
 
   const formatDate = (value?: string | null) => {
     const date = parseServerTime(value);
-    if (!date) return value || '-';
+    if (!date) return '-';
     return isSmallMobile ? date.toLocaleDateString() : date.toLocaleString();
   };
 
@@ -457,7 +457,7 @@ export default function Received({
         alignItems="center" onClick={(event) => event.stopPropagation()}>
         <Tooltip title={hasDocument(row) ? 'Download PDF' : 'The document has not arrived yet.'}>
           <span>
-            <IconButton size="small" onClick={() => void downloadPdf(id, `received-${(row.fax?.received_at ?? row.work?.available_at ?? '').slice(0, 10) || 'fax'}.pdf`)}
+            <IconButton size="small" onClick={() => void downloadPdf(id, `received-${localDay(row.fax?.received_at ?? row.work?.available_at) || 'fax'}.pdf`)}
               disabled={!id || !hasDocument(row)} aria-label={`Download the fax from ${from(row)}`}>
               <DownloadIcon />
             </IconButton>
@@ -697,7 +697,7 @@ export default function Received({
       </Dialog>
 
       <WorkDetail client={client} item={selected} onClose={() => setSelected(null)}
-        onDownload={(item) => void downloadPdf(item.inbound_fax_id, `document-${item.available_at.slice(0, 10)}.pdf`)} />
+        onDownload={(item) => void downloadPdf(item.inbound_fax_id, `document-${localDay(item.available_at) || 'fax'}.pdf`)} />
     </Box>
   );
 }

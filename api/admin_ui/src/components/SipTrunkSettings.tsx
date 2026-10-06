@@ -44,6 +44,7 @@ import InboundRecovery from './InboundRecovery';
 import NetworkForFax from './NetworkForFax';
 import TelnyxT38 from './TelnyxT38';
 import FaxSettings from './FaxSettings';
+import { formatServerTime } from '../api/time';
 
 interface SipTrunkSettingsProps {
   client: AdminAPIClient;
@@ -74,6 +75,7 @@ const EMPTY: TrunkValues = {
   // Fax settings: the recommended values.
   t38_error_correction: 'redundancy', t38_max_datagram: 400, fax_max_rate: 14400, fax_ecm: true,
   fax_compression: 'jbig', fax_fine: true, sslfax_enabled: true, fax_lines: 2, sslfax_listener_port: 10443,
+  max_calls: 0, calls_per_second: 0,
 };
 
 // What the phone system section shows: how the phone system reaches Faxbot, from the trunk check.
@@ -137,8 +139,7 @@ export function connectedTime(seconds: number | null): string {
 }
 
 function when(iso: string): string {
-  const date = new Date(iso);
-  return Number.isNaN(date.getTime()) ? '' : date.toLocaleString();
+  return formatServerTime(iso, '');
 }
 
 function failure(error: unknown, fallback: string): string {
@@ -303,6 +304,8 @@ function SipTrunkSettings({ client, showCalls = true, revision: sharedRevision, 
       ['fax_max_rate', 'sip_fax_max_rate'], ['fax_ecm', 'sip_fax_ecm'], ['fax_compression', 'sip_fax_compression'],
       ['fax_fine', 'sip_fax_fine'], ['sslfax_enabled', 'sip_sslfax_enabled'], ['fax_lines', 'sip_fax_lines'],
       ['sslfax_listener_port', 'sip_sslfax_listener_port'],
+      // How many calls the trunk takes: faxes beyond them wait for a free line.
+      ['max_calls', 'sip_trunk_max_calls'], ['calls_per_second', 'sip_trunk_calls_per_second'],
     ];
     // The caller ID keeps its spaces while typed and is trimmed when saved.
     const current: TrunkValues = { ...form, caller_id: form.caller_id.trim() };
@@ -404,7 +407,22 @@ function SipTrunkSettings({ client, showCalls = true, revision: sharedRevision, 
     }
   };
 
-  // Offered after a T.38 call carried no fax data; Faxbot never changes the mode by itself.
+  // Faxbot restarts the fast fax service by itself after a fax call it did not answer; this is the same by hand.
+  const restartEngine = async () => {
+    setBusy(true);
+    try {
+      const result = await client.restartSipEngine();
+      setNotice({ severity: 'success', text: result.message });
+      setStatus(await client.getSipStatus());
+    } catch (error) {
+      setNotice({ severity: 'error', text: failure(error, 'The fast fax service could not be restarted. Try again.') });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Offered after a T.38 call carried no fax data while T.38 is still on. Faxbot switches new calls to audio
+  // fax by itself when such a call timed out waiting for fax data; this does it at once in the other cases.
   const useAudioFax = async () => {
     setBusy(true);
     try {
@@ -736,6 +754,10 @@ function SipTrunkSettings({ client, showCalls = true, revision: sharedRevision, 
                   {status.engine_audio ? `${status.engine_text} To try T.38 again, select Apply and connect.`
                     : status.engine_text}
                 </Typography>
+              )}
+              {(status.engine_state === 'running' || status.engine_state === 'starting') && (
+                <Button size="small" variant="outlined" sx={{ mt: 1, alignSelf: 'flex-start' }} onClick={restartEngine}
+                  disabled={busy}>Restart the fast fax service</Button>
               )}
               {status.ports_text && status.ports_text !== status.message && status.kind !== 'phone_system'
                 && <Typography variant="body2">{status.ports_text}</Typography>}

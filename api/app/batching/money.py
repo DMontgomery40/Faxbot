@@ -6,7 +6,7 @@ when there is one, otherwise Faxbot's rate-card estimate from the measured call.
 """
 from datetime import timedelta
 
-from ..routing.costs import estimate_cost, money_text
+from ..routing.costs import Money, estimate_cost, money_text
 from ..routing.database import utcnow
 from .store import call_members, calls_to
 
@@ -51,6 +51,8 @@ def savings(routes, engine, number, *, now=None, days=WINDOW_DAYS):
     Separate calls are priced with the SIP trunk's rate card the way Faxbot
     estimates any fax (setup plus time per page, with the card's minimum and
     rounding); the shared call at its reported charge, or its rate-card cost.
+    A shared call that cost more than the separate calls is a negative saving:
+    summed as it is, never turned into 0.
     """
     calls = calls_to(engine, number, (now or utcnow()) - timedelta(days=days))
     card = routes.card_for('sip')
@@ -65,9 +67,12 @@ def savings(routes, engine, number, *, now=None, days=WINDOW_DAYS):
         micros, currency, _ = charge
         if card is None or card.currency != currency:
             continue
-        separate = sum(estimate_cost(card, member['pages']) for member in members)
+        separate = Money(0, currency)
+        for member in members:
+            separate += Money(estimate_cost(card, member['pages']), currency)
+        saved = separate - Money(int(micros), currency)
         result['priced_calls'] += 1
-        result['saved'][currency] = result['saved'].get(currency, 0) + max(0, separate - micros)
+        result['saved'][currency] = result['saved'].get(currency, 0) + saved.micros
     return result
 
 
@@ -76,7 +81,15 @@ def savings_sentence(result):
         return 'No faxes to this number have been sent together in the last 30 days.'
     calls = '1 call' if result['calls_saved'] == 1 else f"{result['calls_saved']} calls"
     faxes = f"{result['faxes']} faxes in {result['calls']} call" + ('' if result['calls'] == 1 else 's')
-    money = ' + '.join(money_text(micros, currency) for currency, micros in sorted(result['saved'].items()))
-    if money:
-        return f'Last 30 days: {faxes}, {calls} saved, about {money} saved (estimate).'
+    saved = ' + '.join(money_text(micros, currency) for currency, micros in sorted(result['saved'].items())
+                       if micros >= 0)
+    more = ' + '.join(money_text(-micros, currency) for currency, micros in sorted(result['saved'].items())
+                      if micros < 0)
+    if more and saved:
+        return (f'Last 30 days: {faxes}, {calls} saved, about {saved} saved, and sending together cost about '
+                f'{more} more (estimate).')
+    if more:
+        return f'Last 30 days: {faxes}, {calls} saved, but sending together cost about {more} more (estimate).'
+    if saved:
+        return f'Last 30 days: {faxes}, {calls} saved, about {saved} saved (estimate).'
     return f'Last 30 days: {faxes}, {calls} saved.'

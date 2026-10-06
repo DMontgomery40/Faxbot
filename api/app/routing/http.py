@@ -189,6 +189,8 @@ def _destination_view(number, row, routes):
     return {'number': number, 'display_name': row['display_name'] if row else None,
             'notes': row['notes'] if row else None, 'preferred_route': row['preferred_route'] if row else None,
             'accepts_references': bool(row['accepts_references']) if row else False,
+            # Calls at once to this number: None is the default (one at a time), 0 means no limit.
+            'max_calls': row.get('max_calls') if row else None,
             'version': row['version'] if row else 0,
             'routes': sorted((_route_view(entry) for entry in routes.values()), key=lambda item: item['route']),
             'estimated_cost_30_days': _money(total)}
@@ -292,6 +294,7 @@ class DestinationPatch(BaseModel):
     notes: str | None = Field(default=None, max_length=2000)
     preferred_route: str | None = Field(default=None, max_length=64)
     accepts_references: bool | None = None
+    max_calls: int | None = Field(default=None, ge=0, le=20)
     version: int | None = Field(default=None, ge=0)
 
 
@@ -335,13 +338,18 @@ async def costs(request: Request, since: datetime | None = Query(default=None)):
     for entry in [*outbound, *received]:
         for currency, micros in entry['total_micros'].items():
             grand[currency] = grand.get(currency, 0) + micros
-    return {'since': start, 'carrier_charges': _carrier_status(values), 'total_cost': _money(grand), 'providers': [{
+    # Faxes and calls with no charge and no estimate: left out of every total, never counted as $0.
+    not_priced = sum(entry['unpriced'] for entry in [*outbound, *received])
+    return {'since': start, 'carrier_charges': _carrier_status(values), 'total_cost': _money(grand),
+            'not_priced': not_priced, 'providers': [{
         'provider_id': entry['provider_id'], 'label': route_label(entry['provider_id']), 'carrier': carrier(entry),
         'attempts': entry['attempts'], 'successes': entry['successes'], 'failures': entry['failures'],
         'uncertain': entry['uncertain'], 'billed_minutes': round(entry['billed_seconds'] / 60, 1),
         'billed_pages': entry['billed_pages'], 'estimated_cost': _money(entry['cost_micros']),
         'reported_cost': _money(entry['reported_cost_micros']), 'settled_cost': _money(entry['settled_cost_micros']),
         'attempts_without_reported_cost': entry['unreported'], 'attempts_with_reported_cost': entry['reported'],
+        # Of attempts_without_reported_cost, those with no estimate either: not in any total.
+        'attempts_not_priced': entry['unpriced'],
         'estimated_cost_not_reported': _money(entry['unreported_estimate_micros']),
         'awaiting_carrier_bill': entry['awaiting'], 'unmatched_charges': entry['unmatched'],
         **_unrecorded_view(entry), 'plan': plan(entry), 'priced': entry['has_card'] or bool(entry['reported']),
@@ -352,6 +360,7 @@ async def costs(request: Request, since: datetime | None = Query(default=None)):
             'calls': entry['calls'], 'faxes': entry['faxes'], 'billed_minutes': round(entry['billed_seconds'] / 60, 1),
             'estimated_cost': _money(entry['cost_micros']), 'reported_cost': _money(entry['reported_cost_micros']),
             'calls_with_reported_cost': entry['reported'], 'calls_without_reported_cost': entry['unreported'],
+            'calls_not_priced': entry['unpriced'],
             'estimated_cost_not_reported': _money(entry['unreported_estimate_micros']),
             'awaiting_carrier_bill': entry['awaiting'], 'unmatched_charges': entry['unmatched'],
             **_unrecorded_view(entry), 'total_cost': _money(entry['total_micros'])}
@@ -384,8 +393,8 @@ def _carrier_status(values):
     return {'carrier': carrier_label(preset), 'supported': True, 'readable': bool(values.telnyx_api_key)}
 
 
-NO_TELNYX_KEY = ('Faxbot needs a Telnyx API key to read call charges. Add TELNYX_API_KEY to .env, '
-                 'then run docker compose up -d.')
+NO_TELNYX_KEY = ('Faxbot needs a Telnyx API key to read call charges. Add it in the console under Providers → '
+                 'Telnyx, or run faxbot system settings set --secret telnyx_api_key.')
 
 
 def _reconcile_summary(result):
@@ -507,7 +516,8 @@ async def savings(request: Request, days: int = Query(default=WINDOW_DAYS, ge=1,
     store = _store(request)
     result = await _call(lambda: count_savings(store, store.engine, days=days))
     return {'days': result['days'], 'since': result['since'], 'estimate': True, 'sentence': SENTENCE,
-            'total_saved': _money(result['total']),
+            # Signed: a negative amount is money that cost more than it saved, said so in total_sentence.
+            'total_saved': _money(result['total']), 'total_sentence': result['total_sentence'],
             'sending_together': _saving_view(result['sending_together']),
             'direct_delivery': _saving_view(result['direct_delivery']),
             'case_packets': _saving_view(result['case_packets']),
@@ -538,8 +548,16 @@ async def inbound_cost(inbound_id: str, request: Request, identity=Depends(requi
     return _cost_view(await _call(lambda: spending.inbound(inbound_id)))
 
 
+def _provider_name(provider_id):
+    """A rate card's provider in words: "Telnyx" for the trunk or a carrier's card, "Phaxio" for a provider."""
+    if provider_id.startswith('sip-'):
+        return carrier_label(provider_id[len('sip-'):])
+    return route_label(provider_id)
+
+
 def _card_view(card):
-    return {'id': card.id, 'provider_id': card.provider_id, 'label': card.label, 'direction': card.direction,
+    return {'id': card.id, 'provider_id': card.provider_id, 'provider_name': _provider_name(card.provider_id),
+            'label': card.label, 'direction': card.direction,
             'currency': card.currency, 'per_minute': format_amount(card.per_minute_micros),
             'per_page': format_amount(card.per_page_micros), 'per_call': format_amount(card.per_call_micros),
             'billing_increment_seconds': card.billing_increment_seconds, 'minimum_seconds': card.minimum_seconds,
@@ -564,6 +582,7 @@ class RateCardIn(BaseModel):
     monthly_fee: str | int | None = None
     # Shown by GET; accepted and ignored so a listed card can be saved back unchanged.
     included_in_plan: bool | None = None
+    provider_name: str | None = None
 
 
 class RateCardsIn(BaseModel):

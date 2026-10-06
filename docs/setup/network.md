@@ -2,7 +2,7 @@
 
 Faxbot sends faxes over a carrier trunk in two ways. **Fax over IP (T.38)** carries the fax data in its own packets, while **audio fax** carries the fax tones as an ordinary phone call. Audio fax has worked on every network Faxbot has met so far. Fax over IP (T.38) only works when the carrier's fax data can find its way back to Faxbot, and whether it can depends on the network Faxbot runs on.
 
-Faxbot checks its network, fixes what it can by itself, and tells you exactly what to change when it can't. Audio fax keeps working in the meantime.
+Faxbot checks its network, opens router ports when it can, and tells you what to change when it cannot. Audio fax keeps working in the meantime.
 
 A network that allows fax over IP (T.38) doesn't guarantee that the carrier will accept it on every call. Faxbot tries fax over IP (T.38) first, and when the carrier declines it, that fax goes through as audio fax instead. Faxbot saw this live with Telnyx on 4 October 2026, on calls coming from another fax service.
 
@@ -78,7 +78,7 @@ The console and the command line show the same instructions, with the commands f
 
 ### Colima on a Mac
 
-Colima's default network changes port numbers, and so does its shared network. The fix is to put Colima directly on your local network (bridged mode).
+Colima's default network changes port numbers, and so does its shared network. When Faxbot's network check says the carrier's fax data cannot come back, put Colima directly on your local network (bridged mode).
 
 Colima can't change the network of an existing virtual machine (it says "'network mode' cannot be updated after initial setup"), so you delete the virtual machine and create it again. Delete it **without** `--data`: Colima 0.9 and later keep Docker's images and volumes, so Faxbot keeps its faxes and settings. Then start it again in bridged mode with the same CPU, memory and disk. Faxbot is down for a few minutes, and your Mac may ask for your password once.
 
@@ -96,7 +96,7 @@ This was checked with Colima 0.9.1 on 4 October 2026. After the new virtual mach
 
 ### Docker Desktop (Mac or Windows)
 
-Docker Desktop changes port numbers, and Faxbot can't see your router from inside it. Forward UDP ports 4000–4039 on your router to this computer, start Faxbot with the fax ports file, and enter your internet address under **Internet address**. Once the address is entered and the fax ports are published, Faxbot turns fax over IP (T.38) on by itself.
+Docker Desktop changes port numbers, and Faxbot can't see your router from inside it. Forward UDP ports 4000–4039 on your router to this computer, start Faxbot with the fax ports file, and enter your internet address under **Internet address**. Once the address is entered and the fax ports are published, Faxbot can turn fax over IP (T.38) on.
 
 Faxbot hasn't been measured on Docker Desktop; this advice is based on Docker's documentation.
 
@@ -122,12 +122,6 @@ If a firewall limits outgoing traffic, let Faxbot reach `stun.cloudflare.com` on
 
 ## For developers
 
-Other parts of Faxbot ask one question through `sip_network.network_allows_t38(values)`, which reads only the stored network check. It returns `True` when fax over IP (T.38) can be tried and `False` when audio fax should be used. It returns `None` when Faxbot can't tell yet; then fax over IP (T.38) is tried, and after one failed call the no-data-back rule switches new calls to audio fax.
-
 ## What is not verified
 
-Docker Desktop, cloud servers and shared internet addresses are recognized from recorded examples; Faxbot hasn't been measured on a real one.
-
-Opening the fax ports on a router was tested only against stand-in routers on this computer using PCP, NAT-PMP and UPnP. The home router that was measured answers none of them, so no port mapping has been made on a real router.
-
-The check runs inside Faxbot and assumes that the fax engine shares its network, as it does in the standard Docker Compose installation.
+Docker Desktop and cloud servers have not been measured. Opening fax ports on a router was tested only against stand-in routers; Faxbot has not opened ports on a real router. The check assumes the fax engine shares Faxbot's network, as it does in the standard Docker Compose installation.

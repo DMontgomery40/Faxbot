@@ -20,4 +20,4 @@ Every figure compares what you paid with what the same faxes would have cost the
 
 ## Recommendations
 
-**Costs → Recommendations** (`#/costs/recommendations`) will show cheaper routes for the numbers you fax and receiving lines you could share.
+**Costs → Recommendations** (`#/costs/recommendations`) compares delivered fax costs by number, suggests a cheaper route or a plan that already includes those faxes, and shows whether you could reduce receiving costs by sharing Telnyx channels or removing quiet numbers. Faxbot bases the advice on recorded calls and published prices; it recommends changes but does not change your routes or carrier account. Advice may be unavailable when there is not enough history or price information.

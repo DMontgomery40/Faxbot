@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Box, Card, CardContent, Typography, TextField, Button, CircularProgress, Table, TableHead, TableRow, TableCell, TableBody, TableContainer, Alert, Dialog, DialogTitle, DialogContent, DialogActions, FormControlLabel, Switch, MenuItem, Select, InputLabel, FormControl } from '@mui/material';
 import AdminAPIClient, { configurationWriteRejected } from '../api/client';
+import { formatServerTime } from '../api/time';
 import type { ConfigurationWriteResult, Settings } from '../api/types';
 
 interface LogsProps { client: AdminAPIClient; }
@@ -24,6 +25,14 @@ export const LOG_COLUMNS: Array<{ field: string; label: string }> = [
   { field: 'key_id', label: 'Key' }, { field: 'backend', label: 'Provider' }, { field: 'status', label: 'Result' },
   { field: 'error', label: 'Error' }, { field: 'to', label: 'To' }, { field: 'from', label: 'From' },
 ];
+// One value as people read it: the time in local time, yes or no, and nothing for an empty field.
+export function logValue(field: string, value: unknown): string {
+  if (value === undefined || value === null || value === '') return '';
+  if (field === 'ts') return formatServerTime(String(value), String(value));
+  if (typeof value === 'boolean') return value ? 'yes' : 'no';
+  return typeof value === 'object' ? JSON.stringify(value) : String(value);
+}
+
 const COLUMN_FIELDS: Record<string, string> = Object.fromEntries(LOG_COLUMNS.map(({ field, label }) => [label.toLowerCase(), field]));
 
 // "provider:sinch result:failed" matches one column each; other words search everything.
@@ -51,6 +60,8 @@ function Logs({ client }: LogsProps) {
   const [fileLines, setFileLines] = useState<number>(2000);
   const [expandOpen, setExpandOpen] = useState(false);
   const [expandedRow, setExpandedRow] = useState<any | null>(null);
+  // The entry exactly as recorded, for developers; the readable lines come first.
+  const [showRaw, setShowRaw] = useState(false);
   const [wrap, setWrap] = useState<boolean>(false);
   const [sincePreset, setSincePreset] = useState<string>('');
   const [follow, setFollow] = useState<boolean>(false);
@@ -342,10 +353,10 @@ function Logs({ client }: LogsProps) {
                 {items.length === 0 ? (
                   <TableRow><TableCell colSpan={columns.length}><Typography variant="body2" color="text.secondary">No matching entries</Typography></TableCell></TableRow>
                 ) : items.map((row, idx) => (
-                  <TableRow key={idx} hover onClick={()=>{ setExpandedRow(row); setExpandOpen(true); }} sx={{ cursor: 'pointer' }}>
+                  <TableRow key={idx} hover onClick={()=>{ setExpandedRow(row); setShowRaw(false); setExpandOpen(true); }} sx={{ cursor: 'pointer' }}>
                     {columns.map(col => (
                       <TableCell key={col.field} sx={{ maxWidth: wrap? 'none': 340, whiteSpace: wrap? 'normal':'nowrap', overflow: wrap? 'visible':'hidden', textOverflow: wrap? 'clip':'ellipsis' }}>
-                        {row[col.field] !== undefined ? String(row[col.field]) : ''}
+                        {logValue(col.field, row[col.field])}
                       </TableCell>
                     ))}
                   </TableRow>
@@ -362,9 +373,21 @@ function Logs({ client }: LogsProps) {
       <Dialog open={expandOpen} onClose={()=>setExpandOpen(false)} maxWidth="md" fullWidth>
         <DialogTitle>Log entry</DialogTitle>
         <DialogContent>
-          <Box component="pre" sx={{ p: 2, bgcolor: 'background.default', borderRadius: 1, whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontFamily: 'monospace', fontSize: '0.85rem' }}>
-            {expandedRow ? JSON.stringify(expandedRow, null, 2) : ''}
+          <Box data-testid="log-entry-lines">
+            {expandedRow && LOG_COLUMNS.filter((col) => logValue(col.field, expandedRow[col.field])).map((col) => (
+              <Box key={col.field} display="flex" gap={2} sx={{ py: 0.5 }}>
+                <Typography variant="body2" color="text.secondary" sx={{ minWidth: 96 }}>{col.label}</Typography>
+                <Typography variant="body2" sx={{ wordBreak: 'break-word' }}>{logValue(col.field, expandedRow[col.field])}</Typography>
+              </Box>
+            ))}
           </Box>
+          <FormControlLabel sx={{ mt: 1 }} control={<Switch checked={showRaw} onChange={(event) => setShowRaw(event.target.checked)} />}
+            label="Show all recorded details" />
+          {showRaw && (
+            <Box component="pre" data-testid="log-entry-raw" sx={{ p: 2, bgcolor: 'background.default', borderRadius: 1, whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontFamily: 'monospace', fontSize: '0.85rem' }}>
+              {expandedRow ? JSON.stringify(expandedRow, null, 2) : ''}
+            </Box>
+          )}
         </DialogContent>
         <DialogActions>
           <Button onClick={()=>{ if (!expandedRow) return; const blob = new Blob([JSON.stringify(expandedRow, null, 2)], { type: 'application/json' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = 'log.json'; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url); }}>Download</Button>

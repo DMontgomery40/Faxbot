@@ -239,6 +239,55 @@ def test_the_switch_waits_for_the_failed_call_to_hang_up_then_restarts_asterisk_
     assert _t38(client) is False
 
 
+def test_a_switch_that_finds_calls_up_reloads_asterisk_once_they_end_and_says_so(client, network, monkeypatch):
+    """Review round 4: after 120 s of busy lines the setting was saved but Asterisk never loaded it."""
+    import os
+    network['result'] = KEEPS_PORTS
+    assert client.post('/admin/sip/apply', headers=ADMIN).status_code == 200
+    runtime = client.app.state.configuration_runtime
+    values = runtime.manager.store.read().active.values
+    open(os.path.join(values.fax_data_dir, 'asterisk', 'engine-started'), 'w').write('1700000000\n')
+    busy = {'up': True}
+    actions = []
+
+    async def status_query(fields, *, collect=False):
+        actions.append(fields.get('Command') or fields['Action'])
+        if fields['Action'] == 'CoreShowChannels':
+            return {'response': 'Success', 'value': '', 'message': ''}, [{'Uniqueid': '1.1'}] if busy['up'] else []
+        raise ConnectionError('AMI connection closed')  # Asterisk exits inside "core stop gracefully"
+    monkeypatch.setattr(ami_client, 'status_query', status_query)
+    monkeypatch.setattr(ami_client._connected, 'is_set', lambda: True)
+    monkeypatch.setattr(sip_http, '_restart', {'at': None})
+    monkeypatch.setattr(sip_fax_mode, 'BUSY_RETRY_SECONDS', 0.01)
+    monkeypatch.setattr(sip_fax_mode, 'BUSY_WAIT_SECONDS', 0.05)
+
+    async def scenario():
+        result = await sip_fax_mode.switch_to_audio(runtime, sip_fax_mode.NO_DATA_BACK)
+        assert (result['engine'], result['waiting'], result['message']) == (
+            'busy', True, 'Saved. Asterisk loads the new settings as soon as no call is up.')
+        assert sip_fax_mode.reload_waiting() and 'core stop gracefully' not in actions
+        busy['up'] = False  # the call ends
+        for _ in range(200):
+            if not sip_fax_mode.reload_waiting():
+                break
+            await asyncio.sleep(0.01)
+        assert not sip_fax_mode.reload_waiting()
+    asyncio.run(scenario())
+    assert actions.count('core stop gracefully') == 1 and _t38(client) is False
+
+
+def test_the_status_says_asterisk_loads_a_switched_setting_once_calls_end(client, network, monkeypatch):
+    import os
+    network['result'] = KEEPS_PORTS
+    assert client.post('/admin/sip/apply', headers=ADMIN).status_code == 200
+    values = client.app.state.configuration_runtime.manager.store.read().active.values
+    open(os.path.join(values.fax_data_dir, 'asterisk', 'engine-started'), 'w').write('1700000000\n')
+    monkeypatch.setattr(sip_fax_mode, 'reload_waiting', lambda: True)
+    status = client.get('/admin/sip/status', headers=ADMIN).json()
+    assert status['reload_waiting'] is True
+    assert status['message'] == 'Saved. Asterisk loads the new settings as soon as no call is up.'
+
+
 def test_a_t38_call_that_was_simply_hung_up_gives_no_derived_reason(client, network):
     from app import sip_calls
     network['result'] = KEEPS_PORTS

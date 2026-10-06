@@ -8,6 +8,7 @@ from .. import state
 from ..client import segment
 from ..errors import CliError, EXIT_NOT_FOUND
 from ..output import local_time, parse_time
+from ..settings_write import write_settings
 from .fax import _report_saved, save_document
 
 work = typer.Typer(help='The work queue: received documents with an owner, an acknowledgement target and a '
@@ -194,9 +195,7 @@ def work_settings(acknowledge_hours: int = typer.Option(None, '--acknowledge-hou
     api = state.api()
     changed = []
     if acknowledge_hours is not None:
-        current = api.get('/admin/settings')
-        api.put('/admin/settings', json={'work_acknowledge_hours': acknowledge_hours,
-                                         'expected_revision_id': current['_meta']['desired_revision_id']})
+        write_settings(api, {'work_acknowledge_hours': acknowledge_hours})
         changed.append('installation target')
     if (hours is not None or installation_target or backup or no_backup) and not mailbox:
         raise CliError('Add --mailbox to say which mailbox to change.')

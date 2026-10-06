@@ -427,6 +427,26 @@ def test_reported_charges_count_once_and_numbers_match_however_they_were_stored(
     assert estimated in {item.id for item, _ in found.inbound}
 
 
+def test_a_received_call_of_unknown_length_is_unpriced_never_zero_minutes(history):
+    """Builder T: the fax engine records a received fax as answered with no answer time or length, and it was
+    priced at zero minutes. A call that ended unanswered still costs nothing by the minute."""
+    engine, routes, store = history
+    start = CHECK_START + timedelta(days=3, hours=10)
+    engine_reported, missed, answered = insert_calls(store, [
+        (QUIET[0], start, 0), (QUIET[0], start + timedelta(hours=1), 0), (QUIET[0], start + timedelta(hours=2), 90)])
+    with store.engine.begin() as connection:
+        # What sip_calls.record_engine_receive stores: answered, no answer time, no length, ended now.
+        connection.execute(store.calls.update().where(store.calls.c.id == engine_reported).values(
+            answered_at=None, connected_seconds=None, ended_at=start + timedelta(minutes=3)))
+        connection.execute(store.calls.update().where(store.calls.c.id == missed).values(
+            answered_at=None, connected_seconds=None, disposition='no_answer', pages=None, fax_status=None))
+    found = ReceivingHistory(engine, routes).read('telnyx', CHOOSE_START, NOW, country='US',
+                                                  prices=carrier_prices('telnyx'))
+    by_id = {item.id: item for item, _ in found.inbound}
+    assert by_id[engine_reported].metered_micros is None and found.unpriced == 1
+    assert by_id[missed].metered_micros == 0 and by_id[answered].metered_micros > 0
+
+
 def test_connections_are_arithmetic_on_monthly_fees(history):
     engine, routes, store = history
     report = receiving_report(engine, routes, values(), now=NOW, days=DAYS)

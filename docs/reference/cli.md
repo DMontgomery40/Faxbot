@@ -57,6 +57,7 @@ $ faxbot send [OPTIONS] {to} {file}
 * `--queue`: Accept the fax without sending it. Faxbot allows this only while sending is turned off (test mode).
 * `--idempotency-key KEY`: Your own reference for this fax. Sending again with the same reference returns the first fax instead of sending twice.
 * `--now`: Send immediately, even when this number batches faxes; faxes already waiting for it go in the same call.
+* `--urgent`: Send before other faxes waiting for the same line, without waiting to go together with other faxes.
 * `--by-call`: Place a real call through your carrier even when the number is one of your own, for example to test your fax line.
 * `--help`: Show this message and exit.
 
@@ -957,7 +958,7 @@ $ faxbot recipients show [OPTIONS] {number}
 
 ### `faxbot recipients set`
 
-Change a number&#x27;s name, notes, preferred route, or whether it accepts case packets.
+Change a number&#x27;s name, notes, preferred route, calls at once, or whether it accepts case packets.
 
 **Usage**:
 
@@ -974,6 +975,7 @@ $ faxbot recipients set [OPTIONS] {number}
 * `--name <str>`: A name for this destination.
 * `--notes <str>`: Notes for your team.
 * `--preferred-route <str>`: Route to use first, as listed by &#x27;faxbot recipients show&#x27;. Use &#x27;automatic&#x27; for the cheapest reliable route.
+* `--calls-at-once N|default`: Calls at once to this number: a number from 1 to 20, 0 for no limit, or &#x27;default&#x27; for one at a time.
 * `--accepts-references / --no-references`: Whether this recipient accepts case packets that reference documents they already received instead of resending them.
 * `--help`: Show this message and exit.
 
@@ -1389,6 +1391,9 @@ $ faxbot providers show [OPTIONS] {provider}
 
 Change a provider&#x27;s settings, or start using it for sending, receiving or storage.
 
+Passwords and keys are never typed as NAME=VALUE, where they would stay in your shell history: use --secret
+NAME to type one without showing it, or --secret-stdin NAME to read it from standard input.
+
 **Usage**:
 
 ```console
@@ -1403,6 +1408,7 @@ $ faxbot providers configure [OPTIONS] {provider} [NAME=VALUE...]
 **Options**:
 
 * `--secret NAME`: Prompt for this setting&#x27;s value without echoing it, for passwords and keys. Repeat for more.
+* `--secret-stdin NAME`: Read this password or key from standard input, one line each, for scripts. Repeat for more.
 * `--role <str>`: With --enable: outbound (sending), inbound (receiving) or storage.
 * `--enable`: Use this provider for sending, receiving or storage (choose which with --role).
 * `--help`: Show this message and exit.
@@ -1526,7 +1532,9 @@ $ faxbot providers trunk [OPTIONS] COMMAND [ARGS]...
 * `status`: Check the SIP trunk: registration with the...
 * `apply`: Connect the saved phone line settings.
 * `calls`: List recent calls on the phone line,...
+* `restart-engine`: Restart the fast fax service once no fax...
 * `mode`: Choose how new fax calls are sent, T.38...
+* `limits`: Show or change how many calls the trunk...
 * `presets`: List the carriers and phone systems Faxbot...
 * `use`: Choose a carrier or phone system preset...
 * `network`: Whether fax over IP (T.38) works on the...
@@ -1578,6 +1586,20 @@ $ faxbot providers trunk calls [OPTIONS]
 * `--direction <str>`: Only outbound or inbound calls.
 * `--help`: Show this message and exit.
 
+#### `faxbot providers trunk restart-engine`
+
+Restart the fast fax service once no fax is being sent or received.
+
+**Usage**:
+
+```console
+$ faxbot providers trunk restart-engine [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
 #### `faxbot providers trunk mode`
 
 Choose how new fax calls are sent, T.38 (fax over IP) or audio when T.38 fails, then reconnect the trunk.
@@ -1594,6 +1616,22 @@ $ faxbot providers trunk mode [OPTIONS] {t38|audio}
 
 **Options**:
 
+* `--help`: Show this message and exit.
+
+#### `faxbot providers trunk limits`
+
+Show or change how many calls the trunk takes at once and how many new calls a second. Faxes beyond them wait for a free line; they never fail for it.
+
+**Usage**:
+
+```console
+$ faxbot providers trunk limits [OPTIONS]
+```
+
+**Options**:
+
+* `--calls-at-once <int range>`: Calls at once on the trunk; 0 means the same as the fax lines.  [0&lt;=x&lt;=200]
+* `--calls-per-second <int range>`: New calls per second; 0 means your carrier&#x27;s published limit, or no limit.  [0&lt;=x&lt;=100]
 * `--help`: Show this message and exit.
 
 #### `faxbot providers trunk presets`
@@ -3011,6 +3049,9 @@ $ faxbot system settings get [OPTIONS] [section]
 
 Change settings by name, for example max_file_size_mb=20. Faxbot checks the result before saving it.
 
+Passwords and keys are never typed as NAME=VALUE, where they would stay in your shell history: use --secret
+NAME to type one without showing it, or --secret-stdin NAME to read it from standard input.
+
 **Usage**:
 
 ```console
@@ -3024,6 +3065,7 @@ $ faxbot system settings set [OPTIONS] [NAME=VALUE...]
 **Options**:
 
 * `--secret NAME`: Ask for this setting without showing what you type, for passwords and provider keys. Repeat for more.
+* `--secret-stdin NAME`: Read this password or key from standard input, one line each, for scripts. Repeat for more.
 * `--text`: Send every value exactly as typed.
 * `--help`: Show this message and exit.
 
