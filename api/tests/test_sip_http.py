@@ -296,6 +296,8 @@ def test_each_route_declares_the_permission_the_console_relies_on():
                         ('GET', '/admin/sip/network'): [('providers:read', False)],
                         ('POST', '/admin/sip/network/check'): [('providers:write', False)],
                         ('GET', '/admin/sip/telnyx'): [('providers:read', False)],
+                        ('GET', '/admin/sip/negotiation'): [('providers:read', False)],
+                        ('GET', '/admin/sip/negotiation/received/{inbound_id}'): [('providers:read', False)],
                         ('POST', '/admin/sip/telnyx/numbers/{number}/t38'): [('providers:write', True)]}
 
 
