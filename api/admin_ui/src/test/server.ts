@@ -170,6 +170,7 @@ export function emptySavings() {
   const part = (sentence: string) => ({ estimate: true, saved: [], sentence });
   return {
     days: 30, since: '2026-09-04T00:00:00', estimate: true, total_saved: [],
+    total_sentence: 'No money saved in the last 30 days, as far as Faxbot can tell.',
     sentence: 'Each figure is an estimate: what you paid compared with what the same faxes would have cost the usual way.',
     sending_together: { ...part('No faxes were sent together in the last 30 days.'),
       numbers: 0, calls: 0, faxes: 0, calls_saved: 0, priced_calls: 0 },

@@ -170,6 +170,35 @@ def test_the_number_humblefax_reports_for_the_account_counts_when_none_is_config
     assert reads == [] and plan['windows'][0]['own_numbers'] == 0
 
 
+def test_an_unknown_number_rental_is_never_counted_as_free(plans, monkeypatch):
+    """The trunk carrier publishes no price for keeping the plan's number: no saving is stated, and the rent row
+    says the price is not published instead of showing nothing."""
+    from api.app.routing import plan_check
+    multi, routes = plans
+    sent(multi, routes, 'humblefax', CLINIC, ['success'] * 5)
+    monkeypatch.setattr(plan_check, 'carrier_prices', lambda carrier, path=None: SimpleNamespace(rental={}))
+    (plan,) = report(routes)['plans']
+    latest = plan['windows'][0]
+    assert latest['other_way'] == money(5 * estimate_cost(TELNYX_OUT, 3))
+    assert plan['state'] == 'review'
+    assert plan['sentence'] == ('Worth reviewing: HumbleFax carried 5 faxes in the last 30 days, about $2.00 each for '
+                                'its $10 monthly fee; Telnyx would have cost about $0.05 for the same faxes, but '
+                                'Telnyx does not publish what it charges to keep your HumbleFax number, so Faxbot '
+                                "can't tell whether dropping the plan would save money (estimate).")
+    assert latest['number_rental'] == [] and latest['number_rental_unpublished'] is True
+    # A plan that costs less than the faxes alone would another way is kept, whatever the number costs.
+    routes.replace_cards([HUMBLEFAX, TELNYX_OUT, TELNYX_IN, card('phaxio', page='1.00')])
+    sent(multi, routes, 'phaxio', CLINIC, ['success'] * 3, reported='3.00')
+    (plan,) = report(routes, outbound_route_providers=('phaxio',))['plans']
+    assert plan['state'] == 'keep' and plan['sentence'].startswith('Keep it: HumbleFax carried 5 faxes')
+    # With the carrier's published rental the row shows it and nothing says it is unpublished.
+    monkeypatch.setattr(plan_check, 'carrier_prices', lambda carrier, path=None: SimpleNamespace(
+        rental={'local': 1_000_000}))
+    (plan,) = report(routes)['plans']
+    assert plan['windows'][0]['number_rental'] == money(1_000_000)
+    assert plan['windows'][0]['number_rental_unpublished'] is False
+
+
 def test_an_unreliable_alternative_suggests_nothing(plans):
     multi, routes = plans
     sent(multi, routes, 'humblefax', CLINIC, ['success'] * 5)

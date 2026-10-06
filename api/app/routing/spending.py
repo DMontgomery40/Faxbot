@@ -9,13 +9,19 @@ could not match to exactly one carrier record is counted as unmatched.
 A carrier record that fits no call Faxbot recorded is still money spent: it is
 included in the charged total of its direction and counted separately as
 "billed but not recorded by Faxbot".
+
+Unknown cost is not zero cost. A fax or call with neither a reported charge nor
+an estimate (no rate card, or a per-minute card and a call of unknown length)
+adds nothing to the totals and is counted as ``unpriced`` ("not priced yet"),
+apart from ``unreported``, which also counts the estimated ones.
 """
 from datetime import timedelta
 
 import sqlalchemy as sa
 
 from .carriers import GIVE_UP, carrier_label
-from .costs import attempt_cost, billed_seconds, money_list_text, plan_fee_for_days, plan_fee_text
+from .costs import (Money, Tally, attempt_cost, billed_seconds, call_seconds, money_list_text, plan_fee_for_days,
+                    plan_fee_text)
 from .database import read_connection, utcnow
 from .plan import route_label
 
@@ -87,13 +93,9 @@ class Spending:
             calls = self._outbound_calls(connection, window)
             reported = self._reported_charges(connection, window)
         cards = {card.provider_id: card for card in self.routes.current_cards() if card.direction == 'outbound'}
-        totals = {}
+        totals, open_costs = {}, {}
         for row in rows:
-            entry = totals.setdefault(row['provider_id'], {
-                'provider_id': row['provider_id'], 'attempts': 0, 'successes': 0, 'failures': 0, 'uncertain': 0,
-                'billed_seconds': 0, 'billed_pages': 0, 'cost_micros': {}, 'reported_cost_micros': {},
-                'settled_cost_micros': {}, 'unreported': 0, 'reported': 0, 'unreported_estimate_micros': {},
-                'awaiting': 0, 'unmatched': 0, 'carriers': set()})
+            entry = totals.setdefault(row['provider_id'], self._empty_outbound(row['provider_id']))
             entry['attempts'] += 1
             entry['successes'] += row['outcome'] == 'success'
             entry['failures'] += row['outcome'] == 'failed'
@@ -111,11 +113,16 @@ class Spending:
                 entry['carriers'].add(call[0])
             if row['reported_cost_micros'] is None:
                 entry['unreported'] += 1
-                _add(entry['unreported_estimate_micros'], row['currency'], row['estimated_cost_micros'])
+                # Estimated, or not priced at all: counted, never added as 0.
+                open_costs.setdefault(row['provider_id'], Tally()).add(
+                    Money.of(row['estimated_cost_micros'], row['currency']))
                 entry['awaiting'] += self._awaiting(row, call, now)
                 entry['unmatched'] += call is not None and call[1] == 'ambiguous'
             else:
                 entry['reported'] += 1
+        for provider, tally in open_costs.items():
+            totals[provider]['unreported_estimate_micros'] = tally.known
+            totals[provider]['unpriced'] = tally.unknown
         unrecorded = [row for row in self.carriers.unrecorded_in_effect(since=since) if row['direction'] == 'outbound']
         if unrecorded:
             entry = totals.setdefault('sip', self._empty_outbound('sip'))
@@ -148,7 +155,13 @@ class Spending:
         return {'provider_id': provider_id, 'attempts': 0, 'successes': 0, 'failures': 0, 'uncertain': 0,
                 'billed_seconds': 0, 'billed_pages': 0, 'cost_micros': {}, 'reported_cost_micros': {},
                 'settled_cost_micros': {}, 'unreported': 0, 'reported': 0, 'unreported_estimate_micros': {},
-                'awaiting': 0, 'unmatched': 0, 'carriers': set()}
+                'unpriced': 0, 'awaiting': 0, 'unmatched': 0, 'carriers': set()}
+
+    @staticmethod
+    def _empty_received(carrier):
+        return {'provider_id': 'sip', 'carrier': carrier, 'calls': 0, 'faxes': 0, 'billed_seconds': 0,
+                'cost_micros': {}, 'reported_cost_micros': {}, 'unreported_estimate_micros': {}, 'reported': 0,
+                'unreported': 0, 'unpriced': 0, 'awaiting': 0, 'unmatched': 0}
 
     @staticmethod
     def _add_unrecorded(entry, rows):
@@ -176,43 +189,44 @@ class Spending:
                 .where(calls.c.direction == 'inbound', calls.c.started_at >= since)).mappings().all()
             effective = self.carriers.in_effect([row['id'] for row in rows], connection)
         cards = {(card.provider_id, card.direction): card for card in self.routes.current_cards()}
-        totals = {}
+        totals, estimated, open_costs = {}, {}, {}
         for row in rows:
             preset = row['trunk_preset'] or ''
-            entry = totals.setdefault(preset, {
-                'provider_id': 'sip', 'carrier': preset or None, 'calls': 0, 'faxes': 0, 'billed_seconds': 0,
-                'cost_micros': {}, 'reported_cost_micros': {}, 'unreported_estimate_micros': {}, 'reported': 0,
-                'unreported': 0, 'awaiting': 0, 'unmatched': 0})
+            entry = totals.setdefault(preset, self._empty_received(preset or None))
             card = cards.get((f'sip-{preset}', 'inbound')) or cards.get(('sip', 'inbound'))
-            seconds = row['connected_seconds']
-            estimate = (attempt_cost(card, seconds=seconds, pages=row['pages'], delivered=row['job_id'] is not None)
+            # Measured, or worked out from the answer and end times; an answered call of unknown length stays unknown.
+            seconds = call_seconds(row['connected_seconds'], row['answered_at'], row['ended_at'], row['disposition'])
+            estimate = (Money.of(attempt_cost(card, seconds=seconds, pages=row['pages'],
+                                              delivered=row['job_id'] is not None), card.currency)
                         if card is not None and row['ended_at'] is not None else None)
+            billed = billed_seconds(card, seconds) if card is not None else None
             entry['calls'] += 1
             entry['faxes'] += row['job_id'] is not None
-            _add(entry['cost_micros'], card.currency if card else None, estimate)
+            estimated.setdefault(preset, Tally()).add(estimate)
             charges = effective.get(row['id'], [])
             if charges:
                 entry['reported'] += 1
                 for charge in charges:
                     _add(entry['reported_cost_micros'], charge['currency'], charge['amount_micros'])
                 carrier_seconds = [charge['billed_seconds'] for charge in charges if charge['billed_seconds'] is not None]
-                entry['billed_seconds'] += sum(carrier_seconds) if carrier_seconds else (
-                    billed_seconds(card, seconds) if card else 0)
+                entry['billed_seconds'] += sum(carrier_seconds) if carrier_seconds else (billed or 0)
                 continue
             entry['unreported'] += 1
-            entry['billed_seconds'] += billed_seconds(card, seconds) if card else 0
-            _add(entry['unreported_estimate_micros'], card.currency if card else None, estimate)
+            entry['billed_seconds'] += billed or 0  # minutes shown; an unknown length adds none
+            open_costs.setdefault(preset, Tally()).add(estimate)
             entry['unmatched'] += row['state'] == 'ambiguous'
             entry['awaiting'] += (preset in self.carrier_presets and row['ended_at'] is not None
                                   and row['state'] not in ('ambiguous', 'unreported')
                                   and row['ended_at'] >= now - GIVE_UP)
+        for preset, tally in estimated.items():
+            totals[preset]['cost_micros'] = tally.known
+        for preset, tally in open_costs.items():
+            totals[preset]['unreported_estimate_micros'] = tally.known
+            totals[preset]['unpriced'] = tally.unknown
         for row in self.carriers.unrecorded_in_effect(since=since):
             if row['direction'] != 'inbound':
                 continue
-            entry = totals.setdefault(row['provider_id'], {
-                'provider_id': 'sip', 'carrier': row['provider_id'], 'calls': 0, 'faxes': 0, 'billed_seconds': 0,
-                'cost_micros': {}, 'reported_cost_micros': {}, 'unreported_estimate_micros': {}, 'reported': 0,
-                'unreported': 0, 'awaiting': 0, 'unmatched': 0})
+            entry = totals.setdefault(row['provider_id'], self._empty_received(row['provider_id']))
             self._add_unrecorded(entry, [row])
         for entry in totals.values():
             entry.setdefault('unrecorded', 0)
@@ -298,10 +312,10 @@ class Spending:
                 return {'state': 'included', 'summary': f'Included in your {route_label(pending)} plan ({fee} a month).',
                         'reported_cost': {}, 'estimated_cost': {}, 'attempts': 0, **where}
             return {'state': 'none', 'summary': None, 'reported_cost': {}, 'estimated_cost': {}, 'attempts': 0, **where}
-        reported_total, estimated_total, carriers = {}, {}, set()
+        reported_total, estimated, carriers = {}, Tally(), set()
         waiting = unmatched = done = 0
         for row in rows:
-            _add(estimated_total, row['currency'], row['estimated_cost_micros'])
+            estimated.add(Money.of(row['estimated_cost_micros'], row['currency']))
             if row['reported_cost_micros'] is not None:
                 done += 1
                 _add(reported_total, row['reported_currency'], row['reported_cost_micros'])
@@ -312,6 +326,8 @@ class Spending:
             waiting += 1
             if call is not None and call[0]:
                 carriers.add(call[0])
+        # An estimate covers every attempt or none: one attempt with no price leaves the fax's estimate unknown.
+        estimated_total = {} if estimated.unknown else estimated.known
         sip = all(row['provider_id'] == 'sip' for row in rows)
         unit = 'call' if sip else 'attempt'
         who = carrier_label(next(iter(carriers))) if len(carriers) == 1 else 'Your providers'

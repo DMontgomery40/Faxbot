@@ -54,6 +54,23 @@ describe('Costs → Recommendations → Plans', () => {
     expect(document.body.textContent).not.toMatch(/\d{4}-\d{2}-\d{2}T|\btrue\b|\bfalse\b|humblefax/);
   });
 
+  it('shows an unpublished number rent as not published, never as nothing to pay', async () => {
+    const advice = review();
+    Object.assign(advice.plans[0], {
+      sentence: 'Worth reviewing: HumbleFax carried 5 faxes in the last 30 days, about $2.00 each for its $10 monthly '
+        + 'fee; Telnyx would have cost about $0.05 for the same faxes, but Telnyx does not publish what it charges to '
+        + "keep your HumbleFax number, so Faxbot can't tell whether dropping the plan would save money (estimate).",
+      windows: [window(30, 5, { number_rental: [], number_rental_unpublished: true }), window(0, 0)],
+    });
+    server.use(http.get('/routing/recommendations/plans', () => HttpResponse.json(advice)));
+    render(<PlanRecommendations client={client()} />);
+    const plan = await screen.findByTestId('plan-recommendation');
+    expect(within(plan).getByTestId('plan-sentence').textContent).not.toMatch(/\$\d+\.\d+ less/);
+    const rent = within(plan).getByText('Rent for the fax number at your carrier').closest('tr') as HTMLElement;
+    expect(within(rent).getAllByRole('cell').map((cell) => cell.textContent))
+      .toEqual(['Rent for the fax number at your carrier', 'Not published', '-']);
+  });
+
   it('shows too little history as its sentence alone, and the page keeps its empty sentence', async () => {
     const advice = review();
     Object.assign(advice.plans[0], {

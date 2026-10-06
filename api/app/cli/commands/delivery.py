@@ -192,6 +192,19 @@ def _not_billed(item, unreported):
     return money(item.get('estimated_cost_not_reported')) if item.get(unreported) else '-'
 
 
+def _not_priced_line(result):
+    """How many sent faxes and received calls have no charge and no estimate, so no total counts them."""
+    sent = sum(item.get('attempts_not_priced') or 0 for item in result.get('providers') or [])
+    calls = sum(item.get('calls_not_priced') or 0 for item in result.get('received') or [])
+    parts = ([f"{sent} {'fax' if sent == 1 else 'faxes'}"] if sent else []) + (
+        [f"{calls} {'call' if calls == 1 else 'calls'}"] if calls else [])
+    if not parts:
+        return None
+    one = sent + calls == 1
+    return (f"{' and '.join(parts)} {'is' if one else 'are'} not priced yet, so {'it is' if one else 'they are'} "
+            "not in the total.")
+
+
 def _unrecorded_lines(out, items):
     for item in items:
         calls = item.get('unrecorded_calls') or 0
@@ -216,23 +229,28 @@ def routing_costs(since: str = typer.Option(None, '--since', help='Start date, f
     def human(out):
         out.line(f"Since {local_time(result['since'])}")
         out.table(['Route', 'Faxes', 'Delivered', 'Billed minutes', 'Charged', 'Estimated, not billed yet',
-                   'Waiting for the bill', 'Could not be matched'],
+                   'Not priced yet', 'Waiting for the bill', 'Could not be matched'],
                   [[_route_name(item), item['attempts'], item['successes'], item['billed_minutes'],
                     money(item['reported_cost']), _not_billed(item, 'attempts_without_reported_cost'),
-                    item.get('awaiting_carrier_bill', 0), item.get('unmatched_charges', 0)]
+                    item.get('attempts_not_priced', 0), item.get('awaiting_carrier_bill', 0),
+                    item.get('unmatched_charges', 0)]
                    for item in result.get('providers', [])],
                   empty='No faxes sent in this period.')
         received = result.get('received') or []
         if received:
             out.table(['Received on', 'Calls', 'Faxes', 'Billed minutes', 'Charged', 'Estimated, not billed yet',
-                       'Waiting for the bill', 'Could not be matched'],
+                       'Not priced yet', 'Waiting for the bill', 'Could not be matched'],
                       [[_route_name(item), item['calls'], item['faxes'], item['billed_minutes'],
                         money(item['reported_cost']), _not_billed(item, 'calls_without_reported_cost'),
-                        item['awaiting_carrier_bill'], item['unmatched_charges']] for item in received])
+                        item.get('calls_not_priced', 0), item['awaiting_carrier_bill'], item['unmatched_charges']]
+                       for item in received])
         _unrecorded_lines(out, [*result.get('providers', []), *received])
         if result.get('total_cost'):
             out.line(f"Total: {money(result['total_cost'])} (charges, estimates for faxes not billed yet, and plan fees "
                      "counted once per 30 days, pro-rated by day).")
+        not_priced = _not_priced_line(result)
+        if not_priced:
+            out.line(not_priced)
         carrier = result.get('carrier_charges') or {}
         if carrier.get('supported') and not carrier.get('readable'):
             out.line(f"{carrier['carrier']} call charges appear once a {carrier['carrier']} API key is set: "
@@ -292,8 +310,10 @@ def routing_savings(days: int = typer.Option(30, '--days', min=1, max=366, help=
 
     def human(out):
         total = result.get('total_saved') or []
-        out.line(f"About {money(total)} saved in the last {result['days']} days." if total
-                 else f"No money saved in the last {result['days']} days, as far as Faxbot can tell.")
+        # The server's headline says honestly when something cost more than it saved.
+        out.line(result.get('total_sentence') or (
+            f"About {money(total)} saved in the last {result['days']} days." if total
+            else f"No money saved in the last {result['days']} days, as far as Faxbot can tell."))
         out.table(['Saving', 'Estimate', 'What happened'],
                   [[title, money((result.get(key) or {}).get('saved')), (result.get(key) or {}).get('sentence') or '-']
                    for key, title in SAVING_PARTS])
@@ -413,6 +433,8 @@ def show_plans(out, result):
         latest, before = (plan.get('windows') or [{}, {}])[:2]
 
         def cell(window, key, empty='-'):
+            if key == 'number_rental' and window.get('number_rental_unpublished'):
+                return 'Not published'  # the carrier publishes no price for keeping the number: unknown, not $0
             value = window.get(key)
             return money(value, empty=empty) if isinstance(value, list) else (empty if value is None else value)
         rows = [('Days Faxbot has records for', 'days'), ('Faxes sent', 'sent'), ('Faxes received', 'received'),

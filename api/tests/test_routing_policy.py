@@ -114,6 +114,56 @@ def test_rounding_increments_minimums_and_failed_pages():
     assert attempt_cost(card('z', minute='0.000001'), seconds=1, pages=0, delivered=True) == 1
 
 
+def test_an_unknown_call_length_is_never_priced_as_zero_minutes():
+    """Unknown cost is not zero cost: a per-minute card cannot price a call whose length nobody measured."""
+    trunk = card('sip', minute='0.005', call='0.01', minimum=60)
+    assert billed_seconds(trunk, None) is None
+    assert attempt_cost(trunk, seconds=None, pages=3, delivered=True) is None  # not the $0.01 call fee alone
+    assert attempt_cost(trunk, seconds=0, pages=3, delivered=False) == parse_amount('0.01')  # never connected
+    # A card that charges nothing by the minute still prices the call without its length.
+    per_page = card('y', page='0.10', call='0.01')
+    assert attempt_cost(per_page, seconds=None, pages=4, delivered=True) == parse_amount('0.41')
+
+
+@pytest.mark.parametrize('connected, answered, ended, disposition, expected', [
+    (45, None, None, 'answered', 45),                       # measured
+    (None, 0, 25, 'answered', 25),                          # worked out from the answer and end times
+    (None, None, 25, 'answered', None),                     # answered, length never reported: unknown, never 0
+    (None, None, 25, 'no_answer', 0),                       # never answered: nothing billed by the minute
+    (None, None, 25, 'busy', 0),
+    (None, None, None, 'answered', None),                   # still going
+    (None, None, 25, 'ambiguous', None),
+])
+def test_call_seconds_are_known_only_when_measured_or_worked_out(connected, answered, ended, disposition, expected):
+    from datetime import timedelta
+    from api.app.routing.costs import call_seconds
+    start = datetime(2026, 10, 4, 3)
+    moment = (lambda offset: None if offset is None else start + timedelta(seconds=offset))
+    assert call_seconds(connected, moment(answered), moment(ended), disposition) == expected
+
+
+def test_money_never_adds_an_unknown_amount_to_a_known_one():
+    from api.app.routing.costs import Money, Tally, UnknownAmount
+    cent = Money(10_000, 'USD')
+    assert cent + Money(5000, 'USD') == Money(15_000, 'USD')
+    assert Money(5000, 'USD') - cent == Money(-5000, 'USD')  # a loss stays a loss
+    assert Money.of(None, 'USD') is None and Money.of(5000, None) is None and Money.of(0, 'USD') == Money(0, 'USD')
+    for unknown in (lambda: cent + None, lambda: None + cent, lambda: cent - None, lambda: None - cent):
+        with pytest.raises(UnknownAmount):
+            unknown()
+    with pytest.raises(TypeError):
+        sum([cent, cent])  # sum() starts from the number 0, which is not money
+    with pytest.raises(TypeError):
+        cent + 5000
+    with pytest.raises(ValueError):
+        cent + Money(1, 'EUR')
+    tally = Tally()
+    for amount in (cent, None, Money(2000, 'EUR'), cent, None):
+        tally.add(amount)
+    assert tally.known == {'USD': 20_000, 'EUR': 2000} and tally.unknown == 2
+    assert Tally().add(None).known == {}  # nothing known: no total at all, never a total of 0
+
+
 def test_amount_parsing_and_formatting_are_exact():
     assert parse_amount('0.0095') == 9500
     assert parse_amount(2) == 2_000_000

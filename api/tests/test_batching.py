@@ -495,6 +495,35 @@ def test_the_call_is_costed_once_on_the_fax_that_placed_it_and_shares_split_by_p
     assert money.savings_sentence(saved) == 'Last 30 days: 3 faxes in 1 call, 2 calls saved, about $0.01 saved (estimate).'
 
 
+def test_a_shared_call_that_cost_more_than_separate_calls_shows_the_loss_never_a_zero_saving(sip):
+    from api.app.batching import money
+    from api.app.routing.capture import CostRecorder
+    from api.app.routing.savings import savings, sending_together
+    configuration, delivery, _, routes, _ = sip
+    jobs, claim = _submitted(sip, 1, 2, 1)
+    for job in jobs:
+        routes.record_decision(attempt_id=delivery.get(job)['attempt_id'], job_id=job, destination=NUMBER,
+                               route='sip', reason='configured', provider_id='sip')
+    results.apply_fax_result(delivery, {'JobID': claim.job_id, 'AttemptID': claim.attempt_id, 'Status': 'SUCCESS',
+                                        'Pages': '7'})
+    CostRecorder(routes, observed_seconds=lambda target: 100).step()
+    # The carrier billed the shared call at $0.05 (a slow call); three separate calls would have cost about $0.02.
+    assert routes.ingest_charge(claim.attempt_id, provider_id='sip', charge_id='rec-slow', amount_micros=50_000,
+                                currency='USD', billed_seconds=600) == 'new'
+    saved = money.savings(routes, configuration.engine, NUMBER)
+    assert saved['saved'] == {'USD': -30_000}
+    assert money.savings_sentence(saved) == ('Last 30 days: 3 faxes in 1 call, 2 calls saved, but sending together '
+                                             'cost about $0.03 more (estimate).')
+    together = sending_together(routes, configuration.engine, now=datetime.utcnow(), days=30)
+    assert together['saved'] == {'USD': -30_000}
+    assert together['sentence'] == ('3 faxes to the same number went in 1 call instead of 3, saving 2 calls, but '
+                                    'that call cost about $0.03 more than 3 separate calls.')
+    # Costs → Savings sums signed amounts, and its headline says the money went the other way.
+    found = savings(routes, configuration.engine)
+    assert found['total'] == {'USD': -30_000}
+    assert found['total_sentence'] == 'About $0.03 more spent than saved in the last 30 days.'
+
+
 # The image ------------------------------------------------------------------------------------
 
 def test_the_call_image_copies_each_faxs_pages_unchanged_after_its_separator(tmp_path):

@@ -246,13 +246,15 @@ class PlanCheck:
         numbers = _plan_numbers(self.values, key, self.country, self.accounts)
         includes_number = bool(numbers or shipped_numbers_included(self.path).get(key) or latest['received'])
         carrier = self.label('sip') if self.preset else None
-        monthly = carrier_prices(self.preset).rental.get('local') if includes_number and carrier and key != 'sip' \
-            else None
+        renting = bool(includes_number and carrier and key != 'sip')
+        monthly = carrier_prices(self.preset).rental.get('local') if renting else None
         for view in windows:
-            # Keeping the plan's number means renting it from the carrier instead.
-            view['rental'] = prorate(monthly, view['seconds']) if monthly else 0
+            # Keeping the plan's number means renting it from the carrier instead. When the carrier publishes
+            # no price for that, the rent is unknown (None), never $0.
+            view['rental'] = (None if monthly is None else prorate(monthly, view['seconds'])) if renting else 0
         rental = latest['rental']
-        total = latest['alternative'] + rental
+        # The other way's full cost; unknown with the rent. Without the rent, the faxes alone still decide "keep".
+        total = None if rental is None else latest['alternative'] + rental
         period = (f'in the last {self.days} days' if full
                   else f"over the {_days(latest['days'])} Faxbot has records for")
         other = ' and '.join(sorted(self.label(route) for route in latest['routes'])) or carrier or 'another way'
@@ -272,22 +274,28 @@ class PlanCheck:
         elif latest['blocked']:
             state = 'keep'
             sentence = self._blocked_sentence(name, latest['blocked'], period)
-        elif latest['fee'] <= total:
+        elif latest['fee'] <= (latest['alternative'] if total is None else total):
+            # An unknown rent can only add to the other way, so a plan cheaper than the faxes alone is kept.
             state = 'keep'
             per = (f", about {_about(-(-latest['fee'] // carried), currency)} a fax" if carried else '')
             sentence = (f"Keep it: {name} carried {_faxes(carried)} {period} for its "
                         f"{_fee_text(fee, currency)} monthly fee{per}, while {other_cost} (estimate).")
         else:
             state = 'review'
-            difference = latest['fee'] - total
             if carried:
                 head = (f"{name} carried {_faxes(carried)} {period}, about "
                         f"{_about(-(-latest['fee'] // carried), currency)} each")
             else:
                 head = f'{name} carried no faxes {period}'
             fee_part = ('its ' if full else 'that part of its ') + f'{_fee_text(fee, currency)} monthly fee'
-            sentence = (f"Worth reviewing: {head} for {fee_part}; {other_cost}, "
-                        f"{_about(difference, currency)} less (estimate).")
+            if total is None:
+                # No saving is stated: the number's rent at the carrier is unknown.
+                sentence = (f"Worth reviewing: {head} for {fee_part}; {other_cost}, but {carrier} does not publish "
+                            f"what it charges to keep your {name} number, so Faxbot can't tell whether dropping the "
+                            "plan would save money (estimate).")
+            else:
+                sentence = (f"Worth reviewing: {head} for {fee_part}; {other_cost}, "
+                            f"{_about(latest['fee'] - total, currency)} less (estimate).")
             # Faxes priced another way (not only received ones on the trunk) need that way chosen in Recipients.
             sends_elsewhere = latest['sent'] > latest['own_numbers'] and latest['routes']
             action = (f'If you decide to drop the plan, fax these numbers with {other} instead, then cancel the plan in '
@@ -345,6 +353,8 @@ class PlanCheck:
                 # The same faxes another way, and the carrier's rental for the plan's number once moved there.
                 'other_way': _money(view['alternative'], currency) if view['seconds'] and not view['blocked'] else [],
                 'number_rental': _money(view['rental'], currency) if view['seconds'] and view['rental'] else [],
+                # True when the carrier publishes no price for keeping the plan's number: unknown, not free.
+                'number_rental_unpublished': view['rental'] is None,
                 'other_routes': sorted(self.label(route) for route in view['routes']),
                 'without_other_way': sum(view['blocked'].values())}
 
