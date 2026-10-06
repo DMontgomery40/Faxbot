@@ -491,7 +491,7 @@ async def test_the_watcher_runs_the_whole_check_with_the_running_installation(mo
 class StandInRouter:
     """Stands in for port_mapping.Router: records what Faxbot asked; the wire format is in test_port_mapping.py."""
     opened, renewed, closed = [], [], []
-    external, refuse = '198.51.100.7', False
+    external, refuse, silent = '198.51.100.7', False, False
 
     def __init__(self, gateway, **_):
         self.gateway = gateway
@@ -510,13 +510,14 @@ class StandInRouter:
 
     def close(self, lease):
         StandInRouter.closed.append((lease.gateway, lease.first, lease.last))
+        return not StandInRouter.silent
 
 
 @pytest.fixture
 def stand_in_router(monkeypatch):
     from app import port_mapping
     StandInRouter.opened, StandInRouter.renewed, StandInRouter.closed = [], [], []
-    StandInRouter.external, StandInRouter.refuse = '198.51.100.7', False
+    StandInRouter.external, StandInRouter.refuse, StandInRouter.silent = '198.51.100.7', False, False
     monkeypatch.setattr(port_mapping, 'Router', StandInRouter)
     return StandInRouter
 
@@ -693,6 +694,26 @@ def test_nothing_is_asked_of_the_router_when_ports_are_kept_or_not_published(cli
     network['row'] = COLIMA_SHARED
     assert _check(client)['router_state'] == 'no_router'
     assert stand_in_router.opened == []
+
+
+def test_router_ports_stay_on_record_when_the_router_does_not_answer_at_stop(client, network, stand_in_router):
+    """Review round 4: the lease was forgotten although the router never closed the ports."""
+    network['row'] = LINUX_LAN_CHANGES
+    _publish_fax_ports(client)
+    assert client.post('/admin/sip/apply', headers=ADMIN).status_code == 200
+    stand_in_router.silent = True
+    assert sip_network.close_router_ports(_values(client)) is False
+    assert sip_network.read_lease(_values(client)) is not None  # the next check closes or reuses them
+    stand_in_router.silent = False
+    assert sip_network.close_router_ports(_values(client)) is True
+    assert sip_network.read_lease(_values(client)) is None
+    # A lease whose lifetime is over is forgotten either way: the router has dropped those ports itself.
+    from app.port_mapping import Lease
+    sip_network._keep_lease(_values(client), Lease('natpmp', '192.168.1.1', 4000, 4039, '198.51.100.7', 3600,
+                                                   time.time() - 3700))
+    stand_in_router.silent = True
+    assert sip_network.close_router_ports(_values(client)) is False
+    assert sip_network.read_lease(_values(client)) is None
 
 
 def test_the_router_ports_are_renewed_and_closed_when_faxbot_stops(client, network, stand_in_router):

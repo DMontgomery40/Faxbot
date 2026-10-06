@@ -44,6 +44,8 @@ DESCRIPTION = 'Faxbot fax ports'
 METHODS = ('pcp', 'natpmp', 'upnp')
 _MAX_BODY = 64 * 1024
 _PCP_VERSION, _PCP_MAP, _PCP_PREFER_FAILURE, _UDP = 2, 1, 2, 17
+# A MAP answer: the 24-byte header and the 36-byte MAP body (RFC 6887 sections 7.2 and 11.1).
+_PCP_MAP_ANSWER = 60
 _SERVICES = ('urn:schemas-upnp-org:service:WANIPConnection:2', 'urn:schemas-upnp-org:service:WANIPConnection:1',
              'urn:schemas-upnp-org:service:WANPPPConnection:1')
 
@@ -181,6 +183,9 @@ def pcp_map(gateway, client, internal, external, lifetime, nonce, *, port=PCP_PO
         result = data[3]
     if result != 0:
         raise Refused(f'pcp_{result}')
+    if len(data) < _PCP_MAP_ANSWER:
+        # Cut short: the router answered (and may have opened the port), but not with a whole MAP answer.
+        raise Refused('pcp_short_answer')
     granted, = struct.unpack('!I', data[4:8])
     assigned_port, = struct.unpack('!H', data[42:44])
     assigned = socket.inet_ntoa(data[56:60]) if data[44:56] == b'\x00' * 10 + b'\xff\xff' else None
@@ -314,7 +319,8 @@ class Router:
         self.client = client or client_address() or (None if container else _local_toward(gateway))
 
     def _release(self, method, ports, *, nonce=b'', control='', service='', client=None):
-        """Delete each mapping; a router that stops answering is not asked about the rest."""
+        """Delete each mapping; True when the router answered about every port. A router that stops answering
+        is not asked about the rest (False)."""
         client = client or self.client
         for port in ports:
             try:
@@ -326,10 +332,11 @@ class Router:
                     answer = upnp_unmap(control, service, port, post=self.http) or True
             except Refused as refused:
                 if refused.reason == 'upnp_no_answer':
-                    return
+                    return False
                 continue
             if answer is None:
-                return
+                return False
+        return True
 
     def _pcp(self, first, last, lifetime):
         if not self.client:
@@ -345,7 +352,11 @@ class Router:
                 if answer[1] != port:
                     raise Refused('port_taken')
                 external, granted = answer[0] or external, min(granted, answer[2])
-        except Refused:
+        except Exception as error:
+            # Hand back every port opened so far; a cut-short answer may have opened the port it was about too
+            # (the nonce makes the router close only Faxbot's own mapping).
+            if isinstance(error, Refused) and error.reason == 'pcp_short_answer':
+                done.append(port)
             self._release('pcp', done, nonce=nonce)
             raise
         return Lease('pcp', self.gateway, first, last, external, granted, time.time(), nonce=nonce.hex(),
@@ -365,7 +376,7 @@ class Router:
                 if answer[0] != port:
                     raise Refused('port_taken')
                 granted = min(granted, answer[1])
-        except Refused:
+        except Exception:
             self._release('natpmp', done)
             raise
         return Lease('natpmp', self.gateway, first, last, external, granted, time.time())
@@ -385,7 +396,7 @@ class Router:
                 done.append(port)
                 # A router that keeps only permanent mappings gets permanent ones for every port.
                 asked, granted = (0, 0) if got == 0 else (asked, min(granted, got))
-        except Refused:
+        except Exception:
             self._release('upnp', done, control=control, service=service)
             raise
         return Lease('upnp', self.gateway, first, last, external or None, granted, time.time(), client=self.client,
@@ -426,16 +437,18 @@ class Router:
                 for port in range(lease.first, lease.last + 1) if granted else ():
                     granted = min(granted, upnp_map(lease.control_url, lease.service, lease.client, port, granted,
                                                     post=self.http))
-        except (Refused, ValueError, OSError):
+        except Exception:
+            # Refused, no answer, or an answer Faxbot cannot read: the lease is closed and forgotten.
             self.close(lease)
             return None
         lease.lifetime, lease.granted_at = granted, time.time()
         return lease
 
     def close(self, lease):
-        """Ask the router to close every port of ``lease``; never raises."""
+        """Ask the router to close every port of ``lease``; True when it answered about each one. Never raises."""
         try:
-            self._release(lease.method, range(lease.first, lease.last + 1), nonce=bytes.fromhex(lease.nonce or ''),
-                          control=lease.control_url, service=lease.service, client=lease.client or None)
+            return self._release(lease.method, range(lease.first, lease.last + 1),
+                                 nonce=bytes.fromhex(lease.nonce or ''), control=lease.control_url,
+                                 service=lease.service, client=lease.client or None)
         except Exception:
-            pass
+            return False

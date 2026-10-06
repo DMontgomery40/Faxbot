@@ -561,20 +561,31 @@ def map_ports(values, probe, found, *, router=None, now=time.time):
 
 
 def close_router_ports(values):
-    """Close the ports the router opened for Faxbot (at stop); never raises."""
+    """Close the ports the router opened for Faxbot (at stop); True when the router closed them. Never raises.
+
+    When the router does not answer, the lease stays on record (unless its
+    lifetime is over, when the router has dropped the ports itself), so the
+    next check closes or reuses those ports instead of losing track of them.
+    """
     lease = read_lease(values)
     if lease is None:
         return False
+
     def quick(payload, address, **options):
         return port_mapping.exchange(payload, address, **{**options, 'tries': 1, 'wait': 0.3})
 
     def brief(method, url, body=None, headers=None):
         return port_mapping._http(method, url, body, headers, timeout=0.5)
+    closed = False
     try:
-        port_mapping.Router(lease.gateway, send=quick, http=brief, client=lease.client or None).close(lease)
-    finally:
+        closed = bool(port_mapping.Router(lease.gateway, send=quick, http=brief,
+                                          client=lease.client or None).close(lease))
+    except Exception:
+        closed = False
+    expired = bool(lease.lifetime) and time.time() >= lease.granted_at + lease.lifetime
+    if closed or expired:
         _keep_lease(values, None)
-    return True
+    return closed
 
 
 # -- sentences -----------------------------------------------------------------------------------------
