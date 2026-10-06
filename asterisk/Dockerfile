@@ -31,9 +31,13 @@ RUN curl --fail --location --retry 3 --output asterisk.tar.gz \
     && printf '%s\n' '04b2eb1f0f01aa0ad1945b167171843448a51aa6b7c3e806496d434f13a112b7  /usr/src/download-cache/pjproject-2.17.tar.bz2' | sha256sum --check --strict
 
 WORKDIR /usr/src/asterisk-22.11.0
-# Faxbot's own changes to Asterisk, each explained at the top of its file.
+# Faxbot's own changes to Asterisk, each explained at the top of its file. Every hunk must apply
+# exactly (--fuzz=0): a patch that no longer fits a new Asterisk stops the build instead of landing
+# in the wrong place. faxbot_t38_gateway.h holds the T.38 gateway steps 0002 and 0003 call, with
+# the spandsp version guard; the replay proof in tests/ compiles the same file.
 COPY patches/ /usr/src/patches/
-RUN for change in /usr/src/patches/*.patch; do patch -p1 --forward < "$change" || exit 1; done
+RUN for change in /usr/src/patches/*.patch; do patch -p1 --forward --fuzz=0 < "$change" || exit 1; done \
+    && cp /usr/src/patches/faxbot_t38_gateway.h res/
 RUN ./configure --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var \
        --with-pjproject-bundled --with-spandsp \
     && make menuselect.makeopts \
@@ -80,13 +84,24 @@ RUN apt-get update \
 
 COPY --from=build /opt/install/ /
 
+# Asterisk parses the carrier's SIP, audio and T.38 packets, so it runs as its own unprivileged
+# user (runuser and rungroup in asterisk.conf). The IDs are fixed because Faxbot's data volume
+# outlives the image: the API writes each fax's pages and the inbound secret for this group.
+RUN groupadd --system --gid 5060 asterisk \
+    && useradd --system --uid 5060 --gid 5060 --home-dir /var/lib/asterisk --no-create-home \
+       --shell /usr/sbin/nologin asterisk
+
 WORKDIR /etc/asterisk
 
 COPY etc/asterisk/ /etc/asterisk/
 COPY start.sh /start.sh
 COPY bin/faxbot-inbound-notify bin/faxbot-public-address /usr/local/bin/
+# What Asterisk writes is its own; its configuration stays root's, readable by its group
+# (start.sh renders the rest of it as root at every start).
 RUN chmod +x /start.sh /usr/local/bin/faxbot-inbound-notify /usr/local/bin/faxbot-public-address \
     && mkdir -p /var/run/asterisk /var/log/asterisk /var/lib/asterisk /var/spool/asterisk /faxdata \
+    && chown -R asterisk:asterisk /var/run/asterisk /var/log/asterisk /var/lib/asterisk /var/spool/asterisk \
+    && chown -R root:asterisk /etc/asterisk && chmod -R u=rwX,g=rX,o= /etc/asterisk \
     && test -x /usr/bin/envsubst && test -x /usr/bin/ip
 
 VOLUME ["/faxdata"]

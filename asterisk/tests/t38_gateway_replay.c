@@ -9,8 +9,9 @@
  *
  * Usage: t38_gateway_replay FILE MODE [MODEM]
  *   FILE lines: "<seconds> <sequence number> <IFP hex>", the far end's T.38.
- *   MODE 0: spandsp as shipped; 1: with patch 0002 (faxbot_end_empty_preamble); 2: with patches 0002 and
- *   0003 (faxbot_end_empty_training). Each runs before each block of audio, as in the patches.
+ *   MODE 0: spandsp as shipped; 1: with patch 0002 (faxbot_gateway_end_empty_preamble); 2: with patches
+ *   0002 and 0003 (faxbot_gateway_end_empty_training). Each runs before each block of audio, as in the
+ *   patches; both come from asterisk/patches/faxbot_t38_gateway.h, the file the patches compile.
  *   MODEM lines: "<seconds> v21 <frame hex without FCS>" or "<seconds> tcf <seconds of zeros at 9600>",
  *   what the fax machine behind the gateway sends (silence otherwise).
  * Prints, in time order:
@@ -28,8 +29,9 @@
 #include <inttypes.h>
 #define SPANDSP_EXPOSE_INTERNAL_STRUCTURES
 #include <spandsp.h>
-
-#define FAXBOT_SPANDSP_FLAG_INDICATOR 0x100	/* FLAG_INDICATOR in spandsp 0.0.6's t38_gateway.c */
+/* The steps patches 0002 and 0003 add, and their spandsp version guard: the same file the image build
+ * compiles into res_fax_spandsp (asterisk/patches/faxbot_t38_gateway.h). */
+#include "faxbot_t38_gateway.h"
 #define MAX_PACKETS 4096
 #define MAX_IFP 512
 #define MAX_EVENTS 64
@@ -250,45 +252,21 @@ static void modem_tx(int16_t amp[], int len)
 	}
 }
 
-/* The same steps as faxbot_end_empty_preamble in asterisk/patches/0002-t38-gateway-empty-preamble.patch. */
+/* Patch 0002's step (faxbot_gateway_end_empty_preamble, as res_fax_spandsp runs it). */
 static void end_empty_preamble(t38_gateway_state_t *gw)
 {
-	t38_gateway_hdlc_state_t *queue = &gw->core.hdlc_to_modem;
-	hdlc_tx_state_t *hdlc = &gw->audio.modems.hdlc_tx;
-
-	if (queue->in == queue->out || !(queue->buf[queue->out].contents & FAXBOT_SPANDSP_FLAG_INDICATOR) || hdlc->len) {
-		return;
-	}
-	if (hdlc->flag_octets > 2) {
-		hdlc->flag_octets = 2;
+	if (faxbot_gateway_end_empty_preamble(gw)) {
 		printf("cut %.3f\n", now);
 	}
-	hdlc_tx_frame(hdlc, NULL, 0);
 }
 
-/* The same steps as faxbot_end_empty_training in asterisk/patches/0003-t38-gateway-open-fast-modem-signal.patch:
- * only while the fast modem sends the far end's data (not while it trains or shuts down). */
+/* Patch 0003's step (faxbot_gateway_end_empty_training): only while the fast modem sends the far end's
+ * data, not while it trains or shuts down. */
 static void end_empty_training(t38_gateway_state_t *gw)
 {
-	fax_modems_state_t *modems = &gw->audio.modems;
-	t38_gateway_hdlc_state_t *queue = &gw->core.hdlc_to_modem;
-	t38_non_ecm_buffer_state_t *buffer = &gw->core.non_ecm_to_modem;
-	get_bit_func_t get_bit = NULL;
-
-	if (modems->tx_handler == (span_tx_handler_t *) &v29_tx) {
-		get_bit = modems->fast_modems.v29_tx.current_get_bit;
-	} else if (modems->tx_handler == (span_tx_handler_t *) &v17_tx) {
-		get_bit = modems->fast_modems.v17_tx.current_get_bit;
-	} else if (modems->tx_handler == (span_tx_handler_t *) &v27ter_tx) {
-		get_bit = modems->fast_modems.v27ter_tx.current_get_bit;
+	if (faxbot_gateway_end_empty_training(gw)) {
+		printf("ended %.3f\n", now);
 	}
-	if (get_bit != t38_non_ecm_buffer_get_bit || buffer->data_finished
-		|| queue->in == queue->out || !(queue->buf[queue->out].contents & FAXBOT_SPANDSP_FLAG_INDICATOR)
-		|| gw->t38x.current_rx_field_class == T38_FIELD_CLASS_NON_ECM) {
-		return;
-	}
-	t38_non_ecm_buffer_push(buffer);
-	printf("ended %.3f\n", now);
 }
 
 int main(int argc, char *argv[])

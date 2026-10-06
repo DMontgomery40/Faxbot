@@ -35,11 +35,12 @@ RUN curl --fail --location --retry 3 --output hylafax.tar.gz \
 # Faxbot's changes to the SSL Fax client: refuse private, loopback, link-local,
 # metadata, multicast and reserved addresses (except this engine's own
 # listener), keep the session passcode out of logs, and let the listener bind
-# again right after a call. The policy is tested here; a failure stops the build.
+# again right after a call. The policy is tested here; a failure stops the build,
+# and so does a hunk that does not apply exactly (--fuzz=0).
 COPY patches/ /usr/src/patches/
 COPY tests/sslfax_policy_test.c++ /usr/src/tests/
 WORKDIR /usr/src/hylafax-7.0.11
-RUN for patch in /usr/src/patches/*.patch; do patch -p1 --forward --batch < "$patch" || exit 1; done \
+RUN for patch in /usr/src/patches/*.patch; do patch -p1 --forward --batch --fuzz=0 < "$patch" || exit 1; done \
     && g++ -Wall -Werror -I faxd -o /usr/src/sslfax-policy-test /usr/src/tests/sslfax_policy_test.c++ \
     && /usr/src/sslfax-policy-test
 

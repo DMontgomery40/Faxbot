@@ -11,11 +11,18 @@ time: no frame reaches the fax machine; with this change every DIS does, and
 the calls that worked are unchanged frame for frame.
 
 The gateway also marks the T.38 channel FAXBOT_T38_GATEWAY=engaged when it
-starts, for the line 0001 logs at the end of the session.
+starts, for the line 0001 logs at the end of the session. The far end decides
+how often an empty preamble comes, so only the first in a call is logged; the
+count goes on the T.38 channel (FAXBOT_T38_EMPTY_PREAMBLES) for that line.
+
+The steps themselves, and the spandsp version guard, are in
+faxbot_t38_gateway.h next to this file (the image build copies it into res/),
+so the replay proof in asterisk/tests runs exactly these steps. The build
+stops on any spandsp other than the 0.0.6 they were checked against.
 
 --- a/res/res_fax_spandsp.c
 +++ b/res/res_fax_spandsp.c
-@@ -62,6 +62,7 @@
+@@ -62,10 +62,13 @@
  #include "asterisk/res_fax.h"
  #include "asterisk/channel.h"
  #include "asterisk/format_cache.h"
@@ -23,7 +30,13 @@ starts, for the line 0001 logs at the end of the session.
  
  #define SPANDSP_EXPOSE_INTERNAL_STRUCTURES
  #include <spandsp.h>
-@@ -162,6 +163,8 @@
+ #include <spandsp/version.h>
++/* Faxbot: the gateway steps of 0002 and 0003, and the spandsp version they were checked against. */
++#include "faxbot_t38_gateway.h"
+ 
+ #define SPANDSP_FAX_SAMPLES 160
+ #define SPANDSP_FAX_TIMER_RATE 8000 / SPANDSP_FAX_SAMPLES	/* 50 ticks per second, 20ms, 160 samples per second */
+@@ -162,6 +165,8 @@
  
  	int v21_detected;
  	modem_connect_tones_rx_state_t *tone_state;
@@ -32,11 +45,35 @@ starts, for the line 0001 logs at the end of the session.
  };
  
  static int spandsp_v21_new(struct spandsp_pvt *p);
-@@ -788,7 +791,43 @@
+@@ -788,7 +793,65 @@
  		return t38_core_rx_ifp_packet(p->t38_core_state, f->data.ptr, f->datalen, f->seqno);
  	} else {
  		return fax_rx(&p->fax_state, f->data.ptr, f->samples);
 +	}
++}
++
++/*!
++ * \brief Faxbot: put one of the T.38 gateway's counts on its T.38 channel, for the line 0001 logs when
++ * the call's T.38 session ends.
++ *
++ * \param t30 the channel the gateway plays T.30 audio to; the T.38 channel is the other one
++ */
++static void faxbot_gateway_count(struct ast_fax_session *s, struct ast_channel *t30, const char *name,
++	unsigned int count)
++{
++	struct ast_channel *t38;
++	char value[12];
++
++	if (!s->chan) {
++		return;
++	}
++	t38 = (t30 == s->chan) ? ast_channel_bridge_peer(s->chan) : ast_channel_ref(s->chan);
++	if (!t38) {
++		return;
++	}
++	snprintf(value, sizeof(value), "%u", count);
++	pbx_builtin_setvar_helper(t38, name, value);
++	ast_channel_unref(t38);
 +}
 +
 +/*!
@@ -54,37 +91,35 @@ starts, for the line 0001 logs at the end of the session.
 + * behind the T.38 stream (spandsp would then wipe a frame that arrived while it
 + * lagged). In every other state this changes nothing: a normal frame end is
 + * already ended by spandsp itself, with its two closing flags.
++ *
++ * The steps are faxbot_gateway_end_empty_preamble in faxbot_t38_gateway.h,
++ * which the replay proof (asterisk/tests/t38_gateway_replay.c) runs as well.
++ * The far end decides how often this happens, so only the first one in a call
++ * is logged; 0001's line at the end of the call has the count.
 + */
-+#define FAXBOT_SPANDSP_FLAG_INDICATOR 0x100	/* FLAG_INDICATOR in spandsp 0.0.6's t38_gateway.c */
-+
-+static void faxbot_end_empty_preamble(struct ast_fax_session *s, struct spandsp_pvt *p)
++static void faxbot_end_empty_preamble(struct ast_fax_session *s, struct ast_channel *t30, struct spandsp_pvt *p)
 +{
-+	t38_gateway_hdlc_state_t *queue = &p->t38_gw_state.core.hdlc_to_modem;
-+	hdlc_tx_state_t *hdlc = &p->t38_gw_state.audio.modems.hdlc_tx;
-+
-+	if (queue->in == queue->out || !(queue->buf[queue->out].contents & FAXBOT_SPANDSP_FLAG_INDICATOR) || hdlc->len) {
++	if (!faxbot_gateway_end_empty_preamble(&p->t38_gw_state)) {
 +		return;
-+	}
-+	if (hdlc->flag_octets > 2) {
-+		hdlc->flag_octets = 2;
-+		p->faxbot_empty_preambles++;
-+		ast_log(LOG_NOTICE, "Faxbot T.38 gateway on %s: the far end's V.21 signal ended with no frame; "
-+			"ended it so its next frame reaches the fax machine (%u so far)\n",
-+			s->chan ? ast_channel_name(s->chan) : "<gone>", p->faxbot_empty_preambles);
  	}
-+	hdlc_tx_frame(hdlc, NULL, 0);
++	if (!p->faxbot_empty_preambles++) {
++		ast_log(LOG_NOTICE, "Faxbot T.38 gateway on %s: the far end's V.21 signal ended with no frame; "
++			"ended it so its next frame reaches the fax machine (logged once per call; the T.38 line at "
++			"the end of the call counts them)\n", s->chan ? ast_channel_name(s->chan) : "<gone>");
++	}
++	faxbot_gateway_count(s, t30, "FAXBOT_T38_EMPTY_PREAMBLES", p->faxbot_empty_preambles);
  }
  
  /*! \brief generate T.30 packets sent to the T.30 leg of gateway
-@@ -819,6 +858,7 @@
+@@ -819,6 +882,7 @@
  	}
  
  	/* generate a T.30 packet */
-+	faxbot_end_empty_preamble(s, p);
++	faxbot_end_empty_preamble(s, chan, p);
  	if ((f->samples = t38_gateway_tx(&p->t38_gw_state, f->data.ptr, f->samples))) {
  		f->datalen = f->samples * sizeof(int16_t);
  		res = ast_write(chan, f);
-@@ -883,6 +923,8 @@
+@@ -883,6 +947,8 @@
  	}
  
  	ast_activate_generator(p->ast_t38_state == T38_STATE_NEGOTIATED ? peer : s->chan, &t30_gen , s);

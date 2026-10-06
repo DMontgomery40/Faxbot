@@ -698,23 +698,35 @@ def test_asterisk_sends_t38_first_when_a_t38_stream_starts():
     # a page; a new T.38 stream (state no longer enabled) sends again.
     assert '+	if (remote_stream->desc.port && state->opened != session_media->udptl) {' in patch
     assert '+		state->opened = NULL;' in patch
-    # The T.38 gateway ends a V.21 preamble that carried no frame (spandsp 0.0.6), with the same steps
-    # asterisk/tests/t38_gateway_replay.c proves (tests/test_t38_gateway_replay.py).
+    # The T.38 gateway ends a V.21 preamble that carried no frame (spandsp 0.0.6). The steps live in one
+    # header that both res_fax_spandsp (0002) and the replay proof asterisk/tests/t38_gateway_replay.c
+    # compile (tests/test_t38_gateway_replay.py), so the proof cannot drift from the patch.
     gateway = (ROOT / 'asterisk' / 'patches' / '0002-t38-gateway-empty-preamble.patch').read_text()
+    header = (ROOT / 'asterisk' / 'patches' / 'faxbot_t38_gateway.h').read_text()
     replay = (ROOT / 'asterisk' / 'tests' / 't38_gateway_replay.c').read_text()
     for step in ('queue->in == queue->out || !(queue->buf[queue->out].contents & FAXBOT_SPANDSP_FLAG_INDICATOR) '
                  '|| hdlc->len', 'if (hdlc->flag_octets > 2) {', 'hdlc->flag_octets = 2;', 'hdlc_tx_frame(hdlc, NULL, 0);',
                  '#define FAXBOT_SPANDSP_FLAG_INDICATOR 0x100'):
-        assert step in gateway and step in replay, step
-    assert '+\tfaxbot_end_empty_preamble(s, p);\n \tif ((f->samples = t38_gateway_tx(' in gateway
+        assert step in header and step not in gateway and step not in replay, step
+    for source in (gateway, replay):
+        assert '#include "faxbot_t38_gateway.h"' in source and 'faxbot_gateway_end_empty_preamble(' in source
+    # The guard: any spandsp but the pinned 0.0.6 stops the build (tests/test_t38_gateway_replay.py shows it).
+    assert '#if !defined(SPANDSP_RELEASE_DATE) || SPANDSP_RELEASE_DATE != 20110122\n#error ' in header
+    assert '+\tfaxbot_end_empty_preamble(s, chan, p);\n \tif ((f->samples = t38_gateway_tx(' in gateway
     # One NOTICE line per T.38 stream at session end, with the packets counted in res_pjsip_t38's own
     # read and write callbacks (so it holds after the call switched back to audio).
     assert '+\t.session_end = t38_session_end,' in patch
     assert patch.count('+\tfaxbot_t38_count(session, ') == 2
     assert not (ROOT / 'asterisk' / 'patches' / '0003-udptl-packet-counts.patch').exists()
+    # The far end decides how often the gateway acts, so it logs the first time in a call and counts the rest
+    # on the T.38 channel, which 0001 keeps at the BYE and puts in that line.
+    assert '+\tif (!p->faxbot_empty_preambles++) {' in gateway
+    assert '"FAXBOT_T38_EMPTY_PREAMBLES"' in gateway and '"FAXBOT_T38_EMPTY_PREAMBLES"' in patch
+    assert '+\t.method = "BYE",' in patch and 'open fast modem "\n+\t\t\t"signals from the far end)"' in patch
     dockerfile = (ROOT / 'asterisk' / 'Dockerfile').read_text()
-    applied = dockerfile.index('patch -p1 --forward')
+    applied = dockerfile.index('patch -p1 --forward --fuzz=0')
     assert dockerfile.index('COPY patches/ /usr/src/patches/') < applied < dockerfile.index('RUN ./configure')
+    assert 'cp /usr/src/patches/faxbot_t38_gateway.h res/' in dockerfile
 
 
 def test_the_t38_gateway_ends_a_fast_modem_signal_the_far_end_left_open():
@@ -723,8 +735,10 @@ def test_the_t38_gateway_ends_a_fast_modem_signal_the_far_end_left_open():
     Asterisk applies patch 0003 after 0002, with the same steps asterisk/tests/t38_gateway_replay.c proves
     (tests/test_t38_gateway_replay.py), and the image build stops when a patch no longer applies."""
     patch = (ROOT / 'asterisk' / 'patches' / '0003-t38-gateway-open-fast-modem-signal.patch').read_text()
+    header = (ROOT / 'asterisk' / 'patches' / 'faxbot_t38_gateway.h').read_text()
     replay = (ROOT / 'asterisk' / 'tests' / 't38_gateway_replay.c').read_text()
     assert '--- a/res/res_fax_spandsp.c' in patch
+    # The steps live in the header 0002 includes, which the replay proof compiles too.
     for step in ('get_bit = modems->fast_modems.v29_tx.current_get_bit;',
                  'get_bit = modems->fast_modems.v17_tx.current_get_bit;',
                  'get_bit = modems->fast_modems.v27ter_tx.current_get_bit;',
@@ -732,15 +746,21 @@ def test_the_t38_gateway_ends_a_fast_modem_signal_the_far_end_left_open():
                  '|| queue->in == queue->out || !(queue->buf[queue->out].contents & FAXBOT_SPANDSP_FLAG_INDICATOR)',
                  '|| gw->t38x.current_rx_field_class == T38_FIELD_CLASS_NON_ECM) {',
                  't38_non_ecm_buffer_push(buffer);'):
-        assert step in patch and step in replay, step
-    # Run before each block of audio, after 0002's step, with one NOTICE line each time it acts.
-    assert ' \tfaxbot_end_empty_preamble(s, p);\n+\tfaxbot_end_empty_training(s, p);\n' in patch
+        assert step in header and step not in patch and step not in replay, step
+    assert 'faxbot_gateway_end_empty_training(' in patch and 'faxbot_gateway_end_empty_training(' in replay
+    # Run before each block of audio, after 0002's step; one NOTICE line for the first time in a call, and a
+    # count on the T.38 channel for 0001's line at the end of the call.
+    assert ' \tfaxbot_end_empty_preamble(s, chan, p);\n+\tfaxbot_end_empty_training(s, chan, p);\n' in patch
     assert 'ast_log(LOG_NOTICE, "Faxbot T.38 gateway on %s: ' in patch
+    assert '+\tif (!p->faxbot_empty_trainings++) {' in patch and '"FAXBOT_T38_EMPTY_TRAININGS"' in patch
     names = sorted(path.name for path in (ROOT / 'asterisk' / 'patches').glob('*.patch'))
     assert names[:3] == ['0001-t38-send-first.patch', '0002-t38-gateway-empty-preamble.patch',
                          '0003-t38-gateway-open-fast-modem-signal.patch']
+    # Every hunk applies exactly (fuzz 0) or the image build stops.
     dockerfile = (ROOT / 'asterisk' / 'Dockerfile').read_text()
-    assert 'for change in /usr/src/patches/*.patch; do patch -p1 --forward < "$change" || exit 1; done' in dockerfile
+    assert ('for change in /usr/src/patches/*.patch; do patch -p1 --forward --fuzz=0 < "$change" || exit 1; done'
+            in dockerfile)
+    assert 'patch -p1 --forward --batch --fuzz=0 < "$patch"' in (ROOT / 'hylafax' / 'Dockerfile').read_text()
 
 
 def test_two_sends_with_the_same_communication_id_both_keep_their_engine_record(database):

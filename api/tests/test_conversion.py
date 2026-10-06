@@ -585,6 +585,8 @@ def test_real_ghostscript_preserves_two_pdf_pages(monkeypatch, tmp_path, disable
     output = tmp_path / "converted.tiff"
 
     assert conversion.pdf_to_tiff(str(source), str(output)) == (2, str(output))
+    # A fax image Asterisk sends: readable by the data folder's group (Asterisk's own user), no one else.
+    assert oct(output.stat().st_mode & 0o777) == "0o640"
 
     with Image.open(output) as image:
         assert image.format == "TIFF"

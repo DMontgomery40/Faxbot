@@ -579,6 +579,8 @@ def test_the_call_image_copies_each_faxs_pages_unchanged_after_its_separator(tmp
     assert lines[0][2] == 'Document 1 of 2 · Faxbot 11111111 · 2 pages · from Front Desk'
     out = image.build_call_image(tmp_path, 'a' * 32, lines)
     assert image.page_count(out) == 5
+    # Asterisk sends the call image as its own user (the data folder's group): 0640, never world-readable.
+    assert oct(out.stat().st_mode & 0o777) == '0o640'
     with Image.open(out) as combined, Image.open(tmp_path / ('1' * 32 + '.tiff')) as original:
         for combined_page, original_page in ((1, 0), (2, 1)):
             combined.seek(combined_page)

@@ -1,5 +1,6 @@
 """One locked, transactional installation/upgrade path for startup and Alembic."""
 from contextlib import contextmanager
+import os
 from pathlib import Path
 import re
 
@@ -64,6 +65,8 @@ def create_database_engine(url, *, lock_timeout=LOCK_TIMEOUT_SECONDS, **kwargs):
         connect_args.setdefault("timeout", lock_timeout)
     engine = sa.create_engine(parsed, future=True, connect_args=connect_args, **kwargs)
     if engine.dialect.name == "sqlite":
+        database = parsed.database if parsed.database and parsed.database != ":memory:" else None
+
         @sa.event.listens_for(engine, "connect")
         def enable_foreign_keys(dbapi_connection, _record):
             cursor = dbapi_connection.cursor()
@@ -71,7 +74,25 @@ def create_database_engine(url, *, lock_timeout=LOCK_TIMEOUT_SECONDS, **kwargs):
                 cursor.execute("PRAGMA foreign_keys=ON")
             finally:
                 cursor.close()
+            if database:
+                keep_database_private(database)
     return engine
+
+
+def keep_database_private(path):
+    """The SQLite database and its journal files are the owner's alone (mode 0600 at most).
+
+    It sits on the data volume Asterisk shares, and SQLite creates it readable
+    by everyone. Run on each connection, so it holds from creation and fixes a
+    database made before; it only ever removes access.
+    """
+    for name in (str(path), f"{path}-wal", f"{path}-shm", f"{path}-journal"):
+        try:
+            mode = os.stat(name).st_mode
+            if mode & 0o077:
+                os.chmod(name, mode & 0o700)
+        except OSError:
+            continue
 
 
 def upgrade_schema(engine, *, lock_timeout=LOCK_TIMEOUT_SECONDS):
