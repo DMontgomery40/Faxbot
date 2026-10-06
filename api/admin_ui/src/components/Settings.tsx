@@ -79,6 +79,17 @@ const OWN_APPLY_SECTIONS = new Set<SettingsSection>(['diagnostics']);
 
 export const OWNER_ONLY_SENTENCE = 'Only the owner of this installation can change this.';
 
+// The server says the same: Sinch's user name counts only with its password, or anyone could send faxes in.
+export const SINCH_PASSWORD_NEEDED = 'Enter the password Sinch sends as well; Faxbot does not accept the user name without it.';
+
+/** The sentence to show when a save would leave Sinch's user name without a password; null otherwise. */
+export function sinchBasicProblem(form: Record<string, unknown>, fields: string[]): string | null {
+  if (!fields.includes('sinch_inbound_basic_user') && !fields.includes('sinch_inbound_basic_pass')) return null;
+  const user = String(form.sinch_inbound_basic_user ?? '').trim();
+  const password = String(form.sinch_inbound_basic_pass ?? '');
+  return user && !password ? SINCH_PASSWORD_NEEDED : null;
+}
+
 // One sentence on a provider's own page: whether Faxbot uses it now. The trunk is
 // named by its carrier ("Telnyx") once one is chosen.
 export function providerUseSentence(provider: string, directions: { sending: string; receiving: string }): string {
@@ -295,6 +306,8 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
       if (problem) throw new Error(problem);
       const patch: SettingsPatch = { expected_revision_id: desiredRevision };
       const fields = only ? changedFields.filter((field) => only.includes(field)) : changedFields;
+      const sinchProblem = sinchBasicProblem(form, fields);
+      if (sinchProblem) throw new Error(sinchProblem);
       // Edits to other settings stay on screen after a partial apply.
       const kept = Object.fromEntries(changedFields.filter((field) => !fields.includes(field)).map((field) => [field, form[field]]));
       for (const field of fields) {
