@@ -28,7 +28,7 @@ Faxbot behaves like a phone behind a router, not like a server:
 - **Fax data.** On every call, in both directions, Asterisk sends the first audio and T.38 packets itself. Your router then lets the carrier's answer back in on the same path. Carriers built for this (Telnyx is one) send their media wherever Faxbot's packets come from.
 - **Docker.** The default `docker-compose.yml` publishes no SIP or media port. Inside the container Asterisk uses UDP 4000 to 4499 for T.38 and 4500 to 4999 for audio, but only for packets it starts. The manager port, 5038, stays private on the Compose network.
 
-Faxbot's loopback proof (`make native-proof`) shows that both directions work when Faxbot's address in the call setup cannot be reached, as long as the carrier sends its media back to the path Faxbot's packets came from. It also runs Faxbot behind a router container that hides it the way a home router does: Faxbot registers through the router over UDP or TCP, the stand-in carrier sends its incoming call down that registration, and a two-page T.38 fax goes through in both directions, including through a router that changes port numbers. If your carrier only sends media to the address in the call setup, the call connects but no fax data arrives. Advertising the exact internet address does not reliably fix that: when the carrier's first packet reaches your router before Faxbot's, the router can give Faxbot's own flow a different port. Faxbot then shows "The call connected but no fax data came back from the carrier." for that call. In that case, run Faxbot's fax engine on a host with a public address, or use a cloud fax provider.
+Faxbot checks whether the router can provide stable paths for fax media. When needed and supported, it can request temporary router port mappings; **Check trunk status** reports what it found. The default Compose setup does not publish SIP or media ports on the host, but a router mapping may still be used. Carriers that require Faxbot to receive calls at a fixed public address need a host with its own public address and the public Compose override below. If media cannot return to the path Faxbot's packets came from, the call may connect without fax data; use a host with a public address or a cloud fax provider.
 
 ### Carriers that sign in by IP address
 
@@ -42,7 +42,7 @@ It publishes SIP on 5060 (UDP and TCP) and 5061 (TCP), plus one 32-port media ra
 
 ### A phone system on your local network
 
-An Avaya IP Office or Aura phone system sends calls to Faxbot on your local network. Set `FAXBOT_LAN_ADDRESS` in `.env` to this computer's address on that network and start Compose with the phone system override:
+An Avaya IP Office or Aura phone system sends calls to Faxbot on your local network. Set `FAXBOT_LAN_ADDRESS` in the `.env` file to this computer's address on that network and start Compose with the phone system override:
 
 ```
 docker compose -f docker-compose.yml -f docker-compose.phone-system.yml up -d
@@ -52,7 +52,7 @@ It publishes SIP on 5060 (UDP and TCP) and the media range `FAXBOT_MEDIA_PORTS` 
 
 ## Configure API and Asterisk separately
 
-On an existing installation, choose your carrier or phone system (under **Your own fax line through a carrier** or **Your phone system**) for sending, receiving or both in the Setup Wizard and select **Restart now** when it asks.
+In **System → Setup**, choose your carrier under **Your own fax line through a carrier**, or your phone system under **Your phone system**. Choose whether it handles sending, receiving, or both, then select **Restart now** if the wizard asks.
 
 ### The fax engine login: nothing to type
 
@@ -63,7 +63,7 @@ Faxbot and Asterisk share one manager login (the Asterisk Manager Interface, por
 - `ASTERISK_AMI_USERNAME` and `ASTERISK_AMI_PASSWORD` in `.env` always win: both containers read them, and Asterisk then ignores the file.
 - An installation that already used its own Asterisk with the shipped default password keeps that password; set `ASTERISK_AMI_PASSWORD` in `.env` to replace it.
 
-The Setup Wizard shows these fields only under **Advanced: fax engine connection**, for a fax engine you run yourself.
+The **Providers → Carrier trunk** page contains **Fax engine connection (advanced)** for an Asterisk engine you run yourself. Faxbot manages the connection settings for its own Asterisk engine.
 
 The trunk itself is set up on the **Carrier SIP trunk** screen: **Apply and connect** writes the trunk file Asterisk loads at start and, in the Docker Compose install, restarts Asterisk to load it once no call is up (see [Carrier SIP trunk](sip-trunk.md)). For first bootstrap, the API names below can also be supplied in `.env`:
 ```
