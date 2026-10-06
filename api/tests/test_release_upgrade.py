@@ -512,7 +512,9 @@ def test_a_saved_provider_is_kept_when_the_environment_no_longer_names_it(monkey
 
 # Every setting a release removes stays accepted, and ignored, for one release: an installation whose
 # saved settings, recovery file or environment still names it starts and shows nothing for it.
-RETIRED = {'PLUGIN_REGISTRY_PATH': '/app/config/plugin_registry.json'}
+RETIRED = {'PLUGIN_REGISTRY_PATH': '/app/config/plugin_registry.json',
+           # Sinch's Fax API (v3) signs no webhooks, so this setting checked nothing.
+           'SINCH_INBOUND_VERIFY_SIGNATURE': 'true'}
 
 
 def _shows_no_retired_setting(installation, client):
@@ -520,7 +522,9 @@ def _shows_no_retired_setting(installation, client):
     assert shown.status_code == 200, shown.text
     exported = installation.remote_json(client, 'system', 'settings', 'export')['env']
     for name, value in RETIRED.items():
-        assert name not in exported and value not in shown.text and name.lower() not in shown.text
+        assert name not in exported and name.lower() not in shown.text
+        assert value in ('true', 'false') or value not in shown.text  # a yes/no value appears elsewhere anyway
+    assert 'verify_signature' not in json.dumps(shown.json()['inbound']['sinch'])
 
 
 def test_saved_settings_that_name_a_removed_setting_still_start(monkeypatch, tmp_path, database_url):

@@ -36,7 +36,7 @@ function settingsFixture(overrides: (data: Json) => void = () => undefined): Jso
       smtp_password: '***', email_from: 'fax@example.org', email_to: 'desk@example.org', email_subject: 'Fax from {from_number}' },
     direct: { enabled: false, organization: 'County Clinic', fax_number: '+12025550123' },
     inbound: { enabled: false, retention_days: 30, token_ttl_minutes: 60, sip: { asterisk_secret: '', configured: false },
-      phaxio: { verify_signature: true }, sinch: { verify_signature: true, basic_auth_configured: false, hmac_configured: false } },
+      phaxio: { verify_signature: true }, sinch: { basic_auth_configured: false, hmac_configured: false } },
     limits: { max_file_size_mb: 10, pdf_token_ttl_minutes: 60, rate_limit_rpm: 0, inbound_list_rpm: 30, inbound_get_rpm: 60,
       artifact_ttl_days: 0, cleanup_interval_minutes: 1440 },
     _meta: { active_revision_id: 'rev-a', desired_revision_id: 'rev-a', generation: 4, apply_state: 'applied', pending_fields: [] },
