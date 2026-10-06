@@ -15,7 +15,8 @@ def test_configuration_migration_preserves_legacy_jobs_without_inventing_binding
     upgrade_schema(database)
     after = snapshot(database)
     for table, rows in before.items():
-        assert after[table] == rows
+        # Later migrations add columns (for example 0020's fax_jobs.send_by_call); the saved values stay as they were.
+        assert [{name: row[name] for name in rows[0]} for row in after[table]] == rows if rows else after[table] == []
     assert after['fax_job_bindings'] == []
     assert after['inbound_fax_bindings'] == []
     assert after['configuration_revisions'] == []

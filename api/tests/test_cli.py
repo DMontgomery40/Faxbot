@@ -426,6 +426,13 @@ def test_settings_get_set_validate_export(cli, monkeypatch):
     assert unchanged.exit_code == 0 and 'Nothing changed' in unchanged.stdout
     rejected = cli('system', 'settings', 'set', 'max_file_size_mb=lots')
     assert rejected.exit_code == 9 and 'max_file_size_mb' in rejected.stderr
+    # Sinch's user name alone is refused with one sentence; with its password it saves.
+    lone = cli('system', 'settings', 'set', 'sinch_inbound_basic_user=synthetic-sinch-webhook')
+    assert lone.exit_code != 0
+    assert ('Enter the password Sinch sends as well; Faxbot does not accept the user name without it.'
+            in ' '.join(lone.stderr.split()))
+    assert cli('system', 'settings', 'set', 'sinch_inbound_basic_user=synthetic-sinch-webhook',
+               'sinch_inbound_basic_pass=synthetic-webhook-pass').exit_code == 0
     exported = cli('system', 'settings', 'export')
     assert exported.exit_code == 0 and 'MAX_FILE_SIZE_MB=7' in exported.stdout and BOOTSTRAP not in exported.stdout
     monkeypatch.setenv('SINCH_PROJECT_ID', 'synthetic-project')

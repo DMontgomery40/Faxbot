@@ -69,7 +69,7 @@ LABEL org.opencontainers.image.title="Faxbot fax engine (HylaFAX+)" \
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-       bash gawk sed procps psmisc file dumb-init curl ca-certificates openssl \
+       bash gawk sed procps psmisc file dumb-init curl ca-certificates openssl busybox \
        libtiff6 libtiff-tools libjbig0 libjpeg62-turbo zlib1g libssl3t64 libstdc++6 iaxmodem ghostscript \
     && rm -rf /var/lib/apt/lists/*
 

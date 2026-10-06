@@ -335,3 +335,55 @@ def test_api_and_cli_record_the_real_call_request_and_show_a_fax_delivered_here(
     assert (here['backend'], here['to'], here['fr'], here['mailbox']) == ('local', own_number, own_number, 'Front desk')
     listed = ' '.join(cli('received', 'list').stdout.split())
     assert 'Arrived through' in listed and 'This Faxbot' in listed
+
+
+@pytest.mark.asyncio
+async def test_one_record_that_cannot_be_settled_never_holds_up_the_others(own):
+    """Row 1 raises unexpectedly; row 2 still settles, and row 1 is tried again after a pause."""
+    from datetime import timedelta
+    from api.app.outbound_worker import OutboundWorker
+    from api.app.routing.local import LocalReconciler
+    from api.app.routing.transport import RoutedTransport
+
+    class Unanswered:
+        """Nothing is delivered and the answer is lost, so the fax is left uncertain."""
+        def __init__(self, real):
+            self.document, self.find = real.document, real.find
+
+        def deliver(self, **kwargs):
+            raise RuntimeError('answer lost')
+
+        def delivered(self, job_id):
+            raise RuntimeError('records unavailable')
+    route = local.LocalRoute(Unanswered(own['local']), values=lambda: own['configuration'].read().active.values)
+    jobs = [own['accept'](), own['accept']()]
+    for _ in jobs:
+        await OutboundWorker(own['delivery'], RoutedTransport(Inner(own['delivery'], []), direct=None,
+                                                              local=route)).step()
+    assert [own['delivery'].get(job)['state'] for job in jobs] == ['reconciliation_required'] * 2
+
+    class FirstBreaks:
+        def __init__(self, real):
+            self.real, self.broken = real, True
+
+        def deliver(self, **kwargs):
+            if self.broken and kwargs['job_id'] == jobs[0]:
+                raise RuntimeError('unexpected')
+            return self.real.deliver(**kwargs)
+
+        def delivered(self, job_id):
+            return self.real.delivered(job_id)
+    now = [datetime.utcnow()]
+    flaky = FirstBreaks(own['local'])
+    reconciler = LocalReconciler(flaky, own['delivery'], own['routes'],
+                                 values=lambda: own['configuration'].read().active.values, clock=lambda: now[0])
+    assert reconciler.step() is True
+    assert [own['delivery'].get(job)['state'] for job in jobs] == ['reconciliation_required', 'success']
+    assert reconciler.retry[jobs[0]][0] == 1
+    # Before its pause ends it is left alone, even once it would work.
+    flaky.broken = False
+    assert reconciler.step() is False and own['delivery'].get(jobs[0])['state'] == 'reconciliation_required'
+    now[0] += timedelta(minutes=2)
+    assert reconciler.step() is True
+    assert own['delivery'].get(jobs[0])['state'] == 'success' and jobs[0] not in reconciler.retry
+    assert len([fax for fax in _received(own) if fax['status'] == 'received']) == 2

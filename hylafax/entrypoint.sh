@@ -24,8 +24,13 @@ conf=$shared/engine.conf
 out=${FAXBOT_ENGINE_OUT:-$data/hylafax-out}
 spool=${FAXBOT_HYLAFAX_SPOOL:-/var/spool/hylafax}
 state=${FAXBOT_ENGINE_STATE:-/var/lib/faxbot-engine}
+# Tests only (api/tests/test_hylafax_engine.py): a folder standing in for / for the modems' files.
+root=${FAXBOT_ENGINE_ROOT:-}
 status=$out/engine.status
 check_seconds=${FAXBOT_ENGINE_CHECK_SECONDS:-5}
+# How long a line may stay not ready (it may be setting its modem up), and how long the start waits for all.
+unready_seconds=${FAXBOT_ENGINE_UNREADY_SECONDS:-30}
+ready_seconds=${FAXBOT_ENGINE_READY_SECONDS:-120}
 started_at=$(date +%s)
 mkdir -p "$out" "$state"
 chmod 755 "$out"
@@ -202,9 +207,15 @@ if [ -f "$shared/asterisk-started" ] && ! lines_loaded; then
   sleep "$check_seconds"
 fi
 
-mkdir -p /run/lock /etc/iaxmodem /var/log/iaxmodem
-chmod 1777 /run/lock
-[ -e /var/lock ] || ln -s /run/lock /var/lock
+mkdir -p "$root/run/lock" "$root/etc/iaxmodem" "$root/var/log/iaxmodem"
+chmod 1777 "$root/run/lock"
+[ -e "$root/var/lock" ] || ln -s "$root/run/lock" "$root/var/lock"
+# A restart inside the container keeps its files: a modem lock left by a faxgetty stopped in a call names a
+# process ID that is in use again after the restart, and that line would wait for it for good. Nothing holds
+# a modem before the lines start.
+rm -f "$root/run/lock"/LCK..*
+# Session logs older than this mark were written before this start (bin/sessions reports the cut-off ones).
+: > "$spool/etc/faxbot-engine-started"
 if [ "$sslfax" = yes ]; then ssl_support=Yes; else ssl_support=No; fi
 # Session logs leave out HDLC frame dumps, modem byte traces and SSL Fax data:
 # server, protocol, modem operations, timeouts and state changes only.
@@ -230,7 +241,7 @@ esac
 for line_number in $(seq 1 "$lines"); do
   device=ttyIAX$line_number
   line_secret=$(get "line${line_number}_secret")
-  cat > "/etc/iaxmodem/$device" <<EOF
+  cat > "$root/etc/iaxmodem/$device" <<EOF
 device		/dev/$device
 owner		uucp:uucp
 mode		660
@@ -243,7 +254,7 @@ cidname		Faxbot
 cidnumber	$fax_number
 codec		$codec
 EOF
-  chmod 600 "/etc/iaxmodem/$device"
+  chmod 600 "$root/etc/iaxmodem/$device"
   {
     printf 'CountryCode:\t\t1\nAreaCode:\t\t\nLongDistancePrefix:\t1\nInternationalPrefix:\t011\n'
     printf 'FAXNumber:\t\t%s\n' "$fax_number"
@@ -270,61 +281,16 @@ EOF
   # One modem per line: with its config name as the only argument IAXmodem runs that line alone.
   # (`iaxmodem -F <file>` starts a modem for every file in /etc/iaxmodem: two copies of each line
   # register as one peer from two ports, and calls reach the copy no faxgetty answers.)
-  iaxmodem "$device" > "/var/log/iaxmodem/$device.log" 2>&1 &
+  iaxmodem "$device" > "$root/var/log/iaxmodem/$device.log" 2>&1 &
 done
 
 for line_number in $(seq 1 "$lines"); do
   for attempt in $(seq 1 50); do
-    [ -e "/dev/ttyIAX$line_number" ] && break
+    [ -e "$root/dev/ttyIAX$line_number" ] && break
     sleep 0.2
   done
-  [ -e "/dev/ttyIAX$line_number" ] || refuse "Fax line $line_number did not start."
+  [ -e "$root/dev/ttyIAX$line_number" ] || refuse "Fax line $line_number did not start."
 done
-
-faxq
-hfaxd -i 4559
-for line_number in $(seq 1 "$lines"); do
-  faxgetty -D "ttyIAX$line_number"
-done
-
-# Each line answers calls only as exactly one modem on its own port, with its device and its
-# faxgetty: a second modem for a line registers the same line from another port, and Asterisk then
-# sends calls where nothing answers. Prints the first problem; fails when every line is whole.
-line_problem() {
-  local number count
-  for number in $(seq 1 "$lines"); do
-    count=$(pgrep -c -x -f "iaxmodem ttyIAX$number" || true)
-    [ "$count" = 1 ] || { printf 'line %s has %s modems' "$number" "$count"; return 0; }
-    grep -q -E "^ *[0-9]+: [0-9A-F]{8}:$(printf '%04X' $((4569 + number))) " /proc/net/udp \
-      || { printf 'line %s is not on its port %s' "$number" $((4569 + number)); return 0; }
-    [ -e "/dev/ttyIAX$number" ] || { printf 'line %s has no device' "$number"; return 0; }
-    pgrep -x -f "faxgetty -D ttyIAX$number" >/dev/null || { printf 'line %s has no faxgetty' "$number"; return 0; }
-  done
-  count=$(pgrep -c -x iaxmodem || true)
-  [ "$count" = "$lines" ] || { printf '%s modems for %s lines' "$count" "$lines"; return 0; }
-  return 1
-}
-problem=''
-for attempt in $(seq 1 20); do
-  problem=$(line_problem) || { problem=''; break; }
-  sleep 0.5
-done
-[ -z "$problem" ] || { write_status failed "$LINE_DOWN"; log "$problem; restarting the engine"; exit 1; }
-# Asterisk sends calls to a line as soon as its modem registers, but a call is answered only once faxgetty
-# has set the modem up: the engine says it is running only when every line is ready for a call.
-lines_ready() {
-  local ready
-  ready=$(faxstat -s 2>/dev/null | grep -c -E '^Modem ttyIAX[0-9]+ .*: Running and idle' || true)
-  [ "$ready" = "$lines" ]
-}
-write_status starting ''
-for attempt in $(seq 1 120); do
-  lines_ready && break
-  sleep 1
-done
-lines_ready || { write_status failed "$LINE_DOWN"; log 'the fax lines did not come ready; restarting the engine'; exit 1; }
-write_status running ''
-log "running with $lines fax line(s); SSL Fax $sslfax${listener:+, listener $listener}"
 
 # Engine idle: no line is sending or receiving.
 idle() {
@@ -335,6 +301,94 @@ idle() {
   [ "$busy" = 0 ]
 }
 
+# The HylaFAX daemons send their own server messages (a modem lock, a reset, a scheduler error) to syslog;
+# a small syslogd passes them, and only them, to the container log, where they would otherwise never appear.
+if command -v busybox >/dev/null 2>&1; then
+  printf 'daemon.*\t/proc/1/fd/2\n' > "$root/etc/faxbot-syslog.conf"
+  busybox syslogd -n -s 0 -f /etc/faxbot-syslog.conf &
+fi
+faxq
+hfaxd -i 4559
+for line_number in $(seq 1 "$lines"); do
+  faxgetty -D "ttyIAX$line_number"
+done
+
+# A line's state as its faxgetty reports it ("Running and idle", "Receiving facsimile", "Waiting for modem
+# to come free" ...), and whether a state is a call.
+line_state() {
+  # faxstat ends its lines with CR LF.
+  faxstat -s 2>/dev/null | tr -d '\r' | sed -n "s/^Modem ttyIAX$1 ([^)]*): //p" | head -1
+}
+in_call() {
+  case $1 in *[Ss]ending*|*[Rr]eceiving*|*[Aa]nswering*|*[Dd]ialing*) return 0 ;; esac
+  return 1
+}
+
+# Each line answers calls only as exactly one modem on its own port, with its device and a faxgetty that is
+# ready for a call (or in one): a second modem for a line registers the same line from another port, and a
+# faxgetty waiting on a modem lock takes no call. Sets $problem to the first problem; succeeds when there
+# is one. A line that is not ready counts after $unready_seconds (it may be setting its modem up).
+declare -A unready_since=()
+check_lines() {
+  local number count state now
+  now=$(date +%s)
+  problem=''
+  for number in $(seq 1 "$lines"); do
+    count=$(pgrep -c -x -f "iaxmodem ttyIAX$number" || true)
+    [ "$count" = 1 ] || { problem="line $number has $count modems"; return 0; }
+    grep -q -E "^ *[0-9]+: [0-9A-F]{8}:$(printf '%04X' $((4569 + number))) " "$root/proc/net/udp" \
+      || { problem="line $number is not on its port $((4569 + number))"; return 0; }
+    [ -e "$root/dev/ttyIAX$number" ] || { problem="line $number has no device"; return 0; }
+    pgrep -x -f "faxgetty -D ttyIAX$number" >/dev/null || { problem="line $number has no faxgetty"; return 0; }
+    state=$(line_state "$number")
+    if [ "$state" = 'Running and idle' ] || in_call "$state"; then
+      unset "unready_since[$number]"
+    else
+      unready_since[$number]=${unready_since[$number]:-$now}
+      if (( now - unready_since[$number] >= unready_seconds )); then
+        problem="line $number is not ready (${state:-no state})"
+        return 0
+      fi
+    fi
+  done
+  count=$(pgrep -c -x iaxmodem || true)
+  [ "$count" = "$lines" ] || { problem="$count modems for $lines lines"; return 0; }
+  return 1
+}
+for attempt in $(seq 1 20); do
+  check_lines || break
+  sleep 0.5
+done
+if check_lines; then
+  write_status failed "$LINE_DOWN"
+  log "$problem; restarting the engine"
+  exit 1
+fi
+# Asterisk sends calls to a line as soon as its modem registers, but a call is answered only once faxgetty
+# has set the modem up: the engine says it is running only when every line is ready (or already in a call).
+lines_ready() {
+  local number state
+  for number in $(seq 1 "$lines"); do
+    state=$(line_state "$number")
+    [ "$state" = 'Running and idle' ] || in_call "$state" || return 1
+  done
+  return 0
+}
+write_status starting ''
+waited=0
+until lines_ready; do
+  sleep 1
+  waited=$((waited + 1))
+  # Still not ready after two minutes: start again, but never in the middle of a call.
+  if [ "$waited" -ge "$ready_seconds" ] && idle; then
+    write_status failed "$LINE_DOWN"
+    log 'the fax lines did not come ready; restarting the engine'
+    exit 1
+  fi
+done
+write_status running ''
+log "running with $lines fax line(s); SSL Fax $sslfax${listener:+, listener $listener}"
+
 # A line whose registration Asterisk refused (Asterisk restarted underneath it)
 # stays down; once it has been down for a while and no call is up, start again.
 declare -A refused_since=()
@@ -343,7 +397,7 @@ registration_refused() {
   now=$(date +%s)
   for number in $(seq 1 "$lines"); do
     # A modem started with one argument logs to its output (the .log file), not /var/log/iaxmodem/ttyIAXn.
-    if tail -n 1 "/var/log/iaxmodem/ttyIAX$number.log" 2>/dev/null | grep -q 'Registration failed'; then
+    if tail -n 1 "$root/var/log/iaxmodem/ttyIAX$number.log" 2>/dev/null | grep -q 'Registration failed'; then
       refused_since[$number]=${refused_since[$number]:-$now}
       (( now - refused_since[$number] >= 30 )) && return 0
     else
@@ -353,6 +407,7 @@ registration_refused() {
   return 1
 }
 
+line_down=''
 while sleep "$check_seconds"; do
   # Received faxes and kept reports go to Faxbot (as uucp, like every other engine script).
   if compgen -G "$state/received/*.ticket" >/dev/null; then
@@ -378,13 +433,18 @@ while sleep "$check_seconds"; do
       exit 1
     fi
   done
-  # A line that is not whole takes no calls: say so at once, and start again once no call is up.
-  if problem=$(line_problem); then
+  # A line that is not whole or not ready takes no calls: say so at once, and start again once no call is
+  # up; a line that comes back by itself is running again.
+  if check_lines; then
     write_status restarting "$LINE_DOWN"
+    line_down=yes
     if idle; then
       log "$problem; restarting the engine"
       exit 1
     fi
+  elif [ -n "$line_down" ]; then
+    write_status running ''
+    line_down=''
   fi
   current=$(conf_sum)
   if [ "$current" != "$loaded" ] && idle; then

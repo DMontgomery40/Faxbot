@@ -7,8 +7,14 @@ Nothing is stored before a notification is authenticated:
   signature checks turned off, the notification is only a hint: Faxbot looks
   the fax up by ID in the configured Phaxio account first, and ignores it when
   the account has no such received fax.
-- Sinch: HTTP basic auth and/or the HMAC header when configured; otherwise the
-  same look-up-by-ID rule in the configured Sinch project.
+- Sinch: HTTP basic auth (only with both a user name and a password) and/or the
+  HMAC header when configured; otherwise the same look-up-by-ID rule in the
+  configured Sinch project.
+
+A notification confirmed by look-up is kept only as the provider's own record
+(ID, numbers, pages, time), and its document is always fetched from the
+provider; an authenticated notification is kept as evidence, cut to 8 KB by
+``acquisition.sanitize_report``.
 - Asterisk: the internal shared secret, and a TIFF inside the data folder.
 - eFax: the documented ``X-HMAC-Signature`` (hex HMAC-SHA256 of the raw body
   with ``EFAX_WEBHOOK_SECRET``). A verified notification only starts the next
@@ -50,6 +56,9 @@ AUTOMATIC = True
 UNVERIFIED_PER_MINUTE = 60
 FORM_BODY_BYTES = MAX_DOCUMENT_BYTES + 1024 * 1024
 JSON_BODY_BYTES = MAX_DOCUMENT_BYTES * 4 // 3 + 1024 * 1024
+def _confirmed_report(fax_id, confirmed):
+    """With no authenticated notification, only what the provider's own record confirmed is kept."""
+    return {'id': fax_id, **{key: confirmed.get(key) for key in ('to_number', 'from_number', 'pages', 'completed_at')}}
 
 
 class InboundAcquisition:
@@ -287,6 +296,8 @@ async def phaxio_inbound(request: Request):
                 or not _matches(notification['from_number'], confirmed['from_number'])):
             return {'status': 'ignored'}
     attached = next((content for name, content in files if name == 'file'), None) if verify else None
+    # Unauthenticated, the notification was only a hint: keep the provider's confirmed record instead of it.
+    report = report if verify else _confirmed_report(fax_id, confirmed)
     source_time = parse_source_time(confirmed.get('completed_at'))
     begun = await _begin(service, source='phaxio', account=account_identity('phaxio', settings.phaxio_api_key),
                          operation_id=fax_id, backend='phaxio', inbound_backend=active_inbound(),
@@ -327,10 +338,15 @@ def _replayed(request, body):
     return StarletteRequest(request.scope, receive)
 
 
+def _sinch_basic_configured():
+    """Basic auth is in force only with both a user name and a password: a user name alone proves nothing."""
+    return bool(settings.sinch_inbound_basic_user and settings.sinch_inbound_basic_pass)
+
+
 def _sinch_authenticated(request, raw):
     """True when basic auth or HMAC is configured and correct; None when neither is configured."""
     configured = False
-    if settings.sinch_inbound_basic_user:
+    if _sinch_basic_configured():
         configured = True
         header = request.headers.get('Authorization', '')
         try:
@@ -339,7 +355,7 @@ def _sinch_authenticated(request, raw):
         except (ValueError, UnicodeError, binascii.Error):
             user, password = '', ''
         if not (hmac.compare_digest(user.encode(), settings.sinch_inbound_basic_user.encode())
-                and hmac.compare_digest(password.encode(), (settings.sinch_inbound_basic_pass or '').encode())):
+                and hmac.compare_digest(password.encode(), settings.sinch_inbound_basic_pass.encode())):
             raise HTTPException(401, detail='Invalid basic auth')
     if settings.sinch_inbound_hmac_secret:
         configured = True
@@ -383,7 +399,7 @@ async def _sinch_payload(request, raw):
 async def sinch_inbound(request: Request):
     _require_route('sinch', '/sinch-inbound')
     service = _acquisition(request)
-    if not (settings.sinch_inbound_basic_user or settings.sinch_inbound_hmac_secret):
+    if not (_sinch_basic_configured() or settings.sinch_inbound_hmac_secret):
         _limit_unverified(request, '/sinch-inbound')
     raw = await _bounded_body(request, JSON_BODY_BYTES)
     authenticated = _sinch_authenticated(request, raw)
@@ -402,7 +418,7 @@ async def sinch_inbound(request: Request):
                     'to_number': fax.get('to') or fax.get('to_number'),
                     'pages': _int(fax.get('numberOfPages') or fax.get('num_pages') or fax.get('pages')),
                     'completed_at': fax.get('completedTime')}
-    confirmed, verified_by = notification, 'basic auth' if settings.sinch_inbound_basic_user else 'signature'
+    confirmed, verified_by = notification, 'basic auth' if _sinch_basic_configured() else 'signature'
     if not authenticated:
         attached, verified_by = None, 'lookup'
         api, _ = provider_service('sinch', settings)
@@ -417,7 +433,9 @@ async def sinch_inbound(request: Request):
                 or not _matches(notification['from_number'], confirmed['from_number'])):
             return {'status': 'ignored'}
     source_time = parse_source_time(confirmed.get('completed_at'))
-    report = {key: value for key, value in data.items() if key != 'file'}
+    # Unauthenticated, the notification was only a hint: keep the provider's confirmed record instead of it.
+    report = ({key: value for key, value in data.items() if key != 'file'} if authenticated
+              else _confirmed_report(fax_id, confirmed))
     begun = await _begin(service, source='sinch', account=account_identity('sinch', settings.sinch_project_id),
                          operation_id=fax_id, backend='sinch', inbound_backend=active_inbound(),
                          to_number=confirmed.get('to_number'), from_number=confirmed.get('from_number'),

@@ -17,6 +17,7 @@ fax. A failure before that record is complete is a definite failure, and the
 fax may then go by its normal route; once it is complete, the send is delivered.
 """
 from contextlib import asynccontextmanager
+from datetime import timedelta
 import json
 import logging
 from pathlib import Path
@@ -184,8 +185,15 @@ class _LocalSubmission:
 class LocalReconciler:
     """Settle faxes to own numbers whose answer was lost: delivered if the received fax exists, else sent normally."""
 
-    def __init__(self, delivery, outbound, routes, *, values):
+    # A fax whose settling failed unexpectedly waits 1, 2, 4 ... minutes (at most an hour) before the next try,
+    # so one bad record never holds up the others.
+    FIRST_RETRY = timedelta(minutes=1)
+    LONGEST_RETRY = timedelta(hours=1)
+
+    def __init__(self, delivery, outbound, routes, *, values, clock=None):
         self.delivery, self.outbound, self.routes, self.values = delivery, outbound, routes, values
+        self.clock = clock or utcnow
+        self.retry = {}  # job id -> (failures, next try); in memory: a restart retries at once, which is safe
 
     def waiting(self, *, limit=20):
         deliveries, costs, jobs = self.outbound.deliveries, self.routes.costs, self.routes.jobs
@@ -198,22 +206,36 @@ class LocalReconciler:
             return connection.execute(query).all()
 
     def step(self):
-        settled = 0
-        for job_id, attempt_id, to_number, pages in self.waiting():
-            values = self.values()
-            try:
-                self.delivery.deliver(job_id=job_id, attempt_id=attempt_id, values=values,
-                                      destination=destination_key(to_number, values.fax_default_country), pages=pages)
-            except LocalRefused:
-                if not self.delivery.delivered(job_id):
-                    self.outbound.requeue_after_failure(job_id, attempt_id=attempt_id, category='local_not_delivered')
-                    settled += 1
+        settled, now = 0, self.clock()
+        for job_id, attempt_id, to_number, pages in self.waiting(limit=100):
+            failures, due = self.retry.get(job_id, (0, now))
+            if due > now:
                 continue
-            _, profile = self.outbound.attempt_context(job_id, attempt_id)
-            self.outbound.observe(job_id, attempt_id=attempt_id, profile_id=profile.id, provider_sid=None,
-                                  status='success', event_key='local:' + job_id)
-            settled += 1
+            try:
+                settled += self._settle(job_id, attempt_id, to_number, pages)
+                self.retry.pop(job_id, None)
+            except Exception:
+                # One bad record fails on its own: it is retried later and the others still settle.
+                wait = min(self.FIRST_RETRY * (2 ** failures), self.LONGEST_RETRY)
+                self.retry[job_id] = (failures + 1, now + wait)
+                logging.getLogger(__name__).warning('A fax to one of your own numbers could not be settled yet; '
+                                                    'Faxbot tries it again later.')
         return settled > 0
+
+    def _settle(self, job_id, attempt_id, to_number, pages):
+        values = self.values()
+        try:
+            self.delivery.deliver(job_id=job_id, attempt_id=attempt_id, values=values,
+                                  destination=destination_key(to_number, values.fax_default_country), pages=pages)
+        except LocalRefused:
+            if not self.delivery.delivered(job_id):
+                self.outbound.requeue_after_failure(job_id, attempt_id=attempt_id, category='local_not_delivered')
+                return 1
+            return 0
+        _, profile = self.outbound.attempt_context(job_id, attempt_id)
+        self.outbound.observe(job_id, attempt_id=attempt_id, profile_id=profile.id, provider_sid=None,
+                              status='success', event_key='local:' + job_id)
+        return 1
 
 
 def for_application(app, runtime):
