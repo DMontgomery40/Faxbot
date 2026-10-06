@@ -372,6 +372,10 @@ async def test_a_fax_routed_over_a_full_trunk_waits_with_nothing_sent_and_nothin
     from api.tests.test_routing_multiprovider import Inner, card
     full = Install(database, tmp_path, SIP_TRUNK_PRESET='telnyx', SIP_TRUNK_MAX_CALLS='1',
                    FAX_OUTBOUND_ROUTES='sip')
+    # The worker's lease recovery and the route chooser's trunk check both read the real clock, so the
+    # call holding the trunk starts two minutes ago: its 300-second lease and the 30-minute hold are
+    # still running and the one-second rate window has passed, whatever the date.
+    full.clock = datetime.utcnow() - timedelta(minutes=2)
     RouteStore(database).replace_cards([card('phaxio', page='0.07'), card('sip', minute='0.005')])
     holding = full.accept('+12025550101', trunk=True)
     assert full.start().job_id == holding
