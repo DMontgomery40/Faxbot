@@ -45,6 +45,14 @@ Faxbot limits how many calls use the trunk at once and how quickly it starts new
 
 Faxes that reach a trunk limit wait for room; they do not fail because of the limit. Set either limit to 0 to use its default. From the command line, run `faxbot providers trunk limits` to see the effective limits, or add `--calls-at-once N` and `--calls-per-second N` to change them. Each accepts 0; the maximums are 200 concurrent calls and 100 new calls per second.
 
+### See how fax calls went
+
+In **Providers**, the page for your carrier trunk has **How fax calls went**. It groups the answered fax calls of the last 7, 30 or 90 days by the compression, error correction and speed the fax engine reported, and shows for each group how many calls succeeded, the seconds per confirmed page and the calls per delivered fax. Each sent or received fax that went over the trunk also says how its call went.
+
+The engines report different details. The SSL Fax engine reports the whole call. Faxbot's built-in Asterisk engine reports only the last page's speed and resolution, and neither compression nor error correction, so those show as not reported. Faxbot only measures these values; it does not change how it sends faxes because of them.
+
+From the command line, run `faxbot providers trunk negotiation --days 30`; use `7` or `90` for another period.
+
 ## Choose a carrier
 
 Faxbot has settings ready for these carriers. Each preset uses the carrier's own connection documentation, read on 2026-10-03.

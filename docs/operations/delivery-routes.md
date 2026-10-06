@@ -181,7 +181,9 @@ SSLFax is a HylaFAX+ feature. During an ordinary fax call, it moves the pages on
 - an audio (G.711) call rather than T.38
 - an internet address the sender can reach, to receive this way
 
-It saves money only on routes billed by the minute. Faxbot's Asterisk fax engine does not support SSLFax, so Faxbot does not currently offer it.
+It saves money only on routes billed by the minute. Faxbot's built-in Asterisk engine does not support SSLFax; Faxbot's optional SSL Fax engine does, on the same trunk (see [Faster pages with SSL Fax](../setup/sslfax.md)).
+
+The pages travel encrypted, but SSLFax gives no way to confirm who is at the other end, so a fax sent this way is as private as an ordinary fax call, not more.
 
 ## Case packets
 
