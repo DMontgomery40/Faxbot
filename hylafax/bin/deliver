@@ -5,8 +5,10 @@
 # notify and the engine's start write each report into the engine's volume
 # (results/<time>-<name>.report) before anything is sent, so a report Faxbot
 # cannot take now is sent again later, also after a restart, until Faxbot
-# answers. A report Faxbot refuses as malformed moves to results/refused and
-# is not sent again; every other answer keeps it. Faxbot takes the same report
+# answers. A report Faxbot refuses as malformed or unknown moves to
+# results/refused and is not sent again (Faxbot answers 503 for anything that
+# may pass, and a send whose result never arrives waits for a person after
+# three hours); every other answer keeps it. Faxbot takes the same report
 # twice without change. The shared secret is read from etc/faxbot.conf at
 # send time and never stored with a report or printed.
 set -u

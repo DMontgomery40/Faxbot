@@ -56,7 +56,8 @@ def test_apply_writes_the_engine_settings_and_one_iax_peer_per_line_privately(tm
     assert settings['sslfax'] == 'yes' and settings['sslfax_listener'] == ''
     assert settings['submit_user'] == 'faxbot' and settings['submit_password'] == stored['submit_password']
     # The engine reports with its own secret, never Asterisk's inbound secret.
-    assert settings['inbound_secret'] == stored['report_secret'] != SECRET and settings['codec'] == 'ulaw'
+    assert settings['report_secret'] == stored['report_secret'] != SECRET and 'inbound_secret' not in settings
+    assert settings['codec'] == 'ulaw'
     assert hylafax_engine.report_secret(tmp_path) == stored['report_secret']
     assert settings['api_url'] == 'http://api:8080'
 
@@ -84,13 +85,13 @@ def test_engine_settings_refuse_values_that_could_break_the_file(tmp_path):
     values = trunk_values(tmp_path)
     engine_secret = hylafax_engine.engine_secrets(values)
     with pytest.raises(ValueError):
-        hylafax_engine.render_engine_conf(values, engine_secret, inbound_secret='short')
+        hylafax_engine.render_engine_conf(values, engine_secret, report_secret='short')
     with pytest.raises(ValueError):
-        hylafax_engine.render_engine_conf(values, engine_secret, inbound_secret=SECRET, listener='host:1\nlines=8')
-    text = hylafax_engine.render_engine_conf(values, engine_secret, inbound_secret=SECRET,
+        hylafax_engine.render_engine_conf(values, engine_secret, report_secret=SECRET, listener='host:1\nlines=8')
+    text = hylafax_engine.render_engine_conf(values, engine_secret, report_secret=SECRET,
                                              listener='fax.example.net:10443')
     assert 'sslfax_listener=fax.example.net:10443' in text
-    off = hylafax_engine.render_engine_conf(values, engine_secret, inbound_secret=SECRET,
+    off = hylafax_engine.render_engine_conf(values, engine_secret, report_secret=SECRET,
                                             listener='fax.example.net:10443', sslfax=False)
     assert 'sslfax=no' in off and 'sslfax_listener=\n' in off
     # A hand-set inbound secret the engine cannot carry leaves the engine not set up; Apply still works.

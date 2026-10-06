@@ -412,7 +412,7 @@ def bring_up(tmp_path, label, made, *, faxbot_t38, carrier_gateway, peer_listene
     # The peer's listener is published (as docker-compose.sslfax.yml would) when the case gives it one.
     peer = docker.create('peer', images['engine'], env={'FAXBOT_SSLFAX_PUBLISHED_PORT': str(LISTENER_PORT)})
     peer_conf = hylafax_engine.render_engine_conf(
-        carrier_values, peer_secrets, inbound_secret=inbound_secret, lines=1, listener=peer_listener,
+        carrier_values, peer_secrets, report_secret=peer_secrets['report_secret'], lines=1, listener=peer_listener,
         sslfax=peer_sslfax, asterisk_host=ADDRESS['carrier'], api_url='http://198.51.100.250:8080')
     docker.run('start', peer)
     docker.sh(peer, 'mkdir -p /faxdata/hylafax', check=True)

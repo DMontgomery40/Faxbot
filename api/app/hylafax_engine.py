@@ -239,7 +239,7 @@ def listener_address(values) -> str:
     return f'{address}:{sip_trunk.fax_options(values).listener_port}'
 
 
-def render_engine_conf(values, engine_secret: dict, *, inbound_secret: str, lines=None, listener=None,
+def render_engine_conf(values, engine_secret: dict, *, report_secret: str, lines=None, listener=None,
                        sslfax=None, asterisk_host=None, api_url=None) -> str:
     """The engine container's settings (hylafax/entrypoint.sh checks every value again)."""
     from . import sip_trunk
@@ -251,8 +251,8 @@ def render_engine_conf(values, engine_secret: dict, *, inbound_secret: str, line
     codec = _codecs(values)[0]
     if listener and not re.fullmatch(r'[A-Za-z0-9.-]{1,253}:[0-9]{1,5}', listener):
         raise ValueError('Unsupported SSL Fax listener address')
-    if not re.fullmatch(r'[A-Za-z0-9_-]{16,256}', inbound_secret or ''):
-        raise ValueError('Unsupported inbound secret for the fax engine')
+    if not re.fullmatch(r'[A-Za-z0-9_-]{16,256}', report_secret or ''):
+        raise ValueError('Unsupported report secret for the fax engine')
     t38 = bool(getattr(values, 'sip_t38_enabled', True))
     pairs = [
         ('lines', str(lines)),
@@ -270,7 +270,8 @@ def render_engine_conf(values, engine_secret: dict, *, inbound_secret: str, line
         ('ecm', 'yes' if options.ecm else 'no'),
         ('compression', options.compression),
         ('api_url', api_url or ENGINE_API_URL),
-        ('inbound_secret', inbound_secret),
+        # The engine's own secret for its reports (never Asterisk's: _require_engine refuses that one).
+        ('report_secret', report_secret),
     ]
     pairs += [(f'line{number}_secret', engine_secret['lines'][str(number)]) for number in range(1, lines + 1)]
     for key, value in pairs:
@@ -308,10 +309,10 @@ def render_options(values, *, lines=0) -> str:
     return '\n'.join(out) + '\n'
 
 
-def write_engine_files(values, inbound_secret: str | None):
+def write_engine_files(values, asterisk_secret: str | None):
     """Write the engine settings and Asterisk's IAX peers next to the trunk files (both mode 0600).
 
-    Without an inbound secret the engine could not report results, so both
+    Without Asterisk's inbound secret the engine could not report results, so both
     files are removed and the engine waits; Faxbot's built-in engine places calls.
     """
     def without_engine():
@@ -322,13 +323,13 @@ def write_engine_files(values, inbound_secret: str | None):
                 pass
         _write_private(options_path(values), render_options(values))
         return None
-    if not inbound_secret:
+    if not asterisk_secret:
         return without_engine()
     lines = line_count(values)
     engine_secret = engine_secrets(values, lines=lines)
     try:
         # The engine reports with its own secret; Asterisk's inbound secret never leaves Faxbot and Asterisk.
-        text = render_engine_conf(values, engine_secret, inbound_secret=engine_secret['report_secret'], lines=lines)
+        text = render_engine_conf(values, engine_secret, report_secret=engine_secret['report_secret'], lines=lines)
     except ValueError:
         # An inbound secret the engine cannot carry (set by hand with other characters):
         # the engine stays not set up and Faxbot's built-in engine places every call.
@@ -890,7 +891,9 @@ def record_inbound_engine(engine, payload, *, call_key, inbound_fax_id, number):
     if not isinstance(details, dict) or details.get('engine') != 'hylafax':
         return None
     from . import hylafax_records
-    values = {'engine_ref': details.get('engine_ref'), 'sslfax': details.get('sslfax') is True,
+    # Unknown stays unknown (a call without its own session log); never recorded as "no SSL Fax".
+    values = {'engine_ref': details.get('engine_ref'),
+              'sslfax': details.get('sslfax') if isinstance(details.get('sslfax'), bool) else None,
               'sslfax_offered': details.get('sslfax_offered') if isinstance(details.get('sslfax_offered'), bool)
               else None,
               'transfer_seconds': details.get('transfer_seconds'), 'session_seconds': details.get('session_seconds'),
