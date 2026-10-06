@@ -189,6 +189,8 @@ def _destination_view(number, row, routes):
     return {'number': number, 'display_name': row['display_name'] if row else None,
             'notes': row['notes'] if row else None, 'preferred_route': row['preferred_route'] if row else None,
             'accepts_references': bool(row['accepts_references']) if row else False,
+            # Calls at once to this number: None is the default (one at a time), 0 means no limit.
+            'max_calls': row.get('max_calls') if row else None,
             'version': row['version'] if row else 0,
             'routes': sorted((_route_view(entry) for entry in routes.values()), key=lambda item: item['route']),
             'estimated_cost_30_days': _money(total)}
@@ -292,6 +294,7 @@ class DestinationPatch(BaseModel):
     notes: str | None = Field(default=None, max_length=2000)
     preferred_route: str | None = Field(default=None, max_length=64)
     accepts_references: bool | None = None
+    max_calls: int | None = Field(default=None, ge=0, le=20)
     version: int | None = Field(default=None, ge=0)
 
 

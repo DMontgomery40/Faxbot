@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 
 import pytest
+import sqlalchemy as sa
 
 from api.tests.test_outbound_store import installation, accept
 from api.tests.test_schema import database
@@ -145,8 +146,12 @@ async def test_timeout_or_unusable_receipt_requires_reconciliation(installation)
         await asyncio.Event().wait()
     async def malformed():
         return SubmissionReceipt('', 'success')
-    for operation in (timeout, malformed):
+    for index, operation in enumerate((timeout, malformed)):
         job = accept(installation)
+        # Each to its own number: an uncertain call keeps its number reserved (capacity.py).
+        with installation[0].engine.begin() as connection:
+            connection.execute(sa.text('UPDATE fax_jobs SET to_number = :to WHERE id = :id'),
+                               {'to': f'+1202555019{index}', 'id': job})
         transport = Transport(operation)
         await OutboundWorker(store, transport, submission_timeout=0.01).step()
         assert store.get(job)['state'] == 'reconciliation_required'

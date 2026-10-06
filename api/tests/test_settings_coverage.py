@@ -45,7 +45,10 @@ READ_ONLY_OR_ENV = {
 }
 
 # Settings the console has not placed yet, with the home the map gives them. Builder L shrinks this.
-AWAITING_CONSOLE: dict = {}
+AWAITING_CONSOLE: dict = {
+    'sip_trunk_max_calls': 'Builder R places "Calls at once" on the trunk page in capacity M2',
+    'sip_trunk_calls_per_second': 'Builder R places "New calls per second" on the trunk page in capacity M2',
+}
 
 PROMOTED = {'sip_public_address_check_minutes': 'SIP_PUBLIC_ADDRESS_CHECK_MINUTES',
             'enable_s3_diagnostics': 'ENABLE_S3_DIAGNOSTICS', 'mobile_local_base': 'MOBILE_LOCAL_BASE',

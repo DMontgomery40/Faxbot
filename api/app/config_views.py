@@ -49,6 +49,16 @@ def _owner_only() -> list[str]:
     return sorted(owner_only_fields())
 
 
+def _capacity_view(values) -> dict:
+    """The trunk's calls at once and new calls a second in effect, and the carrier's published limits."""
+    from .capacity import CARRIERS, calls_per_second, trunk_calls_at_once
+    limits = CARRIERS.get(values.sip_trunk_preset or '')
+    return {'max_calls_in_effect': trunk_calls_at_once(values), 'calls_per_second_in_effect': calls_per_second(values),
+            'carrier_limits': None if limits is None else {
+                'calls_per_second': limits.calls_per_second, 'calls_at_once': limits.calls_at_once,
+                'note': limits.note, 'sources': list(limits.sources), 'read_on': limits.read_on}}
+
+
 def _audio_reason(values) -> dict:
     from .sip_fax_mode import reason_for
     try:
@@ -212,6 +222,10 @@ def project_admin_settings(snapshot: ConfigurationSnapshot, pending_fields: Iter
                 'fax_fine': values.sip_fax_fine,
                 'sslfax_enabled': values.sip_sslfax_enabled,
                 'fax_lines': values.sip_fax_lines,
+                # Calls at once on the trunk and new calls a second, as set (0: the default) and as in effect.
+                'max_calls': values.sip_trunk_max_calls,
+                'calls_per_second': values.sip_trunk_calls_per_second,
+                **_capacity_view(values),
                 'sslfax_listener_port': values.sip_sslfax_listener_port,
                 'dial_format': values.sip_trunk_dial_format,
                 'dial_prefix': values.sip_trunk_dial_prefix,
