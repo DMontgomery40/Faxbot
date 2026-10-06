@@ -33,14 +33,15 @@ def test_existing_legacy_selection_is_imported_but_missing_defaults_are_not(tmp_
 
 
 def test_a_legacy_sinch_setting_this_release_removed_is_ignored(tmp_path):
-    """Sinch's Fax API signs no webhooks, so inbound_verify_signature checked nothing and is gone."""
+    """Sinch's Fax API signs no webhooks: inbound_verify_signature checked nothing, inbound_hmac_secret refused all."""
     path = tmp_path / 'plugins.json'
     path.write_text(json.dumps({'version': 1, 'providers': {'inbound': {'plugin': 'sinch', 'enabled': True,
         'settings': {'inbound_basic_user': 'faxbot-sinch', 'inbound_basic_pass': 'synthetic-Pass!42',
-                     'inbound_verify_signature': True}}}}))
+                     'inbound_verify_signature': True, 'inbound_hmac_secret': 'synthetic-retired-secret'}}}}))
     imported = load_bootstrap_configuration({'FAXBOT_CONFIG_PATH': str(path)})
     assert imported.values.sinch_inbound_basic_configured is True
     assert not hasattr(imported.values, 'sinch_inbound_verify_signature')
+    assert not hasattr(imported.values, 'sinch_inbound_hmac_secret')
 
 
 def test_conflicting_legacy_credentials_require_reconciliation(tmp_path):

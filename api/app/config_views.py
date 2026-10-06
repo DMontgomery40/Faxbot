@@ -320,9 +320,7 @@ def project_admin_settings(snapshot: ConfigurationSnapshot, pending_fields: Iter
             'sinch': {
                 'basic_user': values.sinch_inbound_basic_user,
                 'basic_pass': mask_secret(values.sinch_inbound_basic_pass),
-                'hmac_secret': mask_secret(values.sinch_inbound_hmac_secret),
                 'basic_auth_configured': values.sinch_inbound_basic_configured,
-                'hmac_configured': bool(values.sinch_inbound_hmac_secret),
             },
         },
         'limits': {

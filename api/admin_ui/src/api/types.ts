@@ -326,10 +326,8 @@ export interface Settings {
     };
     sinch?: {
       basic_auth_configured: boolean;
-      hmac_configured: boolean;
       basic_user?: string;
       basic_pass?: string;
-      hmac_secret?: string;
     };
   };
   features?: {

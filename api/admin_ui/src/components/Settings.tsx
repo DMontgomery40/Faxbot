@@ -185,7 +185,6 @@ function editorValues(data: SettingsType): SettingsForm {
     phaxio_inbound_verify_signature: data.inbound.phaxio?.verify_signature ?? true,
     sinch_inbound_basic_user: data.inbound.sinch?.basic_user ?? '',
     sinch_inbound_basic_pass: data.inbound.sinch?.basic_pass ?? '',
-    sinch_inbound_hmac_secret: data.inbound.sinch?.hmac_secret ?? '',
     storage_backend: data.storage.backend,
     s3_bucket: data.storage.s3_bucket,
     s3_region: data.storage.s3_region ?? '',
@@ -1139,19 +1138,6 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
                   type="password"
                   showCurrentValue={false}
                   {...envField('sinch_inbound_basic_pass')}
-                />
-                
-                <ResponsiveSettingItem
-                  icon={settings.inbound?.sinch?.hmac_configured ? <CheckCircleIcon color="success" /> : <WarningIcon color="warning" />}
-                  label="Signing secret shared with Sinch (optional)"
-                  value={settings.inbound?.sinch?.hmac_configured ? 'Configured' : 'Not configured'}
-                  editValue={form.sinch_inbound_hmac_secret ?? ''}
-                  helperText="Faxbot checks each received fax with this secret. Set the same value in Sinch."
-                  onChange={(value) => handleForm('sinch_inbound_hmac_secret', value)}
-                  placeholder="Signing secret"
-                  type="password"
-                  showCurrentValue={false}
-                  {...envField('sinch_inbound_hmac_secret')}
                 />
               </Box>
             )}

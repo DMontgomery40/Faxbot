@@ -77,6 +77,7 @@ def test_empty_credentials_are_empty_and_all_nonempty_credentials_have_opaque_ma
         'HUMBLEFAX_ACCESS_KEY': 'synthetic-humblefax-access', 'HUMBLEFAX_SECRET_KEY': 'synthetic-humblefax-secret',
         'SIGNALWIRE_WEBHOOK_SIGNING_KEY': 'synthetic-webhook-key', 'ASTERISK_AMI_PASSWORD': 'synthetic-ami-password',
         'FREESWITCH_ESL_PASSWORD': 'synthetic-esl-password', 'ASTERISK_INBOUND_SECRET': 'synthetic-inbound-secret',
+        # SINCH_INBOUND_HMAC_SECRET is retired (Sinch signs no webhooks): a stale value is read and never shown.
         'SINCH_INBOUND_BASIC_PASS': 'synthetic-basic-password', 'SINCH_INBOUND_HMAC_SECRET': 'synthetic-hmac-secret',
         'INTAKE_SMTP_PASSWORD': 'synthetic-intake-password',
         'DATABASE_URL': 'postgresql://synthetic-user:synthetic-db-password@db.invalid/faxbot?token=synthetic-query-secret',
@@ -90,7 +91,7 @@ def test_empty_credentials_are_empty_and_all_nonempty_credentials_have_opaque_ma
     assert view['signalwire']['api_token'] == view['signalwire']['webhook_signing_key'] == '***'
     assert view['sip']['ami_password'] == view['fs']['esl_password'] == '***'
     assert view['inbound']['sip']['asterisk_secret'] == '***'
-    assert view['inbound']['sinch']['basic_pass'] == view['inbound']['sinch']['hmac_secret'] == '***'
+    assert view['inbound']['sinch']['basic_pass'] == '***' and 'hmac_secret' not in view['inbound']['sinch']
     assert view['intake']['smtp_password'] == '***'
     assert view['database']['url'] == '***'
     serialized = json.dumps(view)
@@ -111,7 +112,7 @@ def test_empty_credentials_are_empty_and_all_nonempty_credentials_have_opaque_ma
     assert empty['signalwire']['webhook_signing_key'] == ''
     assert empty['sip']['ami_password'] == empty['fs']['esl_password'] == ''
     assert empty['inbound']['sip']['asterisk_secret'] == ''
-    assert empty['inbound']['sinch']['basic_pass'] == empty['inbound']['sinch']['hmac_secret'] == ''
+    assert empty['inbound']['sinch']['basic_pass'] == ''
     assert empty['intake']['smtp_password'] == ''
     assert empty['database']['url'] == ''
     assert empty['phaxio']['configured'] is False
@@ -126,7 +127,7 @@ MASKED_PATHS = {
     'sinch.api_secret', 'documo.api_key', 'humblefax.access_key', 'humblefax.secret_key', 'signalwire.api_token',
     'efax.app_id', 'efax.api_key', 'efax.user_id', 'efax.webhook_secret',
     'signalwire.webhook_signing_key', 'sip.ami_password', 'sip.trunk.password', 'sip.telnyx_api_key', 'fs.esl_password',
-    'inbound.sip.asterisk_secret', 'inbound.sinch.basic_pass', 'inbound.sinch.hmac_secret', 'intake.smtp_password',
+    'inbound.sip.asterisk_secret', 'inbound.sinch.basic_pass', 'intake.smtp_password',
     'database.url',
 }
 

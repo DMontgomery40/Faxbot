@@ -513,8 +513,8 @@ def test_a_saved_provider_is_kept_when_the_environment_no_longer_names_it(monkey
 # Every setting a release removes stays accepted, and ignored, for one release: an installation whose
 # saved settings, recovery file or environment still names it starts and shows nothing for it.
 RETIRED = {'PLUGIN_REGISTRY_PATH': '/app/config/plugin_registry.json',
-           # Sinch's Fax API (v3) signs no webhooks, so this setting checked nothing.
-           'SINCH_INBOUND_VERIFY_SIGNATURE': 'true'}
+           # Sinch's Fax API (v3) signs no webhooks: the first checked nothing, the second refused every fax.
+           'SINCH_INBOUND_VERIFY_SIGNATURE': 'true', 'SINCH_INBOUND_HMAC_SECRET': 'synthetic-retired-signing-secret'}
 
 
 def _shows_no_retired_setting(installation, client):

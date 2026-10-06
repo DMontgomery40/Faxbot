@@ -7,8 +7,7 @@ PLUGIN_FIELDS = {
                'inbound_verify_signature': 'phaxio_inbound_verify_signature'},
     'sinch': {'project_id': 'sinch_project_id', 'api_key': 'sinch_api_key',
               'api_secret': 'sinch_api_secret', 'base_url': 'sinch_base_url',
-              'inbound_basic_user': 'sinch_inbound_basic_user', 'inbound_basic_pass': 'sinch_inbound_basic_pass',
-              'inbound_hmac_secret': 'sinch_inbound_hmac_secret'},
+              'inbound_basic_user': 'sinch_inbound_basic_user', 'inbound_basic_pass': 'sinch_inbound_basic_pass'},
     'signalwire': {'space_url': 'signalwire_space_url', 'project_id': 'signalwire_project_id',
                    'api_token': 'signalwire_api_token', 'fax_from_e164': 'signalwire_fax_from_e164',
                    'sms_from_e164': 'signalwire_sms_from_e164', 'callback_url': 'signalwire_status_callback_url',
@@ -31,5 +30,5 @@ PLUGIN_FIELDS = {
 
 # Plugin settings an earlier release had and this one removed: an older configuration that names one is
 # accepted and the value ignored. Sinch's Fax API (v3) signs no webhooks, so inbound_verify_signature
-# checked nothing.
-RETIRED_PLUGIN_FIELDS = {'sinch': frozenset({'inbound_verify_signature'})}
+# checked nothing and inbound_hmac_secret refused every real notification.
+RETIRED_PLUGIN_FIELDS = {'sinch': frozenset({'inbound_verify_signature', 'inbound_hmac_secret'})}

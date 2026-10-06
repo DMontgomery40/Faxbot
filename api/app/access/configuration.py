@@ -48,7 +48,7 @@ _PROVIDER_FIELDS = frozenset({
     'intake_email_enabled', 'intake_smtp_host', 'intake_smtp_port', 'intake_smtp_security',
     'intake_smtp_username', 'intake_smtp_password', 'intake_email_from', 'intake_email_to',
     'inbound_enabled', 'asterisk_inbound_secret', 'sinch_inbound_basic_user',
-    'sinch_inbound_basic_pass', 'sinch_inbound_hmac_secret',
+    'sinch_inbound_basic_pass',
     'storage_backend', 's3_bucket', 's3_prefix', 's3_region', 's3_endpoint_url',
     's3_kms_key_id', 'enable_s3_diagnostics',
 })
