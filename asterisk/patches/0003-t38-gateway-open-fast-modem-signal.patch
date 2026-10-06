@@ -1,0 +1,86 @@
+Faxbot: the T.38 gateway ends a fast modem signal the far end left open (spandsp 0.0.6).
+
+Live over Telnyx on 6 October 2026, the first fax received over T.38 failed.
+The carrier's T.38 carried a training check its own modem had cut short (7
+packets instead of about 51), so the fax engine rightly refused it. Telnyx
+then sent two trainings that ended at once, with no data. spandsp 0.0.6's
+gateway never marks such data finished, so it played V.29 fill to the engine
+for seconds at a time and did not listen to the engine meanwhile: the engine's
+answer (failure to train, which makes the sender retrain at a lower speed)
+never reached the sender, and the engine, waiting for silence, gave up (E100).
+Replaying the captured T.38 packets into spandsp reproduces it: no answer
+reaches the far end, with or without 0002; with this change it reaches the
+far end 1.5 s after the training check, within the sender's 3 s wait. The
+call that worked, the send-direction captures 0002 was proven with, and a
+training check the engine sends are unchanged.
+
+--- a/res/res_fax_spandsp.c
++++ b/res/res_fax_spandsp.c
+@@ -165,6 +165,8 @@
+ 	modem_connect_tones_rx_state_t *tone_state;
+ 	/*! Faxbot: empty V.21 preambles the gateway ended (see faxbot_end_empty_preamble) */
+ 	unsigned int faxbot_empty_preambles;
++	/*! Faxbot: fast modem signals left open that the gateway ended (see faxbot_end_empty_training) */
++	unsigned int faxbot_empty_trainings;
+ };
+ 
+ static int spandsp_v21_new(struct spandsp_pvt *p);
+@@ -830,6 +832,50 @@
+ 	hdlc_tx_frame(hdlc, NULL, 0);
+ }
+ 
++/*!
++ * \brief Faxbot: end a fast modem signal the far end left open (spandsp 0.0.6).
++ *
++ * A T.38 sender can send a training indicator followed by a non-ECM signal end
++ * with no data (live over Telnyx, 6 October 2026: twice, right after a training
++ * check its own modem cut short). spandsp 0.0.6's gateway then logs
++ * "T38_FIELD_NON_ECM_SIG_END received at the end of HDLC data!" and never marks
++ * the data finished, so its fast modem plays fill to the fax machine until more
++ * data arrives, for seconds, and does not listen to the fax machine meanwhile:
++ * the fax machine's answer (failure to train) never reaches the far end, and the
++ * fax machine cannot get the silence it waits for before it sends. A lost signal
++ * end leaves the same state. When the fast modem is sending the far end's data
++ * and the far end has moved on (an indicator is queued behind it and no non-ECM
++ * data is arriving), the data has ended: mark it finished, as a signal end does,
++ * so the modem sends what it has and stops. A modem still training or already
++ * shutting down, and data that ended with its signal end, are left alone.
++ */
++static void faxbot_end_empty_training(struct ast_fax_session *s, struct spandsp_pvt *p)
++{
++	t38_gateway_state_t *gw = &p->t38_gw_state;
++	fax_modems_state_t *modems = &gw->audio.modems;
++	t38_gateway_hdlc_state_t *queue = &gw->core.hdlc_to_modem;
++	t38_non_ecm_buffer_state_t *buffer = &gw->core.non_ecm_to_modem;
++	get_bit_func_t get_bit = NULL;
++
++	if (modems->tx_handler == (span_tx_handler_t *) &v29_tx) {
++		get_bit = modems->fast_modems.v29_tx.current_get_bit;
++	} else if (modems->tx_handler == (span_tx_handler_t *) &v17_tx) {
++		get_bit = modems->fast_modems.v17_tx.current_get_bit;
++	} else if (modems->tx_handler == (span_tx_handler_t *) &v27ter_tx) {
++		get_bit = modems->fast_modems.v27ter_tx.current_get_bit;
++	}
++	if (get_bit != t38_non_ecm_buffer_get_bit || buffer->data_finished
++		|| queue->in == queue->out || !(queue->buf[queue->out].contents & FAXBOT_SPANDSP_FLAG_INDICATOR)
++		|| gw->t38x.current_rx_field_class == T38_FIELD_CLASS_NON_ECM) {
++		return;
++	}
++	t38_non_ecm_buffer_push(buffer);
++	p->faxbot_empty_trainings++;
++	ast_log(LOG_NOTICE, "Faxbot T.38 gateway on %s: the far end's fast modem signal ended with its data still open; "
++		"ended it so the fax machine's answer reaches the far end (%u so far)\n",
++		s->chan ? ast_channel_name(s->chan) : "<gone>", p->faxbot_empty_trainings);
++}
++
+ /*! \brief generate T.30 packets sent to the T.30 leg of gateway
+  * \param chan T.30 channel
+  * \param data fax session structure
+@@ -859,6 +905,7 @@
+ 
+ 	/* generate a T.30 packet */
+ 	faxbot_end_empty_preamble(s, p);
++	faxbot_end_empty_training(s, p);
+ 	if ((f->samples = t38_gateway_tx(&p->t38_gw_state, f->data.ptr, f->samples))) {
+ 		f->datalen = f->samples * sizeof(int16_t);
+ 		res = ast_write(chan, f);
