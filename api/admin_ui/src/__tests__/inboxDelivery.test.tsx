@@ -240,8 +240,7 @@ describe('Received fax status', () => {
 
   it('says how often fetching stopped before the document was fetched again, in the viewer local time', async () => {
     // The viewer is in Denver; the server's own sentence is in its installation's zone (UTC) and is not shown.
-    const zone = process.env.TZ;
-    process.env.TZ = 'America/Denver';
+    vi.stubEnv('TZ', 'America/Denver');
     try {
       expect(parseServerTime('2026-10-05T21:12:00')?.getHours()).toBe(15);
       const stop = { stopped_at: '2026-10-04T08:00:00', attempts: 30, problem: 'Phaxio did not answer.' };
@@ -268,7 +267,7 @@ describe('Received fax status', () => {
       expect(earlierFailuresText({ backend: 'phaxio', earlier_failures_text: 'An older server.' })).toBe('An older server.');
       expect(earlierFailuresText({ backend: 'phaxio', earlier_failures: [], earlier_failures_text: null })).toBeNull();
     } finally {
-      if (zone === undefined) delete process.env.TZ; else process.env.TZ = zone;
+      vi.unstubAllEnvs();
     }
   });
 
