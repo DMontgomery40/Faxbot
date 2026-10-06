@@ -407,6 +407,20 @@ function SipTrunkSettings({ client, showCalls = true, revision: sharedRevision, 
     }
   };
 
+  // Faxbot restarts the fast fax service by itself after a fax call it did not answer; this is the same by hand.
+  const restartEngine = async () => {
+    setBusy(true);
+    try {
+      const result = await client.restartSipEngine();
+      setNotice({ severity: 'success', text: result.message });
+      setStatus(await client.getSipStatus());
+    } catch (error) {
+      setNotice({ severity: 'error', text: failure(error, 'The fast fax service could not be restarted. Try again.') });
+    } finally {
+      setBusy(false);
+    }
+  };
+
   // Offered after a T.38 call carried no fax data while T.38 is still on. Faxbot switches new calls to audio
   // fax by itself when such a call timed out waiting for fax data; this does it at once in the other cases.
   const useAudioFax = async () => {
@@ -740,6 +754,10 @@ function SipTrunkSettings({ client, showCalls = true, revision: sharedRevision, 
                   {status.engine_audio ? `${status.engine_text} To try T.38 again, select Apply and connect.`
                     : status.engine_text}
                 </Typography>
+              )}
+              {(status.engine_state === 'running' || status.engine_state === 'starting') && (
+                <Button size="small" variant="outlined" sx={{ mt: 1, alignSelf: 'flex-start' }} onClick={restartEngine}
+                  disabled={busy}>Restart the fast fax service</Button>
               )}
               {status.ports_text && status.ports_text !== status.message && status.kind !== 'phone_system'
                 && <Typography variant="body2">{status.ports_text}</Typography>}

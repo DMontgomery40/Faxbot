@@ -25,8 +25,9 @@ case $file in
   *) printf 'faxbot-received: unexpected file %s\n' "$file" >&2; exit 1 ;;
 esac
 [ -f "$file" ] || { printf 'faxbot-received: no image for this call\n' >&2; exit 1; }
-# HylaFAX leaves the communication ID empty when two lines begin a session at the same moment (Asterisk
-# rings every free line for one call): the fax is kept under its receive-queue number instead, never refused.
+# HylaFAX leaves the communication ID empty when two lines begin a session at the same moment (seen when
+# Asterisk rang every free line for one call; it now tries them in turn): the fax is kept under its
+# receive-queue number instead, never refused.
 queued=''
 if [ -z "$commid" ]; then
   commid=0

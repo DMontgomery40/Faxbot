@@ -379,6 +379,8 @@ class AMIClient:
             self._emit("FaxInboundCall", msg)
         elif event == "userevent" and fields.get("userevent", "").lower() == "faxenginecall":
             self._emit("FaxEngineCall", msg)
+        elif event == "userevent" and fields.get("userevent", "").lower() == "faxenginemissed":
+            self._emit("FaxEngineMissed", msg)
 
     @staticmethod
     def _collect(query, msg: Dict[str, str], fields: Dict[str, str]):
@@ -552,6 +554,10 @@ class AMIClient:
     def on_engine_call(self, cb: Callable[[Dict[str, str]], None]):
         """A trunk call the SSL Fax engine placed or answered (the dialplan's FaxEngineCall event)."""
         self._listen("FaxEngineCall", cb)
+
+    def on_engine_missed(self, cb: Callable[[Dict[str, str]], None]):
+        """A received call none of the SSL Fax engine's free lines answered (the built-in engine took it)."""
+        self._listen("FaxEngineMissed", cb)
 
     def on_inbound_call(self, cb: Callable[[Dict[str, str]], None]):
         """A received call that left no fax image (the dialplan's FaxInboundCall event)."""

@@ -165,9 +165,10 @@ def test_a_new_container_that_repeats_a_communication_id_reports_each_call_that_
 
 
 def test_a_fax_received_without_a_communication_id_is_still_kept_and_handed_over(engine, tmp_path):
-    """Asterisk rings every free line for one call; when two lines begin a session at the same moment HylaFAX
-    left the answering line's communication ID empty (loopback, 6 October 2026), and the fax was refused here.
-    It is kept under its receive-queue number instead, and handed over like any other."""
+    """When Asterisk rang every free line for one call (it now tries them in turn), two lines could begin a
+    session at the same moment and HylaFAX left the answering line's communication ID empty (loopback,
+    6 October 2026), and the fax was refused here. It is kept under its receive-queue number instead, and
+    handed over like any other."""
     spool, state, data, environment = engine
     # An ordinary fax (not SSL Fax by its image): whether SSL Fax ran on the call is unknown, never "no".
     _stub(tmp_path / 'tools', 'faxinfo', "printf '%s\\n' 'x:' '    Sender: +1 555 555 0199' '     Pages: 2' "
@@ -429,6 +430,22 @@ def test_a_line_that_never_gets_ready_is_never_reported_running(entrypoint):
     assert (root / 'status.ttyIAX1').read_text().strip() == 'Waiting for modem to come free'
 
 
+def test_the_engine_starts_again_when_faxbot_asks_and_not_for_a_request_it_already_followed(entrypoint):
+    """Faxbot writes a restart request (a fax call no free line answered, or Restart the fast fax service): the
+    engine starts again once no call is up. A request older than this start was already followed."""
+    start, root, data = entrypoint
+    (data / 'hylafax' / 'engine-restart').write_text('{"reason": "manual", "at": 1, "asked": 1}\n')
+    process = start()
+    assert _wait(lambda: _status(data).get('state') == 'running')
+    time.sleep(2.5)  # two supervision rounds: the old request does not restart it
+    assert process.poll() is None
+    (data / 'hylafax' / 'engine-restart').write_text('{"reason": "missed_call", "at": 2, "asked": 2}\n')
+    assert _wait(lambda: process.poll() is not None)
+    assert process.returncode == 0
+    assert _status(data)['state'] == 'restarting'
+    assert _status(data)['reason'] == "Faxbot's fast fax service is starting again."
+
+
 def test_a_line_that_stops_being_ready_is_reported_and_running_again_once_it_recovers(entrypoint):
     """After the start, a line that is not ready for a call (waiting on a modem lock) makes the status say so;
     while the other line is in a call the engine does not restart, and once the line is ready again the
@@ -598,7 +615,10 @@ def test_sessions_read_only_the_sessions_above_the_last_finished_one(engine, tmp
     (spool / 'log' / 'c000000004').write_text(RECEIVED)
     (spool / 'log' / 'c000000005').write_text(FAILED_RECEIVE.replace('SESSION END\n', ''))  # still in progress
     (spool / 'log' / 'c000000006').write_text(FAILED_RECEIVE)
-    assert run('sessions', environment).returncode == 0
+    # Before the first mark the script runs quietly (it runs every few seconds; loopback, 6 October 2026).
+    (spool / 'etc' / 'faxbot-sessions-done').unlink(missing_ok=True)
+    first = run('sessions', environment)
+    assert first.returncode == 0 and first.stderr == '', first.stderr
     assert (spool / 'etc' / 'faxbot-sessions-done').read_text().strip() == '000000004'
     assert len(list((state / 'results').glob('*.report'))) == 2  # 3 and 6
     # Sessions at or below the mark are not read again, whatever their log says now.

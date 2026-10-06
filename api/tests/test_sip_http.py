@@ -99,6 +99,29 @@ def test_status_without_a_trunk_says_so_in_one_sentence(bare_client):
                     'message': 'No SIP trunk is set up. Choose your carrier to start.'}
 
 
+def test_restart_the_fast_fax_service_asks_the_engine_and_never_touches_asterisk(client, isolated_installation):
+    """The console's Restart the fast fax service and `faxbot providers trunk restart-engine`: the engine reads
+    the request and starts again once no fax is going through; before Apply, or while the engine is not
+    running, there is nothing to restart and the answer says so."""
+    from app import hylafax_engine
+    from app.config import configuration_values
+    refused = client.post('/admin/sip/engine/restart', headers=ADMIN)
+    assert refused.status_code == 409 and refused.json()['detail'] == hylafax_engine.NOT_SET_UP
+    assert client.post('/admin/sip/apply', headers=ADMIN).status_code == 200
+    stopped = client.post('/admin/sip/engine/restart', headers=ADMIN)
+    assert stopped.status_code == 409 and stopped.json()['detail'] == hylafax_engine.RESTART_NOT_RUNNING
+    out = os.path.join(isolated_installation['FAX_DATA_DIR'], 'hylafax-out')
+    os.makedirs(out, exist_ok=True)
+    with open(os.path.join(out, 'engine.status'), 'w') as handle:
+        handle.write(json.dumps({'state': 'running', 'lines': 2}))
+    asked = client.post('/admin/sip/engine/restart', headers=ADMIN)
+    assert asked.status_code == 200, asked.text
+    assert asked.json() == {'ok': True, 'message': hylafax_engine.RESTART_ASKED}
+    request = json.loads(open(os.path.join(isolated_installation['FAX_DATA_DIR'], 'hylafax', 'engine-restart')).read())
+    assert request['reason'] == 'manual'
+    assert client.post('/admin/sip/engine/restart').status_code == 401
+
+
 def test_apply_writes_the_private_trunk_file_and_status_never_shows_the_password(client, isolated_installation):
     before = client.get('/admin/sip/status', headers=ADMIN)
     assert before.status_code == 200
@@ -268,6 +291,7 @@ def test_each_route_declares_the_permission_the_console_relies_on():
     assert declared == {('GET', '/admin/sip/presets'): [('providers:read', False)],
                         ('GET', '/admin/sip/status'): [('providers:read', False)],
                         ('POST', '/admin/sip/apply'): [('providers:write', False)],
+                        ('POST', '/admin/sip/engine/restart'): [('providers:write', False)],
                         ('GET', '/admin/sip/calls'): [('diagnostics:read', False)],
                         ('GET', '/admin/sip/network'): [('providers:read', False)],
                         ('POST', '/admin/sip/network/check'): [('providers:write', False)],

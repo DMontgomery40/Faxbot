@@ -116,6 +116,31 @@ def test_asterisk_must_have_loaded_the_lines_before_the_trunk_counts_as_current(
 
 # -- Asterisk side: modules, dialplan, start script ----------------------------------------------------
 
+def test_dialplan_tries_the_engine_lines_in_turn_and_reports_a_call_no_free_line_answered():
+    """Ringing every line at once started two engine sessions for one call (6 October 2026). The lines are
+    tried one at a time, first free line first, all of them within 20 s as before; a free line that rang and
+    did not answer is reported (FaxEngineMissed) and the built-in engine answers the call."""
+    text = (ROOT / 'asterisk' / 'etc' / 'asterisk' / 'extensions.conf').read_text()
+    start = text.index('[faxbot-engine-in]')
+    section = text[start:text.index('[faxbot-engine-in-answered]')]
+    assert 'Dial(${FAXBOT_ENGINE_LINES}' not in section
+    assert ('Dial(IAX2/faxbot-line${FAXBOT_LINE}/${FAXBOT_ENGINE_DID},${FAXBOT_RING},U(faxbot-engine-in-answered))'
+            in section)
+    assert '${DEVICE_STATE(IAX2/faxbot-line${FAXBOT_LINE})}' in section
+    # Each line rings for what is left of the 20 s, 12 s at most.
+    assert 'Set(FAXBOT_RING=$[20 - (${EPOCH} - ${FAXBOT_HUNT_START})])' in section
+    assert 'GotoIf($[${FAXBOT_RING} < 1]?none)' in section
+    assert 'Set(FAXBOT_RING=${IF($[${FAXBOT_RING} > 12]?12:${FAXBOT_RING})})' in section
+    assert 'UserEvent(FaxEngineMissed,' in section
+    # Every line Faxbot can set up is tried.
+    assert f'${{FAXBOT_LINE}} > {hylafax_engine.MAX_LINES}]?none)' in section
+    assert section.index('UserEvent(FaxEngineMissed,') < section.index('(builtin),')
+    import re
+    for line in section.splitlines():
+        if line.strip() and not line.lstrip().startswith(';'):
+            assert re.search(r'(?<!\\);', line) is None, line
+
+
 def test_dialplan_places_engine_calls_only_from_a_stored_plan_and_never_reports_a_fax_result():
     text = (ROOT / 'asterisk' / 'etc' / 'asterisk' / 'extensions.conf').read_text()
     start = text.index('[faxbot-engine-out]')
@@ -200,6 +225,81 @@ async def test_engine_choice_says_why_the_built_in_engine_places_a_call(tmp_path
     assert (await choose(values, ami=FakeAmi())).reason == hylafax_engine.ASTERISK_NOT_CURRENT
     running(tmp_path, values, state='failed')
     assert (await choose(values, ami=FakeAmi())).reason == hylafax_engine.NOT_RUNNING
+
+
+@pytest.mark.asyncio
+async def test_a_call_the_engine_did_not_answer_restarts_it_and_the_trunk_page_says_why(tmp_path, monkeypatch):
+    """Asterisk's FaxEngineMissed (a free line rang and did not answer): Faxbot asks the engine to start again
+    (it reads the request once no call is up) and says what happened in one sentence for a day."""
+    import asyncio
+    import sqlalchemy as sa
+    from app import sip_calls
+    from tests.test_native_submission import connected_stream
+    values = trunk_values(tmp_path, FAX_TIME_ZONE='America/Denver')
+    running(tmp_path, values)
+    monkeypatch.setattr('app.config.configuration_values', lambda: values)
+    audits = []
+    monkeypatch.setattr('app.audit.audit_event', lambda name, **details: audits.append((name, details)))
+    missed_at = 1791256440  # 6 October 2026 03:14 UTC: 9:14 PM MDT on 5 October
+    frame = {'Event': 'UserEvent', 'UserEvent': 'FaxEngineMissed', 'Token': '17912564401',
+             'DID': '+15555550100', 'Caller': '+13035550100', 'Started': str(missed_at),
+             'Lines': '1:NOANSWER 2:NOANSWER '}
+    async with connected_stream(monkeypatch) as (client, _writer):
+        sip_calls.attach(client, sa.create_engine('sqlite://'))
+        try:
+            client.reader.feed_data((''.join(f'{key}: {value}\r\n' for key, value in frame.items()) + '\r\n')
+                                    .encode())
+            for _ in range(50):
+                if hylafax_engine.restart_request(values):
+                    break
+                await asyncio.sleep(0.02)
+        finally:
+            sip_calls.detach()
+    assert audits == [('sip_engine_restart_requested',
+                       {'backend': 'sip', 'reason': 'missed_call', 'lines': '1:NOANSWER 2:NOANSWER'})]
+    request = hylafax_engine.restart_request(values)
+    assert request['reason'] == 'missed_call' and request['at'] == missed_at
+    status = tmp_path / 'hylafax-out' / 'engine.status'
+    status.write_text(json.dumps({'state': 'running', 'lines': 2, 'started': request['asked'] - 5}))
+    monkeypatch.setattr('time.time', lambda: missed_at + 60)
+    state, sentence = await hylafax_engine.engine_summary(values, FakeAmi())
+    assert state == 'running' and sentence == (
+        "Faxbot's fast fax service did not answer the 9:14 PM MDT fax call, so that fax was received the ordinary "
+        "way; Faxbot is restarting the fast fax service.")
+    status.write_text(json.dumps({'state': 'running', 'lines': 2, 'started': request['asked'] + 5}))
+    assert (await hylafax_engine.engine_summary(values, FakeAmi()))[1].endswith(
+        'Faxbot restarted the fast fax service.')
+    # An engine on audio fax by itself still says so (each screen adds its own way to try T.38 again).
+    monkeypatch.setattr(hylafax_engine, 'engine_audio', lambda values: True)
+    assert (await hylafax_engine.engine_summary(values, FakeAmi()))[1].endswith(
+        'Faxbot restarted the fast fax service. ' + hylafax_engine.ENGINE_AUDIO)
+    monkeypatch.setattr(hylafax_engine, 'engine_audio', lambda values: False)
+    # A day later the page is back to the usual sentence.
+    monkeypatch.setattr('time.time', lambda: missed_at + hylafax_engine.MISSED_SHOWN + 60)
+    assert (await hylafax_engine.engine_summary(values, FakeAmi()))[1].startswith(
+        "Faxbot's fast fax service is running on 2 fax lines")
+
+
+@pytest.mark.asyncio
+async def test_the_engines_own_states_while_it_starts_or_has_lost_a_line_are_shown(tmp_path):
+    """The engine writes "starting" while its lines get ready and its own sentence for a line it lost."""
+    values = trunk_values(tmp_path)
+    running(tmp_path, values)
+    status = tmp_path / 'hylafax-out' / 'engine.status'
+    status.write_text(json.dumps({'state': 'starting', 'reason': '', 'lines': 2}))
+    assert await hylafax_engine.engine_summary(values, FakeAmi()) == ('starting', hylafax_engine.STARTING)
+    status.write_text(json.dumps({'state': 'restarting', 'reason': hylafax_engine.LINE_DOWN, 'lines': 2}))
+    assert await hylafax_engine.engine_summary(values, FakeAmi()) == ('starting', hylafax_engine.LINE_DOWN)
+
+
+def test_a_manual_restart_request_is_kept_for_the_engine_and_refuses_other_reasons(tmp_path):
+    values = trunk_values(tmp_path)
+    assert hylafax_engine.request_restart(values, reason='manual')
+    request = hylafax_engine.restart_request(values)
+    assert request['reason'] == 'manual'
+    assert stat.S_IMODE(hylafax_engine.restart_request_path(values).stat().st_mode) == 0o644
+    with pytest.raises(ValueError):
+        hylafax_engine.request_restart(values, reason='because')
 
 
 # -- job submission against a stand-in engine ------------------------------------------------------------

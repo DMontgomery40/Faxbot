@@ -31,6 +31,14 @@ check_seconds=${FAXBOT_ENGINE_CHECK_SECONDS:-5}
 # How long a line may stay not ready (it may be setting its modem up), and how long the start waits for all.
 unready_seconds=${FAXBOT_ENGINE_UNREADY_SECONDS:-30}
 ready_seconds=${FAXBOT_ENGINE_READY_SECONDS:-120}
+# Faxbot asks for a restart by writing a new request (a fax call no free line answered, or a person's
+# Restart the fast fax service). One written before this start is done by this start: read before the
+# start time, so Faxbot's "restarted" (start time at or after the request) is never early.
+restart_request=$shared/engine-restart
+request_sum() {
+  if [ -f "$restart_request" ] && [ ! -L "$restart_request" ]; then cksum < "$restart_request"; else echo none; fi
+}
+restart_seen=$(request_sum)
 started_at=$(date +%s)
 mkdir -p "$out" "$state"
 chmod 755 "$out"
@@ -447,6 +455,11 @@ while sleep "$check_seconds"; do
   elif [ -n "$line_down" ]; then
     write_status running ''
     line_down=''
+  fi
+  if [ "$(request_sum)" != "$restart_seen" ] && idle; then
+    write_status restarting "Faxbot's fast fax service is starting again."
+    log 'Faxbot asked for a restart; starting again'
+    exit 0
   fi
   current=$(conf_sum)
   if [ "$current" != "$loaded" ] && idle; then
