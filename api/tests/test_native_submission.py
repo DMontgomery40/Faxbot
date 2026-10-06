@@ -17,6 +17,12 @@ from app.config_values import ConfigurationValues
 JOB = "0123456789abcdef0123456789abcdef"
 ATTEMPT = "11111111-2222-4333-8444-555555555555"
 ACK_UUID = "ABCDEF01-2345-4678-9ABC-DEF012345678"
+# A hang guard, never a timing assumption: each wait that uses it ends as soon as its condition holds. A loaded
+# machine (a Docker image build alongside, 5 October 2026) can take seconds to reconnect after the client's
+# 1 s back-off, or stall between an action and its acknowledgement.
+CONDITION_TIMEOUT = 30.0
+# Only for tests whose action is never acknowledged: the timeout is what they wait for.
+UNACKNOWLEDGED_TIMEOUT = 0.05
 
 
 def test_native_preparation_is_explicit_and_matches_the_issued_contract():
@@ -216,8 +222,10 @@ class StreamWriter:
 
 
 @asynccontextmanager
-async def connected_stream(monkeypatch):
-    monkeypatch.setattr(ami, "ORIGINATE_RESPONSE_TIMEOUT_SECONDS", 0.05, raising=False)
+async def connected_stream(monkeypatch, response_timeout=CONDITION_TIMEOUT):
+    """An in-memory connection. A test that acknowledges its action keeps the hang guard (a stall between the
+    write and the acknowledgement must not time the action out); one that never does passes a short timeout."""
+    monkeypatch.setattr(ami, "ORIGINATE_RESPONSE_TIMEOUT_SECONDS", response_timeout, raising=False)
     client = ami.AMIClient()
     client.reader = asyncio.StreamReader()
     client.writer = writer = StreamWriter()
@@ -377,7 +385,7 @@ async def test_ami_uncertain_failure_cleans_pending_without_replaying(
     monkeypatch, failure
 ):
     """Each uncertain outcome must issue once and leave no stale future for reconnect."""
-    async with connected_stream(monkeypatch) as (client, writer):
+    async with connected_stream(monkeypatch, UNACKNOWLEDGED_TIMEOUT) as (client, writer):
         task = asyncio.create_task(
             client.originate_sendfax(
                 JOB, "15555550123", "/fax/a.tif", attempt_id=ATTEMPT
@@ -398,7 +406,7 @@ async def test_ami_uncertain_failure_cleans_pending_without_replaying(
             else (TimeoutError, ConnectionError)
         )
         with pytest.raises(expected):
-            await asyncio.wait_for(task, 1)
+            await asyncio.wait_for(task, CONDITION_TIMEOUT)
         assert len(writer.writes) == 1
         assert not client._pending_actions
 
@@ -443,13 +451,14 @@ async def test_ami_reconnect_never_reissues_the_unacknowledged_native_action():
     client = ami.AMIClient()
     try:
         with use_configuration(values):
-            await asyncio.wait_for(client.connect(), 2)
-            await asyncio.wait_for(logins.get(), 1)
+            await asyncio.wait_for(client.connect(), CONDITION_TIMEOUT)
+            await asyncio.wait_for(logins.get(), CONDITION_TIMEOUT)
             with pytest.raises(ConnectionError):
                 await client.originate_sendfax(
                     JOB, "15555550123", "/fax/a.tif", attempt_id=ATTEMPT
                 )
-        await asyncio.wait_for(logins.get(), 3)
+        # The supervisor logs in again after its 1 s back-off; however long that takes, it never replays.
+        await asyncio.wait_for(logins.get(), CONDITION_TIMEOUT)
         await client.close()
         await asyncio.gather(*peers)
         assert len(writers) == 2
@@ -852,7 +861,7 @@ async def test_every_listener_hears_each_event_and_a_failing_one_cannot_stop_the
 
 @pytest.mark.asyncio
 async def test_submission_is_announced_before_the_wire_even_when_never_acknowledged(monkeypatch):
-    async with connected_stream(monkeypatch) as (client, writer):
+    async with connected_stream(monkeypatch, UNACKNOWLEDGED_TIMEOUT) as (client, writer):
         submissions = []
         client.on_submission(lambda event: submissions.append((event, len(writer.writes))))
         with use_configuration(_trunk(SIP_FAX_PREFERENCE_HEADER="true")):
@@ -951,7 +960,7 @@ async def test_status_query_keeps_allowlisted_fields_and_drops_auth_details(monk
         client.on_fax_result(fax_events.append)
         for frame in frames:
             client.reader.feed_data(frame.encode())
-        response, events = await asyncio.wait_for(task, 1)
+        response, events = await asyncio.wait_for(task, CONDITION_TIMEOUT)
         assert response == {"response": "Success", "value": "", "message": "Following"}
         assert events == [{"ObjectName": "trunk-registration", "Status": "Registered",
                            "ServerUri": "sip:sip.telnyx.com:5060"}]
@@ -971,7 +980,7 @@ async def test_status_query_never_connects_and_cleans_up_on_disconnect(monkeypat
         await writer.requests.get()
         client.reader.feed_eof()
         with pytest.raises(ConnectionError):
-            await asyncio.wait_for(task, 1)
+            await asyncio.wait_for(task, CONDITION_TIMEOUT)
         assert not client._queries
 
 
