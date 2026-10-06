@@ -398,3 +398,65 @@ export interface Savings {
     faxes: number; seconds_saved: number; priced: number; in_plan: number; unpriced: number; same_cost: number;
   };
 }
+
+// GET /routing/recommendations/receiving: shared lines, numbers with few calls and fax services. Every figure is an
+// estimate; "choose" is the earlier window the advice is picked from, "check" the later one it is judged on.
+export interface ReceivingWindow { start: string; end: string; days: number }
+
+export interface ReceivingCosts {
+  billed_by_the_minute: Money[];
+  channels: Money[];
+  still_billed_by_the_minute: Money[];
+  number_rental: Money[];
+  total_today: Money[];
+  total_with_pool: Money[];
+  difference: Money[];
+}
+
+export interface ReceivingNumber {
+  number: string;
+  kind: 'local' | 'toll_free' | 'international' | 'other';
+  eligible: boolean;
+  reason: string | null;
+  in_pool: boolean;
+  calls_before: number;
+  calls: number;
+  billed_by_the_minute: Money[];
+}
+
+export interface ReceivingPool {
+  state: 'share' | 'turned_away' | 'keep_metered' | 'not_saving' | 'too_little_history' | 'no_channel_price' | 'no_trunk';
+  sentence: string;
+  numbers: ReceivingNumber[];
+  note?: string | null;
+  pool_numbers?: string[];
+  channels?: number;
+  calls?: number;
+  turned_away?: number;
+  peak?: number;
+  needed?: number;
+  busy_windows?: Array<{ start: string; end: string; turned_away: number; numbers: string[] }>;
+  busy_windows_total?: number;
+  check?: ReceivingCosts;
+  choose?: ReceivingCosts & { calls: number; peak: number; turned_away: number };
+  break_even?: string | null;
+  assumptions?: string[];
+}
+
+export interface ReceivingRecommendations {
+  days: number;
+  estimate: true;
+  carrier: string | null;
+  sentence: string;
+  windows: { choose: ReceivingWindow; check: ReceivingWindow };
+  history: { enough: boolean; first_call_at: string | null; days: number };
+  pool: ReceivingPool;
+  quiet_numbers: {
+    state: 'quiet' | 'none_quiet' | 'too_little_history' | 'no_trunk';
+    sentence: string;
+    numbers: Array<{ number: string; received: number; sent: number; monthly_rental: Money[] }>;
+    monthly_total: Money[];
+  };
+  connections: { sentence: string; items: Array<{ name: string; kind: 'trunk' | 'provider'; monthly_fee: Money[] }> };
+  prices: Array<{ label: string; text: string; source_url: string | null; read_on: string | null }>;
+}

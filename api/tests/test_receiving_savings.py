@@ -281,6 +281,8 @@ def test_busy_local_numbers_share_channels_chosen_on_one_month_and_checked_on_th
     assert pool['break_even'] == ('One shared line at $12.00 a month costs as much as 3,750 received minutes at $0.0032 a '
                                   'minute.')
     assert 'A caller who would have heard a busy signal is counted once, not as calling back.' in pool['assumptions']
+    assert ('Numbers outside the US, Canadian numbers included, stay billed by the minute, because the shared-line '
+            'price is for the US.') in pool['assumptions']
     assert pool['assumptions'][0] == ('Telnyx calls a shared line an inbound channel: it takes one call at a time, '
                                       'with no charge per minute.')
     assert 'Faxbot only recommends; it never changes your Telnyx account.' in pool['assumptions']
@@ -405,7 +407,7 @@ def test_no_trunk_or_a_carrier_without_a_channel_price_says_so_in_one_sentence(h
                                         'calls to compare.')
     other = receiving_report(engine, routes, values(sip_trunk_preset='signalwire'), now=NOW, days=DAYS)
     assert other['pool'] == {'state': 'no_channel_price', 'numbers': [], 'sentence': (
-        'Faxbot can suggest shared lines only for Telnyx numbers.')}
+        'Shared lines are a Telnyx option, so Faxbot suggests them only for your Telnyx numbers.')}
 
 
 # Over HTTPS -------------------------------------------------------------------------------------

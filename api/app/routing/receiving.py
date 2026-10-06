@@ -545,13 +545,16 @@ def _configured_numbers(values, country):
                               if number))
 
 
-def _assumptions(history, carrier, days):
+def _assumptions(history, carrier, days, prices):
+    where = _COUNTRY_NAMES.get(prices.country, prices.country)
     lines = [f'{carrier} calls a shared line an inbound channel: it takes one call at a time, with no charge per '
              'minute.',
              'These figures assume the same calls come in again: each call uses one line from when it arrived until '
              'it ended.',
              'A caller who would have heard a busy signal is counted once, not as calling back.',
              'Only received calls count; sent calls on these numbers stay billed by the minute.',
+             f'Numbers outside {where}, Canadian numbers included, stay billed by the minute, because the shared-line '
+             f'price is for {where}.',
              f'Faxbot picks the lines from older calls and checks them on {_days_text(days)}, so one unusual month '
              'does not decide the advice.',
              'Callers who never reached Faxbot are not in its history.',
@@ -572,7 +575,7 @@ def pool_advice(history, kinds, prices, carrier, choose_start, check_start, now,
     seconds = days * 86_400
     currency = prices.currency
     if not prices.channels_priced:
-        sentence = 'Faxbot can suggest shared lines only for Telnyx numbers.'
+        sentence = 'Shared lines are a Telnyx option, so Faxbot suggests them only for your Telnyx numbers.'
         return {'state': 'no_channel_price', 'sentence': sentence, 'numbers': []}
     if not covers(history.first_at, choose_start):
         sentence = (f'Faxbot needs {2 * days} days of call history to advise on shared lines; '
@@ -645,7 +648,7 @@ def pool_advice(history, kinds, prices, carrier, choose_start, check_start, now,
                 'peak': chosen['replay'].peak, 'turned_away': len(chosen['replay'].turned_away)},
             'later_window_alone': {'pool_numbers': list(later_pool), 'channels': later_channels},
             'numbers_without_rental_price': unpriced_numbers, 'break_even': break_even,
-            'assumptions': _assumptions(history, carrier, days)}
+            'assumptions': _assumptions(history, carrier, days, prices)}
 
 
 def quiet_numbers(history, configured, kinds, prices, carrier, check_start, now, days):
