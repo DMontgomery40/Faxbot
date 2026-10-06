@@ -239,10 +239,14 @@ describe('Received fax status', () => {
   });
 
   it('says how often fetching stopped before the document was fetched again, in the viewer local time', async () => {
-    // The viewer is in Denver; the server's own sentence is in its installation's zone (UTC) and is not shown.
-    vi.stubEnv('TZ', 'America/Denver');
+    // The viewer is in Denver, whatever zone the test machine is in: the console's dates come from
+    // toLocaleString, which reads the browser's zone. The server's own sentence (UTC here) is not shown.
+    const toLocaleString = Date.prototype.toLocaleString;
+    const denver = vi.spyOn(Date.prototype, 'toLocaleString').mockImplementation(function (this: Date, locales, options) {
+      return toLocaleString.call(this, locales ?? 'en-US', { timeZone: 'America/Denver', ...options });
+    });
     try {
-      expect(parseServerTime('2026-10-05T21:12:00')?.getHours()).toBe(15);
+      expect(formatServerTime('2026-10-05T21:12:00')).toBe('10/5/2026, 3:12:00 PM');
       const stop = { stopped_at: '2026-10-04T08:00:00', attempts: 30, problem: 'Phaxio did not answer.' };
       server.use(
         http.get('/inbound', () => HttpResponse.json([{ ...fax('fax-refetched', '+15550108888'), backend: 'phaxio',
@@ -267,7 +271,7 @@ describe('Received fax status', () => {
       expect(earlierFailuresText({ backend: 'phaxio', earlier_failures_text: 'An older server.' })).toBe('An older server.');
       expect(earlierFailuresText({ backend: 'phaxio', earlier_failures: [], earlier_failures_text: null })).toBeNull();
     } finally {
-      vi.unstubAllEnvs();
+      denver.mockRestore();
     }
   });
 
