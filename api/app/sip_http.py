@@ -329,7 +329,7 @@ def _ports_text(values, network):
             return None
         return BEHIND_ROUTER if network and network.behind_nat else None
     check = sip_network.read_check(values)
-    forwards = check and ((check['t38'] != sip_network.OPEN and check.get('why') != 'no_address')
+    forwards = check and ((check['t38'] != sip_network.OPEN and check.get('why') not in ('no_address', 'one_server'))
                           or check.get('why') in ('router_mapped', 'forwarded'))
     return None if forwards else NO_PORTS
 

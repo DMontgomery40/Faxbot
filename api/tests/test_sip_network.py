@@ -620,6 +620,64 @@ def test_a_router_that_refuses_or_sits_behind_another_router_gets_the_forward_to
     body = _check(client)
     assert (body['why'], body['shared_address']) == ('behind_another_router', False)
     assert body['fix_text'].startswith('Forward UDP ports 4000–4039 on the router in front of yours too')
+    # Review round 4: a router that does not say its internet address, with the provider's shared address on the
+    # way out, opened ports that lead nowhere; the verdict was OPEN.
+    network['row'] = SHARED_ISP
+    stand_in_router.external, stand_in_router.closed = None, []
+    body = _check(client)
+    assert (body['t38'], body['why'], body['router_state'], body['shared_address']) == (
+        BLOCKED, 'shared_address', 'behind_another_router', True)
+    assert stand_in_router.closed == [('192.168.1.1', 4000, 4039)]
+    assert sip_network.read_lease(_values(client)) is None
+
+
+def test_ports_the_router_opened_never_outweigh_the_providers_shared_address():
+    changing = probe(4000, 61001, 61002)
+    assert sip_network.verdict(changing, 'changed_per_destination', True, mapped={'state': 'open'}) == (
+        BLOCKED, 'shared_address')
+    assert sip_network.verdict(changing, 'changed_per_destination', False, mapped={'state': 'open'}) == (
+        OPEN, 'router_mapped')
+    # A T.38 fax that went through is still the strongest evidence.
+    assert sip_network.verdict(changing, 'changed_per_destination', True, observed={'t38_ok': True},
+                               mapped={'state': 'open'}) == (OPEN, 't38_worked')
+
+
+def test_one_stun_answer_alone_never_says_ports_are_kept():
+    """Review round 4: one answering server that saw the local port made the verdict OPEN."""
+    one = probe(4000, 4000, None)  # stun.cloudflare.com did not answer
+    check = sip_network.assess(values(), one, LINUX_LAN[0])
+    assert (check['ports'], check['t38'], check['why'], check['unanswered']) == (
+        'kept_once', UNKNOWN, 'one_server', ['stun.cloudflare.com:3478'])
+    assert sip_network.verdict_text(check, 'Telnyx') == (
+        'Faxbot heard back from only one of the two servers it asks for its internet address, so it cannot tell yet '
+        'whether your network keeps port numbers, which fax over IP (T.38) needs.')
+    assert sip_network.fix(check)['text'] == ('If a firewall limits outgoing traffic, let Faxbot reach '
+                                              'stun.cloudflare.com on UDP port 3478.')
+    other = stun.Probe(public_ip='198.51.100.7', local_ip='172.18.0.5', local_port=4000,
+                       mapped=(('stun.cloudflare.com:3478', 4000), ('stun.l.google.com:19302', None)))
+    assert sip_network.fix(sip_network.assess(values(), other, LINUX_LAN[0]))['text'].endswith(
+        'reach stun.l.google.com on UDP port 19302.')
+    # On Colima the advice is still about the firewall, never to recreate the machine.
+    colima = sip_network.assess(values(), one, Discovery(lima=True, **APPLE))
+    assert colima['why'] == 'one_server' and 'colima' not in str(sip_network.fix(colima)).lower()
+    # Two agreeing answers still say the network keeps port numbers.
+    assert sip_network.assess(values(), probe(4000, 4000, 4000), LINUX_LAN[0])['why'] == 'ports_kept'
+
+
+def test_one_stun_answer_leaves_t38_alone_unless_the_router_opens_the_ports(client, network, stand_in_router):
+    network['row'] = (LINUX_LAN[0], probe(4000, 4000, None))
+    before = _t38(client)
+    assert client.post('/admin/sip/apply', headers=ADMIN).status_code == 200
+    report = client.get('/admin/sip/network', headers=ADMIN).json()
+    assert (report['t38'], report['why'], report['action']) == (UNKNOWN, 'one_server', None)
+    assert _t38(client) is before
+    assert client.get('/admin/sip/status', headers=ADMIN).json()['ports_text'] == (
+        'No ports need to be opened or forwarded.')
+    # With Faxbot's fax ports published, the router opens them 1:1, which settles the doubt.
+    _publish_fax_ports(client)
+    body = _check(client)
+    assert (body['t38'], body['why'], body['router_state']) == (OPEN, 'router_mapped', 'open')
+    assert stand_in_router.opened == [('192.168.1.1', 4000, 4039)]
 
 
 def test_nothing_is_asked_of_the_router_when_ports_are_kept_or_not_published(client, network, stand_in_router):

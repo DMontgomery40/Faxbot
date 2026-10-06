@@ -255,12 +255,14 @@ def outside_hops(found: Discovery):
 
 
 def port_behavior(probe):
-    """'kept', 'changed_same' (one changed port for every destination), 'changed_per_destination',
-    'changed' (one answer, changed), or None when no STUN server answered."""
+    """'kept', 'kept_once' (only one server answered, with the same port), 'changed_same' (one changed port
+    for every destination), 'changed_per_destination', 'changed' (one answer, changed), or None when no STUN
+    server answered."""
     if probe is None or not probe.answered:
         return None
     if probe.ports == 'preserved':
-        return 'kept'
+        # Two servers must agree that the port stayed the same; one answer alone is not enough to say so.
+        return 'kept' if len(probe.answered) > 1 else 'kept_once'
     if probe.ports == 'consistent':
         return 'changed_same'
     return 'changed_per_destination' if len(set(probe.answered)) > 1 else 'changed'
@@ -319,9 +321,13 @@ def verdict(probe, ports, shared, typed='', observed=None, *, published=None, ma
     newest T.38 call went through here).
     BLOCKED: ports_change, shared_address, or behind_another_router (the router
     opened the ports, but another router in front of it changes port numbers).
-    UNKNOWN: no_address, typed_differs (the typed address is not the one STUN
-    sees), or typed on a network that changes port numbers without the fax
-    ports published.
+    UNKNOWN: no_address, one_server (only one STUN server answered, so nothing
+    confirms that ports are kept), typed_differs (the typed address is not the
+    one STUN sees), or typed on a network that changes port numbers without the
+    fax ports published.
+
+    Ports the router opened count only when nothing shows the provider's shared
+    address in front of it (that address changes port numbers again).
     """
     worked = bool(observed and observed.get('t38_ok'))
     seen = probe.public_ip if probe is not None else None
@@ -341,10 +347,12 @@ def verdict(probe, ports, shared, typed='', observed=None, *, published=None, ma
     if ports == 'kept':
         return OPEN, 'ports_kept'
     state = (mapped or {}).get('state')
-    if state == 'open':
+    if state == 'open' and not shared:
         return OPEN, 'router_mapped'
     if worked:
         return OPEN, 't38_worked'
+    if ports == 'kept_once':
+        return UNKNOWN, 'one_server'
     if shared:
         return BLOCKED, 'shared_address'
     if state == 'behind_another_router':
@@ -366,6 +374,8 @@ def assess(values, probe, found: Discovery, observed=None, *, mapping=None, publ
             'router': router, 'hops': list(outside), 't38': t38, 'why': why, 'typed_address': typed or None,
             'fax_ports': f'{published[0]}-{published[1]}' if published else None,
             'router_ports': mapping or None,
+            # The STUN servers that did not answer (host:port), for the firewall advice.
+            'unanswered': [server for server, port in (probe.mapped if probe else ()) if port is None],
             'cpus': found.cpus, 'memory_gib': found.memory_gib, 'disk_gib': found.disk_gib}
 
 
@@ -538,6 +548,12 @@ def map_ports(values, probe, found, *, router=None, now=time.time):
             outer = _address(lease.external_ip)
             return {'state': 'behind_another_router', 'ports': ports,
                     'shared': bool(outer is not None and outer in SHARED_ADDRESS_SPACE)}
+        if not lease.external_ip and shared_address(found, probe):
+            # The router did not say its internet address, and the way out passes the internet provider's
+            # shared address, which changes port numbers again: the opened ports would lead nowhere.
+            client.close(lease)
+            _keep_lease(values, None)
+            return {'state': 'behind_another_router', 'ports': ports, 'shared': True}
         return {'state': 'open', 'ports': ports, 'method': lease.method}
     except Exception:
         return {'state': 'refused', 'ports': f'{published[0]}-{published[1]}' if published else None,
@@ -623,6 +639,8 @@ def verdict_text(record, carrier='the carrier'):
                                   'port numbers.'),
         'no_address': ('Faxbot could not find its internet address, so it cannot tell yet whether fax over IP (T.38) '
                        'works here.'),
+        'one_server': ('Faxbot heard back from only one of the two servers it asks for its internet address, so it '
+                       'cannot tell yet whether your network keeps port numbers, which fax over IP (T.38) needs.'),
     }
     if why == 'ports_change':
         if carrier == 'Telnyx':
@@ -684,6 +702,9 @@ def fix(record):
                       'own internet address.')
     if why == 'no_address':
         return answer('If a firewall limits outgoing traffic, let Faxbot reach stun.cloudflare.com on UDP port 3478.')
+    if why == 'one_server':
+        host, _, port = ((record.get('unanswered') or ['stun.cloudflare.com:3478'])[0]).rpartition(':')
+        return answer(f'If a firewall limits outgoing traffic, let Faxbot reach {host} on UDP port {port}.')
     if why == 'typed_differs':
         return answer('Empty the Internet address box so Faxbot uses the address it found, or correct it.')
     if where in ('colima_user', 'colima_shared', 'colima'):
