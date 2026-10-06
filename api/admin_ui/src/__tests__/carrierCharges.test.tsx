@@ -275,6 +275,35 @@ describe('One reading of spending', () => {
     expect(card.textContent).toContain('Received through Carrier trunk · TelnyxNot priced yet');
     expect(card.textContent).toContain('Total$0.02, 2 faxes and 1 call not priced yet');
   });
+
+  it('says what the carrier never priced in full apart from what is not priced yet', async () => {
+    // Sent: one fax estimated, one not priced yet, and one whose call Telnyx priced only in part by the give-up
+    // time (its priced part is in the charges). Received: two calls priced only in part.
+    const sent = { ...sip, attempts: 4, attempts_with_reported_cost: 2, attempts_without_reported_cost: 2,
+      attempts_not_priced: 1, attempts_never_priced: 1 };
+    const call = { ...received, unmatched_charges: 0, unrecorded_calls: 0, unrecorded_cost: [],
+      unrecorded_matched_to_faxes: 0, unrecorded_unmatched_cost: [], calls_not_priced: 0, calls_never_priced: 2,
+      total_cost: [usd('0.0064')] };
+    const costs = { since: '2026-09-03T00:00:00', providers: [sent], received: [call],
+      carrier_charges: { carrier: 'Telnyx', supported: true, readable: true }, total_cost: [usd('0.0264')],
+      not_priced: 1, never_priced: 3 };
+    routes(costs);
+    const { unmount } = render(<DeliveryRoutes client={client()} canWrite={false} />);
+    const trunk = (await screen.findByText('Carrier trunk · Telnyx')).closest('.MuiCard-root') as HTMLElement;
+    expect(within(trunk).getByText('Estimated $0.005 for 1 fax not billed yet.')).toBeTruthy();
+    expect(within(trunk).getByText('1 fax not priced yet.')).toBeTruthy();
+    expect(within(trunk).getByText('Telnyx never priced 1 fax in full; only its priced part is in the total.')).toBeTruthy();
+    const inbound = screen.getByText('Received through Carrier trunk · Telnyx').closest('.MuiCard-root') as HTMLElement;
+    expect(within(inbound).getByText('Telnyx never priced 2 calls in full; only their priced parts are in the total.'))
+      .toBeTruthy();
+    expect(inbound.textContent).not.toContain('not priced yet');
+    unmount();
+    render(<Dashboard client={client()} onNavigate={() => undefined} />);
+    const card = await screen.findByRole('button', { name: 'Spending, last 30 days' });
+    expect(card.textContent).toContain('Carrier trunk$0.02, 1 fax not priced yet, 1 never priced in full');
+    expect(card.textContent).toContain('Received through Carrier trunk · Telnyx$0.0064, 2 calls never priced in full');
+    expect(card.textContent).toContain(', 1 fax not priced yet, 1 fax and 2 calls never priced in full');
+  });
 });
 
 describe('Money as money', () => {

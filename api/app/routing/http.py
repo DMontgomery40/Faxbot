@@ -340,8 +340,10 @@ async def costs(request: Request, since: datetime | None = Query(default=None)):
             grand[currency] = grand.get(currency, 0) + micros
     # Faxes and calls with no charge and no estimate: left out of every total, never counted as $0.
     not_priced = sum(entry['unpriced'] for entry in [*outbound, *received])
+    # Calls the carrier priced only in part by the give-up time: their priced part is in the totals.
+    never_priced = sum(entry['never_priced'] for entry in [*outbound, *received])
     return {'since': start, 'carrier_charges': _carrier_status(values), 'total_cost': _money(grand),
-            'not_priced': not_priced, 'providers': [{
+            'not_priced': not_priced, 'never_priced': never_priced, 'providers': [{
         'provider_id': entry['provider_id'], 'label': route_label(entry['provider_id']), 'carrier': carrier(entry),
         'attempts': entry['attempts'], 'successes': entry['successes'], 'failures': entry['failures'],
         'uncertain': entry['uncertain'], 'billed_minutes': round(entry['billed_seconds'] / 60, 1),
@@ -350,6 +352,8 @@ async def costs(request: Request, since: datetime | None = Query(default=None)):
         'attempts_without_reported_cost': entry['unreported'], 'attempts_with_reported_cost': entry['reported'],
         # Of attempts_without_reported_cost, those with no estimate either: not in any total.
         'attempts_not_priced': entry['unpriced'],
+        # Faxes whose call the carrier never priced in full: the priced part is in reported_cost.
+        'attempts_never_priced': entry['never_priced'],
         'estimated_cost_not_reported': _money(entry['unreported_estimate_micros']),
         'awaiting_carrier_bill': entry['awaiting'], 'unmatched_charges': entry['unmatched'],
         **_unrecorded_view(entry), 'plan': plan(entry), 'priced': entry['has_card'] or bool(entry['reported']),
@@ -360,7 +364,7 @@ async def costs(request: Request, since: datetime | None = Query(default=None)):
             'calls': entry['calls'], 'faxes': entry['faxes'], 'billed_minutes': round(entry['billed_seconds'] / 60, 1),
             'estimated_cost': _money(entry['cost_micros']), 'reported_cost': _money(entry['reported_cost_micros']),
             'calls_with_reported_cost': entry['reported'], 'calls_without_reported_cost': entry['unreported'],
-            'calls_not_priced': entry['unpriced'],
+            'calls_not_priced': entry['unpriced'], 'calls_never_priced': entry['never_priced'],
             'estimated_cost_not_reported': _money(entry['unreported_estimate_micros']),
             'awaiting_carrier_bill': entry['awaiting'], 'unmatched_charges': entry['unmatched'],
             **_unrecorded_view(entry), 'total_cost': _money(entry['total_micros'])}

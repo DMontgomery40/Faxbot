@@ -711,7 +711,9 @@ def test_a_record_still_unpriced_at_the_give_up_time_settles_the_call_as_incompl
     assert cost['summary'] == ('Telnyx charged $0.005 for part of this call and never priced the rest, '
                                'so its full cost is unknown.')
     totals = spending.outbound(BASE - timedelta(days=1), now=past)[0]
-    assert totals['reported_cost_micros'] == {'USD': 5000} and totals['unpriced'] == 1  # never counted as $0
+    # The priced part is in the total; the call counts as never priced in full, apart from "not priced yet".
+    assert totals['reported_cost_micros'] == {'USD': 5000}
+    assert (totals['unreported'], totals['unpriced'], totals['never_priced']) == (0, 0, 1)
     # Settling again changes nothing.
     CarrierReconciler(carriers, routes, FakeTelnyx(legs)).step(now=past + timedelta(days=1))
     assert len(carriers.history(call)) == 2 and spending.job(job)['summary'] == cost['summary']
@@ -739,4 +741,5 @@ def test_a_received_call_never_priced_in_full_says_its_cost_is_unknown(ledger):
         'state': 'incomplete', 'reported_cost': {'USD': 3200},
         'summary': 'Telnyx charged $0.0032 for part of this call and never priced the rest, so its full cost is unknown.'}
     [entry] = spending.received(BASE - timedelta(days=1), now=past)
-    assert entry['reported_cost_micros'] == {'USD': 3200} and entry['unpriced'] == 1
+    assert entry['reported_cost_micros'] == {'USD': 3200}
+    assert (entry['unreported'], entry['unpriced'], entry['never_priced']) == (0, 0, 1)

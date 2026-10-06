@@ -876,6 +876,31 @@ def test_routing_reconcile_asks_the_carrier_and_costs_show_charges(telnyx_cli, m
     costs = telnyx_cli.json('costs', 'spending')
     assert costs['not_priced'] == 1 and costs['received'][0]['calls_not_priced'] == 1
     assert costs['total_cost'] == [{'currency': 'USD', 'amount': '0.0032'}]
+    # A received call Telnyx priced only in part by the give-up time: its priced part is in the total, and it
+    # reads as never priced in full, apart from the call that is not priced yet.
+    checks = sa.Table('carrier_call_checks', sa.MetaData(), autoload_with=engine)
+    charges = sa.Table('carrier_charges', sa.MetaData(), autoload_with=engine)
+    with engine.begin() as connection:
+        connection.execute(calls.insert().values(
+            id='c2', direction='inbound', call_id='1759.c2', job_id=None, attempt_id=None, trunk_preset='telnyx',
+            did='+13035550100', caller='+17205550113', called='+13035550100', started_at=moment,
+            answered_at=moment, ended_at=moment + timedelta(seconds=25), disposition='answered',
+            connected_seconds=25, t38='yes', pages=1, fax_status='SUCCESS', fax_preference=0, created_at=moment,
+            updated_at=moment))
+        connection.execute(checks.insert().values(
+            id='c2', provider_id='telnyx', state='settled', checks=3, checked_at=moment, next_check_at=moment,
+            unpriced_records=1, created_at=moment, updated_at=moment))
+        connection.execute(charges.insert().values(
+            id='charge-c2', call_record_id='c2', provider_id='telnyx', record_id='rec-c2', version=1,
+            amount_micros=1000, raw_amount='0.001', currency='USD', billed_seconds=60, call_seconds=25,
+            match_method='call_id', effective_at=moment, observed_at=moment, created_at=moment,
+            supersedes_id=None, applied=1, is_final=1))
+    human = ' '.join(telnyx_cli('costs', 'spending').stdout.split())
+    assert 'Total: $0.0042' in human and '1 call is not priced yet, so it is not in the total.' in human
+    assert 'Telnyx never priced 1 call in full; only its priced part is in the total.' in human
+    costs = telnyx_cli.json('costs', 'spending')
+    assert (costs['not_priced'], costs['never_priced']) == (1, 1)
+    assert (costs['received'][0]['calls_not_priced'], costs['received'][0]['calls_never_priced']) == (1, 1)
 
 
 def test_intake_connectors_items_and_test_email(cli):
@@ -1357,6 +1382,11 @@ def test_route_and_spending_words_match_the_console(monkeypatch):
     out = Lines()
     delivery._unrecorded_lines(out, [{'unrecorded_calls': 1, 'unrecorded_matched_to_faxes': 1}])
     assert out.lines == ['1 call reached Faxbot without a call record; its fax is in Received. Included in Charged.']
+    # The console's Spending cards say the same (carrierCharges.test.tsx).
+    assert delivery.never_priced_sentence('Telnyx', 2, 'fax') == (
+        'Telnyx never priced 2 faxes in full; only their priced parts are in the total.')
+    assert delivery.never_priced_sentence(None, 1, 'call') == (
+        'Your carrier never priced 1 call in full; only its priced part is in the total.')
 
 
 def test_sent_list_names_the_route_that_carried_each_fax():
