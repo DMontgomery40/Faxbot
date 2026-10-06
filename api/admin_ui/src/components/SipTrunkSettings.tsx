@@ -44,6 +44,7 @@ import InboundRecovery from './InboundRecovery';
 import NetworkForFax from './NetworkForFax';
 import TelnyxT38 from './TelnyxT38';
 import FaxSettings from './FaxSettings';
+import { formatServerTime } from '../api/time';
 
 interface SipTrunkSettingsProps {
   client: AdminAPIClient;
@@ -137,8 +138,7 @@ export function connectedTime(seconds: number | null): string {
 }
 
 function when(iso: string): string {
-  const date = new Date(iso);
-  return Number.isNaN(date.getTime()) ? '' : date.toLocaleString();
+  return formatServerTime(iso, '');
 }
 
 function failure(error: unknown, fallback: string): string {

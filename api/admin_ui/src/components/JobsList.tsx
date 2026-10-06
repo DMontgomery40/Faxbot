@@ -38,6 +38,7 @@ import { FaxTogetherItem, togetherLine } from './delivery/SendingTogether';
 import type { FaxJob, OperatorDelivery, DeliveryHistoryEvent } from '../api/types';
 import type { DirectDeliveryRecord, FaxCost } from '../api/deliveryTypes';
 import { providerLabel } from '../providerLabels';
+import { formatServerTime } from '../api/time';
 
 
 interface JobsListProps {
@@ -260,19 +261,8 @@ function JobsList({ client, openJobId, onOpened, onSendFax }: JobsListProps) {
     }
   };
 
-  const formatDate = (dateString: string) => {
-    try {
-      const naiveUTC = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?$/.test(dateString);
-      const date = new Date(naiveUTC ? `${dateString}Z` : dateString);
-      if (Number.isNaN(date.getTime())
-          || (naiveUTC && date.toISOString().slice(0, 19) !== dateString.slice(0, 19))) {
-        return dateString;
-      }
-      return date.toLocaleString();
-    } catch {
-      return dateString;
-    }
-  };
+  // The shared server-time reading: local time, and a dash rather than a raw date it cannot read.
+  const formatDate = (dateString: string) => formatServerTime(dateString);
 
   const beginDetailAction = (selection: DetailSelection): object | null => {
     if (detailSelectionRef.current !== selection || detailActionRef.current) return null;

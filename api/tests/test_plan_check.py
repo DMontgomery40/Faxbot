@@ -170,6 +170,35 @@ def test_the_number_humblefax_reports_for_the_account_counts_when_none_is_config
     assert reads == [] and plan['windows'][0]['own_numbers'] == 0
 
 
+def test_an_unknown_number_rental_is_never_counted_as_free(plans, monkeypatch):
+    """The trunk carrier publishes no price for keeping the plan's number: no saving is stated, and the rent row
+    says the price is not published instead of showing nothing."""
+    from api.app.routing import plan_check
+    multi, routes = plans
+    sent(multi, routes, 'humblefax', CLINIC, ['success'] * 5)
+    monkeypatch.setattr(plan_check, 'carrier_prices', lambda carrier, path=None: SimpleNamespace(rental={}))
+    (plan,) = report(routes)['plans']
+    latest = plan['windows'][0]
+    assert latest['other_way'] == money(5 * estimate_cost(TELNYX_OUT, 3))
+    assert plan['state'] == 'review'
+    assert plan['sentence'] == ('Worth reviewing: HumbleFax carried 5 faxes in the last 30 days, about $2.00 each for '
+                                'its $10 monthly fee; Telnyx would have cost about $0.05 for the same faxes, but '
+                                'Telnyx does not publish what it charges to keep your HumbleFax number, so Faxbot '
+                                "can't tell whether dropping the plan would save money (estimate).")
+    assert latest['number_rental'] == [] and latest['number_rental_unpublished'] is True
+    # A plan that costs less than the faxes alone would another way is kept, whatever the number costs.
+    routes.replace_cards([HUMBLEFAX, TELNYX_OUT, TELNYX_IN, card('phaxio', page='1.00')])
+    sent(multi, routes, 'phaxio', CLINIC, ['success'] * 3, reported='3.00')
+    (plan,) = report(routes, outbound_route_providers=('phaxio',))['plans']
+    assert plan['state'] == 'keep' and plan['sentence'].startswith('Keep it: HumbleFax carried 5 faxes')
+    # With the carrier's published rental the row shows it and nothing says it is unpublished.
+    monkeypatch.setattr(plan_check, 'carrier_prices', lambda carrier, path=None: SimpleNamespace(
+        rental={'local': 1_000_000}))
+    (plan,) = report(routes)['plans']
+    assert plan['windows'][0]['number_rental'] == money(1_000_000)
+    assert plan['windows'][0]['number_rental_unpublished'] is False
+
+
 def test_an_unreliable_alternative_suggests_nothing(plans):
     multi, routes = plans
     sent(multi, routes, 'humblefax', CLINIC, ['success'] * 5)
@@ -205,6 +234,37 @@ def test_faxes_to_your_own_numbers_are_tests_that_need_no_other_way(plans):
     assert latest['other_way'] == money(estimate_cost(TELNYX_OUT, 3))  # only the clinic's fax is priced
     assert plan['state'] == 'review'
     assert '6 of these faxes were tests to your own numbers.' in plan['caveats']
+
+
+def test_a_test_fax_that_places_a_paid_call_is_counted_as_a_cost(plans):
+    """Telnyx (a trunk with a $5 monthly fee) faxed the HumbleFax number twice: tests, but HumbleFax cannot receive
+    into Faxbot, so each was a paid call and is priced; a test to the trunk's own number arrives with no call."""
+    multi, routes = plans
+    routes.replace_cards([card('sip-telnyx', minute='0.005', minimum=60, monthly='5'), TELNYX_IN,
+                          card('phaxio', page='1.00')])
+    sent(multi, routes, 'sip', HUMBLE, ['success'] * 2)
+    sent(multi, routes, 'sip', TRUNK, ['success'])
+    sent(multi, routes, 'sip', CLINIC, ['success'] * 3)
+    (plan,) = report(routes, effective_outbound='sip', outbound_route_providers=('phaxio',),
+                     humblefax_from_number=HUMBLE)['plans']
+    latest = plan['windows'][0]
+    assert plan['route'] == 'sip'
+    each = estimate_cost(card('phaxio', page='1.00'), 3)
+    assert latest['other_way'] == money(5 * each)  # the clinic's 3 faxes and the 2 paid tests
+    assert (latest['sent'], latest['own_numbers'], latest['paid_tests']) == (6, 3, 2)
+    assert ('3 of these faxes were tests to your own numbers. The 2 sent to +13035550150 still cost a phone call, '
+            'so they are counted in what the other way would cost.') in plan['caveats']
+
+
+def test_one_rule_for_own_numbers_with_its_two_uses(monkeypatch):
+    """A HumbleFax account number is an account number of yours, but it does not receive into this Faxbot."""
+    from api.app.routing import local
+    from api.app.routing.own_numbers import account_numbers, receiving_numbers
+    settings = values(humblefax_from_number=HUMBLE, local_delivery_enabled=True)
+    assert receiving_numbers(settings) == {TRUNK} == local.own_numbers(settings)
+    assert {TRUNK, HUMBLE} <= account_numbers(settings)
+    assert '+13035550199' in account_numbers(settings, {'humblefax': ('+13035550199',)})
+    assert not local.applies(settings, HUMBLE) and local.applies(settings, TRUNK)
 
 
 def test_too_little_history_is_one_sentence(plans):

@@ -21,7 +21,9 @@ const ROWS: Array<[string, (window: PlanWindow) => string]> = [
   ['Plan fee for this period', (window) => formatMoneyList(window.fee, '-')],
   ['Plan fee per fax', (window) => formatMoneyList(window.fee_per_fax, '-')],
   ['The same faxes another way', (window) => formatMoneyList(window.other_way, '-')],
-  ['Rent for the fax number at your carrier', (window) => formatMoneyList(window.number_rental, '-')],
+  // Unknown, not free, when the carrier publishes no price for keeping the number.
+  ['Rent for the fax number at your carrier',
+    (window) => (window.number_rental_unpublished ? 'Not published' : formatMoneyList(window.number_rental, '-'))],
 ];
 
 function Plan({ plan, days }: { plan: PlanAdvice; days: number }) {

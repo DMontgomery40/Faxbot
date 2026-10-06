@@ -592,3 +592,93 @@ def test_shipped_cards_are_added_for_providers_in_use_once_and_never_after_remov
     routes.replace_cards([card for card in routes.current_cards() if card.provider_id != 'humblefax'])
     assert routes.add_missing_cards(cards_in_use(values, load_cards())) == []  # a removal is remembered
     assert routes.card_for('humblefax') is None
+
+
+# Unknown cost is never zero ---------------------------------------------------------------
+
+def engine_call(ledger, *, end, answer=None, connected=None, disposition='answered', inbound_id='fax-engine'):
+    """A received call as the SSL Fax engine records it: answered, its length unknown until Asterisk reports it."""
+    _, routes, carriers = ledger
+    identity = uuid4().hex
+    with routes.engine.begin() as connection:
+        connection.execute(carriers.calls.insert().values(
+            id=identity, direction='inbound', call_id=f'1759.{identity[:6]}', job_id=inbound_id, attempt_id=None,
+            trunk_preset='telnyx', did=OURS, caller=CALLER_C, called=OURS, started_at=end, answered_at=answer,
+            ended_at=end, disposition=disposition, connected_seconds=connected, t38='unknown', pages=1,
+            fax_status='SUCCESS' if inbound_id else 'FAILED', fax_preference=0, created_at=end, updated_at=end))
+    return identity
+
+
+def test_a_received_call_of_unknown_length_is_not_priced_rather_than_priced_at_zero_minutes(ledger):
+    installation, routes, carriers = ledger
+    spending = Spending(routes, carriers)
+    engine_call(ledger, end=at(14, 29))
+    entry = spending.received(BASE - timedelta(days=1), now=NOW)[0]
+    assert entry['unreported_estimate_micros'] == {} and entry['cost_micros'] == {} and entry['total_micros'] == {}
+    assert (entry['calls'], entry['unreported'], entry['unpriced'], entry['billed_seconds']) == (1, 1, 1, 0)
+    # The length worked out from the answer and end times is priced (31 s bills the 60 s minimum at $0.0032), and
+    # a call that was never answered costs nothing by the minute.
+    engine_call(ledger, answer=at(18, 54), end=at(19, 25))
+    engine_call(ledger, end=at(20), disposition='no_answer', inbound_id=None)
+    entry = spending.received(BASE - timedelta(days=1), now=NOW)[0]
+    assert entry['unreported_estimate_micros'] == {'USD': 3200} and entry['total_micros'] == {'USD': 3200}
+    assert (entry['calls'], entry['unreported'], entry['unpriced'], entry['billed_seconds']) == (3, 3, 1, 60)
+
+
+def test_spending_counts_faxes_with_no_price_apart_from_estimated_ones(ledger):
+    installation, routes, carriers = ledger
+    job = accept(installation)
+    outbound_attempt(ledger, job, phase='success', answer=at(3, 28), end=at(4, 14))  # estimated from the sip card
+    # Two SignalWire faxes: no rate card and no charge reported, so they have no price at all.
+    for minute in (5, 7):
+        other, attempt = accept(installation), uuid4().hex
+        with routes.engine.begin() as connection:
+            connection.execute(routes.attempts.insert().values(
+                id=attempt, job_id=other, sequence=1, phase='success', created_at=at(minute),
+                submitted_at=at(minute), completed_at=at(minute + 1)))
+        routes.capture(CaptureTarget(attempt, other, FAR, 'signalwire', 'sw-1', 'success', 1, at(minute),
+                                     at(minute + 1), False))
+    totals = {entry['provider_id']: entry
+              for entry in Spending(routes, carriers).outbound(BASE - timedelta(days=1), now=NOW)}
+    sip, signalwire = totals['sip'], totals['signalwire']
+    assert (sip['unreported'], sip['unpriced'], sip['total_micros']) == (1, 0, {'USD': 5000})
+    assert (signalwire['unreported'], signalwire['unpriced'], signalwire['total_micros']) == (2, 2, {})
+
+
+@pytest.mark.parametrize('meta', [None, {}, {'total_pages': None}, {'total_pages': '2'}])
+def test_a_full_page_without_a_page_count_is_never_taken_as_the_whole_window(meta):
+    """A missing or unusable page count is no proof that page 1 was the last: matching relies on ``complete``."""
+    pages = {1: [{**sent_b(), 'id': f'rec-{number}'} for number in range(50)], 2: [received_c()]}
+
+    def handler(request):
+        body = {'data': pages.get(int(request.url.params['page[number]']), [])}
+        if meta is not None:
+            body['meta'] = meta
+        return httpx.Response(200, json=body)
+
+    def factory():
+        return httpx.Client(transport=httpx.MockTransport(handler))
+    records, complete = TelnyxDetailRecords(lambda: 'KEYsynthetic', client_factory=factory).fetch(at(0), at(30))
+    assert (len(records), complete) == (51, True)  # read on to the short page, which ends the window
+    records, complete = TelnyxDetailRecords(lambda: 'KEYsynthetic', client_factory=factory,
+                                            max_pages=1).fetch(at(0), at(30))
+    assert (len(records), complete) == (50, False)  # stopped on a full page: not proven complete
+
+
+def test_a_call_whose_other_record_is_unpriced_stays_open_until_every_record_is_priced(ledger):
+    installation, routes, carriers = ledger
+    job = accept(installation)
+    attempt = outbound_attempt(ledger, job, phase='success', answer=at(3, 28), end=at(4, 14), call_id='call-two-legs')
+    call = call_of(carriers, attempt)
+    later = at(4, 14) + timedelta(hours=25)  # past the settle time
+    # Telnyx has two records with this call's SIP Call-ID, and only one has its price yet.
+    legs = [sent_b(call_id='call-two-legs'), {**sent_b(call_id='call-two-legs', cost=None), 'id': 'rec-b2'}]
+    CarrierReconciler(carriers, routes, FakeTelnyx(legs)).step(now=later)
+    assert checks(carriers, call) == 'matched'  # not settled while a record of it has no price
+    assert call in [row['id'] for row in carriers.due_calls('telnyx', now=later + timedelta(hours=7))]
+    assert routes.decision(attempt)['settled_cost_micros'] is None
+    # The second record is priced later: the call settles with both amounts.
+    legs[1] = {**legs[1], 'cost': '0.002'}
+    CarrierReconciler(carriers, routes, FakeTelnyx(legs)).step(now=later + timedelta(hours=7))
+    assert checks(carriers, call) == 'settled'
+    assert sorted(charge['amount_micros'] for charge in carriers.in_effect([call])[call]) == [2000, 5000]

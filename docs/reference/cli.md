@@ -1389,6 +1389,9 @@ $ faxbot providers show [OPTIONS] {provider}
 
 Change a provider&#x27;s settings, or start using it for sending, receiving or storage.
 
+Passwords and keys are never typed as NAME=VALUE, where they would stay in your shell history: use --secret
+NAME to type one without showing it, or --secret-stdin NAME to read it from standard input.
+
 **Usage**:
 
 ```console
@@ -1403,6 +1406,7 @@ $ faxbot providers configure [OPTIONS] {provider} [NAME=VALUE...]
 **Options**:
 
 * `--secret NAME`: Prompt for this setting&#x27;s value without echoing it, for passwords and keys. Repeat for more.
+* `--secret-stdin NAME`: Read this password or key from standard input, for scripts.
 * `--role <str>`: With --enable: outbound (sending), inbound (receiving) or storage.
 * `--enable`: Use this provider for sending, receiving or storage (choose which with --role).
 * `--help`: Show this message and exit.
@@ -3011,6 +3015,9 @@ $ faxbot system settings get [OPTIONS] [section]
 
 Change settings by name, for example max_file_size_mb=20. Faxbot checks the result before saving it.
 
+Passwords and keys are never typed as NAME=VALUE, where they would stay in your shell history: use --secret
+NAME to type one without showing it, or --secret-stdin NAME to read it from standard input.
+
 **Usage**:
 
 ```console
@@ -3024,6 +3031,7 @@ $ faxbot system settings set [OPTIONS] [NAME=VALUE...]
 **Options**:
 
 * `--secret NAME`: Ask for this setting without showing what you type, for passwords and provider keys. Repeat for more.
+* `--secret-stdin NAME`: Read this password or key from standard input, for scripts.
 * `--text`: Send every value exactly as typed.
 * `--help`: Show this message and exit.
 

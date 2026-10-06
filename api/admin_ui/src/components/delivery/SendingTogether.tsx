@@ -7,6 +7,7 @@ import {
 import AdminAPIClient from '../../api/client';
 import type { BatchingNumber, FaxTogether, FaxTogetherSummary } from '../../api/batchingTypes';
 import { DeliveryError } from './shared';
+import { formatServerTime } from '../../api/time';
 
 // "10:40 PM" today, or "Oct 4, 10:40 PM" on another day, in the viewer's time zone.
 export function formatWaitTime(value: string | undefined | null, now: Date = new Date()): string {
@@ -165,7 +166,7 @@ export function SendingTogetherPanel({ client, number, canWrite }: {
       <Typography variant="body2" color="text.secondary">{view.route_sentence}</Typography>
       {view.agreement && (
         <Typography variant="body2" color="text.secondary">
-          The recipient's agreement was recorded by {view.agreement.by} on {new Date(view.agreement.at).toLocaleString()}.
+          The recipient's agreement was recorded by {view.agreement.by} on {formatServerTime(view.agreement.at)}.
         </Typography>
       )}
       <Typography variant="body2" color="text.secondary">{view.savings.sentence}</Typography>

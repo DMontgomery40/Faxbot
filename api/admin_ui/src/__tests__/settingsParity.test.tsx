@@ -359,6 +359,15 @@ describe('Settings save status', () => {
     expect(await screen.findByText('Someone else changed these settings. Your edits are kept here; reload to see the current values.')).toBeTruthy();
   });
 
+  it('says one plain sentence when a save fails on the server, never the raw error', async () => {
+    settingsHandlers(settingsFixture(), () => HttpResponse.json({ detail: 'Internal Server Error' }, { status: 500 }));
+    render(<Settings client={client()} />);
+    fireEvent.change(within(await section('Delivery routes')).getByLabelText('Minimum delivery rate (%)'), { target: { value: '70' } });
+    apply();
+    expect(await screen.findByText('The save could not be confirmed. Reload to check whether your changes were saved.')).toBeTruthy();
+    expect(document.body.textContent).not.toMatch(/API Error|500/);
+  });
+
   it('checks the minimum delivery rate and email server port before saving', async () => {
     const writes = settingsHandlers(settingsFixture());
     render(<Settings client={client()} />);

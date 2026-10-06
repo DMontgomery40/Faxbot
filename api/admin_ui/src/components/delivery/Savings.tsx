@@ -59,9 +59,10 @@ export default function Savings({ client }: { client: AdminAPIClient }) {
       {data && (
         <Stack spacing={2}>
           <Typography variant="body1" data-testid="savings-total">
-            {data.total_saved.length
+            {/* The server's headline says honestly when something cost more than it saved. */}
+            {data.total_sentence ?? (data.total_saved.length
               ? `About ${formatMoneyList(data.total_saved)} saved in the last ${data.days} days.`
-              : `No money saved in the last ${data.days} days, as far as Faxbot can tell.`}
+              : `No money saved in the last ${data.days} days, as far as Faxbot can tell.`)}
           </Typography>
           <Part title="Sending together" sentence={data.sending_together.sentence} testId="savings-together" />
           <Part title="Direct delivery" sentence={data.direct_delivery.sentence} testId="savings-direct" />

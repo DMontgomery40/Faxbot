@@ -10,7 +10,7 @@ import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import AdminAPIClient from '../../api/client';
 import type { ReceivingCosts, ReceivingNumber, ReceivingRecommendations as Advice } from '../../api/deliveryTypes';
 import { parseServerTime } from '../../api/time';
-import { DeliveryError, formatMoneyList } from './shared';
+import { DeliveryError, NOT_PRICED, formatMoneyList } from './shared';
 
 const TOO_LITTLE = new Set(['too_little_history', 'no_trunk', 'no_channel_price']);
 
@@ -58,7 +58,8 @@ function Heading({ title }: { title: string }) {
 function SharedLines({ advice }: { advice: Advice }) {
   const { pool, days, windows } = advice;
   const pooled = (pool.pool_numbers ?? []).length > 0;
-  const money = (values: ReceivingCosts[keyof ReceivingCosts] | undefined) => formatMoneyList(values, '$0.00');
+  // An empty figure is unknown: "Not priced yet", never $0.
+  const figure = (values: ReceivingCosts[keyof ReceivingCosts] | undefined) => formatMoneyList(values, NOT_PRICED);
   return (
     <Paper variant="outlined" sx={{ p: 2, borderRadius: 2 }} data-testid="receiving-lines">
       <Heading title="Shared lines for received faxes" />
@@ -88,7 +89,7 @@ function SharedLines({ advice }: { advice: Advice }) {
                   <TableCell>{row.number}</TableCell>
                   <TableCell align="right">{row.calls}</TableCell>
                   <TableCell align="right">
-                    {row.unpriced_calls ? 'Not priced yet' : formatMoneyList(row.billed_by_the_minute, '$0.00')}
+                    {row.unpriced_calls ? NOT_PRICED : formatMoneyList(row.billed_by_the_minute, NOT_PRICED)}
                   </TableCell>
                   <TableCell>{adviceText(row)}</TableCell>
                 </TableRow>
@@ -111,8 +112,8 @@ function SharedLines({ advice }: { advice: Advice }) {
               {COST_ROWS.map(([label, key]) => (
                 <TableRow key={key}>
                   <TableCell>{label}</TableCell>
-                  <TableCell align="right">{money(pool.choose?.[key])}</TableCell>
-                  <TableCell align="right">{money(pool.check?.[key])}</TableCell>
+                  <TableCell align="right">{figure(pool.choose?.[key])}</TableCell>
+                  <TableCell align="right">{figure(pool.check?.[key])}</TableCell>
                 </TableRow>
               ))}
             </TableBody>

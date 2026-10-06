@@ -431,8 +431,15 @@ def test_settings_get_set_validate_export(cli, monkeypatch):
     assert lone.exit_code != 0
     assert ('Enter the password Sinch sends as well; Faxbot does not accept the user name without it.'
             in ' '.join(lone.stderr.split()))
+    # A password typed as NAME=VALUE would stay in shell history: refused, with the two ways to give it.
+    typed = cli('system', 'settings', 'set', 'sinch_inbound_basic_user=synthetic-sinch-webhook',
+                'sinch_inbound_basic_pass=synthetic-webhook-pass')
+    assert typed.exit_code != 0 and 'synthetic-webhook-pass' not in typed.stdout + typed.stderr
+    assert ('sinch_inbound_basic_pass is a password or key, and typed on the command line it stays in your shell '
+            'history.' in ' '.join(typed.stderr.split()))
     assert cli('system', 'settings', 'set', 'sinch_inbound_basic_user=synthetic-sinch-webhook',
-               'sinch_inbound_basic_pass=synthetic-webhook-pass').exit_code == 0
+               '--secret-stdin', 'sinch_inbound_basic_pass', input='synthetic-webhook-pass\n').exit_code == 0
+    assert '--secret-stdin' in cli('system', 'settings', 'set', '--help').stdout
     exported = cli('system', 'settings', 'export')
     assert exported.exit_code == 0 and 'MAX_FILE_SIZE_MB=7' in exported.stdout and BOOTSTRAP not in exported.stdout
     monkeypatch.setenv('SINCH_PROJECT_ID', 'synthetic-project')
@@ -670,6 +677,12 @@ def test_providers_show_and_configure_work_on_a_default_install(cli):
     assert 'synthetic-phaxio-key' not in saved.stdout
     masked = cli.json('providers', 'show', 'phaxio')['settings']['api_key']
     assert masked and 'synthetic-phaxio-key' not in masked
+    # A key typed as NAME=VALUE is refused; from standard input, for scripts, it saves.
+    typed = cli('providers', 'configure', 'phaxio', 'api_key=synthetic-typed-key')
+    assert typed.exit_code == 1 and 'Use --secret api_key to type it without showing it' in ' '.join(typed.stderr.split())
+    piped = cli('providers', 'configure', 'phaxio', '--secret-stdin', 'api_secret', input='synthetic-piped-secret\n')
+    assert piped.exit_code == 0, piped.stderr
+    assert 'synthetic-piped-secret' not in piped.stdout + str(cli.json('providers', 'show', 'phaxio'))
     address = 'https://fax.example.test/phaxio-callback'
     assert cli('providers', 'configure', 'phaxio', f'callback_url={address}').exit_code == 0
     assert cli.json('providers', 'show', 'phaxio')['settings']['callback_url'] == address
@@ -732,7 +745,16 @@ def test_routing_destinations_costs_and_rate_cards(cli, tmp_path):
                                             'per_page': '0.07', 'captured_on': '2026-10-01T00:00:00'}]}))
     replaced = cli.json('costs', 'rate-cards', '--replace', cards)
     assert [card['per_page'] for card in replaced['cards']] == ['0.07']
-    assert cli.json('costs', 'rate-cards')['cards'][0]['label'] == 'Phaxio list price'
+    listed = cli.json('costs', 'rate-cards')['cards']
+    assert listed[0]['label'] == 'Phaxio list price' and listed[0]['provider_name'] == 'Phaxio'
+    # A listed card saves back unchanged without its id, as the console sends it, the provider's name included.
+    cards.write_text(json.dumps({'cards': [{key: value for key, value in card.items() if key != 'id'}
+                                           for card in listed]}))
+    assert cli('costs', 'rate-cards', '--replace', cards).exit_code == 0
+    # Money as money, the provider by name and the date in words: no bare decimals, currency codes or ids.
+    shown = cli('costs', 'rate-cards').stdout
+    assert '$0.07' in shown and 'Sending' in shown and 'October' in shown
+    assert 'USD' not in shown and '0.07 ' not in shown.replace('$0.07', '') and '2026-10-01' not in shown
     # Each route says how it charges and what this fax would cost, for the pages asked.
     three = cli.json('recipients', 'show', '+15551230001', '--pages', '3')['recommended_routes']
     assert three and three[0]['pages'] == 3 and three[0]['rate'] and three[0]['estimated_cost']
@@ -746,6 +768,9 @@ def test_routing_destinations_costs_and_rate_cards(cli, tmp_path):
     refused = cli('costs', 'reconcile')
     assert refused.exit_code != 0
     assert 'Faxbot needs a Telnyx API key to read call charges.' in refused.stdout + refused.stderr
+    # The key has a console field and a setting: never sent to .env.
+    assert 'faxbot system settings set --secret telnyx_api_key' in ' '.join((refused.stdout + refused.stderr).split())
+    assert '.env' not in refused.stdout + refused.stderr
     assert cli('costs', 'fax', '0' * 32).exit_code != 0
 
 
@@ -805,6 +830,20 @@ def test_routing_reconcile_asks_the_carrier_and_costs_show_charges(telnyx_cli, m
     human = telnyx_cli('costs', 'spending')
     assert 'Telnyx billed 1 call Faxbot has no record of: $0.0032. It is included in Charged.' in human.stdout
     assert 'Total: $0.0032' in human.stdout
+    assert 'not priced yet, so' not in human.stdout
+    # A received call the SSL Fax engine recorded without its length has no price: counted, never added as $0.
+    calls = sa.Table('sip_call_records', sa.MetaData(), autoload_with=engine)
+    with engine.begin() as connection:
+        connection.execute(calls.insert().values(
+            id='c1', direction='inbound', call_id='1759.c1', job_id=None, attempt_id=None, trunk_preset='telnyx',
+            did='+13035550100', caller='+17205550112', called='+13035550100', started_at=moment, answered_at=None,
+            ended_at=moment, disposition='answered', connected_seconds=None, t38='unknown', pages=1,
+            fax_status='SUCCESS', fax_preference=0, created_at=moment, updated_at=moment))
+    human = ' '.join(telnyx_cli('costs', 'spending').stdout.split())
+    assert 'Total: $0.0032' in human and '1 call is not priced yet, so it is not in the total.' in human
+    costs = telnyx_cli.json('costs', 'spending')
+    assert costs['not_priced'] == 1 and costs['received'][0]['calls_not_priced'] == 1
+    assert costs['total_cost'] == [{'currency': 'USD', 'amount': '0.0032'}]
 
 
 def test_intake_connectors_items_and_test_email(cli):
@@ -1170,6 +1209,10 @@ def test_money_reads_as_the_console_shows_it(monkeypatch):
     assert output.money_amount({'currency': 'EUR', 'amount': '0.005'}, 'USD') == '0.005 EUR'
     assert output.money_amount({'currency': 'GBP', 'amount': '0.07'}, 'GBP') == '£0.07'
     assert output.money_amount({'currency': 'USD', 'amount': '0.0025'}, 'GBP') == '0.0025 USD'
+    # The exact decimal, rounded half up the same way as the console's formatMoney (never through a float).
+    assert [output.money_amount(usd(value), 'USD') for value in ('0.00125', '0.000049', '-0.03', '-0.000001',
+                                                                  '12345678901.125')] == \
+        ['$0.0013', '$0.00', '-$0.03', '$0.00', '$12345678901.13']
     monkeypatch.setattr(output, 'home_currency', lambda: 'USD')
     assert output.cost_amount({'state': 'estimated', 'estimated_cost': [usd('0.0025')]}) == '$0.0025 estimate'
     assert output.cost_amount({'state': 'reported', 'reported_cost': [usd('0.005')]}) == '$0.005'

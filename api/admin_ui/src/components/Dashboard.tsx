@@ -26,9 +26,9 @@ import type { DirectPartner, IntakeCounts, RouteCostsResponse } from '../api/del
 import type { SipCallRecord } from '../api/sipTypes';
 import type { SipNetworkReport } from '../api/networkTypes';
 import type { AdminDestination } from '../navigation';
-import { formatMoneyList } from './delivery/shared';
-import { NO_PUBLISHED_PRICE, spendingLines, spendingTotal } from './delivery/spendingSummary';
+import { spendingLines, spendingTotalText } from './delivery/spendingSummary';
 import { providerLabel } from '../providerLabels';
+import { formatServerTime } from '../api/time';
 
 type CardData<T> = { kind: 'loading' } | { kind: 'ready'; data: T } | { kind: 'denied' | 'unavailable' | 'error' };
 
@@ -181,7 +181,6 @@ function Dashboard({ client, onNavigate, canSetUp = false, onSendFax }: Dashboar
   const [health, setHealth] = useState<HealthStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [justApplied, setJustApplied] = useState<boolean>(false);
   const [cfg, setCfg] = useState<any | null>(null);
   const [spending, setSpending] = useState<CardData<RouteCostsResponse>>({ kind: 'loading' });
   const [intake, setIntake] = useState<CardData<IntakeCounts>>({ kind: 'loading' });
@@ -233,11 +232,6 @@ function Dashboard({ client, onNavigate, canSetUp = false, onSendFax }: Dashboar
   useEffect(() => {
     fetchHealth();
     void fetchDelivery();
-    if (sessionStorage.getItem('fb_admin_applied') === '1') {
-      setJustApplied(true);
-      sessionStorage.removeItem('fb_admin_applied');
-      setTimeout(() => setJustApplied(false), 4000);
-    }
 
     // Start polling
     const cleanup = client.startPolling((data) => {
@@ -270,11 +264,6 @@ function Dashboard({ client, onNavigate, canSetUp = false, onSendFax }: Dashboar
 
   return (
     <Box>
-      {justApplied && (
-        <Alert severity="success" sx={{ mb: 2 }}>
-          Configuration applied successfully.
-        </Alert>
-      )}
       <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
         <Typography variant="h4" component="h1">
           Overview
@@ -502,7 +491,7 @@ function Dashboard({ client, onNavigate, canSetUp = false, onSendFax }: Dashboar
                 ) : (
                   <Box display="flex" flexDirection="column" gap={1}>
                     {lines.map((line) => <Line key={line.key} label={line.label} value={line.value} />)}
-                    {lines.length > 1 && <Line label="Total" value={formatMoneyList(spendingTotal(costs), NO_PUBLISHED_PRICE)} />}
+                    {lines.length > 1 && <Line label="Total" value={spendingTotalText(costs)} />}
                   </Box>
                 );
               }}
@@ -543,7 +532,7 @@ function Dashboard({ client, onNavigate, canSetUp = false, onSendFax }: Dashboar
             <Card>
               <CardContent>
                 <Typography variant="body2" color="text.secondary">
-                  Last updated: {new Date(health.timestamp).toLocaleString()}
+                  Last updated: {formatServerTime(health.timestamp)}
                 </Typography>
                 <Typography variant="caption" color="text.secondary">
                   Auto-refreshing every 5 seconds

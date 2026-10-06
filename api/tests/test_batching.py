@@ -195,7 +195,8 @@ def test_turning_on_needs_the_recipients_agreement_and_every_change_is_kept(sip)
         settings.save('+15555550999', enabled=False, actor='principal:p1', expected_version=1)
     assert settings.save('+15555550999', enabled=False, actor='principal:p1')[1] == 'off'
     assert [change['action'] for change in settings.history('+15555550999')] == ['off', 'changed', 'on']
-    assert [change['recipient_agreed'] for change in settings.history('+15555550999')] == [0, 1, 1]
+    # The change to 12 pages did not record the recipient's agreement again, so its row does not claim it.
+    assert [change['recipient_agreed'] for change in settings.history('+15555550999')] == [0, 0, 1]
     for bad in ({'max_wait_seconds': 30}, {'max_pages': 1}, {'mixed_senders': 'yes'}):
         with pytest.raises(batching.BatchingInputError):
             settings.save('+15555550999', enabled=True, recipient_agreed=True, actor='principal:p1', **bad)
@@ -493,6 +494,35 @@ def test_the_call_is_costed_once_on_the_fax_that_placed_it_and_shares_split_by_p
     # Separately: three calls of one minute or more (1 + 2 + 1 pages) = $0.005 + $0.01 + $0.005.
     assert saved['calls_saved'] == 2 and saved['saved'] == {'USD': 10_000}
     assert money.savings_sentence(saved) == 'Last 30 days: 3 faxes in 1 call, 2 calls saved, about $0.01 saved (estimate).'
+
+
+def test_a_shared_call_that_cost_more_than_separate_calls_shows_the_loss_never_a_zero_saving(sip):
+    from api.app.batching import money
+    from api.app.routing.capture import CostRecorder
+    from api.app.routing.savings import savings, sending_together
+    configuration, delivery, _, routes, _ = sip
+    jobs, claim = _submitted(sip, 1, 2, 1)
+    for job in jobs:
+        routes.record_decision(attempt_id=delivery.get(job)['attempt_id'], job_id=job, destination=NUMBER,
+                               route='sip', reason='configured', provider_id='sip')
+    results.apply_fax_result(delivery, {'JobID': claim.job_id, 'AttemptID': claim.attempt_id, 'Status': 'SUCCESS',
+                                        'Pages': '7'})
+    CostRecorder(routes, observed_seconds=lambda target: 100).step()
+    # The carrier billed the shared call at $0.05 (a slow call); three separate calls would have cost about $0.02.
+    assert routes.ingest_charge(claim.attempt_id, provider_id='sip', charge_id='rec-slow', amount_micros=50_000,
+                                currency='USD', billed_seconds=600) == 'new'
+    saved = money.savings(routes, configuration.engine, NUMBER)
+    assert saved['saved'] == {'USD': -30_000}
+    assert money.savings_sentence(saved) == ('Last 30 days: 3 faxes in 1 call, 2 calls saved, but sending together '
+                                             'cost about $0.03 more (estimate).')
+    together = sending_together(routes, configuration.engine, now=datetime.utcnow(), days=30)
+    assert together['saved'] == {'USD': -30_000}
+    assert together['sentence'] == ('3 faxes to the same number went in 1 call instead of 3, saving 2 calls, but '
+                                    'that call cost about $0.03 more than 3 separate calls.')
+    # Costs → Savings sums signed amounts, and its headline says the money went the other way.
+    found = savings(routes, configuration.engine)
+    assert found['total'] == {'USD': -30_000}
+    assert found['total_sentence'] == 'About $0.03 more spent than saved in the last 30 days.'
 
 
 # The image ------------------------------------------------------------------------------------

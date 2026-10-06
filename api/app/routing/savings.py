@@ -14,7 +14,7 @@ import sqlalchemy as sa
 
 from ..batching import money
 from ..batching.store import tables as batching_tables
-from .costs import estimate_cost, money_text
+from .costs import Money, estimate_cost, money_text
 from .database import read_connection, reflect, utcnow
 from .policy import DIRECT
 
@@ -32,6 +32,12 @@ def _money_text(totals):
     return ' + '.join(money_text(micros, currency) for currency, micros in sorted(totals.items()))
 
 
+def _signed(totals):
+    """``(saved, more)``: the parts of a signed saving that saved money, and those that cost more (as positives)."""
+    return ({currency: micros for currency, micros in totals.items() if micros >= 0},
+            {currency: -micros for currency, micros in totals.items() if micros < 0})
+
+
 def _plural(count, word, plural=None):
     return f'{count} {word}' if count == 1 else f'{count} {plural or word + "s"}'
 
@@ -44,8 +50,11 @@ def _avoided(card, with_pages, without_pages, result):
         result['in_plan'] += 1
     else:
         result['priced'] += 1
-        cost = estimate_cost(card, with_pages) - (0 if without_pages is None else estimate_cost(card, without_pages))
-        _add(result['saved'], card.currency, max(0, cost))
+        cost = Money(estimate_cost(card, with_pages), card.currency)
+        if without_pages is not None:
+            cost -= Money(estimate_cost(card, without_pages), card.currency)
+        # Signed: something that cost more is a negative saving, never 0.
+        _add(result['saved'], card.currency, cost.micros)
 
 
 def sending_together(routes, engine, *, now, days):
@@ -73,8 +82,12 @@ def sending_together(routes, engine, *, now, days):
     sentence = (f"{_plural(result['faxes'], 'fax', 'faxes')} to {same} went in "
                 f"{_plural(result['calls'], 'call')} instead of {result['faxes']}, saving "
                 f"{_plural(result['calls_saved'], 'call')}")
-    if result['saved']:
-        sentence += f" and about {_money_text(result['saved'])}"
+    saved, more = _signed(result['saved'])
+    if saved:
+        sentence += f" and about {_money_text(saved)}"
+    if more:
+        shared = 'that call' if result['calls'] == 1 else 'those calls'
+        sentence += f", but {shared} cost about {_money_text(more)} more than {result['faxes']} separate calls"
     sentence += '.'
     if result['priced_calls'] < result['calls']:
         sentence += " Some calls have no price, because your carrier's prices are not entered in Costs."
@@ -195,7 +208,10 @@ def case_packets(routes, engine, *, since, days):
     sentence = (f"{_plural(result['packets'], 'case packet')} left out "
                 f"{_plural(result['documents_left_out'], 'document')} the recipient already had: "
                 f"{_plural(result['pages_saved'], 'page')}")
-    sentence += f" and about {_money_text(result['saved'])} saved." if result['saved'] else ' saved.'
+    saved, more = _signed(result['saved'])
+    sentence += f" and about {_money_text(saved)} saved." if saved else ' saved.'
+    if more:
+        sentence += f" Sending the list of those documents instead cost about {_money_text(more)} more."
     if result['in_plan']:
         sentence += (f" {_plural(result['in_plan'], 'packet')} {'was' if result['in_plan'] == 1 else 'were'} sent "
                      'through your monthly plan, so it saved pages but no money.')
@@ -216,6 +232,19 @@ def savings(routes, engine, *, now=None, days=WINDOW_DAYS):
     total = {}
     for part in (together, direct, packets, sslfax, own):
         for currency, micros in part['saved'].items():
-            _add(total, currency, micros)
+            _add(total, currency, micros)  # signed: a part that cost more lowers the total
     return {'days': days, 'since': since, 'sending_together': together, 'direct_delivery': direct,
-            'case_packets': packets, 'sslfax': sslfax, 'own_numbers': own, 'total': total}
+            'case_packets': packets, 'sslfax': sslfax, 'own_numbers': own, 'total': total,
+            'total_sentence': total_sentence(total, days)}
+
+
+def total_sentence(total, days):
+    """The headline: what was saved, or honestly what cost more, in the last ``days``."""
+    saved, more = _signed(total)
+    if saved and more:
+        return f'About {_money_text(saved)} saved and {_money_text(more)} more spent in the last {days} days.'
+    if more:
+        return f'About {_money_text(more)} more spent than saved in the last {days} days.'
+    if saved:
+        return f'About {_money_text(saved)} saved in the last {days} days.'
+    return f'No money saved in the last {days} days, as far as Faxbot can tell.'
