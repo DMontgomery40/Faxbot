@@ -775,15 +775,26 @@ async def forget_plan(ami, tag):
 UNCERTAIN = 'uncertain'
 # HylaFAX's own words for a call that never became a fax, first match wins. Every
 # sentence fits the 80 characters a fax's error shows (main.py cuts longer ones).
+NOT_CONFIRMED = 'The other fax machine did not confirm the pages.'
 _REASONS = (
     (re.compile(r'busy', re.IGNORECASE), 'The fax did not go through: the line was busy.'),
     (re.compile(r'no answer', re.IGNORECASE), 'The fax did not go through: no one answered.'),
-    (re.compile(r'no carrier|no remote fax|not a fax|no response to', re.IGNORECASE),
+    # "No response to MPS/EOP/PPS/...": a page went out and its confirmation never came back.
+    (re.compile(r'no response to', re.IGNORECASE), NOT_CONFIRMED),
+    (re.compile(r'no carrier|no remote fax|not a fax', re.IGNORECASE),
      'The other end did not answer as a fax machine.'),
     (re.compile(r'refused|rejected|hang ?up|disconnect', re.IGNORECASE),
      'The call ended before the fax went through.'),
 )
-NOT_CONFIRMED = 'The other fax machine did not confirm the pages.'
+# HylaFAX+ 7.0.11's codes (faxd/README.errorcodes) for a call that ended before any fax data: busy (E001),
+# no carrier (E002), no answer (E003), no dial tone (E004), a bad dial string (E005), Phase A failure
+# (E007), a data modem (E008), glare (E009), blacklisted (E010), ringback without CED (E011), a V.8
+# mismatch (E013), and no T.30 answer within T1 (E102 receiving, E126 sending). After any other ending
+# the pages may have arrived: npages counts only confirmed pages, and "No response to EOP" (E151) follows
+# a page the other machine may well have printed.
+_BEFORE_FAX_DATA = frozenset({'E001', 'E002', 'E003', 'E004', 'E005', 'E007', 'E008', 'E009', 'E010', 'E011',
+                              'E013', 'E102', 'E126'})
+_BEFORE_FAX_DATA_TEXT = re.compile(r'busy|no answer|no carrier', re.IGNORECASE)
 
 
 def _int(value):
@@ -822,14 +833,36 @@ def failure_sentence(status_text: str, pages: int) -> str:
     return NOT_CONFIRMED
 
 
+def exchanged(payload: dict) -> bool:
+    """Whether the call reached the fax exchange: the other machine named itself (its CSI) or a speed was
+    agreed (training). From then on its pages may have arrived."""
+    return bool(_text64(payload, 'remote_station_b64', 40) or _text64(payload, 'signal_rate_b64', 32)
+                or _text64(payload, 'data_format_b64', 32))
+
+
+def ended_before_fax_data(payload: dict, status_text: str) -> bool:
+    """Whether the engine's own code (or, without one, its words) says the call ended before any fax data."""
+    code = payload.get('status_code') if isinstance(payload.get('status_code'), str) else ''
+    if not code:
+        found = re.search(r'\{(E[0-9]{3})\}', status_text or '')
+        code = found.group(1) if found else ''
+    if code:
+        return code in _BEFORE_FAX_DATA
+    return bool(_BEFORE_FAX_DATA_TEXT.search(status_text or ''))
+
+
 def result_outcome(payload: dict) -> tuple[str, str | None, str | None]:
     """(status, failure sentence, error category) for one engine result.
 
-    ``done`` is a delivered fax. A job that never dialed failed for certain. A
-    call the engine itself saw end without confirmation failed; with some
-    pages confirmed it waits for a person (no other route sends it again).
-    A job removed or rejected after it dialed is uncertain: the outcome waits
-    for a person and the fax is never sent again by itself.
+    ``done`` is a delivered fax. A job that never dialed failed for certain,
+    and so did a call that ended before any fax data (busy, no answer, no fax
+    machine, no T.30 answer; see _BEFORE_FAX_DATA): another route may send it.
+    With some pages confirmed it failed and is never sent again by itself
+    (``partly_sent``). Every other ending after a dial may have delivered pages
+    that were never confirmed, so it waits for a person (uncertain, category
+    ``pages_unconfirmed``) and is never sent again by itself; the route still
+    turns it into a plain failure when the trunk says no fax machine was ever
+    heard. A job removed or rejected after it dialed is uncertain too.
     """
     why = payload.get('why') if isinstance(payload.get('why'), str) else ''
     dials = max(_int(payload.get('dials')), _int(payload.get('total_dials')))
@@ -845,7 +878,9 @@ def result_outcome(payload: dict) -> tuple[str, str | None, str | None]:
         if why == 'failed':
             if pages:
                 return 'failed', failure_sentence(status_text, pages), 'partly_sent'
-            return 'failed', failure_sentence(status_text, 0), None
+            if not exchanged(payload) and ended_before_fax_data(payload, status_text):
+                return 'failed', failure_sentence(status_text, 0), None
+            return UNCERTAIN, NOT_CONFIRMED, 'pages_unconfirmed'
     return UNCERTAIN, None, None
 
 

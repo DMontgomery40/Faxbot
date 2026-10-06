@@ -366,6 +366,56 @@ def test_engine_results_map_to_delivery_outcomes(payload, outcome):
     assert hylafax_engine.result_outcome(payload) == outcome
 
 
+UNCONFIRMED = (hylafax_engine.UNCERTAIN, hylafax_engine.NOT_CONFIRMED, 'pages_unconfirmed')
+
+
+@pytest.mark.parametrize('status, code', [
+    ('No response to EOP repeated 3 tries {E151}', 'E151'),
+    ('No response to MPS repeated 3 tries {E150}', 'E150'),
+    ('No response to PPS repeated 3 times. {E147}', 'E147'),
+    ('Unable to transmit page (giving up after 3 attempts) {E131}', 'E131'),
+    ('Remote fax disconnected prematurely {E128}', 'E128'),
+])
+def test_a_send_whose_page_went_out_unconfirmed_waits_for_a_person_and_is_never_resent(status, code):
+    """HylaFAX counts only confirmed pages: "No response to EOP" with no page counted follows a page the other
+    machine may have printed. It waits for a person (pages_unconfirmed), never another route."""
+    payload = result('failed', dials=1, pages=0, status_b64=b64(status), status_code=code)
+    assert hylafax_engine.result_outcome(payload) == UNCONFIRMED
+    # Without the code, the words alone keep it open too.
+    assert hylafax_engine.result_outcome({**payload, 'status_code': ''})[0] == hylafax_engine.UNCERTAIN
+
+
+@pytest.mark.parametrize('extra', [
+    {'remote_station_b64': b64('+1 303 426 5097')},
+    {'signal_rate_b64': b64('9600 bit/s')},
+])
+def test_a_send_that_reached_the_fax_exchange_is_never_a_certain_failure(extra):
+    """The other machine named itself, or a speed was agreed: pages may have arrived, whatever the code."""
+    payload = result('failed', dials=1, pages=0, status_b64=b64('No carrier detected {E002}'), status_code='E002',
+                     **extra)
+    assert hylafax_engine.result_outcome(payload)[0] == hylafax_engine.UNCERTAIN
+    assert hylafax_engine.result_outcome(payload)[2] == 'pages_unconfirmed'
+
+
+@pytest.mark.parametrize('status, code, sentence', [
+    ('Busy signal detected {E001}', 'E001', 'The fax did not go through: the line was busy.'),
+    ('No answer from remote {E003}', 'E003', 'The fax did not go through: no one answered.'),
+    ('No carrier detected {E002}', 'E002', 'The other end did not answer as a fax machine.'),
+    ('No receiver protocol (T.30 T1 timeout) {E126}', 'E126', hylafax_engine.NOT_CONFIRMED),
+    ('Busy signal detected', '', 'The fax did not go through: the line was busy.'),
+])
+def test_a_send_that_ended_before_any_fax_data_failed_for_certain(status, code, sentence):
+    """Busy, no answer, no carrier, no T.30 answer (HylaFAX+ 7.0.11's codes): nothing was sent, so another
+    route may send it."""
+    payload = result('failed', dials=1, pages=0, status_b64=b64(status), status_code=code)
+    assert hylafax_engine.result_outcome(payload) == ('failed', sentence, None)
+
+
+def test_no_response_to_means_the_pages_were_not_confirmed():
+    assert hylafax_engine.failure_sentence('No response to EOP repeated 3 tries {E151}', 0) == \
+        hylafax_engine.NOT_CONFIRMED
+
+
 def test_every_engine_failure_sentence_fits_the_80_characters_a_fax_error_shows():
     texts = ['', 'Busy signal detected', 'No answer from remote', 'No carrier detected', 'Remote hangup']
     sentences = {hylafax_engine.failure_sentence(text, 0) for text in texts}

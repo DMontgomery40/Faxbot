@@ -327,6 +327,13 @@ async def engine_result(request: Request, payload: dict = Body(...),
         raise HTTPException(409, detail='The fax engine job does not match the fax.')
     why = payload.get('why') if isinstance(payload.get('why'), str) else ''
     row = await run_lifecycle_step(lambda: _record(request, job_id, attempt_id, payload, status, sentence))
+    if status == hylafax_engine.UNCERTAIN and category == 'pages_unconfirmed' and not hylafax_engine.exchanged(payload):
+        # The engine's words leave it open, but the trunk may know no fax machine was ever heard (no fax
+        # signal, no sound back, not a fax machine): then nothing was delivered and it failed for certain.
+        from . import sip_calls
+        row = await _settled_call(request, attempt_id, row)
+        if (row or {}).get('verdict') in (sip_calls.NO_FAX_SIGNAL, 'no_media_back', 'no_fax_answer'):
+            status, category = 'failed', None
     if status == 'failed' and category is None:
         # Nothing confirmed: the same sentence the built-in engine gives for this call, when the trunk
         # side says why (no fax data came back, not a fax machine, no sound).
@@ -339,7 +346,8 @@ async def engine_result(request: Request, payload: dict = Body(...),
         if found in (sip_calls.NO_FAX_SIGNAL, 'no_media_back', 'no_fax_answer', 'remote_fax_failed'):
             sentence = sip_calls.verdict_sentence(found)
     if status == hylafax_engine.UNCERTAIN:
-        # Removed or rejected after it dialed: the fax may have arrived. It waits for a person, never resent.
+        # Pages that may have arrived unconfirmed, or a job removed or rejected after it dialed: the fax may
+        # have arrived. It waits for a person and is never sent again by itself (no other route takes it).
         try:
             await run_lifecycle_step(lambda: store.record_unconfirmed(
                 job_id, attempt_id=attempt_id, profile_id=profile.id, event_key=f'{attempt_id}:hylafax:{why[:40]}'))

@@ -309,6 +309,38 @@ async def test_uncertain_outcomes_are_never_requeued(multi):
     assert delivery.requeue_after_failure(job, attempt_id=attempt, category='provider_failed') is False
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize('how', ['observed', 'unconfirmed'])
+async def test_pages_that_may_have_arrived_never_take_another_route(multi, monkeypatch, how):
+    """A send whose pages may have arrived unconfirmed (pages_unconfirmed: the fax engine's "No response to
+    EOP" with no page counted) waits for a person: neither the failure's own policy nor the scheduler sends it
+    on another route (PR #33 round 6)."""
+    from api.app.routing.fallback import FallbackPolicy
+    _, delivery, routes, _ = multi
+    monkeypatch.setattr(OutboundStore, 'fallback_policy', FallbackPolicy(FallbackScheduler(delivery, routes)))
+    job = accept(multi)
+
+    class Unconfirmed(Inner):
+        async def submit(self):
+            self.used.append(self.current)
+            return SubmissionReceipt('FX1', 'in_progress')
+    await OutboundWorker(delivery, RoutedTransport(Unconfirmed(delivery, []))).step()
+    row = delivery.get(job)
+    attempt, profile = row['attempt_id'], delivery.attempt_context(job, row['attempt_id'])[1]
+    if how == 'observed':
+        assert delivery.observe(job, attempt_id=attempt, profile_id=profile.id, provider_sid='FX1', status='failed',
+                                event_key=f'{attempt}:engine:failed', error='The other fax machine did not confirm '
+                                'the pages.', error_category='pages_unconfirmed')
+        assert delivery.get(job)['state'] == 'failed'
+    else:
+        assert delivery.record_unconfirmed(job, attempt_id=attempt, profile_id=profile.id,
+                                           event_key=f'{attempt}:engine:failed')
+        assert delivery.get(job)['state'] == 'reconciliation_required'
+    assert 'route_fallback' not in [event['kind'] for event in delivery.history(job)]
+    assert FallbackScheduler(delivery, routes).step() is False
+    assert delivery.get(job)['attempt_id'] == attempt
+
+
 def test_requeue_cap_and_partner_refusal_rules(multi):
     configuration, delivery, _, _ = multi
     job = accept(multi)
