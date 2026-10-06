@@ -69,6 +69,8 @@ export interface FaxJob extends DeliveryMetadata {
   together?: FaxTogetherSummary | null;
   // Over the SIP trunk: which fax engine carried it, and SSL Fax's line or the built-in engine's reason.
   fax_engine?: { engine: 'hylafax' | 'builtin'; sslfax: boolean | null; sentence: string | null } | null;
+  // The sender asked for a real call through the carrier, even to one of this installation's own numbers.
+  send_by_call?: boolean;
 }
 
 export interface DeliveryHistoryEvent {
@@ -249,6 +251,8 @@ export interface Settings {
   routing?: {
     outbound_routes: string;
     min_success_percent: number;
+    // Faxes to the installation's own numbers become received faxes here, with no call.
+    local_delivery?: boolean;
   };
   intake?: {
     email_enabled: boolean;

@@ -14,12 +14,13 @@ from .database import read_connection
 from .delivered import WINDOW_DAYS, short_money_text
 from .delivered_store import DeliveredEvidence
 from .policy import DIRECT, RouteCandidate, RouteChoice, RoutePolicy
+from . import local as local_delivery
 from .store import destination_key
 from ..provider_labels import PROVIDER_LABELS, trunk_name
 
 
 MIN_ATTEMPTS = 3
-LABELS = {'direct': 'Direct delivery', **PROVIDER_LABELS}
+LABELS = {'local': 'This installation', 'direct': 'Direct delivery', **PROVIDER_LABELS}
 REASON_TEXT = {
     'direct_peer': 'Delivered straight to a verified partner, with no fax call.',
     'preferred': 'You chose this route for this number.',
@@ -31,6 +32,7 @@ REASON_TEXT = {
     'configured': 'Your outbound fax provider.',
     # Only the reason is stored with a sent fax, so its details use this sentence without the amount.
     'cheapest_delivered': f'The cheapest route per delivered fax to this number over the last {WINDOW_DAYS} days.',
+    'own_number': 'One of your own numbers, so Faxbot delivers it here without a call.',
 }
 
 
@@ -39,6 +41,7 @@ DECIDED_TEXT = {
     'alternative': 'Your first-choice route was not available, so Faxbot used this one.',
     'unreliable': 'Faxes to this number often failed on this route, but no other route was available.',
     'unknown_cost': 'None of your routes had a price, so Faxbot used the first one in your list.',
+    'own_number': 'One of your own numbers, so Faxbot delivered it here without a call.',
 }
 
 
@@ -56,8 +59,11 @@ def route_label(key):
     return LABELS.get(key, key)
 
 
-def explain(choice):
+def explain(choice, destination=None):
     """One sentence saying what decided this route."""
+    if choice.reason == 'own_number' and destination:
+        from .local import display_number
+        return f'{display_number(destination)} is one of your own numbers, so Faxbot delivers it here without a call.'
     if choice.reason == 'included':
         card = choice.route.card
         return f'Included in your {route_label(choice.route.key)} plan ({plan_fee_text(card.monthly_fee_micros, card.currency)} a month).'
@@ -97,9 +103,11 @@ class RoutePlan:
 
 
 class RoutePlanner:
-    def __init__(self, store, *, direct_ready=None):
+    def __init__(self, store, *, direct_ready=None, local_ready=None):
         self.store = store
         self.direct_ready = direct_ready or (lambda: False)
+        # Whether this process can deliver inside Faxbot (the worker has the received-fax records).
+        self.local_ready = local_ready or (lambda: False)
 
     def tried_routes(self, job_id, current_attempt):
         """Routes earlier submitted attempts of this fax already used."""
@@ -109,7 +117,8 @@ class RoutePlanner:
                 costs.c.job_id == job_id, costs.c.id != current_attempt,
                 attempts.c.submitted_at.is_not(None))).scalars())
 
-    def plan(self, *, to_number, bound, values, pages, alternates=False, exclude=(), card_for=None):
+    def plan(self, *, to_number, bound, values, pages, alternates=False, exclude=(), card_for=None, by_call=False):
+        """``by_call``: the sender asked for a real call, so an own number is not delivered inside Faxbot."""
         destination = destination_key(to_number, getattr(values, 'fax_default_country', 'US'))
         card_for = card_for or self.store.card_for
         candidates = [RouteCandidate(bound, 'provider', bound, card_for(bound), bound=True)]
@@ -121,6 +130,8 @@ class RoutePlanner:
             peer = self.store.verified_peer(destination)
             if peer is not None:
                 candidates.insert(0, RouteCandidate(DIRECT, 'direct', DIRECT, None, peer_id=peer['id']))
+        if self.local_ready() and local_delivery.applies(values, destination, by_call=by_call):
+            candidates.insert(0, RouteCandidate(local_delivery.LOCAL, 'local', local_delivery.LOCAL, None))
         candidates = [candidate for candidate in candidates if candidate.key not in set(exclude)]
         if destination in _trunk_numbers(values):
             # One of the trunk's own numbers: an extra route over that trunk only calls itself back

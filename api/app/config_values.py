@@ -266,6 +266,8 @@ class ConfigurationValues(BaseModel):
     # rate a route needs at a number before it stops being chosen first.
     outbound_routes: str = Field('', validation_alias='FAX_OUTBOUND_ROUTES', pattern=r'^[a-z0-9_.,\s-]*$')
     route_min_success_percent: int = Field(80, validation_alias='FAX_ROUTE_MIN_SUCCESS_PERCENT', ge=0, le=100)
+    # A fax to one of the installation's own receiving numbers becomes a received fax here, with no call.
+    local_delivery_enabled: bool = Field(True, validation_alias='FAX_LOCAL_DELIVERY')
     # Default intake email connector; more connectors are managed in the console.
     intake_email_enabled: bool = Field(False, validation_alias='INTAKE_EMAIL_ENABLED')
     intake_smtp_host: str = Field('', validation_alias='INTAKE_SMTP_HOST')

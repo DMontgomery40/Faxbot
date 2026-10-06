@@ -80,7 +80,8 @@ class Spending:
         """Per provider: faxes, billed minutes, reported charges, estimates for the rest and open counts."""
         now = now or utcnow()
         c = self.routes.costs
-        window = sa.and_(c.c.created_at >= since, c.c.outcome != 'pending')
+        # Faxes delivered inside Faxbot placed no call and cost nothing; Savings counts them as calls avoided.
+        window = sa.and_(c.c.created_at >= since, c.c.outcome != 'pending', c.c.provider_id != 'local')
         with read_connection(self.routes.engine) as connection:
             rows = connection.execute(sa.select(c).where(window)).mappings().all()
             calls = self._outbound_calls(connection, window)
@@ -284,6 +285,11 @@ class Spending:
                 **row, 'estimated_cost_micros': self._part(row['estimated_cost_micros'], share),
                 'reported_cost_micros': self._part(row['reported_cost_micros'], share)})
         shared = any(row['id'] in shares for row in rows)
+        if (rows and all(row['provider_id'] == 'local' for row in rows)) or (not rows and pending == 'local'):
+            # A fax to one of the installation's own numbers: delivered inside Faxbot, with no call.
+            return {'state': 'local', 'summary': 'No call: delivered inside Faxbot.', 'reported_cost': {},
+                    'estimated_cost': {}, 'attempts': len(rows), **where}
+        rows = [row for row in rows if row['provider_id'] != 'local']
         if not rows:
             card = self.routes.card_for(pending) if pending else None
             if card is not None and card.flat_plan:

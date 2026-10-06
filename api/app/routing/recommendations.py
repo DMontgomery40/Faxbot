@@ -19,6 +19,8 @@ def cost_text(figure):
     state = figure.state
     if state == 'direct':
         return 'No charge, sent straight to the partner'
+    if state == 'local':
+        return 'No call: delivered inside Faxbot'
     if state == 'included':
         return 'Included in your plan'
     if state == 'mixed':
@@ -33,7 +35,7 @@ def cost_text(figure):
 
 def basis_text(figure):
     """Where the cost comes from: "14 faxes billed", "9 faxes billed, 5 estimated", "1 fax with no price"."""
-    if figure.state in ('direct', 'included'):
+    if figure.state in ('local', 'direct', 'included'):
         return None
     parts = [(figure.reported, 'billed'), (figure.estimated, 'estimated'), (figure.unpriced, 'with no price')]
     parts = [(count, words) for count, words in parts if count]
@@ -50,7 +52,7 @@ def route_view(figure):
             'delivered': figure.delivered, 'failed': figure.failed, 'uncertain': figure.uncertain,
             'cancelled': figure.cancelled, 'delivered_percent': figure.delivered_percent,
             'cost_per_delivered': _money(figure.per_delivered_micros, figure.currency),
-            'total_cost': (None if figure.state in ('direct', 'included', 'mixed')
+            'total_cost': (None if figure.state in ('local', 'direct', 'included', 'mixed')
                            else _money(figure.cost_micros, figure.currency)),
             'estimate': figure.estimate, 'charged_attempts': figure.reported,
             'estimated_attempts': figure.estimated, 'unpriced_attempts': figure.unpriced,

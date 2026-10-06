@@ -17,7 +17,8 @@ delivered faxes divide it, so a route that often needs a second call costs more
 per delivered fax than its rate card suggests.
 
 A route whose rate card is a flat monthly plan is "included in the plan": it
-has no cost per fax, never a $0 "cheapest". A direct delivery has no fax call.
+has no cost per fax, never a $0 "cheapest". A direct delivery has no fax call, and
+a fax to one of the installation's own numbers is delivered inside Faxbot with no call.
 """
 from dataclasses import dataclass
 from decimal import ROUND_HALF_UP, Decimal
@@ -102,6 +103,7 @@ class DeliveredCost:
     unpriced: int = 0
     plan: bool = False
     direct: bool = False
+    local: bool = False
     # Delivered faxes: their pages, and connected seconds for those with a measured call.
     delivered_pages: int = 0
     connected_seconds: int = 0
@@ -109,7 +111,9 @@ class DeliveredCost:
 
     @property
     def state(self):
-        """``direct``, ``included``, ``mixed``, ``unpriced``, ``undelivered`` or ``priced``."""
+        """``local``, ``direct``, ``included``, ``mixed``, ``unpriced``, ``undelivered`` or ``priced``."""
+        if self.local:
+            return 'local'
         if self.direct:
             return 'direct'
         if self.plan:
@@ -190,5 +194,5 @@ def delivered_costs(attempts, cards=None):
             currency = card.currency
         result[route] = DeliveredCost(
             **entry, cost_micros=costs.get(currency, 0) if currency else 0, currency=currency,
-            mixed=len(costs) > 1, plan=bool(card is not None and card.flat_plan), direct=route == 'direct')
+            mixed=len(costs) > 1, plan=bool(card is not None and card.flat_plan), direct=route == 'direct', local=route == 'local')
     return result

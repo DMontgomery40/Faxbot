@@ -36,6 +36,9 @@ export const ROUTE_LABELS: Record<string, string> = PROVIDER_LABELS;
 
 const routeLabel = (id: string) => providerLabel(id);
 
+// One sentence for the switch that keeps faxes to the installation's own numbers off the phone network.
+export const LOCAL_DELIVERY_HELP = 'A fax to one of the numbers this Faxbot receives on arrives in Received at once, with no call and no charge.';
+
 export function parseRoutes(value: FormValue | undefined): string[] {
   const result: string[] = [];
   for (const part of String(value ?? '').split(',')) {
@@ -52,6 +55,7 @@ export function deliveryEditorValues(data: Settings): Values {
   if (data.routing) {
     values.outbound_routes = parseRoutes(data.routing.outbound_routes).join(',');
     values.route_min_success_percent = data.routing.min_success_percent;
+    values.local_delivery_enabled = data.routing.local_delivery ?? true;
   }
   if (data.direct) {
     values.direct_delivery_enabled = data.direct.enabled;
@@ -231,6 +235,9 @@ export function DeliverySettingsSections({ client, settings, form, loaded, onCha
             outbound={outbound} />
           {text('Minimum delivery rate (%)', 'route_min_success_percent',
             'A route that delivers less than this share of recent faxes to a number is tried last for that number.', 'number')}
+          <SwitchField label="Deliver faxes to your own numbers inside Faxbot" checked={Boolean(form.local_delivery_enabled)}
+            onChange={(checked) => onChange('local_delivery_enabled', checked)}
+            helper={LOCAL_DELIVERY_HELP} />
         </ResponsiveFormSection>
       )}
 

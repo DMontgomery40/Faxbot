@@ -25,13 +25,14 @@ DIRECT = 'direct'
 # ``reliable``: first because cheaper routes often failed here; its own cost is unknown.
 # ``unknown_cost``: no route has a known price, so the configured order decides.
 # ``cheapest_delivered``: the lowest observed cost per delivered fax among routes with enough delivered faxes.
+# ``own_number``: one of the installation's own receiving numbers, delivered inside Faxbot without a call.
 REASONS = ('direct_peer', 'preferred', 'cheapest', 'alternative', 'unreliable', 'configured', 'known_cheapest',
-           'included', 'reliable', 'unknown_cost', 'cheapest_delivered')
+           'included', 'reliable', 'unknown_cost', 'cheapest_delivered', 'own_number')
 
 
 @dataclass(frozen=True)
 class RouteCandidate:
-    """``key`` is ``direct`` or a provider identity; one candidate per key."""
+    """``key`` is ``local``, ``direct`` or a provider identity; one candidate per key."""
     key: str
     kind: str
     provider_id: str
@@ -40,7 +41,7 @@ class RouteCandidate:
     peer_id: str | None = None
 
     def __post_init__(self):
-        if self.kind not in {'direct', 'provider'}:
+        if self.kind not in {'local', 'direct', 'provider'}:
             raise ValueError('Unknown route kind.')
 
 
@@ -106,13 +107,17 @@ class RoutePolicy:
             chosen.append(RouteChoice(candidate, reason, estimates[candidate.key], delivered.get(candidate.key),
                                       compared))
 
+        local = next((c for c in candidates if c.kind == 'local'), None)
         direct = next((c for c in candidates if c.kind == 'direct'), None)
         providers = [c for c in candidates if c.kind == 'provider']
         override = next((c for c in providers if preferred is not None and c.key == preferred), None)
-        # An explicit provider preference is an operator override, ahead of
-        # the direct route; otherwise a verified direct route always goes first.
+        # An explicit provider preference is an operator override, ahead of every
+        # other route; otherwise one of the installation's own numbers is delivered
+        # inside Faxbot, then a verified direct route goes first.
         if override is not None:
             take(override, 'preferred')
+        if local is not None:
+            take(local, 'own_number' if override is None else 'alternative')
         if direct is not None:
             take(direct, 'direct_peer')
         remaining = [c for c in providers if c is not override]

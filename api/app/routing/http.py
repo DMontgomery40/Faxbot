@@ -46,7 +46,13 @@ def _background(app):
     carriers = CarrierReconciler(CarrierChargeStore(engine), routes, carrier_source(_telnyx_key),
                                  numbers=lambda: _trunk_numbers(_managed_values()))
     fallback = FallbackScheduler(delivery, routes, ami=ami_client)
-    return [('faxbot-route-policy', _install_policy(OutboundStore, FallbackPolicy(fallback))),
+    # Faxes to the installation's own numbers whose answer was lost: delivered, or sent normally.
+    from .local import LocalReconciler, for_application
+    local_delivery, local_values, _ = for_application(app, runtime)
+    local = LocalReconciler(local_delivery, delivery, routes, values=local_values)
+    return [('faxbot-local-delivery', repeat(local.step, interval=30.0, initial_delay=20.0,
+                                             warning='Faxes to your own numbers could not be checked.')),
+            ('faxbot-route-policy', _install_policy(OutboundStore, FallbackPolicy(fallback))),
             ('faxbot-route-costs', repeat(recorder.step, interval=15.0, initial_delay=5.0,
                                           warning='Fax cost estimates are temporarily unavailable.')),
             ('faxbot-route-billing', repeat(billing.step, interval=60.0, initial_delay=30.0,
@@ -216,7 +222,7 @@ def _recommendation(store, number, revision, bound, pages=1):
     """
     if revision is None or bound is None:
         return []
-    planner = RoutePlanner(store, direct_ready=lambda: True)
+    planner = RoutePlanner(store, direct_ready=lambda: True, local_ready=lambda: True)
     plan = planner.plan(to_number=number, bound=bound, values=revision.values, pages=pages, alternates=True)
     def plan_fee(card):
         if card is None or not card.flat_plan:
@@ -226,7 +232,7 @@ def _recommendation(store, number, revision, bound, pages=1):
     def money(card, micros):
         return None if card is None or micros is None else {'currency': card.currency, 'amount': format_amount(micros)}
     return [{'route': choice.route.key, 'label': route_label(choice.route.key), 'reason': choice.reason,
-             'explanation': explain(choice),
+             'explanation': explain(choice, plan.destination),
              'estimated_cost_one_page': money(choice.route.card, None if choice.route.card is None
                                                else estimate_cost(choice.route.card, 1)),
              # This fax: setup plus typical seconds a page, rounded the way the card bills.

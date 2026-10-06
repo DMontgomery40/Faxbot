@@ -286,6 +286,8 @@ def project_admin_settings(snapshot: ConfigurationSnapshot, pending_fields: Iter
         'routing': {
             'outbound_routes': values.outbound_routes,
             'min_success_percent': values.route_min_success_percent,
+            # Faxes to the installation's own numbers become received faxes here, with no call.
+            'local_delivery': values.local_delivery_enabled,
         },
         'intake': {
             'email_enabled': values.intake_email_enabled,

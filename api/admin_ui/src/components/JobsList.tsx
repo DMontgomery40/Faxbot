@@ -163,7 +163,10 @@ function eventDetails(event: DeliveryHistoryEvent): string {
 
 interface DetailSelection { jobId: string }
 
+export const BY_CALL_TEXT = 'You asked for a real call through your carrier, even if the number is one of your own.';
+
 function routeName(route: string): string {
+  if (route === 'local') return 'This installation';
   return route === 'direct' ? 'Direct delivery' : providerLabel(route);
 }
 
@@ -682,6 +685,12 @@ function JobsList({ client, openJobId, onOpened, onSendFax }: JobsListProps) {
                   secondary={<>
                     {routeText(detailJob.backend, costs.get(detailJob.id))}
                     {/* Why Faxbot chose it, as recorded when it chose it. */}
+                    {detailJob.send_by_call && (
+                      <Typography component="span" variant="body2" color="text.secondary" display="block"
+                        data-testid="job-by-call">
+                        {BY_CALL_TEXT}
+                      </Typography>
+                    )}
                     {costs.get(detailJob.id)?.route_explanation && (
                       <Typography component="span" variant="body2" color="text.secondary" display="block"
                         data-testid="job-route-reason">

@@ -92,7 +92,8 @@ export default function WizardTestFax({ client, sending, receiving, numbers, num
       const file = new File([page], 'faxbot-test-page.pdf', { type: 'application/pdf' });
       // One key per request: the server never makes a second fax from it.
       const key = typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
-      const accepted = await client.sendFax(destination, file, { idempotencyKey: key });
+      // A test proves the carrier path, so it always places a real call, even to one of your own numbers.
+      const accepted = await client.sendFax(destination, file, { idempotencyKey: key, byCall: true });
       const started = Date.now();
       while (alive.current) {
         await sleep(pollMs);
