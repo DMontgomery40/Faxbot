@@ -443,12 +443,16 @@ class OutboundStore:
         values = self._active_values(connection)
         return values is not None and not values.fax_disabled
 
-    def capacity(self):
-        """Room for calls (``capacity.py``), or None before the tables it reads exist."""
+    def capacity(self, connection=None):
+        """Room for calls (``capacity.py``), or None before the tables it reads exist.
+
+        Inside the claim's locked transaction pass its ``connection`` so the first
+        reflection reads through it and opens no second connection.
+        """
         if getattr(self, '_capacity', None) is None:
             try:
-                from .capacity import Capacity
-                self._capacity = Capacity(self.configuration.engine)
+                from .capacity import for_engine
+                self._capacity = for_engine(self.configuration.engine, connection)
             except Exception:
                 return None
         return self._capacity
@@ -486,7 +490,7 @@ class OutboundStore:
             values = self._active_values(connection)
             if values is None or values.fax_disabled:
                 return None
-            capacity = self.capacity()
+            capacity = self.capacity(connection)
             together = self._claim_together_on(connection, owner, now, lease_seconds, capacity=capacity,
                                                values=values)
             if together is not None:

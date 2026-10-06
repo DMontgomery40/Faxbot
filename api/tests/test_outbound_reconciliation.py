@@ -9,7 +9,7 @@ import httpx
 import pytest
 import sqlalchemy as sa
 
-from api.tests.test_outbound_store import installation, accept
+from api.tests.test_outbound_store import installation, accept, another_number
 from api.tests.test_schema import database
 from api.app.config_profiles import ProviderConfiguration
 from api.app.outbound_polling import OutboundPoller
@@ -17,11 +17,12 @@ from api.app.outbound_store import DeliveryConflict, OutboundStore
 
 
 def uncertain(installation, *, profile=None):
+    """One fax whose result is unknown; each goes to its own number, which it keeps holding (capacity.py)."""
     configuration, store, snapshot = installation
     if profile is not None:
         snapshot = configuration.apply(snapshot, snapshot.active.values, actor="test",
             restart_required=False, providers={"outbound": profile})
-    job_id = accept((configuration, store, snapshot))
+    job_id = accept((configuration, store, snapshot), to_number=another_number())
     claim = store.claim("synthetic-original-worker")
     assert store.begin_submission(claim)
     store.record_uncertain(claim, category="response_unusable")

@@ -998,10 +998,10 @@ async def admin_restart():
 
 def _waiting_for_line(store, now):
     try:
-        from .capacity import Capacity
+        from .capacity import for_engine
         from .batching.store import tables as batching_tables, waiting_ids
         values = store.read().active.values
-        return Capacity(store.engine).waiting_for_line(values, now, waiting=waiting_ids(batching_tables(store.engine)))
+        return for_engine(store.engine).waiting_for_line(values, now, waiting=waiting_ids(batching_tables(store.engine)))
     except Exception:
         return 0
 
@@ -1009,8 +1009,8 @@ def _waiting_for_line(store, now):
 def _waiting_reason(store, job_id, now):
     """One sentence while a sent fax waits for room on its number or the trunk (capacity.py), else None."""
     try:
-        from .capacity import Capacity
-        return Capacity(store.engine).waiting_sentence(job_id, store.read().active.values, now)
+        from .capacity import for_engine
+        return for_engine(store.engine).waiting_sentence(job_id, store.read().active.values, now)
     except Exception:
         return None
 
