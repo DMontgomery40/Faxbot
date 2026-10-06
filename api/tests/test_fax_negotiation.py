@@ -266,13 +266,13 @@ def test_a_fax_the_ssl_fax_engine_received_records_its_whole_call_values(install
     kept = row(database, 'inbound', 'engine.179117219142')
     assert kept['negotiation_by'] == 'hylafax' and kept['session_seconds'] == 51 and kept['rate_last_page'] == 9600
     assert fax_negotiation.received_view(database, 'fax-2')['sentence'] == (
-        'The call used MR without error correction starting at 14400 bit/s and dropping to 9600 bit/s, '
+        'The call used MR compression without error correction starting at 14400 bit/s and dropping to 9600 bit/s, '
         'fine resolution; 2 pages in 35 s.')
 
 
 @pytest.mark.parametrize('values, sentence', [
     ({'rate_first': 14400, 'rate_lowest': 14400, 'compression': 'MMR', 'ecm': 'on', 'resolution': 'fine'},
-     'The call used MMR with error correction at 14400 bit/s, fine resolution; 2 pages in 41 s.'),
+     'The call used MMR compression with error correction at 14400 bit/s, fine resolution; 2 pages in 41 s.'),
     ({'rate_first': 9600, 'rate_lowest': 9600, 'resolution': 'mixed'},
      'The call ran at 9600 bit/s (compression and error correction not reported by this engine), more than one '
      'resolution; 2 pages in 41 s.'),
@@ -324,14 +324,14 @@ def test_the_summary_counts_calls_success_seconds_per_page_and_attempts_per_deli
     assert result['sentence'] == ('Measured on 6 calls in the last 30 days; the engine reported nothing for 1 more '
                                   'call.')
     groups = {(group['coding_label'], group['speed_label']): group for group in result['groups']}
-    best = groups[('MMR with error correction', '14400 bit/s')]
+    best = groups[('MMR compression with error correction', '14400 bit/s')]
     assert (best['calls'], best['sent'], best['received'], best['delivered']) == (4, 3, 1, 3)
     assert best['success_percent'] == 75
     # (40 + 50 + 20 + 25) s over 2 + 3 + 0 + 1 pages, the failed call's time included.
     assert best['seconds_per_page'] == 22.5
     # x took 2 calls, y took 1.
     assert best['attempts_per_delivered'] == 1.5
-    worse = groups[('MR without error correction', '9600 bit/s')]
+    worse = groups[('MR compression without error correction', '9600 bit/s')]
     assert (worse['calls'], worse['delivered'], worse['seconds_per_page'], worse['attempts_per_delivered']) == (
         1, 0, None, None)
     built_in = groups[('not reported by this engine', '14400 bit/s on the last page')]

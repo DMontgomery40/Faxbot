@@ -41,6 +41,7 @@ import SecretInput from './common/SecretInput';
 import EnvSetField, { environmentManaged } from './common/EnvSetField';
 import { numberHint, numberPlaceholder, settingsNumberFormat } from './common/numbers';
 import InboundRecovery from './InboundRecovery';
+import NegotiationSummary from './CallNegotiation';
 import NetworkForFax from './NetworkForFax';
 import TelnyxT38 from './TelnyxT38';
 import FaxSettings from './FaxSettings';
@@ -837,6 +838,7 @@ function SipTrunkSettings({ client, showCalls = true, revision: sharedRevision, 
           ))}
           {nextCursor && <Button sx={{ mt: 1 }} onClick={() => loadCalls(nextCursor)}>Show older calls</Button>}
           <InboundRecovery client={client} onRecovered={() => { void loadCalls(); }} />
+          <NegotiationSummary client={client} />
         </Box>
       )}
     </Stack>

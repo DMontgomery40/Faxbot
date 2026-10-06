@@ -1532,6 +1532,7 @@ $ faxbot providers trunk [OPTIONS] COMMAND [ARGS]...
 * `status`: Check the SIP trunk: registration with the...
 * `apply`: Connect the saved phone line settings.
 * `calls`: List recent calls on the phone line,...
+* `negotiation`: Show how fax calls on your phone line...
 * `restart-engine`: Restart the fast fax service once no fax...
 * `mode`: Choose how new fax calls are sent, T.38...
 * `limits`: Show or change how many calls the trunk...
@@ -1584,6 +1585,21 @@ $ faxbot providers trunk calls [OPTIONS]
 
 * `--limit <int range>`: How many calls to show, newest first.  [default: 10; 1&lt;=x&lt;=200]
 * `--direction <str>`: Only outbound or inbound calls.
+* `--help`: Show this message and exit.
+
+#### `faxbot providers trunk negotiation`
+
+Show how fax calls on your phone line went, grouped by compression, error correction and speed: calls, how many succeeded, seconds per confirmed page and calls per delivered fax. Faxbot only measures these; it changes nothing because of them.
+
+**Usage**:
+
+```console
+$ faxbot providers trunk negotiation [OPTIONS]
+```
+
+**Options**:
+
+* `--days DAYS`: How many days to count: 7, 30 or 90.  [default: 30]
 * `--help`: Show this message and exit.
 
 #### `faxbot providers trunk restart-engine`

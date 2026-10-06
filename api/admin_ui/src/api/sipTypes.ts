@@ -201,3 +201,50 @@ export interface SipCallPage {
   items: SipCallRecord[];
   next_cursor: string | null;
 }
+
+// What one fax call negotiated, as its engine reported it (measurement only). null: not reported by that
+// engine. The *_last_page values describe the last page only; the others the whole call.
+export interface CallNegotiation {
+  engine: 'builtin' | 'hylafax';
+  rate_first: number | null;
+  rate_lowest: number | null;
+  rate_last_page: number | null;
+  trainings: number | null;
+  compression: string | null;
+  resolution: string | null;
+  resolution_last_page: string | null;
+  ecm: 'on' | 'off' | 'mixed' | null;
+  sslfax: boolean | null;
+  transfer_seconds: number | null;
+  session_seconds: number | null;
+  pages: number | null;
+  call_seconds: number | null;
+  // One sentence, worded by the server.
+  sentence: string;
+}
+
+export interface NegotiationGroup {
+  compression: string | null;
+  ecm: 'on' | 'off' | 'mixed' | null;
+  speed_scope: 'call' | 'last_page' | 'internet' | null;
+  speed: number | null;
+  calls: number;
+  sent: number;
+  received: number;
+  delivered: number;
+  pages: number;
+  success_percent: number;
+  seconds_per_page: number | null;
+  attempts_per_delivered: number | null;
+  coding_label: string;
+  speed_label: string;
+}
+
+export interface NegotiationSummary {
+  days: number;
+  calls: number;
+  measured_calls: number;
+  groups: NegotiationGroup[];
+  sentence: string;
+  note: string;
+}

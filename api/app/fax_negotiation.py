@@ -137,8 +137,8 @@ def measured(row):
 
 
 def _coding(compression, ecm):
-    if compression == 'mixed':
-        compression = 'more than one compression'
+    compression = None if not compression else (
+        'more than one compression' if compression == 'mixed' else f'{compression} compression')
     if compression and ecm:
         return {'on': f'{compression} with error correction', 'off': f'{compression} without error correction',
                 'mixed': f'{compression} with error correction on some pages'}[ecm]
@@ -267,7 +267,7 @@ def speed_label(scope, rate):
 def coding_label(compression, ecm):
     if not compression and not ecm:
         return NOT_REPORTED
-    return _coding(compression, ecm).replace('more than one compression', 'mixed compression')
+    return _coding(compression, ecm)
 
 
 def _order(group):

@@ -1,4 +1,5 @@
 import type { FaxTogetherSummary } from './batchingTypes';
+import type { CallNegotiation } from './sipTypes';
 // TypeScript types for the admin API
 
 // Active operator fields consumed by Send and Plugins. The shell builds this
@@ -73,7 +74,11 @@ export interface FaxJob extends DeliveryMetadata {
   // Present when the fax waited, or went, with other faxes to the same number.
   together?: FaxTogetherSummary | null;
   // Over the SIP trunk: which fax engine carried it, and SSL Fax's line or the built-in engine's reason.
-  fax_engine?: { engine: 'hylafax' | 'builtin'; sslfax: boolean | null; sentence: string | null } | null;
+  // negotiation: what the call negotiated (measurement only), once the call has a result.
+  fax_engine?: {
+    engine: 'hylafax' | 'builtin'; sslfax: boolean | null; sentence: string | null;
+    negotiation?: CallNegotiation | null;
+  } | null;
   // The sender asked for a real call through the carrier, even to one of this installation's own numbers.
   send_by_call?: boolean;
   // Marked urgent: it goes before other faxes waiting for the same line.

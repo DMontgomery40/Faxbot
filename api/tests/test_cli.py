@@ -1090,6 +1090,54 @@ def test_trunk_status_and_calls_read_as_plain_sentences(trunk_cli):
     assert trunk_cli.json('providers', 'trunk', 'apply', '--no-wait')['engine'] == 'manual'
 
 
+def test_trunk_negotiation_and_each_faxs_call_say_what_was_measured_and_what_was_not(trunk_cli, tmp_path):
+    """`faxbot providers trunk negotiation`, `sent show` and `received show`: the same words as the console."""
+    from datetime import datetime, timedelta
+    from app import hylafax_engine, hylafax_records, sip_calls
+    engine = trunk_cli.client.app.state.configuration_runtime.manager.store.engine
+    now = datetime.utcnow().replace(microsecond=0)
+    epoch = lambda moment: str(int((moment - datetime(1970, 1, 1)).total_seconds()))  # noqa: E731
+    received = trunk_cli.json('system', 'diagnostics', 'test-fax', '--from', '+15559990000', '--to', '+15555550100')
+    call = {'did': '+15555550100', 'caller': '+15559990000', 'started_at': epoch(now), 'answered_at': epoch(now),
+            'ended_at': epoch(now + timedelta(seconds=44)), 'pages': 1, 't38': True, 'rate': 9600,
+            'resolution': '8031x3850'}
+    sip_calls.record_inbound_call(engine, call, call_id='1791083644.7', inbound_fax_id=received['id'],
+                                  fax_status='SUCCESS')
+    note = tmp_path / 'note.txt'
+    note.write_text('Synthetic\n')
+    sent = trunk_cli.json('send', '+15551230001', note, '--queue')
+    attempt = 'b' * 32
+    calls = sip_calls.SipCallRecords(engine)
+    calls.record_submission({'JobID': sent['id'], 'AttemptID': attempt, 'Called': '+15551230001'}, now=now)
+    hylafax_records.records_for(engine).record_call(direction='outbound', call_key=attempt, job_id=sent['id'],
+                                                    engine='builtin', reason=hylafax_engine.NOT_RUNNING, now=now)
+    calls.record_fax_result({'JobID': sent['id'], 'AttemptID': attempt, 'Status': 'FAILED', 'Pages': '0',
+                             'Error': 'T30_ERR_RX_NOCARRIER', 'Answered': epoch(now),
+                             'Ended': epoch(now + timedelta(seconds=30))}, now=now)
+    sip_calls.record_builtin_negotiation(engine, direction='outbound', call_key=attempt, rate='14400',
+                                         resolution='0x0', pages='0', job_id=sent['id'])
+
+    summary = trunk_cli('providers', 'trunk', 'negotiation', '--days', '7')
+    assert summary.exit_code == 0, summary.stdout
+    out = ' '.join(summary.stdout.split())
+    for words in ('Measured on 1 call in the last 7 days; the engine reported nothing for 1 more call.',
+                  '9600 bit/s on the last page', 'not reported by this engine', 'Calls per delivered fax',
+                  'Faxbot only measures these for now; it does not change speed, compression or error correction '
+                  'because of them.'):
+        assert words in out, words
+    assert '14400' not in out  # spandsp's starting speed on a call that confirmed no page is not a measurement
+    assert trunk_cli.json('providers', 'trunk', 'negotiation')['days'] == 30
+    assert trunk_cli('providers', 'trunk', 'negotiation', '--days', '12').exit_code != 0
+
+    shown = ' '.join(trunk_cli('received', 'show', received['id']).stdout.split())
+    assert ('How the call went The last page went at 9600 bit/s and had standard resolution; compression and error '
+            'correction are not reported by this engine; 1 page in a 44 s call.') in shown
+    assert trunk_cli.json('received', 'show', received['id'])['negotiation']['rate_last_page'] == 9600
+    sent_shown = ' '.join(trunk_cli('sent', 'show', sent['id']).stdout.split())
+    assert ('How the call went Speed, compression and error correction were not reported by this engine; no pages '
+            'confirmed in a 30 s call.') in sent_shown
+
+
 def test_trunk_telnyx_shows_t38_per_number_and_turns_it_on_for_one(monkeypatch, tmp_path):
     import httpx
     from app import sip_http, stun, telnyx_t38

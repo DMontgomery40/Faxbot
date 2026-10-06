@@ -1,4 +1,6 @@
-import type { RecipientFaxLimits, SipApplyResult, SipCallPage, SipPreset, SipTrunkStatus } from './sipTypes';
+import type {
+  CallNegotiation, NegotiationSummary, RecipientFaxLimits, SipApplyResult, SipCallPage, SipPreset, SipTrunkStatus,
+} from './sipTypes';
 import type { SipNetworkReport, TelnyxT38Report } from './networkTypes';
 import type { BatchingCheck, BatchingNumber, BatchingSave, FaxTogether } from './batchingTypes';
 import type {
@@ -653,6 +655,15 @@ class AdminAPIClient {
 
   async listSipCalls(params: { cursor?: string | null; limit?: number; direction?: 'outbound' | 'inbound' } = {}): Promise<SipCallPage> {
     return this.json(`/admin/sip/calls${query(params)}`);
+  }
+
+  // What fax calls on the phone line negotiated (speed, compression, error correction): measurement only.
+  async getNegotiationSummary(days: number): Promise<NegotiationSummary> {
+    return this.json(`/admin/sip/negotiation${query({ days })}`);
+  }
+
+  async getReceivedNegotiation(inboundId: string): Promise<CallNegotiation> {
+    return this.json(`/admin/sip/negotiation/received/${id(inboundId)}`);
   }
 
   // The network check for fax over IP: the last result, and Check again.

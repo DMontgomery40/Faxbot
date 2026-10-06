@@ -234,9 +234,13 @@ def jobs_get(fax_id: str = typer.Argument(..., help='Fax ID.')):
     if job.get('send_by_call'):
         route.append(('Note', 'You asked for a real phone call through your carrier, even if the number is one of your own.'))
 
+    # What the phone call negotiated (speed, compression, error correction), measured only.
+    negotiation = ((job.get('fax_engine') or {}).get('negotiation') or {}).get('sentence')
+
     def human(out):
         out.fields(_fax_fields(job) + route + ([('Reference on its separator page', together.get('reference'))]
-                                               if together.get('state') == 'together' else []))
+                                               if together.get('state') == 'together' else [])
+                   + ([('How the call went', negotiation)] if negotiation else []))
         if line:
             out.line(line)
         # Over the SIP trunk: SSL Fax's line, or why the built-in fax engine carried it.
@@ -460,7 +464,16 @@ def inbound_get(inbound_id: str = typer.Argument(..., help="A received fax's ID,
     """Show one received fax."""
     api = state.api()
     item = received_id(api, inbound_id, lambda fax_id: api.get('/inbound/' + segment(fax_id)))
-    state.out().result(item, lambda out: out.fields(_inbound_fields(item)))
+    # What the phone call negotiated, when Faxbot's own phone line carried the fax (measured only).
+    try:
+        negotiation = api.get('/admin/sip/negotiation/received/' + segment(item.get('id') or inbound_id))
+    except CliError:
+        negotiation = None
+    if negotiation:
+        item = {**item, 'negotiation': negotiation}
+    sentence = (negotiation or {}).get('sentence')
+    state.out().result(item, lambda out: out.fields(_inbound_fields(item)
+                                                    + ([('How the call went', sentence)] if sentence else [])))
 
 
 @inbound.command('pdf')
