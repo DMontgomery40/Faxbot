@@ -7,9 +7,9 @@ Nothing is stored before a notification is authenticated:
   signature checks turned off, the notification is only a hint: Faxbot looks
   the fax up by ID in the configured Phaxio account first, and ignores it when
   the account has no such received fax.
-- Sinch: HTTP basic auth (only with both a user name and a password) and/or the
-  HMAC header when configured; otherwise the same look-up-by-ID rule in the
-  configured Sinch project.
+- Sinch: HTTP basic auth (only with both a user name and a password), the only
+  webhook security Sinch's Fax API offers (it signs no webhooks); otherwise the
+  same look-up-by-ID rule in the configured Sinch project.
 
 A notification confirmed by look-up is kept only as the provider's own record
 (ID, numbers, pages, time), and its document is always fetched from the
@@ -343,26 +343,23 @@ def _sinch_basic_configured():
     return settings.sinch_inbound_basic_configured
 
 
-def _sinch_authenticated(request, raw):
-    """True when basic auth or HMAC is configured and correct; None when neither is configured."""
-    configured = False
-    if _sinch_basic_configured():
-        configured = True
-        header = request.headers.get('Authorization', '')
-        try:
-            user, _, password = base64.b64decode(header.split(' ', 1)[1]).decode().partition(':') \
-                if header.startswith('Basic ') else ('', '', '')
-        except (ValueError, UnicodeError, binascii.Error):
-            user, password = '', ''
-        if not (hmac.compare_digest(user.encode(), settings.sinch_inbound_basic_user.encode())
-                and hmac.compare_digest(password.encode(), settings.sinch_inbound_basic_pass.encode())):
-            raise HTTPException(401, detail='Invalid basic auth')
-    if settings.sinch_inbound_hmac_secret:
-        configured = True
-        digest = hmac.new(settings.sinch_inbound_hmac_secret.encode(), raw, hashlib.sha256).hexdigest()
-        if not hmac.compare_digest(digest, request.headers.get('X-Sinch-Signature', '').strip().lower()):
-            raise HTTPException(401, detail='Invalid signature')
-    return configured or None
+def _sinch_authenticated(request):
+    """True when basic auth is configured and correct; None when it is not configured.
+
+    Basic auth is the only webhook security Sinch's Fax API (v3) offers: it signs no webhooks.
+    """
+    if not _sinch_basic_configured():
+        return None
+    header = request.headers.get('Authorization', '')
+    try:
+        user, _, password = base64.b64decode(header.split(' ', 1)[1]).decode().partition(':') \
+            if header.startswith('Basic ') else ('', '', '')
+    except (ValueError, UnicodeError, binascii.Error):
+        user, password = '', ''
+    if not (hmac.compare_digest(user.encode(), settings.sinch_inbound_basic_user.encode())
+            and hmac.compare_digest(password.encode(), settings.sinch_inbound_basic_pass.encode())):
+        raise HTTPException(401, detail='Invalid basic auth')
+    return True
 
 
 async def _sinch_payload(request, raw):
@@ -399,10 +396,10 @@ async def _sinch_payload(request, raw):
 async def sinch_inbound(request: Request):
     _require_route('sinch', '/sinch-inbound')
     service = _acquisition(request)
-    if not (_sinch_basic_configured() or settings.sinch_inbound_hmac_secret):
+    if not _sinch_basic_configured():
         _limit_unverified(request, '/sinch-inbound')
     raw = await _bounded_body(request, JSON_BODY_BYTES)
-    authenticated = _sinch_authenticated(request, raw)
+    authenticated = _sinch_authenticated(request)
     data, attached = await _sinch_payload(request, raw)
     if data.get('event') not in (None, 'INCOMING_FAX'):
         return {'status': 'ignored'}
@@ -418,7 +415,7 @@ async def sinch_inbound(request: Request):
                     'to_number': fax.get('to') or fax.get('to_number'),
                     'pages': _int(fax.get('numberOfPages') or fax.get('num_pages') or fax.get('pages')),
                     'completed_at': fax.get('completedTime')}
-    confirmed, verified_by = notification, 'basic auth' if _sinch_basic_configured() else 'signature'
+    confirmed, verified_by = notification, 'basic auth'
     if not authenticated:
         attached, verified_by = None, 'lookup'
         api, _ = provider_service('sinch', settings)

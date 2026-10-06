@@ -399,6 +399,30 @@ def test_sinch_without_webhook_auth_confirms_by_lookup_and_ignores_unknown_faxes
     assert providers.hosts() == {'fax.api.sinch.com'}
 
 
+def test_a_sinch_signing_secret_left_in_env_neither_refuses_nor_authenticates(isolated_installation, monkeypatch,
+                                                                              providers):
+    """Sinch's Fax API signs no webhooks, so SINCH_INBOUND_HMAC_SECRET is retired. A value left in .env used to
+    refuse every real notification (Sinch sends no X-Sinch-Signature); it is ignored, and a header made with it
+    proves nothing: the fax is confirmed with Sinch and its document fetched from Sinch."""
+    import hmac as hmac_module
+    secret = 'synthetic-retired-signing-secret'
+    environment(monkeypatch, SINCH_INBOUND_HMAC_SECRET=secret)
+    providers.sinch('01SIGNEDFAX')
+    document = pdf_bytes('the real Sinch document')
+    providers.files[('sinch', '01SIGNEDFAX')] = (200, document)
+    event = dict(_sinch_event('01SIGNEDFAX'), file=base64.b64encode(pdf_bytes('forged document')).decode())
+    raw = json.dumps(event).encode()
+    signed = {'Content-Type': 'application/json',
+              'X-Sinch-Signature': hmac_module.new(secret.encode(), raw, hashlib.sha256).hexdigest()}
+    with client() as http:
+        assert http.post('/sinch-inbound', content=raw, headers=signed).json() == {'status': 'ok'}
+        assert step() is True
+        assert only_fax(http)['sha256'] == hashlib.sha256(document).hexdigest()
+        [record] = rows(isolated_installation, 'inbound_imports')
+        assert json.loads(record['report'])['verified_by'] == 'lookup'
+        assert 'hmac' not in json.dumps(http.get('/admin/settings', headers=ADMIN).json()['inbound']['sinch'])
+
+
 # 3. The same provider fax ID under two accounts stays two records ----------------
 def test_same_fax_id_under_two_accounts_is_two_records(isolated_installation, monkeypatch, providers):
     environment(monkeypatch)

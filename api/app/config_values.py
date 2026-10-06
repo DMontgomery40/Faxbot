@@ -37,8 +37,10 @@ class ConfigurationValueError(ValueError):
 ENVIRONMENT_CREDENTIAL_EXCLUSIONS = frozenset({"api_key", "database_url"})
 # Variables of settings an earlier release had and this one removed. A settings file that still
 # names one is accepted and the value ignored, for one release, so the installation still starts.
-# SINCH_INBOUND_VERIFY_SIGNATURE: Sinch's Fax API (v3) signs no webhooks, so the setting checked nothing.
-RETIRED_ENVIRONMENT_KEYS = frozenset({"PLUGIN_REGISTRY_PATH", "SINCH_INBOUND_VERIFY_SIGNATURE"})
+# SINCH_INBOUND_VERIFY_SIGNATURE and SINCH_INBOUND_HMAC_SECRET: Sinch's Fax API (v3) signs no webhooks, so
+# the first checked nothing and the second refused every real notification.
+RETIRED_ENVIRONMENT_KEYS = frozenset({"PLUGIN_REGISTRY_PATH", "SINCH_INBOUND_VERIFY_SIGNATURE",
+                                      "SINCH_INBOUND_HMAC_SECRET"})
 ENVIRONMENT_MANAGED_REFUSAL = "This key is set in .env. Change it there, then run docker compose up -d."
 
 # Fax numbers in settings are saved in E.164; national input uses the country.
@@ -237,7 +239,6 @@ class ConfigurationValues(BaseModel):
     phaxio_inbound_verify_signature: bool = Field(True, validation_alias='PHAXIO_INBOUND_VERIFY_SIGNATURE')
     sinch_inbound_basic_user: str = Field('', validation_alias='SINCH_INBOUND_BASIC_USER')
     sinch_inbound_basic_pass: str = Field('', validation_alias='SINCH_INBOUND_BASIC_PASS', repr=False, json_schema_extra={'secret': True})
-    sinch_inbound_hmac_secret: str = Field('', validation_alias='SINCH_INBOUND_HMAC_SECRET', repr=False, json_schema_extra={'secret': True})
     storage_backend: str = Field('local', validation_alias='STORAGE_BACKEND')
     s3_bucket: str = Field('', validation_alias='S3_BUCKET')
     s3_prefix: str = Field('inbound/', validation_alias='S3_PREFIX')

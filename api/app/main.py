@@ -1463,7 +1463,6 @@ def admin_inbound_callbacks(request: Request):
             "url": f"{base}/sinch-inbound",
             "auth": {
                 "basic": settings.sinch_inbound_basic_configured,
-                "hmac": bool(settings.sinch_inbound_hmac_secret),
             },
             "notes": "Set this as the incoming fax webhook in Sinch. Without basic auth, Faxbot confirms each fax with Sinch first.",
         })
