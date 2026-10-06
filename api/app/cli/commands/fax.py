@@ -223,7 +223,7 @@ def jobs_get(fax_id: str = typer.Argument(..., help='Fax ID.')):
     route = ([('Route', _route_text(job, cost)), ('Why this route', cost.get('route_explanation'))]
              if cost.get('routes') else [])
     if job.get('send_by_call'):
-        route.append(('Phone call', 'You asked for a real phone call through your carrier, even if the number is one of your own.'))
+        route.append(('Note', 'You asked for a real phone call through your carrier, even if the number is one of your own.'))
 
     def human(out):
         out.fields(_fax_fields(job) + route + ([('Reference on its separator page', together.get('reference'))]

@@ -20,7 +20,7 @@ def cost_text(figure):
     if state == 'direct':
         return 'No charge, sent straight to the partner'
     if state == 'local':
-        return 'No call needed'
+        return 'No call'
     if state == 'included':
         return 'Included in your plan'
     if state == 'mixed':

@@ -37,7 +37,7 @@ export const ROUTE_LABELS: Record<string, string> = PROVIDER_LABELS;
 const routeLabel = (id: string) => providerLabel(id);
 
 // One sentence for the switch that keeps faxes to the installation's own numbers off the phone network.
-export const LOCAL_DELIVERY_HELP = 'A fax to one of the numbers this Faxbot receives on arrives in Received at once, with no call and no charge.';
+export const LOCAL_DELIVERY_HELP = 'A fax to one of your own fax numbers goes straight into Received, with no phone call and no charge.';
 
 export function parseRoutes(value: FormValue | undefined): string[] {
   const result: string[] = [];
