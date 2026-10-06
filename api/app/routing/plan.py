@@ -34,6 +34,21 @@ REASON_TEXT = {
 }
 
 
+# Why a sent fax went by its route, from the reason stored when Faxbot chose it; no amounts are stored.
+DECIDED_TEXT = {
+    'alternative': 'Your first-choice route was not available, so Faxbot used this one.',
+    'unreliable': 'Recent faxes to this number often failed on this route, but the other routes were unavailable.',
+    'unknown_cost': 'No route had a known price, so Faxbot used the first one in your list.',
+}
+
+
+def decided_text(route, reason):
+    """One sentence for a sent fax's stored route reason, or None for a reason Faxbot does not know."""
+    if reason == 'included':
+        return f'Included in your {route_label(route)} plan.'
+    return DECIDED_TEXT.get(reason) or REASON_TEXT.get(reason)
+
+
 def route_label(key):
     # The trunk is named after the carrier or phone system it connects to.
     if key == 'sip':

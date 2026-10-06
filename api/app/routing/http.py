@@ -421,6 +421,11 @@ def _cost_view(cost):
     view = {**cost, 'reported_cost': _money(cost.get('reported_cost', {}))}
     if 'estimated_cost' in cost:
         view['estimated_cost'] = _money(cost['estimated_cost'])
+    if 'route_reason' in cost:
+        # Sent details: why the latest attempt went by its route, in one sentence.
+        from .plan import decided_text
+        view['route_explanation'] = (decided_text(cost.get('route'), cost['route_reason'])
+                                     if cost['route_reason'] else None)
     return view
 
 

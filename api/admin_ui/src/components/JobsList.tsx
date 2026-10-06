@@ -679,7 +679,16 @@ function JobsList({ client, openJobId, onOpened, onSendFax }: JobsListProps) {
               <ListItem>
                 <ListItemText
                   primary="Route"
-                  secondary={routeText(detailJob.backend, costs.get(detailJob.id))}
+                  secondary={<>
+                    {routeText(detailJob.backend, costs.get(detailJob.id))}
+                    {/* Why Faxbot chose it, as recorded when it chose it. */}
+                    {costs.get(detailJob.id)?.route_explanation && (
+                      <Typography component="span" variant="body2" color="text.secondary" display="block"
+                        data-testid="job-route-reason">
+                        {costs.get(detailJob.id)?.route_explanation}
+                      </Typography>
+                    )}
+                  </>}
                 />
               </ListItem>
               <Divider />

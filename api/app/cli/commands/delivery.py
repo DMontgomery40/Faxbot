@@ -319,7 +319,8 @@ def _show_sending(out, result):
     out.table(['Fax number', 'Name', 'Sent now by', 'Per delivered fax', 'Cheaper route', 'Per delivered fax',
                'Saves per fax'],
               [[item['number'], item.get('display_name'), item['current']['label'], item['current']['cost_text'],
-                item['suggested']['label'], item['suggested']['cost_text'], money([item['saving_per_fax']])]
+                item['suggested']['label'], item['suggested']['cost_text'],
+                money([item['saving_per_fax']]) if item.get('saving_per_fax') else '-']
                for item in items])
     for item in items:
         out.line(item['sentence'])

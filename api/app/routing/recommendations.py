@@ -78,12 +78,20 @@ NO_SENDING = (f'No cheaper routes yet. Faxbot compares routes for a number once 
 
 
 def sending_recommendations(store, revision, bound):
-    """Numbers where another available, reliable route cost less per delivered fax than the one used first now.
+    """Numbers where another available, reliable route would have cost less than the one used first now.
 
-    Both routes need at least ``MIN_DELIVERED`` delivered faxes, every attempt
-    priced, in one currency. A flat plan or a direct partner is never compared
-    as money. With no preferred route set, Faxbot already sends by the cheaper
-    route, so a recommendation mostly means a preferred route costs more.
+    Two kinds, each with "Use this route":
+
+    - ``plan``: you chose a metered route for the number, and a flat plan that
+      already includes faxes delivered at least ``MIN_DELIVERED`` faxes to it
+      without being unreliable. It is worded as the plan, never as a $0 route,
+      and it takes precedence: a metered route is never suggested over a plan.
+    - ``cheaper_route``: another metered route cost less per delivered fax.
+      Both need at least ``MIN_DELIVERED`` delivered faxes, every attempt
+      priced, in one currency. With no preferred route set, Faxbot already
+      sends by the cheaper route, so this mostly means a preferred route costs more.
+
+    A direct partner is never compared as money.
     """
     if revision is None or bound is None:
         return []
@@ -92,30 +100,44 @@ def sending_recommendations(store, revision, bound):
     items = []
     for number, figures in sorted(DeliveredEvidence(store).by_destination(timing=False).items()):
         comparable = {key: figure for key, figure in figures.items() if figure.comparable()}
-        if len(comparable) < 2:
+        plans = {key: figure for key, figure in figures.items()
+                 if figure.state == 'included' and figure.delivered >= MIN_DELIVERED}
+        if len(comparable) < 2 and not plans:
             continue
         plan = planner.plan(to_number=number, bound=bound, values=values, pages=1, alternates=True)
         first = plan.first
-        current = comparable.get(first.route.key)
-        if current is None:
+        current = figures.get(first.route.key)
+        if current is None or current.state != 'priced':
             continue
         usable = {choice.route.key for choice in plan.choices if choice.reason != 'unreliable'}
-        options = [figure for key, figure in comparable.items()
-                   if key in usable and key != current.route and figure.currency == current.currency]
-        if not options:
-            continue
-        best = min(options, key=lambda figure: (figure.per_delivered_micros, route_label(figure.route)))
-        if best.per_delivered_micros >= current.per_delivered_micros:
-            continue
-        row = store.get_destination(number) or {}
         chosen = first.reason == 'preferred'
+        included = sorted((figure for key, figure in plans.items() if chosen and key in usable and key != current.route),
+                          key=lambda figure: route_label(figure.route))
+        if included:
+            best, kind, saving, sentence = included[0], 'plan', None, _plan_sentence(included[0], current)
+        else:
+            options = [figure for key, figure in comparable.items()
+                       if key in usable and key != current.route and figure.currency == current.currency]
+            if current.route not in comparable or not options:
+                continue
+            best = min(options, key=lambda figure: (figure.per_delivered_micros, route_label(figure.route)))
+            if best.per_delivered_micros >= current.per_delivered_micros:
+                continue
+            kind, sentence = 'cheaper_route', _sentence(best, current, chosen)
+            saving = _money(current.per_delivered_micros - best.per_delivered_micros, best.currency)
+        row = store.get_destination(number) or {}
         items.append({
             'number': number, 'display_name': row.get('display_name'), 'version': row.get('version') or 0,
-            'preferred_route': row.get('preferred_route'), 'chosen_by_you': chosen,
-            'current': route_view(current), 'suggested': route_view(best),
-            'saving_per_fax': _money(current.per_delivered_micros - best.per_delivered_micros, best.currency),
-            'sentence': _sentence(best, current, chosen)})
+            'preferred_route': row.get('preferred_route'), 'chosen_by_you': chosen, 'kind': kind,
+            'current': route_view(current), 'suggested': route_view(best), 'saving_per_fax': saving,
+            'sentence': sentence})
     return items
+
+
+def _plan_sentence(plan, current):
+    return (f'Your {route_label(plan.route)} plan already includes faxes to this number. '
+            f'{route_label(current.route)} cost {_amount(current)} per delivered fax here over the last '
+            f'{WINDOW_DAYS} days.')
 
 
 def _amount(figure):

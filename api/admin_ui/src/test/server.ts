@@ -617,6 +617,9 @@ const consoleHandlers = [
   http.get('/routing/fax-costs', () => json({ costs: {} })),
   // Savings: nothing saved yet, every part an estimate.
   http.get('/routing/savings', () => json(emptySavings())),
+  // Sending recommendations: no number has enough delivered faxes on two routes yet.
+  http.get('/routing/recommendations/sending', () => json({ window_days: 30, min_delivered: 3, items: [],
+    empty_sentence: 'No cheaper routes yet. Faxbot compares routes for a number once each route has delivered at least 3 faxes to it in the last 30 days.' })),
   // Case packets: none sent yet.
   http.get('/cases', () => json({ cases: [] })),
   // The audit log: nothing recorded yet.
