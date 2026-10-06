@@ -208,6 +208,33 @@ describe('SIP trunk settings', () => {
       /last T\.38 call heard no fax machine\. To try T\.38 again, select Apply and connect\.$/);
   });
 
+  it('says when the fast fax service missed a call and restarts it by hand on request', async () => {
+    let restarts = 0;
+    const missed = "Faxbot's fast fax service did not answer the 9:14 PM MDT fax call, so that fax was received the "
+      + 'ordinary way; Faxbot restarted the fast fax service.';
+    server.use(
+      http.get('/admin/sip/presets', () => HttpResponse.json({ presets: PRESETS })),
+      http.get('/admin/settings', () => HttpResponse.json(settings())),
+      http.get('/admin/sip/calls', () => HttpResponse.json({ items: [], next_cursor: null })),
+      http.get('/admin/sip/status', () => HttpResponse.json({ configured: true, applied: true,
+        message: 'The trunk is ready.', engine_state: 'running', engine_audio: false, engine_text: missed })),
+      http.post('/admin/sip/engine/restart', () => {
+        restarts += 1;
+        return HttpResponse.json({ ok: true,
+          message: 'The fast fax service will restart when no fax is being sent or received.' });
+      }),
+    );
+    render(<SipTrunkSettings client={client()} />);
+    await screen.findByText('A password is saved.');
+    fireEvent.click(screen.getByRole('button', { name: 'Check trunk status' }));
+    const status = await screen.findByTestId('sip-trunk-status');
+    expect(within(status).getByTestId('engine-text').textContent).toBe(missed);
+    fireEvent.click(within(status).getByRole('button', { name: 'Restart the fast fax service' }));
+    expect(await screen.findByText('The fast fax service will restart when no fax is being sent or received.'))
+      .toBeTruthy();
+    expect(restarts).toBe(1);
+  });
+
   it('refuses server IP sign-in behind a router in one sentence and names the transports plainly', async () => {
     const detail = 'Your Faxbot runs behind a router, so sign in with a username and password; server IP sign-in needs a public address.';
     server.use(

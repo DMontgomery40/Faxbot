@@ -429,6 +429,22 @@ def test_a_line_that_never_gets_ready_is_never_reported_running(entrypoint):
     assert (root / 'status.ttyIAX1').read_text().strip() == 'Waiting for modem to come free'
 
 
+def test_the_engine_starts_again_when_faxbot_asks_and_not_for_a_request_it_already_followed(entrypoint):
+    """Faxbot writes a restart request (a fax call no free line answered, or Restart the fast fax service): the
+    engine starts again once no call is up. A request older than this start was already followed."""
+    start, root, data = entrypoint
+    (data / 'hylafax' / 'engine-restart').write_text('{"reason": "manual", "at": 1, "asked": 1}\n')
+    process = start()
+    assert _wait(lambda: _status(data).get('state') == 'running')
+    time.sleep(2.5)  # two supervision rounds: the old request does not restart it
+    assert process.poll() is None
+    (data / 'hylafax' / 'engine-restart').write_text('{"reason": "missed_call", "at": 2, "asked": 2}\n')
+    assert _wait(lambda: process.poll() is not None)
+    assert process.returncode == 0
+    assert _status(data)['state'] == 'restarting'
+    assert _status(data)['reason'] == "Faxbot's fast fax service is starting again."
+
+
 def test_a_line_that_stops_being_ready_is_reported_and_running_again_once_it_recovers(entrypoint):
     """After the start, a line that is not ready for a call (waiting on a modem lock) makes the status say so;
     while the other line is in a call the engine does not restart, and once the line is ready again the

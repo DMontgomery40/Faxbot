@@ -992,6 +992,23 @@ def _on_engine_call(event):
     engine_audio_check(row)
 
 
+def _on_engine_missed(event):
+    """A received call the engine's free lines did not answer: the engine starts again once no call is up
+    (hylafax/entrypoint.sh reads the request), and the trunk page says why. Never raises."""
+    from . import hylafax_engine
+    try:
+        from .config import configuration_values
+        values = configuration_values()
+        started = int(str(event.get('Started') or '0').strip() or 0)
+        if not hylafax_engine.request_restart(values, reason='missed_call', at=started or None):
+            return
+        from .audit import audit_event
+        audit_event('sip_engine_restart_requested', backend='sip', reason='missed_call',
+                    lines=re.sub(r'[^A-Za-z0-9:, ]', '', str(event.get('Lines') or ''))[:80])
+    except Exception:
+        logging.getLogger(__name__).warning('A fax call the fast fax service did not answer could not be recorded.')
+
+
 def engine_audio_check(row):
     """An engine call on T.38 on which the engine heard no fax machine moves the engine (not the built-in
     engine, not the installation's T.38 setting) to audio fax from its next call on. Runs when any part of
@@ -1012,6 +1029,9 @@ def attach(ami_client, engine):
     ami_client.on_inbound_call(_on_inbound_call)
     # Calls the SSL Fax engine (HylaFAX+) placed or answered through the trunk.
     ami_client.on_engine_call(_on_engine_call)
+    on_missed = getattr(ami_client, 'on_engine_missed', None)
+    if on_missed is not None:
+        on_missed(_on_engine_missed)
     return _current
 
 

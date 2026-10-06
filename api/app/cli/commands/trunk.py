@@ -121,6 +121,13 @@ def trunk_calls(limit: int = typer.Option(10, '--limit', min=1, max=200, help='H
     state.out().result(result, human)
 
 
+@trunk.command('restart-engine')
+def trunk_restart_engine():
+    """Restart the fast fax service once no fax is being sent or received."""
+    result = state.api().post('/admin/sip/engine/restart')
+    state.out().result(result, lambda out: out.line(result.get('message') or ''))
+
+
 @trunk.command('mode')
 def trunk_mode(mode: str = typer.Argument(..., metavar='t38|audio',
                                           help='t38 (recommended), or audio when T.38 faxes fail on your line.')):

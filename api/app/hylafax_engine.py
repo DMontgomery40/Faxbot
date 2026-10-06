@@ -77,6 +77,16 @@ WAITING_FOR_RESTART = "Faxbot's fast fax service is waiting for the phone connec
 # What the engine does after a T.38 call that heard no fax machine; each screen adds its own way to
 # try T.38 again (the console's button, the command line's command).
 ENGINE_AUDIO = 'It sends audio fax because its last T.38 call heard no fax machine.'
+# The engine's own sentence for a line that stopped taking calls (hylafax/entrypoint.sh LINE_DOWN).
+LINE_DOWN = "Faxbot's fast fax service lost a fax line and is starting again."
+# A restart Faxbot asked for (a fax call no line answered, or Restart the fast fax service).
+RESTART_REQUESTED = "Faxbot's fast fax service is starting again."
+RESTART_ASKED = 'The fast fax service will restart when no fax is being sent or received.'
+# Nothing reads a restart request while the engine is not running; it starts afresh on its own.
+RESTART_NOT_RUNNING = ("Faxbot's fast fax service is not running, so there is nothing to restart; faxes are "
+                       'sent the ordinary way until it starts.')
+# How long the trunk page says that a fax call went unanswered by the fast fax service.
+MISSED_SHOWN = 24 * 3600
 
 _TAG = re.compile(r'[1-9][0-9]{15}', re.ASCII)
 _HEX32 = re.compile(r'[a-f0-9]{32}', re.ASCII)
@@ -93,6 +103,60 @@ def engine_dir(values) -> Path:
 
 def engine_conf_path(values) -> Path:
     return engine_dir(values) / 'engine.conf'
+
+
+def restart_request_path(values) -> Path:
+    """Read by the engine (hylafax/entrypoint.sh): a new request makes it start again once no call is up."""
+    return engine_dir(values) / 'engine-restart'
+
+
+def request_restart(values, *, reason, at=None):
+    """Ask the engine to start again ('missed_call': a fax call no free line answered; 'manual'). False when
+    the request could not be written."""
+    import time
+    if reason not in ('missed_call', 'manual'):
+        raise ValueError('Unsupported restart reason')
+    moment = at if isinstance(at, int) and not isinstance(at, bool) and at > 0 else int(time.time())
+    try:
+        _write_private(restart_request_path(values),
+                       json.dumps({'reason': reason, 'at': moment, 'asked': int(time.time())}) + '\n')
+        # Only a reason and two times: readable by the engine whichever user it runs as.
+        os.chmod(restart_request_path(values), 0o644)
+    except OSError:
+        return False
+    return True
+
+
+def restart_request(values):
+    """{'reason', 'at', 'asked'} of the newest restart request, or None."""
+    try:
+        descriptor = os.open(restart_request_path(values), os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0))
+        with os.fdopen(descriptor, 'rb') as handle:
+            record = json.loads(handle.read(1024).decode('utf-8'))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(record, dict) or record.get('reason') not in ('missed_call', 'manual'):
+        return None
+    if not all(isinstance(record.get(name), int) and not isinstance(record.get(name), bool)
+               for name in ('at', 'asked')):
+        return None
+    return {'reason': record['reason'], 'at': record['at'], 'asked': record['asked']}
+
+
+def missed_sentence(values, status, now=None):
+    """One sentence for a fax call the fast fax service did not answer in the last day, or None."""
+    import time
+    from datetime import datetime, timezone
+    from .people_time import clock
+    request = restart_request(values)
+    now = now or int(time.time())
+    if request is None or request['reason'] != 'missed_call' or now - request['at'] > MISSED_SHOWN:
+        return None
+    when = clock(datetime.fromtimestamp(request['at'], timezone.utc).replace(tzinfo=None),
+                 getattr(values, 'time_zone', '') or None)
+    restarted = status.started is not None and status.started >= request['asked']
+    return (f"Faxbot's fast fax service did not answer the {when} fax call, so that fax was received the "
+            f"ordinary way; Faxbot {'restarted' if restarted else 'is restarting'} the fast fax service.")
 
 
 def out_dir(values) -> Path:
@@ -299,6 +363,7 @@ def render_options(values, *, lines=0) -> str:
            f' same => n,Set(FAXBOT_IN_AUDIO_RATE={options.rate_for(t38=False)})',
            f' same => n,Set(FAXBOT_IN_ECM={"yes" if options.ecm else "no"})']
     if lines:
+        # The dialplan tries these lines in turn, the first free one first (one engine session per call).
         out += [' same => n,Set(FAXBOT_ENGINE_DID=${FILTER(0123456789,${FAXBOT_DID})})',
                 ' same => n,Set(FAXBOT_ENGINE_DID=${IF($["${FAXBOT_ENGINE_DID}" = ""]?s:${FAXBOT_ENGINE_DID})})',
                 ' same => n,Set(FAXBOT_ENGINE_LINES=' + '&'.join(
@@ -380,6 +445,8 @@ STATUS_SENTENCES = frozenset({
     "Faxbot's fast fax service is reconnecting to the phone connection.",
     "Faxbot's fast fax service stopped and is starting again.",
     "Faxbot's fast fax service is loading new settings.",
+    LINE_DOWN,
+    RESTART_REQUESTED,
     *(f'Fax line {number} did not start.' for number in range(1, MAX_LINES + 1)),
 })
 
@@ -392,7 +459,8 @@ def read_status(values) -> EngineStatus:
             record = json.loads(handle.read(4096).decode('utf-8'))
     except (OSError, ValueError):
         return EngineStatus('absent')
-    if not isinstance(record, dict) or record.get('state') not in {'waiting', 'running', 'failed', 'restarting'}:
+    if not isinstance(record, dict) or record.get('state') not in {'waiting', 'starting', 'running', 'failed',
+                                                                    'restarting'}:
         return EngineStatus('absent')
     lines = record.get('lines') if isinstance(record.get('lines'), int) else 0
     reason = record.get('reason') if record.get('reason') in STATUS_SENTENCES else ''
@@ -590,6 +658,10 @@ async def engine_summary(values, ami=None) -> tuple[str, str]:
             ready = 0
     if ready < 1:
         return 'starting', STARTING
+    missed = missed_sentence(values, status)
+    if missed:
+        # What happened, in one sentence; the audio note stays (each screen adds its way to try T.38 again).
+        return 'running', missed + (' ' + ENGINE_AUDIO if engine_audio(values) else '')
     lines = f'{ready} fax line' + ('' if ready == 1 else 's')
     sentence = (f"Faxbot's fast fax service is running on {lines} and sends pages faster "
                 'when the other fax machine allows it.')

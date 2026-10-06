@@ -646,6 +646,11 @@ class AdminAPIClient {
     return this.json('/admin/sip/apply', { method: 'POST' });
   }
 
+  // Restart the fast fax service: it starts again as soon as no fax is going through.
+  async restartSipEngine(): Promise<{ ok: boolean; message: string }> {
+    return this.json('/admin/sip/engine/restart', { method: 'POST' });
+  }
+
   async listSipCalls(params: { cursor?: string | null; limit?: number; direction?: 'outbound' | 'inbound' } = {}): Promise<SipCallPage> {
     return this.json(`/admin/sip/calls${query(params)}`);
   }

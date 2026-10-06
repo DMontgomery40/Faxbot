@@ -753,6 +753,23 @@ async def calls(request: Request, cursor: str | None = Query(default=None, max_l
         raise HTTPException(503, detail='Call records are not available right now.') from None
 
 
+@router.post('/engine/restart')
+async def restart_engine(request: Request, identity=Depends(require_permission('providers:write'))):
+    """Restart the fast fax service: it starts again as soon as no fax is going through (the engine reads
+    the request; Asterisk and the trunk settings are left as they are)."""
+    from . import hylafax_engine
+    values = configuration_values()
+    if not hylafax_engine.engine_conf_path(values).is_file():
+        raise HTTPException(409, detail=hylafax_engine.NOT_SET_UP)
+    if hylafax_engine.read_status(values).state in ('absent', 'failed'):
+        raise HTTPException(409, detail=hylafax_engine.RESTART_NOT_RUNNING)
+    if not await run_lifecycle_step(lambda: hylafax_engine.request_restart(values, reason='manual')):
+        raise HTTPException(503, detail='Faxbot could not ask the fast fax service to restart; try again.')
+    from .audit import audit_event
+    audit_event('sip_engine_restart_requested', backend='sip', reason='manual')
+    return {'ok': True, 'message': hylafax_engine.RESTART_ASKED}
+
+
 @router.get('/network')
 async def network_check(identity=Depends(require_permission('providers:read'))):
     """Whether T.38 fax data can come back through this network, where Faxbot runs, and what to do about it."""
