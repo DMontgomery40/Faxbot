@@ -238,7 +238,7 @@ def test_editor_projects_delivery_routes_intake_email_and_direct_delivery_settin
         'DIRECT_DELIVERY_ENABLED': 'false', 'DIRECT_ORGANIZATION': 'County Clinic', 'DIRECT_FAX_NUMBER': '+12025550123',
     }))
     # The raw list is kept as written so an editor can show and save it unchanged.
-    assert view['routing'] == {'outbound_routes': 'sip, phaxio', 'min_success_percent': 0}
+    assert view['routing'] == {'outbound_routes': 'sip, phaxio', 'min_success_percent': 0, 'local_delivery': True}
     assert view['intake'] == {
         'email_enabled': True, 'smtp_host': 'smtp.example.invalid', 'smtp_port': 465, 'smtp_security': 'tls',
         'smtp_username': 'fax', 'smtp_password': '', 'email_from': 'fax@example.invalid',
@@ -248,7 +248,7 @@ def test_editor_projects_delivery_routes_intake_email_and_direct_delivery_settin
                               'allow_private_peers': False}
 
     defaults = project_admin_settings(snapshot())
-    assert defaults['routing'] == {'outbound_routes': '', 'min_success_percent': 80}
+    assert defaults['routing'] == {'outbound_routes': '', 'min_success_percent': 80, 'local_delivery': True}
     assert defaults['intake']['email_enabled'] is False and defaults['intake']['smtp_port'] == 587
     assert defaults['direct'] == {'enabled': False, 'organization': '', 'fax_number': '', 'allow_private_peers': False}
     assert defaults['sender'] == {'header': 'Faxbot', 'station_id': defaults['sip']['station_id']}
