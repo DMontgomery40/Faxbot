@@ -614,7 +614,10 @@ def test_sessions_read_only_the_sessions_above_the_last_finished_one(engine, tmp
     (spool / 'log' / 'c000000004').write_text(RECEIVED)
     (spool / 'log' / 'c000000005').write_text(FAILED_RECEIVE.replace('SESSION END\n', ''))  # still in progress
     (spool / 'log' / 'c000000006').write_text(FAILED_RECEIVE)
-    assert run('sessions', environment).returncode == 0
+    # Before the first mark the script runs quietly (it runs every few seconds; loopback, 6 October 2026).
+    (spool / 'etc' / 'faxbot-sessions-done').unlink(missing_ok=True)
+    first = run('sessions', environment)
+    assert first.returncode == 0 and first.stderr == '', first.stderr
     assert (spool / 'etc' / 'faxbot-sessions-done').read_text().strip() == '000000004'
     assert len(list((state / 'results').glob('*.report'))) == 2  # 3 and 6
     # Sessions at or below the mark are not read again, whatever their log says now.

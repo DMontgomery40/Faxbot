@@ -1111,6 +1111,12 @@ def dial_lines(docker, asterisk):
     return '\n'.join(line[:260] for line in log.splitlines() if any(word in line for word in keep))[-6000:]
 
 
+def answered_lines(docker, asterisk):
+    """The engine line that answered each received call so far, in order (Asterisk's dial steps)."""
+    log = docker.run('exec', '-u', 'root', asterisk, 'cat', '/var/log/asterisk/calls', check=False).stdout
+    return [int(found.group(1)) for found in re.finditer(r'IAX2/faxbot-line([0-9]+)-[0-9]+ answered', log)]
+
+
 def receive_through_the_engine(context, number):
     """The peer faxes Faxbot; the fax must arrive in Received through the engine (its call record says so)."""
     docker = context['docker']
@@ -1175,7 +1181,10 @@ def test_k_after_an_engine_restart_and_a_fresh_start_received_calls_still_reach_
     docker = context['docker']
     docker.asterisk(context['asterisk'], 'core set verbose 3')
     proof = {'lines_at_start': engine_lines(docker, context['engine'])}
+    seen = len(answered_lines(docker, context['asterisk']))
     proof['first'] = receive_through_the_engine(context, 1)
+    proof['first_lines'], seen = answered_lines(docker, context['asterisk'])[seen:], len(
+        answered_lines(docker, context['asterisk']))
     # A modem lock left in the container by a restart, naming a process ID that is alive after it (live,
     # 6 October 2026: line 1 then waited on it for good). The engine clears it and both lines take calls.
     docker.run('exec', '-u', 'uucp', context['engine'], 'sh', '-c',
@@ -1189,11 +1198,14 @@ def test_k_after_an_engine_restart_and_a_fresh_start_received_calls_still_reach_
                                                 check=False).stdout
     proof['lines_after_engine_restart'] = engine_lines(docker, context['engine'])
     proof['second'] = receive_through_the_engine(context, 2)
+    proof['second_lines'] = answered_lines(docker, context['asterisk'])[seen:]
     started = int(time.time())
     docker.run('restart', context['asterisk'], context['engine'])
     engine_running_again(context, started)
     proof['lines_after_fresh_start'] = engine_lines(docker, context['engine'])
+    seen = len(answered_lines(docker, context['asterisk']))  # the log stays across Asterisk's restart
     proof['third'] = receive_through_the_engine(context, 3)
+    proof['third_lines'] = answered_lines(docker, context['asterisk'])[seen:]
     print('\nSSLFAX_PROOF_K ' + json.dumps(proof, indent=2, default=str))
     expected = ([f'iaxmodem ttyIAX{number}' for number in range(1, ENGINE_LINES + 1)],
                 [4569 + number for number in range(1, ENGINE_LINES + 1)])
@@ -1208,3 +1220,62 @@ def test_k_after_an_engine_restart_and_a_fresh_start_received_calls_still_reach_
     for name in ('first', 'second', 'third'):
         assert proof[name]['fax']['pages'] == 2, proof
         assert proof[name]['call'] and proof[name]['call'][0]['call_id'].startswith('engine.'), proof
+        # The lines are tried in turn, first free line first: line 1 takes each call, including the first
+        # call after the stale lock on line 1.
+        assert proof[f'{name}_lines'] == [1], proof
+
+
+def test_l_a_fax_call_no_free_line_answers_restarts_the_engine_by_itself(tmp_path, loopback):
+    """A free engine line that rings and does not answer: the built-in engine takes that fax within 20 s,
+    Faxbot asks the engine to start again, the engine restarts by itself once no fax is going through, the
+    trunk page says what happened, and the next received call reaches line 1 through the engine."""
+    from datetime import datetime
+    context = loopback('l', faxbot_t38=True, carrier_gateway=False, carrier_t38=False, peer_listener='',
+                       peer_sslfax=False)
+    docker = context['docker']
+    docker.asterisk(context['asterisk'], 'core set verbose 3')
+    # Both lines stay registered and idle but no longer answer (HylaFAX's own setting, changed only in the
+    # running faxgetty; the engine's start writes it back).
+    for number in range(1, ENGINE_LINES + 1):
+        docker.run('exec', '-u', 'uucp', context['engine'], 'faxconfig', '-m', f'ttyIAX{number}',
+                   'RingsBeforeAnswer', '0')
+    seen = len(answered_lines(docker, context['asterisk']))
+    proof = {'missed': receive_through_the_engine(context, 1)}
+    proof['missed_lines'] = answered_lines(docker, context['asterisk'])[seen:]
+    fax_id = proof['missed']['fax']['id']
+    call = database(context, call=f"SELECT call_id, started_at, answered_at FROM sip_call_records "
+                                  f"WHERE job_id = '{fax_id}'")['call']
+    proof['missed_call'] = call
+    events = parse_ami(docker.read(context['asterisk'], '/tmp/ami-events.log'))
+    proof['missed_events'] = [event for event in events if event.get('UserEvent') == 'FaxEngineMissed']
+    request = wait_for(lambda: json.loads(docker.read(context['api'], '/faxdata/hylafax/engine-restart') or 'null'),
+                       60, 'the restart request')
+    proof['request'] = request
+    engine_running_again(context, request['asked'])
+    proof['status'] = json.loads(docker.read(context['engine'], '/faxdata/hylafax-out/engine.status'))
+    trunk = api(docker, 'GET', '/admin/sip/status', key=context['key'])['json'] or {}
+    proof['engine_state'], proof['engine_text'] = trunk.get('engine_state'), trunk.get('engine_text')
+    engine_log = docker.run('logs', context['engine'], check=False)
+    proof['engine_log'] = (engine_log.stdout + engine_log.stderr)[-1500:]
+    seen = len(answered_lines(docker, context['asterisk']))
+    proof['next'] = receive_through_the_engine(context, 2)
+    proof['next_lines'] = answered_lines(docker, context['asterisk'])[seen:]
+    print('\nSSLFAX_PROOF_L ' + json.dumps(proof, indent=2, default=str))
+    # The missed fax arrived through the built-in engine, answered within the 20 s the lines may ring.
+    assert proof['missed']['fax']['pages'] == 2 and proof['missed_lines'] == [], proof
+    assert call and not call[0]['call_id'].startswith('engine.'), proof
+    rang = (datetime.fromisoformat(str(call[0]['answered_at'])) - datetime.fromisoformat(str(call[0]['started_at'])))
+    assert rang.total_seconds() <= 23, proof
+    assert len(proof['missed_events']) == 1, proof
+    assert request['reason'] == 'missed_call', proof
+    # The engine started again after the request, and the trunk page says what happened.
+    assert proof['status']['state'] == 'running' and proof['status']['started'] >= request['asked'], proof
+    assert proof['engine_state'] == 'running', proof
+    text = proof['engine_text'] or ''
+    assert text.startswith("Faxbot's fast fax service did not answer the "), proof
+    assert text.endswith('so that fax was received the ordinary way; Faxbot restarted the fast fax service.'), proof
+    # The restart wrote the engine's own settings back: the next call reaches line 1 through the engine.
+    assert proof['next']['fax']['pages'] == 2, proof
+    assert proof['next']['call'] and proof['next']['call'][0]['call_id'].startswith('engine.'), proof
+    assert proof['next_lines'] == [1], proof
+
