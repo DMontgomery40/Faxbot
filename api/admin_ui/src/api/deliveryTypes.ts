@@ -72,7 +72,9 @@ export interface SendingRecommendation {
   preferred_route: string | null;
   chosen_by_you: boolean;
   kind: 'plan' | 'cheaper_route';
-  current: DeliveredCost;
+  current_label: string;
+  // Null when the route used now has no faxes to this number in the last 30 days (a plan suggestion only).
+  current: DeliveredCost | null;
   suggested: DeliveredCost;
   // Null for a plan: the plan's fee is already paid, so Faxbot claims no saving per fax.
   saving_per_fax: Money | null;

@@ -61,7 +61,7 @@ describe('Recipients', () => {
 
 const recommendation: SendingRecommendation = {
   number: NUMBER, display_name: 'County clinic', version: 4, preferred_route: 'signalwire', chosen_by_you: true,
-  kind: 'cheaper_route', current: figure('signalwire', 'SignalWire', { cost_text: '$0.13', delivered: 4, attempts: 5 }),
+  kind: 'cheaper_route', current_label: 'SignalWire', current: figure('signalwire', 'SignalWire', { cost_text: '$0.13', delivered: 4, attempts: 5 }),
   suggested: figure('sip', 'Telnyx', { delivered: 9, attempts: 14 }),
   saving_per_fax: { currency: 'USD', amount: '0.1211' },
   sentence: 'Telnyx cost $0.0089 per delivered fax to this number over the last 30 days. SignalWire, which you chose, cost $0.13.',

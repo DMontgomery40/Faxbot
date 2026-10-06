@@ -373,10 +373,17 @@ def test_a_flat_plan_is_suggested_only_over_a_metered_route_you_chose(multi):
     # metered route over the plan.
     routes.update_destination(number, preferred_route=None)
     assert sending_recommendations(routes, revision, 'phaxio') == []
+    # The chosen metered route has no figure here (nothing sent on it): the plan is suggested without an amount.
+    other = '+12025550199'
+    _finished(multi, 'phaxio', ['success'] * 3, estimated='0', number=other)
+    routes.update_destination(other, preferred_route='signalwire')
+    [item] = [entry for entry in sending_recommendations(routes, revision, 'phaxio') if entry['number'] == other]
+    assert (item['kind'], item['current'], item['current_label']) == ('plan', None, 'SignalWire')
+    assert item['sentence'] == 'Your Phaxio plan already includes faxes to this number.'
     # A plan that often fails to this number is not suggested.
     routes.update_destination(number, preferred_route='signalwire')
     _finished(multi, 'phaxio', ['failed'] * 3)
-    assert sending_recommendations(routes, revision, 'phaxio') == []
+    assert [entry['number'] for entry in sending_recommendations(routes, revision, 'phaxio')] == [other]
 
 
 # -- the HTTP routes and `faxbot`, over the real application -----------------------------

@@ -20,8 +20,8 @@ function Item({ item, canWrite, busy, onUse }: {
       {item.display_name && <Typography variant="body2" color="text.secondary">{item.number}</Typography>}
       <Typography variant="body2" sx={{ mt: 1 }}>{item.sentence}</Typography>
       <Box display="flex" gap={1} flexWrap="wrap" sx={{ mt: 1 }}>
-        <Chip size="small" variant="outlined"
-          label={`${current.label}: ${current.delivered} of ${current.attempts} faxes delivered`} />
+        {current && <Chip size="small" variant="outlined"
+          label={`${current.label}: ${current.delivered} of ${current.attempts} faxes delivered`} />}
         <Chip size="small" variant="outlined"
           label={`${suggested.label}: ${suggested.delivered} of ${suggested.attempts} faxes delivered`} />
         {item.saving_per_fax && <Chip size="small" label={`Saves about ${formatMoney(item.saving_per_fax)} a fax`} />}
