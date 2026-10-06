@@ -337,10 +337,10 @@ async def test_the_address_watcher_records_a_new_address_and_ignores_unanswered_
                                    mapped=(('a', 40000), ('b', 40000)))
     task = asyncio.create_task(sip_http.watch_public_address(minutes=0.001, values_source=lambda: settings))
     try:
-        for _ in range(100):
+        # Waits for the watcher (a hang guard, not a timing assumption): a loaded machine can take seconds.
+        deadline = asyncio.get_running_loop().time() + 30
+        while not sip_trunk.read_public_address(settings) and asyncio.get_running_loop().time() < deadline:
             await asyncio.sleep(0.02)
-            if sip_trunk.read_public_address(settings):
-                break
         assert sip_trunk.read_public_address(settings)['ip'] == '198.51.100.9'
         network['result'] = stun.Probe(public_ip=None, local_ip=None, local_port=40000, mapped=(('a', None),))
         await asyncio.sleep(0.2)

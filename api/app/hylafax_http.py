@@ -246,6 +246,9 @@ async def engine_receive_failed(request: Request, payload: dict = Body(...),
         did=payload.get('called'), caller=payload.get('caller'), inbound_fax_id=None))
     from . import hylafax_records
     from .routing.background import installation_engine
+    # The key is <communication id>-<time bin/sessions reported the call>: a new engine container starts its
+    # communication IDs again, so the time keeps the reference unique, and the same report posted again
+    # carries the same key.
     try:
         engine, _ = installation_engine(request.app)
         hylafax_records.safely(hylafax_records.records_for(engine).record_result, direction='inbound',

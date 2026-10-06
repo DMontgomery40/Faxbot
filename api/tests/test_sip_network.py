@@ -477,10 +477,10 @@ async def test_the_watcher_runs_the_whole_check_with_the_running_installation(mo
     task = asyncio.create_task(sip_http.watch_public_address(minutes=0.001, values_source=lambda: settings,
                                                              runtime='the installation'))
     try:
-        for _ in range(100):
+        # Waits for the watcher (a hang guard, not a timing assumption): a loaded machine can take seconds.
+        deadline = asyncio.get_running_loop().time() + 30
+        while not runs and asyncio.get_running_loop().time() < deadline:
             await asyncio.sleep(0.02)
-            if runs:
-                break
     finally:
         task.cancel()
     assert runs and runs[0] == ('the installation', True)
@@ -648,10 +648,9 @@ def test_the_router_ports_are_renewed_and_closed_when_faxbot_stops(client, netwo
 
     async def run_until_renewed():
         task = asyncio.create_task(sip_network.keep_router_ports(runtime, idle=0.05))
-        for _ in range(200):
+        deadline = asyncio.get_running_loop().time() + 30  # a hang guard, not a timing assumption
+        while not stand_in_router.renewed and asyncio.get_running_loop().time() < deadline:
             await asyncio.sleep(0.02)
-            if stand_in_router.renewed:
-                break
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
