@@ -1,10 +1,14 @@
 """Every operator route has a caller in the console and a command in the command line.
 
 Routes come from the application table, as in test_route_policy_coverage.py. A
-route counts as called when a path in the console source (api/admin_ui/src,
-tests and mocks excluded) or in the command line (api/app/cli) matches it,
-segment by segment; a value filled in at run time matches a {parameter}
-segment only. Matching is by path, so every method on a called path counts.
+route counts as called when a path in the command line (api/app/cli) matches
+it, or when a console screen requests it: a path written in a screen file, or
+a path in an API client method that a screen calls (api/admin_ui/src outside
+api/, tests and mocks excluded). The API client and the type files alone never
+count, so a client method no screen uses leaves its route without a console
+caller. Paths match segment by segment; a value filled in at run time matches
+a {parameter} segment only. Matching is by path, so every method on a called
+path counts.
 
 Routes that are not for operators, or belong to one surface by design, are
 listed with a reason. AWAITING_CONSOLE and AWAITING_CLI hold the gaps still
@@ -81,7 +85,14 @@ CONSOLE_ONLY = {
 }
 
 # The command line only, by design.
-CLI_ONLY: dict = {}
+CLI_ONLY = {
+    ('GET', '/routing/inbound/{inbound_id}/cost'): (
+        "one received fax's cost for faxbot costs received <id>; the console reads the costs of the received faxes "
+        'on screen in one request (GET /routing/inbound-costs)'),
+    ('GET', '/routing/published-plans'): (
+        "any provider's published plans for faxbot costs plans <provider>; the console shows the plans of the "
+        'providers in use (GET /routing/published-plans/in-use)'),
+}
 
 # Gaps still open in the console. Builder L removes each entry with the screen that closes it.
 AWAITING_CONSOLE: dict = {}
@@ -139,15 +150,65 @@ def _template_text(source, start, quote):
     return None
 
 
-def console_paths():
-    """Every string or template literal in the console that starts with a path (or ${base}/path)."""
+def _literal_paths(source):
+    """Every string or template literal in ``source`` that starts with a path (or ${base}/path)."""
     found = set()
-    for path in _console_files():
+    for match in re.finditer(r"""['"`](?=/|\$\{)""", source):
+        text = _template_text(source, match.end(), match.group(0))
+        if text is not None:
+            found.add(text)
+    return found
+
+
+def screen_files():
+    """Console files that people see or that screens use (components, hooks, the shell), never the API layer.
+
+    ``api/`` holds the client and the response types: a route counts only when a
+    screen calls the client method that requests it, not because the client has one.
+    """
+    return [path for path in _console_files() if path.relative_to(CONSOLE_SOURCE).parts[0] != 'api']
+
+
+CLIENT = CONSOLE_SOURCE / 'api' / 'client.ts'
+# A member of the AdminAPIClient class, at two spaces: "  async getSavings(", "  static async login(".
+_MEMBER = re.compile(r'^  (?:(?:private|public|protected|static|async|readonly)\s+)*(?:get\s+|set\s+)?'
+                     r'([A-Za-z_$][\w$]*)\s*(?:<[^>\n]*>)?\(', re.M)
+
+
+def client_methods():
+    """{AdminAPIClient method: paths it requests}, including paths of the client methods it calls itself."""
+    source = CLIENT.read_text(encoding='utf-8')
+    start = source.index('class AdminAPIClient')
+    end = source.index('\n}\n', start)
+    body = source[start:end]
+    members = [(match.start(), match.group(1)) for match in _MEMBER.finditer(body)]
+    texts = {}
+    for index, (offset, name) in enumerate(members):
+        stop = members[index + 1][0] if index + 1 < len(members) else len(body)
+        texts[name] = texts.get(name, '') + body[offset:stop]
+    paths = {name: _literal_paths(text) for name, text in texts.items()}
+    calls = {name: set(re.findall(r'(?:this|AdminAPIClient)\.(\w+)\(', text)) & set(texts)
+             for name, text in texts.items()}
+    changed = True
+    while changed:
+        changed = False
+        for name in paths:
+            for other in calls[name]:
+                if not paths[other] <= paths[name]:
+                    paths[name] |= paths[other]
+                    changed = True
+    return paths
+
+
+def console_paths():
+    """Paths the console's screens request: literals in screen files, and the paths of client methods they call."""
+    methods = client_methods()
+    found = set()
+    for path in screen_files():
         source = path.read_text(encoding='utf-8')
-        for match in re.finditer(r"""['"`](?=/|\$\{)""", source):
-            text = _template_text(source, match.end(), match.group(0))
-            if text is not None:
-                found.add(text)
+        found |= _literal_paths(source)
+        for name in set(re.findall(r'\.(\w+)\(', source)) & set(methods):
+            found |= methods[name]
     return found
 
 
@@ -259,6 +320,17 @@ def test_every_listed_route_exists_once_with_a_reason():
         for second in exclusive[index + 1:] + [AWAITING_CONSOLE, AWAITING_CLI]:
             assert not set(first) & set(second), _show(set(first) & set(second))
     assert not set(CONSOLE_ONLY) & set(AWAITING_CONSOLE) and not set(CLI_ONLY) & set(AWAITING_CLI)
+
+
+def test_a_client_method_counts_only_when_a_screen_calls_it():
+    """The API client is not a screen: a route its methods request but no screen calls has no console caller."""
+    methods = client_methods()
+    assert '/routing/inbound/' + HOLE + '/cost' in methods['getInboundCost']
+    assert '/routing/savings' + HOLE in methods['getSavings']
+    console = _callers(console_paths())
+    assert not _called('/routing/inbound/{inbound_id}/cost', console)
+    assert _called('/routing/savings', console) and _called('/routing/inbound-costs', console)
+    assert not any(path.relative_to(CONSOLE_SOURCE).parts[0] == 'api' for path in screen_files())
 
 
 def test_paths_are_matched_by_segment():
