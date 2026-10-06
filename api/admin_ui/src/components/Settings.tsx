@@ -183,7 +183,6 @@ function editorValues(data: SettingsType): SettingsForm {
     inbound_token_ttl_minutes: data.inbound.token_ttl_minutes ?? 60,
     asterisk_inbound_secret: data.inbound.sip?.asterisk_secret ?? '',
     phaxio_inbound_verify_signature: data.inbound.phaxio?.verify_signature ?? true,
-    sinch_inbound_verify_signature: data.inbound.sinch?.verify_signature ?? true,
     sinch_inbound_basic_user: data.inbound.sinch?.basic_user ?? '',
     sinch_inbound_basic_pass: data.inbound.sinch?.basic_pass ?? '',
     sinch_inbound_hmac_secret: data.inbound.sinch?.hmac_secret ?? '',
@@ -1118,22 +1117,6 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
 
             {effectiveInbound === 'sinch' && (
               <Box sx={{ mt: 2 }}>
-                <ResponsiveSettingItem
-                  icon={settings.inbound?.sinch?.verify_signature ? <CheckCircleIcon color="success" /> : <WarningIcon color="warning" />}
-                  label="Check that received faxes come from Sinch"
-                  value={settings.inbound?.sinch?.verify_signature ? 'Enabled' : 'Disabled'}
-                  editValue={form.sinch_inbound_verify_signature ?? settings.inbound?.sinch?.verify_signature ?? false}
-                  helperText={withOwnerNote('sinch_inbound_verify_signature', "Faxbot accepts a received fax only when Sinch signed it.")}
-                  onChange={(value) => handleForm('sinch_inbound_verify_signature', value === 'true')}
-                  type="select"
-                  options={[
-                    { value: 'true', label: 'Enabled' },
-                    { value: 'false', label: 'Disabled' }
-                  ]}
-                  showCurrentValue={!pendingRestart}
-                  disabled={locked('sinch_inbound_verify_signature')}
-                />
-                
                 <ResponsiveSettingItem
                   icon={settings.inbound?.sinch?.basic_auth_configured ? <CheckCircleIcon color="success" /> : <WarningIcon color="warning" />}
                   label="User name Sinch sends with received faxes (optional)"

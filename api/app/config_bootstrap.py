@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 import json
 
 from .config_file import ConfigurationFileError, read_configuration_text, read_environment
-from .config_plugin_fields import PLUGIN_FIELDS
+from .config_plugin_fields import PLUGIN_FIELDS, RETIRED_PLUGIN_FIELDS
 from .config_plugin_secrets import reject_masked_plugin_secrets
 from .config_profiles import ConfigurationDocument, ConfigurationRecordError
 from .config_values import ConfigurationValues, ConfigurationValueError
@@ -73,6 +73,8 @@ def _import_plugins(values, environment, legacy):
         settings = entry.get('settings', {})
         if provider in PLUGIN_FIELDS:
             fields = PLUGIN_FIELDS[provider]
+            retired = RETIRED_PLUGIN_FIELDS.get(provider, frozenset())
+            settings = {key: value for key, value in settings.items() if key not in retired}
             if set(settings) - set(fields):
                 raise ConfigurationBootstrapError('Unsupported legacy plugin setting.')
             patch = {fields[key]: value for key, value in settings.items()}

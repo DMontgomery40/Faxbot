@@ -325,7 +325,6 @@ export interface Settings {
       verify_signature: boolean;
     };
     sinch?: {
-      verify_signature: boolean;
       basic_auth_configured: boolean;
       hmac_configured: boolean;
       basic_user?: string;

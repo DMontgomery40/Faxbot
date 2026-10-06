@@ -318,11 +318,10 @@ def project_admin_settings(snapshot: ConfigurationSnapshot, pending_fields: Iter
             'sip': {'asterisk_secret': mask_secret(values.asterisk_inbound_secret), 'configured': bool(values.asterisk_inbound_secret)},
             'phaxio': {'verify_signature': values.phaxio_inbound_verify_signature},
             'sinch': {
-                'verify_signature': values.sinch_inbound_verify_signature,
                 'basic_user': values.sinch_inbound_basic_user,
                 'basic_pass': mask_secret(values.sinch_inbound_basic_pass),
                 'hmac_secret': mask_secret(values.sinch_inbound_hmac_secret),
-                'basic_auth_configured': bool(values.sinch_inbound_basic_user and values.sinch_inbound_basic_pass),
+                'basic_auth_configured': values.sinch_inbound_basic_configured,
                 'hmac_configured': bool(values.sinch_inbound_hmac_secret),
             },
         },

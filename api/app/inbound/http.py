@@ -339,8 +339,8 @@ def _replayed(request, body):
 
 
 def _sinch_basic_configured():
-    """Basic auth is in force only with both a user name and a password: a user name alone proves nothing."""
-    return bool(settings.sinch_inbound_basic_user and settings.sinch_inbound_basic_pass)
+    """Basic auth is in force only with both a user name and a password: the one rule, in ConfigurationValues."""
+    return settings.sinch_inbound_basic_configured
 
 
 def _sinch_authenticated(request, raw):
