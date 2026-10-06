@@ -707,6 +707,7 @@ export default function Received({
 
       <WorkDetail client={client} item={selected} onClose={() => setSelected(null)}
         fax={selected ? faxes.find((candidate) => candidate.id === selected.inbound_fax_id) ?? null : null}
+        delivery={selected ? deliveryFor.get(selected.inbound_fax_id) ?? null : null}
         onDownload={(item) => void downloadPdf(item.inbound_fax_id, `document-${localDay(item.available_at) || 'fax'}.pdf`)} />
     </Box>
   );

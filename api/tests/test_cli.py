@@ -183,7 +183,7 @@ def test_every_command_is_shown_in_help_and_the_older_names_are_gone():
 ])
 def test_system_health_exits_0_when_ready_for_what_the_install_is_set_up_to_do(
         monkeypatch, sends, receives, ready_to_send, ready_to_receive, code):
-    """The console's rule (Dashboard receivesOnly/statusReady): a receive-only install is judged on receiving."""
+    """A receive-only install is judged on receiving, a send-only one on sending, and one set up for both on both."""
     from app.cli import state as cli_state
 
     class Canned:

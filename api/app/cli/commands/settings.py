@@ -437,8 +437,9 @@ def providers_status():
 def ready_for_setup(ready):
     """``(set up to send, set up to receive, ready for each of those)`` from ``/health/ready``.
 
-    An install with no sending provider is judged on receiving alone, as the console's Overview
-    judges it; one set up for both must be ready for both; one set up for neither is not ready.
+    An install with no sending provider is judged on receiving alone, one with sending and no
+    receiving on sending alone, and one set up for both must be ready for both; one set up for
+    neither is not ready.
     """
     ready = ready or {}
     inbound = (ready.get('checks') or {}).get('inbound') or {}

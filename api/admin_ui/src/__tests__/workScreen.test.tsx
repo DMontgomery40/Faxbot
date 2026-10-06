@@ -8,6 +8,8 @@ import Received from '../components/Received';
 import { duplicateSentence, OPERATIONAL_TARGET, shortTime, targetLabel, workStateSentence } from '../components/work/text';
 import { NAVIGATION, parseAddress, resolveAddress, visibleNavigation } from '../navigation';
 import WorkSettingsPanel from '../components/work/WorkSettingsPanel';
+import WorkDetail from '../components/work/WorkDetail';
+import type { IntakeItem } from '../api/deliveryTypes';
 import { server } from '../test/server';
 
 const client = () => new AdminAPIClient({ kind: 'key', key: 'synthetic-key' });
@@ -173,5 +175,37 @@ describe('Acknowledgement targets under Numbers, Mailboxes', () => {
     expect(await screen.findByText('Acknowledgement targets')).toBeTruthy();
     expect(screen.getByText(new RegExp(OPERATIONAL_TARGET.replace(/[.']/g, '.')))).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Save' })).toBeNull();
+  });
+});
+
+describe('the received fax detail', () => {
+  const delivered = (overrides: Partial<IntakeItem>): IntakeItem => ({
+    id: 'delivery', source: 'fax', inbound_fax_id: 'fax', received_at: '2026-10-03T12:00:00', pages: 1,
+    from_number: '+15550109999', to_number: '+15550100001', state: 'delivered', status: 'Delivered.', needs_action: false,
+    attempts: 1, next_attempt_at: null, delivered_at: '2026-10-03T12:00:09', connector: 'Front desk', ...overrides,
+  });
+
+  function open(delivery: IntakeItem) {
+    const shown = item({});
+    server.use(
+      http.get('/work/:id', () => HttpResponse.json(shown)),
+      http.get('/work/:id/history', () => HttpResponse.json({ events: [] })),
+    );
+    const sentence = 'Failed once before Dana Lee asked Faxbot to fetch it again on 3 October 2026 at 2:00 PM UTC.';
+    render(<WorkDetail client={client()} item={shown} onClose={() => undefined} onDownload={() => undefined}
+      fax={{ id: 'fax', status: 'received', backend: 'phaxio', earlier_failures_text: sentence }} delivery={delivery} />);
+    return within(screen.getByRole('dialog', { name: 'Work item' }));
+  }
+
+  it('names who the email went to from the delivery, and how often fetching stopped', () => {
+    const drawer = open(delivered({ delivered_to: ['frontdesk@clinic.example'], recipients_recorded: true }));
+    expect(drawer.getByText('Emailed to')).toBeTruthy();
+    expect(drawer.getByText('frontdesk@clinic.example')).toBeTruthy();
+    expect(drawer.getByText(/^Failed once before Dana Lee asked Faxbot to fetch it again/)).toBeTruthy();
+  });
+
+  it('says plainly when an older email delivery did not record who it went to', () => {
+    const drawer = open(delivered({ delivered_to: [], recipients_recorded: false }));
+    expect(drawer.getByText('Who it went to was not recorded when it was delivered.')).toBeTruthy();
   });
 });
