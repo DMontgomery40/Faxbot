@@ -1,0 +1,801 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "ADMIN_ALLOW_RESTART": {
+      "default": false,
+      "title": "Admin Allow Restart",
+      "type": "boolean"
+    },
+    "API_KEY": {
+      "secret": true,
+      "title": "Api Key",
+      "type": "string",
+      "writeOnly": true
+    },
+    "ARTIFACT_TTL_DAYS": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Artifact Ttl Days",
+      "type": "integer"
+    },
+    "ASTERISK_AMI_HOST": {
+      "default": "asterisk",
+      "title": "Asterisk Ami Host",
+      "type": "string"
+    },
+    "ASTERISK_AMI_PASSWORD": {
+      "secret": true,
+      "title": "Asterisk Ami Password",
+      "type": "string",
+      "writeOnly": true
+    },
+    "ASTERISK_AMI_PORT": {
+      "default": 5038,
+      "maximum": 65535,
+      "minimum": 1,
+      "title": "Asterisk Ami Port",
+      "type": "integer"
+    },
+    "ASTERISK_AMI_USERNAME": {
+      "default": "api",
+      "title": "Asterisk Ami Username",
+      "type": "string"
+    },
+    "ASTERISK_INBOUND_SECRET": {
+      "secret": true,
+      "title": "Asterisk Inbound Secret",
+      "type": "string",
+      "writeOnly": true
+    },
+    "AUDIT_LOG_ENABLED": {
+      "default": false,
+      "title": "Audit Log Enabled",
+      "type": "boolean"
+    },
+    "AUDIT_LOG_FILE": {
+      "default": "",
+      "title": "Audit Log File",
+      "type": "string"
+    },
+    "AUDIT_LOG_FORMAT": {
+      "default": "json",
+      "title": "Audit Log Format",
+      "type": "string"
+    },
+    "AUDIT_LOG_SYSLOG": {
+      "default": false,
+      "title": "Audit Log Syslog",
+      "type": "boolean"
+    },
+    "AUDIT_LOG_SYSLOG_ADDRESS": {
+      "default": "/dev/log",
+      "title": "Audit Log Syslog Address",
+      "type": "string"
+    },
+    "CLEANUP_INTERVAL_MINUTES": {
+      "default": 1440,
+      "minimum": 1,
+      "title": "Cleanup Interval Minutes",
+      "type": "integer"
+    },
+    "DATABASE_URL": {
+      "secret": true,
+      "title": "Database Url",
+      "type": "string",
+      "writeOnly": true
+    },
+    "DIRECT_ALLOW_PRIVATE_PEERS": {
+      "default": false,
+      "title": "Direct Allow Private Peers",
+      "type": "boolean"
+    },
+    "DIRECT_DELIVERY_ENABLED": {
+      "default": false,
+      "title": "Direct Delivery Enabled",
+      "type": "boolean"
+    },
+    "DIRECT_FAX_NUMBER": {
+      "default": "",
+      "title": "Direct Fax Number",
+      "type": "string"
+    },
+    "DIRECT_ORGANIZATION": {
+      "default": "",
+      "title": "Direct Organization",
+      "type": "string"
+    },
+    "DOCS_BASE_URL": {
+      "default": "https://docs.faxbot.net/latest/",
+      "title": "Docs Base Url",
+      "type": "string"
+    },
+    "DOCUMO_API_KEY": {
+      "secret": true,
+      "title": "Documo Api Key",
+      "type": "string",
+      "writeOnly": true
+    },
+    "DOCUMO_BASE_URL": {
+      "default": "https://api.documo.com",
+      "title": "Documo Base Url",
+      "type": "string"
+    },
+    "DOCUMO_SANDBOX": {
+      "default": false,
+      "title": "Documo Sandbox",
+      "type": "boolean"
+    },
+    "EFAX_API_KEY": {
+      "pattern": "^[!-~]{0,256}$",
+      "secret": true,
+      "title": "Efax Api Key",
+      "type": "string",
+      "writeOnly": true
+    },
+    "EFAX_APP_ID": {
+      "pattern": "^[!-9;-~]{0,256}$",
+      "secret": true,
+      "title": "Efax App Id",
+      "type": "string",
+      "writeOnly": true
+    },
+    "EFAX_CALLER_ID": {
+      "default": "",
+      "pattern": "^(?:\\+[1-9][0-9]{6,14})?$",
+      "title": "Efax Caller Id",
+      "type": "string"
+    },
+    "EFAX_CSID": {
+      "default": "",
+      "pattern": "^[ -~]{0,20}$",
+      "title": "Efax Csid",
+      "type": "string"
+    },
+    "EFAX_DELETE_AFTER_DOWNLOAD": {
+      "default": false,
+      "title": "Efax Delete After Download",
+      "type": "boolean"
+    },
+    "EFAX_POLL_SECONDS": {
+      "default": 60,
+      "maximum": 3600,
+      "minimum": 30,
+      "title": "Efax Poll Seconds",
+      "type": "integer"
+    },
+    "EFAX_USER_ID": {
+      "pattern": "^[!-~]{0,256}$",
+      "secret": true,
+      "title": "Efax User Id",
+      "type": "string",
+      "writeOnly": true
+    },
+    "EFAX_WEBHOOK_SECRET": {
+      "pattern": "^[!-~]{0,256}$",
+      "secret": true,
+      "title": "Efax Webhook Secret",
+      "type": "string",
+      "writeOnly": true
+    },
+    "ENABLE_MCP_HTTP": {
+      "default": false,
+      "title": "Enable Mcp Http",
+      "type": "boolean"
+    },
+    "ENABLE_MCP_SSE": {
+      "default": false,
+      "title": "Enable Mcp Sse",
+      "type": "boolean"
+    },
+    "ENABLE_PERSISTED_SETTINGS": {
+      "default": false,
+      "title": "Enable Persisted Settings",
+      "type": "boolean"
+    },
+    "ENABLE_S3_DIAGNOSTICS": {
+      "default": false,
+      "title": "Enable S3 Diagnostics",
+      "type": "boolean"
+    },
+    "ENFORCE_PUBLIC_HTTPS": {
+      "default": true,
+      "title": "Enforce Public Https",
+      "type": "boolean"
+    },
+    "FAXBOT_CONFIG_PATH": {
+      "title": "Faxbot Config Path",
+      "type": "string"
+    },
+    "FAXBOT_PROVIDERS_DIR": {
+      "title": "Faxbot Providers Dir",
+      "type": "string"
+    },
+    "FAX_BACKEND": {
+      "default": "",
+      "patch_name": "backend",
+      "title": "Fax Backend",
+      "type": "string"
+    },
+    "FAX_DATA_DIR": {
+      "default": "./faxdata",
+      "title": "Fax Data Dir",
+      "type": "string"
+    },
+    "FAX_DEFAULT_COUNTRY": {
+      "default": "US",
+      "title": "Fax Default Country",
+      "type": "string"
+    },
+    "FAX_DISABLED": {
+      "default": false,
+      "title": "Fax Disabled",
+      "type": "boolean"
+    },
+    "FAX_HEADER": {
+      "default": "Faxbot",
+      "title": "Fax Header",
+      "type": "string"
+    },
+    "FAX_INBOUND_BACKEND": {
+      "default": "",
+      "title": "Fax Inbound Backend",
+      "type": "string"
+    },
+    "FAX_LOCAL_DELIVERY": {
+      "default": true,
+      "title": "Fax Local Delivery",
+      "type": "boolean"
+    },
+    "FAX_LOCAL_STATION_ID": {
+      "default": "",
+      "title": "Fax Local Station Id",
+      "type": "string"
+    },
+    "FAX_OUTBOUND_BACKEND": {
+      "default": "",
+      "title": "Fax Outbound Backend",
+      "type": "string"
+    },
+    "FAX_OUTBOUND_ROUTES": {
+      "default": "",
+      "pattern": "^[a-z0-9_.,\\s-]*$",
+      "title": "Fax Outbound Routes",
+      "type": "string"
+    },
+    "FAX_ROUTE_MIN_SUCCESS_PERCENT": {
+      "default": 80,
+      "maximum": 100,
+      "minimum": 0,
+      "title": "Fax Route Min Success Percent",
+      "type": "integer"
+    },
+    "FAX_TIME_ZONE": {
+      "default": "",
+      "title": "Fax Time Zone",
+      "type": "string"
+    },
+    "FEATURE_PLUGIN_INSTALL": {
+      "default": false,
+      "title": "Feature Plugin Install",
+      "type": "boolean"
+    },
+    "FEATURE_V3_PLUGINS": {
+      "default": false,
+      "title": "Feature V3 Plugins",
+      "type": "boolean"
+    },
+    "FREESWITCH_CALLER_ID_NUMBER": {
+      "default": "",
+      "title": "Freeswitch Caller Id Number",
+      "type": "string"
+    },
+    "FREESWITCH_ESL_HOST": {
+      "default": "127.0.0.1",
+      "title": "Freeswitch Esl Host",
+      "type": "string"
+    },
+    "FREESWITCH_ESL_PASSWORD": {
+      "secret": true,
+      "title": "Freeswitch Esl Password",
+      "type": "string",
+      "writeOnly": true
+    },
+    "FREESWITCH_ESL_PORT": {
+      "default": 8021,
+      "maximum": 65535,
+      "minimum": 1,
+      "title": "Freeswitch Esl Port",
+      "type": "integer"
+    },
+    "FREESWITCH_GATEWAY_NAME": {
+      "default": "gw_signalwire",
+      "title": "Freeswitch Gateway Name",
+      "type": "string"
+    },
+    "FREESWITCH_T38_ENABLE": {
+      "default": true,
+      "title": "Freeswitch T38 Enable",
+      "type": "boolean"
+    },
+    "HUMBLEFAX_ACCESS_KEY": {
+      "secret": true,
+      "title": "Humblefax Access Key",
+      "type": "string",
+      "writeOnly": true
+    },
+    "HUMBLEFAX_FROM_NUMBER": {
+      "default": "",
+      "pattern": "^(?:\\+1[2-9][0-9]{9}|1?[2-9][0-9]{9})?$",
+      "title": "Humblefax From Number",
+      "type": "string"
+    },
+    "HUMBLEFAX_SECRET_KEY": {
+      "secret": true,
+      "title": "Humblefax Secret Key",
+      "type": "string",
+      "writeOnly": true
+    },
+    "INBOUND_ENABLED": {
+      "default": false,
+      "title": "Inbound Enabled",
+      "type": "boolean"
+    },
+    "INBOUND_GET_RPM": {
+      "default": 60,
+      "minimum": 0,
+      "title": "Inbound Get Rpm",
+      "type": "integer"
+    },
+    "INBOUND_LIST_RPM": {
+      "default": 30,
+      "minimum": 0,
+      "title": "Inbound List Rpm",
+      "type": "integer"
+    },
+    "INBOUND_RETENTION_DAYS": {
+      "default": 30,
+      "minimum": 0,
+      "title": "Inbound Retention Days",
+      "type": "integer"
+    },
+    "INBOUND_TOKEN_TTL_MINUTES": {
+      "default": 60,
+      "minimum": 1,
+      "title": "Inbound Token Ttl Minutes",
+      "type": "integer"
+    },
+    "INTAKE_EMAIL_ENABLED": {
+      "default": false,
+      "title": "Intake Email Enabled",
+      "type": "boolean"
+    },
+    "INTAKE_EMAIL_FROM": {
+      "default": "",
+      "title": "Intake Email From",
+      "type": "string"
+    },
+    "INTAKE_EMAIL_SUBJECT": {
+      "default": "Fax from {from_number}",
+      "title": "Intake Email Subject",
+      "type": "string"
+    },
+    "INTAKE_EMAIL_TO": {
+      "default": "",
+      "title": "Intake Email To",
+      "type": "string"
+    },
+    "INTAKE_SMTP_HOST": {
+      "default": "",
+      "title": "Intake Smtp Host",
+      "type": "string"
+    },
+    "INTAKE_SMTP_PASSWORD": {
+      "secret": true,
+      "title": "Intake Smtp Password",
+      "type": "string",
+      "writeOnly": true
+    },
+    "INTAKE_SMTP_PORT": {
+      "default": 587,
+      "maximum": 65535,
+      "minimum": 1,
+      "title": "Intake Smtp Port",
+      "type": "integer"
+    },
+    "INTAKE_SMTP_SECURITY": {
+      "default": "starttls",
+      "pattern": "^(starttls|tls|none)$",
+      "title": "Intake Smtp Security",
+      "type": "string"
+    },
+    "INTAKE_SMTP_USERNAME": {
+      "default": "",
+      "title": "Intake Smtp Username",
+      "type": "string"
+    },
+    "MAX_FILE_SIZE_MB": {
+      "default": 10,
+      "minimum": 1,
+      "title": "Max File Size Mb",
+      "type": "integer"
+    },
+    "MAX_REQUESTS_PER_MINUTE": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Max Requests Per Minute",
+      "type": "integer"
+    },
+    "MCP_HTTP_PATH": {
+      "default": "/mcp/http",
+      "title": "Mcp Http Path",
+      "type": "string"
+    },
+    "MCP_SSE_PATH": {
+      "default": "/mcp/sse",
+      "title": "Mcp Sse Path",
+      "type": "string"
+    },
+    "MOBILE_LOCAL_BASE": {
+      "default": "",
+      "title": "Mobile Local Base",
+      "type": "string"
+    },
+    "OAUTH_AUDIENCE": {
+      "default": "",
+      "title": "Oauth Audience",
+      "type": "string"
+    },
+    "OAUTH_ISSUER": {
+      "default": "",
+      "title": "Oauth Issuer",
+      "type": "string"
+    },
+    "OAUTH_JWKS_URL": {
+      "default": "",
+      "title": "Oauth Jwks Url",
+      "type": "string"
+    },
+    "PDF_TOKEN_TTL_MINUTES": {
+      "default": 60,
+      "minimum": 1,
+      "title": "Pdf Token Ttl Minutes",
+      "type": "integer"
+    },
+    "PERSISTED_ENV_PATH": {
+      "default": "/faxdata/faxbot.env",
+      "title": "Persisted Env Path",
+      "type": "string"
+    },
+    "PHAXIO_API_KEY": {
+      "secret": true,
+      "title": "Phaxio Api Key",
+      "type": "string",
+      "writeOnly": true
+    },
+    "PHAXIO_API_SECRET": {
+      "secret": true,
+      "title": "Phaxio Api Secret",
+      "type": "string",
+      "writeOnly": true
+    },
+    "PHAXIO_CALLBACK_TOKEN": {
+      "secret": true,
+      "title": "Phaxio Callback Token",
+      "type": "string",
+      "writeOnly": true
+    },
+    "PHAXIO_INBOUND_VERIFY_SIGNATURE": {
+      "default": true,
+      "title": "Phaxio Inbound Verify Signature",
+      "type": "boolean"
+    },
+    "PHAXIO_STATUS_CALLBACK_URL": {
+      "default": "",
+      "title": "Phaxio Status Callback Url",
+      "type": "string"
+    },
+    "PHAXIO_VERIFY_SIGNATURE": {
+      "default": true,
+      "title": "Phaxio Verify Signature",
+      "type": "boolean"
+    },
+    "PUBLIC_API_URL": {
+      "default": "http://localhost:8080",
+      "title": "Public Api Url",
+      "type": "string"
+    },
+    "REQUIRE_API_KEY": {
+      "default": false,
+      "title": "Require Api Key",
+      "type": "boolean"
+    },
+    "REQUIRE_MCP_OAUTH": {
+      "default": false,
+      "title": "Require Mcp Oauth",
+      "type": "boolean"
+    },
+    "S3_BUCKET": {
+      "default": "",
+      "title": "S3 Bucket",
+      "type": "string"
+    },
+    "S3_ENDPOINT_URL": {
+      "default": "",
+      "title": "S3 Endpoint Url",
+      "type": "string"
+    },
+    "S3_KMS_KEY_ID": {
+      "default": "",
+      "title": "S3 Kms Key Id",
+      "type": "string"
+    },
+    "S3_PREFIX": {
+      "default": "inbound/",
+      "title": "S3 Prefix",
+      "type": "string"
+    },
+    "S3_REGION": {
+      "default": "",
+      "title": "S3 Region",
+      "type": "string"
+    },
+    "SIGNALWIRE_API_TOKEN": {
+      "secret": true,
+      "title": "Signalwire Api Token",
+      "type": "string",
+      "writeOnly": true
+    },
+    "SIGNALWIRE_FAX_FROM_E164": {
+      "default": "",
+      "title": "Signalwire Fax From E164",
+      "type": "string"
+    },
+    "SIGNALWIRE_PROJECT_ID": {
+      "default": "",
+      "title": "Signalwire Project Id",
+      "type": "string"
+    },
+    "SIGNALWIRE_SMS_FROM_E164": {
+      "default": "",
+      "title": "Signalwire Sms From E164",
+      "type": "string"
+    },
+    "SIGNALWIRE_SPACE_URL": {
+      "default": "",
+      "title": "Signalwire Space Url",
+      "type": "string"
+    },
+    "SIGNALWIRE_STATUS_CALLBACK_URL": {
+      "default": "",
+      "title": "Signalwire Status Callback Url",
+      "type": "string"
+    },
+    "SIGNALWIRE_STATUS_POLL_SECONDS": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Signalwire Status Poll Seconds",
+      "type": "integer"
+    },
+    "SIGNALWIRE_WEBHOOK_SIGNING_KEY": {
+      "secret": true,
+      "title": "Signalwire Webhook Signing Key",
+      "type": "string",
+      "writeOnly": true
+    },
+    "SINCH_API_KEY": {
+      "secret": true,
+      "title": "Sinch Api Key",
+      "type": "string",
+      "writeOnly": true
+    },
+    "SINCH_API_SECRET": {
+      "secret": true,
+      "title": "Sinch Api Secret",
+      "type": "string",
+      "writeOnly": true
+    },
+    "SINCH_BASE_URL": {
+      "default": "",
+      "title": "Sinch Base Url",
+      "type": "string"
+    },
+    "SINCH_INBOUND_BASIC_PASS": {
+      "secret": true,
+      "title": "Sinch Inbound Basic Pass",
+      "type": "string",
+      "writeOnly": true
+    },
+    "SINCH_INBOUND_BASIC_USER": {
+      "default": "",
+      "title": "Sinch Inbound Basic User",
+      "type": "string"
+    },
+    "SINCH_PROJECT_ID": {
+      "default": "",
+      "title": "Sinch Project Id",
+      "type": "string"
+    },
+    "SIP_EXTERNAL_ADDRESS": {
+      "default": "",
+      "pattern": "^(?:[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?)?$",
+      "title": "Sip External Address",
+      "type": "string"
+    },
+    "SIP_FAX_COMPRESSION": {
+      "default": "jbig",
+      "pattern": "^(?:mh|mr|mmr|jbig)$",
+      "title": "Sip Fax Compression",
+      "type": "string"
+    },
+    "SIP_FAX_ECM": {
+      "default": true,
+      "title": "Sip Fax Ecm",
+      "type": "boolean"
+    },
+    "SIP_FAX_FINE": {
+      "default": true,
+      "title": "Sip Fax Fine",
+      "type": "boolean"
+    },
+    "SIP_FAX_LINES": {
+      "default": 2,
+      "maximum": 8,
+      "minimum": 1,
+      "title": "Sip Fax Lines",
+      "type": "integer"
+    },
+    "SIP_FAX_MAX_RATE": {
+      "default": 14400,
+      "title": "Sip Fax Max Rate",
+      "type": "integer"
+    },
+    "SIP_FAX_PREFERENCE_HEADER": {
+      "default": true,
+      "title": "Sip Fax Preference Header",
+      "type": "boolean"
+    },
+    "SIP_PUBLIC_ADDRESS_CHECK_MINUTES": {
+      "default": 5,
+      "maximum": 1440,
+      "minimum": 0,
+      "title": "Sip Public Address Check Minutes",
+      "type": "integer"
+    },
+    "SIP_ROUTER_PORTS": {
+      "default": true,
+      "title": "Sip Router Ports",
+      "type": "boolean"
+    },
+    "SIP_SSLFAX_ENABLED": {
+      "default": true,
+      "title": "Sip Sslfax Enabled",
+      "type": "boolean"
+    },
+    "SIP_SSLFAX_LISTENER_PORT": {
+      "default": 10443,
+      "maximum": 65535,
+      "minimum": 1024,
+      "title": "Sip Sslfax Listener Port",
+      "type": "integer"
+    },
+    "SIP_T38_ENABLED": {
+      "default": true,
+      "title": "Sip T38 Enabled",
+      "type": "boolean"
+    },
+    "SIP_T38_ERROR_CORRECTION": {
+      "default": "redundancy",
+      "pattern": "^(?:redundancy|fec|none)$",
+      "title": "Sip T38 Error Correction",
+      "type": "string"
+    },
+    "SIP_T38_MAX_DATAGRAM": {
+      "default": 400,
+      "maximum": 1400,
+      "minimum": 100,
+      "title": "Sip T38 Max Datagram",
+      "type": "integer"
+    },
+    "SIP_TRUNK_AUTH": {
+      "default": "registration",
+      "pattern": "^(?:registration|ip)$",
+      "title": "Sip Trunk Auth",
+      "type": "string"
+    },
+    "SIP_TRUNK_CALLER_ID": {
+      "default": "",
+      "pattern": "^(?:\\+[1-9][0-9]{6,14})?$",
+      "title": "Sip Trunk Caller Id",
+      "type": "string"
+    },
+    "SIP_TRUNK_CODECS": {
+      "default": "",
+      "pattern": "^(?:(?:ulaw|alaw)(?:,(?:ulaw|alaw))?)?$",
+      "title": "Sip Trunk Codecs",
+      "type": "string"
+    },
+    "SIP_TRUNK_DIAL_FORMAT": {
+      "default": "",
+      "pattern": "^(?:|e164|local)$",
+      "title": "Sip Trunk Dial Format",
+      "type": "string"
+    },
+    "SIP_TRUNK_DIAL_PREFIX": {
+      "default": "",
+      "pattern": "^[0-9]{0,4}$",
+      "title": "Sip Trunk Dial Prefix",
+      "type": "string"
+    },
+    "SIP_TRUNK_DIDS": {
+      "default": "",
+      "pattern": "^(?:\\+[1-9][0-9]{6,14}(?:\\s*,\\s*\\+[1-9][0-9]{6,14}){0,99})?$",
+      "title": "Sip Trunk Dids",
+      "type": "string"
+    },
+    "SIP_TRUNK_HOST": {
+      "default": "",
+      "pattern": "^(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*)?$",
+      "title": "Sip Trunk Host",
+      "type": "string"
+    },
+    "SIP_TRUNK_OUTBOUND_PROXY": {
+      "default": "",
+      "pattern": "^(?:[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?(?::[0-9]{1,5})?)?$",
+      "title": "Sip Trunk Outbound Proxy",
+      "type": "string"
+    },
+    "SIP_TRUNK_PASSWORD": {
+      "pattern": "^(?:[!-:<-\\[\\]-~](?:[ !-:<-\\[\\]-~]{0,126}[!-:<-\\[\\]-~])?)?$",
+      "secret": true,
+      "title": "Sip Trunk Password",
+      "type": "string",
+      "writeOnly": true
+    },
+    "SIP_TRUNK_PORT": {
+      "default": 0,
+      "maximum": 65535,
+      "minimum": 0,
+      "title": "Sip Trunk Port",
+      "type": "integer"
+    },
+    "SIP_TRUNK_PRESET": {
+      "default": "",
+      "pattern": "^(?:|telnyx|signalwire|sinch|anveo|flowroute|gamma|bt-one-voice|telstra-sip-connect|avaya-ipoffice|avaya-aura|custom)$",
+      "title": "Sip Trunk Preset",
+      "type": "string"
+    },
+    "SIP_TRUNK_TRANSPORT": {
+      "default": "",
+      "pattern": "^(?:|udp|tcp|tls)$",
+      "title": "Sip Trunk Transport",
+      "type": "string"
+    },
+    "SIP_TRUNK_USERNAME": {
+      "default": "",
+      "pattern": "^[A-Za-z0-9_.+-]{0,128}$",
+      "title": "Sip Trunk Username",
+      "type": "string"
+    },
+    "STORAGE_BACKEND": {
+      "default": "local",
+      "title": "Storage Backend",
+      "type": "string"
+    },
+    "TELNYX_API_KEY": {
+      "pattern": "^[!-~]{0,256}$",
+      "secret": true,
+      "title": "Telnyx Api Key",
+      "type": "string",
+      "writeOnly": true
+    },
+    "WORK_ACKNOWLEDGE_HOURS": {
+      "default": 0,
+      "maximum": 8760,
+      "minimum": 0,
+      "title": "Work Acknowledge Hours",
+      "type": "integer"
+    }
+  },
+  "title": "ConfigurationValues",
+  "type": "object"
+}
