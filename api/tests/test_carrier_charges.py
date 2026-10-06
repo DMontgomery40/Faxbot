@@ -643,3 +643,42 @@ def test_spending_counts_faxes_with_no_price_apart_from_estimated_ones(ledger):
     sip, signalwire = totals['sip'], totals['signalwire']
     assert (sip['unreported'], sip['unpriced'], sip['total_micros']) == (1, 0, {'USD': 5000})
     assert (signalwire['unreported'], signalwire['unpriced'], signalwire['total_micros']) == (2, 2, {})
+
+
+@pytest.mark.parametrize('meta', [None, {}, {'total_pages': None}, {'total_pages': '2'}])
+def test_a_full_page_without_a_page_count_is_never_taken_as_the_whole_window(meta):
+    """A missing or unusable page count is no proof that page 1 was the last: matching relies on ``complete``."""
+    pages = {1: [{**sent_b(), 'id': f'rec-{number}'} for number in range(50)], 2: [received_c()]}
+
+    def handler(request):
+        body = {'data': pages.get(int(request.url.params['page[number]']), [])}
+        if meta is not None:
+            body['meta'] = meta
+        return httpx.Response(200, json=body)
+
+    def factory():
+        return httpx.Client(transport=httpx.MockTransport(handler))
+    records, complete = TelnyxDetailRecords(lambda: 'KEYsynthetic', client_factory=factory).fetch(at(0), at(30))
+    assert (len(records), complete) == (51, True)  # read on to the short page, which ends the window
+    records, complete = TelnyxDetailRecords(lambda: 'KEYsynthetic', client_factory=factory,
+                                            max_pages=1).fetch(at(0), at(30))
+    assert (len(records), complete) == (50, False)  # stopped on a full page: not proven complete
+
+
+def test_a_call_whose_other_record_is_unpriced_stays_open_until_every_record_is_priced(ledger):
+    installation, routes, carriers = ledger
+    job = accept(installation)
+    attempt = outbound_attempt(ledger, job, phase='success', answer=at(3, 28), end=at(4, 14), call_id='call-two-legs')
+    call = call_of(carriers, attempt)
+    later = at(4, 14) + timedelta(hours=25)  # past the settle time
+    # Telnyx has two records with this call's SIP Call-ID, and only one has its price yet.
+    legs = [sent_b(call_id='call-two-legs'), {**sent_b(call_id='call-two-legs', cost=None), 'id': 'rec-b2'}]
+    CarrierReconciler(carriers, routes, FakeTelnyx(legs)).step(now=later)
+    assert checks(carriers, call) == 'matched'  # not settled while a record of it has no price
+    assert call in [row['id'] for row in carriers.due_calls('telnyx', now=later + timedelta(hours=7))]
+    assert routes.decision(attempt)['settled_cost_micros'] is None
+    # The second record is priced later: the call settles with both amounts.
+    legs[1] = {**legs[1], 'cost': '0.002'}
+    CarrierReconciler(carriers, routes, FakeTelnyx(legs)).step(now=later + timedelta(hours=7))
+    assert checks(carriers, call) == 'settled'
+    assert sorted(charge['amount_micros'] for charge in carriers.in_effect([call])[call]) == [2000, 5000]

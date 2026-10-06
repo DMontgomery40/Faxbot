@@ -151,7 +151,12 @@ class TelnyxDetailRecords:
             return False
 
     def fetch(self, start, end):
-        """``(records, complete)``; ``complete`` is False when the window had more pages than allowed."""
+        """``(records, complete)``; ``complete`` is False when the window had more pages than allowed.
+
+        Without a usable ``meta.total_pages``, only an empty or short page proves
+        the window was read to its end: a full page is never taken as the last
+        one, because callers rely on ``complete`` to prove a match is unique.
+        """
         key = self.api_key()
         if not key:
             raise CarrierUnavailable('No Telnyx API key is set.')
@@ -179,8 +184,14 @@ class TelnyxDetailRecords:
                     raise CarrierUnavailable('Telnyx returned an unusable answer.')
                 records.extend(record for record in map(parse_record, data) if record is not None)
                 pages = meta.get('total_pages') if isinstance(meta, dict) else None
-                if type(pages) is not int or page >= pages or not data:
+                if not data:
                     return records, True
+                if type(pages) is int:
+                    if page >= pages:
+                        return records, True
+                elif len(data) < PAGE_SIZE:
+                    return records, True  # no page count, but a short page is the last one
+                # A full page may have more after it, with or without a page count: read on, or stop unproven.
                 if page >= self.max_pages:
                     return records, False
                 page += 1
