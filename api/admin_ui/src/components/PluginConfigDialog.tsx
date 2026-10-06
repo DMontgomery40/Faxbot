@@ -116,7 +116,8 @@ export default function PluginConfigDialog({ open, plugin, initialConfig, loadin
       return (
         <Box>
           <Alert severity="info">
-            Set up the SIP trunk (Asterisk) and its fax station ID in the Setup Wizard.
+            Your carrier trunk has its own page under Providers, named after your carrier. Set the name and number
+            other fax machines see in Numbers → Sender identity.
           </Alert>
         </Box>
       );

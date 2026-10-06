@@ -225,7 +225,7 @@ export default function Destinations({ client, destinations, canWrite, onChanged
                 <Typography variant="subtitle1">{destination.display_name || destination.number}</Typography>
                 {destination.display_name && <Typography variant="body2" color="text.secondary">{destination.number}</Typography>}
                 <Typography variant="body2" sx={{ mt: 1 }}>{routeSummary(destination)}</Typography>
-                <Typography variant="body2" color="text.secondary">Last 30 days: {formatMoneyList(destination.estimated_cost_30_days)}</Typography>
+                <Typography variant="body2" color="text.secondary">Last 30 days: {formatMoneyList(destination.estimated_cost_30_days, 'None yet')}</Typography>
                 {(destination.delivered_costs ?? []).length > 0 && (
                   <Typography variant="body2" color="text.secondary">Per delivered fax: {deliveredSummary(destination)}</Typography>
                 )}
@@ -260,7 +260,7 @@ export default function Destinations({ client, destinations, canWrite, onChanged
                     {destination.display_name && <Typography variant="caption" color="text.secondary">{destination.number}</Typography>}
                   </TableCell>
                   <TableCell>{routeSummary(destination)}</TableCell>
-                  <TableCell>{formatMoneyList(destination.estimated_cost_30_days)}</TableCell>
+                  <TableCell>{formatMoneyList(destination.estimated_cost_30_days, 'None yet')}</TableCell>
                   <TableCell>{deliveredSummary(destination)}</TableCell>
                   <TableCell>{preferredText(destination)}</TableCell>
                   <TableCell>{partnerText(destination, partners)}</TableCell>

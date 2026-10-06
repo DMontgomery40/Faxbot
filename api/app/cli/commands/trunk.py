@@ -6,6 +6,7 @@ import typer
 from .. import state
 from ..errors import CliError
 from ..output import local_time, parse_time
+from ..settings_write import write_settings
 
 trunk = typer.Typer(help='Your own phone line for faxing, to a phone carrier or to your phone system: presets, status and '
                          'recent calls.', no_args_is_help=True)
@@ -128,9 +129,7 @@ def trunk_mode(mode: str = typer.Argument(..., metavar='t38|audio',
     if mode not in ('t38', 'audio'):
         raise typer.BadParameter('Use t38 or audio.', param_hint='MODE')
     api = state.api()
-    current = api.get('/admin/settings')
-    saved = api.put('/admin/settings', json={'sip_t38_enabled': mode == 't38',
-                                             'expected_revision_id': current['_meta']['desired_revision_id']})
+    saved = write_settings(api, {'sip_t38_enabled': mode == 't38'})
     applied, _ = _connect(api, wait=False, timeout=0)
     result = {'mode': mode, 'changed': bool(saved.get('changed')), 'applied': bool(applied.get('ok')),
               'engine': applied.get('engine'), 'message': applied.get('message')}
@@ -203,9 +202,7 @@ def network_router_ports(choice: str = typer.Argument(..., metavar='on|off',
     if choice not in ('on', 'off'):
         raise typer.BadParameter('Use on or off.', param_hint='on|off')
     api = state.api()
-    current = api.get('/admin/settings')
-    api.put('/admin/settings', json={'sip_router_ports': choice == 'on',
-                                     'expected_revision_id': current['_meta']['desired_revision_id']})
+    write_settings(api, {'sip_router_ports': choice == 'on'})
     result = api.post('/admin/sip/network/check')
     state.out().result(result, lambda out: _network_lines(out, result))
 
@@ -336,7 +333,7 @@ def trunk_use(preset: str = typer.Argument(..., metavar='PRESET', help='Carrier 
         changes['sip_trunk_dial_format'] = number_format
     if prefix is not None:
         changes['sip_trunk_dial_prefix'] = prefix.strip()
-    result = api.put('/admin/settings', json={**changes, 'expected_revision_id': current['_meta']['desired_revision_id']})
+    result = write_settings(api, changes, current=current)
 
     def human(out):
         kind = 'phone system' if chosen['kind'] == 'phone_system' else 'carrier'

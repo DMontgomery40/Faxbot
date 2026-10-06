@@ -9,6 +9,7 @@ import DeliveryRoutes from '../components/DeliveryRoutes';
 import Received from '../components/Received';
 import JobsList from '../components/JobsList';
 import { localToday } from '../components/delivery/RateCards';
+import { NOT_PRICED, formatMoney, formatMoneyList } from '../components/delivery/shared';
 import { server } from '../test/server';
 
 const client = () => new AdminAPIClient({ kind: 'key', key: 'synthetic-key' });
@@ -88,7 +89,7 @@ describe('Delivery routes spending', () => {
     routes({ providers: [{ ...sip, carrier: null, reported_cost: [], attempts_with_reported_cost: 0, total_cost: [usd('0.02')],
       attempts_without_reported_cost: 3 }], received: [], carrier_charges: { carrier: 'Telnyx', supported: true, readable: false } });
     render(<DeliveryRoutes client={client()} canWrite />);
-    expect(await screen.findByText('Telnyx call charges appear here once a Telnyx API key is added to .env.')).toBeTruthy();
+    expect(await screen.findByText('Telnyx call charges appear here once you add your Telnyx API key in Providers → Telnyx.')).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Check Telnyx charges now' })).toBeNull();
     expect(screen.getByText('estimated')).toBeTruthy();
   });
@@ -269,6 +270,19 @@ describe('One reading of spending', () => {
     expect(card.textContent).toContain('DocumoNo published price; add your rate');
     expect(card.textContent).toContain('Received through Carrier trunk · TelnyxNot priced yet');
     expect(card.textContent).toContain('Total$0.02, 2 faxes and 1 call not priced yet');
+  });
+});
+
+describe('Money as money', () => {
+  it('formats the exact decimal the way the faxbot command does, and an unknown amount as not priced', () => {
+    // The same cases as test_money_reads_as_the_console_shows_it: half up from the decimal, never through a float.
+    expect(['0.005', '0.0032', '1.5', '0.07', '0', '10', '0.00125', '0.000049', '-0.03', '-0.000001']
+      .map((amount) => formatMoney(usd(amount))))
+      .toEqual(['$0.005', '$0.0032', '$1.50', '$0.07', '$0.00', '$10.00', '$0.0013', '$0.00', '-$0.03', '$0.00']);
+    expect(formatMoney(usd('12345678901.125'))).toBe('$12,345,678,901.13');
+    expect(formatMoney(usd('not a number'))).toBe('-');
+    expect(formatMoneyList([])).toBe(NOT_PRICED);
+    expect(formatMoneyList([usd('0.005'), { currency: 'EUR', amount: '0.01' }])).toBe('$0.005 + €0.01');
   });
 });
 

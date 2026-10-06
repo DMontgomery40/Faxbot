@@ -390,8 +390,8 @@ def _carrier_status(values):
     return {'carrier': carrier_label(preset), 'supported': True, 'readable': bool(values.telnyx_api_key)}
 
 
-NO_TELNYX_KEY = ('Faxbot needs a Telnyx API key to read call charges. Add TELNYX_API_KEY to .env, '
-                 'then run docker compose up -d.')
+NO_TELNYX_KEY = ('Faxbot needs a Telnyx API key to read call charges. Add it in the console under Providers → '
+                 'Telnyx, or run faxbot system settings set --secret telnyx_api_key.')
 
 
 def _reconcile_summary(result):
@@ -545,8 +545,16 @@ async def inbound_cost(inbound_id: str, request: Request, identity=Depends(requi
     return _cost_view(await _call(lambda: spending.inbound(inbound_id)))
 
 
+def _provider_name(provider_id):
+    """A rate card's provider in words: "Telnyx" for the trunk or a carrier's card, "Phaxio" for a provider."""
+    if provider_id.startswith('sip-'):
+        return carrier_label(provider_id[len('sip-'):])
+    return route_label(provider_id)
+
+
 def _card_view(card):
-    return {'id': card.id, 'provider_id': card.provider_id, 'label': card.label, 'direction': card.direction,
+    return {'id': card.id, 'provider_id': card.provider_id, 'provider_name': _provider_name(card.provider_id),
+            'label': card.label, 'direction': card.direction,
             'currency': card.currency, 'per_minute': format_amount(card.per_minute_micros),
             'per_page': format_amount(card.per_page_micros), 'per_call': format_amount(card.per_call_micros),
             'billing_increment_seconds': card.billing_increment_seconds, 'minimum_seconds': card.minimum_seconds,
@@ -571,6 +579,7 @@ class RateCardIn(BaseModel):
     monthly_fee: str | int | None = None
     # Shown by GET; accepted and ignored so a listed card can be saved back unchanged.
     included_in_plan: bool | None = None
+    provider_name: str | None = None
 
 
 class RateCardsIn(BaseModel):

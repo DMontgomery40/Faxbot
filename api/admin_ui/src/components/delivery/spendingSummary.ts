@@ -2,11 +2,11 @@
 // Dashboard card), so the two can never disagree: plans, charges, estimates, received calls and unmatched records.
 import type { Money, ProviderCosts, ReceivedCosts, RouteCostsResponse } from '../../api/deliveryTypes';
 import { providerLabel } from '../../providerLabels';
-import { formatMoney, formatMoneyList } from './shared';
+import { NOT_PRICED, formatMoney, formatMoneyList, fromMicros, toMicros } from './shared';
 
 export const NO_PUBLISHED_PRICE = 'No published price; add your rate';
 // A fax or call with no charge and no estimate: never shown or totalled as $0.
-export const NOT_PRICED = 'Not priced yet';
+export { NOT_PRICED };
 
 function countOf(count: number, unit: 'fax' | 'call'): string {
   return `${count} ${count === 1 ? unit : unit === 'fax' ? 'faxes' : 'calls'}`;
@@ -17,18 +17,22 @@ export function notPriced(count: number | undefined, unit: 'fax' | 'call'): stri
   return count ? `${countOf(count, unit)} not priced yet` : null;
 }
 
-function add(totals: Map<string, number>, values: Money[] | undefined) {
-  for (const value of values ?? []) totals.set(value.currency, (totals.get(value.currency) ?? 0) + Number(value.amount));
+// Exact sums in millionths, as the server keeps them; an amount that is not a decimal adds nothing.
+function add(totals: Map<string, bigint>, values: Money[] | undefined) {
+  for (const value of values ?? []) {
+    const micros = toMicros(value.amount);
+    if (micros !== null) totals.set(value.currency, (totals.get(value.currency) ?? 0n) + micros);
+  }
 }
 
-function moneyOf(totals: Map<string, number>): Money[] {
-  return [...totals].map(([currency, amount]) => ({ currency, amount: String(Number(amount.toFixed(6))) }));
+function moneyOf(totals: Map<string, bigint>): Money[] {
+  return [...totals].map(([currency, micros]) => ({ currency, amount: fromMicros(micros) }));
 }
 
 // What a route cost: the server's total, or charges plus estimates for faxes not billed yet (older servers).
 export function sentTotal(provider: ProviderCosts): Money[] {
   if (provider.total_cost) return provider.total_cost;
-  const totals = new Map<string, number>();
+  const totals = new Map<string, bigint>();
   add(totals, provider.reported_cost);
   add(totals, provider.estimated_cost_not_reported ?? (provider.reported_cost.length ? [] : provider.estimated_cost));
   return moneyOf(totals);
@@ -101,7 +105,7 @@ export function spendingTotalText(costs: Pick<RouteCostsResponse, 'providers' | 
 // Everything spent in the period: the server's total when it sends one (it counts each plan fee once per 30 days).
 export function spendingTotal(costs: Pick<RouteCostsResponse, 'providers' | 'received' | 'total_cost'>): Money[] {
   if (costs.total_cost) return costs.total_cost;
-  const totals = new Map<string, number>();
+  const totals = new Map<string, bigint>();
   for (const provider of costs.providers) add(totals, sentTotal(provider));
   for (const entry of costs.received ?? []) add(totals, entry.total_cost ?? entry.reported_cost);
   return moneyOf(totals);

@@ -9,7 +9,7 @@ import typer
 
 from .. import state
 from ..client import segment
-from ..errors import CliError
+from ..errors import CliError, EXIT_FAILURE
 from ..output import cost_amount, local_time, money, text
 
 routing = typer.Typer(help='Delivery routes, destinations, fax costs and rate cards.', no_args_is_help=True)
@@ -169,6 +169,21 @@ def _monthly(card):
     return f"{money([{'currency': card['currency'], 'amount': card['monthly_fee']}])} a month"
 
 
+def _card_price(card, field):
+    """One of a rate card's prices as money ("$0.005"), or '-' when the card charges nothing that way."""
+    amount = card.get(field)
+    if amount in (None, '') or not any(digit not in '0.' for digit in str(amount)):
+        return '-'
+    return money([{'currency': card['currency'], 'amount': amount}])
+
+
+def _billing_step(seconds):
+    if seconds and seconds % 60 == 0:
+        minutes = seconds // 60
+        return f"{minutes} {'minute' if minutes == 1 else 'minutes'}"
+    return f"{seconds} {'second' if seconds == 1 else 'seconds'}"
+
+
 def _route_rate(item):
     """A route's price as Prices & plans words it: the plan with its fee, the rate, or no price yet."""
     fee = item.get('monthly_fee')
@@ -253,8 +268,9 @@ def routing_costs(since: str = typer.Option(None, '--since', help='Start date, f
             out.line(not_priced)
         carrier = result.get('carrier_charges') or {}
         if carrier.get('supported') and not carrier.get('readable'):
-            out.line(f"{carrier['carrier']} call charges appear once a {carrier['carrier']} API key is set: "
-                     "add TELNYX_API_KEY to .env, then run docker compose up -d.")
+            out.line(f"{carrier['carrier']} call charges appear once a {carrier['carrier']} API key is saved: add it "
+                     f"in the console under Providers → {carrier['carrier']}, or run faxbot system settings set "
+                     "--secret telnyx_api_key.")
     state.out().result(result, human)
 
 
@@ -484,12 +500,17 @@ def routing_rate_cards(replace: str = typer.Option(None, '--replace', metavar='F
         result = api.put('/routing/rate-cards', json=document)
     else:
         result = api.get('/routing/rate-cards')
+    from .trunk import local_date
+    # Money as money and the provider's name, as Costs → Prices & plans shows them.
     state.out().result(result, lambda out: out.table(
-        ['Provider', 'Name', 'Per minute', 'Per page', 'Per call', 'Monthly', 'Billing step', 'Currency', 'Captured'],
-        [[card['provider_id'], card['label'], card['per_minute'], card['per_page'], card['per_call'],
+        ['Provider', 'Name', 'For', 'Per minute', 'Per page', 'Per call', 'Monthly', 'Billed in steps of',
+         'Advertised on'],
+        [[card.get('provider_name') or card['provider_id'], card['label'],
+          'Receiving' if card.get('direction') == 'inbound' else 'Sending',
+          _card_price(card, 'per_minute'), _card_price(card, 'per_page'), _card_price(card, 'per_call'),
           (f"{_monthly(card)}, faxes included" if card.get('included_in_plan')
            else _monthly(card) if card.get('monthly_fee') else '-'),
-          f"{card['billing_increment_seconds']} s", card['currency'], card['captured_on']]
+          _billing_step(card['billing_increment_seconds']), local_date(card['captured_on'])]
          for card in result.get('cards', [])], empty='No rate cards.'))
 
 
@@ -717,7 +738,7 @@ def connectors_test(name: str = typer.Argument(..., help='A name for this delive
     result = api.post(f"/intake/connectors/{segment(connector['id'])}/test")
     state.out().result(result, lambda out: out.line(result.get('detail') or ''))
     if not result.get('ok'):
-        raise typer.Exit(1)
+        raise typer.Exit(EXIT_FAILURE)  # the result above already says what failed, in --json too
 
 
 @connectors.command('remove')
@@ -807,9 +828,9 @@ def peers_revoke(partner: str = typer.Argument(..., help='Partner organization, 
 def direct_deliveries():
     """List recent faxes sent to and received from partners over the internet."""
     items = state.api().get('/direct/deliveries')['deliveries']
-    state.out().result(items, lambda out: out.table(['When', 'Direction', 'Partner', 'Fax number', 'Status'],
-        [[local_time(item['created_at']), item['direction'], item.get('partner'), item.get('fax_number'),
-          item['status']] for item in items], empty='No direct deliveries yet.'))
+    state.out().result(items, lambda out: out.table(['When', 'Sent or received', 'Partner', 'Fax number', 'Status'],
+        [[local_time(item['created_at']), 'Received' if item['direction'] == 'inbound' else 'Sent', item.get('partner'),
+          item.get('fax_number'), item['status']] for item in items], empty='No direct deliveries yet.'))
 
 
 # -- case packets ---------------------------------------------------------------------------------

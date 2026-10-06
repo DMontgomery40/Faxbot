@@ -4,20 +4,61 @@ import { Alert, Fade } from '@mui/material';
 import { AdminAPIError, accessErrorMessage } from '../../api/client';
 import type { Money, RecommendedRoute } from '../../api/deliveryTypes';
 
+// An amount with no price at all: never shown as $0.
+export const NOT_PRICED = 'Not priced yet';
+
+const MICROS_PER_UNIT = 1_000_000n;
+
+// The API's exact decimal string ("0.0095", "-1.50") as whole millionths, or null when it is not one.
+export function toMicros(amount: string | null | undefined): bigint | null {
+  const match = /^(-?)(\d+)(?:\.(\d{1,6}))?$/.exec(String(amount ?? '').trim());
+  if (!match) return null;
+  const micros = BigInt(match[2]) * MICROS_PER_UNIT + BigInt((match[3] ?? '').padEnd(6, '0'));
+  return match[1] ? -micros : micros;
+}
+
+// Whole millionths back to the API's decimal string, trailing zeros trimmed to two places ("0.005", "1.50").
+export function fromMicros(micros: bigint): string {
+  const sign = micros < 0n ? '-' : '';
+  const size = micros < 0n ? -micros : micros;
+  const fraction = (size % MICROS_PER_UNIT).toString().padStart(6, '0').replace(/0+$/, '').padEnd(2, '0');
+  return `${sign}${size / MICROS_PER_UNIT}.${fraction}`;
+}
+
+// The shown digits, worked out exactly from the decimal string as the faxbot command does: two places, or up to
+// four under ten cents, rounded half up and trailing zeros trimmed ("0.005", "0.0013", "1.50").
+function shownAmount(micros: bigint): { text: string; places: number } {
+  const size = micros < 0n ? -micros : micros;
+  const places = size !== 0n && size < 100_000n ? 4 : 2;
+  const step = 10n ** BigInt(6 - places);
+  const rounded = (size + step / 2n) / step;  // half up, away from zero
+  let digits = rounded.toString().padStart(places + 1, '0');
+  let shown = places;
+  while (shown > 2 && digits.endsWith('0')) {
+    digits = digits.slice(0, -1);
+    shown -= 1;
+  }
+  const whole = digits.slice(0, digits.length - shown);
+  return { text: `${micros < 0n && rounded > 0n ? '-' : ''}${whole}.${digits.slice(-shown)}`, places: shown };
+}
+
 export function formatMoney(value: Money | null | undefined): string {
   if (!value) return '-';
-  const amount = Number(value.amount);
-  if (!Number.isFinite(amount)) return '-';
+  const micros = toMicros(value.amount);
+  if (micros === null) return '-';
+  const { text, places } = shownAmount(micros);
   try {
+    // The digits are already exact; the browser adds only the currency symbol and its own separators.
     return new Intl.NumberFormat(undefined, {
-      style: 'currency', currency: value.currency, minimumFractionDigits: 2, maximumFractionDigits: amount !== 0 && Math.abs(amount) < 0.1 ? 4 : 2,
-    }).format(amount);
+      style: 'currency', currency: value.currency, minimumFractionDigits: places, maximumFractionDigits: places,
+    }).format(Number(text));
   } catch {
-    return `${value.amount} ${value.currency}`;
+    return `${text} ${value.currency}`;
   }
 }
 
-export function formatMoneyList(values: Money[] | null | undefined, empty = 'None yet'): string {
+// Several currencies joined with "+"; an empty list is an unknown amount, so the default says so, never $0.
+export function formatMoneyList(values: Money[] | null | undefined, empty = NOT_PRICED): string {
   if (!values || values.length === 0) return empty;
   return values.map(formatMoney).join(' + ');
 }
@@ -34,7 +75,7 @@ export function routeCostSentence(route: RecommendedRoute, pages: number | null)
 }
 
 export function formatRate(amount: string, currency: string, unit: string): string | null {
-  return Number(amount) > 0 ? `${formatMoney({ amount, currency })} per ${unit}` : null;
+  return (toMicros(amount) ?? 0n) > 0n ? `${formatMoney({ amount, currency })} per ${unit}` : null;
 }
 
 export function formatMinutes(minutes: number): string {
