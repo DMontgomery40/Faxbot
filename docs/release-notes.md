@@ -57,7 +57,7 @@ Each of these still works in this release and shows a notice where you use it. S
 | FreeSWITCH as a fax provider | Another provider, chosen in the Setup wizard |
 | Provider plugins: `FEATURE_V3_PLUGINS`, `GET /plugins`, `GET` and `PUT /plugins/{id}/config`, and the **Provider plugins** page | Built-in providers in Setup, and `GET` and `PUT /admin/settings` |
 | The settings recovery copy: **Save a recovery copy**, `faxbot system settings persist`, `POST /admin/settings/persist` and `ENABLE_PERSISTED_SETTINGS`. New installations no longer turn it on; an installation that already has it on keeps it. | `faxbot system backup` and `faxbot system restore` |
-| `client.plugins` in the Python and Node SDKs (it now warns once when used) | The console, or `faxbot providers` |
+| `client.plugins` in the Python and Node SDKs (it now warns once when used; the SDKs drop it in their next major version) | The console, or `faxbot providers` |
 
 
 - **Existing fax routes keep their contract.** `POST /fax`, `GET /fax/{id}`, `GET /inbound`, `GET /inbound/{id}`, `GET /inbound/{id}/pdf`, `GET /health` and `POST /mobile/pair` keep their fields. Jobs gain `delivery_state`, `dispatch_mode`, `delivery_version` and `reconciliation_reason`.

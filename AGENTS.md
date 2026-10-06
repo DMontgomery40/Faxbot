@@ -59,7 +59,7 @@ The future enterprise direction adds accountable correspondence: reusable intake
 
 ## Engineering boundaries
 
-- Preserve the public fax API, authorization checks, immutable attempt/provider bindings, and original document content. Make schema changes through additive migrations following the existing frozen-schema pattern.
+- Preserve the public fax API, authorization checks, immutable attempt/provider bindings, and original document content. Make schema changes through additive migrations following the existing frozen-schema pattern. The one owner-approved exception is the 2026-10-05 legacy cleanup: migration 0018 removes the Terminal from the built-in Host Operator role and 0019 removes retired permissions and the grants that named them (0019 writes an audit row with what it removed); both downgrades put them back. Don't use them as a pattern for new migrations.
 - Never blindly retransmit after an uncertain provider or direct-delivery outcome. Client idempotency and transport reconciliation are different responsibilities; retain both.
 - Unknown cost is not zero cost. Keep estimated, provider-reported, and settlement observations separate, and apply billing increments per attempt.
 - Direct delivery requires verified peers; case-document reuse requires recipient approval. Keep capability and fallback limits visible in the relevant documentation.
