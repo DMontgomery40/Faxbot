@@ -41,8 +41,11 @@ def without_later_access_changes(name, rows):
     if name == 'access_audit':
         return [row for row in rows if row['operation'] != retired.OPERATION]
     if name == 'fax_jobs':
-        # 0020 adds a nullable column to every sent fax; existing rows hold NULL.
-        return [{key: value for key, value in row.items() if key != 'send_by_call'} for row in rows]
+        # 0020 and 0021 add nullable columns to every sent fax; existing rows hold NULL.
+        return [{key: value for key, value in row.items() if key not in ('send_by_call', 'urgent')} for row in rows]
+    if name == 'delivery_destinations':
+        # 0021 adds a nullable column to every recipient; existing rows hold NULL.
+        return [{key: value for key, value in row.items() if key != 'max_calls'} for row in rows]
     return rows
 
 
