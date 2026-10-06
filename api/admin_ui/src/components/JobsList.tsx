@@ -164,6 +164,7 @@ function eventDetails(event: DeliveryHistoryEvent): string {
 
 interface DetailSelection { jobId: string }
 
+export const URGENT_TEXT = 'Urgent: it goes before other faxes waiting for the same line.';
 export const BY_CALL_TEXT = 'You asked for a real phone call through your carrier, even if the number is one of your own.';
 
 function routeName(route: string): string {
@@ -686,6 +687,18 @@ function JobsList({ client, openJobId, onOpened, onSendFax }: JobsListProps) {
                   secondary={<>
                     {routeText(detailJob.backend, costs.get(detailJob.id))}
                     {/* Why Faxbot chose it, as recorded when it chose it. */}
+                    {detailJob.waiting_reason && (
+                      <Typography component="span" variant="body2" color="text.secondary" display="block"
+                        data-testid="job-waiting-reason">
+                        {detailJob.waiting_reason}
+                      </Typography>
+                    )}
+                    {detailJob.urgent && (
+                      <Typography component="span" variant="body2" color="text.secondary" display="block"
+                        data-testid="job-urgent">
+                        {URGENT_TEXT}
+                      </Typography>
+                    )}
                     {detailJob.send_by_call && (
                       <Typography component="span" variant="body2" color="text.secondary" display="block"
                         data-testid="job-by-call">

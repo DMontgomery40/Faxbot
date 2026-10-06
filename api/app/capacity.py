@@ -286,8 +286,8 @@ class Capacity:
                     lines = room.trunk_limit
                     return f"Waiting for a free line: all {lines} {'line is' if lines == 1 else 'lines are'} in use."
                 if room.rate_full:
-                    return (f'Waiting a moment: your carrier takes {room.rate_limit} new '
-                            f"{'call' if room.rate_limit == 1 else 'calls'} a second.")
+                    return (f'Waiting a moment: Faxbot starts at most {room.rate_limit} new '
+                            f"{'call' if room.rate_limit == 1 else 'calls'} each second on your phone line.")
         return None
 
     def waiting_for_line(self, values, now, *, waiting=None):

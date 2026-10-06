@@ -408,7 +408,9 @@ def providers_status():
                     ('Checked', local_time(result.get('timestamp')))])
         jobs = result.get('jobs')
         if isinstance(jobs, dict):
-            out.table(['Faxes', 'Count'], [[name.replace('_', ' '), count] for name, count in jobs.items()])
+            names = {'waiting_for_line': 'waiting for a free line'}
+            out.table(['Faxes', 'Count'], [[names.get(name, name.replace('_', ' ')), count]
+                                           for name, count in jobs.items()])
     state.out().result(result, human)
 
 

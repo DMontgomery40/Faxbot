@@ -25,6 +25,8 @@ export interface HealthStatus {
     recent_failures: number;
     held?: number;
     reconciliation_required?: number;
+    // Ready to go but waiting for room on their number or the trunk.
+    waiting_for_line?: number;
   };
   inbound_enabled: boolean;
   api_keys_configured: boolean;
@@ -71,6 +73,10 @@ export interface FaxJob extends DeliveryMetadata {
   fax_engine?: { engine: 'hylafax' | 'builtin'; sslfax: boolean | null; sentence: string | null } | null;
   // The sender asked for a real call through the carrier, even to one of this installation's own numbers.
   send_by_call?: boolean;
+  // Marked urgent: it goes before other faxes waiting for the same line.
+  urgent?: boolean;
+  // Why it has not started yet, or why its number stays reserved; null otherwise.
+  waiting_reason?: string | null;
 }
 
 export interface DeliveryHistoryEvent {

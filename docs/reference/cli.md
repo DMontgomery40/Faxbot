@@ -57,6 +57,7 @@ $ faxbot send [OPTIONS] {to} {file}
 * `--queue`: Accept the fax without sending it. Faxbot allows this only while sending is turned off (test mode).
 * `--idempotency-key KEY`: Your own reference for this fax. Sending again with the same reference returns the first fax instead of sending twice.
 * `--now`: Send immediately, even when this number batches faxes; faxes already waiting for it go in the same call.
+* `--urgent`: Send before other faxes waiting for the same line, without waiting to go together with other faxes.
 * `--by-call`: Place a real call through your carrier even when the number is one of your own, for example to test your fax line.
 * `--help`: Show this message and exit.
 
@@ -957,7 +958,7 @@ $ faxbot recipients show [OPTIONS] {number}
 
 ### `faxbot recipients set`
 
-Change a number&#x27;s name, notes, preferred route, or whether it accepts case packets.
+Change a number&#x27;s name, notes, preferred route, calls at once, or whether it accepts case packets.
 
 **Usage**:
 
@@ -974,6 +975,7 @@ $ faxbot recipients set [OPTIONS] {number}
 * `--name <str>`: A name for this destination.
 * `--notes <str>`: Notes for your team.
 * `--preferred-route <str>`: Route to use first, as listed by &#x27;faxbot recipients show&#x27;. Use &#x27;automatic&#x27; for the cheapest reliable route.
+* `--calls-at-once N|default`: Calls at once to this number: a number from 1 to 20, 0 for no limit, or &#x27;default&#x27; for one at a time.
 * `--accepts-references / --no-references`: Whether this recipient accepts case packets that reference documents they already received instead of resending them.
 * `--help`: Show this message and exit.
 
@@ -1527,6 +1529,7 @@ $ faxbot providers trunk [OPTIONS] COMMAND [ARGS]...
 * `apply`: Connect the saved phone line settings.
 * `calls`: List recent calls on the phone line,...
 * `mode`: Choose how new fax calls are sent, T.38...
+* `limits`: Show or change how many calls the trunk...
 * `presets`: List the carriers and phone systems Faxbot...
 * `use`: Choose a carrier or phone system preset...
 * `network`: Whether fax over IP (T.38) works on the...
@@ -1594,6 +1597,22 @@ $ faxbot providers trunk mode [OPTIONS] {t38|audio}
 
 **Options**:
 
+* `--help`: Show this message and exit.
+
+#### `faxbot providers trunk limits`
+
+Show or change how many calls the trunk takes at once and how many new calls a second. Faxes beyond them wait for a free line; they never fail for it.
+
+**Usage**:
+
+```console
+$ faxbot providers trunk limits [OPTIONS]
+```
+
+**Options**:
+
+* `--calls-at-once <int range>`: Calls at once on the trunk; 0 means the same as the fax lines.  [0&lt;=x&lt;=200]
+* `--calls-per-second <int range>`: New calls per second; 0 means your carrier&#x27;s published limit, or no limit.  [0&lt;=x&lt;=100]
 * `--help`: Show this message and exit.
 
 #### `faxbot providers trunk presets`

@@ -194,7 +194,7 @@ def test_new_calls_a_second_follow_the_setting_and_the_carriers_published_limit(
     moment = slow.tick()
     assert slow.start(moment).job_id == first
     assert slow.claim(moment) is None
-    assert slow.waiting(second, moment) == 'Waiting a moment: your carrier takes 1 new call a second.'
+    assert slow.waiting(second, moment) == 'Waiting a moment: Faxbot starts at most 1 new call each second on your phone line.'
     assert slow.start(moment + timedelta(seconds=1)).job_id == second
     # Defaults: Telnyx's published limits (5 new calls a second without a surcharge), the fax lines otherwise.
     telnyx = ConfigurationValues.from_environment({'FAX_BACKEND': 'phaxio', 'SIP_TRUNK_PRESET': 'telnyx'})
@@ -333,3 +333,46 @@ def test_urgent_is_bound_into_a_request_only_when_set():
                                       sort_keys=True, separators=(',', ':')).encode()).hexdigest()
     assert intent_fingerprint(version=2, to=NUMBER, queue_only=False, document_sha256='a' * 64) == plain
     assert intent_fingerprint(version=2, to=NUMBER, queue_only=False, document_sha256='a' * 64, urgent=True) != plain
+
+
+# -- the API and `faxbot` ------------------------------------------------------------------
+
+@pytest.fixture
+def capacity_cli(monkeypatch, tmp_path):
+    from api.tests.test_cli import Cli, _serve
+    for client in _serve(monkeypatch, tmp_path, SIP_TRUNK_PRESET='telnyx'):
+        yield Cli(client)
+
+
+def test_cli_and_api_show_and_change_capacity_and_urgency(capacity_cli):
+    from api.tests.test_cli import BOOTSTRAP
+    cli, admin = capacity_cli, {'X-API-Key': BOOTSTRAP}
+    # The trunk: its limits in effect, and Telnyx's published limits with their sources.
+    limits = cli.json('providers', 'trunk', 'limits')
+    assert (limits['max_calls_in_effect'], limits['calls_per_second_in_effect']) == (2, 5)
+    assert limits['carrier_limits']['read_on'] == '2026-10-06' and len(limits['carrier_limits']['sources']) == 2
+    shown = ' '.join(cli('providers', 'trunk', 'limits').stdout.split())
+    assert 'Calls at once 2 (the same as the fax lines)' in shown and "5 (your carrier's limit)" in shown
+    changed = cli.json('providers', 'trunk', 'limits', '--calls-at-once', '3', '--calls-per-second', '1')
+    assert (changed['max_calls_in_effect'], changed['calls_per_second_in_effect']) == (3, 1)
+    # A recipient: calls at once to this number.
+    assert cli.json('recipients', 'set', NUMBER, '--calls-at-once', '2')['max_calls'] == 2
+    assert 'Calls at once to this number 2 at once' in ' '.join(cli('recipients', 'show', NUMBER).stdout.split())
+    assert cli.json('recipients', 'set', NUMBER, '--calls-at-once', 'default')['max_calls'] is None
+    assert cli('recipients', 'set', NUMBER, '--calls-at-once', 'many').exit_code != 0
+    # An urgent fax: stored, shown, and bound into the request.
+    def post(urgent, key):
+        return cli.client.post('/fax', headers={**admin, 'Idempotency-Key': key},
+                               data={'to': NUMBER, **({'urgent': 'true'} if urgent else {})},
+                               files={'file': ('note.txt', b'Synthetic page\n', 'text/plain')})
+    sent = post(True, 'capacity-key-1')
+    assert sent.status_code == 202, sent.text
+    job = sent.json()['id']
+    detail = cli.client.get(f'/admin/fax-jobs/{job}', headers=admin).json()
+    assert detail['urgent'] is True and 'waiting_reason' in detail
+    assert post(False, 'capacity-key-1').status_code == 409
+    assert 'Urgent Yes: it goes before other faxes waiting for the same line.' in ' '.join(
+        cli('sent', 'show', job).stdout.split())
+    health = cli.client.get('/admin/health-status', headers=admin).json()
+    assert health['jobs']['waiting_for_line'] == 0
+    assert 'waiting for a free line' in cli('providers', 'status').stdout

@@ -82,7 +82,7 @@ describe('delivery routes', () => {
     await screen.findByText('Spending');
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(calls.find((call) => call.method === 'PATCH')?.body).toEqual({
-      display_name: 'County clinic', notes: null, preferred_route: 'phaxio', accepts_references: false, version: 3,
+      display_name: 'County clinic', notes: null, preferred_route: 'phaxio', accepts_references: false, max_calls: null, version: 3,
     });
   });
 

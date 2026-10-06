@@ -54,6 +54,13 @@ def preferred_text(item):
     return next((known['label'] for known in item.get('routes') or [] if known.get('route') == route), route)
 
 
+def calls_at_once_text(value):
+    """Calls at once to a number, in the console's words."""
+    if value is None:
+        return 'One at a time'
+    return 'No limit' if value == 0 else f'{value} at once'
+
+
 def references_text(value):
     """Whether a number takes a case packet's one-page list, in the console's words."""
     return 'Takes a one-page list instead' if value else 'Full documents'
@@ -119,6 +126,7 @@ def routing_destination(number: str = typer.Argument(..., help='Fax number.'),
         out.fields([('Fax number', view['number']), ('Name', view.get('display_name')), ('Notes', view.get('notes')),
                     ('Preferred way to send', preferred_text(view)),
                     ('Case packets', references_text(view.get('accepts_references'))),
+                    ('Calls at once to this number', calls_at_once_text(view.get('max_calls'))),
                     ('Direct partner', partner.get('organization')),
                     ('Available routes', [item['label'] for item in view.get('available_routes', [])]),
                     *(limits_fields(limits) if limits else [])])
@@ -144,10 +152,13 @@ def routing_update_destination(number: str = typer.Argument(..., help='Fax numbe
                                preferred_route: str = typer.Option(None, '--preferred-route',
                                    help="Route to use first, as listed by 'faxbot recipients show'. Use "
                                         "'automatic' for the cheapest reliable route."),
+                               calls_at_once: str = typer.Option(None, '--calls-at-once', metavar='N|default',
+                                   help="Calls at once to this number: a number from 1 to 20, 0 for no limit, or "
+                                        "'default' for one at a time."),
                                references: bool = typer.Option(None, '--accepts-references/--no-references',
                                    help='Whether this recipient accepts case packets that reference documents '
                                         'they already received instead of resending them.')):
-    """Change a number's name, notes, preferred route, or whether it accepts case packets."""
+    """Change a number's name, notes, preferred route, calls at once, or whether it accepts case packets."""
     api = state.api()
     body = {}
     if name is not None:
@@ -158,6 +169,13 @@ def routing_update_destination(number: str = typer.Argument(..., help='Fax numbe
         body['preferred_route'] = None if preferred_route == 'automatic' else preferred_route
     if references is not None:
         body['accepts_references'] = references
+    if calls_at_once is not None:
+        if calls_at_once == 'default':
+            body['max_calls'] = None
+        elif calls_at_once.isdigit() and int(calls_at_once) <= 20:
+            body['max_calls'] = int(calls_at_once)
+        else:
+            raise CliError("Use a number from 0 to 20 for --calls-at-once, or 'default'.")
     if not body:
         raise CliError('Nothing to change. Add at least one option; see --help.')
     current = api.get('/routing/destinations/' + segment(number))

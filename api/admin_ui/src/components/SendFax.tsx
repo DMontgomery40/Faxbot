@@ -111,6 +111,8 @@ function SendFax({ client, config, configLoading, configError, onOpenJob }: Send
   const [sendNow, setSendNow] = useState(false);
   // One of this installation's own numbers: delivered inside Faxbot unless the sender asks for a real call.
   const [byCall, setByCall] = useState(false);
+  // Urgent: before other faxes waiting for the same line, and never held to go with others.
+  const [urgent, setUrgent] = useState(false);
   useEffect(() => {
     setTogether(null);
     setSendNow(false);
@@ -222,7 +224,7 @@ function SendFax({ client, config, configLoading, configError, onOpenJob }: Send
         maxFileSizeBytes: intent.maxFileSizeBytes, createdAt: intent.createdAt });
       const response = await client.sendFax(intent.destination, intent.file,
         { queueOnly: intent.queueOnly, idempotencyKey: intent.key, sendNow: together !== null && sendNow,
-          byCall: route?.route === 'local' && byCall });
+          byCall: route?.route === 'local' && byCall, urgent });
       const state = (response.delivery_state || response.status).toLowerCase();
       const to = typeof response.to === 'string' && response.to ? response.to : undefined;
       setResult({
@@ -342,6 +344,11 @@ function SendFax({ client, config, configLoading, configError, onOpenJob }: Send
                     )}
                   </Box>
                 )}
+
+                <FormControlLabel data-testid="send-urgent"
+                  control={<Checkbox checked={urgent} onChange={(e) => setUrgent(e.target.checked)}
+                    disabled={!configReady || loading} />}
+                  label="Urgent: send before other faxes waiting for the same line" />
 
                 {route?.route === 'local' && (
                   <FormControlLabel data-testid="send-by-call"
