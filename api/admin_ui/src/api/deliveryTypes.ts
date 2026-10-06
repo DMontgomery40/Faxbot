@@ -60,6 +60,8 @@ export interface Destination {
   estimated_cost_30_days: Money[];
   // Each route's cost per delivered fax, the cheapest first (absent from a save response).
   delivered_costs?: DeliveredCost[];
+  // Calls at once to this number: null is the default (one at a time), 0 means no limit.
+  max_calls?: number | null;
 }
 
 // A number where another route would cost less than the one Faxbot uses first now:
@@ -115,6 +117,7 @@ export interface DestinationPatch {
   notes?: string | null;
   preferred_route?: string | null;
   accepts_references?: boolean;
+  max_calls?: number | null;
   version?: number;
 }
 

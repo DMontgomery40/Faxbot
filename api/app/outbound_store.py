@@ -24,7 +24,7 @@ _EVENT_KINDS = frozenset({'accepted', 'legacy_migrated', 'binding_unavailable',
     'submission_uncertain', 'preparation_failed', 'preparation_expired',
     'provider_observation_refused', 'terminal_conflict', 'late_observation',
     'provider_observed', 'operator_identity_bound', 'route_assigned', 'route_fallback',
-    'sent_together', 'batch_split'})
+    'sent_together', 'batch_split', 'capacity_wait'})
 _CATEGORIES = frozenset({'transport_ambiguous', 'response_unusable', 'submission_cancelled',
     'worker_lost', 'artifact_unavailable', 'provider_unavailable', 'preparation_failed',
     'profile_mismatch', 'sid_mismatch', 'provider_failed', 'partner_not_received',
@@ -412,34 +412,63 @@ class OutboundStore:
     def _row(self, connection, job_id):
         return connection.execute(sa.select(self.deliveries).where(self.deliveries.c.id == job_id)).mappings().one_or_none()
 
-    def _enabled(self, connection):
+    def _active_values(self, connection):
         configuration = self.configuration
         head = configuration._head(connection)
         if head is None:
-            return False
-        active = configuration._revision(connection, configuration._cipher(), head['installation_id'], head['active_revision_id'])
-        return not active.values.fax_disabled
+            return None
+        return configuration._revision(connection, configuration._cipher(), head['installation_id'],
+                                       head['active_revision_id']).values
+
+    def _enabled(self, connection):
+        values = self._active_values(connection)
+        return values is not None and not values.fax_disabled
+
+    def capacity(self):
+        """Room for calls (``capacity.py``), or None before the tables it reads exist."""
+        if getattr(self, '_capacity', None) is None:
+            try:
+                from .capacity import Capacity
+                self._capacity = Capacity(self.configuration.engine)
+            except Exception:
+                return None
+        return self._capacity
 
     def _update(self, connection, row, now, **changes):
         connection.execute(self.deliveries.update().where(self.deliveries.c.id == row['id']).values(
             **changes, version=row['version'] + 1, updated_at=now))
 
-    def claim(self, owner, *, now=None, lease_seconds=30):
+    def claim(self, owner, *, now=None, lease_seconds=30, exclude=()):
+        """Claim the next fax that may start a call now; ``exclude`` names faxes the worker is pausing.
+
+        Only a fax whose number, and trunk, have room is claimed (``capacity.py``);
+        the others wait in ``ready`` and never fail for it.
+        """
         if not isinstance(owner, str) or not owner or len(owner) > 40 or not 1 <= lease_seconds <= 300:
             raise ValueError('Invalid delivery worker claim.')
         with self.configuration._locked() as connection:
             now = datetime.utcnow() if now is None else now
-            if not self._enabled(connection):
+            values = self._active_values(connection)
+            if values is None or values.fax_disabled:
                 return None
-            together = self._claim_together_on(connection, owner, now, lease_seconds)
+            capacity = self.capacity()
+            together = self._claim_together_on(connection, owner, now, lease_seconds, capacity=capacity,
+                                               values=values)
             if together is not None:
                 return together
             from .batching.store import waiting_ids
             # A fax waiting to go with others is claimed only with its group.
-            row = connection.execute(sa.select(self.deliveries).where(
-                self.deliveries.c.state == 'ready', self.deliveries.c.dispatch_mode == 'normal',
-                self.deliveries.c.id.not_in(waiting_ids(self._batching(connection)))
-            ).order_by(self.deliveries.c.created_at, self.deliveries.c.id).limit(1)).mappings().one_or_none()
+            waiting = waiting_ids(self._batching(connection))
+            if capacity is not None:
+                row = capacity.next_ready(connection, values, now, waiting=waiting, exclude=exclude)
+            else:
+                query = sa.select(self.deliveries).where(
+                    self.deliveries.c.state == 'ready', self.deliveries.c.dispatch_mode == 'normal',
+                    self.deliveries.c.id.not_in(waiting))
+                if exclude:
+                    query = query.where(self.deliveries.c.id.not_in(list(exclude)))
+                row = connection.execute(query.order_by(self.deliveries.c.created_at, self.deliveries.c.id)
+                                         .limit(1)).mappings().one_or_none()
             if row is None:
                 return None
             return self._claim_row_on(connection, row, owner, now, lease_seconds)
@@ -467,13 +496,15 @@ class OutboundStore:
         _event(connection, self.events, row['id'], 'claimed', now, attempt_id=attempt)
         return DispatchClaim(row['id'], attempt, profile.id, owner, token, expiry)
 
-    def _claim_together_on(self, connection, owner, now, lease_seconds):
+    def _claim_together_on(self, connection, owner, now, lease_seconds, *, capacity=None, values=None):
         """Claim the first due group of waiting faxes as one call; a group of one goes on its own."""
         from .batching import store as batching
         t = self._batching(connection)
         group = batching.due_group_on(connection, t, now)
         if group is None:
             return None
+        if capacity is not None and values is not None and not capacity.group_may_start(connection, values, group, now):
+            return None  # the group waits, still together, until its number (and the trunk) have room
         claims, joined = [], []
         for member in group:
             claim = self._claim_row_on(connection, self._row(connection, member['id']), owner, now, lease_seconds)
@@ -490,6 +521,26 @@ class OutboundStore:
         for claim in claims:
             _event(connection, self.events, claim.job_id, 'sent_together', now, attempt_id=claim.attempt_id)
         return replace(claims[0], members=tuple(claims))
+
+    def defer(self, claim, *, now=None):
+        """Give a claimed fax back to the queue before anything was sent: there is no room for its call yet.
+
+        Nothing fails and nothing is sent; a shared call's faxes wait again, still together.
+        """
+        from .batching.store import return_to_waiting_on
+        now = now or datetime.utcnow()
+        with self.configuration._locked() as connection:
+            for member in claim.everyone:
+                row = self._row(connection, member.job_id)
+                if not self._owns(row, member) or row['state'] != 'preparing':
+                    continue
+                connection.execute(self.attempts.update().where(self.attempts.c.id == member.attempt_id).values(
+                    phase='abandoned', completed_at=now))
+                self._update(connection, row, now, state='ready', claim_owner=None, claim_token=None,
+                             claim_expires_at=None)
+                _event(connection, self.events, member.job_id, 'capacity_wait', now, attempt_id=member.attempt_id)
+                if claim.members:
+                    return_to_waiting_on(connection, self._batching(connection), member.job_id, member.attempt_id, now)
 
     def split_batch(self, claim, *, separate=None, now=None):
         """Undo a shared call before anything was sent; no fax is failed here.

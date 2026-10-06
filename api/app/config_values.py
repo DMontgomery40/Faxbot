@@ -151,6 +151,10 @@ class ConfigurationValues(BaseModel):
     # used only when docker-compose.sslfax.yml publishes it.
     sip_sslfax_enabled: bool = Field(True, validation_alias='SIP_SSLFAX_ENABLED')
     sip_fax_lines: int = Field(2, validation_alias='SIP_FAX_LINES', ge=1, le=8)
+    # Calls at once on the trunk (0: as many as the fax lines above) and new calls a second
+    # (0: the carrier's published limit, or none). Faxes beyond either wait; they never fail for it.
+    sip_trunk_max_calls: int = Field(0, validation_alias='SIP_TRUNK_MAX_CALLS', ge=0, le=200)
+    sip_trunk_calls_per_second: int = Field(0, validation_alias='SIP_TRUNK_CALLS_PER_SECOND', ge=0, le=100)
     sip_sslfax_listener_port: int = Field(10443, validation_alias='SIP_SSLFAX_LISTENER_PORT', ge=1024, le=65535)
     # On by default: the RFC 6913 Accept-Contact preference only (never Require), which carriers may ignore.
     sip_fax_preference_header: bool = Field(True, validation_alias='SIP_FAX_PREFERENCE_HEADER')

@@ -152,12 +152,20 @@ def test_send_now_on_a_waiting_fax_releases_its_group_and_refuses_one_already_se
 
 def test_faxes_from_different_senders_never_share_a_call_unless_the_number_allows_it(sip):
     configuration, delivery, *_ = sip
+    # Two separate calls to one number in a row: this number takes calls at once here (capacity.py
+    # otherwise lets the second wait for the first).
+    from api.app.routing.store import RouteStore
+    RouteStore(configuration.engine).update_destination(NUMBER, max_calls=0)
     mine, theirs = accept(sip, sender='key:front'), accept(sip, sender='principal:other', at=T0 + timedelta(seconds=1))
     later = T0 + timedelta(minutes=11)
     first = delivery.claim('worker', now=later)
     second = delivery.claim('worker', now=later)
     assert {first.job_id, second.job_id} == {mine, theirs}
     assert first.members == () and second.members == ()
+    # Those two calls end, so both trunk lines are free for the next call.
+    for claim in (first, second):
+        assert delivery.begin_submission(claim, now=later)
+        delivery.record_receipt(claim, provider_sid='SID' + claim.attempt_id[:8], status='success', now=later)
     batching.BatchingSettings(configuration.engine).save(NUMBER, enabled=True, actor='principal:p1',
                                                           mixed_senders=True)
     a, b = accept(sip, sender='key:front'), accept(sip, sender='principal:other', at=T0 + timedelta(seconds=1))
@@ -167,6 +175,10 @@ def test_faxes_from_different_senders_never_share_a_call_unless_the_number_allow
 
 def test_turning_a_number_off_releases_its_waiting_faxes_one_at_a_time(sip):
     configuration, delivery, *_ = sip
+    # Two separate calls to one number in a row: this number takes calls at once here (capacity.py
+    # otherwise lets the second wait for the first).
+    from api.app.routing.store import RouteStore
+    RouteStore(configuration.engine).update_destination(NUMBER, max_calls=0)
     first, second = accept(sip, at=T0), accept(sip, at=T0 + timedelta(seconds=1))
     batching.BatchingSettings(configuration.engine).save(NUMBER, enabled=False, actor='principal:p1')
     claims = [delivery.claim('worker', now=T0 + timedelta(seconds=2)) for _ in range(2)]

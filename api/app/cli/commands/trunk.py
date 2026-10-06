@@ -145,6 +145,36 @@ def trunk_mode(mode: str = typer.Argument(..., metavar='t38|audio',
     state.out().result(result, human)
 
 
+@trunk.command('limits')
+def trunk_limits(calls_at_once: int = typer.Option(None, '--calls-at-once', min=0, max=200,
+                                                  help='Calls at once on the trunk; 0 means the same as the fax lines.'),
+                 calls_per_second: int = typer.Option(None, '--calls-per-second', min=0, max=100,
+                                                      help="New calls per second; 0 means your carrier's published "
+                                                           'limit, or no limit.')):
+    """Show or change how many calls the trunk takes at once and how many new calls a second. Faxes beyond them wait for a free line; they never fail for it."""
+    api = state.api()
+    changes = {name: value for name, value in (('sip_trunk_max_calls', calls_at_once),
+                                               ('sip_trunk_calls_per_second', calls_per_second)) if value is not None}
+    if changes:
+        current = api.get('/admin/settings')
+        api.put('/admin/settings', json={**changes, 'expected_revision_id': current['_meta']['desired_revision_id']})
+    trunk = ((api.get('/admin/settings').get('sip') or {}).get('trunk') or {})
+    result = {key: trunk.get(key) for key in ('max_calls', 'calls_per_second', 'max_calls_in_effect',
+                                              'calls_per_second_in_effect', 'carrier_limits')}
+
+    def human(out):
+        lines = result.get('max_calls_in_effect')
+        rate = result.get('calls_per_second_in_effect')
+        out.fields([('Calls at once', f"{lines}" + ('' if result.get('max_calls') else ' (the same as the fax lines)')),
+                    ('New calls per second', f'{rate}' + ('' if result.get('calls_per_second') else
+                                                           " (your carrier's limit)") if rate else 'No limit')])
+        limits = result.get('carrier_limits')
+        if limits:
+            out.line(limits['note'])
+            out.line(f"Read {limits['read_on']}: " + ', '.join(limits['sources']))
+    state.out().result(result, human)
+
+
 network = typer.Typer(help='Whether fax over IP (T.38) works on the network Faxbot runs on, and what to do when it '
                              'does not.', no_args_is_help=True)
 trunk.add_typer(network, name='network')

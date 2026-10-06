@@ -122,6 +122,9 @@ def send(to: str = typer.Argument(..., help='Fax number to send to, for example 
          now: bool = typer.Option(False, '--now',
                                   help='Send immediately, even when this number batches faxes; faxes already '
                                        'waiting for it go in the same call.'),
+         urgent: bool = typer.Option(False, '--urgent',
+                                     help='Send before other faxes waiting for the same line, without waiting to go '
+                                          'together with other faxes.'),
          by_call: bool = typer.Option(False, '--by-call',
                                       help='Place a real call through your carrier even when the number is one of '
                                            'your own, for example to test your fax line.')):
@@ -134,6 +137,8 @@ def send(to: str = typer.Argument(..., help='Fax number to send to, for example 
         data['send_now'] = 'true'
     if by_call:
         data['send_by_call'] = 'true'
+    if urgent:
+        data['urgent'] = 'true'
     with file.open('rb') as handle:
         job = api.post('/fax', data=data, files={'file': (file.name, handle, content_type)}, headers=headers)
     waiting = _together(api, job['id'])
@@ -222,6 +227,10 @@ def jobs_get(fax_id: str = typer.Argument(..., help='Fax ID.')):
     # The route that carried the fax and why Faxbot chose it, as Sent details show them.
     route = ([('Route', _route_text(job, cost)), ('Why this route', cost.get('route_explanation'))]
              if cost.get('routes') else [])
+    if job.get('waiting_reason'):
+        route.insert(0, ('Waiting', job['waiting_reason']))
+    if job.get('urgent'):
+        route.append(('Urgent', 'Yes: it goes before other faxes waiting for the same line.'))
     if job.get('send_by_call'):
         route.append(('Note', 'You asked for a real phone call through your carrier, even if the number is one of your own.'))
 

@@ -986,6 +986,25 @@ async def admin_restart():
     return {"ok": True, "note": "Process will exit; container manager should restart it."}
 
 
+def _waiting_for_line(store, now):
+    try:
+        from .capacity import Capacity
+        from .batching.store import tables as batching_tables, waiting_ids
+        values = store.read().active.values
+        return Capacity(store.engine).waiting_for_line(values, now, waiting=waiting_ids(batching_tables(store.engine)))
+    except Exception:
+        return 0
+
+
+def _waiting_reason(store, job_id, now):
+    """One sentence while a sent fax waits for room on its number or the trunk (capacity.py), else None."""
+    try:
+        from .capacity import Capacity
+        return Capacity(store.engine).waiting_sentence(job_id, store.read().active.values, now)
+    except Exception:
+        return None
+
+
 @app.get("/admin/health-status", dependencies=[Depends(require_permission('diagnostics:read'))],
          responses=_PERMISSION_RESPONSES)
 async def get_health_status(request: Request):
@@ -997,6 +1016,8 @@ async def get_health_status(request: Request):
         now = datetime.utcnow()
         with store.engine.connect() as connection:
             jobs = dashboard_counts(connection, store.delivery_tables['outbound_deliveries'], now=now)
+        # Faxes ready to go that wait for room on their number or the trunk (Overview: "Waiting for a free line").
+        jobs['waiting_for_line'] = _waiting_for_line(store, now)
         readiness = _readiness_status(request)
         with SessionLocal() as db:
             db_key_present = db.query(APIKey.id).filter(APIKey.revoked_at.is_(None),
@@ -1577,7 +1598,10 @@ async def get_admin_job(job_id: str, request: Request, identity=Depends(require_
     return {**_admin_fax_view(row), 'provider_sid': row['provider_sid'], 'file_name': row['file_name'],
             'together': together.get(job_id), 'fax_engine': fax_engine,
             # The sender asked for a real call through the carrier, even to one of this installation's own numbers.
-            'send_by_call': bool(row.get('send_by_call'))}
+            'send_by_call': bool(row.get('send_by_call')), 'urgent': bool(row.get('urgent')),
+            # Why it has not started yet, or why its number stays reserved (capacity.py); None otherwise.
+            'waiting_reason': await run_lifecycle_step(
+                lambda: _waiting_reason(_configuration_manager().store, job_id, datetime.utcnow()))}
 
 
 def _admin_fax_view(row):
@@ -1707,6 +1731,8 @@ async def send_fax(request: Request, to: str = Form(...), file: UploadFile = Fil
                    send_by_call: bool = Form(False, description="Place a real call through your fax provider or "
                                              "carrier even when the number is one of this installation's own "
                                              "numbers, instead of delivering it inside Faxbot. Test faxes use this."),
+                   urgent: bool = Form(False, description='Send before other faxes waiting for the same number or '
+                                       'line, and without waiting to go together with other faxes.'),
                    idempotency_key: Optional[str] = Header(default=None, alias='Idempotency-Key',
                        description='Optional key for replaying the same fax request; 1 to 128 printable ASCII characters without spaces.'),
                    identity=Depends(require_identity)):
@@ -1740,12 +1766,12 @@ async def send_fax(request: Request, to: str = Form(...), file: UploadFile = Fil
             # under the country its original was accepted with.
             original = destination if accepted is None else resolve(accepted.fax_default_country)[0]
             fingerprint, legacy = request_fingerprints(entered=to, destination=original,
-                queue_only=queue_only, document_sha256=document_sha256, by_call=send_by_call)
+                queue_only=queue_only, document_sha256=document_sha256, by_call=send_by_call, urgent=urgent)
             replay_identity = RequestIdentity(scope, validated.idempotency_digest, fingerprint, legacy)
             existing = await run_lifecycle_step(lambda: access.outbound.find_replay(identity.actor, replay_identity))
             if destination is not None:
                 fingerprint, legacy = request_fingerprints(entered=to, destination=destination,
-                    queue_only=queue_only, document_sha256=document_sha256, by_call=send_by_call)
+                    queue_only=queue_only, document_sha256=document_sha256, by_call=send_by_call, urgent=urgent)
                 request_identity = RequestIdentity(scope, validated.idempotency_digest, fingerprint, legacy)
         except UploadPreparationError as error:
             raise HTTPException(error.status_code, detail=str(error)) from None
@@ -1793,7 +1819,7 @@ async def send_fax(request: Request, to: str = Form(...), file: UploadFile = Fil
     try:
         hold = await run_lifecycle_step(lambda: batching_acceptance.hold_plan(
             manager.store.engine, revision, profile, destination=destination, pages=prepared.pages,
-            actor=identity.actor, send_now=send_now))
+            actor=identity.actor, send_now=send_now or urgent))
     except Exception:
         # Sending together is optional: without a usable answer the fax goes straight away.
         logging.getLogger(__name__).warning('Sending together is unavailable; the fax goes straight away.')
@@ -1812,6 +1838,8 @@ async def send_fax(request: Request, to: str = Form(...), file: UploadFile = Fil
             'created_at': accepted_at, 'updated_at': accepted_at,
             # A real call even to one of this installation's own numbers (never delivered inside Faxbot).
             **({'send_by_call': 1} if send_by_call else {}),
+            # Goes before other faxes waiting for the same room (capacity.py).
+            **({'urgent': 1} if urgent else {}),
         }, request_identity=request_identity, also=None if hold is None else batching_acceptance.recorder(
             manager.store.engine, job_id, hold, identity.actor)))
     except IdempotentReplay as replay:

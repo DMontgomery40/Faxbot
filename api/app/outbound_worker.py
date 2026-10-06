@@ -7,6 +7,7 @@ must never guess whether that transaction committed.
 """
 import asyncio
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 import logging
 from uuid import uuid4
 
@@ -47,8 +48,16 @@ class BatchSplit(RuntimeError):
         super().__init__('The shared call was split before anything was sent.')
 
 
+class CapacityWait(RuntimeError):
+    """No room for this fax's call yet (its route's trunk is full); nothing was sent and nothing failed."""
+
+    def __init__(self, seconds=5.0):
+        self.seconds = seconds
+        super().__init__('The fax waits for a free line.')
+
+
 class OutboundWorker:
-    def __init__(self, store, transport, *, interval=1.0, submission_timeout=90.0):
+    def __init__(self, store, transport, *, interval=1.0, submission_timeout=90.0, clock=None):
         if interval <= 0 or submission_timeout <= 0:
             raise ValueError('Worker intervals must be positive.')
         self.store = store
@@ -56,10 +65,20 @@ class OutboundWorker:
         self.owner = uuid4().hex
         self.interval = interval
         self.submission_timeout = submission_timeout
+        self.clock = clock or datetime.utcnow
+        # Faxes given back for lack of room, and when the worker may claim them again. In memory:
+        # after a restart a fax is at most given back once more.
+        self.paused = {}
+
+    def _exclude(self):
+        now = self.clock()
+        self.paused = {job: until for job, until in self.paused.items() if until > now}
+        return tuple(self.paused)
 
     async def step(self):
         await run_lifecycle_step(self.store.recover_expired)
-        claim = await run_lifecycle_step(lambda: self.store.claim(self.owner))
+        exclude = self._exclude()
+        claim = await run_lifecycle_step(lambda: self.store.claim(self.owner, exclude=exclude))
         if claim is None:
             return False
         preparing = True
@@ -97,6 +116,14 @@ class OutboundWorker:
                 raise
             separate = split.separate
             await run_lifecycle_step(lambda: self.store.split_batch(claim, separate=separate))
+        except CapacityWait as wait:
+            if not preparing:
+                raise
+            await run_lifecycle_step(lambda: self.store.defer(claim))
+            until = self.clock() + timedelta(seconds=wait.seconds)
+            for member in claim.everyone:
+                self.paused[member.job_id] = until
+            return False
         return True
 
     async def run(self):

@@ -77,6 +77,14 @@ export interface SipTrunkSettings {
   fax_fine?: boolean;
   sslfax_enabled?: boolean;
   fax_lines?: number;
+  // Calls at once on the trunk (0: as many as the fax lines) and new calls a second (0: the carrier's limit).
+  max_calls?: number;
+  calls_per_second?: number;
+  // Read only: the limits in effect, and the carrier's published limits with their sources.
+  max_calls_in_effect?: number;
+  calls_per_second_in_effect?: number | null;
+  carrier_limits?: { calls_per_second: number | null; calls_at_once: number | null; note: string;
+    sources: string[]; read_on: string } | null;
   sslfax_listener_port?: number;
   // Why Faxbot chose audio fax for new calls, and when (read only).
   t38_off_reason?: 'no_data_back' | 'network' | 'carrier' | null;

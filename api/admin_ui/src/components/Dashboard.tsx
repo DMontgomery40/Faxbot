@@ -410,6 +410,12 @@ function Dashboard({ client, onNavigate, canSetUp = false, onSendFax }: Dashboar
                       {health.jobs.queued}
                     </Typography>
                   </Box>
+                  {(health.jobs.waiting_for_line ?? 0) > 0 && (
+                    <Box display="flex" justifyContent="space-between" data-testid="waiting-for-line">
+                      <Typography variant="body2">Waiting for a free line:</Typography>
+                      <Typography variant="body2" fontWeight="bold">{health.jobs.waiting_for_line}</Typography>
+                    </Box>
+                  )}
                   <Box display="flex" justifyContent="space-between">
                     <Typography variant="body2">Submitting / In Progress:</Typography>
                     <Typography variant="body2" fontWeight="bold">

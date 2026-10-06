@@ -153,7 +153,7 @@ def test_0004_enrollment_preserves_all_rows_and_narrows_unproven_authority(datab
     for name, rows in before.items():
         if name == 'fax_jobs':
             # 0020 adds a nullable column to every sent fax; nothing else in the row changes.
-            assert [{k: v for k, v in row.items() if k != 'send_by_call'} for row in after[name]] == rows
+            assert [{k: v for k, v in row.items() if k not in ('send_by_call', 'urgent')} for row in after[name]] == rows
         elif name != 'alembic_version':
             assert after[name] == rows
     bindings = {r['id']: r for r in after['access_key_bindings']}

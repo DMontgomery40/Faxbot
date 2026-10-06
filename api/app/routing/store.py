@@ -201,9 +201,13 @@ class RouteStore:
             return read(conn)
 
     def update_destination(self, number, *, expected_version=None, **changes):
-        allowed = {'display_name', 'notes', 'preferred_route', 'accepts_references'}
+        allowed = {'display_name', 'notes', 'preferred_route', 'accepts_references', 'max_calls'}
         if set(changes) - allowed:
             raise RoutingInputError('Unknown destination setting.')
+        if 'max_calls' in changes and changes['max_calls'] is not None:
+            # Calls at once to this number: None is the default (one), 0 means no limit.
+            if type(changes['max_calls']) is not int or not 0 <= changes['max_calls'] <= 20:
+                raise RoutingInputError('Choose from 0 to 20 calls at once; 0 means no limit.')
         if 'display_name' in changes and changes['display_name'] is not None:
             name = changes['display_name'].strip() if isinstance(changes['display_name'], str) else None
             if name is None or len(name) > 200:
