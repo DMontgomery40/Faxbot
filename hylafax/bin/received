@@ -24,7 +24,14 @@ case $file in
   recvq/fax[0-9]*.tif) ;;
   *) printf 'faxbot-received: unexpected file %s\n' "$file" >&2; exit 1 ;;
 esac
-[ -n "$commid" ] && [ -f "$file" ] || { printf 'faxbot-received: no image for this call\n' >&2; exit 1; }
+[ -f "$file" ] || { printf 'faxbot-received: no image for this call\n' >&2; exit 1; }
+# HylaFAX leaves the communication ID empty when two lines begin a session at the same moment (Asterisk
+# rings every free line for one call): the fax is kept under its receive-queue number instead, never refused.
+queued=''
+if [ -z "$commid" ]; then
+  commid=0
+  queued=$(printf '%s' "${file#recvq/fax}" | tr -cd '0-9')-
+fi
 
 # What the engine knows about the reception, from the image and the session log.
 info=$(faxinfo "$file" 2>/dev/null)
@@ -45,7 +52,7 @@ case $rate in *SSL*) sslfax=true offered=true ;; esac
 
 # The communication ID restarts with a new spool; the arrival time keeps names unique.
 received=$(date +%s)
-key=$commid-$received
+key=$commid-$queued$received
 copy=$state/received/$key.tif
 cp "$file" "$copy.part" && mv -f "$copy.part" "$copy" || { printf 'faxbot-received: image not kept\n' >&2; exit 1; }
 

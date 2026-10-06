@@ -1,0 +1,56 @@
+Loopback proof only (api/tests/test_sslfax_loopback.py, case j): never in Faxbot's own Asterisk.
+
+A carrier stand-in built with this change sends what Telnyx sent on 5 October 2026 when
+FAXBOT_PROOF_EMPTY_PREAMBLES is set: two seconds into its T.38 stream, two V.21 preambles that
+end with no frame (06, c00110, 00, 06, c00110, 00), before the far machine's DIS. Applied after
+asterisk/patches/.
+
+--- a/res/res_fax_spandsp.c
++++ b/res/res_fax_spandsp.c
+@@ -875,7 +875,30 @@
+ 		"ended it so the fax machine's answer reaches the far end (%u so far)\n",
+ 		s->chan ? ast_channel_name(s->chan) : "<gone>", p->faxbot_empty_trainings);
+ }
++
++/* Faxbot loopback proof only (a carrier stand-in, never Faxbot's own Asterisk): blocks of gateway audio
++ * since the gateway started, while FAXBOT_PROOF_EMPTY_PREAMBLES is set; 0 when not injecting. */
++static unsigned int faxbot_proof_blocks;
++
++/* Two seconds into the T.38 stream, as Telnyx did on 5 October 2026: two V.21 preambles that end with no
++ * frame (06, c00110, 00, 06, c00110, 00); the far machine's own signals follow. */
++static void faxbot_proof_empty_preambles(struct ast_fax_session *s, struct spandsp_pvt *p)
++{
++	int i;
+ 
++	if (!faxbot_proof_blocks || ++faxbot_proof_blocks != 100) {
++		return;
++	}
++	for (i = 0; i < 2; i++) {
++		t38_core_send_indicator(&p->t38_gw_state.t38x.t38, T38_IND_V21_PREAMBLE);
++		t38_core_send_data(&p->t38_gw_state.t38x.t38, T38_DATA_V21, T38_FIELD_HDLC_SIG_END, NULL, 0,
++			T38_PACKET_CATEGORY_CONTROL_DATA_END);
++		t38_core_send_indicator(&p->t38_gw_state.t38x.t38, T38_IND_NO_SIGNAL);
++	}
++	ast_log(LOG_NOTICE, "Faxbot proof: sent two empty V.21 preambles on %s\n",
++		s->chan ? ast_channel_name(s->chan) : "<gone>");
++}
++
+ /*! \brief generate T.30 packets sent to the T.30 leg of gateway
+  * \param chan T.30 channel
+  * \param data fax session structure
+@@ -906,6 +929,7 @@
+ 	/* generate a T.30 packet */
+ 	faxbot_end_empty_preamble(s, p);
+ 	faxbot_end_empty_training(s, p);
++	faxbot_proof_empty_preambles(s, p);
+ 	if ((f->samples = t38_gateway_tx(&p->t38_gw_state, f->data.ptr, f->samples))) {
+ 		f->datalen = f->samples * sizeof(int16_t);
+ 		res = ast_write(chan, f);
+@@ -1005,6 +1029,7 @@
+ 		t38_core_send_indicator(&p->t38_gw_state.t38, T38_IND_NO_SIGNAL, p->t38_gw_state.t38.indicator_tx_count);
+ #endif
+ 	}
++	faxbot_proof_blocks = getenv("FAXBOT_PROOF_EMPTY_PREAMBLES") ? 1 : 0;
+ 
+ 	s->state = AST_FAX_STATE_ACTIVE;
+ 

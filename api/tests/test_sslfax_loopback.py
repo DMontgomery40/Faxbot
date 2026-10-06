@@ -38,6 +38,7 @@ import os
 from pathlib import Path
 import re
 import secrets
+import shutil
 import subprocess
 import tempfile
 import time
@@ -147,6 +148,22 @@ def image(docker, variable, tag, *build):
     return name
 
 
+def proof_carrier_image(docker):
+    """The carrier stand-in for case j: Faxbot's Asterisk plus asterisk/tests/proof-empty-preambles.patch, which
+    (with FAXBOT_PROOF_EMPTY_PREAMBLES set) opens its T.38 stream with two empty V.21 preambles as Telnyx did."""
+    name = os.environ.get('FAXBOT_PROOF_CARRIER_IMAGE')
+    if name:
+        return name
+    name = f'{PREFIX}-carrier-preambles:proof'
+    with tempfile.TemporaryDirectory() as folder:
+        context = Path(folder) / 'asterisk'
+        shutil.copytree(ROOT / 'asterisk', context)
+        shutil.copy(ROOT / 'asterisk' / 'tests' / 'proof-empty-preambles.patch',
+                    context / 'patches' / '9001-proof-empty-preambles.patch')
+        docker.run('build', '--quiet', '--tag', name, str(context), timeout=3600)
+    return name
+
+
 def proof_pdf():
     """Three pages with large distinct shapes and text, so every page differs."""
     from reportlab.lib.pagesizes import letter
@@ -205,7 +222,9 @@ NAT_STANDIN = """table inet faxbot_nat {
 }
 """
 
-LOGGER = '[general]\ndateformat=%F %T\n\n[logfiles]\nconsole => notice,warning,error,verbose\n'
+LOGGER = ('[general]\ndateformat=%F %T\n\n[logfiles]\nconsole => notice,warning,error,verbose\n'
+          # Each call's dial steps, read by case k when a received call does not reach the engine.
+          'calls => notice,warning,verbose(3)\n')
 
 AMI_LISTENER = r'''
 exec 3<>/dev/tcp/127.0.0.1/5038
@@ -290,7 +309,8 @@ except (urllib.error.URLError, OSError) as error:
 
 
 def bring_up(tmp_path, label, made, *, faxbot_t38, carrier_gateway, peer_listener, peer_sslfax=True,
-             carrier_t38=None, carrier_drops_t38=False, carrier_nat_standin=False, carrier_receives=False):
+             carrier_t38=None, carrier_drops_t38=False, carrier_nat_standin=False, carrier_receives=False,
+             carrier_empty_preambles=False, peer_ecm=True):
     """Start the whole loopback; returns (docker, context dict). ``made`` collects it for cleanup at once."""
     docker = Docker(label)
     made.append(docker)
@@ -338,6 +358,8 @@ def bring_up(tmp_path, label, made, *, faxbot_t38, carrier_gateway, peer_listene
         'SIP_TRUNK_HOST': ADDRESS['asterisk'], 'SIP_TRUNK_CALLER_ID': PEER_NUMBER, 'SIP_TRUNK_DIDS': PEER_NUMBER,
         # The carrier's T.38: with its gateway on, or off so it refuses every T.38 request (case e, inbound).
         'SIP_T38_ENABLED': 'true' if (carrier_gateway if carrier_t38 is None else carrier_t38) else 'false',
+        # The peer's error correction: off sends pages as plain V.29 data, as the live senders did.
+        'SIP_FAX_ECM': 'true' if peer_ecm else 'false',
         'ASTERISK_INBOUND_SECRET': inbound_secret})
     peer_secrets = hylafax_engine.engine_secrets(carrier_values, lines=1)
     carrier_image = images['native']
@@ -347,10 +369,13 @@ def bring_up(tmp_path, label, made, *, faxbot_t38, carrier_gateway, peer_listene
         docker.run('build', '-t', carrier_image, '-', input_text=(
             f"FROM {images['native']}\nRUN apt-get update && apt-get install -y --no-install-recommends nftables "
             "&& rm -rf /var/lib/apt/lists/*\n"), timeout=900)
+    carrier_env = {'ASTERISK_AMI_USERNAME': ami_user, 'ASTERISK_AMI_PASSWORD': ami_password}
+    if carrier_empty_preambles:
+        carrier_image = proof_carrier_image(docker)
+        carrier_env['FAXBOT_PROOF_EMPTY_PREAMBLES'] = '1'
     carrier = docker.create('carrier', carrier_image,
                             caps=('NET_ADMIN',) if carrier_drops_t38 or carrier_nat_standin else (),
-                            env={'ASTERISK_AMI_USERNAME': ami_user,
-                                                             'ASTERISK_AMI_PASSWORD': ami_password})
+                            env=carrier_env)
     docker.run('start', carrier)
     docker.sh(carrier, 'mkdir -p /faxdata/asterisk', check=True)
     docker.put(carrier, '/faxdata/asterisk/pjsip.conf', sip_trunk.render_pjsip(carrier_values))
@@ -726,6 +751,10 @@ def test_e_a_refused_t38_request_goes_on_as_audio(tmp_path, loopback):
     outcome = send_and_collect(tmp_path, context)
     proof = evidence(outcome)
     print('\nSSLFAX_PROOF_E ' + json.dumps(proof, indent=2))
+    if str(proof['job_status']).upper() != 'SUCCESS':
+        # Both engines' own words, for the record, when the fax did not go through.
+        print('\nSSLFAX_PROOF_E_FAXBOT_SESSION\n' + outcome['faxbot_log'][-4000:])
+        print('\nSSLFAX_PROOF_E_PEER_SESSION\n' + outcome['peer_log'][-4000:])
     assert_delivered(outcome, proof)
     assert proof['engine_call']['Gateway'] == 'yes', proof
     # Faxbot asked for T.38 and nobody accepted; the call went on as audio.
@@ -799,6 +828,47 @@ def test_inbound_a_fax_through_the_engine_reaches_received(tmp_path, loopback):
     assert engine['engine'] == 'hylafax' and engine['sslfax'] == 1 and engine['number'] == PEER_NUMBER, proof
     assert proof['accepts'] and proof['accepts'][0]['accepts'] == 1, proof
     assert not passcodes(log), proof
+
+
+def test_inbound_t38_a_fax_received_over_t38_reaches_received(tmp_path, loopback):
+    """The peer faxes Faxbot's number over T.38 on both Asterisks, without error correction, so its training
+    check and pages reach the engine as V.29 data through Faxbot's T.38 gateway, as on 6 October (call 2).
+    The fax arrives whole, and asterisk/patches/0003 does not act on a call whose signals all end normally."""
+    context = loopback('it', faxbot_t38=True, carrier_gateway=True, peer_listener='', peer_sslfax=False,
+                       peer_ecm=False)
+    docker = context['docker']
+    docker.put(context['peer'], '/tmp/inbound.ps', PEER_DOCUMENT)
+    sent = docker.run('exec', context['peer'], 'sendfax', '-n', '-d', FAXBOT_NUMBER.lstrip('+'), '/tmp/inbound.ps',
+                      check=False)
+    assert sent.returncode == 0, sent.stderr
+
+    def arrived():
+        rows = database(context, fax="SELECT id, from_number, to_number, pages FROM inbound_faxes")['fax']
+        return rows or None
+    try:
+        faxes = wait_for(arrived, 300, 'the fax in Received')
+    except AssertionError:
+        print('\nSSLFAX_INBOUND_T38_TIMEOUT peer:\n' + session_logs(docker, context['peer'])[-4000:])
+        print('\nSSLFAX_INBOUND_T38_TIMEOUT faxbot engine:\n' + session_logs(docker, context['engine'])[-4000:])
+        raise
+    time.sleep(3)
+    rows = database(context, call="SELECT call_id, t38, pages, fax_status FROM sip_call_records "
+                                  "WHERE direction = 'inbound'")
+    log = session_logs(docker, context['engine'])
+    asterisk_log = docker.run('logs', context['asterisk'], check=False).stdout
+    proof = {'faxes': faxes, **rows,
+             'engine_training': [line.split(']: ', 1)[-1] for line in log.splitlines()
+                                 if 'TCF' in line or 'TRAINING' in line or 'training' in line][:8],
+             'open_signals_ended': asterisk_log.count('fast modem signal ended with its data still open'),
+             'empty_preambles_ended': asterisk_log.count("the far end's V.21 signal ended with no frame"),
+             't38_lines': t38_lines(asterisk_log)}
+    print('\nSSLFAX_PROOF_INBOUND_T38 ' + json.dumps(proof, indent=2, default=str))
+    fax = faxes[0]
+    assert fax['from_number'] == PEER_NUMBER and fax['to_number'] == FAXBOT_NUMBER and fax['pages'] == 2, proof
+    assert proof['call'][0]['t38'] == 'yes', proof
+    assert any('TRAINING succeeded' in line for line in proof['engine_training']), proof
+    assert proof['open_signals_ended'] == 0, proof
+    assert proof['t38_lines'] and all(line[4] == 'engaged' for line in proof['t38_lines']), proof
 
 
 def test_f_a_restart_mid_call_leaves_the_fax_uncertain_and_never_resends_it(tmp_path, loopback):
@@ -959,3 +1029,127 @@ def test_i_t38_offered_by_the_carrier_behind_a_router_that_keeps_ports(tmp_path,
     [(_, opened, sent, received, gateway)] = proof['t38_lines']
     assert int(sent) > 3 and int(received) > 0 and gateway == 'engaged', proof
 
+
+def test_j_t38_that_opens_with_empty_v21_preambles_still_reaches_the_engine(tmp_path, loopback):
+    """The live failure of 5 October that asterisk/patches/0002 fixed: the carrier's T.38 opens with two V.21
+    preambles that end with no frame (00, 06, c00110, 00, 06, c00110, 00, then the far machine's DIS). With 0002
+    the engine hears the DIS and the fax goes through; on an image without 0002 (FAXBOT_NATIVE_IMAGE) the
+    gateway keeps sending V.21 flags to the engine and the fax fails like the live calls."""
+    context = loopback('j', faxbot_t38=True, carrier_gateway=True, peer_listener='', peer_sslfax=False,
+                       carrier_empty_preambles=True)
+    outcome = send_and_collect(tmp_path, context)
+    proof = evidence(outcome)
+    proof.update({'carrier_empty_preambles': outcome['carrier_log'].count(
+                      'Faxbot proof: sent two empty V.21 preambles'),
+                  'faxbot_ended_preambles': outcome['asterisk_log'].count(
+                      "the far end's V.21 signal ended with no frame"),
+                  't38_lines': t38_lines(outcome['asterisk_log'])})
+    print('\nSSLFAX_PROOF_J ' + json.dumps(proof, indent=2, default=str))
+    assert proof['carrier_empty_preambles'] >= 1, proof
+    assert_delivered(outcome, proof)
+    assert proof['faxbot_ended_preambles'] >= 1, proof
+
+
+ENGINE_LINES = 2
+
+
+def engine_lines(docker, engine):
+    """The engine's modems and the UDP ports open on all addresses: one modem per line, each on its port."""
+    modems = docker.run('exec', engine, 'pgrep', '-a', '-x', 'iaxmodem', check=False).stdout.splitlines()
+    udp = docker.read(engine, '/proc/net/udp').splitlines()[1:]
+    ports = sorted({int(line.split()[1].split(':')[1], 16) for line in udp
+                    if line.split()[1].startswith('00000000:')})
+    return sorted(line.split(' ', 1)[1] for line in modems if line.strip()), ports
+
+
+def dial_lines(docker, asterisk):
+    """Asterisk's lines about the engine's fax lines and received calls (dial steps, IAX, fax)."""
+    log = docker.run('exec', '-u', 'root', asterisk, 'cat', '/var/log/asterisk/calls', check=False).stdout
+    keep = ('IAX2/faxbot', 'chan_iax2', 'Dial(', 'ReceiveFAX', 'is ringing', 'answered', 'busy', 'No one',
+            'congest', 'Everyone', 'faxbot-engine', 'Registered IAX2', 'Unregistered')
+    return '\n'.join(line[:260] for line in log.splitlines() if any(word in line for word in keep))[-6000:]
+
+
+def receive_through_the_engine(context, number):
+    """The peer faxes Faxbot; the fax must arrive in Received through the engine (its call record says so)."""
+    docker = context['docker']
+    before = len(database(context, fax='SELECT id FROM inbound_faxes')['fax'])
+    docker.put(context['peer'], '/tmp/inbound.ps', PEER_DOCUMENT)
+    sent = docker.run('exec', context['peer'], 'sendfax', '-n', '-d', FAXBOT_NUMBER.lstrip('+'), '/tmp/inbound.ps',
+                      check=False)
+    assert sent.returncode == 0, sent.stderr
+
+    def arrived():
+        rows = database(context, fax='SELECT id, pages FROM inbound_faxes ORDER BY created_at')['fax']
+        return rows[before:] if len(rows) > before else None
+    try:
+        (fax,) = wait_for(arrived, 300, f'received fax {number}')
+    except AssertionError:
+        print(f'\nSSLFAX_RESTART_TIMEOUT {number} engine:\n' + session_logs(docker, context['engine'])[-3000:])
+        engine_log = docker.run('logs', '--timestamps', context['engine'], check=False)
+        print(f'\nSSLFAX_RESTART_TIMEOUT {number} engine container:\n' + (engine_log.stdout + engine_log.stderr)[-2500:])
+        print(f'\nSSLFAX_RESTART_TIMEOUT {number} peer:\n' + session_logs(docker, context['peer'])[-2000:])
+        print(f'\nSSLFAX_RESTART_TIMEOUT {number} modem logs:\n' + docker.run(
+            'exec', '-u', 'root', context['engine'], 'tail', '-n', '12', '/var/log/iaxmodem/ttyIAX1.log',
+            '/var/log/iaxmodem/ttyIAX2.log', check=False).stdout)
+        print(f'\nSSLFAX_RESTART_TIMEOUT {number} asterisk:\n' + dial_lines(docker, context['asterisk']))
+        raise
+    time.sleep(3)
+    call = database(context, call=f"SELECT call_id, fax_status FROM sip_call_records WHERE job_id = '{fax['id']}'")
+    if not (call['call'] and call['call'][0]['call_id'].startswith('engine.')):
+        # Not through the engine: what the engine and Asterisk said, for the record.
+        engine_log = docker.run('logs', '--timestamps', context['engine'], check=False)
+        print(f'\nSSLFAX_RESTART_BUILTIN {number} engine container:\n' + (engine_log.stdout + engine_log.stderr)[-2500:])
+        print(f'\nSSLFAX_RESTART_BUILTIN {number} modem logs:\n' + docker.run(
+            'exec', '-u', 'root', context['engine'], 'tail', '-n', '12', '/var/log/iaxmodem/ttyIAX1.log',
+            '/var/log/iaxmodem/ttyIAX2.log', check=False).stdout)
+        print(f'\nSSLFAX_RESTART_BUILTIN {number} asterisk:\n' + dial_lines(docker, context['asterisk']))
+        print(f'\nSSLFAX_RESTART_BUILTIN {number} peers:\n' + docker.asterisk(context['asterisk'], 'iax2 show peers'))
+    return {'fax': fax, 'call': call['call']}
+
+
+def engine_running_again(context, since):
+    docker = context['docker']
+
+    def running():
+        text = docker.read(context['engine'], '/faxdata/hylafax-out/engine.status')
+        try:
+            status = json.loads(text)
+        except ValueError:
+            return False
+        return status.get('state') == 'running' and int(status.get('started') or 0) >= since
+    wait_for(running, 180, 'the engine to run again')
+    wait_for(lambda: docker.asterisk(context['asterisk'], 'iax2 show peers').count(' OK ') >= ENGINE_LINES, 120,
+             "the engine's lines on Faxbot's Asterisk")
+    docker.asterisk(context['asterisk'], 'core set verbose 3')  # each call's dial steps in the log
+
+
+def test_k_after_an_engine_restart_and_a_fresh_start_received_calls_still_reach_the_engine(tmp_path, loopback):
+    """Live, 6 October 2026: every fax line ran as two modems (`iaxmodem -F <file>` starts one for every line),
+    so calls rang where nothing answered and went to Asterisk's own fax engine after 20 s. Now one modem per
+    line on its own port, at start, after the engine restarts, and after the engine and Asterisk start afresh,
+    and a received call reaches the engine each time."""
+    context = loopback('k', faxbot_t38=True, carrier_gateway=False, carrier_t38=False, peer_listener='',
+                       peer_sslfax=False)
+    docker = context['docker']
+    docker.asterisk(context['asterisk'], 'core set verbose 3')
+    proof = {'lines_at_start': engine_lines(docker, context['engine'])}
+    proof['first'] = receive_through_the_engine(context, 1)
+    started = int(time.time())
+    docker.run('restart', context['engine'])
+    engine_running_again(context, started)
+    proof['lines_after_engine_restart'] = engine_lines(docker, context['engine'])
+    proof['second'] = receive_through_the_engine(context, 2)
+    started = int(time.time())
+    docker.run('restart', context['asterisk'], context['engine'])
+    engine_running_again(context, started)
+    proof['lines_after_fresh_start'] = engine_lines(docker, context['engine'])
+    proof['third'] = receive_through_the_engine(context, 3)
+    print('\nSSLFAX_PROOF_K ' + json.dumps(proof, indent=2, default=str))
+    expected = ([f'iaxmodem ttyIAX{number}' for number in range(1, ENGINE_LINES + 1)],
+                [4569 + number for number in range(1, ENGINE_LINES + 1)])
+    for moment in ('lines_at_start', 'lines_after_engine_restart', 'lines_after_fresh_start'):
+        assert tuple(proof[moment]) == expected, proof
+    for name in ('first', 'second', 'third'):
+        assert proof[name]['fax']['pages'] == 2, proof
+        assert proof[name]['call'] and proof[name]['call'][0]['call_id'].startswith('engine.'), proof
