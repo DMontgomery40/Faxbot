@@ -1864,7 +1864,7 @@ $ faxbot costs savings [OPTIONS]
 
 ### `faxbot costs recommendations`
 
-Show ways to pay less: numbers where another route cost less per delivered fax in the last 30 days, and numbers that could share incoming lines.
+Show ways to pay less: numbers where another route cost less per delivered fax in the last 30 days, numbers that could share incoming lines, and whether each monthly plan is worth its fee.
 
 **Usage**:
 

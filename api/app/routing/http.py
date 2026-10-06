@@ -272,6 +272,22 @@ async def sending_recommendations(request: Request):
     return {'window_days': WINDOW_DAYS, 'min_delivered': MIN_DELIVERED, 'items': items, 'empty_sentence': NO_SENDING}
 
 
+@router.get('/recommendations/plans', dependencies=[Depends(require_permission('settings:read'))])
+async def plan_recommendations(request: Request):
+    """Whether each monthly plan is worth its fee at your traffic (estimates; Faxbot never cancels anything)."""
+    from .plan_check import plan_report
+    from .recommendations import sending_recommendations as recommend
+    store = _store(request)
+    revision, bound = await run_lifecycle_step(lambda: _active(request))
+    values = request.scope['faxbot.configuration'].active.values
+
+    def read():
+        # Plans the Sending section already points numbers to: Plans then says what the fee question is.
+        suggested = {item['suggested']['route'] for item in recommend(store, revision, bound) if item['kind'] == 'plan'}
+        return plan_report(store, values, bound=bound, suggested=suggested)
+    return await _call(read)
+
+
 class DestinationPatch(BaseModel):
     model_config = ConfigDict(extra='forbid')
     display_name: str | None = Field(default=None, max_length=200)

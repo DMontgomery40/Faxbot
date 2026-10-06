@@ -642,6 +642,9 @@ const consoleHandlers = [
     empty_sentence: 'Nothing to suggest yet. Faxbot compares the cost of two routes once each has delivered 3 faxes to the same number in the last 30 days.' })),
   // Receiving recommendations: too little call history yet.
   http.get('/routing/recommendations/receiving', () => json(newReceivingAdvice())),
+  // Plans: no fax service with a monthly fee.
+  http.get('/routing/recommendations/plans', () => json({ days: 30, estimate: true, plans: [],
+    empty_sentence: 'You pay no monthly fee for a fax service, so there is no plan to review.' })),
   // Case packets: none sent yet.
   http.get('/cases', () => json({ cases: [] })),
   // The audit log: nothing recorded yet.

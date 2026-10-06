@@ -406,6 +406,42 @@ export interface Savings {
   };
 }
 
+// GET /routing/recommendations/plans: whether each monthly plan is worth its fee. Every figure is an estimate;
+// windows[0] is the last 30 days and windows[1] the 30 days before, each counted over the days Faxbot has records for.
+export interface PlanWindow {
+  start: string;
+  end: string;
+  days: number;
+  sent: number;
+  received: number;
+  own_numbers: number;
+  fee: Money[];
+  fee_per_fax: Money[];
+  other_way: Money[];
+  number_rental: Money[];
+  other_routes: string[];
+  without_other_way: number;
+}
+
+export interface PlanAdvice {
+  route: string;
+  name: string;
+  monthly_fee: Money[];
+  state: 'keep' | 'review' | 'too_little_history';
+  sentence: string;
+  action: string | null;
+  caveats: string[];
+  estimate: true;
+  windows: PlanWindow[];
+}
+
+export interface PlanRecommendations {
+  days: number;
+  estimate: true;
+  plans: PlanAdvice[];
+  empty_sentence: string | null;
+}
+
 // GET /routing/recommendations/receiving: shared lines, numbers with few calls and fax services. Every figure is an
 // estimate; "choose" is the earlier window the advice is picked from, "check" the later one it is judged on.
 export interface ReceivingWindow { start: string; end: string; days: number }

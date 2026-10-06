@@ -126,6 +126,7 @@ def test_converted_routes_declare_their_exact_permission():
 READS = {
     ("GET", "/routing/recommendations/sending"): ("settings:read", False),
     ("GET", "/routing/recommendations/receiving"): ("settings:read", False),
+    ("GET", "/routing/recommendations/plans"): ("settings:read", False),
 }
 
 
