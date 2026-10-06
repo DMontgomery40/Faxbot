@@ -55,6 +55,7 @@ import type {
   CasePacket,
   CaseSummary,
   Savings,
+  SendingRecommendations,
 } from './deliveryTypes';
 import type {
   ImportManifest, ImportResult, WorkAssignee, WorkCounts, WorkEvent, WorkItem, WorkSettings, WorkView,
@@ -959,6 +960,11 @@ class AdminAPIClient {
 
   async updateDestination(number: string, patch: DestinationPatch): Promise<Destination> {
     return this.json(`/routing/destinations/${id(number)}`, { method: 'PATCH', body: JSON.stringify(patch) });
+  }
+
+  // Numbers where another route cost less per delivered fax over the last 30 days (Costs → Recommendations).
+  async getSendingRecommendations(): Promise<SendingRecommendations> {
+    return this.json('/routing/recommendations/sending');
   }
 
   async getRouteCosts(): Promise<RouteCostsResponse> {

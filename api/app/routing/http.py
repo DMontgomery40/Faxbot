@@ -198,12 +198,14 @@ def _destination_view(number, row, routes):
 
 @router.get('/destinations', dependencies=[Depends(require_permission('settings:read'))])
 async def list_destinations(request: Request):
+    from .recommendations import delivered_costs_for
     store = _store(request)
-    rows, evidence = await _call(lambda: store.destination_evidence())
+    rows, evidence, delivered = await _call(lambda: (*store.destination_evidence(), delivered_costs_for(store)))
     numbers = sorted(set(rows) | set(evidence))
+    # Each route's cost per delivered fax, the cheapest first (the Recipients list column).
     return {'window_days': WINDOW_DAYS,
-            'destinations': [_destination_view(number, rows.get(number), evidence.get(number, {}))
-                             for number in numbers]}
+            'destinations': [{**_destination_view(number, rows.get(number), evidence.get(number, {})),
+                              'delivered_costs': delivered.get(number, [])} for number in numbers]}
 
 
 def _recommendation(store, number, revision, bound, pages=1):
@@ -242,17 +244,32 @@ async def get_destination(number: str, request: Request, pages: int = Query(defa
     revision, bound = await run_lifecycle_step(lambda: _active(request))
 
     def read():
+        from .recommendations import delivered_costs_for
         rows, evidence = store.destination_evidence(number=number)
         peer = store.verified_peer(number)
-        return rows, evidence, peer, _recommendation(store, number, revision, bound, pages)
-    rows, evidence, peer, recommended = await _call(read)
+        delivered = delivered_costs_for(store, number).get(number, [])
+        return rows, evidence, peer, _recommendation(store, number, revision, bound, pages), delivered
+    rows, evidence, peer, recommended, delivered = await _call(read)
     view = _destination_view(number, rows.get(number), evidence.get(number, {}))
+    # Per route over the window: delivered share, cost per delivered fax, average pages and connected time.
+    view['delivered_costs'] = delivered
     view['direct_partner'] = None if peer is None else {'organization': peer['organization'], 'verified': True}
     view['recommended_routes'] = recommended
     view['available_routes'] = ([] if bound is None else
                                 [{'route': key, 'label': route_label(key)}
                                  for key in [bound, *extra_routes(revision.values, bound)]])
     return view
+
+
+@router.get('/recommendations/sending', dependencies=[Depends(require_permission('settings:read'))])
+async def sending_recommendations(request: Request):
+    """Numbers where another route cost less per delivered fax than the one Faxbot uses first now."""
+    from .delivered import MIN_DELIVERED
+    from .recommendations import NO_SENDING, sending_recommendations as recommend
+    store = _store(request)
+    revision, bound = await run_lifecycle_step(lambda: _active(request))
+    items = await _call(lambda: recommend(store, revision, bound))
+    return {'window_days': WINDOW_DAYS, 'min_delivered': MIN_DELIVERED, 'items': items, 'empty_sentence': NO_SENDING}
 
 
 class DestinationPatch(BaseModel):
