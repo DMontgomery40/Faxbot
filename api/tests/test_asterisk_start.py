@@ -130,6 +130,41 @@ def test_the_login_faxbot_wrote_turns_the_manager_port_on(tmp_path):
     assert oct((etc / 'manager.conf').stat().st_mode & 0o777) == '0o600'
 
 
+def _acl(manager):
+    return [line for line in manager.splitlines() if line.startswith(('permit=', 'deny='))]
+
+
+def test_only_the_api_address_may_sign_in_to_the_manager_port(tmp_path):
+    """The SSL Fax engine shares the network; the manager login accepts only the API's fixed address."""
+    shared = tmp_path / 'data' / 'asterisk'
+    shared.mkdir(parents=True)
+    (shared / 'manager.credentials').write_text('api\nGenerated-Login_42\n')
+    result, etc, _ = start(tmp_path, FAXBOT_API_ADDRESS='172.30.53.10')
+    assert result.returncode == 0, result.stderr
+    manager = (etc / 'manager.conf').read_text()
+    assert _acl(manager) == ['deny=0.0.0.0/0.0.0.0', 'permit=172.30.53.10/255.255.255.255']
+    # The ACL belongs to the login, after its secret.
+    assert manager.index('[api]') < manager.index('deny=0.0.0.0/0.0.0.0')
+    # With no address given, only the container itself may sign in.
+    result, etc, _ = start(tmp_path)
+    assert result.returncode == 0 and _acl((etc / 'manager.conf').read_text()) == [
+        'deny=0.0.0.0/0.0.0.0', 'permit=127.0.0.1/255.255.255.255']
+    for refused in ('api', '172.30.53.10/24', '172.30.53.300', '0.0.0.0/0', '172.30.53.10\npermit=0.0.0.0'):
+        result, _, _ = start(tmp_path, FAXBOT_API_ADDRESS=refused)
+        assert result.returncode != 0 and 'Unsupported API address' in result.stderr, refused
+
+
+def test_compose_gives_the_api_the_address_the_manager_port_accepts():
+    import yaml
+    compose = yaml.safe_load((ROOT / 'docker-compose.yml').read_text())
+    api_address = compose['services']['api']['networks']['default']['ipv4_address']
+    asterisk = dict(item.split('=', 1) for item in compose['services']['asterisk']['environment'])
+    assert asterisk['FAXBOT_API_ADDRESS'] == api_address == '${FAXBOT_API_ADDRESS:-172.30.53.10}'
+    assert compose['networks']['default']['ipam']['config'] == [{'subnet': '${FAXBOT_NETWORK:-172.30.53.0/24}'}]
+    # The SSL Fax engine is on the same network but never at the API's address.
+    assert 'networks' not in compose['services']['hylafax']
+
+
 def test_a_login_in_the_environment_wins_and_the_file_is_not_followed(tmp_path):
     shared = tmp_path / 'data' / 'asterisk'
     shared.mkdir(parents=True)

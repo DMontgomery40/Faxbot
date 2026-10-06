@@ -333,7 +333,8 @@ def bring_up(tmp_path, label, made, *, faxbot_t38, carrier_gateway, peer_listene
 
     # Faxbot: Asterisk and the API share the data folder; the engine gets only its own folders
     # (settings read-only, the out folder, its volume), exactly as in docker-compose.yml.
-    asterisk = docker.create('asterisk', images['native'], env=ami_env,
+    # The manager port accepts only the API's address, as docker-compose.yml sets it.
+    asterisk = docker.create('asterisk', images['native'], env={**ami_env, 'FAXBOT_API_ADDRESS': ADDRESS['api']},
                              volumes=[(faxdata, '/faxdata'), (settings_volume, '/faxdata/hylafax')], alias='asterisk')
     engine = docker.create('hylafax', images['engine'], alias='hylafax',
                            volumes=[(settings_volume, '/faxdata/hylafax:ro'), (out_volume, '/faxdata/hylafax-out'),

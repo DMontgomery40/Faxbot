@@ -6,8 +6,12 @@ bindaddr=0.0.0.0
 
 [${ASTERISK_AMI_USERNAME}]
 secret=${ASTERISK_AMI_PASSWORD}
+; Only the API's own address may sign in (its fixed address on Faxbot's network,
+; docker-compose.yml): the SSL Fax engine and anything else on the network cannot.
+deny=0.0.0.0/0.0.0.0
+permit=${FAXBOT_MANAGER_PERMIT}/255.255.255.255
 read=system,call,user
 ; system and command let Faxbot check for calls in progress and restart Asterisk
-; to load new trunk settings; the manager port stays on the private network.
+; to load new trunk settings (command only for "core stop gracefully").
 write=originate,reporting,system,command
 displayconnects=no

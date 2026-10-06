@@ -60,10 +60,16 @@ elif [ -f "$credentials" ] && [ ! -L "$credentials" ]; then
   export ASTERISK_AMI_USERNAME ASTERISK_AMI_PASSWORD
   login_from=faxbot
 fi
+# Only the API may sign in to the manager port: its fixed address on Faxbot's
+# network (docker-compose.yml sets FAXBOT_API_ADDRESS), or this container alone
+# when none is given.
+FAXBOT_MANAGER_PERMIT=${FAXBOT_API_ADDRESS:-127.0.0.1}
+[[ "$FAXBOT_MANAGER_PERMIT" =~ ^$octet\.$octet\.$octet\.$octet$ ]] || refuse 'Unsupported API address'
+export FAXBOT_MANAGER_PERMIT
 if [ "$login_from" = none ]; then
   printf '%s\n' '[general]' 'enabled=no' 'webenabled=no' > "$out_dir/manager.conf"
 else
-  render manager.conf '${ASTERISK_AMI_USERNAME} ${ASTERISK_AMI_PASSWORD}'
+  render manager.conf '${ASTERISK_AMI_USERNAME} ${ASTERISK_AMI_PASSWORD} ${FAXBOT_MANAGER_PERMIT}'
 fi
 
 # A public-address install (docker-compose.public.yml) or a phone system
