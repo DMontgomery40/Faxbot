@@ -450,6 +450,9 @@ def network_allows_t38(values) -> bool | None:
 # -- Faxbot's fax ports: published on this computer, opened on the router ---------------------------------
 
 _RANGE = re.compile(r'([0-9]{4,5})-([0-9]{4,5})', re.ASCII)
+# The widths asterisk/start.sh accepts (last - first): at least 5 and under 2000. Faxbot asks the router for
+# every port of the range one by one, so a wider record is never trusted.
+MEDIA_RANGE_NARROWEST, MEDIA_RANGE_WIDEST = 5, 1999
 
 
 def media_ports_path(values) -> Path:
@@ -464,9 +467,12 @@ def read_media_ports(values):
     except (OSError, ValueError):
         return None
     found = _RANGE.fullmatch(str(record.get('media_ports', ''))) if isinstance(record, dict) else None
-    if not found or not 1024 <= int(found.group(1)) <= int(found.group(2)) <= 65535:
+    if not found:
         return None
-    return int(found.group(1)), int(found.group(2))
+    first, last = int(found.group(1)), int(found.group(2))
+    if not (1024 <= first <= last <= 65535 and MEDIA_RANGE_NARROWEST <= last - first <= MEDIA_RANGE_WIDEST):
+        return None
+    return first, last
 
 
 def lease_path(values) -> Path:

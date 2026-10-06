@@ -857,3 +857,8 @@ def test_the_media_ports_record_is_read_only_when_well_formed(tmp_path):
                            ('{"media_ports": "80-90"}', None), ('not json', None)):
         path.write_text(text)
         assert sip_network.read_media_ports(settings) == expected
+    # Review round 4: the widths asterisk/start.sh accepts, checked here too (Faxbot asks the router port by port).
+    for ports, expected in (('4000-4004', None), ('4000-4005', (4000, 4005)), ('4000-5999', (4000, 5999)),
+                            ('4000-6000', None), ('1024-65535', None)):
+        path.write_text(json.dumps({'media_ports': ports}))
+        assert sip_network.read_media_ports(settings) == expected, ports

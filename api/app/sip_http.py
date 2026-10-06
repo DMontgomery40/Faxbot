@@ -569,7 +569,8 @@ async def status(request: Request, identity=Depends(require_permission('provider
         'last_call_text': last['summary'] if last else None,
         'last_call_at': last['started_at'] if last else None,
         'last_call_verdict': last['verdict'] if last else None,
-        # After a T.38 call carried no fax data, audio fax is the next thing to try (the owner decides).
+        # After a T.38 call carried no fax data while T.38 is still on, audio fax is the next thing to try. Faxbot
+        # switches by itself when the call timed out waiting for fax data; the console offers it for the rest.
         'suggest_audio': bool(last and last['verdict'] == 'no_t38_data_back' and values.sip_t38_enabled),
         'address_changed': bool(changed),
         # Asterisk shares Faxbot's data folder (the Compose install), so Apply and connect restarts it.
