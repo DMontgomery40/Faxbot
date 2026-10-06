@@ -9,6 +9,11 @@ on:
   pull_request:
     branches: [ "**" ]
 
+# A newer push to the same branch or pull request replaces the run still in progress.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test-api:
     runs-on: ubuntu-latest
@@ -67,6 +72,9 @@ jobs:
       - name: Install Admin UI dependencies
         working-directory: api/admin_ui
         run: npm ci
+      - name: Admin UI tests
+        working-directory: api/admin_ui
+        run: npx vitest run
       - name: Typecheck and build Admin UI
         working-directory: api/admin_ui
         run: npm run build
