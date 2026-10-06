@@ -1597,7 +1597,7 @@ $ faxbot providers trunk mode [OPTIONS] {t38|audio}
 
 #### `faxbot providers trunk presets`
 
-List the carriers and phone systems Faxbot knows the settings for, or show one with where each setting comes from. For a phone system it also lists, in order, what its administrator sets.
+List the carriers and phone systems Faxbot knows the settings for, or show one with where each setting comes from. For a phone system it also lists, in order, what you set in it.
 
 **Usage**:
 

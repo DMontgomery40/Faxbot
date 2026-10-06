@@ -1063,7 +1063,7 @@ def test_trunk_presets_and_use_cover_phone_systems_and_uk_and_australian_carrier
     for text in ('avaya-ipoffice', 'avaya-aura', 'gamma', 'bt-one-voice', 'telstra-sip-connect', 'Phone system'):
         assert text in listing.stdout, text
     detail = trunk_cli('providers', 'trunk', 'presets', 'avaya-ipoffice')
-    assert detail.exit_code == 0 and 'What your Avaya IP Office administrator sets:' in detail.stdout
+    assert detail.exit_code == 0 and 'What you set in Avaya IP Office:' in detail.stdout
     assert '1. System, LAN1 (or LAN2), VoIP: tick SIP Trunks Enable.' in detail.stdout
     assert trunk_cli.json('providers', 'trunk', 'presets', 'avaya-aura')['sources'][0]['read_on'] == '2026-10-03'
     assert trunk_cli('providers', 'trunk', 'presets', 'nope').exit_code != 0

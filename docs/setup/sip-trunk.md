@@ -21,6 +21,8 @@ Telnyx documents T.38 fax on its SIP connections, so it is the carrier to start 
 
 A Telnyx trial account can only call verified numbers until you upgrade it.
 
+In Faxbot, an optional **Telnyx API key** lets the trunk page check the T.38 setting on each trunk number and lets Faxbot show call charges. Under **Providers → Carrier trunk**, **Fax over IP (T.38) at Telnyx** reports what Telnyx shows and offers **Turn on T.38** for a number that has it off. Faxbot changes only the number you select. If Telnyx refuses the change, open **Numbers → My Numbers**, select the gear next to that number, open **Expert Configuration**, and tick **Enable T.38 Fax Gateway**.
+
 ### In Faxbot
 
 | Setting | Value |
@@ -177,6 +179,8 @@ When the router directly in front of Faxbot's computer changes port numbers, Fax
 Sometimes a call switches to fax over IP (T.38) and no fax data comes back, and Faxbot reports "The call connected but no fax data came back from the carrier." The carrier isn't sending fax data back along Faxbot's path, even though it may still send audio that way.
 
 Faxbot then switches new calls to audio fax by itself, but only when the fax engine timed out waiting for the other side's first fax message; a plain hang-up, a busy line or the other side hanging up never triggers it. When it switches, Faxbot turns off **Use T.38 fax over IP** (the settings history records "system"), reconnects the carrier trunk once no call is in progress, and shows a sentence next to the switch such as "Off: on 3 October a T.38 fax got no fax data back on this network, so Faxbot uses audio fax.", together with **Try T.38 again**. It never sends the failed fax again; send it yourself when you're ready.
+
+The fast fax service handles this on its own. After one of its T.38 calls hears no fax machine, it uses audio fax for its next calls, while the trunk's **Use T.38 fax over IP** setting and the built-in fax engine stay as they are. The trunk page reports the change under **Check trunk status**; select **Apply and connect** there to let the fast fax service try T.38 again. The same rule applies: a plain hang-up, a busy line or the other side hanging up does not trigger it, and Faxbot never sends the failed fax again.
 
 If fax over IP (T.38) is off and the most recent fax over IP (T.38) call got no fax data back (for example, because someone turned it off by hand right after such a call), Faxbot takes that call as the reason and says so in the same way.
 

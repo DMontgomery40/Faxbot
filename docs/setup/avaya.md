@@ -16,7 +16,7 @@ Avaya IP Office and Avaya Aura (Communication Manager with Session Manager) are 
 - A Linux computer on the same local network as the phone system, running Faxbot with Docker Compose, with a fixed address on that network (for example `192.168.1.20`).
 - The phone system's address on that network: IP Office's LAN address, or Session Manager's SIP entity address for Aura.
 - The fax numbers the phone system should send to Faxbot, and the fax number Faxbot's own faxes should show.
-- Your Avaya administrator or partner, for the steps in [What your Avaya administrator sets](#what-your-avaya-administrator-sets).
+- Your Avaya partner, if one manages your phone system; use the steps in [What you set in Avaya](#what-you-set-in-avaya).
 
 The phone system and Faxbot recognise each other by address, so the phone system's own address has to reach Faxbot unchanged. Docker Engine on Linux does that. Docker Desktop (Mac and Windows) and Colima instead pass outside traffic through their own virtual machine, so Faxbot would see the virtual machine's address rather than the phone system's. **Check trunk status** says so when it sees that it is running there. This is Docker's documented behaviour, and it has not been tested against a real phone system. A carrier trunk over the internet has its own network needs for fax over IP; see [Network for fax over IP](network.md). Avaya's notes for IP Office SIP extensions also state that "Connection of SIP extension devices from locations where Network Address Translation (NAT) is applied to the connection is not supported", so signing Faxbot in as an extension would not help either. Faxbot does not offer that.
 
@@ -105,9 +105,9 @@ faxbot providers trunk apply
 faxbot providers trunk status
 ```
 
-## What your Avaya administrator sets
+## What you set in Avaya
 
-Both lists come from Avaya's DevConnect application notes and say which notes each step comes from. The phone system's page under **Providers** shows the same list under **What your Avaya administrator sets**, and `faxbot providers trunk presets avaya-ipoffice` prints it.
+Both lists come from Avaya's DevConnect application notes and say which notes each step comes from. The phone system's page under **Providers** shows the same list under **What you set in Avaya**, and `faxbot providers trunk presets avaya-ipoffice` prints it.
 
 ### IP Office (IP Office Manager)
 

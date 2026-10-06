@@ -458,7 +458,7 @@ function SipTrunkSettings({ client, showCalls = true, revision: sharedRevision, 
   const phoneSystems = presets.filter(isPhoneSystem);
   const formats = preset?.dial_formats ?? [];
   const localNumbers = form.dial_format === 'local';
-  // The vendor names the administrator: "What your Avaya administrator sets".
+  // The vendor names the checklist: "What you set in Avaya".
   const vendor = preset?.label.split(' ')[0] ?? '';
 
   return (
@@ -516,7 +516,7 @@ function SipTrunkSettings({ client, showCalls = true, revision: sharedRevision, 
           {phone && (preset.admin_steps ?? []).length > 0 && (
             <Accordion disableGutters variant="outlined" data-testid="phone-system-steps">
               <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-                <Typography>{`What your ${vendor} administrator sets`}</Typography>
+                <Typography>{`What you set in ${vendor}`}</Typography>
               </AccordionSummary>
               <AccordionDetails>
                 <Box component="ol" sx={{ pl: 3, mt: 0 }}>

@@ -512,7 +512,7 @@ describe('SIP trunk to a phone system', () => {
     expect(within(reach).getByText(
       "Set FAXBOT_LAN_ADDRESS in .env to this computer's address on your local network, then run:")).toBeTruthy();
     // The administrator's checklist, with its dated source.
-    fireEvent.click(screen.getByText('What your Avaya administrator sets'));
+    fireEvent.click(screen.getByText('What you set in Avaya'));
     const steps = screen.getByTestId('phone-system-steps');
     expect(within(steps).getByText('System, LAN1 (or LAN2), VoIP: tick SIP Trunks Enable.')).toBeTruthy();
     expect(within(steps).getByText('support.avaya.com')).toBeTruthy();

@@ -250,7 +250,7 @@ def telnyx_t38_on(number: str = typer.Argument(..., metavar='NUMBER',
 @trunk.command('presets')
 def trunk_presets(preset: str = typer.Argument(None, metavar='[PRESET]',
                                                help='Show one preset in full, for example avaya-ipoffice.')):
-    """List the carriers and phone systems Faxbot knows the settings for, or show one with where each setting comes from. For a phone system it also lists, in order, what its administrator sets."""
+    """List the carriers and phone systems Faxbot knows the settings for, or show one with where each setting comes from. For a phone system it also lists, in order, what you set in it."""
     result = state.api().get('/admin/sip/presets')
     items = result.get('presets') or []
     if preset:
@@ -268,7 +268,7 @@ def trunk_presets(preset: str = typer.Argument(None, metavar='[PRESET]',
                 out.line(chosen['t38'])
             if chosen['admin_steps']:
                 out.line('')
-                out.line(f"What your {chosen['label']} administrator sets:")
+                out.line(f"What you set in {chosen['label']}:")
                 for number, step in enumerate(chosen['admin_steps'], 1):
                     out.line(f'{number}. {step}')
             if chosen['sources']:
