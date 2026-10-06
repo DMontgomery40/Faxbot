@@ -114,6 +114,15 @@ export interface AttentionItem {
   destination: AdminDestination;
 }
 
+// An install that only receives: no sending provider, one that receives. Its status is about receiving.
+function receivesOnly(health: HealthStatus): boolean {
+  return !health.backend && !!health.receiving_backend;
+}
+
+function statusReady(health: HealthStatus): boolean {
+  return receivesOnly(health) ? !!health.receiving_ready : health.backend_healthy;
+}
+
 // What needs a person now, from the cards' own data. Items this account
 // cannot read, and items with nothing in them, are left out.
 export function attentionItems({ health, work, intake, costs, network, canSetUp = false }: {
@@ -126,12 +135,15 @@ export function attentionItems({ health, work, intake, costs, network, canSetUp 
   canSetUp?: boolean;
 }): AttentionItem[] {
   const items: AttentionItem[] = [];
-  if (health && !health.backend) {
+  if (health && !health.backend && !health.receiving_backend) {
     items.push({ key: 'no-provider', label: 'No fax provider is set up yet', count: null,
       destination: canSetUp ? 'setup' : 'diagnostics' });
   }
   if (health && health.backend && !health.backend_healthy) {
     items.push({ key: 'not-ready', label: 'Faxbot is not ready to send faxes', count: null, destination: 'system/diagnostics' });
+  }
+  if (health && receivesOnly(health) && !health.receiving_ready) {
+    items.push({ key: 'not-ready', label: 'Faxbot is not ready to receive faxes', count: null, destination: 'system/diagnostics' });
   }
   if (health?.jobs.recent_failures) {
     items.push({ key: 'failed', label: 'Faxes that failed in the last 24 hours', count: health.jobs.recent_failures, destination: 'faxes/sent' });
@@ -311,26 +323,28 @@ function Dashboard({ client, onNavigate, canSetUp = false, onSendFax }: Dashboar
               >
               <CardContent sx={{ pb: { xs: 1, sm: 2 } }}>
                 <Box display="flex" alignItems="center" mb={{ xs: 1, sm: 2 }}>
-                  {getStatusIcon(health.backend_healthy)}
+                  {getStatusIcon(statusReady(health))}
                   <Typography variant="h6" component="h2" sx={{ ml: 1, fontSize: { xs: '1rem', sm: '1.25rem' } }}>
                     System Status
                   </Typography>
                 </Box>
                 <Chip
-                  label={health.backend_healthy ? 'Ready' : 'Needs attention'}
-                  color={getStatusColor(health.backend_healthy)}
+                  label={statusReady(health) ? 'Ready' : 'Needs attention'}
+                  color={getStatusColor(statusReady(health))}
                   variant="outlined"
                 />
                 <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-                  {health.backend ? `Sending: ${providerLabel(health.backend)}` : 'No fax provider set up yet.'}
+                  {health.backend ? `Sending: ${providerLabel(health.backend)}`
+                    : receivesOnly(health) ? `Receiving: ${providerLabel(health.receiving_backend ?? '')}`
+                      : 'No fax provider set up yet.'}
                 </Typography>
-                {!health.backend && canSetUp && onNavigate && (
+                {!health.backend && !receivesOnly(health) && canSetUp && onNavigate && (
                   <Button variant="contained" size="small" sx={{ mt: 1.5 }}
                     onClick={(event) => { event.stopPropagation(); onNavigate('setup'); }}>
                     Set up a fax provider
                   </Button>
                 )}
-                {health.backend && health.backend_message && (
+                {(health.backend || receivesOnly(health)) && health.backend_message && (
                   <Typography variant="body2" color="error" sx={{ mt: 1 }} data-testid="engine-message">
                     {health.backend_message}
                   </Typography>

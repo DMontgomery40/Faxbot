@@ -211,9 +211,10 @@ def network_decision(values, verdict, *, previous=None, records=None):
 
 _runtime = None
 _pending: set = set()
-# How often and how long Faxbot waits for calls to end before Asterisk loads audio fax.
+# How often Faxbot looks for calls to end before Asterisk loads a switched fax setting, and how long the
+# switch itself waits (the call that caused it is still hanging up); after that a background task waits.
 BUSY_RETRY_SECONDS = 5
-BUSY_WAIT_SECONDS = 120
+BUSY_WAIT_SECONDS = 15
 
 
 def _on_fax_event(event):
@@ -292,14 +293,53 @@ async def switch(runtime, enabled, reason, *, network=None):
             pass
         from .sip_http import _load_into_engine
         # The event arrives from the call's hangup handler, while its channel still
-        # exists: wait for it (and any other call) to end before restarting Asterisk.
+        # exists: wait briefly for it (and any other call) to end before restarting Asterisk.
         loop = asyncio.get_running_loop()
         deadline = loop.time() + BUSY_WAIT_SECONDS
         result = await _load_into_engine(values)
         while result.get('engine') == 'busy' and loop.time() < deadline:
             await asyncio.sleep(BUSY_RETRY_SECONDS)
             result = await _load_into_engine(values)
+        if result.get('engine') == 'busy':
+            # Still busy: Asterisk loads the change as soon as no call is up, and the trunk status says so.
+            reload_later(runtime)
+            result = {**result, 'waiting': True, 'message': RELOAD_WAITING}
         return result
     except Exception:
         logging.getLogger(__name__).warning('Faxbot could not switch T.38 for new calls.')
         return None
+
+
+# A saved switch that Asterisk loads once no call is up, so the screen and Asterisk never disagree for long.
+RELOAD_WAITING = 'Saved. Asterisk loads the new settings as soon as no call is up.'
+_reload = {}
+
+
+def reload_waiting():
+    """True while a saved switch waits for the calls in progress to end before Asterisk loads it."""
+    task = _reload.get('task')
+    return task is not None and not task.done()
+
+
+def reload_later(runtime):
+    """Load the saved trunk into Asterisk once no call is up (one waiting task at a time); never resends."""
+    if reload_waiting():
+        return
+    _reload['task'] = asyncio.get_running_loop().create_task(_reload_when_free(runtime), name='faxbot-trunk-reload')
+
+
+async def _reload_when_free(runtime):
+    from .config_runtime import run_lifecycle_step
+    from .sip_http import _load_into_engine
+    while True:
+        await asyncio.sleep(BUSY_RETRY_SECONDS)
+        try:
+            # The settings in force now, in case they changed again while calls were up.
+            values = await run_lifecycle_step(lambda: runtime.manager.store.read().active.values)
+            result = await _load_into_engine(values)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            continue
+        if result.get('engine') != 'busy':
+            return result

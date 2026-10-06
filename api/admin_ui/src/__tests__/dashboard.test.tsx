@@ -129,6 +129,25 @@ describe('Dashboard delivery cards', () => {
     expect(screen.queryByRole('button', { name: 'Set up a fax provider' })).toBeNull();
   });
 
+  it('names the provider that receives on an install that only receives, and judges it by receiving', async () => {
+    const receiveOnly = (ready: boolean) => http.get('/admin/health-status', () => HttpResponse.json({
+      timestamp: new Date().toISOString(), backend: '', backend_healthy: false, receiving_backend: 'sip',
+      receiving_ready: ready, jobs: { queued: 0, in_progress: 0, recent_failures: 0 }, inbound_enabled: true,
+      api_keys_configured: true, require_auth: true }));
+    server.use(receiveOnly(true));
+    const { unmount } = render(<Dashboard client={client()} onNavigate={vi.fn()} canSetUp />);
+    expect(await screen.findByText('Receiving: Carrier trunk')).toBeTruthy();
+    expect(screen.queryByText('No fax provider set up yet.')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Set up a fax provider' })).toBeNull();
+    expect(screen.getByText('Ready')).toBeTruthy();
+    expect(screen.queryByTestId('attention-no-provider')).toBeNull();
+    expect(screen.queryByTestId('attention-not-ready')).toBeNull();
+    unmount();
+    server.use(receiveOnly(false));
+    render(<Dashboard client={client()} />);
+    expect((await screen.findByTestId('attention-not-ready')).textContent).toContain('Faxbot is not ready to receive faxes');
+  });
+
   it('says in one sentence when Faxbot cannot sign in to its fax engine', async () => {
     const sentence = "Faxbot can't sign in to its fax engine. Check that the Asterisk manager password matches.";
     server.use(http.get('/admin/health-status', () => HttpResponse.json({ timestamp: new Date().toISOString(),

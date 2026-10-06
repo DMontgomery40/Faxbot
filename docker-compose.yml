@@ -1,5 +1,13 @@
+# Every service keeps at most three 10 MB log files, so logs never fill the disk.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   api:
+    logging: *logging
     build:
       context: .
       dockerfile: ./api/Dockerfile
@@ -24,20 +32,39 @@ services:
       - hylafax-out:/faxdata/hylafax-out:ro
     ports:
       - "8080:8080"
+    # A fixed address on Faxbot's network: Asterisk's manager port accepts only this address,
+    # so no other container (the SSL Fax engine reads data from other machines) can reach it.
+    networks:
+      default:
+        ipv4_address: ${FAXBOT_API_ADDRESS:-172.30.53.10}
     # Note: Asterisk dependency is optional - only needed for SIP backend
 
   # Asterisk service - only needed for SIP backend
   # Can be disabled by setting FAX_BACKEND=phaxio in .env (cloud backend)
   asterisk:
+    logging: *logging
     build:
       context: ./asterisk
       dockerfile: Dockerfile
     restart: unless-stopped
-    env_file:
-      - path: ./.env
-        required: false
+    # Only what Asterisk reads (start.sh, bin/faxbot-inbound-notify and the dialplan's ENV()),
+    # never the whole .env: the provider, mail and carrier keys stay with the API. Each is
+    # empty when .env does not set it. test_sip_compose.py lists what each service may get.
     environment:
       - TZ=${TZ:-UTC}
+      - SIP_USERNAME=${SIP_USERNAME:-}
+      - SIP_PASSWORD=${SIP_PASSWORD:-}
+      - SIP_SERVER=${SIP_SERVER:-}
+      - SIP_FROM_DOMAIN=${SIP_FROM_DOMAIN:-}
+      - SIP_REGISTER=${SIP_REGISTER:-}
+      - ASTERISK_AMI_USERNAME=${ASTERISK_AMI_USERNAME:-}
+      - ASTERISK_AMI_PASSWORD=${ASTERISK_AMI_PASSWORD:-}
+      - ASTERISK_INBOUND_SECRET=${ASTERISK_INBOUND_SECRET:-}
+      - FAX_HEADER=${FAX_HEADER:-}
+      - FAX_LOCAL_STATION_ID=${FAX_LOCAL_STATION_ID:-}
+      - FAXBOT_LOCAL_NET=${FAXBOT_LOCAL_NET:-}
+      # The one address the manager port accepts (the API's, above).
+      - FAXBOT_API_ADDRESS=${FAXBOT_API_ADDRESS:-172.30.53.10}
     volumes:
       - faxdata:/faxdata
       # Asterisk tells the SSL Fax engine which fax lines it loaded.
@@ -60,6 +87,7 @@ services:
   # Faxbot's data folder: its settings read-only, one folder it hands faxes
   # and its status back in, and its own volume.
   hylafax:
+    logging: *logging
     build:
       context: ./hylafax
       dockerfile: Dockerfile
@@ -75,6 +103,7 @@ services:
   # Each MCP client sends its own Faxbot API key with every request, so the MCP
   # services get no Faxbot key. Values come from .env next to this file when set.
   faxbot-mcp:
+    logging: *logging
     build:
       context: ./node_mcp
       dockerfile: Dockerfile
@@ -99,6 +128,7 @@ services:
   # Python MCP over SSE, only for older clients that cannot use Streamable HTTP.
   # Removed in the next release; use faxbot-mcp (Streamable HTTP).
   faxbot-mcp-py-sse:
+    logging: *logging
     build:
       context: ./python_mcp
       dockerfile: Dockerfile.sse
@@ -119,6 +149,16 @@ services:
       - mcp
     stdin_open: true
     tty: true
+
+
+# Faxbot's own network, with a fixed range so the API's address above stays the same
+# when its container is recreated. Change FAXBOT_NETWORK (and FAXBOT_API_ADDRESS inside
+# it) in .env if this range is already used on the computer.
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: ${FAXBOT_NETWORK:-172.30.53.0/24}
 
 volumes:
   faxdata:

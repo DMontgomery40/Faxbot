@@ -238,6 +238,18 @@ class ConfigurationStore:
         row = connection.execute(sa.select(self.revisions).where(self.revisions.c.id == identity)).mappings().one_or_none()
         if row is None or row['format_version'] != 1 or row['key_id'] != cipher.key_id:
             raise ConfigurationSecretError('Cannot authenticate configuration revision.')
+        # A stored revision never changes: decrypt it once per key, not on every background check.
+        cache_key = (cipher.key_id, installation_id, identity, row['envelope'])
+        cache = self.__dict__.setdefault('_revision_cache', {})
+        if cache_key in cache:
+            return cache[cache_key]
+        revision = self._open_revision(row, cipher, installation_id, identity)
+        if len(cache) >= 32:
+            cache.pop(next(iter(cache)))
+        cache[cache_key] = revision
+        return revision
+
+    def _open_revision(self, row, cipher, installation_id, identity):
         payload = cipher.open(row['envelope'], installation_id=installation_id, kind='revision', record_id=identity)
         if (set(payload) != {'environment', 'profiles', 'plugins'} or not isinstance(payload['environment'], dict)
                 or not isinstance(payload['profiles'], dict)

@@ -580,15 +580,25 @@ def _readiness_status(request: Request):
     # One plain reason when the fax engine is missing: no provider, or Faxbot cannot sign in or reach it,
     # or the SIP trunk it would call through is not set up yet.
     trunk_message = sip_trunk_message(settings)
-    message = NO_PROVIDER if not ob else (ami_client.engine_message() if ami_required else None) or trunk_message
+    # A receive-only install has a provider too: only no provider in either direction is "none set up".
+    receiving = ib if settings.inbound_enabled else ''
+    message = (NO_PROVIDER if not (ob or receiving)
+               else (ami_client.engine_message() if ami_required else None) or trunk_message)
     storage_required = settings.inbound_enabled and providerHasTrait("inbound", "needs_storage")
     ready = bool(
         db_ok and gs_installed and outbound_ok and inbound_ok and
         (not ami_required or ami_connected) and
         (not storage_required or storage_ok) and trunk_message is None
     )
+    # "ready" stays ready to send; receiving has its own answer, for an install that only receives.
+    ready_to_receive = bool(
+        receiving and db_ok and gs_installed and inbound_ok and
+        (not providerHasTrait("inbound", "requires_ami") or ami_connected) and
+        (not storage_required or storage_ok) and trunk_message is None
+    )
     return {
             "status": "ready" if ready else "not_ready",
+            "ready_to_receive": ready_to_receive,
             "backend": ob,
             "checks": {
                 "db": db_ok,
@@ -1026,6 +1036,9 @@ async def get_health_status(request: Request):
             "timestamp": now.isoformat() + 'Z',
             "backend": readiness['backend'],
             "backend_healthy": readiness['status'] == 'ready',
+            # The provider that receives faxes ('' when receiving is off), and whether receiving can work now.
+            "receiving_backend": readiness['checks']['inbound']['backend'] if settings.inbound_enabled else '',
+            "receiving_ready": readiness['ready_to_receive'],
             # One plain reason when sending cannot work, such as the fax engine refusing Faxbot's login.
             "backend_message": readiness.get('message'),
             "jobs": jobs,

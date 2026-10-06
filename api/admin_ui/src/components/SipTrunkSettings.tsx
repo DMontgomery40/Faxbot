@@ -407,7 +407,8 @@ function SipTrunkSettings({ client, showCalls = true, revision: sharedRevision, 
     }
   };
 
-  // Offered after a T.38 call carried no fax data; Faxbot never changes the mode by itself.
+  // Offered after a T.38 call carried no fax data while T.38 is still on. Faxbot switches new calls to audio
+  // fax by itself when such a call timed out waiting for fax data; this does it at once in the other cases.
   const useAudioFax = async () => {
     setBusy(true);
     try {

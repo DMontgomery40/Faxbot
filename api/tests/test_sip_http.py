@@ -92,6 +92,7 @@ def test_status_without_a_trunk_says_so_in_one_sentence(bare_client):
                     'address_changed': False, 'last_call_verdict': None, 'suggest_audio': False,
                     'engine_managed': False, 'engine_restarting': False, 'in_use': False,
                     'handover_ready': None, 'handover_text': None, 't38_off_reason': None, 't38_off_at': None,
+                    'reload_waiting': False,
                     'phone_system': None, 'phone_system_command': None, 'phone_system_setting': None,
                     'phone_system_hidden': False, 'network_t38': None, 'network_text': None, 'telnyx_t38': None,
                     'engine_state': None, 'engine_text': None, 'engine_audio': False,
@@ -519,6 +520,30 @@ def test_readiness_waits_for_a_trunk_on_each_direction_that_uses_it(isolated_ins
             'expected_revision_id': current['_meta']['desired_revision_id'], 'sip_trunk_password': PASSWORD,
             'sip_trunk_caller_id': '+15555550100'})
         assert 'message' not in client.get('/health/ready').json()
+
+
+def test_an_install_that_only_receives_is_never_told_no_provider_is_set_up(isolated_installation, monkeypatch):
+    """Review round 4: readiness looked only at sending, so a receive-only install read "No fax provider set up yet."""
+    import shutil
+    monkeypatch.setattr(ami_client._connected, 'is_set', lambda: True)
+    monkeypatch.setattr(main.shutil, 'which', lambda name: f'/usr/bin/{name}' if name == 'gs' else shutil.which(name))
+    monkeypatch.delenv('FAX_BACKEND', raising=False)
+    monkeypatch.delenv('FAX_OUTBOUND_BACKEND', raising=False)
+    with _client(monkeypatch, {'FAX_INBOUND_BACKEND': 'sip', 'INBOUND_ENABLED': 'true'}) as client:
+        ready = client.get('/health/ready').json()
+        assert (ready['backend'], ready['status'], ready['ready_to_receive']) == ('', 'not_ready', False)
+        assert ready['message'] == 'No SIP trunk is set up. Choose your carrier to start.'
+        current = client.get('/admin/settings', headers=ADMIN).json()
+        saved = client.put('/admin/settings', headers=ADMIN, json={
+            'expected_revision_id': current['_meta']['desired_revision_id'], 'sip_trunk_preset': 'telnyx',
+            'sip_trunk_username': 'faxbotuser', 'sip_trunk_password': PASSWORD})
+        assert saved.status_code == 200, saved.text
+        ready = client.get('/health/ready').json()
+        # Ready to send stays false (nothing sends), receiving is ready, and nothing claims no provider.
+        assert (ready['status'], ready['ready_to_receive'], 'message' in ready) == ('not_ready', True, False)
+        health = client.get('/admin/health-status', headers=ADMIN).json()
+        assert (health['backend'], health['receiving_backend'], health['receiving_ready'],
+                health['backend_message']) == ('', 'sip', True, None)
 
 
 def test_a_refused_registration_names_the_password_the_carrier_wants(client, monkeypatch):
