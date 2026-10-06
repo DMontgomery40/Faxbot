@@ -4,7 +4,7 @@ Faxbot records how every fax was sent and what it cost, and uses that to send ea
 
 In the Admin Console, spending, prices and savings are under **Costs**, and the numbers you fax and direct partners under **Recipients**.
 
-Faxbot also limits concurrent calls to each destination and, for calls over your SIP trunk, to the trunk's configured capacity. A fax that reaches a limit waits for room; it does not fail because of the limit. You can set a destination's **Calls at once** in **Recipients → Details**. The default is one call at a time; set 0 for no limit. Calls to a destination are limited across phone routes because the receiving fax line is the same whichever route calls it.
+Faxbot also limits concurrent calls to each destination and, for calls over your SIP trunk, to the trunk's configured capacity. A fax that reaches a limit waits for room; it does not fail because of the limit. By default Faxbot makes one call at a time to each number, because most fax machines take one call at a time. To change that for one number, open its **Details** under **Recipients → Recipients** and choose **Calls at once to this number**, from 2 to 10 or **No limit** (`max_calls` 0 in the API). Calls to a destination are limited across phone routes because the receiving fax line is the same whichever route calls it.
 
 ## What you see
 

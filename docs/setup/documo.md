@@ -25,7 +25,7 @@ The adapter sends one multipart `POST /v1/faxes` with `faxNumber`, the PDF attac
 
 A returned `messageId` identifies the original provider fax. An ID-only asynchronous acknowledgement or `processing` means in progress. Polling reads `/v1/fax/{messageId}/info` using the accepted account and requires the matching ID. Documented `success` and `failed` are terminal; missing, malformed or unknown results do not manufacture success.
 
-An ambiguous create is never automatically resubmitted. Check the original account first. For an issued unresolved attempt without an ID, **Jobs → Job Details** can attach the confirmed Documo UUID with explicit operator confirmation, then resume original-account polling. This does not send again or mark the fax delivered. Later credential/provider changes do not move accepted work to a different account.
+An ambiguous create is never automatically resubmitted. Check the original account first. For an issued unresolved attempt without an ID, **Confirm receipt** in the fax's details (**Faxes → Sent**) can attach the confirmed Documo UUID with explicit operator confirmation, then resume original-account polling. This does not send again or mark the fax delivered. Later credential/provider changes do not move accepted work to a different account.
 
 Documo cancellation and callback mutation are not implemented by this adapter. Do not infer a provider cancellation from a local request. See [held test jobs](test-mode.md) for document checks without creating provider attempts.
 

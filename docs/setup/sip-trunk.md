@@ -91,7 +91,7 @@ Faxbot is that digital alternative. Keep your fax numbers, and fax over a SIP tr
 
 **Gamma** is the main UK wholesale SIP provider and sells through resellers. It recognises the fax server by its public address (no registration). Its codecs include "T.38 for FAX Negotiation", and a phone system maker tested "T.38 Negotiation and FAX transmission" over it ([Swyx, updated 17 June 2024](https://service.swyx.net/hc/en-gb/articles/360010513919-SIP-Provider-Gamma-Telecom-UK)). Choose the **Gamma** preset, enter the SIP server address your reseller gives you, and give them your static public address. Yeastar's UK list also marks DIDlogic, Fuse2 and Sona for T.38; use **Another carrier** for those. **Telnyx** has UK numbers and T.38, and works from behind a router with no open ports, which makes it the quickest UK start.
 
-No published price was found for Gamma, BT One Voice or Telstra SIP Connect, so their rate cards carry none: Spending says "No published price; add your rate" until you enter your own rate under **Tools → Delivery routes**. Gamma's own page gives only a range: £3 to £150 a month for each SIP channel, plus £50 to £150 a month service rental.
+No published price was found for Gamma, BT One Voice or Telstra SIP Connect, so their rate cards carry none: Spending says "No published price; add your rate" until you enter your own rate under **Costs → Prices & plans**. Gamma's own page gives only a range: £3 to £150 a month for each SIP channel, plus £50 to £150 a month service rental.
 
 ## Australia
 

@@ -47,7 +47,7 @@ Email delivery handles faxes that arrive after it is set up. Faxes received earl
 
 ## Intake defaults
 
-One email delivery can be defined by the installation settings, in **Settings → Intake defaults** (or the environment when a new installation starts). Faxbot keeps it in step with the settings within a few minutes, and shows it under **Email delivery** as set by Intake defaults:
+One email delivery can be defined for the whole installation, in **Numbers → Email delivery** under **Email delivery for the whole installation** (or the environment when a new installation starts). Faxbot keeps it in step with the settings within a few minutes, and lists it with the other email deliveries as set for the whole installation:
 
 ```env
 INTAKE_EMAIL_ENABLED=true

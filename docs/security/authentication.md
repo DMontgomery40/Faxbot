@@ -23,7 +23,7 @@ The installation key in `API_KEY` can also sign in this way. Use it to create th
 
 A console session lasts at most 12 hours. It also ends after 30 minutes without activity. Signing out, changing your password, or an administrator disabling your account or revoking the session ends it immediately.
 
-Everyone can see and end their own sessions on **Settings → Sessions**. Seeing other people's sessions needs the `sessions:read` permission, and ending them needs `sessions:revoke`.
+Everyone can see and end their own sessions under **Access → Sessions**. Seeing other people's sessions needs the `sessions:read` permission, and ending them needs `sessions:revoke`.
 
 Faxbot keeps the session in a browser cookie that scripts cannot read. Over HTTPS the cookie is also marked secure, so the browser only sends it over HTTPS. API keys and session tokens never belong in URLs or in browser storage.
 

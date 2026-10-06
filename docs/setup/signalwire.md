@@ -11,8 +11,8 @@ SignalWire’s “Compatibility” endpoints mimic the old Twilio Fax API. Faxbo
 
 ## Configure with the Setup Wizard
 
-1. Admin Console → **Setup Wizard**
-2. Choose **SignalWire Compatibility**
+1. Open **System → Setup** in the Admin Console.
+2. Choose **SignalWire**.
 3. Enter Space URL, Project ID, API Token, and default From number
 4. Provide your public URL; the wizard computes the MediaUrl that SignalWire fetches
 5. Apply the changed desired fields and inspect active/pending status. Pending changes require every API worker to stop and the installation restart. Existing `.env` edits do not import configuration.

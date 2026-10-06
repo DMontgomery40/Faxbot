@@ -45,7 +45,7 @@ The returned fax ID identifies the original HumbleFax fax. Polling reads `GET /s
 
 Missing, malformed or unknown results do not manufacture success. `partial success` is reported as failed because not every page or recipient completed.
 
-An ambiguous create is never automatically resubmitted. A timeout, rate limit, rejected reply or unreadable acknowledgement leaves the job requiring reconciliation. Check the original account's sent history first. For an issued unresolved attempt without an ID, **Jobs → Job Details** can attach the confirmed HumbleFax fax ID with explicit operator confirmation, then resume original-account polling. This does not send again or mark the fax delivered. Later credential or provider changes do not move accepted work to a different account.
+An ambiguous create is never automatically resubmitted. A timeout, rate limit, rejected reply or unreadable acknowledgement leaves the job requiring reconciliation. Check the original account's sent history first. For an issued unresolved attempt without an ID, **Confirm receipt** in the fax's details (**Faxes → Sent**) can attach the confirmed HumbleFax fax ID with explicit operator confirmation, then resume original-account polling. This does not send again or mark the fax delivered. Later credential or provider changes do not move accepted work to a different account.
 
 HumbleFax cancellation, webhooks and inbound faxes are not implemented by this adapter. Do not infer a provider cancellation from a local request. See [held test jobs](test-mode.md) for document checks without creating provider attempts.
 

@@ -300,6 +300,13 @@ READER_RULE = """Who reads these pages: the administrator who set Faxbot up and 
 - Name another party only when real companies really have one: the fax carrier or provider, a partner who manages an Avaya or BT phone system, the recipient's fax machine. Even then, give the reader the exact settings to check or pass on.
 - Keep developer internals (API internals, revision IDs, plugin manifests, environment-variable plumbing) out of operator guides; they belong on developer reference pages."""
 
+# Screen paths in the guides went stale when the console's navigation was reorganized, and
+# audits that checked labels alone missed them.
+SCREEN_PATH_RULE = (
+    "Check every screen path written like **Costs → Prices & plans** against "
+    "api/admin_ui/src/navigation.tsx, which lists each top-level area and its pages (their label: values); "
+    "a path whose area or page is not there is wrong, so fix it to the page that now holds that setting or button."
+)
 
 DIFF_FORMAT = ("Write the diff exactly as `git diff` prints it: a `diff --git a/<path> b/<path>` line, `--- a/<path>` "
                "and `+++ b/<path>` lines, then hunks headed `@@ -<start>,<count> +<start>,<count> @@` with three "
@@ -317,7 +324,7 @@ The change to review is {base}..{head}.
 
 How to work:
 1. Read what changed, code first: `git diff {base}..HEAD` for the code (api/, asterisk/, scripts/, docker-compose*.yml, Makefile and similar), then for docs/.
-2. Find every maintained page under docs/ that describes the changed behavior (search for setting names, commands, labels and routes). Check each claim on those pages against the code: setting names and defaults, button and screen labels (api/admin_ui/src), CLI commands and options (api/app/cli), API routes, numbers, limits and what the product actually does.
+2. Find every maintained page under docs/ that describes the changed behavior (search for setting names, commands, labels and routes). Check each claim on those pages against the code: setting names and defaults, button and screen labels (api/admin_ui/src), CLI commands and options (api/app/cli), API routes, numbers, limits and what the product actually does. {SCREEN_PATH_RULE}
 3. Fix every contradiction you find. Where user-visible behavior from this change is not explained on any page, add a brief explanation where a reader would look for it.
 4. Do not restate, reword or reorganize text that is already correct, and do not add marketing language. Text that addresses the reader as someone other than the administrator is not correct: fix it.
 5. Write clear, natural prose. ASD-STE100 Simplified Technical English is loose inspiration only (about 20%): prefer shorter sentences and active voice where they help, use one term for one thing, and never chop explanations into fragments. Say plainly what is unverified.
@@ -695,7 +702,7 @@ This is an audit of the documentation against the CURRENT code at {head}; there 
 
 How to work:
 1. Read each page in full, then read the code it describes: api/app (settings in api/app/config_values.py, routes, behavior), the console (api/admin_ui/src), the CLI (api/app/cli), asterisk/, the Compose files and scripts/.
-2. Check every claim against the code: setting names and defaults, button and screen labels, CLI commands and options, API routes, numbers, limits and what the product actually does. Fix every contradiction.
+2. Check every claim against the code: setting names and defaults, button and screen labels, CLI commands and options, API routes, numbers, limits and what the product actually does. Fix every contradiction. {SCREEN_PATH_RULE}
 3. Pages or sections that describe features, settings, screens or commands that no longer exist in the code: delete them in the diff (a whole page as a deleted file) and say so in a finding. If mkdocs.yml's nav lists a page you delete, say so too, because mkdocs.yml is changed by hand.
 4. Pages that duplicate each other (also with pages outside this batch, listed below): propose merging them. Keep the better page, move anything it lacks into it, and delete the other.
 5. Report each page of this batch that is not in mkdocs.yml's nav as a finding.

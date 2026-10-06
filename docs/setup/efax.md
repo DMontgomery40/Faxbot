@@ -101,7 +101,7 @@ Faxbot accepts a notification only when its `X-HMAC-Signature` header is the hex
 
 ## Prices
 
-eFax prices the API by quote in every country, so Faxbot gives eFax no starting rate card and shows **No published price; add your rate**. Tools → **Delivery routes** names eFax's cheapest published plan for your installation country on the eFax line under **Spending** and under **Rate cards**, and **Use a published plan as my estimate** opens a new rate card filled in from it, saved only when you click Save. `faxbot costs plans efax` lists the same plans.
+eFax prices the API by quote in every country, so Faxbot gives eFax no starting rate card and shows **No published price; add your rate**. **Costs → Spending** and **Costs → Prices & plans** name eFax's cheapest published plan for your installation country on the eFax line, and **Use a published plan as my estimate** opens a new rate card filled in from it, saved only when you click Save. `faxbot costs plans efax` lists the same plans.
 
 | Plan | Country | Price a month | Includes | Extra page | Read on |
 | --- | --- | --- | --- | --- | --- |
