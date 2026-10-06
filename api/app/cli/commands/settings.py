@@ -4,7 +4,7 @@ import typer
 from .. import profiles, state
 from ..errors import CliError, EXIT_FAILURE, EXIT_NOT_FOUND
 from ..output import local_time, text
-from ..settings_write import refuse_secret_in_command, secret_from_stdin, write_settings
+from ..settings_write import secret_names, secrets_from_stdin, write_settings
 from ...provider_labels import provider_label
 
 
@@ -90,31 +90,33 @@ def settings_set(assignments: list[str] = typer.Argument(None, metavar='NAME=VAL
                  secret: list[str] = typer.Option(None, '--secret', metavar='NAME',
                                                   help='Ask for this setting without showing what you type, for '
                                                        'passwords and provider keys. Repeat for more.'),
-                 secret_stdin: str = typer.Option(None, '--secret-stdin', metavar='NAME',
-                                                  help='Read this password or key from standard input, for scripts.'),
+                 secret_stdin: list[str] = typer.Option(None, '--secret-stdin', metavar='NAME',
+                                                        help='Read this password or key from standard input, one '
+                                                             'line each, for scripts. Repeat for more.'),
                  as_text: bool = typer.Option(False, '--text', help='Send every value exactly as typed.')):
     """Change settings by name, for example max_file_size_mb=20. Faxbot checks the result before saving it.
 
     Passwords and keys are never typed as NAME=VALUE, where they would stay in your shell history: use --secret
     NAME to type one without showing it, or --secret-stdin NAME to read it from standard input.
     """
-    changes = {}
+    changes, typed_secrets, secrets = {}, [], secret_names()
     known = _request_names()
     for item in assignments or []:
         name, separator, raw = item.partition('=')
         if not separator or not name.strip():
             raise CliError(f"Write each setting as NAME=VALUE; '{item}' has no '='.")
         name = name.strip()
-        refuse_secret_in_command(known.get(name, name), name)
+        if known.get(name, name) in secrets:
+            typed_secrets.append(name)  # refused after the .env check, which comes first
         changes[known.get(name, name)] = raw if as_text or name in known else _value(raw)
     for name in secret or []:
         changes[known.get(name, name)] = typer.prompt(f'Value for {name}', hide_input=True, confirmation_prompt=True)
-    if secret_stdin:
-        changes[known.get(secret_stdin, secret_stdin)] = secret_from_stdin(secret_stdin)
+    for name, value in secrets_from_stdin(secret_stdin).items():
+        changes[known.get(name, name)] = value
     if not changes:
         raise CliError('Nothing to change. Give NAME=VALUE pairs, --secret NAME or --secret-stdin NAME.')
     api = state.api()
-    result = write_settings(api, changes)
+    result = write_settings(api, changes, typed_secrets=typed_secrets)
 
     def human(out):
         if not result.get('changed'):
@@ -282,9 +284,9 @@ def providers_configure(provider: str = typer.Argument(..., help="Provider from 
                                                                 help='Provider settings to change.'),
                         secret: list[str] = typer.Option(None, '--secret', metavar='NAME',
                                                          help="Prompt for this setting's value without echoing it, for passwords and keys. Repeat for more."),
-                        secret_stdin: str = typer.Option(None, '--secret-stdin', metavar='NAME',
-                                                         help='Read this password or key from standard input, for '
-                                                              'scripts.'),
+                        secret_stdin: list[str] = typer.Option(None, '--secret-stdin', metavar='NAME',
+                                                               help='Read this password or key from standard input, '
+                                                                    'one line each, for scripts. Repeat for more.'),
                         role: str = typer.Option(None, '--role', help='With --enable: outbound (sending), inbound '
                                                                       '(receiving) or storage.'),
                         enable: bool = typer.Option(False, '--enable', help='Use this provider for sending, receiving or storage '
@@ -304,17 +306,18 @@ def providers_configure(provider: str = typer.Argument(..., help="Provider from 
                            'to see them.')
         return known.get(target, target)
 
-    changes = {}
+    changes, typed_secrets = {}, []
     for item in assignments or []:
         key, separator, raw = item.partition('=')
         if not separator or not key.strip():
             raise CliError(f"Write each setting as NAME=VALUE; '{item}' has no '='.")
-        refuse_secret_in_command(setting(key.strip()), key.strip())
+        if setting(key.strip()) in secret_names():
+            typed_secrets.append(key.strip())  # refused after the .env check, which comes first
         changes[setting(key.strip())] = raw
     for key in secret or []:
         changes[setting(key)] = typer.prompt(f'Value for {key}', hide_input=True, confirmation_prompt=True)
-    if secret_stdin:
-        changes[setting(secret_stdin)] = secret_from_stdin(secret_stdin)
+    for key, value in secrets_from_stdin(secret_stdin).items():
+        changes[setting(key)] = value
     if enable:
         if role not in _ROLES:
             raise CliError('Add --role outbound, inbound or storage to say what to use it for.')
@@ -324,7 +327,7 @@ def providers_configure(provider: str = typer.Argument(..., help="Provider from 
     if not changes:
         raise CliError('Nothing to change. Give NAME=VALUE pairs, --secret NAME, --secret-stdin NAME or --enable.')
     api = state.api()
-    result = write_settings(api, changes)
+    result = write_settings(api, changes, typed_secrets=typed_secrets)
     def human(out):
         out.line('Nothing changed.' if not result.get('changed') else 'Saved. Restart Faxbot to apply it.'
                  if result.get('_meta', {}).get('restart_recommended') else 'Saved and applied.')
