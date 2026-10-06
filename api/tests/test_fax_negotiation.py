@@ -334,9 +334,9 @@ def test_the_summary_counts_calls_success_seconds_per_page_and_attempts_per_deli
     worse = groups[('MR compression without error correction', '9600 bit/s')]
     assert (worse['calls'], worse['delivered'], worse['seconds_per_page'], worse['attempts_per_delivered']) == (
         1, 0, None, None)
-    built_in = groups[('not reported by this engine', '14400 bit/s on the last page')]
+    built_in = groups[('Not reported by this engine', '14400 bit/s on the last page')]
     assert built_in['seconds_per_page'] == 60.0 and built_in['attempts_per_delivered'] == 1.0
-    unknown = groups[('not reported by this engine', 'not reported by this engine')]
+    unknown = groups[('Not reported by this engine', 'Not reported by this engine')]
     assert unknown['calls'] == 1 and unknown['success_percent'] == 0
     assert result['note'] == fax_negotiation.MEASURE_ONLY
     with pytest.raises(ValueError):

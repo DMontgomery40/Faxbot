@@ -134,6 +134,7 @@ export default function NegotiationSummary({ client }: { client: AdminAPIClient 
       ))}
       {groups.length > 0 && (
         <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 1 }}>
+          Speed: the lowest speed each call used, or the last page&apos;s speed where the engine reports only that.
           Seconds per page: the time of every call in the row, divided by the pages they confirmed. Calls per
           delivered fax: sent faxes only.
         </Typography>

@@ -146,8 +146,9 @@ def trunk_negotiation(days: int = typer.Option(30, '--days', metavar='DAYS',
         if rows:
             out.table(['Compression and error correction', 'Speed', 'Calls', 'Succeeded', 'Seconds per page',
                        'Calls per delivered fax'], rows)
-            out.line('Seconds per page: the time of every call in the row, divided by the pages they confirmed. '
-                     'Calls per delivered fax: sent faxes only.')
+            out.line("Speed: the lowest speed each call used, or the last page's speed where the engine reports "
+                     'only that. Seconds per page: the time of every call in the row, divided by the pages they '
+                     'confirmed. Calls per delivered fax: sent faxes only.')
         out.line(result['note'])
     state.out().result(result, human)
 

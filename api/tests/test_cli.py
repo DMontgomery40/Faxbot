@@ -1121,7 +1121,7 @@ def test_trunk_negotiation_and_each_faxs_call_say_what_was_measured_and_what_was
     assert summary.exit_code == 0, summary.stdout
     out = ' '.join(summary.stdout.split())
     for words in ('Measured on 1 call in the last 7 days; the engine reported nothing for 1 more call.',
-                  '9600 bit/s on the last page', 'not reported by this engine', 'Calls per delivered fax',
+                  '9600 bit/s on the last page', 'Not reported by this engine', 'Calls per delivered fax',
                   'Faxbot only measures these for now; it does not change speed, compression or error correction '
                   'because of them.'):
         assert words in out, words

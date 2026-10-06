@@ -254,20 +254,25 @@ def speed_of(row):
     return None, None
 
 
+def _cell(text):
+    """A label that stands alone in a table cell starts with a capital letter."""
+    return text[:1].upper() + text[1:]
+
+
 def speed_label(scope, rate):
     if scope == 'internet':
-        return 'over the internet'
+        return 'Over the internet'
     if scope == 'call':
         return f'{rate} bit/s'
     if scope == 'last_page':
         return f'{rate} bit/s on the last page'
-    return NOT_REPORTED
+    return _cell(NOT_REPORTED)
 
 
 def coding_label(compression, ecm):
     if not compression and not ecm:
-        return NOT_REPORTED
-    return _coding(compression, ecm)
+        return _cell(NOT_REPORTED)
+    return _cell(_coding(compression, ecm))
 
 
 def _order(group):

@@ -22,8 +22,8 @@ const negotiation = (sentence: string) => ({
 
 const group = (fields: Record<string, unknown>) => ({
   compression: null, ecm: null, speed_scope: null, speed: null, calls: 1, sent: 1, received: 0, delivered: 1, pages: 1,
-  success_percent: 100, seconds_per_page: null, attempts_per_delivered: null, coding_label: 'not reported by this engine',
-  speed_label: 'not reported by this engine', ...fields,
+  success_percent: 100, seconds_per_page: null, attempts_per_delivered: null, coding_label: 'Not reported by this engine',
+  speed_label: 'Not reported by this engine', ...fields,
 });
 
 describe('How a fax call went', () => {
@@ -86,8 +86,8 @@ describe('How fax calls went, on the trunk page', () => {
     await waitFor(() => expect(summary.textContent).toContain('Measured on 6 calls in the last 30 days'));
     const rows = within(summary).getAllByRole('row').map((row) => row.textContent);
     expect(rows[1]).toBe('MMR compression with error correction14400 bit/s475%22.5 s1.5');
-    expect(rows[2]).toBe('not reported by this engine14400 bit/s on the last page1100%60 s1');
-    expect(rows[3]).toBe('not reported by this enginenot reported by this engine10%——');
+    expect(rows[2]).toBe('Not reported by this engine14400 bit/s on the last page1100%60 s1');
+    expect(rows[3]).toBe('Not reported by this engineNot reported by this engine10%——');
     expect(summary.textContent).toContain(MEASURE_ONLY);
     fireEvent.click(within(summary).getByRole('button', { name: 'Last 7 days' }));
     await waitFor(() => expect(summary.textContent).toContain('Measured on 6 calls in the last 7 days'));
