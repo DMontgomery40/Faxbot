@@ -45,10 +45,12 @@ venv:
 #   make test-local PYTEST_ARGS='tests/test_routing_http.py' PGDB=faxbot_test_x
 # PGDB (or FAXBOT_SCHEMA_TEST_POSTGRES_URL) adds the PostgreSQL schema variants.
 # The whole suite runs only as the combined gate: make test-local FULL_GATE=1
+# GITHUB_ACTIONS=true makes Typer force a colour terminal as it does on hosted CI, so help-text
+# tests see the same escape codes locally (a7ca67e5's gate passed; CI failed on one).
 test-local:
 	@if [ -z "$(strip $(PYTEST_ARGS))" ] && [ "$(FULL_GATE)" != 1 ]; then echo "Name the test files to run, for example PYTEST_ARGS='tests/test_cli.py'. The whole suite is the combined gate: add FULL_GATE=1."; exit 2; fi
 	@if [ -n "$(PGDB)" ] && [ ! -s "$(PG_URL_FILE)" ]; then echo "PGDB needs the PostgreSQL server URL in $(PG_URL_FILE)."; exit 2; fi
-	cd api && mkdir -p faxdata && FAX_DISABLED=true FAX_DATA_DIR=./faxdata DATABASE_URL='sqlite:///./test_faxbot_ci.db' FAXBOT_SCHEMA_TEST_POSTGRES_URL="$(if $(PGDB),$$(cat '$(PG_URL_FILE)')/$(PGDB),$${FAXBOT_SCHEMA_TEST_POSTGRES_URL:-})" $(abspath $(VENV))/bin/python -m pytest -q -p no:cacheprovider $(PYTEST_ARGS)
+	cd api && mkdir -p faxdata && GITHUB_ACTIONS=true FAX_DISABLED=true FAX_DATA_DIR=./faxdata DATABASE_URL='sqlite:///./test_faxbot_ci.db' FAXBOT_SCHEMA_TEST_POSTGRES_URL="$(if $(PGDB),$$(cat '$(PG_URL_FILE)')/$(PGDB),$${FAXBOT_SCHEMA_TEST_POSTGRES_URL:-})" $(abspath $(VENV))/bin/python -m pytest -q -p no:cacheprovider $(PYTEST_ARGS)
 
 ui-build:
 	cd api/admin_ui && npm ci --no-audit --no-fund && npm run build
