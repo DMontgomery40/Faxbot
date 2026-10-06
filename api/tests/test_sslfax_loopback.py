@@ -248,13 +248,15 @@ LOGGER = ('[general]\ndateformat=%F %T\n\n[logfiles]\nconsole => notice,warning,
           # Each call's dial steps, read by case k when a received call does not reach the engine.
           'calls => notice,warning,verbose(3)\n')
 
+# Asterisk's events, collected in the API container: the manager port accepts only the API's address
+# (docker-compose.yml, start.sh), so a listener inside Asterisk's container is refused.
 AMI_LISTENER = r'''
-exec 3<>/dev/tcp/127.0.0.1/5038
+exec 3<>/dev/tcp/asterisk/5038
 printf 'Action: Login\r\nUsername: %s\r\nSecret: %s\r\nEvents: user\r\n\r\n' \
   "$ASTERISK_AMI_USERNAME" "$ASTERISK_AMI_PASSWORD" >&3
 deadline=$((SECONDS + 900))
 while [ "$SECONDS" -lt "$deadline" ]; do
-  if IFS= read -r -t 5 line <&3; then printf '%s\n' "$line" >> /tmp/ami-events.log; fi
+  if IFS= read -r -t 5 line <&3; then printf '%s\n' "$line" >> /tmp/ami-events.log; elif [ $? -le 128 ]; then break; fi
 done
 '''
 
@@ -502,7 +504,7 @@ def bring_up(tmp_path, label, made, *, faxbot_t38, carrier_gateway, peer_listene
         assert daemons(docker, container, names) == commands, (container, daemons(docker, container, names))
     for container, lines in ((engine, 2), (peer, 1)):
         assert udp_ports(docker, container) == [4569 + n for n in range(1, lines + 1)], container
-    docker.run('exec', '--detach', asterisk, 'bash', '-c', AMI_LISTENER)
+    docker.run('exec', '--detach', api_container, 'bash', '-c', AMI_LISTENER)
     for container in (asterisk, carrier):
         docker.asterisk(container, 'pjsip set logger on')
     return docker, context
@@ -593,7 +595,7 @@ def send_and_collect(tmp_path, context):
     _, info, pages = received_pages(docker, context['peer'], tmp_path)
     faxbot_log = session_logs(docker, context['engine'])
     peer_log = session_logs(docker, context['peer'])
-    events = parse_ami(docker.read(context['asterisk'], '/tmp/ami-events.log'))
+    events = parse_ami(docker.read(context['api'], '/tmp/ami-events.log'))
     # The engine channel's event for this fax (the trunk channel sends its own, Side: trunk).
     engine_call = next((event for event in events if event.get('UserEvent') == 'FaxEngineCall'
                         and event.get('Side') == 'engine' and event.get('JobID') == job_id), None)
@@ -970,7 +972,7 @@ def test_f_a_restart_mid_call_leaves_the_fax_uncertain_and_never_resends_it(tmp_
     events = database(context, kinds=f"SELECT kind FROM outbound_events WHERE job_id = '{job_id}' "
                                      f"ORDER BY created_at")
     attempts = database(context, n=f"SELECT COUNT(*) AS n FROM outbound_attempts WHERE job_id = '{job_id}'")
-    calls = [event for event in parse_ami(docker.read(context['asterisk'], '/tmp/ami-events.log'))
+    calls = [event for event in parse_ami(docker.read(context['api'], '/tmp/ami-events.log'))
              if event.get('UserEvent') == 'FaxEngineCall' and event.get('Side') == 'engine'
              and event.get('JobID') == job_id]
     engine_log = docker.run('logs', context['engine'], check=False)
@@ -1287,7 +1289,7 @@ def test_l_a_fax_call_no_free_line_answers_restarts_the_engine_by_itself(tmp_pat
     call = database(context, call=f"SELECT call_id, started_at, answered_at FROM sip_call_records "
                                   f"WHERE job_id = '{fax_id}'")['call']
     proof['missed_call'] = call
-    events = parse_ami(docker.read(context['asterisk'], '/tmp/ami-events.log'))
+    events = parse_ami(docker.read(context['api'], '/tmp/ami-events.log'))
     proof['missed_events'] = [event for event in events if event.get('UserEvent') == 'FaxEngineMissed']
     request = wait_for(lambda: json.loads(docker.read(context['api'], '/faxdata/hylafax/engine-restart') or 'null'),
                        60, 'the restart request')
