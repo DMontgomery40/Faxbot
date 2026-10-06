@@ -6,6 +6,8 @@ from ..errors import CliError, EXIT_FAILURE, EXIT_NOT_FOUND
 from ..output import local_time, text
 from ..settings_write import secret_names, secrets_from_stdin, write_settings
 from ...provider_labels import provider_label
+# The same rule as /health/ready's HTTP status, applied to the answer's fields (any server version).
+from ...readiness import ready_for_setup
 
 
 def _provider(identity):
@@ -432,22 +434,6 @@ def providers_status():
             out.table(['Faxes', 'Count'], [[names.get(name, name.replace('_', ' ')), count]
                                            for name, count in jobs.items()])
     state.out().result(result, human)
-
-
-def ready_for_setup(ready):
-    """``(set up to send, set up to receive, ready for each of those)`` from ``/health/ready``.
-
-    An install with no sending provider is judged on receiving alone, one with sending and no
-    receiving on sending alone, and one set up for both must be ready for both; one set up for
-    neither is not ready.
-    """
-    ready = ready or {}
-    inbound = (ready.get('checks') or {}).get('inbound') or {}
-    sends = bool(ready.get('backend'))
-    receives = bool(inbound.get('enabled') and inbound.get('backend'))
-    ok = ((sends or receives) and (not sends or ready.get('status') == 'ready')
-          and (not receives or bool(ready.get('ready_to_receive'))))
-    return sends, receives, bool(ok)
 
 
 def health():

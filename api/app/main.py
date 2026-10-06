@@ -624,8 +624,13 @@ def _readiness_status(request: Request):
 
 @app.get("/health/ready")
 def health_ready(request: Request):
+    """200 when Faxbot is ready for what it is set up to do (sending, receiving or both), else 503.
+
+    The body is unchanged: ``status`` stays ready to send, and ``ready_to_receive`` answers for receiving.
+    """
+    from .readiness import ready_for_setup
     status = _readiness_status(request)
-    return JSONResponse(status, status_code=200 if status['status'] == 'ready' else 503)
+    return JSONResponse(status, status_code=200 if ready_for_setup(status)[2] else 503)
 
 
 # Every protected route either declares its permission with require_permission
