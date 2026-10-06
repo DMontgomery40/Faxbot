@@ -2855,7 +2855,7 @@ $ faxbot system [OPTIONS] COMMAND [ARGS]...
 
 ### `faxbot system health`
 
-Check that Faxbot answers and is ready to send faxes. No key is needed. For scripts, the command ends with exit code 1 when Faxbot is not ready.
+Check that Faxbot answers and is ready to send and receive faxes, for whichever of those it is set up to do. No key is needed. For scripts, the command ends with exit code 1 when Faxbot is not ready for them.
 
 **Usage**:
 

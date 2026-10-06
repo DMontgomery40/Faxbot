@@ -198,7 +198,7 @@ export interface RouteCostsResponse {
 
 // One fax's cost: what the carrier charged, or why it is not known yet.
 export interface FaxCost {
-  state: 'reported' | 'partial' | 'waiting' | 'unmatched' | 'included' | 'local' | 'none';
+  state: 'reported' | 'partial' | 'incomplete' | 'waiting' | 'unmatched' | 'included' | 'local' | 'none';
   summary: string | null;
   reported_cost: Money[];
   estimated_cost?: Money[];

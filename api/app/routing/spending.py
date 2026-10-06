@@ -13,7 +13,10 @@ included in the charged total of its direction and counted separately as
 Unknown cost is not zero cost. A fax or call with neither a reported charge nor
 an estimate (no rate card, or a per-minute card and a call of unknown length)
 adds nothing to the totals and is counted as ``unpriced`` ("not priced yet"),
-apart from ``unreported``, which also counts the estimated ones.
+apart from ``unreported``, which also counts the estimated ones. A call the
+carrier priced only in part by the give-up time (``carriers.GIVE_UP``) adds
+what was priced and is counted as ``unpriced`` too; its cost reads as
+incomplete, never as the priced part alone.
 """
 from datetime import timedelta
 
@@ -21,7 +24,7 @@ import sqlalchemy as sa
 
 from .carriers import GIVE_UP, carrier_label
 from .costs import (Money, Tally, attempt_cost, billed_seconds, call_seconds, money_list_text, plan_fee_for_days,
-                    plan_fee_text)
+                    plan_fee_text, split_by_weight)
 from .database import read_connection, utcnow
 from .plan import route_label
 
@@ -36,6 +39,17 @@ def _add(bucket, currency, micros):
         bucket[currency] = bucket.get(currency, 0) + int(micros)
 
 
+def _unpriced_records(checks):
+    """The 0022 count of a call's records never priced, or NULL on a database without it."""
+    column = checks.c.get('unpriced_records')
+    return (column if column is not None else sa.null()).label('unpriced_records')
+
+
+def _incomplete(state, unpriced_records):
+    """A call settled at the give-up time with records the carrier never priced."""
+    return state == 'settled' and bool(unpriced_records)
+
+
 def _plural(count, one, many=None):
     return f'{count} {one if count == 1 else (many or one + "s")}'
 
@@ -47,15 +61,17 @@ class Spending:
 
     # Shared lookups -------------------------------------------------------------
     def _outbound_calls(self, connection, condition):
-        """{attempt id: (trunk preset, check state, call ended)} for attempts matching ``condition``."""
+        """{attempt id: (trunk preset, check state, call ended, never priced in full)} for attempts matching ``condition``."""
         calls, checks, costs = self.carriers.calls, self.carriers.checks, self.routes.costs
         rows = connection.execute(
-            sa.select(calls.c.attempt_id, calls.c.trunk_preset, checks.c.state, calls.c.ended_at)
+            sa.select(calls.c.attempt_id, calls.c.trunk_preset, checks.c.state, calls.c.ended_at,
+                      _unpriced_records(checks))
             .select_from(costs.join(calls, calls.c.attempt_id == costs.c.id)
                          .outerjoin(checks, checks.c.id == calls.c.id))
             .where(calls.c.direction == 'outbound', condition)
             .order_by(calls.c.started_at)).all()
-        return {attempt: (preset, state, ended) for attempt, preset, state, ended in rows}
+        return {attempt: (preset, state, ended, _incomplete(state, unpriced))
+                for attempt, preset, state, ended, unpriced in rows}
 
     def _reported_charges(self, connection, condition):
         """{attempt id: (carrier, billed seconds or None)} from recorded provider charges."""
@@ -77,7 +93,7 @@ class Spending:
             return bool(row['provider_sid']) and row['created_at'] >= now - GIVE_UP
         if call is None:
             return False
-        preset, state, ended = call
+        preset, state, ended, _ = call
         return (preset in self.carrier_presets and state not in ('ambiguous', 'unreported')
                 and (ended is None or ended >= now - GIVE_UP))
 
@@ -93,7 +109,7 @@ class Spending:
             calls = self._outbound_calls(connection, window)
             reported = self._reported_charges(connection, window)
         cards = {card.provider_id: card for card in self.routes.current_cards() if card.direction == 'outbound'}
-        totals, open_costs = {}, {}
+        totals, open_costs, incomplete = {}, {}, {}
         for row in rows:
             entry = totals.setdefault(row['provider_id'], self._empty_outbound(row['provider_id']))
             entry['attempts'] += 1
@@ -120,9 +136,14 @@ class Spending:
                 entry['unmatched'] += call is not None and call[1] == 'ambiguous'
             else:
                 entry['reported'] += 1
+                if call is not None and call[3]:
+                    # Priced only in part: the priced part counts, and the call counts as unpriced too.
+                    incomplete[row['provider_id']] = incomplete.get(row['provider_id'], 0) + 1
         for provider, tally in open_costs.items():
             totals[provider]['unreported_estimate_micros'] = tally.known
             totals[provider]['unpriced'] = tally.unknown
+        for provider, count in incomplete.items():
+            totals[provider]['unpriced'] += count
         unrecorded = [row for row in self.carriers.unrecorded_in_effect(since=since) if row['direction'] == 'outbound']
         if unrecorded:
             entry = totals.setdefault('sip', self._empty_outbound('sip'))
@@ -185,11 +206,12 @@ class Spending:
         calls, checks = self.carriers.calls, self.carriers.checks
         with read_connection(self.routes.engine) as connection:
             rows = connection.execute(
-                sa.select(calls, checks.c.state).select_from(calls.outerjoin(checks, checks.c.id == calls.c.id))
+                sa.select(calls, checks.c.state, _unpriced_records(checks))
+                .select_from(calls.outerjoin(checks, checks.c.id == calls.c.id))
                 .where(calls.c.direction == 'inbound', calls.c.started_at >= since)).mappings().all()
             effective = self.carriers.in_effect([row['id'] for row in rows], connection)
         cards = {(card.provider_id, card.direction): card for card in self.routes.current_cards()}
-        totals, estimated, open_costs = {}, {}, {}
+        totals, estimated, open_costs, incomplete = {}, {}, {}, {}
         for row in rows:
             preset = row['trunk_preset'] or ''
             entry = totals.setdefault(preset, self._empty_received(preset or None))
@@ -210,6 +232,8 @@ class Spending:
                     _add(entry['reported_cost_micros'], charge['currency'], charge['amount_micros'])
                 carrier_seconds = [charge['billed_seconds'] for charge in charges if charge['billed_seconds'] is not None]
                 entry['billed_seconds'] += sum(carrier_seconds) if carrier_seconds else (billed or 0)
+                if _incomplete(row['state'], row['unpriced_records']):
+                    incomplete[preset] = incomplete.get(preset, 0) + 1
                 continue
             entry['unreported'] += 1
             entry['billed_seconds'] += billed or 0  # minutes shown; an unknown length adds none
@@ -223,6 +247,8 @@ class Spending:
         for preset, tally in open_costs.items():
             totals[preset]['unreported_estimate_micros'] = tally.known
             totals[preset]['unpriced'] = tally.unknown
+        for preset, count in incomplete.items():
+            totals[preset]['unpriced'] += count
         for row in self.carriers.unrecorded_in_effect(since=since):
             if row['direction'] != 'inbound':
                 continue
@@ -238,31 +264,35 @@ class Spending:
 
     # One fax ---------------------------------------------------------------------
     def _shares(self, connection, job_id):
-        """{call attempt: (this fax's pages, all the call's pages)} for calls this fax shared with other faxes.
+        """{call attempt: (this fax's place, every fax's pages)} for calls this fax shared with other faxes.
 
         A call that carried several faxes is costed once, on the attempt that
         placed it; each fax's part of it is split by pages, each fax counting
-        its separator page, as the fax's sending-together details say.
+        its separator page, as the fax's sending-together details say. The
+        parts sum exactly to the call's amount: largest remainder, in call
+        order then fax ID (``costs.split_by_weight``).
         """
         members = self.routes.batch_members()
         if members is None:
             return {}
         together = members.c.state == 'together'
         result = {}
-        for batch_id, pages in connection.execute(sa.select(members.c.batch_id, members.c.pages).where(
+        for (batch_id,) in connection.execute(sa.select(members.c.batch_id).where(
                 members.c.id == job_id, together, members.c.batch_id.is_not(None))).all():
-            count, total = connection.execute(sa.select(sa.func.count(), sa.func.sum(members.c.pages + 1)).where(
-                members.c.batch_id == batch_id, together)).one()
-            if count > 1 and total:
-                result[batch_id] = (pages + 1, int(total))
+            rows = connection.execute(sa.select(members.c.id, members.c.pages).where(
+                members.c.batch_id == batch_id, together)
+                .order_by(sa.func.coalesce(members.c.document_number, 0), members.c.id)).all()
+            weights = [int(pages) + 1 for _, pages in rows]
+            if len(rows) > 1 and sum(weights):
+                result[batch_id] = ([identity for identity, _ in rows].index(job_id), weights)
         return result
 
     @staticmethod
     def _part(micros, share):
         if micros is None:
             return None
-        part, total = share
-        return (int(micros) * part + total // 2) // total
+        position, weights = share
+        return split_by_weight(int(micros), weights)[position]
 
     def job(self, job_id, *, now=None):
         """The cost of one sent fax across all its attempts, including charged failures.
@@ -313,11 +343,13 @@ class Spending:
                         'reported_cost': {}, 'estimated_cost': {}, 'attempts': 0, **where}
             return {'state': 'none', 'summary': None, 'reported_cost': {}, 'estimated_cost': {}, 'attempts': 0, **where}
         reported_total, estimated, carriers = {}, Tally(), set()
-        waiting = unmatched = done = 0
+        waiting = unmatched = done = incomplete = 0
         for row in rows:
             estimated.add(Money.of(row['estimated_cost_micros'], row['currency']))
             if row['reported_cost_micros'] is not None:
                 done += 1
+                call = calls.get(row['id'])
+                incomplete += call is not None and call[3]
                 _add(reported_total, row['reported_currency'], row['reported_cost_micros'])
                 carriers.add(reported.get(row['id'], (row['provider_id'], None))[0])
                 continue
@@ -331,7 +363,19 @@ class Spending:
         sip = all(row['provider_id'] == 'sip' for row in rows)
         unit = 'call' if sip else 'attempt'
         who = carrier_label(next(iter(carriers))) if len(carriers) == 1 else 'Your providers'
-        if done and not waiting:
+        if done and not waiting and incomplete:
+            # The carrier priced part of a call and never the rest: the full cost is unknown, never the part.
+            if len(rows) == 1 and shared:
+                summary = (f"{who} charged {money_list_text(reported_total)} for this fax's share of part of the call "
+                           'and never priced the rest, so its full cost is unknown.')
+            elif len(rows) == 1:
+                summary = (f'{who} charged {money_list_text(reported_total)} for part of this call and never priced '
+                           'the rest, so its full cost is unknown.')
+            else:
+                summary = (f'{who} charged {money_list_text(reported_total)} for {_plural(len(rows), unit)} and never '
+                           f'priced all of {_plural(incomplete, unit)}, so the full cost is unknown.')
+            state = 'incomplete'
+        elif done and not waiting:
             if len(rows) == 1 and shared:
                 summary = f"{who} charged {money_list_text(reported_total)} for this fax's share of the call."
             elif len(rows) == 1:
@@ -363,7 +407,7 @@ class Spending:
         calls, checks = self.carriers.calls, self.carriers.checks
         with read_connection(self.routes.engine) as connection:
             rows = connection.execute(
-                sa.select(calls.c.id, calls.c.trunk_preset, checks.c.state)
+                sa.select(calls.c.id, calls.c.trunk_preset, checks.c.state, _unpriced_records(checks))
                 .select_from(calls.outerjoin(checks, checks.c.id == calls.c.id))
                 .where(calls.c.direction == 'inbound', calls.c.job_id == inbound_id)).all()
             effective = self.carriers.in_effect([row.id for row in rows], connection)
@@ -388,6 +432,10 @@ class Spending:
                 carriers.add(charge['provider_id'])
         preset = rows[0].trunk_preset
         who = carrier_label(next(iter(carriers)) if carriers else (preset or ''))
+        if total and any(_incomplete(row.state, row.unpriced_records) for row in rows):
+            return {'state': 'incomplete', 'reported_cost': total,
+                    'summary': f'{who} charged {money_list_text(total)} for part of this call and never priced the rest, '
+                               'so its full cost is unknown.'}
         if total:
             return {'state': 'reported', 'summary': f'{who} charged {money_list_text(total)} for this call.',
                     'reported_cost': total}

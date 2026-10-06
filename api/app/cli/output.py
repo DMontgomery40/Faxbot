@@ -114,6 +114,8 @@ def cost_amount(cost):
         return money(cost.get('reported_cost'))
     if state == 'partial':
         return f"{money(cost.get('reported_cost'))} charged so far"
+    if state == 'incomplete':
+        return f"{money(cost.get('reported_cost'))}, part never priced"
     if state == 'included':
         return 'In your plan'
     if state == 'local':

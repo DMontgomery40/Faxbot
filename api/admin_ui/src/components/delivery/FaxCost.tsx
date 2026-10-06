@@ -72,6 +72,8 @@ export function costAmount(cost: FaxCost | undefined): string {
   if (!cost || cost.state === 'none') return '-';
   if (cost.state === 'reported') return formatMoneyList(cost.reported_cost, '-');
   if (cost.state === 'partial') return `${formatMoneyList(cost.reported_cost, '-')} charged so far`;
+  // The carrier priced part of the call and never the rest: never shown as the whole cost.
+  if (cost.state === 'incomplete') return `${formatMoneyList(cost.reported_cost, '-')}, part never priced`;
   if (cost.state === 'included') return 'In your plan';
   // Delivered inside Faxbot to one of this installation's own numbers.
   if (cost.state === 'local') return 'No call';
